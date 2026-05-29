@@ -8,6 +8,7 @@
 // voice_id + language and returns raw audio bytes (default mp3).
 
 import { createLogger } from "../logger.js";
+import { resolveCredential } from "../auth/resolve.js";
 
 const logger = createLogger("voice.xai");
 
@@ -15,17 +16,8 @@ const DEFAULT_VOICE = "eve";
 const DEFAULT_LANGUAGE = "en";
 
 async function getCredential(): Promise<string | null> {
-  try {
-    const { getXaiApiKey } = await import("../auth/xai.js");
-    const oauth = await getXaiApiKey();
-    if (oauth) return oauth;
-  } catch { /* fall through */ }
-  try {
-    const { getSecretsStoreSingleton } = await import("../secrets.js");
-    const key = getSecretsStoreSingleton()?.get("XAI_API_KEY");
-    if (key) return key;
-  } catch { /* fall through */ }
-  return null;
+  const resolved = await resolveCredential("xai");
+  return resolved?.credential || null;
 }
 
 export async function synthesizeXai(text: string, voice?: string): Promise<Buffer | null> {

@@ -9,6 +9,7 @@
 import type { MemorySearchResult } from "./index.js";
 
 import { createLogger } from "../logger.js";
+import { resolveCredential } from "../auth/resolve.js";
 const logger = createLogger("memory-reranker");
 
 export interface RerankOptions {
@@ -90,14 +91,8 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
 
   if (provider === "anthropic") {
     try {
-      // Check for direct API key first (env var), then fall back to auth system
-      let apiKey = process.env.ANTHROPIC_API_KEY || "";
-      if (!apiKey) {
-        try {
-          const { getAnthropicApiKey } = await import("../auth/anthropic.js");
-          apiKey = await getAnthropicApiKey();
-        } catch {}
-      }
+      const resolved = await resolveCredential("anthropic");
+      const apiKey = resolved?.credential || "";
       if (!apiKey) { logger.warn("[reranker] No Anthropic API key"); return []; }
       const model = options.model || "claude-haiku-4-5-20251001";
 
@@ -134,7 +129,8 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
   }
 
   if (provider === "openai") {
-    const apiKey = process.env.OPENAI_API_KEY || "";
+    const resolved = await resolveCredential("openai");
+    const apiKey = resolved?.credential || "";
     if (!apiKey) return [];
     const model = options.model || "gpt-4o-mini";
     try {

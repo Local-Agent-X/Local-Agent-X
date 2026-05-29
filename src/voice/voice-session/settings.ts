@@ -17,9 +17,7 @@
 //   "cpu_fallback" — in-process Sherpa WASM + Matcha (slow, low quality,
 //                    no Python or GPU needed — emergency fallback only)
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { getLaxDir } from "../../lax-data-dir.js";
+import { loadSettings } from "../../settings.js";
 import { createLogger } from "../../logger.js";
 import type { WhisperProvider } from "../whisper-stream.js";
 import { VALID_WHISPER_PROVIDERS } from "../whisper-stream.js";
@@ -64,63 +62,59 @@ export function resolveVoiceSettings(): ResolvedVoiceSettings {
   const out: ResolvedVoiceSettings = { engine: "tier4" };
   let savedEngine: VoiceEngineId | undefined;
   try {
-    const dataDir = getLaxDir();
-    const sp = join(dataDir, "settings.json");
-    if (existsSync(sp)) {
-      const saved = JSON.parse(readFileSync(sp, "utf-8")) as {
-        voiceEngine?: string;
-        voiceMode?: string;
-        voiceTier4Device?: string;
-        voiceTier4Dtype?: string;
-        voiceTier4Voice?: string;
-        voiceTier4Speed?: number;
-        voiceTier4Provider?: string;
-        voiceWhisperDevice?: string;
-        voiceWhisperModel?: string;
-        voiceSttProvider?: string;
-        voiceRealtimeVoice?: string;
-        voiceRealtimeModel?: string;
-      };
-      if (saved.voiceEngine === "tier4" || saved.voiceEngine === "python" || saved.voiceEngine === "cpu_fallback") {
-        savedEngine = saved.voiceEngine;
-      }
-      const mode = saved.voiceMode?.trim().toLowerCase();
-      if (mode === "realtime" || mode === "standard") out.mode = mode;
-      const td = saved.voiceTier4Device?.toLowerCase() as Tier4Device | undefined;
-      if (td && VALID_TIER4_DEVICES.has(td)) out.tier4Device = td;
-      const tdt = saved.voiceTier4Dtype?.toLowerCase() as Tier4Dtype | undefined;
-      if (tdt && VALID_TIER4_DTYPES.has(tdt)) out.tier4Dtype = tdt;
-      const tp = saved.voiceTier4Provider?.trim().toLowerCase();
-      if (tp) out.tier4Provider = tp;
-      const tv = typeof saved.voiceTier4Voice === "string" ? saved.voiceTier4Voice.trim() : "";
-      if (tv) {
-        // Only the kokoro provider has a strict validation list;
-        // pass-through for edge-tts / chatterbox-clone / future adapters
-        // that own their own catalogs. Empty/unset provider is treated
-        // as kokoro for back-compat with installs that never wrote
-        // voiceTier4Provider.
-        const isKokoro = !out.tier4Provider || out.tier4Provider === "kokoro";
-        if (!isKokoro || isValidKokoroVoice(tv)) {
-          out.tier4Voice = tv;
-        } else {
-          logger.warn(`[voice-session] settings.voiceTier4Voice="${tv}" is not a known Kokoro voice; using default`);
-        }
-      }
-      const ts = saved.voiceTier4Speed;
-      if (typeof ts === "number" && Number.isFinite(ts) && ts >= TIER4_SPEED_MIN && ts <= TIER4_SPEED_MAX) {
-        out.tier4Speed = ts;
-      }
-      const wd = saved.voiceWhisperDevice?.toLowerCase() as WhisperProvider | undefined;
-      if (wd && VALID_WHISPER_PROVIDERS.has(wd)) out.whisperDevice = wd;
-      const wm = saved.voiceWhisperModel?.toLowerCase() as WhisperVariant | undefined;
-      if (wm && VALID_WHISPER_VARIANTS.has(wm)) out.whisperModel = wm;
-      const sp2 = saved.voiceSttProvider?.trim().toLowerCase();
-      if (sp2) out.sttProvider = sp2;
-      const rv = saved.voiceRealtimeVoice?.trim().toLowerCase();
-      if (rv) out.realtimeVoice = rv;
-      const rm = saved.voiceRealtimeModel?.trim();
-      if (rm) out.realtimeModel = rm;
+    const saved = loadSettings() as {
+      voiceEngine?: string;
+      voiceMode?: string;
+      voiceTier4Device?: string;
+      voiceTier4Dtype?: string;
+      voiceTier4Voice?: string;
+      voiceTier4Speed?: number;
+      voiceTier4Provider?: string;
+      voiceWhisperDevice?: string;
+      voiceWhisperModel?: string;
+      voiceSttProvider?: string;
+      voiceRealtimeVoice?: string;
+      voiceRealtimeModel?: string;
+    };
+    if (saved.voiceEngine === "tier4" || saved.voiceEngine === "python" || saved.voiceEngine === "cpu_fallback") {
+      savedEngine = saved.voiceEngine;
     }
+    const mode = saved.voiceMode?.trim().toLowerCase();
+    if (mode === "realtime" || mode === "standard") out.mode = mode;
+    const td = saved.voiceTier4Device?.toLowerCase() as Tier4Device | undefined;
+    if (td && VALID_TIER4_DEVICES.has(td)) out.tier4Device = td;
+    const tdt = saved.voiceTier4Dtype?.toLowerCase() as Tier4Dtype | undefined;
+    if (tdt && VALID_TIER4_DTYPES.has(tdt)) out.tier4Dtype = tdt;
+    const tp = saved.voiceTier4Provider?.trim().toLowerCase();
+    if (tp) out.tier4Provider = tp;
+    const tv = typeof saved.voiceTier4Voice === "string" ? saved.voiceTier4Voice.trim() : "";
+    if (tv) {
+      // Only the kokoro provider has a strict validation list;
+      // pass-through for edge-tts / chatterbox-clone / future adapters
+      // that own their own catalogs. Empty/unset provider is treated
+      // as kokoro for back-compat with installs that never wrote
+      // voiceTier4Provider.
+      const isKokoro = !out.tier4Provider || out.tier4Provider === "kokoro";
+      if (!isKokoro || isValidKokoroVoice(tv)) {
+        out.tier4Voice = tv;
+      } else {
+        logger.warn(`[voice-session] settings.voiceTier4Voice="${tv}" is not a known Kokoro voice; using default`);
+      }
+    }
+    const ts = saved.voiceTier4Speed;
+    if (typeof ts === "number" && Number.isFinite(ts) && ts >= TIER4_SPEED_MIN && ts <= TIER4_SPEED_MAX) {
+      out.tier4Speed = ts;
+    }
+    const wd = saved.voiceWhisperDevice?.toLowerCase() as WhisperProvider | undefined;
+    if (wd && VALID_WHISPER_PROVIDERS.has(wd)) out.whisperDevice = wd;
+    const wm = saved.voiceWhisperModel?.toLowerCase() as WhisperVariant | undefined;
+    if (wm && VALID_WHISPER_VARIANTS.has(wm)) out.whisperModel = wm;
+    const sp2 = saved.voiceSttProvider?.trim().toLowerCase();
+    if (sp2) out.sttProvider = sp2;
+    const rv = saved.voiceRealtimeVoice?.trim().toLowerCase();
+    if (rv) out.realtimeVoice = rv;
+    const rm = saved.voiceRealtimeModel?.trim();
+    if (rm) out.realtimeModel = rm;
   } catch { /* settings file unreadable — fall through to env */ }
   if (savedEngine) {
     out.engine = savedEngine;

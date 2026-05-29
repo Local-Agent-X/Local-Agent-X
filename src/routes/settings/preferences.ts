@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
-import { jsonResponse, safeParseBody } from "../../server-utils.js";
+import { jsonResponse, safeParseBody, atomicWriteFileSync } from "../../server-utils.js";
 import { RUNTIME_SETTINGS, BROADCAST_KEYS, publicSchema } from "../../settings-schema.js";
+import { loadSettings, saveSettings } from "../../settings.js";
 
 /** Tiny edit-distance for 'did you mean' hints on sidebar pin 404s. */
 function levenshtein(a: string, b: string): number {
@@ -33,16 +34,12 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
   // is a single line in settings-schema.ts — no edits here.
   if (method === "POST" && url.pathname === "/api/settings") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-    const settingsPath = join(ctx.dataDir, "settings.json");
-    let existing: Record<string, unknown> = {};
-    try { if (existsSync(settingsPath)) existing = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
-    const merged = { ...existing, ...body };
+    const merged = { ...loadSettings(), ...body };
     // Atomic write — same race as cron-service.saveJobs() pre-9ec343f.
     // Concurrent POST /api/settings from two clients was overwriting
     // each other's merges in a non-atomic read-modify-write sequence,
     // and a hot-reloader reading the file mid-write could JSON.parse-crash.
-    const { atomicWriteFileSync } = await import("../../server-utils.js");
-    atomicWriteFileSync(settingsPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
+    saveSettings(merged);
 
     // Broadcast UI-sync fields (theme, provider, model) over WS so other
     // tabs/windows pick up the change without a reload.
@@ -88,11 +85,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     json(200, { ok: true }); return true;
   }
   if (method === "GET" && url.pathname === "/api/settings") {
-    const settingsPath = join(ctx.dataDir, "settings.json");
-    let merged: Record<string, unknown> = {};
-    try {
-      if (existsSync(settingsPath)) merged = JSON.parse(readFileSync(settingsPath, "utf-8"));
-    } catch {}
+    const merged: Record<string, unknown> = { ...loadSettings() };
     // Overlay live runtime values for every schema-listed field. This is
     // what makes the source-of-truth refactor work: the UI sees what the
     // server actually uses, not whatever was last written to settings.json
@@ -120,11 +113,8 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
   // ── Sidebar Pins ──
   // Dynamic sidebar items stored in settings.json — survive updates, agent-controllable
   if (method === "GET" && url.pathname === "/api/sidebar/pins") {
-    const settingsPath = join(ctx.dataDir, "settings.json");
-    try {
-      const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, "utf-8")) : {};
-      json(200, { pins: settings.sidebarPins || [] });
-    } catch { json(200, { pins: [] }); }
+    const settings = loadSettings();
+    json(200, { pins: settings.sidebarPins || [] });
     return true;
   }
   if (method === "POST" && url.pathname === "/api/sidebar/pins") {
@@ -157,9 +147,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       }
     }
 
-    const settingsPath = join(ctx.dataDir, "settings.json");
-    let settings: Record<string, unknown> = {};
-    try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
+    const settings = { ...loadSettings() };
     const pins = (settings.sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
     if (pins.length >= 10 && !pins.some(p => p.name === name)) {
       json(400, { error: "Maximum 10 pinned apps. Unpin one first." }); return true;
@@ -168,7 +156,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     if (!pins.some(p => p.name === name)) {
       pins.push({ name: String(name), icon: String(icon || "📌"), url: String(pageUrl) });
       settings.sidebarPins = pins;
-      writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
+      saveSettings(settings);
     }
     // Re-pinning is the "I changed my mind" signal — clear any tombstone
     // so a remote-pulled unpin doesn't immediately re-remove this pin.
@@ -185,12 +173,10 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
   if (method === "DELETE" && url.pathname.startsWith("/api/sidebar/pins/")) {
     const pinName = decodeURIComponent(url.pathname.split("/").pop() || "");
     if (!pinName) { json(400, { error: "pin name required" }); return true; }
-    const settingsPath = join(ctx.dataDir, "settings.json");
-    let settings: Record<string, unknown> = {};
-    try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
+    const settings = { ...loadSettings() };
     const pins = ((settings.sidebarPins || []) as Array<{ name: string }>).filter(p => p.name !== pinName);
     settings.sidebarPins = pins;
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
+    saveSettings(settings);
     // Write tombstone so a future pull from another machine that still
     // has this pin doesn't restore it. Tombstone also propagates via
     // sync-repo so other machines see the unpin on next pull.

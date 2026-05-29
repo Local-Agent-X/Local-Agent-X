@@ -220,6 +220,23 @@ function renderMessage(msg, ctx) {
 //
 // Off-screen sessions, post-done events, and missing live nodes are no-ops —
 // renderMessages will catch up on next full render.
+// The live bubble is rebuilt from scratch on every WS event, which would
+// wipe any block the user manually expanded. Carry the .open state across
+// the swap, matching groups/cards by document order (the rebuild is
+// deterministic from the same transcript, so new blocks only append).
+function preserveOpenState(oldNode, fresh) {
+  for (const sel of ['.activity-group', '.tool-card']) {
+    const olds = oldNode.querySelectorAll(sel);
+    const news = fresh.querySelectorAll(sel);
+    for (let i = 0; i < news.length && i < olds.length; i++) {
+      if (!olds[i].classList.contains('open')) continue;
+      news[i].classList.add('open');
+      const chev = news[i].querySelector('.activity-chevron');
+      if (chev) chev.textContent = '▼';
+    }
+  }
+}
+
 function rerenderLiveMessage(sessionId) {
   if (!sessionId) return;
   if (!activeChat || activeChat.id !== sessionId) return;
@@ -247,6 +264,7 @@ function rerenderLiveMessage(sessionId) {
     const tmp = document.createElement('div');
     const fresh = renderMessage(null, { parent: tmp, isLiveSynth: true, store });
     if (!fresh) return;
+    preserveOpenState(oldNode, fresh);
     oldNode.replaceWith(fresh);
     _liveMessageNodes.set(sessionId, fresh);
     autoScroll();

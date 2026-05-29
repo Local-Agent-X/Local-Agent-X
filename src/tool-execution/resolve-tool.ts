@@ -74,7 +74,7 @@ async function parseArgs(ctx: ToolCallContext): Promise<void> {
   } catch {
     // Weak models often emit malformed JSON (trailing commas, single quotes,
     // code fences). Attempt progressive relaxation before giving up.
-    const { repairJson } = await import("../tool-arg-repair.js");
+    const { repairJson } = await import("./arg-repair.js");
     const repair = repairJson(ctx.tc.arguments);
     if (repair.ok) {
       ctx.args = repair.value;

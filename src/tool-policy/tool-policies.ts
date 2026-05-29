@@ -4,7 +4,7 @@
 //
 //   deriveTools()        → TOOLS               (tool-registry.ts; kernel + risk taxonomy)
 //   deriveDefaultRules() → DEFAULT_POLICY.rules (tool-policy/default-rules.ts)
-//   deriveRateLimits()   → DEFAULT_LIMITS       (tool-rate-limiter.ts)
+//   deriveRateLimits()   → DEFAULT_LIMITS       (tool-execution/rate-limiter.ts)
 
 import type { KernelClass, ToolRisk } from "../tool-registry.js";
 import type { ToolPolicyRule } from "./types.js";
@@ -42,7 +42,7 @@ export function deriveDefaultRules(): ToolPolicyRule[] {
 }
 
 /** Per-tool sliding-window caps, plus the global "*" cap. Shape matches
- *  tool-rate-limiter's RateLimitConfig. */
+ *  tool-execution/rate-limiter's RateLimitConfig. */
 export function deriveRateLimits(): Array<ToolRateLimit & { tool: string }> {
   const limits: Array<ToolRateLimit & { tool: string }> = [];
   for (const [tool, entry] of Object.entries(TOOL_POLICIES)) {

@@ -9,7 +9,7 @@ import { withRetry } from "../auto-retry.js";
 import { getRetryContext } from "../retry-context.js";
 import { recordCircuitFailure, recordCircuitSuccess } from "../circuit-breaker.js";
 import { recordToolCall as recordToolStat } from "../tool-tracker.js";
-import { recordToolCall as recordRateLimit } from "../tool-rate-limiter.js";
+import { recordToolCall as recordRateLimit } from "./rate-limiter.js";
 import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";

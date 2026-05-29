@@ -3,8 +3,8 @@
  *
  * Configurable per-tool rate limits using a sliding window.
  */
-import { USER_HINTS } from "./types.js";
-import { deriveRateLimits } from "./tool-policy/tool-policies.js";
+import { USER_HINTS } from "../types.js";
+import { deriveRateLimits } from "../tool-policy/tool-policies.js";
 
 export interface RateLimitConfig {
   /** Tool name or "*" for global */

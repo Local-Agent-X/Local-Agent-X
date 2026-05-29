@@ -17,6 +17,10 @@
          fall through to "main". Read at runtime by SourceDownloader via
          AssemblyMetadataAttribute below. -->
     <InstallerSourceTag Condition="'$(InstallerSourceTag)' == ''">main</InstallerSourceTag>
+    <!-- Win32 .exe icon shown in Explorer, the taskbar before the window paints,
+         and Add/Remove Programs. The runtime Window.Icon (set in MainWindow.axaml)
+         covers the title-bar icon once the UI is up. -->
+    <ApplicationIcon>Assets/icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

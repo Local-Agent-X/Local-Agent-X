@@ -7,6 +7,7 @@
         x:Class="LocalAgentX.Installer.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="Local Agent X Installer"
+        Icon="avares://LocalAgentXInstaller/Assets/icon.png"
         Width="820" Height="580"
         CanResize="False"
         WindowStartupLocation="CenterScreen">

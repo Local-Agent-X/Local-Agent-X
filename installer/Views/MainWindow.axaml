@@ -3,132 +3,175 @@
         xmlns:vm="using:LocalAgentX.Installer.ViewModels"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="640" d:DesignHeight="540"
+        mc:Ignorable="d" d:DesignWidth="820" d:DesignHeight="580"
         x:Class="LocalAgentX.Installer.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="Local Agent X Installer"
-        Width="640" Height="560"
+        Width="820" Height="580"
         CanResize="False"
         WindowStartupLocation="CenterScreen">
 
-    <Grid RowDefinitions="Auto,*,Auto" Margin="32,28,32,24">
+    <Grid ColumnDefinitions="260,*">
 
-        <!-- Header (shared across all screens) -->
-        <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="Local Agent X" FontSize="22" FontWeight="SemiBold"/>
-            <TextBlock Text="Personal AI agent that runs on your machine"
-                       Opacity="0.6" FontSize="13"/>
-        </StackPanel>
+        <!-- Hero panel — brand artwork on a white field that contrasts the dark
+             content panel. Same hero asset used on the marketing site. -->
+        <Border Grid.Column="0" Background="White" ClipToBounds="True">
+            <Grid>
+                <Image Source="avares://LocalAgentXInstaller/Assets/hero.png"
+                       Stretch="UniformToFill"
+                       VerticalAlignment="Stretch"
+                       HorizontalAlignment="Center"/>
 
-        <!-- Body — one child becomes IsVisible per screen state -->
-        <Panel Grid.Row="1" Margin="0,24,0,12">
+                <!-- Subtle bottom fade so the wordmark sits cleanly on the art -->
+                <Border VerticalAlignment="Bottom" Height="120">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                            <GradientStop Color="#00FFFFFF" Offset="0"/>
+                            <GradientStop Color="#FFFFFFFF" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
 
-            <!-- WELCOME -->
-            <StackPanel IsVisible="{Binding IsWelcome}" Spacing="16">
-                <TextBlock Text="Ready to install" FontSize="18" FontWeight="SemiBold"/>
-                <TextBlock TextWrapping="Wrap" Opacity="0.85" FontSize="13"
-                           Text="This installs the local AI engine, the memory model, app dependencies, and the desktop launcher. The first run takes about 15–30 minutes — most of that is downloading the AI model. Subsequent installs are much faster."/>
-                <Expander Header="What gets installed?" Margin="0,4,0,0">
-                    <StackPanel Spacing="6" Margin="0,8,0,0">
-                        <TextBlock Text="• Node.js 22 runtime (if missing)" FontSize="12"/>
-                        <TextBlock Text="• Build tools (Visual Studio C++ on Windows / Xcode CLT on macOS)" FontSize="12"/>
-                        <TextBlock Text="• Python 3.12 (optional voice + scripts)" FontSize="12"/>
-                        <TextBlock Text="• Ollama local AI runtime" FontSize="12"/>
-                        <TextBlock Text="• Embedding model (~670 MB)" FontSize="12"/>
-                        <TextBlock Text="• App dependencies (npm packages)" FontSize="12"/>
-                        <TextBlock Text="• Compiled server + Electron desktop bundle" FontSize="12"/>
-                        <TextBlock Text="• Desktop + Start Menu shortcuts" FontSize="12"/>
-                    </StackPanel>
-                </Expander>
+                <StackPanel VerticalAlignment="Bottom" HorizontalAlignment="Center"
+                            Margin="20,0,20,22" Spacing="2">
+                    <TextBlock Text="Local Agent X" FontSize="18" FontWeight="SemiBold"
+                               Foreground="#0A0F1C" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Runs on your machine" FontSize="11"
+                               Foreground="#5A6275" HorizontalAlignment="Center"
+                               LetterSpacing="1.2"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Content panel -->
+        <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="28,28,28,22">
+
+            <!-- Header (shared across all screens) -->
+            <StackPanel Grid.Row="0" Spacing="4">
+                <TextBlock Text="Welcome" FontSize="22" FontWeight="SemiBold"
+                           IsVisible="{Binding IsWelcome}"/>
+                <TextBlock Text="Installing" FontSize="22" FontWeight="SemiBold"
+                           IsVisible="{Binding IsProgress}"/>
+                <TextBlock Text="All set" FontSize="22" FontWeight="SemiBold"
+                           IsVisible="{Binding IsDone}"/>
+                <TextBlock Text="Installation failed" FontSize="22" FontWeight="SemiBold"
+                           Foreground="#FF7C7C" IsVisible="{Binding IsError}"/>
+                <TextBlock Text="Personal AI agent that runs on your machine"
+                           Opacity="0.55" FontSize="12"/>
             </StackPanel>
 
-            <!-- PROGRESS -->
-            <Grid IsVisible="{Binding IsProgress}" RowDefinitions="Auto,*,Auto">
-                <StackPanel Grid.Row="0" Spacing="4">
-                    <TextBlock Text="{Binding CurrentStepLabel}" FontSize="15" FontWeight="SemiBold"/>
-                    <TextBlock Text="{Binding CurrentStepDetail}" Opacity="0.65" FontSize="12"
-                               TextWrapping="Wrap"/>
+            <!-- Body — one child becomes IsVisible per screen state -->
+            <Panel Grid.Row="1" Margin="0,22,0,12">
+
+                <!-- WELCOME -->
+                <StackPanel IsVisible="{Binding IsWelcome}" Spacing="14">
+                    <TextBlock Text="Ready to install" FontSize="15" FontWeight="SemiBold"/>
+                    <TextBlock TextWrapping="Wrap" Opacity="0.82" FontSize="13" LineHeight="20"
+                               Text="This installs the local AI engine, the memory model, app dependencies, and the desktop launcher. The first run takes about 15–30 minutes — most of that is downloading the AI model. Subsequent installs are much faster."/>
+                    <Expander Header="What gets installed?" Margin="0,4,0,0">
+                        <StackPanel Spacing="6" Margin="0,8,0,0">
+                            <TextBlock Text="• Node.js 22 runtime (if missing)" FontSize="12"/>
+                            <TextBlock Text="• Build tools (Visual Studio C++ on Windows / Xcode CLT on macOS)" FontSize="12"/>
+                            <TextBlock Text="• Python 3.12 (optional voice + scripts)" FontSize="12"/>
+                            <TextBlock Text="• Ollama local AI runtime" FontSize="12"/>
+                            <TextBlock Text="• Embedding model (~670 MB)" FontSize="12"/>
+                            <TextBlock Text="• App dependencies (npm packages)" FontSize="12"/>
+                            <TextBlock Text="• Compiled server + Electron desktop bundle" FontSize="12"/>
+                            <TextBlock Text="• Desktop + Start Menu shortcuts" FontSize="12"/>
+                        </StackPanel>
+                    </Expander>
                 </StackPanel>
 
-                <ScrollViewer Grid.Row="1" Margin="0,16,0,0">
-                    <ItemsControl ItemsSource="{Binding Steps}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:StepViewModel">
-                                <Grid ColumnDefinitions="28,*" Margin="0,4">
-                                    <TextBlock Grid.Column="0" Text="{Binding Icon}"
-                                               FontSize="14" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="1" Text="{Binding Label}"
-                                               FontSize="13" VerticalAlignment="Center"/>
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
+                <!-- PROGRESS -->
+                <Grid IsVisible="{Binding IsProgress}" RowDefinitions="Auto,*,Auto">
+                    <StackPanel Grid.Row="0" Spacing="4">
+                        <TextBlock Text="{Binding CurrentStepLabel}" FontSize="14" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding CurrentStepDetail}" Opacity="0.65" FontSize="12"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
 
-                <Grid Grid.Row="2" Margin="0,12,0,0" RowDefinitions="Auto,Auto">
-                    <ToggleButton Grid.Row="0" Content="Show details"
-                                  IsChecked="{Binding ShowLog}" HorizontalAlignment="Left"/>
-                    <Border Grid.Row="1" IsVisible="{Binding ShowLog}" Margin="0,8,0,0"
-                            BorderThickness="1" BorderBrush="#333" Background="#1a1a1a"
-                            CornerRadius="4" MaxHeight="120">
+                    <ScrollViewer Grid.Row="1" Margin="0,14,0,0">
+                        <ItemsControl ItemsSource="{Binding Steps}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:StepViewModel">
+                                    <Grid ColumnDefinitions="28,*" Margin="0,3">
+                                        <TextBlock Grid.Column="0" Text="{Binding Icon}"
+                                                   FontSize="14" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Label}"
+                                                   FontSize="13" VerticalAlignment="Center"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <Grid Grid.Row="2" Margin="0,12,0,0" RowDefinitions="Auto,Auto">
+                        <ToggleButton Grid.Row="0" Content="Show details"
+                                      IsChecked="{Binding ShowLog}" HorizontalAlignment="Left"/>
+                        <Border Grid.Row="1" IsVisible="{Binding ShowLog}" Margin="0,8,0,0"
+                                BorderThickness="1" BorderBrush="#333" Background="#1a1a1a"
+                                CornerRadius="4" MaxHeight="120">
+                            <ScrollViewer>
+                                <TextBlock Text="{Binding LogText}"
+                                           FontFamily="Consolas,Menlo,monospace"
+                                           FontSize="11" Padding="8" Foreground="#cfcfcf"/>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
+                </Grid>
+
+                <!-- DONE -->
+                <StackPanel IsVisible="{Binding IsDone}" Spacing="14"
+                            HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Border Width="72" Height="72" CornerRadius="36"
+                            Background="#1A3ECF8E" HorizontalAlignment="Center">
+                        <TextBlock Text="✓" FontSize="40" Foreground="#3ECF8E"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="Local Agent X is ready" FontSize="18" FontWeight="SemiBold"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="Click Launch to start using it." FontSize="13" Opacity="0.7"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- ERROR -->
+                <StackPanel IsVisible="{Binding IsError}" Spacing="14">
+                    <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" FontSize="13" Opacity="0.85"/>
+                    <Border BorderThickness="1" BorderBrush="#444" Background="#1a1a1a"
+                            CornerRadius="4" MaxHeight="200" Margin="0,4,0,0">
                         <ScrollViewer>
-                            <TextBlock Text="{Binding LogText}"
-                                       FontFamily="Consolas,Menlo,monospace"
+                            <TextBlock Text="{Binding LogText}" FontFamily="Consolas,Menlo,monospace"
                                        FontSize="11" Padding="8" Foreground="#cfcfcf"/>
                         </ScrollViewer>
                     </Border>
-                </Grid>
+                </StackPanel>
+            </Panel>
+
+            <!-- Footer -->
+            <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto">
+                <Grid.Styles>
+                    <Style Selector="Button">
+                        <Setter Property="MinWidth" Value="100"/>
+                        <Setter Property="Padding" Value="16,8"/>
+                    </Style>
+                </Grid.Styles>
+
+                <Button Grid.Column="2" Content="Install" Classes="accent"
+                        Command="{Binding InstallCommand}"
+                        IsVisible="{Binding IsWelcome}"/>
+
+                <Button Grid.Column="2" Content="Cancel"
+                        Command="{Binding CancelCommand}"
+                        IsVisible="{Binding IsProgress}"/>
+
+                <Button Grid.Column="2" Content="Launch" Classes="accent"
+                        Command="{Binding LaunchCommand}"
+                        IsVisible="{Binding IsDone}"/>
+
+                <Button Grid.Column="2" Content="Close"
+                        Command="{Binding CloseCommand}"
+                        IsVisible="{Binding IsError}"/>
             </Grid>
-
-            <!-- DONE -->
-            <StackPanel IsVisible="{Binding IsDone}" Spacing="16"
-                        HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="✓" FontSize="48" HorizontalAlignment="Center" Foreground="#3ECF8E"/>
-                <TextBlock Text="Local Agent X is ready" FontSize="20" FontWeight="SemiBold"
-                           HorizontalAlignment="Center"/>
-                <TextBlock Text="Click Launch to start using it." FontSize="13" Opacity="0.7"
-                           HorizontalAlignment="Center"/>
-            </StackPanel>
-
-            <!-- ERROR -->
-            <StackPanel IsVisible="{Binding IsError}" Spacing="16">
-                <TextBlock Text="Something went wrong" FontSize="18" FontWeight="SemiBold"
-                           Foreground="#FF7C7C"/>
-                <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" FontSize="13" Opacity="0.85"/>
-                <Border BorderThickness="1" BorderBrush="#444" Background="#1a1a1a"
-                        CornerRadius="4" MaxHeight="160" Margin="0,8,0,0">
-                    <ScrollViewer>
-                        <TextBlock Text="{Binding LogText}" FontFamily="Consolas,Menlo,monospace"
-                                   FontSize="11" Padding="8" Foreground="#cfcfcf"/>
-                    </ScrollViewer>
-                </Border>
-            </StackPanel>
-        </Panel>
-
-        <!-- Footer -->
-        <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto">
-            <Grid.Styles>
-                <Style Selector="Button">
-                    <Setter Property="MinWidth" Value="100"/>
-                    <Setter Property="Padding" Value="16,8"/>
-                </Style>
-            </Grid.Styles>
-
-            <Button Grid.Column="2" Content="Install" Classes="accent"
-                    Command="{Binding InstallCommand}"
-                    IsVisible="{Binding IsWelcome}"/>
-
-            <Button Grid.Column="2" Content="Cancel"
-                    Command="{Binding CancelCommand}"
-                    IsVisible="{Binding IsProgress}"/>
-
-            <Button Grid.Column="2" Content="Launch" Classes="accent"
-                    Command="{Binding LaunchCommand}"
-                    IsVisible="{Binding IsDone}"/>
-
-            <Button Grid.Column="2" Content="Close"
-                    Command="{Binding CloseCommand}"
-                    IsVisible="{Binding IsError}"/>
         </Grid>
     </Grid>
 </Window>

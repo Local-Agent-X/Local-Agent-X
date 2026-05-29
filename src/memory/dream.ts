@@ -21,6 +21,7 @@ import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "
 import { join } from "node:path";
 import { extractSessionPairs, type ConversationMessage } from "./chunking.js";
 import { getLaxDir } from "../lax-data-dir.js";
+import { runMemoryGate } from "./write-safely.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory-dream");
@@ -52,7 +53,12 @@ function loadDreamState(): DreamState {
 }
 
 function saveDreamState(state: DreamState): void {
-  writeFileSync(DREAM_STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+  const gated = runMemoryGate({
+    content: JSON.stringify(state, null, 2),
+    source: "tool",
+    target: DREAM_STATE_PATH,
+  });
+  writeFileSync(DREAM_STATE_PATH, gated, "utf-8");
 }
 
 /** Count sessions modified since the last dream */

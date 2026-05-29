@@ -5,6 +5,7 @@ import type {
   Chunk, EmbeddingProvider, FactKind, MemoryConfig, MemorySearchResult, RetainedFact,
 } from "./types.js";
 import { DEFAULT_MEMORY_CONFIG } from "./types.js";
+import { runMemoryGate, type MemoryWriteSource } from "./write-safely.js";
 import { openDatabaseSafe } from "./index-db.js";
 import * as Schema from "./index-schema.js";
 import * as Files from "./index-files.js";
@@ -85,11 +86,14 @@ export class MemoryIndex {
    *
    * Format: `[sessionId] [HH:MM:SS] text` (sessionId omitted if undefined).
    */
-  appendDailyLog(text: string, sessionId?: string): void {
+  appendDailyLog(text: string, sessionId?: string, source: MemoryWriteSource = "tool"): void {
     const logPath = this.getDailyLogPath();
     const timestamp = new Date().toLocaleTimeString();
     const sidTag = sessionId ? `[${sessionId}] ` : "";
-    appendFileSync(logPath, `\n${sidTag}[${timestamp}] ${text}\n`, "utf-8");
+    const line = `\n${sidTag}[${timestamp}] ${text}\n`;
+    // Defensive idempotent gate — blocks direct callers that bypassed appendToDailyLogSafely.
+    const gated = runMemoryGate({ content: line, source, target: logPath });
+    appendFileSync(logPath, gated, "utf-8");
     this.dirty = true;
     this.reindexThroughUniversal("daily-log").catch(() => {});
   }

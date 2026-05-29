@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 
 import type { PatternsFile } from "./types.js";
 import { getLaxDir } from "../../../lax-data-dir.js";
+import { runMemoryGate } from "../../write-safely.js";
 
 const LAX_DIR = getLaxDir();
 const PATTERNS_FILE = join(LAX_DIR, "proactive-patterns.json");
@@ -46,5 +47,11 @@ export function savePatterns(data: PatternsFile): void {
     data.patterns.sort((a, b) => b.confidence - a.confidence);
     data.patterns = data.patterns.slice(0, MAX_PATTERNS);
   }
-  atomicWrite(PATTERNS_FILE, JSON.stringify(data, null, 2));
+  const serialized = JSON.stringify(data, null, 2);
+  const gated = runMemoryGate({
+    content: serialized,
+    source: "tool",
+    target: PATTERNS_FILE,
+  });
+  atomicWrite(PATTERNS_FILE, gated);
 }

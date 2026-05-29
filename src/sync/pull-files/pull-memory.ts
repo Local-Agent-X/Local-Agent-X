@@ -1,11 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createRequire } from "node:module";
 
 import { createLogger } from "../../logger.js";
 import { unionMerge } from "../mirror.js";
+import { writeMemorySafely, MemoryWriteBlocked } from "../../memory/write-safely.js";
 
-const require = createRequire(import.meta.url);
 const logger = createLogger("sync.pull-files.memory");
 
 export function pullMemoryDir(dataDir: string, syncDir: string): void {
@@ -15,9 +14,6 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
 
   const remoteMemFiles = new Set<string>();
   if (existsSync(syncMemDir)) {
-    let checkTaint: ((s: string) => { safe: boolean; reason?: string }) | null = null;
-    try { checkTaint = require("../../sanitize.js").checkMemoryTaint; } catch {}
-
     // Daily chat archives (YYYY-MM-DD.md) are auto-generated transcripts
     // of the user's own conversations — already inside the trust boundary
     // when they were created. Skip taint checks on them or the filter
@@ -39,15 +35,30 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
       if (SYNC_SKIP_MEMORY_FILES.has(f)) continue;
       remoteMemFiles.add(f);
       const syncContent = readFileSync(join(syncMemDir, f), "utf-8");
-      if (checkTaint && !isDailyChatArchive(f)) {
-        const t = checkTaint(syncContent);
-        if (!t.safe) { logger.warn(`[sync] Rejected ${f}: ${t.reason}`); continue; }
-      }
       const localPath = join(memDir, f);
-      if (existsSync(localPath)) {
-        writeFileSync(localPath, unionMerge(readFileSync(localPath, "utf-8"), syncContent), "utf-8");
-      } else {
-        writeFileSync(localPath, syncContent, "utf-8");
+      const merged = existsSync(localPath)
+        ? unionMerge(readFileSync(localPath, "utf-8"), syncContent)
+        : syncContent;
+
+      if (isDailyChatArchive(f)) {
+        // Trust-boundary content — write through unchanged, preserves prior behavior.
+        writeFileSync(localPath, merged, "utf-8");
+        continue;
+      }
+
+      try {
+        writeMemorySafely({
+          content: merged,
+          source: "sync",
+          target: localPath,
+          mode: "overwrite",
+        });
+      } catch (e) {
+        if (e instanceof MemoryWriteBlocked) {
+          logger.warn(`[sync] Rejected ${f}: ${e.reason}`);
+          continue;
+        }
+        throw e;
       }
     }
   }

@@ -1,5 +1,5 @@
 // One round-trip through the OpenAI-compat HTTP transport. Streams events
-// from ollamaHttpAdapter (the OpenAI Chat Completions client used by every
+// from openaiHttpAdapter (the OpenAI Chat Completions client used by every
 // HTTP provider in this family), accumulates text + tool calls, and
 // reports each event back through the canonical contract.
 //
@@ -44,12 +44,11 @@ export async function streamOnce(
     interruptedByInject: false,
   };
   try {
-    // OllamaHttpAdapter extends OpenAIHttpAdapter — same streaming +
-    // tool-call accumulation code path used by every OpenAI-compat
-    // provider. The class name is historical; the wire shape is what
-    // matters and it's universal here.
-    const { ollamaHttpAdapter } = await import("../../../providers/adapters/ollama-http.js");
-    for await (const ev of ollamaHttpAdapter.stream(req)) {
+    // The OpenAI Chat Completions client every provider in this family
+    // shares — OpenAI, xAI, Gemini compat, and local + cloud Ollama. They
+    // differ only by baseURL/apiKey, which ride on `req`.
+    const { openaiHttpAdapter } = await import("../../../providers/adapters/openai-http.js");
+    for await (const ev of openaiHttpAdapter.stream(req)) {
       if (deps.isAborted()) break;
       // Mid-stream user interrupt — same shape as anthropic.ts and
       // codex.ts. Abort the stream when the user types so the next

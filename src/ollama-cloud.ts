@@ -120,7 +120,7 @@ export function isCloudModel(modelName: string): boolean {
   return cached !== null && cached.modelNames.has(modelName);
 }
 
-/** Cloud baseURL + apiKey for routing the OllamaHttpAdapter, or null
+/** Cloud baseURL + apiKey for the OpenAI-compat HTTP adapter, or null
  *  if cloud isn't configured / cached. The adapter expects the OpenAI-
  *  compat path; cloud Ollama serves it at `<base>/v1`, same as local. */
 export function getCloudOllamaCallTarget(): { baseURL: string; apiKey: string } | null {

@@ -18,6 +18,8 @@ export function normalizeAnthropicModel(model: string, mode: AnthropicAuthMode =
 
   const lower = trimmed.toLowerCase();
 
+  // 4.8 family (May 2026 — Opus 4.8 ships with 1M context)
+  if (matchesModelRef(lower, ["claude-opus-4-8", "claude-opus-4.8"]) || lower === "claude-opus-4-8[1m]") return "claude-opus-4-8";
   // 4.7 family (April 2026 — Opus 4.7 ships with 1M context)
   if (matchesModelRef(lower, ["claude-opus-4-7", "claude-opus-4.7"]) || lower === "claude-opus-4-7[1m]") return "claude-opus-4-7";
   if (matchesModelRef(lower, ["claude-sonnet-4-7", "claude-sonnet-4.7"])) return "claude-sonnet-4-7";

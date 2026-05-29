@@ -93,8 +93,9 @@ const PROVIDER_MODELS = {
     { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
   ],
   anthropic: [
-    { value: 'claude-opus-4-7', label: 'Claude Opus 4.7 (frontier, 1M context)' },
-    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (default, faster)' },
+    { value: 'claude-opus-4-8', label: 'Claude Opus 4.8 (frontier, 1M context)' },
+    { value: 'claude-opus-4-7', label: 'Claude Opus 4.7 (1M context)' },
+    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (faster)' },
     { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
     { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (fastest)' },
     { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },

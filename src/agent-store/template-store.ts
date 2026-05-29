@@ -54,7 +54,7 @@ export class AgentTemplateStore {
   private static instance: AgentTemplateStore;
   private templates: AgentTemplate[] = [];
 
-  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.seedDefaults(); }
+  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateManagerModel(); this.seedDefaults(); }
 
   /**
    * Strip deprecated org-membership fields from persisted templates.
@@ -101,6 +101,22 @@ export class AgentTemplateStore {
     t.updatedAt = Date.now();
     this.persist();
     logger.info("[agents] migrated app-builder template: list_directory → glob");
+  }
+
+  /**
+   * Bump the manager template's default model when the prior flagship
+   * (Opus 4.7) ships a successor (Opus 4.8). Only rewrites templates still
+   * pinned to the OLD default — a user who picked a different model keeps it.
+   * Idempotent: already on 4.8 (or anything else) → left alone.
+   */
+  private migrateManagerModel(): void {
+    const t = this.templates.find(x => x.id === "builtin-manager");
+    if (!t?.defaultModel) return;
+    if (t.defaultModel.provider !== "anthropic" || t.defaultModel.model !== "claude-opus-4-7") return;
+    t.defaultModel = { provider: "anthropic", model: "claude-opus-4-8" };
+    t.updatedAt = Date.now();
+    this.persist();
+    logger.info("[agents] migrated builtin-manager default model: claude-opus-4-7 → claude-opus-4-8");
   }
 
   static getInstance(): AgentTemplateStore {
@@ -323,7 +339,7 @@ No silent stalls under your watch. If you wake up and find one, that's the first
           "web_search",
         ],
         icon: "🧑‍💼",
-        defaultModel: { provider: "anthropic", model: "claude-opus-4-7" },
+        defaultModel: { provider: "anthropic", model: "claude-opus-4-8" },
       },
       {
         id: "builtin-ceo",

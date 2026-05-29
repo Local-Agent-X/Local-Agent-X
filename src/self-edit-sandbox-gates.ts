@@ -157,7 +157,7 @@ export function spawnClaude(cwd: string, prompt: string, signal?: AbortSignal): 
     let stderr = "";
     const proc = spawn("claude", [
       "-p",
-      "--model", "claude-opus-4-7",
+      "--model", "claude-opus-4-8",
       "--permission-mode", "bypassPermissions",
       "--no-session-persistence",
       "--output-format", "text",

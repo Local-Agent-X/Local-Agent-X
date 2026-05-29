@@ -137,7 +137,7 @@ async function buildWithClaude(input: BuildSpawnInput): Promise<ToolResult> {
         "--verbose",
         "--no-session-persistence",
         "--max-turns", "25",
-        "--model", "claude-opus-4-7",
+        "--model", "claude-opus-4-8",
         // claude CLI prompts interactively for Write approval by default.
         // The pipe-stdin invocation has no UI to surface the prompt, so the
         // CLI returns without writing and the build fails with "I need

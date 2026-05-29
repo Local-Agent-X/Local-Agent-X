@@ -117,7 +117,7 @@ export class AnthropicAdapter implements Adapter {
     // narrating / chaining follow-up calls. Same posture as the legacy
     // force-tool-use middleware.
     const forcedToolChoice = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
-    const model = this.opts.model ?? "claude-opus-4-7";
+    const model = this.opts.model ?? "claude-opus-4-8";
 
     const req: AnthropicTransportRequest = {
       model,

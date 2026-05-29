@@ -113,6 +113,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     id: "anthropic",
     label: "Anthropic Claude",
     models: [
+      "claude-opus-4-8",
       "claude-opus-4-7",
       "claude-sonnet-4-6",
       "claude-opus-4-6",
@@ -120,7 +121,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "claude-sonnet-4-5",
       "claude-opus-4-5",
     ],
-    defaultModel: "claude-opus-4-7",
+    defaultModel: "claude-opus-4-8",
     cliBinary: "claude",
     capabilities: { tools: true, streaming: true, reasoning: false },
   },

@@ -7,6 +7,11 @@ function handleSettingsChanged(msg) {
   if (msg.settings.theme && typeof applyTheme === 'function') {
     localStorage.setItem('sax_theme', msg.settings.theme);
     applyTheme(msg.settings.theme);
+    // Agent-driven theme changes arrive here (not via toggleTheme), so mirror
+    // the choice to the Electron wrapper too — otherwise the renderer flips
+    // CSS but the native Windows titleBarOverlay (top-right min/max/X strip)
+    // keeps its old color until the user manually toggles theme twice.
+    try { window.desktop?.setSetting?.('theme', msg.settings.theme); } catch {}
   }
   // Provider / model change from agent → force-refresh the status bar's
   // dropdowns so it stops showing the stale previous provider.

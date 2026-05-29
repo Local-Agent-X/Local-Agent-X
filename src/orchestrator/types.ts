@@ -114,35 +114,6 @@ export const EXAMPLES_FILE = join(LAX_DIR, "orchestration-examples.json");
 export const STATE_FILE = join(LAX_DIR, "orchestrator-state.json");
 export const MAX_EXAMPLES = 200;
 
-export const SENSITIVE_KEYWORDS = [
-  "died", "death", "passed away", "cancer", "depression", "anxiety",
-  "breakup", "divorce", "fired", "laid off", "suicide", "abuse",
-  "scared", "terrified", "lonely", "grief", "lost my", "struggling",
-  "overwhelmed", "panic", "hurt", "trauma", "sick", "hospital",
-  "emergency", "miscarriage", "relapse", "addiction",
-];
-
-export const CORRECTION_KEYWORDS = [
-  "no", "wrong", "incorrect", "not what", "that's not", "actually",
-  "i meant", "you misunderstood", "i said", "nope", "nah",
-  "that's wrong", "fix this", "you got it wrong",
-];
-
-export const FACT_PATTERNS = [
-  /\bi (am|work|live|use|prefer|like|hate|love|have|need|want)\b/i,
-  /\bmy (name|job|project|favorite|preference|dog|cat|wife|husband|kid)\b/i,
-  /\bi('m| am) (a |an )?[a-z]+ (developer|engineer|designer|manager|student)/i,
-  /\bi (moved|switched|changed|started|quit|joined)\b/i,
-];
-
-export const STORY_PATTERNS = [
-  /\bso (basically|what happened|the thing is|long story)\b/i,
-  /\byesterday|last (week|month|night|year)\b/i,
-  /\bremember when\b/i,
-  /\bback when\b/i,
-  /\bthe other day\b/i,
-];
-
 export const MAX_CONTEXT_SIGNALS = 7;
 export const MAX_CONTEXT_TOKENS = 200;
 

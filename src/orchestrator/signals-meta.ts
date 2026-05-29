@@ -6,7 +6,6 @@ import { MilestoneCelebrator } from "../milestone-celebrations.js";
 import { CorrectionLearner } from "../correction-learning.js";
 import { ContradictionDetector } from "../contradiction-detector.js";
 import type { CognitiveSignal } from "./types.js";
-import { CORRECTION_KEYWORDS, FACT_PATTERNS } from "./types.js";
 
 export const metaSignals: CognitiveSignal[] = [
   {
@@ -53,9 +52,7 @@ export const metaSignals: CognitiveSignal[] = [
     scope: "profile",
     critical: true,
     triage: ({ input }) =>
-      CORRECTION_KEYWORDS.some(kw => input.message.toLowerCase().includes(kw)) && input.agentPreviousMessage
-        ? "triggered"
-        : null,
+      CorrectionLearner.looksLikeCorrection(input.message) && input.agentPreviousMessage ? "triggered" : null,
     run(input, _out) {
       // Detection still runs (CorrectionLearner persists records to disk for
       // history/diagnostics), and prepare-request.ts uses the same detector
@@ -92,7 +89,7 @@ export const metaSignals: CognitiveSignal[] = [
     id: "contradiction-detector",
     scope: "profile",
     critical: true,
-    triage: ({ input }) => (FACT_PATTERNS.some(p => p.test(input.message)) ? "triggered" : null),
+    triage: ({ input }) => (ContradictionDetector.looksLikeFactStatement(input.message) ? "triggered" : null),
     run: (input, out) => out.push(...ContradictionDetector.getInstance().signalsFor(input.message)),
     veto: sig =>
       sig.confidence >= 0.8

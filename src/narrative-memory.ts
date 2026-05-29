@@ -113,6 +113,16 @@ const PROJECT_KEYWORDS = [
   "deployed", "shipped", "released", "finished", "completed", "started",
 ];
 
+// Surface markers that the user is telling a story — the cheap pre-gate before
+// autoDetectNarrative() does the real life-event / project matching.
+const STORY_PATTERNS = [
+  /\bso (basically|what happened|the thing is|long story)\b/i,
+  /\byesterday|last (week|month|night|year)\b/i,
+  /\bremember when\b/i,
+  /\bback when\b/i,
+  /\bthe other day\b/i,
+];
+
 function tokenize(text: string): string[] {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(Boolean);
 }
@@ -144,6 +154,11 @@ export class NarrativeMemory {
       NarrativeMemory.instance = new NarrativeMemory();
     }
     return NarrativeMemory.instance;
+  }
+
+  /** Pre-gate: does this message read like the user is telling a story? */
+  static looksLikeStory(message: string): boolean {
+    return STORY_PATTERNS.some(p => p.test(message));
   }
 
   /**

@@ -75,12 +75,14 @@ export interface BaseURLContext {
 }
 
 const REASONING_OPENAI_FAMILY = /^o[134]|gpt-5/i;
-// xAI reasoning models: grok-4 family (all reasoning), grok-code-fast-1,
-// and grok-3-mini (supports reasoning_effort). Plain grok-3 is NOT a
-// reasoning model. Without `reasoning_effort` set, the grok-4 family
-// leaks chain-of-thought into the `content` field instead of the
-// separate `reasoning_content` field, dumping raw thoughts into chat.
-const REASONING_GROK = /^grok-(4|3-mini|code-fast)/i;
+// xAI reasoning models: grok-4 family (grok-4.3, grok-4.20-*reasoning,
+// grok-4.20-multi-agent) + legacy grok-code-fast-1 + grok-3-mini. The
+// explicit `-non-reasoning` variant (grok-4.20-0309-non-reasoning) is
+// excluded — sending reasoning_effort to it would either be ignored or
+// rejected. Without reasoning_effort set, the grok-4 family leaks
+// chain-of-thought into `delta.content` instead of the separate
+// `delta.reasoning_content` field, dumping raw thoughts into chat.
+const REASONING_GROK = /^grok-(?:4|3-mini|code-fast)(?!.*-non-reasoning)/i;
 const REASONING_GEMINI = /gemini-(2\.5|3)/i;
 const REASONING_OSS = /deepseek-r1|qwen.*reasoning|gpt-oss|glm-4\.7/i;
 
@@ -89,8 +91,14 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "xai",
     label: "xAI Grok",
-    models: ["grok-4", "grok-4-fast", "grok-4-heavy", "grok-code-fast-1", "grok-3", "grok-3-mini"],
-    defaultModel: "grok-4",
+    models: [
+      "grok-4.3",
+      "grok-4.20-0309-reasoning",
+      "grok-4.20-0309-non-reasoning",
+      "grok-4.20-multi-agent-0309",
+      "grok-build-0.1",
+    ],
+    defaultModel: "grok-4.3",
     baseURL: "https://api.x.ai/v1",
     envKey: "XAI_API_KEY",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_GROK },

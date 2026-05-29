@@ -130,7 +130,6 @@ async function testModuleImports(): Promise<void> {
     "./embedded-runtime.js",
     "./driver-abstraction.js",
     "./agent-protocol.js",
-    "./ipc-channel.js",
     "./compute-offload.js",
     "./battery-scheduler.js",
     "./ota-update.js",

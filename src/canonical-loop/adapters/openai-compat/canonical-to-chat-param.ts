@@ -5,7 +5,6 @@
 // expanding user messages into multi-part content (text + image_url) and
 // emitting a follow-up user message when a tool result carries images.
 
-import { readFileSync } from "node:fs";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { CanonicalMessage } from "../../contract-types.js";
 import type { TurnInput } from "../../adapter-contract.js";
@@ -13,6 +12,7 @@ import { sanitizeAssistantTextForRebuild } from "../../../anthropic-client/parse
 import { createLogger } from "../../../logger.js";
 import { extractText } from "./helpers.js";
 import type { CanonicalImageRef } from "./types.js";
+import { imagesToOpenAIParts } from "../images-to-openai-parts.js";
 
 const logger = createLogger("canonical-loop.adapters.openai-compat.chat-param");
 
@@ -131,46 +131,3 @@ function extractImages(c: unknown): CanonicalImageRef[] {
   );
 }
 
-/**
- * Build OpenAI vision content parts: a text part plus one image_url
- * part per attachment, base64-data-url'd from the on-disk file. Mirrors
- * `buildUserContentWithImages` in run-standard-helpers.ts (legacy path)
- * so the wire shape is identical for any provider that's vision-capable.
- *
- * Adds a trailing text part listing on-disk file paths so the agent can
- * `read`/`bash cp` the original bytes when an app needs the asset on
- * disk (matches legacy behavior — the agent uses these hints to avoid
- * regenerating an image when the user already attached one).
- */
-function imagesToOpenAIParts(
-  text: string,
-  images: CanonicalImageRef[],
-): Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> {
-  const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> = [
-    { type: "text", text },
-  ];
-  const filePathHints: string[] = [];
-  for (const img of images) {
-    try {
-      if (!img.filePath) continue;
-      const data = readFileSync(img.filePath);
-      const ext = (img.name.split(".").pop() || "png").toLowerCase();
-      const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
-      const dataUrl = `data:${mime};base64,${data.toString("base64")}`;
-      parts.push({ type: "image_url", image_url: { url: dataUrl, detail: "auto" } });
-      filePathHints.push(`  - ${img.name} → ${img.filePath}`);
-    } catch {
-      // Skip unreadable attachments rather than fail the whole turn.
-    }
-  }
-  if (filePathHints.length > 0) {
-    parts.push({
-      type: "text",
-      text:
-        `\n\n[Attached file paths on disk — use these if you need to copy the real bytes into the workspace]\n` +
-        filePathHints.join("\n") +
-        `\n\nTo use an attachment as an app asset: read the file with bash/read, then write it to the target path under workspace/apps/<app>/, or use bash cp. Do NOT generate a new image or download from the web when a user attachment exists — use the file at the path above.`,
-    });
-  }
-  return parts;
-}

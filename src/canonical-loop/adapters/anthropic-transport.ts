@@ -17,13 +17,13 @@
  *   - If the user has not authenticated, `getAnthropicApiKey` throws —
  *     the adapter surfaces that as an `error` adapter_report.
  */
-import { readFileSync } from "node:fs";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type {
   AnthropicTransport,
   AnthropicTransportRequest,
   TransportEvent,
 } from "./anthropic.js";
+import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
 
 export function defaultAnthropicTransport(): AnthropicTransport {
   return {
@@ -163,59 +163,6 @@ function toOpenAiMessage(m: AnthropicTransportRequest["messages"][number]): Chat
     tool_call_id: m.toolCallId ?? "tc-unknown",
     content: m.content,
   } as ChatCompletionMessageParam;
-}
-
-function imagesToOpenAIParts(
-  text: string,
-  images: Array<{ url: string; name: string; filePath?: string }>,
-): Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> {
-  const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> = [
-    { type: "text", text },
-  ];
-  const filePathHints: string[] = [];
-  for (const img of images) {
-    try {
-      // Tool-emitted images arrive pre-encoded as a data URL on `url`
-      // (no on-disk file). User-attached images come with a `filePath`
-      // pointing at /uploads/... — read + base64-encode at request time.
-      let dataUrl: string;
-      if (img.url && img.url.startsWith("data:")) {
-        dataUrl = img.url;
-      } else if (img.filePath) {
-        const data = readFileSync(img.filePath);
-        const ext = (img.name.split(".").pop() || "png").toLowerCase();
-        const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
-        dataUrl = `data:${mime};base64,${data.toString("base64")}`;
-      } else {
-        continue;
-      }
-      parts.push({ type: "image_url", image_url: { url: dataUrl, detail: "auto" } });
-      if (img.filePath) filePathHints.push(`  - ${img.name} → ${img.filePath}`);
-    } catch {
-      // Skip unreadable attachments rather than fail the whole turn.
-    }
-  }
-  // Append a text part with the on-disk file paths. Critical for
-  // Anthropic OAuth/subscription chats: the CLI proxy strips image_url
-  // parts via extractUserPrompt (text-only stdin), so the model never
-  // sees the bytes through that channel. The model DOES have a `read`
-  // tool wired through MCP — when it reads an image file, the tool
-  // returns image content and serializeMcpContent packages it as MCP
-  // image blocks the CLI delivers natively to the model. So leaving
-  // the file path in the text prompt is what restores vision: the
-  // model sees "[User attached N images at /path]" and calls `read`.
-  // For HTTP API key paths (sk-ant-api03-*) this hint is harmless —
-  // the model already has the bytes via image_url.
-  if (filePathHints.length > 0) {
-    parts.push({
-      type: "text",
-      text:
-        `\n\n[Attached file paths on disk — use these if you need to copy the real bytes into the workspace]\n` +
-        filePathHints.join("\n") +
-        `\n\nTo use an attachment as an app asset: read the file with bash/read, then write it to the target path under workspace/apps/<app>/, or use bash cp. Do NOT generate a new image or download from the web when a user attachment exists — use the file at the path above.`,
-    });
-  }
-  return parts;
 }
 
 function scrub(s: string): string {

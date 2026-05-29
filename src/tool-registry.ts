@@ -303,8 +303,6 @@ export const TOOLS: Record<string, ToolEntry> = {
   voice_visual:   { kernel: "internal", risk: "safe" },
   session_status: { kernel: "internal", risk: "safe" },
   setting:        { kernel: "internal", risk: "workspace-write" },
-  config_get:     { kernel: "internal", risk: "safe" },
-  config_set:     { kernel: "internal", risk: "workspace-write" },
   clipboard_read: { kernel: "internal", risk: "safe" },
   clipboard_write:{ kernel: "internal", risk: "workspace-write" },
 

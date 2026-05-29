@@ -19,6 +19,15 @@ export interface SessionHelpers {
    * Wait for any pending write for this session to complete. No-op if
    * nothing is queued. Call this at the start of a request that depends
    * on the prior turn's bytes being durable (cache + disk).
+   *
+   * Invariant: any reader that consumes `session.messages` as the committed
+   * transcript MUST `await flushSession(id)` first. The bridge writer
+   * (canonical-run.ts:persistTurnState) assigns `session.messages` and then
+   * `saveSession`s in one synchronous stretch, so awaiting the queued write
+   * guarantees the assignment has landed. Skipping this reintroduces the
+   * 2026-05-19 hazard: a fast next-turn / inject / compaction read the stale
+   * cache (or stale disk bytes after LRU eviction) before the bridge flushed,
+   * reordering or dropping the latest turn.
    */
   flushSession: (id: string) => Promise<void>;
 }

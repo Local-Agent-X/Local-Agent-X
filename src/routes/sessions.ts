@@ -69,6 +69,9 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     const sourceId = String(body.sessionId || "");
     const atIndex = typeof body.atIndex === "number" ? body.atIndex : -1;
     if (!sourceId || !isValidSessionId(sourceId)) { json(400, { error: "Invalid session ID" }); return true; }
+    // Fork persists a slice of the transcript — flush the bridge so the fork
+    // can't miss the source's last turn.
+    await ctx.flushSession(sourceId);
     const source = ctx.getOrCreateSession(sourceId);
     if (atIndex < 0 || atIndex >= source.messages.length) { json(400, { error: "Invalid message index" }); return true; }
     const forkId = `fork-${randomBytes(8).toString("hex")}`;
@@ -178,6 +181,7 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     const id = url.pathname.split("/").pop()!;
     if (!isValidSessionId(id)) { json(400, { error: "Invalid session ID" }); return true; }
     const raw = url.searchParams.get("view") === "raw";
+    await ctx.flushSession(id);
     const session = ctx.getOrCreateSession(id);
     if (raw) { json(200, session); return true; }
     const { projectSessionForUI } = await import("../memory/session-message-log.js");

@@ -196,6 +196,16 @@ export function readOpTurn(opId: string, turnIdx: number): OpTurnRow | null {
 }
 
 // ── op_messages — append-only ─────────────────────────────────────────────
+//
+// SEAL: op_messages rows are canonical-loop's internal turn metadata, not
+// chat messages. External readers MUST consume rows through
+// `opMessageRowToChatParam()` (canonical-loop/chat-runner) — it is the only
+// shape adapter that maps a row to a `ChatCompletionMessageParam`. Reading
+// the op_messages JSONL directly outside canonical-loop is forbidden: it
+// bypasses the adapter and exposes internal turn metadata (hist- seeds,
+// tool-call envelopes) in the wrong format. The two sanctioned external
+// callers — canonical-run.ts:persistTurnState and bootstrap-bridges.ts —
+// both call readOpMessages() then opMessageRowToChatParam() per row.
 
 export function appendOpMessage(row: OpMessageRow): void {
   const path = opMessagesPath(row.opId);

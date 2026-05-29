@@ -18,9 +18,8 @@
  *     user's chat-time provider choice.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { loadSettings } from "./settings.js";
+import { resolveCredential } from "./auth/resolve.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("llm-dispatch");
@@ -60,15 +59,10 @@ const DEFAULTS = {
 /** Pick a provider based on env + (optionally) user settings. Returns null if none usable. */
 export function detectProvider(opts: { rejectOAuth?: boolean; preferEnvKeys?: boolean } = {}): LLMProvider | null {
   if (!opts.preferEnvKeys) {
-    try {
-      const settingsPath = join(getLaxDir(), "settings.json");
-      if (existsSync(settingsPath)) {
-        const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as { provider?: string };
-        if (s.provider === "ollama") return "ollama";
-        if (s.provider === "anthropic") return "anthropic";
-        if (s.provider === "openai" || s.provider === "codex") return "openai";
-      }
-    } catch { /* fall through */ }
+    const s = loadSettings() as { provider?: string };
+    if (s.provider === "ollama") return "ollama";
+    if (s.provider === "anthropic") return "anthropic";
+    if (s.provider === "openai" || s.provider === "codex") return "openai";
   }
   const ak = process.env.ANTHROPIC_API_KEY || "";
   if (ak && (!opts.rejectOAuth || ak.startsWith("sk-ant-api"))) return "anthropic";
@@ -119,11 +113,9 @@ async function callOllama(prompt: string, model: string, temperature: number, ma
 
 async function callAnthropic(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, rejectOAuth: boolean): Promise<string | null> {
   try {
-    let apiKey = process.env.ANTHROPIC_API_KEY || "";
-    if (!apiKey) {
-      try { apiKey = await (await import("./auth/anthropic.js")).getAnthropicApiKey(); } catch { /* no fallback key */ }
-    }
-    if (!apiKey) return null;
+    const resolved = await resolveCredential("anthropic", { rejectOAuth });
+    if (!resolved) return null;
+    const apiKey = resolved.credential;
     const isOAuth = apiKey.startsWith("oauth:");
     if (rejectOAuth && (isOAuth || !apiKey.startsWith("sk-ant-api"))) return null;
     const token = isOAuth ? apiKey.slice(6) : apiKey;
@@ -150,8 +142,9 @@ async function callAnthropic(prompt: string, model: string, temperature: number,
 
 async function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
   try {
-    const apiKey = process.env.OPENAI_API_KEY || "";
-    if (!apiKey) return null;
+    const resolved = await resolveCredential("openai");
+    if (!resolved) return null;
+    const apiKey = resolved.credential;
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -181,14 +174,9 @@ async function callXai(prompt: string, model: string, temperature: number, maxTo
   // classify-with-llm hit the xAI/Gemini fallback that returns null
   // before reaching this dispatcher.
   try {
-    let apiKey = process.env.XAI_API_KEY || "";
-    if (!apiKey) {
-      try {
-        const { getSecretsStoreSingleton } = await import("./secrets.js");
-        apiKey = getSecretsStoreSingleton()?.get("XAI_API_KEY") || "";
-      } catch { /* no secrets store available */ }
-    }
-    if (!apiKey) return null;
+    const resolved = await resolveCredential("xai");
+    if (!resolved) return null;
+    const apiKey = resolved.credential;
     const res = await fetch("https://api.x.ai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },

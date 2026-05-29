@@ -1,10 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { LAXConfig } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
-import { getApiKey } from "../auth/index.js";
 import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
 import { PROVIDERS, isHttpProvider } from "../providers/registry.js";
+import { loadSettings, getSetting } from "../settings.js";
+import { resolveCredential } from "../auth/resolve.js";
 
 const isProviderId = (s: string): s is ProviderId =>
   (PROVIDER_IDS as readonly string[]).includes(s);
@@ -29,15 +28,11 @@ export async function resolveProvider(
   maxIterations: number;
 }> {
   const { loadTokens } = await import("../auth/index.js");
-  const { loadAnthropicTokens, getAnthropicApiKey } = await import("../auth/anthropic.js");
-  const { loadXaiTokens, getXaiApiKey } = await import("../auth/xai.js");
+  const { loadAnthropicTokens } = await import("../auth/anthropic.js");
+  const { loadXaiTokens } = await import("../auth/xai.js");
 
-  // Load saved settings
-  let saved: Record<string, unknown> = {};
-  try {
-    const sp = join(dataDir, "settings.json");
-    if (existsSync(sp)) saved = JSON.parse(readFileSync(sp, "utf-8"));
-  } catch {}
+  // Load saved settings (spread because the codepath blanks saved.model below)
+  const saved: Record<string, unknown> = { ...loadSettings() };
 
   // Resolve provider. If a saved provider exists but has no usable credentials,
   // fall through to auto-detection so a stale "codex" default from a previous
@@ -96,34 +91,29 @@ export async function resolveProvider(
   const meta = PROVIDERS[provider];
   if (!isHttpProvider(meta)) {
     // CLI transport: anthropic via Claude CLI subprocess.
-    apiKey = await getAnthropicApiKey();
-    try { codexApiKey = await getApiKey(config.openaiApiKey); } catch {}
+    const r = await resolveCredential("anthropic");
+    apiKey = r?.credential ?? "";
+    const cr = await resolveCredential("codex", { configOpenAIKey: config.openaiApiKey });
+    codexApiKey = cr?.credential || undefined;
     if (!codexApiKey) codexApiKey = secretsStore.get("OPENAI_API_KEY") || undefined;
   } else if (provider === "local") {
     apiKey = "ollama";
   } else if (provider === "codex") {
-    // Codex uses ChatGPT OAuth, not the openai envKey.
-    apiKey = await getApiKey(config.openaiApiKey);
+    const r = await resolveCredential("codex", { configOpenAIKey: config.openaiApiKey });
+    apiKey = r?.credential ?? "";
   } else if (provider === "openai") {
-    apiKey = config.openaiApiKey || secretsStore.get(meta.envKey) || await getApiKey(config.openaiApiKey);
+    const r = await resolveCredential("openai", { configOpenAIKey: config.openaiApiKey });
+    apiKey = r?.credential ?? "";
   } else if (provider === "xai") {
-    // Prefer OAuth bearer (SuperGrok / X Premium+) when present, fall back
-    // to XAI_API_KEY. Bearer + key are wire-identical on api.x.ai/v1, so
-    // openai-http consumes either without branching.
-    const oauth = await getXaiApiKey();
-    apiKey = oauth || secretsStore.get(meta.envKey) || "";
+    const r = await resolveCredential("xai");
+    apiKey = r?.credential ?? "";
   } else if (provider === "custom") {
-    apiKey = secretsStore.get(meta.envKey) || "";
-    try {
-      const sp = join(dataDir, "settings.json");
-      if (existsSync(sp)) {
-        const ss = JSON.parse(readFileSync(sp, "utf-8"));
-        customBaseURL = ss.customBaseUrl || undefined;
-      }
-    } catch {}
+    const r = await resolveCredential("custom");
+    apiKey = r?.credential ?? "";
+    customBaseURL = getSetting<string>("customBaseUrl") || undefined;
   } else {
-    // Generic http provider — xai, gemini, cerebras, ollama-cloud.
-    apiKey = secretsStore.get(meta.envKey) || "";
+    const r = await resolveCredential(provider);
+    apiKey = r?.credential ?? "";
   }
 
   // Default model — registry is SoT. Falls back to config.model when

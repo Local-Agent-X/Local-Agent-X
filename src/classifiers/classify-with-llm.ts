@@ -25,9 +25,8 @@
  */
 
 import { createLogger } from "../logger.js";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { getLaxDir } from "../lax-data-dir.js";
+import { loadSettings } from "../settings.js";
+import { resolveCredential } from "../auth/resolve.js";
 
 // Aggressive default timeout. These classifiers shape signal quality but
 // aren't load-bearing — every call site already has a regex/heuristic
@@ -78,58 +77,34 @@ async function resolveActiveProvider(): Promise<{
   // 1. Read the user's active provider choice from settings.json
   let provider = "anthropic";
   let model = "";
-  try {
-    const settingsPath = join(getLaxDir(), "settings.json");
-    if (existsSync(settingsPath)) {
-      const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
-        provider?: string; model?: string;
-      };
-      if (s.provider) provider = String(s.provider).toLowerCase();
-      if (s.model) model = String(s.model);
-    }
-  } catch { /* fall through to defaults */ }
+  const s = loadSettings() as { provider?: string; model?: string };
+  if (s.provider) provider = String(s.provider).toLowerCase();
+  if (s.model) model = String(s.model);
 
-  // 2. Resolve apiKey using the same per-provider getters resolveProvider uses
+  // 2. Resolve apiKey via the canonical resolver (handles OAuth/env/secrets per provider)
   let apiKey = "";
   try {
     if (provider === "anthropic") {
-      const { loadAnthropicTokens, isAnthropicTokenExpired } = await import("../auth/anthropic.js");
-      const tokens = loadAnthropicTokens();
-      if (!tokens || isAnthropicTokenExpired(tokens)) return null;
-      apiKey = tokens.accessToken || "";
+      const r = await resolveCredential("anthropic");
+      apiKey = r?.credential || "";
       if (!model) model = "claude-sonnet-4-6";
     } else if (provider === "codex") {
-      // Subscription bearer via the canonical loader the chat path uses
-      // (auth.ts → loadTokens → ChatGPT OAuth). Returns the JWT
-      // streamCodexResponse expects. Reading just OPENAI_API_KEY broke
-      // every classifier for Codex CLI subscribers (no API key exists).
-      try {
-        const { getApiKey } = await import("../auth/index.js");
-        apiKey = await getApiKey();
-      } catch { /* no subscription tokens — fall through to null below */ }
+      const r = await resolveCredential("codex");
+      apiKey = r?.credential || "";
       if (!model) model = "gpt-5.5";
     } else if (provider === "openai") {
-      try {
-        const { getSecretsStoreSingleton } = await import("../secrets.js");
-        apiKey = getSecretsStoreSingleton()?.get("OPENAI_API_KEY") || "";
-      } catch {}
-      if (!apiKey) {
-        try { apiKey = process.env.OPENAI_API_KEY || ""; } catch {}
-      }
+      const r = await resolveCredential("openai");
+      apiKey = r?.credential || "";
       if (!model) model = "gpt-4o-mini";
     } else if (provider === "ollama" || provider === "local") {
       apiKey = "ollama";
       if (!model) model = "llama3:8b";
     } else if (provider === "xai") {
-      try {
-        const { getSecretsStoreSingleton } = await import("../secrets.js");
-        apiKey = getSecretsStoreSingleton()?.get("XAI_API_KEY") || "";
-      } catch {}
+      const r = await resolveCredential("xai");
+      apiKey = r?.credential || "";
     } else if (provider === "gemini") {
-      try {
-        const { getSecretsStoreSingleton } = await import("../secrets.js");
-        apiKey = getSecretsStoreSingleton()?.get("GEMINI_API_KEY") || "";
-      } catch {}
+      const r = await resolveCredential("gemini");
+      apiKey = r?.credential || "";
     }
   } catch { /* fall through */ }
 

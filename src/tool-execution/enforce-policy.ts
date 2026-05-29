@@ -11,7 +11,7 @@ import { checkSessionPolicy } from "../session/policy.js";
 import { checkEgressTaint } from "../data-lineage.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit } from "../circuit-breaker.js";
-import { checkToolRateLimit } from "../tool-rate-limiter.js";
+import { checkToolRateLimit } from "./rate-limiter.js";
 import { logRetry } from "../retry-telemetry.js";
 import { assertToolCallAllowed } from "../tools/pre-dispatch.js";
 import { ToolBlocked } from "./errors.js";
@@ -187,7 +187,7 @@ async function validateArgs(ctx: ToolCallContext): Promise<void> {
 
   if (schema && typeof ctx.args === "object" && ctx.args && !("_raw" in ctx.args)) {
     try {
-      const { coerceArgs } = await import("../tool-arg-repair.js");
+      const { coerceArgs } = await import("./arg-repair.js");
       const coerce = coerceArgs(ctx.args as Record<string, unknown>, schema);
       if (coerce.fixes.length > 0) {
         ctx.args = coerce.coerced;

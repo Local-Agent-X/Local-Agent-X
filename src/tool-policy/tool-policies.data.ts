@@ -37,7 +37,7 @@ export interface ToolPolicyEntry {
   /** Explicit policy rule(s) for this tool or glob. `tool` is stamped from the
    *  record key by deriveDefaultRules — omit it here. */
   rules?: Array<Omit<ToolPolicyRule, "tool">>;
-  /** Sliding-window rate cap (was DEFAULT_LIMITS in tool-rate-limiter.ts). */
+  /** Sliding-window rate cap (was DEFAULT_LIMITS in tool-execution/rate-limiter.ts). */
   rateLimit?: ToolRateLimit;
 }
 

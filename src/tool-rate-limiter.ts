@@ -4,6 +4,7 @@
  * Configurable per-tool rate limits using a sliding window.
  */
 import { USER_HINTS } from "./types.js";
+import { deriveRateLimits } from "./tool-policy/tool-policies.js";
 
 export interface RateLimitConfig {
   /** Tool name or "*" for global */
@@ -30,14 +31,9 @@ interface RateLimitResult {
   userHint?: string;
 }
 
-const DEFAULT_LIMITS: RateLimitConfig[] = [
-  { tool: "bash", maxCalls: 30, windowMs: 60_000, action: "block" },
-  { tool: "http_request", maxCalls: 20, windowMs: 60_000, action: "block" },
-  { tool: "web_fetch", maxCalls: 20, windowMs: 60_000, action: "block" },
-  { tool: "write", maxCalls: 50, windowMs: 60_000, action: "warn" },
-  { tool: "browser", maxCalls: 15, windowMs: 60_000, action: "block" },
-  { tool: "*", maxCalls: 200, windowMs: 60_000, action: "warn" },
-];
+// Per-tool sliding-window caps, derived from the unified policy table
+// (tool-policies.data.ts rateLimit entries + the global "*" cap).
+const DEFAULT_LIMITS: RateLimitConfig[] = deriveRateLimits();
 
 export class ToolRateLimiter {
   private configs: RateLimitConfig[];

@@ -1,103 +1,98 @@
 /**
- * Synthetic policy-default tests.
+ * Unified tool-policy table tests.
  *
- * Verifies the TOOL_POLICY_DEFAULTS layer (tool-registry.ts) — synthetic
- * rules derived from each TOOLS entry's risk tier — composes correctly
- * with explicit DEFAULT_POLICY rules.
+ * The four formerly-scattered policy sources (TOOLS kernel+risk, DEFAULT_POLICY
+ * rules, DEFAULT_LIMITS rate caps, the synthetic risk-tier fallback) collapsed
+ * into one table (tool-policy/tool-policies.data.ts). These tests assert the
+ * two guarantees the refactor must hold:
  *
- * Closes the 2026-05-17 silent-block class: a tool registered in TOOLS
- * with risk:"safe"/workspace-write/network-read now dispatches even when
- * no explicit allow rule exists in default-rules.ts.
+ *   1. ORPHAN CHECK — every kernel-mapped tool (TOOLS) is reachable by a rule.
+ *      No silent risk-tier fallback anymore: a missing rule = deny-by-default,
+ *      which this test fails on.
+ *   2. BEHAVIOR PARITY — a representative set of (tool, args) decisions matches
+ *      the pre-refactor outcomes.
  */
 
 import { describe, expect, it } from "vitest";
 
-import { ToolPolicy } from "./tool-policy.js";
-import type { ToolPolicyConfig } from "./tool-policy.js";
+import { ToolPolicy, auditPolicyCoverage, type ToolPolicyConfig } from "./tool-policy.js";
+import { DEFAULT_POLICY } from "./tool-policy/default-rules.js";
+import { deriveRateLimits } from "./tool-policy/tool-policies.js";
+import { TOOLS } from "./tool-registry.js";
 
-function emptyPolicy(): ToolPolicy {
-  // Empty user rules → only synthetic defaults are present.
-  return new ToolPolicy({ defaultDecision: "deny", rules: [] });
+function defaultPolicy(): ToolPolicy {
+  return new ToolPolicy(DEFAULT_POLICY);
 }
 
-describe("synthetic policy defaults (TOOL_POLICY_DEFAULTS)", () => {
-  it("allows a safe tool with no explicit rule via synthetic fallback", () => {
-    // `read` is risk:"safe" in TOOLS → synthetic allow at priority 10.
-    const policy = emptyPolicy();
-    const result = policy.evaluate("read", { path: "test.txt" }, "test");
-    expect(result.allowed).toBe(true);
-    expect(result.ruleId).toBe("default-read");
+describe("orphan check — every kernel tool has a policy rule", () => {
+  it("leaves no TOOLS entry uncovered by DEFAULT_POLICY", () => {
+    const policy = defaultPolicy();
+    const report = auditPolicyCoverage(Object.keys(TOOLS), policy);
+    expect(report.uncovered, `uncovered tools: ${report.uncovered.join(", ")}`).toEqual([]);
+    expect(report.covered.length).toBe(Object.keys(TOOLS).length);
   });
 
-  it("allows a workspace-write tool via synthetic fallback", () => {
-    // `memory_save` is risk:"workspace-write" → synthetic allow.
-    const policy = emptyPolicy();
-    const result = policy.evaluate("memory_save", { key: "x" }, "test");
-    expect(result.allowed).toBe(true);
-    expect(result.ruleId).toBe("default-memory_save");
+  it("returns null for a tool with no entry and no rule", () => {
+    expect(defaultPolicy().findCoveringRule("not_a_real_tool_xyz")).toBeNull();
   });
+});
 
-  it("leaves a high-risk tool uncovered (hits deny-by-default)", () => {
-    // `bash` is risk:"shell" → RISK_TO_DEFAULT has no entry → no synthetic.
-    // No user rule either → defaultDecision:"deny" fires.
-    const policy = emptyPolicy();
-    const result = policy.evaluate("bash", { command: "ls" }, "test");
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toContain("default policy");
+describe("behavior parity — representative decisions match the old table", () => {
+  const policy = defaultPolicy();
+  const cases: Array<{ tool: string; args: Record<string, unknown>; allowed: boolean; confirm?: boolean; note: string }> = [
+    { tool: "read", args: { path: "a.txt" }, allowed: true, note: "allow-read" },
+    { tool: "memory_save", args: { key: "x" }, allowed: true, note: "via memory_* glob" },
+    { tool: "memory_recall", args: {}, allowed: true, note: "via memory_* glob" },
+    { tool: "bash", args: { command: "ls -la" }, allowed: true, note: "allow-bash-limited" },
+    { tool: "bash", args: { command: "git status" }, allowed: true, note: "allow-bash-git" },
+    { tool: "bash", args: { command: "rm -rf /home" }, allowed: false, note: "deny-bash-rm-rf" },
+    { tool: "write", args: { path: "src/a.ts" }, allowed: true, note: "allow-write" },
+    { tool: "write", args: { path: "C:\\Windows\\System32\\x" }, allowed: false, note: "deny-write-system" },
+    { tool: "edit", args: { path: "node_modules/foo/i.js" }, allowed: false, note: "deny-edit-node-modules" },
+    { tool: "delete_file", args: { path: "workspace/x" }, allowed: true, note: "allow-delete-file (destructive but explicit allow)" },
+    { tool: "list_secrets", args: {}, allowed: true, note: "allow-list-secrets" },
+    { tool: "email_send", args: {}, allowed: true, note: "via email_* glob (external-comms but allowed today)" },
+    { tool: "marketplace_install", args: {}, allowed: true, note: "via marketplace_* glob (destructive but allowed today)" },
+    { tool: "browser", args: { action: "evaluate" }, allowed: true, confirm: true, note: "flag-browser-evaluate → confirm" },
+    // The 15 formerly synthetic-only / uncovered tools, now explicit:
+    { tool: "swarm_create", args: {}, allowed: true, note: "was synthetic allow" },
+    { tool: "swarm_status", args: {}, allowed: true, note: "was synthetic allow" },
+    { tool: "swarm_cancel", args: {}, allowed: false, note: "was uncovered → deny-by-default" },
+    { tool: "mission_list", args: {}, allowed: true, note: "was synthetic allow" },
+    { tool: "mission_build", args: {}, allowed: true, note: "was synthetic allow" },
+    { tool: "mission_delete", args: {}, allowed: false, note: "was uncovered → deny-by-default" },
+    { tool: "not_a_real_tool_xyz", args: {}, allowed: false, note: "deny by default policy" },
+  ];
+
+  for (const c of cases) {
+    it(`${c.tool} ${JSON.stringify(c.args)} → ${c.allowed ? "allow" : "deny"} (${c.note})`, () => {
+      const r = policy.evaluate(c.tool, c.args, "test");
+      expect(r.allowed).toBe(c.allowed);
+      if (c.confirm !== undefined) expect(r.confirm).toBe(c.confirm);
+    });
+  }
+});
+
+describe("rate-limit derivation", () => {
+  it("preserves the per-tool + global sliding-window caps", () => {
+    const byTool = Object.fromEntries(deriveRateLimits().map((l) => [l.tool, l]));
+    expect(byTool.bash).toMatchObject({ maxCalls: 30, windowMs: 60_000, action: "block" });
+    expect(byTool.http_request).toMatchObject({ maxCalls: 20, action: "block" });
+    expect(byTool.web_fetch).toMatchObject({ maxCalls: 20, action: "block" });
+    expect(byTool.write).toMatchObject({ maxCalls: 50, action: "warn" });
+    expect(byTool.browser).toMatchObject({ maxCalls: 15, action: "block" });
+    expect(byTool["*"]).toMatchObject({ maxCalls: 200, action: "warn" });
   });
+});
 
-  it("leaves a destructive tool uncovered", () => {
-    // `delete_file` is risk:"destructive" → no synthetic.
-    const policy = emptyPolicy();
-    const result = policy.evaluate("delete_file", { path: "x" }, "test");
-    expect(result.allowed).toBe(false);
-  });
-
-  it("leaves a secrets tool uncovered", () => {
-    // `list_secrets` is risk:"secrets" → no synthetic.
-    const policy = emptyPolicy();
-    const result = policy.evaluate("list_secrets", {}, "test");
-    expect(result.allowed).toBe(false);
-  });
-
-  it("explicit allow rule beats synthetic at lower priority", () => {
-    // User rule at priority 50 matches before synthetic at priority 10.
-    // findCoveringRule iterates priority desc — explicit wins.
+describe("user rules still override table rules", () => {
+  it("explicit deny beats a table allow", () => {
     const config: ToolPolicyConfig = {
       defaultDecision: "deny",
-      rules: [
-        { id: "user-allow-read", tool: "read", decision: "allow", reason: "explicit", priority: 50 },
-      ],
+      rules: [{ id: "user-deny-read", tool: "read", decision: "deny", reason: "blocked", priority: 90 }],
     };
-    const policy = new ToolPolicy(config);
-    const result = policy.evaluate("read", { path: "x" }, "test");
-    expect(result.allowed).toBe(true);
-    expect(result.ruleId).toBe("user-allow-read");
-  });
-
-  it("explicit deny rule beats synthetic allow", () => {
-    // Synthetic allow for `read` (priority 10) loses to explicit deny (priority 90).
-    const config: ToolPolicyConfig = {
-      defaultDecision: "deny",
-      rules: [
-        { id: "user-deny-read", tool: "read", decision: "deny", reason: "blocked", priority: 90 },
-      ],
-    };
-    const policy = new ToolPolicy(config);
-    const result = policy.evaluate("read", { path: "x" }, "test");
-    expect(result.allowed).toBe(false);
-    expect(result.ruleId).toBe("user-deny-read");
-  });
-
-  it("findCoveringRule reports synthetic id for fallback-covered tools", () => {
-    const policy = emptyPolicy();
-    const id = policy.findCoveringRule("read");
-    expect(id).toBe("default-read");
-  });
-
-  it("findCoveringRule returns null for tools with no entry and no synthetic", () => {
-    const policy = emptyPolicy();
-    const id = policy.findCoveringRule("not_a_real_tool_xyz");
-    expect(id).toBeNull();
+    const r = new ToolPolicy(config).evaluate("read", { path: "x" }, "test");
+    expect(r.allowed).toBe(false);
+    expect(r.ruleId).toBe("user-deny-read");
   });
 });

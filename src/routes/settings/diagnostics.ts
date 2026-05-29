@@ -57,13 +57,6 @@ export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, re
     return true;
   }
 
-  // Response quality scores (per session)
-  if (method === "GET" && url.pathname === "/api/quality") {
-    const { getAverageQuality } = await import("../../quality-scorer.js");
-    const sessionId = url.searchParams.get("sessionId") || undefined;
-    json(200, { average: getAverageQuality(sessionId) }); return true;
-  }
-
   // Worker sessions (IDE worker pattern)
   if (method === "GET" && url.pathname === "/api/workers") {
     const { listWorkerSessions } = await import("../../worker-session.js");

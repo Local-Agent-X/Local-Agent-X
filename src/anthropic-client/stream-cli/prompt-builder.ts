@@ -92,6 +92,12 @@ export function buildCliPrompt(input: CliPromptInput): string {
   } else if (mode === "mcp") {
     suffix =
       `You have Local Agent X's tools available via MCP (prefixed mcp__lax__). Call them directly when needed.\n\n` +
+      `TOOL CALL DISCIPLINE (strict — prevents duplicate side-effects):\n` +
+      `- Call each tool ONCE per discrete user request. A successful tool result is TERMINAL — do not re-issue the same tool with the same or near-identical arguments to "verify" or "improve" the outcome.\n` +
+      `- If the user asked for ONE thing (one project, one email, one post), make ONE tool call. Do not loop.\n` +
+      `- If a tool result phrases a follow-up ("Roster's empty — add agents via X"), that is INFORMATION, not a question for you to auto-answer by retrying. Surface it to the user in your summary and stop.\n` +
+      `- If you genuinely need multiple calls (different args, different targets), do them — but each call must have a DISTINCT purpose, not be a near-duplicate of a prior call in this turn.\n` +
+      `- Destructive/external tools (email_send, *_post, *_create, *_send) are especially never to be re-called on the same payload — recipients/feeds will see real duplicates.\n\n` +
       `REPLY FORMAT (strict):\n` +
       `- After you finish, respond with a SHORT plain-English summary of what you did. 1-2 sentences max.\n` +
       `- NEVER paste raw tool output, JSON, or HTTP response bodies into your reply.\n` +

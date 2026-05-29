@@ -39,27 +39,49 @@ function retryMessage(text) {
   sendMessage();
 }
 
-function triggerUpload() { document.getElementById('file-input')?.click(); }
-function handleFileUpload(event) {
-  addFilesToUpload(Array.from(event.target.files || []));
+// ── Multi-surface upload context registry ──
+// Each chat surface (main chat, IDE chat) registers a context here. All upload
+// functions below take an optional ctxKey ('main' | 'ide') and resolve the
+// DOM ids + the pendingUploads array via the context. Default 'main' keeps
+// existing HTML onclick="triggerUpload()" call sites working unchanged.
+window.__uploadContexts = window.__uploadContexts || {};
+window.__uploadContexts.main = {
+  fileInputId: 'file-input',
+  previewsId: 'upload-previews',
+  // Lazy getter — `pendingUploads` is declared in chat.js which loads after
+  // this file; the binding only needs to resolve at call time.
+  getState: () => pendingUploads,
+  setState: (arr) => { pendingUploads = arr; },
+};
+function __uploadCtx(ctxKey) { return window.__uploadContexts[ctxKey || 'main'] || window.__uploadContexts.main; }
+function __uploadState(ctxKey) { return __uploadCtx(ctxKey).getState() || []; }
+
+function triggerUpload(ctxKey) {
+  document.getElementById(__uploadCtx(ctxKey).fileInputId)?.click();
+}
+function handleFileUpload(event, ctxKey) {
+  addFilesToUpload(Array.from(event.target.files || []), ctxKey);
 }
 
-function renderUploadPreviews() {
-  const bar = document.getElementById('upload-previews');
+function renderUploadPreviews(ctxKey) {
+  const key = ctxKey || 'main';
+  const ctx = __uploadCtx(key);
+  const bar = document.getElementById(ctx.previewsId);
   if (!bar) return;
-  if (pendingUploads.length === 0) { bar.classList.remove('has-items'); bar.innerHTML = ''; return; }
+  const list = __uploadState(key);
+  if (list.length === 0) { bar.classList.remove('has-items'); bar.innerHTML = ''; return; }
   bar.classList.add('has-items');
-  bar.innerHTML = pendingUploads.map((f, i) => {
+  bar.innerHTML = list.map((f, i) => {
     if (f.dataUrl) {
-      return `<div style="position:relative;width:140px;height:110px;border-radius:10px;overflow:hidden;background:#111;border:1px solid var(--border);cursor:pointer;flex-shrink:0" onclick="previewImage('${i}')">
+      return `<div style="position:relative;width:140px;height:110px;border-radius:10px;overflow:hidden;background:#111;border:1px solid var(--border);cursor:pointer;flex-shrink:0" onclick="previewImage('${i}','${key}')">
         <img src="${f.dataUrl}" style="width:100%;height:100%;object-fit:cover"/>
-        <button onclick="event.stopPropagation();removeUpload(${i})" style="position:absolute;top:5px;right:5px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.65);border:none;color:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)">&times;</button>
+        <button onclick="event.stopPropagation();removeUpload(${i},'${key}')" style="position:absolute;top:5px;right:5px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.65);border:none;color:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)">&times;</button>
       </div>`;
     }
     return `<div style="position:relative;display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;flex-shrink:0;min-width:180px">
       <div style="width:36px;height:36px;border-radius:8px;background:#1a1a30;display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0">&#128196;</div>
       <div style="min-width:0"><div style="font-size:.78rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px">${esc(f.name)}</div><div style="font-size:.65rem;color:var(--muted)">${f.type || 'File'}</div></div>
-      <button onclick="removeUpload(${i})" style="position:absolute;top:5px;right:5px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.65);border:none;color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">&times;</button>
+      <button onclick="removeUpload(${i},'${key}')" style="position:absolute;top:5px;right:5px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.65);border:none;color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">&times;</button>
     </div>`;
   }).join('');
 }
@@ -76,6 +98,12 @@ document.addEventListener('keydown', e => {
 document.getElementById('msg-input')?.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 200) + 'px'; });
 
 // ── Paste handling (images + files from clipboard) ──
+// Route by which surface the user is in: IDE fullscreen → IDE chat, else main.
+// Mirrors how dictate routes by detecting the active input.
+function __activePasteCtxKey() {
+  if (document.body && document.body.classList.contains('ide-fullscreen')) return 'ide';
+  return 'main';
+}
 document.addEventListener('paste', (e) => {
   const items = e.clipboardData?.items;
   if (!items) return;
@@ -88,21 +116,30 @@ document.addEventListener('paste', (e) => {
   }
   if (files.length > 0) {
     e.preventDefault();
-    addFilesToUpload(files);
+    addFilesToUpload(files, __activePasteCtxKey());
   }
 });
 
 // ── Drag & drop (feature 93: works anywhere in main area) ──
-function initDragDrop() {
-  const dropZone = document.getElementById('main') || document.getElementById('page-chat');
+// Configurable per surface: pass dropZoneId + ctxKey + overlayId to mount a
+// second drop target on the IDE chat panel. Default behavior unchanged for
+// the main chat (dropZone falls back to #main or #page-chat; auto-navigate
+// to chat on drop).
+function initDragDrop(opts) {
+  const cfg = opts || {};
+  const ctxKey = cfg.ctxKey || 'main';
+  const overlayId = cfg.overlayId || 'drop-overlay';
+  const dropZone = cfg.dropZoneId
+    ? document.getElementById(cfg.dropZoneId)
+    : (document.getElementById('main') || document.getElementById('page-chat'));
   if (!dropZone) return;
   let dragCounter = 0;
 
   // Create drop overlay
-  let dropOverlay = document.getElementById('drop-overlay');
+  let dropOverlay = document.getElementById(overlayId);
   if (!dropOverlay) {
     dropOverlay = document.createElement('div');
-    dropOverlay.id = 'drop-overlay';
+    dropOverlay.id = overlayId;
     dropOverlay.innerHTML = '<div class="drop-overlay-content"><span class="drop-icon">&#128206;</span><span>Drop files to attach</span></div>';
     dropZone.appendChild(dropOverlay);
   }
@@ -130,15 +167,22 @@ function initDragDrop() {
     dropOverlay.classList.remove('visible');
     const files = Array.from(e.dataTransfer?.files || []);
     if (files.length > 0) {
-      // Navigate to chat if not already there
-      if (typeof currentRoute === 'function' && currentRoute() !== 'chat') navigate('chat');
-      addFilesToUpload(files);
+      // Navigate to chat if not already there — only for the main surface;
+      // an IDE drop should stay in the IDE.
+      if (ctxKey === 'main' && typeof currentRoute === 'function' && currentRoute() !== 'chat') navigate('chat');
+      addFilesToUpload(files, ctxKey);
     }
   });
 }
 initDragDrop();
+// IDE drop zone: panel exists in the DOM at page load (hidden until user
+// enters IDE view), so wiring it now is safe; events only fire once the
+// panel is visible.
+initDragDrop({ dropZoneId: 'ide-chat-panel', ctxKey: 'ide', overlayId: 'ide-drop-overlay' });
 
-async function addFilesToUpload(files) {
+async function addFilesToUpload(files, ctxKey) {
+  const key = ctxKey || 'main';
+  const list = __uploadState(key);
   for (const f of files) {
     const isImage = f.type.startsWith('image/');
     const entry = { name: f.name, size: f.size, type: f.type, isImage, url: null, dataUrl: null, _uploadPromise: null };
@@ -146,12 +190,12 @@ async function addFilesToUpload(files) {
     // Local preview for images
     if (isImage) {
       const reader = new FileReader();
-      reader.onload = () => { entry.dataUrl = reader.result; renderUploadPreviews(); };
+      reader.onload = () => { entry.dataUrl = reader.result; renderUploadPreviews(key); };
       reader.readAsDataURL(f);
     }
 
-    pendingUploads.push(entry);
-    renderUploadPreviews();
+    list.push(entry);
+    renderUploadPreviews(key);
 
     // Upload to server in background — track the promise so sendMessage can await it
     const form = new FormData();
@@ -166,13 +210,15 @@ async function addFilesToUpload(files) {
   }
 }
 
-function removeUpload(index) {
-  pendingUploads.splice(index, 1);
-  renderUploadPreviews();
+function removeUpload(index, ctxKey) {
+  const key = ctxKey || 'main';
+  __uploadState(key).splice(index, 1);
+  renderUploadPreviews(key);
 }
 
-function previewImage(index) {
-  const f = pendingUploads[index];
+function previewImage(index, ctxKey) {
+  const key = ctxKey || 'main';
+  const f = __uploadState(key)[index];
   if (!f?.dataUrl) return;
   let overlay = document.getElementById('img-preview-overlay');
   if (!overlay) {

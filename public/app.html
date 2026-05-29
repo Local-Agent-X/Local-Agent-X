@@ -14,7 +14,7 @@
 <script src="/vendor/highlightjs/highlight.min.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb3"/>
+<link rel="stylesheet" href="/css/app.css?v=vb5"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
      Import map lets `import * as THREE from 'three'` resolve cleanly in
@@ -898,7 +898,10 @@
         <!-- Left: Chat -->
         <div id="ide-chat-panel" class="ide-panel">
           <div id="ide-chat-messages"></div>
+          <input id="ide-file-input" type="file" multiple style="display:none" onchange="handleFileUpload(event, 'ide')" aria-hidden="true"/>
+          <div id="ide-upload-previews" role="list" aria-label="Upload previews"></div>
           <div id="ide-chat-input-area">
+            <button id="ide-plus-btn" onclick="triggerUpload('ide')" title="Attach files" aria-label="Attach files">+</button>
             <textarea id="ide-chat-input" placeholder="Describe changes..." rows="2"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();if(typeof dictateMode!=='undefined'&&dictateMode){stopDictate()}else{sendIdeChatMessage()}}"></textarea>
             <button id="ide-dictate-btn" onclick="toggleDictate('ide-chat-input')" title="Dictate (speech to text only — no agent reply)" aria-label="Dictate">&#127908;</button>
@@ -1091,7 +1094,7 @@
 <script src="/js/chat-send-ws.js?v=v3"></script>
 <script src="/js/chat-send-http.js?v=v3"></script>
 <script src="/js/chat-send.js?v=v9"></script>
-<script src="/js/chat-uploads.js?v=v2"></script>
+<script src="/js/chat-uploads.js?v=v3"></script>
 <script src="/js/chat.js?v=vd4"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
 <!-- settings.js modules — load BEFORE settings.js for the same reason. -->
@@ -1136,7 +1139,7 @@
 <!-- apps-ide split: core (state + lifecycle) loads first, then the WS
      handler and the tool/file rendering helpers, then the agent panel
      that already lived in its own file. -->
-<script src="/js/apps-ide.js?v=v2"></script>
+<script src="/js/apps-ide.js?v=v4"></script>
 <script src="/js/apps-ide-ws.js?v=v1"></script>
 <script src="/js/apps-ide-tools-files.js?v=v1"></script>
 <script src="/js/apps-ide-picker.js?v=v1"></script>

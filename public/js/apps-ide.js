@@ -14,6 +14,19 @@ let _ideStartTime = 0;
 let _ideTimerInterval = null;
 let _ideAgentPollInterval = null;
 let _ideTrackedAgents = {}; // agentId -> { name, role, status }
+let idePendingUploads = []; // IDE-side mirror of pendingUploads; populated by chat-uploads.js via the 'ide' context
+
+// Register the IDE upload context with chat-uploads.js so paste / drop / +
+// button all route into idePendingUploads when the user is in IDE view.
+// The registry itself is created in chat-uploads.js (loads earlier); this
+// just adds the 'ide' entry. Same factory pattern as the 'main' entry.
+window.__uploadContexts = window.__uploadContexts || {};
+window.__uploadContexts.ide = {
+  fileInputId: 'ide-file-input',
+  previewsId: 'ide-upload-previews',
+  getState: () => idePendingUploads,
+  setState: (arr) => { idePendingUploads = arr; },
+};
 
 function enterIdeView(appId, appName, appUrl, buildPrompt) {
   _ideAppId = appId;
@@ -228,17 +241,19 @@ function ideStopTimer() {
 }
 
 // ── Send & input ──
-function sendIdeChatMessage() {
+async function sendIdeChatMessage() {
   const input = document.getElementById('ide-chat-input');
   if (!input) return;
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && idePendingUploads.length === 0) return;
 
   // Mid-stream inject: the agent's mid-turn already. Send the text into the
   // running op's inject queue instead of starting a new turn. Server's
   // interjectDrainMiddleware picks it up at the next iteration boundary so
   // the agent sees the new instruction without abandoning current work.
-  // (Same path main chat uses; see chat-send.js inject branch.)
+  // (Same path main chat uses; see chat-send.js inject branch.) Inject
+  // messages don't carry attachments today — same constraint as main chat;
+  // queued files surface on the next non-inject send.
   if (_ideStreaming) {
     if (typeof chatWs !== 'undefined' && chatWs && chatWs.readyState === WebSocket.OPEN) {
       const injectId = (window.crypto && window.crypto.randomUUID)
@@ -255,11 +270,36 @@ function sendIdeChatMessage() {
     return;
   }
 
+  // Wait for any in-flight uploads to finish before capturing attachments.
+  // Hard 8s ceiling per chat-send.js — a hung server would otherwise leave
+  // a pending promise forever and block this and every future send.
+  const inflight = idePendingUploads.filter(f => f._uploadPromise).map(f => f._uploadPromise);
+  if (inflight.length > 0) {
+    await Promise.race([
+      Promise.all(inflight),
+      new Promise(resolve => setTimeout(resolve, 8000)),
+    ]);
+  }
+  const msgAttachments = idePendingUploads.length ? idePendingUploads.map(f => ({
+    name: f.name, size: f.size, type: f.type, isImage: f.isImage,
+    url: f.url || null, dataUrl: f.dataUrl || null,
+  })) : null;
+  const hasImages = msgAttachments && msgAttachments.some(a => a.isImage);
+  const nonImageFiles = msgAttachments ? msgAttachments.filter(a => !a.isImage) : [];
+  const uploadPrefix = nonImageFiles.length
+    ? `Attached files:\n${nonImageFiles.map(f => `- ${f.name} (${f.size} bytes)`).join('\n')}\n\n`
+    : '';
+  const displayText = text || (hasImages ? '' : '');
+
   input.value = '';
   input.style.height = 'auto';
-  ideAddMessage('user', text);
+  idePendingUploads = [];
+  if (window.__uploadContexts && window.__uploadContexts.ide) window.__uploadContexts.ide.setState([]);
+  if (typeof renderUploadPreviews === 'function') renderUploadPreviews('ide');
+
+  ideAddMessage('user', displayText, false, msgAttachments);
   const errPrefix = (typeof ideDrainErrorsForAgent === 'function') ? ideDrainErrorsForAgent() : '';
-  ideSendToAgent(ideContextPrefix() + errPrefix + text);
+  ideSendToAgent(ideContextPrefix() + errPrefix + uploadPrefix + text, msgAttachments);
 }
 
 function ideContextPrefix() {
@@ -290,7 +330,7 @@ function ideStripPrefix(text) {
   return text;
 }
 
-function ideSendToAgent(message) {
+function ideSendToAgent(message, attachments) {
   _ideStreaming = true;
   _ideContent = '';
   _ideToolCount = 0;
@@ -302,7 +342,7 @@ function ideSendToAgent(message) {
   if (typeof chatWs !== 'undefined' && chatWs && chatWs.readyState === WebSocket.OPEN) {
     chatWs.send(JSON.stringify({
       type: 'chat', sessionId: _ideSessionId,
-      message: message, attachments: []
+      message: message, attachments: attachments || []
     }));
   }
 }
@@ -409,7 +449,25 @@ async function ideLoadHistory() {
 }
 
 // ── Chat messages ──
-function ideAddMessage(role, text, isPlaceholder) {
+function __ideAttachmentHtml(attachments) {
+  if (!attachments || !attachments.length) return '';
+  const safeEsc = (typeof esc === 'function') ? esc : (s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]));
+  return '<div class="msg-attachments">' + attachments.map(a => {
+    if (a.isImage && a.dataUrl) {
+      return `<img src="${safeEsc(a.dataUrl)}" alt="${safeEsc(a.name)}" onclick="typeof openLightbox==='function'&&openLightbox(this.src)" title="${safeEsc(a.name)}" loading="lazy" />`;
+    } else if (a.isImage && a.url) {
+      const tok = (typeof AUTH_TOKEN !== 'undefined') ? AUTH_TOKEN : '';
+      const authedUrl = a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + tok;
+      return `<img src="${safeEsc(authedUrl)}" alt="${safeEsc(a.name)}" onclick="typeof openLightbox==='function'&&openLightbox(this.src)" title="${safeEsc(a.name)}" loading="lazy" />`;
+    } else if (a.isImage) {
+      return `<div class="att-badge"><span>&#128444;</span> ${safeEsc(a.name)}</div>`;
+    } else {
+      return `<div class="att-badge"><span>&#128196;</span> ${safeEsc(a.name)} (${(a.size / 1024).toFixed(1)}KB)</div>`;
+    }
+  }).join('') + '</div>';
+}
+
+function ideAddMessage(role, text, isPlaceholder, attachments) {
   const msgs = document.getElementById('ide-chat-messages');
   if (!msgs) return;
   const el = document.createElement('div');
@@ -418,11 +476,16 @@ function ideAddMessage(role, text, isPlaceholder) {
     el.innerHTML = '<div class="ide-thinking"><span></span><span></span><span></span></div>';
     el.id = 'ide-assistant-active';
   } else {
-    el.innerHTML = typeof md === 'function' ? md(text) : text;
+    const attachHtml = __ideAttachmentHtml(attachments);
+    const body = typeof md === 'function' ? md(text || '') : (text || '');
+    el.innerHTML = attachHtml + body;
     if (typeof text === 'string') el.dataset.rawText = text;
   }
   msgs.appendChild(el);
   msgs.scrollTop = msgs.scrollHeight;
+  // Re-scroll after images decode (height changes once they paint).
+  const imgs = el.querySelectorAll('.msg-attachments img');
+  if (imgs.length) imgs.forEach(img => img.onload = () => { msgs.scrollTop = msgs.scrollHeight; });
 }
 
 // ── Panel toggles ──

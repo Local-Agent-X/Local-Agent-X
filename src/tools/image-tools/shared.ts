@@ -4,11 +4,13 @@
  * the prompt regex that signals the user is referring to an earlier image.
  */
 
-import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolResult } from "../../types.js";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { loadSettings } from "../../settings.js";
 import type { SecretsStore } from "../../secrets.js";
+import { resolveCredential } from "../../auth/resolve.js";
 
 export function ok(content: string): ToolResult { return { content }; }
 export function err(content: string): ToolResult { return { content, isError: true }; }
@@ -25,25 +27,16 @@ export function initImageTools(secrets: SecretsStore) {
  *  shape, but the OAuth bearer draws from subscription quota instead of
  *  API spend. */
 export async function getActiveProvider(): Promise<{ provider: string; apiKey?: string }> {
-  const settingsPath = join(getLaxDir(), "settings.json");
-  let provider = "local";
-  try {
-    if (existsSync(settingsPath)) {
-      const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
-      provider = s.provider || "local";
-    }
-  } catch {}
+  const s = loadSettings() as { provider?: string };
+  const provider = s.provider || "local";
 
   let apiKey: string | undefined;
   if (provider === "xai") {
-    try {
-      const { getXaiApiKey } = await import("../../auth/xai.js");
-      const oauth = await getXaiApiKey();
-      if (oauth) apiKey = oauth;
-    } catch {}
-    if (!apiKey && _secretsStore) apiKey = _secretsStore.get("XAI_API_KEY") || undefined;
-  } else if (provider === "openai" && _secretsStore) {
-    apiKey = _secretsStore.get("OPENAI_API_KEY") || undefined;
+    const r = await resolveCredential("xai");
+    apiKey = r?.credential || undefined;
+  } else if (provider === "openai") {
+    const r = await resolveCredential("openai");
+    apiKey = r?.credential || undefined;
   }
 
   return { provider, apiKey };

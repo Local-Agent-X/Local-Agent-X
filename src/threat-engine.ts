@@ -24,9 +24,7 @@
  * and re-exports the public types.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
+import { loadSettings } from "./settings.js";
 
 import { canaryPromptBlock, checkCanaries, generateCanaries } from "./threat/canaries.js";
 import { classifyData, type DataLabel } from "./threat/classification.js";
@@ -44,21 +42,12 @@ let _scorerOptsCachedAt = 0;
 function readThreatScorerOptions(): ThreatScorerOptions {
   if (_cachedScorerOpts && Date.now() - _scorerOptsCachedAt < 1000) return _cachedScorerOpts;
   const opts: ThreatScorerOptions = {};
-  try {
-    const home = process.env.HOME || process.env.USERPROFILE || homedir();
-    const settingsPath = join(home, ".lax", "settings.json");
-    if (existsSync(settingsPath)) {
-      const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as { threat?: Record<string, unknown> };
-      const t = raw.threat;
-      if (t && typeof t === "object") {
-        if (typeof t.startingBudget === "number" && t.startingBudget >= 0) opts.startingBudget = t.startingBudget;
-        if (typeof t.decayPerHour === "number" && t.decayPerHour >= 0) opts.decayPerHour = t.decayPerHour;
-        if (typeof t.decayPerTurn === "number" && t.decayPerTurn >= 0) opts.decayPerTurn = t.decayPerTurn;
-      }
-    }
-  } catch {
-    // Bad settings file → fall back to defaults silently. Threat calibration
-    // must keep working even if the settings file is malformed.
+  const raw = loadSettings() as { threat?: Record<string, unknown> };
+  const t = raw.threat;
+  if (t && typeof t === "object") {
+    if (typeof t.startingBudget === "number" && t.startingBudget >= 0) opts.startingBudget = t.startingBudget;
+    if (typeof t.decayPerHour === "number" && t.decayPerHour >= 0) opts.decayPerHour = t.decayPerHour;
+    if (typeof t.decayPerTurn === "number" && t.decayPerTurn >= 0) opts.decayPerTurn = t.decayPerTurn;
   }
   _cachedScorerOpts = opts;
   _scorerOptsCachedAt = Date.now();

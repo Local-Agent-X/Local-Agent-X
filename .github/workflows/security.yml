@@ -9,6 +9,9 @@ on:
     # Run weekly on Monday at 9am UTC (catches new CVEs in dependencies)
     - cron: '0 9 * * 1'
 
+permissions:
+  contents: read
+
 jobs:
   security:
     name: Security Checks

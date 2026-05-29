@@ -39,6 +39,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
   }
   if (method === "GET" && url.pathname.startsWith("/api/history/")) {
     const id = url.pathname.split("/").pop()!;
+    await ctx.flushSession(id);
     const session = ctx.getOrCreateSession(id);
     const redacted = session.messages.map(m => ({ role: m.role, content: typeof m.content === "string" ? redactCredentials(m.content) : m.content }));
     json(200, { ...session, messages: redacted }); return true;

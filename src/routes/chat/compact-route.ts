@@ -28,6 +28,9 @@ export async function handleCompactRoute(
   if (!parsed.success) { json(400, { error: parsed.error }); return true; }
 
   const sessionId = parsed.data.sessionId!;
+  // Read-modify-write of the transcript: flush any in-flight bridge write
+  // first, or we'd compact (and persist) a transcript missing the last turn.
+  await ctx.flushSession(sessionId);
   const session = ctx.getOrCreateSession(sessionId);
   if (session.messages.length < 10) {
     json(200, { ok: false, reason: `Only ${session.messages.length} messages (need 10+)` });

@@ -79,6 +79,7 @@ export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, re
   if (method === "GET" && url.pathname === "/api/context/usage") {
     const sessionId = url.searchParams.get("sessionId");
     if (sessionId) {
+      await ctx.flushSession(sessionId);
       const session = ctx.getOrCreateSession(sessionId);
       if (session) { json(200, getContextUsage(session.messages as Array<{ role: string; content: string | Array<{ type: string; text?: string }> }>, 128000)); return true; }
     }

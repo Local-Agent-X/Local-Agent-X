@@ -164,10 +164,22 @@
         e.toolEvents.push({ type: 'start', name: event.toolName, args: event.args, riskLevel: event.riskLevel });
         e.lastActivityMs = now;
         break;
-      case 'tool_end':
-        e.toolEvents.push({ type: 'end', name: event.toolName, allowed: event.allowed, result: (event.result || '').slice(0, 500) });
+      case 'tool_end': {
+        // Preserve the media URL line through the 500-char cap so
+        // chat-tool-cards.js attachMediaPreview can still render the
+        // <img>/<video>. Long video prompts routinely push the trailing
+        // `View: /videos/...` line past the cap, leaving the chat bubble
+        // with the tool-detail text but no inline player or link.
+        const raw = event.result || '';
+        let result = raw.slice(0, 500);
+        const mediaUrl = raw.match(/\/(?:images|videos)\/[A-Za-z0-9._-]+/);
+        if (mediaUrl && !result.includes(mediaUrl[0])) {
+          result = result.trimEnd() + '\nView: ' + mediaUrl[0];
+        }
+        e.toolEvents.push({ type: 'end', name: event.toolName, allowed: event.allowed, result });
         e.lastActivityMs = now;
         break;
+      }
       case 'tool_chip':
         if (event.chip) e.chips.push(event.chip);
         e.lastActivityMs = now;

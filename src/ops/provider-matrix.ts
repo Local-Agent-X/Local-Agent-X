@@ -282,19 +282,3 @@ export function isCircuitOpenForProvider(providerId: string): boolean {
 export function resetProviderCircuit(providerId: string): void {
   providerFailures.delete(providerId);
 }
-
-// ── Classification helper for callers ────────────────────────────────────
-
-/** Map a thrown error to outcome category for markCallEnded(). */
-export function classifyProviderError(err: unknown): "transient" | "fatal" {
-  const msg = String((err as { message?: string })?.message || err || "").toLowerCase();
-  if (
-    msg.includes("rate limit") || msg.includes("429") ||
-    msg.includes("overload") || msg.includes("503") || msg.includes("529") ||
-    msg.includes("timeout") || msg.includes("etimedout") ||
-    msg.includes("econnreset") || msg.includes("econnrefused")
-  ) {
-    return "transient";
-  }
-  return "fatal";
-}

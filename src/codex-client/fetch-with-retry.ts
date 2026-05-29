@@ -4,6 +4,7 @@
 // instead of waiting the full connect window.
 
 import { createLogger } from "../logger.js";
+import { classify, isRetryable, backoffMs } from "../resilience-policy.js";
 
 const logger = createLogger("codex-client.fetch");
 
@@ -44,10 +45,9 @@ export async function fetchCodexWithRetry(input: FetchWithRetryInput): Promise<R
 
       const errText = await res.text();
 
-      // Retry on transient errors
-      if ((res.status === 503 || res.status === 429 || res.status >= 500) && attempt < maxRetries) {
-        const waitMs = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
-        logger.warn(`[codex] API ${res.status}, retrying in ${waitMs}ms (attempt ${attempt}/${maxRetries})`);
+      if (isRetryable({ status: res.status }) && attempt < maxRetries) {
+        const waitMs = backoffMs(attempt, classify({ status: res.status }));
+        logger.warn(`[codex] API ${res.status}, retrying in ${Math.round(waitMs)}ms (attempt ${attempt}/${maxRetries})`);
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }
@@ -55,16 +55,12 @@ export async function fetchCodexWithRetry(input: FetchWithRetryInput): Promise<R
       logger.error(`[codex] API error ${res.status}:`, errText.slice(0, 500));
       throw new Error(`Codex API error ${res.status}: ${errText.slice(0, 500)}`);
     } catch (e) {
-      if (attempt >= maxRetries) throw e;
+      if (attempt >= maxRetries || !isRetryable(e)) throw e;
       const msg = (e as Error).message;
-      // Retry on network/timeout errors
-      if (msg.includes("timeout") || msg.includes("fetch") || msg.includes("ECONNRESET")) {
-        const waitMs = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
-        logger.warn(`[codex] Network error, retrying in ${waitMs}ms: ${msg.slice(0, 100)}`);
-        await new Promise((r) => setTimeout(r, waitMs));
-        continue;
-      }
-      throw e;
+      const waitMs = backoffMs(attempt, classify(e));
+      logger.warn(`[codex] Network error, retrying in ${Math.round(waitMs)}ms: ${msg.slice(0, 100)}`);
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
     }
   }
   // Unreachable: loop either returns on success or throws. Satisfies TS.

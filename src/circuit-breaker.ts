@@ -15,6 +15,7 @@
 
 import { createLogger } from "./logger.js";
 import { USER_HINTS } from "./types.js";
+import { CIRCUIT_FAILURE_THRESHOLD, CIRCUIT_COOLDOWN_MS } from "./resilience-policy.js";
 const logger = createLogger("circuit-breaker");
 
 type BreakerState = "closed" | "open" | "half_open";
@@ -26,12 +27,9 @@ interface BreakerEntry {
   totalTrips: number;
 }
 
-const DEFAULT_FAILURE_THRESHOLD = 4;
-const DEFAULT_COOLDOWN_MS = 30_000;
-
 const breakers = new Map<string, BreakerEntry>();
-let failureThreshold = DEFAULT_FAILURE_THRESHOLD;
-let cooldownMs = DEFAULT_COOLDOWN_MS;
+let failureThreshold = CIRCUIT_FAILURE_THRESHOLD;
+let cooldownMs = CIRCUIT_COOLDOWN_MS;
 
 function key(sessionId: string | undefined, toolName: string): string {
   return `${sessionId || "default"}::${toolName}`;

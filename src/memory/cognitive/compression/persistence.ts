@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { COMPRESSED_DIR, LAX_DIR } from "./constants.js";
 import type { StoredCompression } from "./types.js";
+import { runMemoryGate } from "../../write-safely.js";
 
 export function ensureDirs(): void {
   for (const dir of [LAX_DIR, COMPRESSED_DIR]) {
@@ -27,15 +28,22 @@ export function loadStored(id: string): StoredCompression | null {
 }
 
 export function writeStored(stored: StoredCompression): void {
-  writeFileSync(
-    storedPath(stored.id),
-    JSON.stringify(stored, null, 2),
-    "utf-8",
-  );
+  const target = storedPath(stored.id);
+  const gated = runMemoryGate({
+    content: JSON.stringify(stored, null, 2),
+    source: "tool",
+    target,
+  });
+  writeFileSync(target, gated, "utf-8");
 }
 
 export function writeStoredAtPath(filePath: string, stored: StoredCompression): void {
-  writeFileSync(filePath, JSON.stringify(stored, null, 2), "utf-8");
+  const gated = runMemoryGate({
+    content: JSON.stringify(stored, null, 2),
+    source: "tool",
+    target: filePath,
+  });
+  writeFileSync(filePath, gated, "utf-8");
 }
 
 export function listStoredFiles(): string[] {

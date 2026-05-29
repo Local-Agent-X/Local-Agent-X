@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs
 import { join } from "node:path";
 import { ENTITIES_DIR, type FactEntry } from "./types.js";
 import { todayDateStr } from "./utils.js";
+import { runMemoryGate } from "../../write-safely.js";
 
 export function updateAllEntityPages(grouped: Map<string, FactEntry[]>): number {
   let updated = 0;
@@ -33,14 +34,13 @@ export function updateAllEntityPages(grouped: Map<string, FactEntry[]>): number 
       .join("\n");
 
     if (existing) {
-      appendFileSync(
-        entityPath,
-        `\n\n### Consolidated ${todayDateStr()}\n${additions}\n`,
-        "utf-8"
-      );
+      const block = `\n\n### Consolidated ${todayDateStr()}\n${additions}\n`;
+      const gated = runMemoryGate({ content: block, source: "tool", target: entityPath });
+      appendFileSync(entityPath, gated, "utf-8");
     } else {
       const header = `# ${displayName}\n\n*Created: ${todayDateStr()}*\n\n### Facts\n${additions}\n`;
-      writeFileSync(entityPath, header, "utf-8");
+      const gated = runMemoryGate({ content: header, source: "tool", target: entityPath });
+      writeFileSync(entityPath, gated, "utf-8");
     }
 
     updated++;

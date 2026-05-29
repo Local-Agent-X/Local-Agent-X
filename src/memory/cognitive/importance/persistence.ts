@@ -16,6 +16,7 @@ import {
   MEMORY_DIR,
   SCORES_FILE,
 } from "./constants.js";
+import { runMemoryGate } from "../../write-safely.js";
 
 export function ensureDirs(): void {
   for (const dir of [LAX_DIR, MEMORY_DIR, ARCHIVE_DIR]) {
@@ -38,12 +39,18 @@ export function loadScores(): ScoresData {
 }
 
 export function persistScores(scores: ScoresData): void {
+  const serialized = JSON.stringify(scores, null, 2);
+  const gated = runMemoryGate({
+    content: serialized,
+    source: "tool",
+    target: SCORES_FILE,
+  });
   try {
     const tmp = SCORES_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(scores, null, 2), "utf-8");
+    writeFileSync(tmp, gated, "utf-8");
     renameSync(tmp, SCORES_FILE);
   } catch {
-    try { writeFileSync(SCORES_FILE, JSON.stringify(scores, null, 2), "utf-8"); } catch {}
+    try { writeFileSync(SCORES_FILE, gated, "utf-8"); } catch {}
   }
 }
 

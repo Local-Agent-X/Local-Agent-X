@@ -13,6 +13,7 @@ import { compactIfNeeded, compactIfNeededWithLLM } from "../context-manager/inde
 import { createContext } from "./context.js";
 import { resolvePhase } from "./resolve-tool.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
+import { dedupCheckPhase, dedupRecordPhase } from "./dedup-check.js";
 import { requireApprovalPhase } from "./require-approval.js";
 import { captureRollbackPhase } from "./capture-rollback.js";
 import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
@@ -42,12 +43,27 @@ async function executeSingleTool(
   if (ctx.terminated) return ctx.msgs;
 
   if (!ctx.preBlocked && ctx.tool) {
+    // Dedup check sits between policy and approval: policy denials still
+    // win (a previously-allowed call doesn't grant future immunity), but
+    // a same-args repeat short-circuits before we re-prompt the user for
+    // approval or re-execute side effects. See dedup-cache.ts header for
+    // the class of bugs this catches (MCP-loop dupes from Anthropic CLI's
+    // multi-step tool use).
+    await dedupCheckPhase(ctx);
+    if (ctx.terminated) {
+      await auditPhase(ctx);
+      return ctx.msgs;
+    }
     await requireApprovalPhase(ctx);
     if (ctx.terminated) return ctx.msgs;
     await captureRollbackPhase(ctx);
     await emitTraceStartPhase(ctx);
     await runSandboxedPhase(ctx);
     await emitTraceCompletePhase(ctx);
+    // Record the successful execution AFTER sandbox so a subsequent
+    // identical call within the TTL window short-circuits in
+    // dedupCheckPhase above. No-op if scope is absent or result errored.
+    await dedupRecordPhase(ctx);
   }
 
   await auditPhase(ctx);

@@ -128,7 +128,24 @@ export class AgentTemplateStore {
     return this.templates.find(t => t.id === id) || null;
   }
 
+  /** Case-insensitive, whitespace-trimmed lookup. Used by agent_create
+   *  to enforce one agent per display name. Same pattern as project-store
+   *  uses — keeps the natural-key invariant at the store layer instead of
+   *  scattered per-caller checks. */
+  findByName(name: string): AgentTemplate | null {
+    const target = name.trim().toLowerCase();
+    if (!target) return null;
+    return this.templates.find(t => t.name.trim().toLowerCase() === target) || null;
+  }
+
   create(template: Omit<AgentTemplate, "id" | "createdAt" | "updatedAt">): AgentTemplate {
+    const existing = this.findByName(template.name);
+    if (existing) {
+      const err = new Error(`Agent name '${template.name}' already exists (id: ${existing.id})`) as Error & { code?: string; existingId?: string };
+      err.code = "AGENT_NAME_EXISTS";
+      err.existingId = existing.id;
+      throw err;
+    }
     const id = "tpl-" + Date.now().toString(36) + "-" + randomBytes(3).toString("hex");
     const full: AgentTemplate = {
       ...template,

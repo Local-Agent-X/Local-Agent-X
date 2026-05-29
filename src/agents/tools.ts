@@ -155,8 +155,18 @@ export function createAgentTools(): ToolDefinition[] {
         try {
           const tools = Array.isArray(args.allowed_tools) ? args.allowed_tools.map(String) : [];
           if (tools.length === 0) return err(`allowed_tools must be a non-empty list of tool names.`);
-          const template = AgentTemplateStore.getInstance().create({
-            name: String(args.name),
+          const name = String(args.name).trim();
+          const store = AgentTemplateStore.getInstance();
+          const existing = store.findByName(name);
+          if (existing) {
+            return ok(
+              `Agent '${existing.name}' already exists (id: ${existing.id}, role: ${existing.role}). ` +
+              `Nothing was created. To spawn an instance use agent_spawn with template_id=${existing.id}. ` +
+              `If you intended a distinct agent, retry with a different name.`,
+            );
+          }
+          const template = store.create({
+            name,
             role: String(args.role),
             systemPrompt: String(args.system_prompt),
             allowedTools: tools,

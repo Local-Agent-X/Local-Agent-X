@@ -3,6 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { getLaxDir } from '../lax-data-dir.js';
 import type { ToolDefinition, ToolResult } from '../types.js';
+import { recentlyDone, markDone, fingerprintOf, describeAge } from './idempotency.js';
+
+// Each call mints a fresh UUID, so two identical-args calls = two
+// distinct rows in calendar.json (unlike document_create/pdf_create which
+// overwrite by file_path). The 60s within-turn dedup catches the
+// MCP-loop case; this 5-min window is the cross-turn / cross-session
+// backstop matching the email_send pattern.
+const CALENDAR_EVENT_WINDOW_MS = 5 * 60 * 1000;
 
 interface CalendarEvent {
   id: string; title: string; start: string; end: string;
@@ -97,19 +105,37 @@ const calendarCreateEvent: ToolDefinition = {
       if (!args.title || !args.start || !args.end) {
         return fail('Missing required fields: title, start, and end are required.');
       }
-      const cal = await loadCalendar();
+      const title = args.title as string;
+      const start = args.start as string;
+      const end = args.end as string;
+      const description = (args.description as string) || '';
       const attendeeStr = (args.attendees as string) || '';
+      const location = (args.location as string) || '';
+
+      const fp = fingerprintOf(title, start, end, description, attendeeStr, location);
+      const prior = recentlyDone('calendar_create_event', fp, CALENDAR_EVENT_WINDOW_MS);
+      if (prior) {
+        return ok(
+          `Event "${title}" (${start} → ${end}) was already created ${describeAge(prior.ageMs)} ` +
+          `(prior result: ${prior.result}). Skipped this attempt to prevent a duplicate calendar entry. ` +
+          `If you genuinely need a second copy, change the title/time or wait a few minutes.`,
+          { skipped: 'duplicate', priorResult: prior.result, ageMs: prior.ageMs },
+        );
+      }
+
+      const cal = await loadCalendar();
       const event: CalendarEvent = {
         id: randomUUID(),
-        title: args.title as string,
-        start: args.start as string,
-        end: args.end as string,
-        description: (args.description as string) || '',
+        title,
+        start,
+        end,
+        description,
         attendees: attendeeStr ? attendeeStr.split(',').map((s) => s.trim()) : [],
-        location: (args.location as string) || '',
+        location,
       };
       cal.events.push(event);
       await saveCalendar(cal);
+      markDone('calendar_create_event', fp, `id=${event.id}`);
       return ok(`Event created: "${event.title}" (${event.start} → ${event.end}) [id: ${event.id}]`);
     } catch (err) {
       return fail(`Failed to create event: ${(err as Error).message}`);

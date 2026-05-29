@@ -5,8 +5,18 @@ import { homedir } from "node:os";
 import { resolve, basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { getLaxDir } from "../lax-data-dir.js";
+import { recentlyDone, markDone, fingerprintOf, describeAge } from "./idempotency.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
+
+// Send-once window for identical (to, cc, subject, body) payloads. The
+// in-process dedup phase already catches MCP-loop within-turn dupes at
+// 60s; this is the cross-turn / cross-session backstop because the user
+// has confirmed duplicate sends via Fastmail in the wild. Five minutes
+// is long enough to catch a model that re-tries after a thought delay
+// or a separate-turn nudge, short enough that a deliberate human
+// "actually send a second identical follow-up" works after the window.
+const EMAIL_SEND_WINDOW_MS = 5 * 60 * 1000;
 
 function resolvePath(p: string): string {
   if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));
@@ -166,17 +176,41 @@ const emailSend: ToolDefinition = {
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const cfg = getSmtpConfig();
     if (typeof cfg === "string") return { content: cfg, isError: true };
+    const to = String(args.to);
+    const subject = String(args.subject);
+    const body = String(args.body);
+    const cc = args.cc ? String(args.cc) : "";
+    const attachmentsRaw = args.attachments ? String(args.attachments) : "";
+
+    // Catastrophic-tier idempotency: a real recipient receiving the same
+    // email twice is real damage. Hash payload + recipients; refuse re-send
+    // within the window with an explicit "already sent" message so the
+    // model knows to surface it rather than retry. Attachments included
+    // so attaching the same files counts as the same payload; changing
+    // them is a distinct message worth sending.
+    const fp = fingerprintOf(to, cc, subject, body, attachmentsRaw);
+    const prior = recentlyDone("email_send", fp, EMAIL_SEND_WINDOW_MS);
+    if (prior) {
+      return {
+        content:
+          `Email to ${to} with subject "${subject}" was already sent ${describeAge(prior.ageMs)} ` +
+          `(prior result: ${prior.result}). Skipped this attempt to prevent a duplicate. ` +
+          `If you genuinely need to re-send, wait a few minutes or change the subject/body.`,
+        metadata: { skipped: "duplicate", priorResult: prior.result, ageMs: prior.ageMs },
+      };
+    }
+
     try {
       const transport = createTransport({ host: cfg.host, port: cfg.port, secure: cfg.port === 465, auth: { user: cfg.user, pass: cfg.pass } });
       const mailOpts: Record<string, unknown> = {
         from: cfg.from,
-        to: String(args.to),
-        subject: String(args.subject),
-        text: String(args.body),
+        to,
+        subject,
+        text: body,
       };
-      if (args.cc) mailOpts.cc = String(args.cc);
-      if (args.attachments) {
-        const paths: string[] = JSON.parse(String(args.attachments));
+      if (cc) mailOpts.cc = cc;
+      if (attachmentsRaw) {
+        const paths: string[] = JSON.parse(attachmentsRaw);
         mailOpts.attachments = await Promise.all(
           paths.map(async (p) => {
             const abs = resolvePath(p);
@@ -185,6 +219,7 @@ const emailSend: ToolDefinition = {
         );
       }
       const info = await transport.sendMail(mailOpts);
+      markDone("email_send", fp, `messageId=${info.messageId}`);
       return { content: `Email sent successfully. Message ID: ${info.messageId}`, metadata: { messageId: info.messageId } };
     } catch (err) {
       return { content: `Failed to send email: ${(err as Error).message}`, isError: true };

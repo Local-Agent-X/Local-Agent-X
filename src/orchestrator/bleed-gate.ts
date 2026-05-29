@@ -1,5 +1,5 @@
 import type { OrchestratorInput } from "./types.js";
-import { getModuleScope } from "./types.js";
+import { getModuleScope } from "./registry.js";
 import { isConversationalFollowup, topicalKeywords, signalTopicallyRelevant } from "./topical-helpers.js";
 
 // Three-state verdict from the LLM classifier:

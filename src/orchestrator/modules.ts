@@ -1,7 +1,6 @@
 import type { OrchestratorInput, ModuleSignal, TriageResult } from "./types.js";
 import { orchestratorState, safeRun } from "./state.js";
-import { runConversationalModule } from "./modules-conversational.js";
-import { runMetaModule } from "./modules-meta.js";
+import { getSignal } from "./registry.js";
 
 export function gatherSignals(input: OrchestratorInput, triage: TriageResult): ModuleSignal[] {
   const signals: ModuleSignal[] = [];
@@ -25,9 +24,7 @@ export function runModule(name: string, input: OrchestratorInput): ModuleSignal[
   const start = Date.now();
   const signals: ModuleSignal[] = [];
 
-  if (!runConversationalModule(name, input, signals)) {
-    runMetaModule(name, input, signals);
-  }
+  getSignal(name)?.run?.(input, signals);
 
   orchestratorState.moduleRunTimes[name] = Date.now() - start;
   return signals;

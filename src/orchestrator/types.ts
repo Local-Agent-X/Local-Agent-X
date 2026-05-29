@@ -147,47 +147,59 @@ export const MAX_CONTEXT_SIGNALS = 7;
 export const MAX_CONTEXT_TOKENS = 200;
 
 /**
- * Per-module scope classification for cross-session bleed control.
+ * Per-signal scope classification for cross-session bleed control.
  *
- * - "profile" modules describe the user as a stable entity (emotion arc,
+ * - "profile" signals describe the user as a stable entity (emotion arc,
  *   stylistic patterns, trust stage, growth, milestones, retained facts).
- *   Their signals are safe to surface in any session — they're about *who
- *   you are*, not *what we discussed in chat #47*.
+ *   They're safe to surface in any session — they're about *who you are*,
+ *   not *what we discussed in chat #47*.
  *
- * - "session" modules pull content that could have originated in a
+ * - "session" signals pull content that could have originated in a
  *   different conversation (callbacks, followups, cross-session recall,
- *   ongoing narratives). Their signals must pass an additional topical-
- *   relevance gate so a "logo work for X" memory doesn't surface when the
- *   user is writing about an unrelated topic.
+ *   ongoing narratives). They must pass an additional topical-relevance
+ *   gate so a "logo work for X" memory doesn't surface when the user is
+ *   writing about an unrelated topic.
  *
- * If a new module is added without an entry here, the orchestrator
- * defaults it to "profile" (signal flows freely) — but you should add
- * the entry. Forgetting is a quiet leak.
+ * A signal's scope is declared once, on its registry entry (registry.ts).
+ * An entry with no scope defaults to "profile" (flows freely) — set it
+ * deliberately; forgetting is a quiet leak.
  */
 export type ModuleScope = "profile" | "session";
 
-export const MODULE_SCOPE: Record<string, ModuleScope> = {
-  // profile — about the user as a stable entity
-  "emotional-memory": "profile",
-  "language-mirror": "profile",
-  "trust-engine": "profile",
-  "vulnerability-awareness": "profile",
-  "shared-history": "profile",
-  "cross-session-learning": "profile",
-  "unspoken-detector": "profile",
-  "growth-tracker": "profile",
-  "milestone-celebrations": "profile",
-  "correction-learning": "profile",
-  "contradiction-detector": "profile",
-  "memory-graph": "profile",
-  "proactive-memory": "profile",
-  // session — pulls from a global pool of past-conversation content
-  "inside-references": "session",
-  "anticipatory-care": "session",
-  "associative-recall": "session",
-  "narrative-memory": "session",
-};
+export type TriageBucket = "always" | "conditional" | "scheduled" | "triggered";
 
-export function getModuleScope(moduleName: string): ModuleScope {
-  return MODULE_SCOPE[moduleName] ?? "profile";
+export interface SignalContext {
+  input: OrchestratorInput;
+  msgCount: number;
+}
+
+export interface VetoOutcome {
+  reason: string;
+  overrideSignal: ModuleSignal;
+}
+
+/**
+ * One cognitive signal module, declared once. The orchestrator iterates the
+ * registry (registry.ts) for every facet — triage, dispatch, recording,
+ * veto, scope, health — so a module's identity lives in exactly one place
+ * instead of being restated as a string across five files.
+ *
+ * Facets are optional: a recall module defines `run`; a passive learner
+ * defines `record`; a background store defines only `health`.
+ */
+export interface CognitiveSignal {
+  id: string;
+  scope: ModuleScope;
+  /** Member of the deep-pass critical set — re-run on a wider window when low-confidence. */
+  critical?: boolean;
+  /** Which triage bucket this runs in for the current message, or null to skip. */
+  triage?(ctx: SignalContext): TriageBucket | null;
+  /** Gather signals for the current message; push them into `out`. */
+  run?(input: OrchestratorInput, out: ModuleSignal[]): void;
+  /** Passive learning from the message; emits no signal. */
+  record?(input: OrchestratorInput): void;
+  /** Escalate one of this module's signals to a turn-overriding veto, or null to pass. */
+  veto?(sig: ModuleSignal): VetoOutcome | null;
+  /** Liveness probe for the health report; throws or returns falsy when unloaded. */
+  health?(): unknown;
 }

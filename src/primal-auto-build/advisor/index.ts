@@ -26,11 +26,17 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { ScoreReport } from "../scenario-scorer/types.js";
 import type { LlmCall } from "../chunk-review/judgment-hook.js";
 
 const ADVISOR_TIMEOUT_MS = 18_000;
+
+const ADVISOR_SYSTEM_PROMPT =
+  `You are advising a build orchestrator on a recovery decision. ` +
+  `Follow the rules and options in the user message exactly. ` +
+  `Respond with ONE JSON line and nothing else — no prose, no code fences.`;
 
 export type AdvisorAction =
   | "try-fix-worker"
@@ -108,16 +114,28 @@ export interface AdvisorOptions {
  * responsible for the fall-back path.
  */
 export async function consultAdvisor(situation: AdvisorSituation, opts: AdvisorOptions = {}): Promise<AdvisorRecommendation | null> {
-  const call = opts.llmCall || (await getProductionLlmCall());
   const prompt = buildAdvisorPrompt(situation);
 
-  let raw: string;
-  try {
-    raw = await callWithTimeout(call, prompt, opts.signal, ADVISOR_TIMEOUT_MS);
-  } catch {
-    return null;
+  // Test injection path — preserves the LlmCall stub seam used by primal-advisor.test.ts.
+  if (opts.llmCall) {
+    let raw: string;
+    try {
+      raw = await callWithTimeout(opts.llmCall, prompt, opts.signal, ADVISOR_TIMEOUT_MS);
+    } catch {
+      return null;
+    }
+    return parseAdvisorResponse(raw);
   }
-  return parseAdvisorResponse(raw);
+
+  return classifyWithLLM<AdvisorRecommendation>({
+    category: "primal-advisor",
+    systemPrompt: ADVISOR_SYSTEM_PROMPT,
+    userPrompt: prompt,
+    parse: parseAdvisorResponse,
+    timeoutMs: ADVISOR_TIMEOUT_MS,
+    maxResponseChars: 4000,
+    signal: opts.signal,
+  });
 }
 
 // ── prompt construction ────────────────────────────────────────────────────
@@ -286,27 +304,4 @@ async function callWithTimeout(fn: LlmCall, prompt: string, signal: AbortSignal 
   const winner = await Promise.race([call, wallclock]);
   if (winner === SENTINEL) throw new Error("advisor timeout");
   return String(winner || "");
-}
-
-async function getProductionLlmCall(): Promise<LlmCall> {
-  return async (prompt: string, signal?: AbortSignal): Promise<string> => {
-    const { getRuntimeConfig } = await import("../../config.js");
-    const { getOrInitSecretsStore } = await import("../../secrets.js");
-    const { resolveProvider } = await import("../../agent-request/index.js");
-    const { getLaxDir } = await import("../../lax-data-dir.js");
-    const runtime = getRuntimeConfig();
-    const dataDir = getLaxDir();
-    const secretsStore = getOrInitSecretsStore(dataDir);
-    const resolved = await resolveProvider(runtime, secretsStore, dataDir);
-    if (!resolved.apiKey) throw new Error("no api key for advisor");
-    if (resolved.provider === "anthropic") {
-      const { streamForResponse_anthropic } = await import("../../memory/curate-classifier.js");
-      return (await streamForResponse_anthropic(resolved.apiKey, resolved.model, prompt, signal)) || "";
-    }
-    if (resolved.provider === "codex" || resolved.provider === "openai") {
-      const { streamForResponse_codex } = await import("../../memory/curate-classifier.js");
-      return (await streamForResponse_codex(resolved.apiKey, resolved.model, prompt, signal)) || "";
-    }
-    throw new Error(`unsupported provider: ${resolved.provider}`);
-  };
 }

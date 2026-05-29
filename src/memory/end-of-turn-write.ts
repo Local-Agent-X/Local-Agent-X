@@ -26,14 +26,13 @@ import { join } from "node:path";
 import { createLogger } from "../logger.js";
 import { redactKnownSecrets } from "../sanitize.js";
 import { resetSession as resetCurateNudge } from "./curate-nudge.js";
-import { dispatch } from "../llm-dispatch.js";
+import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
 import { PERSONALITY_FILES, dedupeProfileMarkdown } from "./personality.js";
 import { writeMemorySafely, MemoryWriteBlocked } from "./write-safely.js";
 import type { MemoryIndex } from "./index-core.js";
 
 const logger = createLogger("memory.end-of-turn-write");
 
-const DISABLED = process.env.LAX_MEMORY_END_OF_TURN === "0";
 const TIMEOUT_MS = 8000; // generous — runs in background, no user blocking
 
 const WRITE_DECISION_PROMPT = `You decide whether the user/agent exchange just finished revealed something durable about the USER (preferences, workflow rules, communication style, identity) that belongs in their narrative profile (USER.md).
@@ -60,9 +59,6 @@ export interface EndOfTurnContext {
   sessionId: string;
   userMessage: string;
   assistantReply: string;
-  provider: string;
-  model: string;
-  apiKey: string;
   memory: MemoryIndex;
 }
 
@@ -75,7 +71,6 @@ export interface EndOfTurnContext {
  * post-turn errors to the user who already got their answer.
  */
 export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<void> {
-  if (DISABLED) return;
   if (!ctx.sessionId || !ctx.userMessage || !ctx.assistantReply) return;
 
   // Always reset the curate-nudge per-session counter at end-of-turn — the
@@ -95,16 +90,15 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<vo
     `[AGENT FINAL REPLY]\n"""${safeReply}"""\n\n` +
     `Decide whether to write to memory. JSON only.`;
 
-  let response: string | null = null;
-  try {
-    response = await callForDecision(ctx.provider, ctx.model, ctx.apiKey, userBlock);
-  } catch (e) {
-    logger.warn(`[end-of-turn] classifier failed: ${(e as Error).message}`);
-    return;
-  }
-  if (!response) return;
-
-  const decision = parseWriteDecision(response);
+  const decision = await classifyWithLLM<WriteDecision>({
+    category: "end-of-turn-write",
+    systemPrompt: WRITE_DECISION_PROMPT,
+    userPrompt: userBlock,
+    parse: parseWriteDecision,
+    timeoutMs: TIMEOUT_MS,
+    maxResponseChars: 1500,
+    envDisableVar: "LAX_MEMORY_END_OF_TURN",
+  });
   if (!decision || !decision.write) return;
 
   // Execute the write server-side via the same memory_update_profile path
@@ -120,67 +114,6 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<vo
   } catch (e) {
     logger.warn(`[end-of-turn] write failed: ${(e as Error).message}`);
   }
-}
-
-// ── Classifier call (per-provider; mirrors curate-classifier) ──
-
-async function callForDecision(
-  provider: string,
-  model: string,
-  apiKey: string,
-  userBlock: string,
-): Promise<string | null> {
-  const lc = (provider || "").toLowerCase();
-  const ac = new AbortController();
-  const timeoutId = setTimeout(() => ac.abort(), TIMEOUT_MS);
-  try {
-    if (lc === "anthropic" && apiKey) {
-      const { streamAnthropicResponse } = await import("../anthropic-client/index.js");
-      const stream = streamAnthropicResponse({
-        token: apiKey, model,
-        messages: [{ role: "user", content: userBlock } as never],
-        systemPrompt: WRITE_DECISION_PROMPT,
-        temperature: 0,
-        signal: ac.signal,
-      });
-      let response = "";
-      for await (const event of stream) {
-        if (event.type === "text") response += event.delta || "";
-        if (response.length > 1500) break;
-      }
-      return response || null;
-    }
-    if (lc === "codex" && apiKey) {
-      const { streamCodexResponse } = await import("../codex-client/index.js");
-      const stream = streamCodexResponse({
-        token: apiKey, model,
-        messages: [{ role: "user", content: userBlock } as never],
-        systemPrompt: WRITE_DECISION_PROMPT,
-        tools: [],
-        sessionId: undefined,
-      });
-      let response = "";
-      for await (const event of stream) {
-        if (event.type === "text") response += event.delta || "";
-        if (response.length > 1500) break;
-      }
-      return response || null;
-    }
-    if (lc === "openai" || lc === "ollama" || lc === "local") {
-      return await dispatch({
-        prompt: `${WRITE_DECISION_PROMPT}\n\n---\n\n${userBlock}`,
-        provider: lc === "openai" ? "openai" : "ollama",
-        openaiModel: lc === "openai" ? (model || undefined) : undefined,
-        ollamaModel: lc !== "openai" ? (model || undefined) : undefined,
-        temperature: 0,
-        maxTokens: 400,                   // write content can be ~250 chars + JSON wrapper
-        timeoutMs: TIMEOUT_MS,
-      });
-    }
-  } finally {
-    clearTimeout(timeoutId);
-  }
-  return null;
 }
 
 // ── Decision parsing + apply ──

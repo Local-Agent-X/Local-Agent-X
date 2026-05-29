@@ -17,8 +17,14 @@
  *    0: app didn't load or errored before step 1
  */
 
+import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
 import type { ParsedScenario, ScoreStep } from "./types.js";
 import type { LlmCall } from "../chunk-review/judgment-hook.js";
+
+const JUDGE_SYSTEM_PROMPT =
+  `You are scoring a user-flow scenario against a built app. ` +
+  `Follow the rubric in the user message exactly. ` +
+  `Respond with ONE JSON line and nothing else — no prose, no code fences.`;
 
 export interface JudgeInput {
   scenario: ParsedScenario;
@@ -95,37 +101,29 @@ export function parseJudgeResponse(raw: string): JudgeResult | null {
 let injectedLlmCall: LlmCall | null = null;
 export function _setLlmCallForTests(fn: LlmCall | null): void { injectedLlmCall = fn; }
 
-async function getProductionLlmCall(): Promise<LlmCall> {
-  return async (prompt: string, signal?: AbortSignal): Promise<string> => {
-    const { getRuntimeConfig } = await import("../../config.js");
-    const { getOrInitSecretsStore } = await import("../../secrets.js");
-    const { resolveProvider } = await import("../../agent-request/index.js");
-    const { getLaxDir } = await import("../../lax-data-dir.js");
-    const runtime = getRuntimeConfig();
-    const dataDir = getLaxDir();
-    const secretsStore = getOrInitSecretsStore(dataDir);
-    const resolved = await resolveProvider(runtime, secretsStore, dataDir);
-    if (!resolved.apiKey) throw new Error("no api key for judge");
-    if (resolved.provider === "anthropic") {
-      const { streamForResponse_anthropic } = await import("../../memory/curate-classifier.js");
-      return (await streamForResponse_anthropic(resolved.apiKey, resolved.model, prompt, signal)) || "";
-    }
-    if (resolved.provider === "codex" || resolved.provider === "openai") {
-      const { streamForResponse_codex } = await import("../../memory/curate-classifier.js");
-      return (await streamForResponse_codex(resolved.apiKey, resolved.model, prompt, signal)) || "";
-    }
-    throw new Error(`unsupported provider: ${resolved.provider}`);
-  };
-}
-
 export async function judgeScenario(input: JudgeInput, signal?: AbortSignal): Promise<JudgeResult> {
-  const call = injectedLlmCall || (await getProductionLlmCall());
   const prompt = buildJudgePrompt(input);
-  const SENTINEL = Symbol("judge-timeout");
-  const wallclock = new Promise<typeof SENTINEL>((r) => setTimeout(() => r(SENTINEL), JUDGE_TIMEOUT_MS));
-  const raced = await Promise.race([call(prompt, signal).catch(() => ""), wallclock]);
-  if (raced === SENTINEL) throw new Error("judge timeout");
-  const result = parseJudgeResponse(String(raced || ""));
+
+  // Test injection path — keeps deterministic stubs working without a real provider.
+  if (injectedLlmCall) {
+    const SENTINEL = Symbol("judge-timeout");
+    const wallclock = new Promise<typeof SENTINEL>((r) => setTimeout(() => r(SENTINEL), JUDGE_TIMEOUT_MS));
+    const raced = await Promise.race([injectedLlmCall(prompt, signal).catch(() => ""), wallclock]);
+    if (raced === SENTINEL) throw new Error("judge timeout");
+    const result = parseJudgeResponse(String(raced || ""));
+    if (!result) throw new Error("judge returned unparseable response");
+    return result;
+  }
+
+  const result = await classifyWithLLM<JudgeResult>({
+    category: "scenario-judge",
+    systemPrompt: JUDGE_SYSTEM_PROMPT,
+    userPrompt: prompt,
+    parse: parseJudgeResponse,
+    timeoutMs: JUDGE_TIMEOUT_MS,
+    maxResponseChars: 4000,
+    signal,
+  });
   if (!result) throw new Error("judge returned unparseable response");
   return result;
 }

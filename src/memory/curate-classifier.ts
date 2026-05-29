@@ -24,15 +24,11 @@
  * preferred.
  */
 
-import { createLogger } from "../logger.js";
-import { dispatch } from "../llm-dispatch.js";
+import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
 import { redactKnownSecrets } from "../sanitize.js";
 import type { NudgeTrigger } from "./curate-nudge.js";
 
-const logger = createLogger("memory.curate-classifier");
-
 const CLASSIFIER_TIMEOUT_MS = 2000;
-const CLASSIFIER_DISABLED = process.env.LAX_MEMORY_CURATE_CLASSIFIER === "0";
 
 const SYSTEM_PROMPT = `You decide whether a user message contains durable, transferable knowledge that the agent should save (via the \`remember\` tool for facts, or \`memory_update_profile\` for narrative profile sections).
 
@@ -70,28 +66,20 @@ export interface ClassifierResult {
  *
  * Architectural choice: uses the **same model the chat is already running
  * on**, not a per-provider weak-tier table. Cost is bounded (~$0.0004 on
- * Haiku, ~$0.006 worst-case on Opus 4.7 — single-digit cents per day for
- * an active user) and the maintenance burden of a "weak model per provider"
- * mapping is real (gpt-4o-mini → 5.x-mini → 6-mini etc., model deprecations,
- * new providers all needing curation). Using the main model means zero
- * model-table maintenance and zero per-provider quality cliffs.
+ * Haiku, ~$0.006 worst-case on Opus 4.7) and using the main model means
+ * zero model-table maintenance and zero per-provider quality cliffs.
  *
  * Returns null on any failure — caller treats as "no boost from classifier"
  * and falls back to cadence-based nudge.
  *
- * `providerHint` is the chat's resolved.provider; `modelHint` is the chat's
- * resolved.model. The classifier asks dispatch to use exactly that model.
- * If the provider isn't supported by dispatch (xAI, Gemini, Codex
- * subscription), returns null — regex+cadence still works for those.
+ * Provider/model/auth are resolved by the canonical classifier wrapper from
+ * settings.json (same place the chat resolves from). If the active provider
+ * isn't supported by the wrapper (Gemini, etc.), returns null.
  */
 export async function classifyTeachMoment(
   userMessage: string,
   lastAssistantPreview: string,
-  options?: { providerHint?: string; modelHint?: string; apiKey?: string },
 ): Promise<ClassifierResult | null> {
-  if (CLASSIFIER_DISABLED) return null;
-
-  // Cheap pre-checks — don't bother the API on obvious non-teaching content
   const trimmed = userMessage.trim();
   if (trimmed.length < 4) return null;       // 1-3 char acks ("ok", "ya")
   if (trimmed.length > 4000) return null;    // huge messages skip — likely pasted content
@@ -106,148 +94,15 @@ export async function classifyTeachMoment(
     (safePrev ? `AGENT'S PRIOR MESSAGE (preview, 200ch):\n"""${safePrev}"""\n\n` : "") +
     `Classify per the system rules. JSON only, one line.`;
 
-  const provider = (options?.providerHint || "").toLowerCase();
-  const model = options?.modelHint || "";
-  const apiKey = options?.apiKey || "";
-
-  try {
-    let response: string | null = null;
-
-    // Per-provider call. Each branch uses the SAME client the main chat
-    // agent uses for that provider, so auth automatically just works.
-    //
-    // Wallclock race: every provider call is wrapped in Promise.race
-    // against a hard timeout. The underlying clients (especially the
-    // Anthropic CLI path) don't reliably honor AbortController.signal —
-    // a "1.5s timeout" was actually waiting tens of seconds for cold-
-    // start CLI spawns. The race guarantees the wrapper returns within
-    // CLASSIFIER_TIMEOUT_MS regardless. Orphan call drains in background.
-    const RACE_SENTINEL = Symbol("curate-race-timeout");
-    const wallclock = new Promise<typeof RACE_SENTINEL>((resolve) =>
-      setTimeout(() => resolve(RACE_SENTINEL), CLASSIFIER_TIMEOUT_MS),
-    );
-
-    let providerCall: Promise<string | null>;
-    if (provider === "anthropic" && apiKey) {
-      providerCall = streamForResponse_anthropic(apiKey, model, userBlock);
-    } else if (provider === "codex" && apiKey) {
-      providerCall = streamForResponse_codex(apiKey, model, userBlock);
-    } else if (provider === "openai") {
-      providerCall = dispatch({
-        prompt: `${SYSTEM_PROMPT}\n\n---\n\n${userBlock}`,
-        provider: "openai",
-        openaiModel: model || undefined,
-        temperature: 0, maxTokens: 150, timeoutMs: CLASSIFIER_TIMEOUT_MS,
-      });
-    } else if (provider === "ollama" || provider === "local") {
-      providerCall = dispatch({
-        prompt: `${SYSTEM_PROMPT}\n\n---\n\n${userBlock}`,
-        provider: "ollama",
-        ollamaModel: model || undefined,
-        temperature: 0, maxTokens: 150, timeoutMs: CLASSIFIER_TIMEOUT_MS,
-      });
-    } else {
-      // xAI / Gemini / custom / unknown — no classifier path yet, fall
-      // through to "no boost" and let cadence catch the teach moment.
-      return null;
-    }
-
-    const raced = await Promise.race([providerCall, wallclock]);
-    if (raced === RACE_SENTINEL) {
-      logger.info(`[curate-classifier] wallclock timeout at ${CLASSIFIER_TIMEOUT_MS}ms (provider=${provider})`);
-      providerCall.catch(() => {}); // drop orphan rejection
-      return null;
-    }
-    response = raced;
-
-    if (!response) return null;
-    return parseClassifierResponse(response);
-  } catch (e) {
-    logger.warn(`[curate-classifier] call failed for provider=${provider}: ${(e as Error).message}`);
-    return null;
-  }
-}
-
-/**
- * Anthropic stream-to-string helper. Uses the same streamAnthropicResponse
- * the main chat agent uses, so CLI OAuth tokens "just work" — no special
- * handling needed for the Authorization: Bearer vs x-api-key distinction.
- */
-export async function streamForResponse_anthropic(token: string, model: string, userMessage: string, signal?: AbortSignal): Promise<string | null> {
-  const ac = new AbortController();
-  const timeoutId = setTimeout(() => ac.abort(), CLASSIFIER_TIMEOUT_MS);
-  let onExternalAbort: (() => void) | undefined;
-  if (signal) {
-    if (signal.aborted) ac.abort();
-    else {
-      onExternalAbort = () => ac.abort();
-      signal.addEventListener("abort", onExternalAbort, { once: true });
-    }
-  }
-  try {
-    const { streamAnthropicResponse } = await import("../anthropic-client/index.js");
-    const stream = streamAnthropicResponse({
-      token,
-      model,
-      messages: [{ role: "user", content: userMessage } as never],
-      systemPrompt: SYSTEM_PROMPT,
-      temperature: 0,
-      signal: ac.signal,
-    });
-    let response = "";
-    for await (const event of stream) {
-      if (event.type === "text") response += event.delta || "";
-      if (response.length > 500) break;
-    }
-    return response || null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeoutId);
-    if (signal && onExternalAbort) signal.removeEventListener("abort", onExternalAbort);
-  }
-}
-
-/**
- * Codex stream-to-string helper. Uses the same streamCodexResponse the
- * main chat agent uses, so subscription bearer tokens (chatgpt.com/
- * backend-api) work without dispatch needing a Codex-specific provider.
- * Tools=[] tells Codex this is a one-shot completion, not a tool loop.
- */
-export async function streamForResponse_codex(token: string, model: string, userMessage: string, signal?: AbortSignal): Promise<string | null> {
-  const ac = new AbortController();
-  const timeoutId = setTimeout(() => ac.abort(), CLASSIFIER_TIMEOUT_MS);
-  let onExternalAbort: (() => void) | undefined;
-  if (signal) {
-    if (signal.aborted) ac.abort();
-    else {
-      onExternalAbort = () => ac.abort();
-      signal.addEventListener("abort", onExternalAbort, { once: true });
-    }
-  }
-  try {
-    const { streamCodexResponse } = await import("../codex-client/index.js");
-    const stream = streamCodexResponse({
-      token,
-      model,
-      messages: [{ role: "user", content: userMessage } as never],
-      systemPrompt: SYSTEM_PROMPT,
-      tools: [],
-      sessionId: undefined,
-    });
-    let response = "";
-    for await (const event of stream) {
-      if (ac.signal.aborted) break;
-      if (event.type === "text") response += event.delta || "";
-      if (response.length > 500) break;
-    }
-    return response || null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeoutId);
-    if (signal && onExternalAbort) signal.removeEventListener("abort", onExternalAbort);
-  }
+  return classifyWithLLM<ClassifierResult>({
+    category: "curate-teach-moment",
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt: userBlock,
+    parse: parseClassifierResponse,
+    timeoutMs: CLASSIFIER_TIMEOUT_MS,
+    maxResponseChars: 500,
+    envDisableVar: "LAX_MEMORY_CURATE_CLASSIFIER",
+  });
 }
 
 /**

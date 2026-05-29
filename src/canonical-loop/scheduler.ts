@@ -25,6 +25,7 @@ const LANE_CAPS: Record<CanonicalLane, number> = {
   build: 2,
   ide: 1,
   background: 1,
+  agent: 3,
 };
 
 interface QueuedOp {

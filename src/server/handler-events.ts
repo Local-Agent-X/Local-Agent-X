@@ -3,7 +3,6 @@ import { join, resolve } from "node:path";
 import { type AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
-import { enqueue } from "../execution-lanes.js";
 import { EventBus } from "../event-bus.js";
 import { ProjectStore, type AgentRun } from "../agent-store/index.js";
 import { looksLikeClarificationRequest } from "../agents/result-guard.js";
@@ -170,12 +169,12 @@ export function registerHandlerEvents(deps: {
       // aborted via signal — out-of-band from the loop). The
       // invokeDefinition-supplied AbortSignal also routes through canonical
       // via this options.signal, so Handler.cancelAgent → opCancel works.
-      const agentResult = await enqueue("agent", () => runAgentViaCanonical(task, agentSession.messages, {
+      const agentResult = await runAgentViaCanonical(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock,
         tools: spawnedTools, security, toolPolicy, sessionId: `agent-${agentId}`, maxIterations: config.maxIterations, temperature: config.temperature,
         wallClockMs: config.agentTimeoutMs,
         opType: "agent_spawn",
-        lane: "background",
+        lane: "agent",
         runId: agentId,
         signal,
         onEvent: (event) => {
@@ -193,7 +192,7 @@ export function registerHandlerEvents(deps: {
             eventBus.emit("handler:agent-output", { agentId, output: `[progress] ${event.message}` });
           }
         },
-      }), { label: `agent:${agentId}`, timeout: config.agentTimeoutMs });
+      });
       if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
 
       let mergeSuccess = true;

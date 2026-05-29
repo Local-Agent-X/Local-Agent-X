@@ -1,22 +1,11 @@
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
-import { getLaneStatus, setLaneConcurrency, type LaneName } from "../../execution-lanes.js";
 import { getProviderHealthStatus, resetProviderHealth, type ProviderId } from "../../model-fallback.js";
 import { linkIdentities, unlinkIdentity, getIdentityGroups, type ChannelType } from "../../session/router.js";
 import { LinkIdentitiesSchema, validateBody } from "../../route-schemas.js";
 
 export const handleInfraRoutes: RouteHandler = async (method, url, req, res, _ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
-
-  if (method === "GET" && url.pathname === "/api/lanes") {
-    json(200, getLaneStatus()); return true;
-  }
-  if (method === "POST" && url.pathname === "/api/lanes/concurrency") {
-    const body = await safeParseBody(req);
-    if (!body || !body.lane || !body.maxConcurrent) { json(400, { error: "lane and maxConcurrent required" }); return true; }
-    setLaneConcurrency(body.lane as LaneName, parseInt(String(body.maxConcurrent), 10));
-    json(200, { ok: true }); return true;
-  }
 
   if (method === "GET" && url.pathname === "/api/identity-links") {
     json(200, getIdentityGroups()); return true;

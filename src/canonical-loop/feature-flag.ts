@@ -12,6 +12,7 @@ const LANE_ENV: Record<CanonicalLane, string> = {
   build: "LAX_CANONICAL_LOOP_BUILD",
   ide: "LAX_CANONICAL_LOOP_IDE",
   background: "LAX_CANONICAL_LOOP_BACKGROUND",
+  agent: "LAX_CANONICAL_LOOP_AGENT",
 };
 
 export function isCanonicalLoopEnabled(_lane: CanonicalLane): boolean {

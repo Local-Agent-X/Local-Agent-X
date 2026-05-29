@@ -51,6 +51,16 @@ export interface ContradictionRecord {
 const LAX_DIR = getLaxDir();
 const HISTORY_FILE = join(LAX_DIR, "contradiction-history.json");
 
+// Cheap surface markers that a message asserts a fact about the user worth
+// checking against their accumulated record. The precise comparison lives in
+// checkContradiction() against FIELD_PATTERNS.
+const FACT_PATTERNS = [
+  /\bi (am|work|live|use|prefer|like|hate|love|have|need|want)\b/i,
+  /\bmy (name|job|project|favorite|preference|dog|cat|wife|husband|kid)\b/i,
+  /\bi('m| am) (a |an )?[a-z]+ (developer|engineer|designer|manager|student)/i,
+  /\bi (moved|switched|changed|started|quit|joined)\b/i,
+];
+
 // ── Keyword patterns for contradiction categories ────────
 
 interface FieldPattern {
@@ -205,6 +215,11 @@ export class ContradictionDetector {
       ContradictionDetector.instance = new ContradictionDetector();
     }
     return ContradictionDetector.instance;
+  }
+
+  /** Pre-gate: does this message assert a fact worth checking against the user's record? */
+  static looksLikeFactStatement(message: string): boolean {
+    return FACT_PATTERNS.some(p => p.test(message));
   }
 
   // ── Check a single new fact against existing facts ────────

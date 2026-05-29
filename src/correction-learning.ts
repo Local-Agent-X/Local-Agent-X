@@ -45,6 +45,14 @@ const LAX_DIR = getLaxDir();
 const STORE_FILE = join(LAX_DIR, "correction-history.json");
 const MAX_RECORDS = 500;
 
+// Cheap surface markers that a message might be correcting the agent. This is a
+// broad pre-gate; detectCorrection() does the precise extraction via DETECTION_RULES.
+const CORRECTION_KEYWORDS = [
+  "no", "wrong", "incorrect", "not what", "that's not", "actually",
+  "i meant", "you misunderstood", "i said", "nope", "nah",
+  "that's wrong", "fix this", "you got it wrong",
+];
+
 // ── Persistence ─────────────────────────────────────────────
 
 function ensureDir(): void {
@@ -199,6 +207,12 @@ export class CorrectionLearner {
       CorrectionLearner.instance = new CorrectionLearner();
     }
     return CorrectionLearner.instance;
+  }
+
+  /** Pre-gate: does this message look like it might be correcting the agent? */
+  static looksLikeCorrection(message: string): boolean {
+    const lower = message.toLowerCase();
+    return CORRECTION_KEYWORDS.some(kw => lower.includes(kw));
   }
 
   /**

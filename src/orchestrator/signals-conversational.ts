@@ -9,7 +9,6 @@ import { TrustEngine } from "../trust-deepening.js";
 import { VulnerabilityAwareness } from "../vulnerability-awareness.js";
 import { AssociativeMemory } from "../associative-recall/index.js";
 import type { CognitiveSignal } from "./types.js";
-import { SENSITIVE_KEYWORDS, STORY_PATTERNS } from "./types.js";
 
 export const conversationalSignals: CognitiveSignal[] = [
   {
@@ -47,10 +46,7 @@ export const conversationalSignals: CognitiveSignal[] = [
     id: "inside-references",
     storageFile: "inside-references.json",
     scope: "session",
-    triage: ({ input }) =>
-      input.message.length < 60 || /^(that|this|the one|you know|it|same)\b/i.test(input.message)
-        ? "conditional"
-        : null,
+    triage: ({ input }) => (InsideReferences.mightReference(input.message) ? "conditional" : null),
     run: (input, out) => out.push(...InsideReferences.getInstance().signalsFor(input.message)),
     health: () => InsideReferences.getInstance(),
   },
@@ -74,7 +70,7 @@ export const conversationalSignals: CognitiveSignal[] = [
     scope: "profile",
     critical: true,
     triage: ({ input }) =>
-      SENSITIVE_KEYWORDS.some(kw => input.message.toLowerCase().includes(kw)) ? "conditional" : null,
+      VulnerabilityAwareness.touchesSensitiveTopic(input.message) ? "conditional" : null,
     run: (input, out) => out.push(...VulnerabilityAwareness.getInstance().signalsFor(input.message)),
     record: input => VulnerabilityAwareness.getInstance().recordFrom(input.message),
     veto: sig =>
@@ -119,7 +115,7 @@ export const conversationalSignals: CognitiveSignal[] = [
     id: "narrative-memory",
     storageFile: "narratives.json",
     scope: "session",
-    triage: ({ input }) => (STORY_PATTERNS.some(p => p.test(input.message)) ? "scheduled" : null),
+    triage: ({ input }) => (NarrativeMemory.looksLikeStory(input.message) ? "scheduled" : null),
     run: (input, out) => out.push(...NarrativeMemory.getInstance().signalsFor(input.sessionMessages)),
     health: () => NarrativeMemory.getInstance(),
   },

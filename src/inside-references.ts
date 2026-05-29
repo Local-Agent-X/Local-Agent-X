@@ -60,6 +60,10 @@ const MAX_REFERENCES = 500;
 const MAX_PENDING = 2000;
 const AUTO_THRESHOLD = 3; // phrases need 3+ uses to auto-register
 
+// Anaphoric openers that suggest the message leans on shared shorthand rather
+// than naming its subject. Short messages get the benefit of the doubt too.
+const SHORTHAND_OPENER = /^(that|this|the one|you know|it|same)\b/i;
+
 function ensureDir(): void {
   if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
 }
@@ -122,6 +126,11 @@ export class InsideReferences {
       InsideReferences.instance = new InsideReferences();
     }
     return InsideReferences.instance;
+  }
+
+  /** Pre-gate: is the message short or anaphoric enough to maybe invoke shared shorthand? */
+  static mightReference(message: string): boolean {
+    return message.length < 60 || SHORTHAND_OPENER.test(message);
   }
 
   /**

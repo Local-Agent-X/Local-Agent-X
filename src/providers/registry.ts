@@ -23,9 +23,10 @@ export interface ProviderCapabilities {
   /**
    * Whether to opt-in to `reasoning_effort` on the OpenAI Chat
    * Completions request. Matched per-model against the regex from
-   * openai-http.ts (grok-3-mini-reasoning, o1/o3/o4, gpt-5, gemini 2.5+,
-   * deepseek-r1, qwen reasoning). Lives on the entry so we don't have
-   * one global regex pretending to be provider-agnostic.
+   * openai-http.ts (grok-4 family + grok-code-fast + grok-3-mini,
+   * o1/o3/o4, gpt-5, gemini 2.5+, deepseek-r1, qwen reasoning). Lives
+   * on the entry so we don't have one global regex pretending to be
+   * provider-agnostic.
    */
   reasoning: RegExp | false;
 }
@@ -74,7 +75,12 @@ export interface BaseURLContext {
 }
 
 const REASONING_OPENAI_FAMILY = /^o[134]|gpt-5/i;
-const REASONING_GROK = /grok-3-mini-reasoning/i;
+// xAI reasoning models: grok-4 family (all reasoning), grok-code-fast-1,
+// and grok-3-mini (supports reasoning_effort). Plain grok-3 is NOT a
+// reasoning model. Without `reasoning_effort` set, the grok-4 family
+// leaks chain-of-thought into the `content` field instead of the
+// separate `reasoning_content` field, dumping raw thoughts into chat.
+const REASONING_GROK = /^grok-(4|3-mini|code-fast)/i;
 const REASONING_GEMINI = /gemini-(2\.5|3)/i;
 const REASONING_OSS = /deepseek-r1|qwen.*reasoning|gpt-oss|glm-4\.7/i;
 

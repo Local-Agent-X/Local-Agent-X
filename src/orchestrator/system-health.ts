@@ -18,27 +18,18 @@ export function getSystemHealth(): HealthReport {
     } catch { /* module failed to load */ }
   }
 
-  const storageFiles: Record<string, string> = {
-    "emotional-memory": "emotional-history.json",
-    "language-mirror": "language-style.json",
-    "trust-engine": "trust-engine.json",
-    "milestones": "milestones.json",
-    "vulnerability": "vulnerability-shares.json",
-    "corrections": "corrections.json",
-    "shared-history": "shared-history.json",
-    "inside-references": "inside-references.json",
-    "growth-tracker": "growth-tracker.json",
-    "narrative-memory": "narratives.json",
-    "unspoken-detector": "unspoken-detector.json",
-    "orchestrator": "orchestrator-state.json",
-  };
-
-  for (const [name, file] of Object.entries(storageFiles)) {
+  // Storage sizes derive from the registry: each signal that persists state
+  // declares its storageFile. The orchestrator's own state is the one
+  // non-signal entry.
+  const storageTargets: Array<[string, string]> = [
+    ...SIGNALS.filter(s => s.storageFile).map(s => [s.id, s.storageFile!] as [string, string]),
+    ["orchestrator", "orchestrator-state.json"],
+  ];
+  for (const [name, file] of storageTargets) {
     const path = join(LAX_DIR, file);
     try {
       if (existsSync(path)) {
-        const stat = readFileSync(path, "utf-8");
-        storageSizes[name] = stat.length;
+        storageSizes[name] = readFileSync(path, "utf-8").length;
       }
     } catch { /* skip */ }
   }

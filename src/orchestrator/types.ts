@@ -202,4 +202,6 @@ export interface CognitiveSignal {
   veto?(sig: ModuleSignal): VetoOutcome | null;
   /** Liveness probe for the health report; throws or returns falsy when unloaded. */
   health?(): unknown;
+  /** Persisted-state filename under LAX_DIR, surfaced in the health report's storageSizes (keyed by id). */
+  storageFile?: string;
 }

@@ -14,6 +14,7 @@ import { SENSITIVE_KEYWORDS, STORY_PATTERNS } from "./types.js";
 export const conversationalSignals: CognitiveSignal[] = [
   {
     id: "emotional-memory",
+    storageFile: "emotional-history.json",
     scope: "profile",
     critical: true,
     triage: () => "always",
@@ -55,6 +56,7 @@ export const conversationalSignals: CognitiveSignal[] = [
 
   {
     id: "language-mirror",
+    storageFile: "language-style.json",
     scope: "profile",
     triage: () => "always",
     run(_input, out) {
@@ -81,6 +83,7 @@ export const conversationalSignals: CognitiveSignal[] = [
 
   {
     id: "trust-engine",
+    storageFile: "trust-engine.json",
     scope: "profile",
     triage: () => "always",
     run(_input, out) {
@@ -119,6 +122,7 @@ export const conversationalSignals: CognitiveSignal[] = [
 
   {
     id: "inside-references",
+    storageFile: "inside-references.json",
     scope: "session",
     triage: ({ input }) =>
       input.message.length < 60 || /^(that|this|the one|you know|it|same)\b/i.test(input.message)
@@ -177,6 +181,7 @@ export const conversationalSignals: CognitiveSignal[] = [
 
   {
     id: "vulnerability-awareness",
+    storageFile: "vulnerability-shares.json",
     scope: "profile",
     critical: true,
     triage: ({ input }) =>
@@ -268,6 +273,7 @@ export const conversationalSignals: CognitiveSignal[] = [
 
   {
     id: "shared-history",
+    storageFile: "shared-history.json",
     scope: "profile",
     triage: () => "conditional",
     run(_input, out) {
@@ -301,6 +307,7 @@ export const conversationalSignals: CognitiveSignal[] = [
 
   {
     id: "narrative-memory",
+    storageFile: "narratives.json",
     scope: "session",
     triage: ({ input }) => (STORY_PATTERNS.some(p => p.test(input.message)) ? "scheduled" : null),
     run(input, out) {

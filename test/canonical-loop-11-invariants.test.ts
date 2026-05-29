@@ -47,6 +47,7 @@ import {
   readCanonicalEvents,
   readLatestOpTurn,
   readOpTurn,
+  setToolDispatcher,
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
 import { readOp, newOpId } from "../src/ops/op-store.js";
@@ -61,6 +62,14 @@ const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
   setLeaseConfig({ leaseDurationMs: 200, heartbeatIntervalMs: 50 });
+  // No-op dispatcher: the pause→resume scenario keeps the loop going by
+  // having the first turn request a (non-silent) tool. Only fires when a
+  // script emits a tool call.
+  setToolDispatcher({
+    async dispatch(call) {
+      return { toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 1 };
+    },
+  });
 });
 
 afterEach(async () => {
@@ -255,7 +264,7 @@ describe("Issue 11 — invariants survive pause→resume→succeeded", () => {
     const op = mkOp("pause-resume");
     const adapter = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: ["x"], text: "turn 0" },
+        { streamChunks: ["x"], toolCalls: [{ toolCallId: "pr-0", tool: "search", args: {} }] },
         { text: "turn 1", terminal: "done" },
       ]),
     });

@@ -64,6 +64,9 @@ export interface SandboxOpts {
   fullPrompt: string;
   /** Auth token for the probe smoke-test (POST /api/chat). */
   authToken: string;
+  /** Optional progress sink — surfaced to the chat UI via tool_progress so the
+   *  user can see which gate the sandbox is on. */
+  onProgress?: (message: string) => void;
 }
 
 // ── Lock ───────────────────────────────────────────────────────────────────
@@ -117,6 +120,8 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
   const branch = `selfedit/${slug}/${ts}`;
   let probeProc: ChildProcess | null = null;
 
+  const progress = opts.onProgress ?? (() => { /* no-op */ });
+
   try {
     const wt = createNamedWorktree(name, branch);
     if (!wt) {
@@ -130,10 +135,12 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     logger.info(`[self-edit.sandbox] worktree ready at ${wt.path}`);
 
     // Run claude -p inside the worktree
+    progress("Running source-code repair in sandbox…");
     const claudeOutput = await spawnClaude(wt.path, opts.fullPrompt, opts.signal);
 
     // Gate 1: build
     logger.info(`[self-edit.sandbox] running build gate`);
+    progress("Build gate: compiling sandboxed code…");
     const build = gateBuild(name);
     if (!build.ok) {
       logger.warn(`[self-edit.sandbox] build gate failed: ${build.detail.slice(0, 200)}`);
@@ -144,6 +151,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // Gate 2: bind
     const port = pickProbePort();
     logger.info(`[self-edit.sandbox] running bind gate on port ${port}`);
+    progress(`Bind gate: launching probe server on :${port}…`);
     const bindOutcome = await gateBind(name, port, opts.signal);
     probeProc = bindOutcome.proc;
     if (!bindOutcome.result.ok) {
@@ -154,6 +162,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
 
     // Gate 3: smoke
     logger.info(`[self-edit.sandbox] running smoke gate`);
+    progress("Smoke gate: exercising probe agent…");
     const smoke = await gateSmoke(port, opts.authToken, opts.signal);
     if (!smoke.ok) {
       logger.warn(`[self-edit.sandbox] smoke gate failed: ${smoke.detail.slice(0, 200)}`);
@@ -165,6 +174,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     killProbe(probeProc);
     probeProc = null;
 
+    progress("All gates passed — merging into main…");
     const merge = mergeWorktree(name);
     if (!merge.merged) {
       return {

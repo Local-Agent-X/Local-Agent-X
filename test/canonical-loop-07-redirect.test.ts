@@ -38,6 +38,7 @@ import {
   subscribeOpSignals,
   readCanonicalEvents,
   readOpTurn,
+  setToolDispatcher,
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
 import { readOp, newOpId } from "../src/ops/op-store.js";
@@ -51,6 +52,14 @@ const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
+  // No-op dispatcher: redirect scenarios keep the loop going by having the
+  // first turn request a (non-silent) tool. Only fires when a script emits
+  // a tool call.
+  setToolDispatcher({
+    async dispatch(call) {
+      return { toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 1 };
+    },
+  });
 });
 
 afterEach(async () => {
@@ -131,7 +140,7 @@ describe("Issue 07 — redirect at next turn boundary (PRD test #5)", () => {
     // turn 1 terminates.
     const adapter = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: ["s1", "s2", "s3"], text: "turn 0" },
+        { streamChunks: ["s1", "s2", "s3"], toolCalls: [{ toolCallId: "rd-0", tool: "search", args: {} }] },
         { text: "turn 1 (after redirect)", terminal: "done" },
       ]),
     });
@@ -190,7 +199,7 @@ describe("Issue 07 — latest-wins (PRD test #6)", () => {
     const op = mkOp("latest-wins");
     const adapter = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: ["a", "b", "c"], text: "turn 0" },
+        { streamChunks: ["a", "b", "c"], toolCalls: [{ toolCallId: "lw-0", tool: "search", args: {} }] },
         { text: "turn 1 (after redirect)", terminal: "done" },
       ]),
     });
@@ -276,7 +285,7 @@ describe("Issue 07 — redirect survives pause→resume", () => {
     const op = mkOp("redirect-across-pause");
     const adapter = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: ["x"], text: "turn 0" },
+        { streamChunks: ["x"], toolCalls: [{ toolCallId: "rap-0", tool: "search", args: {} }] },
         { text: "turn 1 (after resume)", terminal: "done" },
       ]),
     });

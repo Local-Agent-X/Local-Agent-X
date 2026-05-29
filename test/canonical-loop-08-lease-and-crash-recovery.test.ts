@@ -51,6 +51,7 @@ import {
   readOpMessages,
   readOpTurn,
   decideSubmitRouting,
+  setToolDispatcher,
   type CanonicalEvent,
   type ProviderStateEnvelope,
 } from "../src/canonical-loop/index.js";
@@ -70,6 +71,14 @@ beforeEach(() => {
   // burning a half-minute per scenario. Heartbeat 25ms, lease 100ms —
   // small enough to expire quickly, big enough for committed turns.
   setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
+  // No-op dispatcher: multi-turn scenarios keep the loop going by having
+  // the first turn request a (non-silent) tool. Only fires when a script
+  // emits a tool call.
+  setToolDispatcher({
+    async dispatch(call) {
+      return { toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 1 };
+    },
+  });
 });
 
 afterEach(async () => {
@@ -234,7 +243,7 @@ describe("heartbeat keeps lease alive while running", () => {
     // around long enough for several heartbeat ticks.
     const adapter = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: Array.from({ length: 30 }, (_, i) => `s${i}`), text: "t0" },
+        { streamChunks: Array.from({ length: 30 }, (_, i) => `s${i}`), toolCalls: [{ toolCallId: "hb-0", tool: "search", args: {} }] },
         { text: "t1", terminal: "done" },
       ]),
     });
@@ -257,7 +266,10 @@ describe("heartbeat keeps lease alive while running", () => {
 
     await awaitTerminal(op.id);
     expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
-    // Lease released on terminal exit.
+    // Lease released on terminal exit. The release lands in the worker's
+    // finally block, which runs just after the succeeded state becomes
+    // visible — wait for the worker to fully drain before asserting.
+    await awaitIdle(2_000).catch(() => undefined);
     expect(readOp(op.id)?.canonical?.leaseOwner ?? null).toBeNull();
   });
 });
@@ -617,14 +629,13 @@ describe("PRD acceptance #7 — live crash recovery via heartbeat pause", () => 
     registerAdapterForOp(op.id, () => {
       attempt++;
       if (attempt === 1) {
-        // Worker A's adapter: turn 0 commits normally (no terminal, so
-        // worker proceeds), turn 1 hangs (simulates the worker being
-        // blocked when the test pauses its heartbeat).
-        // NB: scriptTurn with no `terminal` returns terminalReason: undefined,
-        // which the loop treats as "continue to next turn". scriptMultiTurn
-        // would auto-fill "done" on the last turn — we want the opposite.
+        // Worker A's adapter: turn 0 commits normally (it requests a tool,
+        // so the turn is non-terminal and the worker proceeds), turn 1
+        // hangs (simulates the worker being blocked when the test pauses
+        // its heartbeat). A tool call is what legitimately continues the
+        // loop — a text-only turn would be terminal and stop after turn 0.
         const inner = new FakeAdapter({
-          script: [scriptTurn({ text: "turn 0" })],
+          script: [scriptTurn({ toolCalls: [{ toolCallId: "lr-0", tool: "search", args: {} }] })],
         });
         const hanging = new HangingAdapter();
         const composite: Adapter = {

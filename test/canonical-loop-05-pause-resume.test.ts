@@ -35,6 +35,7 @@ import {
   subscribeOpEvents,
   subscribeOpSignals,
   readCanonicalEvents,
+  setToolDispatcher,
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
 import { readOp, newOpId } from "../src/ops/op-store.js";
@@ -48,6 +49,15 @@ const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
+  // No-op dispatcher: these tests drive multi-turn by having the first turn
+  // request a (non-silent) tool, which is what legitimately keeps the loop
+  // going to a next turn. Only invoked when a script actually emits a tool
+  // call, so single-turn tests are unaffected.
+  setToolDispatcher({
+    async dispatch(call) {
+      return { toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 1 };
+    },
+  });
 });
 
 afterEach(async () => {
@@ -174,7 +184,7 @@ describe("pause applied at next turn boundary", () => {
     const op = mkOp("turn-boundary");
     const adapter = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: ["a", "b", "c"], text: "turn 0 result" },
+        { streamChunks: ["a", "b", "c"], toolCalls: [{ toolCallId: "tb-0", tool: "search", args: {} }] },
         { text: "turn 1 should never run", terminal: "done" },
       ]),
     });
@@ -246,7 +256,7 @@ describe("opPause — error codes and idempotency", () => {
     const op = mkOp("already-paused");
     const adapter = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: ["x"], text: "t0" },
+        { streamChunks: ["x"], toolCalls: [{ toolCallId: "ap-0", tool: "search", args: {} }] },
         { text: "t1", terminal: "done" },
       ]),
     });
@@ -293,7 +303,7 @@ describe("opResume — public API surface", () => {
     const op = mkOp("resume-happy");
     const adapter = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: ["a"], text: "turn 0" },
+        { streamChunks: ["a"], toolCalls: [{ toolCallId: "rh-0", tool: "search", args: {} }] },
         { text: "turn 1 after resume", terminal: "done" },
       ]),
     });
@@ -371,7 +381,7 @@ describe("resume hands prior provider_state to the adapter", () => {
       script: scriptMultiTurn([
         {
           streamChunks: ["chunk"],
-          text: "first",
+          toolCalls: [{ toolCallId: "ps-0", tool: "search", args: {} }],
           providerStatePayload: { marker: "from-turn-0", n: 42 },
         },
         { text: "second", terminal: "done" },
@@ -413,7 +423,7 @@ describe("concurrent ops: pausing A does not disturb B", () => {
 
     const adapterA = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: ["a1"], text: "A turn 0" },
+        { streamChunks: ["a1"], toolCalls: [{ toolCallId: "ca-0", tool: "search", args: {} }] },
         { text: "A turn 1 should not run", terminal: "done" },
       ]),
     });

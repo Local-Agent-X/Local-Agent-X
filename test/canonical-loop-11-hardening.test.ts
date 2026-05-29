@@ -55,6 +55,7 @@ import {
   readOpMessages,
   subscribeOpStream,
   subscribeOpEvents,
+  setToolDispatcher,
   type ProviderStateEnvelope,
 } from "../src/canonical-loop/index.js";
 import { readOp, writeOp, newOpId } from "../src/ops/op-store.js";
@@ -69,6 +70,14 @@ const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
   setLeaseConfig({ leaseDurationMs: 200, heartbeatIntervalMs: 50 });
+  // No-op dispatcher: pause/redirect scenarios keep the loop going by having
+  // the first turn request a (non-silent) tool. Only fires when a script
+  // emits a tool call.
+  setToolDispatcher({
+    async dispatch(call) {
+      return { toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 1 };
+    },
+  });
 });
 
 afterEach(async () => {
@@ -331,7 +340,7 @@ describe("Issue 11 — pause idempotency under repeated calls", () => {
     const op = mkOp("pause-idem-race");
     const adapter = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: ["x"], text: "t0" },
+        { streamChunks: ["x"], toolCalls: [{ toolCallId: "pir-0", tool: "search", args: {} }] },
         { text: "t1", terminal: "done" },
       ]),
     });
@@ -369,7 +378,7 @@ describe("Issue 11 — pause+resume+redirect interaction is deterministic", () =
     const op = mkOp("pause-resume-redirect");
     const adapter = new FakeAdapter({
       script: scriptMultiTurn([
-        { streamChunks: ["x"], text: "turn 0" },
+        { streamChunks: ["x"], toolCalls: [{ toolCallId: "prr-0", tool: "search", args: {} }] },
         { text: "turn 1 with redirect", terminal: "done" },
       ]),
     });

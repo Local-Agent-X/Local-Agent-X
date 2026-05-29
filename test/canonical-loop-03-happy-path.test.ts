@@ -216,12 +216,21 @@ describe("Issue 03 — single-turn happy path (PRD #1)", () => {
 describe("Issue 03 — multi-turn happy path", () => {
   it("3 sequential turns reach succeeded; turn_idx 0..2 with no gaps", async () => {
     const op = mkOp("multi");
+    // Turns 0 and 1 each request a (data-returning, non-silent) tool, which
+    // is what legitimately keeps the loop going for another turn. A turn with
+    // only text and no tool call is terminal — the model has nothing to hand
+    // a next turn — so bare-text turns would short-circuit after turn 0.
+    setToolDispatcher({
+      async dispatch(call) {
+        return { toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 1 };
+      },
+    });
     registerAdapterForOp(
       op.id,
       () => new FakeAdapter({
         script: scriptMultiTurn([
-          { text: "step 1" },
-          { text: "step 2" },
+          { toolCalls: [{ toolCallId: "mt-0", tool: "search", args: { q: "0" } }] },
+          { toolCalls: [{ toolCallId: "mt-1", tool: "search", args: { q: "1" } }] },
           { text: "step 3", terminal: "done" },
         ]),
       }),
@@ -246,6 +255,35 @@ describe("Issue 03 — multi-turn happy path", () => {
     // Denormalized cache matches MAX(op_turns.turn_idx).
     expect(readOp(op.id)?.canonical?.currentTurnIdx).toBe(2);
 
+    expectInvariant(op.id);
+  });
+});
+
+// ── Tool-less turn is terminal (regression guard) ────────────────────────
+// 8c7911be / 846e231c: a turn that produced user-facing text and requested
+// zero tools is done — there is nothing for a next turn to react to. The
+// Anthropic CLI subscription path doesn't carry end_turn through, so without
+// the wrap-up short-circuit the worker drove a second "nothing to commit"
+// scratchwork turn that surfaced to the user. Pin it: even when the adapter
+// never surfaces a terminal reason, a tool-less text turn commits exactly
+// once and the op succeeds.
+describe("Issue 03 — tool-less turn terminates (no wrap-up scratchwork)", () => {
+  it("a text-only turn with no terminal signal still ends after one turn", async () => {
+    const op = mkOp("toolless-terminal");
+    const adapter = new FakeAdapter({
+      script: [
+        scriptTurn({ text: "here is your answer" }),
+        scriptTurn({ text: "SCRATCHWORK — must never run" }),
+      ],
+    });
+    registerAdapterForOp(op.id, () => adapter);
+    canonicalLoopEntry(op);
+    const events = await awaitTerminal(op.id);
+
+    const commits = events.filter(e => e.type === "turn_committed").map(e => bodyOf<{ turnIdx: number }>(e).turnIdx);
+    expect(commits).toEqual([0]);
+    expect(adapter.turnInputs.length).toBe(1);
+    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
     expectInvariant(op.id);
   });
 });

@@ -38,6 +38,7 @@ function toolSummary(name, args) {
     case 'memory_search': return `Searching memory: "${(args.query || '').slice(0, 40)}"`;
     case 'memory_save': return `Saving to ${args.target || 'daily'} memory`;
     case 'generate_image': return `Generating: ${(args.prompt || '').slice(0, 40)}...`;
+    case 'self_edit': return `Modifying LAX source: ${args.task || '(no task)'}`;
     default: return `${name} ${JSON.stringify(args).slice(0, 60)}`;
   }
 }

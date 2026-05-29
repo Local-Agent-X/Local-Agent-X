@@ -99,6 +99,7 @@ export function terminateChat(sessionId: string, opts: TerminateOptions): boolea
   if (opts.abort) {
     chat.abortController.abort();
     void releaseTurnLockSafe(sessionId);
+    void abortActiveSelfEditSafe(sessionId);
   }
 
   if (opts.errorMessage) {
@@ -120,5 +121,18 @@ async function releaseTurnLockSafe(sessionId: string): Promise<void> {
     releaseTurn(sessionId);
   } catch {
     // best-effort: lock release failures don't change terminate semantics
+  }
+}
+
+// Kill the live self_edit sandbox subprocesses immediately on user stop.
+// Without this, abort propagates only through the canonical-loop signal and
+// gets picked up at the next sandbox gate hop — leaving the chat marked done
+// while claude -p keeps running for minutes inside the worktree.
+async function abortActiveSelfEditSafe(sessionId: string): Promise<void> {
+  try {
+    const { abortActiveSelfEdit } = await import("../self-edit/session-lock.js");
+    abortActiveSelfEdit(sessionId);
+  } catch {
+    // best-effort: lock module unreachable doesn't change terminate semantics
   }
 }

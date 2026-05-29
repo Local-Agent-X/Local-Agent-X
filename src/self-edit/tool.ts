@@ -91,7 +91,12 @@ export const selfEditTool: ToolDefinition = {
     const task = String(args.task || "").trim();
     if (!task) return { content: "self_edit requires a 'task' description.", isError: true };
 
+    const onProgress = typeof args._onProgress === "function"
+      ? args._onProgress as (msg: string) => void
+      : () => { /* no-op when dispatcher didn't inject the channel */ };
+
     // Layer 2: scope-evidence gate — reject too-vague task descriptions.
+    onProgress("Checking task scope…");
     const scopeBlock = checkScopeEvidence(task);
     if (scopeBlock) return { content: scopeBlock.message, isError: true };
 
@@ -110,6 +115,7 @@ export const selfEditTool: ToolDefinition = {
     const lastUserMessage = typeof args._lastUserMessage === "string" ? args._lastUserMessage : "";
     const lastAssistantMessage = typeof args._lastAssistantMessage === "string" ? args._lastAssistantMessage : "";
     if (lastUserMessage) {
+      onProgress("Verifying intent against your last message…");
       try {
         const verdict = await checkSelfEditIntent(task, lastUserMessage, lastAssistantMessage);
         if (verdict?.verdict === "mismatch") {
@@ -131,12 +137,23 @@ export const selfEditTool: ToolDefinition = {
     // Per-session live-call guard. If another self_edit is already running for
     // this session, refuse the new call. Prevents the parallel-worktree mess
     // when a slow self_edit tempts the model to retry.
+    //
+    // The local controller lets terminateChat (chat-ws/state.ts) reach in and
+    // kill this self_edit immediately on stop. We chain the inbound `signal`
+    // and the local controller through AbortSignal.any so EITHER source fires
+    // killProcessTree in the sandbox/bypass runners. Without the local
+    // controller, stop only propagates through the canonical-loop signal,
+    // which gets noticed at the next gate hop rather than mid-claude-spawn.
     const sessionId = typeof args._sessionId === "string" ? args._sessionId : "";
+    const controller = new AbortController();
     if (sessionId) {
       const live = getActiveSelfEdit(sessionId);
       if (live) return buildLiveCallBlockedResponse(live);
-      acquireSelfEditLock(sessionId, task);
+      acquireSelfEditLock(sessionId, task, controller);
     }
+    const combinedSignal = signal
+      ? AbortSignal.any([signal, controller.signal])
+      : controller.signal;
 
     const scopeHintArg = String(args.scope_hint || "").trim();
     // Internal (server-injected) overrides — NOT in the public tool schema:
@@ -151,27 +168,33 @@ export const selfEditTool: ToolDefinition = {
     // Release the per-session live-call lock no matter how this function
     // exits — sandbox path, bypass success, spawn error, timeout. Without a
     // finally the lock would leak on the early returns and permanently block
-    // the session from issuing another self_edit.
-    const releaseLock = () => { if (sessionId) releaseSelfEditLock(sessionId); };
+    // the session from issuing another self_edit. Aborting the controller in
+    // the same finally guarantees any orphan listeners shed even on errors.
+    const releaseLock = () => {
+      if (sessionId) releaseSelfEditLock(sessionId);
+      try { controller.abort(); } catch { /* best-effort */ }
+    };
 
     try {
       // Default flow: sandboxed via worktree + 3-gate validation. Skipped when
       // _cwd is set (autopilot already provides isolation) or _unsafe is set.
       if (!internalCwd && !unsafe) {
+        onProgress("Creating sandbox worktree…");
         const { runSelfEditInSandbox, formatSandboxResult } = await import("../self-edit-sandbox.js");
         const { getRuntimeConfig } = await import("../config.js");
         const authToken = getRuntimeConfig().authToken;
         const result = await runSelfEditInSandbox({
-          task, scopeHint: scopeHintArg, signal,
-          fullPrompt, authToken,
+          task, scopeHint: scopeHintArg, signal: combinedSignal,
+          fullPrompt, authToken, onProgress,
         });
         return { content: formatSandboxResult(result), isError: !result.ok };
       }
 
       // Bypass flow: write directly to the supplied cwd (autopilot worktree
       // OR LAX_REPO_ROOT for unsafe rescues). No gates.
+      onProgress("Running source-code repair…");
       const subprocessCwd = internalCwd || LAX_REPO_ROOT;
-      return await runSelfEditBypass(subprocessCwd, fullPrompt, signal);
+      return await runSelfEditBypass(subprocessCwd, fullPrompt, combinedSignal);
     } finally {
       releaseLock();
     }

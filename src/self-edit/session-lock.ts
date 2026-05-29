@@ -2,20 +2,37 @@
 // the same chat session returns BLOCKED instead of spawning a parallel
 // worktree — prevents the "agent fired self_edit 3 times because the first
 // was slow" pattern that produces overlapping branches.
-const ACTIVE_SELF_EDITS = new Map<string, { task: string; startedAt: number }>();
+//
+// The controller field lets terminateChat reach in and abort the live
+// self_edit immediately on user-initiated stop, instead of waiting for the
+// next sandbox gate to notice the inbound signal propagation.
+const ACTIVE_SELF_EDITS = new Map<string, { task: string; startedAt: number; controller: AbortController }>();
 
 export type ActiveLiveCall = { task: string; startedAt: number };
 
 export function getActiveSelfEdit(sessionId: string): ActiveLiveCall | undefined {
-  return ACTIVE_SELF_EDITS.get(sessionId);
+  const live = ACTIVE_SELF_EDITS.get(sessionId);
+  if (!live) return undefined;
+  return { task: live.task, startedAt: live.startedAt };
 }
 
-export function acquireSelfEditLock(sessionId: string, task: string): void {
-  ACTIVE_SELF_EDITS.set(sessionId, { task, startedAt: Date.now() });
+export function acquireSelfEditLock(sessionId: string, task: string, controller: AbortController): void {
+  ACTIVE_SELF_EDITS.set(sessionId, { task, startedAt: Date.now(), controller });
 }
 
 export function releaseSelfEditLock(sessionId: string): void {
   ACTIVE_SELF_EDITS.delete(sessionId);
+}
+
+/** Abort the live self_edit for this session, if any. Returns true iff a live
+ *  call was found and its controller was signalled. Called by terminateChat
+ *  on user-initiated stop so the sandbox subprocesses die without waiting for
+ *  the next gate to notice the parent signal. */
+export function abortActiveSelfEdit(sessionId: string): boolean {
+  const live = ACTIVE_SELF_EDITS.get(sessionId);
+  if (!live) return false;
+  try { live.controller.abort(); } catch { /* best-effort */ }
+  return true;
 }
 
 export function buildLiveCallBlockedResponse(live: ActiveLiveCall) {

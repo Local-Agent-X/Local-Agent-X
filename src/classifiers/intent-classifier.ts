@@ -83,6 +83,12 @@ KINDS:
     "delete the kraken project" → free (project_delete)
   Rule of thumb: if the user is asking to CHANGE WHAT IS DISPLAYED (their data/state in the running app), that's a tool call, not a source edit. self_edit is reserved for "the feature itself is broken / missing in the code."
 
+  NOT self_edit — failures of EXTERNAL devices or networks. TV, router, printer, IoT device, smart-home gear, ADB target, any hardware the user is trying to control through a workspace app. If the user says something doesn't respond, doesn't power on, or won't pair, that's the external thing failing — NOT LAX source. Return "free" so the agent can debug the device itself (network probes, ADB checks, manufacturer protocol guidance).
+
+  NOT self_edit — failures of a WORKSPACE APP the agent built earlier in the session. Anything under workspace/apps/ is user-owned code. When the user says "the dashboard isn't working" / "my todo app's button doesn't fire" / "this app you made doesn't do X", the fix is to edit/write files in that workspace app — NOT touch LAX source. Return "free" so the agent reaches for edit/write/read on workspace paths.
+
+  NOT self_edit — VAGUE FAILURE PHRASES with no explicit LAX feature named. Phrases like "none of them worked", "3 things tried, nothing responded", "still not working", "I tried everything" do NOT by themselves mean LAX is broken — they almost always describe an external thing (device, network, third-party API) failing. Return "free" unless the user explicitly names a LAX feature, route, panel, button, or in-LAX behavior.
+
 - free — anything else. Ordinary conversation, status checks, casual questions, ambiguous requests, "how would you build..." (asking for discussion, not the build), "explain", "what is...", short acks, follow-ups, requests that don't unambiguously map to ONE of the three primitives above. When in doubt, choose "free" — forcing the wrong tool is worse than no forcing.
 
 DISTINCTIONS:
@@ -98,6 +104,11 @@ DISTINCTIONS:
 - "fix my todo app's toggle" → free (workspace edit, not LAX source — agent uses edit/write)
 - "remove all chats from the sidebar" → free (data mutation — sidebar_clear tool exists)
 - "the sidebar clear button doesn't work" → self_edit (behavior bug in LAX)
+- "the chat UI freezes when I paste an image" → self_edit (LAX feature broken)
+- "the TV won't respond to the dashboard" → free (external device, not LAX)
+- "my todo app's reorder is broken" → free (workspace app, agent uses edit/write)
+- "none of the IPs worked" → free (network/external, not LAX)
+- "3 things tried, nothing responded" → free (vague failure — external thing, not LAX)
 
 Reply with JSON only. No prose, no markdown fences.`;
 

@@ -49,11 +49,32 @@ export class ProjectStore {
   }
 
   create(project: Omit<Project, "id" | "createdAt" | "updatedAt">): Project {
+    const existing = this.findByName(project.name);
+    if (existing) {
+      const err = new Error(`Project name '${project.name}' already exists (id: ${existing.id})`) as Error & { code?: string; existingId?: string };
+      err.code = "PROJECT_NAME_EXISTS";
+      err.existingId = existing.id;
+      throw err;
+    }
     const id = "proj-" + Date.now().toString(36) + "-" + randomBytes(3).toString("hex");
     const full: Project = { ...project, id, createdAt: Date.now(), updatedAt: Date.now() };
     this.projects.push(full);
     this.persist();
     return full;
+  }
+
+  /** Case-insensitive, whitespace-trimmed name lookup. Used by the
+   *  project_create tool and the HTTP POST /api/projects route to enforce
+   *  unique project names — `create()` also throws on collision as a
+   *  defense-in-depth backstop. The MCP path in particular relied on this
+   *  because Claude CLI's multi-step tool loop kept re-issuing
+   *  project_create after each step's text reply (the friendly "want me
+   *  to add agents?" tool result read like incomplete work), and the
+   *  store was happily minting a fresh proj-... id every time. */
+  findByName(name: string): Project | null {
+    const target = name.trim().toLowerCase();
+    if (!target) return null;
+    return this.projects.find(p => p.name.trim().toLowerCase() === target) || null;
   }
 
   get(id: string): Project | null {

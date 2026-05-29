@@ -94,7 +94,26 @@ export function createProjectTools(): ToolDefinition[] {
           const name = String(args.name).trim();
           if (!name) return err("project_create requires a non-empty `name`.");
           const agentIds = Array.isArray(args.agent_ids) ? args.agent_ids.map(String) : [];
-          const project = ProjectStore.getInstance().create({
+          const store = ProjectStore.getInstance();
+
+          // Idempotent on name. Two reasons:
+          //  1. User policy: project names are unique (case-insensitive).
+          //  2. The Anthropic CLI/MCP path loops project_create when its
+          //     own text reply phrases the result as a pending question
+          //     ("want me to add agents?"). Returning the EXISTING project
+          //     with an explicit "already exists" body breaks that loop —
+          //     the model stops re-issuing "Created project ..." because
+          //     the tool result no longer reads like fresh work.
+          const existing = store.findByName(name);
+          if (existing) {
+            return ok(
+              `Project '${existing.name}' already exists (id: ${existing.id}). ` +
+              `Nothing was created. To add agents, call project_add_agent with project_id=${existing.id}. ` +
+              `If you intended a separate project, retry with a distinct name (e.g. '${name} 2' or '${name} McKinney').`,
+            );
+          }
+
+          const project = store.create({
             name,
             description: args.description ? String(args.description) : "",
             agentIds,
@@ -105,9 +124,9 @@ export function createProjectTools(): ToolDefinition[] {
           await seedRosters(project.id, agentIds);
           await broadcastProjectsChanged();
           const rosterLine = agentIds.length > 0
-            ? `\nSeeded roster: ${agentIds.length} agent(s).`
-            : `\nRoster is empty — add agents via project_add_agent or seed agent_ids on the next call.`;
-          return ok(`Created project: ${project.name} (id: ${project.id}).${rosterLine}`);
+            ? ` Seeded roster: ${agentIds.length} agent(s).`
+            : ` Roster is empty; call project_add_agent to populate it.`;
+          return ok(`Created project '${project.name}' (id: ${project.id}).${rosterLine}`);
         } catch (e) {
           return err(`Failed to create project: ${String(e)}`);
         }

@@ -45,6 +45,8 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "POST" && url.pathname === "/api/projects/from-starter") {
     const body = await safeParseBody(req);
     if (!body || !body.name) { json(400, { error: "name required" }); return true; }
+    const dup = ctx.projectStore.findByName(body.name as string);
+    if (dup) { json(409, { error: `Project name '${body.name}' already exists`, existingId: dup.id, existing: dup }); return true; }
     const project = ctx.projectStore.create({ name: body.name as string, description: (body.description as string) || "", agentIds: (body.agentIds as string[]) || [], workspace: body.workspace as string | undefined });
     await seedProjectRosters(project.id, (body.agentIds as string[]) || [], ctx);
     await broadcastProjectsChanged();
@@ -57,6 +59,8 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "POST" && url.pathname === "/api/projects") {
     const body = await safeParseBody(req);
     if (!body || !body.name) { json(400, { error: "name required" }); return true; }
+    const dup = ctx.projectStore.findByName(body.name as string);
+    if (dup) { json(409, { error: `Project name '${body.name}' already exists`, existingId: dup.id, existing: dup }); return true; }
     const project = ctx.projectStore.create({ name: body.name as string, description: (body.description as string) || "", workspace: body.workspace as string | undefined, agentIds: (body.agentIds as string[]) || [], secretKeys: body.secretKeys as string[] | undefined, allowedTools: body.allowedTools as string[] | undefined });
     // Mirror from-starter — any seeded agentIds become real roster entries
     // (the L3 source of truth). Without this, a project created with

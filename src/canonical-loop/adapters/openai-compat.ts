@@ -9,10 +9,9 @@
  * the resolved `baseURL` + `apiKey` and we stream, accumulate, finalize.
  *
  * Mirrors `codex.ts` shape: convert canonical messages →
- * ChatCompletionMessageParam[], hand off to the existing
- * `OllamaHttpAdapter` (which inherits OpenAIHttpAdapter — same code
- * path used by the legacy `runStandardAgent`), and report stream/tool/
- * done events back through the canonical contract.
+ * ChatCompletionMessageParam[], hand off to `OpenAIHttpAdapter` (the
+ * same code path used by the legacy `runStandardAgent`), and report
+ * stream/tool/done events back through the canonical contract.
  *
  * Stateless: no Codex-style `previousResponseId` chaining. Each turn
  * re-sends full history. provider_state is just `lastTurnIdx`, model,
@@ -22,7 +21,7 @@
  * after sending tools, we retry once without tools and call
  * markNoToolSupport so subsequent turns skip the dead first leg.
  * Catches qwen2's silent-fail pattern (cf. the explicit-error fallback
- * already inside OllamaHttpAdapter). For models that don't have this
+ * already inside OpenAIHttpAdapter). For models that don't have this
  * failure mode (gpt-5, grok, etc.), the condition just never fires.
  *
  * Helpers split into ./openai-compat/* — this file is the adapter class.

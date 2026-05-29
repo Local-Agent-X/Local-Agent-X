@@ -15,7 +15,7 @@ import type { ProviderRequest, StreamChunk, ProviderResponse } from "./types.js"
 export abstract class BaseAdapter {
   /**
    * Stable provider identifier used by the registry (e.g. "anthropic-http",
-   * "anthropic-cli", "openai-http", "codex-cli", "ollama-http").
+   * "anthropic-cli", "openai-http", "codex-cli").
    * Subclasses set this in their constructor or as a static field.
    */
   abstract readonly name: string;

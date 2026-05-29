@@ -57,8 +57,7 @@ export const selfEditTool: ToolDefinition = {
     "right call.\n\n" +
     "BEFORE calling self_edit, CHECK THE EXISTING TOOL LIST. If a tool already covers the intent, " +
     "use that tool — don't add a duplicate. Common misroutes that should NOT be self_edit:\n" +
-    "- 'Launch an installer' → install_software has strategy='launch' (don't add launch_installer)\n" +
-    "- 'Install software' → install_software handles it (don't add install_X)\n" +
+    "- 'Install software' / 'launch an installer' → bash with winget/brew/apt (don't add install_X)\n" +
     "- 'Run a shell command' → bash exists for this (don't add run_command)\n" +
     "- 'Edit a workspace/ file' → edit covers it (self_edit is for SOURCE only)\n" +
     "- 'Change a setting' → http_request POST to /api/settings (don't add settings_set)\n" +
@@ -127,7 +126,7 @@ export const selfEditTool: ToolDefinition = {
               `Reason: ${verdict.reason}\n\n` +
               `If the user wants the change you described, they need to ask for it explicitly. ` +
               `If you misread their intent, use a different tool. ` +
-              `Common misroutes: "launch installer" → install_software strategy='launch', "run command" → bash, "edit workspace file" → edit, "change setting" → http_request to /api/settings.`,
+              `Common misroutes: "install / launch installer" → bash with winget/brew/apt, "run command" → bash, "edit workspace file" → edit, "change setting" → http_request to /api/settings.`,
             isError: true,
           };
         }

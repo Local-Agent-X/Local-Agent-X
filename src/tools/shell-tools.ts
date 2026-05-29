@@ -89,7 +89,7 @@ export const bashTool: ToolDefinition = {
     "- Find files by name → `glob` with a pattern (NOT `find`/`Get-ChildItem -Recurse`)\n" +
     "- Edit a file → `edit` (NOT `sed`/`awk` piping)\n" +
     "- Write a file → `write` (NOT `echo >` / heredoc)\n" +
-    "- Install software → `install_software` (NOT `winget`/`brew`/`apt` directly)\n" +
+    "- Install software → `bash` with the OS package manager: `winget install <Id>` (Windows), `brew install <name>` (macOS), `apt install <name>` (Linux). For Ollama on Windows, prefer the .exe from ollama.com — the winget entry skips first-run setup.\n" +
     "- Make HTTP requests → `http_request` (NOT `curl`/`wget`/`Invoke-WebRequest`)\n" +
     "- Open a URL → `browser` (NOT `start`/`open`)\n\n" +
     "Use bash ONLY for: build/test commands the project defines (npm/yarn/pytest/cargo), git operations beyond what tool surface covers, custom user-supplied scripts, OS-level operations no native tool exposes (process listing, env vars, services). " +
@@ -355,7 +355,7 @@ export const bashTool: ToolDefinition = {
             exit_code: code,
             duration_ms: durationMs,
             av_suspect: true,
-            recovery: "Add the project folder to AV exclusions, OR use http_request / install_software / native tools to avoid spawning a shell.",
+            recovery: "Add the project folder to AV exclusions, OR use http_request / native tools to avoid spawning a shell.",
           },
         );
       }

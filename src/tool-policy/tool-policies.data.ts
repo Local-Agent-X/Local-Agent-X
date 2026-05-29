@@ -191,24 +191,24 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   delegate:        { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-delegate", decision: "allow", reason: "Task delegation", priority: 50 }] },
   // swarm_* has no family glob today: the 4 read/create tools were allowed
   // only via the risk-tier synthetic fallback; swarm_cancel was uncovered
-  // (deny-by-default). Both made explicit here to preserve today's outcome.
+  // (deny-by-default) — now gated on approval (destructive, user-initiated).
   swarm_create:     { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-swarm-create", decision: "allow", reason: "Swarm creation", priority: 50 }] },
   swarm_status:     { kernel: "internal", risk: "safe", rules: [{ id: "allow-swarm-status", decision: "allow", reason: "Swarm status (read-only)", priority: 50 }] },
-  swarm_cancel:     { kernel: "internal", risk: "destructive", rules: [{ id: "deny-swarm-cancel", decision: "deny", reason: "Swarm cancel blocked by default policy (destructive)", priority: 50 }] },
+  swarm_cancel:     { kernel: "internal", risk: "destructive", rules: [{ id: "confirm-swarm-cancel", decision: "confirm", reason: "Swarm cancel requires approval (destructive, user-initiated)", priority: 50 }] },
   swarm_list_roles: { kernel: "internal", risk: "safe", rules: [{ id: "allow-swarm-list-roles", decision: "allow", reason: "Swarm role catalog (read-only)", priority: 50 }] },
   swarm_result:     { kernel: "internal", risk: "safe", rules: [{ id: "allow-swarm-result", decision: "allow", reason: "Swarm result (read-only)", priority: 50 }] },
 
   // ── Missions / playbooks ──
   // mission_schedule_* has a family glob (allow-mission-schedule). The
   // non-schedule mission_* tools below had no glob — allowed only via the
-  // synthetic fallback (mission_delete was uncovered → deny). Made explicit.
+  // synthetic fallback (mission_delete was uncovered → deny, now approval-gated).
   mission_list:             { kernel: "internal", risk: "safe", rules: [{ id: "allow-mission-list", decision: "allow", reason: "Mission catalog (read-only)", priority: 50 }] },
   mission_get:              { kernel: "internal", risk: "safe", rules: [{ id: "allow-mission-get", decision: "allow", reason: "Mission detail (read-only)", priority: 50 }] },
   mission_save_preference:  { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-mission-save-preference", decision: "allow", reason: "Save mission preference", priority: 50 }] },
   mission_format_caption:   { kernel: "internal", risk: "safe", rules: [{ id: "allow-mission-format-caption", decision: "allow", reason: "Format mission caption (pure)", priority: 50 }] },
   mission_build:            { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-mission-build", decision: "allow", reason: "Build a mission definition", priority: 50 }] },
   mission_edit:             { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-mission-edit", decision: "allow", reason: "Edit a mission definition", priority: 50 }] },
-  mission_delete:           { kernel: "internal", risk: "destructive", rules: [{ id: "deny-mission-delete", decision: "deny", reason: "Mission delete blocked by default policy (destructive)", priority: 50 }] },
+  mission_delete:           { kernel: "internal", risk: "destructive", rules: [{ id: "confirm-mission-delete", decision: "confirm", reason: "Mission delete requires approval (destructive, user-initiated)", priority: 50 }] },
   mission_chain:            { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-mission-chain", decision: "allow", reason: "Chain missions", priority: 50 }] },
   mission_variables_set:    { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-mission-variables-set", decision: "allow", reason: "Set mission variable", priority: 50 }] },
   mission_variables_get:    { kernel: "internal", risk: "safe", rules: [{ id: "allow-mission-variables-get", decision: "allow", reason: "Get mission variable (read-only)", priority: 50 }] },

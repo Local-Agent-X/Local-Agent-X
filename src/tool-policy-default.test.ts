@@ -57,10 +57,10 @@ describe("behavior parity — representative decisions match the old table", () 
     // The 15 formerly synthetic-only / uncovered tools, now explicit:
     { tool: "swarm_create", args: {}, allowed: true, note: "was synthetic allow" },
     { tool: "swarm_status", args: {}, allowed: true, note: "was synthetic allow" },
-    { tool: "swarm_cancel", args: {}, allowed: false, note: "was uncovered → deny-by-default" },
+    { tool: "swarm_cancel", args: {}, allowed: true, confirm: true, note: "destructive → approval-gated" },
     { tool: "mission_list", args: {}, allowed: true, note: "was synthetic allow" },
     { tool: "mission_build", args: {}, allowed: true, note: "was synthetic allow" },
-    { tool: "mission_delete", args: {}, allowed: false, note: "was uncovered → deny-by-default" },
+    { tool: "mission_delete", args: {}, allowed: true, confirm: true, note: "destructive → approval-gated" },
     { tool: "not_a_real_tool_xyz", args: {}, allowed: false, note: "deny by default policy" },
   ];
 

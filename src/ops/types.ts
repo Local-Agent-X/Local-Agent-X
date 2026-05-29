@@ -21,7 +21,7 @@ export type OpStatus =
   | "needs-input"    // worker is blocked, waiting on user
   | "merge-conflict-pending"; // worktree result has conflicts to resolve
 
-export type OpLane = "interactive" | "build" | "background";
+export type OpLane = "interactive" | "build" | "background" | "agent";
 
 export type OpVisibility = "private" | "project" | "org";
 

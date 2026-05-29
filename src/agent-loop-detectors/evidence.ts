@@ -28,7 +28,6 @@ const NON_EVIDENCE_TOOLS: ReadonlySet<string> = new Set<string>([
   "session_status",
   "voice_visual",
   "agent_whoami",
-  "config_get",
 ]);
 
 /**

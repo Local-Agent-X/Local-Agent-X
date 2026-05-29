@@ -8,6 +8,7 @@ import {
   getTopicSuggestions,
 } from "./suggestions.js";
 import { detectBehavioralPatterns, learnPattern as recordPattern, updateTopicIndex } from "./detectors.js";
+import type { ModuleSignal } from "../../../orchestrator/types.js";
 
 class ProactiveMemoryImpl {
   private data: PatternsFile;
@@ -56,6 +57,19 @@ class ProactiveMemoryImpl {
   learnPattern(pattern: InteractionPattern): void {
     recordPattern(this.data, pattern);
     savePatterns(this.data);
+  }
+
+  /** Orchestrator signal: the highest-confidence proactive suggestion for the current context. */
+  signalsFor(message: string, recentMessages: Array<{ role: string; content: string }>, timeOfDay: number): ModuleSignal[] {
+    const suggestions = this.analyzeContext(message, recentMessages, timeOfDay);
+    if (!suggestions || suggestions.length === 0) return [];
+    const top = suggestions.sort((a, b) => b.confidence - a.confidence)[0];
+    return [{ source: "proactive-memory", signal: top.message, priority: 3 + Math.round(top.confidence * 4), category: "proactive", confidence: 1.0 }];
+  }
+
+  /** Record a user interaction for pattern learning. */
+  recordFrom(sessionId: string, message: string): void {
+    this.recordInteraction(sessionId, message, Date.now());
   }
 }
 

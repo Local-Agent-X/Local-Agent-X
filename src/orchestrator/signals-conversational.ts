@@ -18,39 +18,8 @@ export const conversationalSignals: CognitiveSignal[] = [
     scope: "profile",
     critical: true,
     triage: () => "always",
-    run(input, out) {
-      const emotion = EmotionalMemory.detectEmotion(input.message);
-      if (emotion.confidence > 0.3) {
-        const hint = EmotionalMemory.getAdaptationHint(emotion);
-        out.push({
-          source: "emotional-memory",
-          signal: hint,
-          priority: 5 + Math.round(emotion.confidence * 3),
-          category: "emotion",
-          confidence: 1.0,
-        });
-      }
-      const history = EmotionalMemory.getEmotionalHistory(input.sessionId, 5);
-      if (history.length >= 2) {
-        const prev = history[history.length - 1].emotion.primary;
-        const curr = emotion.primary;
-        if (prev !== curr && emotion.confidence > 0.5) {
-          out.push({
-            source: "emotional-memory",
-            signal: `Emotional shift detected: moved from ${prev} to ${curr}`,
-            priority: 7,
-            category: "emotion-shift",
-            confidence: 1.0,
-          });
-        }
-      }
-    },
-    record(input) {
-      const emotion = EmotionalMemory.detectEmotion(input.message);
-      if (emotion.confidence > 0.2) {
-        EmotionalMemory.recordEmotion(input.sessionId, emotion, input.message.slice(0, 100));
-      }
-    },
+    run: (input, out) => out.push(...EmotionalMemory.signalsFor(input.message, input.sessionId)),
+    record: input => EmotionalMemory.recordFrom(input.message, input.sessionId),
     health: () => EmotionalMemory,
   },
 
@@ -59,25 +28,8 @@ export const conversationalSignals: CognitiveSignal[] = [
     storageFile: "language-style.json",
     scope: "profile",
     triage: () => "always",
-    run(_input, out) {
-      const mirror = LanguageMirror.getInstance();
-      const profile = mirror.getStyleProfile();
-      if (profile.sampleSize > 3) {
-        const hint = mirror.getStyleHint();
-        if (hint) {
-          out.push({
-            source: "language-mirror",
-            signal: hint,
-            priority: 4,
-            category: "style",
-            confidence: 1.0,
-          });
-        }
-      }
-    },
-    record(input) {
-      LanguageMirror.getInstance().recordUserStyle(input.message);
-    },
+    run: (_input, out) => out.push(...LanguageMirror.getInstance().signalsFor()),
+    record: input => LanguageMirror.getInstance().recordFrom(input.message),
     health: () => LanguageMirror.getInstance(),
   },
 
@@ -86,37 +38,8 @@ export const conversationalSignals: CognitiveSignal[] = [
     storageFile: "trust-engine.json",
     scope: "profile",
     triage: () => "always",
-    run(_input, out) {
-      const trust = TrustEngine.getInstance();
-      const stage = trust.getRelationshipStage();
-      const adjustments = trust.getBehaviorAdjustments();
-      out.push({
-        source: "trust-engine",
-        signal: stage,
-        priority: 3,
-        category: "trust",
-        confidence: 1.0,
-      });
-      if (adjustments.personalReferences) {
-        out.push({
-          source: "trust-engine",
-          signal: "Relationship is close enough for personal references and callbacks to shared history",
-          priority: 2,
-          category: "trust-behavior",
-          confidence: 1.0,
-        });
-      }
-    },
-    record(input) {
-      const trust = TrustEngine.getInstance();
-      const emotion = EmotionalMemory.detectEmotion(input.message);
-      if (emotion.primary === "happy" || emotion.primary === "grateful" || emotion.primary === "excited") {
-        trust.recordPositiveSignal("praise");
-      }
-      if (emotion.primary === "frustrated" || emotion.primary === "angry") {
-        trust.recordNegativeSignal("frustration");
-      }
-    },
+    run: (_input, out) => out.push(...TrustEngine.getInstance().signalsFor()),
+    record: input => TrustEngine.getInstance().recordFrom(input.message),
     health: () => TrustEngine.getInstance(),
   },
 
@@ -128,19 +51,7 @@ export const conversationalSignals: CognitiveSignal[] = [
       input.message.length < 60 || /^(that|this|the one|you know|it|same)\b/i.test(input.message)
         ? "conditional"
         : null,
-    run(input, out) {
-      const refs = InsideReferences.getInstance();
-      const callback = refs.detectCallback(input.message);
-      if (callback) {
-        out.push({
-          source: "inside-references",
-          signal: `Possible inside reference: "${callback.reference}" — ${callback.originalContext}`,
-          priority: 8,
-          category: "reference",
-          confidence: 1.0,
-        });
-      }
-    },
+    run: (input, out) => out.push(...InsideReferences.getInstance().signalsFor(input.message)),
     health: () => InsideReferences.getInstance(),
   },
 
@@ -153,29 +64,7 @@ export const conversationalSignals: CognitiveSignal[] = [
       if (care.getProactiveMessage(input.timeOfDay)) return "conditional";
       return null;
     },
-    run(input, out) {
-      const care = AnticipatoryCare.getInstance();
-      const followUps = care.getFollowUps();
-      for (const fu of followUps.slice(0, 2)) {
-        out.push({
-          source: "anticipatory-care",
-          signal: `Follow up on "${fu.event.event}": ${fu.suggestedMessage}`,
-          priority: 6,
-          category: "followup",
-          confidence: 1.0,
-        });
-      }
-      const proactive = care.getProactiveMessage(input.timeOfDay);
-      if (proactive) {
-        out.push({
-          source: "anticipatory-care",
-          signal: proactive,
-          priority: 5,
-          category: "proactive",
-          confidence: 1.0,
-        });
-      }
-    },
+    run: (input, out) => out.push(...AnticipatoryCare.getInstance().signalsFor(input.timeOfDay)),
     health: () => AnticipatoryCare.getInstance(),
   },
 
@@ -186,27 +75,8 @@ export const conversationalSignals: CognitiveSignal[] = [
     critical: true,
     triage: ({ input }) =>
       SENSITIVE_KEYWORDS.some(kw => input.message.toLowerCase().includes(kw)) ? "conditional" : null,
-    run(input, out) {
-      const vuln = VulnerabilityAwareness.getInstance();
-      const share = vuln.detectVulnerability(input.message);
-      if (share) {
-        const guidance = vuln.getHandlingGuidance(share.category);
-        out.push({
-          source: "vulnerability-awareness",
-          signal: guidance,
-          priority: 9,
-          category: "vulnerability",
-          confidence: 1.0,
-        });
-      }
-    },
-    record(input) {
-      const vuln = VulnerabilityAwareness.getInstance();
-      const share = vuln.detectVulnerability(input.message);
-      if (share) {
-        vuln.recordVulnerableShare(share);
-      }
-    },
+    run: (input, out) => out.push(...VulnerabilityAwareness.getInstance().signalsFor(input.message)),
+    record: input => VulnerabilityAwareness.getInstance().recordFrom(input.message),
     veto: sig =>
       sig.priority >= 8
         ? {
@@ -221,26 +91,8 @@ export const conversationalSignals: CognitiveSignal[] = [
     id: "associative-recall",
     scope: "session",
     triage: ({ input }) => (input.message.length > 30 ? "conditional" : null),
-    run(input, out) {
-      const assoc = AssociativeMemory.getInstance();
-      const results = assoc.recall(input.message);
-      if (results.length > 0) {
-        const top = results[0];
-        out.push({
-          source: "associative-recall",
-          signal: `Related memory: ${top.content} (relevance: ${top.score.toFixed(2)})`,
-          priority: 4 + Math.round(top.score * 3),
-          category: "recall",
-          confidence: 1.0,
-        });
-      }
-    },
-    record(input) {
-      const words = input.message.split(/\s+/).filter(w => w.length > 5);
-      if (words.length >= 2) {
-        AssociativeMemory.getInstance().learnAssociation(words[0], words[1], "co-occurrence", 0.3);
-      }
-    },
+    run: (input, out) => out.push(...AssociativeMemory.getInstance().signalsFor(input.message)),
+    record: input => AssociativeMemory.getInstance().recordFrom(input.message),
     health: () => AssociativeMemory.getInstance(),
   },
 
@@ -248,26 +100,8 @@ export const conversationalSignals: CognitiveSignal[] = [
     id: "proactive-memory",
     scope: "profile",
     triage: () => "conditional",
-    run(input, out) {
-      const suggestions = ProactiveMemory.analyzeContext(
-        input.message,
-        input.sessionMessages,
-        input.timeOfDay,
-      );
-      if (suggestions && suggestions.length > 0) {
-        const top = suggestions.sort((a, b) => b.confidence - a.confidence)[0];
-        out.push({
-          source: "proactive-memory",
-          signal: top.message,
-          priority: 3 + Math.round(top.confidence * 4),
-          category: "proactive",
-          confidence: 1.0,
-        });
-      }
-    },
-    record(input) {
-      ProactiveMemory.recordInteraction(input.sessionId, input.message, Date.now());
-    },
+    run: (input, out) => out.push(...ProactiveMemory.signalsFor(input.message, input.sessionMessages, input.timeOfDay)),
+    record: input => ProactiveMemory.recordFrom(input.sessionId, input.message),
     health: () => ProactiveMemory,
   },
 
@@ -276,32 +110,8 @@ export const conversationalSignals: CognitiveSignal[] = [
     storageFile: "shared-history.json",
     scope: "profile",
     triage: () => "conditional",
-    run(_input, out) {
-      const sh = SharedHistory.getInstance();
-      const summary = sh.getRelationshipSummary();
-      if (summary.totalConversations > 5) {
-        const moments = sh.getMostMemorableMoments(3);
-        if (moments.length > 0) {
-          out.push({
-            source: "shared-history",
-            signal: `Notable shared moments: ${moments.map(m => m.description).join("; ")}`,
-            priority: 2,
-            category: "history",
-            confidence: 1.0,
-          });
-        }
-      }
-    },
-    record(input) {
-      if (input.message.length > 100) {
-        SharedHistory.getInstance().recordMoment({
-          description: input.message.slice(0, 200),
-          timestamp: Date.now(),
-          sessionId: input.sessionId,
-          significance: 3,
-        });
-      }
-    },
+    run: (_input, out) => out.push(...SharedHistory.getInstance().signalsFor()),
+    record: input => SharedHistory.getInstance().recordFrom(input.message, input.sessionId),
     health: () => SharedHistory.getInstance(),
   },
 
@@ -310,29 +120,7 @@ export const conversationalSignals: CognitiveSignal[] = [
     storageFile: "narratives.json",
     scope: "session",
     triage: ({ input }) => (STORY_PATTERNS.some(p => p.test(input.message)) ? "scheduled" : null),
-    run(input, out) {
-      const nm = NarrativeMemory.getInstance();
-      const detected = nm.autoDetectNarrative(input.sessionMessages);
-      if (detected) {
-        out.push({
-          source: "narrative-memory",
-          signal: `Ongoing story: "${detected.title}" — ${detected.summary}`,
-          priority: 4,
-          category: "narrative",
-          confidence: 1.0,
-        });
-      }
-      const ongoing = nm.getOngoingStories();
-      if (ongoing.length > 0 && !detected) {
-        out.push({
-          source: "narrative-memory",
-          signal: `Continuing narrative: "${ongoing[0].title}"`,
-          priority: 3,
-          category: "narrative",
-          confidence: 1.0,
-        });
-      }
-    },
+    run: (input, out) => out.push(...NarrativeMemory.getInstance().signalsFor(input.sessionMessages)),
     health: () => NarrativeMemory.getInstance(),
   },
 ];

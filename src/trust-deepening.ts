@@ -12,6 +12,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import { EmotionalMemory } from "./emotional-memory.js";
+import type { ModuleSignal } from "./orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -260,6 +262,34 @@ export class TrustEngine {
         return `We go way back — ${days} days, ${convos}+ conversations. I know your style, your preferences, and can anticipate what you need.`;
       case "best-friend":
         return `Ride or die — ${days} days together, ${convos}+ conversations. Full trust, full autonomy, full vibes.`;
+    }
+  }
+
+  /** Orchestrator signals: the relationship stage, plus a personal-reference cue when close enough. */
+  signalsFor(): ModuleSignal[] {
+    const out: ModuleSignal[] = [
+      { source: "trust-engine", signal: this.getRelationshipStage(), priority: 3, category: "trust", confidence: 1.0 },
+    ];
+    if (this.getBehaviorAdjustments().personalReferences) {
+      out.push({
+        source: "trust-engine",
+        signal: "Relationship is close enough for personal references and callbacks to shared history",
+        priority: 2,
+        category: "trust-behavior",
+        confidence: 1.0,
+      });
+    }
+    return out;
+  }
+
+  /** Translate the message's emotional tone into a trust signal. */
+  recordFrom(message: string): void {
+    const emotion = EmotionalMemory.detectEmotion(message);
+    if (emotion.primary === "happy" || emotion.primary === "grateful" || emotion.primary === "excited") {
+      this.recordPositiveSignal("praise");
+    }
+    if (emotion.primary === "frustrated" || emotion.primary === "angry") {
+      this.recordNegativeSignal("frustration");
     }
   }
 

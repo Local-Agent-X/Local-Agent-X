@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import type { ModuleSignal } from "./orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -373,6 +374,20 @@ export class NarrativeMemory {
     const firstSentence = event.split(/[.!?]/)[0].trim();
     if (firstSentence.length <= 80) return firstSentence;
     return firstSentence.slice(0, 77) + "...";
+  }
+
+  /** Orchestrator signals: a freshly detected story, or a reminder of an ongoing one. */
+  signalsFor(sessionMessages: { role: string; content: string }[]): ModuleSignal[] {
+    const out: ModuleSignal[] = [];
+    const detected = this.autoDetectNarrative(sessionMessages);
+    if (detected) {
+      out.push({ source: "narrative-memory", signal: `Ongoing story: "${detected.title}" — ${detected.summary}`, priority: 4, category: "narrative", confidence: 1.0 });
+    }
+    const ongoing = this.getOngoingStories();
+    if (ongoing.length > 0 && !detected) {
+      out.push({ source: "narrative-memory", signal: `Continuing narrative: "${ongoing[0].title}"`, priority: 3, category: "narrative", confidence: 1.0 });
+    }
+    return out;
   }
 
   private buildSummary(narrative: Narrative): string {

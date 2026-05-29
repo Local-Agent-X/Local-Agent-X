@@ -12,6 +12,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import { SharedHistory } from "./shared-history.js";
+import type { ModuleSignal } from "./orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -331,6 +333,25 @@ export class MilestoneCelebrator {
   setBirthday(date: string): void {
     this.store.birthday = date;
     saveStore(this.store);
+  }
+
+  /** Orchestrator signals: celebrations for any milestones the current relationship totals cross. */
+  signalsFor(): ModuleSignal[] {
+    const summary = SharedHistory.getInstance().getRelationshipSummary();
+    const context = {
+      conversationCount: summary.totalConversations || 0,
+      appCount: summary.totalApps || 0,
+      daysTogether: summary.daysTogether || 0,
+      toolsUsed: [] as string[],
+      streak: 0,
+    };
+    return this.checkMilestones(context).map(m => ({
+      source: "milestone-celebrations",
+      signal: this.celebrate(m),
+      priority: 8,
+      category: "milestone",
+      confidence: 1.0,
+    }));
   }
 
   /** Reload store from disk. */

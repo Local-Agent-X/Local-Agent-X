@@ -2,6 +2,7 @@ import type { UpcomingEvent, FollowUp } from "./types.js";
 import { loadStore, saveStore, generateId, parseDate, DAY_MS } from "./persistence.js";
 import { resolveRelativeDate } from "./date-parser.js";
 import { EVENT_PATTERNS, guessImportance } from "./detection.js";
+import type { ModuleSignal } from "../orchestrator/types.js";
 
 export class AnticipatoryCare {
   private static instance: AnticipatoryCare | null = null;
@@ -180,6 +181,19 @@ export class AnticipatoryCare {
       event.followedUp = true;
       saveStore(store);
     }
+  }
+
+  /** Orchestrator signals: due follow-ups and any time-appropriate proactive message. */
+  signalsFor(timeOfDay: number): ModuleSignal[] {
+    const out: ModuleSignal[] = [];
+    for (const fu of this.getFollowUps().slice(0, 2)) {
+      out.push({ source: "anticipatory-care", signal: `Follow up on "${fu.event.event}": ${fu.suggestedMessage}`, priority: 6, category: "followup", confidence: 1.0 });
+    }
+    const proactive = this.getProactiveMessage(timeOfDay);
+    if (proactive) {
+      out.push({ source: "anticipatory-care", signal: proactive, priority: 5, category: "proactive", confidence: 1.0 });
+    }
+    return out;
   }
 
   private buildFollowUpMessage(event: UpcomingEvent, daysSince: number): string {

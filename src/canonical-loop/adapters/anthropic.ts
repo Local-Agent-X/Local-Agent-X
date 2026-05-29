@@ -169,6 +169,15 @@ export class AnthropicAdapter implements Adapter {
     let terminalReason: "done" | "error" | undefined;
     if (this.aborted) {
       terminalReason = "error";
+    } else if (result.interruptedByInject) {
+      // Stream cut short by mid-turn user inject — NOT an error. terminalReason
+      // is "done" so the worker checks hasInjects, sees true, and continues
+      // to the next iteration where drainInjectsIntoTurn surfaces the inject
+      // text. Treating this as "error" + sticky this.aborted (the old
+      // behavior) killed the next iteration before the model could see the
+      // inject. xAI Grok exposed this via HTTP streaming; the CLI
+      // adapters happened to mask it but the bug is structurally the same.
+      terminalReason = "done";
     } else if (result.firstError) {
       terminalReason = "error";
     } else if (result.toolCallIds.length > 0) {
@@ -233,12 +242,14 @@ export class AnthropicAdapter implements Adapter {
       isAborted: () => this.aborted,
       sessionId: this.opts.sessionId,
     });
-    // Mid-stream inject interrupt: streamConsume broke out of the loop
-    // and flagged this on the result. Flip the adapter's aborted flag
-    // AND abort the transport's signal so its subprocess/HTTP request
-    // tears down. Same effect as before the extraction.
+    // Mid-stream inject interrupt: streamConsume broke out of the loop and
+    // flagged this on the result. Abort the transport's signal so the CLI
+    // subprocess / HTTP request tears down promptly, but DO NOT set
+    // this.aborted — that flag is sticky across runTurn calls and would
+    // short-circuit the next iteration before drainInjectsIntoTurn could
+    // surface the inject text. result.interruptedByInject flows through to
+    // runTurn which picks terminalReason='done' so the worker continues.
     if (result.interruptedByInject) {
-      this.aborted = true;
       try { this.aborter?.abort(); } catch { /* already aborted */ }
     }
     return result;

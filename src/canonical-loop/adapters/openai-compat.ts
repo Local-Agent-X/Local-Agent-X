@@ -110,6 +110,7 @@ export class OpenAICompatAdapter implements Adapter {
     // grok, sonnet) — they don't silent-fail on tools.
     const noOutput =
       !this.aborted &&
+      !result.interruptedByInject &&
       !result.firstError &&
       result.assembledText.length === 0 &&
       result.pendingToolCalls.length === 0;
@@ -143,6 +144,7 @@ export class OpenAICompatAdapter implements Adapter {
 
     let terminalReason: "done" | "error" | undefined;
     if (this.aborted) terminalReason = "error";
+    else if (result.interruptedByInject) terminalReason = "done";
     else if (firstError) terminalReason = "error";
     else if (pendingToolCalls.length > 0) terminalReason = undefined;
     else terminalReason = "done";
@@ -197,11 +199,17 @@ export class OpenAICompatAdapter implements Adapter {
       sessionId: this.opts.sessionId,
     });
     // Mid-stream inject interrupt: streamOnce broke out of the loop and
-    // flagged this on the result. Flip the adapter's aborted flag so
-    // post-stream handling (terminalReason resolution, empty-response
-    // retry guard) treats the turn as aborted, same effect as before
-    // the extraction.
-    if (result.interruptedByInject) this.aborted = true;
+    // flagged this on the result. The flag flows through to the caller via
+    // result.interruptedByInject — runTurn uses it to skip the empty-
+    // response retry and pick terminalReason='done' (not 'error') so the
+    // worker continues into the next iteration where drainInjectsIntoTurn
+    // surfaces the user's text. DO NOT set this.aborted here — that flag
+    // is sticky across runTurn calls (see line 64) and would short-circuit
+    // the next iteration before the inject could be drained, killing the
+    // stream and ignoring the user's message. Observed on xAI Grok: HTTP
+    // streaming surfaces events fast enough that this code path fires
+    // mid-stream reliably; Anthropic/Codex CLI transports buffer enough
+    // that they rarely hit it, which is why the bug only showed up there.
     return result;
   }
 }

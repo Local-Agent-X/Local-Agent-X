@@ -78,6 +78,12 @@ export class CodexAdapter implements Adapter {
     let newResponseId: string | undefined;
     let usageInputTokens: number | undefined;
     let usageOutputTokens: number | undefined;
+    // Set when the streaming loop breaks because hasInjects() fired. Distinct
+    // from this.aborted (cancel/error path) — terminalReason resolves to
+    // "done" so the worker continues to the next iteration where
+    // drainInjectsIntoTurn surfaces the inject. See openai-compat.ts /
+    // anthropic.ts for the matching fix.
+    let interruptedByInject = false;
 
     const forcedToolChoice = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
 
@@ -104,7 +110,9 @@ export class CodexAdapter implements Adapter {
           // stream so the next driveTurn drains the inject and the model
           // sees the user's message on its next API call.
           if (this.opts.sessionId && hasInjects(this.opts.sessionId)) {
-            this.aborted = true;
+            // DO NOT set this.aborted — sticky across runTurn calls, would
+            // short-circuit the next iteration before the inject lands.
+            interruptedByInject = true;
             try { this.aborter?.abort(); } catch { /* already aborted */ }
             break;
           }
@@ -160,6 +168,7 @@ export class CodexAdapter implements Adapter {
     // chat-mp5psjdd-ersqf on gpt-5.5 — 120s turn, 0 output, 0 tools, no error.
     const noOutput =
       !this.aborted &&
+      !interruptedByInject &&
       !firstError &&
       assembledText.length === 0 &&
       pendingToolCalls.length === 0;
@@ -221,6 +230,11 @@ export class CodexAdapter implements Adapter {
     let terminalReason: "done" | "error" | undefined;
     if (this.aborted) {
       terminalReason = "error";
+    } else if (interruptedByInject) {
+      // Stream cut short by mid-turn user inject. terminalReason='done' so
+      // the worker sees hasInjects=true and continues to the next iteration
+      // where drainInjectsIntoTurn surfaces the inject text.
+      terminalReason = "done";
     } else if (firstError) {
       terminalReason = "error";
     } else if (toolCallIds.length > 0) {

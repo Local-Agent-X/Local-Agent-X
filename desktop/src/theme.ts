@@ -9,8 +9,8 @@ import type { DesktopSettings } from "./settings";
 // the macOS traffic-light strip when the title bar is hidden, and as the
 // initial fill before HTML loads.
 export function bgForTheme(theme: DesktopSettings["theme"]): string {
-  if (theme === "light") return "#ffffff";
-  if (theme === "system") return nativeTheme.shouldUseDarkColors ? "#0a0a0f" : "#ffffff";
+  if (theme === "light") return "#f5f5f7";
+  if (theme === "system") return nativeTheme.shouldUseDarkColors ? "#0a0a0f" : "#f5f5f7";
   return "#0a0a0f";
 }
 
@@ -22,7 +22,7 @@ export function overlayForTheme(theme: DesktopSettings["theme"]): { color: strin
   const isDark = theme === "dark" || (theme === "system" && nativeTheme.shouldUseDarkColors);
   return isDark
     ? { color: "#0a0a0f", symbolColor: "#40f0f0", height: 32 }
-    : { color: "#ffffff", symbolColor: "#1a1a2e", height: 32 };
+    : { color: "#f5f5f7", symbolColor: "#1a1a2e", height: 32 };
 }
 
 // Tells Windows itself which theme our app prefers. Without this set,

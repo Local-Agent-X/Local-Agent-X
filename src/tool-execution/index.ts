@@ -6,4 +6,4 @@ export { executeToolCalls, dispatchSingleToolCall, checkAndCompact, checkAndComp
 export type { UnifiedDispatchCtx } from "./execute-tool.js";
 export { markDryRunSession, unmarkDryRunSession } from "./resolve-tool.js";
 export { getRiskLevel, buildApprovalContext } from "./approval-context.js";
-export { isTransientError, ToolBlocked } from "./errors.js";
+export { ToolBlocked } from "./errors.js";

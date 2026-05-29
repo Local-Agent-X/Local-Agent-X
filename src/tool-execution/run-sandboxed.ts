@@ -13,20 +13,9 @@ import { recordToolCall as recordRateLimit } from "../tool-rate-limiter.js";
 import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
-import { isTransientError } from "./errors.js";
+import { isRetryable, isRetryableTool } from "../resilience-policy.js";
 
 const logger = createLogger("tool-execution");
-
-// Tools whose failures are usually transient (network, rate limit).
-const RETRYABLE_TOOLS = new Set([
-  "http_request",
-  "web_fetch",
-  "web_search",
-  "browser",
-]);
-
-// Tools whose failures are deterministic — never retry.
-const NEVER_RETRY = new Set(["bash", "write", "edit", "agent_spawn", "delegate"]);
 
 export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
@@ -38,7 +27,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
 
   const startedAt = Date.now();
   ctx.startedAt = startedAt;
-  const shouldRetry = RETRYABLE_TOOLS.has(tc.name) && !NEVER_RETRY.has(tc.name);
+  const shouldRetry = isRetryableTool(tc.name);
 
   try {
     if (shouldRetry) {
@@ -46,7 +35,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
         maxRetries: 2,
         baseDelayMs: 500,
         maxDelayMs: 4000,
-        shouldRetry: (err) => isTransientError(err),
+        shouldRetry: (err, attempt) => isRetryable(err, { toolName: tc.name, attempt }),
         ctx: getRetryContext(sessionId),
         layer: "L1-tool",
       });

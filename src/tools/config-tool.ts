@@ -1,22 +1,5 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
-import { getLaxDir } from '../lax-data-dir.js';
+import { loadSettings, saveSettings } from '../settings.js';
 import type { ToolDefinition, ToolResult } from '../types.js';
-
-const SETTINGS_PATH = join(getLaxDir(), 'settings.json');
-
-async function loadSettings(): Promise<Record<string, unknown>> {
-  try {
-    return JSON.parse(await readFile(SETTINGS_PATH, 'utf-8'));
-  } catch {
-    return {};
-  }
-}
-
-async function saveSettings(data: Record<string, unknown>): Promise<void> {
-  await mkdir(dirname(SETTINGS_PATH), { recursive: true });
-  await writeFile(SETTINGS_PATH, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-}
 
 function coerce(value: string): unknown {
   if (value === 'true') return true;
@@ -37,7 +20,7 @@ const configGet: ToolDefinition = {
     },
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const settings = await loadSettings();
+    const settings = loadSettings();
     const key = args.key as string | undefined;
     if (key) {
       const val = settings[key];
@@ -66,10 +49,10 @@ const configSet: ToolDefinition = {
     if (!key || raw === undefined) {
       return { content: 'Both "key" and "value" are required.', isError: true };
     }
-    const settings = await loadSettings();
+    const settings = { ...loadSettings() };
     const coerced = coerce(raw);
     settings[key] = coerced;
-    await saveSettings(settings);
+    saveSettings(settings);
     return { content: `Set "${key}" = ${JSON.stringify(coerced)}`, metadata: { key, value: coerced } };
   },
 };

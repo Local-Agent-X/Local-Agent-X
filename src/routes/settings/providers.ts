@@ -1,8 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody } from "../../server-utils.js";
 import { getRuntimeConfig } from "../../config.js";
+import { loadSettings, saveSettings } from "../../settings.js";
 import { isEmbeddingModel } from "../../canonical-loop/model-capabilities.js";
 import type { ProviderId } from "../../providers/provider-ids.js";
 import { PROVIDERS } from "../../providers/registry.js";
@@ -33,14 +32,11 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // current.provider="xai" the UI couldn't render. Mirror the request-
     // resolution logic so the dropdown reflects what would actually run.
     let currentProvider = "", currentModel = "";
-    try {
-      const sp = join(ctx.dataDir, "settings.json");
-      if (existsSync(sp)) {
-        const s = JSON.parse(readFileSync(sp, "utf-8"));
-        if (s.provider) currentProvider = String(s.provider);
-        if (s.model) currentModel = String(s.model);
-      }
-    } catch {}
+    {
+      const s = loadSettings();
+      if (s.provider) currentProvider = String(s.provider);
+      if (s.model) currentModel = String(s.model);
+    }
     if (!currentProvider) {
       // Auto-detect priority matches resolve-provider.ts's fallback chain
       // so the UI dropdown and the request path agree on which provider
@@ -136,9 +132,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       }
     }
 
-    const settingsPath = join(ctx.dataDir, "settings.json");
-    let settings: Record<string, unknown> = {};
-    try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
+    const settings = { ...loadSettings() };
     // If no model specified, auto-pick the first model for the new provider —
     // otherwise we'd leave the previous provider's model (e.g. gpt-5.4)
     // paired with a different provider (anthropic) and every next turn would
@@ -152,7 +146,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     }
     settings.provider = provider;
     if (model) settings.model = model;
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    saveSettings(settings);
     // Broadcast so every open browser tab (bottom status bar, model selector)
     // updates instantly instead of staying on the stale provider.
     try {

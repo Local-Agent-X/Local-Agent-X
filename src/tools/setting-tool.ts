@@ -23,16 +23,9 @@
 import { z } from "zod";
 import { FLIPPABLE_SETTINGS, RUNTIME_SETTINGS, BROADCAST_KEYS } from "../settings-schema.js";
 import { getRuntimeConfig, saveConfig } from "../config.js";
-import { atomicWriteFileSync } from "../server-utils.js";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { loadSettings, saveSettings } from "../settings.js";
 import type { ToolDefinition } from "../types.js";
-import { getLaxDir } from "../lax-data-dir.js";
 import { ok, err } from "./result-helpers.js";
-
-function settingsPath(): string {
-  return join(getLaxDir(), "settings.json");
-}
 
 function listKnownFields(): string {
   return FLIPPABLE_SETTINGS.map((s) => {
@@ -93,10 +86,8 @@ export const settingTool: ToolDefinition = {
     const newValue = parsed.data;
 
     // 1) Persist to settings.json (UI cache + UI-only fields read here).
-    let existing: Record<string, unknown> = {};
-    try { if (existsSync(settingsPath())) existing = JSON.parse(readFileSync(settingsPath(), "utf-8")); } catch {}
-    const merged = { ...existing, [fieldName]: newValue };
-    atomicWriteFileSync(settingsPath(), JSON.stringify(merged, null, 2), { mode: 0o600 });
+    const merged = { ...loadSettings(), [fieldName]: newValue };
+    saveSettings(merged);
 
     // 2) If runtime-bound, mirror to config.json + in-memory ctx.config
     //    so the gate / dispatcher reads the new value on the next call.

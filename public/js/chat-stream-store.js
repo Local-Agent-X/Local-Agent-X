@@ -49,6 +49,12 @@
       // Single stop notice per turn — last write wins.
       stopNote: null,
       opId: null,
+      // Ops we've already seen `done` for. A late chat_op_started carrying
+      // one of these (server replay, dying subprocess, race after stop)
+      // would otherwise re-light the streaming indicator on a finished
+      // turn — see the self_edit stop-button regression where the chat
+      // showed streaming for minutes after a successful stop.
+      doneOpIds: new Set(),
       lastSeenSeq: -1,
       lastActivityMs: 0,
       status: 'idle',
@@ -139,6 +145,12 @@
     const now = Date.now();
     switch (event.type) {
       case 'chat_op_started':
+        if (event.opId && e.doneOpIds.has(event.opId)) {
+          // Stale start for an op we've already ended. Don't overwrite the
+          // current opId with the dead one and don't re-light streaming.
+          e.lastActivityMs = now;
+          break;
+        }
         if (event.opId) { e.opId = event.opId; e.lastSeenSeq = -1; }
         if (e.status === 'idle' || e.status === 'done') e.status = 'streaming';
         e.lastActivityMs = now;
@@ -209,6 +221,7 @@
         e.lastActivityMs = now;
         break;
       case 'done':
+        if (e.opId) e.doneOpIds.add(e.opId);
         e.status = 'done';
         e.opId = null;
         e.lastActivityMs = now;
@@ -258,6 +271,7 @@
         e.toolEvents.push({ type: 'end', name: te.name, allowed: true, result: '(interrupted)' });
       }
     }
+    if (e.opId) e.doneOpIds.add(e.opId);
     e.status = 'done';
     e.opId = null;
     if (reason) e.abortReason = reason;

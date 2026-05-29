@@ -12,6 +12,7 @@
  * collapsed back into an `if (provider === "anthropic")` branch.
  */
 import type { ProviderId } from "./provider-ids.js";
+import { AUTH_PROVIDERS, type AuthProvider } from "../auth/auth-provider.js";
 
 /** Provider capability flags. Used to gate reasoning_effort, tools, etc. */
 export interface ProviderCapabilities {
@@ -47,6 +48,8 @@ export interface ProviderMetaHttp {
   /** Secret name in SecretsStore. Empty when no key is required (local). */
   envKey: string;
   capabilities: ProviderCapabilities;
+  /** Credential resolution adapter — the auth seam. */
+  auth: AuthProvider;
 }
 
 /** CLI transport — anthropic via the claude subprocess. */
@@ -58,6 +61,8 @@ export interface ProviderMetaCli {
   defaultModel: string;
   cliBinary: string;
   capabilities: ProviderCapabilities;
+  /** Credential resolution adapter — the auth seam. */
+  auth: AuthProvider;
 }
 
 export type ProviderMeta = ProviderMetaHttp | ProviderMetaCli;
@@ -83,6 +88,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     baseURL: "https://api.x.ai/v1",
     envKey: "XAI_API_KEY",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_GROK },
+    auth: AUTH_PROVIDERS.xai,
   },
   openai: {
     transport: "http",
@@ -93,6 +99,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     baseURL: "https://api.openai.com/v1",
     envKey: "OPENAI_API_KEY",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_OPENAI_FAMILY },
+    auth: AUTH_PROVIDERS.openai,
   },
   codex: {
     transport: "http",
@@ -107,6 +114,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     baseURL: "https://api.openai.com/v1",
     envKey: "",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_OPENAI_FAMILY },
+    auth: AUTH_PROVIDERS.codex,
   },
   anthropic: {
     transport: "cli",
@@ -124,6 +132,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     defaultModel: "claude-opus-4-8",
     cliBinary: "claude",
     capabilities: { tools: true, streaming: true, reasoning: false },
+    auth: AUTH_PROVIDERS.anthropic,
   },
   gemini: {
     transport: "http",
@@ -138,6 +147,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     envKey: "GEMINI_API_KEY",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_GEMINI },
+    auth: AUTH_PROVIDERS.gemini,
   },
   cerebras: {
     transport: "http",
@@ -148,6 +158,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     baseURL: "https://api.cerebras.ai/v1",
     envKey: "CEREBRAS_API_KEY",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_OSS },
+    auth: AUTH_PROVIDERS.cerebras,
   },
   local: {
     transport: "http",
@@ -158,6 +169,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     baseURL: (ctx) => `${ctx.ollamaUrl}/v1`,
     envKey: "",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_OSS },
+    auth: AUTH_PROVIDERS.local,
   },
   "ollama-cloud": {
     transport: "http",
@@ -172,6 +184,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     baseURL: () => null,
     envKey: "OLLAMA_CLOUD_API_KEY",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_OSS },
+    auth: AUTH_PROVIDERS["ollama-cloud"],
   },
   custom: {
     transport: "http",
@@ -182,6 +195,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     baseURL: (ctx) => ctx.customBaseURL || null,
     envKey: "CUSTOM_API_KEY",
     capabilities: { tools: true, streaming: true, reasoning: false },
+    auth: AUTH_PROVIDERS.custom,
   },
 };
 

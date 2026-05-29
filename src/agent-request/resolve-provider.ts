@@ -27,30 +27,15 @@ export async function resolveProvider(
   temperature: number;
   maxIterations: number;
 }> {
-  const { loadTokens } = await import("../auth/index.js");
-  const { loadAnthropicTokens } = await import("../auth/anthropic.js");
-  const { loadXaiTokens } = await import("../auth/xai.js");
-
   // Load saved settings (spread because the codepath blanks saved.model below)
   const saved: Record<string, unknown> = { ...loadSettings() };
 
   // Resolve provider. If a saved provider exists but has no usable credentials,
   // fall through to auto-detection so a stale "codex" default from a previous
-  // run doesn't block a freshly-signed-in Anthropic user.
-  const hasCredsFor = (p: ProviderId): boolean => {
-    const meta = PROVIDERS[p];
-    // CLI transport (anthropic): trust the auth-anthropic token check.
-    if (!isHttpProvider(meta)) return !!loadAnthropicTokens();
-    // Codex uses ChatGPT OAuth, not a SecretsStore key.
-    if (p === "codex") return !!loadTokens();
-    // OpenAI accepts either a config-level key or the SecretsStore.
-    if (p === "openai") return !!(config.openaiApiKey || secretsStore.get(meta.envKey));
-    // xAI accepts either OAuth (SuperGrok / X Premium+) or an API key.
-    if (p === "xai") return !!(loadXaiTokens() || secretsStore.get(meta.envKey));
-    // Local Ollama needs no key.
-    if (meta.envKey === "") return true;
-    return !!secretsStore.get(meta.envKey);
-  };
+  // run doesn't block a freshly-signed-in Anthropic user. Each provider's
+  // auth adapter owns the per-provider presence check.
+  const hasCredsFor = (p: ProviderId): boolean =>
+    PROVIDERS[p].auth.hasCredential({ secretsStore, configOpenAIKey: config.openaiApiKey });
   // Caller-supplied override takes precedence if creds are available.
   // Lets a worker honor op.contextPack.routing.preferredProvider without
   // having to mutate settings.json.
@@ -72,9 +57,9 @@ export async function resolveProvider(
     // xAI (OAuth or API key) takes priority — Grok is the default on fresh
     // installs and stays the default when the user has multiple providers
     // configured but hasn't explicitly picked one in settings.json.
-    if (loadXaiTokens() || secretsStore.get("XAI_API_KEY")) provider = "xai";
-    else if (loadAnthropicTokens()) provider = "anthropic";
-    else if (loadTokens() && !config.openaiApiKey) provider = "codex";
+    if (hasCredsFor("xai")) provider = "xai";
+    else if (hasCredsFor("anthropic")) provider = "anthropic";
+    else if (hasCredsFor("codex") && !config.openaiApiKey) provider = "codex";
     else provider = "xai"; // no creds anywhere → xai fallback so the picker shows Grok
     providerWasOverridden = true;
   }
@@ -89,31 +74,17 @@ export async function resolveProvider(
   let customBaseURL: string | undefined;
 
   const meta = PROVIDERS[provider];
+  const r = await resolveCredential(provider, { configOpenAIKey: config.openaiApiKey });
+  apiKey = r?.credential ?? "";
+
   if (!isHttpProvider(meta)) {
-    // CLI transport: anthropic via Claude CLI subprocess.
-    const r = await resolveCredential("anthropic");
-    apiKey = r?.credential ?? "";
+    // Anthropic (CLI transport) also carries a Codex side-key so build_app
+    // can route through the Codex CLI even when the main provider is Claude.
     const cr = await resolveCredential("codex", { configOpenAIKey: config.openaiApiKey });
     codexApiKey = cr?.credential || undefined;
     if (!codexApiKey) codexApiKey = secretsStore.get("OPENAI_API_KEY") || undefined;
-  } else if (provider === "local") {
-    apiKey = "ollama";
-  } else if (provider === "codex") {
-    const r = await resolveCredential("codex", { configOpenAIKey: config.openaiApiKey });
-    apiKey = r?.credential ?? "";
-  } else if (provider === "openai") {
-    const r = await resolveCredential("openai", { configOpenAIKey: config.openaiApiKey });
-    apiKey = r?.credential ?? "";
-  } else if (provider === "xai") {
-    const r = await resolveCredential("xai");
-    apiKey = r?.credential ?? "";
   } else if (provider === "custom") {
-    const r = await resolveCredential("custom");
-    apiKey = r?.credential ?? "";
     customBaseURL = getSetting<string>("customBaseUrl") || undefined;
-  } else {
-    const r = await resolveCredential(provider);
-    apiKey = r?.credential ?? "";
   }
 
   // Default model — registry is SoT. Falls back to config.model when

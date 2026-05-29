@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import type { ModuleSignal } from "./orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -379,6 +380,44 @@ class EmotionalMemoryImpl {
    */
   getAdaptationHint(currentEmotion: EmotionState): string {
     return ADAPTATION_HINTS[currentEmotion.primary] || ADAPTATION_HINTS.calm;
+  }
+
+  /** Orchestrator signals for the current message: adaptation hint plus a shift cue. */
+  signalsFor(message: string, sessionId: string): ModuleSignal[] {
+    const out: ModuleSignal[] = [];
+    const emotion = this.detectEmotion(message);
+    if (emotion.confidence > 0.3) {
+      out.push({
+        source: "emotional-memory",
+        signal: this.getAdaptationHint(emotion),
+        priority: 5 + Math.round(emotion.confidence * 3),
+        category: "emotion",
+        confidence: 1.0,
+      });
+    }
+    const history = this.getEmotionalHistory(sessionId, 5);
+    if (history.length >= 2) {
+      const prev = history[history.length - 1].emotion.primary;
+      const curr = emotion.primary;
+      if (prev !== curr && emotion.confidence > 0.5) {
+        out.push({
+          source: "emotional-memory",
+          signal: `Emotional shift detected: moved from ${prev} to ${curr}`,
+          priority: 7,
+          category: "emotion-shift",
+          confidence: 1.0,
+        });
+      }
+    }
+    return out;
+  }
+
+  /** Passively record the message's emotion when confident enough to be worth keeping. */
+  recordFrom(message: string, sessionId: string): void {
+    const emotion = this.detectEmotion(message);
+    if (emotion.confidence > 0.2) {
+      this.recordEmotion(sessionId, emotion, message.slice(0, 100));
+    }
   }
 }
 

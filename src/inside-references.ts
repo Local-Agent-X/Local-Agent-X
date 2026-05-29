@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import type { ModuleSignal } from "./orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -321,5 +322,12 @@ export class InsideReferences {
     const best = candidates[0].ref;
 
     return `Remember "${best.phrase}"? ${best.means} — first came up on ${best.firstUsed}.`;
+  }
+
+  /** Orchestrator signal: surface an inside reference the message seems to invoke. */
+  signalsFor(message: string): ModuleSignal[] {
+    const callback = this.detectCallback(message);
+    if (!callback) return [];
+    return [{ source: "inside-references", signal: `Possible inside reference: "${callback.reference}" — ${callback.originalContext}`, priority: 8, category: "reference", confidence: 1.0 }];
   }
 }

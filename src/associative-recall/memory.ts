@@ -10,6 +10,7 @@ import {
 import { loadStore, saveStore } from "./persistence.js";
 import { buildAssociations, upsertAssociation } from "./builder.js";
 import { findByContext, getAssociationWeb, recall } from "./query.js";
+import type { ModuleSignal } from "../orchestrator/types.js";
 
 export class AssociativeMemory {
   private static instance: AssociativeMemory | null = null;
@@ -69,6 +70,22 @@ export class AssociativeMemory {
     if (node) {
       node.content = content;
       saveStore(this.store);
+    }
+  }
+
+  /** Orchestrator signal: the strongest memory associated with the message. */
+  signalsFor(message: string): ModuleSignal[] {
+    const results = this.recall(message);
+    if (results.length === 0) return [];
+    const top = results[0];
+    return [{ source: "associative-recall", signal: `Related memory: ${top.content} (relevance: ${top.score.toFixed(2)})`, priority: 4 + Math.round(top.score * 3), category: "recall", confidence: 1.0 }];
+  }
+
+  /** Learn a weak co-occurrence association from the message's salient words. */
+  recordFrom(message: string): void {
+    const words = message.split(/\s+/).filter(w => w.length > 5);
+    if (words.length >= 2) {
+      this.learnAssociation(words[0], words[1], "co-occurrence", 0.3);
     }
   }
 }

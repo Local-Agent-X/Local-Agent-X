@@ -16,6 +16,7 @@ import {
 } from "./detectors.js";
 import { getInsights, suggestAutomation } from "./suggestions.js";
 import { fuzzyMatch } from "./text-utils.js";
+import type { ModuleSignal } from "../orchestrator/types.js";
 
 export class CrossSessionLearner {
   private static instance: CrossSessionLearner;
@@ -80,5 +81,13 @@ export class CrossSessionLearner {
 
   fuzzyMatch(a: string, b: string): number {
     return fuzzyMatch(a, b);
+  }
+
+  /** Orchestrator signal: the most-recurring cross-session pattern, if any. */
+  signalsFor(): ModuleSignal[] {
+    const patterns = this.detectPatterns(3);
+    if (patterns.length === 0) return [];
+    const top = patterns[0];
+    return [{ source: "cross-session-learning", signal: `Recurring pattern: ${top.description} (seen ${top.occurrences}x)`, priority: 3, category: "pattern", confidence: 1.0 }];
   }
 }

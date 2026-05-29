@@ -2,32 +2,18 @@ import { MemoryGraph } from "../memory-graph.js";
 import crossSessionLearner, { CrossSessionLearner } from "../cross-session-learning/index.js";
 import { UnspokenDetector } from "../unspoken-detector.js";
 import { GrowthTracker } from "../growth-tracker.js";
-import { SharedHistory } from "../shared-history.js";
 import { MilestoneCelebrator } from "../milestone-celebrations.js";
 import { CorrectionLearner } from "../correction-learning.js";
 import { ContradictionDetector } from "../contradiction-detector.js";
-import { getUniversalIndex } from "../memory/universal-index.js";
 import type { CognitiveSignal } from "./types.js";
-import { GRAPH_STOP_WORDS, CORRECTION_KEYWORDS, FACT_PATTERNS } from "./types.js";
+import { CORRECTION_KEYWORDS, FACT_PATTERNS } from "./types.js";
 
 export const metaSignals: CognitiveSignal[] = [
   {
     id: "cross-session-learning",
     scope: "profile",
     triage: ({ msgCount }) => (msgCount % 5 === 0 ? "conditional" : null),
-    run(_input, out) {
-      const patterns = crossSessionLearner.detectPatterns(3);
-      if (patterns.length > 0) {
-        const top = patterns[0];
-        out.push({
-          source: "cross-session-learning",
-          signal: `Recurring pattern: ${top.description} (seen ${top.occurrences}x)`,
-          priority: 3,
-          category: "pattern",
-          confidence: 1.0,
-        });
-      }
-    },
+    run: (_input, out) => out.push(...crossSessionLearner.signalsFor()),
     health: () => CrossSessionLearner.getInstance(),
   },
 
@@ -36,32 +22,7 @@ export const metaSignals: CognitiveSignal[] = [
     storageFile: "unspoken-detector.json",
     scope: "profile",
     triage: ({ msgCount }) => (msgCount % 10 === 0 && msgCount > 0 ? "scheduled" : null),
-    run(_input, out) {
-      const ud = UnspokenDetector.getInstance();
-      const absences = ud.detectAbsence();
-      if (absences.length > 0) {
-        const hint = ud.getSensitivityHint(absences);
-        if (hint) {
-          out.push({
-            source: "unspoken-detector",
-            signal: hint,
-            priority: 6,
-            category: "unspoken",
-            confidence: 1.0,
-          });
-        }
-      }
-      const changes = ud.detectBehaviorChange();
-      if (changes.length > 0) {
-        out.push({
-          source: "unspoken-detector",
-          signal: `Behavior change: ${changes[0].description}`,
-          priority: 5,
-          category: "behavior-change",
-          confidence: 1.0,
-        });
-      }
-    },
+    run: (_input, out) => out.push(...UnspokenDetector.getInstance().signalsFor()),
     health: () => UnspokenDetector.getInstance(),
   },
 
@@ -70,18 +31,7 @@ export const metaSignals: CognitiveSignal[] = [
     storageFile: "growth-tracker.json",
     scope: "profile",
     triage: ({ msgCount }) => (msgCount % 20 === 0 && msgCount > 0 ? "scheduled" : null),
-    run(_input, out) {
-      const summary = GrowthTracker.getInstance().getGrowthSummary();
-      if (summary && summary.length > 10) {
-        out.push({
-          source: "growth-tracker",
-          signal: summary,
-          priority: 3,
-          category: "growth",
-          confidence: 1.0,
-        });
-      }
-    },
+    run: (_input, out) => out.push(...GrowthTracker.getInstance().signalsFor()),
     health: () => GrowthTracker.getInstance(),
   },
 
@@ -93,27 +43,7 @@ export const metaSignals: CognitiveSignal[] = [
       msgCount > 0 && (msgCount % 25 === 0 || msgCount === 1 || msgCount === 10 || msgCount === 50 || msgCount === 100)
         ? "triggered"
         : null,
-    run(_input, out) {
-      const mc = MilestoneCelebrator.getInstance();
-      const summary = SharedHistory.getInstance().getRelationshipSummary();
-      const context = {
-        conversationCount: summary.totalConversations || 0,
-        appCount: summary.totalApps || 0,
-        daysTogether: summary.daysTogether || 0,
-        toolsUsed: [] as string[],
-        streak: 0,
-      };
-      const milestones = mc.checkMilestones(context);
-      for (const m of milestones) {
-        out.push({
-          source: "milestone-celebrations",
-          signal: mc.celebrate(m),
-          priority: 8,
-          category: "milestone",
-          confidence: 1.0,
-        });
-      }
-    },
+    run: (_input, out) => out.push(...MilestoneCelebrator.getInstance().signalsFor()),
     health: () => MilestoneCelebrator.getInstance(),
   },
 
@@ -163,40 +93,7 @@ export const metaSignals: CognitiveSignal[] = [
     scope: "profile",
     critical: true,
     triage: ({ input }) => (FACT_PATTERNS.some(p => p.test(input.message)) ? "triggered" : null),
-    run(input, out) {
-      // Pre-fix this read from cd.getContradictionHistory() — its own
-      // log of past contradictions. The auto-recording path was
-      // unreliable, so the comparison set was almost always empty and
-      // the detector never fired. Now we pull live facts from the Facts
-      // DB so the detector actually sees the user's accumulated
-      // preferences when they say "stop X" / "don't do X anymore".
-      const cd = ContradictionDetector.getInstance();
-      let factTexts: string[] = [];
-      try {
-        const ui = getUniversalIndex();
-        const memory = ui?.getMemory();
-        if (memory) {
-          factTexts = memory
-            .recallRecentFacts({ limit: 100, minConfidence: 0.4 })
-            .map(f => f.content);
-        }
-      } catch { /* facts unavailable — fall through to no-op */ }
-      if (factTexts.length > 0) {
-        const contradiction = cd.checkContradiction(input.message, factTexts);
-        if (contradiction) {
-          out.push({
-            source: "contradiction-detector",
-            signal:
-              `Possible contradiction with prior fact: "${contradiction.oldFact}" — ` +
-              `user just said "${contradiction.newFact}". Call \`forget\` or \`update_fact\` ` +
-              `to retire the stale fact, don't just save a new one alongside it.`,
-            priority: 9,
-            category: "contradiction",
-            confidence: 0.8,
-          });
-        }
-      }
-    },
+    run: (input, out) => out.push(...ContradictionDetector.getInstance().signalsFor(input.message)),
     veto: sig =>
       sig.confidence >= 0.8
         ? {
@@ -211,42 +108,8 @@ export const metaSignals: CognitiveSignal[] = [
     id: "memory-graph",
     scope: "profile",
     triage: ({ input }) => (input.message.length > 40 ? "conditional" : null),
-    run(input, out) {
-      const entityCandidates = [...new Set(
-        (input.message.match(/\b[A-Z][a-zA-Z]{2,}\b/g) || [])
-          .filter(w => !GRAPH_STOP_WORDS.has(w.toLowerCase()))
-      )];
-      if (entityCandidates.length > 0) {
-        const relationships: string[] = [];
-        for (const entity of entityCandidates.slice(0, 5)) {
-          const edges = MemoryGraph.getEdges(entity, "out");
-          for (const edge of edges.slice(0, 3)) {
-            relationships.push(`${edge.from} ${edge.relation} ${edge.to}`);
-          }
-        }
-        if (relationships.length > 0) {
-          out.push({
-            source: "memory-graph",
-            signal: `Known relationships: ${relationships.slice(0, 5).join("; ")}`,
-            priority: 3,
-            category: "knowledge-graph",
-            confidence: 0.6,
-          });
-        }
-      }
-    },
-    record(input) {
-      if (input.message.length < 40) return;
-      const entityCandidates = [...new Set(
-        (input.message.match(/\b[A-Z][a-zA-Z]{2,}\b/g) || [])
-          .filter(w => !GRAPH_STOP_WORDS.has(w.toLowerCase()))
-      )];
-      if (entityCandidates.length < 2) return;
-      const extracted = MemoryGraph.autoExtractRelationships(input.message, entityCandidates);
-      for (const edge of extracted) {
-        MemoryGraph.addEdge(edge.from, edge.relation, edge.to, edge.metadata);
-      }
-    },
+    run: (input, out) => out.push(...MemoryGraph.signalsFor(input.message)),
+    record: input => MemoryGraph.recordFrom(input.message),
     health: () => MemoryGraph,
   },
 ];

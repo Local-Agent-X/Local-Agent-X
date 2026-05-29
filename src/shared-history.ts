@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import type { ModuleSignal } from "./orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -305,6 +306,20 @@ export class SharedHistory {
     }
 
     return `${periodLabel}: we ${parts.join(", ")}.${bestPart}`;
+  }
+
+  /** Orchestrator signal: memorable shared moments, once the relationship has some history. */
+  signalsFor(): ModuleSignal[] {
+    if (this.getRelationshipSummary().totalConversations <= 5) return [];
+    const moments = this.getMostMemorableMoments(3);
+    if (moments.length === 0) return [];
+    return [{ source: "shared-history", signal: `Notable shared moments: ${moments.map(m => m.description).join("; ")}`, priority: 2, category: "history", confidence: 1.0 }];
+  }
+
+  /** Record a substantial message as a shared moment. */
+  recordFrom(message: string, sessionId: string): void {
+    if (message.length <= 100) return;
+    this.recordMoment({ description: message.slice(0, 200), timestamp: Date.now(), sessionId, significance: 3 });
   }
 
   /** Reload store from disk. */

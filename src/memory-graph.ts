@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import { GRAPH_STOP_WORDS, type ModuleSignal } from "./orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -383,6 +384,37 @@ class MemoryGraphImpl {
     }
 
     return extracted;
+  }
+
+  private extractEntities(message: string): string[] {
+    return [...new Set(
+      (message.match(/\b[A-Z][a-zA-Z]{2,}\b/g) || [])
+        .filter(w => !GRAPH_STOP_WORDS.has(w.toLowerCase())),
+    )];
+  }
+
+  /** Orchestrator signal: known relationships for entities mentioned in the message. */
+  signalsFor(message: string): ModuleSignal[] {
+    const entities = this.extractEntities(message);
+    if (entities.length === 0) return [];
+    const relationships: string[] = [];
+    for (const entity of entities.slice(0, 5)) {
+      for (const edge of this.getEdges(entity, "out").slice(0, 3)) {
+        relationships.push(`${edge.from} ${edge.relation} ${edge.to}`);
+      }
+    }
+    if (relationships.length === 0) return [];
+    return [{ source: "memory-graph", signal: `Known relationships: ${relationships.slice(0, 5).join("; ")}`, priority: 3, category: "knowledge-graph", confidence: 0.6 }];
+  }
+
+  /** Extract and persist entity relationships from a substantial message. */
+  recordFrom(message: string): void {
+    if (message.length < 40) return;
+    const entities = this.extractEntities(message);
+    if (entities.length < 2) return;
+    for (const edge of this.autoExtractRelationships(message, entities)) {
+      this.addEdge(edge.from, edge.relation, edge.to, edge.metadata);
+    }
   }
 }
 

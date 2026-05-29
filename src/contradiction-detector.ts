@@ -9,6 +9,8 @@
  */
 
 import { getLaxDir } from "./lax-data-dir.js";
+import { getUniversalIndex } from "./memory/universal-index.js";
+import type { ModuleSignal } from "./orchestrator/types.js";
 import {
   existsSync,
   mkdirSync,
@@ -242,6 +244,40 @@ export class ContradictionDetector {
     }
 
     return null;
+  }
+
+  // ── Orchestrator signal ───────────────────────────────────
+
+  /**
+   * Signal a contradiction between the message and the user's accumulated facts.
+   *
+   * Pulls live facts from the Facts DB rather than this.getContradictionHistory()
+   * — its own log of past contradictions. The auto-recording path was unreliable,
+   * so that comparison set was almost always empty and the detector never fired.
+   * Reading the Facts DB means the detector actually sees the user's accumulated
+   * preferences when they say "stop X" / "don't do X anymore".
+   */
+  signalsFor(message: string): ModuleSignal[] {
+    let factTexts: string[] = [];
+    try {
+      const memory = getUniversalIndex()?.getMemory();
+      if (memory) {
+        factTexts = memory.recallRecentFacts({ limit: 100, minConfidence: 0.4 }).map(f => f.content);
+      }
+    } catch { /* facts unavailable — fall through to no-op */ }
+    if (factTexts.length === 0) return [];
+    const contradiction = this.checkContradiction(message, factTexts);
+    if (!contradiction) return [];
+    return [{
+      source: "contradiction-detector",
+      signal:
+        `Possible contradiction with prior fact: "${contradiction.oldFact}" — ` +
+        `user just said "${contradiction.newFact}". Call \`forget\` or \`update_fact\` ` +
+        `to retire the stale fact, don't just save a new one alongside it.`,
+      priority: 9,
+      category: "contradiction",
+      confidence: 0.8,
+    }];
   }
 
   // ── Resolve a detected contradiction ──────────────────────

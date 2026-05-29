@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import type { ModuleSignal } from "./orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -343,6 +344,20 @@ export class LanguageMirror {
     else if (profile.punctuationStyle === "minimal") parts.push("Minimal punctuation preferred");
 
     return parts.join(". ") + ".";
+  }
+
+  /** Orchestrator signal: a style hint once enough of the user's writing has been sampled. */
+  signalsFor(): ModuleSignal[] {
+    if (this.getStyleProfile().sampleSize <= 3) return [];
+    const hint = this.getStyleHint();
+    return hint
+      ? [{ source: "language-mirror", signal: hint, priority: 4, category: "style", confidence: 1.0 }]
+      : [];
+  }
+
+  /** Learn from the user's writing style. */
+  recordFrom(message: string): void {
+    this.recordUserStyle(message);
   }
 
   /** Reload store from disk. */

@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import type { ModuleSignal } from "./orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -382,6 +383,13 @@ export class GrowthTracker {
     }
 
     return { period1, period2, improvements, stats };
+  }
+
+  /** Orchestrator signal: a growth summary, when there's enough of one to be worth surfacing. */
+  signalsFor(): ModuleSignal[] {
+    const summary = this.getGrowthSummary();
+    if (!summary || summary.length <= 10) return [];
+    return [{ source: "growth-tracker", signal: summary, priority: 3, category: "growth", confidence: 1.0 }];
   }
 
   // ── Private helpers ─────────────────────────────────────────

@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import type { ModuleSignal } from "./orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -343,6 +344,21 @@ export class UnspokenDetector {
     });
 
     saveStore(store);
+  }
+
+  /** Orchestrator signals: a sensitivity hint for notable absences, plus any behavior shift. */
+  signalsFor(): ModuleSignal[] {
+    const out: ModuleSignal[] = [];
+    const absences = this.detectAbsence();
+    if (absences.length > 0) {
+      const hint = this.getSensitivityHint(absences);
+      if (hint) out.push({ source: "unspoken-detector", signal: hint, priority: 6, category: "unspoken", confidence: 1.0 });
+    }
+    const changes = this.detectBehaviorChange();
+    if (changes.length > 0) {
+      out.push({ source: "unspoken-detector", signal: `Behavior change: ${changes[0].description}`, priority: 5, category: "behavior-change", confidence: 1.0 });
+    }
+    return out;
   }
 
   // ── Private helpers ─────────────────────────────────────────

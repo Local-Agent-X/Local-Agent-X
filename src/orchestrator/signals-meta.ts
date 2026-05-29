@@ -33,6 +33,7 @@ export const metaSignals: CognitiveSignal[] = [
 
   {
     id: "unspoken-detector",
+    storageFile: "unspoken-detector.json",
     scope: "profile",
     triage: ({ msgCount }) => (msgCount % 10 === 0 && msgCount > 0 ? "scheduled" : null),
     run(_input, out) {
@@ -66,6 +67,7 @@ export const metaSignals: CognitiveSignal[] = [
 
   {
     id: "growth-tracker",
+    storageFile: "growth-tracker.json",
     scope: "profile",
     triage: ({ msgCount }) => (msgCount % 20 === 0 && msgCount > 0 ? "scheduled" : null),
     run(_input, out) {
@@ -85,6 +87,7 @@ export const metaSignals: CognitiveSignal[] = [
 
   {
     id: "milestone-celebrations",
+    storageFile: "milestones.json",
     scope: "profile",
     triage: ({ msgCount }) =>
       msgCount > 0 && (msgCount % 25 === 0 || msgCount === 1 || msgCount === 10 || msgCount === 50 || msgCount === 100)
@@ -116,6 +119,7 @@ export const metaSignals: CognitiveSignal[] = [
 
   {
     id: "correction-learning",
+    storageFile: "corrections.json",
     scope: "profile",
     critical: true,
     triage: ({ input }) =>

@@ -3,17 +3,10 @@ import { join } from "node:path";
 
 import { createLogger } from "./logger.js";
 import { checkRegexSafety } from "./safe-regex.js";
-import { TOOL_POLICY_DEFAULTS } from "./tool-registry.js";
 import { DEFAULT_POLICY } from "./tool-policy/default-rules.js";
 import { matchArgPattern, matchGlob, matchHost } from "./tool-policy/matchers.js";
 import type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./tool-policy/types.js";
 import { USER_HINTS } from "./types.js";
-
-/** Synthetic rule id prefix (see TOOL_POLICY_DEFAULTS in tool-registry.ts).
- *  Boot audit uses this to distinguish "covered by explicit rule" from
- *  "covered by risk-tier fallback only" — high-risk tools should still get
- *  an explicit review-able rule in default-rules.ts. */
-const SYNTHETIC_RULE_PREFIX = "default-";
 
 const logger = createLogger("tool-policy");
 
@@ -56,17 +49,10 @@ export class ToolPolicy {
       return true;
     });
 
-    // Merge synthetic risk-tier defaults below user rules. Dedup by id so a
-    // user can hand-author a rule named "default-foo" without colliding,
-    // though synthetics ship at priority 10 and are unreachable if any
-    // higher-priority rule matches the same tool name.
-    const userIds = new Set(validRules.map((r) => r.id));
-    const synthetics = TOOL_POLICY_DEFAULTS.filter((r) => !userIds.has(r.id));
-
     // Sort rules by priority (highest first)
     this.config = {
       ...config,
-      rules: [...validRules, ...synthetics].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)),
+      rules: [...validRules].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)),
     };
   }
 
@@ -324,53 +310,44 @@ export function loadToolPolicy(dataDir: string): LiveToolPolicy {
 // gap existed. This audit catches the gap AT BOOT — same shape as the
 // existing security-audit pair.
 //
+// Since every policy decision now comes from an explicit rule in the unified
+// table (the silent risk-tier fallback was removed), "uncovered" means a
+// genuine orphan: a registered tool with no rule in tool-policies.data.ts.
+// That is the orphan check the table refactor guarantees — also asserted by
+// the tool-policy-default.test.ts unit test against TOOLS.
+//
 // Different from runtime evaluate(): we ignore argMatch/action/constraints
-// and ask the structural question "does any rule's tool-pattern match
-// this tool name?" A tool can be "covered" by a deny rule and still be
-// unusable (e.g. bash deny-rm-rf would still report bash as covered
-// because of allow-bash-limited) — that's correct, the point is the
-// catalog mentions it.
+// and ask the structural question "does any rule's tool-pattern match this
+// tool name?" A tool can be "covered" by a deny rule and still be unusable
+// (e.g. swarm_cancel is covered by deny-swarm-cancel) — that's correct, the
+// point is the catalog mentions it.
 
 export interface PolicyCoverageReport {
   totalTools: number;
-  /** Covered by an explicit rule in default-rules.ts (review-able by hand). */
-  coveredExplicit: string[];
-  /** Covered ONLY by the synthetic risk-tier fallback (no explicit rule).
-   *  Safe for low-risk tiers; flagged at INFO so devs can promote to an
-   *  explicit rule when behavior diverges. */
-  coveredSynthetic: string[];
+  /** Covered by a rule whose tool-pattern matches this name. */
+  covered: string[];
   /** No matching rule at all — hits deny-by-default. Error-level. */
   uncovered: string[];
 }
 
 export function auditPolicyCoverage(toolNames: string[], policy: ToolPolicy): PolicyCoverageReport {
-  const coveredExplicit: string[] = [];
-  const coveredSynthetic: string[] = [];
+  const covered: string[] = [];
   const uncovered: string[] = [];
   for (const name of toolNames) {
-    const ruleId = policy.findCoveringRule(name);
-    if (!ruleId) uncovered.push(name);
-    else if (ruleId.startsWith(SYNTHETIC_RULE_PREFIX)) coveredSynthetic.push(name);
-    else coveredExplicit.push(name);
+    if (policy.findCoveringRule(name)) covered.push(name);
+    else uncovered.push(name);
   }
-  return { totalTools: toolNames.length, coveredExplicit, coveredSynthetic, uncovered };
+  return { totalTools: toolNames.length, covered, uncovered };
 }
 
 export function printPolicyCoverageReport(report: PolicyCoverageReport): void {
   // Match the security-audit visual idiom (printAuditReport in security-audit.ts).
   logger.info(`\n  ── Tool-Policy Coverage ──`);
-  if (report.uncovered.length === 0 && report.coveredSynthetic.length === 0) {
-    logger.info(`  \x1b[36mℹ\x1b[0m All ${report.totalTools} registered tools have explicit rules\n`);
+  if (report.uncovered.length === 0) {
+    logger.info(`  \x1b[36mℹ\x1b[0m All ${report.totalTools} registered tools have a matching policy rule\n`);
     return;
   }
-  if (report.coveredSynthetic.length > 0) {
-    logger.info(`  \x1b[36mℹ\x1b[0m ${report.coveredSynthetic.length} of ${report.totalTools} tools covered by risk-tier fallback only (no explicit rule):`);
-    for (const name of report.coveredSynthetic) logger.info(`    - ${name}`);
-    logger.info(`  These dispatch successfully via TOOL_POLICY_DEFAULTS. Add an explicit rule in src/tool-policy/default-rules.ts when behavior should diverge from the risk-tier default.\n`);
-  }
-  if (report.uncovered.length > 0) {
-    logger.error(`  \x1b[31m✖\x1b[0m ${report.uncovered.length} of ${report.totalTools} tools have NO matching policy rule:`);
-    for (const name of report.uncovered) logger.error(`    - ${name}`);
-    logger.error(`  These will hit deny-by-default at runtime. Either set a risk tier in TOOLS that maps via RISK_TO_DEFAULT, or add an explicit rule in src/tool-policy/default-rules.ts.\n`);
-  }
+  logger.error(`  \x1b[31m✖\x1b[0m ${report.uncovered.length} of ${report.totalTools} tools have NO matching policy rule:`);
+  for (const name of report.uncovered) logger.error(`    - ${name}`);
+  logger.error(`  These will hit deny-by-default at runtime. Add the tool (with an explicit allow/deny rule) to src/tool-policy/tool-policies.data.ts.\n`);
 }

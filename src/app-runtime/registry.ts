@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 
+import { getLaxDir } from "../lax-data-dir.js";
+import { tombstoneAppEagerly } from "../sync/tombstones.js";
 import { readAuditLog, readGlobalAuditLog, writeAuditEntry } from "./audit.js";
 import { consumeEvents, getUnconsumedEvents, pushEvent, readEvents } from "./events-store.js";
 import { migrateFromDashboards } from "./migration.js";
@@ -159,17 +162,59 @@ export class AppRegistry {
     return { app: updated };
   }
 
-  delete(id: string, actor = "user"): { deleted: boolean; error?: string } {
+  // Removes the registry dir AND (with opts.workspaceDir) the workspace dir + eager tombstone.
+  delete(id: string, actor = "user", opts?: { workspaceDir?: string }): {
+    deleted: boolean;
+    registry: boolean;
+    workspace: boolean;
+    error?: string;
+  } {
     const def = this.get(id);
-    if (!def) return { deleted: false, error: "App not found" };
+    const wsAppDir = opts?.workspaceDir
+      ? resolve(opts.workspaceDir, "apps", id)
+      : null;
+    const wsAppsRoot = opts?.workspaceDir
+      ? resolve(opts.workspaceDir, "apps")
+      : null;
+    const wsAppExists = !!(wsAppDir && wsAppsRoot && wsAppDir.startsWith(wsAppsRoot) && existsSync(wsAppDir));
 
-    const access = this.checkAccess(id, actor, "admin");
-    if (!access.allowed) return { deleted: false, error: access.reason || "Access denied" };
+    if (!def && !wsAppExists) return { deleted: false, registry: false, workspace: false, error: "App not found" };
 
-    writeAuditEntry(id, actor, "app:delete", { name: def.name });
+    if (def) {
+      const access = this.checkAccess(id, actor, "admin");
+      if (!access.allowed) return { deleted: false, registry: false, workspace: false, error: access.reason || "Access denied" };
+      writeAuditEntry(id, actor, "app:delete", { name: def.name });
+    }
 
-    const dir = appDir(id);
-    try { rmSync(dir, { recursive: true, force: true }); return { deleted: true }; } catch { return { deleted: false, error: "Failed to remove app directory" }; }
+    let registryDeleted = false;
+    if (def) {
+      try {
+        rmSync(appDir(id), { recursive: true, force: true });
+        registryDeleted = true;
+      } catch (e) {
+        logger.warn(`failed to remove registry dir for ${id}: ${(e as Error).message}`);
+      }
+    }
+
+    let workspaceDeleted = false;
+    if (wsAppExists && wsAppDir) {
+      try {
+        rmSync(wsAppDir, { recursive: true, force: true });
+        workspaceDeleted = true;
+      } catch (e) {
+        logger.warn(`failed to remove workspace dir for ${id}: ${(e as Error).message}`);
+      }
+      if (workspaceDeleted) {
+        try {
+          const syncDir = join(getLaxDir(), "sync-repo");
+          if (existsSync(syncDir)) tombstoneAppEagerly(syncDir, id);
+        } catch (e) {
+          logger.warn(`eager tombstone write failed for ${id}: ${(e as Error).message}`);
+        }
+      }
+    }
+
+    return { deleted: registryDeleted || workspaceDeleted, registry: registryDeleted, workspace: workspaceDeleted };
   }
 
   list(actor?: string): AppDefinition[] {

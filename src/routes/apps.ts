@@ -85,41 +85,11 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
 
   if (method === "DELETE" && appPath.startsWith("/api/apps/") && appPath.split("/").length === 4) {
     const id = appPath.split("/")[3];
-    // Validate id shape to prevent path traversal — only alphanumeric + - _
     if (!/^[a-zA-Z0-9_-]+$/.test(id)) { json(400, { error: "Invalid app id" }); return true; }
-    const registryResult = appReg.delete(id);
-    // ALSO remove the workspace folder so the app disappears from both
-    // sources. Registry-only delete left /apps/<id> still scannable via
-    // the workspace walk in GET /api/apps — the app would reappear on
-    // next loadApps(). For workspace-only HTML apps (no registry entry),
-    // this was the only thing keeping them alive.
-    const wsDir = resolve(ctx.config.workspace, "apps", id);
-    const relCheck = wsDir.startsWith(resolve(ctx.config.workspace, "apps"));
-    let workspaceDeleted = false;
-    if (relCheck && existsSync(wsDir)) {
-      try {
-        const { rmSync } = await import("node:fs");
-        rmSync(wsDir, { recursive: true, force: true });
-        workspaceDeleted = true;
-        // Eager tombstone — write the delete intent into the synced
-        // tombstone store NOW so a restart-before-push followed by
-        // a pull doesn't resurrect this app from the remote.
-        try {
-          const { getLaxDir } = await import("../lax-data-dir.js");
-          const { tombstoneAppEagerly } = await import("../sync/tombstones.js");
-          const syncDir = join(getLaxDir(), "sync-repo");
-          if (existsSync(syncDir)) tombstoneAppEagerly(syncDir, id);
-        } catch (e) {
-          logger.warn(`[apps] eager tombstone write failed for ${id}: ${(e as Error).message}`);
-        }
-      } catch (e) { logger.warn(`[apps] workspace delete failed for ${id}:`, (e as Error).message); }
-    }
-    if (!registryResult.deleted && !workspaceDeleted) {
-      json(404, { error: "Not found" });
-      return true;
-    }
+    const result = appReg.delete(id, "user", { workspaceDir: ctx.config.workspace });
+    if (!result.deleted) { json(404, { error: result.error || "Not found" }); return true; }
     try { ctx.agentSync.notifyChange(`app-delete:${id}`); } catch {}
-    json(200, { ok: true, registry: registryResult.deleted, workspace: workspaceDeleted });
+    json(200, { ok: true, registry: result.registry, workspace: result.workspace });
     return true;
   }
 

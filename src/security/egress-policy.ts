@@ -6,8 +6,8 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { USER_HINTS } from "./types.js";
-import { getLaxDir } from "./lax-data-dir.js";
+import { USER_HINTS } from "../types.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 export interface EgressRule {
   domain: string;

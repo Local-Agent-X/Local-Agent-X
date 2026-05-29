@@ -6,7 +6,7 @@
  */
 
 import { detectInjection } from "./sanitize.js";
-import { classifyData } from "./threat-engine.js";
+import { classifyData } from "./threat/threat-engine.js";
 import { SecurityLayer } from "./security/index.js";
 
 import { createLogger } from "./logger.js";

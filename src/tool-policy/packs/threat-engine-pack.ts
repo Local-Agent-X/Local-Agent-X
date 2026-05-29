@@ -5,7 +5,7 @@
  * learning) stays in src/threat/tool-chain.ts — that's a separate concern,
  * not a rule.
  */
-import type { ThreatEngine } from "../../threat-engine.js";
+import type { ThreatEngine } from "../../threat/threat-engine.js";
 import { USER_HINTS } from "../../types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 

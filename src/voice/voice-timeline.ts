@@ -5,7 +5,7 @@
 
 import { existsSync, mkdirSync, readFileSync, appendFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 

@@ -17,7 +17,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { scanForSecrets } from "../secret-scanner.js";
+import { scanForSecrets } from "../security/secret-scanner.js";
 import { matchEgressList } from "../security/network-policy.js";
 import { getLaxDir } from "../lax-data-dir.js";
 

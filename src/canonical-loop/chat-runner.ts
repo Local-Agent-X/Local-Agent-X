@@ -35,7 +35,7 @@ import type { PreparedAgentRequest } from "../agent-request/types.js";
 import type { ServerEvent } from "../types.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
-import type { ThreatEngine } from "../threat-engine.js";
+import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 
 import { canonicalLoopEntry } from "./index.js";

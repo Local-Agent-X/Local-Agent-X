@@ -11,9 +11,9 @@
 
 import { existsSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const logger = createLogger("security-audit");

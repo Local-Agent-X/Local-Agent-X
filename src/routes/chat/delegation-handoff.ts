@@ -3,7 +3,7 @@ import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { createLogger } from "../../logger.js";
 import type { ServerContext } from "../../server-context.js";
-import { ThreatEngine } from "../../threat-engine.js";
+import { ThreatEngine } from "../../threat/threat-engine.js";
 import type { ServerEvent } from "../../types.js";
 import type { Role } from "../../rbac.js";
 import type { SseSink } from "./run-chat-turn.js";

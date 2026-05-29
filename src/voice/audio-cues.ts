@@ -6,7 +6,7 @@
 import { writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);

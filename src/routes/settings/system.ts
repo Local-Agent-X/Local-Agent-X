@@ -4,7 +4,7 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody, safeErrorMessage } from "../../server-utils.js";
 import { getToolStats, getToolSuccessRate, getRecentFailures } from "../../tool-tracker.js";
 import { getProviderHealthStatus } from "../../model-fallback.js";
-import { getThreatDashboard } from "../../threat-dashboard.js";
+import { getThreatDashboard } from "../../threat/threat-dashboard.js";
 
 /** Typed cache for update check results stored on the module scope */
 interface UpdateCheckResult { localVersion: string; localCommit: string; remoteVersion: string; remoteCommit: string; updateAvailable: boolean; releaseNotes: string; error?: string }

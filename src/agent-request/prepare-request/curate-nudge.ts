@@ -75,17 +75,7 @@ export async function detectAndBoostCurate(input: CurateNudgeInput): Promise<str
     if (!regexBoosted) {
       try {
         const { classifyTeachMoment } = await import("../../memory/curate-classifier.js");
-        // Use the SAME provider+model+apiKey the chat is on — the classifier
-        // calls the same client functions the main agent uses, so CLI OAuth
-        // (Anthropic) and subscription bearer (Codex) auth "just work" with
-        // no per-provider auth abstraction needed. Cost-bounded by the tiny
-        // ~30-token output and 2s timeout. xAI/Gemini fall through to null
-        // (regex+cadence still work for those providers).
-        const classification = await classifyTeachMoment(input.message, lastAssistantText, {
-          providerHint: input.resolvedProvider,
-          modelHint: input.resolvedModel,
-          apiKey: input.resolvedApiKey,
-        });
+        const classification = await classifyTeachMoment(input.message, lastAssistantText);
         if (classification && classification.teach && classification.confidence >= 0.6 && classification.kind !== "none") {
           boostNudgePriority(input.sessionId, classification.kind);
           logger.info(`[chat] curate-classifier boosted ${classification.kind} (conf=${classification.confidence.toFixed(2)}, why=${classification.why}, provider=${input.resolvedProvider}) sess=${input.sessionId}`);

@@ -16,7 +16,13 @@
  * scenario to a freewheeling agent (which is what Day 3 explicitly does NOT).
  */
 
+import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
 import type { LlmCall } from "../chunk-review/judgment-hook.js";
+
+const STEP_PLANNER_SYSTEM_PROMPT =
+  `You are translating ONE scenario step into ONE Playwright action. ` +
+  `Follow the locator and action-choice rules in the user message exactly. ` +
+  `Respond with ONE JSON line and nothing else — no prose, no code fences.`;
 
 export type StepAction = "click" | "fill" | "navigate" | "assert-text" | "skip";
 
@@ -94,39 +100,27 @@ export function parseStepPlannerResponse(raw: string): StepActionPlan | null {
 let injectedLlmCall: LlmCall | null = null;
 export function _setLlmCallForTests(fn: LlmCall | null): void { injectedLlmCall = fn; }
 
-async function getProductionLlmCall(): Promise<LlmCall> {
-  const { getRuntimeConfig } = await import("../../config.js");
-  const { getOrInitSecretsStore } = await import("../../secrets.js");
-  const { resolveProvider } = await import("../../agent-request/index.js");
-  const { getLaxDir } = await import("../../lax-data-dir.js");
-
-  return async (prompt: string, signal?: AbortSignal): Promise<string> => {
-    const runtime = getRuntimeConfig();
-    const dataDir = getLaxDir();
-    const secretsStore = getOrInitSecretsStore(dataDir);
-    const resolved = await resolveProvider(runtime, secretsStore, dataDir);
-    if (!resolved.apiKey) throw new Error("no api key for step planner");
-
-    if (resolved.provider === "anthropic") {
-      const { streamForResponse_anthropic } = await import("../../memory/curate-classifier.js");
-      return (await streamForResponse_anthropic(resolved.apiKey, resolved.model, prompt, signal)) || "";
-    }
-    if (resolved.provider === "codex" || resolved.provider === "openai") {
-      const { streamForResponse_codex } = await import("../../memory/curate-classifier.js");
-      return (await streamForResponse_codex(resolved.apiKey, resolved.model, prompt, signal)) || "";
-    }
-    throw new Error(`unsupported provider: ${resolved.provider}`);
-  };
-}
-
 export async function chooseStepAction(input: ChooseStepActionInput): Promise<StepActionPlan> {
-  const call = injectedLlmCall || (await getProductionLlmCall());
   const prompt = buildStepPlannerPrompt(input);
-  const SENTINEL = Symbol("step-planner-timeout");
-  const wallclock = new Promise<typeof SENTINEL>((r) => setTimeout(() => r(SENTINEL), STEP_PLANNER_TIMEOUT_MS));
-  const raced = await Promise.race([call(prompt).catch(() => ""), wallclock]);
-  if (raced === SENTINEL) throw new Error("step planner timeout");
-  const plan = parseStepPlannerResponse(String(raced || ""));
+
+  if (injectedLlmCall) {
+    const SENTINEL = Symbol("step-planner-timeout");
+    const wallclock = new Promise<typeof SENTINEL>((r) => setTimeout(() => r(SENTINEL), STEP_PLANNER_TIMEOUT_MS));
+    const raced = await Promise.race([injectedLlmCall(prompt).catch(() => ""), wallclock]);
+    if (raced === SENTINEL) throw new Error("step planner timeout");
+    const plan = parseStepPlannerResponse(String(raced || ""));
+    if (!plan) throw new Error("step planner returned unparseable response");
+    return plan;
+  }
+
+  const plan = await classifyWithLLM<StepActionPlan>({
+    category: "scenario-step-planner",
+    systemPrompt: STEP_PLANNER_SYSTEM_PROMPT,
+    userPrompt: prompt,
+    parse: parseStepPlannerResponse,
+    timeoutMs: STEP_PLANNER_TIMEOUT_MS,
+    maxResponseChars: 2000,
+  });
   if (!plan) throw new Error("step planner returned unparseable response");
   return plan;
 }

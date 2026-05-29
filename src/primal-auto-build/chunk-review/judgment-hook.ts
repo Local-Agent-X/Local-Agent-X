@@ -22,6 +22,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, isAbsolute, resolve } from "node:path";
+import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { ChunkReport } from "./report-parser.js";
 
@@ -29,6 +30,11 @@ const MAX_CONSTITUTION_CHARS = 6000;
 const MAX_CHANGED_FILES = 12;
 const MAX_FILE_CHARS = 3000;
 const CLASSIFIER_TIMEOUT_MS = 12_000;
+
+const JUDGMENT_SYSTEM_PROMPT =
+  `You are auditing one build chunk for an implicit-spec violation. ` +
+  `Follow the decision rules in the user message exactly. Bias STRONGLY toward null (no violation). ` +
+  `Respond with ONE JSON line and nothing else — no prose, no code fences.`;
 
 export interface JudgmentHookInput {
   chunk: ParsedChunk;
@@ -83,33 +89,34 @@ export function createLlmJudgmentHook(llmCall: LlmCall): JudgmentHook {
 }
 
 /**
- * Default production hook — wires the LLM call to LAX's classifier
- * pattern (same provider+model as the active chat). Imports are lazy
- * so unit tests that don't exercise the default hook never load the
- * provider modules.
+ * Default production hook — routes through the canonical classifier wrapper
+ * (same provider+model as the active chat, single source of truth for
+ * timeout/abort/provider-dispatch). Tests construct their own hook via
+ * {@link createLlmJudgmentHook} with a stub LlmCall.
  */
-export const defaultJudgmentHook: JudgmentHook = createLlmJudgmentHook(async (prompt, signal) => {
-  const { getRuntimeConfig } = await import("../../config.js");
-  const { getOrInitSecretsStore } = await import("../../secrets.js");
-  const { resolveProvider } = await import("../../agent-request/index.js");
-  const { getLaxDir } = await import("../../lax-data-dir.js");
+export const defaultJudgmentHook: JudgmentHook = async (input) => {
+  if (input.report.changed.length === 0) return null;
+  const constitution = readConstitution(input.projectDir);
+  const changedSnippets = readChangedFiles(input.projectDir, input.report.changed);
+  if (!constitution && !changedSnippets.trim()) return null;
 
-  const runtime = getRuntimeConfig();
-  const dataDir = getLaxDir();
-  const secretsStore = getOrInitSecretsStore(dataDir);
-  const resolved = await resolveProvider(runtime, secretsStore, dataDir);
-  if (!resolved.apiKey) throw new Error("no api key");
+  const prompt = buildJudgmentPrompt({
+    chunk: input.chunk,
+    report: input.report,
+    constitution,
+    changedSnippets,
+  });
 
-  if (resolved.provider === "anthropic") {
-    const { streamForResponse_anthropic } = await import("../../memory/curate-classifier.js");
-    return (await streamForResponse_anthropic(resolved.apiKey, resolved.model, prompt, signal)) || "";
-  }
-  if (resolved.provider === "codex" || resolved.provider === "openai") {
-    const { streamForResponse_codex } = await import("../../memory/curate-classifier.js");
-    return (await streamForResponse_codex(resolved.apiKey, resolved.model, prompt, signal)) || "";
-  }
-  throw new Error(`unsupported provider: ${resolved.provider}`);
-});
+  return classifyWithLLM<JudgmentResult>({
+    category: "chunk-review-judgment",
+    systemPrompt: JUDGMENT_SYSTEM_PROMPT,
+    userPrompt: prompt,
+    parse: parseJudgmentResponse,
+    timeoutMs: CLASSIFIER_TIMEOUT_MS,
+    maxResponseChars: 3000,
+    signal: input.signal,
+  });
+};
 
 // ── prompt construction ───────────────────────────────────────────────────
 

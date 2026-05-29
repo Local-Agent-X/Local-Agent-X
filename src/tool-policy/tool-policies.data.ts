@@ -59,7 +59,6 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   process_status:   { kernel: "shell",    risk: "safe" },
   process_kill:     { kernel: "shell",    risk: "destructive" },
   process_list:     { kernel: "shell",    risk: "safe" },
-  install_software: { kernel: "shell",    risk: "destructive", rules: [{ id: "allow-install-software", decision: "allow", reason: "OS-aware software installer (bounded timeout + http_request fallback)", priority: 50 }] },
 
   // ── Raw filesystem ──
   read:        { kernel: "file", risk: "safe", rules: [{ id: "allow-read", decision: "allow", reason: "File read (path-checked by SecurityLayer)", priority: 50 }] },

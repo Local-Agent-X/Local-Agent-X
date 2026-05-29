@@ -326,7 +326,7 @@ export class SecurityLayer {
         };
 
       case "shell":
-        // Non-bash shell tools (process_start, install_software). bash
+        // Non-bash shell tools (process_start, process_kill, etc.). bash
         // is handled by the explicit case above and is the only one
         // routed through evaluateShellCommand. The kernel and the
         // tool's own implementation are the gates for the rest.

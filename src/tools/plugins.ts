@@ -33,9 +33,8 @@ export const plugins: ToolPlugin[] = [
       // The bootstrap loop's "already registered? skip" check then leaves
       // those entries alone; the three extras below land with defer:true.
       buildToolRegistry();
-      const { installSoftwareTool } = await import("./install-software.js");
       const { settingTool } = await import("./setting-tool.js");
-      return [...allTools, createHttpRequestTool(ctx.secretsStore), installSoftwareTool, settingTool];
+      return [...allTools, createHttpRequestTool(ctx.secretsStore), settingTool];
     },
   },
   {

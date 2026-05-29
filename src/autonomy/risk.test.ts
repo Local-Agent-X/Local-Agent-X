@@ -37,7 +37,6 @@ describe("TOOL_RISK", () => {
     expect(classifyToolRisk("bash")).toBe("shell");
     expect(classifyToolRisk("ari_shell")).toBe("shell");
     expect(classifyToolRisk("delete_file")).toBe("destructive");
-    expect(classifyToolRisk("install_software")).toBe("destructive");
     expect(classifyToolRisk("memory_forget")).toBe("destructive");
     expect(classifyToolRisk("self_edit")).toBe("destructive");
     expect(classifyToolRisk("email_send")).toBe("external-comms");

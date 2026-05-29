@@ -232,6 +232,7 @@
           <div class="btn-row" style="margin-top:10px">
             <button id="btn-xai-login" class="action-btn primary" onclick="doXaiLogin()">Sign in with xAI (SuperGrok / X Premium+)</button>
             <button id="btn-xai-disconnect" class="action-btn danger" onclick="doXaiDisconnect()" style="display:none">Disconnect</button>
+            <button class="action-btn" onclick="window.open('https://grok.com/?_s=usage','_blank')" title="Open SuperGrok subscription usage">View Usage ↗</button>
           </div>
           <div class="field-hint" style="margin-top:8px">Opens accounts.x.ai in your browser. Tokens land in <code>~/.lax/xai-auth.json</code> and refresh automatically.</div>
           <div id="xai-open-fallback" style="display:none;margin-top:8px;font-size:.85rem"></div>
@@ -254,6 +255,7 @@
             <button id="btn-disconnect" class="action-btn danger" onclick="doDisconnect()" style="display:none">Disconnect</button>
             <button id="btn-install-codex-cli" class="action-btn" onclick="installCodexCli()" style="display:none">Install Codex CLI</button>
             <button id="btn-codex-cli-login" class="action-btn" onclick="doCodexCliLogin()">Sign in via Codex CLI</button>
+            <button class="action-btn" onclick="window.open('https://chatgpt.com/codex/settings/usage','_blank')" title="Open ChatGPT/Codex usage dashboard">View Usage ↗</button>
           </div>
           <div class="field-hint" style="margin-top:8px">The Codex CLI enables reliable app building via subprocess — avoids the ChatGPT subscription endpoint's output truncation on large file writes.</div>
         </div>
@@ -274,6 +276,7 @@
                 <button id="btn-anthropic-cli-login" class="action-btn primary" onclick="doClaudeCliLogin()">Sign in via Claude CLI</button>
                 <button id="btn-update-claude-cli" class="action-btn" onclick="updateClaudeCli()" title="Reinstall Claude CLI at the latest npm release">Update CLI</button>
                 <button id="btn-anthropic-cli-login-cancel" class="action-btn" onclick="cancelClaudeCliLogin()" style="display:none">Cancel</button>
+                <button class="action-btn" onclick="window.open('https://claude.ai/settings/usage','_blank')" title="Open Claude.ai usage dashboard">View Usage ↗</button>
               </div>
               <div id="claude-cli-update-status" class="field-hint" style="margin-top:6px;display:none"></div>
               <div id="anthropic-cli-login-status" class="field-hint" style="margin-top:8px">Click to start. We'll launch <code>claude login</code> and surface the OAuth link here — no terminal needed. No tokens stored in this app; the CLI manages them.</div>

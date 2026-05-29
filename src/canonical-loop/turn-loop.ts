@@ -274,6 +274,11 @@ export async function driveTurn(
     ? "error"
     : (result.terminalReason ?? (adapterError ? "error" : null));
 
+  // Compute the failure summary up front — both the short-circuit below
+  // and the gaslighting-nudge block below depend on whether at least one
+  // mutation tool committed this turn.
+  const failureSummary = collectToolFailures(toolMessages, toolSummary);
+
   // Silent-side-effect short-circuit. When every tool call this turn is
   // visible-without-narration (memory writes, browser navigation/clicks)
   // AND the model already produced user-facing text, terminate the turn
@@ -289,12 +294,22 @@ export async function driveTurn(
   // end_turn through), the worker loops and the model produces a
   // "no blocker / informational / nothing to commit" paragraph that reads
   // as internal scratchwork to the user.
+  //
+  // And same for mutation-committed turns: if the model wrote/edited
+  // something on disk (or otherwise committed a mutation tool) AND
+  // produced user-facing text, the turn is done. Without this, a turn
+  // that retried `edit` a few times before succeeding with `write`
+  // surfaces a second wrap-up turn whose entire payload is the model
+  // narrating "Previous edits failed on whitespace, used full write
+  // instead" — the user already saw the success summary in turn N and
+  // does not need turn N+1's recovery monologue.
   const allSilent = toolCalls.length > 0 && toolCalls.every(isSilentToolCall);
   const noTools = toolCalls.length === 0;
+  const mutationCommitted = failureSummary.hadSuccessfulMutation;
   if (
     terminalReason === null &&
     !middlewareAborted &&
-    (allSilent || noTools) &&
+    (allSilent || noTools || mutationCommitted) &&
     assistantText.trim().length > 0
   ) {
     terminalReason = "done";
@@ -308,7 +323,6 @@ export async function driveTurn(
   // existing per-op turn cap bounds the retry.
   let failureNudged = false;
   if (!middlewareAborted) {
-    const failureSummary = collectToolFailures(toolMessages, toolSummary);
     if (shouldNudgeForFailures(failureSummary)) {
       appendNudgeAsUserMessage(op.id, turnIdx + 1, formatFailureNudgeForModel(failureSummary));
       failureNudged = true;

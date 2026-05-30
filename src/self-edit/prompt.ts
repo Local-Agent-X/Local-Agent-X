@@ -16,7 +16,8 @@ export async function buildSelfEditPrompt(task: string, scopeHintArg: string): P
     `- Do NOT commit or push — just make the edit and run the build to verify compilation.\n` +
     `- Make the MINIMUM change needed. No refactoring or unrelated cleanup.\n` +
     `- If the bug is ambiguous, diagnose first (read relevant files, grep logs at /tmp/lax-server.log), then patch.\n` +
-    `- If your change breaks the build, revert it — don't leave the tree in a broken state.\n\n` +
+    `- If your change breaks the build, revert it — don't leave the tree in a broken state.\n` +
+    `- To add or change a dependency, edit package.json (and package-lock.json if you can) but do NOT run 'npm install' / 'npm ci' yourself — the sandbox performs an isolated install and validates it.\n\n` +
     `When done, reply in this format (nothing else):\n` +
     `DIAGNOSIS: <one-line root cause>\n` +
     `CHANGED: <comma-separated file paths>\n` +

@@ -128,6 +128,14 @@ import { initLifecycle } from "./lifecycle.js";
 // remediation message. Must run BEFORE startServer.
 enforceStartupIntegrity();
 
+// One-time notice if a self_edit merged into main on a prior run. Gives the
+// operator the revert escape hatch in case the merged code misbehaves at
+// runtime (the post-merge re-gate only catches a broken build). Best-effort.
+try {
+  const { surfaceUnacknowledgedMerge } = await import("./self-edit-rollback.js");
+  surfaceUnacknowledgedMerge();
+} catch { /* best-effort */ }
+
 // Single-instance enforcement + pidfile + parent-pid heartbeat. Must run
 // BEFORE startServer so we never bind ports while a sibling server is up.
 initLifecycle();

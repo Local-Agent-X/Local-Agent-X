@@ -6,9 +6,13 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { runCommandInWorktree, getWorktreePath } from "./agency/worktree.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runCommandInWorktree, getWorktreePath, getWorktreeChangedFiles, isolateNodeModules, changedFilesTouchDeps } from "./agency/worktree.js";
 import { npmAugmentedEnv } from "./anthropic-client/cli-path.js";
 import { killProcessTree } from "./process-tree-kill.js";
+import { runSmokeAssertions } from "./self-edit-smoke-suite.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("self-edit.sandbox-gates");
@@ -31,6 +35,33 @@ export interface GateResult {
 
 export const SKIPPED_GATE: GateResult = { ok: false, skipped: true, durationMs: 0, detail: "skipped (earlier gate failed)" };
 
+// ── Gate 0: deps ─────────────────────────────────────────────────────────────
+//
+// Lazy isolation. If the self_edit didn't touch a dependency manifest, the
+// shared node_modules junction is harmless and we skip (skipped = passed-by-
+// not-applying). If deps DID change, installing through the junction would
+// corrupt the parent repo's real node_modules — so we drop the junction
+// (isolateNodeModules) and run a real `npm ci` in an isolated dir. A failing
+// install blocks the merge.
+
+export function gateDeps(name: string): GateResult {
+  const changed = getWorktreeChangedFiles(name);
+  if (!changedFilesTouchDeps(changed)) {
+    return { ok: true, skipped: true, durationMs: 0, detail: "no dependency changes" };
+  }
+  const isolate = isolateNodeModules(name);
+  if (!isolate.ok) {
+    return { ok: false, skipped: false, durationMs: 0, detail: isolate.detail };
+  }
+  const r = runCommandInWorktree(name, { command: "npm ci", timeoutMs: BUILD_TIMEOUT_MS });
+  return {
+    ok: r.ok,
+    skipped: false,
+    durationMs: r.durationMs,
+    detail: r.ok ? "isolated npm ci passed" : (r.stderr || r.stdout || "npm ci failed").slice(-1500),
+  };
+}
+
 // ── Gate 1: build ──────────────────────────────────────────────────────────
 
 export function gateBuild(name: string): GateResult {
@@ -49,24 +80,33 @@ export function gateBuild(name: string): GateResult {
 // for the port to bind. Returns the spawned process so the caller can keep
 // it alive for the smoke gate (and kill it in the finally).
 
-export async function gateBind(name: string, port: number, signal?: AbortSignal): Promise<{ result: GateResult; proc: ChildProcess | null }> {
+export async function gateBind(name: string, port: number, authToken: string, signal?: AbortSignal): Promise<{ result: GateResult; proc: ChildProcess | null; dataDir: string | null }> {
   const start = Date.now();
   const wt = getWorktreePath(name);
   if (!wt) {
-    return { result: { ok: false, skipped: false, durationMs: 0, detail: "worktree path not found" }, proc: null };
+    return { result: { ok: false, skipped: false, durationMs: 0, detail: "worktree path not found" }, proc: null, dataDir: null };
   }
+  // Disposable data dir — the probe boots a real server, so without this it
+  // would point LAX_DATA_DIR at the user's REAL state (live SQLite, memory,
+  // secrets) and a smoke test could mutate it. A fresh temp dir isolates the
+  // probe; the caller removes it in its finally. We still pass the parent's
+  // LAX_AUTH_TOKEN so the fresh data dir adopts the same token (config.ts
+  // applies the env override before its generate-if-empty branch) and the
+  // smoke gate can authenticate POST /api/chat.
+  //
+  // LAX_INTEGRITY_WARN_ONLY=1 — downgrade enforceStartupIntegrity() to a
+  // non-fatal warning in the probe instead of a hard skip. The probe is
+  // short-lived (a few seconds, just verifies port bind + auth route), so a
+  // dropped/AV-quarantined arikernel file shouldn't kill it (exit 2) and
+  // block an unrelated self_edit — but unlike a full skip, the missing file
+  // is still logged as a warning so it stays visible. The REAL server boot
+  // (parent process) still enforces integrity normally.
+  const dataDir = mkdtempSync(join(tmpdir(), "lax-probe-"));
   const proc = spawn("npm", ["run", "dev:nowatch"], {
     cwd: wt,
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
-    // LAX_SKIP_INTEGRITY=1 — bypass enforceStartupIntegrity() in the
-    // probe. The probe is short-lived and only needs to verify the
-    // server can bind a port + answer auth. The integrity check kills
-    // the probe (exit 2) when arikernel files are AV-quarantined,
-    // which would block self_edit even though the actual edit is
-    // unrelated to those files. The check still runs on the REAL
-    // server boot (parent process) — this only loosens it for probes.
-    env: { ...npmAugmentedEnv(), LAX_PORT: String(port), LAX_DISABLE_BACKGROUND_JOBS: "1", LAX_SKIP_INTEGRITY: "1" },
+    env: { ...npmAugmentedEnv(), LAX_PORT: String(port), LAX_DISABLE_BACKGROUND_JOBS: "1", LAX_DATA_DIR: dataDir, LAX_AUTH_TOKEN: authToken, LAX_INTEGRITY_WARN_ONLY: "1" },
   });
 
   let probeStdout = "";
@@ -78,7 +118,7 @@ export async function gateBind(name: string, port: number, signal?: AbortSignal)
   while (Date.now() < deadline) {
     if (signal?.aborted) {
       try { proc.kill("SIGKILL"); } catch {}
-      return { result: { ok: false, skipped: false, durationMs: Date.now() - start, detail: "aborted" }, proc: null };
+      return { result: { ok: false, skipped: false, durationMs: Date.now() - start, detail: "aborted" }, proc: null, dataDir };
     }
     if (proc.exitCode !== null) {
       return {
@@ -87,13 +127,14 @@ export async function gateBind(name: string, port: number, signal?: AbortSignal)
           detail: `probe exited (code ${proc.exitCode}) before binding\nstdout: ${probeStdout.slice(-800)}\nstderr: ${probeStderr.slice(-800)}`,
         },
         proc: null,
+        dataDir,
       };
     }
     try {
       const r = await fetch(`http://127.0.0.1:${port}/api/auth/status`, { signal: AbortSignal.timeout(1000) });
       // 200 = bound and answering; 401 = bound and rejecting auth — both prove bind success
       if (r.status === 200 || r.status === 401) {
-        return { result: { ok: true, skipped: false, durationMs: Date.now() - start, detail: `bound on port ${port}` }, proc };
+        return { result: { ok: true, skipped: false, durationMs: Date.now() - start, detail: `bound on port ${port}` }, proc, dataDir };
       }
     } catch { /* not yet bound */ }
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -105,6 +146,7 @@ export async function gateBind(name: string, port: number, signal?: AbortSignal)
       detail: `did not bind on port ${port} within ${BIND_TIMEOUT_MS / 1000}s\nstdout: ${probeStdout.slice(-800)}\nstderr: ${probeStderr.slice(-800)}`,
     },
     proc: null,
+    dataDir,
   };
 }
 
@@ -143,7 +185,11 @@ export async function gateSmoke(port: number, authToken: string, signal?: AbortS
     if (total < 1) {
       return { ok: false, skipped: false, durationMs: Date.now() - start, detail: "chat returned 200 but stream was empty" };
     }
-    return { ok: true, skipped: false, durationMs: Date.now() - start, detail: `chat replied (${total} bytes)` };
+    const suite = await runSmokeAssertions(port, authToken, signal);
+    if (!suite.ok) {
+      return { ok: false, skipped: false, durationMs: Date.now() - start, detail: `chat ok but ${suite.detail}` };
+    }
+    return { ok: true, skipped: false, durationMs: Date.now() - start, detail: `chat replied (${total} bytes) + ${suite.detail}` };
   } catch (e) {
     return { ok: false, skipped: false, durationMs: Date.now() - start, detail: `smoke test threw: ${(e as Error).message}` };
   }

@@ -20,8 +20,9 @@ fingerprint-parent-deps → spawnClaude[scrubbed env] → verify-parent-deps(res
 ```
 
 The subprocess is spawned with a **scrubbed env** (Pass 4) so it can't inherit
-the user's credentials, and its output is secret-redacted before it reaches
-chat/logs.
+the user's credentials — and the gates that later EXECUTE its output (`gateBuild`,
+the `gateBind` probe) run scrubbed too, so it can't exfil via written code
+either. Its output is secret-redacted before it reaches chat/logs.
 
 Both the sandbox path and the bypass path acquire the same machine-wide global
 lock before touching the shared tree (Pass 2, #9); the lock is atomic and the
@@ -139,9 +140,17 @@ than forking a new scrubber.
   plus the child's OWN Anthropic auth (`ANTHROPIC_API_KEY` /
   `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`) so API-key installs still
   authenticate. The `ENV_ALLOWLIST` was moved to `env-credential-patterns.ts`
-  so the MCP and self_edit scrubbers share one source of truth. The probe in
-  `gateBind` keeps the real env — it's the trusted LAX boot, not the injected
-  child.
+  so the MCP and self_edit scrubbers share one source of truth.
+  - **Gate-execution scrub (M1 follow-up).** Scrubbing only the `claude -p`
+    child left a side door: an injected child needn't read creds itself — it can
+    write `process.env.SECRET`-exfil code that the gates which EXECUTE its output
+    then run with the full env. So `gateBuild` (`npm run build`) and the
+    `gateBind` probe (which BOOTS the worktree app — the richest exfil runtime)
+    now run under `buildSelfEditChildEnv()` too (`runCommandInWorktree` gained an
+    optional `env`). The probe defaults to the `anthropic` provider on its fresh
+    empty data dir, so the only provider cred it can use is the Anthropic auth
+    the scrub already passes through — verified end-to-end: LAX boots, binds, and
+    the smoke chat returns 200 under the scrubbed env.
 - **M4 — Staged-secret tripwire (detective).** `scanWorktreeForStagedSecrets`
   (`src/self-edit/exfil-scan.ts`) scans the ADDED content of the worktree diff
   (tracked additions + new untracked files) against the canonical
@@ -172,6 +181,13 @@ suites still green (27 tests).
   theater, so we don't ship it. M4 is the detective compensating control for
   the staging/output sub-case; the diff-scope hold + encrypted-at-rest vault
   (`secrets.enc`/`auth.json`, DPAPI master key) cover the rest.
+- **`gateDeps` (`npm ci`) keeps the real env (deliberate).** Scrubbing it would
+  break enterprise installs — private-registry tokens, proxy/registry/cache
+  config that a strict allowlist drops — and its only code-exec vector (a
+  malicious `postinstall`) requires a dependency-manifest change, which only
+  runs the deps gate at all when `package.json`/lock changed and is a visible,
+  reviewable diff. The build + bind gates (which run on every self_edit) carry
+  the scrub; deps does not.
 - **M2 — Disposable `LAX_DATA_DIR` for the child (considered, deferred —
   marginal).** Generalizing `gateBind`'s temp-dir pattern to the child only
   redirects LAX-code reads of the data dir; raw `cat ~/.lax/...` still resolves

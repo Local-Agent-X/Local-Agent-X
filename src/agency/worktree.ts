@@ -468,6 +468,10 @@ export function commitInWorktree(name: string, message: string): string | null {
 interface BuildOptions {
   command: string;
   timeoutMs: number;
+  /** Env for the command. Defaults to the parent process env. Callers running
+   *  worktree code authored by an untrusted self_edit child pass a scrubbed env
+   *  so the command can't read+exfil the server's credentials. */
+  env?: NodeJS.ProcessEnv;
 }
 
 interface BuildResult {
@@ -549,6 +553,7 @@ export function runCommandInWorktree(name: string, opts: BuildOptions): BuildRes
       timeout: opts.timeoutMs,
       windowsHide: true,
       maxBuffer: 10 * 1024 * 1024,
+      ...(opts.env ? { env: opts.env } : {}),
     });
     return { ok: true, durationMs: Date.now() - start, stdout, stderr: "" };
   } catch (e) {

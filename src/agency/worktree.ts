@@ -9,7 +9,7 @@
  */
 
 import { execSync, execFileSync } from "node:child_process";
-import { existsSync, symlinkSync, readdirSync, statSync } from "node:fs";
+import { existsSync, symlinkSync, readdirSync, statSync, lstatSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -117,6 +117,15 @@ export function cleanupWorktree(agentId: string): void {
   const wt = activeWorktrees.get(agentId);
   if (!wt) return;
 
+  // Drop the shared node_modules junctions BEFORE `git worktree remove --force`
+  // so the recursive delete can't traverse into the parent repo's real deps.
+  const stuck = unlinkSharedJunctions(wt.path);
+  if (stuck.length) {
+    logger.error(`[worktree] Refusing to remove ${agentId}: live node_modules junction(s) still present (${stuck.join(", ")}). Worktree left on disk to protect the parent node_modules.`);
+    activeWorktrees.delete(agentId);
+    return;
+  }
+
   try { git(["worktree", "remove", wt.path, "--force"], wt.repoRoot); } catch { /* already gone */ }
 
   // Only delete branch if merge was successful — preserve it on conflict so user can resolve
@@ -176,6 +185,49 @@ function linkDirectoryInto(srcAbs: string, dstAbs: string): void {
   } catch (e) {
     logger.warn(`[worktree] Failed to link ${srcAbs} -> ${dstAbs}: ${(e as Error).message}`);
   }
+}
+
+/**
+ * Remove every node_modules junction we linked into a worktree, BEFORE any
+ * destructive teardown (`git worktree remove --force`).
+ *
+ * linkDirectoryInto() junctions the parent repo's real node_modules into the
+ * worktree so builds resolve deps without a per-shift npm install. A junction
+ * is a reparse point; a force-recursive directory delete can traverse INTO it
+ * and delete the TARGET's contents — i.e. the parent's real node_modules,
+ * taking @esbuild/arikernel with it and bricking the app. Unlinking the
+ * junction first removes the only thing that can be traversed.
+ *
+ * Returns the links it could NOT remove. A non-empty return means teardown
+ * must refuse the destructive delete — the junction is still live and would be
+ * traversed.
+ */
+function unlinkSharedJunctions(wtPath: string): string[] {
+  const candidates = [join(wtPath, "node_modules")];
+  const pkgsDir = join(wtPath, "packages");
+  if (existsSync(pkgsDir)) {
+    for (const pkg of readdirSync(pkgsDir)) candidates.push(join(pkgsDir, pkg, "node_modules"));
+  }
+  const stuck: string[] = [];
+  for (const link of candidates) {
+    let st;
+    try { st = lstatSync(link); } catch { continue; } // not present
+    if (!st.isSymbolicLink()) continue;               // real dir — not ours, never delete
+    try {
+      if (process.platform === "win32") {
+        // `rmdir` without /S removes ONLY the junction reparse point. If this
+        // were somehow a real non-empty dir, rmdir fails — a SAFE failure that
+        // never traverses into the target.
+        execSync(`cmd /c rmdir "${link}"`, { timeout: 10_000, windowsHide: true });
+      } else {
+        unlinkSync(link);
+      }
+    } catch (e) {
+      logger.warn(`[worktree] Failed to unlink junction ${link}: ${(e as Error).message}`);
+      stuck.push(link);
+    }
+  }
+  return stuck;
 }
 
 /**

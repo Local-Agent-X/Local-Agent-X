@@ -305,6 +305,25 @@ export function changedFilesTouchDeps(files: string[]): boolean {
 }
 
 /**
+ * Of the given changed files, return those touching security-sensitive paths:
+ * src/security/**, src/tool-policy/**, src/auth/**, and config/protected-files.json.
+ * A self_edit that rewrites these can silently weaken the layer that authorizes
+ * every tool call — and a weakened layer still builds, boots, and chats, so the
+ * sandbox gates can't catch it. The sandbox holds these for explicit human
+ * review instead of auto-merging. Backslashes are normalized so Windows paths
+ * from `git status` match.
+ */
+export function securitySensitiveChangedFiles(files: string[]): string[] {
+  return files.filter(f => {
+    const p = f.replace(/\\/g, "/");
+    return p.startsWith("src/security/")
+      || p.startsWith("src/tool-policy/")
+      || p.startsWith("src/auth/")
+      || p === "config/protected-files.json";
+  });
+}
+
+/**
  * Drop the worktree's shared node_modules junction so a real isolated install
  * can replace it. Used by the deps gate when a self_edit changes dependencies:
  * installing through the junction would write into the parent repo's real

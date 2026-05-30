@@ -26,7 +26,7 @@
 import { rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { type ChildProcess } from "node:child_process";
-import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild } from "./agency/worktree.js";
+import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getWorktreeChangedFiles, securitySensitiveChangedFiles } from "./agency/worktree.js";
 import { recordMerge } from "./self-edit-rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, spawnClaude, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
@@ -53,6 +53,10 @@ export interface SandboxResult {
   filesMerged: number | null;
   /** Reason for failure, populated when ok=false. */
   failure?: string;
+  /** True when all gates passed but the merge was deliberately HELD (not a
+   *  failure) — currently only the security diff-scope gate (#10), which
+   *  requires explicit human review before security/policy/auth changes land. */
+  heldForReview?: boolean;
 }
 
 export interface SandboxOpts {
@@ -165,10 +169,33 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     killProbe(probeProc);
     probeProc = null;
 
-    progress("All gates passed — merging into main…");
     // Capture the pre-merge base SHA BEFORE mergeWorktree deletes the registry
     // entry, so a post-merge re-gate failure can revert the base branch.
     const mergeInfo = getMergeBaseInfo(name);
+
+    // Security diff-scope gate (#10): the subprocess runs with
+    // bypassPermissions and can rewrite the security / tool-policy / auth layer
+    // (or the protected-files manifest). A weakened layer still builds, boots,
+    // and chats, so no gate above catches it. Hold such merges for explicit
+    // human review — branch preserved on disk, main untouched.
+    const securityTouched = securitySensitiveChangedFiles(getWorktreeChangedFiles(name));
+    if (securityTouched.length > 0) {
+      logger.warn(`[self-edit.sandbox] security-sensitive paths touched — holding merge for human review: ${securityTouched.join(", ")}`);
+      const base = mergeInfo?.baseBranch ?? "main";
+      return {
+        ok: false, output: claudeOutput,
+        gates: { deps, build, bind: bindOutcome.result, smoke },
+        branchName: branch, filesMerged: null, heldForReview: true,
+        failure:
+          `Gates passed, but this self_edit modifies security-sensitive files:\n` +
+          securityTouched.map(f => `    - ${f}`).join("\n") + `\n\n` +
+          `Auto-merge is BLOCKED — changes to the security / tool-policy / auth layer require explicit human review.\n` +
+          `Review:  git diff ${base}...${branch}\n` +
+          `Merge:   git checkout ${base} && git merge ${branch}`,
+      };
+    }
+
+    progress("All gates passed — merging into main…");
     const merge = mergeWorktree(name);
     if (!merge.merged) {
       return {
@@ -260,6 +287,17 @@ export function formatSandboxResult(r: SandboxResult): string {
       ``,
       `Restart the server to apply the changes.`,
     ].join("\n");
+  }
+  // Held for review — gates passed, merge deliberately withheld (not a failure).
+  if (r.heldForReview) {
+    return [
+      `[HELD] self_edit passed all gates but was NOT merged — security review required`,
+      `  ${r.failure || "(no detail)"}`,
+      r.branchName ? `  branch ${r.branchName} preserved on disk` : "",
+      ``,
+      `Subprocess output (informational):`,
+      r.output || "(empty)",
+    ].filter(Boolean).join("\n");
   }
   const failedGate =
     !r.gates.deps.skipped && !r.gates.deps.ok ? "deps" :

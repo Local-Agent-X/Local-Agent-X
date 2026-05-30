@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { npmAugmentedEnv } from "../anthropic-client/cli-path.js";
 import { killProcessTree } from "../process-tree-kill.js";
+import { buildSelfEditChildEnv } from "./child-env.js";
+import { redactSecrets } from "../security/secret-scanner.js";
 
 const MAX_OUTPUT_CHARS = 4000;
 const TIMEOUT_MS = 10 * 60_000; // 10 min — source-code repair can be slow
@@ -30,7 +31,9 @@ export function runSelfEditBypass(
       cwd: subprocessCwd,
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
-      env: npmAugmentedEnv(),
+      // Scrubbed env — a prompt-injected child must not inherit the user's
+      // credentials from the LAX server env. See child-env.ts.
+      env: buildSelfEditChildEnv(),
     });
 
     // Windows shell:true → cmd.exe wrapper → proc.kill only signals
@@ -58,7 +61,10 @@ export function runSelfEditBypass(
         resolveP({ content: `self_edit failed (exit ${code}):\n${stderr.slice(0, 600)}`, isError: true });
         return;
       }
-      const output = stdout.trim().slice(0, MAX_OUTPUT_CHARS);
+      // Redact any secret-shaped material the child echoed before it reaches
+      // chat/logs — a child that read a credential shouldn't get to surface
+      // it through stdout either.
+      const output = redactSecrets(stdout.trim().slice(0, MAX_OUTPUT_CHARS));
       resolveP({ content: output || `(no output, exit ${code})` });
     });
 

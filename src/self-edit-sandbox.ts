@@ -31,6 +31,8 @@ import { recordMerge } from "./self-edit-rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, spawnClaude, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
 import { fingerprintParentDeps, restoreParentDeps } from "./self-edit/parent-deps-guard.js";
+import { scanWorktreeForStagedSecrets } from "./self-edit/exfil-scan.js";
+import { redactSecrets } from "./security/secret-scanner.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("self-edit.sandbox");
@@ -124,9 +126,11 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     const repoRoot = getMergeBaseInfo(name)?.repoRoot ?? null;
     const depsFingerprintBefore = repoRoot ? fingerprintParentDeps(repoRoot) : null;
 
-    // Run claude -p inside the worktree
+    // Run claude -p inside the worktree. Redact any secret-shaped material
+    // the child echoed before it reaches chat/logs (defense-in-depth — a
+    // child that read a credential shouldn't surface it through stdout).
     progress("Running source-code repair in sandbox…");
-    const claudeOutput = await spawnClaude(wt.path, opts.fullPrompt, opts.signal);
+    const claudeOutput = redactSecrets(await spawnClaude(wt.path, opts.fullPrompt, opts.signal));
 
     // Parent-deps guard (#2): the parent's node_modules must be UNCHANGED across
     // the run (the only legit install — the deps gate — is isolated to the
@@ -215,6 +219,32 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
           `Gates passed, but this self_edit modifies security-sensitive files:\n` +
           securityTouched.map(f => `    - ${f}`).join("\n") + `\n\n` +
           `Auto-merge is BLOCKED — changes to the security / tool-policy / auth layer require explicit human review.\n` +
+          `Review:  git diff ${base}...${branch}\n` +
+          `Merge:   git checkout ${base} && git merge ${branch}`,
+      };
+    }
+
+    // Exfil tripwire (confidentiality): a prompt-injected subprocess could
+    // stage a scraped credential into the diff (a secret written into a
+    // source file rides out on the eventual commit/push). Scan the added
+    // content for secret-shaped material; HOLD the merge on a hit — same
+    // posture as the security diff-scope gate, branch preserved for review.
+    // This catches staged secrets, NOT live network egress (the irreducible
+    // residual — see docs/self-edit-hardening.md, M3).
+    const exfil = scanWorktreeForStagedSecrets(wt.path);
+    if (!exfil.clean) {
+      logger.warn(`[self-edit.sandbox] secret-shaped content staged in diff — holding merge for human review: ${exfil.hits.map(h => h.file).join(", ")}`);
+      const base = mergeInfo?.baseBranch ?? "main";
+      return {
+        ok: false, output: claudeOutput,
+        gates: { deps, build, bind: bindOutcome.result, smoke },
+        branchName: branch, filesMerged: null, heldForReview: true,
+        failure:
+          `Gates passed, but this self_edit staged secret-shaped content into the tree:\n` +
+          exfil.hits.map(h => `    - ${h.file}: ${h.patterns.join(", ")}`).join("\n") + `\n\n` +
+          `Auto-merge is BLOCKED — a prompt-injected subprocess could be staging a credential ` +
+          `for exfiltration. Review the diff before merging (false positives are possible — e.g. ` +
+          `a test fixture or an edit to the secret-pattern catalog itself):\n` +
           `Review:  git diff ${base}...${branch}\n` +
           `Merge:   git checkout ${base} && git merge ${branch}`,
       };

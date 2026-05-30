@@ -5,7 +5,7 @@ import { wrapExternalContent } from "../sanitize.js";
 import type { ToolResult } from "../types.js";
 import { type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
 import { verifyOrTrust } from "./integrity.js";
-import { DENY_PREFIXES, DENY_SUBSTRINGS, DENY_EXACT } from "./env-credential-patterns.js";
+import { DENY_PREFIXES, DENY_SUBSTRINGS, DENY_EXACT, ENV_ALLOWLIST } from "./env-credential-patterns.js";
 
 const logger = createLogger("mcp-client");
 
@@ -21,28 +21,8 @@ const logger = createLogger("mcp-client");
 // credentials must flow through the secret vault, never env injection.
 // ─────────────────────────────────────────────────────────────────────
 
-const ENV_ALLOWLIST: readonly string[] = [
-  // Binary resolution
-  "PATH", "PATHEXT",
-  // Home dir
-  "HOME", "USERPROFILE",
-  // Windows shell + system paths
-  "SYSTEMROOT", "WINDIR", "COMSPEC",
-  // Windows user dirs
-  "APPDATA", "LOCALAPPDATA",
-  // Temp dirs
-  "TMPDIR", "TEMP", "TMP",
-  // Locale
-  "LANG", "LC_ALL", "LC_CTYPE",
-  // POSIX shell discovery
-  "SHELL",
-  // Unix identity
-  "USER", "LOGNAME",
-  // Linux XDG dirs
-  "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-  // Node module resolution
-  "NODE_PATH",
-];
+// ENV_ALLOWLIST moved to ./env-credential-patterns.js so the self_edit child
+// env builder can share the same allowlist (one source of truth).
 
 /**
  * Match `key` against the shared credential-deny tables.

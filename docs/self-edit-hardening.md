@@ -12,11 +12,16 @@ tracked below as two passes.
 ## Gate order (current, after Pass 2)
 
 ```
-fingerprint-parent-deps → spawnClaude → verify-parent-deps(restore+abort if mutated)
+fingerprint-parent-deps → spawnClaude[scrubbed env] → verify-parent-deps(restore+abort if mutated)
   → deps → build → bind → smoke → security-scope(HOLD if security/auth/policy touched)
+  → exfil-scan(HOLD if secret-shaped content staged in diff)
   → merge → re-gate(rebuild merged main) → record(boot-pending)
   → [next boot] confirmMergeBoot on bind / revertPendingMergeIfCrashed on crash
 ```
+
+The subprocess is spawned with a **scrubbed env** (Pass 4) so it can't inherit
+the user's credentials, and its output is secret-redacted before it reaches
+chat/logs.
 
 Both the sandbox path and the bypass path acquire the same machine-wide global
 lock before touching the shared tree (Pass 2, #9); the lock is atomic and the
@@ -31,6 +36,9 @@ Key files:
 - `src/agency/worktree.ts` — junctions, isolateNodeModules, security-scope matcher, orphan sweep, git/build primitives
 - `src/self-edit/tool.ts` — entrypoint; sandbox vs bypass (_cwd / _unsafe) routing; bypass lock + unsafe snapshot
 - `src/self-edit/bypass-runner.ts` — bypass path (no gates)
+- `src/self-edit/child-env.ts` — confidentiality scrub of the `claude -p` child env (Pass 4, M1)
+- `src/self-edit/exfil-scan.ts` — staged-secret tripwire on the produced diff (Pass 4, M4)
+- `src/mcp-client/env-credential-patterns.ts` — shared child-env policy data (allowlist + credential-deny tables); canonical for env scrubbing across MCP + self_edit
 - `src/autopilot/validate.ts` + `loop.ts` — autopilot's own per-round validation
 - `src/autopilot/boot-proof.ts` — end-of-shift bind+smoke boot proof for the run summary (#3)
 - `src/startup-integrity.ts` — boot integrity check + warn-only probe mode
@@ -112,12 +120,73 @@ suites green (12 tests). Shipped on branch `chore/self-edit-hardening-pass2`.
 Tests: `self-edit-rollback` (+ boot-marker), `self-edit-global-lock`,
 `self-edit-parent-deps`, `worktree-deps`, `protected-files` — 35 green.
 
+## Pass 4 — SHIPPED (#6 — exfiltration / confidentiality)
+
+The first non-brick gap addressed. Passes 1–3 defend INTEGRITY/AVAILABILITY
+(bricking). Pass 4 defends CONFIDENTIALITY: a prompt-injected subprocess
+(injection via the task text OR via repo/workspace content it reads) reading
+secrets/tokens and bashing them out to the network. Canonical owner: the child
+env scrubber already used for MCP children (`buildMcpChildEnv` +
+`env-credential-patterns.ts`); Pass 4 extends it to the self_edit child rather
+than forking a new scrubber.
+
+- **M1 — Child env scrub (the root-cause fix).** Both `claude -p` spawn sites
+  (`bypass-runner.ts`, `spawnClaude` in `self-edit-sandbox-gates.ts`) used to
+  pass `npmAugmentedEnv()` = `{...process.env}`, handing every credential in the
+  LAX server env to the child. Replaced with `buildSelfEditChildEnv()`
+  (`src/self-edit/child-env.ts`): default-deny — only the non-credential
+  allowlist passes through (binary resolution / shell / locale / temp / home),
+  plus the child's OWN Anthropic auth (`ANTHROPIC_API_KEY` /
+  `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`) so API-key installs still
+  authenticate. The `ENV_ALLOWLIST` was moved to `env-credential-patterns.ts`
+  so the MCP and self_edit scrubbers share one source of truth. The probe in
+  `gateBind` keeps the real env — it's the trusted LAX boot, not the injected
+  child.
+- **M4 — Staged-secret tripwire (detective).** `scanWorktreeForStagedSecrets`
+  (`src/self-edit/exfil-scan.ts`) scans the ADDED content of the worktree diff
+  (tracked additions + new untracked files) against the canonical
+  `secret-scanner.ts` catalog before merge; a hit HOLDs the merge for human
+  review (same posture as the security diff-scope gate, branch preserved).
+  Catches a child STAGING a scraped credential into source (rides out on the
+  eventual commit/push). Subprocess stdout is also secret-redacted before it
+  reaches chat/logs (both sandbox + bypass paths). False positives are possible
+  (test fixtures, edits to the pattern catalog itself) — by design it's a HOLD,
+  not a hard fail.
+
+Tests: `test/self-edit-child-env.test.ts` (env scrub guarantees),
+`test/self-edit-exfil-scan.test.ts` (pure staged-secret detection). Verified:
+`npm run build` clean; both suites green (11 tests); MCP env + prior self-edit
+suites still green (27 tests).
+
+### What M1+M4 do NOT close (honest residuals)
+- **Anthropic-credential exfil (irreducible).** After M1 the child still holds
+  an Anthropic credential — whether via the env passthrough or its own
+  `~/.claude` OAuth store — and an injected child can read+exfil it. This is
+  inherent to running a Claude subprocess and cannot be closed without an
+  OS-level egress jail (M3, below — not shipping). M1 removes the *bulk*
+  credential-from-env path (GitHub/AWS/Stripe/LAX-token/etc.), not this one.
+- **Live network egress (M3 — NOT shipping, deliberately).** Truly preventing a
+  child from POSTing a secret it read from disk via raw bash needs WFP /
+  AppContainer / a forced proxy — heavyweight, per-machine, brittle on Windows,
+  and not enforceable out-of-the-box. Anything lighter would be security
+  theater, so we don't ship it. M4 is the detective compensating control for
+  the staging/output sub-case; the diff-scope hold + encrypted-at-rest vault
+  (`secrets.enc`/`auth.json`, DPAPI master key) cover the rest.
+- **M2 — Disposable `LAX_DATA_DIR` for the child (considered, deferred —
+  marginal).** Generalizing `gateBind`'s temp-dir pattern to the child only
+  redirects LAX-code reads of the data dir; raw `cat ~/.lax/...` still resolves
+  via `~`, and those blobs are encrypted anyway. Near-zero value for this
+  threat; not worth the moving part. Revisit only if a future feature makes the
+  child run LAX code that reads the data dir by env.
+
+> Billing note (not security): if a user has BOTH a Max-subscription OAuth
+> login and a stray `ANTHROPIC_API_KEY` in env, the passthrough makes the child
+> bill against the API key instead of the subscription. A nuance, not a leak;
+> not solved here.
+
 ### Accepted / out-of-scope (not brick vectors)
 - **Fail-open intent/scope gates** — deliberate: better to allow an occasional
   misroute than block legit self_edits when the classifier is flaky. Left as-is.
-- **Exfiltration** — a `bypassPermissions` subprocess can read secrets + bash
-  out. Real, but the feature's security ceiling, not a brick — tracked as a
-  separate security effort, not self-edit-hardening.
 - **Probe-port collision (#7-minor)** — autopilot boot-proof probe doesn't take
   the global lock; a port clash yields a false boot-proof failure (cosmetic, no
   brick). Deferred.

@@ -76,6 +76,26 @@ export function loadToolsConfig(): ToolsConfig {
   return _toolsConfig;
 }
 
+/**
+ * Match a candidate path against a single manifest entry. The candidate is
+ * already normalized to forward slashes and may be absolute or repo-relative.
+ * A trailing "/" on the entry protects the entire subtree (so splitting a
+ * protected file into a directory keeps it protected). Matching is anchored to
+ * path-segment boundaries: "src/security/" never matches "src/security-notes.ts"
+ * and "src/auth.ts" never matches a file ending in "oauth.ts".
+ */
+export function pathMatchesProtected(candidate: string, entry: string): boolean {
+  const isDir = entry.endsWith("/");
+  const e = normalize(entry).replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!e) return false;
+  // File, or the directory node itself: candidate equals e or ends with "/<e>".
+  const atBoundary = candidate === e || candidate.endsWith("/" + e);
+  if (!isDir) return atBoundary;
+  // Directory subtree: the dir itself, anything under it (".../<e>/..."), or a
+  // repo-relative path that starts with "<e>/".
+  return atBoundary || candidate.includes("/" + e + "/") || candidate.startsWith(e + "/");
+}
+
 /** Check if a file path is protected (cannot be modified by the agent). */
 export function isProtectedFile(filePath: string): { protected: boolean; reason?: string } {
   const protectedList = loadProtectedFiles();
@@ -91,8 +111,7 @@ export function isProtectedFile(filePath: string): { protected: boolean; reason?
   } catch {}
 
   for (const protectedPath of protectedList) {
-    const normalizedProtected = normalize(protectedPath).replace(/\\/g, "/");
-    if (normalized.endsWith(normalizedProtected) || normalized === normalizedProtected) {
+    if (pathMatchesProtected(normalized, protectedPath)) {
       return {
         protected: true,
         reason: reasons[protectedPath] || `${protectedPath} is a protected core file`,

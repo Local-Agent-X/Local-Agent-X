@@ -33,3 +33,24 @@ export function checkScopeEvidence(task: string): { blocked: true; message: stri
       `Rewrite with specifics. If you don't have specifics, you probably don't have enough information to call self_edit yet — read the relevant code first or ask the user for details.`,
   };
 }
+
+// LAX source roots self_edit is allowed to touch. workspace/ is the user's
+// own app code and is gitignored (.gitignore: workspace/*) — a self_edit
+// scoped there edits an ephemeral sandbox worktree, never commits, and the
+// change is lost when the worktree is cleaned up. So a task scoped ONLY to
+// workspace/ is a misrouted `edit`, never a real self_edit. (A task that
+// references BOTH workspace/ and a source root is a legit "adapt this
+// workspace prototype into src/" wiring job — allowed.)
+const SOURCE_ROOT_RE = /(?:^|\s|['"`(])(?:src|packages|public|config|integrations|scripts)\//;
+const WORKSPACE_PATH_RE = /(?:^|\s|['"`(])workspace\//;
+
+export function checkWorkspaceMisroute(text: string): { blocked: true; message: string } | null {
+  if (!WORKSPACE_PATH_RE.test(text) || SOURCE_ROOT_RE.test(text)) return null;
+  return {
+    blocked: true,
+    message:
+      `BLOCKED — this is a workspace-app change, not a LAX source edit. self_edit only modifies LAX's own source ` +
+      `(src/, packages/, etc.); workspace/ is the user's own app code and is gitignored, so a self_edit there can't ` +
+      `even persist. Use the edit/write tools directly on the workspace path instead — they apply the change in place.`,
+  };
+}

@@ -25,7 +25,7 @@
 
 import type { ToolDefinition } from "../types.js";
 import { LAX_REPO_ROOT } from "./agents-rules.js";
-import { checkScopeEvidence } from "./scope-gate.js";
+import { checkScopeEvidence, checkWorkspaceMisroute } from "./scope-gate.js";
 import { checkSelfEditIntent } from "./intent-gate.js";
 import {
   acquireSelfEditLock,
@@ -99,6 +99,13 @@ export const selfEditTool: ToolDefinition = {
     onProgress("Checking task scope…");
     const scopeBlock = checkScopeEvidence(task);
     if (scopeBlock) return { content: scopeBlock.message, isError: true };
+
+    // Workspace-misroute backstop — a task scoped only to workspace/ is a
+    // misrouted `edit` (workspace is gitignored; self_edit can't persist
+    // there). Checked here, before the LLM intent gate, so the redirect is
+    // free. Covers paths in either the task or the optional scope_hint.
+    const misroute = checkWorkspaceMisroute(`${task}\n${String(args.scope_hint || "")}`);
+    if (misroute) return { content: misroute.message, isError: true };
 
     // Layer 1: intent-match gate.
     //

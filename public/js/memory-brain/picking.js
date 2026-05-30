@@ -5,6 +5,12 @@
 
 import * as THREE from 'three';
 import { state } from './state.js';
+import { clearFocus } from './focus.js';
+
+// Only raycast individual dots once zoomed in past this distance — from the
+// overview every dot overlaps its neighbours, so a click would hit a random
+// one. Out there, labels handle navigation; in here, dots are pickable.
+const PICK_ZOOM = 2.6;
 
 const ray = new THREE.Raycaster();
 ray.params.Points.threshold = 0.04;
@@ -37,12 +43,13 @@ export function wirePicking() {
   el.addEventListener('click', (e) => {
     const hit = pick(e);
     if (hit) { pinned = true; showTip(e, hit); }
-    else { pinned = false; hideTip(); }
+    else { pinned = false; hideTip(); clearFocus(); }
   });
 }
 
 function pick(e) {
   if (!state.points || !state.items.length) return null;
+  if (state.camera.position.z > PICK_ZOOM) return null;
   const rect = state.canvas.getBoundingClientRect();
   ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
   ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;

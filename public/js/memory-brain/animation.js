@@ -5,6 +5,7 @@
 import { state } from './state.js';
 import { updateClusterLabels } from './labels.js';
 import { updateLod } from './lod.js';
+import { updateFocus } from './focus.js';
 
 export function tick() {
   state.raf = requestAnimationFrame(tick);
@@ -12,12 +13,17 @@ export function tick() {
   if (state.mat) state.mat.uniforms.uTime.value = t;
   if (state.points) {
     state.spinFactor += (state.spinTarget - state.spinFactor) * 0.06;
-    state.points.rotation.y += 0.0016 * state.spinFactor;
-    state.points.rotation.x = Math.sin(t * 0.15) * 0.12;
+    // While focused on a region the rotation is held fixed so the camera's
+    // captured pan target stays valid — otherwise the cluster would drift away.
+    if (!state.focused) {
+      state.points.rotation.y += 0.0016 * state.spinFactor;
+      state.points.rotation.x = Math.sin(t * 0.15) * 0.12;
+    }
   }
   if (state.camera) {
     state.camera.position.z += (state.zoomTarget - state.camera.position.z) * 0.08;
   }
+  updateFocus();
   updateLod();
   state.renderer.render(state.scene, state.camera);
   updateClusterLabels();

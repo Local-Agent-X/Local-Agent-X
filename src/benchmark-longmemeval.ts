@@ -162,9 +162,11 @@ async function main() {
       process.stdout.write(`\r[${pct}%] ${qi + 1}/${testItems.length} | R@${K}: ${recall}% | ${qType} ${hit ? "✓" : "✗"} | ETA: ${Math.floor(eta/60)}m${eta%60}s  `);
     }
 
-    // Cleanup
+    // Cleanup — typed call so a missing removeFile fails loudly instead of
+    // silently leaving prior questions' haystacks in the index (the bug that
+    // tanked measured recall when removeFile moved off the class).
     for (const p of sessionPaths) {
-      try { (memory as any).removeFile(p); } catch {}
+      memory.removeFile(p);
     }
     } catch (e) {
       logger.warn(`\n[bench] Question ${qi + 1} failed: ${(e as Error).message}`);

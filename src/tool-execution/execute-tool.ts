@@ -36,26 +36,27 @@ async function executeSingleTool(
 ): Promise<ChatCompletionMessageParam[]> {
   const ctx = createContext({ tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, runId, onEvent, signal, priorMessages });
 
-  await resolvePhase(ctx);
-  if (ctx.terminated) return ctx.msgs;
+  if ((await resolvePhase(ctx)).kind === "halt") return ctx.msgs;
 
-  await enforcePolicyPhase(ctx);
-  if (ctx.terminated) return ctx.msgs;
+  const policy = await enforcePolicyPhase(ctx);
+  if (policy.kind === "halt") return ctx.msgs;
 
-  if (!ctx.preBlocked && ctx.tool) {
+  // policy === "block" means the pre-dispatch chain or unknown-tool fired:
+  // skip approval + execute, but fall through to audit so the threat engine +
+  // hooks see the block and render its message.
+  if (policy.kind === "continue" && ctx.tool) {
     // Dedup check sits between policy and approval: policy denials still
     // win (a previously-allowed call doesn't grant future immunity), but
     // a same-args repeat short-circuits before we re-prompt the user for
     // approval or re-execute side effects. See dedup-cache.ts header for
     // the class of bugs this catches (MCP-loop dupes from Anthropic CLI's
-    // multi-step tool use).
-    await dedupCheckPhase(ctx);
-    if (ctx.terminated) {
+    // multi-step tool use). On a dedup hit we still run audit so threat +
+    // hooks observe the reused result.
+    if ((await dedupCheckPhase(ctx)).kind === "halt") {
       await auditPhase(ctx);
       return ctx.msgs;
     }
-    await requireApprovalPhase(ctx);
-    if (ctx.terminated) return ctx.msgs;
+    if ((await requireApprovalPhase(ctx)).kind === "halt") return ctx.msgs;
     await captureRollbackPhase(ctx);
     await emitTraceStartPhase(ctx);
     await runSandboxedPhase(ctx);

@@ -12,9 +12,10 @@ import { getToolDecision } from "../approval-manager.js";
 import { classifyToolRisk } from "../autonomy/risk.js";
 import { appendTraceEvent, capValue } from "../agents/run-trace.js";
 import type { Phase } from "./context.js";
+import { CONTINUE } from "./context.js";
 
 export const emitTraceStartPhase: Phase = async (ctx) => {
-  if (!ctx.runId) return;
+  if (!ctx.runId) return CONTINUE;
   appendTraceEvent(ctx.runId, {
     type: "tool_call_started",
     runId: ctx.runId,
@@ -25,10 +26,11 @@ export const emitTraceStartPhase: Phase = async (ctx) => {
     decision: getToolDecision(ctx.tc.name),
     args: capValue(ctx.args),
   });
+  return CONTINUE;
 };
 
 export const emitTraceCompletePhase: Phase = async (ctx) => {
-  if (!ctx.runId) return;
+  if (!ctx.runId) return CONTINUE;
   const result = ctx.result;
   const durationMs = ctx.startedAt ? Date.now() - ctx.startedAt : 0;
   const ok = !!result && !result.isError;
@@ -46,4 +48,5 @@ export const emitTraceCompletePhase: Phase = async (ctx) => {
     resultPreview: preview,
     error,
   });
+  return CONTINUE;
 };

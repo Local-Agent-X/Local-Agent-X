@@ -16,8 +16,8 @@ import { logRetry } from "../retry-telemetry.js";
 import { assertToolCallAllowed } from "../tools/pre-dispatch.js";
 import { ToolBlocked } from "./errors.js";
 import { join, resolve, relative } from "node:path";
-import type { Phase, ToolCallContext } from "./context.js";
-import { terminate } from "./context.js";
+import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
+import { terminate, CONTINUE, BLOCK } from "./context.js";
 
 // HOST_CAPABILITY_MANIFEST action names — see ari-kernel.ts. A non-shell
 // tool that falls through to "exec" → lookupHostGrantId returns undefined
@@ -57,25 +57,27 @@ const ARI_ACTION_MAP: Record<string, string> = {
   search_past_sessions: "search",
 };
 
-async function ariKernelGate(ctx: ToolCallContext): Promise<void> {
+async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId } = ctx;
   if (isAriActive() && shouldGateInKernel(tc.name)) {
     const ariResult = await ariEvaluate(tc.name, ARI_ACTION_MAP[tc.name] || "exec", args);
     if (!ariResult.allowed) {
       const hint = ariResult.userHint ?? USER_HINTS.policy;
-      terminate(ctx, { rendered: "raw", content: `User hint: ${hint}\n${ariResult.reason}`, allowed: false });
+      return terminate(ctx, { rendered: "raw", content: `User hint: ${hint}\n${ariResult.reason}`, allowed: false });
     }
   } else if (isAriActive() && shouldObserveInKernel(tc.name)) {
     // Audit-only path for internal-class tools — never blocks.
     ariObserve(tc.name, "internal", args, { sessionId });
   }
+  return CONTINUE;
 }
 
-function sessionPolicyGate(ctx: ToolCallContext): void {
+function sessionPolicyGate(ctx: ToolCallContext): PhaseOutcome {
   const block = checkSessionPolicy(ctx.sessionId || "default", ctx.tc.name);
   if (block) {
-    terminate(ctx, { rendered: "raw", content: `User hint: ${USER_HINTS.policy}\n${block}`, allowed: false });
+    return terminate(ctx, { rendered: "raw", content: `User hint: ${USER_HINTS.policy}\n${block}`, allowed: false });
   }
+  return CONTINUE;
 }
 
 // Worktree enforcement: rewrite paths BEFORE the security pre-dispatch
@@ -110,9 +112,9 @@ async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
   } catch { /* worktree module not available */ }
 }
 
-// Pre-dispatch chain blocks set ctx.result and flip preBlocked. Audit still
+// Pre-dispatch chain blocks set ctx.result and return BLOCK. Audit still
 // runs (so the block message can be re-examined by threat engine + hooks).
-async function runPreDispatch(ctx: ToolCallContext): Promise<void> {
+async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId, callContext, security, rbac, callerRole, toolPolicy } = ctx;
   try {
     await assertToolCallAllowed(
@@ -138,50 +140,51 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<void> {
       "approval": "approval",
     };
     ctx.allowed = false;
-    ctx.preBlocked = true;
     ctx.result = {
       content: e.message,
       isError: true,
       status: "blocked",
       metadata: { layer: layerMap[e.stage], recovery: e.recovery, userHint: e.userHint },
     };
+    return BLOCK;
   }
+  return CONTINUE;
 }
 
-function dataLineageGate(ctx: ToolCallContext): void {
-  if (!["http_request", "web_fetch"].includes(ctx.tc.name)) return;
+function dataLineageGate(ctx: ToolCallContext): PhaseOutcome {
+  if (!["http_request", "web_fetch"].includes(ctx.tc.name)) return CONTINUE;
   const egress = checkEgressTaint(ctx.sessionId || "default");
-  if (!egress.blocked) return;
+  if (!egress.blocked) return CONTINUE;
   const result: ToolResult = {
     content: `BLOCKED by data lineage: ${egress.reason}`,
     isError: true,
     status: "blocked",
     metadata: { layer: "data-lineage", recovery: "Sensitive data was tainted earlier this session and may not egress. Either don't include the tainted data or end the session.", userHint: USER_HINTS.network },
   };
-  terminate(ctx, { rendered: "model", result, allowed: false });
+  return terminate(ctx, { rendered: "model", result, allowed: false });
 }
 
-function lookupTool(ctx: ToolCallContext): void {
+function lookupTool(ctx: ToolCallContext): PhaseOutcome {
   const tool = ctx.toolMap.get(ctx.tc.name);
   if (!tool) {
     ctx.allowed = false;
-    ctx.preBlocked = true;
     ctx.result = {
       content: `Unknown tool: ${ctx.tc.name}`,
       isError: true,
       status: "error",
       metadata: { recovery: "Tool name typo or the tool isn't registered. Use tool_search to find the right name." },
     };
-    return;
+    return BLOCK;
   }
   ctx.tool = tool;
+  return CONTINUE;
 }
 
 // Weak models emit malformed args. Lightweight required[] + type checks on
 // top-level fields; safe scalar coercion ("5" → 5) before validation.
-async function validateArgs(ctx: ToolCallContext): Promise<void> {
+async function validateArgs(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, tool, sessionId } = ctx;
-  if (!tool) return;
+  if (!tool) return CONTINUE;
   const schema = tool.parameters as { type?: string; properties?: Record<string, { type?: string; enum?: unknown[] }>; required?: string[] } | undefined;
 
   if (schema && typeof ctx.args === "object" && ctx.args && !("_raw" in ctx.args)) {
@@ -195,7 +198,7 @@ async function validateArgs(ctx: ToolCallContext): Promise<void> {
     } catch {}
   }
 
-  if (!schema?.properties) return;
+  if (!schema?.properties) return CONTINUE;
   const errs: string[] = [];
   for (const req of schema.required || []) {
     if (!(req in ctx.args)) errs.push(`missing required field "${req}"`);
@@ -209,7 +212,7 @@ async function validateArgs(ctx: ToolCallContext): Promise<void> {
     else if (propSchema.type === "array" && !Array.isArray(val)) errs.push(`"${key}" must be an array (got ${typeof val})`);
     if (propSchema.enum && !propSchema.enum.includes(val)) errs.push(`"${key}" must be one of [${propSchema.enum.map(v => JSON.stringify(v)).join(", ")}] (got ${JSON.stringify(val)})`);
   }
-  if (errs.length === 0) return;
+  if (errs.length === 0) return CONTINUE;
 
   const result: ToolResult = {
     content: `Invalid arguments for ${tc.name}: ${errs.join("; ")}. Fix and retry.`,
@@ -217,70 +220,70 @@ async function validateArgs(ctx: ToolCallContext): Promise<void> {
     status: "error",
     metadata: { recovery: "Schema validation failed — fix the listed fields and retry. This is NOT a policy denial; the tool itself is available." },
   };
-  terminate(ctx, { rendered: "model", result, allowed: false });
+  return terminate(ctx, { rendered: "model", result, allowed: false });
 }
 
-async function preToolUseHook(ctx: ToolCallContext): Promise<void> {
+async function preToolUseHook(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId, callContext } = ctx;
   const hookEngine = getHookEngine();
-  if (!hookEngine.hasHooks) return;
+  if (!hookEngine.hasHooks) return CONTINUE;
   const preHook = await hookEngine.fire({ event: "PreToolUse", toolName: tc.name, toolArgs: args, sessionId, callContext });
-  if (preHook.continue) return;
+  if (preHook.continue) return CONTINUE;
   const result: ToolResult = {
     content: `BLOCKED by hook: ${preHook.reason || "PreToolUse hook returned false"}`,
     isError: true,
     status: "blocked",
     metadata: { layer: "hook", recovery: "A user-configured hook blocked this call. Check ~/.lax/hooks.json or proceed without the gated action.", userHint: USER_HINTS.policy },
   };
-  terminate(ctx, { rendered: "model", result, allowed: false });
+  return terminate(ctx, { rendered: "model", result, allowed: false });
 }
 
-function circuitBreakerGate(ctx: ToolCallContext): void {
+function circuitBreakerGate(ctx: ToolCallContext): PhaseOutcome {
   const { tc, sessionId } = ctx;
   const circuit = checkCircuit(sessionId, tc.name);
-  if (circuit.allowed) return;
+  if (circuit.allowed) return CONTINUE;
   const result: ToolResult = {
     content: `BLOCKED by circuit breaker: ${circuit.reason}`,
     isError: true,
     status: "blocked",
     metadata: { layer: "circuit-breaker", recovery: "This tool has failed repeatedly in this session. Stop calling it and use an alternative — the breaker will reset after several successful unrelated calls.", userHint: circuit.userHint ?? USER_HINTS.retryExhausted },
   };
-  terminate(ctx, { rendered: "model", result, allowed: false });
+  return terminate(ctx, { rendered: "model", result, allowed: false });
 }
 
-function rateLimitGate(ctx: ToolCallContext): void {
+function rateLimitGate(ctx: ToolCallContext): PhaseOutcome {
   const { tc, sessionId } = ctx;
   const rate = checkToolRateLimit(tc.name, sessionId);
-  if (rate.allowed) return;
+  if (rate.allowed) return CONTINUE;
   const result: ToolResult = {
     content: `BLOCKED by rate limit: ${rate.reason}`,
     isError: true,
     status: "blocked",
     metadata: { layer: "rate-limit", recovery: "Per-tool rate limit hit. Wait or batch fewer calls; immediate retries will keep being denied.", userHint: rate.userHint ?? USER_HINTS.retryExhausted },
   };
-  terminate(ctx, { rendered: "model", result, allowed: false });
+  return terminate(ctx, { rendered: "model", result, allowed: false });
 }
 
 export const enforcePolicyPhase: Phase = async (ctx) => {
-  await ariKernelGate(ctx);
-  if (ctx.terminated) return;
-  sessionPolicyGate(ctx);
-  if (ctx.terminated) return;
+  let outcome = await ariKernelGate(ctx);
+  if (outcome.kind !== "continue") return outcome;
+  outcome = sessionPolicyGate(ctx);
+  if (outcome.kind !== "continue") return outcome;
   await rewriteWorktreePaths(ctx);
 
-  await runPreDispatch(ctx);
-  if (ctx.preBlocked) return;
-  dataLineageGate(ctx);
-  if (ctx.terminated) return;
+  outcome = await runPreDispatch(ctx);
+  if (outcome.kind !== "continue") return outcome;
+  outcome = dataLineageGate(ctx);
+  if (outcome.kind !== "continue") return outcome;
 
-  lookupTool(ctx);
-  if (ctx.preBlocked) return;
-  await validateArgs(ctx);
-  if (ctx.terminated) return;
+  outcome = lookupTool(ctx);
+  if (outcome.kind !== "continue") return outcome;
+  outcome = await validateArgs(ctx);
+  if (outcome.kind !== "continue") return outcome;
 
-  await preToolUseHook(ctx);
-  if (ctx.terminated) return;
-  circuitBreakerGate(ctx);
-  if (ctx.terminated) return;
-  rateLimitGate(ctx);
+  outcome = await preToolUseHook(ctx);
+  if (outcome.kind !== "continue") return outcome;
+  outcome = circuitBreakerGate(ctx);
+  if (outcome.kind !== "continue") return outcome;
+  return rateLimitGate(ctx);
 };

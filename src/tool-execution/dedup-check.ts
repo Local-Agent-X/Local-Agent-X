@@ -6,7 +6,7 @@
 
 import { dedupLookup, dedupRecord } from "./dedup-cache.js";
 import type { Phase, ToolCallContext } from "./context.js";
-import { terminate } from "./context.js";
+import { terminate, CONTINUE } from "./context.js";
 
 function scopeFor(ctx: ToolCallContext): string | undefined {
   // Prefer runId when the call is part of a spawned-agent run (more
@@ -19,7 +19,7 @@ function scopeFor(ctx: ToolCallContext): string | undefined {
 export const dedupCheckPhase: Phase = async (ctx: ToolCallContext) => {
   const scope = scopeFor(ctx);
   const hit = dedupLookup(scope, ctx.tc.name, ctx.tc.arguments);
-  if (!hit) return;
+  if (!hit) return CONTINUE;
 
   const annotation =
     `[deduplicated: same args as a prior call this turn — original result reused, no re-execution]`;
@@ -29,30 +29,30 @@ export const dedupCheckPhase: Phase = async (ctx: ToolCallContext) => {
       ...hit.result,
       content: `${hit.result.content}\n\n${annotation}`,
     };
-    terminate(ctx, { rendered: "model", result: annotated, allowed: hit.allowed });
-  } else {
-    terminate(ctx, {
-      rendered: "raw",
-      content: `${hit.resultContent}\n\n${annotation}`,
-      allowed: hit.allowed,
-    });
+    return terminate(ctx, { rendered: "model", result: annotated, allowed: hit.allowed });
   }
+  return terminate(ctx, {
+    rendered: "raw",
+    content: `${hit.resultContent}\n\n${annotation}`,
+    allowed: hit.allowed,
+  });
 };
 
 /** Post-sandbox record phase. Reads the executed result off ctx and
  *  caches it for the rest of the window. */
 export const dedupRecordPhase: Phase = async (ctx: ToolCallContext) => {
   const scope = scopeFor(ctx);
-  if (!scope) return;
-  // preBlocked / unknown-tool / policy-denied calls have no successful
-  // result to cache. dedupRecord also filters on allowed + non-error.
-  if (ctx.preBlocked) return;
-  if (!ctx.allowed) return;
+  if (!scope) return CONTINUE;
+  // Policy-denied calls have no successful result to cache. This phase only
+  // runs on the post-sandbox path (the orchestrator skips it for pre-blocked
+  // calls), so an allowed-but-errored result is the only thing to filter
+  // here; dedupRecord also filters on allowed + non-error.
+  if (!ctx.allowed) return CONTINUE;
 
   // ctx.msgs holds the tool-role message(s) produced by sandbox/terminate.
   // We snapshot them so a re-issue replays the same conversation content
   // (preserves any structured metadata the caller depended on).
-  if (ctx.msgs.length === 0) return;
+  if (ctx.msgs.length === 0) return CONTINUE;
 
   const lastMsg = ctx.msgs[ctx.msgs.length - 1];
   const resultContent =
@@ -66,4 +66,5 @@ export const dedupRecordPhase: Phase = async (ctx: ToolCallContext) => {
     result: ctx.result,
     resultContent,
   });
+  return CONTINUE;
 };

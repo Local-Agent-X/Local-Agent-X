@@ -8,8 +8,8 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { USER_HINTS } from "../types.js";
 import { isPlanMode, READ_ONLY_TOOLS } from "../tools/plan-tools.js";
 import { logRetry } from "../retry-telemetry.js";
-import type { CallContext, Phase, ToolCallContext } from "./context.js";
-import { terminate } from "./context.js";
+import type { CallContext, Phase, PhaseOutcome, ToolCallContext } from "./context.js";
+import { terminate, CONTINUE, HALT } from "./context.js";
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 
 // Eval scaffolding — see markDryRunSession docstring below.
@@ -85,7 +85,7 @@ async function parseArgs(ctx: ToolCallContext): Promise<void> {
   }
 }
 
-async function injectSessionState(ctx: ToolCallContext): Promise<void> {
+async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId, priorMessages } = ctx;
 
   if (SESSION_SCOPED_TOOLS.has(tc.name)) {
@@ -125,8 +125,7 @@ async function injectSessionState(ctx: ToolCallContext): Promise<void> {
           const gate = trackSelfEditCall(sessionId);
           if (!gate.allowed) {
             const result = `User hint: ${USER_HINTS.retryExhausted}\nBLOCKED: self_edit ceiling reached for this autopilot run (${gate.count}/${gate.max}). Use direct edit/write/bash tools instead.`;
-            terminate(ctx, { rendered: "raw", content: result, allowed: false });
-            return;
+            return terminate(ctx, { rendered: "raw", content: result, allowed: false });
           }
         }
       }
@@ -143,6 +142,7 @@ async function injectSessionState(ctx: ToolCallContext): Promise<void> {
   ) {
     args._onEvent = ctx.onEvent;
   }
+  return CONTINUE;
 }
 
 export const resolvePhase: Phase = async (ctx) => {
@@ -158,8 +158,7 @@ export const resolvePhase: Phase = async (ctx) => {
     onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: hint, allowed: true });
     logRetry({ kind: "custom", sessionId, tool: tc.name, detail: { reason: "session-repeat", priorTurn: dup.turnIndex } });
     ctx.msgs.push({ role: "tool", tool_call_id: tc.id, content: hint } as ChatCompletionMessageParam);
-    ctx.terminated = true;
-    return;
+    return HALT;
   }
 
   await parseArgs(ctx);
@@ -168,8 +167,7 @@ export const resolvePhase: Phase = async (ctx) => {
   // Plan mode: block non-read-only tools (session-scoped).
   if (isPlanMode(sessionId) && !READ_ONLY_TOOLS.has(tc.name)) {
     const result = `User hint: ${USER_HINTS.planMode}\nBLOCKED: Plan mode is active. Only read-only tools are allowed. Use exit_plan_mode to restore full access.`;
-    terminate(ctx, { rendered: "raw", content: result, allowed: false });
-    return;
+    return terminate(ctx, { rendered: "raw", content: result, allowed: false });
   }
 
   // Protected files: block writes/deletes to core engine files that would
@@ -181,14 +179,13 @@ export const resolvePhase: Phase = async (ctx) => {
       const check = isProtectedFile(String(ctx.args.path));
       if (check.protected) {
         const result = `User hint: ${USER_HINTS.secrets}\nBLOCKED: ${check.reason}`;
-        terminate(ctx, { rendered: "raw", content: result, allowed: false });
-        return;
+        return terminate(ctx, { rendered: "raw", content: result, allowed: false });
       }
     } catch {}
   }
 
-  await injectSessionState(ctx);
-  if (ctx.terminated) return;
+  const injected = await injectSessionState(ctx);
+  if (injected.kind === "halt") return injected;
 
   ctx.riskLevel = getRiskLevel(tc.name, ctx.args, ctx.security);
   ctx.approvalContext = buildApprovalContext(tc.name, ctx.args);
@@ -199,7 +196,8 @@ export const resolvePhase: Phase = async (ctx) => {
   // prompt, no `tool.execute()`, no side effects.
   if (sessionId && dryRunSessions.has(sessionId)) {
     const dryRunResult = `[dry-run] tool_call captured: ${tc.name}. No side effects executed (eval mode).`;
-    terminate(ctx, { rendered: "raw", content: dryRunResult, allowed: true });
-    return;
+    return terminate(ctx, { rendered: "raw", content: dryRunResult, allowed: true });
   }
+
+  return CONTINUE;
 };

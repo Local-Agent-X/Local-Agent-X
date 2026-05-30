@@ -17,7 +17,9 @@
 import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createLogger } from "../logger.js";
 
+const logger = createLogger("self-edit.lock");
 const SANDBOX_LOCK = join(getLaxDir(), "self-edit-sandbox.lock");
 
 export interface LockHolder {
@@ -30,25 +32,73 @@ export interface LockResult {
   holder?: LockHolder;
 }
 
+export interface AcquireOptions {
+  /** Emergency override: if the lock is held by a LIVE process, steal it anyway
+   *  (logging the displaced holder). Used only by the `_unsafe` rescue hatch —
+   *  a human explicitly fixing a bricked app must not be blocked indefinitely by
+   *  another self_edit. Automated paths (sandbox, autopilot `_cwd`) never force. */
+  force?: boolean;
+}
+
 function isPidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-/** Acquire the global self_edit lock. Reclaims a stale lock whose holder PID
- *  is dead or whose file is corrupt. Returns acquired=false (with the live
- *  holder) when another live process holds it. */
-export function acquireGlobalSelfEditLock(): LockResult {
-  mkdirSync(getLaxDir(), { recursive: true, mode: 0o700 });
-  if (existsSync(SANDBOX_LOCK)) {
-    try {
-      const existing = JSON.parse(readFileSync(SANDBOX_LOCK, "utf-8")) as LockHolder;
-      if (isPidAlive(existing.pid)) return { acquired: false, holder: existing };
-    } catch { /* corrupt lock — reclaim */ }
-  }
-  writeFileSync(SANDBOX_LOCK, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), { mode: 0o600 });
-  return { acquired: true };
+function lockPayload(): string {
+  return JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
 }
 
+function readHolder(): LockHolder | undefined {
+  try { return JSON.parse(readFileSync(SANDBOX_LOCK, "utf-8")) as LockHolder; } catch { return undefined; }
+}
+
+/** Atomically create the lock file (fails if it already exists). Returns false
+ *  on EEXIST, true on success; rethrows anything else. The `wx` flag is the
+ *  OS-level exclusive create that closes the check-then-write race. */
+function tryCreateLock(): boolean {
+  try {
+    writeFileSync(SANDBOX_LOCK, lockPayload(), { mode: 0o600, flag: "wx" });
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw e;
+  }
+}
+
+/**
+ * Acquire the global self_edit lock. Atomic create-exclusive, so two processes
+ * can't both win. A stale lock (dead holder PID) or corrupt file is reclaimed.
+ * A live holder blocks (acquired=false, holder reported) — unless opts.force,
+ * in which case the live lock is stolen (emergency `_unsafe` rescue only).
+ */
+export function acquireGlobalSelfEditLock(opts: AcquireOptions = {}): LockResult {
+  mkdirSync(getLaxDir(), { recursive: true, mode: 0o700 });
+  if (tryCreateLock()) return { acquired: true };
+
+  // Lock exists — inspect the holder.
+  const holder = readHolder();
+  const live = !!holder && isPidAlive(holder.pid);
+  if (live && !opts.force) return { acquired: false, holder };
+
+  if (live && opts.force) {
+    logger.warn(`[self-edit.lock] force-overriding live global self_edit lock (pid=${holder?.pid}, started=${holder?.startedAt}) — emergency _unsafe rescue`);
+  }
+  // Stale / corrupt / force-stolen — reclaim by removing then re-creating.
+  try { unlinkSync(SANDBOX_LOCK); } catch { /* raced */ }
+  if (tryCreateLock()) return { acquired: true };
+
+  // Lost the reclaim race to another process that recreated the lock first.
+  return { acquired: false, holder: readHolder() };
+}
+
+/** Release the lock, but ONLY if we still own it. If we were force-displaced by
+ *  an `_unsafe` rescue, the file now belongs to that process — deleting it would
+ *  free the lock out from under the live owner. */
 export function releaseGlobalSelfEditLock(): void {
-  try { if (existsSync(SANDBOX_LOCK)) unlinkSync(SANDBOX_LOCK); } catch { /* best-effort */ }
+  try {
+    if (!existsSync(SANDBOX_LOCK)) return;
+    const holder = readHolder();
+    if (holder && holder.pid !== process.pid) return; // not ours anymore
+    unlinkSync(SANDBOX_LOCK);
+  } catch { /* best-effort */ }
 }

@@ -207,7 +207,12 @@ export const selfEditTool: ToolDefinition = {
       // OR LAX_REPO_ROOT for unsafe rescues). No gates — but still serialize
       // against any sandboxed self_edit via the machine-wide global lock so the
       // two can't build/install into the shared node_modules concurrently (#9).
-      const gLock = acquireGlobalSelfEditLock();
+      //
+      // _unsafe is the human's emergency rescue hatch — it force-steals the
+      // global lock so a wedged/long-running self_edit can't block fixing a
+      // bricked app. Automated paths (autopilot _cwd) respect the lock instead.
+      const isUnsafeRescue = unsafe && !internalCwd;
+      const gLock = acquireGlobalSelfEditLock({ force: isUnsafeRescue });
       if (!gLock.acquired) {
         return {
           content:

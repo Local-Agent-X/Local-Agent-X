@@ -10,7 +10,6 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCommandInWorktree, getWorktreePath, getWorktreeChangedFiles, isolateNodeModules, changedFilesTouchDeps } from "./agency/worktree.js";
-import { npmAugmentedEnv } from "./anthropic-client/cli-path.js";
 import { killProcessTree } from "./process-tree-kill.js";
 import { runSmokeAssertions } from "./self-edit-smoke-suite.js";
 import { buildSelfEditChildEnv } from "./self-edit/child-env.js";
@@ -66,7 +65,10 @@ export function gateDeps(name: string): GateResult {
 // ── Gate 1: build ──────────────────────────────────────────────────────────
 
 export function gateBuild(name: string): GateResult {
-  const r = runCommandInWorktree(name, { command: "npm run build", timeoutMs: BUILD_TIMEOUT_MS });
+  // Scrubbed env: `npm run build` runs the worktree's build scripts (authored
+  // by the untrusted self_edit child). It needs no credentials — strip them so
+  // a malicious build script can't read+exfil the server's secrets.
+  const r = runCommandInWorktree(name, { command: "npm run build", timeoutMs: BUILD_TIMEOUT_MS, env: buildSelfEditChildEnv() });
   return {
     ok: r.ok,
     skipped: false,
@@ -103,11 +105,18 @@ export async function gateBind(name: string, port: number, authToken: string, si
   // is still logged as a warning so it stays visible. The REAL server boot
   // (parent process) still enforces integrity normally.
   const dataDir = mkdtempSync(join(tmpdir(), "lax-probe-"));
+  // Scrubbed env: the probe BOOTS the full app from the worktree — code the
+  // untrusted self_edit child wrote — so it's the richest exfil runtime (agent
+  // loop, fetch, the lot). buildSelfEditChildEnv strips the server's bystander
+  // credentials (GitHub/AWS/Stripe/…); the probe runs on a fresh empty data dir
+  // and defaults to the anthropic provider, so the only provider cred it can
+  // use is the Anthropic auth this scrub already passes through — smoke is
+  // unaffected. The explicit LAX_* overrides below are layered on top.
   const proc = spawn("npm", ["run", "dev:nowatch"], {
     cwd: wt,
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
-    env: { ...npmAugmentedEnv(), LAX_PORT: String(port), LAX_DISABLE_BACKGROUND_JOBS: "1", LAX_DATA_DIR: dataDir, LAX_AUTH_TOKEN: authToken, LAX_INTEGRITY_WARN_ONLY: "1" },
+    env: { ...buildSelfEditChildEnv(), LAX_PORT: String(port), LAX_DISABLE_BACKGROUND_JOBS: "1", LAX_DATA_DIR: dataDir, LAX_AUTH_TOKEN: authToken, LAX_INTEGRITY_WARN_ONLY: "1" },
   });
 
   let probeStdout = "";
@@ -213,8 +222,8 @@ export function spawnClaude(cwd: string, prompt: string, signal?: AbortSignal): 
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
       // Scrubbed env — the injected surgery child must not inherit the
-      // user's credentials. The probe in gateBind (real LAX boot, not the
-      // injected child) keeps npmAugmentedEnv. See child-env.ts.
+      // user's credentials. The build/bind gates that later EXECUTE this
+      // child's output are scrubbed the same way. See child-env.ts.
       env: buildSelfEditChildEnv(),
     });
     // Windows shell:true spawn wraps the binary in cmd.exe; proc.kill only

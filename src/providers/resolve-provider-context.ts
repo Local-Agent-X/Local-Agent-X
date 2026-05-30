@@ -32,17 +32,21 @@
  */
 import { loadSettings } from "../settings.js";
 import { resolveCredential } from "../auth/resolve.js";
+import { PROVIDER_IDS, type ProviderId } from "./provider-ids.js";
 
 export interface ProviderContext {
   /** Lower-cased provider id from settings.json (e.g. "anthropic", "codex"). */
   provider: string;
-  /** Resolved credential / token for the provider. Never empty (null is
-   *  returned instead when no usable credential exists). */
+  /** Resolved credential / token for the provider. Never empty — null is
+   *  returned instead when no usable credential exists. */
   apiKey: string;
   /** The user's configured model from settings.json, or "" when unset.
    *  Callers apply their own default policy on top of this. */
   model: string;
 }
+
+const isProviderId = (s: string): s is ProviderId =>
+  (PROVIDER_IDS as readonly string[]).includes(s);
 
 /**
  * Resolve {provider, apiKey, model} for the user's currently-selected
@@ -65,10 +69,11 @@ export async function resolveProviderContext(): Promise<ProviderContext | null> 
       // only requires a non-empty placeholder. Matches the chat path's
       // treatment of local transports.
       apiKey = "ollama";
-    } else {
+    } else if (isProviderId(provider)) {
       const r = await resolveCredential(provider);
       apiKey = r?.credential || "";
     }
+    // Unknown provider strings fall through with apiKey "" → null below.
   } catch {
     /* fall through to the no-credential return below */
   }

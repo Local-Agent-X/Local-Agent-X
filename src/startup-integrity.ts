@@ -103,6 +103,18 @@ export function enforceStartupIntegrity(): void {
   // even though it would kill a real boot. The parent server still
   // enforces integrity normally; this only loosens it for probes.
   if (process.env.LAX_SKIP_INTEGRITY === "1") return;
+  // self_edit's bind-probe sets this to downgrade the check to a non-fatal
+  // warning instead of skipping it outright. The probe boots a real server
+  // but is short-lived, so a missing/AV-quarantined arikernel file shouldn't
+  // exit(2) and block an unrelated self_edit — but unlike a full skip, the
+  // missing file is still surfaced in the logs so it doesn't go unnoticed.
+  if (process.env.LAX_INTEGRITY_WARN_ONLY === "1") {
+    const result = checkStartupIntegrity();
+    if (!result.ok) {
+      logger.warn(`[integrity] missing file(s) — running warn-only in this process (probe), not aborting: ${result.missing.map(m => m.path).join(", ")}`);
+    }
+    return;
+  }
   const result = checkStartupIntegrity();
   if (result.ok) return;
 

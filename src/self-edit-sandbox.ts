@@ -23,13 +23,14 @@
  * to keep both files under the 400-LOC limit.
  */
 
-import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
 import { type ChildProcess } from "node:child_process";
-import { createNamedWorktree, mergeWorktree } from "./agency/worktree.js";
-import { gateBuild, gateBind, gateSmoke, spawnClaude, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
+import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild } from "./agency/worktree.js";
+import { recordMerge } from "./self-edit-rollback.js";
+import { gateDeps, gateBuild, gateBind, gateSmoke, spawnClaude, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("self-edit.sandbox");
@@ -47,7 +48,7 @@ export interface SandboxResult {
   /** Subprocess output (claude -p) — kept for the chat-agent to surface. */
   output: string;
   /** Per-gate status, in order. */
-  gates: { build: GateResult; bind: GateResult; smoke: GateResult };
+  gates: { deps: GateResult; build: GateResult; bind: GateResult; smoke: GateResult };
   /** Branch the worktree was on (preserved on disk if any gate failed). */
   branchName: string;
   /** Number of files merged on success; null on failure. */
@@ -119,6 +120,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
   const name = `selfedit-${slug}-${ts}`;
   const branch = `selfedit/${slug}/${ts}`;
   let probeProc: ChildProcess | null = null;
+  let probeDataDir: string | null = null;
 
   const progress = opts.onProgress ?? (() => { /* no-op */ });
 
@@ -127,7 +129,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     if (!wt) {
       return {
         ok: false, output: "",
-        gates: { build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE },
+        gates: { deps: SKIPPED_GATE, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE },
         branchName: branch, filesMerged: null,
         failure: "Failed to create sandbox worktree — see server logs.",
       };
@@ -138,13 +140,25 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     progress("Running source-code repair in sandbox…");
     const claudeOutput = await spawnClaude(wt.path, opts.fullPrompt, opts.signal);
 
+    // Gate 0: deps — isolate node_modules + `npm ci` if a manifest changed.
+    // Lazy: skipped (passes) when no dependency change. A failed isolated
+    // install blocks the merge before anything else runs.
+    logger.info(`[self-edit.sandbox] running deps gate`);
+    progress("Deps gate: checking for dependency changes…");
+    const deps = gateDeps(name);
+    if (!deps.skipped && !deps.ok) {
+      logger.warn(`[self-edit.sandbox] deps gate failed: ${deps.detail.slice(0, 200)}`);
+      return failResult(claudeOutput, branch, { deps, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, `Dependency install failed: ${deps.detail.slice(0, 600)}`);
+    }
+    logger.info(`[self-edit.sandbox] deps gate ${deps.skipped ? "skipped (no dep changes)" : `passed (${deps.durationMs}ms)`}`);
+
     // Gate 1: build
     logger.info(`[self-edit.sandbox] running build gate`);
     progress("Build gate: compiling sandboxed code…");
     const build = gateBuild(name);
     if (!build.ok) {
       logger.warn(`[self-edit.sandbox] build gate failed: ${build.detail.slice(0, 200)}`);
-      return failResult(claudeOutput, branch, { build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, `Build failed: ${build.detail.slice(0, 600)}`);
+      return failResult(claudeOutput, branch, { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, `Build failed: ${build.detail.slice(0, 600)}`);
     }
     logger.info(`[self-edit.sandbox] build gate passed (${build.durationMs}ms)`);
 
@@ -152,11 +166,12 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     const port = pickProbePort();
     logger.info(`[self-edit.sandbox] running bind gate on port ${port}`);
     progress(`Bind gate: launching probe server on :${port}…`);
-    const bindOutcome = await gateBind(name, port, opts.signal);
+    const bindOutcome = await gateBind(name, port, opts.authToken, opts.signal);
     probeProc = bindOutcome.proc;
+    probeDataDir = bindOutcome.dataDir;
     if (!bindOutcome.result.ok) {
       logger.warn(`[self-edit.sandbox] bind gate failed: ${bindOutcome.result.detail.slice(0, 200)}`);
-      return failResult(claudeOutput, branch, { build, bind: bindOutcome.result, smoke: SKIPPED_GATE }, `Server failed to bind: ${bindOutcome.result.detail.slice(0, 600)}`);
+      return failResult(claudeOutput, branch, { deps, build, bind: bindOutcome.result, smoke: SKIPPED_GATE }, `Server failed to bind: ${bindOutcome.result.detail.slice(0, 600)}`);
     }
     logger.info(`[self-edit.sandbox] bind gate passed (${bindOutcome.result.durationMs}ms)`);
 
@@ -166,7 +181,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     const smoke = await gateSmoke(port, opts.authToken, opts.signal);
     if (!smoke.ok) {
       logger.warn(`[self-edit.sandbox] smoke gate failed: ${smoke.detail.slice(0, 200)}`);
-      return failResult(claudeOutput, branch, { build, bind: bindOutcome.result, smoke }, `Agent smoke test failed: ${smoke.detail.slice(0, 600)}`);
+      return failResult(claudeOutput, branch, { deps, build, bind: bindOutcome.result, smoke }, `Agent smoke test failed: ${smoke.detail.slice(0, 600)}`);
     }
     logger.info(`[self-edit.sandbox] smoke gate passed (${smoke.durationMs}ms)`);
 
@@ -175,30 +190,60 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     probeProc = null;
 
     progress("All gates passed — merging into main…");
+    // Capture the pre-merge base SHA BEFORE mergeWorktree deletes the registry
+    // entry, so a post-merge re-gate failure can revert the base branch.
+    const mergeInfo = getMergeBaseInfo(name);
     const merge = mergeWorktree(name);
     if (!merge.merged) {
       return {
         ok: false, output: claudeOutput,
-        gates: { build, bind: bindOutcome.result, smoke },
+        gates: { deps, build, bind: bindOutcome.result, smoke },
         branchName: branch, filesMerged: null,
         failure: `Gates passed but merge failed: ${merge.error || "unknown"}. Branch ${branch} preserved on disk.`,
       };
     }
 
+    // Re-gate: the merge can combine the worktree branch with main commits no
+    // gate ever saw. Rebuild the merged main tree; auto-revert if it fails.
+    if (mergeInfo) {
+      progress("Re-gate: rebuilding merged main…");
+      const rebuilt = runRepoBuild(mergeInfo.repoRoot, 5 * 60_000);
+      if (!rebuilt.ok) {
+        revertBranchTo(mergeInfo.repoRoot, mergeInfo.baseBranch, mergeInfo.sha);
+        return failResult(
+          claudeOutput, branch,
+          { deps, build, bind: bindOutcome.result, smoke },
+          `Merge reverted — post-merge build failed: ${rebuilt.detail.slice(0, 600)}`,
+        );
+      }
+      const postSha = getBranchHead(mergeInfo.repoRoot, mergeInfo.baseBranch);
+      recordMerge({
+        preSha: mergeInfo.sha,
+        postSha,
+        baseBranch: mergeInfo.baseBranch,
+        repoRoot: mergeInfo.repoRoot,
+        files: merge.files,
+        ts: new Date().toISOString(),
+      });
+    }
+
     return {
       ok: true, output: claudeOutput,
-      gates: { build, bind: bindOutcome.result, smoke },
+      gates: { deps, build, bind: bindOutcome.result, smoke },
       branchName: branch, filesMerged: merge.files,
     };
   } catch (e) {
     return {
       ok: false, output: "",
-      gates: { build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE },
+      gates: { deps: SKIPPED_GATE, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE },
       branchName: branch, filesMerged: null,
       failure: `Sandbox crashed: ${(e as Error).message}`,
     };
   } finally {
     killProbe(probeProc);
+    if (probeDataDir) {
+      try { rmSync(probeDataDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
     // On failure, the worktree+branch are preserved by mergeWorktree (which
     // is NOT called on the fail paths). On success, mergeWorktree already
     // cleaned them up.
@@ -211,7 +256,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
 function failPreflight(failure: string): SandboxResult {
   return {
     ok: false, output: "",
-    gates: { build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE },
+    gates: { deps: SKIPPED_GATE, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE },
     branchName: "", filesMerged: null, failure,
   };
 }
@@ -232,7 +277,7 @@ export function formatSandboxResult(r: SandboxResult): string {
     return [
       `[OK] self_edit shipped via sandbox`,
       `  branch: ${r.branchName} (merged, ${r.filesMerged} files)`,
-      `  gates: build ${g.build.durationMs}ms, bind ${g.bind.durationMs}ms, smoke ${g.smoke.durationMs}ms`,
+      `  gates: deps ${g.deps.skipped ? "skipped" : `${g.deps.durationMs}ms`}, build ${g.build.durationMs}ms, bind ${g.bind.durationMs}ms, smoke ${g.smoke.durationMs}ms`,
       ``,
       `Subprocess output:`,
       r.output || "(empty)",
@@ -241,6 +286,7 @@ export function formatSandboxResult(r: SandboxResult): string {
     ].join("\n");
   }
   const failedGate =
+    !r.gates.deps.skipped && !r.gates.deps.ok ? "deps" :
     !r.gates.build.skipped && !r.gates.build.ok ? "build" :
     !r.gates.bind.skipped && !r.gates.bind.ok ? "bind" :
     !r.gates.smoke.skipped && !r.gates.smoke.ok ? "smoke" : "preflight";

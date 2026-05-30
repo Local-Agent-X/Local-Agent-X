@@ -288,6 +288,41 @@ export function getWorktreeStatus(name: string): string {
   return git("status --porcelain", wt.path);
 }
 
+/**
+ * True if any changed file is a dependency manifest (root or nested package).
+ *
+ * A self_edit that touches package.json / package-lock.json changes what
+ * `npm ci` installs, so it must trigger an isolated real install instead of
+ * letting the write pass through the shared node_modules junction into the
+ * parent repo. Matches on basename so nested workspace manifests
+ * (e.g. packages/arikernel/package.json) count too.
+ */
+export function changedFilesTouchDeps(files: string[]): boolean {
+  return files.some(f => {
+    const base = f.split(/[\\/]/).pop() ?? f;
+    return base === "package.json" || base === "package-lock.json";
+  });
+}
+
+/**
+ * Drop the worktree's shared node_modules junction so a real isolated install
+ * can replace it. Used by the deps gate when a self_edit changes dependencies:
+ * installing through the junction would write into the parent repo's real
+ * node_modules. Removing the junction first makes the subsequent `npm ci`
+ * (run by the gate via runCommandInWorktree) populate a real isolated dir.
+ *
+ * Does NOT run npm — the install lives next to the other gates.
+ */
+export function isolateNodeModules(name: string): { ok: boolean; detail: string } {
+  const wt = activeWorktrees.get(name);
+  if (!wt) throw new Error(`No worktree found for ${name}`);
+  const stuck = unlinkSharedJunctions(wt.path);
+  if (stuck.length) {
+    return { ok: false, detail: `could not unlink junction(s): ${stuck.join(", ")}` };
+  }
+  return { ok: true, detail: "junction dropped; ready for isolated install" };
+}
+
 /** List of files changed (added/modified/deleted) in the worktree's uncommitted state. */
 export function getWorktreeChangedFiles(name: string): string[] {
   const status = getWorktreeStatus(name);
@@ -331,6 +366,66 @@ interface BuildResult {
   durationMs: number;
   stdout: string;
   stderr: string;
+}
+
+/**
+ * Capture the merge base info BEFORE mergeWorktree deletes the registry entry.
+ *
+ * Returns the repoRoot, baseBranch, and the base branch HEAD sha as it stands
+ * RIGHT NOW (pre-merge). The caller stashes this so a post-merge re-gate failure
+ * can hard-reset the base branch back to where it was before the merge.
+ */
+export function getMergeBaseInfo(
+  name: string,
+): { repoRoot: string; baseBranch: string; sha: string } | null {
+  const wt = activeWorktrees.get(name);
+  if (!wt) return null;
+  return {
+    repoRoot: wt.repoRoot,
+    baseBranch: wt.baseBranch,
+    sha: git(["rev-parse", wt.baseBranch], wt.repoRoot),
+  };
+}
+
+/** Resolve a branch's current HEAD sha in the given repo. */
+export function getBranchHead(repoRoot: string, branch: string): string {
+  return git(["rev-parse", branch], repoRoot);
+}
+
+/** Hard-reset a base branch back to a known sha (used to revert a bad merge). */
+export function revertBranchTo(
+  repoRoot: string,
+  baseBranch: string,
+  sha: string,
+): { ok: boolean; detail: string } {
+  try {
+    git(["checkout", baseBranch], repoRoot);
+    git(["reset", "--hard", sha], repoRoot);
+    return { ok: true, detail: `reset ${baseBranch} to ${sha.slice(0, 8)}` };
+  } catch (e) {
+    return { ok: false, detail: (e as Error).message };
+  }
+}
+
+/**
+ * Run `npm run build` in the repo root (NOT a worktree). Used to re-validate the
+ * merged main tree after a self_edit merge, since the merge can combine the
+ * worktree branch with main commits no gate ever saw.
+ */
+export function runRepoBuild(repoRoot: string, timeoutMs: number): { ok: boolean; detail: string } {
+  try {
+    execSync("npm run build", {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      timeout: timeoutMs,
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return { ok: true, detail: "build passed" };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message: string };
+    return { ok: false, detail: (err.stderr || err.stdout || err.message).slice(-1500) };
+  }
 }
 
 /** Run a build/test command inside the worktree. */

@@ -155,7 +155,7 @@ export const resolvePhase: Phase = async (ctx) => {
   const dup = (tc.name === "request_secret" || tc.name === "request_secrets") ? null : findPriorIdenticalResult(tc, priorMessages || []);
   if (dup) {
     const hint = `[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing. If you need fresh data, change the arguments. Otherwise, focus on the user's current question.]\n\n${dup.result}`;
-    onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: hint, allowed: true });
+    onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: hint, allowed: true, status: "ok" });
     logRetry({ kind: "custom", sessionId, tool: tc.name, detail: { reason: "session-repeat", priorTurn: dup.turnIndex } });
     ctx.msgs.push({ role: "tool", tool_call_id: tc.id, content: hint } as ChatCompletionMessageParam);
     return HALT;

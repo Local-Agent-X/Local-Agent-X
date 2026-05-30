@@ -255,7 +255,7 @@ export type ServerEvent =
   | { type: "stream"; replace: true; text: string }
   | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
   | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string }
-  | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean }
+  | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean; status?: ToolResultStatus }
   | { type: "done"; usage: AgentTurn["usage"] }
   // Out-of-band notice that the turn stopped early (middleware abort,
   // wall-clock ceiling, stale evidence, loop detection, etc.). The UI

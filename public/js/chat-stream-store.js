@@ -176,7 +176,7 @@
         if (mediaUrl && !result.includes(mediaUrl[0])) {
           result = result.trimEnd() + '\nView: ' + mediaUrl[0];
         }
-        e.toolEvents.push({ type: 'end', name: event.toolName, allowed: event.allowed, result });
+        e.toolEvents.push({ type: 'end', name: event.toolName, allowed: event.allowed, status: event.status, result });
         e.lastActivityMs = now;
         break;
       }

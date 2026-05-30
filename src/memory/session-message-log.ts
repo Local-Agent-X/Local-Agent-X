@@ -28,6 +28,8 @@ import { atomicWriteFileSync } from "./utils.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { Session } from "../types.js";
 import { COMPACTION_PREFIX } from "../types.js";
+import type { ToolResultStatus } from "../types.js";
+import { parseStatusHeader } from "../tools/result-helpers.js";
 
 export interface SessionMetaRow {
   kind: "meta";
@@ -186,7 +188,7 @@ export function projectSessionForUI(session: Session): Session {
     if (id) toolResults.set(id, content);
   }
 
-  type ToolEvent = { type: "start" | "end"; name: string; args?: Record<string, unknown>; result?: string; allowed?: boolean };
+  type ToolEvent = { type: "start" | "end"; name: string; args?: Record<string, unknown>; result?: string; allowed?: boolean; status?: ToolResultStatus };
   type UIAssistant = ChatCompletionMessageParam & { _tools?: ToolEvent[] };
 
   const messages: ChatCompletionMessageParam[] = [];
@@ -223,7 +225,7 @@ export function projectSessionForUI(session: Session): Session {
           try { args = JSON.parse(tc.function?.arguments || "{}"); } catch {}
           pendingTools.push({ type: "start", name, args });
           const result = toolResults.get(tc.id) || "";
-          pendingTools.push({ type: "end", name, allowed: true, result: result.slice(0, 500) });
+          pendingTools.push({ type: "end", name, allowed: true, result: result.slice(0, 500), status: parseStatusHeader(result) });
         }
       }
       const text = typeof m.content === "string" ? m.content : "";

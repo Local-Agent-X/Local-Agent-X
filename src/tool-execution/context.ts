@@ -4,7 +4,7 @@ import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
-import { renderToolResultForModel } from "../tools/result-helpers.js";
+import { renderToolResultForModel, statusOf } from "../tools/result-helpers.js";
 
 export type CallContext = "local" | "api" | "delegated" | "cron";
 
@@ -109,12 +109,12 @@ export function terminate(
 ): PhaseOutcome {
   if (payload.rendered === "raw") {
     ctx.allowed = payload.allowed;
-    ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.content, allowed: payload.allowed });
+    ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.content, allowed: payload.allowed, status: payload.allowed ? "ok" : "blocked" });
     ctx.msgs.push({ role: "tool", tool_call_id: ctx.tc.id, content: payload.content } as ChatCompletionMessageParam);
   } else {
     ctx.allowed = payload.allowed;
     ctx.result = payload.result;
-    ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.result.content, allowed: payload.allowed });
+    ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.result.content, allowed: payload.allowed, status: statusOf(payload.result) });
     ctx.msgs.push({ role: "tool", tool_call_id: ctx.tc.id, content: renderToolResultForModel(payload.result) } as ChatCompletionMessageParam);
   }
   return HALT;

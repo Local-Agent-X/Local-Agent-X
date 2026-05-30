@@ -30,6 +30,7 @@ import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, re
 import { recordMerge } from "./self-edit-rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, spawnClaude, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
+import { fingerprintParentDeps, restoreParentDeps } from "./self-edit/parent-deps-guard.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("self-edit.sandbox");
@@ -116,9 +117,33 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     }
     logger.info(`[self-edit.sandbox] worktree ready at ${wt.path}`);
 
+    // Parent-deps guard (#2): snapshot the parent's node_modules fingerprint
+    // BEFORE the subprocess runs. The worktree junctions the parent's real
+    // node_modules, so a subprocess that disobeys the no-install instruction
+    // corrupts the parent through the junction before the deps gate can react.
+    const repoRoot = getMergeBaseInfo(name)?.repoRoot ?? null;
+    const depsFingerprintBefore = repoRoot ? fingerprintParentDeps(repoRoot) : null;
+
     // Run claude -p inside the worktree
     progress("Running source-code repair in sandbox…");
     const claudeOutput = await spawnClaude(wt.path, opts.fullPrompt, opts.signal);
+
+    // Parent-deps guard (#2): the parent's node_modules must be UNCHANGED across
+    // the run (the only legit install — the deps gate — is isolated to the
+    // worktree). A changed fingerprint means the subprocess ran an install
+    // through the junction. Restore the parent deterministically via `npm ci`
+    // and abort: code produced under a violated sandbox contract isn't trusted.
+    if (repoRoot && depsFingerprintBefore && fingerprintParentDeps(repoRoot) !== depsFingerprintBefore) {
+      logger.error(`[self-edit.sandbox] parent node_modules mutated during subprocess run — restoring via npm ci`);
+      progress("Parent deps mutated mid-run — restoring via npm ci…");
+      const restored = restoreParentDeps(repoRoot);
+      return failResult(
+        claudeOutput, branch,
+        { deps: SKIPPED_GATE, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE },
+        `Aborted — the subprocess mutated the parent's node_modules mid-run (it ran an install despite instructions). ` +
+        `Parent deps restored via npm ci (${restored.ok ? "ok" : `FAILED: ${restored.detail}`}). No changes were merged; re-run the self_edit if still needed.`,
+      );
+    }
 
     // Gate 0: deps — isolate node_modules + `npm ci` if a manifest changed.
     // Lazy: skipped (passes) when no dependency change. A failed isolated

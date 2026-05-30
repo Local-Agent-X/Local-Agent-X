@@ -18,15 +18,17 @@
  *   - Ollama / local                   → llm-dispatch ollama
  *   - xAI / Gemini / custom            → null (caller falls back to regex)
  *
- * Reading the active provider: settings.json's `provider` field +
- * resolveProvider's auth getter for that provider. Each classifier call
- * looks this up at firing time so a provider switch in the UI takes effect
- * on the next classifier invocation.
+ * Reading the active provider: delegated to the shared
+ * `resolveProviderContext` helper (src/providers/), the single source of
+ * truth for "settings → provider + credential" that the chat seam also
+ * routes through. Model defaulting stays here (see MODEL_FALLBACKS) because
+ * classifiers deliberately use a cheaper model floor than chat. Each
+ * classifier call re-resolves at firing time so a provider switch in the UI
+ * takes effect on the next classifier invocation.
  */
 
 import { createLogger } from "../logger.js";
-import { loadSettings } from "../settings.js";
-import { resolveCredential } from "../auth/resolve.js";
+import { resolveProviderContext } from "../providers/resolve-provider-context.js";
 
 // Aggressive default timeout. These classifiers shape signal quality but
 // aren't load-bearing — every call site already has a regex/heuristic
@@ -66,63 +68,34 @@ export interface ClassifyOptions<T> {
 }
 
 /**
- * Read the user's currently-selected provider + model + apiKey, using the
- * same logic the chat path uses. Returns null if no usable provider is
- * configured or auth is unavailable. Cached per call (re-reads settings on
- * every invocation — provider switches take effect immediately).
+ * Per-provider model floor for classifiers when the user has NOT configured
+ * an explicit model in settings.json. Classifiers shape signal quality but
+ * aren't load-bearing, so they default to a cheaper model than chat (which
+ * uses the capable registry default). Only the streaming clients
+ * (anthropic/codex) strictly need a value here — `dispatch()` self-defaults
+ * the OpenAI-compat providers (openai→gpt-4o-mini, ollama→llama3:8b,
+ * xai→grok-4.3), so they're listed for clarity/parity but a "" model reaches
+ * the same place. Mirrors the old hand-rolled defaults 1:1.
  */
-async function resolveActiveProvider(): Promise<{
-  provider: string; model: string; apiKey: string;
-} | null> {
-  // 1. Read the user's active provider choice from settings.json
-  let provider = "anthropic";
-  let model = "";
-  const s = loadSettings() as { provider?: string; model?: string };
-  if (s.provider) provider = String(s.provider).toLowerCase();
-  if (s.model) model = String(s.model);
-
-  // 2. Resolve apiKey via the canonical resolver (handles OAuth/env/secrets per provider)
-  let apiKey = "";
-  try {
-    if (provider === "anthropic") {
-      const r = await resolveCredential("anthropic");
-      apiKey = r?.credential || "";
-      if (!model) model = "claude-sonnet-4-6";
-    } else if (provider === "codex") {
-      const r = await resolveCredential("codex");
-      apiKey = r?.credential || "";
-      if (!model) model = "gpt-5.5";
-    } else if (provider === "openai") {
-      const r = await resolveCredential("openai");
-      apiKey = r?.credential || "";
-      if (!model) model = "gpt-4o-mini";
-    } else if (provider === "ollama" || provider === "local") {
-      apiKey = "ollama";
-      if (!model) model = "llama3:8b";
-    } else if (provider === "xai") {
-      const r = await resolveCredential("xai");
-      apiKey = r?.credential || "";
-    } else if (provider === "gemini") {
-      const r = await resolveCredential("gemini");
-      apiKey = r?.credential || "";
-    }
-  } catch { /* fall through */ }
-
-  if (!apiKey) return null;
-  return { provider, model, apiKey };
-}
+const MODEL_FALLBACKS: Record<string, string> = {
+  anthropic: "claude-sonnet-4-6",
+  codex: "gpt-5.5",
+  openai: "gpt-4o-mini",
+  ollama: "llama3:8b",
+  local: "llama3:8b",
+};
 
 export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | null> {
   const logger = createLogger(`classifier.${opts.category}`);
 
   if (opts.envDisableVar && process.env[opts.envDisableVar] === "0") return null;
 
-  const ctx = await resolveActiveProvider();
+  const ctx = await resolveProviderContext();
   if (!ctx) return null;
-  const { provider, model: defaultModel, apiKey } = ctx;
-  // Caller can override the model, but otherwise we use whatever the
-  // resolved provider's default is (matches what chat uses).
-  const model = opts.model ?? defaultModel;
+  const { provider, apiKey } = ctx;
+  // Model precedence: explicit per-call override > the user's configured
+  // model (settings.json) > the classifier's cheaper per-provider floor.
+  const model = opts.model || ctx.model || MODEL_FALLBACKS[provider] || "";
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxChars = opts.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS;

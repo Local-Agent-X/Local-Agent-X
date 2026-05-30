@@ -35,6 +35,7 @@ import {
 } from "./session-lock.js";
 import { buildSelfEditPrompt } from "./prompt.js";
 import { runSelfEditBypass } from "./bypass-runner.js";
+import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./global-lock.js";
 
 export const selfEditTool: ToolDefinition = {
   name: "self_edit",
@@ -174,6 +175,12 @@ export const selfEditTool: ToolDefinition = {
       try { controller.abort(); } catch { /* best-effort */ }
     };
 
+    // The bypass path acquires the machine-wide global self_edit lock (the same
+    // one runSelfEditInSandbox takes). Tracked here so the finally releases it
+    // only when this call actually acquired it. The sandbox path manages the
+    // global lock internally, so we never touch it on that branch.
+    let globalLockHeld = false;
+
     try {
       // Default flow: sandboxed via worktree + 3-gate validation. Skipped when
       // _cwd is set (autopilot already provides isolation) or _unsafe is set.
@@ -190,11 +197,51 @@ export const selfEditTool: ToolDefinition = {
       }
 
       // Bypass flow: write directly to the supplied cwd (autopilot worktree
-      // OR LAX_REPO_ROOT for unsafe rescues). No gates.
-      onProgress("Running source-code repair…");
+      // OR LAX_REPO_ROOT for unsafe rescues). No gates — but still serialize
+      // against any sandboxed self_edit via the machine-wide global lock so the
+      // two can't build/install into the shared node_modules concurrently (#9).
+      const gLock = acquireGlobalSelfEditLock();
+      if (!gLock.acquired) {
+        return {
+          content:
+            `BLOCKED — another self_edit is already running on this machine ` +
+            `(pid=${gLock.holder?.pid}, started=${gLock.holder?.startedAt}). It holds the ` +
+            `global self_edit lock; a concurrent run could corrupt the shared node_modules. ` +
+            `Wait for it to finish and retry.`,
+          isError: true,
+        };
+      }
+      globalLockHeld = true;
       const subprocessCwd = internalCwd || LAX_REPO_ROOT;
+
+      // _unsafe is the deliberate gateless escape hatch — it writes straight
+      // into the live repo with no build/bind/smoke gate. Stays gateless, but
+      // log loudly and snapshot the pre-edit SHA so there's a known-good point
+      // to roll back to if the rescue makes things worse. (_cwd autopilot
+      // bypass already commits per-round to its own branch, so it's exempt.)
+      if (unsafe && !internalCwd) {
+        try {
+          const { getBranchHead } = await import("../agency/worktree.js");
+          const { recordUnsafeEdit } = await import("../self-edit-rollback.js");
+          const preSha = getBranchHead(LAX_REPO_ROOT, "HEAD");
+          const { createLogger } = await import("../logger.js");
+          createLogger("self-edit.unsafe").warn(
+            `[self-edit] GATELESS _unsafe self_edit writing directly to ${LAX_REPO_ROOT} ` +
+            `(no sandbox, no gates). Pre-edit HEAD=${preSha.slice(0, 8)} snapshotted for rollback. ` +
+            `Task: ${task.slice(0, 120)}`,
+          );
+          recordUnsafeEdit({ preSha, repoRoot: LAX_REPO_ROOT, task, ts: new Date().toISOString() });
+        } catch (e) {
+          // Snapshot is best-effort — never block the emergency rescue on it.
+          const { createLogger } = await import("../logger.js");
+          createLogger("self-edit.unsafe").warn(`[self-edit] unsafe pre-edit snapshot failed: ${(e as Error).message}`);
+        }
+      }
+
+      onProgress("Running source-code repair…");
       return await runSelfEditBypass(subprocessCwd, fullPrompt, combinedSignal);
     } finally {
+      if (globalLockHeld) releaseGlobalSelfEditLock();
       releaseLock();
     }
   },

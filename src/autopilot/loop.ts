@@ -9,11 +9,12 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Operation } from "../operations/types.js";
-import type { AutopilotState, RoundResult } from "./types.js";
+import type { AutopilotState, BootProof, RoundResult } from "./types.js";
 import { runAutopilotRound } from "./round-agent.js";
 import { validateRound, partitionByScope } from "./validate.js";
 import { commitRound } from "./commit.js";
 import { buildRunSummary, renderSummaryMarkdown } from "./summary.js";
+import { runEndOfShiftBootProof } from "./boot-proof.js";
 import { releaseLock } from "./lock.js";
 import type { StartAutopilotDeps } from "./start.js";
 
@@ -289,6 +290,28 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
     finalState = "error";
     addOpEvent(op, "error", `Loop crashed: ${(e as Error).message}`);
   } finally {
+    // End-of-shift boot proof. Per-round validation only proves the code
+    // BUILDS; this proves it BOOTS. Run it once, only when there's committed
+    // work to boot (passed rounds), a build gate is configured, and the run
+    // ended naturally — skip on interrupt (user wants out fast) and on error
+    // (loop state is unreliable). Autopilot never auto-merges to main, so a
+    // failed boot proof is a human-merge warning, not a brick.
+    let bootProof: BootProof | undefined;
+    const passedCount = (op.autopilotRounds || []).filter(r => r.outcome === "passed").length;
+    const naturalEnd = finalState !== "interrupted" && finalState !== "error";
+    if (passedCount > 0 && config.buildCommand !== null && naturalEnd) {
+      try {
+        void broadcastProgress(op.id, "🔌 Boot proof: launching server + smoke check…");
+        bootProof = await runEndOfShiftBootProof(config);
+        logger.info(`[autopilot.loop] boot proof: ${bootProof.status} (${bootProof.durationMs}ms)`);
+        addOpEvent(op, bootProof.status === "passed" ? "info" : "error",
+          `Boot proof ${bootProof.status}: ${bootProof.detail.slice(0, 200)}`);
+      } catch (e) {
+        logger.warn(`[autopilot.loop] boot proof threw: ${(e as Error).message}`);
+        bootProof = { status: "failed", detail: `Boot proof error: ${(e as Error).message}`, durationMs: 0 };
+      }
+    }
+
     // Build summary, persist, update Operation status
     const summary = buildRunSummary({
       opId: op.id,
@@ -297,6 +320,7 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
       rounds: op.autopilotRounds || [],
       startedAt: startedAtIso,
       selfEditCalls: totalSelfEditCalls,
+      bootProof,
     });
 
     op.status = finalState === "error" ? "failed" : finalState === "interrupted" ? "cancelled" : "completed";

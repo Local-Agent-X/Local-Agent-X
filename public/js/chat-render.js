@@ -84,6 +84,26 @@ function _buildLiveAssistantInto(parent, store) {
   return div;
 }
 
+// Roll tool failures up onto the collapsed "Agent activity" header so the
+// user can tell work failed WITHOUT expanding the group — the whole point of
+// the outcome indicator. Recomputed on every render from the end events, so
+// it stays correct as the turn streams in and after a reload.
+function _updateActivityOutcome(bodyEl, toolEvents) {
+  const group = bodyEl.querySelector('.activity-group');
+  if (!group) return;
+  const ends = toolEvents.filter(t => t.type === 'end');
+  const failed = ends.filter(t => t.status === 'error' || t.status === 'timeout').length;
+  const label = group.querySelector('.activity-label');
+  if (label) {
+    const total = ends.length;
+    let txt = total >= 5 ? `Agent activity — ${total} actions` : 'Agent activity';
+    if (failed > 0) txt += ` · ${failed} failed`;
+    label.textContent = txt;
+  }
+  const countEl = group.querySelector('.activity-count');
+  if (countEl) countEl.style.color = failed > 0 ? 'var(--danger, #e5484d)' : '';
+}
+
 // Shared render for assistant tool artifacts (cards, chips, progress, approvals,
 // stop notice). Used by both the live synth path (_buildLiveAssistantInto) and
 // the finalized assistant branch in renderMessage so a reloaded chat looks
@@ -102,7 +122,13 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
         const card = appendToolCardGrouped(bodyEl, te.name, te.args || '', te.riskLevel);
         const endEvt = toolEvents.find(t => t.type === 'end' && t.name === te.name);
         if (endEvt) {
-          card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
+          // Execution outcome, not just the approval decision. A tool can be
+          // allowed-then-fail (bash exit 1, edit no-match, http 500); the
+          // status discriminator carries that. Reuse the existing
+          // allowed(green)/blocked(red) dot styles — failure maps to red.
+          const failed = endEvt.status === 'error' || endEvt.status === 'timeout';
+          const ok = endEvt.allowed !== false && !failed && endEvt.status !== 'blocked';
+          card.querySelector('.indicator').className = 'indicator ' + (ok ? 'allowed' : 'blocked');
           // Clean the agent-safety scaffolding off the tool-detail text but
           // leave the raw result in place for attachMediaPreview's URL scan —
           // generate_image results can wrap their /images/foo.png path inside
@@ -116,10 +142,14 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
             .replace(/<content>\n?/g, '').replace(/\n?<\/content>/g, '')
             .trim()
             .slice(0, 200);
-          card.querySelector('.tool-detail').textContent = detailText || '✓ Done';
+          const fallback = failed
+            ? (endEvt.status === 'timeout' ? '✗ Timed out' : '✗ Failed')
+            : (endEvt.status === 'blocked' || endEvt.allowed === false ? '⚠ Blocked' : '✓ Done');
+          card.querySelector('.tool-detail').textContent = detailText || fallback;
           attachMediaPreview(card, te.name, rawResult);
         }
       }
+      _updateActivityOutcome(bodyEl, toolEvents);
     } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
   }
   // Chips attach to the last tool card matching the chip's emit time. The

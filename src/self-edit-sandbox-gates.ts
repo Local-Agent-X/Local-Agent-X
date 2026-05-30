@@ -13,6 +13,7 @@ import { runCommandInWorktree, getWorktreePath, getWorktreeChangedFiles, isolate
 import { npmAugmentedEnv } from "./anthropic-client/cli-path.js";
 import { killProcessTree } from "./process-tree-kill.js";
 import { runSmokeAssertions } from "./self-edit-smoke-suite.js";
+import { buildSelfEditChildEnv } from "./self-edit/child-env.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("self-edit.sandbox-gates");
@@ -211,7 +212,10 @@ export function spawnClaude(cwd: string, prompt: string, signal?: AbortSignal): 
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
-      env: npmAugmentedEnv(),
+      // Scrubbed env — the injected surgery child must not inherit the
+      // user's credentials. The probe in gateBind (real LAX boot, not the
+      // injected child) keeps npmAugmentedEnv. See child-env.ts.
+      env: buildSelfEditChildEnv(),
     });
     // Windows shell:true spawn wraps the binary in cmd.exe; proc.kill only
     // signals the wrapper. `killProcessTree` does the proper SIGTERM +

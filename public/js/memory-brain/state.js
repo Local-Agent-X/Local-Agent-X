@@ -16,7 +16,17 @@ export const state = {
   startTime: 0,
 
   // Camera dolly target — wheel events nudge this, the tick lerps toward it.
-  zoomTarget: 4.2,
+  // Opens at the overview tier (readable, not tiny); zoom in to ~1.3 to reach
+  // individual clickable dots, out to ~5 for the whole map.
+  zoomTarget: 3.2,
+
+  // Region fly-to. When a cluster label is clicked, focused=true and the tick
+  // pans the camera to (panX, panY) + zoomTarget while auto-spin is suspended,
+  // so the clicked region centers and holds still. Cleared by clicking empty
+  // space; panX/panY ease back to 0 (recentre) when not focused.
+  focused: false,
+  panX: 0,
+  panY: 0,
 
   count: 0,
   // Per-dot memory records (index i ↔ point i), so a raycast hit maps to a

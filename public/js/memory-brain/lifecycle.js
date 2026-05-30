@@ -37,6 +37,7 @@ export async function ensure() {
   resize();
 
   const hud = document.getElementById('mb-hud');
+  const hint = document.getElementById('mb-hint');
   const empty = document.getElementById('mb-empty');
   const loading = document.getElementById('mb-loading');
 
@@ -56,12 +57,14 @@ export async function ensure() {
     for (let i = 0; i < data.size.length; i++) data.size[i] *= 0.55;
     if (empty) empty.style.display = '';
     if (hud) hud.textContent = '';
+    if (hint) hint.style.display = 'none';
     if (toggle) toggle.style.display = 'none';
     clearClusterLabels();
     buildPoints(data);
   } else {
     if (empty) empty.style.display = 'none';
     if (hud) hud.innerHTML = '<b>' + total.toLocaleString() + '</b> memories';
+    if (hint) hint.style.display = '';
     const cloud = buildCloud(items, clusters);
     buildPoints(cloud);
 

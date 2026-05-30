@@ -34,7 +34,6 @@ const BLOB_FRAGMENT = `
 
 let blobs = null;
 let blobMat = null;
-let labelLayer = null;
 
 // centroids: [{ x, y, z, size, color: [r,g,b] 0-1 }]
 export function buildBlobs(centroids) {
@@ -84,8 +83,4 @@ export function updateLod() {
   if (state.mat) state.mat.uniforms.uOpacity.value = dotOp;
   if (blobMat) blobMat.uniforms.uOpacity.value = t;
   if (blobs) blobs.rotation.copy(state.points.rotation);
-  // Labels stay readable at every zoom (they're the navigation aid), just a
-  // touch brighter when zoomed out to the blob view.
-  if (!labelLayer) labelLayer = document.getElementById('mb-labels');
-  if (labelLayer) labelLayer.style.opacity = (0.8 + 0.2 * t).toFixed(3);
 }

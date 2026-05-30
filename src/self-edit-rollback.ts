@@ -33,6 +33,39 @@ function recordPath(): string {
   return join(getLaxDir(), "last-self-edit-merge.json");
 }
 
+/** Snapshot of the repo HEAD taken right before a gateless `_unsafe` self_edit
+ *  writes directly to the working tree. The unsafe path runs NO gates by
+ *  design (emergency rescue), so this pre-edit SHA is the only breadcrumb back
+ *  to the last known-good state if the rescue makes things worse. */
+export interface UnsafeEditRecord {
+  preSha: string;
+  repoRoot: string;
+  task: string;
+  ts: string;
+}
+
+function unsafeRecordPath(): string {
+  return join(getLaxDir(), "last-unsafe-self-edit.json");
+}
+
+/** Persist the pre-edit SHA before a gateless `_unsafe` self_edit runs. */
+export function recordUnsafeEdit(rec: UnsafeEditRecord): void {
+  try {
+    writeFileSync(unsafeRecordPath(), JSON.stringify(rec, null, 2), { mode: 0o600 });
+  } catch (e) {
+    logger.warn(`[self-edit.rollback] Failed to record unsafe edit: ${(e as Error).message}`);
+  }
+}
+
+/** Read the last gateless `_unsafe` self_edit snapshot, or null if none/corrupt. */
+export function readLastUnsafeEdit(): UnsafeEditRecord | null {
+  try {
+    return JSON.parse(readFileSync(unsafeRecordPath(), "utf-8")) as UnsafeEditRecord;
+  } catch {
+    return null;
+  }
+}
+
 /** Persist the last self_edit merge (pre/post SHA) for the revert hatch. */
 export function recordMerge(rec: Omit<MergeRecord, "surfaced">): void {
   try {

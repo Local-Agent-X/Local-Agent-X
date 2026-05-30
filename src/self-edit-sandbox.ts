@@ -23,21 +23,19 @@
  * to keep both files under the 400-LOC limit.
  */
 
-import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { getLaxDir } from "./lax-data-dir.js";
 import { type ChildProcess } from "node:child_process";
 import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild } from "./agency/worktree.js";
 import { recordMerge } from "./self-edit-rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, spawnClaude, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
+import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("self-edit.sandbox");
 
 // ── Config ─────────────────────────────────────────────────────────────────
 
-const SANDBOX_LOCK = join(getLaxDir(), "self-edit-sandbox.lock");
 const PROBE_PORT_MIN = 7100;
 const PROBE_PORT_MAX = 7999;
 
@@ -70,28 +68,6 @@ export interface SandboxOpts {
   onProgress?: (message: string) => void;
 }
 
-// ── Lock ───────────────────────────────────────────────────────────────────
-
-function isPidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
-
-function acquireLock(): { acquired: boolean; holder?: { pid: number; startedAt: string } } {
-  mkdirSync(getLaxDir(), { recursive: true, mode: 0o700 });
-  if (existsSync(SANDBOX_LOCK)) {
-    try {
-      const existing = JSON.parse(readFileSync(SANDBOX_LOCK, "utf-8"));
-      if (isPidAlive(existing.pid)) return { acquired: false, holder: existing };
-    } catch { /* corrupt lock — reclaim */ }
-  }
-  writeFileSync(SANDBOX_LOCK, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), { mode: 0o600 });
-  return { acquired: true };
-}
-
-function releaseLock(): void {
-  try { if (existsSync(SANDBOX_LOCK)) unlinkSync(SANDBOX_LOCK); } catch {}
-}
-
 // ── Naming + port ─────────────────────────────────────────────────────────
 
 function slugify(s: string): string {
@@ -102,7 +78,7 @@ function nowSlug(): string {
   return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 }
 
-function pickProbePort(): number {
+export function pickProbePort(): number {
   const h = createHash("sha1").update(`${process.pid}-${Date.now()}`).digest();
   return PROBE_PORT_MIN + (h.readUInt16BE(0) % (PROBE_PORT_MAX - PROBE_PORT_MIN));
 }
@@ -110,7 +86,7 @@ function pickProbePort(): number {
 // ── Main entry ─────────────────────────────────────────────────────────────
 
 export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxResult> {
-  const lock = acquireLock();
+  const lock = acquireGlobalSelfEditLock();
   if (!lock.acquired) {
     return failPreflight(`Another self_edit sandbox is running (pid=${lock.holder?.pid}, started=${lock.holder?.startedAt}). Try again in a moment.`);
   }
@@ -247,7 +223,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // On failure, the worktree+branch are preserved by mergeWorktree (which
     // is NOT called on the fail paths). On success, mergeWorktree already
     // cleaned them up.
-    releaseLock();
+    releaseGlobalSelfEditLock();
   }
 }
 

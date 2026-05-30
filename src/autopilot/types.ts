@@ -68,6 +68,17 @@ export interface RoundResult {
   startedAt: string;
 }
 
+/** Result of the end-of-shift bind+smoke boot proof. */
+export interface BootProof {
+  /** "passed" = worktree server bound and smoke endpoints answered;
+   *  "failed" = bind or smoke failed (detail explains which). */
+  status: "passed" | "failed";
+  /** Human-readable verdict / failure reason. */
+  detail: string;
+  /** Wall-clock ms spent on the bind+smoke pass. */
+  durationMs: number;
+}
+
 export type AutopilotState =
   | "running"
   | "completed"        // agent emitted AUTOPILOT_DONE
@@ -97,6 +108,9 @@ export interface AutopilotRunSummary {
   filesChangedOutOfScope: string[];
   /** Final build status from the most recent passed round. */
   buildStatus: "passing" | "failing" | "skipped";
+  /** End-of-shift bind+smoke verdict. undefined when the boot proof was not run
+   *  (no committed rounds, build gate disabled, or the run was interrupted/errored). */
+  bootProof?: BootProof;
   /** Per-round detail, in order. */
   rounds: RoundResult[];
 }

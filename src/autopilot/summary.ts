@@ -10,6 +10,7 @@ import type {
   AutopilotConfig,
   AutopilotRunSummary,
   AutopilotState,
+  BootProof,
   RoundResult,
 } from "./types.js";
 
@@ -20,6 +21,8 @@ export interface BuildSummaryInput {
   rounds: RoundResult[];
   startedAt: string;
   selfEditCalls: number;
+  /** End-of-shift bind+smoke verdict, if the boot proof ran. */
+  bootProof?: BootProof;
 }
 
 export function buildRunSummary(input: BuildSummaryInput): AutopilotRunSummary {
@@ -64,6 +67,7 @@ export function buildRunSummary(input: BuildSummaryInput): AutopilotRunSummary {
     filesChangedInScope: [...inScopeSet],
     filesChangedOutOfScope: [...outOfScopeSet],
     buildStatus,
+    bootProof: input.bootProof,
     rounds: input.rounds,
   };
 }
@@ -91,6 +95,14 @@ export function renderSummaryMarkdown(summary: AutopilotRunSummary): string {
   const inScope = summary.filesChangedInScope.length > 0 ? summary.filesChangedInScope.join(", ") : "(none)";
   const outOfScope = summary.filesChangedOutOfScope.length > 0 ? summary.filesChangedOutOfScope.join(", ") : "(none)";
 
+  // Boot proof: explicit signal so the human merging knows whether the
+  // committed code actually boots. "not run" is honest about the gap rather
+  // than implying a green boot when none happened.
+  const bp = summary.bootProof;
+  const bootLine = bp
+    ? `**Boot proof:** ${bp.status === "passed" ? "✅ passed" : "❌ FAILED"} — ${bp.detail}`
+    : `**Boot proof:** not run (no committed rounds, build disabled, or run interrupted)`;
+
   return [
     `## Autopilot ${stateLabel[summary.state]} (${summary.totalRounds} rounds, ${minutes}m)`,
     `**Branch:** \`${summary.branchName}\``,
@@ -103,6 +115,7 @@ export function renderSummaryMarkdown(summary: AutopilotRunSummary): string {
     `**Files changed (in scope):** ${inScope}`,
     `**Files changed (out of scope):** ${outOfScope}`,
     `**Build:** ${summary.buildStatus}  |  **self_edit calls:** ${summary.selfEditCalls}`,
+    bootLine,
     ``,
     `**Review:** \`git diff ${summary.baseBranch}...${summary.branchName}\``,
     `**Merge:** \`git checkout ${summary.baseBranch} && git merge ${summary.branchName}\``,

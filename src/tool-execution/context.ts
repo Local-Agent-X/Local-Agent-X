@@ -35,17 +35,30 @@ export interface ToolCallContext {
   startedAt?: number;
   result?: ToolResult;
 
-  // preBlocked: pre-dispatch chain (security/RBAC/tool-policy) or
-  // unknown-tool fired. Skips approval + execute, still runs audit so
-  // threat engine + hooks see the block message.
-  preBlocked: boolean;
-
   allowed: boolean;
   msgs: ChatCompletionMessageParam[];
-  terminated: boolean;
 }
 
-export type Phase = (ctx: ToolCallContext) => Promise<void>;
+// A phase's control-flow signal to the orchestrator, replacing the old
+// hidden `ctx.terminated` / `ctx.preBlocked` flags read between phase calls.
+//   continue — chain proceeds to the next phase.
+//   halt     — phase produced the final tool message (via `terminate`) and
+//              the chain stops. The orchestrator decides whether a trailing
+//              audit runs (it does only for the dedup-hit position).
+//   block    — pre-dispatch chain (security/RBAC/tool-policy) or unknown-tool
+//              fired: `ctx.result` is set but no message was pushed. Skips
+//              approval + execute; audit still runs so the threat engine +
+//              hooks see the block and render its message.
+export type PhaseOutcome =
+  | { kind: "continue" }
+  | { kind: "halt" }
+  | { kind: "block" };
+
+export const CONTINUE: PhaseOutcome = { kind: "continue" };
+export const HALT: PhaseOutcome = { kind: "halt" };
+export const BLOCK: PhaseOutcome = { kind: "block" };
+
+export type Phase = (ctx: ToolCallContext) => Promise<PhaseOutcome>;
 
 export function createContext(input: {
   tc: { id: string; name: string; arguments: string };
@@ -78,23 +91,22 @@ export function createContext(input: {
     args: {},
     riskLevel: "low",
     approvalContext: "",
-    preBlocked: false,
     allowed: true,
     msgs: [],
-    terminated: false,
   };
 }
 
-// Build the final tool msg, emit tool_end, and stop the phase chain.
-// `rendered: "raw"` writes content verbatim (used by paths that build a
-// human-readable string directly). `rendered: "model"` runs the content
-// through renderToolResultForModel for ToolResult-shaped values.
+// Build the final tool msg, emit tool_end, and return the halt outcome so the
+// calling phase short-circuits the chain. `rendered: "raw"` writes content
+// verbatim (used by paths that build a human-readable string directly).
+// `rendered: "model"` runs the content through renderToolResultForModel for
+// ToolResult-shaped values.
 export function terminate(
   ctx: ToolCallContext,
   payload:
     | { rendered: "raw"; content: string; allowed: boolean }
     | { rendered: "model"; result: ToolResult; allowed: boolean },
-): void {
+): PhaseOutcome {
   if (payload.rendered === "raw") {
     ctx.allowed = payload.allowed;
     ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.content, allowed: payload.allowed });
@@ -105,5 +117,5 @@ export function terminate(
     ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.result.content, allowed: payload.allowed });
     ctx.msgs.push({ role: "tool", tool_call_id: ctx.tc.id, content: renderToolResultForModel(payload.result) } as ChatCompletionMessageParam);
   }
-  ctx.terminated = true;
+  return HALT;
 }

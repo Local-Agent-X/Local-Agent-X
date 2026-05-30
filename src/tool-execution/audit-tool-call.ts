@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import type { Phase, ToolCallContext } from "./context.js";
+import { CONTINUE } from "./context.js";
 
 interface ToolResultWithImage extends ToolResult {
   _image?: { path: string; question: string; mime: string; b64: string };
@@ -136,4 +137,5 @@ export const auditPhase: Phase = async (ctx) => {
   ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed });
   harvestChip(ctx);
   shapeMsg(ctx);
+  return CONTINUE;
 };

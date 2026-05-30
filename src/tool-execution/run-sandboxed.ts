@@ -13,13 +13,14 @@ import { recordToolCall as recordRateLimit } from "./rate-limiter.js";
 import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
+import { CONTINUE } from "./context.js";
 import { isRetryable, isRetryableTool } from "../resilience-policy.js";
 
 const logger = createLogger("tool-execution");
 
 export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
-  if (!tool) return;
+  if (!tool) return CONTINUE;
 
   args._onProgress = (message: string) => {
     onEvent?.({ type: "tool_progress", toolName: tc.name, toolCallId: tc.id, message } as ServerEvent);
@@ -121,4 +122,5 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   } else {
     recordCircuitFailure(sessionId, tc.name, typeof result.content === "string" ? result.content : undefined);
   }
+  return CONTINUE;
 };

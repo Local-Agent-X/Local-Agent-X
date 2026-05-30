@@ -354,10 +354,8 @@ describe("run-sandboxed redacts result content when taint fires", () => {
       tool: input.tool,
       riskLevel: "low",
       approvalContext: "",
-      preBlocked: false,
       allowed: true,
       msgs: [],
-      terminated: false,
     } as ToolCallContext;
   }
 

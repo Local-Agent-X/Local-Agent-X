@@ -9,11 +9,12 @@ import { classifyToolRisk } from "../autonomy/risk.js";
 import { captureRollback } from "../autonomy/rollback.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
+import { CONTINUE } from "./context.js";
 
 const logger = createLogger("tool-execution");
 
 export const captureRollbackPhase: Phase = async (ctx) => {
-  if (getToolDecision(ctx.tc.name) !== "allow-with-rollback") return;
+  if (getToolDecision(ctx.tc.name) !== "allow-with-rollback") return CONTINUE;
   try {
     const contract = captureRollback(
       ctx.tc.id,
@@ -28,4 +29,5 @@ export const captureRollbackPhase: Phase = async (ctx) => {
   } catch (e) {
     logger.warn(`[rollback] capture threw for ${ctx.tc.name}: ${(e as Error).message}`);
   }
+  return CONTINUE;
 };

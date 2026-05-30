@@ -10,7 +10,7 @@ import {
   decisionDenies,
 } from "../approval-manager.js";
 import type { Phase } from "./context.js";
-import { terminate } from "./context.js";
+import { terminate, CONTINUE } from "./context.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
   const decision = getToolDecision(ctx.tc.name);
@@ -22,13 +22,12 @@ export const requireApprovalPhase: Phase = async (ctx) => {
       status: "blocked",
       metadata: { layer: "approval", userHint: USER_HINTS.policy },
     };
-    terminate(ctx, { rendered: "model", result, allowed: false });
-    return;
+    return terminate(ctx, { rendered: "model", result, allowed: false });
   }
 
-  if (!decisionRequiresPrompt(decision)) return;
-  if (ctx.callContext !== "local") return;
-  if (!ctx.onEvent) return;
+  if (!decisionRequiresPrompt(decision)) return CONTINUE;
+  if (ctx.callContext !== "local") return CONTINUE;
+  if (!ctx.onEvent) return CONTINUE;
 
   const approved = await getApprovalManager().requestApproval({
     toolName: ctx.tc.name,
@@ -38,7 +37,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     args: ctx.args,
     emit: ctx.onEvent,
   });
-  if (approved) return;
+  if (approved) return CONTINUE;
 
   const result: ToolResult = {
     content: `BLOCKED by user: declined approval for ${ctx.tc.name}`,
@@ -46,5 +45,5 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     status: "blocked",
     metadata: { layer: "approval", userHint: USER_HINTS.policy },
   };
-  terminate(ctx, { rendered: "model", result, allowed: false });
+  return terminate(ctx, { rendered: "model", result, allowed: false });
 };

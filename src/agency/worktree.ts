@@ -202,46 +202,76 @@ function linkDirectoryInto(srcAbs: string, dstAbs: string): void {
  * must refuse the destructive delete — the junction is still live and would be
  * traversed.
  */
+/**
+ * Unlink a single junction/symlink reparse point WITHOUT following it. A real
+ * (non-link) entry or a missing path is left alone and counts as success — we
+ * only ever remove reparse points, never real directories. On Windows `rmdir`
+ * (no /S) removes ONLY the reparse point; if the target were a real non-empty
+ * dir it fails safely without traversing in. Returns true if the link is gone
+ * (removed / absent / not-a-link), false if it could not be unlinked.
+ */
+function unlinkReparsePoint(link: string): boolean {
+  let st;
+  try { st = lstatSync(link); } catch { return true; } // not present
+  if (!st.isSymbolicLink()) return true;               // real entry — not ours, never delete
+  try {
+    if (process.platform === "win32") execSync(`cmd /c rmdir "${link}"`, { timeout: 10_000, windowsHide: true });
+    else unlinkSync(link);
+    return true;
+  } catch (e) {
+    logger.warn(`[worktree] Failed to unlink reparse point ${link}: ${(e as Error).message}`);
+    return false;
+  }
+}
+
 function unlinkSharedJunctions(wtPath: string): string[] {
   const candidates = [join(wtPath, "node_modules")];
   const pkgsDir = join(wtPath, "packages");
   if (existsSync(pkgsDir)) {
     for (const pkg of readdirSync(pkgsDir)) candidates.push(join(pkgsDir, pkg, "node_modules"));
   }
-  const stuck: string[] = [];
-  for (const link of candidates) {
-    let st;
-    try { st = lstatSync(link); } catch { continue; } // not present
-    if (!st.isSymbolicLink()) continue;               // real dir — not ours, never delete
-    try {
-      if (process.platform === "win32") {
-        // `rmdir` without /S removes ONLY the junction reparse point. If this
-        // were somehow a real non-empty dir, rmdir fails — a SAFE failure that
-        // never traverses into the target.
-        execSync(`cmd /c rmdir "${link}"`, { timeout: 10_000, windowsHide: true });
-      } else {
-        unlinkSync(link);
-      }
-    } catch (e) {
-      logger.warn(`[worktree] Failed to unlink junction ${link}: ${(e as Error).message}`);
-      stuck.push(link);
+  return candidates.filter(link => !unlinkReparsePoint(link));
+}
+
+/**
+ * Find every junction/symlink at the shallow locations where a worktree
+ * junction could live: the worktree's direct children and one level under
+ * packages/. Junctions are always created shallow (node_modules, packages/<pkg>/
+ * node_modules, and any future one like dist), so this catches them all without
+ * walking the entire source tree. Used by the boot sweep so a raw recursive
+ * delete can never traverse a reparse point this helper missed.
+ */
+function scanReparsePoints(wtPath: string): string[] {
+  const found: string[] = [];
+  const scanDir = (dir: string) => {
+    let entries: string[];
+    try { entries = readdirSync(dir); } catch { return; }
+    for (const e of entries) {
+      const p = join(dir, e);
+      try { if (lstatSync(p).isSymbolicLink()) found.push(p); } catch { /* skip unreadable */ }
     }
+  };
+  scanDir(wtPath);
+  const pkgsDir = join(wtPath, "packages");
+  if (existsSync(pkgsDir)) {
+    try { for (const pkg of readdirSync(pkgsDir)) scanDir(join(pkgsDir, pkg)); } catch { /* skip */ }
   }
-  return stuck;
+  return found;
 }
 
 /**
  * Boot-time sweep of orphaned worktrees left in %TEMP%/lax-worktrees by a
  * self_edit / autopilot run that crashed between worktree-create and cleanup.
  *
- * Each orphan can still hold a LIVE node_modules junction pointing at the
- * parent repo's real deps. A later `git worktree prune`, AV scan, or manual
- * %TEMP% cleanup can traverse that junction and delete the parent's real
- * node_modules — bricking the app (#11). We proactively unlink every junction
- * first (the same safe rmdir-reparse-point logic teardown uses), THEN remove
- * the now-junction-free orphan dirs, THEN prune git's stale registry. An orphan
- * whose junction we could NOT unlink is left untouched and logged — never
- * deleted, since deleting it is exactly the traversal we're guarding against.
+ * Each orphan can still hold a LIVE junction (node_modules, packages/<pkg>/
+ * node_modules, or any future shallow link) pointing at the parent repo's real
+ * tree. A later `git worktree prune`, AV scan, or manual %TEMP% cleanup can
+ * traverse that junction and delete the parent's real files — bricking the app
+ * (#11). We scan for EVERY shallow reparse point and unlink it first (not just
+ * the hardcoded node_modules paths), THEN remove the now-link-free orphan dir,
+ * THEN prune git's stale registry. An orphan with any reparse point we could
+ * NOT unlink is left untouched and logged — never deleted, since deleting it is
+ * exactly the traversal we're guarding against.
  *
  * Safe to call at boot: the in-memory worktree registry is empty in a fresh
  * process, so everything on disk under WORKTREE_BASE is by definition an orphan
@@ -264,13 +294,20 @@ export function sweepOrphanWorktreeJunctions(): void {
     const wtPath = join(WORKTREE_BASE, name);
     try { if (!lstatSync(wtPath).isDirectory()) continue; } catch { continue; }
 
-    const stuck = unlinkSharedJunctions(wtPath);
-    if (stuck.length) {
-      stuckTotal += stuck.length;
-      logger.warn(`[worktree] orphan sweep: live junction(s) stuck in ${wtPath} (${stuck.join(", ")}) — left on disk to protect parent node_modules`);
-      continue; // do NOT delete — deletion would traverse the live junction
+    // Unlink EVERY shallow reparse point, not just the node_modules ones — an
+    // unknown/future junction (e.g. a dist link) must not survive into the
+    // recursive delete below and get traversed into the parent's real tree.
+    const points = scanReparsePoints(wtPath);
+    const stuck = points.filter(p => !unlinkReparsePoint(p));
+    // Belt-and-suspenders: re-scan. If ANY reparse point remains, refuse to
+    // recursive-delete this orphan — deletion would traverse the live link.
+    const remaining = scanReparsePoints(wtPath);
+    if (stuck.length || remaining.length) {
+      stuckTotal += Math.max(stuck.length, remaining.length);
+      logger.warn(`[worktree] orphan sweep: live reparse point(s) in ${wtPath} (${[...new Set([...stuck, ...remaining])].join(", ")}) — left on disk to protect the parent tree`);
+      continue;
     }
-    // Junction-free now — safe to remove the orphan dir entirely.
+    // Reparse-point-free now — safe to remove the orphan dir entirely.
     try { rmSync(wtPath, { recursive: true, force: true }); removed++; }
     catch (e) { logger.warn(`[worktree] orphan sweep: failed to remove ${wtPath}: ${(e as Error).message}`); }
   }

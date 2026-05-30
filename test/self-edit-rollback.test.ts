@@ -70,4 +70,46 @@ describe("self-edit-rollback", () => {
     expect(() => surfaceUnacknowledgedMerge()).not.toThrow();
     expect(readLastMerge()!.surfaced).toBe(true);
   });
+
+  it("recordMerge starts boot-pending with zero attempts", async () => {
+    const { recordMerge, readLastMerge } = await import("../src/self-edit-rollback.js");
+    recordMerge(sample);
+    const rec = readLastMerge()!;
+    expect(rec.bootPending).toBe(true);
+    expect(rec.bootAttempts).toBe(0);
+  });
+
+  it("confirmMergeBoot clears the boot-pending flag", async () => {
+    const { recordMerge, readLastMerge, confirmMergeBoot } = await import("../src/self-edit-rollback.js");
+    recordMerge(sample);
+    confirmMergeBoot();
+    expect(readLastMerge()!.bootPending).toBe(false);
+  });
+
+  it("crashed-merge guard: first boot only records an attempt, second boot reverts", async () => {
+    const { recordMerge, readLastMerge, revertPendingMergeIfCrashed } =
+      await import("../src/self-edit-rollback.js");
+    recordMerge(sample);
+
+    // First boot after the merge: don't revert (it hasn't tried to bind yet) —
+    // just record the attempt.
+    expect(revertPendingMergeIfCrashed()).toBeNull();
+    expect(readLastMerge()!.bootAttempts).toBe(1);
+    expect(readLastMerge()!.bootPending).toBe(true);
+
+    // Second boot still finds it pending → prior attempt never bound → revert.
+    // (repoRoot "/repo" doesn't exist, so the git revert fails fast — we assert
+    // the guard fired and cleared pending, not the git outcome.)
+    const result = revertPendingMergeIfCrashed();
+    expect(result).not.toBeNull();
+    expect(readLastMerge()!.bootPending).toBe(false);
+  });
+
+  it("crashed-merge guard is a no-op once boot is confirmed", async () => {
+    const { recordMerge, confirmMergeBoot, revertPendingMergeIfCrashed } =
+      await import("../src/self-edit-rollback.js");
+    recordMerge(sample);
+    confirmMergeBoot();
+    expect(revertPendingMergeIfCrashed()).toBeNull();
+  });
 });

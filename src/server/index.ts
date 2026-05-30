@@ -253,6 +253,12 @@ export async function startServer(config: LAXConfig) {
   server.listen(config.port, "127.0.0.1", () => {
     bootLogger.info(`[boot-phase] TOTAL ${Date.now() - _bootT0}ms (port ${config.port} listening)`);
     logStartup({ config, dataDir });
+
+    // The server bound successfully — confirm any pending self_edit merge so the
+    // boot-time crashed-merge guard knows the merged code actually boots.
+    void import("../self-edit-rollback.js")
+      .then(m => m.confirmMergeBoot())
+      .catch(e => bootLogger.warn(`[self-edit] confirmMergeBoot failed: ${(e as Error).message}`));
     const handle = startBackgroundJobs({
       config, dataDir, sessionStore, memoryIndex, memoryManager, secretsStore, security, toolPolicy,
       cronService, integrations, agentSync, allAgentTools, bridgeTools,

@@ -21,8 +21,6 @@ import * as Relations from "./index-relations.js";
 import * as Reflectx from "./index-reflect.js";
 import { startWatcher, type WatcherHandle } from "./index-watcher.js";
 import { getStats } from "./index-stats.js";
-import * as Atlas from "./index-atlas.js";
-import { getLayout } from "./atlas-layout.js";
 
 export class MemoryIndex {
   private db: InstanceType<typeof Database>;
@@ -231,14 +229,6 @@ export class MemoryIndex {
 
   countChunks(pathPattern: string): number {
     return Forget.countChunks(this.db, pathPattern);
-  }
-
-  atlasRecords(limit: number) {
-    return Atlas.getAtlasRecords(this.db, limit);
-  }
-
-  atlasLayout() {
-    return getLayout(this.dataDir, Atlas.getAtlasSignature(this.db));
   }
 
   // ── Search ──

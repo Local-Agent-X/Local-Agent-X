@@ -548,3 +548,5 @@ By question type:
 [benchmark-longmemeval]   temporal-reasoning: 97.0% (129/133)
 [benchmark-longmemeval] 
 MemPalace reference: 96.6% R@5 / ~98% R@10 (zero API)
+[manifest-generator] [manifest] Generated app-manifest.json (2 pages, 223 routes, 5 tools, 106 apps)
+[manifest-generator] [manifest] Generated app-manifest.json (2 pages, 223 routes, 5 tools, 106 apps)

@@ -136,6 +136,18 @@ try {
   surfaceUnacknowledgedMerge();
 } catch { /* best-effort */ }
 
+// Sweep orphaned self_edit/autopilot worktrees left in %TEMP%/lax-worktrees by
+// a prior run that crashed before cleanup. Each can hold a live node_modules
+// junction into the parent's real deps; we unlink those FIRST so a later
+// `git worktree prune` / AV scan / temp cleanup can't traverse them and eat
+// the parent node_modules (#11). Best-effort — must never block boot.
+try {
+  const { sweepOrphanWorktreeJunctions } = await import("./agency/worktree.js");
+  sweepOrphanWorktreeJunctions();
+} catch (e) {
+  logger.warn(`[boot] orphan worktree sweep failed: ${(e as Error).message}`);
+}
+
 // Single-instance enforcement + pidfile + parent-pid heartbeat. Must run
 // BEFORE startServer so we never bind ports while a sibling server is up.
 initLifecycle();

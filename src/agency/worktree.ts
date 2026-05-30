@@ -9,7 +9,7 @@
  */
 
 import { execSync, execFileSync } from "node:child_process";
-import { existsSync, symlinkSync, readdirSync, statSync, lstatSync, unlinkSync } from "node:fs";
+import { existsSync, symlinkSync, readdirSync, statSync, lstatSync, unlinkSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -228,6 +228,59 @@ function unlinkSharedJunctions(wtPath: string): string[] {
     }
   }
   return stuck;
+}
+
+/**
+ * Boot-time sweep of orphaned worktrees left in %TEMP%/lax-worktrees by a
+ * self_edit / autopilot run that crashed between worktree-create and cleanup.
+ *
+ * Each orphan can still hold a LIVE node_modules junction pointing at the
+ * parent repo's real deps. A later `git worktree prune`, AV scan, or manual
+ * %TEMP% cleanup can traverse that junction and delete the parent's real
+ * node_modules — bricking the app (#11). We proactively unlink every junction
+ * first (the same safe rmdir-reparse-point logic teardown uses), THEN remove
+ * the now-junction-free orphan dirs, THEN prune git's stale registry. An orphan
+ * whose junction we could NOT unlink is left untouched and logged — never
+ * deleted, since deleting it is exactly the traversal we're guarding against.
+ *
+ * Safe to call at boot: the in-memory worktree registry is empty in a fresh
+ * process, so everything on disk under WORKTREE_BASE is by definition an orphan
+ * from a prior run.
+ */
+export function sweepOrphanWorktreeJunctions(): void {
+  if (!existsSync(WORKTREE_BASE)) return;
+  let dirs: string[];
+  try {
+    dirs = readdirSync(WORKTREE_BASE);
+  } catch (e) {
+    logger.warn(`[worktree] orphan sweep: cannot read ${WORKTREE_BASE}: ${(e as Error).message}`);
+    return;
+  }
+  if (dirs.length === 0) return;
+
+  let removed = 0;
+  let stuckTotal = 0;
+  for (const name of dirs) {
+    const wtPath = join(WORKTREE_BASE, name);
+    try { if (!lstatSync(wtPath).isDirectory()) continue; } catch { continue; }
+
+    const stuck = unlinkSharedJunctions(wtPath);
+    if (stuck.length) {
+      stuckTotal += stuck.length;
+      logger.warn(`[worktree] orphan sweep: live junction(s) stuck in ${wtPath} (${stuck.join(", ")}) — left on disk to protect parent node_modules`);
+      continue; // do NOT delete — deletion would traverse the live junction
+    }
+    // Junction-free now — safe to remove the orphan dir entirely.
+    try { rmSync(wtPath, { recursive: true, force: true }); removed++; }
+    catch (e) { logger.warn(`[worktree] orphan sweep: failed to remove ${wtPath}: ${(e as Error).message}`); }
+  }
+
+  // Prune git's registry of the worktrees we just removed. Run AFTER unlinking
+  // so prune can never traverse a live junction.
+  try { git(["worktree", "prune"]); }
+  catch (e) { logger.warn(`[worktree] orphan sweep: git worktree prune failed: ${(e as Error).message}`); }
+
+  logger.info(`[worktree] orphan sweep: ${dirs.length} dir(s) scanned, ${removed} removed, ${stuckTotal} junction(s) stuck`);
 }
 
 /**

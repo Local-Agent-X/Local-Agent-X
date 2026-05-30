@@ -12,11 +12,15 @@ tracked below as two passes.
 ## Gate order (current, after Pass 2)
 
 ```
-spawnClaude → deps → build → bind → smoke → security-scope(HOLD if security/auth/policy touched) → merge → re-gate(rebuild merged main) → record
+fingerprint-parent-deps → spawnClaude → verify-parent-deps(restore+abort if mutated)
+  → deps → build → bind → smoke → security-scope(HOLD if security/auth/policy touched)
+  → merge → re-gate(rebuild merged main) → record(boot-pending)
+  → [next boot] confirmMergeBoot on bind / revertPendingMergeIfCrashed on crash
 ```
 
-Both the sandbox path and the bypass path now acquire the same machine-wide
-global lock before touching the shared tree (Pass 2, #9).
+Both the sandbox path and the bypass path acquire the same machine-wide global
+lock before touching the shared tree (Pass 2, #9); the lock is atomic and the
+`_unsafe` rescue can force-steal it (Pass 3, #4).
 
 Key files:
 - `src/self-edit-sandbox.ts` — orchestrates the gate flow + merge + re-gate
@@ -83,17 +87,37 @@ Tests: `test/worktree-deps.test.ts` (+4 for `securitySensitiveChangedFiles`),
 `test/self-edit-rollback.test.ts`. Verified: `npm run build` clean; both
 suites green (12 tests). Shipped on branch `chore/self-edit-hardening-pass2`.
 
-### Deferred residuals (lower priority, next pass)
-- **Mid-run parent corruption (Chunk 1 residual):** if the subprocess disobeys
-  the prompt and runs `npm install` anyway, it hits the parent through the
-  junction before `gateDeps` detection. Real fix = snapshot parent
-  `node_modules` (or the 3 arikernel sentinels + lock hash) before the
-  subprocess runs and restore if mutated. Pairs naturally with the rollback
-  machinery in `self-edit-rollback.ts`.
-- **Broken-boot auto-revert (#7 runtime half):** `startServer(config)` in
-  `index.ts:208` is fire-and-forget with no ready signal, so there's no clean
-  "did the post-merge boot succeed?" hook. Implement a boot-success marker:
-  set the merge record "pending" on `recordMerge`, clear it once the server
-  confirms it bound, and on the next boot offer/auto `revertLastMerge()` if a
-  prior record is still pending (i.e. the last boot crashed). Needs a ready
-  callback threaded out of `server/index.ts` (protected code — touch with care).
+## Pass 3 — SHIPPED (the deferred residuals + sweep/lock hardening)
+
+- **#1 — Broken-boot auto-revert (the runtime half).** The post-merge re-gate
+  only proved the merged tree builds, not boots. Added a boot-success marker:
+  `recordMerge` starts boot-pending; the server `listen` callback calls
+  `confirmMergeBoot()` on bind; at boot `revertPendingMergeIfCrashed()` (in
+  `index.ts`, before `startServer`) auto-reverts + rebuilds a merge that a prior
+  boot loaded but never confirmed. Good merges cost 0 extra boots; a broken
+  merge self-heals after one failed boot. Limit: import-time crashes can still
+  precede the guard — the re-gate build is the first defense.
+- **#2 — Mid-run parent corruption.** `src/self-edit/parent-deps-guard.ts`
+  fingerprints the parent `node_modules` (count + .package-lock.json/typescript/
+  @arikernel/@esbuild sentinels) before the subprocess and after; on mismatch it
+  restores via `npm ci` and aborts. Enforces "parent node_modules unchanged
+  across the run."
+- **#3 — Orphan sweep robustness.** `sweepOrphanWorktreeJunctions` now unlinks
+  EVERY shallow reparse point (`scanReparsePoints` + `unlinkReparsePoint`), not
+  just hardcoded node_modules, and refuses the recursive delete if any remains.
+- **#4 — Global lock.** Atomic exclusive create (`wx`) closes the check-then-
+  write race; `_unsafe` rescue can force-steal a live lock; release is
+  ownership-aware.
+
+Tests: `self-edit-rollback` (+ boot-marker), `self-edit-global-lock`,
+`self-edit-parent-deps`, `worktree-deps`, `protected-files` — 35 green.
+
+### Accepted / out-of-scope (not brick vectors)
+- **Fail-open intent/scope gates** — deliberate: better to allow an occasional
+  misroute than block legit self_edits when the classifier is flaky. Left as-is.
+- **Exfiltration** — a `bypassPermissions` subprocess can read secrets + bash
+  out. Real, but the feature's security ceiling, not a brick — tracked as a
+  separate security effort, not self-edit-hardening.
+- **Probe-port collision (#7-minor)** — autopilot boot-proof probe doesn't take
+  the global lock; a port clash yields a false boot-proof failure (cosmetic, no
+  brick). Deferred.

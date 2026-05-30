@@ -23,7 +23,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const NODE_MRileyOR_MIN = 22;
+const NODE_MAJOR_MIN = 22;
 const EMBED_MODEL = "mxbai-embed-large";
 const IPC = process.argv.includes("--ipc");
 
@@ -121,8 +121,8 @@ ipc({ type: "plan", steps: STEPS_PLAN });
 // 1. Node version assertion
 step("node");
 const nodeMajor = Number(process.versions.node.split(".")[0]);
-if (nodeMajor < NODE_MRileyOR_MIN) {
-  fail(`Node ${NODE_MRileyOR_MIN}+ required (found v${process.versions.node})`);
+if (nodeMajor < NODE_MAJOR_MIN) {
+  fail(`Node ${NODE_MAJOR_MIN}+ required (found v${process.versions.node})`);
 }
 ok(`Node v${process.versions.node}`);
 stepDone("node");

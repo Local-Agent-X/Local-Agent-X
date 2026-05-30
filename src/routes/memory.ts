@@ -20,6 +20,43 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     return true;
   }
 
+  if (method === "GET" && url.pathname === "/api/memory/atlas") {
+    const raw = parseInt(url.searchParams.get("limit") || "40000", 10);
+    const limit = Math.min(40000, Math.max(1, Number.isFinite(raw) ? raw : 40000));
+    const recs = ctx.memoryIndex.atlasRecords(limit);
+    const layout = await ctx.memoryIndex.atlasLayout();
+    if (!layout) {
+      // No layout yet (e.g. no embeddings) — return flat records; the brain
+      // falls back to scatter positioning.
+      json(200, { total: recs.total, clusters: [], items: recs.items });
+      return true;
+    }
+    const byId = new Map(recs.items.map((it) => [it.id, it]));
+    const items = [];
+    for (let i = 0; i < layout.ids.length; i++) {
+      const it = byId.get(layout.ids[i]);
+      if (!it) continue;
+      items.push({
+        ...it,
+        x: layout.xyz[i * 3],
+        y: layout.xyz[i * 3 + 1],
+        z: layout.xyz[i * 3 + 2],
+        cluster: layout.cluster[i],
+      });
+    }
+    json(200, { total: recs.total, clusters: layout.clusters, items });
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/memory/chunk") {
+    const id = parseInt(url.searchParams.get("id") || "", 10);
+    if (!Number.isFinite(id)) { json(400, { error: "id parameter required" }); return true; }
+    const chunk = ctx.memoryIndex.atlasChunk(id);
+    if (!chunk) { json(404, { error: "not found" }); return true; }
+    json(200, chunk);
+    return true;
+  }
+
   // [chat-diag] frontend → server log sink. Browser console.logs don't
   // persist to disk and asking non-technical users to open DevTools is a
   // non-starter. Frontend diag breadcrumbs POST here and the message is

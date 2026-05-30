@@ -203,6 +203,27 @@ suites still green (27 tests).
 ### Accepted / out-of-scope (not brick vectors)
 - **Fail-open intent/scope gates** — deliberate: better to allow an occasional
   misroute than block legit self_edits when the classifier is flaky. Left as-is.
-- **Probe-port collision (#7-minor)** — autopilot boot-proof probe doesn't take
-  the global lock; a port clash yields a false boot-proof failure (cosmetic, no
-  brick). Deferred.
+
+## Backlog — committed follow-ups (DO NOT DROP)
+
+Tracked deliberately; the user does not want these skipped.
+
+- **Branch cleanup in the boot-sweep.** `sweepOrphanWorktreeJunctions`
+  (worktree.ts) removes orphaned worktree *dirs* + prunes the registry, but
+  leaves the `selfedit/<slug>/<ts>` (and `autopilot/<slug>/<ts>`) git *branches*
+  behind. They accumulate as harmless refs forever. → After the sweep, delete
+  branches that match the sandbox/autopilot naming pattern and are fully merged
+  OR whose worktree is gone. Be careful not to delete a branch with an active
+  worktree (the sweep already skips those).
+- **Harden `killProbe` process-tree kill.** On Windows, `spawn(..., {shell:true})`
+  wraps the child in cmd.exe, so `proc.kill()` only signals the wrapper and
+  leaves the real `node`/`tsx` tree alive (this leaked probes during the
+  2026-05-30 bind-gate debugging). `killProbe` (self-edit-sandbox-gates.ts) must
+  use the same `killProcessTree` (taskkill /F /T) the bypass-runner already uses,
+  not a bare `proc.kill`. Same gap may exist anywhere a probe/worktree process is
+  killed.
+- **#7 probe-port collision.** The autopilot end-of-shift boot proof
+  (boot-proof.ts) picks its probe port from `pid+time` and does NOT hold the
+  global self_edit lock, so it can collide with a concurrent sandbox probe port →
+  false "boot proof failed". Cosmetic (no brick), but real. → Either serialize
+  the boot proof under the global lock, or retry on EADDRINUSE with a fresh port.

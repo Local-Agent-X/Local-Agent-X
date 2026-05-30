@@ -105,6 +105,13 @@ export async function gateBind(name: string, port: number, authToken: string, si
   // is still logged as a warning so it stays visible. The REAL server boot
   // (parent process) still enforces integrity normally.
   const dataDir = mkdtempSync(join(tmpdir(), "lax-probe-"));
+  // Boot the COMPILED build (`npm start` → node dist/index.js), not
+  // `dev:nowatch` (tsx). The build gate just produced dist/; tsx would instead
+  // cold-recompile the whole codebase from scratch (esbuild caches per project
+  // path, and each worktree is a new path), which on a large tree blows past
+  // BIND_TIMEOUT_MS and fails the gate for slow boot rather than real breakage.
+  // dist boots in seconds and is the exact artifact `npm start` ships.
+  //
   // Scrubbed env: the probe BOOTS the full app from the worktree — code the
   // untrusted self_edit child wrote — so it's the richest exfil runtime (agent
   // loop, fetch, the lot). buildSelfEditChildEnv strips the server's bystander
@@ -112,7 +119,7 @@ export async function gateBind(name: string, port: number, authToken: string, si
   // and defaults to the anthropic provider, so the only provider cred it can
   // use is the Anthropic auth this scrub already passes through — smoke is
   // unaffected. The explicit LAX_* overrides below are layered on top.
-  const proc = spawn("npm", ["run", "dev:nowatch"], {
+  const proc = spawn("npm", ["start"], {
     cwd: wt,
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",

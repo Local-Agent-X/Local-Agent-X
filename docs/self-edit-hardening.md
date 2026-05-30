@@ -9,21 +9,26 @@ Origin: an 11-issue audit of the self_edit path. Issue #1 in that audit (the
 junction-teardown traversal fix) shipped before this pass. The remaining 10 are
 tracked below as two passes.
 
-## Gate order (current, after Pass 1)
+## Gate order (current, after Pass 2)
 
 ```
-spawnClaude → deps → build → bind → smoke → merge → re-gate(rebuild merged main) → record
+spawnClaude → deps → build → bind → smoke → security-scope(HOLD if security/auth/policy touched) → merge → re-gate(rebuild merged main) → record
 ```
+
+Both the sandbox path and the bypass path now acquire the same machine-wide
+global lock before touching the shared tree (Pass 2, #9).
 
 Key files:
 - `src/self-edit-sandbox.ts` — orchestrates the gate flow + merge + re-gate
 - `src/self-edit-sandbox-gates.ts` — gateDeps / gateBuild / gateBind / gateSmoke
 - `src/self-edit-smoke-suite.ts` — broad endpoint assertions for the smoke gate
-- `src/self-edit-rollback.ts` — merge record + revertLastMerge + boot notice
-- `src/agency/worktree.ts` — junctions, isolateNodeModules, git/build primitives
-- `src/self-edit/tool.ts` — entrypoint; sandbox vs bypass (_cwd / _unsafe) routing
+- `src/self-edit-rollback.ts` — merge record + revertLastMerge + boot notice + unsafe-edit snapshot
+- `src/self-edit/global-lock.ts` — machine-wide PID-file lock shared by sandbox + bypass (#9)
+- `src/agency/worktree.ts` — junctions, isolateNodeModules, security-scope matcher, orphan sweep, git/build primitives
+- `src/self-edit/tool.ts` — entrypoint; sandbox vs bypass (_cwd / _unsafe) routing; bypass lock + unsafe snapshot
 - `src/self-edit/bypass-runner.ts` — bypass path (no gates)
 - `src/autopilot/validate.ts` + `loop.ts` — autopilot's own per-round validation
+- `src/autopilot/boot-proof.ts` — end-of-shift bind+smoke boot proof for the run summary (#3)
 - `src/startup-integrity.ts` — boot integrity check + warn-only probe mode
 
 ## Pass 1 — SHIPPED (issues #1-dep, #2, #4, #5, #6, #8, partial #7)
@@ -49,43 +54,36 @@ Key files:
 Tests: `test/worktree-deps.test.ts`, `test/self-edit-rollback.test.ts`.
 Verified: `npm run build` clean; both new suites green.
 
-## Pass 2 — TODO (instructions for the next session)
+## Pass 2 — SHIPPED (issues #9, #3, #10, #11)
 
-Run via `/brownfield`. Read each seam before planning; verify each chunk with
-`npm run build` + grep + diff read; one chunk in flight at a time.
+- **Chunk 5 — Bypass safety (#9 + #3).**
+  - *#9 shared-deps race:* extracted the machine-wide PID-file lock out of
+    `self-edit-sandbox.ts` into `src/self-edit/global-lock.ts` (one source of
+    truth). The bypass path (`tool.ts`) now acquires it too, so an autopilot
+    (`_cwd`) self_edit and a chat `_unsafe` self_edit can no longer build into
+    the shared `node_modules` concurrently.
+  - *#3 autopilot boot proof:* `src/autopilot/boot-proof.ts` runs a bind+smoke
+    pass once at end-of-shift (reusing `gateBind`/`gateSmoke`) when the run
+    ended naturally and ≥1 round committed; the verdict is threaded into the
+    run summary (`summary.ts` renders a `Boot proof:` line). Autopilot still
+    never auto-merges to main — this is a human-merge signal. `_unsafe` stays
+    gateless but now logs loudly + snapshots the pre-edit SHA (`recordUnsafeEdit`).
+- **Chunk 6 — Security diff-scope gate (#10).** `securitySensitiveChangedFiles`
+  (worktree.ts) + a hold in `self-edit-sandbox.ts` before `mergeWorktree`: if
+  the worktree diff touches `src/security/**`, `src/tool-policy/**`,
+  `src/auth/**`, or `config/protected-files.json`, the merge is HELD
+  (`heldForReview`), the branch preserved, and the result prints the exact
+  `git diff`/`git merge` commands for a human.
+- **Chunk 7 — Orphan junction boot sweep (#11).** `sweepOrphanWorktreeJunctions`
+  (worktree.ts) unlinks junctions in every `%TEMP%/lax-worktrees/*` orphan,
+  removes the now-safe dir, then `git worktree prune` — wired into
+  `src/index.ts` boot (best-effort).
 
-### Chunk 5 — Bypass safety (#3 + #9)
-- **#9 shared-deps race:** the bypass path (`tool.ts` → `runSelfEditBypass`)
-  skips the global sandbox lock that `runSelfEditInSandbox` acquires
-  (`self-edit-sandbox.ts` `acquireLock`). A chat `_unsafe` self_edit and an
-  autopilot self_edit can build into the shared `node_modules` concurrently.
-  → Make the bypass path acquire the same global lock.
-- **#3 autopilot has no boot proof:** `autopilot/validate.ts` runs build + size
-  (+ opt test) per round but never bind/smoke. Note: autopilot commits to its
-  OWN branch and the human merges (`summary.ts` prints the `git merge` command)
-  — it does NOT auto-merge to main, so this is a human-merge signal, not a
-  brick vector. → Run bind+smoke once at end-of-shift so the summary carries a
-  real boot signal. Keep `_unsafe` gateless (deliberate escape hatch) but log
-  loudly + snapshot the pre-edit SHA for rollback.
+Tests: `test/worktree-deps.test.ts` (+4 for `securitySensitiveChangedFiles`),
+`test/self-edit-rollback.test.ts`. Verified: `npm run build` clean; both
+suites green (12 tests). Shipped on branch `chore/self-edit-hardening-pass2`.
 
-### Chunk 6 — Security diff-scope gate (#10)
-- The subprocess runs `claude -p --permission-mode bypassPermissions` and can
-  rewrite `src/security/**`, `src/tool-policy/**`, `src/auth/**`,
-  `config/protected-files.json`. Gates don't care — it still builds/boots/chats.
-  → In `self-edit-sandbox.ts`, before `mergeWorktree`: if the worktree diff
-  (`getWorktreeChangedFiles`) touches those paths, block auto-merge, preserve
-  the branch, require explicit human confirm.
-
-### Chunk 7 — Orphan junction boot sweep (#11)
-- A self_edit that crashes between worktree-create and cleanup leaves a live
-  `node_modules` junction in `%TEMP%/lax-worktrees/*`. A later
-  `git worktree prune` / AV sweep / manual temp cleanup can traverse it into
-  the parent's real deps.
-  → Boot-time sweep of `%TEMP%/lax-worktrees` that unlinks stale junctions
-  (reuse the `unlinkSharedJunctions` logic) BEFORE `git worktree prune`. Wire
-  into `src/index.ts` boot.
-
-### Deferred residuals (lower priority, fold into Pass 2 or later)
+### Deferred residuals (lower priority, next pass)
 - **Mid-run parent corruption (Chunk 1 residual):** if the subprocess disobeys
   the prompt and runs `npm install` anyway, it hits the parent through the
   junction before `gateDeps` detection. Real fix = snapshot parent

@@ -145,7 +145,19 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // but the tool-filter strip-down already biased the model toward
   // the right choice.
   let toolChoice: ForcedToolChoice | undefined;
-  if (toolSel.intentVerdict && toolSel.intentVerdict.kind !== "free") {
+  // self_edit is deliberately NOT force-pinnable. It modifies LAX's own
+  // source (destructive, propagates via git) and the system prompt already
+  // requires explicit user permission in the same turn — so hard-forcing it
+  // from a one-line intent guess contradicts its own invariant. The model
+  // keeps self_edit in its toolset and can still pick it, but a classifier
+  // false-positive (e.g. a workspace-app change misread as a LAX bug) no
+  // longer locks the model out of edit/write. build_app/agent_spawn stay
+  // forceable — they're reversible and models chronically under-call them.
+  if (
+    toolSel.intentVerdict &&
+    toolSel.intentVerdict.kind !== "free" &&
+    toolSel.intentVerdict.kind !== "self_edit"
+  ) {
     const forcedName = toolSel.intentVerdict.kind;
     const inToolList = toolSel.tools.some(t => t.name === forcedName);
     if (inToolList) {

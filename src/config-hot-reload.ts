@@ -2,6 +2,9 @@
 
 import { watch, readFileSync, existsSync, type FSWatcher } from "node:fs";
 import { EventBus } from "./event-bus.js";
+import { createLogger } from "./logger.js";
+
+const logger = createLogger("config-watcher");
 
 type ConfigData = Record<string, unknown>;
 type OnChangeCallback = (newConfig: ConfigData, oldConfig: ConfigData) => void;
@@ -27,24 +30,35 @@ export class ConfigWatcher {
       this.stop();
     }
 
+    // Hot-reload is a convenience, never a boot dependency. A missing or
+    // unreadable config file means there's nothing to watch — log it and skip,
+    // rather than throwing and aborting server startup (loadConfig already
+    // tolerates the same cases by falling back to defaults). This is what keeps
+    // the self_edit probe — which boots on a fresh data dir with no config.json
+    // — able to bind.
     if (!existsSync(configPath)) {
-      throw new Error(`Config file not found: ${configPath}`);
+      logger.warn(`${configPath} not found — hot-reload disabled`);
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = parseConfig(readFileSync(configPath, "utf-8"));
+    } catch {
+      logger.warn(`${configPath} unreadable or invalid JSON — hot-reload disabled`);
+      return;
+    }
+    if (!validateConfig(parsed)) {
+      logger.warn(`${configPath} is not a JSON object — hot-reload disabled`);
+      return;
     }
 
     this.configPath = configPath;
     this.onChange = onChange;
-
-    // Load initial config
-    const raw = readFileSync(configPath, "utf-8");
-    const parsed = parseConfig(raw);
-    if (!validateConfig(parsed)) {
-      throw new Error(`Invalid config file format at ${configPath}`);
-    }
     this.currentConfig = parsed;
     this.running = true;
 
-    // Watch for changes
-    this.watcher = watch(configPath, (_eventType) => {
+    this.watcher = watch(configPath, () => {
       this.scheduleReload();
     });
 

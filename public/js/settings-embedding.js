@@ -1,7 +1,6 @@
-// ── Settings: Embedding provider + rerank ──
+// ── Settings: Embedding provider ──
 //
-// Picks the embedding provider (Ollama / OpenAI / etc.) and surfaces
-// rerank model options when the active provider supports it.
+// Picks the embedding provider (Ollama / OpenAI / etc.) for semantic search.
 
 async function onEmbProviderChange(provider) {
   const hint = document.getElementById('cfg-emb-hint');
@@ -63,40 +62,4 @@ async function onEmbProviderChange(provider) {
   }
 }
 window.onEmbProviderChange = onEmbProviderChange;
-
-async function loadRerankModels(saved) {
-  const modelSelect = document.getElementById('cfg-rerank-model-select');
-  const modelInput = document.getElementById('cfg-rerank-model');
-  if (!modelSelect || !modelInput) return;
-
-  try {
-    const data = await apiJson('/api/models/local');
-    const models = (data.models || []).map(function(m) { return m.name; });
-    if (models.length === 0) {
-      modelSelect.style.display = 'none';
-      modelInput.style.display = '';
-      return;
-    }
-    // Show dropdown, hide text input
-    modelSelect.style.display = '';
-    modelInput.style.display = 'none';
-    // Exclude embedding-only models, sort reasoning models first
-    var reasoningModels = ['qwen2', 'llama3', 'mistral', 'phi', 'gemma', 'deepseek', 'codellama'];
-    var sorted = models.slice().sort(function(a, b) {
-      if (a.includes('embed') && !b.includes('embed')) return 1;
-      if (!a.includes('embed') && b.includes('embed')) return -1;
-      var aR = reasoningModels.some(function(r) { return a.includes(r); }) ? 0 : 1;
-      var bR = reasoningModels.some(function(r) { return b.includes(r); }) ? 0 : 1;
-      return aR - bR || a.localeCompare(b);
-    }).filter(function(m) { return !m.includes('embed'); });
-    modelSelect.innerHTML = '<option value="">(disabled — no reranking)</option>' +
-      sorted.map(function(m) { return '<option value="' + esc(m) + '">' + esc(m) + '</option>'; }).join('');
-    if (saved && sorted.includes(saved)) modelSelect.value = saved;
-    if (modelInput) modelInput.value = modelSelect.value;
-    modelSelect.onchange = function() { if (modelInput) modelInput.value = modelSelect.value; };
-  } catch {
-    modelSelect.style.display = 'none';
-    modelInput.style.display = '';
-  }
-}
 

@@ -44,8 +44,7 @@ async function saveSettings() {
   const maxIter = parseInt(document.getElementById('cfg-maxiter')?.value || '25', 10);
   const embProvider = document.getElementById('cfg-emb-provider')?.value || 'ollama';
   const embModel = document.getElementById('cfg-emb-model')?.value || '';
-  const rerankModel = document.getElementById('cfg-rerank-model')?.value || '';
-  const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature, maxIterations: maxIter, embeddingProvider: embProvider === 'none' ? undefined : embProvider, embeddingModel: embModel || undefined, rerankModel: rerankModel || undefined };
+  const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature, maxIterations: maxIter, embeddingProvider: embProvider === 'none' ? undefined : embProvider, embeddingModel: embModel || undefined };
   if (s.port) settingsPayload.port = s.port;
   const customUrl = document.getElementById('cfg-custom-url');
   if (customUrl && customUrl.value) settingsPayload.customBaseUrl = customUrl.value;
@@ -88,9 +87,7 @@ async function loadSettings() {
     // Embedding settings
     set('cfg-emb-provider', s.embeddingProvider || 'ollama');
     set('cfg-emb-model', s.embeddingModel || '');
-    set('cfg-rerank-model', s.rerankModel || '');
     onEmbProviderChange(s.embeddingProvider || 'ollama');
-    loadRerankModels(s.rerankModel);
     // Show/hide XTTS sections based on engine
     if (s.ttsEngine) onTtsEngineChange(s.ttsEngine);
     // Show local model dropdown if provider is local

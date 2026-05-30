@@ -463,6 +463,38 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 #stab-image.tab-pane{max-width:1320px}
 #stab-image.tab-pane.active{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;align-items:start}
 #stab-image .section-card{margin-bottom:0}
+#stab-memory.tab-pane{max-width:1280px}
+#stab-memory .mem-cards-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;align-items:start}
+#stab-memory .mem-cards-row .section-card{margin-bottom:0}
+.mem-brain{position:relative;margin-top:16px;height:clamp(380px,54vh,680px);background:radial-gradient(ellipse at center,rgba(20,45,80,.22),var(--surface));border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.mem-brain canvas{display:block;width:100%;height:100%;cursor:grab}
+.mem-brain-hud{position:absolute;left:16px;bottom:13px;font-family:var(--mono);font-size:.7rem;color:var(--muted);letter-spacing:.5px;pointer-events:none}
+.mem-brain-hud b{color:var(--accent);font-weight:600}
+.mem-brain-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;pointer-events:none}
+.mem-brain-empty .mb-empty-title{font-family:var(--mono);font-size:.95rem;color:var(--text);letter-spacing:.5px;margin-bottom:8px}
+.mem-brain-empty .mb-empty-sub{font-size:.74rem;color:var(--muted);max-width:380px;line-height:1.5}
+.mem-brain-tip{position:absolute;max-width:268px;background:rgba(10,16,28,.94);border:1px solid var(--border);border-radius:8px;padding:9px 11px;pointer-events:none;z-index:5;box-shadow:0 6px 22px rgba(0,0,0,.45)}
+.mem-brain-tip.pinned{border-color:var(--accent)}
+.mem-brain-tip .mb-tip-text{font-size:.74rem;color:var(--text);line-height:1.45}
+.mem-brain-tip .mb-tip-meta{margin-top:6px;font-family:var(--mono);font-size:.62rem;color:var(--muted);letter-spacing:.4px}
+.mem-brain-labels{position:absolute;inset:0;pointer-events:none;z-index:4;overflow:hidden}
+.mb-cluster-label{position:absolute;transform:translate(-50%,-50%);font-family:var(--mono);font-size:.68rem;font-weight:600;letter-spacing:.4px;white-space:nowrap;background:rgba(8,12,20,.66);padding:2px 8px;border-radius:7px;text-shadow:0 1px 3px rgba(0,0,0,.95);pointer-events:auto;cursor:pointer}
+.mb-cluster-label:hover{background:rgba(8,12,20,.92);text-decoration:underline}
+.mem-brain-inspector{position:absolute;top:0;right:0;bottom:0;width:360px;max-width:64%;background:rgba(8,13,22,.96);border-left:1px solid var(--border);z-index:8;display:flex;flex-direction:column;box-shadow:-10px 0 30px rgba(0,0,0,.4)}
+.mbi-head{position:relative;padding:16px 18px 12px;border-bottom:1px solid var(--border);flex:0 0 auto}
+.mbi-title{font-family:var(--mono);font-size:.82rem;font-weight:600;letter-spacing:.4px;padding-right:24px}
+.mbi-sub{margin-top:3px;font-size:.66rem;color:var(--muted);font-family:var(--mono)}
+.mbi-close{position:absolute;top:12px;right:12px;width:24px;height:24px;line-height:1;font-size:1.1rem;color:var(--muted);background:transparent;border:none;cursor:pointer;border-radius:5px}
+.mbi-close:hover{color:var(--text);background:rgba(255,255,255,.06)}
+.mbi-list{flex:1 1 auto;overflow-y:auto;padding:8px 10px}
+.mbi-row{padding:9px 10px;border-radius:7px;cursor:pointer;border:1px solid transparent}
+.mbi-row:hover{background:rgba(255,255,255,.04);border-color:var(--border)}
+.mbi-text{font-size:.72rem;color:var(--text);line-height:1.45;white-space:pre-wrap}
+.mbi-meta{margin-top:5px;font-family:var(--mono);font-size:.6rem;color:var(--muted);letter-spacing:.3px}
+.mbi-more{padding:10px;text-align:center;font-family:var(--mono);font-size:.64rem;color:var(--muted)}
+.mem-brain-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.8rem;color:var(--accent);letter-spacing:.5px;z-index:6}
+.mem-brain-toggle{position:absolute;top:12px;right:12px;z-index:7;font-family:var(--mono);font-size:.66rem;letter-spacing:.5px;color:var(--accent);background:rgba(10,16,28,.85);border:1px solid var(--border);border-radius:7px;padding:6px 13px;cursor:pointer}
+.mem-brain-toggle:hover{border-color:var(--accent)}
 .section-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:16px}
 .section-title{font-family:var(--mono);font-size:.8rem;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
 .section-desc{font-size:.72rem;color:var(--muted);margin-bottom:16px;line-height:1.4}

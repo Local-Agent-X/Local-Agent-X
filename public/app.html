@@ -339,17 +339,15 @@
       </div>
       <!-- Memory & Embeddings -->
       <div id="stab-memory" class="tab-pane">
+        <div class="mem-cards-row">
         <div class="section-card">
           <div class="section-title">Memory Embeddings</div>
           <div class="section-desc">Embeddings power semantic search — find memories by meaning, not just keywords. Choose a provider below.</div>
           <div id="emb-status" class="status-badge" style="display:none"><span class="status-dot"></span> <span id="emb-status-text"></span></div>
           <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-emb-provider" onchange="onEmbProviderChange(this.value)"><option value="ollama">Ollama (Local, Free)</option><option value="openai">OpenAI</option><option value="gemini">Google Gemini</option><option value="local">Built-in (No server needed)</option><option value="none">None (Keyword search only)</option></select></div>
           <div class="field"><label class="field-label">Embedding Model</label><select class="field-select" id="cfg-emb-model-select" style="display:none"></select><input class="field-input" id="cfg-emb-model" placeholder="e.g. nomic-embed-text, text-embedding-3-small" value=""/><div class="field-hint" id="cfg-emb-hint">For Ollama: nomic-embed-text (default), mxbai-embed-large, all-minilm. For OpenAI: text-embedding-3-small, text-embedding-3-large.</div></div>
-          <div class="section-title" style="margin-top:16px">Reranking</div>
-          <div class="section-desc">After search finds candidates, a reasoning model scores their relevance. Improves accuracy on complex questions.</div>
-          <div class="field"><label class="field-label">Reranker Model</label><select class="field-select" id="cfg-rerank-model-select"></select><input class="field-input" id="cfg-rerank-model" placeholder="e.g. qwen2:7b, llama3:8b" value="" style="display:none"/><div class="field-hint" id="cfg-rerank-hint">Any Ollama chat model works. Smarter models = better reranking but slower. Select disabled for no reranking.</div></div>
         </div>
-        <div class="section-card" style="margin-top:16px">
+        <div class="section-card">
           <div class="section-title">Import Conversations</div>
           <div class="section-desc">Import chat history from other AI platforms. Supports ChatGPT, Claude.ai, Claude Code, Codex CLI, Slack, and generic JSON exports. Auto-detects format.</div>
           <div class="field">
@@ -368,6 +366,20 @@
             </div>
           </div>
           <div id="ingest-result" style="display:none;margin-top:12px;font-family:var(--mono);font-size:.72rem;color:var(--text);background:var(--surface);padding:12px;border-radius:8px;border:1px solid var(--border)"></div>
+        </div>
+        </div><!-- /mem-cards-row -->
+        <div class="mem-brain" id="mem-brain">
+          <canvas id="mb-canvas"></canvas>
+          <div class="mem-brain-labels" id="mb-labels"></div>
+          <button class="mem-brain-toggle" id="mb-toggle" style="display:none">Brain</button>
+          <div class="mem-brain-hud" id="mb-hud"></div>
+          <div class="mem-brain-tip" id="mb-tip" style="display:none"></div>
+          <div class="mem-brain-loading" id="mb-loading" style="display:none">Organizing memories…</div>
+          <div class="mem-brain-inspector" id="mb-inspector" style="display:none"></div>
+          <div class="mem-brain-empty" id="mb-empty" style="display:none">
+            <div class="mb-empty-title">Your agent's memory is forming</div>
+            <div class="mb-empty-sub">Start chatting or import your history above — each memory appears here as a glowing dot in the brain.</div>
+          </div>
         </div>
       </div>
       <!-- Image & Video -->
@@ -1048,6 +1060,7 @@
 <script src="/js/app-sidebar-render.js?v=v1"></script>
 <script src="/js/app.js?v=va6"></script>
 <script type="module" src="/js/voice-sphere.js?v=vb8"></script>
+<script type="module" src="/js/memory-brain.js?v=v8"></script>
 <script src="/js/voice/hotkey-capture.js?v=v1"></script>
 <script src="/js/voice/push-to-talk.js?v=v1"></script>
 <!-- chat.js modules — load BEFORE chat.js so its call sites see the

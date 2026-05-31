@@ -44,24 +44,59 @@ export function initImageTools(secrets: SecretsStore) {
   _secretsStore = secrets;
 }
 
-/** Get current provider + API key from settings + secrets. For xai, prefer
- *  the SuperGrok / X Premium+ OAuth bearer over the API key — same wire
- *  shape, but the OAuth bearer draws from subscription quota instead of
- *  API spend. */
+/** Resolve the API key for a media backend id. For xai/openai this prefers
+ *  the SuperGrok / X Premium+ (or OpenAI) OAuth bearer over a raw API key —
+ *  same wire shape, but draws from subscription quota instead of API spend.
+ *  `local` needs no key. */
+async function keyForProvider(provider: string): Promise<string | undefined> {
+  if (provider === "xai" || provider === "openai") {
+    return (await resolveCredential(provider))?.credential || undefined;
+  }
+  return undefined;
+}
+
+/** Get the active chat provider + its API key from settings + secrets. */
 export async function getActiveProvider(): Promise<{ provider: string; apiKey?: string }> {
   const s = loadSettings() as { provider?: string };
   const provider = s.provider || "local";
+  return { provider, apiKey: await keyForProvider(provider) };
+}
 
-  let apiKey: string | undefined;
-  if (provider === "xai") {
-    const r = await resolveCredential("xai");
-    apiKey = r?.credential || undefined;
-  } else if (provider === "openai") {
-    const r = await resolveCredential("openai");
-    apiKey = r?.credential || undefined;
+/** Map a user/model-supplied backend name to a canonical id. Returns null
+ *  for unrecognized names so a garbage override is ignored rather than
+ *  silently mis-routing. */
+function normalizeMediaProvider(name?: string): string | null {
+  const n = (name || "").trim().toLowerCase();
+  if (!n) return null;
+  if (["xai", "grok", "grok-imagine", "imagine", "x"].includes(n)) return "xai";
+  if (["openai", "dalle", "dall-e", "dall·e", "gpt"].includes(n)) return "openai";
+  if (["local", "sd", "stable-diffusion", "stable", "cogvideox", "cog"].includes(n)) return "local";
+  return null;
+}
+
+/**
+ * Resolve which backend an image/video tool should use, by precedence:
+ *   1. explicit per-call override ("generate this with grok") → forced
+ *   2. media default: prefer Grok whenever xAI is connected, unless the user
+ *      turned off `preferGrokForMedia` in Settings → Media
+ *   3. the active chat provider (getActiveProvider)
+ *
+ * `forced` is true only in case 1 so the caller can surface a clear error
+ * when the user explicitly names a backend that isn't connected (rather than
+ * silently falling back to local SD).
+ */
+export async function resolveMediaProvider(
+  explicit?: string,
+): Promise<{ provider: string; apiKey?: string; forced: boolean }> {
+  const forced = normalizeMediaProvider(explicit);
+  if (forced) return { provider: forced, apiKey: await keyForProvider(forced), forced: true };
+
+  const s = loadSettings() as { preferGrokForMedia?: boolean };
+  if (s.preferGrokForMedia !== false) {
+    const apiKey = await keyForProvider("xai");
+    if (apiKey) return { provider: "xai", apiKey, forced: false };
   }
-
-  return { provider, apiKey };
+  return { ...(await getActiveProvider()), forced: false };
 }
 
 /** Find the most recent image across uploads + workspace/images. Used as

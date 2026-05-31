@@ -395,6 +395,7 @@
           <div class="section-title">Image Generation</div>
           <div id="img-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div class="field"><label class="field-label">Default Engine</label><select class="field-select" id="cfg-image-engine"><option value="sd-local">Stable Diffusion (Local GPU)</option><option value="comfyui">ComfyUI (Local)</option><option value="dalle">DALL-E (OpenAI API)</option><option value="none">None</option></select></div>
+          <div class="toggle-row"><div><div class="toggle-label">Prefer Grok for media</div><div class="toggle-desc">Use xAI Grok Imagine for image &amp; video whenever xAI is connected — even when your chat provider is something else. The model can still override per message (e.g. "make this with DALL-E").</div></div><div id="cfg-toggle-grok-media" class="toggle on" onclick="toolPolicyToggle('preferGrokForMedia', this)"></div></div>
           <div class="btn-row"><button class="action-btn primary" onclick="checkServer('image')">Check Server</button><button class="action-btn secondary" onclick="startServer('image')">Start SD Server</button></div>
         </div>
         <div class="section-card">

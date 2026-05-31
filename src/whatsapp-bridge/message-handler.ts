@@ -162,9 +162,24 @@ export function createMessagesUpsertHandler(
         try { await ctx.sock.readMessages([{ remoteJid, id: msgId, fromMe: false }]); } catch {}
       }
 
-      // Prevent concurrent agent runs for the same person.
+      // /stop | /cancel — hard-kill the running turn. Intercepted BEFORE the
+      // processingLock bounce so it works mid-turn. Doesn't depend on the
+      // model cooperating.
+      const cmd = sanitizedText.trim().toLowerCase();
+      if (cmd === "/stop" || cmd === "/cancel") {
+        const { stopBridgeTurn } = await import("../bridge-control.js");
+        const n = await stopBridgeTurn("whatsapp", phone, sessionId, "whatsapp-stop");
+        await ctx.sendMessage(phone, n > 0 ? "🛑 Stopped." : "Nothing running.");
+        continue;
+      }
+
+      // A message arriving mid-turn is steering the running turn — inject it
+      // instead of bouncing. Falls back to the old notice only if the op
+      // already finished out from under us.
       if (ctx.processingLock.has(phone)) {
-        await ctx.sendMessage(phone, "Still working on your last message...");
+        const { injectBridgeTurn } = await import("../bridge-control.js");
+        const injected = await injectBridgeTurn("whatsapp", phone, sessionId, sanitizedText, "whatsapp-inject");
+        await ctx.sendMessage(phone, injected ? "→ Got it — passing that to the running task." : "Still working on your last message...");
         continue;
       }
 

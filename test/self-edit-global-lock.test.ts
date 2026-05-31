@@ -56,11 +56,18 @@ describe("global self_edit lock", () => {
   });
 
   it("force-steals a live lock; non-force does not", () => {
-    // A live holder = this process's own pid (isPidAlive true).
-    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: "2020-01-01T00:00:00.000Z" }));
+    // A live, in-TTL-window holder = this process's pid + a RECENT startedAt.
+    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
     expect(acquireGlobalSelfEditLock({ force: false }).acquired).toBe(false);
     const stolen = acquireGlobalSelfEditLock({ force: true });
     expect(stolen.acquired).toBe(true);
+  });
+
+  it("reclaims a lock held past the TTL even if the holder pid is alive (in-process leak)", () => {
+    // self_edit runs in-process, so a leaked lock's pid is THIS always-alive
+    // server; only the age TTL can reclaim it.
+    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: "2020-01-01T00:00:00.000Z" }));
+    expect(acquireGlobalSelfEditLock({ force: false }).acquired).toBe(true);
   });
 
   it("release is ownership-aware — won't delete a lock owned by another PID", () => {
@@ -75,13 +82,18 @@ describe("isSelfEditLockHeldByLiveProcess (boot-sweep guard)", () => {
     expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
   });
 
-  it("is true while a live process holds the lock", () => {
-    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: "2020-01-01T00:00:00.000Z" }));
+  it("is true while a live, in-TTL-window process holds the lock", () => {
+    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
     expect(isSelfEditLockHeldByLiveProcess()).toBe(true);
   });
 
   it("is false for a stale lock whose holder PID is dead", () => {
     writeFileSync(LOCK, JSON.stringify({ pid: DEAD_PID, startedAt: "2020-01-01T00:00:00.000Z" }));
+    expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
+  });
+
+  it("is false for a lock held past the TTL even if the pid is alive", () => {
+    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: "2020-01-01T00:00:00.000Z" }));
     expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
   });
 

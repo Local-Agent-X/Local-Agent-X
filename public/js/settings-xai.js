@@ -31,7 +31,83 @@ async function checkXaiAuth() {
       if (loginBtn) { loginBtn.textContent = 'Sign in with xAI (SuperGrok / X Premium+)'; loginBtn.disabled = false; }
       if (discBtn) discBtn.style.display = 'none';
     }
+    // Grok Build CLI badge — separate credential store (~/.grok/auth.json)
+    // from the OAuth above; drives the self_edit surgeon. cliInstalled /
+    // cliAuthenticated come from the same /api/auth/xai/status response.
+    const cliEl = document.getElementById('xai-cli-status');
+    const cliInstallBtn = document.getElementById('btn-install-grok-cli');
+    const cliLoginBtn = document.getElementById('btn-grok-cli-login');
+    if (cliEl) {
+      if (!d.cliInstalled) {
+        cliEl.className = 'status-badge warn';
+        cliEl.innerHTML = '<span class="status-dot"></span> Grok Build CLI not installed';
+        if (cliInstallBtn) cliInstallBtn.style.display = '';
+        if (cliLoginBtn) cliLoginBtn.disabled = true;
+      } else if (!d.cliAuthenticated) {
+        cliEl.className = 'status-badge warn';
+        cliEl.innerHTML = '<span class="status-dot"></span> Grok Build CLI installed but NOT signed in — click “Sign in via Grok Build CLI”.';
+        if (cliInstallBtn) cliInstallBtn.style.display = 'none';
+        if (cliLoginBtn) { cliLoginBtn.disabled = false; cliLoginBtn.textContent = 'Sign in via Grok Build CLI'; }
+      } else {
+        cliEl.className = 'status-badge ok';
+        cliEl.innerHTML = '<span class="status-dot"></span> Grok Build CLI signed in (~/.grok/auth.json)';
+        if (cliInstallBtn) cliInstallBtn.style.display = 'none';
+        if (cliLoginBtn) { cliLoginBtn.disabled = true; cliLoginBtn.textContent = '✓ Signed in'; }
+      }
+    }
   } catch {}
+}
+
+// Grok Build CLI login — mirror of the Codex CLI flow (doCodexCliLogin in
+// settings.js). Spawns `grok login --device-auth` server-side, captures the
+// device URL, opens it, then polls /api/auth/xai/status until cliAuthenticated
+// flips. This signs in the `grok` binary's own store so self_edit can use it.
+let _grokCliLoginPoll = null;
+async function doGrokCliLogin() {
+  const btn = document.getElementById('btn-grok-cli-login');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Starting...'; }
+  try {
+    const d = await apiPost('/api/auth/xai/cli-login', {});
+    if (!d.authUrl) throw new Error(d.error || 'No auth URL returned');
+    window.open(d.authUrl, '_blank');
+    if (btn) btn.textContent = '⏳ Complete sign-in in browser tab...';
+    if (_grokCliLoginPoll) clearInterval(_grokCliLoginPoll);
+    let attempts = 0;
+    _grokCliLoginPoll = setInterval(async () => {
+      attempts++;
+      try {
+        const s = await apiJson('/api/auth/xai/status');
+        if (s.cliAuthenticated) {
+          clearInterval(_grokCliLoginPoll); _grokCliLoginPoll = null;
+          if (btn) { btn.textContent = '✓ Signed in'; btn.disabled = true; }
+          checkXaiAuth();
+        }
+      } catch {}
+      if (attempts > 150) { // ~5 min @ 2s
+        clearInterval(_grokCliLoginPoll); _grokCliLoginPoll = null;
+        if (btn) { btn.textContent = '⏱ Timed out — try again'; btn.disabled = false; }
+        try { await apiPost('/api/auth/xai/cli-login-cancel', {}); } catch {}
+      }
+    }, 2000);
+  } catch (e) {
+    if (btn) { btn.textContent = '✗ Failed — retry'; btn.disabled = false; }
+    console.error('Grok CLI login failed:', e);
+  }
+}
+
+async function installGrokCli() {
+  const btn = document.getElementById('btn-install-grok-cli');
+  const cliEl = document.getElementById('xai-cli-status');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Installing...'; }
+  try {
+    const d = await apiPost('/api/auth/xai/install-cli', {});
+    if (d.error) throw new Error(d.error);
+    if (btn) { btn.textContent = '✓ Installed'; btn.style.display = 'none'; }
+    checkXaiAuth();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Install Grok Build CLI'; }
+    if (cliEl) { cliEl.className = 'status-badge err'; cliEl.innerHTML = '<span class="status-dot"></span> Install failed: ' + (e?.message || 'unknown'); }
+  }
 }
 
 async function doXaiLogin() {

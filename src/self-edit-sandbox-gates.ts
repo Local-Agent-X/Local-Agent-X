@@ -123,7 +123,11 @@ export async function gateBind(name: string, port: number, authToken: string, si
     cwd: wt,
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
-    env: { ...buildSelfEditChildEnv(), LAX_PORT: String(port), LAX_DISABLE_BACKGROUND_JOBS: "1", LAX_DATA_DIR: dataDir, LAX_AUTH_TOKEN: authToken, LAX_INTEGRITY_WARN_ONLY: "1" },
+    // LAX_SELF_EDIT_PROBE=1 — tells the booting probe it's running from a
+    // worktree INSIDE %TEMP%/lax-worktrees, so it must NOT run the orphan
+    // worktree sweep (which would unlink the node_modules junction it's
+    // currently booting on and kill itself mid-boot).
+    env: { ...buildSelfEditChildEnv(), LAX_PORT: String(port), LAX_DISABLE_BACKGROUND_JOBS: "1", LAX_DATA_DIR: dataDir, LAX_AUTH_TOKEN: authToken, LAX_INTEGRITY_WARN_ONLY: "1", LAX_SELF_EDIT_PROBE: "1" },
   });
 
   let probeStdout = "";

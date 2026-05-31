@@ -1,31 +1,30 @@
 /**
- * Surgeon selection for self_edit — which coding CLI rewrites LAX's own source,
- * chosen from the user's ACTIVE provider so a user self-edits on the same
- * provider (and subscription) they chat on:
+ * Surgeon selection for self_edit — which agent rewrites LAX's own source.
  *
- *   anthropic        → claude   (Claude Code)
- *   codex / openai   → codex    (Codex CLI, `codex exec`)
- *   xai              → grok     (Grok Build CLI)
+ * Resolution order (best available coding agent wins):
+ *   1. The ACTIVE provider's own coding CLI, if installed + authed
+ *      (anthropic→claude, codex/openai→codex, xai→grok). A user self-edits on
+ *      the same provider/subscription they chat on.
+ *   2. Otherwise, ANY installed + authed coding CLI (off-provider) — the best
+ *      code-specialized agent on the box beats a generic loop.
+ *   3. Last resort: the GENERIC surgeon — drive LAX's own agent loop
+ *      (runAgentViaCanonical) on the active provider, for providers with no CLI
+ *      and no other CLI available (gemini / cerebras / ollama / local / custom).
  *
- * Every OTHER provider (gemini / cerebras / ollama / local / …) falls back to
- * claude for now; the generic non-CLI surgeon — drive LAX's own loop with the
- * active credential, no external CLI — is the planned follow-up.
+ * CLI surgeons run single-shot, auto-approving, headless, editing the worktree
+ * cwd in place. Prompt via stdin (claude/codex) or --prompt-file (grok). The
+ * generic surgeon is dispatched through generic-surgeon.ts (registered runner).
  *
- * All three run single-shot, auto-approving, headless, editing the worktree
- * cwd in place (no nested worktrees / subagents — the sandbox already owns
- * isolation). The prompt goes via stdin for claude/codex; grok takes it via
- * --prompt-file (its -p wants the prompt inline, which is fragile for large or
- * shell-special prompts — a temp file is robust and cross-platform).
- *
- * This is the one source of truth for the surgeon spawn; both the gated
- * (sandbox) path and the bypass path call runSurgeon().
+ * One source of truth for the surgeon spawn; both the gated (sandbox) and
+ * bypass paths call runSurgeon().
  */
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { buildSelfEditChildEnv } from "./child-env.js";
+import { runGenericSurgeon } from "./generic-surgeon.js";
 import { killProcessTree } from "../process-tree-kill.js";
 import { createLogger } from "../logger.js";
 
@@ -36,7 +35,8 @@ const MAX_OUTPUT_CHARS = 4000;
 
 export type SurgeonProviderKey = "anthropic" | "codex" | "xai";
 
-interface SurgeonSpec {
+export interface CliSurgeonSpec {
+  kind: "cli";
   provider: SurgeonProviderKey;
   bin: string;
   baseArgs: string[];
@@ -45,34 +45,43 @@ interface SurgeonSpec {
   promptVia: "stdin" | "file";
   label: string;
   installHint: string;
+  /** Auth store path relative to homedir — presence means the CLI is signed in. */
+  authPath: string;
+  /** Env vars that also satisfy the CLI's auth (API-key installs). */
+  authEnv: string[];
 }
 
-const SPECS: Record<SurgeonProviderKey, SurgeonSpec> = {
+export interface GenericSurgeonSpec {
+  kind: "generic";
+  label: string;
+}
+
+export type SurgeonSpec = CliSurgeonSpec | GenericSurgeonSpec;
+
+const CLI_SPECS: Record<SurgeonProviderKey, CliSurgeonSpec> = {
   anthropic: {
-    provider: "anthropic",
-    bin: "claude",
+    kind: "cli", provider: "anthropic", bin: "claude",
     baseArgs: ["-p", "--model", "claude-opus-4-8", "--permission-mode", "bypassPermissions", "--no-session-persistence", "--output-format", "text"],
-    promptVia: "stdin",
-    label: "Claude Code",
-    installHint: "npm install -g @anthropic-ai/claude-code",
+    promptVia: "stdin", label: "Claude Code", installHint: "npm install -g @anthropic-ai/claude-code",
+    authPath: ".claude", authEnv: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
   },
   codex: {
-    provider: "codex",
-    bin: "codex",
+    kind: "cli", provider: "codex", bin: "codex",
     baseArgs: ["exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "--color", "never"],
-    promptVia: "stdin",
-    label: "Codex CLI",
-    installHint: "npm install -g @openai/codex",
+    promptVia: "stdin", label: "Codex CLI", installHint: "npm install -g @openai/codex",
+    authPath: ".codex/auth.json", authEnv: ["OPENAI_API_KEY", "CODEX_API_KEY"],
   },
   xai: {
-    provider: "xai",
-    bin: "grok",
+    kind: "cli", provider: "xai", bin: "grok",
     baseArgs: ["--permission-mode", "bypassPermissions", "--no-plan", "--no-subagents", "--output-format", "plain", "--no-auto-update"],
-    promptVia: "file",
-    label: "Grok Build CLI",
-    installHint: "curl -fsSL https://x.ai/cli/install.sh | bash",
+    promptVia: "file", label: "Grok Build CLI", installHint: "curl -fsSL https://x.ai/cli/install.sh | bash",
+    authPath: ".grok/auth.json", authEnv: ["XAI_API_KEY", "GROK_API_KEY", "GROK_DEPLOYMENT_KEY"],
   },
 };
+
+// Off-provider fallback order — consulted only after the active provider's own
+// CLI. Rough code-capability order; the active provider's CLI always wins first.
+const CLI_PRIORITY: SurgeonProviderKey[] = ["anthropic", "codex", "xai"];
 
 /** Read the active chat provider from settings.json — same source build_app uses. */
 export function readActiveProvider(): string {
@@ -86,12 +95,47 @@ export function readActiveProvider(): string {
   return "anthropic";
 }
 
-/** Map a provider key to the surgeon spec. anthropic + any unmapped provider → claude. */
-export function resolveSurgeonSpec(providerArg?: string): SurgeonSpec {
-  const provider = (providerArg ?? readActiveProvider()).toLowerCase();
-  if (provider === "codex" || provider === "openai") return SPECS.codex;
-  if (provider === "xai") return SPECS.xai;
-  return SPECS.anthropic;
+function providerToCliKey(provider: string): SurgeonProviderKey | null {
+  if (provider === "anthropic") return "anthropic";
+  if (provider === "codex" || provider === "openai") return "codex";
+  if (provider === "xai") return "xai";
+  return null;
+}
+
+/** Pure mapping: the CLI a provider prefers, or null if it has no coding CLI. */
+export function cliSpecForProvider(provider: string): CliSurgeonSpec | null {
+  const key = providerToCliKey(provider.toLowerCase());
+  return key ? CLI_SPECS[key] : null;
+}
+
+/** True if the CLI binary resolves AND it's signed in (auth store or env key). */
+export function isCliAvailable(spec: CliSurgeonSpec): boolean {
+  try {
+    execSync(`${spec.bin} --version`, { timeout: 5000, stdio: "pipe", env: buildSelfEditChildEnv(process.env, spec.provider) });
+  } catch { return false; }
+  if (existsSync(join(homedir(), spec.authPath))) return true;
+  return spec.authEnv.some(k => { const v = process.env[k]; return typeof v === "string" && v.length > 0; });
+}
+
+export interface ResolveSurgeonDeps {
+  provider?: string;
+  /** Test seam: override the CLI availability probe. */
+  isAvailable?: (spec: CliSurgeonSpec) => boolean;
+}
+
+/**
+ * Pick the surgeon: active provider's CLI → any available CLI → generic loop.
+ */
+export function resolveSurgeon(deps: ResolveSurgeonDeps = {}): SurgeonSpec {
+  const provider = (deps.provider ?? readActiveProvider()).toLowerCase();
+  const isAvailable = deps.isAvailable ?? isCliAvailable;
+  const preferredKey = providerToCliKey(provider);
+  if (preferredKey && isAvailable(CLI_SPECS[preferredKey])) return CLI_SPECS[preferredKey];
+  for (const key of CLI_PRIORITY) {
+    if (key === preferredKey) continue;
+    if (isAvailable(CLI_SPECS[key])) return CLI_SPECS[key];
+  }
+  return { kind: "generic", label: "Generic (in-loop)" };
 }
 
 export interface SurgeonRun {
@@ -103,14 +147,20 @@ export interface SurgeonRun {
   bin: string;
 }
 
-/**
- * Spawn the resolved surgeon CLI in `cwd`, hand it `prompt`, collect its
- * output. Never rejects — a spawn failure is reported in SurgeonRun.spawnError
- * so callers format one consistent result. Kills the whole process tree on
- * abort/timeout (Windows shell:true wraps the binary in cmd.exe).
- */
-export function runSurgeon(cwd: string, prompt: string, signal?: AbortSignal): Promise<SurgeonRun> {
-  const spec = resolveSurgeonSpec();
+/** Spawn the resolved surgeon and collect its output. Never rejects. */
+export async function runSurgeon(cwd: string, prompt: string, signal?: AbortSignal): Promise<SurgeonRun> {
+  const spec = resolveSurgeon();
+  logger.info(`[surgeon] selected ${spec.label}`);
+  if (spec.kind === "generic") {
+    const r = await runGenericSurgeon(cwd, prompt, signal);
+    return r.ok
+      ? { exitCode: 0, stdout: r.output, stderr: "", label: spec.label, bin: "canonical-loop" }
+      : { exitCode: 1, stdout: "", stderr: r.output, label: spec.label, bin: "canonical-loop" };
+  }
+  return runCliSurgeon(spec, cwd, prompt, signal);
+}
+
+function runCliSurgeon(spec: CliSurgeonSpec, cwd: string, prompt: string, signal?: AbortSignal): Promise<SurgeonRun> {
   const env = buildSelfEditChildEnv(process.env, spec.provider);
   return new Promise<SurgeonRun>((resolveP) => {
     let tmpDir: string | null = null;

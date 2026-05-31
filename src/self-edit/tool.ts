@@ -1,8 +1,9 @@
 /**
- * self_edit — delegates source-code repair to a coding-CLI surgeon picked from
- * the active provider (anthropic→claude, codex/openai→codex, xai→grok; every
- * other provider falls back to claude until the generic non-CLI surgeon ships).
- * See self-edit/surgeon.ts.
+ * self_edit — delegates source-code repair to the best available coding agent:
+ * the active provider's own CLI (anthropic→claude, codex/openai→codex, xai→grok)
+ * if installed+authed, else any other installed CLI, else a GENERIC in-loop
+ * surgeon that drives LAX's own agent loop on the active provider. See
+ * self-edit/surgeon.ts.
  *
  * Purpose: when the in-Local-Agent-X agent hits a bug (tool call "succeeded"
  * but outcome is wrong, UI didn't update, endpoint returns wrong shape,

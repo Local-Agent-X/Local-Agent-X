@@ -1,8 +1,8 @@
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, getActiveProvider } from "./shared.js";
+import { ok, err, okWithImage, getActiveProvider } from "./shared.js";
 
 /** Stable Diffusion server URL — configurable via config.sdServerUrl */
 function getSDServerUrl(): string { return getRuntimeConfig().sdServerUrl; }
@@ -59,11 +59,12 @@ async function generateViaXai(
   }
   writeFileSync(savePath, buffer);
 
-  return ok(
+  return okWithImage(
     `Image generated via Grok Imagine!\n` +
     `Prompt: ${prompt}\n` +
     `Saved: ${savePath}\n` +
-    `View: /images/${filename}`
+    `View: /images/${filename}`,
+    { b64: buffer.toString("base64"), path: savePath, question: `Generated image: ${prompt}` },
   );
 }
 
@@ -93,11 +94,12 @@ async function generateViaOpenai(prompt: string, apiKey: string): Promise<ToolRe
   const savePath = join(imagesDir, filename);
   writeFileSync(savePath, buffer);
 
-  return ok(
+  return okWithImage(
     `Image generated via DALL-E!\n` +
     `Prompt: ${prompt}\n` +
     `Saved: ${savePath}\n` +
-    `View: /uploads/../workspace/generated/${filename}`
+    `View: /uploads/../workspace/generated/${filename}`,
+    { b64: buffer.toString("base64"), path: savePath, question: `Generated image: ${prompt}` },
   );
 }
 
@@ -199,14 +201,21 @@ export const generateImageTool: ToolDefinition = {
       };
 
       const localUrl = `http://127.0.0.1:${getRuntimeConfig().port}/images/${data.filename}`;
-
-      return ok(
+      const savePath = join("workspace", "images", data.filename);
+      const text =
         `Image generated!\n` +
         `Prompt: ${prompt}\n` +
         `Size: ${data.width}x${data.height} | Steps: ${steps}\n` +
         `View: ${localUrl}\n` +
-        `Saved: workspace/images/${data.filename}`
-      );
+        `Saved: ${savePath}`;
+
+      // Read the file the SD server wrote so the bytes ride `_image` and the
+      // bridge can forward it. Fall back to text-only if the read fails.
+      try {
+        return okWithImage(text, { b64: readFileSync(savePath).toString("base64"), path: savePath, question: `Generated image: ${prompt}` });
+      } catch {
+        return ok(text);
+      }
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes("timeout")) {

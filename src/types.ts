@@ -103,6 +103,14 @@ export interface ToolResult {
    *   bytes:       number  — full payload size when truncated
    */
   metadata?: Record<string, unknown>;
+
+  /**
+   * Image bytes the tool produced. The chat tool dispatcher converts this
+   * into a user-role image_url message (so the model SEES the image) and the
+   * WhatsApp/Telegram bridge auto-forwards it to the user as a photo. Set by
+   * the vision tools (screen_capture, view_image) and generate_image.
+   */
+  _image?: { mime: string; b64: string; path: string; question: string };
 }
 
 export interface AgentTurn {

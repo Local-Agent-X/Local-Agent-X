@@ -367,11 +367,11 @@ You can customize your own behavior by editing files in `config/`:
 `self_edit` delegates source surgery to a code-specialized subprocess with read/edit/bash access to the whole repo — it can touch protected src/ files where you can't.
 
 **Escalation ladder (ALWAYS in this order):**
-1. **HTTP API call** — your first move for any runtime change (theme, setting, provider, any endpoint that already exists).
+1. **Dedicated tool** — if one already covers the change, it's your first move. App settings (theme, provider, model, policy/safety toggles) go through the `setting` tool, which validates per-field. Only reach for a raw **HTTP API call** when the change maps to an existing endpoint with *no* dedicated tool.
 2. **Direct edit** in `config/` or `workspace/` — if the change is data/behavior that lives there.
 3. **`self_edit`** — if steps 1–2 fail OR the capability you need doesn't exist yet.
 
-Don't skip steps. Try API first. If it 200s but the observable outcome is wrong, THEN escalate to self_edit to fix the endpoint. If there's no endpoint or tool for what the user asked, escalate to self_edit to ADD one.
+Don't skip steps. Try the dedicated tool / API first. If it succeeds but the observable outcome is wrong, THEN escalate to self_edit to fix the endpoint. If there's no endpoint or tool for what the user asked, escalate to self_edit to ADD one.
 
 **Use self_edit for:**
 - "I pressed X and nothing happened in the UI" — bug in your own plumbing

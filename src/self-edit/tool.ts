@@ -65,7 +65,7 @@ export const selfEditTool: ToolDefinition = {
     "- 'Install software' / 'launch an installer' → bash with winget/brew/apt (don't add install_X)\n" +
     "- 'Run a shell command' → bash exists for this (don't add run_command)\n" +
     "- 'Edit a workspace/ file' → edit covers it (self_edit is for SOURCE only)\n" +
-    "- 'Change a setting' → http_request POST to /api/settings (don't add settings_set)\n" +
+    "- 'Change a setting' → the `setting` tool (don't add settings_set, don't POST /api/settings — `setting` validates per-field)\n" +
     "- 'Hot-reload config' → edit a file in config/ directly (don't go through self_edit)\n\n" +
     "When wiring up code that ALREADY exists at a known path (e.g. a prototype in workspace/, " +
     "integrations/, or a sibling module), name that path in your task — self_edit reads the " +

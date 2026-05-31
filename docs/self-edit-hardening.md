@@ -9,12 +9,11 @@ Origin: an 11-issue audit of the self_edit path. Issue #1 in that audit (the
 junction-teardown traversal fix) shipped before this pass. The remaining 10 are
 tracked below as two passes.
 
-> **⚠️ ACTIVE — RESUME HERE (2026-05-30):** the sandbox **bind gate still fails
-> for every chat→sandbox self_edit** ("did not bind within 60s"), even after the
-> two fixes below + a fully clean single-server restart. Bind/smoke are
-> effectively dead in prod (only the bypass paths — autopilot `_cwd`, `_unsafe` —
-> work). Full diagnosis + next steps in the **"RESUME HERE: bind gate"** section
-> at the bottom of this doc.
+> **✅ RESOLVED (2026-05-31):** the bind-gate failure ("did not bind within 60s")
+> was a self-inflicted regression — the Pass 2 #11 orphan sweep unlinked the
+> probe's own worktree `node_modules` mid-boot. Fixed in `524dbcd6`; bind+smoke
+> verified green. Full write-up in the **"RESOLVED: bind gate"** section at the
+> bottom.
 
 ## Gate order (current, after Pass 2)
 
@@ -234,69 +233,53 @@ Tracked deliberately; the user does not want these skipped.
   global self_edit lock, so it can collide with a concurrent sandbox probe port →
   false "boot proof failed". Cosmetic (no brick), but real. → Either serialize
   the boot proof under the global lock, or retry on EADDRINUSE with a fresh port.
+- **Boot sweep can nuke an ACTIVE self_edit worktree on a mid-self_edit restart.**
+  The probe case is fixed (`LAX_SELF_EDIT_PROBE` skip), but the REAL server's
+  boot sweep still treats every `%TEMP%/lax-worktrees` dir as an orphan — so
+  restarting LAX while a self_edit is mid-flight would unlink that live worktree's
+  junction out from under it. Narrow edge case (restart during an active
+  self_edit). → Add a "skip junctions currently in use" guard: the sweep already
+  leaves EBUSY/locked reparse points alone; extend it to detect an in-use
+  junction before unlinking rather than relying on the unlink failing.
 
-## RESUME HERE: bind gate still failing (handoff 2026-05-30)
+## RESOLVED: bind gate — orphan sweep nuked the probe's own worktree (2026-05-31)
 
-**Symptom.** Every default chat→sandbox self_edit fails at the **bind gate**:
-`bind gate failed: did not bind on port <N> within 60s`. deps + build gates pass
-(build ~20-30s). The probe boots, its captured stdout always ends at
-`[manifest-generator] Generated app-manifest.json` → `[config-loader] Watching
-config/ for changes`, then it's killed at the 60s timeout. No crash, no stderr.
-Net: bind+smoke gates are dead in prod; only the gateless bypass paths
-(autopilot `_cwd`, `_unsafe`) work, which is why this went unnoticed.
+**Root cause.** The Pass 2 #11 orphan-worktree sweep
+(`sweepOrphanWorktreeJunctions`, wired into `index.ts` boot) runs on EVERY boot
+and treats everything under `%TEMP%/lax-worktrees` as an orphan. The bind probe
+BOOTS from a worktree INSIDE that directory — so the probe's own boot sweep
+unlinked the `node_modules` junction it was booting on, mid-boot. The next
+import after the unlink (`@arikernel/tool-executors`) failed with "Cannot find
+package", boot never reached `server.listen`, and the gate timed out at 60s.
 
-**Fixes already shipped (on main, both confirmed present in src + dist):**
-- `4d29c380` — `ConfigWatcher.start` (config-hot-reload.ts) no longer throws on a
-  missing/invalid `config.json`; it warns + skips. It WAS aborting boot before
-  `server.listen` (the probe's fresh `LAX_DATA_DIR` has no config.json because
-  gateBind passes `LAX_AUTH_TOKEN`, so `loadConfig` skips its only `saveConfig`).
-  This fix is real and verified — the probe now boots PAST it (reaches
-  manifest-gen/config-loader instead of crashing). It just didn't make bind pass.
-- `bed838f5` — gateBind boots the probe via `npm start` (compiled `dist`) instead
-  of `npm run dev:nowatch` (tsx), because tsx cold-recompiles per worktree path.
+A self-inflicted regression from the very hardening shipped in Pass 2 — which is
+why self_edit "worked before" (the sweep didn't exist) and why isolated repros
+kept diverging: test worktrees placed OUTSIDE `lax-worktrees` were never swept,
+so they booted further and pointed at red herrings (ari dist, tool-rag).
 
-**Still fails after BOTH fixes + a clean single-instance restart (run 22:15Z).**
-So the dist-boot fix did NOT resolve it. The open question: why does the WORKTREE
-probe never bind in 60s when repo-root boots fast?
+**Fix (`524dbcd6`).** `gateBind` sets `LAX_SELF_EDIT_PROBE=1` on the probe env;
+boot skips the orphan sweep when it's set (`index.ts`). Only the real server —
+which never lives under `lax-worktrees` — sweeps.
 
-**Hard data gathered:**
-- repo-root `npm start` (dist) → binds in **8.6s**. repo-root `npm run dev:nowatch`
-  (tsx, warm cache) → binds in **14.9s**. (measured via throwaway scripts)
-- The 21:54/22:15 **worktree** probes → **never bind in 60s**.
-- The worktree's own compiled `dist/self-edit-sandbox-gates.js` HAS the `npm start`
-  fix, and `dist/config-hot-reload.js` HAS the graceful skip — so the worktree
-  forked from HEAD correctly.
-- Probe stdout is identical across tsx-era and post-fix runs (can't tell tsx vs
-  dist from logs alone — only timing differs, and it's still >60s).
+**Verified.** Faithful gate chain (`createNamedWorktree` worktree inside
+`lax-worktrees`, forked from the fixed HEAD): build 38.9s, **bind 17.9s**, smoke
+green (`chat replied (186 bytes) + 3 endpoints healthy`). Was: never bound / 60s
+timeout.
 
-**Top hypotheses for next session (in priority order):**
-1. **Verify the probe's ACTUAL spawned command.** Add a one-line log in
-   `gateBind` (self-edit-sandbox-gates.ts) printing the argv it spawns, trigger
-   one self_edit, confirm it's really `npm start` and not still `dev:nowatch`.
-   Cheapest way to kill the ambiguity.
-2. **Measure worktree `npm start` directly.** `git worktree add` a temp tree from
-   HEAD, junction node_modules into it (as createNamedWorktree does), `npm run
-   build`, then time `npm start` to bind. If >60s, the worktree dist boot is the
-   real bottleneck (suspects: module loading through the Windows node_modules
-   JUNCTION is slow vs a real dir; cold OS file cache on freshly-built dist;
-   missing `packages/*/dist`). repo-root binds in 8.6s with a REAL node_modules —
-   the junction is the prime suspect for the delta.
-3. **Distinguish "slow" from "never":** temporarily raise `BIND_TIMEOUT_MS`
-   (60s → 240s) and re-run. If it eventually binds, it's pure slowness (fix =
-   faster probe boot or higher timeout). If it never binds, something hangs
-   after `config-loader Watching config/`.
-4. Add instrumentation: capture the probe's FULL stdout/stderr to a temp file
-   (gateBind currently keeps only the last ~800 chars) so you can see exactly
-   where boot stalls.
+**Loose ends cleared up along the way:**
+- `4d29c380` (ConfigWatcher graceful-skip) was correct in SOURCE but the running
+  `dist/` was STALE — `dist/` is gitignored, so a source fix never travels with
+  the commit; the running build must be rebuilt. After a rebuild, repo-root bound
+  in 14.5s. Lesson: after fixing code the probe boots (`dist`), rebuild before
+  re-testing, and ensure exactly ONE clean server instance.
+- `bed838f5` (probe boots `npm start`/dist, not tsx) stands — unrelated to the
+  bug, kept.
+- The "tool-rag pre-warm blocks bind" hypothesis was WRONG: tool-rag pre-warm is
+  fire-and-forget in `server/index.ts` and does not gate `server.listen`. The
+  blocking phases are bootstrapServices → bootstrapTools → createHttpServer →
+  setupVoiceWs → startConfigWatcher → bootstrapCanonicalLoop; the sweep (run
+  BEFORE startServer) was the real culprit.
 
-**Repro / environment notes:**
-- gateBind runs in the PARENT server process, so the running server must be
-  freshly started from current code to test a gateBind change (a re-trigger
-  alone won't pick it up). During this session, repeated half-restarts left
-  MULTIPLE stale/zombie server instances and the self_edit kept landing on
-  pre-fix ones — make sure there's exactly ONE LAX instance on 7007 before
-  trusting a result (`Get-NetTCPConnection -LocalPort 7007`).
-- `killProbe` not reaping tsx children on Windows (backlog item) leaked probe
-  processes that locked worktree dirs — clean those (taskkill /F /T) between runs.
-- Leftover failed-run worktrees live in `%TEMP%/lax-worktrees/`; the boot-sweep
-  clears them on restart (junction-safe).
+**Follow-up:** see the backlog item "Boot sweep can nuke an ACTIVE self_edit
+worktree on a mid-self_edit restart" — the probe case is fixed, the real-server
+mid-self_edit-restart edge case is not.

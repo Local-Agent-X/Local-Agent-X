@@ -12,6 +12,7 @@ import { JobScheduler } from "../scheduler.js";
 import { createLogger } from "../../logger.js";
 import { registerCronRunner } from "./cron-runner.js";
 import { registerWorkerRunnerForServer } from "./worker-runner.js";
+import { registerSelfEditSurgeonForServer } from "./self-edit-surgeon-runner.js";
 import { makeRunMemBg } from "./memory-bg.js";
 import { makeRunDreamCheck } from "./dream-check.js";
 
@@ -57,6 +58,12 @@ export function startBackgroundJobs(deps: {
   registerWorkerRunnerForServer({
     config, dataDir, secretsStore, security, toolPolicy, allAgentTools,
     getOrCreateSession, saveSession,
+  });
+
+  // Generic (in-loop) self_edit surgeon — last resort for providers with no
+  // coding CLI. Builds its own per-worktree SecurityLayer, so no `security` dep.
+  registerSelfEditSurgeonForServer({
+    config, dataDir, secretsStore, toolPolicy, allAgentTools,
   });
 
   const scheduler = new JobScheduler();

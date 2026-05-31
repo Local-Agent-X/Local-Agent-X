@@ -2,52 +2,74 @@
  * Tests for self_edit surgeon selection (surgeon.ts) and the provider-aware
  * env scrub (child-env.ts).
  *
- * resolveSurgeonSpec maps the active provider to a coding CLI:
- *   anthropic → claude, codex/openai → codex, xai → grok, everything else →
- *   claude (until the generic non-CLI surgeon ships). buildSelfEditChildEnv
- *   passes through ONLY that provider's own auth and strips the rest.
+ * resolveSurgeon picks the best available coding agent: the active provider's
+ * own CLI → any other installed+authed CLI → the generic in-loop surgeon.
+ * cliSpecForProvider is the pure provider→CLI mapping. buildSelfEditChildEnv
+ * passes through ONLY that provider's own auth and strips the rest.
  */
 
 import { describe, it, expect } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { resolveSurgeonSpec, formatSurgeonOutput } from "../src/self-edit/surgeon.js";
+import { cliSpecForProvider, resolveSurgeon, formatSurgeonOutput, type CliSurgeonSpec } from "../src/self-edit/surgeon.js";
 import { buildSelfEditChildEnv } from "../src/self-edit/child-env.js";
 
-describe("resolveSurgeonSpec", () => {
-  it("maps anthropic → claude", () => {
-    expect(resolveSurgeonSpec("anthropic").bin).toBe("claude");
-  });
+describe("cliSpecForProvider (pure mapping)", () => {
+  it("maps anthropic → claude", () => expect(cliSpecForProvider("anthropic")?.bin).toBe("claude"));
   it("maps codex AND openai → codex", () => {
-    expect(resolveSurgeonSpec("codex").bin).toBe("codex");
-    expect(resolveSurgeonSpec("openai").bin).toBe("codex");
+    expect(cliSpecForProvider("codex")?.bin).toBe("codex");
+    expect(cliSpecForProvider("openai")?.bin).toBe("codex");
   });
-  it("maps xai → grok", () => {
-    expect(resolveSurgeonSpec("xai").bin).toBe("grok");
-  });
-  it("is case-insensitive", () => {
-    expect(resolveSurgeonSpec("XAI").bin).toBe("grok");
-    expect(resolveSurgeonSpec("Codex").bin).toBe("codex");
-  });
-  it("falls back to claude for every other provider (until the generic surgeon ships)", () => {
-    for (const p of ["gemini", "cerebras", "ollama", "local", "custom", "anything"]) {
-      expect(resolveSurgeonSpec(p).bin, `${p} should fall back to claude`).toBe("claude");
+  it("maps xai → grok", () => expect(cliSpecForProvider("xai")?.bin).toBe("grok"));
+  it("is case-insensitive", () => expect(cliSpecForProvider("XAI")?.bin).toBe("grok"));
+  it("returns null for providers with no coding CLI", () => {
+    for (const p of ["gemini", "cerebras", "ollama", "local", "custom"]) {
+      expect(cliSpecForProvider(p), `${p} has no CLI`).toBeNull();
     }
   });
-  it("grok takes the prompt via a file, not stdin", () => {
-    expect(resolveSurgeonSpec("xai").promptVia).toBe("file");
-    expect(resolveSurgeonSpec("anthropic").promptVia).toBe("stdin");
-    expect(resolveSurgeonSpec("codex").promptVia).toBe("stdin");
+  it("grok takes the prompt via file; claude/codex via stdin", () => {
+    expect(cliSpecForProvider("xai")?.promptVia).toBe("file");
+    expect(cliSpecForProvider("anthropic")?.promptVia).toBe("stdin");
+    expect(cliSpecForProvider("codex")?.promptVia).toBe("stdin");
+  });
+});
+
+describe("resolveSurgeon (availability-aware)", () => {
+  const all = () => true;
+  const none = () => false;
+  const only = (p: string) => (s: CliSurgeonSpec) => s.provider === p;
+
+  it("uses the active provider's own CLI when available", () => {
+    const s = resolveSurgeon({ provider: "xai", isAvailable: all });
+    expect(s.kind).toBe("cli");
+    expect((s as CliSurgeonSpec).bin).toBe("grok");
+  });
+
+  it("prefers the active provider's CLI over others even when all are available", () => {
+    const s = resolveSurgeon({ provider: "codex", isAvailable: all });
+    expect((s as CliSurgeonSpec).bin).toBe("codex");
+  });
+
+  it("falls back to another installed CLI off-provider", () => {
+    const s = resolveSurgeon({ provider: "xai", isAvailable: only("anthropic") });
+    expect((s as CliSurgeonSpec).bin).toBe("claude");
+  });
+
+  it("an unmapped provider uses any available CLI", () => {
+    const s = resolveSurgeon({ provider: "gemini", isAvailable: only("codex") });
+    expect((s as CliSurgeonSpec).bin).toBe("codex");
+  });
+
+  it("falls back to the generic loop when no CLI is available", () => {
+    expect(resolveSurgeon({ provider: "xai", isAvailable: none }).kind).toBe("generic");
+    expect(resolveSurgeon({ provider: "gemini", isAvailable: none }).kind).toBe("generic");
   });
 });
 
 describe("buildSelfEditChildEnv — provider-aware auth", () => {
   const BASE: NodeJS.ProcessEnv = {
-    PATH: "/usr/bin:/bin",
-    HOME: "/home/user",
-    ANTHROPIC_API_KEY: "sk-ant-x",
-    OPENAI_API_KEY: "sk-openai-x",
-    XAI_API_KEY: "xai-x",
+    PATH: "/usr/bin:/bin", HOME: "/home/user",
+    ANTHROPIC_API_KEY: "sk-ant-x", OPENAI_API_KEY: "sk-openai-x", XAI_API_KEY: "xai-x",
   };
 
   it("xai passes XAI_API_KEY and strips the other providers' keys", () => {
@@ -72,8 +94,7 @@ describe("buildSelfEditChildEnv — provider-aware auth", () => {
   });
 
   it("xai puts ~/.grok/bin on PATH so the grok binary resolves", () => {
-    const env = buildSelfEditChildEnv(BASE, "xai");
-    expect(env.PATH).toContain(join(homedir(), ".grok", "bin"));
+    expect(buildSelfEditChildEnv(BASE, "xai").PATH).toContain(join(homedir(), ".grok", "bin"));
   });
 });
 

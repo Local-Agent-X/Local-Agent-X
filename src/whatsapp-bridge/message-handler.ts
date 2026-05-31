@@ -17,6 +17,7 @@
 
 import { createLogger } from "../logger.js";
 import { markVoiceMirror, clearVoiceMirror, dispatchReplyToJid } from "./voice-reply.js";
+import { isOwnerSelfChat } from "./text-utils.js";
 import type { BridgeReply, WhatsAppBridgeConfig } from "./types.js";
 
 const logger = createLogger("whatsapp-bridge");
@@ -91,14 +92,7 @@ export function createMessagesUpsertHandler(
       const sanitizedText = text?.replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD\u034F\u061C\u180E\u2060-\u2069\uFFF9-\uFFFB]/g, "")
         .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "") || null;
 
-      // Self-chat detection: match remoteJid against known owner JIDs.
-      // Do NOT rely on LID resolution (it can return wrong mappings).
-      // Compare exact JID against the two forms we know:
-      //   1. "ownerPhone@s.whatsapp.net" (legacy)
-      //   2. "ownerLid@lid" (post-migration)
-      const selfJid = ctx.phoneNumber ? `${ctx.phoneNumber}@s.whatsapp.net` : null;
-      const selfLidJid = ctx.selfLid ? `${ctx.selfLid}@lid` : null;
-      const isSelfChat = fromMe && (remoteJid === selfJid || remoteJid === selfLidJid);
+      const isSelfChat = isOwnerSelfChat(remoteJid, fromMe, ctx.phoneNumber, ctx.selfLid);
 
       // Resolve sender phone for access control (incoming from others).
       let senderPhone = remoteJid.split("@")[0];

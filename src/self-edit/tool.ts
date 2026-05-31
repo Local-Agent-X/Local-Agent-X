@@ -30,7 +30,7 @@
 import type { ToolDefinition } from "../types.js";
 import { LAX_REPO_ROOT } from "./agents-rules.js";
 import { checkScopeEvidence, checkWorkspaceMisroute } from "./scope-gate.js";
-import { checkSelfEditIntent } from "./intent-gate.js";
+import { checkSelfEditIntent, isAffirmativeGoAhead } from "./intent-gate.js";
 import {
   acquireSelfEditLock,
   buildLiveCallBlockedResponse,
@@ -114,27 +114,41 @@ export const selfEditTool: ToolDefinition = {
     // Layer 1: intent-match gate.
     //
     // Defends against the "agent grabs self_edit under intent-mapping
-    // uncertainty and submits a task on a different topic" failure mode
-    // (live failure 2026-05-07: user said "launch the ollama installer" →
-    // agent self_edit'd to modify cron jobs).
+    // uncertainty and submits a task the user never asked for" failure mode
+    // (live failures: 2026-05-07 user said "launch the ollama installer" →
+    // agent edited cron jobs; 2026-05-31 user said "i dont see the committed
+    // change" (an observation) → agent self_edited anyway).
     //
-    // Uses the SAME provider+model the chat is currently on (no Haiku
-    // hardcode — minimizes future tech debt when models change). On any
-    // failure (no provider creds, classifier timeout, parse error) we
-    // FAIL OPEN and proceed — better to allow the occasional misuse than
-    // to block legitimate self_edits when the classifier is flaky.
+    // self_edit is destructive, so this gate FAILS CLOSED. We proceed only
+    // when the user is actually asking for a code change — i.e. the classifier
+    // (same provider+model the chat is on, no Haiku hardcode) returns "match",
+    // OR the user's latest message is an explicit affirmative go-ahead. A
+    // "mismatch", an "unsure", or a classifier outage all BLOCK: better to ask
+    // for one explicit confirmation than to mutate source on a guess.
     const lastUserMessage = typeof args._lastUserMessage === "string" ? args._lastUserMessage : "";
     const lastAssistantMessage = typeof args._lastAssistantMessage === "string" ? args._lastAssistantMessage : "";
     if (lastUserMessage) {
       onProgress("Verifying intent against your last message…");
+      const affirmative = isAffirmativeGoAhead(lastUserMessage);
+      let verdict: Awaited<ReturnType<typeof checkSelfEditIntent>> = null;
       try {
-        const verdict = await checkSelfEditIntent(task, lastUserMessage, lastAssistantMessage);
+        verdict = await checkSelfEditIntent(task, lastUserMessage, lastAssistantMessage);
+      } catch { /* classifier unavailable — handled by the fail-closed branch below */ }
+
+      // Allow on a clear "match", or on an explicit go-ahead unless the
+      // classifier positively says the task is off-topic.
+      const allowed = verdict?.verdict === "match"
+        || (affirmative && verdict?.verdict !== "mismatch");
+
+      if (!allowed) {
+        const userQuote = `"${lastUserMessage.slice(0, 200)}${lastUserMessage.length > 200 ? "..." : ""}"`;
+        const taskQuote = `"${task.slice(0, 200)}${task.length > 200 ? "..." : ""}"`;
         if (verdict?.verdict === "mismatch") {
           return {
             content:
               `BLOCKED — the self_edit task doesn't match what the user is asking for.\n\n` +
-              `User's most recent message: "${lastUserMessage.slice(0, 200)}${lastUserMessage.length > 200 ? "..." : ""}"\n` +
-              `Self_edit task you submitted: "${task.slice(0, 200)}${task.length > 200 ? "..." : ""}"\n` +
+              `User's most recent message: ${userQuote}\n` +
+              `Self_edit task you submitted: ${taskQuote}\n` +
               `Reason: ${verdict.reason}\n\n` +
               `If the user wants the change you described, they need to ask for it explicitly. ` +
               `If you misread their intent, use a different tool. ` +
@@ -142,7 +156,20 @@ export const selfEditTool: ToolDefinition = {
             isError: true,
           };
         }
-      } catch { /* classifier unavailable — fail open */ }
+        // unsure, or classifier unavailable — the user's last message isn't a
+        // clear request to change source. Don't mutate on a guess; confirm.
+        return {
+          content:
+            `BLOCKED — the user's latest message isn't a clear go-ahead to modify source code.\n\n` +
+            `User's most recent message: ${userQuote}\n` +
+            `Self_edit task you were about to run: ${taskQuote}\n\n` +
+            `self_edit changes the agent's own code, so it only runs on an explicit request (a bug to fix, ` +
+            `a capability to add) or a direct "yes, go ahead". This looked like a question, an observation, ` +
+            `or open brainstorming. Reply in plain text — tell the user what you'd change and ask if they ` +
+            `want it — then wait for their go-ahead before calling self_edit again.`,
+          isError: true,
+        };
+      }
     }
 
     // Per-session live-call guard. If another self_edit is already running for

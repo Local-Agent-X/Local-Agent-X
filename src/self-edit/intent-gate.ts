@@ -16,13 +16,30 @@ const TIMEOUT_MS = 8000;
 
 const SYSTEM_PROMPT =
   `You are a sanity-check classifier for self_edit, a destructive tool that modifies the agent's own source code. ` +
-  `Decide if a self_edit task description matches what the user is actually asking for. ` +
-  `self_edit should ONLY run when the user wants source-code changes (bug fix, missing capability) related to the chat.\n\n` +
+  `Decide whether the user's most recent message is actually requesting a source-code change right now. ` +
+  `self_edit should ONLY run when the user is asking for a code change: a bug fix, a broken behavior to repair, or a missing capability to add.\n\n` +
   `Reply with ONE LINE of JSON, nothing else:\n` +
   `{"verdict": "match" | "mismatch" | "unsure", "reason": "<one short sentence>"}\n\n` +
-  `- "match": the task addresses the same intent the user expressed (e.g. user asks "fix the chat freeze", task says "fix race in chat-ws.ts where streamingSessionId leaks")\n` +
-  `- "mismatch": the task is on a different topic, or solves a problem the user didn't ask about (e.g. user says "launch the installer", task says "edit cron jobs")\n` +
-  `- "unsure": ambiguous — task could plausibly relate but you can't tell. Bias toward "unsure" when uncertain; we fail open on unsure.`;
+  `- "match": the user is reporting a bug / broken behavior, or explicitly requesting a code change or new capability, AND the task addresses it ` +
+  `(e.g. user "fix the chat freeze" / "the export button does nothing" / "add a transcribe tool" → task patches that area).\n` +
+  `- "mismatch": the user is NOT requesting a change. This includes asking a question, making an observation about the agent's own prior action, ` +
+  `brainstorming / weighing options, or a task on a different topic. Examples that are mismatch: "i don't see the committed change", ` +
+  `"did that actually work?", "is that a bug?", "why did it do that?", "launch the installer" (that's a shell command, not a source edit).\n` +
+  `- "unsure": genuinely ambiguous — could plausibly be a change request but you can't tell. We FAIL CLOSED on unsure for this destructive tool, ` +
+  `so reserve it for when you're truly torn.`;
+
+// Deterministic backstop for the gate in tool.ts. Catches an explicit "yes,
+// go ahead" so a flaky/slow classifier can't strand a real go-ahead — the
+// affirmative usually answers a pending offer in the PRIOR assistant turn, so
+// the classifier (which scores the task against this short reply) may read it
+// as "unsure". Anchored at the start so observations like "i dont see the
+// committed change" never match.
+const AFFIRMATIVE_GO_AHEAD =
+  /^\s*(yes|yep|yeah|yup|ya|sure|ok|okay|k|go|go ahead|do it|please do|go for it|ship it|send it|make it so|proceed|continue|fix it|land it|get it done)\b/i;
+
+export function isAffirmativeGoAhead(msg: string): boolean {
+  return AFFIRMATIVE_GO_AHEAD.test(msg.trim());
+}
 
 export async function checkSelfEditIntent(
   task: string,

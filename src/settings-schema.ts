@@ -120,6 +120,12 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     broadcast: true,
     description: "Model name within the chosen provider (gpt-5.5, claude-opus-4-7, grok-4, etc)",
   },
+  {
+    field: "preferGrokForMedia",
+    validate: z.boolean(),
+    runtime: false,
+    description: "When ON (default), generate_image/generate_video use xAI Grok Imagine whenever xAI is connected, regardless of the active chat provider. The model can still force a backend per call via the tool's `provider` arg.",
+  },
 ];
 
 /** Subset that needs config.json mirroring + GET overlay. */

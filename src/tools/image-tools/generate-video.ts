@@ -5,7 +5,7 @@ import { getLaxDir } from "../../lax-data-dir.js";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { createLogger } from "../../logger.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, okWithVideo, getActiveProvider, findRecentLocalImage, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
+import { ok, err, okWithVideo, resolveMediaProvider, findRecentLocalImage, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
 
 const xaiLogger = createLogger("image-tools.xai");
 
@@ -180,9 +180,10 @@ async function generateViaXaiVideo(
 export const generateVideoTool: ToolDefinition = {
   name: "generate_video",
   description:
-    "Generate a short video from a text prompt. When provider=xai with credentials, uses xAI Grok Imagine " +
-    "(text-to-video, ~60-240s, up to 15s duration, optional reference images). Otherwise falls back to local CogVideoX " +
-    "(must be running on port 7861, ~6 second outputs). Videos saved as MP4. " +
+    "Generate a short video from a text prompt. Defaults to xAI Grok Imagine whenever xAI is connected " +
+    "(text-to-video, ~60-240s, up to 15s duration, optional reference images; toggle in Settings → Media). " +
+    "Otherwise falls back to local CogVideoX (must be running on port 7861, ~6 second outputs). " +
+    "Pass `provider` to force a backend for one call. Videos saved as MP4. " +
     "On WhatsApp/Telegram the generated video is delivered to the user automatically — do NOT also call send_video for it.",
   parameters: {
     type: "object",
@@ -208,6 +209,10 @@ export const generateVideoTool: ToolDefinition = {
         items: { type: "string" },
         description: "Up to 7 reference image URLs for style/character guidance. xAI Grok Imagine only.",
       },
+      provider: {
+        type: "string",
+        description: "Optional. Force a backend for this one video: 'grok' (xAI Grok Imagine) or 'local' (CogVideoX). Omit to use the default. Pass this when the user names a generator.",
+      },
     },
     required: ["prompt"],
   },
@@ -215,8 +220,15 @@ export const generateVideoTool: ToolDefinition = {
     const prompt = String(args.prompt || "");
     if (!prompt.trim()) return err("Prompt is required.");
 
-    // Try xAI Grok Imagine first when provider=xai and creds are configured.
-    const { provider, apiKey } = await getActiveProvider();
+    // Resolve backend: explicit override → Grok-when-connected default →
+    // active provider. CogVideoX is the only local video path.
+    const { provider, apiKey, forced } = await resolveMediaProvider(args.provider as string | undefined);
+    if (forced && provider === "openai") {
+      return err("OpenAI has no video API — use 'grok' or 'local' for video.");
+    }
+    if (forced && provider === "xai" && !apiKey) {
+      return err("Grok/xAI isn't connected — connect it in Settings, or omit the provider override to use the default.");
+    }
     if (provider === "xai" && apiKey) {
       try {
         // Grok-4 sometimes sends reference_images as a JSON-encoded string

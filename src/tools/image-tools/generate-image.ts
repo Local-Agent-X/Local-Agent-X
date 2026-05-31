@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, okWithImage, getActiveProvider } from "./shared.js";
+import { ok, err, okWithImage, resolveMediaProvider } from "./shared.js";
 
 /** Stable Diffusion server URL — configurable via config.sdServerUrl */
 function getSDServerUrl(): string { return getRuntimeConfig().sdServerUrl; }
@@ -107,7 +107,8 @@ export const generateImageTool: ToolDefinition = {
   name: "generate_image",
   description:
     "Generate an image from a text prompt. " +
-    "Automatically uses the best available backend: xAI Grok image API, OpenAI DALL-E, or local Stable Diffusion. " +
+    "Defaults to xAI Grok Imagine whenever xAI is connected (toggle in Settings → Media); otherwise falls back to OpenAI DALL-E or local Stable Diffusion. " +
+    "Pass `provider` to force a specific backend for one call (e.g. user says 'make this with Grok'). " +
     "Use detailed prompts for best results.",
   parameters: {
     type: "object",
@@ -140,6 +141,10 @@ export const generateImageTool: ToolDefinition = {
         type: "boolean",
         description: "Use grok-imagine-image-quality (higher fidelity, ~10-20s) instead of the default grok-imagine-image (~5-10s). Only applies to xAI backend.",
       },
+      provider: {
+        type: "string",
+        description: "Optional. Force a backend for this one image: 'grok' (xAI), 'openai' (DALL-E), or 'local' (Stable Diffusion). Omit to use the default. Pass this when the user names a generator.",
+      },
     },
     required: ["prompt"],
   },
@@ -147,7 +152,10 @@ export const generateImageTool: ToolDefinition = {
     const prompt = String(args.prompt || "");
     if (!prompt.trim()) return err("Prompt is required.");
 
-    const { provider, apiKey } = await getActiveProvider();
+    const { provider, apiKey, forced } = await resolveMediaProvider(args.provider as string | undefined);
+    if (forced && provider !== "local" && !apiKey) {
+      return err(`${provider === "xai" ? "Grok/xAI" : "OpenAI"} isn't connected — connect it in Settings, or omit the provider override to use the default.`);
+    }
 
     if (provider === "xai" && apiKey) {
       try { return await generateViaXai(prompt, apiKey, args.aspect as string | undefined, Boolean(args.quality)); }

@@ -14,6 +14,7 @@ async function loadToolPolicyToggles() {
     setToolPolicyToggle('tp-toggle-shell',   s.enableShell   !== false);
     setToolPolicyToggle('tp-toggle-http',    s.enableHttp    !== false);
     setToolPolicyToggle('tp-toggle-browser', s.enableBrowser !== false);
+    setToolPolicyToggle('cfg-toggle-grok-media', s.preferGrokForMedia !== false);
   } catch (e) { console.warn('[tool-policy] load failed', e); }
 }
 

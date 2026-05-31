@@ -128,3 +128,47 @@ describe("AriKernel pre-dispatch gate (F3 closure)", () => {
     }
   });
 });
+
+// Security switches (kill-switches, approval mode, browser mode) may be changed
+// when the user asks in an interactive session, but never in an autonomous run
+// where no user is present. The autonomous block is the hard guarantee;
+// "only when the user asks" is enforced on the prompt side. Regression for the
+// self-escalation where a blocked browser call led the agent to re-enable
+// enableBrowser and proceed — that now only works in a live, user-driven chat.
+describe("protected security settings gate", () => {
+  it("allows a security-setting change in an interactive (local) session", async () => {
+    await expect(
+      assertToolCallAllowed(
+        { id: "p1", name: "setting", args: { field: "enableBrowser", value: true } },
+        { sessionId: "s", callContext: "local" },
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("denies a security-setting change in an autonomous (cron) run", async () => {
+    await expect(
+      assertToolCallAllowed(
+        { id: "p2", name: "setting", args: { field: "enableShell", value: true } },
+        { sessionId: "s", callContext: "cron" },
+      ),
+    ).rejects.toThrow(/cannot be changed in an automated\/background run/);
+  });
+
+  it("denies in a delegated sub-agent run too", async () => {
+    await expect(
+      assertToolCallAllowed(
+        { id: "p3", name: "setting", args: { field: "toolApproval", value: "auto" } },
+        { sessionId: "s", callContext: "delegated" },
+      ),
+    ).rejects.toThrow(/security setting/);
+  });
+
+  it("does not gate a non-security setting in an autonomous run", async () => {
+    await expect(
+      assertToolCallAllowed(
+        { id: "p4", name: "setting", args: { field: "theme", value: "dark" } },
+        { sessionId: "s", callContext: "cron" },
+      ),
+    ).resolves.toBeUndefined();
+  });
+});

@@ -45,9 +45,10 @@ export const settingTool: ToolDefinition = {
     "Flip an app setting (theme, provider, model, toolApproval, Tool Policy kill-switches, etc.). " +
     "Use this INSTEAD of http_request for any change the user requests to the app itself. " +
     "The field list is the canonical set — pass any other field name and you get back the valid list. " +
-    "Runtime-bound fields (toolApproval, enableShell/Http/Browser, browserMode, maxIterations, temperature, bridgeVoicePreference) " +
-    "take effect on the very next tool call — no restart. After flipping a safety toggle (enable*), " +
-    "verify with a probe (e.g. bash echo ok after enableShell=false should be BLOCKED).",
+    "Runtime-bound fields (maxIterations, temperature, bridgeVoicePreference) " +
+    "take effect on the very next tool call — no restart. " +
+    "Security fields (toolApproval, enableShell/Http/Browser, browserMode) are user-owned: when the USER asks you to change one, DO call this tool with that field and it takes effect immediately. " +
+    "The only rule: change a security setting ONLY when the user explicitly asked for it — never flip one on your own initiative, and never silently re-enable a capability just to get past a block.",
   parameters: {
     type: "object",
     properties: {

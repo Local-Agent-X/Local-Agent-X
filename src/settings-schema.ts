@@ -40,6 +40,15 @@ export interface FlippableSetting {
   runtime: boolean;
   /** Optional WS broadcast on change (cross-tab sync). */
   broadcast?: boolean;
+  /**
+   * true = user-owned security control (kill-switches, approval mode, browser
+   * mode). The agent may REQUEST a change but can never apply one on its own:
+   * the `setting` tool routes it through interactive approval, and the HTTP
+   * settings route refuses it unless the request carries a real operator token
+   * (i.e. the change came from the authenticated UI, not the agent's own
+   * loopback http_request). See isProtectedSetting().
+   */
+  protected?: boolean;
   /** Human-readable for the schema endpoint — used by the agent to pick the right field. */
   description: string;
 }
@@ -50,12 +59,14 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     field: "toolApproval",
     validate: z.enum(["auto", "confirm-risky", "confirm-all"]),
     runtime: true,
+    protected: true,
     description: "When the AI must ask for permission before running tools. auto=never, confirm-risky=bash/write/edit, confirm-all=every tool",
   },
   {
     field: "browserMode",
     validate: z.enum(["isolated", "attach"]),
     runtime: true,
+    protected: true,
     description: "Browser session mode. isolated=dedicated agent profile (safer), attach=user's real Chrome profile (requires Chrome closed)",
   },
   {
@@ -81,6 +92,7 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     validate: z.boolean(),
     runtime: true,
     broadcast: true,
+    protected: true,
     description: "Category kill-switch — when false, blocks ALL bash tool calls at pre-dispatch",
   },
   {
@@ -88,6 +100,7 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     validate: z.boolean(),
     runtime: true,
     broadcast: true,
+    protected: true,
     description: "Category kill-switch — when false, blocks ALL http_request tool calls at pre-dispatch",
   },
   {
@@ -95,6 +108,7 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     validate: z.boolean(),
     runtime: true,
     broadcast: true,
+    protected: true,
     description: "Category kill-switch — when false, blocks ALL browser_* tool calls at pre-dispatch",
   },
 
@@ -135,6 +149,16 @@ export const RUNTIME_SETTINGS: ReadonlyArray<FlippableSetting> = FLIPPABLE_SETTI
 export const BROADCAST_KEYS: ReadonlySet<string> = new Set(
   FLIPPABLE_SETTINGS.filter((s) => s.broadcast).map((s) => s.field),
 );
+
+/** User-owned security controls the agent can request but never self-apply. */
+export const PROTECTED_SETTINGS: ReadonlySet<string> = new Set(
+  FLIPPABLE_SETTINGS.filter((s) => s.protected).map((s) => s.field),
+);
+
+/** True when a field is a user-owned security control (see PROTECTED_SETTINGS). */
+export function isProtectedSetting(field: string): boolean {
+  return PROTECTED_SETTINGS.has(field);
+}
 
 /**
  * One-time migration: if a user's settings.json has a runtime value that

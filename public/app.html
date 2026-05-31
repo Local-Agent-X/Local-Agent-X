@@ -235,6 +235,12 @@
             <button class="action-btn" onclick="window.open('https://grok.com/?_s=usage','_blank')" title="Open SuperGrok subscription usage">View Usage ↗</button>
           </div>
           <div class="field-hint" style="margin-top:8px">Opens accounts.x.ai in your browser. Tokens land in <code>~/.lax/xai-auth.json</code> and refresh automatically.</div>
+          <div id="xai-cli-status" class="status-badge warn" style="margin-top:10px"><span class="status-dot"></span> Checking Grok Build CLI...</div>
+          <div class="btn-row" style="margin-top:8px">
+            <button id="btn-install-grok-cli" class="action-btn" onclick="installGrokCli()" style="display:none">Install Grok Build CLI</button>
+            <button id="btn-grok-cli-login" class="action-btn" onclick="doGrokCliLogin()">Sign in via Grok Build CLI</button>
+          </div>
+          <div class="field-hint" style="margin-top:6px">The Grok Build CLI (<code>grok</code>) lets <code>self_edit</code> do code surgery on your SuperGrok / X Premium+ subscription — a separate sign-in from the OAuth above. Signs in the CLI's own store at <code>~/.grok/auth.json</code>.</div>
           <div id="xai-open-fallback" style="display:none;margin-top:8px;font-size:.85rem"></div>
           <details style="margin-top:10px;font-size:.85rem">
             <summary style="cursor:pointer;color:var(--muted)">Browser couldn't reach the app? Paste the code from xAI</summary>
@@ -1116,7 +1122,7 @@
 <script src="/js/settings-telegram.js?v=v1"></script>
 <script src="/js/settings-onboarding.js?v=v1"></script>
 <script src="/js/settings-anthropic.js?v=v1"></script>
-<script src="/js/settings-xai.js?v=v1"></script>
+<script src="/js/settings-xai.js?v=v2"></script>
 <script src="/js/settings-providers.js?v=v1"></script>
 <script src="/js/settings-ollama.js?v=v1"></script>
 <script src="/js/settings-save-load.js?v=v1"></script>

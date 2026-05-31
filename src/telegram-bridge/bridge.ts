@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { apiCall, sendMessage, sendVoice, sendPhoto } from "./api.js";
+import { apiCall, sendMessage, sendVoice, sendPhoto, sendVideo } from "./api.js";
 import { describeNonTextMessage, dispatchReply, transcribeInboundVoice } from "./inbound.js";
 import {
   _voiceMirrorForChat,
@@ -104,6 +104,13 @@ export class TelegramBridge {
     const token = this.getToken();
     if (!token || this.state !== "connected") return false;
     return sendPhoto(token, chatId, image, caption);
+  }
+
+  /** Send a video (buffer) with optional caption. */
+  async sendVideo(chatId: string, video: Buffer, caption?: string): Promise<boolean> {
+    const token = this.getToken();
+    if (!token || this.state !== "connected") return false;
+    return sendVideo(token, chatId, video, caption);
   }
 
   /** Get current status */

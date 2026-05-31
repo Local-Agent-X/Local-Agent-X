@@ -94,6 +94,30 @@ export async function sendPhoto(token: string, chatId: string, image: Buffer, ca
   }
 }
 
+export async function sendVideo(token: string, chatId: string, video: Buffer, caption?: string): Promise<boolean> {
+  try {
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    if (caption) form.append("caption", caption.slice(0, 1024));
+    const blob = new Blob([video], { type: "video/mp4" });
+    form.append("video", blob, "video.mp4");
+
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendVideo`, {
+      method: "POST",
+      body: form,
+    });
+    const result = await res.json() as { ok: boolean; description?: string };
+    if (!result.ok) {
+      logger.error(`[telegram] sendVideo failed: ${result.description}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    logger.error("[telegram] sendVideo error:", (e as Error).message);
+    return false;
+  }
+}
+
 /** Download a Telegram-hosted file to ~/.lax/uploads, return the absolute path. */
 export async function downloadTelegramFile(token: string, fileId: string, kind: string): Promise<string> {
   const info = await apiCall(token, "getFile", { file_id: fileId });

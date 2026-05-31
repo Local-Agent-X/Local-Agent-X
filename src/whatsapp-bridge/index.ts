@@ -172,6 +172,21 @@ export class WhatsAppBridge {
     }
   }
 
+  /** Send a video (buffer) with optional caption. */
+  async sendVideo(to: string, video: Buffer, caption?: string): Promise<boolean> {
+    if (!this.sock || this.state !== "connected") {
+      logger.error("[whatsapp] Cannot send video — not connected");
+      return false;
+    }
+    try {
+      await this.sock.sendMessage(toJid(to), { video, caption: caption || "" });
+      return true;
+    } catch (e) {
+      logger.error("[whatsapp] sendVideo error:", (e as Error).message);
+      return false;
+    }
+  }
+
   /** Get current status (with rendered QR image as data URL) */
   async getStatus(): Promise<{
     state: ConnectionState;

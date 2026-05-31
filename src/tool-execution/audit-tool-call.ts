@@ -126,7 +126,12 @@ function shapeMsg(ctx: ToolCallContext): void {
       { type: "image_url", image_url: { url: `data:${imageData.mime};base64,${imageData.b64}`, detail: "auto" } },
     ]} as ChatCompletionMessageParam);
   } else {
-    ctx.msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) });
+    const toolMessage = { role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam;
+    // Video/large media rides a file PATH on the tool message — not fed to
+    // the model (no image_url), just carried so the canonical dispatcher can
+    // put it on the result envelope and the bridge can forward the file.
+    if (result._media) (toolMessage as unknown as Record<string, unknown>)._media = result._media;
+    ctx.msgs.push(toolMessage);
   }
 }
 

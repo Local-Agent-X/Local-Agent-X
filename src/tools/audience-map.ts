@@ -36,6 +36,7 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
 
   // Vision
   view_image:     ["main-chat", "spawned-agent", "operator", "build-intent"],
+  send_video:     ["main-chat"],
   screen_capture: ["main-chat"],
   ocr:            ["spawned-agent", "operator"],
 

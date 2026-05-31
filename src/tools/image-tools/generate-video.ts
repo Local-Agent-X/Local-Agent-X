@@ -5,7 +5,7 @@ import { getLaxDir } from "../../lax-data-dir.js";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { createLogger } from "../../logger.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, getActiveProvider, findRecentLocalImage, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
+import { ok, err, okWithVideo, getActiveProvider, findRecentLocalImage, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
 
 const xaiLogger = createLogger("image-tools.xai");
 
@@ -166,13 +166,14 @@ async function generateViaXaiVideo(
     ? `Reference image used: ${refSources.join(", ")}${usedFallback ? " (auto-selected from chat — Grok did not pass it explicitly)" : ""}`
     : `Reference image used: none (text-to-video only)`;
 
-  return ok(
+  return okWithVideo(
     `Video generated via Grok Imagine!\n` +
     `Prompt: ${prompt}\n` +
     `Duration: ${clamped}s\n` +
     `${refLine}\n` +
     `Saved: ${savePath}\n` +
-    `View: /videos/${filename}`
+    `View: /videos/${filename}`,
+    savePath,
   );
 }
 
@@ -286,14 +287,16 @@ export const generateVideoTool: ToolDefinition = {
       };
 
       const localUrl = `http://127.0.0.1:${getRuntimeConfig().port}/videos/${data.filename}`;
+      const savePath = join("workspace", "videos", data.filename);
 
-      return ok(
+      return okWithVideo(
         `Video generated!\n` +
         `Prompt: ${prompt}\n` +
         `Frames: ${data.frames} (~${Math.round(data.frames / 8)}s at 8fps)\n` +
         `Size: ${Math.round(data.size / 1024)}KB\n` +
         `View: ${localUrl}\n` +
-        `Saved: workspace/videos/${data.filename}`
+        `Saved: ${savePath}`,
+        savePath,
       );
     } catch (e) {
       const msg = (e as Error).message;

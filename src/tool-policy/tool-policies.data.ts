@@ -85,6 +85,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   glob:        { kernel: "file", risk: "safe", rules: [{ id: "allow-glob", decision: "allow", reason: "File pattern search (read-only)", priority: 50 }] },
   grep:        { kernel: "file", risk: "safe", rules: [{ id: "allow-grep", decision: "allow", reason: "Content search (read-only)", priority: 50 }] },
   view_image:  { kernel: "file", risk: "safe", rules: [{ id: "allow-view-image", decision: "allow", reason: "Image viewing (path-checked)", priority: 50 }] },
+  send_video:  { kernel: "file", risk: "safe", rules: [{ id: "allow-send-video", decision: "allow", reason: "Sends a local video to the user over their own bridge (path-checked read)", priority: 50 }] },
   ari_file:    { kernel: "internal", risk: "workspace-write" },
 
   // ── Network ──

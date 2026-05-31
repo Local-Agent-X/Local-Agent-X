@@ -8,7 +8,7 @@ import { readTool, writeTool, editTool, deleteFileTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
 import { processTools } from "./process-tools.js";
 import { webFetchTool } from "./web-tools.js";
-import { viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
+import { viewImageTool, sendVideoTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
 import { buildAppTool } from "./build-app.js";
 import { createPageTool } from "./create-page-tool.js";
 import { extractSiteAssetsTool } from "./asset-tools.js";
@@ -43,7 +43,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   globTool, grepTool, webSearchTool, _toolSearchTool,
   selfEditTool, primalRunBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   primalBuildStatusTool, primalBuildResumeTool,
-  viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool,
+  viewImageTool, sendVideoTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool,
   buildAppTool,
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool,
   ...processTools,

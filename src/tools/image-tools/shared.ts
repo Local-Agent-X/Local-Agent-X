@@ -29,6 +29,14 @@ export function okWithImage(
   };
 }
 
+/** Like ok(), but rides a saved video file PATH on `_media` so the
+ *  WhatsApp/Telegram bridge reads it off disk and forwards it as a video.
+ *  Path, not bytes — videos are too big to base64 onto the result and the
+ *  model can't watch them. */
+export function okWithVideo(content: string, path: string, mime = "video/mp4"): ToolResult {
+  return { content, _media: { kind: "video", path, mime } };
+}
+
 let _secretsStore: SecretsStore | undefined;
 
 /** Call this at startup to inject the secrets store for API-based image generation */

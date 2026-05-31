@@ -46,6 +46,47 @@ export const viewImageTool: ToolDefinition = {
   },
 };
 
+const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv", "avi", "m4v"]);
+const VIDEO_MIME: Record<string, string> = {
+  mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime",
+  webm: "video/webm", mkv: "video/x-matroska", avi: "video/x-msvideo",
+};
+
+export const sendVideoTool: ToolDefinition = {
+  name: "send_video",
+  description:
+    "Send a video file from this computer to the user over the current messaging channel (WhatsApp/Telegram). " +
+    "Use when the user asks you to send or share a video file with them. Only delivers on a messaging bridge — " +
+    "on web chat the user is already at the computer with the file. Supports mp4, mov, webm, mkv, avi. " +
+    "WhatsApp caps at 16MB, Telegram at 50MB.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Path to the video file (absolute or relative)" },
+    },
+    required: ["path"],
+  },
+  async execute(args) {
+    const { resolve } = await import("node:path");
+    const { existsSync, statSync } = await import("node:fs");
+
+    const filePath = resolve(String(args.path || ""));
+    if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
+
+    const ext = filePath.split(".").pop()?.toLowerCase() || "";
+    if (!VIDEO_EXTS.has(ext)) return { content: `Not a video file: .${ext}. Supported: ${[...VIDEO_EXTS].join(", ")}.`, isError: true };
+
+    const sizeMb = statSync(filePath).size / 1048576;
+    if (sizeMb > 50) return { content: `Video is ${sizeMb.toFixed(1)}MB — over the 50MB messaging limit, can't send.`, isError: true };
+
+    logger.info(`[send_video] ${filePath} (${sizeMb.toFixed(1)}MB)`);
+    return {
+      content: `Sending video to the user: ${filePath} (${sizeMb.toFixed(1)}MB).`,
+      _media: { kind: "video", path: filePath, mime: VIDEO_MIME[ext] || "video/mp4" },
+    };
+  },
+};
+
 export const screenCaptureTool: ToolDefinition = {
   name: "screen_capture",
   description:

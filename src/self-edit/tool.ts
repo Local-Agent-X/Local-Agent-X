@@ -39,7 +39,7 @@ import {
 } from "./session-lock.js";
 import { buildSelfEditPrompt } from "./prompt.js";
 import { runSelfEditBypass } from "./bypass-runner.js";
-import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./global-lock.js";
+import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./global-lock.js";
 
 export const selfEditTool: ToolDefinition = {
   name: "self_edit",
@@ -204,7 +204,9 @@ export const selfEditTool: ToolDefinition = {
           task, scopeHint: scopeHintArg, signal: combinedSignal,
           fullPrompt, authToken, onProgress,
         });
-        return { content: formatSandboxResult(result), isError: !result.ok };
+        // alreadyRunning is a benign serialization notice, not a failure — keep
+        // isError false so the duplicate dispatch doesn't trip the breaker.
+        return { content: formatSandboxResult(result), isError: !result.ok && !result.alreadyRunning };
       }
 
       // Bypass flow: write directly to the supplied cwd (autopilot worktree
@@ -216,16 +218,11 @@ export const selfEditTool: ToolDefinition = {
       // global lock so a wedged/long-running self_edit can't block fixing a
       // bricked app. Automated paths (autopilot _cwd) respect the lock instead.
       const isUnsafeRescue = unsafe && !internalCwd;
-      const gLock = acquireGlobalSelfEditLock({ force: isUnsafeRescue });
+      const gLock = acquireGlobalSelfEditLock({ force: isUnsafeRescue, task });
       if (!gLock.acquired) {
-        return {
-          content:
-            `BLOCKED — another self_edit is already running on this machine ` +
-            `(pid=${gLock.holder?.pid}, started=${gLock.holder?.startedAt}). It holds the ` +
-            `global self_edit lock; a concurrent run could corrupt the shared node_modules. ` +
-            `Wait for it to finish and retry.`,
-          isError: true,
-        };
+        // Benign serialization notice (not a failure) — end the turn, don't
+        // retry-loop. isError:false so the breaker doesn't trip.
+        return { content: formatGlobalLockBusy(gLock.holder, task), isError: false };
       }
       globalLockHeld = true;
       const subprocessCwd = internalCwd || LAX_REPO_ROOT;

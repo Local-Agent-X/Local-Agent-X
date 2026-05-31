@@ -155,7 +155,7 @@ try {
 if (process.env.LAX_SELF_EDIT_PROBE !== "1") {
   try {
     const { sweepOrphanWorktreeJunctions } = await import("./agency/worktree.js");
-    sweepOrphanWorktreeJunctions();
+    await sweepOrphanWorktreeJunctions();
   } catch (e) {
     logger.warn(`[boot] orphan worktree sweep failed: ${(e as Error).message}`);
   }

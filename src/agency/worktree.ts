@@ -242,6 +242,32 @@ function unlinkSharedJunctions(wtPath: string): string[] {
  * walking the entire source tree. Used by the boot sweep so a raw recursive
  * delete can never traverse a reparse point this helper missed.
  */
+/**
+ * Recursive-delete a directory, retrying on Windows transient lock errors.
+ *
+ * On Windows a just-released worktree dir is often still pinned for a few
+ * hundred ms by an AV scanner, the file indexer, or git's own handle teardown,
+ * surfacing as EBUSY / EPERM / ENOTEMPTY. The old single-shot rmSync logged and
+ * gave up, so the orphan survived every boot and accumulated forever. A short
+ * backoff lets the OS release the handle. ENOENT (already gone) is success.
+ */
+async function rmDirWithRetry(dir: string, attempts = 5): Promise<boolean> {
+  const transient = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EACCES"]);
+  for (let i = 0; i < attempts; i++) {
+    try { rmSync(dir, { recursive: true, force: true }); return true; }
+    catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return true;
+      if (!code || !transient.has(code) || i === attempts - 1) {
+        logger.warn(`[worktree] rm ${dir} failed (${code}): ${(e as Error).message}`);
+        return false;
+      }
+      await new Promise(r => setTimeout(r, 150 * (i + 1)));
+    }
+  }
+  return false;
+}
+
 function scanReparsePoints(wtPath: string): string[] {
   const found: string[] = [];
   const scanDir = (dir: string) => {
@@ -316,7 +342,7 @@ function pruneMergedAgentBranches(): void {
  * process, so everything on disk under WORKTREE_BASE is by definition an orphan
  * from a prior run.
  */
-export function sweepOrphanWorktreeJunctions(): void {
+export async function sweepOrphanWorktreeJunctions(): Promise<void> {
   // A live self_edit holds the global lock while it builds inside a worktree
   // under WORKTREE_BASE. During a restart overlap (old instance mid-self_edit,
   // new instance booting) that worktree is NOT an orphan — unlinking its
@@ -355,9 +381,10 @@ export function sweepOrphanWorktreeJunctions(): void {
       logger.warn(`[worktree] orphan sweep: live reparse point(s) in ${wtPath} (${[...new Set([...stuck, ...remaining])].join(", ")}) — left on disk to protect the parent tree`);
       continue;
     }
-    // Reparse-point-free now — safe to remove the orphan dir entirely.
-    try { rmSync(wtPath, { recursive: true, force: true }); removed++; }
-    catch (e) { logger.warn(`[worktree] orphan sweep: failed to remove ${wtPath}: ${(e as Error).message}`); }
+    // Reparse-point-free now — safe to remove the orphan dir entirely. Retry
+    // on Windows transient locks (AV / indexer / git handle) rather than
+    // letting the orphan survive to the next boot.
+    if (await rmDirWithRetry(wtPath)) removed++;
   }
 
   // Prune git's registry of the worktrees we just removed. Run AFTER unlinking

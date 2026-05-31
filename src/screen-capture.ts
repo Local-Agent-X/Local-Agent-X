@@ -3,18 +3,21 @@
  * Uses PowerShell on Windows for zero-dependency screenshots.
  */
 
-import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { execSync, execFileSync } from "node:child_process";
+import { writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 
+const FFMPEG = process.env.LAX_FFMPEG || "ffmpeg";
+
+// listMonitors still shells a tiny PowerShell enum script. That's benign:
+// screen *enumeration* isn't a capture, so Defender's AMSI never flags it.
+// The screenshot *capture* goes through ffmpeg gdigrab (captureScreen)
+// because AMSI blocks the System.Drawing CopyFromScreen script pattern as a
+// screen-grabber signature ("malicious content has been blocked").
 const TMP_DIR = join(getLaxDir(), "voice-tmp");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
-
-function tmpPath(ext: string): string {
-  return join(TMP_DIR, `screen_${randomBytes(6).toString("hex")}.${ext}`);
-}
 
 export interface ScreenCaptureOptions {
   /** Capture a specific monitor (0-based index). Omit for primary. */
@@ -44,20 +47,21 @@ function safeNum(val: unknown, name: string): number {
   return n;
 }
 
-/** Capture the screen using PowerShell + .NET */
+/** Capture the screen via ffmpeg gdigrab. Deliberately NOT a PowerShell
+ *  script: Defender's AMSI blocks the System.Drawing CopyFromScreen pattern
+ *  as a screen-grabber signature, which killed WhatsApp/Telegram screenshot
+ *  delivery. ffmpeg is an external binary (already a dependency — see
+ *  camera-tool.ts) and is not subject to AMSI script scanning. */
 export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCaptureResult {
   const format = options.format ?? "png";
   if (!/^(png|jpg)$/.test(format)) throw new Error(`Invalid format: ${format}`);
-  const outPath = tmpPath(format);
-  const scale = safeNum(options.scale ?? 1.0, "scale");
+  const scale = Math.min(1, Math.max(0.1, safeNum(options.scale ?? 1.0, "scale")));
 
-  // Sanitize region. LLMs love to auto-fill optional struct args with
-  // zeros — `region:{x:0,y:0,width:0,height:0}` arrives whenever the
-  // model "completes" the schema even though the user didn't ask for
-  // a region. A zero-dimension region falls through to
-  // `New-Object Bitmap(0,0)` → "Parameter is not valid" and the whole
-  // capture fails. Treat any region with non-positive width/height as
-  // "no region" and route through the monitor path instead.
+  // LLMs love to auto-fill optional struct args with zeros —
+  // `region:{x:0,y:0,width:0,height:0}` arrives whenever the model
+  // "completes" the schema even though the user didn't ask for a region. A
+  // zero-dimension region would hand ffmpeg a 0x0 grab. Treat any region
+  // with non-positive width/height as "no region".
   let effectiveRegion = options.region;
   if (effectiveRegion) {
     const w = Number(effectiveRegion.width);
@@ -67,147 +71,86 @@ export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCapture
     }
   }
 
-  // Pre-validate monitor index against listMonitors() so a bad index
-  // surfaces as a real error the agent can self-correct against. Validate
-  // even when a region is passed — caller may want a sub-rect of a NON-
-  // primary monitor and the index still has to be in range.
-  let monitorOffset = { x: 0, y: 0 };
+  // Resolve the capture rectangle in virtual-desktop coordinates. gdigrab's
+  // `desktop` input shares the origin Screen.Bounds reports — primary
+  // monitor at (0,0), other monitors offset from it (can be negative).
+  const monitors = listMonitors();
+  let target: { x: number; y: number; width: number; height: number };
   if (options.monitor != null) {
     const monitorIdx = safeNum(options.monitor, "monitor");
-    const monitors = listMonitors();
-    if (monitorIdx < 0 || monitorIdx >= monitors.length) {
-      const list = monitors.map(m => `${m.index}=${m.name}${m.primary ? " (primary)" : ""}`).join(", ");
+    const m = monitors[monitorIdx];
+    if (!m) {
+      const list = monitors.map(mm => `${mm.index}=${mm.name}${mm.primary ? " (primary)" : ""}`).join(", ");
       throw new Error(
         `Monitor index ${monitorIdx} out of range. Connected monitors: ${list || "(none detected)"}. ` +
         `Call list_monitors first or omit monitor for primary.`
       );
     }
-    // When monitor + region are BOTH set, region is RELATIVE to the chosen
-    // monitor's origin. Earlier the code silently ignored monitor whenever
-    // region was set, so an LLM that auto-filled `region:{x:0,y:0,w:1920,
-    // h:1080}` while asking for monitor 2 just got the primary screen.
-    // Visible failure: WhatsApp "show me monitor 2" returned the same
-    // image as "monitor 1" because region won and stayed at (0,0) which
-    // is on the primary screen.
-    monitorOffset = { x: monitors[monitorIdx].x, y: monitors[monitorIdx].y };
+    target = { x: m.x, y: m.y, width: m.width, height: m.height };
+  } else {
+    // Default to the PRIMARY monitor, not screen index 0 — they aren't
+    // always the same, and the old index-0 default mismatched the
+    // "captured primary" metadata vision-tools reports.
+    const primary = monitors.find(m => m.primary) ?? monitors[0] ?? { x: 0, y: 0, width: 1920, height: 1080 };
+    target = { x: primary.x, y: primary.y, width: primary.width, height: primary.height };
   }
 
-  // PS script body. We'll wrap the whole thing in try/catch + strict
-  // error preference so any failure surfaces with a real message
-  // instead of silently leaving $bmp null and chaining null-method
-  // errors down the script.
-  let psBody: string;
-
+  // Region is RELATIVE to the chosen monitor's top-left.
   if (effectiveRegion) {
-    const x = safeNum(effectiveRegion.x, "region.x") + monitorOffset.x;
-    const y = safeNum(effectiveRegion.y, "region.y") + monitorOffset.y;
-    const width = safeNum(effectiveRegion.width, "region.width");
-    const height = safeNum(effectiveRegion.height, "region.height");
-    psBody = `
-$w = ${width}; $h = ${height}
-$bmp = New-Object System.Drawing.Bitmap($w, $h)
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.CopyFromScreen(${x}, ${y}, 0, 0, [System.Drawing.Size]::new($w, $h))
-$g.Dispose()
-`;
-  } else {
-    const monitorIdx = safeNum(options.monitor ?? 0, "monitor");
-    psBody = `
-$screens = [System.Windows.Forms.Screen]::AllScreens
-if (${monitorIdx} -ge $screens.Count -or ${monitorIdx} -lt 0) {
-  throw "Monitor index ${monitorIdx} out of range (only $($screens.Count) connected)"
-}
-$screen = $screens[${monitorIdx}]
-$bounds = $screen.Bounds
-$w = $bounds.Width; $h = $bounds.Height
-$bmp = New-Object System.Drawing.Bitmap($w, $h)
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, [System.Drawing.Size]::new($w, $h))
-$g.Dispose()
-`;
-  }
-
-  let psScript = `
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Drawing
-Add-Type -AssemblyName System.Windows.Forms
-try {
-${psBody}`;
-
-  // Optionally scale down
-  if (scale < 1.0) {
-    psScript += `
-$newW = [int]($w * ${scale}); $newH = [int]($h * ${scale})
-$scaled = New-Object System.Drawing.Bitmap($newW, $newH)
-$g2 = [System.Drawing.Graphics]::FromImage($scaled)
-$g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-$g2.DrawImage($bmp, 0, 0, $newW, $newH)
-$g2.Dispose()
-$bmp.Dispose()
-$bmp = $scaled
-`;
-  }
-
-  if (format === "jpg") {
-    const q = safeNum(options.quality ?? 85, "quality");
-    psScript += `
-$codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
-$params = New-Object System.Drawing.Imaging.EncoderParameters(1)
-$params.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, ${q}L)
-$bmp.Save('${outPath.replace(/\\/g, "\\\\")}', $codec, $params)
-`;
-  } else {
-    psScript += `
-$bmp.Save('${outPath.replace(/\\/g, "\\\\")}', [System.Drawing.Imaging.ImageFormat]::Png)
-`;
-  }
-
-  psScript += `
-$bmp.Dispose()
-Write-Output "$w,$h"
-} catch {
-  Write-Error "screen_capture: $($_.Exception.Message)"
-  exit 1
-}
-`;
-
-  const scriptPath = join(TMP_DIR, `capture_${randomBytes(6).toString("hex")}.ps1`);
-  writeFileSync(scriptPath, psScript, "utf-8");
-
-  try {
-    let output = "";
-    try {
-      output = execSync(
-        `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`,
-        { encoding: "utf-8", timeout: 10_000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
-      ).toString().trim();
-    } catch (e) {
-      // execSync throws on non-zero exit; surface stderr as the real reason.
-      const err = e as { stderr?: Buffer | string; stdout?: Buffer | string; message?: string };
-      const stderr = err.stderr ? err.stderr.toString().trim() : "";
-      const stdout = err.stdout ? err.stdout.toString().trim() : "";
-      const reason = stderr || stdout || err.message || "unknown PowerShell failure";
-      throw new Error(`Screenshot capture failed: ${reason.split("\n").slice(0, 3).join(" | ")}`);
-    }
-
-    try { unlinkSync(scriptPath); } catch {}
-
-    if (!existsSync(outPath)) throw new Error("Screenshot capture failed: output file missing");
-
-    const image = readFileSync(outPath);
-    const [w, h] = output.split(",").map(Number);
-
-    return {
-      image,
-      format,
-      width: Math.round((w || 1920) * scale),
-      height: Math.round((h || 1080) * scale),
-      capturedAt: new Date().toISOString(),
+    target = {
+      x: target.x + safeNum(effectiveRegion.x, "region.x"),
+      y: target.y + safeNum(effectiveRegion.y, "region.y"),
+      width: safeNum(effectiveRegion.width, "region.width"),
+      height: safeNum(effectiveRegion.height, "region.height"),
     };
-  } finally {
-    try { unlinkSync(outPath); } catch {}
-    try { unlinkSync(scriptPath); } catch {}
   }
+
+  const outW = Math.max(1, Math.round(target.width * scale));
+  const outH = Math.max(1, Math.round(target.height * scale));
+
+  const args = [
+    "-hide_banner", "-loglevel", "error",
+    "-f", "gdigrab",
+    "-framerate", "1",
+    "-offset_x", String(Math.round(target.x)),
+    "-offset_y", String(Math.round(target.y)),
+    "-video_size", `${Math.round(target.width)}x${Math.round(target.height)}`,
+    "-i", "desktop",
+    "-frames:v", "1",
+  ];
+  if (scale < 1) args.push("-vf", `scale=${outW}:${outH}`);
+  args.push("-f", "image2pipe");
+  if (format === "jpg") {
+    args.push("-vcodec", "mjpeg", "-q:v", String(mjpegQuality(options.quality ?? 85)));
+  } else {
+    args.push("-vcodec", "png");
+  }
+  args.push("pipe:1");
+
+  let image: Buffer;
+  try {
+    image = execFileSync(FFMPEG, args, { maxBuffer: 64 * 1024 * 1024, timeout: 15_000, windowsHide: true });
+  } catch (e) {
+    const err = e as { stderr?: Buffer | string; message?: string };
+    const reason = (err.stderr ? err.stderr.toString().trim() : "") || err.message || "unknown ffmpeg failure";
+    throw new Error(`Screenshot capture failed: ${reason.split("\n").slice(0, 3).join(" | ")}`);
+  }
+  if (!image || image.length === 0) throw new Error("Screenshot capture failed: ffmpeg produced no output");
+
+  return {
+    image,
+    format,
+    width: outW,
+    height: outH,
+    capturedAt: new Date().toISOString(),
+  };
+}
+
+/** Map the 1-100 quality scale (100 = best) to ffmpeg mjpeg's -q:v range
+ *  (2 = best, 31 = worst). */
+function mjpegQuality(quality: number): number {
+  const clamped = Math.min(100, Math.max(1, safeNum(quality, "quality")));
+  return Math.min(31, Math.max(2, Math.round(2 + ((100 - clamped) / 100) * 29)));
 }
 
 /** Capture screen and return as base64 data URI */

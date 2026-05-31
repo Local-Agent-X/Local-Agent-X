@@ -23,7 +23,14 @@ const logger = createLogger("self-edit.sandbox-gates");
 // ── Config ─────────────────────────────────────────────────────────────────
 
 export const BUILD_TIMEOUT_MS = 5 * 60_000;
-export const BIND_TIMEOUT_MS = 60_000;
+// The probe boots the COMPILED server (npm start) in a fresh data dir, which
+// on this machine takes ~46s warm. 60s left almost no margin — a known-good
+// edit bound at 46s and a slightly slower boot (AV scan, cold FS, disk
+// contention) timed out at 60s and stranded a passing edit. The poll loop
+// early-exits the instant the probe process crashes (proc.exitCode !== null),
+// so a higher ceiling only buys margin for slow boots — it never masks a real
+// failure. 150s is comfortably under the 5-min build gate.
+export const BIND_TIMEOUT_MS = 150_000;
 export const SMOKE_TIMEOUT_MS = 30_000;
 
 export interface GateResult {

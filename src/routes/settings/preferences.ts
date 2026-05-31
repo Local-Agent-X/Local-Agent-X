@@ -1,9 +1,29 @@
 import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { timingSafeEqual } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, atomicWriteFileSync } from "../../server-utils.js";
-import { RUNTIME_SETTINGS, BROADCAST_KEYS, publicSchema } from "../../settings-schema.js";
+import { RUNTIME_SETTINGS, BROADCAST_KEYS, publicSchema, isProtectedSetting } from "../../settings-schema.js";
 import { loadSettings, saveSettings } from "../../settings.js";
+
+/**
+ * True only when the request carries the real app auth token. The authenticated
+ * UI always does; the agent's own loopback `http_request` does not (it rides
+ * the User-Agent auth exemption in request-handler with no token). We use this
+ * to keep the agent from writing user-owned security settings through this
+ * route — the equivalent gate to the `setting` tool's approval prompt.
+ */
+function hasValidOperatorToken(req: IncomingMessage, authToken: string): boolean {
+  const header = req.headers.authorization || "";
+  const provided = header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (!provided || !authToken || provided.length !== authToken.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(provided), Buffer.from(authToken));
+  } catch {
+    return false;
+  }
+}
 
 /** Tiny edit-distance for 'did you mean' hints on sidebar pin 404s. */
 function levenshtein(a: string, b: string): number {
@@ -34,6 +54,15 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
   // is a single line in settings-schema.ts — no edits here.
   if (method === "POST" && url.pathname === "/api/settings") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+    // User-owned security controls can only be changed by the authenticated UI
+    // (real operator token). The agent's own loopback http_request is auth-
+    // exempt by User-Agent and must not be able to flip a kill-switch here —
+    // it has to go through the `setting` tool, which asks the user to approve.
+    const protectedFields = Object.keys(body).filter((k) => isProtectedSetting(k));
+    if (protectedFields.length > 0 && !hasValidOperatorToken(req, ctx.config.authToken)) {
+      json(403, { error: `Security settings (${protectedFields.join(", ")}) can only be changed by the user in Settings → Security. Use the \`setting\` tool, which asks the user to approve.` });
+      return true;
+    }
     const merged = { ...loadSettings(), ...body };
     // Atomic write — same race as cron-service.saveJobs() pre-9ec343f.
     // Concurrent POST /api/settings from two clients was overwriting

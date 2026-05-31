@@ -21,6 +21,7 @@ import {
   decisionDenies,
 } from "../approval-manager.js";
 import { getRuntimeConfig } from "../config.js";
+import { isProtectedSetting } from "../settings-schema.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";
@@ -98,7 +99,7 @@ export async function assertToolCallAllowed(
     throw new ToolBlocked({
       stage: "tool-policy",
       reason: "Shell Access is disabled in Settings → Security → Tool Policy.",
-      recovery: "Re-enable the Shell Access toggle to use bash. Other tools (write/edit/http_request) still work.",
+      recovery: "Shell is off. Tell the user, and ask if they'd like it on. If they confirm, call `setting` with enableShell=true. Don't re-enable it on your own just to get past this block. Other tools (write/edit/http_request) still work.",
       userHint: USER_HINTS.policy,
     });
   }
@@ -106,7 +107,7 @@ export async function assertToolCallAllowed(
     throw new ToolBlocked({
       stage: "tool-policy",
       reason: "HTTP Requests are disabled in Settings → Security → Tool Policy.",
-      recovery: "Re-enable the HTTP Requests toggle to make outbound API calls.",
+      recovery: "HTTP is off. Tell the user, and ask if they'd like it on. If they confirm, call `setting` with enableHttp=true. Don't re-enable it on your own just to get past this block.",
       userHint: USER_HINTS.policy,
     });
   }
@@ -114,7 +115,7 @@ export async function assertToolCallAllowed(
     throw new ToolBlocked({
       stage: "tool-policy",
       reason: "Browser is disabled in Settings → Security → Tool Policy.",
-      recovery: "Re-enable the Browser toggle to use Playwright browser control.",
+      recovery: "The browser is off. Tell the user, and ask if they'd like it on. If they confirm, call `setting` with enableBrowser=true. Don't re-enable it on your own just to get past this block.",
       userHint: USER_HINTS.policy,
     });
   }
@@ -151,6 +152,26 @@ export async function assertToolCallAllowed(
       reason: decision.reason,
       recovery: decision.recovery,
       userHint: decision.userHint,
+    });
+  }
+
+  // User-owned security controls (kill-switches, approval mode, browser mode)
+  // may be changed when the user asks in an interactive session, but NEVER in
+  // an autonomous run (cron/api/delegated sub-agent) where no user is present.
+  // That autonomous block is the hard guarantee; the prompt-side rule "only
+  // when the user asks" keeps the agent from flipping one on its own initiative
+  // — e.g. re-enabling its own kill-switch to get past a block.
+  if (
+    call.name === "setting" &&
+    isProtectedSetting(String((call.args as { field?: unknown }).field ?? "")) &&
+    ctx.callContext !== "local"
+  ) {
+    const field = String((call.args as { field?: unknown }).field ?? "");
+    throw new ToolBlocked({
+      stage: "approval",
+      reason: `"${field}" is a user-controlled security setting and cannot be changed in an automated/background run.`,
+      recovery: "Security settings can only be changed when the user asks in an interactive chat. Surface this to the user instead.",
+      userHint: USER_HINTS.policy,
     });
   }
 

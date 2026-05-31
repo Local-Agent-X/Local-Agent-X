@@ -15,6 +15,20 @@ import { resolveCredential } from "../../auth/resolve.js";
 export function ok(content: string): ToolResult { return { content }; }
 export function err(content: string): ToolResult { return { content, isError: true }; }
 
+/** Like ok(), but rides the generated image bytes on `_image` so the chat
+ *  tool dispatcher harvests them — feeds the model the image AND lets the
+ *  WhatsApp/Telegram bridge auto-forward it as a photo. Without this,
+ *  generate_image returns only a localhost URL the phone can't open. */
+export function okWithImage(
+  content: string,
+  image: { b64: string; path: string; question: string; mime?: string },
+): ToolResult {
+  return {
+    content,
+    _image: { mime: image.mime || "image/png", b64: image.b64, path: image.path, question: image.question },
+  };
+}
+
 let _secretsStore: SecretsStore | undefined;
 
 /** Call this at startup to inject the secrets store for API-based image generation */

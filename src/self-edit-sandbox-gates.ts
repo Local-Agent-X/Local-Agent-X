@@ -22,8 +22,6 @@ const logger = createLogger("self-edit.sandbox-gates");
 export const BUILD_TIMEOUT_MS = 5 * 60_000;
 export const BIND_TIMEOUT_MS = 60_000;
 export const SMOKE_TIMEOUT_MS = 30_000;
-export const CLAUDE_TIMEOUT_MS = 10 * 60_000;
-const MAX_OUTPUT_CHARS = 4000;
 
 export interface GateResult {
   ok: boolean;
@@ -216,56 +214,8 @@ export async function gateSmoke(port: number, authToken: string, signal?: AbortS
   }
 }
 
-// ── claude -p spawner ──────────────────────────────────────────────────────
-
-export function spawnClaude(cwd: string, prompt: string, signal?: AbortSignal): Promise<string> {
-  return new Promise((resolveP) => {
-    let stdout = "";
-    let stderr = "";
-    const proc = spawn("claude", [
-      "-p",
-      "--model", "claude-opus-4-8",
-      "--permission-mode", "bypassPermissions",
-      "--no-session-persistence",
-      "--output-format", "text",
-    ], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      shell: process.platform === "win32",
-      // Scrubbed env — the injected surgery child must not inherit the
-      // user's credentials. The build/bind gates that later EXECUTE this
-      // child's output are scrubbed the same way. See child-env.ts.
-      env: buildSelfEditChildEnv(),
-    });
-    // Windows shell:true spawn wraps the binary in cmd.exe; proc.kill only
-    // signals the wrapper. `killProcessTree` does the proper SIGTERM +
-    // taskkill /F /T so claude.exe (the actual descendant) dies on
-    // cancel/timeout. Without it, Stop leaves claude running for minutes
-    // and the worker's lease never releases.
-    const killTree = () => killProcessTree(proc);
-    const abortListener = killTree;
-    signal?.addEventListener("abort", abortListener);
-    const timer = setTimeout(killTree, CLAUDE_TIMEOUT_MS);
-    proc.stdout?.on("data", (c: Buffer) => { stdout += c.toString(); if (stdout.length > MAX_OUTPUT_CHARS * 3) stdout = stdout.slice(-MAX_OUTPUT_CHARS * 3); });
-    proc.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abortListener);
-      if (code !== 0 && !stdout.trim()) {
-        resolveP(`(claude -p exited ${code}, no output)\n${stderr.slice(0, 600)}`);
-      } else {
-        resolveP(stdout.trim().slice(0, MAX_OUTPUT_CHARS));
-      }
-    });
-    proc.on("error", (e) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abortListener);
-      resolveP(`(claude -p spawn error: ${e.message})`);
-    });
-    proc.stdin?.write(prompt);
-    proc.stdin?.end();
-  });
-}
+// The surgeon spawner (claude / codex / grok, picked from the active provider)
+// lives in self-edit/surgeon.ts — runSurgeon(). The sandbox calls it directly.
 
 // ── Probe process cleanup helper ───────────────────────────────────────────
 

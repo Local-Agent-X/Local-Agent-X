@@ -28,30 +28,39 @@
  * env path; it does not make the child hermetic.
  */
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { isCredentialKey } from "../mcp-client/connection.js";
 import { ENV_ALLOWLIST } from "../mcp-client/env-credential-patterns.js";
 import { getNpmGlobalBin } from "../anthropic-client/cli-path.js";
 
 /**
- * The credential keys the child is allowed to inherit — its own Anthropic
- * auth. Exempted from the final credential strip. Uppercase-canonical to
- * match isCredentialKey's comparison. CLAUDE_CODE_OAUTH_TOKEN covers the
- * OAuth-token install shape; the common Claude-CLI subscription login reads
- * ~/.claude from disk and needs none of these.
+ * The ONLY credential keys each surgeon CLI may inherit — its own provider
+ * auth. Everything else is stripped. Exempted from the final credential strip.
+ * Uppercase-canonical to match isCredentialKey's comparison. Each CLI ALSO
+ * reads its own on-disk store (~/.claude, ~/.codex/auth.json, ~/.grok/auth.json)
+ * via HOME — which the allowlist passes through — so subscription logins need
+ * none of these; the env vars cover API-key-only installs.
  */
-export const CHILD_AUTH_PASSTHROUGH: ReadonlySet<string> = new Set([
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_AUTH_TOKEN",
-  "CLAUDE_CODE_OAUTH_TOKEN",
-]);
+const AUTH_PASSTHROUGH_BY_PROVIDER: Record<string, ReadonlySet<string>> = {
+  anthropic: new Set(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]),
+  codex: new Set(["OPENAI_API_KEY", "CODEX_API_KEY"]),
+  xai: new Set(["XAI_API_KEY", "GROK_API_KEY", "GROK_DEPLOYMENT_KEY"]),
+};
+
+/** Back-compat: the default (anthropic) passthrough set. */
+export const CHILD_AUTH_PASSTHROUGH = AUTH_PASSTHROUGH_BY_PROVIDER.anthropic;
 
 /**
- * Build the scrubbed env for a self_edit `claude -p` subprocess.
+ * Build the scrubbed env for a self_edit surgeon subprocess.
  *
  * @param base source env to scrub (defaults to process.env; injectable for tests)
+ * @param provider which surgeon CLI — selects the auth passthrough set and any
+ *        provider-specific PATH fixup (defaults to "anthropic")
  */
-export function buildSelfEditChildEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function buildSelfEditChildEnv(base: NodeJS.ProcessEnv = process.env, provider: string = "anthropic"): NodeJS.ProcessEnv {
   const out: Record<string, string> = {};
+  const passthrough = AUTH_PASSTHROUGH_BY_PROVIDER[provider] ?? AUTH_PASSTHROUGH_BY_PROVIDER.anthropic;
 
   // 1. Allowlist passthrough — non-credential vars the child needs to run.
   for (const key of ENV_ALLOWLIST) {
@@ -59,29 +68,31 @@ export function buildSelfEditChildEnv(base: NodeJS.ProcessEnv = process.env): No
     if (typeof val === "string" && val.length > 0) out[key] = val;
   }
 
-  // 2. The child's own Anthropic auth — pass through if present so
-  //    API-key-only installs (no `claude login`) still authenticate.
-  for (const key of CHILD_AUTH_PASSTHROUGH) {
+  // 2. The child's own provider auth — pass through if present so API-key-only
+  //    installs (no CLI login) still authenticate.
+  for (const key of passthrough) {
     const val = base[key];
     if (typeof val === "string" && val.length > 0) out[key] = val;
   }
 
   // 3. Final credential strip (defense-in-depth) — runs the shared deny
   //    tables over everything assembled above, exempting the child's own
-  //    Anthropic auth. A no-op for the current allowlist, but guards against
+  //    provider auth. A no-op for the current allowlist, but guards against
   //    a credential-shaped var sneaking in if the allowlist ever grows.
   for (const key of Object.keys(out)) {
-    if (isCredentialKey(key, CHILD_AUTH_PASSTHROUGH)) delete out[key];
+    if (isCredentialKey(key, passthrough)) delete out[key];
   }
 
-  // 4. Prepend the npm global bin so a globally-installed `claude`
-  //    (claude.cmd on Windows) resolves on PATH — same fixup
+  // 4. Prepend the npm global bin so a globally-installed `claude`/`codex`
+  //    (and `.cmd` on Windows) resolves on PATH — same fixup
   //    npmAugmentedEnv() applies, but on top of the scrubbed PATH.
+  const sep = process.platform === "win32" ? ";" : ":";
   const bin = getNpmGlobalBin();
-  if (bin) {
-    const sep = process.platform === "win32" ? ";" : ":";
-    out.PATH = `${bin}${sep}${out.PATH || ""}`;
-  }
+  if (bin) out.PATH = `${bin}${sep}${out.PATH || ""}`;
+
+  // 5. The grok binary lives in ~/.grok/bin (not an npm global), so the xAI
+  //    surgeon needs it on PATH to resolve.
+  if (provider === "xai") out.PATH = `${join(homedir(), ".grok", "bin")}${sep}${out.PATH || ""}`;
 
   return out;
 }

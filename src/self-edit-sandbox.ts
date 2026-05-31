@@ -31,7 +31,7 @@ import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, re
 import { recordMerge } from "./self-edit-rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
 import { runSurgeon, formatSurgeonOutput } from "./self-edit/surgeon.js";
-import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
+import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./self-edit/global-lock.js";
 import { fingerprintParentDeps, restoreParentDeps } from "./self-edit/parent-deps-guard.js";
 import { scanWorktreeForStagedSecrets } from "./self-edit/exfil-scan.js";
 import { redactSecrets } from "./security/secret-scanner.js";
@@ -62,6 +62,11 @@ export interface SandboxResult {
    *  failure) — currently only the security diff-scope gate (#10), which
    *  requires explicit human review before security/policy/auth changes land. */
   heldForReview?: boolean;
+  /** True when this call was refused because another self_edit already holds the
+   *  global lock (a second agent acting on the same instruction). NOT a failure
+   *  — the caller should just end its turn. Kept distinct from gate failures so
+   *  the tool layer can mark it isError:false (no circuit-breaker trip). */
+  alreadyRunning?: boolean;
 }
 
 export interface SandboxOpts {
@@ -121,9 +126,14 @@ export async function pickProbePort(): Promise<number> {
 // ── Main entry ─────────────────────────────────────────────────────────────
 
 export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxResult> {
-  const lock = acquireGlobalSelfEditLock();
+  const lock = acquireGlobalSelfEditLock({ task: opts.task });
   if (!lock.acquired) {
-    return failPreflight(`Another self_edit sandbox is running (pid=${lock.holder?.pid}, started=${lock.holder?.startedAt}). Try again in a moment.`);
+    return {
+      ok: false, output: "",
+      gates: { deps: SKIPPED_GATE, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE },
+      branchName: "", filesMerged: null, alreadyRunning: true,
+      failure: formatGlobalLockBusy(lock.holder, opts.task),
+    };
   }
 
   const slug = slugify(opts.task);
@@ -339,14 +349,6 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
 
 // ── Result helpers ────────────────────────────────────────────────────────
 
-function failPreflight(failure: string): SandboxResult {
-  return {
-    ok: false, output: "",
-    gates: { deps: SKIPPED_GATE, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE },
-    branchName: "", filesMerged: null, failure,
-  };
-}
-
 function failResult(
   output: string,
   branch: string,
@@ -358,6 +360,9 @@ function failResult(
 
 /** Pretty-print a SandboxResult as a short summary the chat agent can surface. */
 export function formatSandboxResult(r: SandboxResult): string {
+  // Benign collision — another self_edit already holds the global lock. Not a
+  // failure; surface the no-retry notice directly (no "[BLOCKED]" framing).
+  if (r.alreadyRunning) return r.failure || "A self_edit is already running — wait for it to finish.";
   if (r.ok) {
     const g = r.gates;
     return [

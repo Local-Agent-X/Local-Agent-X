@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { stripEphemeralMessages } from "../providers/sanitize.js";
 import { WhatsAppBridge } from "../whatsapp-bridge/index.js";
@@ -249,18 +249,22 @@ export function createBridgeHandler(deps: {
       try {
         const { readOpMessages } = await import("../canonical-loop/store.js");
         const images: Buffer[] = [];
+        const videoPaths: string[] = [];
         for (const row of readOpMessages(canonicalOpId)) {
           if (row.role !== "tool_result") continue;
           const r = (row.content as { result?: unknown })?.result;
           if (!r || typeof r !== "object") continue;
           const imgs = (r as { images?: unknown }).images;
-          if (!Array.isArray(imgs)) continue;
-          for (const img of imgs) {
-            if (!img || typeof img !== "object") continue;
-            const b64 = (img as { b64?: unknown }).b64;
-            if (typeof b64 !== "string") continue;
-            try { images.push(Buffer.from(b64, "base64")); } catch { /* skip malformed */ }
+          if (Array.isArray(imgs)) {
+            for (const img of imgs) {
+              if (!img || typeof img !== "object") continue;
+              const b64 = (img as { b64?: unknown }).b64;
+              if (typeof b64 !== "string") continue;
+              try { images.push(Buffer.from(b64, "base64")); } catch { /* skip malformed */ }
+            }
           }
+          const media = (r as { media?: { kind?: string; path?: string } }).media;
+          if (media && media.kind === "video" && typeof media.path === "string") videoPaths.push(media.path);
         }
         if (images.length > 0) {
           logger.info(`[bridge:${platform}] sending ${images.length} image(s) to ${from}`);
@@ -272,8 +276,29 @@ export function createBridgeHandler(deps: {
             }
           }
         }
+        // Videos forward by PATH — read off disk, size-guard, send. The text
+        // reply already carries the saved path, so an over-limit clip still
+        // tells the user where it landed even when we skip the send.
+        const maxBytes = channelType === "whatsapp" ? 16 * 1024 * 1024 : 50 * 1024 * 1024;
+        for (const path of videoPaths) {
+          try {
+            const buf = readFileSync(resolve(path));
+            if (buf.length > maxBytes) {
+              logger.warn(`[bridge:${platform}] video ${path} is ${Math.round(buf.length / 1048576)}MB, over the ${Math.round(maxBytes / 1048576)}MB limit — not sending`);
+              continue;
+            }
+            logger.info(`[bridge:${platform}] sending video (${Math.round(buf.length / 1048576)}MB) to ${from}`);
+            if (channelType === "whatsapp") {
+              await getWhatsappBridge().sendVideo(from, buf).catch((e: Error) => logger.error(`[whatsapp] video send failed: ${e.message}`));
+            } else if (channelType === "telegram") {
+              await getTelegramBridge().sendVideo(from, buf).catch((e: Error) => logger.error(`[telegram] video send failed: ${e.message}`));
+            }
+          } catch (e) {
+            logger.warn(`[bridge:${platform}] video read/send failed for ${path}: ${(e as Error).message}`);
+          }
+        }
       } catch (e) {
-        logger.warn(`[bridge:${platform}] image scan failed: ${(e as Error).message}`);
+        logger.warn(`[bridge:${platform}] media scan failed: ${(e as Error).message}`);
       }
     }
 

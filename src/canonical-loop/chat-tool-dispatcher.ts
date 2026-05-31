@@ -136,8 +136,12 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
         const canonicalStatus: ToolDispatchResult["status"] =
           envStatus === "ok" || envStatus === "running" ? "ok" : "error";
 
-        const result: unknown = harvestedImages.length > 0
-          ? { text: content, images: harvestedImages }
+        // Video/large media rides a file path on the tool message (set by
+        // shapeMsg). Carry it onto the result envelope so bridge handlers can
+        // forward the file — same channel as harvested images, path not bytes.
+        const media = (toolMsg as { _media?: { kind: string; path: string; mime: string } })._media;
+        const result: unknown = harvestedImages.length > 0 || media
+          ? { text: content, ...(harvestedImages.length > 0 ? { images: harvestedImages } : {}), ...(media ? { media } : {}) }
           : content;
 
         // Deferred-tool augmentation. tool_search returns schemas as text;

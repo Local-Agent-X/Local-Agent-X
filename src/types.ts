@@ -111,6 +111,15 @@ export interface ToolResult {
    * the vision tools (screen_capture, view_image) and generate_image.
    */
   _image?: { mime: string; b64: string; path: string; question: string };
+
+  /**
+   * A large media file (video) the tool produced or wants delivered. Unlike
+   * `_image` this carries a PATH, not bytes — videos are too big to base64
+   * onto every result and the model can't ingest them as image_url. The
+   * WhatsApp/Telegram bridge reads the file off disk and forwards it. Set by
+   * generate_video and send_video. Not fed to the model.
+   */
+  _media?: { kind: "video"; path: string; mime: string };
 }
 
 export interface AgentTurn {

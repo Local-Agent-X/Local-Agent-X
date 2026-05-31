@@ -39,7 +39,7 @@ const ARI_ACTION_MAP: Record<string, string> = {
   browser_fill_from_secret: "fill",
   clipboard_write_from_secret: "clipboard",
   // file
-  glob: "read", grep: "read", view_image: "read", delete_file: "write",
+  glob: "read", grep: "read", view_image: "read", send_video: "read", delete_file: "write",
   // http — get for read paths, post for mutations
   calendar_check_availability: "get", calendar_list_events: "get",
   calendar_create_event: "post",

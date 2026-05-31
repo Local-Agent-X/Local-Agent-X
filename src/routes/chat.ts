@@ -79,7 +79,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     if (!message) { json(400, { error: "message is required" }); return true; }
     const timeoutMs = Math.min(Math.max(Number(evalBody.timeoutMs) || 60_000, 5_000), 120_000);
 
-    const evalSessionId = `eval${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const evalSessionId = `eval-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     // Mark the session as dry-run BEFORE we kick off the chat turn so the
     // very first tool dispatch hits the short-circuit. Cleared in `finally`.
     markDryRunSession(evalSessionId);
@@ -106,10 +106,14 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       }
     };
 
-    // Fire-and-forget the chat turn — we resolve as soon as we have what we
-    // need. The turn itself keeps running in the background (necessary so the
-    // canonical loop can clean up), but we delete the session below regardless.
-    runChatTurn({
+    // Fire-and-forget the chat turn — we resolve `done` as soon as we have the
+    // first tool (or the turn ends / times out) and return the envelope. The
+    // turn keeps running in the background and may dispatch more tools, so
+    // dry-run must stay in effect for its WHOLE lifetime — but no longer.
+    // Unmark + tombstone the session when the turn actually settles, not on a
+    // fixed timer: a fixed window either expired mid-turn or lingered onto a
+    // later real turn on the same session and silently dry-ran it.
+    void runChatTurn({
       sessionId: evalSessionId,
       message,
       attachments: [],
@@ -117,19 +121,19 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       ctx,
       requestRole,
       sseSink: captureSink,
-    }).catch((e) => { errorMsg = errorMsg || safeErrorMessage(e); resolve(); });
+    })
+      .catch((e) => { errorMsg = errorMsg || safeErrorMessage(e); resolve(); })
+      .finally(() => {
+        unmarkDryRunSession(evalSessionId);
+        // sessionStore.delete is idempotent; deleting only after the turn has
+        // settled avoids the background turn re-persisting (resurrecting) it.
+        try { ctx.sessionStore.delete(evalSessionId); } catch {}
+      });
 
     try {
       await done;
     } finally {
       clearTimeout(timer);
-      // Tombstone the session so it never appears in the user's sidebar.
-      // sessionStore.delete is idempotent and forgiving of unknown IDs.
-      try { ctx.sessionStore.delete(evalSessionId); } catch {}
-      // Keep dry-run marked for 5 more minutes so any background-running
-      // chat turn that hasn't fully torn down still hits the short-circuit
-      // for any subsequent tool dispatches. Then clean up the set entry.
-      setTimeout(() => unmarkDryRunSession(evalSessionId), 5 * 60_000).unref();
     }
 
     json(200, { firstTool, allTools, assistantText: assistantText.slice(0, 500), error: errorMsg });

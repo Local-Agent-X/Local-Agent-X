@@ -11,9 +11,12 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
 
   // List sessions
   if (method === "GET" && url.pathname === "/api/sessions") {
-    // Hide system sessions (dream, cron, IDE) from the sidebar
+    // Hide system sessions (dream, cron, IDE, eval) from the sidebar. Eval
+    // sessions are dry-run throwaways from /api/eval/run — surfacing one lets
+    // the UI adopt it and route a real message into a dry-run turn (silent
+    // no-op reported as success).
     const all = ctx.sessionStore.list();
-    const visible = all.filter(s => !s.id.startsWith("dream-") && !s.id.startsWith("cron-") && !s.id.startsWith("ide-"));
+    const visible = all.filter(s => !s.id.startsWith("dream-") && !s.id.startsWith("cron-") && !s.id.startsWith("ide-") && !s.id.startsWith("eval-"));
     json(200, visible);
     return true;
   }

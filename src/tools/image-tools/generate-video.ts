@@ -182,7 +182,8 @@ export const generateVideoTool: ToolDefinition = {
   description:
     "Generate a short video from a text prompt. When provider=xai with credentials, uses xAI Grok Imagine " +
     "(text-to-video, ~60-240s, up to 15s duration, optional reference images). Otherwise falls back to local CogVideoX " +
-    "(must be running on port 7861, ~6 second outputs). Videos saved as MP4.",
+    "(must be running on port 7861, ~6 second outputs). Videos saved as MP4. " +
+    "On WhatsApp/Telegram the generated video is delivered to the user automatically — do NOT also call send_video for it.",
   parameters: {
     type: "object",
     properties: {

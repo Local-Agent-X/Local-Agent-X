@@ -279,10 +279,18 @@ export function createBridgeHandler(deps: {
         // Videos forward by PATH — read off disk, size-guard, send. The text
         // reply already carries the saved path, so an over-limit clip still
         // tells the user where it landed even when we skip the send.
+        // Dedupe on the resolved path: the model commonly calls generate_video
+        // (which auto-forwards) AND send_video on the same file, and the two
+        // tools emit the path in different forms (relative vs absolute). Send
+        // each distinct file once.
         const maxBytes = channelType === "whatsapp" ? 16 * 1024 * 1024 : 50 * 1024 * 1024;
+        const sentVideos = new Set<string>();
         for (const path of videoPaths) {
+          const abs = resolve(path);
+          if (sentVideos.has(abs)) continue;
+          sentVideos.add(abs);
           try {
-            const buf = readFileSync(resolve(path));
+            const buf = readFileSync(abs);
             if (buf.length > maxBytes) {
               logger.warn(`[bridge:${platform}] video ${path} is ${Math.round(buf.length / 1048576)}MB, over the ${Math.round(maxBytes / 1048576)}MB limit — not sending`);
               continue;

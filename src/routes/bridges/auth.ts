@@ -408,12 +408,17 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
   }
   // Grok Build CLI install — ships via x.ai's install script, NOT npm (so it
   // can't reuse the openai/anthropic npm-install routes). Drops the binary in
-  // ~/.grok/bin and updates the user's shell PATH.
+  // ~/.grok/bin and updates the user's shell PATH. x.ai ships a separate
+  // installer per OS: a bash script for macOS/Linux, a PowerShell script for
+  // Windows. The bash flow dies on native Windows (no /bin/bash), so branch.
   if (method === "POST" && url.pathname === "/api/auth/xai/install-cli") {
     try {
       const { exec } = await import("node:child_process");
       const { promisify } = await import("node:util");
-      const { stdout, stderr } = await promisify(exec)("curl -fsSL https://x.ai/cli/install.sh | bash", { timeout: 180_000 });
+      const installCmd = process.platform === "win32"
+        ? `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://x.ai/cli/install.ps1 | iex"`
+        : "curl -fsSL https://x.ai/cli/install.sh | bash";
+      const { stdout, stderr } = await promisify(exec)(installCmd, { timeout: 180_000 });
       let version = "unknown";
       try { version = _execSync("grok --version", { timeout: 5000, stdio: "pipe", env: grokAugmentedEnv() }).toString().trim(); } catch {}
       json(200, { ok: true, version, output: (stdout + stderr).slice(-500) });

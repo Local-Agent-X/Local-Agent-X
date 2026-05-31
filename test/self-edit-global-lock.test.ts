@@ -21,7 +21,7 @@ const DATA_DIR = mkdtempSync(join(tmpdir(), "lax-lock-test-"));
 process.env.LAX_DATA_DIR = DATA_DIR;
 const LOCK = join(DATA_DIR, "self-edit-sandbox.lock");
 
-const { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } = await import("../src/self-edit/global-lock.js");
+const { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, isSelfEditLockHeldByLiveProcess } = await import("../src/self-edit/global-lock.js");
 
 const DEAD_PID = 2147483646; // unlikely to exist → isPidAlive false
 
@@ -67,5 +67,26 @@ describe("global self_edit lock", () => {
     writeFileSync(LOCK, JSON.stringify({ pid: DEAD_PID, startedAt: "2020-01-01T00:00:00.000Z" }));
     releaseGlobalSelfEditLock();
     expect(existsSync(LOCK)).toBe(true); // not ours → left intact
+  });
+});
+
+describe("isSelfEditLockHeldByLiveProcess (boot-sweep guard)", () => {
+  it("is false when no lock file exists", () => {
+    expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
+  });
+
+  it("is true while a live process holds the lock", () => {
+    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: "2020-01-01T00:00:00.000Z" }));
+    expect(isSelfEditLockHeldByLiveProcess()).toBe(true);
+  });
+
+  it("is false for a stale lock whose holder PID is dead", () => {
+    writeFileSync(LOCK, JSON.stringify({ pid: DEAD_PID, startedAt: "2020-01-01T00:00:00.000Z" }));
+    expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
+  });
+
+  it("is false for a corrupt lock file", () => {
+    writeFileSync(LOCK, "{ not json");
+    expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
   });
 });

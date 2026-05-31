@@ -210,37 +210,58 @@ suites still green (27 tests).
 - **Fail-open intent/scope gates** — deliberate: better to allow an occasional
   misroute than block legit self_edits when the classifier is flaky. Left as-is.
 
-## Backlog — committed follow-ups (DO NOT DROP)
+## Pass 5 — SHIPPED (the four committed boot-sweep / probe follow-ups)
 
-Tracked deliberately; the user does not want these skipped.
+The backlog the prior passes deliberately tracked ("DO NOT DROP"), all closed.
 
-- **Branch cleanup in the boot-sweep.** `sweepOrphanWorktreeJunctions`
-  (worktree.ts) removes orphaned worktree *dirs* + prunes the registry, but
-  leaves the `selfedit/<slug>/<ts>` (and `autopilot/<slug>/<ts>`) git *branches*
-  behind. They accumulate as harmless refs forever. → After the sweep, delete
-  branches that match the sandbox/autopilot naming pattern and are fully merged
-  OR whose worktree is gone. Be careful not to delete a branch with an active
-  worktree (the sweep already skips those).
-- **Harden `killProbe` process-tree kill.** On Windows, `spawn(..., {shell:true})`
-  wraps the child in cmd.exe, so `proc.kill()` only signals the wrapper and
-  leaves the real `node`/`tsx` tree alive (this leaked probes during the
-  2026-05-30 bind-gate debugging). `killProbe` (self-edit-sandbox-gates.ts) must
-  use the same `killProcessTree` (taskkill /F /T) the bypass-runner already uses,
-  not a bare `proc.kill`. Same gap may exist anywhere a probe/worktree process is
-  killed.
-- **#7 probe-port collision.** The autopilot end-of-shift boot proof
-  (boot-proof.ts) picks its probe port from `pid+time` and does NOT hold the
-  global self_edit lock, so it can collide with a concurrent sandbox probe port →
-  false "boot proof failed". Cosmetic (no brick), but real. → Either serialize
-  the boot proof under the global lock, or retry on EADDRINUSE with a fresh port.
-- **Boot sweep can nuke an ACTIVE self_edit worktree on a mid-self_edit restart.**
-  The probe case is fixed (`LAX_SELF_EDIT_PROBE` skip), but the REAL server's
-  boot sweep still treats every `%TEMP%/lax-worktrees` dir as an orphan — so
-  restarting LAX while a self_edit is mid-flight would unlink that live worktree's
-  junction out from under it. Narrow edge case (restart during an active
-  self_edit). → Add a "skip junctions currently in use" guard: the sweep already
-  leaves EBUSY/locked reparse points alone; extend it to detect an in-use
-  junction before unlinking rather than relying on the unlink failing.
+- **Branch cleanup in the boot-sweep.** `pruneMergedAgentBranches` (worktree.ts),
+  called at the end of `sweepOrphanWorktreeJunctions` after `git worktree prune`,
+  deletes `selfedit/<slug>/<ts>` + `autopilot/<slug>/<ts>` branches that are
+  FULLY MERGED into the current base and not checked out in any worktree.
+  - *Deliberate narrowing of the original "merged OR worktree-gone" criterion.* A
+    held-for-review or gate-failed self_edit preserves its **unmerged** branch on
+    purpose (the user is told to `git diff`/`git merge` it), and the sweep removes
+    that branch's worktree — so "worktree is gone" is NOT evidence the work is
+    abandoned. Deleting on that signal would destroy review work. Merged-only is
+    the zero-data-loss subset; it still clears the real accumulation case (the
+    autopilot human-merge flow, where the user merges by hand and nothing in the
+    app ever cleans up the ref). `git branch -d` (lower-case) refuses to delete an
+    unmerged branch as a hard backstop even if the classification were wrong.
+- **`killProbe` / probe tree-kill (Windows).** `killProbe` already used
+  `killProcessTree`, but the two in-line kills inside `gateBind` (the abort and
+  bind-timeout paths) were bare `proc.kill("SIGKILL")`, which on Windows only
+  signal the cmd.exe wrapper and leak the real `node` tree (this leaked probes
+  during the 2026-05-30 debugging). Both now call `killProcessTree(proc,
+  "SIGKILL")`. The other `proc.kill` sites in the tree are unrelated subsystems
+  (audio/browser/voice/mcp), out of scope.
+- **#7 probe-port collision.** `pickProbePort` (self-edit-sandbox.ts) no longer
+  trusts a bare `pid+time` hash. It starts at the hashed offset and walks the
+  7100–7999 range to the first port nothing is listening on (`isProbePortFree`
+  binds a throwaway server to test). This fixes BOTH a false "did not bind" AND
+  the worse failure mode — the bind poll hitting *another* probe on a collided
+  port and reporting a false PASS. Picking a verified-free port fixes every
+  caller (sandbox bind gate + autopilot boot proof) without holding a long lock
+  across a multi-minute boot. A tiny TOCTOU window remains between the check and
+  the probe's own listen; the bind gate's exit-code check still catches an
+  EADDRINUSE there.
+- **Boot sweep nuking an ACTIVE self_edit worktree on mid-restart.** The sweep
+  now early-returns when `isSelfEditLockHeldByLiveProcess()` (global-lock.ts) is
+  true — a live self_edit holds the global lock while building inside a worktree
+  under `%TEMP%/lax-worktrees`, so during a restart overlap (old instance
+  mid-self_edit, new instance booting) the new boot won't treat that live
+  worktree as an orphan and unlink the junction it's building on. A stale
+  (dead-pid) lock returns false, so genuine orphans are still reclaimed.
+
+Tests: `test/self-edit-global-lock.test.ts` (+4 for the live-lock guard, 10
+green). Verified: `npm run build` clean; the 6 self-edit/worktree suites green
+(38 tests); `pickProbePort` runtime-checked to skip an occupied in-range port.
+
+### Honest residual
+- The autopilot end-of-shift boot proof boots an existing autopilot worktree but
+  does NOT hold the global self_edit lock for the whole shift, so the live-lock
+  guard does not protect an autopilot worktree from a mid-shift restart sweep the
+  way it protects an active self_edit. Out of scope here (item #4 was scoped to an
+  active self_edit); flagged so it isn't mistaken for closed.
 
 ## RESOLVED: bind gate — orphan sweep nuked the probe's own worktree (2026-05-31)
 

@@ -27,7 +27,7 @@ const logger = createLogger("autopilot.boot-proof");
 export async function runEndOfShiftBootProof(config: AutopilotConfig, signal?: AbortSignal): Promise<BootProof> {
   const start = Date.now();
   const authToken = getRuntimeConfig().authToken;
-  const port = pickProbePort();
+  const port = await pickProbePort();
   logger.info(`[autopilot.boot-proof] booting ${config.worktreeName} on probe port ${port}`);
 
   const bind = await gateBind(config.worktreeName, port, authToken, signal);

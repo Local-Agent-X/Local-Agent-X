@@ -91,6 +91,17 @@ export function acquireGlobalSelfEditLock(opts: AcquireOptions = {}): LockResult
   return { acquired: false, holder: readHolder() };
 }
 
+/** True if the global self_edit lock is currently held by a LIVE process. The
+ *  boot-time orphan-worktree sweep checks this: a live holder means a self_edit
+ *  (in this or, during a restart overlap, another process) owns a worktree under
+ *  %TEMP%/lax-worktrees, so the sweep must not treat it as an orphan and unlink
+ *  the node_modules junction it's actively building on. A stale (dead-pid) lock
+ *  returns false — that worktree really is an orphan. */
+export function isSelfEditLockHeldByLiveProcess(): boolean {
+  const holder = readHolder();
+  return !!holder && isPidAlive(holder.pid);
+}
+
 /** Release the lock, but ONLY if we still own it. If we were force-displaced by
  *  an `_unsafe` rescue, the file now belongs to that process — deleting it would
  *  free the lock out from under the live owner. */

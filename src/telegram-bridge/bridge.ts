@@ -249,8 +249,24 @@ export class TelegramBridge {
     const safeText = text.slice(0, 80).replace(/[\x00-\x1f\x7f]/g, "");
     logger.info(`[telegram] ${safeName} (${chatId}): ${safeText}${text.length > 80 ? "..." : ""}`);
 
+    // /stop | /cancel — hard-kill the running turn. Intercepted BEFORE the
+    // processingLock bounce so it works mid-turn (the bounce would otherwise
+    // swallow it). Doesn't depend on the model cooperating.
+    const cmd = text.trim().toLowerCase();
+    if (cmd === "/stop" || cmd === "/cancel") {
+      const { stopBridgeTurn } = await import("../bridge-control.js");
+      const n = await stopBridgeTurn("telegram", chatId, sessionId, "telegram-stop");
+      await this.sendMessage(chatId, n > 0 ? "🛑 Stopped." : "Nothing running.");
+      return;
+    }
+
     if (this.processingLock.has(chatId)) {
-      await this.sendMessage(chatId, "Still working on your last message...");
+      // A message arriving mid-turn is steering the running turn — inject it
+      // instead of bouncing. Falls back to the old "still working" notice
+      // only if the op already finished out from under us.
+      const { injectBridgeTurn } = await import("../bridge-control.js");
+      const injected = await injectBridgeTurn("telegram", chatId, sessionId, text, "telegram-inject");
+      await this.sendMessage(chatId, injected ? "→ Got it — passing that to the running task." : "Still working on your last message...");
       return;
     }
 

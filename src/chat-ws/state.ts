@@ -40,7 +40,17 @@ export function getMessageCountForSession(): ((sessionId: string) => number) | n
   return messageCountForSession;
 }
 
+// Eval sessions (/api/eval/run) are dry-run throwaways that run a real chat
+// turn purely to observe tool routing. They must never reach a browser:
+// announcing one via active_chats makes the UI subscribe and render its
+// streamed messages into the user's open chat. Filter them at the broadcast
+// source so no client path can pick them up.
+function isHeadlessSession(sessionId: string): boolean {
+  return sessionId.startsWith("eval-");
+}
+
 export function broadcastToSession(sessionId: string, event: ServerEvent): void {
+  if (isHeadlessSession(sessionId)) return;
   const payload = JSON.stringify({ type: "event", sessionId, event });
   for (const [ws, subs] of clients) {
     if (subs.has(sessionId) && ws.readyState === 1 /* OPEN */) {
@@ -50,7 +60,7 @@ export function broadcastToSession(sessionId: string, event: ServerEvent): void 
 }
 
 export function broadcastActiveChats(): void {
-  const activeIds = [...activeChats.keys()].filter(id => !activeChats.get(id)!.done);
+  const activeIds = [...activeChats.keys()].filter(id => !activeChats.get(id)!.done && !isHeadlessSession(id));
   const payload = JSON.stringify({ type: "active_chats", sessionIds: activeIds });
   for (const [ws] of clients) {
     if (ws.readyState === 1 /* OPEN */) {

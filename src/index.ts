@@ -146,11 +146,19 @@ try {
 // junction into the parent's real deps; we unlink those FIRST so a later
 // `git worktree prune` / AV scan / temp cleanup can't traverse them and eat
 // the parent node_modules (#11). Best-effort — must never block boot.
-try {
-  const { sweepOrphanWorktreeJunctions } = await import("./agency/worktree.js");
-  sweepOrphanWorktreeJunctions();
-} catch (e) {
-  logger.warn(`[boot] orphan worktree sweep failed: ${(e as Error).message}`);
+//
+// NEVER in a self_edit bind probe: the probe boots from a worktree INSIDE
+// %TEMP%/lax-worktrees, so the sweep would treat its own (still-active)
+// worktree as an orphan and unlink the node_modules junction it's booting on,
+// killing the probe mid-boot. Only the real server (never under that dir)
+// sweeps.
+if (process.env.LAX_SELF_EDIT_PROBE !== "1") {
+  try {
+    const { sweepOrphanWorktreeJunctions } = await import("./agency/worktree.js");
+    sweepOrphanWorktreeJunctions();
+  } catch (e) {
+    logger.warn(`[boot] orphan worktree sweep failed: ${(e as Error).message}`);
+  }
 }
 
 // Single-instance enforcement + pidfile + parent-pid heartbeat. Must run

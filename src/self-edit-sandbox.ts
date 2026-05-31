@@ -29,7 +29,8 @@ import { createServer } from "node:net";
 import { type ChildProcess } from "node:child_process";
 import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getWorktreeChangedFiles, securitySensitiveChangedFiles } from "./agency/worktree.js";
 import { recordMerge } from "./self-edit-rollback.js";
-import { gateDeps, gateBuild, gateBind, gateSmoke, spawnClaude, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
+import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
+import { runSurgeon, formatSurgeonOutput } from "./self-edit/surgeon.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
 import { fingerprintParentDeps, restoreParentDeps } from "./self-edit/parent-deps-guard.js";
 import { scanWorktreeForStagedSecrets } from "./self-edit/exfil-scan.js";
@@ -157,7 +158,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // the child echoed before it reaches chat/logs (defense-in-depth — a
     // child that read a credential shouldn't surface it through stdout).
     progress("Running source-code repair in sandbox…");
-    const claudeOutput = redactSecrets(await spawnClaude(wt.path, opts.fullPrompt, opts.signal));
+    const surgeonOutput = redactSecrets(formatSurgeonOutput(await runSurgeon(wt.path, opts.fullPrompt, opts.signal)));
 
     // Parent-deps guard (#2): the parent's node_modules must be UNCHANGED across
     // the run (the only legit install — the deps gate — is isolated to the
@@ -169,7 +170,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
       progress("Parent deps mutated mid-run — restoring via npm ci…");
       const restored = restoreParentDeps(repoRoot);
       return failResult(
-        claudeOutput, branch,
+        surgeonOutput, branch,
         { deps: SKIPPED_GATE, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE },
         `Aborted — the subprocess mutated the parent's node_modules mid-run (it ran an install despite instructions). ` +
         `Parent deps restored via npm ci (${restored.ok ? "ok" : `FAILED: ${restored.detail}`}). No changes were merged; re-run the self_edit if still needed.`,
@@ -184,7 +185,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     const deps = gateDeps(name);
     if (!deps.skipped && !deps.ok) {
       logger.warn(`[self-edit.sandbox] deps gate failed: ${deps.detail.slice(0, 200)}`);
-      return failResult(claudeOutput, branch, { deps, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, `Dependency install failed: ${deps.detail.slice(0, 600)}`);
+      return failResult(surgeonOutput, branch, { deps, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, `Dependency install failed: ${deps.detail.slice(0, 600)}`);
     }
     logger.info(`[self-edit.sandbox] deps gate ${deps.skipped ? "skipped (no dep changes)" : `passed (${deps.durationMs}ms)`}`);
 
@@ -194,7 +195,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     const build = gateBuild(name);
     if (!build.ok) {
       logger.warn(`[self-edit.sandbox] build gate failed: ${build.detail.slice(0, 200)}`);
-      return failResult(claudeOutput, branch, { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, `Build failed: ${build.detail.slice(0, 600)}`);
+      return failResult(surgeonOutput, branch, { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, `Build failed: ${build.detail.slice(0, 600)}`);
     }
     logger.info(`[self-edit.sandbox] build gate passed (${build.durationMs}ms)`);
 
@@ -207,7 +208,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     probeDataDir = bindOutcome.dataDir;
     if (!bindOutcome.result.ok) {
       logger.warn(`[self-edit.sandbox] bind gate failed: ${bindOutcome.result.detail.slice(0, 200)}`);
-      return failResult(claudeOutput, branch, { deps, build, bind: bindOutcome.result, smoke: SKIPPED_GATE }, `Server failed to bind: ${bindOutcome.result.detail.slice(0, 600)}`);
+      return failResult(surgeonOutput, branch, { deps, build, bind: bindOutcome.result, smoke: SKIPPED_GATE }, `Server failed to bind: ${bindOutcome.result.detail.slice(0, 600)}`);
     }
     logger.info(`[self-edit.sandbox] bind gate passed (${bindOutcome.result.durationMs}ms)`);
 
@@ -217,7 +218,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     const smoke = await gateSmoke(port, opts.authToken, opts.signal);
     if (!smoke.ok) {
       logger.warn(`[self-edit.sandbox] smoke gate failed: ${smoke.detail.slice(0, 200)}`);
-      return failResult(claudeOutput, branch, { deps, build, bind: bindOutcome.result, smoke }, `Agent smoke test failed: ${smoke.detail.slice(0, 600)}`);
+      return failResult(surgeonOutput, branch, { deps, build, bind: bindOutcome.result, smoke }, `Agent smoke test failed: ${smoke.detail.slice(0, 600)}`);
     }
     logger.info(`[self-edit.sandbox] smoke gate passed (${smoke.durationMs}ms)`);
 
@@ -239,7 +240,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
       logger.warn(`[self-edit.sandbox] security-sensitive paths touched — holding merge for human review: ${securityTouched.join(", ")}`);
       const base = mergeInfo?.baseBranch ?? "main";
       return {
-        ok: false, output: claudeOutput,
+        ok: false, output: surgeonOutput,
         gates: { deps, build, bind: bindOutcome.result, smoke },
         branchName: branch, filesMerged: null, heldForReview: true,
         failure:
@@ -263,7 +264,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
       logger.warn(`[self-edit.sandbox] secret-shaped content staged in diff — holding merge for human review: ${exfil.hits.map(h => h.file).join(", ")}`);
       const base = mergeInfo?.baseBranch ?? "main";
       return {
-        ok: false, output: claudeOutput,
+        ok: false, output: surgeonOutput,
         gates: { deps, build, bind: bindOutcome.result, smoke },
         branchName: branch, filesMerged: null, heldForReview: true,
         failure:
@@ -281,7 +282,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     const merge = mergeWorktree(name);
     if (!merge.merged) {
       return {
-        ok: false, output: claudeOutput,
+        ok: false, output: surgeonOutput,
         gates: { deps, build, bind: bindOutcome.result, smoke },
         branchName: branch, filesMerged: null,
         failure: `Gates passed but merge failed: ${merge.error || "unknown"}. Branch ${branch} preserved on disk.`,
@@ -296,7 +297,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
       if (!rebuilt.ok) {
         revertBranchTo(mergeInfo.repoRoot, mergeInfo.baseBranch, mergeInfo.sha);
         return failResult(
-          claudeOutput, branch,
+          surgeonOutput, branch,
           { deps, build, bind: bindOutcome.result, smoke },
           `Merge reverted — post-merge build failed: ${rebuilt.detail.slice(0, 600)}`,
         );
@@ -313,7 +314,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     }
 
     return {
-      ok: true, output: claudeOutput,
+      ok: true, output: surgeonOutput,
       gates: { deps, build, bind: bindOutcome.result, smoke },
       branchName: branch, filesMerged: merge.files,
     };

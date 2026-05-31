@@ -1,24 +1,27 @@
 /**
- * self_edit — delegates source-code repair to Claude Code.
+ * self_edit — delegates source-code repair to a coding-CLI surgeon picked from
+ * the active provider (anthropic→claude, codex/openai→codex, xai→grok; every
+ * other provider falls back to claude until the generic non-CLI surgeon ships).
+ * See self-edit/surgeon.ts.
  *
  * Purpose: when the in-Local-Agent-X agent hits a bug (tool call "succeeded"
  * but outcome is wrong, UI didn't update, endpoint returns wrong shape,
  * etc.), it can call self_edit("description of the bug or change") to have
- * Claude Code read the codebase, diagnose, patch, and rebuild.
+ * the surgeon read the codebase, diagnose, patch, and rebuild.
  *
  * The main agent stays in charge of high-level reasoning ("the theme
  * didn't flip visually — something's wrong") and offloads the actual
  * code surgery to a model that's specifically trained for it.
  *
  * Default flow: sandboxed.
- *   - claude -p runs inside an isolated git worktree
+ *   - the surgeon CLI runs inside an isolated git worktree
  *   - after it returns, three gates run: build / server-bind / agent-smoke
  *   - only if all three pass do the changes merge to main
  *   - if any fail, the worktree branch is preserved and main is untouched
  *   - this means a self_edit that breaks the agent CANNOT brick the agent
  *
  * Bypass flow: when args._cwd is set (autopilot route) OR args._unsafe is
- * true (emergency rescues), claude -p runs directly in the supplied cwd
+ * true (emergency rescues), the surgeon runs directly in the supplied cwd
  * without sandbox gates. _unsafe is server-injected only — not in the
  * public schema — so the model can't ask for it.
  */

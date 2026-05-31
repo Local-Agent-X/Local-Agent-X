@@ -138,7 +138,7 @@ export async function gateBind(name: string, port: number, authToken: string, si
   const deadline = Date.now() + BIND_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (signal?.aborted) {
-      try { proc.kill("SIGKILL"); } catch {}
+      killProcessTree(proc, "SIGKILL");
       return { result: { ok: false, skipped: false, durationMs: Date.now() - start, detail: "aborted" }, proc: null, dataDir };
     }
     if (proc.exitCode !== null) {
@@ -160,7 +160,7 @@ export async function gateBind(name: string, port: number, authToken: string, si
     } catch { /* not yet bound */ }
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  try { proc.kill("SIGKILL"); } catch {}
+  killProcessTree(proc, "SIGKILL");
   return {
     result: {
       ok: false, skipped: false, durationMs: Date.now() - start,

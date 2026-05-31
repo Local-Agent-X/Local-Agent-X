@@ -25,6 +25,7 @@
 
 import { rmSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { createServer } from "node:net";
 import { type ChildProcess } from "node:child_process";
 import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getWorktreeChangedFiles, securitySensitiveChangedFiles } from "./agency/worktree.js";
 import { recordMerge } from "./self-edit-rollback.js";
@@ -85,9 +86,35 @@ function nowSlug(): string {
   return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 }
 
-export function pickProbePort(): number {
+/** Resolve to true if nothing currently holds `port` on 127.0.0.1. */
+function isProbePortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = createServer();
+    srv.once("error", () => resolve(false));
+    srv.once("listening", () => srv.close(() => resolve(true)));
+    srv.listen(port, "127.0.0.1");
+  });
+}
+
+/**
+ * Pick a FREE probe port. Hashing pid+time alone (the old behavior) could hand
+ * two concurrent probes — e.g. a sandbox bind gate and an autopilot end-of-shift
+ * boot proof, which don't share the global lock — the same port. The loser then
+ * either fails with a false "did not bind" or, worse, the bind poll hits the
+ * OTHER probe and reports a false PASS. We start at the hashed offset (keeps
+ * probes spread across the range) and walk forward to the first port nothing is
+ * listening on. A tiny TOCTOU window remains between this check and the probe's
+ * own listen; the bind gate's exit-code check still catches an EADDRINUSE there.
+ */
+export async function pickProbePort(): Promise<number> {
+  const span = PROBE_PORT_MAX - PROBE_PORT_MIN;
   const h = createHash("sha1").update(`${process.pid}-${Date.now()}`).digest();
-  return PROBE_PORT_MIN + (h.readUInt16BE(0) % (PROBE_PORT_MAX - PROBE_PORT_MIN));
+  const start = h.readUInt16BE(0) % span;
+  for (let i = 0; i < span; i++) {
+    const port = PROBE_PORT_MIN + ((start + i) % span);
+    if (await isProbePortFree(port)) return port;
+  }
+  return PROBE_PORT_MIN + start; // whole range busy — let the bind gate surface it
 }
 
 // ── Main entry ─────────────────────────────────────────────────────────────
@@ -172,7 +199,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     logger.info(`[self-edit.sandbox] build gate passed (${build.durationMs}ms)`);
 
     // Gate 2: bind
-    const port = pickProbePort();
+    const port = await pickProbePort();
     logger.info(`[self-edit.sandbox] running bind gate on port ${port}`);
     progress(`Bind gate: launching probe server on :${port}…`);
     const bindOutcome = await gateBind(name, port, opts.authToken, opts.signal);

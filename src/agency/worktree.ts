@@ -13,6 +13,7 @@ import { existsSync, symlinkSync, readdirSync, statSync, lstatSync, unlinkSync, 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { isSelfEditLockHeldByLiveProcess } from "../self-edit/global-lock.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("agency.worktree");
 
@@ -260,6 +261,44 @@ function scanReparsePoints(wtPath: string): string[] {
 }
 
 /**
+ * After the orphan sweep, delete leftover agent branches (selfedit/<slug>/<ts>,
+ * autopilot/<slug>/<ts>) that are FULLY MERGED into the current base and not
+ * checked out in any worktree. A successful self_edit merge already deletes its
+ * own branch; this catches the autopilot human-merge flow, where the user merges
+ * the branch by hand and nothing in the app ever cleans up the dead ref.
+ *
+ * Merged-ONLY, deliberately narrower than "merged OR worktree-gone": a
+ * held-for-review or gate-failed self_edit preserves its UNMERGED branch on
+ * purpose (the user is told to `git diff`/`git merge` it) while the sweep above
+ * removes that branch's worktree — so "worktree is gone" does NOT mean the work
+ * is abandoned. `git branch -d` (lower-case) refuses to delete an unmerged
+ * branch, so even a misclassified branch can't lose work.
+ */
+function pruneMergedAgentBranches(): void {
+  const checkedOut = new Set<string>();
+  try {
+    for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {
+      if (line.startsWith("branch ")) checkedOut.add(line.slice(7).replace(/^refs\/heads\//, ""));
+    }
+  } catch { return; }
+
+  let branches: string[];
+  try {
+    branches = git(["branch", "--merged"]).split("\n")
+      .map(l => l.replace(/^[*+]\s*/, "").trim())
+      .filter(Boolean);
+  } catch { return; }
+
+  let deleted = 0;
+  for (const b of branches) {
+    if (!(b.startsWith("selfedit/") || b.startsWith("autopilot/")) || checkedOut.has(b)) continue;
+    try { git(["branch", "-d", b]); deleted++; }
+    catch { /* unmerged or still in use — leave it */ }
+  }
+  if (deleted) logger.info(`[worktree] orphan sweep: deleted ${deleted} merged agent branch(es)`);
+}
+
+/**
  * Boot-time sweep of orphaned worktrees left in %TEMP%/lax-worktrees by a
  * self_edit / autopilot run that crashed between worktree-create and cleanup.
  *
@@ -278,6 +317,15 @@ function scanReparsePoints(wtPath: string): string[] {
  * from a prior run.
  */
 export function sweepOrphanWorktreeJunctions(): void {
+  // A live self_edit holds the global lock while it builds inside a worktree
+  // under WORKTREE_BASE. During a restart overlap (old instance mid-self_edit,
+  // new instance booting) that worktree is NOT an orphan — unlinking its
+  // junction would brick the in-flight build. Skip the whole sweep; the next
+  // boot (no active self_edit) reclaims any genuine orphans.
+  if (isSelfEditLockHeldByLiveProcess()) {
+    logger.info("[worktree] orphan sweep: a live self_edit holds the global lock — skipping to protect its active worktree");
+    return;
+  }
   if (!existsSync(WORKTREE_BASE)) return;
   let dirs: string[];
   try {
@@ -316,6 +364,9 @@ export function sweepOrphanWorktreeJunctions(): void {
   // so prune can never traverse a live junction.
   try { git(["worktree", "prune"]); }
   catch (e) { logger.warn(`[worktree] orphan sweep: git worktree prune failed: ${(e as Error).message}`); }
+
+  // Now that the registry is pruned, drop dead agent branches (merged-only).
+  pruneMergedAgentBranches();
 
   logger.info(`[worktree] orphan sweep: ${dirs.length} dir(s) scanned, ${removed} removed, ${stuckTotal} junction(s) stuck`);
 }

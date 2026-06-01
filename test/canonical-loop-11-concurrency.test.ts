@@ -96,7 +96,17 @@ async function awaitTerminal(opId: string, timeoutMs = 5_000): Promise<void> {
   for (;;) {
     const op = readOp(opId);
     const s = op?.canonical?.state;
-    if (s === "succeeded" || s === "failed" || s === "cancelled") return;
+    // Wait for the op's SETTLED resting state: terminal AND the worker's
+    // lease released. The worker persists the terminal state inside the turn
+    // commit, then releases the lease and emits `lease_lost` in its finally
+    // (after a setImmediate yield on the done/error path). Returning on state
+    // alone can observe a terminal op before that finally runs — so
+    // lease_acquired/lease_lost pairing assertions read a half-written event
+    // log. The lease clears in the same synchronous finally that emits
+    // lease_lost, so a null leaseOwner means both have landed.
+    if (s === "succeeded" || s === "failed" || s === "cancelled") {
+      if ((op?.canonical?.leaseOwner ?? null) === null) return;
+    }
     if (Date.now() > deadline) {
       throw new Error(`awaitTerminal timed out for ${opId} — state=${s}`);
     }

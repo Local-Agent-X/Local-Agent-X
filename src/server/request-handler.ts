@@ -222,6 +222,12 @@ export function createRequestHandler(deps: {
         const h: Record<string, string> = { "Content-Type": ct[ext] || "application/octet-stream" };
         if (ext === "html") {
           h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"; h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
+          // The HTML carries the mtime-stamped bundle URL (getPageBundle rewrite).
+          // The bundle is served `immutable`, so the HTML MUST never be cached —
+          // a heuristically-cached HTML pins an OLD stamp and the renderer keeps
+          // loading the stale immutable bundle forever (empty sidebar / no
+          // providers after any source change). Mirror the /apps/ route's policy.
+          h["Cache-Control"] = "no-cache, must-revalidate"; h["Pragma"] = "no-cache";
           const raw = readFileSync(fp, "utf-8");
           const page = (fp.split(/[/\\]/).pop() || "").replace(/\.html$/i, "");
           const pb = getPageBundle(page, publicDir, raw);

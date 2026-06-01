@@ -1058,6 +1058,12 @@
 <script src="/js/shared-md.js?v=v1"></script>
 <script src="/js/shared-dom.js?v=v1"></script>
 <script src="/js/shared-api.js?v=v1"></script>
+<!-- ChatStreamStore must load before app.js's top-level boot (renderSidebar →
+     isChatActive reads window.ChatStreamStore) AND before every chat-ws /
+     chat-send module. Under the single-file serve-time bundle a boot throw in
+     app.js halts the WHOLE bundle, so this forward-reference — harmless when
+     scripts were isolated — left ChatStreamStore permanently undefined. -->
+<script src="/js/chat-stream-store.js?v=v2"></script>
 <!-- App shell modules. Load order matters: state.js defines the `let`
      bindings (chats, projects, activeChat, …) used by every other module.
      app.js runs the top-level boot last, so it must come after all
@@ -1096,9 +1102,6 @@
 <script src="/js/chat-voice-ui.js?v=v1"></script>
 <script src="/js/chat-extras.js?v=v1"></script>
 <script src="/js/chat-helpers.js?v=v1"></script>
-<!-- ChatStreamStore must load before every chat-ws / chat-send module so
-     they can reference window.ChatStreamStore at file-evaluation time. -->
-<script src="/js/chat-stream-store.js?v=v2"></script>
 <!-- chat-ws-handler split: per-event-group modules must load BEFORE
      chat-ws-handler.js so its dispatcher can reference handleSettingsChanged,
      dispatchBgOpEvent, dispatchChatStreamEvent, handleAgentFeedEvent,

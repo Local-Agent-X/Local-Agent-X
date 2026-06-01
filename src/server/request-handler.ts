@@ -3,6 +3,7 @@ import { join, resolve, relative } from "node:path";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
+import { getPageBundle } from "./static-bundle.js";
 import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes, handleFastmailProxyRoutes, handleHealthRoutes } from "../routes/index.js";
 import type { ServerContext } from "../server-context.js";
 import type { Role } from "../rbac.js";
@@ -203,12 +204,29 @@ export function createRequestHandler(deps: {
       }
     }
     if (method === "GET") {
+      // Serve-time JS bundle: collapses a page's ~90 classic /js scripts into
+      // one response (see static-bundle.ts). URL is mtime-stamped so it's safe
+      // to cache hard; the route ignores the ?v= and serves the live body.
+      const bundleMatch = url.pathname.match(/^\/js\/_bundle\/([a-z0-9_-]+)\.js$/i);
+      if (bundleMatch) {
+        const pb = getPageBundle(bundleMatch[1], publicDir);
+        if (pb) {
+          res.writeHead(200, { ...corsHeaders(req), "Content-Type": "application/javascript", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" });
+          res.end(pb.body); return;
+        }
+      }
       const fp = url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/app.html" ? join(publicDir, "app.html") : join(publicDir, url.pathname);
       if (relative(publicDir, resolve(fp)).startsWith("..")) { json(403, { error: "Path traversal blocked" }); return; }
       if (existsSync(fp)) {
         const ext = fp.split(".").pop() || "", ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", svg: "image/svg+xml", png: "image/png", ico: "image/x-icon" };
         const h: Record<string, string> = { "Content-Type": ct[ext] || "application/octet-stream" };
-        if (ext === "html") { h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"; h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()"; }
+        if (ext === "html") {
+          h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"; h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
+          const raw = readFileSync(fp, "utf-8");
+          const page = (fp.split(/[/\\]/).pop() || "").replace(/\.html$/i, "");
+          const pb = getPageBundle(page, publicDir, raw);
+          res.writeHead(200, h); res.end(pb ? pb.rewrittenHtml : raw); return;
+        }
         res.writeHead(200, h); res.end(readFileSync(fp)); return;
       }
     }

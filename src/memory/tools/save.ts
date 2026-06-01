@@ -27,6 +27,26 @@ export function createSaveTools(memory: MemoryIndex) {
         const rawContent = String(args.content || "");
         const sessionId = args._sessionId ? String(args._sessionId) : undefined;
 
+        // Misfired-durable-fact guard. memory_save only writes a TRANSIENT
+        // daily-log line and only accepts `content`. A worker that passes
+        // stray args (key/value/title/name/fact/...) meant to call `remember`
+        // (the indexed Facts DB). Don't silently append a mangled line and
+        // report success — redirect with a non-terminal hint so the model
+        // retries against the right tool. isError:false → treated as guidance.
+        const strayKeys = Object.keys(args).filter(
+          (k) => k !== "content" && k !== "_sessionId",
+        );
+        if (strayKeys.length > 0) {
+          return {
+            content:
+              `Unexpected argument(s): ${strayKeys.join(", ")}. \`memory_save\` only takes \`content\` and writes a TRANSIENT daily-log line — nothing else. ` +
+              `Durable facts (preferences, environment, project knowledge, names) must go to \`remember\`, which stores ONE compact statement per call in the indexed Facts DB that future sessions see. ` +
+              `The write was NOT applied — retry now with \`remember\` for a durable fact (e.g. \`remember({ content: "..." })\`), or \`memory_save\` with a single \`content\` string for transient session context. ` +
+              `Don't claim "saved!" — nothing persisted.`,
+            isError: false,
+          };
+        }
+
         if (!rawContent.trim()) {
           return { content: "Nothing to save.", isError: true };
         }

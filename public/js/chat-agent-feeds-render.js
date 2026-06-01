@@ -83,7 +83,7 @@ function renderAgentCard_inline(agent) {
   var icon = AGENT_ROLE_ICONS[agent.role] || '🤖';
   var status = agent.status || 'working';
   var progress = agent.progress || '';
-  return '<div class="agent-inline-card" onclick="toggleAgentFeeds();var c=document.getElementById(\'agent-card-' + esc(agent.id) + '\');if(c)c.scrollIntoView({behavior:\'smooth\'})">' +
+  return '<div class="agent-inline-card" data-agent-id="' + esc(agent.id) + '">' +
     '<span class="agent-inline-icon">' + icon + '</span>' +
     '<span class="agent-inline-name">' + esc(agent.name || agent.id) + '</span>' +
     '<span class="agent-inline-status">' + esc(status) + '</span>' +

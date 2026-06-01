@@ -110,7 +110,7 @@ function dispatchChatStreamEvent(msg) {
       if (event.agent && typeof addAgentFeed === 'function') addAgentFeed(event.agent);
       if (viewing && bodyEl && event.agent && typeof renderAgentCard_inline === 'function') {
         const wrap = document.createElement('div');
-        wrap.innerHTML = renderAgentCard_inline(event.agent);
+        wrap.innerHTML = sanitizeHtml(renderAgentCard_inline(event.agent));
         bodyEl.appendChild(wrap.firstChild);
       }
       break;
@@ -119,7 +119,7 @@ function dispatchChatStreamEvent(msg) {
       if (event.agentId && typeof updateAgentFeed === 'function') updateAgentFeed(event.agentId, event);
       if (viewing && bodyEl && event.agent && typeof renderAgentCard_inline === 'function') {
         const wrap = document.createElement('div');
-        wrap.innerHTML = renderAgentCard_inline(event.agent);
+        wrap.innerHTML = sanitizeHtml(renderAgentCard_inline(event.agent));
         bodyEl.appendChild(wrap.firstChild);
       }
       break;

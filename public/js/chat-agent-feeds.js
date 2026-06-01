@@ -313,6 +313,20 @@ function _updateAgentCount() {
 // belt-and-suspenders tick than chase the exact race. 1s cadence is
 // cheap (textContent writes only, no innerHTML rebuilds) and matches
 // the user's "I see motion every second or two" expectation.
+// Inline agent-card click → open the panel and scroll the matching card into
+// view. Delegated, since sanitizeHtml() strips inline on*= handlers from the
+// inline card markup. The id rides in data-agent-id (set in
+// renderAgentCard_inline) and is read back from dataset here.
+document.addEventListener('click', function(e) {
+  var card = e.target.closest ? e.target.closest('.agent-inline-card') : null;
+  if (!card) return;
+  toggleAgentFeeds();
+  var id = card.dataset.agentId;
+  if (!id) return;
+  var target = document.getElementById('agent-card-' + id);
+  if (target) target.scrollIntoView({ behavior: 'smooth' });
+});
+
 setInterval(function() {
   var ids = Object.keys(agentFeedsData);
   for (var i = 0; i < ids.length; i++) {

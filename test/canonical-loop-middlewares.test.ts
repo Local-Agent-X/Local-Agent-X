@@ -30,6 +30,7 @@ import { deadEndMiddleware } from "../src/canonical-loop/middlewares/dead-end.js
 import { postCommitMiddleware } from "../src/canonical-loop/middlewares/post-commit.js";
 import { hallucinationCheckMiddleware } from "../src/canonical-loop/middlewares/hallucination-check.js";
 import { actionClaimMiddleware } from "../src/canonical-loop/middlewares/action-claim.js";
+import { prematureCompletionMiddleware } from "../src/canonical-loop/middlewares/premature-completion.js";
 import { selfCheckMiddleware } from "../src/canonical-loop/middlewares/self-check.js";
 import { midTurnStaleMiddleware } from "../src/canonical-loop/middlewares/mid-turn-stale.js";
 import { postTurnDetectorMiddleware } from "../src/canonical-loop/middlewares/post-turn-detector.js";
@@ -303,6 +304,67 @@ describe("action-claim middleware", () => {
       toolsCalledThisOp: ["read"],
     }));
     expect(r.kind).toBe("continue");
+  });
+});
+
+// ── premature-completion ─────────────────────────────────────────────────
+
+describe("premature-completion middleware", () => {
+  it("when() exempts chat_turn ops, applies to worker ops", () => {
+    expect(prematureCompletionMiddleware.when?.(mkCtx({ op: mkOp("pc-chat", "chat_turn") }))).toBe(false);
+    expect(prematureCompletionMiddleware.when?.(mkCtx({ op: mkOp("pc-work", "research") }))).toBe(true);
+  });
+
+  it("nudges a worker op that ends tool-lessly with nothing committed", async () => {
+    const op = mkOp("pc-fires", "research");
+    const r = await prematureCompletionMiddleware.afterModelCall!(mkCtx({
+      op,
+      userMessage: "summarize the repo architecture into a doc",
+      assistantContent: "Here is a summary of the architecture. Done.",
+    }));
+    expect(r.kind).toBe("nudge");
+    expect((r as { reason: string }).reason).toBe("premature-completion");
+  });
+
+  it("continues when a committing tool already ran this op", async () => {
+    const op = mkOp("pc-committed", "research");
+    const r = await prematureCompletionMiddleware.afterModelCall!(mkCtx({
+      op,
+      assistantContent: "All set, the report is written.",
+      committingToolsThisOp: ["write"],
+    }));
+    expect(r.kind).toBe("continue");
+  });
+
+  it("continues when the turn made tool calls", async () => {
+    const op = mkOp("pc-tools", "research");
+    const r = await prematureCompletionMiddleware.afterModelCall!(mkCtx({
+      op,
+      assistantContent: "Writing it now.",
+      toolCalls: [mkToolCall("write")],
+    }));
+    expect(r.kind).toBe("continue");
+  });
+
+  it("continues on an empty assistant turn", async () => {
+    const op = mkOp("pc-empty", "research");
+    const r = await prematureCompletionMiddleware.afterModelCall!(mkCtx({
+      op, assistantContent: "   ",
+    }));
+    expect(r.kind).toBe("continue");
+  });
+
+  it("fires at most once per op", async () => {
+    const op = mkOp("pc-once", "research");
+    const ctx = mkCtx({
+      op,
+      userMessage: "do the task",
+      assistantContent: "I think that covers it.",
+    });
+    const r1 = await prematureCompletionMiddleware.afterModelCall!(ctx);
+    expect(r1.kind).toBe("nudge");
+    const r2 = await prematureCompletionMiddleware.afterModelCall!(ctx);
+    expect(r2.kind).toBe("continue");
   });
 });
 

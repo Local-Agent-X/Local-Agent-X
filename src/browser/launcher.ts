@@ -46,12 +46,19 @@ export const STEALTH_ARGS = [
   "--disable-sync",
   "--disable-background-networking",
   "--disable-component-update",
-  "--disable-features=Translate,MediaRouter",
   "--disable-session-crashed-bubble",
   "--hide-crash-restore-bubble",
   "--password-store=basic",
   "--disable-infobars",
 ];
+
+/**
+ * Single source of truth for Chrome features we disable. Chrome honors only the
+ * LAST `--disable-features=` flag, so every disable must live in this one list
+ * and be passed as a single consolidated flag. RendererCodeIntegrity is
+ * intentionally absent — disabling it weakens renderer code integrity.
+ */
+export const DISABLE_FEATURES = ["Translate", "MediaRouter", "DownloadBubble", "DownloadBubbleV2"] as const;
 
 /**
  * Path to the user's real Chrome user-data dir. Attach mode launches against
@@ -202,21 +209,19 @@ export async function launchViaCDP(
       // Not running; we'll launch fresh.
     }
 
-    // Spawn a fully separate Chrome process. On Windows, Chrome merges into
-    // the user's main instance unless we force a distinct profile + flags.
-    // --download.default_directory and --disable-download-protection so
-    // downloads land in workspace/downloads/ without the SmartScreen
-    // confirmation dialog blocking the agent.
+    // Spawn a fully separate Chrome process. The distinct --user-data-dir plus
+    // --remote-debugging-port keep this off the user's main instance. All
+    // feature-disables are consolidated into one --disable-features flag
+    // (Chrome honors only the last occurrence), and --download.default_directory
+    // points downloads at workspace/downloads/.
     const downloadsDir = resolveDownloadsDir();
     const args = [
       `--remote-debugging-port=${cdpPort}`,
       `--user-data-dir=${userDataDir}`,
-      "--no-process-per-site",
-      "--disable-features=RendererCodeIntegrity",
       ...STEALTH_ARGS,
       "--window-size=1280,800",
       `--download.default_directory=${downloadsDir}`,
-      "--disable-features=DownloadBubble,DownloadBubbleV2",
+      `--disable-features=${DISABLE_FEATURES.join(",")}`,
     ];
 
     logger.info(`[browser] Spawning agent Chrome: ${chromePath} (profile: ${userDataDir})`);

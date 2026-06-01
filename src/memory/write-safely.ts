@@ -3,7 +3,7 @@
  *
  * Pipeline (every call, every time):
  *   normalize → checkMemoryTaint(threshold) → sanitizeForMemory
- *   → redactKnownSecrets → write
+ *   → redactKnownSecrets → redact(shape catalog) → write
  *
  * Callers may RAISE threshold (less strict) but cannot skip the chain.
  *
@@ -20,6 +20,7 @@ import {
   sanitizeForMemory,
   stripControlChars,
 } from "../sanitize.js";
+import { redact } from "../security/credential-patterns.js";
 import { createLogger } from "../logger.js";
 import { atomicWriteFileSync } from "./utils.js";
 import type { MemoryIndex } from "./index-core.js";
@@ -146,6 +147,7 @@ function applyGateChain(input: GateInput): string {
 
   let result = sanitizeForMemory(normalized);
   result = redactKnownSecrets(result);
+  result = redact(result);
   return result;
 }
 

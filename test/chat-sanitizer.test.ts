@@ -104,4 +104,16 @@ describe("sanitizeHtml — legit markdown survives", () => {
     const html = "<p>hello <strong>world</strong></p>";
     expect(sanitizeHtml(html)).toBe("<p>hello <strong>world</strong></p>");
   });
+
+  it("keeps data-agent-id on inline agent card", () => {
+    const out = sanitizeHtml('<div class="agent-inline-card" data-agent-id="x">y</div>');
+    expect(out).toContain('data-agent-id="x"');
+    expect(out).toContain("agent-inline-card");
+  });
+
+  it("keeps data-* but drops onclick", () => {
+    const out = sanitizeHtml('<div onclick="x()" data-agent-id="1">z</div>');
+    expect(out).toContain('data-agent-id="1"');
+    expect(out).not.toContain("onclick");
+  });
 });

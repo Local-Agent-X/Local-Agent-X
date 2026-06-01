@@ -104,7 +104,7 @@ function sanitizeHtml(html) {
       const name = names[k];
       const lower = name.toLowerCase();
       const allowed = !lower.startsWith('on') &&
-        (GLOBAL_ATTRS.has(lower) || (TAG_ATTRS[tag] && TAG_ATTRS[tag].indexOf(lower) !== -1));
+        (lower.startsWith('data-') || GLOBAL_ATTRS.has(lower) || (TAG_ATTRS[tag] && TAG_ATTRS[tag].indexOf(lower) !== -1));
       if (!allowed) { el.removeAttribute(name); continue; }
       if (lower === 'href' || lower === 'src') {
         if (!isSafeUrl(el.getAttribute(name))) el.setAttribute(name, '#');

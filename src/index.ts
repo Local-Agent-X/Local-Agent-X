@@ -247,4 +247,25 @@ if (process.env.LAX_SELF_EDIT_PROBE !== "1") {
       }
     })();
   }, 5000);
+
+  // Deferred orphan-sidecar reap. Voice GPU sidecars are spawned detached so
+  // they survive a tsx hot-reload, which means one that hangs (crashes its
+  // HTTP server but doesn't exit) escapes killTier's port reaper and piles up
+  // across restarts. Sweep once at boot to clear the accumulated pile, then
+  // every 60s to auto-kill mid-session crashes. The running-map guard inside
+  // reapOrphanSidecars means a sidecar this instance owns (incl. cold start)
+  // is never touched. Off the boot path so the PowerShell scan never blocks
+  // port-listening.
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const { reapOrphanSidecars } = await import("./routes/bridges/voice-setup/process-control.js");
+        const n = await reapOrphanSidecars();
+        if (n > 0) logger.info(`[boot] reaped ${n} orphan voice sidecar(s)`);
+        setInterval(() => { void reapOrphanSidecars().catch(() => {}); }, 60_000).unref();
+      } catch (e) {
+        logger.warn(`[boot] orphan sidecar reap failed: ${(e as Error).message}`);
+      }
+    })();
+  }, 6000);
 }

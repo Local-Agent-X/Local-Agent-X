@@ -1,10 +1,13 @@
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFileSync, execFile } from "node:child_process";
 import { existsSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { createLogger } from "../../../logger.js";
-import { HOME, IS_WIN, tierById, type VoiceTier } from "./tiers.js";
+import { HOME, IS_WIN, TIERS, tierById, type VoiceTier } from "./tiers.js";
 import { probeHealth } from "./detection.js";
 import { running } from "./state.js";
+
+const execFileAsync = promisify(execFile);
 
 const logger = createLogger("routes.bridges.voice-setup");
 
@@ -58,6 +61,83 @@ function killPid(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Find every process matching a tier's command signature, regardless of
+ * whether it's still listening on its port. This is what catches a sidecar
+ * that crashed its HTTP server but didn't exit (CUDA OOM / driver deadlock) —
+ * pidOnPort can't see it because it's no longer bound, but the python process
+ * is still alive eating GPU. Matches on `tier.procMatch` (all substrings must
+ * be present in the command line).
+ */
+async function findSidecarPids(tier: VoiceTier): Promise<number[]> {
+  const markers = tier.procMatch;
+  if (!markers || markers.length === 0) return [];
+  if (IS_WIN) {
+    const conds = markers
+      .map(m => `$_.CommandLine.ToLower().Contains('${m.toLowerCase().replace(/'/g, "''")}')`)
+      .join(" -and ");
+    const script =
+      `Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue | ` +
+      `Where-Object { $_.CommandLine -and ${conds} } | ` +
+      `Select-Object -ExpandProperty ProcessId`;
+    try {
+      const { stdout } = await execFileAsync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", script],
+        { timeout: 10_000, windowsHide: true },
+      );
+      return stdout.split(/\r?\n/).map(s => s.trim()).filter(s => /^\d+$/.test(s)).map(s => parseInt(s, 10));
+    } catch {
+      return [];
+    }
+  }
+  // Unix: pgrep -f the most specific marker, then keep only PIDs whose full
+  // command line contains every marker.
+  try {
+    const { stdout } = await execFileAsync("pgrep", ["-f", markers[markers.length - 1]], { timeout: 5000 });
+    const pids = stdout.split(/\s+/).filter(s => /^\d+$/.test(s)).map(s => parseInt(s, 10));
+    const out: number[] = [];
+    for (const pid of pids) {
+      try {
+        const { stdout: cl } = await execFileAsync("ps", ["-p", String(pid), "-o", "command="], { timeout: 3000 });
+        if (markers.every(m => cl.toLowerCase().includes(m.toLowerCase()))) out.push(pid);
+      } catch { /* gone */ }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Sweep every sidecar tier for orphan processes and kill them. Safe to run
+ * on a timer: it never touches a sidecar THIS instance is tracking (the
+ * `running` map — populated the instant we spawn, so a 90-120s cold-starting
+ * sidecar is protected). For each tier it keeps either the process we own or
+ * the single healthy one currently bound to the port (adopt-across-restart),
+ * and tree-kills everything else. Returns the number reaped.
+ */
+export async function reapOrphanSidecars(): Promise<number> {
+  let killed = 0;
+  for (const tier of TIERS) {
+    if (tier.kind === "native" || !tier.procMatch || tier.port <= 0) continue;
+    const pids = await findSidecarPids(tier);
+    if (pids.length === 0) continue;
+    const mine = running.get(tier.id)?.pid ?? null;
+    const onPort = pidOnPort(tier.port);
+    const healthy = (await probeHealth(tier.healthUrl)).ok;
+    const keep = mine ?? (healthy && onPort ? onPort : null);
+    for (const pid of pids) {
+      if (pid === keep) continue;
+      if (killPid(pid)) {
+        killed++;
+        logger.info(`[voice-setup] reaped orphan ${tier.id} pid=${pid} (port ${tier.port}, healthy=${healthy})`);
+      }
+    }
+  }
+  return killed;
 }
 
 /**
@@ -122,6 +202,17 @@ export function killTier(tierId: string): void {
       logger.info(`[voice-setup] killing orphan ${tierId} pid=${orphan} on port ${tier.port}`);
       killPid(orphan);
     }
+    // Also sweep by command signature: a sidecar that crashed its HTTP server
+    // but didn't exit is no longer on the port, so pidOnPort missed it above.
+    // Fire-and-forget (killTier is sync; callers don't await death). Skip
+    // whatever's in the running map at resolution time so a replacement that
+    // startTierAndWait spawns right after this call isn't killed.
+    if (tier.procMatch) {
+      void findSidecarPids(tier).then(pids => {
+        const keep = running.get(tierId)?.pid ?? null;
+        for (const pid of pids) if (pid !== keep) killPid(pid);
+      }).catch(() => {});
+    }
   }
 }
 
@@ -129,5 +220,7 @@ export function killTier(tierId: string): void {
 // detached so they survive a tsx hot-reload — if we killed them on parent
 // exit, every src/ edit during dev would tear down the user's GPU sidecars
 // (which take 30-90s to cold-start). Sidecars are stopped explicitly via the
-// Stop button; orphans from a real crash are reaped by killTier's port-PID
-// fallback the next time the user clicks Start or Stop.
+// Stop button; orphans from a crash are reaped two ways: killTier's port +
+// signature sweep when the user clicks Start/Stop, and reapOrphanSidecars()
+// running at boot and on a 60s timer (wired in src/index.ts) so hung
+// processes get cleaned automatically without any user action.

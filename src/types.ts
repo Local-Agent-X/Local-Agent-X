@@ -130,6 +130,10 @@ export interface AgentTurn {
    * chat route to decide whether the error is transient (rate limit, auth,
    * overload) and eligible for failover to another provider. */
   errorMessage?: string;
+  /** True when at least one successful (resultStatus "ok") committing tool
+   * ran during the op. Computed from the host.ts ledger in the canonical
+   * runner; lets the result-guard suppress false-completion catches. */
+  committedWork?: boolean;
 }
 
 // ── Security Types ──

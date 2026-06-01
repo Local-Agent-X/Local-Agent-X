@@ -52,6 +52,26 @@ export interface GuardVerdict {
   matchedPhrase?: string;
 }
 
+/** Committing-action verbs/assertions an agent uses to claim it changed
+ *  state — save/create/write/commit/delete/update/install/send plus the
+ *  "done"/"complete"/✅ family. TIGHT on purpose: only verbs that imply a
+ *  mutation. Read-only verbs (analyzed, found, researched, reviewed,
+ *  recommend) are deliberately absent so genuine research reports never
+ *  fire. Case-insensitive. */
+const COMMITTING_CLAIM_PHRASES: ReadonlyArray<RegExp> = [
+  /\b(saved|created|wrote|committed|deleted|removed|updated|installed|sent)\b/i,
+  /✅/,
+  /\b(all )?done\b/i,
+  /\b(task |everything )?(is )?complete(d|ly)?\b/i,
+];
+
+export interface CompletionGuardVerdict {
+  isUnsubstantiated: boolean;
+  /** The matching phrase pattern when triggered. Stored on the run record
+   *  so the user can see which committing-action claim was caught. */
+  matchedPhrase?: string;
+}
+
 /**
  * Returns whether the result looks like the agent gave up and asked
  * for clarification instead of completing the task.
@@ -77,4 +97,36 @@ export function looksLikeClarificationRequest(result: string): GuardVerdict {
     }
   }
   return { isClarificationRequest: false };
+}
+
+/**
+ * Returns whether the result claims a committing action (saved, created,
+ * wrote, etc.) without the agent having actually run a successful committing
+ * tool. `committedWork` is the authoritative ledger signal from the canonical
+ * runner — when true this guard never fires. When false, the tail of the
+ * result is scanned for a committing-action claim; a hit means the agent
+ * narrated work it never committed (a false completion).
+ *
+ * Tail-only and a tight verb list keep false-positives near-zero: a real
+ * research/analysis report that only "analyzed", "found", or "recommended"
+ * carries no committing verb, so it stays a success.
+ */
+export function looksLikeUnsubstantiatedCompletion(
+  result: string,
+  committedWork: boolean,
+): CompletionGuardVerdict {
+  if (committedWork === true) return { isUnsubstantiated: false };
+  if (typeof result !== "string" || result.length === 0) {
+    return { isUnsubstantiated: false };
+  }
+  const tail = result.length <= TAIL_WINDOW_CHARS
+    ? result
+    : result.slice(-TAIL_WINDOW_CHARS);
+  for (const pattern of COMMITTING_CLAIM_PHRASES) {
+    const match = tail.match(pattern);
+    if (match) {
+      return { isUnsubstantiated: true, matchedPhrase: match[0] };
+    }
+  }
+  return { isUnsubstantiated: false };
 }

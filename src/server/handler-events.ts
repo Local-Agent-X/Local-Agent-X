@@ -5,7 +5,7 @@ import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
 import { EventBus } from "../event-bus.js";
 import { ProjectStore, type AgentRun } from "../agent-store/index.js";
-import { looksLikeClarificationRequest } from "../agents/result-guard.js";
+import { looksLikeClarificationRequest, looksLikeUnsubstantiatedCompletion } from "../agents/result-guard.js";
 import { registerAgentRunDriver, type AgentRunDriver } from "../agents/runtime.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex } from "../memory/index.js";
@@ -211,6 +211,14 @@ export function registerHandlerEvents(deps: {
 
       const agentOutput = extractAgentOutput(agentSession.messages);
       if (mergeSuccess) {
+        // False-completion guard: the driver has both the output text AND the
+        // AgentTurn's committedWork ledger signal. Default TRUE so any path
+        // that didn't populate the signal can never false-positive.
+        const completion = looksLikeUnsubstantiatedCompletion(agentOutput, agentResult.committedWork ?? true);
+        if (completion.isUnsubstantiated) {
+          logger.warn(`[handler] Agent ${agentId} (${role}) claimed committing action ("${completion.matchedPhrase}") with no successful committing tool call — re-classified as error`);
+          return { result: `[Agent claimed a committing action ("${completion.matchedPhrase}") but made no successful committing tool call — likely a false completion]\n\n${agentOutput}`, success: false };
+        }
         return { result: agentOutput, success: true };
       }
       const branchHint = worktreeInfo ? `Changes preserved on branch agent/${agentId}. Run: git merge agent/${agentId}` : "File changes may be lost";

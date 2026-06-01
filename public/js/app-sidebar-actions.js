@@ -217,6 +217,8 @@ function selectChat(id) {
   renderSidebar();
   try { if (typeof window.updateStatusBar === 'function') window.updateStatusBar(); } catch {}
   navigate('chat');
+  // Entry render: land on the latest message (see renderMessages scroll gate).
+  window._chatScrollBottomNext = true;
   if (window.renderMessages) renderMessages();
   // Update send/stop button state for THIS chat. Per-session via isStreaming()
   // so switching to a chat that has a stream running (while another stream is

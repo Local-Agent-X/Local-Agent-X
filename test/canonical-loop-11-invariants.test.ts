@@ -109,7 +109,19 @@ async function awaitTerminal(opId: string, timeoutMs = 3_000): Promise<void> {
   for (;;) {
     const op = readOp(opId);
     const s = op?.canonical?.state;
-    if (s === "succeeded" || s === "failed" || s === "cancelled") return;
+    // Wait for the op's SETTLED resting state, not the first instant a
+    // terminal state_changed is persisted. The worker transitions to
+    // succeeded/failed inside the turn commit, then releases its lease in
+    // its finally (deliberately after clearInterval(hb) so a heartbeat
+    // can't re-grab a just-released lease — see worker.ts). On the
+    // done/error path a setImmediate yield sits between those two steps,
+    // so polling on state alone can observe a terminal op whose lease the
+    // worker hasn't released yet. I6 ("terminal ⟹ no live lease") is about
+    // the resting state, so wait for the lease to clear too. A genuine
+    // lease leak still surfaces here as a timeout.
+    if (s === "succeeded" || s === "failed" || s === "cancelled") {
+      if ((op?.canonical?.leaseOwner ?? null) === null) return;
+    }
     if (Date.now() > deadline) {
       throw new Error(`awaitTerminal timed out for ${opId} — state=${s}`);
     }

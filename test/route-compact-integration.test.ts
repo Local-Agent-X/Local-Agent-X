@@ -29,6 +29,7 @@ function makeMockCtx(session: Session): MockCtx {
   const m: MockCtx = { session, saveCalls: 0, ctx: null as unknown as ServerContext };
   m.ctx = {
     getOrCreateSession: vi.fn((_id: string) => session),
+    flushSession: vi.fn(async (_id: string) => {}),
     sessionStore: {
       save: vi.fn(() => { m.saveCalls++; }),
     },

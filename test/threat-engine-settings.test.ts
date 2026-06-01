@@ -7,38 +7,37 @@
  * without code changes.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ThreatEngine, _invalidateThreatSettingsCacheForTests } from "../src/threat/threat-engine.js";
 
-let prevHome: string | undefined;
-let prevUserprofile: string | undefined;
-let fakeHome: string;
+// Sandbox via LAX_DATA_DIR — the resolver's first-class override
+// (src/lax-data-dir.ts). Mutating HOME/USERPROFILE would NOT work here:
+// under vitest's worker-thread pool, those changes don't reach the native
+// os.homedir() that getLaxDir() falls back to. LAX_DATA_DIR is read from the
+// worker's own process.env, so it overrides reliably.
+let prevLaxDataDir: string | undefined;
+let laxDataDir: string;
 let dataDir: string;
 
 function writeSettings(threat: Record<string, unknown>): void {
-  const laxDir = join(fakeHome, ".lax");
-  mkdirSync(laxDir, { recursive: true });
-  writeFileSync(join(laxDir, "settings.json"), JSON.stringify({ threat }), "utf-8");
+  writeFileSync(join(laxDataDir, "settings.json"), JSON.stringify({ threat }), "utf-8");
   _invalidateThreatSettingsCacheForTests();
 }
 
 beforeEach(() => {
-  prevHome = process.env.HOME;
-  prevUserprofile = process.env.USERPROFILE;
-  fakeHome = mkdtempSync(join(tmpdir(), "lax-threat-settings-"));
-  process.env.HOME = fakeHome;
-  process.env.USERPROFILE = fakeHome;
+  prevLaxDataDir = process.env.LAX_DATA_DIR;
+  laxDataDir = mkdtempSync(join(tmpdir(), "lax-threat-settings-"));
+  process.env.LAX_DATA_DIR = laxDataDir;
   dataDir = mkdtempSync(join(tmpdir(), "lax-threat-data-"));
   _invalidateThreatSettingsCacheForTests();
 });
 
 afterEach(() => {
-  if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
-  if (prevUserprofile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevUserprofile;
+  if (prevLaxDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevLaxDataDir;
   _invalidateThreatSettingsCacheForTests();
-  rmSync(fakeHome, { recursive: true, force: true });
+  rmSync(laxDataDir, { recursive: true, force: true });
   rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -69,9 +68,7 @@ describe("ThreatEngine — settings.json override", () => {
   });
 
   it("falls back to defaults on malformed settings without throwing", () => {
-    const laxDir = join(fakeHome, ".lax");
-    mkdirSync(laxDir, { recursive: true });
-    writeFileSync(join(laxDir, "settings.json"), "{ not json", "utf-8");
+    writeFileSync(join(laxDataDir, "settings.json"), "{ not json", "utf-8");
     _invalidateThreatSettingsCacheForTests();
     const eng = new ThreatEngine(dataDir, "sess-bad");
     expect(eng.scorer.startingBudget).toBe(60);

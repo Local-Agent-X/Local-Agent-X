@@ -24,7 +24,7 @@
  * and re-exports the public types.
  */
 
-import { loadSettings } from "../settings.js";
+import { loadSettings, reloadSettings } from "../settings.js";
 
 import { canaryPromptBlock, checkCanaries, generateCanaries } from "./canaries.js";
 import { classifyData, type DataLabel } from "./classification.js";
@@ -60,6 +60,9 @@ function readThreatScorerOptions(): ThreatScorerOptions {
 export function _invalidateThreatSettingsCacheForTests(): void {
   _cachedScorerOpts = null;
   _scorerOptsCachedAt = 0;
+  // loadSettings() holds its own permanent module cache; clear it too so the
+  // next session genuinely re-reads ~/.lax/settings.json (the contract above).
+  reloadSettings();
 }
 
 export { classifyData, type DataClassification, type DataLabel } from "./classification.js";

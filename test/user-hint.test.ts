@@ -44,7 +44,7 @@ describe("userHint on blocked-tool responses", () => {
     });
 
     it("network-policy: egress allowlist rejection", () => {
-      const d = evaluateWebFetch(new Set(["example.com"]), true, "7007", "https://attacker.com/");
+      const d = evaluateWebFetch(new Set(["example.com"]), true, "7007", "https://attacker.com/", "strict");
       expect(d.allowed).toBe(false);
       expect(d.userHint).toBe(USER_HINTS.network);
     });

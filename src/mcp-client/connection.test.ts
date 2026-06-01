@@ -17,6 +17,10 @@ vi.mock("node:child_process", async (importOriginal) => {
 // scoping inside a single file is still our problem.
 
 const ORIGINAL_ENV = { ...process.env };
+// Capture the OS temp base up front: the per-test clearEnv() wipes TEMP/TMP,
+// and on Windows os.tmpdir() reads those — calling it post-wipe yields
+// "undefined\temp". On POSIX it falls back to /tmp, hence the platform gap.
+const TMP_BASE = tmpdir();
 
 function clearEnv(): void {
   for (const k of Object.keys(process.env)) {
@@ -170,7 +174,7 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
     for (const k of ["LAX_DATA_DIR", "HOME", "USERPROFILE", "PATH", "LAX_MCP_STRICT_TRUST", "LAX_MCP_RETRUST"]) {
       envSnap[k] = process.env[k];
     }
-    tempDir = mkdtempSync(join(tmpdir(), "lax-mcp-conn-test-"));
+    tempDir = mkdtempSync(join(TMP_BASE, "lax-mcp-conn-test-"));
     dataDir = join(tempDir, ".lax");
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     const binDir = join(tempDir, "bin");

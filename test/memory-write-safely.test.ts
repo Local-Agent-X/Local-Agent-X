@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   writeMemorySafely,
+  runMemoryGate,
   MemoryWriteBlocked,
 } from "../src/memory/write-safely.js";
 
@@ -88,6 +89,32 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       mode: "overwrite",
     })).not.toThrow();
     expect(existsSync(target)).toBe(true);
+  });
+
+  it("shape-redacts unregistered secrets pasted into a fact", () => {
+    const tail = "abcdef1234567890ABCDEFGH";
+    const antKey = `sk-ant-${tail}${tail}`;
+    const ghToken = `ghp_abcdefghij1234567890ABCDEFGHIJ123456`;
+    const tgToken = `123456789:${"A".repeat(35)}`;
+    const out = runMemoryGate({
+      content: `- API note: ${antKey} and ${ghToken} and ${tgToken}`,
+      source: "tool",
+      target: join(dir, "USER.md"),
+    });
+    expect(out).not.toContain(antKey);
+    expect(out).not.toContain(ghToken);
+    expect(out).not.toContain(tgToken);
+    expect(out).toContain("[REDACTED]");
+  });
+
+  it("leaves a benign fact untouched (no over-redaction)", () => {
+    const benign = "- Name: Alex\n- Role: builder\n- Loves: hiking and coffee";
+    const out = runMemoryGate({
+      content: benign,
+      source: "tool",
+      target: join(dir, "USER.md"),
+    });
+    expect(out).toBe(benign.trim());
   });
 
   it("populates the MemoryWriteBlocked error fields", () => {

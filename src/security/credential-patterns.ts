@@ -30,11 +30,14 @@ export const CREDENTIAL_KEY_PATTERNS: readonly RegExp[] = [
   /\b(gho_[a-zA-Z0-9]{36,})/g,             // GitHub OAuth
   /\b(ghs_[a-zA-Z0-9]{36,})/g,             // GitHub App installation
   /\b(xox[bpas]-[a-zA-Z0-9-]{20,})/g,      // Slack
+  /\b(\d{8,10}:[A-Za-z0-9_-]{35})\b/g,     // Telegram bot token
   /\b(glpat-[a-zA-Z0-9_-]{20,})/g,         // GitLab
   /\b(AKIA[A-Z0-9]{16})/g,                 // AWS Access Key
   /\b(lin_api_[a-zA-Z0-9]{20,})/g,         // Linear
   /\b(sk_live_[a-zA-Z0-9]{20,})/g,         // Stripe live
   /\b(sk_test_[a-zA-Z0-9]{20,})/g,         // Stripe test
+  /\b(ck_[a-f0-9]{40})\b/g,                // WooCommerce consumer key
+  /\b(cs_[a-f0-9]{40})\b/g,                // WooCommerce consumer secret
   /\b(sq0[a-z]{3}-[a-zA-Z0-9_-]{20,})/g,   // Square
   /\b(xai-[a-zA-Z0-9]{20,})/g,             // xAI
   /\b(vercel_[a-zA-Z0-9_-]{20,})/g,        // Vercel

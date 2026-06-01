@@ -24,15 +24,43 @@ export async function dnsPinCheck(url: string): Promise<string | null> {
       return false;
     }
 
+    function isPrivateIpv6(ip: string): boolean {
+      const addr = ip.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+      if (addr === "::1" || addr === "::") return true;
+      // IPv4-mapped (::ffff:a.b.c.d) — delegate the embedded quad to isPrivateIp.
+      const quad = addr.match(/(\d+\.\d+\.\d+\.\d+)$/);
+      if (quad) return isPrivateIp(quad[1]);
+      // IPv4-mapped in hex form (::ffff:c0a8:101) — Node normalizes the dotted
+      // quad to two trailing hextets; decode them back to a dotted quad.
+      const hexMapped = addr.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+      if (hexMapped) {
+        const hi = parseInt(hexMapped[1], 16);
+        const lo = parseInt(hexMapped[2], 16);
+        const dotted = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+        return isPrivateIp(dotted);
+      }
+      const first = addr.split(":")[0];
+      if (/^(fc|fd)/.test(first)) return true; // fc00::/7 ULA
+      if (/^fe[89ab]/.test(first)) return true; // fe80::/10 link-local
+      return false;
+    }
+
     if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
       if (isPrivateIp(host)) return `Blocked: ${host} is a private/reserved IP`;
       return null;
     }
-    if (host.includes(":")) return null;
+    if (host.includes(":")) {
+      if (isPrivateIpv6(host)) return `Blocked: ${host} is a private/reserved IP`;
+      return null;
+    }
 
-    const addrs = await dns.resolve4(host).catch(() => [] as string[]);
-    for (const ip of addrs) {
+    const addrs4 = await dns.resolve4(host).catch(() => [] as string[]);
+    for (const ip of addrs4) {
       if (isPrivateIp(ip)) return `DNS rebinding blocked: ${host} → ${ip}`;
+    }
+    const addrs6 = await dns.resolve6(host).catch(() => [] as string[]);
+    for (const ip of addrs6) {
+      if (isPrivateIpv6(ip)) return `DNS rebinding blocked: ${host} → ${ip}`;
     }
   } catch { /* DNS failure: fail open */ }
   return null;

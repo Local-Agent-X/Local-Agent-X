@@ -121,12 +121,10 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   private async ensureHealthy(): Promise<boolean> {
     if (this.healthy !== null) return this.healthy;
     try {
-      const res = await fetch(`${this.baseUrl}/api/tags`, {
-        method: "GET",
-        signal: AbortSignal.timeout(3000),
-      });
-      if (!res.ok) {
-        logger.warn(`[ollama-embed] Server responded with ${res.status}`);
+      const { fetchLocalOllamaTags } = await import("../ollama-cloud.js");
+      const { reachable } = await fetchLocalOllamaTags(this.baseUrl);
+      if (!reachable) {
+        logger.warn(`[ollama-embed] Server at ${this.baseUrl} not reachable`);
         this.healthy = false;
         return false;
       }

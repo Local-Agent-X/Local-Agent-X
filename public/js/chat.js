@@ -17,6 +17,7 @@ function init_chat() {
   if (stopBtn) stopBtn.style.display = 'none';
   const sendBtn = document.getElementById('send-btn');
   if (sendBtn) sendBtn.disabled = false;
+  window._chatScrollBottomNext = true;
   renderMessages(); initStatusBar(); _renderAgentFeedsList();
 }
 

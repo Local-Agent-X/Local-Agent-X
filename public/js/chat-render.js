@@ -295,6 +295,9 @@ function rerenderLiveMessage(sessionId) {
     const fresh = renderMessage(null, { parent: tmp, isLiveSynth: true, store });
     if (!fresh) return;
     preserveOpenState(oldNode, fresh);
+    // Carry the reserved-space class across the swap so the answer keeps
+    // streaming into a full viewport of room and the prompt stays pinned.
+    if (oldNode.classList.contains('pin-bottom')) fresh.classList.add('pin-bottom');
     oldNode.replaceWith(fresh);
     _liveMessageNodes.set(sessionId, fresh);
     autoScroll();
@@ -305,6 +308,15 @@ function rerenderLiveMessage(sessionId) {
 function renderMessages() {
   const el = document.getElementById('messages');
   if (!el) return;
+  // Entry renders (chat switch / first paint) want to land on the latest
+  // message. In-place rebuilds (turn finalize, mid-stream inject, bg-op nudge,
+  // server sync) must NOT move the viewport — the reader is already anchored to
+  // their prompt at the top, and yanking to scrollHeight here is exactly what
+  // made every completed turn lurch. The flag is set by the entry points
+  // (selectChat / init_chat) and consumed here; the default is "hold position".
+  const scrollToBottom = !!window._chatScrollBottomNext;
+  window._chatScrollBottomNext = false;
+  const prevScrollTop = el.scrollTop;
   if (!activeChat || activeChat.messages.length === 0) {
     el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Local Agent X" class="hero-img hero-dark" /><img src="/hero-light.png" alt="Local Agent X" class="hero-img hero-light" /><h2>LOCAL AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
     _liveMessageNodes.clear();
@@ -358,10 +370,17 @@ function renderMessages() {
       lastAssistant.classList.add('pin-bottom');
     }
   }
-  // Defer one frame so the browser applies pin-bottom's min-height before we
-  // read scrollHeight — otherwise scrollHeight reflects the pre-pin layout
-  // and the scroll lands at the top instead of past the reserved padding,
-  // leaving the chat flush at the top of the viewport on re-entry.
-  requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+  if (scrollToBottom) {
+    // Entry: defer one frame so the browser applies pin-bottom's min-height
+    // before we read scrollHeight — otherwise scrollHeight reflects the
+    // pre-pin layout and the scroll lands short, leaving the chat flush at
+    // the top of the viewport on re-entry.
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+  } else {
+    // In-place rebuild: hold the reader's scroll position. The prompt was
+    // anchored to the top at send time and stays there straight through
+    // finalize — no lurch when the turn completes.
+    el.scrollTop = prevScrollTop;
+  }
 }
 

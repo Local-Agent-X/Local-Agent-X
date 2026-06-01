@@ -105,6 +105,15 @@ async function sendMessage() {
   const msgEl = addMessageEl('assistant', '');
   let bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+  // Reserve a viewport of room under the live bubble from the FIRST frame so
+  // the prompt can sit at the top and the answer streams into the space below.
+  // Without this the scrollIntoView below has nothing to scroll into, and
+  // pin-bottom only lands at finalize — which is what made the view lurch when
+  // a turn completed. Strip any stale pin off prior turns first so they don't
+  // stack 100vh of empty space between replies.
+  const _msgsEl = document.getElementById('messages');
+  if (_msgsEl) _msgsEl.querySelectorAll('.msg.assistant.pin-bottom').forEach(m => m.classList.remove('pin-bottom'));
+  msgEl.classList.add('pin-bottom');
   // ChatGPT-style scroll pin: anchor the user prompt to the top.
   if (userMsgEl) {
     requestAnimationFrame(() => {

@@ -258,10 +258,10 @@ function updateAgentFeed(agentId, update) {
       var isPaused = existing.status === 'paused';
       controlsEl.innerHTML =
         (isPaused
-          ? '<button class="agent-ctrl-btn" onclick="onAgentResume(\'' + safeId + '\')">Resume</button>'
-          : '<button class="agent-ctrl-btn" onclick="onAgentPause(\'' + safeId + '\')">Pause</button>') +
-        '<button class="agent-ctrl-btn" onclick="onAgentRedirect(\'' + safeId + '\')">Redirect</button>' +
-        '<button class="agent-ctrl-btn cancel" onclick="onAgentCancel(\'' + safeId + '\')">Cancel</button>';
+          ? '<button class="agent-ctrl-btn" data-agent-action="resume" data-agent-id="' + safeId + '">Resume</button>'
+          : '<button class="agent-ctrl-btn" data-agent-action="pause" data-agent-id="' + safeId + '">Pause</button>') +
+        '<button class="agent-ctrl-btn" data-agent-action="redirect" data-agent-id="' + safeId + '">Redirect</button>' +
+        '<button class="agent-ctrl-btn cancel" data-agent-action="cancel" data-agent-id="' + safeId + '">Cancel</button>';
     }
   } else {
     _renderAgentFeedsList();
@@ -325,6 +325,43 @@ document.addEventListener('click', function(e) {
   if (!id) return;
   var target = document.getElementById('agent-card-' + id);
   if (target) target.scrollIntoView({ behavior: 'smooth' });
+});
+
+// Worker-card controls are delegated so the markup carries no inline on*=
+// handlers — the id rides in data-agent-id rather than being interpolated into
+// a handler's JS string (which an entity-encoded id could break out of).
+document.addEventListener('click', function(e) {
+  if (!e.target.closest) return;
+  var btn = e.target.closest('[data-agent-action]');
+  if (btn) {
+    var id = btn.dataset.agentId;
+    switch (btn.dataset.agentAction) {
+      case 'resume': onAgentResume(id); break;
+      case 'pause': onAgentPause(id); break;
+      case 'redirect': onAgentRedirect(id); break;
+      case 'stayinline': onAgentStayInline(id); break;
+      case 'cancel': onAgentCancel(id); break;
+      case 'dismiss': onAgentDismiss(id); break;
+    }
+    return;
+  }
+  var toggle = e.target.closest('[data-agent-toggle="tools"]');
+  if (toggle) {
+    var group = toggle.parentElement;
+    var body = group.querySelector('.worker-tools-body');
+    var open = group.classList.toggle('open');
+    if (body) body.style.display = open ? 'block' : 'none';
+    var chev = toggle.querySelector('.worker-tools-chevron');
+    if (chev) chev.textContent = open ? '▼' : '▶';
+  }
+});
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter' || !e.target.closest) return;
+  var input = e.target.closest('[data-agent-redirect]');
+  if (!input) return;
+  sendAgentRedirect(input.dataset.agentRedirect, input.value);
+  input.value = '';
+  input.classList.remove('visible');
 });
 
 setInterval(function() {

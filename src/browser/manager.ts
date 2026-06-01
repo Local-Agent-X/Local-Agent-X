@@ -1,36 +1,58 @@
-import type { Browser, Page, BrowserContext } from "playwright";
-import type { ChildProcess } from "node:child_process";
+import type { Page, BrowserContext } from "playwright";
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
 import { clickRef, fillRef, clickByText as clickByTextAction } from "./actions.js";
 import { waitForStability } from "./stability.js";
 import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
-import {
-  launchViaCDP, USER_AGENTS, STEALTH_ARGS,
-  NAV_TIMEOUT, ACTION_TIMEOUT,
-  type BrowserEngine,
-} from "./launcher.js";
+import { ACTION_TIMEOUT, NAV_TIMEOUT, type BrowserEngine } from "./launcher.js";
+import { acquireSessionContext } from "./runtime.js";
 import { installDownloadHandler } from "./downloads.js";
 import { injectTokenIfLocal } from "./auth-context.js";
 import { safeHost, redirectMessage } from "./redirect.js";
+import { getRuntimeConfig } from "../config.js";
 import {
   extractTextFrom, screenshotAsBase64, evaluateScript,
   listTabs as listTabsOp, resolveSwitchTab, pageInfo,
 } from "./page-ops.js";
 
+function isBlankish(url: string): boolean {
+  return url === "" || url === "about:blank" || url.startsWith("chrome://newtab");
+}
+
+/**
+ * Per-session browser surface. Each session owns its own tabs + observation
+ * registry inside the shared Chrome (see runtime.ts), so a mission navigating
+ * mid-task can't move the tab or reassign the refs another session is using.
+ * The Chrome process and connection are NOT owned here — close() only tears
+ * down this session's tabs (and its own context in isolated mode).
+ */
 export class BrowserManager {
-  private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
-  private chromeProcess: ChildProcess | null = null;
+  private owned: Page[] = [];
   private currentEngine: BrowserEngine = "chromium";
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private registry = new ObservationRegistry();
+  private onIdle: (() => void) | null = null;
+  private peerPages: (() => Page[]) | null = null;
 
-  private resetIdle(): void {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = null;
-    }
+  constructor(
+    private readonly sessionId: string = "default",
+    private readonly isolated: boolean = false,
+  ) {}
+
+  /** Called when the idle timer fires after this session is torn down. */
+  setIdleHandler(fn: () => void): void { this.onIdle = fn; }
+  /** Supplies tabs owned by other sessions so we never adopt one of theirs. */
+  setPeerPages(fn: () => Page[]): void { this.peerPages = fn; }
+  listOwnedPages(): Page[] { return this.owned.filter((p) => !p.isClosed()); }
+
+  private armIdle(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    const ms = getRuntimeConfig().browserIdleTimeoutMs;
+    this.idleTimer = setTimeout(() => {
+      void this.close().then(() => { try { this.onIdle?.(); } catch { /* ignore */ } });
+    }, ms);
+    this.idleTimer.unref?.();
   }
 
   private adoptPage(p: Page): Page {
@@ -47,68 +69,48 @@ export class BrowserManager {
     return new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${port}`, "i").test(this.getCurrentUrl());
   }
 
+  /** Adopt an unclaimed blank tab (consuming Chrome's initial about:blank so
+   *  stray tabs don't pile up) or open a fresh one for this session. */
+  private async acquirePage(): Promise<Page> {
+    const ctx = this.context!;
+    const peers = this.peerPages ? this.peerPages() : [];
+    const adoptable = ctx.pages().find(
+      (p) => !p.isClosed() && !peers.includes(p) && !this.owned.includes(p) && isBlankish(p.url()),
+    );
+    const page = adoptable ?? (await ctx.newPage());
+    if (!this.owned.includes(page)) this.owned.push(page);
+    return this.adoptPage(page);
+  }
+
   async getPage(engine?: BrowserEngine): Promise<Page> {
-    if (engine && engine !== this.currentEngine && this.browser) {
+    if (engine && engine !== this.currentEngine && this.context) {
       await this.close();
     }
     if (engine) this.currentEngine = engine;
 
-    if (this.page) {
+    if (this.page && !this.page.isClosed()) {
       try {
         await this.page.title();
-        this.resetIdle();
+        this.armIdle();
         return this.page;
       } catch {
         this.page = null;
         this.context = null;
-        this.browser = null;
       }
     }
 
-    const pw = await import("playwright");
-
-    if (this.currentEngine === "chromium") {
-      const { browser, chromeProcess } = await launchViaCDP(pw);
-      this.browser = browser;
-      this.chromeProcess = chromeProcess;
-    } else {
-      const launcher = pw[this.currentEngine];
-      this.browser = await launcher.launch({
-        headless: false,
-        args: STEALTH_ARGS,
-      });
-    }
-
-    // For CDP-connected browsers, reuse the existing context/page from Chrome
-    // instead of creating new ones (which opens extra about:blank tabs).
-    const existingContexts = this.browser.contexts();
-    if (existingContexts.length > 0) {
-      this.context = existingContexts[0];
-      const existingPages = this.context.pages();
-      if (existingPages.length > 0) {
-        this.page = this.adoptPage(existingPages[0]);
-        this.resetIdle();
-        return this.page;
-      }
-    }
-
-    this.context = await this.browser.newContext({
-      userAgent: USER_AGENTS[this.currentEngine],
-      viewport: { width: 1280, height: 800 },
-      locale: "en-US",
-      timezoneId: "America/Chicago",
-    });
-
-    this.page = this.adoptPage(await this.context.newPage());
-    this.resetIdle();
+    this.context = await acquireSessionContext(this.currentEngine, this.isolated);
+    this.page = await this.acquirePage();
+    this.armIdle();
     return this.page;
   }
 
   async newTab(url: string): Promise<string> {
     url = injectTokenIfLocal(url);
-    if (!this.context) return this.navigate(url);
+    await this.getPage();
     const requestedHost = safeHost(url);
-    const newPage = this.adoptPage(await this.context.newPage());
+    const newPage = this.adoptPage(await this.context!.newPage());
+    this.owned.push(newPage);
     const response = await newPage.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
     const status = response?.status() ?? "unknown";
     try { await newPage.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
@@ -116,7 +118,7 @@ export class BrowserManager {
     this.page = newPage;
     await newPage.bringToFront();
     const title = await newPage.title();
-    const tabCount = this.context.pages().length;
+    const tabCount = this.listOwnedPages().length;
     const redirect = redirectMessage(requestedHost, safeHost(newPage.url()));
     return `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
   }
@@ -265,11 +267,11 @@ export class BrowserManager {
   }
 
   async listTabs(): Promise<string> {
-    return listTabsOp(this.context, this.page);
+    return listTabsOp(this.listOwnedPages(), this.page);
   }
 
   async switchTab(index: number): Promise<string> {
-    const result = await resolveSwitchTab(this.context, index);
+    const result = await resolveSwitchTab(this.listOwnedPages(), index);
     if (result.ok && result.page) {
       this.page = this.adoptPage(result.page);
     }
@@ -280,25 +282,26 @@ export class BrowserManager {
     return pageInfo(this.page, this.currentEngine);
   }
 
+  /** Tear down only this session's tabs + refs. The shared Chrome stays up;
+   *  in isolated mode the session's own context is closed too. */
   async close(): Promise<void> {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
     this.registry.reset();
-    if (this.browser) {
-      try { await this.browser.close(); } catch { /* already closed */ }
-      this.browser = null;
-      this.context = null;
-      this.page = null;
+    for (const p of this.owned) {
+      try { if (!p.isClosed()) await p.close(); } catch { /* already closed */ }
     }
-    if (this.chromeProcess) {
-      try { this.chromeProcess.kill(); } catch {}
-      this.chromeProcess = null;
+    this.owned = [];
+    if (this.isolated && this.context) {
+      try { await this.context.close(); } catch { /* already closed */ }
     }
+    this.context = null;
+    this.page = null;
   }
 
   isActive(): boolean {
-    return this.browser !== null && this.page !== null && !this.page.isClosed();
+    return this.page !== null && !this.page.isClosed();
   }
 }

@@ -34,6 +34,10 @@ export interface AgentRunDriverRequest {
   tools: string[];
   parentSessionId?: string;
   parentAgentId?: string;
+  /** Override for the run's session id. When set, the driver uses this as
+   *  the session feeding tool calls instead of `agent-<agentId>`, so an
+   *  operation's phases can share session-scoped browser state. */
+  sessionId?: string;
   templateId?: string;
   /** Resolved provider+model pin for this run. Set by invokeDefinition
    *  when resolveAgentModel finds a value at any rung (run override,

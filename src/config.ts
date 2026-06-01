@@ -98,6 +98,14 @@ const configSchema = z.object({
   // your regular Chrome to be closed (Chrome forbids two instances on one profile).
   browserMode: z.enum(["isolated", "attach"]).default("isolated"),
 
+  // Per-session browser context. Off by default: all sessions share one
+  // browser context, so cookies/logins carry across chats and missions
+  // (continuity). On: each session gets its own context (separate cookie
+  // jar) inside the same Chrome — full isolation when sessions must not
+  // share authenticated state. Tabs and element refs are always
+  // per-session regardless of this flag.
+  browserPerSessionContext: z.boolean().default(false),
+
   // Limits & timeouts
   browserCdpPort: z.number().int().min(1).max(65535).default(9800),
   browserIdleTimeoutMs: z.number().int().min(60000).default(600000),

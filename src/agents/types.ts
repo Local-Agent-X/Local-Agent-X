@@ -109,6 +109,11 @@ export interface InvokeOpts {
   /** Parent agent — set when an agent spawns a child agent (delegation
    *  chain). Used for the run tree in AgentRunStore. */
   parentAgentId?: string;
+  /** Override the run's session id (default: `agent-<agentId>`). The
+   *  operations executor sets one stable id for all of an op's sequential
+   *  phases so session-scoped state — notably the browser tab + element
+   *  refs — carries across phases. Does not change the run identity. */
+  sessionId?: string;
   /** Override the definition's allowedTools — narrower than the
    *  definition allows is fine; broader is silently capped. */
   toolOverride?: string[];

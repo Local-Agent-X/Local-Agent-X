@@ -188,7 +188,7 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
 
   // Inject live browser state if a prior phase left a tab open, so the sub-agent
   // picks up where we left off instead of navigating from scratch.
-  const browserState = await captureBrowserState();
+  const browserState = await captureBrowserState(`agent-op-${op.id}`);
   if (browserState) prompt += `\n\n${browserState}`;
 
   // Scoped system prompt for sub-agent. Forces decisive action — the biggest
@@ -242,7 +242,7 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
         description: "Inline operations executor phase agent.",
       },
       prompt,
-      { parentSessionId: opts.parentSessionId },
+      { parentSessionId: opts.parentSessionId, sessionId: `agent-op-${op.id}` },
     );
     const agentId = ref.runId;
 
@@ -271,10 +271,10 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
  * next sub-agent knows where it is. Returns null if no active page — the
  * next phase will navigate fresh.
  */
-async function captureBrowserState(): Promise<string | null> {
+async function captureBrowserState(sessionId: string): Promise<string | null> {
   try {
     const { getBrowserManager } = await import("../browser/index.js");
-    const mgr = getBrowserManager("default");
+    const mgr = getBrowserManager(sessionId);
     if (!mgr.isActive()) return null;
     const info = await mgr.getInfo().catch(() => "");
     const tabs = await mgr.listTabs().catch(() => "");

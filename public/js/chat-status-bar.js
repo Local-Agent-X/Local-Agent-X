@@ -103,7 +103,7 @@ function initStatusBar() {
   // tier voices in the picker even when settings.json on disk says tier 2.
   // Settings page also writes sax_settings, but the chat page is the entry
   // point users hit first — we can't assume settings.js has run this session.
-  _primeSaxSettings().then(() => loadProviders()).then(() => updateStatusBar());
+  _primeSaxSettings().then(() => ensureProvidersLoaded());
   setInterval(updateStatusBar, 10000);
   apiFetch('/api/auth/status').then(r => r.json()).then(d => {
     if (d.uptime) serverStartTime = Date.now() - (d.uptime * 1000);
@@ -196,15 +196,44 @@ async function refreshClonedVoices() {
   }
 }
 
+// A providers payload is "complete" once the active provider has a model
+// list. On a cold boot /api/providers returns instantly but with the Ollama
+// model cache still warming server-side, so the active provider's models come
+// back empty — the source of the empty picker boxes. Static-model providers
+// (xAI, Anthropic, etc.) are complete on the first hit since their models come
+// from the registry, not the warming cache.
+function isProvidersComplete(data) {
+  if (!data || !Array.isArray(data.providers) || data.providers.length === 0) return false;
+  if (!data.current || !data.current.provider) return false;
+  const active = data.providers.find(p => p.active) || data.providers[0];
+  return !!active && Array.isArray(active.models) && active.models.length > 0;
+}
+
 async function loadProviders() {
   if (_providersCache && Date.now() - _providersCacheTime < 30000) return _providersCache;
   try {
     const res = await apiFetch('/api/providers');
     const data = await res.json();
     _providersCache = data;
-    _providersCacheTime = Date.now();
+    // Only an incomplete result is left non-fresh (time 0) so the next call
+    // refetches — a complete one is held for the 30s TTL. This is what stops
+    // the boxes rendering empty for the whole warm-up window on cold boot.
+    _providersCacheTime = isProvidersComplete(data) ? Date.now() : 0;
     return data;
   } catch { return null; }
+}
+
+// Render whatever the first hit returns, then keep refetching until the
+// server's provider caches warm (or we hit the ceiling). Without this the
+// picker boxes sat empty until a manual provider switch, since updateStatusBar
+// only re-renders the cache and never refetches.
+async function ensureProvidersLoaded() {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const data = await loadProviders();
+    updateStatusBar();
+    if (isProvidersComplete(data)) return;
+    await new Promise(r => setTimeout(r, 1200));
+  }
 }
 
 // Mirrors server-side classifyModel() in src/model-tiers.ts. Keep in sync.

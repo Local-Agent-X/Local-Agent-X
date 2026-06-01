@@ -114,6 +114,59 @@ export function getCachedCloudOllama(): CloudState | null {
   return cached;
 }
 
+/** Stale-tolerant cloud model names for the providers-list DISPLAY path.
+ *  Unlike getCachedCloudOllama (fresh-or-null for dispatch), this returns
+ *  whatever is cached so /api/providers never blocks on a network call —
+ *  a background refresh keeps it current. */
+export function getCachedCloudModels(): string[] {
+  return cached ? [...cached.modelNames] : [];
+}
+
+// ── Local Ollama model cache ──────────────────────────────
+// Mirrors the cloud pair above for the LOCAL Ollama endpoint. Exists so
+// /api/providers can render the local model dropdown from cache instead of
+// awaiting a live /api/tags round-trip on every cold-boot hit (the call that
+// stacked 2-3s onto provider-list latency).
+
+interface LocalState {
+  reachable: boolean;
+  models: string[];
+  refreshedAt: number;
+}
+
+let cachedLocal: LocalState | null = null;
+
+/** Fetch local Ollama chat models (embeddings filtered out) and update the
+ *  module cache. Always resolves — unreachable Ollama yields reachable:false
+ *  with an empty list rather than throwing. */
+export async function refreshLocalOllama(ollamaUrl: string): Promise<LocalState> {
+  const base = ollamaUrl.replace(/\/+$/, "");
+  try {
+    const r = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) {
+      cachedLocal = { reachable: false, models: [], refreshedAt: Date.now() };
+      return cachedLocal;
+    }
+    const data = (await r.json()) as { models?: Array<{ name: string }> };
+    const models = (data.models || [])
+      .map(m => m.name)
+      .filter(n => typeof n === "string" && n.length > 0)
+      .filter(n => !isEmbeddingModel(n));
+    cachedLocal = { reachable: true, models, refreshedAt: Date.now() };
+    return cachedLocal;
+  } catch {
+    cachedLocal = { reachable: false, models: [], refreshedAt: Date.now() };
+    return cachedLocal;
+  }
+}
+
+/** Stale-tolerant local model cache for the providers-list DISPLAY path.
+ *  Returns null only if never populated, so the handler can fire a
+ *  background refresh on the first cold hit. */
+export function getCachedLocalOllama(): LocalState | null {
+  return cachedLocal;
+}
+
 /** True when the given model name is currently registered as a cloud
  *  model. Cheap lookup — used by chat-runner per turn. */
 export function isCloudModel(modelName: string): boolean {

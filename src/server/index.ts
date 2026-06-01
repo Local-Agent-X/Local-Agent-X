@@ -130,9 +130,10 @@ export async function startServer(config: LAXConfig) {
     try {
       const t0 = Date.now();
       const { getToolRAG } = await import("../tool-rag.js");
+      const { join } = await import("node:path");
       const rag = getToolRAG();
       const embedder = (memoryIndex as unknown as {
-        embeddingProvider?: { embed(t: string): Promise<number[]> };
+        embeddingProvider?: { embed(t: string): Promise<number[]>; name?: string; model?: string; dimensions?: number };
       }).embeddingProvider;
       if (!embedder) {
         bootLogger.info("[tool-rag] pre-warm skipped — no embedding provider");
@@ -140,6 +141,10 @@ export async function startServer(config: LAXConfig) {
       }
       if (rag.size > 0) return;
       rag.setEmbedder(embedder);
+      // Persist vectors across reboots, keyed by embedder identity so a model
+      // switch invalidates the cache and forces a clean re-embed.
+      const modelKey = `${embedder.name ?? "unknown"}/${embedder.model ?? "unknown"}/${embedder.dimensions ?? 0}`;
+      rag.setCache({ path: join(dataDir, "tool-rag-cache.json"), modelKey });
       await rag.build(allAgentTools);
       bootLogger.info(`[tool-rag] pre-warmed ${allAgentTools.length} tools in ${Date.now() - t0}ms`);
     } catch (e) {

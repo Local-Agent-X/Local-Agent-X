@@ -223,6 +223,25 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   }
 
   import("../tools/image-tools/index.js").then(m => m.initImageTools?.(secretsStore)).catch(() => {});
+
+  // Warm the provider-list model caches so the first /api/providers hit (chat
+  // status bar on app load) renders the model dropdowns from cache instead of
+  // blocking on a live Ollama /api/tags fetch + ollama.com cloud round-trip.
+  // Periodic refresh keeps them current; unref so it never holds the process
+  // open. See src/ollama-cloud.ts for the cache pair.
+  import("../ollama-cloud.js").then(({ refreshLocalOllama, refreshCloudOllama }) => {
+    const cloudUrl = config.ollamaCloudUrl;
+    const ollamaUrl = config.ollamaUrl;
+    const warm = () => {
+      void refreshLocalOllama(ollamaUrl).catch(() => {});
+      if (secretsStore.has("OLLAMA_CLOUD_API_KEY")) {
+        void refreshCloudOllama(secretsStore, cloudUrl).catch(() => {});
+      }
+    };
+    warm();
+    setInterval(warm, 60_000).unref();
+  }).catch(() => {});
+
   _t = _bsT("CronService+IntegrationRegistry");
   const cronService = new CronService(dataDir);
   const integrations = new IntegrationRegistry(dataDir);

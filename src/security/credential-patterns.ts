@@ -1,10 +1,11 @@
 // ── Credential pattern catalog ──
 // Single source of truth for "what counts as a credential" across the codebase.
-// Two consumers today:
-//   1. hooks/hook-engine.ts scrubEnv()  → CREDENTIAL_ENV_PREFIXES (env-var NAMES)
+// Consumers today:
+//   1. hooks/hook-engine.ts scrubEnv()      → CREDENTIAL_ENV_PREFIXES (env-var NAMES)
 //   2. security/credentials.ts redactCredentials() → CREDENTIAL_KEY_PATTERNS (inline VALUES)
+//   3. security/secret-scanner.ts            → CREDENTIAL_PATTERNS (position-aware scan)
 //
-// Add new credential shapes here, not in the call sites.
+// Add new credential shapes to CREDENTIAL_PATTERNS, not in the call sites.
 
 /**
  * Env-var NAME prefixes that indicate the value is credential-bearing.
@@ -18,36 +19,78 @@ export const CREDENTIAL_ENV_PREFIXES: RegExp =
   /^(ANTHROPIC_|OPENAI_|XAI_|CEREBRAS_|GROQ_|MISTRAL_|VOYAGE_|GOOGLE_|GEMINI_|AZURE_|HF_|HUGGINGFACE_|GH_|GITHUB_|GITLAB_|SLACK_|DISCORD_|BRAVE_|NOTION_|LINEAR_|VERCEL_|STRIPE_|SUPABASE_|AWS_|NPM_|SMTP_|IMAP_|DEEPSEEK_|MOONSHOT_|DASHSCOPE_|VOICE_TOOLS_|CUSTOM_).*|.*_(KEY|TOKEN|SECRET|PASS|PASSWORD)$/i;
 
 /**
- * Inline secret-shape regexes. Each pattern captures the secret in group 1
- * (when feasible) so callers can mask just the credential and preserve context.
- * Patterns without a capture group match the whole secret (e.g. PEM blocks).
+ * A single credential shape. `type` is a coarse category and `name` a
+ * human label — both surface in scanner results (security/secret-scanner.ts
+ * SecretMatch) so consumers like exfil-scan and the http egress guard can
+ * report WHICH credential leaked. `regex` captures the secret in group 1
+ * where feasible (so callers can mask just the credential and preserve
+ * surrounding context); patterns without a capture group match the whole
+ * secret (e.g. PEM blocks).
  */
-export const CREDENTIAL_KEY_PATTERNS: readonly RegExp[] = [
-  /\b(sk-ant-[a-zA-Z0-9_-]{20,})/g,        // Anthropic
-  /\b(sk-[a-zA-Z0-9]{20,})/g,              // OpenAI
-  /\b(ghp_[a-zA-Z0-9]{36,})/g,             // GitHub personal access token
-  /\b(github_pat_[a-zA-Z0-9_]{20,})/g,     // GitHub fine-grained PAT
-  /\b(gho_[a-zA-Z0-9]{36,})/g,             // GitHub OAuth
-  /\b(ghs_[a-zA-Z0-9]{36,})/g,             // GitHub App installation
-  /\b(xox[bpas]-[a-zA-Z0-9-]{20,})/g,      // Slack
-  /\b(\d{8,10}:[A-Za-z0-9_-]{35})\b/g,     // Telegram bot token
-  /\b(glpat-[a-zA-Z0-9_-]{20,})/g,         // GitLab
-  /\b(AKIA[A-Z0-9]{16})/g,                 // AWS Access Key
-  /\b(lin_api_[a-zA-Z0-9]{20,})/g,         // Linear
-  /\b(sk_live_[a-zA-Z0-9]{20,})/g,         // Stripe live
-  /\b(sk_test_[a-zA-Z0-9]{20,})/g,         // Stripe test
-  /\b(ck_[a-f0-9]{40})\b/g,                // WooCommerce consumer key
-  /\b(cs_[a-f0-9]{40})\b/g,                // WooCommerce consumer secret
-  /\b(sq0[a-z]{3}-[a-zA-Z0-9_-]{20,})/g,   // Square
-  /\b(xai-[a-zA-Z0-9]{20,})/g,             // xAI
-  /\b(vercel_[a-zA-Z0-9_-]{20,})/g,        // Vercel
-  /\b(npm_[a-zA-Z0-9]{36,})/g,             // npm
-  /\b(sbp_[a-zA-Z0-9]{20,})/g,             // Supabase
-  /Bearer\s+([a-zA-Z0-9._\-]{20,})/gi,     // Bearer tokens
-  /(?:api[_-]?key|token|secret|password|authorization|access_key|private_key)\s*[:=]\s*["']?([^\s"',]{12,})/gi,
-  /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9+/=]{40,})/gi,
-  /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----/g,
+export interface CredentialPattern {
+  type: string;
+  name: string;
+  regex: RegExp;
+}
+
+/**
+ * The structured catalog — union of every credential shape recognized
+ * across the codebase. Source of truth for both the inline-value redactor
+ * (CREDENTIAL_KEY_PATTERNS, below) and the position-aware scanner.
+ */
+export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
+  // ── Provider / vendor API keys ──
+  { type: "api_key", name: "Anthropic API Key", regex: /\b(sk-ant-[a-zA-Z0-9_-]{20,})/g },
+  { type: "api_key", name: "OpenAI API Key", regex: /\b(sk-[a-zA-Z0-9]{20,})/g },
+  { type: "api_key", name: "xAI API Key", regex: /\b(xai-[a-zA-Z0-9]{20,})/g },
+  { type: "api_key", name: "Stripe Live Key", regex: /\b(sk_live_[a-zA-Z0-9]{20,})/g },
+  { type: "api_key", name: "Stripe Test Key", regex: /\b(sk_test_[a-zA-Z0-9]{20,})/g },
+  { type: "api_key", name: "Sendgrid Key", regex: /\b(SG\.[a-zA-Z0-9_-]{22,}\.[a-zA-Z0-9_-]{20,})/g },
+  { type: "api_key", name: "Linear API Key", regex: /\b(lin_api_[a-zA-Z0-9]{20,})/g },
+  { type: "api_key", name: "WooCommerce Consumer Key", regex: /\b(ck_[a-f0-9]{40})\b/g },
+  { type: "api_key", name: "WooCommerce Consumer Secret", regex: /\b(cs_[a-f0-9]{40})\b/g },
+  { type: "api_key", name: "Square Token", regex: /\b(sq0[a-z]{3}-[a-zA-Z0-9_-]{20,})/g },
+  { type: "api_key", name: "Vercel Token", regex: /\b(vercel_[a-zA-Z0-9_-]{20,})/g },
+  { type: "api_key", name: "npm Token", regex: /\b(npm_[a-zA-Z0-9]{36,})/g },
+  { type: "api_key", name: "Supabase Token", regex: /\b(sbp_[a-zA-Z0-9]{20,})/g },
+
+  // ── Cloud provider ──
+  { type: "cloud", name: "AWS Access Key", regex: /\b(AKIA[A-Z0-9]{16})/g },
+  { type: "cloud", name: "AWS Secret Key", regex: /(?:aws_secret_access_key|secret_key)\s*[:=]\s*["']?([A-Za-z0-9/+=]{40})["']?/gi },
+  { type: "cloud", name: "GCP Service Account", regex: /"type"\s*:\s*"service_account"/g },
+
+  // ── Version control ──
+  { type: "vcs", name: "GitHub PAT", regex: /\b(ghp_[a-zA-Z0-9]{36,})/g },
+  { type: "vcs", name: "GitHub Fine-grained PAT", regex: /\b(github_pat_[a-zA-Z0-9_]{20,})/g },
+  { type: "vcs", name: "GitHub OAuth", regex: /\b(gho_[a-zA-Z0-9]{36,})/g },
+  { type: "vcs", name: "GitHub App", regex: /\b(ghs_[a-zA-Z0-9]{36,})/g },
+  { type: "vcs", name: "GitLab PAT", regex: /\b(glpat-[a-zA-Z0-9_-]{20,})/g },
+
+  // ── Communication ──
+  { type: "comm", name: "Slack Token", regex: /\b(xox[bpas]-[a-zA-Z0-9-]{20,})/g },
+  { type: "comm", name: "Telegram Bot Token", regex: /\b(\d{8,10}:[A-Za-z0-9_-]{35})\b/g },
+  { type: "comm", name: "Discord Token", regex: /([MN][A-Za-z\d]{23,}\.[\w-]{6}\.[\w-]{27,})/g },
+
+  // ── Cryptographic ──
+  { type: "crypto", name: "Private Key (PEM)", regex: /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----/g },
+  { type: "crypto", name: "Certificate", regex: /-----BEGIN\s+CERTIFICATE-----/g },
+
+  // ── Database ──
+  { type: "database", name: "Database Connection String", regex: /(?:mongodb|postgres|mysql|redis):\/\/[^\s"']{10,}/gi },
+
+  // ── Generic shapes ──
+  { type: "generic", name: "Bearer Token", regex: /Bearer\s+([a-zA-Z0-9._\-]{20,})/gi },
+  { type: "generic", name: "Password in URL", regex: /\/\/[^:]+:[^@]+@[^\s/]+/g },
+  { type: "generic", name: "Key-Value Secret", regex: /(?:api[_-]?key|token|secret|password|authorization|access_key|private_key)\s*[:=]\s*["']?([^\s"',]{12,})/gi },
+  { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9+/=]{40,})/gi },
 ];
+
+/**
+ * Flat list of just the regexes, derived from the structured catalog.
+ * Kept for the inline-value redactor in security/credentials.ts and the
+ * `redact()` helper below — callers that don't need the type/name metadata.
+ */
+export const CREDENTIAL_KEY_PATTERNS: readonly RegExp[] = CREDENTIAL_PATTERNS.map((p) => p.regex);
 
 /** Mask a secret value: prefix only, never suffix. */
 function maskValue(value: string): string {

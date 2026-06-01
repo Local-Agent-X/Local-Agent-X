@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ChunkMetadata } from "./index.js";
+import { stripHarnessScaffolding } from "../sanitize.js";
 
 // Re-export the Chunk shape used by memory.ts (avoid circular import)
 export interface ChunkData {
@@ -214,11 +215,18 @@ export function extractSessionPairs(sessionPath: string): ConversationMessage[] 
   const messages: ConversationMessage[] = [];
   for (const msg of session.messages) {
     if (msg.role !== "user" && msg.role !== "assistant") continue;
-    const content = typeof msg.content === "string"
+    const raw = typeof msg.content === "string"
       ? msg.content.trim()
       : Array.isArray(msg.content)
         ? msg.content.filter((p: unknown) => typeof p === "string").join(" ").trim()
         : "";
+    // Strip harness scaffolding (<system-reminder> blocks, anti-loop nudges)
+    // before this content reaches consolidation (dream.ts) or the searchable
+    // index (universal-index.ts) — it's harness-injected, not authored, and
+    // must never be mined into a durable fact. Single chokepoint for every
+    // transcript consumer. A pair that's nothing but scaffolding drops out
+    // via the existing min-length guard.
+    const content = stripHarnessScaffolding(raw);
     if (!content || content.length < 3) continue;
     messages.push({ role: msg.role as "user" | "assistant", content });
   }

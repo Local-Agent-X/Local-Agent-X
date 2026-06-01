@@ -95,6 +95,38 @@ export function stripSystemInjectionTags(text: string): string {
   return result;
 }
 
+// ── Harness scaffolding stripping ──
+// The agent harness injects scaffolding INTO user messages: <system-reminder>
+// context blocks and anti-loop / self-check nudges ("SYSTEM: You have called
+// read 8 times. Stop searching and produce your final output.", "[Self-check]
+// The following tool errors occurred..."). This is NOT user-authored content
+// and must never be mined into durable memory. A worker once saved "stop
+// searching after 11 instructions" as a fact — it had extracted one of these.
+// Anchored, tight regexes only; err toward leaving real prose in over false-
+// stripping (a false strip loses a real fact).
+
+const HARNESS_SCAFFOLD_PATTERNS: RegExp[] = [
+  /<system-reminder>[\s\S]*?<\/system-reminder>/gi,
+  /^\s*SYSTEM:\s*You have called[\s\S]*?(?:\n\n|$)/gim,
+  /you have called \w+ \d+ times[\s\S]*?(?:final output\.?|$)/gi,
+  /stop searching and produce your final output\.?/gi,
+  /^\s*\[Self-check\][\s\S]*?(?:\n\n|$)/gim,
+];
+
+/**
+ * Remove agent-harness scaffolding from a message before any memory extraction.
+ * Pure function. Strips system-reminder blocks and anti-loop / self-check
+ * nudges, then collapses 3+ blank lines to one and trims.
+ */
+export function stripHarnessScaffolding(text: string): string {
+  let result = text;
+  for (const pattern of HARNESS_SCAFFOLD_PATTERNS) {
+    result = result.replace(pattern, "");
+  }
+  result = result.replace(/\n{3,}/g, "\n");
+  return result.trim();
+}
+
 // ── Core functions ──
 
 /** Generate a unique boundary ID (16 hex chars) */

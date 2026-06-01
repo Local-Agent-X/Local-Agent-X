@@ -9,6 +9,18 @@ import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
 
 const VALID_KINDS: FactKind[] = ["world", "experience", "opinion", "observation"];
 
+// A single durable fact is one compact line. These tight signals reject a
+// multi-fact dump crammed into one `remember` call (one blob = one
+// un-queryable mega-fact). Tuned for near-zero false positives: a 1-2
+// sentence single-line fact under 400 chars always passes.
+function looksLikeMultiFactBlob(content: string): boolean {
+  if (content.includes("\n")) return true;
+  if (content.length > 400) return true;
+  const sentenceBoundaries = content.match(/[.!?](\s|$)/g);
+  if (sentenceBoundaries && sentenceBoundaries.length >= 4) return true;
+  return false;
+}
+
 function formatToolError(prefix: string, result: { error?: string; matches?: number; preview?: string[] }): string {
   let msg = `${prefix}: ${result.error ?? "unknown error"}`;
   if (result.preview && result.preview.length > 0) {
@@ -63,6 +75,19 @@ export function createFactsTools(memory: MemoryIndex) {
         const confidence = args.confidence != null ? Number(args.confidence) : undefined;
         if (confidence !== undefined && (isNaN(confidence) || confidence < 0 || confidence > 1)) {
           return { content: "confidence must be a number between 0 and 1", isError: true };
+        }
+
+        // One compact statement per call. A multi-fact blob becomes a single
+        // un-queryable mega-fact, so refuse it with a non-terminal retry hint
+        // (isError:false → guidance, not a terminal failure) instead of
+        // persisting the dump. Nothing is written in this branch.
+        if (looksLikeMultiFactBlob(content)) {
+          return {
+            content:
+              "This looks like multiple facts or a long dump. `remember` stores ONE compact statement per call — split it into separate `remember` calls, one fact each. " +
+              "The write was NOT applied. Don't claim 'saved!' — nothing persisted yet.",
+            isError: false,
+          };
         }
 
         try {

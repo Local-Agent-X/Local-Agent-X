@@ -7,6 +7,7 @@ import {
   appendToDailyLogSafely,
   MemoryWriteBlocked,
 } from "./write-safely.js";
+import { stripHarnessScaffolding } from "../sanitize.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.auto-extract");
@@ -28,6 +29,16 @@ export async function autoExtractAndSave(
   assistantResponse: string,
   sessionId?: string,
 ): Promise<void> {
+  // Strip harness scaffolding (system-reminder blocks, anti-loop / self-check
+  // nudges) BEFORE the taint check and classifier — it's injected by the
+  // harness, not user-authored, and must never become a durable fact.
+  userMessage = stripHarnessScaffolding(userMessage);
+  assistantResponse = stripHarnessScaffolding(assistantResponse);
+  if (!userMessage.trim()) {
+    logger.info("[memory] Auto-extract skipped: no user-authored content after scaffolding strip");
+    return;
+  }
+
   // Pre-flight skip on tainted inputs — keeps the LLM classifier from
   // even seeing obvious injection material. The per-write gate inside
   // writeMemorySafely / appendToDailyLogSafely is the load-bearing

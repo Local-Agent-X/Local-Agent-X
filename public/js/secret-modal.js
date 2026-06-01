@@ -1,16 +1,19 @@
-// ── Secret modal (single + multi) ──
-// Handles both `secret_request` and `secrets_request` SSE events. The modal
-// can show 1..N labeled secret fields, grouped by service. While a modal is
-// visible, additional secret events are queued and displayed in batch after
-// the current one is submitted/cancelled.
+// ── Secret card (single + multi) ──
+// Handles both `secret_request` and `secrets_request` SSE events. The card
+// renders inline in the chat flow (as the last entry under the agent's
+// message) rather than as a floating overlay, so the user can still read what
+// the agent said while filling it in. It can show 1..N labeled secret fields,
+// grouped by service. While a card is visible, additional secret events are
+// queued and displayed in batch after the current one is submitted/cancelled.
 
 (function () {
-  let _pendingNames = [];   // names currently rendered in the open modal
+  let _pendingNames = [];   // names currently rendered in the open card
   const _queue = [];        // pending {name, service, reason} entries
+  let _observer = null;     // re-attaches the card if renderMessages() wipes it
+  let _cardEl = null;       // live reference to the card (survives innerHTML wipes)
 
   function _isOpen() {
-    const o = document.getElementById('secret-modal-overlay');
-    return !!(o && o.classList.contains('visible'));
+    return !!(_cardEl && _cardEl.classList.contains('visible'));
   }
 
   function _esc(s) {
@@ -19,14 +22,61 @@
     ));
   }
 
+  // Home for the inline card: the chat message list, so it scrolls with the
+  // conversation and lands under the agent's last bubble. Falls back to body
+  // if the chat list isn't mounted (e.g. another view is active).
+  function _host() {
+    return document.getElementById('messages') || document.body;
+  }
+
+  // The newest assistant bubble carries a ~100vh `pin-bottom` min-height
+  // reservation (keeps the last reply near the viewport top). Our card appends
+  // AFTER that bubble, so the reservation would shove it a full screen down.
+  // Collapse the reservation while the card is the live bottom element.
+  function _collapsePin() {
+    const host = _host();
+    host.querySelectorAll('.msg.pin-bottom').forEach(m => m.classList.remove('pin-bottom'));
+  }
+
   function _ensureOverlay() {
-    let overlay = document.getElementById('secret-modal-overlay');
-    if (overlay) return overlay;
-    overlay = document.createElement('div');
-    overlay.id = 'secret-modal-overlay';
-    overlay.onclick = e => { if (e.target === overlay) cancelSecret(); };
-    document.body.appendChild(overlay);
-    return overlay;
+    const host = _host();
+    if (!_cardEl) {
+      _cardEl = document.createElement('div');
+      _cardEl.id = 'secret-modal-overlay';
+    }
+    // Keep it as the last child of the live host (first mount, a chat
+    // re-render that dropped it, or a host swap).
+    if (_cardEl.parentNode !== host) host.appendChild(_cardEl);
+    _collapsePin();
+    return _cardEl;
+  }
+
+  function _scrollIntoView() {
+    if (typeof window.autoScroll === 'function') { window.autoScroll(); return; }
+    const el = document.getElementById('messages');
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  // renderMessages() rebuilds #messages via innerHTML, which would silently
+  // drop our card mid-input. While the card is open, watch the host and
+  // re-append (preserving typed values) if it gets detached.
+  function _startGuard() {
+    if (_observer || typeof MutationObserver === 'undefined') return;
+    _observer = new MutationObserver(() => {
+      if (!_cardEl || !_cardEl.classList.contains('visible')) return;
+      const host = _host();
+      if (_cardEl.parentNode !== host) {
+        host.appendChild(_cardEl);
+        _collapsePin();
+        _scrollIntoView();
+      }
+    });
+    const host = _host();
+    if (host) _observer.observe(host, { childList: true });
+  }
+
+  function _stopGuard() {
+    if (_observer) { _observer.disconnect(); _observer = null; }
   }
 
   function _renderModalBody(overlay, secrets) {
@@ -79,6 +129,8 @@
     const overlay = _ensureOverlay();
     _renderModalBody(overlay, secrets);
     overlay.classList.add('visible');
+    _startGuard();
+    _scrollIntoView();
     setTimeout(() => {
       const first = overlay.querySelector('.secret-input-field');
       if (first) first.focus();
@@ -100,7 +152,7 @@
   }
 
   async function submitSecret() {
-    const overlay = document.getElementById('secret-modal-overlay');
+    const overlay = _cardEl;
     if (!overlay) return;
     const inputs = Array.from(overlay.querySelectorAll('.secret-input-field'));
     const empty = inputs.filter(i => !i.value.trim());
@@ -110,24 +162,56 @@
       setTimeout(() => { empty[0].style.outline = ''; }, 1500);
       return;
     }
+    const requested = _pendingNames.slice();
+    const saved = [];
     for (const inp of inputs) {
       const name = inp.getAttribute('data-secret-name');
       const value = inp.value.trim();
       if (!name || !value) continue;
       try {
         await apiPost('/api/secrets', { name, value });
+        saved.push(name);
       } catch (e) {
         console.error('Failed saving secret', name, e);
       }
     }
     _afterClose();
+    if (saved.length) {
+      _localNote(`${saved.join(', ')} captured and ready for use.`);
+    } else {
+      _localNote(`Couldn't save ${requested.join(', ') || 'the secret'} — try again.`);
+    }
   }
 
-  function cancelSecret() { _afterClose(); }
+  // Drop an instant confirmation straight into the chat. Client-only: the note
+  // is never sent to the model (the agent reads the credential from the vault
+  // when it next needs it), so there's no turn latency.
+  function _localNote(text) {
+    if (!text) return;
+    const chat = (typeof activeChat !== 'undefined') ? activeChat : null;
+    if (chat && Array.isArray(chat.messages)) {
+      chat.messages.push({ role: 'assistant', content: text, timestamp: Date.now(), _localNote: true });
+      if (typeof saveChats === 'function') saveChats();
+      if (typeof renderMessages === 'function') renderMessages();
+      _scrollIntoView();
+    } else if (typeof addMessageEl === 'function') {
+      addMessageEl('assistant', text);
+    }
+  }
+
+  function cancelSecret() {
+    const requested = _pendingNames.slice();
+    _afterClose();
+    if (requested.length) _localNote(`${requested.join(', ')} not saved — request cancelled.`);
+  }
 
   function _afterClose() {
-    const o = document.getElementById('secret-modal-overlay');
-    if (o) o.classList.remove('visible');
+    _stopGuard();
+    if (_cardEl) {
+      _cardEl.classList.remove('visible');
+      _cardEl.remove();   // inline card: pull it out of the chat flow entirely
+      _cardEl = null;
+    }
     _pendingNames = [];
     if (_queue.length > 0) {
       const next = _queue.splice(0, _queue.length);

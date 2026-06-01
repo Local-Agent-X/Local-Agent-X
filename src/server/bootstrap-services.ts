@@ -11,6 +11,7 @@ import { setBrowserAuthContext } from "../browser/index.js";
 import { CronService } from "../cron/cron-service.js";
 import { IntegrationRegistry } from "../integrations/index.js";
 import { setServerPort } from "../server-utils.js";
+import { fetchLocalOllamaTags } from "../ollama-cloud.js";
 import type { LAXConfig } from "../types.js";
 
 import { createLogger } from "../logger.js";
@@ -69,7 +70,6 @@ export async function initOrRefreshEmbeddingProvider(deps: {
       const fallbackModel = "nomic-embed-text";
       try {
         const ollamaUrl = (settings.ollamaUrl || "http://127.0.0.1:11434").replace(/\/$/, "");
-        const { fetchLocalOllamaTags } = await import("../ollama-cloud.js");
         const tags = await fetchLocalOllamaTags(ollamaUrl);
         if (tags.reachable) {
           const installed = tags.models.map(m => m.name.replace(/:latest$/, ""));

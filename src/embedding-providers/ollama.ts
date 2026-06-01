@@ -1,5 +1,6 @@
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
+import { fetchLocalOllamaTags } from "../ollama-cloud.js";
 import { emptyVector } from "./helpers.js";
 import type { ExtendedEmbeddingProvider } from "./types.js";
 
@@ -121,7 +122,6 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   private async ensureHealthy(): Promise<boolean> {
     if (this.healthy !== null) return this.healthy;
     try {
-      const { fetchLocalOllamaTags } = await import("../ollama-cloud.js");
       const { reachable } = await fetchLocalOllamaTags(this.baseUrl);
       if (!reachable) {
         logger.warn(`[ollama-embed] Server at ${this.baseUrl} not reachable`);

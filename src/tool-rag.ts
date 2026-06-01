@@ -17,6 +17,8 @@
  */
 import type { ToolDefinition } from "./types.js";
 import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("tool-rag");
@@ -24,6 +26,14 @@ const logger = createLogger("tool-rag");
 export interface EmbedFn {
   embed(text: string): Promise<number[]>;
 }
+
+/** Where built tool vectors are persisted so reboots skip re-embedding. */
+export interface ToolRAGCache {
+  path: string;     // file path for the on-disk vector cache
+  modelKey: string; // embedder identity (provider/model/dims) — invalidates on switch
+}
+
+const CACHE_VERSION = 1;
 
 export interface ToolRAGOptions {
   topK?: number;        // default 20 — plenty for most requests
@@ -42,11 +52,22 @@ export class ToolRAG {
   private toolsHash = "";
   private ready = false;
   private embedFn: EmbedFn | null = null;
+  private cache: ToolRAGCache | null = null;
 
   /** Set or update the embedding provider. Rebuild is triggered on next build(). */
   setEmbedder(embed: EmbedFn | null): void {
     this.embedFn = embed;
     this.ready = false;
+  }
+
+  /**
+   * Enable on-disk persistence of built tool vectors. Tool name+description is
+   * static, so once embedded the vectors can be reloaded across reboots without
+   * any embedding calls — which is what kept the prewarm cheap regardless of how
+   * busy the embedding endpoint is at startup.
+   */
+  setCache(cache: ToolRAGCache | null): void {
+    this.cache = cache;
   }
 
   /**
@@ -57,6 +78,13 @@ export class ToolRAG {
     if (!this.embedFn) return;
     const hash = computeToolsHash(tools);
     if (hash === this.toolsHash && this.ready) return;
+
+    // Fast path: identical tool set + same embedder already on disk → reload,
+    // no embedding calls. This is the common case after the first boot.
+    if (this.loadFromCache(hash)) {
+      logger.info(`[tool-rag] loaded ${this.vectors.length} tool vectors from cache`);
+      return;
+    }
 
     const texts = tools.map(t => `${t.name}: ${t.description || t.name}`);
     try {
@@ -69,9 +97,47 @@ export class ToolRAG {
       this.vectors = vectors;
       this.toolsHash = hash;
       this.ready = true;
+      this.saveToCache(hash);
     } catch (e) {
       logger.warn(`[tool-rag] Index build failed: ${(e as Error).message}. Falling back to keyword filter.`);
       this.ready = false;
+    }
+  }
+
+  /** Reload vectors from disk when the tool set and embedder both match. */
+  private loadFromCache(hash: string): boolean {
+    if (!this.cache) return false;
+    try {
+      const raw = JSON.parse(readFileSync(this.cache.path, "utf8")) as {
+        version?: number; hash?: string; modelKey?: string; vectors?: ToolVector[];
+      };
+      if (
+        raw.version !== CACHE_VERSION ||
+        raw.hash !== hash ||
+        raw.modelKey !== this.cache.modelKey ||
+        !Array.isArray(raw.vectors) ||
+        raw.vectors.length === 0
+      ) return false;
+      this.vectors = raw.vectors;
+      this.toolsHash = hash;
+      this.ready = true;
+      return true;
+    } catch {
+      return false; // missing/corrupt cache — fall through to embedding
+    }
+  }
+
+  /** Persist vectors so the next boot can skip embedding entirely. */
+  private saveToCache(hash: string): void {
+    if (!this.cache) return;
+    try {
+      mkdirSync(dirname(this.cache.path), { recursive: true });
+      writeFileSync(
+        this.cache.path,
+        JSON.stringify({ version: CACHE_VERSION, hash, modelKey: this.cache.modelKey, vectors: this.vectors })
+      );
+    } catch (e) {
+      logger.warn(`[tool-rag] cache write failed: ${(e as Error).message}`);
     }
   }
 

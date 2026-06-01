@@ -5,6 +5,12 @@ import { loadSettings, saveSettings } from "../../settings.js";
 import { isEmbeddingModel } from "../../canonical-loop/model-capabilities.js";
 import type { ProviderId } from "../../providers/provider-ids.js";
 import { PROVIDERS } from "../../providers/registry.js";
+import {
+  refreshCloudOllama,
+  getCachedCloudModels,
+  refreshLocalOllama,
+  getCachedLocalOllama,
+} from "../../ollama-cloud.js";
 
 export const handleProvidersRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -21,9 +27,15 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const hasXaiKey = ctx.secretsStore.has("XAI_API_KEY") || hasXaiOAuth;
     const hasCerebrasKey = ctx.secretsStore.has("CEREBRAS_API_KEY");
     const hasOpenAIKey = !!ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY");
-    let hasOllama = false;
     const ollamaUrl = getRuntimeConfig().ollamaUrl;
-    try { const r = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(2000) }); hasOllama = r.ok; } catch {}
+    // Read local Ollama state from the cache — NEVER a live /api/tags fetch on
+    // this path (it stacked 2-3s of cold-boot latency before the dropdown
+    // could render). If the cache was never populated, kick a background
+    // refresh and proceed with what we know (nothing yet); the next poll hit
+    // picks it up. bootstrap-services warms it at startup so this is rare.
+    const localCache = getCachedLocalOllama();
+    if (!localCache) void refreshLocalOllama(ollamaUrl).catch(() => {});
+    const hasOllama = localCache?.reachable ?? false;
     // Resolve current provider/model the same way the request path does
     // (see src/agent-request/resolve-provider.ts). The previous default
     // hardcoded "xai"/"grok-4" here regardless of which creds were
@@ -74,16 +86,8 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     if (hasAnthropicOAuth) pushFromRegistry("anthropic");
     if (hasOpenAIKey) pushFromRegistry("openai");
     if (hasOllama) {
-      let ollamaModels: string[] = [];
-      try {
-        const r = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
-        const d = await r.json() as { models?: Array<{ name: string }> };
-        // Filter out embedding-only models — they can't serve chat
-        // completions and showing them in the chat-model picker leads
-        // to confusing runtime errors.
-        ollamaModels = (d.models || []).map(m => m.name).filter(n => !isEmbeddingModel(n));
-      } catch {}
-      providers.push({ id: "local", name: "Ollama", models: ollamaModels, active: currentProvider === "local" });
+      // From cache (populated above / at boot) — no network call here.
+      providers.push({ id: "local", name: "Ollama", models: localCache?.models ?? [], active: currentProvider === "local" });
     }
     // Ollama Turbo (cloud) — separate top-level entry so users find it
     // by name in the dropdown. When the API key isn't set yet, we still
@@ -92,13 +96,17 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // Gemini before keys are added).
     {
       const hasCloudKey = ctx.secretsStore.has("OLLAMA_CLOUD_API_KEY");
+      // Read cloud models from cache — NEVER an inline ollama.com round-trip
+      // here. That internet call (only present when a cloud key is set) was
+      // the machine-specific 5s stall on the provider-list path. If a key is
+      // set but the cache is cold, kick a background refresh and return what
+      // we have; bootstrap-services warms it at startup.
       let cloudModels: string[] = [];
       if (hasCloudKey) {
-        try {
-          const { refreshCloudOllama } = await import("../../ollama-cloud.js");
-          const r = await refreshCloudOllama(ctx.secretsStore, getRuntimeConfig().ollamaCloudUrl);
-          cloudModels = r.models;
-        } catch { /* cloud unreachable; surface empty list */ }
+        cloudModels = getCachedCloudModels();
+        if (cloudModels.length === 0) {
+          void refreshCloudOllama(ctx.secretsStore, getRuntimeConfig().ollamaCloudUrl).catch(() => {});
+        }
       }
       providers.push({
         id: "ollama-cloud",

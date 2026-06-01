@@ -141,25 +141,12 @@ try {
   surfaceUnacknowledgedMerge();
 } catch { /* best-effort */ }
 
-// Sweep orphaned self_edit/autopilot worktrees left in %TEMP%/lax-worktrees by
-// a prior run that crashed before cleanup. Each can hold a live node_modules
-// junction into the parent's real deps; we unlink those FIRST so a later
-// `git worktree prune` / AV scan / temp cleanup can't traverse them and eat
-// the parent node_modules (#11). Best-effort — must never block boot.
-//
-// NEVER in a self_edit bind probe: the probe boots from a worktree INSIDE
-// %TEMP%/lax-worktrees, so the sweep would treat its own (still-active)
-// worktree as an orphan and unlink the node_modules junction it's booting on,
-// killing the probe mid-boot. Only the real server (never under that dir)
-// sweeps.
-if (process.env.LAX_SELF_EDIT_PROBE !== "1") {
-  try {
-    const { sweepOrphanWorktreeJunctions } = await import("./agency/worktree.js");
-    await sweepOrphanWorktreeJunctions();
-  } catch (e) {
-    logger.warn(`[boot] orphan worktree sweep failed: ${(e as Error).message}`);
-  }
-}
+// NOTE: the orphan-worktree sweep used to run HERE, before the server bound.
+// It walks %TEMP%/lax-worktrees and recursive-deletes dead worktrees, retrying
+// EBUSY dirs with backoff — which cost 11s+ of boot on a box where those dirs
+// stay locked, all of it blocking port-listening. The sweep is pure best-effort
+// cleanup with no ordering dependency on startup, so it now runs DETACHED after
+// startServer (see bottom of file). Boot no longer waits on it.
 
 // Single-instance enforcement + pidfile + parent-pid heartbeat. Must run
 // BEFORE startServer so we never bind ports while a sibling server is up.
@@ -239,3 +226,25 @@ if (args.includes("--login")) {
 }
 
 startServer(config);
+
+// Deferred orphan-worktree sweep — runs AFTER the server is up so its
+// filesystem walk + EBUSY-retry deletes never block port-listening. Best-effort
+// cleanup of dead self_edit/autopilot worktrees in %TEMP%/lax-worktrees; each
+// can hold a node_modules junction into the parent's real deps, so it unlinks
+// those reparse points before any recursive delete (see sweepOrphanWorktreeJunctions).
+//
+// NEVER in a self_edit bind probe: the probe boots from a worktree INSIDE
+// %TEMP%/lax-worktrees, so the sweep would unlink the junction it's booting on
+// and kill itself mid-probe. Only the real server sweeps.
+if (process.env.LAX_SELF_EDIT_PROBE !== "1") {
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const { sweepOrphanWorktreeJunctions } = await import("./agency/worktree.js");
+        await sweepOrphanWorktreeJunctions();
+      } catch (e) {
+        logger.warn(`[boot] deferred orphan worktree sweep failed: ${(e as Error).message}`);
+      }
+    })();
+  }, 5000);
+}

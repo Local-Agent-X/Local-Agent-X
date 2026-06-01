@@ -292,6 +292,11 @@ export interface LAXConfig {
    *  "attach" = your real Chrome profile, requires Chrome closed. */
   browserMode: "isolated" | "attach";
 
+  /** When true, each session gets its own browser context (separate cookie
+   *  jar) inside the shared Chrome. Off = shared context (cookies carry
+   *  across sessions). Tabs/refs are per-session either way. */
+  browserPerSessionContext: boolean;
+
   // ── Externalized limits & timeouts ──
   browserCdpPort: number;
   browserIdleTimeoutMs: number;

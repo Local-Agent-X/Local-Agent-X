@@ -121,6 +121,7 @@ export function invokeDefinition(
       tools,
       parentSessionId: opts.parentSessionId,
       parentAgentId: opts.parentAgentId,
+      sessionId: opts.sessionId,
       templateId,
       modelOverride,
     },

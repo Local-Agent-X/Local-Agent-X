@@ -3,7 +3,7 @@
  * functions that take a Page (and optionally a BrowserContext) — keeps
  * browser.ts under the file-size cap without hiding the operation semantics.
  */
-import type { BrowserContext, Page } from "playwright";
+import type { Page } from "playwright";
 import { MAX_TEXT_LENGTH } from "./launcher.js";
 import { wrapExternalContent } from "../sanitize.js";
 
@@ -81,11 +81,10 @@ export async function evaluateScript(page: Page, script: string): Promise<string
   return output ?? "(no return value)";
 }
 
-/** List all open tabs in the given context. */
-export async function listTabs(context: BrowserContext | null, active: Page | null): Promise<string> {
-  if (!context) return "No browser session active.";
-  const pages = context.pages();
-  if (pages.length === 0) return "No tabs open.";
+/** List the session's own open tabs (scoped to one session, not the whole
+ *  shared context, so sessions don't see each other's tabs). */
+export async function listTabs(pages: Page[], active: Page | null): Promise<string> {
+  if (pages.length === 0) return "No browser session active.";
   const currentUrl = active?.url() || "";
   const tabs: string[] = [];
   for (let i = 0; i < pages.length; i++) {
@@ -110,11 +109,10 @@ export interface SwitchTabResult {
 
 /** Resolve the target page for a switch-tab action without mutating manager state. */
 export async function resolveSwitchTab(
-  context: BrowserContext | null,
+  pages: Page[],
   index: number
 ): Promise<SwitchTabResult> {
-  if (!context) return { ok: false, page: null, message: "No browser session active." };
-  const pages = context.pages();
+  if (pages.length === 0) return { ok: false, page: null, message: "No browser session active." };
   if (index < 0 || index >= pages.length) {
     return {
       ok: false,

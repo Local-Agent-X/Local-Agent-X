@@ -69,10 +69,10 @@ export async function initOrRefreshEmbeddingProvider(deps: {
       const fallbackModel = "nomic-embed-text";
       try {
         const ollamaUrl = (settings.ollamaUrl || "http://127.0.0.1:11434").replace(/\/$/, "");
-        const ping = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) }).catch(() => null);
-        if (ping?.ok) {
-          const tags = await ping.json() as { models?: Array<{ name: string }> };
-          const installed = (tags.models || []).map(m => m.name.replace(/:latest$/, ""));
+        const { fetchLocalOllamaTags } = await import("../ollama-cloud.js");
+        const tags = await fetchLocalOllamaTags(ollamaUrl);
+        if (tags.reachable) {
+          const installed = tags.models.map(m => m.name.replace(/:latest$/, ""));
           if (!installed.includes(targetModel)) {
             logger.info(`[memory] Model "${targetModel}" not found in Ollama. Pulling... (this may take a minute on first run)`);
             try {

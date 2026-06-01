@@ -134,30 +134,47 @@ interface LocalState {
   refreshedAt: number;
 }
 
+/** A raw `/api/tags` entry, unfiltered. Embedding models and chat models
+ *  alike, with the size/timestamp fields callers like /api/models/local
+ *  need. The chat-only `LocalState` cache is a derived view of this. */
+export interface OllamaTag {
+  name: string;
+  size?: number;
+  modified_at?: string;
+}
+
 let cachedLocal: LocalState | null = null;
 
-/** Fetch local Ollama chat models (embeddings filtered out) and update the
- *  module cache. Always resolves — unreachable Ollama yields reachable:false
- *  with an empty list rather than throwing. */
-export async function refreshLocalOllama(ollamaUrl: string): Promise<LocalState> {
+/** THE one place that hits local Ollama's `/api/tags`. Returns the raw
+ *  model list (nothing stripped) so each caller can apply its own view —
+ *  chat-only, embeddings-only, or full with sizes. Always resolves;
+ *  unreachable Ollama yields reachable:false + empty list, never throws. */
+export async function fetchLocalOllamaTags(
+  ollamaUrl: string,
+): Promise<{ reachable: boolean; models: OllamaTag[] }> {
   const base = ollamaUrl.replace(/\/+$/, "");
   try {
     const r = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3000) });
-    if (!r.ok) {
-      cachedLocal = { reachable: false, models: [], refreshedAt: Date.now() };
-      return cachedLocal;
-    }
-    const data = (await r.json()) as { models?: Array<{ name: string }> };
-    const models = (data.models || [])
-      .map(m => m.name)
-      .filter(n => typeof n === "string" && n.length > 0)
-      .filter(n => !isEmbeddingModel(n));
-    cachedLocal = { reachable: true, models, refreshedAt: Date.now() };
-    return cachedLocal;
+    if (!r.ok) return { reachable: false, models: [] };
+    const data = (await r.json()) as { models?: OllamaTag[] };
+    const models = (data.models || []).filter(m => typeof m?.name === "string" && m.name.length > 0);
+    return { reachable: true, models };
   } catch {
-    cachedLocal = { reachable: false, models: [], refreshedAt: Date.now() };
-    return cachedLocal;
+    return { reachable: false, models: [] };
   }
+}
+
+/** Fetch local Ollama chat models (embeddings filtered out) and update the
+ *  module cache. Derived view over {@link fetchLocalOllamaTags}. Always
+ *  resolves — unreachable Ollama yields reachable:false with an empty list. */
+export async function refreshLocalOllama(ollamaUrl: string): Promise<LocalState> {
+  const { reachable, models } = await fetchLocalOllamaTags(ollamaUrl);
+  cachedLocal = {
+    reachable,
+    models: models.map(m => m.name).filter(n => !isEmbeddingModel(n)),
+    refreshedAt: Date.now(),
+  };
+  return cachedLocal;
 }
 
 /** Stale-tolerant local model cache for the providers-list DISPLAY path.

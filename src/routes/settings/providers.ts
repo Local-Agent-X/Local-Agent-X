@@ -10,6 +10,7 @@ import {
   getCachedCloudModels,
   refreshLocalOllama,
   getCachedLocalOllama,
+  fetchLocalOllamaTags,
 } from "../../ollama-cloud.js";
 
 export const handleProvidersRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
@@ -183,15 +184,11 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
   // Pass `?include=embeddings` to get the full list (e.g. for an
   // embedding-provider settings page).
   if (method === "GET" && url.pathname === "/api/models/local") {
-    try {
-      const ollamaRes = await fetch(`${getRuntimeConfig().ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
-      if (!ollamaRes.ok) { json(502, { error: "Ollama returned " + ollamaRes.status }); return true; }
-      const data = await ollamaRes.json() as { models?: Array<{ name: string; size: number; modified_at: string }> };
-      const all = data.models || [];
-      const includeEmbeddings = url.searchParams.get("include") === "embeddings";
-      const filtered = includeEmbeddings ? all : all.filter(m => !isEmbeddingModel(m.name));
-      json(200, { models: filtered.map(m => ({ name: m.name, size: m.size, modified: m.modified_at })) });
-    } catch { json(502, { error: "Ollama not running. Start it with: ollama serve" }); }
+    const { reachable, models: all } = await fetchLocalOllamaTags(getRuntimeConfig().ollamaUrl);
+    if (!reachable) { json(502, { error: "Ollama not running. Start it with: ollama serve" }); return true; }
+    const includeEmbeddings = url.searchParams.get("include") === "embeddings";
+    const filtered = includeEmbeddings ? all : all.filter(m => !isEmbeddingModel(m.name));
+    json(200, { models: filtered.map(m => ({ name: m.name, size: m.size, modified: m.modified_at })) });
     return true;
   }
   // Test the Ollama Cloud connection. Used by the settings UI's "Connect"

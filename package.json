@@ -15,7 +15,7 @@
     "build:ari": "node scripts/build-ari.js",
     "check:no-require": "node scripts/check-no-require.mjs",
     "build": "npm run check:no-require && npm run build:ari && tsc",
-    "postinstall": "npm run build:ari",
+    "postinstall": "npm run build:ari && node scripts/prebuild-dist.mjs",
     "test": "tsx src/test-suite.ts",
     "test:replay": "tsx src/replay-test.ts",
     "test:fixtures": "node scripts/run-prompt-fixtures.mjs",

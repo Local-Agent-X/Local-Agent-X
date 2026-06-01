@@ -1,7 +1,11 @@
-// SAX server child-process lifecycle. Spawns src/index.ts via tsx so the
-// running code is always what's on disk — deliberately NOT pointing at a
-// compiled dist/index.js to eliminate the "I changed source but the
-// running code is stale" failure class.
+// SAX server child-process lifecycle. Prefers the compiled dist/index.js
+// (plain node) over src/index.ts (tsx) WHEN the build is current — node
+// skips tsx's per-file transpile, which on a Defender-heavy Windows box cost
+// ~17s of cold start. "Current" means no source file is newer than the
+// compiled entry; the instant anyone edits or pulls src ahead of dist we fall
+// back to tsx, so the running code can never silently drift from source (the
+// "I changed source but stale code runs" class this used to avoid by always
+// using tsx). Same invariant, without paying transpile on every clean boot.
 //
 // Pid handshake (server.pid handshake + LAX_PARENT_PID env) makes orphan
 // detection load-bearing: Electron crash / force-kill leaves the server
@@ -9,7 +13,7 @@
 // we never silently attach to stale pre-update code.
 
 import { ChildProcess, spawn, execSync } from "child_process";
-import { existsSync, readFileSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { getProjectRoot, getSAXConfig, reloadSAXConfig, type SAXConfig } from "./config";
@@ -57,6 +61,31 @@ function readServerPidFile(): ServerPidFile | null {
   if (!existsSync(PID_FILE)) return null;
   try { return JSON.parse(readFileSync(PID_FILE, "utf-8")) as ServerPidFile; }
   catch { return null; }
+}
+
+// True when dist/index.js exists and no source file is newer than it — i.e.
+// the compiled build reflects current source and is safe to run instead of
+// tsx. `npm run build` runs a full (non-incremental) tsc, so dist/index.js's
+// mtime reliably marks the last build. Walks src for the first .ts newer than
+// that and short-circuits, so the common fresh-build case is a cheap stat
+// sweep (metadata only — not the content reads Defender scans).
+function distIsFresh(projectRoot: string): boolean {
+  const distIndex = join(projectRoot, "dist", "index.js");
+  if (!existsSync(distIndex)) return false;
+  const distMtime = statSync(distIndex).mtimeMs;
+  const stack = [join(projectRoot, "src")];
+  while (stack.length) {
+    const dir = stack.pop()!;
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) { stack.push(p); continue; }
+      if (!e.name.endsWith(".ts")) continue;
+      if (statSync(p).mtimeMs > distMtime) return false;
+    }
+  }
+  return true;
 }
 
 function killPidTree(pid: number): void {
@@ -143,12 +172,9 @@ export function startServer(handlers?: ServerEventHandlers): void {
     return;
   }
 
-  // Always run from src/index.ts via tsx. We deliberately do NOT prefer
-  // a compiled dist/ even when present — that created a recurring "I
-  // changed source but the running code is stale" class of bug. tsx adds
-  // ~2s to cold start (negligible against the full boot) in exchange for
-  // "what's on disk IS what runs" — structurally impossible for the two
-  // to drift. `npm run build` still exists for packaging without source.
+  // Run the compiled dist when the build is current (fast: no tsx transpile),
+  // else tsx-from-source. distIsFresh guarantees we never run a dist that's
+  // behind source, so the speedup costs us nothing in correctness.
   const srcIndex = join(projectRoot, "src", "index.ts");
   if (!existsSync(srcIndex)) {
     const reason =
@@ -157,7 +183,10 @@ export function startServer(handlers?: ServerEventHandlers): void {
     try { handlers?.onStartupFailure?.({ reason }); } catch {}
     return;
   }
-  const nodeArgs = ["--max-old-space-size=4096", "--import=tsx", srcIndex];
+  const useDist = distIsFresh(projectRoot);
+  const nodeArgs = useDist
+    ? ["--max-old-space-size=4096", join(projectRoot, "dist", "index.js")]
+    : ["--max-old-space-size=4096", "--import=tsx", srcIndex];
 
   // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
   // PATH that excludes Homebrew, nvm, and asdf. Augment so `node` resolves
@@ -171,7 +200,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
   const existingPath = (process.env.PATH || "").split(":");
   const augmentedPath = [...PATH_AUGMENTS, ...existingPath].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
 
-  console.log(`[desktop] Starting LAX server (tsx, ${srcIndex})...`);
+  console.log(`[desktop] Starting LAX server (${useDist ? "compiled dist" : "tsx"})...`);
   // LAX_BUNDLED_MODELS_DIR points the server at electron-builder's
   // extraResources directory so whisper-model-fetch can find the
   // pre-bundled tiny.en files before falling back to download. In dev

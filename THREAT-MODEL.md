@@ -31,7 +31,7 @@ Key properties:
 - **Mitigations**: Content wrapping, canary tokens, exfiltration detection, memory taint protection
 
 ### 2. Local Attacker (user-level foothold)
-- **Capability**: Read access to `~/.sax/`, can observe process, may have network position
+- **Capability**: Read access to `~/.lax/`, can observe process, may have network position
 - **Goal**: Steal credentials, hijack agent, impersonate user
 - **Mitigations**: Encrypted secrets (AES-256-GCM + per-install salt), file permissions (0600), token hashing
 
@@ -87,19 +87,19 @@ Layer 0:  Session Policy     — Per-session modes (default / high-security / de
 Layer 1:  SecurityLayer      — SSRF with DNS pinning (anti-rebinding), shell metacharacter rejection + blocked-command list, network-client blocking, path normalization + symlink detection, obfuscation, egress allowlist
 Layer 2:  Data Lineage       — Tracks sensitive reads → blocks egress when tainted
 Layer 3:  RBAC               — Role-based tool permissions enforced at execution time
-Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny), per-tool rate limits, host allowlists/denylists, configured via `~/.sax/tool-policy.json`
+Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny), per-tool rate limits, host allowlists/denylists, configured via `~/.lax/tool-policy.json`
 Layer 5:  ThreatEngine       — Canary tokens, chain analysis (exfil patterns: read-sensitive → send-external), loop detection (generic repeat, ping-pong, circuit breaker), data classification (auto-tags credentials / PII / secrets / financial), encoding detection, adaptive scoring
 Layer 6:  Content Sanitizer  — 54+ injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
 Layer 7:  Memory Taint       — Blocks untrusted content from persisting to memory
-Layer 8:  Container Sandbox  — Docker auto-detected (SAX_SANDBOX=host to disable)
-Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB, per-session threat scoring, daily JSONL files at `~/.sax/audit/`
+Layer 8:  Container Sandbox  — Docker auto-detected (LAX_SANDBOX=host to disable)
+Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB, per-session threat scoring, daily JSONL files at `~/.lax/audit/`
 Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ```
 
 ## Known Limitations
 
 1. **Single-user model** — RBAC adds roles (operator / user / readonly) but not full enterprise IAM (OIDC/SAML planned). Don't share a single instance between mutually untrusted users.
-2. **Docker sandbox auto-detects** — If Docker is available, bash runs in containers by default. Set `SAX_SANDBOX=host` to disable.
+2. **Docker sandbox auto-detects** — If Docker is available, bash runs in containers by default. Set `LAX_SANDBOX=host` to disable.
 3. **Secrets encryption** — Uses OS keychain (DPAPI/Keychain) when available, falls back to scrypt N=131072 (~500ms/attempt).
 4. **Memory taint is heuristic** — Pattern-based detection + Unicode normalization can be evaded by sufficiently creative injection. ARI Kernel taint tracking adds formal enforcement.
 5. **No formal verification** — Security properties are tested empirically, not formally proven.
@@ -110,12 +110,12 @@ Layer 10: Output Redaction   — Credential masking before AI sees tool results
 1. **If canary trips**: Agent response is killed immediately. Check audit logs for the session.
 2. **If threat score hits critical**: External tools auto-blocked. Review recent tool calls.
 3. **If exfiltration detected**: Tool call blocked. Review chain analysis for source and sink.
-4. **If token compromised**: Revoke via RBAC, rotate auth token in `~/.sax/config.json`.
-5. **If memory poisoned**: Review `~/.sax/memory/` files. Check audit trail for suspicious `memory_save` calls.
+4. **If token compromised**: Revoke via RBAC, rotate auth token in `~/.lax/config.json`.
+5. **If memory poisoned**: Review `~/.lax/memory/` files. Check audit trail for suspicious `memory_save` calls.
 
 ## Compliance Notes
 
-- All security decisions are logged in tamper-evident audit trail (`~/.sax/audit/`)
+- All security decisions are logged in tamper-evident audit trail (`~/.lax/audit/`)
 - Audit chain integrity can be verified via `GET /api/audit/verify`
 - Credential redaction is applied to tool output before it reaches the LLM or UI
 - File permissions are set to `0600` on all sensitive files

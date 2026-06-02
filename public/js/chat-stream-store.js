@@ -161,7 +161,14 @@
         e.lastActivityMs = now;
         break;
       case 'tool_start':
-        e.toolEvents.push({ type: 'start', name: event.toolName, toolCallId: event.toolCallId, args: event.args, riskLevel: event.riskLevel });
+        // Idempotent by call id. The same tool_start can reach the store more
+        // than once for a single dispatch (provider/transport replays, a
+        // resubscribed WS listener). A duplicate start would render a second
+        // tool card AND a second generate_image preview, so dedupe at the
+        // source of truth rather than papering over it downstream.
+        if (!event.toolCallId || !e.toolEvents.some(t => t.type === 'start' && t.toolCallId === event.toolCallId)) {
+          e.toolEvents.push({ type: 'start', name: event.toolName, toolCallId: event.toolCallId, args: event.args, riskLevel: event.riskLevel });
+        }
         e.lastActivityMs = now;
         break;
       case 'tool_end': {
@@ -176,7 +183,10 @@
         if (mediaUrl && !result.includes(mediaUrl[0])) {
           result = result.trimEnd() + '\nView: ' + mediaUrl[0];
         }
-        e.toolEvents.push({ type: 'end', name: event.toolName, toolCallId: event.toolCallId, allowed: event.allowed, status: event.status, result });
+        // Idempotent by call id, same reasoning as tool_start above.
+        if (!event.toolCallId || !e.toolEvents.some(t => t.type === 'end' && t.toolCallId === event.toolCallId)) {
+          e.toolEvents.push({ type: 'end', name: event.toolName, toolCallId: event.toolCallId, allowed: event.allowed, status: event.status, result });
+        }
         e.lastActivityMs = now;
         break;
       }

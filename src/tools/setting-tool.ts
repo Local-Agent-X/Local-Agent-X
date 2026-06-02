@@ -47,7 +47,7 @@ export const settingTool: ToolDefinition = {
     "The field list is the canonical set — pass any other field name and you get back the valid list. " +
     "Runtime-bound fields (maxIterations, temperature, bridgeVoicePreference) " +
     "take effect on the very next tool call — no restart. " +
-    "Security fields (toolApproval, enableShell/Http/Browser, browserMode) are user-owned: when the USER asks you to change one, DO call this tool with that field and it takes effect immediately. " +
+    "Security fields (toolApproval, enableShell/Http/Browser) are user-owned: when the USER asks you to change one, DO call this tool with that field and it takes effect immediately. " +
     "The only rule: change a security setting ONLY when the user explicitly asked for it — never flip one on your own initiative, and never silently re-enable a capability just to get past a block.",
   parameters: {
     type: "object",

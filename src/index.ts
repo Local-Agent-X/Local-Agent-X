@@ -162,7 +162,7 @@ const config = loadConfig();
 
 // One-time migration for installs that hit the silent-drift bug: if
 // ~/.lax/settings.json has a runtime field (toolApproval, maxIterations,
-// temperature, browserMode, bridgeVoicePreference) that differs from
+// temperature, bridgeVoicePreference) that differs from
 // config.json, the settings.json value wins (that's what the user saw in
 // the UI). Idempotent — after the first run config.json catches up and
 // subsequent boots match on every field.

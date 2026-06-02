@@ -288,10 +288,6 @@ export interface LAXConfig {
   videoServerUrl: string;
   xttsServerUrl: string;
 
-  /** Browser session mode. "isolated" = dedicated agent profile (safer).
-   *  "attach" = your real Chrome profile, requires Chrome closed. */
-  browserMode: "isolated" | "attach";
-
   /** When true, each session gets its own browser context (separate cookie
    *  jar) inside the shared Chrome. Off = shared context (cookies carry
    *  across sessions). Tabs/refs are per-session either way. */

@@ -2,8 +2,13 @@ import Database from "better-sqlite3";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { wrapExternalContent } from "../sanitize.js";
 
-function resolvePath(p: string): string {
+// Exported so the SecurityLayer can gate the EXACT path these tools open.
+// The layer's evaluateFileAccess only does resolve() — no ~ expansion — so
+// if it didn't share this normalization, validating <cwd>/~/x.db while the
+// tool opens <home>/x.db would re-open the confinement hole (TOCTOU).
+export function resolvePath(p: string): string {
   if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));
   if (p === "~") return homedir();
   return resolve(p);
@@ -53,7 +58,9 @@ const sqlQuery: ToolDefinition = {
       if (isSelect(query)) {
         const rows = db.prepare(query).all() as Record<string, unknown>[];
         return {
-          content: toMarkdownTable(rows),
+          content: wrapExternalContent(toMarkdownTable(rows), "sql_query", {
+            database: String(args.database),
+          }),
           metadata: { rowCount: rows.length },
         };
       }
@@ -106,7 +113,11 @@ const sqlSchema: ToolDefinition = {
           default: c.dflt_value ?? "",
           pk: c.pk ? "YES" : "",
         }));
-        return { content: `### ${table}\n\n${toMarkdownTable(rows)}` };
+        return {
+          content: wrapExternalContent(`### ${table}\n\n${toMarkdownTable(rows)}`, "sql_schema", {
+            database: String(args.database),
+          }),
+        };
       }
 
       const tables = db
@@ -117,7 +128,11 @@ const sqlSchema: ToolDefinition = {
         const count = (db!.prepare(`SELECT COUNT(*) AS cnt FROM "${t.name}"`).get() as { cnt: number }).cnt;
         return { table: t.name, rows: count };
       });
-      return { content: toMarkdownTable(rows) };
+      return {
+        content: wrapExternalContent(toMarkdownTable(rows), "sql_schema", {
+          database: String(args.database),
+        }),
+      };
     } catch (err: unknown) {
       return { content: `Schema error: ${(err as Error).message}`, isError: true };
     } finally {
@@ -148,7 +163,11 @@ const sqlExplain: ToolDefinition = {
     try {
       db = new Database(dbPath, { readonly: true });
       const plan = db.prepare(`EXPLAIN QUERY PLAN ${query}`).all() as Record<string, unknown>[];
-      return { content: toMarkdownTable(plan) };
+      return {
+        content: wrapExternalContent(toMarkdownTable(plan), "sql_explain", {
+          database: String(args.database),
+        }),
+      };
     } catch (err: unknown) {
       return { content: `Explain error: ${(err as Error).message}`, isError: true };
     } finally {

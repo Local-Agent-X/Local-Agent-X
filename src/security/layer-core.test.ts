@@ -288,7 +288,9 @@ describe("SecurityLayer kernel-class dispatch", () => {
   // ── 9: database-class ──
 
   describe("database-class tools", () => {
-    it("sql_query: allowed with kernel-deferral reason", () => {
+    // No caller `database` path → internal managed store (ari_*-style).
+    // Must keep passing.
+    it("sql_query with no database arg: allowed (managed store)", () => {
       const sec = makeLayer();
       const d = sec.evaluate({
         toolName: "sql_query",
@@ -296,7 +298,73 @@ describe("SecurityLayer kernel-class dispatch", () => {
         sessionId: "t",
       });
       expect(d.allowed).toBe(true);
-      expect(d.reason).toMatch(/database-class tool/);
+      expect(d.reason).toMatch(/managed-store database tool/);
+    });
+
+    // A caller path inside the project tree is gated as a read and allowed
+    // (common mode permits reads in the project root).
+    it("sql_query against a project-tree path: allowed (read-gated)", () => {
+      const sec = makeLayer();
+      const dbPath = resolve(WORKSPACE, "data.db");
+      const d = sec.evaluate({
+        toolName: "sql_query",
+        args: { database: dbPath, query: "SELECT 1" },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(true);
+    });
+
+    // A caller path OUTSIDE project / ~/.lax / user dirs is blocked in
+    // common mode. tmpdir() is none of those on either platform.
+    it("sql_query against an outside path: blocked (read-gated)", () => {
+      const sec = makeLayer();
+      const dbPath = join(tmpdir(), "lax-sql-outside-read.db");
+      const d = sec.evaluate({
+        toolName: "sql_query",
+        args: { database: dbPath, query: "SELECT 1" },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+    });
+
+    // A sensitive-pattern path (encrypted secrets store) is blocked even
+    // though ~/.lax is otherwise readable — SENSITIVE_PATTERNS catches it.
+    it("sql_query against a sensitive-pattern path: blocked", () => {
+      const sec = makeLayer();
+      const dbPath = "~/.lax/secrets.enc";
+      const d = sec.evaluate({
+        toolName: "sql_query",
+        args: { database: dbPath, query: "SELECT 1" },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+    });
+
+    // readonly:false gates as a WRITE — common mode blocks writes outside
+    // the workspace, so even a project-tree path that reads fine is blocked
+    // for mutation.
+    it("sql_query readonly:false to an outside path: blocked (write-gated)", () => {
+      const sec = makeLayer();
+      const dbPath = join(tmpdir(), "lax-sql-outside-write.db");
+      const d = sec.evaluate({
+        toolName: "sql_query",
+        args: { database: dbPath, query: "DELETE FROM t", readonly: false },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/cannot write/i);
+    });
+
+    // sql_schema (read-only by nature) against an outside path: blocked.
+    it("sql_schema against an outside path: blocked", () => {
+      const sec = makeLayer();
+      const dbPath = join(tmpdir(), "lax-sql-schema-outside.db");
+      const d = sec.evaluate({
+        toolName: "sql_schema",
+        args: { database: dbPath },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
     });
   });
 

@@ -19,6 +19,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { EventBus } from "../../event-bus.js";
+import { verifyWriteLanded } from "../verify.js";
 import { ok, err, getActor, getAppPort } from "./shared.js";
 
 const registry = AppRegistry.getInstance();
@@ -93,7 +94,10 @@ export const appCreate: ToolDefinition = {
     const port = getAppPort();
     const html = renderApp(def, port);
     const dir = join(getLaxDir(), "apps", rawId);
-    writeFileSync(join(dir, "index.html"), html, "utf-8");
+    const htmlPath = join(dir, "index.html");
+    writeFileSync(htmlPath, html, "utf-8");
+    const verified = verifyWriteLanded(htmlPath);
+    if (!verified.ok) return err(verified.reason);
 
     EventBus.emit("app:create", { id: rawId, name: def.name });
 

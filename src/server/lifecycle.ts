@@ -11,6 +11,7 @@ import { startAriKernel } from "../ari-kernel/index.js";
 import { runMigrations } from "../db-migrations.js";
 import { EventBus } from "../event-bus.js";
 import { ConfigWatcher } from "../config-hot-reload.js";
+import { loadConfig, setRuntimeConfig } from "../config.js";
 import { closeAllBrowsers } from "../browser/index.js";
 import type { LAXConfig, ServerEvent, ToolDefinition } from "../types.js";
 import type { MemoryIndex, MemoryManager } from "../memory/index.js";
@@ -332,7 +333,20 @@ export function wireWsChat(deps: {
 }
 
 export function startConfigWatcher(dataDir: string): void {
-  new ConfigWatcher().start(join(dataDir, "config.json"), () => logger.info("[config] Hot-reloaded"));
+  // Reload from disk via loadConfig() so the freshly-validated LAXConfig (with
+  // profile defaults, schema parse, generated authToken) is what gets handed
+  // to setRuntimeConfig. Without this call, in-memory ctx.config stays stale
+  // forever and a UI toggle (enableShell / toolApproval / etc.) writes to
+  // config.json but the running gate keeps using the old value — observable
+  // as "I turned shell OFF but bash still runs" until process restart.
+  new ConfigWatcher().start(join(dataDir, "config.json"), () => {
+    try {
+      setRuntimeConfig(loadConfig());
+      logger.info("[config] Hot-reloaded (runtime config updated)");
+    } catch (e) {
+      logger.warn(`[config] Hot-reload load failed: ${(e as Error).message}`);
+    }
+  });
 }
 
 export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {

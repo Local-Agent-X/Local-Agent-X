@@ -82,6 +82,72 @@ export function isExecutorActive(operationId: string): boolean {
   return activeExecutors.has(operationId);
 }
 
+export type AwaitExecutorResult = { running: true } | { running: false; reason: string };
+
+/**
+ * Lifecycle verification primitive — confirms a startExecutor call actually
+ * produced a live, running operation rather than a crash during loop init.
+ *
+ * Operations do NOT flow through the canonical-loop ops table; they live
+ * as files under workspace/operations/<opId>/ with `op.status` driven by
+ * the conductor. startExecutor void-fires runExecutorLoop; an init crash
+ * is caught inside the IIFE (executor.ts:54-67) which flips op.status to
+ * "failed" before removing the AbortController. So the truthful signal
+ * is the op.status flip, observable on disk.
+ *
+ * Polling is constrained: the only events ops emit are file writes; we
+ * poll loadOperation every 100ms, capped at timeoutMs. This is the
+ * operations-runtime's "is started" primitive — not an ad-hoc sleep loop.
+ *
+ * Symmetry with awaitOpRunning / awaitAgentRunning.
+ */
+export async function awaitOperationStarted(
+  operationId: string,
+  opts: { workspaceDir?: string; timeoutMs?: number } = {},
+): Promise<AwaitExecutorResult> {
+  const workspaceDir = opts.workspaceDir || join(process.cwd(), "workspace", "operations");
+  const timeoutMs = opts.timeoutMs ?? 5000;
+  const deadline = Date.now() + timeoutMs;
+  const pollMs = 100;
+
+  while (Date.now() < deadline) {
+    const op = loadOperation(workspaceDir, operationId);
+    if (!op) return { running: false, reason: `operation ${operationId} not found` };
+    if (op.status === "failed") {
+      return { running: false, reason: "executor crashed during init" };
+    }
+    if (op.status === "running" || op.status === "completed" || op.status === "paused") {
+      return { running: true };
+    }
+    if (op.status === "cancelled") {
+      return { running: false, reason: "operation cancelled before start" };
+    }
+    // op.status === "pending" — executor hasn't picked up yet. Two truthful
+    // paths: it's still booting, or startExecutor never fired the IIFE.
+    // isExecutorActive distinguishes — if false here, the IIFE either
+    // completed instantly (impossible without status change) or never
+    // started. Treat that as a startup failure.
+    if (!isExecutorActive(operationId)) {
+      // Re-check op.status — race between IIFE finishing and status write.
+      const recheck = loadOperation(workspaceDir, operationId);
+      if (recheck && recheck.status === "failed") {
+        return { running: false, reason: "executor crashed during init" };
+      }
+      if (recheck && recheck.status === "pending") {
+        return { running: false, reason: "executor did not start" };
+      }
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  // Timed out while still pending + executor active — count it as running.
+  // The IIFE is alive; the conductor just hasn't transitioned to "running"
+  // yet (large plans, slow first phase init). Better to over-report alive
+  // than block forever.
+  return isExecutorActive(operationId)
+    ? { running: true }
+    : { running: false, reason: `did not reach running within ${timeoutMs}ms` };
+}
+
 /** Union of preBlessedSecrets across all currently-running operations. Used by
  *  browser_fill_from_secret to decide whether to skip the first-use approval
  *  gate. Origin-binding is enforced separately and is not overridden by this. */

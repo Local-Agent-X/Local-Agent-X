@@ -80,12 +80,20 @@ export function retain(
 
       try { extractRelations(db, parsed.content, validEntities, factId); } catch {}
 
+      let indexError: string | null = null;
       if (hasFts) {
         try {
           db
             .prepare("INSERT INTO facts_fts (rowid, content) VALUES (?, ?)")
             .run(factId, parsed.content);
-        } catch {}
+        } catch (e) {
+          indexError = (e as Error).message || "facts_fts insert failed";
+          logger.warn(`[memory] facts_fts insert failed for #${factId}: ${indexError}`);
+        }
+      }
+      if (indexError) {
+        (fact as RetainedFact & { indexFailed?: boolean; indexError?: string }).indexFailed = true;
+        (fact as RetainedFact & { indexFailed?: boolean; indexError?: string }).indexError = indexError;
       }
 
       facts.push(fact);

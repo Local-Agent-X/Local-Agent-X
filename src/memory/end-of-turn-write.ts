@@ -105,16 +105,29 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<vo
   // the model would have used. Don't go through the tool registry — call
   // the underlying MemoryIndex directly to avoid nested tool dispatch.
   try {
-    await applyWrite(decision, ctx.memory);
-    logger.info(
-      `[end-of-turn] wrote to USER.md ` +
-      `(action=${decision.action}, section=${decision.section_heading || "—"}, ` +
-      `${decision.content.length}ch) sess=${ctx.sessionId}`,
-    );
+    const writeResult = await applyWrite(decision, ctx.memory);
+    if (writeResult.ok) {
+      logger.info(
+        `[end-of-turn] wrote to USER.md ` +
+        `(action=${decision.action}, section=${decision.section_heading || "—"}, ` +
+        `${decision.content.length}ch) sess=${ctx.sessionId}`,
+      );
+    } else if (writeResult.blocked) {
+      logger.warn(
+        `[end-of-turn] write BLOCKED by taint gate sess=${ctx.sessionId}: ${writeResult.reason}`,
+      );
+    } else {
+      logger.warn(`[end-of-turn] write skipped sess=${ctx.sessionId}: ${writeResult.reason}`);
+    }
   } catch (e) {
     logger.warn(`[end-of-turn] write failed: ${(e as Error).message}`);
   }
 }
+
+type ApplyWriteResult =
+  | { ok: true }
+  | { ok: false; blocked: true; reason: string }
+  | { ok: false; blocked?: false; reason: string };
 
 // ── Decision parsing + apply ──
 
@@ -150,7 +163,7 @@ export function parseWriteDecision(raw: string): WriteDecision | null {
   return { write: true, action, section_heading, content };
 }
 
-async function applyWrite(d: WriteDecision, memory: MemoryIndex): Promise<void> {
+async function applyWrite(d: WriteDecision, memory: MemoryIndex): Promise<ApplyWriteResult> {
   // Mirrors memory_update_profile's write path with the same char caps.
   // End-of-turn only writes USER.md — facts go through the agent's `remember`
   // tool during the turn, not this classifier.
@@ -188,8 +201,9 @@ async function applyWrite(d: WriteDecision, memory: MemoryIndex): Promise<void> 
   const LIMITS: Record<string, number> = { "USER.md": 2000 };
   const limit = LIMITS[filename];
   if (limit !== undefined && updated.length > limit) {
-    logger.warn(`[end-of-turn] skipped write — ${filename} would be ${updated.length}/${limit}`);
-    return;
+    const reason = `${filename} would be ${updated.length}/${limit}`;
+    logger.warn(`[end-of-turn] skipped write — ${reason}`);
+    return { ok: false, reason };
   }
 
   try {
@@ -199,10 +213,10 @@ async function applyWrite(d: WriteDecision, memory: MemoryIndex): Promise<void> 
       target: filePath,
       mode: "overwrite",
     });
+    return { ok: true };
   } catch (e) {
     if (e instanceof MemoryWriteBlocked) {
-      logger.warn(`[end-of-turn] write blocked by taint gate: ${e.reason}`);
-      return;
+      return { ok: false, blocked: true, reason: e.reason };
     }
     throw e;
   }

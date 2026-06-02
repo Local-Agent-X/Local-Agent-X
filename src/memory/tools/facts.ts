@@ -98,6 +98,13 @@ export function createFactsTools(memory: MemoryIndex) {
           }
           memory.markDirty();
           const f = result.fact!;
+          if (result.indexFailed) {
+            return {
+              content:
+                `Fact #${f.id} saved but keyword index failed (recall may not find it): ${result.indexError ?? "facts_fts insert error"}`,
+              isError: true,
+            };
+          }
           return { content: `Remembered [${f.kind}, c=${f.confidence}] #${f.id}: ${displayContent(f).slice(0, 80)}` };
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {

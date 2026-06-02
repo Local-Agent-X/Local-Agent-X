@@ -33,6 +33,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { isFeatureEnabled, FEATURE_FLAG_ENV } from "./tool.js";
 import { loadSkillBody } from "./skill-bodies.js";
 import { resolveProjectDir } from "./project-paths.js";
+import { verifyWriteLanded } from "../tools/verify.js";
 
 const FEATURE_FLAG_BLOCK_MESSAGE =
   `BLOCKED — gated behind the ${FEATURE_FLAG_ENV} env flag, which is currently OFF. ` +
@@ -231,27 +232,28 @@ export const finalizeAppBuildTool: ToolDefinition = {
     const twins = Array.isArray(args.twins) ? (args.twins as TwinInput[]) : [];
 
     const written: string[] = [];
+    const queued: Array<{ rel: string; content: string }> = [];
+
     try {
       mkdirSync(projectDir, { recursive: true });
       mkdirSync(join(projectDir, "spec"), { recursive: true });
       mkdirSync(join(projectDir, "scenarios"), { recursive: true });
       if (twins.length > 0) mkdirSync(join(projectDir, "twins"), { recursive: true });
 
-      writeArtifact(projectDir, "spec/product.md", productMd, written);
-      writeArtifact(projectDir, "spec/constitution.md", constitutionMd, written);
-      writeArtifact(projectDir, "spec/plan.md", planMd, written);
-      if (architectureMd) writeArtifact(projectDir, "spec/architecture.md", architectureMd, written);
+      queued.push({ rel: "spec/product.md", content: productMd });
+      queued.push({ rel: "spec/constitution.md", content: constitutionMd });
+      queued.push({ rel: "spec/plan.md", content: planMd });
+      if (architectureMd) queued.push({ rel: "spec/architecture.md", content: architectureMd });
 
       for (const s of scenarios) {
         validateRelPath(s.filename, "scenarios/");
-        writeArtifact(projectDir, join("scenarios", s.filename), s.content, written);
+        queued.push({ rel: join("scenarios", s.filename), content: s.content });
       }
       for (const t of twins) {
         validateRelPath(t.filename, "twins/");
-        writeArtifact(projectDir, join("twins", t.filename), t.content, written);
+        queued.push({ rel: join("twins", t.filename), content: t.content });
       }
 
-      // Convenience: write a README pointing at the next step.
       const readme =
         `# ${projectName}\n\n` +
         `Project initialized via \`finalize_app_build\` from a /app-build planning session.\n\n` +
@@ -262,12 +264,33 @@ export const finalizeAppBuildTool: ToolDefinition = {
         `- \`spec/\` — product, constitution, plan; the source of truth the building agents read.\n` +
         `- \`scenarios/\` — held-out user-flow tests. **Building agents must never read this.**\n` +
         (twins.length > 0 ? `- \`twins/\` — in-process fakes for external services.\n` : "");
-      writeArtifact(projectDir, "README.md", readme, written);
+      queued.push({ rel: "README.md", content: readme });
     } catch (e) {
       return {
-        content: `finalize_app_build failed during write: ${(e as Error).message}. Partial files may remain at ${projectDir}.`,
+        content: `finalize_app_build failed during mkdir: ${(e as Error).message}. Partial files may remain at ${projectDir}.`,
         isError: true,
       };
+    }
+
+    for (const item of queued) {
+      const abs = join(projectDir, item.rel);
+      try {
+        mkdirSync(dirname(abs), { recursive: true });
+        writeFileSync(abs, item.content);
+      } catch (e) {
+        return {
+          content: `finalize_app_build failed writing ${item.rel}: ${(e as Error).message}. Partial files may remain at ${projectDir}.`,
+          isError: true,
+        };
+      }
+      const verified = verifyWriteLanded(abs);
+      if (!verified.ok) {
+        return {
+          content: `finalize_app_build verify failed for ${item.rel}: ${verified.reason}. Partial files may remain at ${projectDir}.`,
+          isError: true,
+        };
+      }
+      written.push(item.rel.replace(/\\/g, "/"));
     }
 
     return {
@@ -282,13 +305,6 @@ export const finalizeAppBuildTool: ToolDefinition = {
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────
-
-function writeArtifact(projectDir: string, relPath: string, content: string, written: string[]): void {
-  const abs = join(projectDir, relPath);
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, content);
-  written.push(relPath.replace(/\\/g, "/"));
-}
 
 /**
  * Reject filenames with path traversal (../, absolute paths). Each

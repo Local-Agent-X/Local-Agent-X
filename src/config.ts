@@ -137,7 +137,7 @@ function getConfigDir(): string {
   return dir;
 }
 
-function getConfigPath(): string {
+export function getConfigPath(): string {
   return join(getConfigDir(), "config.json");
 }
 

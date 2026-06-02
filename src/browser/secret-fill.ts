@@ -255,15 +255,50 @@ export function createBrowserSecretFillTool(
         } else {
           await page.fill(targetSelector, value);
         }
-        if (pressEnter) {
-          await page.locator(targetSelector).press("Enter");
-        }
       } catch (e) {
         auditLog({
           event: "fill_failed", secret: name, origin: currentOrigin, session: sessionId,
           selectorKind: matchedPattern.label, error: (e as Error).message,
         });
         return err(`Fill failed: ${(e as Error).message}`);
+      }
+
+      // Best-effort readback (security-adjacent): NEVER include the secret
+      // value, even truncated. Length-mismatch presence is all the agent
+      // needs. Masked inputs (password/hidden) return "" — skip verification.
+      // Readback runs BEFORE pressEnter so we don't trip on the post-submit
+      // navigation tearing down the locator.
+      let verificationNote = "";
+      try {
+        const loc = page.locator(targetSelector);
+        const actual = await loc.inputValue();
+        if (actual === value) {
+          // ok — verified
+        } else if (actual === "" && (elementDescriptor.type === "password" || elementDescriptor.type === "hidden")) {
+          verificationNote = " (verification skipped: masked input)";
+        } else {
+          auditLog({
+            event: "fill_mismatch", secret: name, origin: currentOrigin, session: sessionId,
+            selectorKind: matchedPattern.label,
+          });
+          return err(`Secret fill did not land: ${targetSelector} (length mismatch)`);
+        }
+      } catch {
+        // Readback machinery itself broke (element gone, navigation, detach).
+        // Don't bury the underlying successful fill.
+        verificationNote = " (verification skipped: readback failed)";
+      }
+
+      if (pressEnter) {
+        try {
+          await page.locator(targetSelector).press("Enter");
+        } catch (e) {
+          auditLog({
+            event: "fill_failed", secret: name, origin: currentOrigin, session: sessionId,
+            selectorKind: matchedPattern.label, error: (e as Error).message,
+          });
+          return err(`Fill failed: ${(e as Error).message}`);
+        }
       }
 
       // --- Guardrail 4: post-fill redaction so value can't leak back via snapshots ---
@@ -281,7 +316,7 @@ export function createBrowserSecretFillTool(
         "approved (operation pre-blessed this secret)";
 
       return ok(
-        `Filled ${matchedPattern.label} on ${currentOrigin} with secret "${name}" [${gateExplain}]. ` +
+        `Filled ${matchedPattern.label} on ${currentOrigin} with secret "${name}" [${gateExplain}]${verificationNote}. ` +
         `Length: ${value.length} chars. Value is NOT shown to you. ` +
         (pressEnter ? "Pressed Enter after fill. " : "") +
         `Take a new snapshot to see the next page state.`

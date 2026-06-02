@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
+import { verifyWriteLanded } from "./verify.js";
 
 // ── Path helper ──
 
@@ -180,6 +181,8 @@ const spreadsheetWrite: ToolDefinition = {
 
       mkdirSync(dirname(filePath), { recursive: true });
       await wb.xlsx.writeFile(filePath);
+      const verified = verifyWriteLanded(filePath, { minBytes: 500 });
+      if (!verified.ok) return fail(`Failed to write spreadsheet: ${verified.reason}`);
       const imgSuffix = acquired.length ? ` and ${acquired.length} image(s)` : "";
       return ok(`Wrote ${parsed.length} rows${imgSuffix} to "${sheetName}" in ${filePath}`);
     } catch (e: unknown) {

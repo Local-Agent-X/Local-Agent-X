@@ -289,7 +289,19 @@ function attachMediaPreview(card, toolName, result) {
   // Dedupe — tool results commonly emit the same artifact twice (e.g. "Saved
   // at workspace\images\X.png ... URL: /images/X.png") which would otherwise
   // produce two side-by-side previews of the same image.
-  const matches = [...new Set(found)];
+  let matches = [...new Set(found)];
+  if (matches.length === 0) return;
+
+  // Skip artifacts already previewed in this message body. The same image can
+  // reach attachMediaPreview through more than one render pass for one turn
+  // (the live swap paints it, then finalize rebuilds; a re-emitted tool event
+  // can also repeat it). attachMediaPreview has no other cross-call dedupe, so
+  // without this the same generated image stacks twice in the bubble.
+  const already = new Set(
+    [...host.querySelectorAll('.tool-media-preview img, .tool-media-preview video')]
+      .map(el => (el.getAttribute('src') || '').split('?')[0])
+  );
+  matches = matches.filter(p => !already.has(p));
   if (matches.length === 0) return;
 
   const tok = (typeof AUTH_TOKEN === 'string' && AUTH_TOKEN) ? '?token=' + encodeURIComponent(AUTH_TOKEN) : '';

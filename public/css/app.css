@@ -498,6 +498,8 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 .mem-brain-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.8rem;color:var(--accent);letter-spacing:.5px;z-index:6}
 .mem-brain-toggle{position:absolute;top:12px;right:12px;z-index:7;font-family:var(--mono);font-size:.66rem;letter-spacing:.5px;color:var(--accent);background:rgba(10,16,28,.85);border:1px solid var(--border);border-radius:7px;padding:6px 13px;cursor:pointer}
 .mem-brain-toggle:hover{border-color:var(--accent)}
+.mb-drill-back{position:absolute;top:12px;left:12px;z-index:7;font-family:var(--mono);font-size:.66rem;letter-spacing:.5px;color:var(--accent);background:rgba(10,16,28,.85);border:1px solid var(--accent-dim);border-radius:7px;padding:6px 13px;cursor:pointer;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mb-drill-back:hover{border-color:var(--accent);background:rgba(10,16,28,.96)}
 /* Core node — the agent ID card (pinned at the brain centre) + slide-in dossier */
 .mb-core-card{position:relative;cursor:pointer;padding:16px;border-radius:12px;border:1px solid var(--accent-dim);background:linear-gradient(180deg,#10101c,#0b0b13);box-shadow:0 0 0 1px #000,0 10px 30px -14px #000,0 0 40px -18px var(--accent-dim);transition:transform .18s,border-color .18s,box-shadow .18s}
 .mb-core-card:hover{transform:translateY(-2px);border-color:var(--accent);box-shadow:0 0 0 1px #000,0 16px 40px -14px #000,0 0 50px -12px var(--accent-dim)}

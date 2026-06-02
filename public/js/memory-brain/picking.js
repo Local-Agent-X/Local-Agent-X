@@ -49,14 +49,24 @@ export function wirePicking() {
 
 function pick(e) {
   if (!state.points || !state.items.length) return null;
-  if (state.camera.position.z > PICK_ZOOM) return null;
+  // Out at the overview, dots overlap and a click would hit a random one, so
+  // labels handle navigation there. Once a cluster is isolated (drilled in),
+  // only its dots are lit — picking is unambiguous at any zoom.
+  if (!state.focused && state.camera.position.z > PICK_ZOOM) return null;
   const rect = state.canvas.getBoundingClientRect();
   ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
   ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
   ray.setFromCamera(ndc, state.camera);
   const hits = ray.intersectObject(state.points);
-  if (!hits.length) return null;
-  return state.items[hits[0].index] || null;
+  for (const h of hits) {
+    const rec = state.items[h.index];
+    if (!rec) continue;
+    // While a cluster is isolated, the other clusters are still drawn as faint
+    // ghosts — ignore hits on them so a pick matches what's actually lit.
+    if (state.focused && state.focusCluster >= 0 && rec.cluster !== state.focusCluster) continue;
+    return rec;
+  }
+  return null;
 }
 
 function showTip(e, rec) {

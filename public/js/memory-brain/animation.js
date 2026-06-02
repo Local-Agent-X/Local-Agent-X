@@ -5,7 +5,7 @@
 import { state } from './state.js';
 import { updateClusterLabels } from './labels.js';
 import { updateLod } from './lod.js';
-import { updateFocus } from './focus.js';
+import { updateFocus, updateDrillUi } from './focus.js';
 
 export function tick() {
   state.raf = requestAnimationFrame(tick);
@@ -24,6 +24,7 @@ export function tick() {
     state.camera.position.z += (state.zoomTarget - state.camera.position.z) * 0.08;
   }
   updateFocus();
+  updateDrillUi();
   updateLod();
   state.renderer.render(state.scene, state.camera);
   updateClusterLabels();

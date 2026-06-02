@@ -109,7 +109,11 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
         },
         { type: "separator" },
         { role: "resetZoom" },
-        { role: "zoomIn" },
+        // Bind plain Ctrl+= so zoom-in doesn't require Shift (the default
+        // zoomIn role is Ctrl+Plus = Ctrl+Shift+=). Also register the keypad
+        // variant so both rows of "+" work.
+        { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
+        { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
         { role: "zoomOut" },
         { type: "separator" },
         { role: "toggleDevTools" },

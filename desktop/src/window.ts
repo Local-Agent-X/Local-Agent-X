@@ -133,9 +133,13 @@ export function createWindow(): void {
   // native top-of-screen menu + the traffic-light padding (handled in
   // app.css via the platform-darwin body class set by preload) cover it.
   mainWindow.webContents.on("did-finish-load", () => {
-    if (process.platform === "darwin") return;
     const currentUrl = mainWindow?.webContents.getURL() ?? "";
     if (!currentUrl.startsWith(serverOrigin)) return;
+    // Electron persists zoom per-origin, so one accidental Ctrl+- otherwise
+    // sticks across every future boot. Pin each app load back to 100%; the
+    // user can still zoom within a session via the View menu.
+    mainWindow?.webContents.setZoomFactor(1);
+    if (process.platform === "darwin") return;
     mainWindow?.webContents.executeJavaScript(MAIN_WINDOW_TITLEBAR_JS);
   });
 

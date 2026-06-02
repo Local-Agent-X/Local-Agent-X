@@ -65,6 +65,36 @@ export function traverseFrom(
   return visited;
 }
 
+/**
+ * Promote explicit `[[name]]` wikilinks into typed, traversable edges. The
+ * fact's primary entity and every linked target form a `links-to` clique at
+ * full confidence — these are author-asserted, not inferred. Runs even when no
+ * @-entities were tagged, since a link is its own assertion.
+ */
+function extractWikilinks(
+  db: InstanceType<typeof Database>,
+  text: string,
+  entities: string[],
+  factId?: number,
+  chunkId?: number
+): number {
+  const targets = [...text.matchAll(/\[\[([^[\]]+)\]\]/g)]
+    .map((m) => m[1].trim())
+    .filter(Boolean);
+  if (targets.length === 0) return 0;
+
+  const nodes = entities[0] ? [entities[0], ...targets] : targets;
+  let count = 0;
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      if (slugify(nodes[i]) === slugify(nodes[j])) continue;
+      storeRelation(db, { subject: nodes[i], predicate: "links-to", object: nodes[j], factId, chunkId, confidence: 1.0 });
+      count++;
+    }
+  }
+  return count;
+}
+
 export function extractRelations(
   db: InstanceType<typeof Database>,
   text: string,
@@ -72,7 +102,9 @@ export function extractRelations(
   factId?: number,
   chunkId?: number
 ): number {
-  if (!text || entities.length === 0) return 0;
+  if (!text) return 0;
+  let wikiCount = extractWikilinks(db, text, entities, factId, chunkId);
+  if (entities.length === 0) return wikiCount;
   const VERBS = "decided|decides|suggested|suggests|introduced|introduces|recommended|recommends|told|asked|wants|wanted|likes|prefers|preferred|owns|owned|uses|used|built|builds|created|creates|shipped|ships|launched|launches|joined|joins|left|leaves|met|meets|works|worked|manages|managed|reports|reported|scheduled|schedules|planned|plans|bought|buys|sold|sells|sent|sends|received|receives|served|serves|retired|retires|lives|lived|moved|moves|started|starts|stopped|stops|finished|finishes|completed|completes|belongs";
   const predicateRe = new RegExp(`\\b([A-Z][a-zA-Z]+|my|our|the|W)?\\s*(${VERBS})\\s+(?:(?:about|with|from|into|onto|upon|for|the|an|at|in|on|to|me|us|a)\\s+)?([a-zA-Z][a-zA-Z0-9\\s-]{2,40})`, "gi");
   const trailingNoiseRe = /\s+(and|or|but|when|while|after|before|last|next|right|just|then|so|because|since|until|over|during|yesterday|today|tomorrow|ago)\b.*$/i;
@@ -113,7 +145,7 @@ export function extractRelations(
     storeRelation(db, { subject, predicate, object, factId, chunkId });
     count++;
   }
-  return count;
+  return count + wikiCount;
 }
 
 export function relationCount(db: InstanceType<typeof Database>): number {

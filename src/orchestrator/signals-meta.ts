@@ -1,4 +1,3 @@
-import { MemoryGraph } from "../memory-graph.js";
 import crossSessionLearner, { CrossSessionLearner } from "../cross-session-learning/index.js";
 import { UnspokenDetector } from "../unspoken-detector.js";
 import { GrowthTracker } from "../growth-tracker.js";
@@ -99,14 +98,5 @@ export const metaSignals: CognitiveSignal[] = [
           }
         : null,
     health: () => ContradictionDetector.getInstance(),
-  },
-
-  {
-    id: "memory-graph",
-    scope: "profile",
-    triage: ({ input }) => (input.message.length > 40 ? "conditional" : null),
-    run: (input, out) => out.push(...MemoryGraph.signalsFor(input.message)),
-    record: input => MemoryGraph.recordFrom(input.message),
-    health: () => MemoryGraph,
   },
 ];

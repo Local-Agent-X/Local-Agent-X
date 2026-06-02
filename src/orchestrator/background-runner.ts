@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 
-import { MemoryGraph } from "../memory-graph.js";
 import MemoryImportance from "../memory/cognitive/importance/index.js";
 import { NarrativeMemory } from "../narrative-memory.js";
 import { UnspokenDetector } from "../unspoken-detector.js";
@@ -58,7 +57,7 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
 
   const graphEdges = safeRun("memory-graph:bg", () => {
     if (!memoryIndex) return 0;
-    let edgesAdded = 0;
+    const before = memoryIndex.relationCount();
     for (let i = 0; i < 7; i++) {
       const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
       const logPath = memoryIndex.getDailyLogPath(date);
@@ -73,13 +72,9 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
       const entities = [...new Set(facts.flatMap(f => f.entities))];
       if (entities.length < 2) continue;
 
-      const extracted = MemoryGraph.autoExtractRelationships(content, entities);
-      for (const edge of extracted) {
-        MemoryGraph.addEdge(edge.from, edge.relation, edge.to, edge.metadata);
-        edgesAdded++;
-      }
+      memoryIndex.extractRelations(content, entities);
     }
-    return edgesAdded;
+    return memoryIndex.relationCount() - before;
   }, 0);
 
   const importanceScored = safeRun("memory-importance:bg", () => {

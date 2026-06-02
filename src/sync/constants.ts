@@ -86,7 +86,6 @@ export const BRAIN_JSON_FILES: readonly string[] = [
   "hooks.json",
   "language-style.json",
   "mcp.json",
-  "memory-graph.json",
   "memory-tiers.json",
   "milestones.json",
   "orchestration-examples.json",

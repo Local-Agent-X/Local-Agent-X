@@ -98,7 +98,6 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     // values are dropped silently — the field stays at its old runtime value
     // and the next GET will reflect that, so the UI re-syncs without us
     // needing a 400 round-trip path.
-    const prevBrowserMode = ctx.config.browserMode;
     let runtimeChanged = false;
     for (const field of RUNTIME_SETTINGS) {
       if (!(field.field in body)) continue;
@@ -110,21 +109,6 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     if (runtimeChanged) {
       const { saveConfig } = await import("../../config.js");
       saveConfig(ctx.config);
-    }
-
-    // Switching browser profile (isolated ⇆ attach) must tear down any running
-    // agent Chrome so the next browser tool call relaunches under the new
-    // profile. Without this the toggle silently no-ops on a live browser:
-    // getSharedBrowser() keeps returning the already-connected browser (it only
-    // relaunches on an engine switch), and even a cleared cache would reconnect
-    // to the old Chrome still listening on the CDP port. Same close-and-relaunch
-    // the engine switch already relies on; BrowserManager.getPage() re-acquires
-    // a fresh context when it finds the browser gone.
-    if (runtimeChanged && ctx.config.browserMode !== prevBrowserMode) {
-      try {
-        const { closeSharedBrowser } = await import("../../browser/runtime.js");
-        await closeSharedBrowser();
-      } catch { /* nothing running to tear down */ }
     }
 
     json(200, { ok: true }); return true;

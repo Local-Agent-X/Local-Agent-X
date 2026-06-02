@@ -92,12 +92,6 @@ const configSchema = z.object({
   videoServerUrl: z.string().default("http://127.0.0.1:7861"),
   xttsServerUrl: z.string().default("http://127.0.0.1:7862"),
 
-  // Browser mode. "isolated" = dedicated agent profile at ~/.lax/chrome-profile
-  // (safer — zero blast radius on personal browsing). "attach" = launches against
-  // your real Chrome profile so the agent inherits all your logins; requires
-  // your regular Chrome to be closed (Chrome forbids two instances on one profile).
-  browserMode: z.enum(["isolated", "attach"]).default("isolated"),
-
   // Per-session browser context. Off by default: all sessions share one
   // browser context, so cookies/logins carry across chats and missions
   // (continuity). On: each session gets its own context (separate cookie

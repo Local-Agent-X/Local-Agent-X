@@ -35,7 +35,6 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
       profile: ctx.config.profile, toolApproval: ctx.config.toolApproval,
       autonomyProfile: loadProfileName(),
       retentionDays: ctx.config.retentionDays, autoUpdate: ctx.config.autoUpdate, logLevel: ctx.config.logLevel,
-      browserMode: ctx.config.browserMode,
       sandbox: { mode: getSandboxMode(), dockerAvailable: isDockerAvailable() },
       security: { threatsBlocked: threatData.stats?.totalBlocked || 0, threatLevel: threatData.currentThreatLevel || "normal", recentEvents: (threatData.recentEvents || []).slice(0, 5) },
       providers: providerHealth,

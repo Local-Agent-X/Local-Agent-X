@@ -63,13 +63,6 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "When the AI must ask for permission before running tools. auto=never, confirm-risky=bash/write/edit, confirm-all=every tool",
   },
   {
-    field: "browserMode",
-    validate: z.enum(["isolated", "attach"]),
-    runtime: true,
-    protected: true,
-    description: "Browser session mode. isolated=dedicated agent profile (safer), attach=user's real Chrome profile (requires Chrome closed)",
-  },
-  {
     field: "bridgeVoicePreference",
     validate: z.enum(["auto", "sovits", "chatterbox", "lite"]),
     runtime: true,

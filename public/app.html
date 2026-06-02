@@ -525,18 +525,6 @@
             <div class="field-hint" id="sandbox-hint">Bash commands run directly on your host OS.</div>
           </div>
         </div>
-        <div class="section-card">
-          <div class="section-title">Browser Profile</div>
-          <div class="section-desc">Which Chrome profile the agent drives. Isolated by default — the agent gets its own sandboxed browser, so your personal logins and passwords are never exposed.</div>
-          <div class="field">
-            <label class="field-label">Session Mode</label>
-            <select class="field-select" id="cfg-browser-mode" onchange="setBrowserModeUI(this.value)">
-              <option value="isolated" selected>Isolated — dedicated agent profile (default, safer)</option>
-              <option value="attach">Use my real browser — saved passwords &amp; cookies (power users)</option>
-            </select>
-            <div class="field-hint" id="browser-mode-hint">Agent runs in a separate Chrome profile with its own cookies. Your real browser is untouched.</div>
-          </div>
-        </div>
       </div>
       <!-- WhatsApp -->
       <div id="stab-whatsapp" class="tab-pane">
@@ -1151,7 +1139,6 @@
 <script src="/js/settings-rollback.js?v=v1"></script>
 <script src="/js/settings-run-traces.js?v=v1"></script>
 <script src="/js/settings-sandbox.js?v=v1"></script>
-<script src="/js/settings-browser-mode.js?v=v1"></script>
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>
 <script src="/js/settings-integrations.js?v=v1"></script>

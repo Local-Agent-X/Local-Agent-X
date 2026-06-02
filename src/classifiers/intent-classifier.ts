@@ -55,6 +55,11 @@ KINDS:
 
   NOT build_app — a bare "project" / "workspace" container inside THIS app (Local Agent X). Phrases like "create a project", "new project called X", "add a project for my client work", "start a project" mean a LAX project container, handled by the project_create tool — NOT a standalone runnable artifact. Return "free" for these so the model calls project_create itself. Only classify as build_app when the user clearly wants a runnable app/page/site/tool (the artifact words above), not just an organizational "project".
 
+  NOT build_app — VENTURE / ASPIRATION statements with no explicit artifact-creation verb. "I want to start a company", "I'm thinking of launching a business doing X", "I want to get into the Y space", "help me start a Z brand" express a GOAL that needs discovery (positioning, name, audience, offering) — they are NOT a request to generate a runnable artifact right now. There is no "build / make / create / generate / scaffold / design a <site/page/app/dashboard>" verb on an artifact noun. Return "free" so the agent can ASK what the user actually wants before building anything. Only flip to build_app once the user explicitly asks for the artifact ("now build the landing page", "make me the website"). Forcing build_app on a bare "I want to start a company" is a real failure — it skips discovery and ships an unwanted site. Examples:
+    "I want to start an active shooter training company called LIVE" → free (venture; ask first)
+    "I'm launching a coffee brand, where do I begin" → free (discovery)
+    "help me start a consulting business" → free (discovery)
+
 - agent_spawn — user is asking to DELEGATE a long-running task to a named role/specialist for execution NOW: research, multi-step writing, code review, market scans, browsing-and-summarizing, anything that benefits from a focused worker run RIGHT NOW. Examples:
     "research current AI voice toolkits and write a summary"
     "have a coder review the kraken bot for bugs"
@@ -96,6 +101,8 @@ DISTINCTIONS:
 - "build a project management app" → build_app (concrete runnable artifact, despite the word "project")
 - "create a dashboard for fastmail" → build_app (concrete artifact)
 - "explain how you'd build a dashboard for fastmail" → free (discussion)
+- "I want to start a company that does X" → free (venture/aspiration — ask first, no artifact verb)
+- "I want to start a training company, build me the website" → build_app (explicit artifact verb present)
 - "research X for me" → agent_spawn (delegation, do it now)
 - "set up a mission to research X every night" → free (scheduling — mission_schedule_create, not delegation)
 - "remind me daily at 9am to do X" → free (scheduling)

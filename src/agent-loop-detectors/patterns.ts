@@ -46,8 +46,15 @@ export const COMPLETION_PHRASE_AT_SENTENCE_START =
 //
 // It deliberately does NOT match first-person promises like "I'll send the
 // email" — those should still trigger planning-only retries when appropriate.
+//   4. Clarifying / choice questions the agent poses back to the user
+//      ("What do you want first?", "Which of these would you like?",
+//      "Want me to build the site or the curriculum?"). When the agent
+//      ends a turn asking the user to choose a direction, forcing "commit
+//      work now" overrides a legitimate question — exactly the misfire
+//      that built two unwanted websites from "I want to start a company"
+//      (it asked "what do you want first?" and got nudged into build_app).
 const WAITING_ON_USER =
-  /(?:^|[.!?—–:;]\s*|\n)\s*(?:please\s+|kindly\s+)?(?:send|share|paste|drop|upload|attach|provide|post|give|show)\s+(?:me|the|it|us|your|a)\b|(?:can|could|would)\s+you\s+(?:send|share|paste|drop|upload|attach|provide|post|give|show|tell|let)\b|when\s+you(?:'re| are)?\s+(?:ready|done|have|get|finish)|let\s+me\s+know\s+(?:when|once|if)|tell\s+me\s+(?:when|once|if|what|who|where|how|the|your)|\bi\s+need\s+(?:the|your|more|you\s+to)\b|\bbefore\s+i\s+(?:can|proceed|continue|start)\b|\bonce\s+you\s+(?:send|share|provide|tell|have|do|'ve|are)\b|\bdrop\s+(?:it|them|that|the)\b/i;
+  /(?:^|[.!?—–:;]\s*|\n)\s*(?:please\s+|kindly\s+)?(?:send|share|paste|drop|upload|attach|provide|post|give|show)\s+(?:me|the|it|us|your|a)\b|(?:can|could|would)\s+you\s+(?:send|share|paste|drop|upload|attach|provide|post|give|show|tell|let)\b|when\s+you(?:'re| are)?\s+(?:ready|done|have|get|finish)|let\s+me\s+know\s+(?:when|once|if|what|which|your|how)|tell\s+me\s+(?:when|once|if|what|who|where|how|the|your)|\bi\s+need\s+(?:the|your|more|you\s+to)\b|\bbefore\s+i\s+(?:can|proceed|continue|start)\b|\bonce\s+you\s+(?:send|share|provide|tell|have|do|'ve|are)\b|\bdrop\s+(?:it|them|that|the)\b|\bwhat\s+(?:do|would)\s+you\s+(?:want|like|prefer|need)\b|\bwhich\s+(?:one|option|of\s+(?:these|those|them)|would|do)\b|\bwould\s+you\s+like\s+me\s+to\b|\b(?:do\s+you\s+)?want\s+me\s+to\b|\bshould\s+i\b/i;
 
 /**
  * True if the agent's reply clearly signals it is blocked waiting on the user.

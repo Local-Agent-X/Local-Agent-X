@@ -89,10 +89,11 @@ export type ServerEvent =
   | { type: "worker_stream"; opId: string; task?: string; delta: string }
   | { type: "worker_done"; opId: string; status: "completed" | "failed" | "cancelled"; summary?: string }
   // Canonical chat lifecycle: emitted at the START of a chat turn so the UI
-  // can track the opId for reconnect/cancel. After connection drops, the
-  // client sends `{type:"reconnect_op", opId}` over WS and the server
-  // replays missed canonical events via `reconnectOp(opId, sinceSeq)`.
-  // Stop button → `{type:"cancel_op", opId}` → `opCancel(opId)`.
+  // can track the opId for reconnect. After connection drops, the client
+  // sends `{type:"reconnect_op", opId}` over WS and the server replays
+  // missed canonical events via `reconnectOp(opId, sinceSeq)`. Stop button →
+  // `{type:"stop", sessionId}` → terminateChat aborts the turn signal →
+  // opCancel.
   | { type: "chat_op_started"; opId: string }
   // Mid-turn user inject lifecycle. Emitted when a user sends while a turn
   // is already in flight: `inject_queued` confirms the message landed in the

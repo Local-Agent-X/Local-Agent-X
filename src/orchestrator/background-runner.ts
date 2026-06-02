@@ -55,7 +55,7 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
     return nm.getOngoingStories().length;
   }, 0);
 
-  const graphEdges = safeRun("memory-graph:bg", () => {
+  const graphEdges = safeRun("memory-relations:bg", () => {
     if (!memoryIndex) return 0;
     const before = memoryIndex.relationCount();
     for (let i = 0; i < 7; i++) {

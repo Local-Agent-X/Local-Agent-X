@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { STOP_WORDS } from "./constants.js";
+import { extractRelationTriples } from "../../relation-patterns.js";
 
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -40,21 +41,19 @@ export function extractEntities(text: string): string[] {
   return [...new Set(entities)];
 }
 
+// "X is a/the Y" type assertions. Local to compression — "is" is deliberately
+// excluded from the shared graph vocabulary (too noisy for edges), but it's
+// useful context in a lossy skeleton.
+const IS_A_RE = /(\w[\w\s]*?)\s+is\s+(?:a|the)\s+(\w[\w\s]*?)(?:\.|,|$)/gi;
+
 export function extractRelationships(text: string): string[] {
-  const relationships: string[] = [];
-  const patterns = [
-    /(\w[\w\s]*?)\s+(?:works?\s+(?:at|for|on))\s+(\w[\w\s]*?)(?:\.|,|$)/gi,
-    /(\w[\w\s]*?)\s+(?:lives?\s+in|based\s+in)\s+(\w[\w\s]*?)(?:\.|,|$)/gi,
-    /(\w[\w\s]*?)\s+(?:likes?|loves?|hates?)\s+(\w[\w\s]*?)(?:\.|,|$)/gi,
-    /(\w[\w\s]*?)\s+(?:is\s+a|is\s+the)\s+(\w[\w\s]*?)(?:\.|,|$)/gi,
-  ];
-
-  for (const pattern of patterns) {
-    let match;
-    while ((match = pattern.exec(text)) !== null) {
-      relationships.push(`${match[1].trim()} -> ${match[2].trim()}`);
-    }
+  const rels = extractRelationTriples(text, extractEntities(text)).map(
+    (t) => `${t.subject} -> ${t.object}`
+  );
+  IS_A_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = IS_A_RE.exec(text)) !== null) {
+    rels.push(`${m[1].trim()} -> ${m[2].trim()}`);
   }
-
-  return relationships;
+  return rels;
 }

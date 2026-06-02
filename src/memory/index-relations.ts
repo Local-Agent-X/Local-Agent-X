@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { slugify } from "./utils.js";
+import { extractRelationTriples } from "./relation-patterns.js";
 
 export function storeRelation(
   db: InstanceType<typeof Database>,
@@ -103,49 +104,13 @@ export function extractRelations(
   chunkId?: number
 ): number {
   if (!text) return 0;
-  let wikiCount = extractWikilinks(db, text, entities, factId, chunkId);
-  if (entities.length === 0) return wikiCount;
-  const VERBS = "decided|decides|suggested|suggests|introduced|introduces|recommended|recommends|told|asked|wants|wanted|likes|prefers|preferred|owns|owned|uses|used|built|builds|created|creates|shipped|ships|launched|launches|joined|joins|left|leaves|met|meets|works|worked|manages|managed|reports|reported|scheduled|schedules|planned|plans|bought|buys|sold|sells|sent|sends|received|receives|served|serves|retired|retires|lives|lived|moved|moves|started|starts|stopped|stops|finished|finishes|completed|completes|belongs";
-  const predicateRe = new RegExp(`\\b([A-Z][a-zA-Z]+|my|our|the|W)?\\s*(${VERBS})\\s+(?:(?:about|with|from|into|onto|upon|for|the|an|at|in|on|to|me|us|a)\\s+)?([a-zA-Z][a-zA-Z0-9\\s-]{2,40})`, "gi");
-  const trailingNoiseRe = /\s+(and|or|but|when|while|after|before|last|next|right|just|then|so|because|since|until|over|during|yesterday|today|tomorrow|ago)\b.*$/i;
-  const leadingFillerRe = /^(the|a|an|my|our|their|his|her|its|this|that|these|those)\s+/i;
-
-  let count = 0;
-  const seen = new Set<string>();
-  let match: RegExpExecArray | null;
-  while ((match = predicateRe.exec(text)) !== null) {
-    const subjectRaw = (match[1] || "").toLowerCase();
-    const predicate = match[2].toLowerCase();
-    let objectRaw = match[3].trim();
-    objectRaw = objectRaw.replace(trailingNoiseRe, "").trim();
-    objectRaw = objectRaw.replace(leadingFillerRe, "").trim();
-    const object = objectRaw.split(/\s+/).slice(0, 4).join(" ");
-
-    const subjectFillers = new Set([
-      "my", "our", "the", "w", "a", "an", "this", "that", "these", "those",
-      "with", "about", "from", "into", "onto", "upon", "for", "at", "in", "on", "to",
-      "me", "us", "you", "him", "her", "it", "them", "they", "we", "i",
-      "after", "before", "when", "while", "then", "and", "or", "but", "so",
-    ]);
-    let subject = subjectRaw;
-    if (!subject || subjectFillers.has(subject)) {
-      subject = entities[0] || "";
-    }
-    if (!subject) continue;
-
-    if (object.length < 3) continue;
-    if (/^(the|a|an|me|us|you|him|her|it|them)$/i.test(object)) continue;
-    if (slugify(object) === subject) continue;
-    if (object.toLowerCase() === predicate) continue;
-
-    const key = `${subject}|${predicate}|${object}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    storeRelation(db, { subject, predicate, object, factId, chunkId });
+  let count = extractWikilinks(db, text, entities, factId, chunkId);
+  if (entities.length === 0) return count;
+  for (const t of extractRelationTriples(text, entities)) {
+    storeRelation(db, { ...t, factId, chunkId });
     count++;
   }
-  return count + wikiCount;
+  return count;
 }
 
 export function relationCount(db: InstanceType<typeof Database>): number {

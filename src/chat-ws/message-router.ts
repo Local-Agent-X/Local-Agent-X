@@ -3,7 +3,7 @@
 // without making any single branch easier to follow.
 //
 // Subscribe / unsubscribe mutate the per-connection subscription set;
-// stop / cancel_op / reconnect_op / etc. operate on session-level state.
+// stop / reconnect_op / etc. operate on session-level state.
 
 import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
@@ -97,11 +97,6 @@ export function attachMessageRouter(ctx: RouterContext): void {
 
     if (type === "reconnect_op" && sessionId && typeof msg.opId === "string") {
       await handleReconnectOp(ws, sessionId, msg.opId, typeof msg.sinceSeq === "number" ? msg.sinceSeq : -1);
-      return;
-    }
-
-    if (type === "cancel_op" && typeof msg.opId === "string") {
-      await handleCancelOp(msg.opId);
       return;
     }
 
@@ -254,20 +249,6 @@ async function handleReconnectOp(ws: WebSocket, sessionId: string, opId: string,
     if (result.ok) ws.on("close", result.off);
   } catch (e) {
     logger.warn(`[ws-chat] reconnect_op error: ${(e as Error).message}`);
-  }
-}
-
-async function handleCancelOp(opId: string): Promise<void> {
-  try {
-    const { opCancel } = await import("../canonical-loop/index.js");
-    const result = opCancel(opId, "user-stop");
-    if (!result.ok) {
-      logger.warn(`[ws-chat] cancel_op ${opId} failed: ${result.code} ${result.message}`);
-    } else {
-      logger.info(`[ws-chat] cancel_op ${opId} → success`);
-    }
-  } catch (e) {
-    logger.warn(`[ws-chat] cancel_op error: ${(e as Error).message}`);
   }
 }
 

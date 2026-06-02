@@ -82,7 +82,12 @@ export const runSandboxedPhase: Phase = async (ctx) => {
         }
       }
     }
-    if (tc.name === "http_request" || tc.name === "web_fetch") {
+    // sql_query returns row DATA read from a SQLite file; like web_fetch/
+    // http_request it can surface secret-shaped bytes (an API key stored in a
+    // table), so scan its output and taint the session on a hit. Confinement
+    // (the file-access gate) is the primary control; this is defense-in-depth
+    // so the redaction+egress-block path covers DB reads, not just HTTP.
+    if (tc.name === "http_request" || tc.name === "web_fetch" || tc.name === "sql_query") {
       const body = typeof ctx.result?.content === "string" ? ctx.result.content : "";
       if (body.length > 0) {
         const det = detectSecretsInOutput(body);

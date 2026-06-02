@@ -93,6 +93,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   // during turn 0 is caught by the bus subscription.
   const tracker: CancelTracker = startCancelTracker(op, adapter);
   let leaseLost = false;
+  let wallClockTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Heartbeat interval: extend the lease periodically. If the lease was
   // stolen out from under us (recovery), abort the adapter and let the
@@ -109,6 +110,22 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   HEARTBEATS.set(workerId, hb);
 
   transitionOp(op, "running", "leased");
+
+  // Wall-clock ceiling. Enforced HERE — the one place every entry path
+  // (chat-runner, agent-runner, cron, sub-agents) converges — by reading the
+  // budget the entry runner stamped onto the op. Firing opCancel routes the
+  // stop through the same authority as a user Stop, so the running →
+  // cancelling → cancelled transition and mid-stream adapter.abort() are
+  // identical. Dynamic import avoids the worker → control-api → scheduler →
+  // worker static cycle; the timer path is cold (only fires on overrun).
+  const wallClockMs = op.contextPack?.budget?.maxWallTimeMs;
+  if (typeof wallClockMs === "number" && Number.isFinite(wallClockMs) && wallClockMs > 0) {
+    wallClockTimer = setTimeout(() => {
+      void import("./control-api.js")
+        .then(({ opCancel }) => opCancel(op.id, "wall-clock-ceiling"))
+        .catch(() => undefined);
+    }, wallClockMs);
+  }
 
   // Seed the initial user op_message before the first driveTurn so the
   // adapter sees the task on turn 0 (PRD §11 parity with the legacy
@@ -242,6 +259,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
     });
   } finally {
     clearInterval(hb);
+    if (wallClockTimer) clearTimeout(wallClockTimer);
     HEARTBEATS.delete(workerId);
     tracker.off();
     const stillOwner = releaseLease(op.id, workerId);

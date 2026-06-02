@@ -7,11 +7,11 @@
  * options) and returns an `AgentTurn`-shaped Promise so existing callers
  * swap with minimal diff.
  *
- * Wall-clock-ceiling: `options.wallClockMs` replaces the caller-side
- * `AbortController + setTimeout` pattern. A single in-runner timer calls
- * `opCancel(opId, "wall-clock-ceiling")` — canonical's state machine sees
- * a clean running → cancelling → cancelled transition instead of the
- * caller and the loop drifting apart on an out-of-band signal.
+ * Wall-clock-ceiling: `options.wallClockMs` is stamped onto the op's
+ * `budget.maxWallTimeMs`. The worker enforces it — the single place every
+ * entry path shares — so cron/autopilot/sub-agent runs and chat turns all
+ * get the same ceiling from one source instead of each runner arming its
+ * own timer. No outside-the-loop AbortController.
  *
  * External cancel: `options.signal` is wired to also call `opCancel`, so
  * callers that need an external cancel hook (e.g. cron's `registerRunAbort`
@@ -171,16 +171,6 @@ export async function runAgentViaCanonical(
       })
     : () => {};
 
-  // Wall-clock-ceiling timer: kicks opCancel after wallClockMs. Routes
-  // through canonical's signal path so the op transitions running →
-  // cancelling → cancelled. No outside-the-loop AbortController.
-  let wallClockFired = false;
-  const wallClockTimer = setTimeout(() => {
-    wallClockFired = true;
-    logger.warn(`[agent-runner] op ${op.id} hit wall-clock ceiling (${wallClockMs}ms) — issuing opCancel`);
-    opCancel(op.id, "wall-clock-ceiling");
-  }, wallClockMs);
-
   // External signal → opCancel. Preserves the cron service's existing
   // registerRunAbort interface for cancel-from-API while routing the
   // actual abort through canonical instead of the AbortController bypass.
@@ -222,10 +212,8 @@ export async function runAgentViaCanonical(
       committedWork,
     };
     if (errorMessage && stopReason === "error") result.errorMessage = errorMessage;
-    void wallClockFired;
     return result;
   } finally {
-    clearTimeout(wallClockTimer);
     if (options.signal) options.signal.removeEventListener("abort", onSignalAbort);
     offEvents();
     offStream();

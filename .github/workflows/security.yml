@@ -54,7 +54,7 @@ jobs:
 
       - name: Verify security files exist
         run: |
-          for f in src/security.ts src/sanitize.ts src/threat-engine.ts src/keychain.ts SECURITY.md THREAT-MODEL.md; do
+          for f in src/security/index.ts src/sanitize.ts src/threat/threat-engine.ts src/keychain.ts SECURITY.md THREAT-MODEL.md; do
             if [ ! -f "$f" ]; then
               echo "::error::Missing critical security file: $f"
               exit 1

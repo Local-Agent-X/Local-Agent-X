@@ -1,6 +1,7 @@
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody } from "../server-utils.js";
 import type { FactKind } from "../memory/index.js";
+import { readIdentityProfile } from "../memory/identity-profile.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.memory");
@@ -45,6 +46,13 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
       });
     }
     json(200, { total: recs.total, clusters: layout.clusters, items });
+    return true;
+  }
+
+  // Identity profile for the Core node (the agent's ID card / dossier): the
+  // parsed view of IDENTITY/HEART/USER.
+  if (method === "GET" && url.pathname === "/api/memory/identity") {
+    json(200, await readIdentityProfile(ctx.memoryIndex.getMemoryDir()));
     return true;
   }
 

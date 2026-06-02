@@ -12,6 +12,7 @@ import { loadAtlas } from './data.js';
 import { setupClusterLabels, clearClusterLabels } from './labels.js';
 import { buildBrainWarp } from './brain-warp.js';
 import { applyMode, wireModeToggle } from './modes.js';
+import { ensureCoreNode } from './core-node.js';
 
 const EMPTY_DOTS = 600;
 
@@ -85,6 +86,7 @@ export async function ensure() {
   }
 
   start();
+  ensureCoreNode();
 }
 
 // Build the point-cloud buffers from atlas items. When the layout has computed,

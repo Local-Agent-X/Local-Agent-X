@@ -1,0 +1,239 @@
+<!doctype html>
+<!--
+  MOCKUP — Core node → "The Legend"
+  The identity editor (IDENTITY.md + HEART.md + USER.md) reframed as a
+  classified personnel dossier. Standalone: open directly in a browser.
+  Pure CSS/HTML, no build. Uses the app's real theme tokens.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>THE LEGEND — Agent X Registry</title>
+<style>
+  :root{
+    --bg:#0a0a0f; --surface:#0f0f18; --surface-2:#131325; --border:#1a1a2e;
+    --accent:#40f0f0; --accent-dim:#30cccc88; --danger:#ff3333; --warn:#ffaa00;
+    --info:#33aaff; --text:#c8d0e0; --muted:#666680; --hover:#151528;
+    --mono:'Cascadia Code','Fira Code','Consolas',monospace;
+    --font:'Segoe UI',system-ui,sans-serif;
+    --stamp:#ff3b3b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:var(--mono); background:
+      radial-gradient(1200px 600px at 70% -10%, #10243a 0%, transparent 55%),
+      radial-gradient(900px 500px at 10% 110%, #161033 0%, transparent 50%),
+      var(--bg);
+    color:var(--text); min-height:100vh; display:flex; align-items:center;
+    justify-content:center; padding:40px 20px; overflow-x:hidden;
+  }
+  /* scanline overlay, same as the app */
+  body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(64,240,240,.012) 2px,rgba(64,240,240,.012) 4px);}
+
+  /* ── classification banners ── */
+  .class-banner{font-family:var(--mono);font-size:11px;letter-spacing:.34em;
+    text-align:center;padding:6px;font-weight:700;color:#0a0a0f;
+    background:repeating-linear-gradient(45deg,var(--stamp),var(--stamp) 14px,#c21f1f 14px,#c21f1f 28px);}
+
+  .dossier{width:min(880px,100%);background:linear-gradient(180deg,var(--surface) 0%,#0c0c14 100%);
+    border:1px solid var(--border);border-radius:6px;overflow:hidden;
+    box-shadow:0 0 0 1px #000, 0 30px 80px -20px #000, 0 0 60px -10px #0c3a4a inset;
+    position:relative;}
+
+  /* breadcrumb showing you came from the brain */
+  .nav{display:flex;align-items:center;gap:8px;padding:10px 18px;font-size:11px;
+    color:var(--muted);border-bottom:1px solid var(--border);background:#0b0b12;letter-spacing:.06em;}
+  .nav b{color:var(--accent);font-weight:600}
+  .nav .sep{color:#333}
+
+  .head{display:flex;gap:20px;padding:22px 24px 18px;position:relative;border-bottom:1px dashed #23233c;}
+  /* portrait */
+  .portrait{flex:0 0 116px;height:116px;border:1px solid var(--accent-dim);border-radius:4px;
+    background:#000 center/cover no-repeat;
+    display:flex;align-items:center;justify-content:center;font-size:58px;position:relative;
+    overflow:hidden;box-shadow:0 0 30px -8px var(--accent-dim) inset;}
+  .portrait img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+    filter:contrast(1.05) saturate(1.1);}
+  .portrait::after{content:'';position:absolute;inset:0;z-index:2;
+    background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.28) 3px,rgba(0,0,0,.28) 4px);}
+  .portrait .corner{position:absolute;width:12px;height:12px;border:2px solid var(--accent);opacity:.7;z-index:3}
+  .portrait .tl{top:5px;left:5px;border-right:0;border-bottom:0}
+  .portrait .tr{top:5px;right:5px;border-left:0;border-bottom:0}
+  .portrait .bl{bottom:5px;left:5px;border-right:0;border-top:0}
+  .portrait .br{bottom:5px;right:5px;border-left:0;border-top:0}
+
+  .id{flex:1;min-width:0}
+  .id .filelabel{font-size:11px;letter-spacing:.28em;color:var(--muted)}
+  .id h1{font-family:var(--font);font-size:30px;font-weight:700;color:#eaf6ff;margin:2px 0 2px;
+    letter-spacing:.02em;text-shadow:0 0 18px var(--accent-dim)}
+  .id .tagline{font-style:italic;color:var(--accent);font-size:14px;margin-bottom:12px}
+  .meta-row{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:12px;color:var(--text)}
+  .meta-row .k{color:var(--muted)}
+
+  /* TOP SECRET stamp */
+  .stamp{position:absolute;top:28px;right:18px;transform:rotate(-13deg);
+    border:3px double var(--stamp);color:var(--stamp);font-weight:800;font-size:13px;
+    letter-spacing:.18em;padding:6px 12px;border-radius:3px;opacity:.82;
+    text-shadow:0 0 8px #ff3b3b55;box-shadow:0 0 14px -4px #ff3b3b55;}
+  .stamp small{display:block;font-size:8px;letter-spacing:.22em;text-align:center;opacity:.85}
+
+  /* clearance / status chips */
+  .chips{display:flex;gap:8px;flex-wrap:wrap;padding:14px 24px;border-bottom:1px dashed #23233c}
+  .chip{font-size:10.5px;letter-spacing:.12em;padding:4px 9px;border-radius:3px;border:1px solid;
+    display:flex;align-items:center;gap:6px}
+  .chip.live{color:#7CFFb0;border-color:#1d6b43;background:#0c1c14}
+  .chip.live .dot{width:7px;height:7px;border-radius:50%;background:#7CFFb0;box-shadow:0 0 8px #7CFFb0;
+    animation:pulse 1.6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+  .chip.grade{color:var(--accent);border-color:var(--accent-dim);background:#08171a}
+  .chip.lock{color:var(--warn);border-color:#5a4410;background:#1a1405}
+
+  .body{padding:6px 24px 22px}
+  section{padding:18px 0;border-bottom:1px dashed #1c1c30}
+  section:last-child{border-bottom:0}
+  .sec-head{display:flex;align-items:center;gap:10px;font-size:11px;letter-spacing:.22em;
+    color:var(--muted);margin-bottom:14px;text-transform:uppercase}
+  .sec-head .num{color:var(--accent);border:1px solid var(--accent-dim);border-radius:3px;
+    padding:1px 6px;font-size:10px}
+  .sec-head .line{flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+
+  /* field grid (identity scalars) */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 26px}
+  .field{border-bottom:1px solid #181828;padding:5px 2px;cursor:text;transition:.15s}
+  .field:hover{background:#0c1418;border-color:var(--accent-dim)}
+  .field .label{font-size:10px;letter-spacing:.2em;color:var(--muted);text-transform:uppercase}
+  .field .val{font-size:15px;color:#dfe9f5;font-family:var(--font);padding-top:2px}
+  .field .val.empty{color:#444;font-style:italic}
+  .field .val .cursor{display:inline-block;width:7px;height:15px;background:var(--accent);
+    margin-left:1px;vertical-align:-2px;animation:blink 1.1s steps(1) infinite;opacity:0}
+  .field.editing .val .cursor{opacity:1}
+  .field.editing{background:#0c1418;border-color:var(--accent)}
+  @keyframes blink{50%{opacity:0}}
+
+  /* directives = HEART personality, as standing orders */
+  .directives{display:flex;flex-direction:column;gap:8px}
+  .order{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.5;
+    color:var(--text);padding:7px 10px;background:#0b0b13;border-left:2px solid var(--accent-dim);
+    border-radius:0 3px 3px 0}
+  .order .code{color:var(--accent);font-size:11px;letter-spacing:.1em;flex:0 0 auto;padding-top:1px}
+  .order.boundary{border-left-color:var(--danger)}
+  .order.boundary .code{color:#ff7a7a}
+
+  /* network preview — known associates */
+  .assoc{display:flex;gap:10px;flex-wrap:wrap}
+  .person{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:6px 11px;
+    border:1px solid var(--border);border-radius:20px;background:#0b0b13;cursor:pointer;transition:.15s}
+  .person:hover{border-color:var(--accent-dim);background:#0c1418}
+  .person .av{width:20px;height:20px;border-radius:50%;background:#1a2438;display:flex;
+    align-items:center;justify-content:center;font-size:11px;color:var(--accent)}
+  .person .rel{color:var(--muted);font-size:11px}
+
+  .footer{display:flex;justify-content:space-between;align-items:center;gap:12px;
+    padding:14px 24px;background:#0a0a11;border-top:1px solid var(--border);font-size:11px;color:var(--muted)}
+  .actions{display:flex;gap:8px}
+  .btn{font-family:var(--mono);font-size:11px;letter-spacing:.1em;padding:7px 14px;border-radius:4px;
+    border:1px solid var(--border);background:#10101c;color:var(--text);cursor:pointer;transition:.15s}
+  .btn:hover{border-color:var(--accent-dim);color:var(--accent);box-shadow:0 0 14px -4px var(--accent-dim)}
+  .btn.primary{background:#0a2a30;border-color:var(--accent-dim);color:var(--accent)}
+  .redact{background:#000;color:#000;border-radius:2px;padding:0 4px;user-select:none}
+</style>
+</head>
+<body>
+<div class="dossier">
+  <div class="class-banner">TOP SECRET // EYES ONLY // AGENT X CENTRAL REGISTRY</div>
+
+  <div class="nav">
+    <b>◈ THE MIND</b><span class="sep">▸</span>
+    <span>CORE</span><span class="sep">▸</span>
+    <b>THE LEGEND</b>
+    <span style="margin-left:auto;color:#333">FILE&nbsp;#AX-001 · CLEARANCE: OPERATOR</span>
+  </div>
+
+  <div class="head">
+    <div class="portrait">
+      <img src="../public/agent-x-portrait.png" alt="Agent X portrait" />
+      <span class="corner tl"></span><span class="corner tr"></span>
+      <span class="corner bl"></span><span class="corner br"></span>
+    </div>
+    <div class="id">
+      <div class="filelabel">PERSONNEL FILE · COVER IDENTITY</div>
+      <h1>VIXEN</h1>
+      <div class="tagline">“I remember everything — so you don't have to.”</div>
+      <div class="meta-row">
+        <span><span class="k">CODENAME&nbsp;</span>VIXEN</span>
+        <span><span class="k">VIBE&nbsp;</span>Warm · sharp · loyal</span>
+        <span><span class="k">ACTIVATED&nbsp;</span>2026·03·14</span>
+        <span><span class="k">HANDLER&nbsp;</span>Peter M.</span>
+      </div>
+    </div>
+    <div class="stamp">TOP SECRET<small>NEVER ARCHIVED</small></div>
+  </div>
+
+  <div class="chips">
+    <span class="chip live"><span class="dot"></span>LOADED IN ACTIVE SESSION</span>
+    <span class="chip grade">◇ SOURCE GRADE A1 — SELF-DECLARED</span>
+    <span class="chip lock">🔒 PROTECTED · EXEMPT FROM DECAY</span>
+  </div>
+
+  <div class="body">
+
+    <section>
+      <div class="sec-head"><span class="num">§1</span> COVER IDENTITY <span class="line"></span>
+        <span style="color:#333">IDENTITY.md</span></div>
+      <div class="grid">
+        <div class="field"><div class="label">Codename</div><div class="val">Vixen</div></div>
+        <div class="field"><div class="label">Insignia</div><div class="val">🦊</div></div>
+        <div class="field editing"><div class="label">Tagline</div><div class="val">I remember everything<span class="cursor"></span></div></div>
+        <div class="field"><div class="label">Vibe</div><div class="val">Warm, sharp, loyal</div></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head"><span class="num">§2</span> STANDING ORDERS <span class="line"></span>
+        <span style="color:#333">HEART.md</span></div>
+      <div class="directives">
+        <div class="order"><span class="code">ORD·01</span><span>Talk like a real friend, not a customer-service bot. Match the handler's energy.</span></div>
+        <div class="order"><span class="code">ORD·02</span><span>Reference past intel naturally — “Last time you were working on…”.</span></div>
+        <div class="order"><span class="code">ORD·03</span><span>Celebrate wins. Follow up on the things that matter.</span></div>
+        <div class="order boundary"><span class="code">RESTR·01</span><span>Never expose internal tradecraft — scores, paths, chunk IDs. <span class="redact">████████</span></span></div>
+        <div class="order boundary"><span class="code">RESTR·02</span><span>Never fabricate intel on the handler. Query the Registry first.</span></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head"><span class="num">§3</span> THE HANDLER <span class="line"></span>
+        <span style="color:#333">USER.md</span></div>
+      <div class="grid">
+        <div class="field"><div class="label">Name</div><div class="val">Peter M.</div></div>
+        <div class="field"><div class="label">Station</div><div class="val">Local-Agent-X</div></div>
+        <div class="field"><div class="label">Role</div><div class="val">Builder / operator</div></div>
+        <div class="field"><div class="label">Comms style</div><div class="val">Casual, technical, direct</div></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head"><span class="num">§4</span> KNOWN ASSOCIATES <span class="line"></span>
+        <span style="color:#333">→ THE NETWORK</span></div>
+      <div class="assoc">
+        <span class="person"><span class="av">A</span>Alex <span class="rel">· co-founder</span></span>
+        <span class="person"><span class="av">M</span>Maria <span class="rel">· sister</span></span>
+        <span class="person"><span class="av">+</span><span class="rel">14 more in The Network</span></span>
+      </div>
+    </section>
+
+  </div>
+
+  <div class="footer">
+    <span>LAST AMENDED 2026·05·28 · 312 RECALLS · CONTRADICTIONS: 0</span>
+    <div class="actions">
+      <button class="btn">VIEW SOURCE .md</button>
+      <button class="btn primary">✎ AMEND FILE</button>
+    </div>
+  </div>
+
+  <div class="class-banner">TOP SECRET // EYES ONLY // AGENT X CENTRAL REGISTRY</div>
+</div>
+</body>
+</html>

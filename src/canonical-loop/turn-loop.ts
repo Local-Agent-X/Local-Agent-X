@@ -49,6 +49,7 @@ import { createIdleWatchdog, readIdleTimeoutMs } from "./turn-loop/idle-watchdog
 import { isSilentToolCall } from "./turn-loop/silent-tool-check.js";
 import { snapshotTouchedApps } from "./turn-loop/snapshot-apps.js";
 import { runRenderVerifyGate, turnTouchedAppFiles } from "./turn-loop/render-verify.js";
+import { isRetractableHallucination, stripRetractedAssistant } from "./turn-loop/retract-false-claim.js";
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 
@@ -260,11 +261,24 @@ export async function driveTurn(
     }
   }
 
-  const allMessages: CommitTurnMessage[] = [];
+  // A confirmed-false-claim nudge (phantom worker, fake "I scheduled it")
+  // means this terminal turn's assistant text is a lie. Retract it: clear the
+  // live bubble and drop it from the committed transcript so the next turn's
+  // correction is the only assistant message the user sees. See
+  // turn-loop/retract-false-claim.ts.
+  const retractFalseClaim =
+    middlewareDirective?.kind === "nudge" &&
+    isRetractableHallucination(middlewareDirective.reason);
+  if (retractFalseClaim) {
+    publishStreamChunk(op.id, { replace: true, text: "" });
+  }
+
+  let allMessages: CommitTurnMessage[] = [];
   for (const m of finalized) {
     allMessages.push({ messageId: m.messageId, role: m.role, content: m.content });
   }
   for (const tm of toolMessages) allMessages.push(tm);
+  if (retractFalseClaim) allMessages = stripRetractedAssistant(allMessages);
 
   const providerState: ProviderStateEnvelope = result.providerState;
   // A middleware abort forces the turn to terminal=error so the worker

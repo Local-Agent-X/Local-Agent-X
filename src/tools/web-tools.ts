@@ -4,6 +4,34 @@ import { wrapExternalContent } from "../sanitize.js";
 import type { SecretsStore } from "../secrets.js";
 import { ok, err } from "./result-helpers.js";
 import { checkOutboundRequest } from "./http-egress-guard.js";
+import { getInternalAgentToken } from "../rbac.js";
+
+/** Auth header for a loopback self-call to our own server, or null for any
+ *  external URL (so the token never leaks off-box). Uses the least-privilege
+ *  internal agent token; falls back to the operator token only when the
+ *  internal token is unset (e.g. a subprocess that didn't boot the full
+ *  server — it already holds the operator token on disk and runs at full
+ *  user trust). In the main server process the internal token is always set,
+ *  so the agent loop never wields operator for its own self-calls. */
+export async function selfCallAuthHeader(url: string): Promise<Record<string, string> | null> {
+  let rc;
+  try {
+    const { getRuntimeConfig } = await import("../config.js");
+    rc = getRuntimeConfig();
+  } catch {
+    return null;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const isLoopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "::1";
+  if (!isLoopback || parsed.port !== String(rc.port)) return null;
+  const token = getInternalAgentToken() ?? rc.authToken;
+  return { Authorization: `Bearer ${token}` };
+}
 
 async function dnsPin(url: string): Promise<string | null> {
   try {
@@ -42,22 +70,28 @@ export const webFetchTool: ToolDefinition = {
 
     try {
       let currentUrl = url;
+      // Loopback self-call auth (least-privilege internal token). Dropped on any
+      // cross-origin redirect so the token never leaves this server.
+      let selfAuth = await selfCallAuthHeader(url);
       const doFetch = async () => {
         let r = await fetch(currentUrl, {
           headers: {
             "User-Agent": "LocalAgentX/0.1",
             Accept: "text/html,application/json,text/plain",
+            ...selfAuth,
           },
           signal: AbortSignal.timeout(30_000),
           redirect: "manual",
         });
         let redirects = 0;
         while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirects < 5) {
-          currentUrl = new URL(r.headers.get("location")!, currentUrl).toString();
+          const location = new URL(r.headers.get("location")!, currentUrl).toString();
+          if (selfAuth && new URL(currentUrl).origin !== new URL(location).origin) selfAuth = null;
+          currentUrl = location;
           const redirectPin = await dnsPin(currentUrl);
           if (redirectPin) throw new Error(`Redirect blocked: ${redirectPin}`);
           r = await fetch(currentUrl, {
-            headers: { "User-Agent": "LocalAgentX/0.1", Accept: "text/html,application/json,text/plain" },
+            headers: { "User-Agent": "LocalAgentX/0.1", Accept: "text/html,application/json,text/plain", ...selfAuth },
             signal: AbortSignal.timeout(30_000),
             redirect: "manual",
           });
@@ -166,25 +200,15 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       const guard = checkOutboundRequest({ url, method, body: args.body, headers: args.headers });
       if (guard) return err(guard.message, guard.meta);
 
-      let autoAuth = false;
-      try {
-        const { getRuntimeConfig } = await import("../config.js");
-        const rc = getRuntimeConfig();
-        const selfUrl = `http://127.0.0.1:${rc.port}`;
-        if (url.startsWith(selfUrl) || url.startsWith(`http://localhost:${rc.port}`)) {
-          autoAuth = true;
-        }
-      } catch {}
-
       const headers: Record<string, string> = {
         "User-Agent": "LocalAgentX/0.1",
       };
-      if (autoAuth) {
-        try {
-          const { getRuntimeConfig } = await import("../config.js");
-          headers["Authorization"] = `Bearer ${getRuntimeConfig().authToken}`;
-        } catch {}
-      }
+      // Loopback self-calls authenticate with the least-privilege internal agent
+      // token (null for any external host, so it never leaks off-box). The
+      // cross-origin redirect stripping below removes `authorization` if a self
+      // redirect ever crosses to another origin.
+      const selfAuth = await selfCallAuthHeader(url);
+      if (selfAuth) Object.assign(headers, selfAuth);
       if (args.headers && typeof args.headers === "object") {
         for (const [key, value] of Object.entries(args.headers as Record<string, unknown>)) {
           let resolved = String(value);

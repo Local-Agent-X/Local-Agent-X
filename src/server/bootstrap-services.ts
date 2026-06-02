@@ -6,7 +6,7 @@ import { loadToolPolicy } from "../tool-policy.js";
 import { SessionStore, MemoryIndex, MemoryManager, ensurePersonalityFiles } from "../memory/index.js";
 import { SecretsStore } from "../secrets.js";
 import { AgentSync } from "../sync/index.js";
-import { RBACManager } from "../rbac.js";
+import { RBACManager, setInternalAgentToken } from "../rbac.js";
 import { setBrowserAuthContext } from "../browser/index.js";
 import { CronService } from "../cron/cron-service.js";
 import { IntegrationRegistry } from "../integrations/index.js";
@@ -175,6 +175,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   mkdirSync(join(dataDir, "uploads"), { recursive: true });
   const toolPolicy = loadToolPolicy(dataDir);
   const rbac = new RBACManager(dataDir, config.authToken);
+  setInternalAgentToken(rbac.getInternalAgentToken());
   setBrowserAuthContext(config.authToken, String(config.port));
   _t();
   // Wire SAX's shared pre-dispatch chain into AriKernel's tool executors so

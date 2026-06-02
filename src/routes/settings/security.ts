@@ -21,8 +21,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
       cfg.authToken = newToken;
       writeFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
       ctx.config.authToken = newToken;
-      const { RBACManager } = await import("../../rbac.js");
-      Object.assign(ctx.rbac, new RBACManager(ctx.dataDir, newToken));
+      ctx.rbac.rotateOperatorToken(newToken);
       setBrowserAuthContext(newToken, String(ctx.config.port));
       const masked = newToken.slice(0, 4) + "****" + newToken.slice(-4);
       logger.info(`Token rotated. New token: ${masked}`);

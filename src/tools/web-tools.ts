@@ -1,10 +1,12 @@
-import { promises as dns } from "node:dns";
+import { Agent, fetch as undiciFetch } from "undici";
+import type { RequestInit as UndiciRequestInit } from "undici";
 import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
 import type { SecretsStore } from "../secrets.js";
 import { ok, err } from "./result-helpers.js";
 import { checkOutboundRequest } from "./http-egress-guard.js";
 import { getInternalAgentToken } from "../rbac.js";
+import { resolveAndPinHost } from "../security/network-policy.js";
 
 /** Auth header for a loopback self-call to our own server, or null for any
  *  external URL (so the token never leaks off-box). Uses the least-privilege
@@ -33,22 +35,35 @@ export async function selfCallAuthHeader(url: string): Promise<Record<string, st
   return { Authorization: `Bearer ${token}` };
 }
 
-async function dnsPin(url: string): Promise<string | null> {
-  try {
-    const host = new URL(url).hostname;
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":")) return null;
+/** Callback shape undici's `connect.lookup` invokes — the array form, where a
+ *  validated address is returned as `[{ address, family }]`. Typed locally
+ *  because undici's `connect` lookup option carries the loose node:net
+ *  signature and won't otherwise accept the array callback without a cast. */
+type PinLookupCallback = (
+  err: NodeJS.ErrnoException | null,
+  addresses: { address: string; family: 4 | 6 }[],
+) => void;
 
-    const addrs = await dns.resolve4(host).catch(() => [] as string[]);
-    for (const ip of addrs) {
-      const parts = ip.split(".").map(Number);
-      const [a, b] = parts;
-      if (a === 127 || a === 10 || a === 0 || a >= 224) return `DNS rebinding blocked: ${host} → ${ip}`;
-      if (a === 192 && b === 168) return `DNS rebinding blocked: ${host} → ${ip}`;
-      if (a === 172 && b >= 16 && b <= 31) return `DNS rebinding blocked: ${host} → ${ip}`;
-      if (a === 169 && b === 254) return `DNS rebinding blocked: ${host} → ${ip}`;
-    }
-  } catch { /* DNS failure is ok — might be valid host */ }
-  return null;
+/** A dispatcher whose DNS lookup resolves, validates against SSRF/private-IP
+ *  rules, and pins the socket to the validated IP — at connect time, so the
+ *  IP that is checked is the IP that is dialed (no rebinding TOCTOU). Blocks
+ *  the connection if resolveAndPinHost rejects. Literal IPs pass through. */
+export function createPinningDispatcher(): Agent {
+  return new Agent({
+    connect: {
+      lookup: (hostname: string, _opts: unknown, cb: PinLookupCallback) => {
+        resolveAndPinHost(hostname).then((r) => {
+          if (!r.ok) { cb(new Error(r.reason), []); return; }
+          if (r.pin === null) {
+            const family = hostname.includes(":") ? 6 : 4;
+            cb(null, [{ address: hostname, family }]);
+          } else {
+            cb(null, [{ address: r.pin.address, family: r.pin.family }]);
+          }
+        }).catch((e) => cb(e instanceof Error ? e : new Error(String(e)), []));
+      },
+    },
+  });
 }
 
 export const webFetchTool: ToolDefinition = {
@@ -65,16 +80,14 @@ export const webFetchTool: ToolDefinition = {
     const url = String(args.url);
     const startMs = Date.now();
 
-    const pinResult = await dnsPin(url);
-    if (pinResult) return err(pinResult, { url, duration_ms: Date.now() - startMs, dns_pin: "blocked" });
-
+    const dispatcher = createPinningDispatcher();
     try {
       let currentUrl = url;
       // Loopback self-call auth (least-privilege internal token). Dropped on any
       // cross-origin redirect so the token never leaves this server.
       let selfAuth = await selfCallAuthHeader(url);
       const doFetch = async () => {
-        let r = await fetch(currentUrl, {
+        let r = await undiciFetch(currentUrl, {
           headers: {
             "User-Agent": "LocalAgentX/0.1",
             Accept: "text/html,application/json,text/plain",
@@ -82,18 +95,18 @@ export const webFetchTool: ToolDefinition = {
           },
           signal: AbortSignal.timeout(30_000),
           redirect: "manual",
+          dispatcher,
         });
         let redirects = 0;
         while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirects < 5) {
           const location = new URL(r.headers.get("location")!, currentUrl).toString();
           if (selfAuth && new URL(currentUrl).origin !== new URL(location).origin) selfAuth = null;
           currentUrl = location;
-          const redirectPin = await dnsPin(currentUrl);
-          if (redirectPin) throw new Error(`Redirect blocked: ${redirectPin}`);
-          r = await fetch(currentUrl, {
+          r = await undiciFetch(currentUrl, {
             headers: { "User-Agent": "LocalAgentX/0.1", Accept: "text/html,application/json,text/plain", ...selfAuth },
             signal: AbortSignal.timeout(30_000),
             redirect: "manual",
+            dispatcher,
           });
           redirects++;
         }
@@ -144,6 +157,8 @@ export const webFetchTool: ToolDefinition = {
       });
     } catch (e) {
       return err(`Fetch failed: ${(e as Error).message}`, { url, duration_ms: Date.now() - startMs });
+    } finally {
+      await dispatcher.close().catch(() => {});
     }
   },
 };
@@ -186,9 +201,6 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       const method = String(args.method || "GET").toUpperCase();
       const timeout = Math.min((args.timeout as number) || 30_000, 120_000);
       const startMs = Date.now();
-
-      const pinResult = await dnsPin(url);
-      if (pinResult) return err(pinResult, { url, method, dns_pin: "blocked" });
 
       const validMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
       if (!validMethods.includes(method)) {
@@ -236,11 +248,13 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         bodyStr = secrets.resolve(bodyStr);
       }
 
-      const fetchOpts: RequestInit = {
+      const dispatcher = createPinningDispatcher();
+      const fetchOpts: UndiciRequestInit = {
         method,
         headers,
         signal: AbortSignal.timeout(timeout),
         redirect: "manual",
+        dispatcher,
       };
 
       if (bodyStr && method !== "GET" && method !== "HEAD") {
@@ -256,16 +270,13 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         let currentUrl = url;
 
         const doFetch = async () => {
-          let r = await fetch(currentUrl, fetchOpts);
+          let r = await undiciFetch(currentUrl, fetchOpts);
           let redirectCount = 0;
 
           while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirectCount < MAX_REDIRECTS) {
             const location = new URL(r.headers.get("location")!, currentUrl).toString();
             const origOrigin = new URL(currentUrl).origin;
             const newOrigin = new URL(location).origin;
-
-            const redirectPin = await dnsPin(location);
-            if (redirectPin) throw new Error(`Redirect blocked: ${redirectPin}`);
 
             const redirectHeaders = { ...headers };
             if (origOrigin !== newOrigin) {
@@ -277,7 +288,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
             }
 
             currentUrl = location;
-            r = await fetch(currentUrl, {
+            r = await undiciFetch(currentUrl, {
               ...fetchOpts,
               headers: redirectHeaders,
               body: r.status === 303 ? undefined : fetchOpts.body,
@@ -354,6 +365,8 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           method,
           duration_ms: Date.now() - startMs,
         });
+      } finally {
+        await dispatcher.close().catch(() => {});
       }
     },
   };

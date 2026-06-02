@@ -346,14 +346,14 @@
       <!-- Memory & Embeddings -->
       <div id="stab-memory" class="tab-pane">
         <div class="mem-cards-row">
-        <div class="section-card">
+        <div id="mem-core-card"></div>
+        <div class="section-card mem-settings-card">
           <div class="section-title">Memory Embeddings</div>
           <div class="section-desc">Embeddings power semantic search — find memories by meaning, not just keywords. Choose a provider below.</div>
           <div id="emb-status" class="status-badge" style="display:none"><span class="status-dot"></span> <span id="emb-status-text"></span></div>
           <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-emb-provider" onchange="onEmbProviderChange(this.value)"><option value="ollama">Ollama (Local, Free)</option><option value="openai">OpenAI</option><option value="gemini">Google Gemini</option><option value="local">Built-in (No server needed)</option><option value="none">None (Keyword search only)</option></select></div>
           <div class="field"><label class="field-label">Embedding Model</label><select class="field-select" id="cfg-emb-model-select" style="display:none"></select><input class="field-input" id="cfg-emb-model" placeholder="e.g. nomic-embed-text, text-embedding-3-small" value=""/><div class="field-hint" id="cfg-emb-hint">For Ollama: nomic-embed-text (default), mxbai-embed-large, all-minilm. For OpenAI: text-embedding-3-small, text-embedding-3-large.</div></div>
-        </div>
-        <div class="section-card">
+          <div class="mem-card-divider"></div>
           <div class="section-title">Import Conversations</div>
           <div class="section-desc">Import chat history from other AI platforms. Supports ChatGPT, Claude.ai, Claude Code, Codex CLI, Slack, and generic JSON exports. Auto-detects format.</div>
           <div class="field">
@@ -523,6 +523,18 @@
               <option value="docker">On — Run in Docker container (network-isolated)</option>
             </select>
             <div class="field-hint" id="sandbox-hint">Bash commands run directly on your host OS.</div>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Browser Profile</div>
+          <div class="section-desc">Which Chrome profile the agent drives. Isolated by default — the agent gets its own sandboxed browser, so your personal logins and passwords are never exposed.</div>
+          <div class="field">
+            <label class="field-label">Session Mode</label>
+            <select class="field-select" id="cfg-browser-mode" onchange="setBrowserModeUI(this.value)">
+              <option value="isolated" selected>Isolated — dedicated agent profile (default, safer)</option>
+              <option value="attach">Use my real browser — saved passwords &amp; cookies (power users)</option>
+            </select>
+            <div class="field-hint" id="browser-mode-hint">Agent runs in a separate Chrome profile with its own cookies. Your real browser is untouched.</div>
           </div>
         </div>
       </div>
@@ -1074,7 +1086,7 @@
 <script src="/js/app-sidebar-render.js?v=v1"></script>
 <script src="/js/app.js?v=va6"></script>
 <script type="module" src="/js/voice-sphere.js?v=vb8"></script>
-<script type="module" src="/js/memory-brain.js?v=v9"></script>
+<script type="module" src="/js/memory-brain.js?v=v10"></script>
 <script src="/js/voice/hotkey-capture.js?v=v1"></script>
 <script src="/js/voice/push-to-talk.js?v=v1"></script>
 <!-- chat.js modules — load BEFORE chat.js so its call sites see the
@@ -1139,6 +1151,7 @@
 <script src="/js/settings-rollback.js?v=v1"></script>
 <script src="/js/settings-run-traces.js?v=v1"></script>
 <script src="/js/settings-sandbox.js?v=v1"></script>
+<script src="/js/settings-browser-mode.js?v=v1"></script>
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>
 <script src="/js/settings-integrations.js?v=v1"></script>

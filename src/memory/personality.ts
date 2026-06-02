@@ -74,6 +74,7 @@ const DEFAULT_IDENTITY_MD = `# Agent Identity
 - Emoji:
 - Tagline:
 - Vibe:
+- Portrait: /agent-x-portrait.png
 `;
 
 /** Write default personality files if they don't exist yet. */

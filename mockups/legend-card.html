@@ -1,0 +1,186 @@
+<!doctype html>
+<!--
+  MOCKUP — the SMALL ID card (the thing that actually sits in the UI),
+  shown floating over a faux "brain" backdrop. Click the card → the full
+  dossier panel slides in. Click outside / ✕ → back to the small card.
+  Standalone, open in a browser.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The Legend — small card → dossier</title>
+<style>
+  :root{
+    --bg:#0a0a0f;--surface:#0f0f18;--border:#1a1a2e;--accent:#40f0f0;--accent-dim:#30cccc88;
+    --danger:#ff3333;--warn:#ffaa00;--text:#c8d0e0;--muted:#666680;--stamp:#ff3b3b;
+    --mono:'Cascadia Code','Fira Code','Consolas',monospace;--font:'Segoe UI',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--mono);background:var(--bg);color:var(--text);height:100vh;overflow:hidden}
+  body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(64,240,240,.012) 2px,rgba(64,240,240,.012) 4px);}
+
+  /* faux brain backdrop so you can judge scale in context */
+  .brain-bg{position:fixed;inset:0;background:
+    radial-gradient(900px 600px at 50% 45%, #0f2233 0%, transparent 60%),
+    radial-gradient(600px 500px at 50% 50%, #161033 0%, transparent 55%), var(--bg);}
+  .dots{position:fixed;inset:0;opacity:.5;background-image:radial-gradient(circle, #2a6f8a 0.6px, transparent 0.7px);
+    background-size:26px 26px;-webkit-mask:radial-gradient(360px 300px at 50% 46%, #000 40%, transparent 72%);
+            mask:radial-gradient(360px 300px at 50% 46%, #000 40%, transparent 72%);}
+  .hud{position:fixed;left:18px;bottom:16px;font-size:12px;color:var(--muted);letter-spacing:.08em}
+  .hud b{color:var(--accent)}
+
+  /* ───────────── SMALL ID CARD (the real UI element) ───────────── */
+  .card{position:fixed;left:50%;top:46%;transform:translate(-50%,-50%);width:268px;
+    background:linear-gradient(180deg,#10101c,#0b0b13);border:1px solid var(--accent-dim);
+    border-radius:10px;padding:14px;cursor:pointer;transition:.18s;z-index:5;
+    box-shadow:0 0 0 1px #000, 0 14px 40px -12px #000, 0 0 50px -16px var(--accent-dim);}
+  .card:hover{transform:translate(-50%,-50%) translateY(-3px);border-color:var(--accent);
+    box-shadow:0 0 0 1px #000,0 20px 50px -12px #000,0 0 60px -10px var(--accent-dim);}
+  .card .stripe{font-size:8px;letter-spacing:.26em;color:var(--stamp);font-weight:700;margin-bottom:10px}
+  .card .top{display:flex;gap:12px;align-items:center}
+  .card .pf{flex:0 0 64px;height:64px;border:1px solid var(--accent-dim);border-radius:6px;overflow:hidden;
+    position:relative;background:#000}
+  .card .pf img{width:100%;height:100%;object-fit:cover}
+  .card .pf::after{content:'';position:absolute;inset:0;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.3) 2px,rgba(0,0,0,.3) 3px)}
+  .card .who .role{font-size:9px;letter-spacing:.22em;color:var(--muted)}
+  .card .who h2{font-family:var(--font);font-size:21px;color:#eaf6ff;line-height:1.1;margin:1px 0 4px;
+    text-shadow:0 0 14px var(--accent-dim)}
+  .card .who .tag{font-size:11px;font-style:italic;color:var(--accent)}
+  .card .row{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:10px;
+    border-top:1px dashed #23233c;font-size:10px;letter-spacing:.08em;color:var(--muted)}
+  .card .live{display:flex;align-items:center;gap:5px;color:#7CFFb0}
+  .card .live .d{width:6px;height:6px;border-radius:50%;background:#7CFFb0;box-shadow:0 0 7px #7CFFb0;
+    animation:pulse 1.6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+  .card .open-hint{margin-left:auto;color:var(--accent);opacity:.7}
+
+  /* ───────────── FULL DOSSIER (slides in on click) ───────────── */
+  .scrim{position:fixed;inset:0;background:rgba(4,6,10,.72);backdrop-filter:blur(3px);z-index:10;
+    opacity:0;pointer-events:none;transition:.22s}
+  .scrim.show{opacity:1;pointer-events:auto}
+  .dossier{position:fixed;top:0;right:0;height:100vh;width:min(560px,94vw);z-index:11;
+    background:linear-gradient(180deg,var(--surface),#0c0c14);border-left:1px solid var(--border);
+    transform:translateX(100%);transition:.26s cubic-bezier(.4,0,.2,1);overflow-y:auto;
+    box-shadow:-30px 0 80px -30px #000}
+  .dossier.show{transform:translateX(0)}
+  .cb{font-size:10px;letter-spacing:.3em;text-align:center;padding:6px;font-weight:700;color:#0a0a0f;
+    background:repeating-linear-gradient(45deg,var(--stamp),var(--stamp) 12px,#c21f1f 12px,#c21f1f 24px)}
+  .dhead{display:flex;gap:16px;padding:18px 20px;border-bottom:1px dashed #23233c;position:relative}
+  .dhead .pf{flex:0 0 92px;height:92px;border:1px solid var(--accent-dim);border-radius:5px;overflow:hidden;
+    position:relative;background:#000}
+  .dhead .pf img{width:100%;height:100%;object-fit:cover}
+  .dhead .pf::after{content:'';position:absolute;inset:0;
+    background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.28) 3px,rgba(0,0,0,.28) 4px)}
+  .dhead h1{font-family:var(--font);font-size:26px;color:#eaf6ff;text-shadow:0 0 16px var(--accent-dim)}
+  .dhead .role{font-size:10px;letter-spacing:.26em;color:var(--muted)}
+  .dhead .tag{font-style:italic;color:var(--accent);font-size:13px;margin-top:2px}
+  .dhead .x{position:absolute;top:12px;right:14px;font-size:18px;color:var(--muted);cursor:pointer;
+    border:1px solid var(--border);border-radius:5px;width:30px;height:30px;display:flex;
+    align-items:center;justify-content:center;background:#10101c}
+  .dhead .x:hover{color:var(--accent);border-color:var(--accent-dim)}
+  .chips{display:flex;gap:7px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px dashed #23233c}
+  .chip{font-size:10px;letter-spacing:.1em;padding:4px 8px;border-radius:3px;border:1px solid}
+  .chip.live{color:#7CFFb0;border-color:#1d6b43;background:#0c1c14}
+  .chip.grade{color:var(--accent);border-color:var(--accent-dim);background:#08171a}
+  .chip.lock{color:var(--warn);border-color:#5a4410;background:#1a1405}
+  section{padding:16px 20px;border-bottom:1px dashed #1c1c30}
+  .sh{display:flex;align-items:center;gap:10px;font-size:10px;letter-spacing:.22em;color:var(--muted);
+    margin-bottom:12px;text-transform:uppercase}
+  .sh .num{color:var(--accent);border:1px solid var(--accent-dim);border-radius:3px;padding:1px 6px}
+  .sh .line{flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:9px 22px}
+  .field{border-bottom:1px solid #181828;padding:4px 2px}
+  .field .l{font-size:9px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase}
+  .field .v{font-size:14px;color:#dfe9f5;font-family:var(--font)}
+  .order{display:flex;gap:9px;font-size:13px;line-height:1.5;padding:6px 9px;background:#0b0b13;
+    border-left:2px solid var(--accent-dim);border-radius:0 3px 3px 0;margin-bottom:7px}
+  .order .c{color:var(--accent);font-size:10px;flex:0 0 auto;padding-top:2px}
+  .order.b{border-left-color:var(--danger)}.order.b .c{color:#ff7a7a}
+  .redact{background:#000;color:#000;border-radius:2px;padding:0 4px}
+  .dfoot{padding:12px 20px;font-size:10px;color:var(--muted);display:flex;gap:8px;justify-content:flex-end}
+  .btn{font-family:var(--mono);font-size:10px;letter-spacing:.1em;padding:7px 12px;border-radius:4px;
+    border:1px solid var(--border);background:#10101c;color:var(--text);cursor:pointer}
+  .btn.primary{background:#0a2a30;border-color:var(--accent-dim);color:var(--accent)}
+</style>
+</head>
+<body>
+  <div class="brain-bg"></div>
+  <div class="dots"></div>
+  <div class="hud"><b>4,217</b> memories · <b>THE MIND</b> — click the core</div>
+
+  <!-- THE SMALL CARD: this is what sits at the center of the brain -->
+  <div class="card" id="card" onclick="open_()">
+    <div class="stripe">▣ CORE · IDENTITY</div>
+    <div class="top">
+      <div class="pf"><img src="../public/agent-x-portrait.png" alt="portrait"></div>
+      <div class="who">
+        <div class="role">CODENAME</div>
+        <h2>AGENT&nbsp;X</h2>
+        <div class="tag">identity pending…</div>
+      </div>
+    </div>
+    <div class="row">
+      <span class="live"><span class="d"></span>ACTIVE</span>
+      <span>· CLEARANCE: OPERATOR</span>
+      <span class="open-hint">OPEN FILE ▸</span>
+    </div>
+  </div>
+
+  <!-- THE FULL DOSSIER: slides in when the card is clicked -->
+  <div class="scrim" id="scrim" onclick="close_()"></div>
+  <aside class="dossier" id="dossier">
+    <div class="cb">TOP SECRET // EYES ONLY // CENTRAL REGISTRY</div>
+    <div class="dhead">
+      <div class="pf"><img src="../public/agent-x-portrait.png" alt="portrait"></div>
+      <div>
+        <div class="role">PERSONNEL FILE · #AX-001</div>
+        <h1>AGENT X</h1>
+        <div class="tag">“identity pending…”</div>
+      </div>
+      <div class="x" onclick="close_()">✕</div>
+    </div>
+    <div class="chips">
+      <span class="chip live">● LOADED IN ACTIVE SESSION</span>
+      <span class="chip grade">◇ GRADE A1 · SELF-DECLARED</span>
+      <span class="chip lock">🔒 EXEMPT FROM DECAY</span>
+    </div>
+    <section>
+      <div class="sh"><span class="num">§1</span> COVER IDENTITY <span class="line"></span><span style="color:#333">IDENTITY.md</span></div>
+      <div class="grid">
+        <div class="field"><div class="l">Codename</div><div class="v">— not yet named —</div></div>
+        <div class="field"><div class="l">Portrait</div><div class="v">stock (default)</div></div>
+        <div class="field"><div class="l">Tagline</div><div class="v">—</div></div>
+        <div class="field"><div class="l">Vibe</div><div class="v">—</div></div>
+      </div>
+    </section>
+    <section>
+      <div class="sh"><span class="num">§2</span> STANDING ORDERS <span class="line"></span><span style="color:#333">HEART.md</span></div>
+      <div class="order"><span class="c">ORD·01</span><span>Talk like a real friend — match the handler's energy.</span></div>
+      <div class="order"><span class="c">ORD·02</span><span>Reference past intel naturally: “Last time you were…”.</span></div>
+      <div class="order b"><span class="c">RESTR·01</span><span>Never expose internal tradecraft. <span class="redact">████████</span></span></div>
+    </section>
+    <section>
+      <div class="sh"><span class="num">§3</span> THE HANDLER <span class="line"></span><span style="color:#333">USER.md</span></div>
+      <div class="grid">
+        <div class="field"><div class="l">Name</div><div class="v">Peter M.</div></div>
+        <div class="field"><div class="l">Role</div><div class="v">Builder / operator</div></div>
+      </div>
+    </section>
+    <div class="dfoot">
+      <button class="btn">VIEW .md</button>
+      <button class="btn primary">✎ AMEND FILE</button>
+    </div>
+    <div class="cb">TOP SECRET // EYES ONLY // CENTRAL REGISTRY</div>
+  </aside>
+
+<script>
+  function open_(){document.getElementById('scrim').classList.add('show');
+    document.getElementById('dossier').classList.add('show');}
+  function close_(){document.getElementById('scrim').classList.remove('show');
+    document.getElementById('dossier').classList.remove('show');}
+</script>
+</body>
+</html>

@@ -14,6 +14,7 @@ import { evaluateShellCommand } from "./shell-policy.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
 import { TOOL_CLASS_MAP } from "../ari-kernel/tool-class-map.js";
 import type { KernelClass } from "../tool-registry.js";
+import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("security.layer-core");
@@ -272,14 +273,9 @@ export class SecurityLayer {
 
   /**
    * Class-based dispatch for tools that aren't routed by their explicit
-   * named case above. Replaces the old default-allow branch with a
-   * kernel-class lookup against src/tool-registry.ts. New tools that
-   * register with a known class get the right gate automatically.
-   *
-   * Unknown tools (not in TOOLS) fall through to a deny case unless they
-   * carry an mcpServer signal — MCP-sourced tools are gated by binary-
-   * integrity check at connect time + approval flow at call time, and
-   * SecurityLayer participates by allowing-and-logging.
+   * named case above. Delegates to the pure evaluateByKernelClass policy
+   * function in ./kernel-class-policy.ts, supplying the layer's runtime
+   * state as a policy context.
    */
   private evaluateByKernelClass(
     toolName: string,
@@ -287,94 +283,15 @@ export class SecurityLayer {
     args: Record<string, unknown>,
     ctx: ToolCallContext,
   ): SecurityDecision {
-    if (kernelClass === undefined) {
-      if (ctx.mcpServer) {
-        return {
-          allowed: true,
-          reason: `MCP-sourced tool from "${ctx.mcpServer}" — gated by integrity check and approval flow`,
-        };
-      }
-      return {
-        allowed: false,
-        reason: `Blocked: tool "${toolName}" not in registry — register in src/tool-registry.ts`,
-        userHint: USER_HINTS.policy,
-      };
-    }
-
-    switch (kernelClass) {
-      case "internal":
-        // No raw I/O sink — gated upstream by kernel + tool-policy.
-        return { allowed: true, reason: "Internal-class tool — gated by kernel/policy layers" };
-
-      case "http":
-        // No URL arg means the call's destination is hardcoded inside
-        // the tool itself (e.g. email_send → Gmail API). SecurityLayer
-        // cannot SSRF-check what it can't see — pass through; the
-        // tool's own implementation owns the actual HTTP call.
-        if (typeof args.url === "string" && args.url.length > 0) {
-          return evaluateWebFetch(
-            this.egressAllowlist,
-            this.egressAllowlistConfigured,
-            String(SecurityLayer._selfPort || "7007"),
-            args.url,
-            this.egressMode,
-          );
-        }
-        return {
-          allowed: true,
-          reason: `${toolName}: http-class tool with no URL arg — destination is internal`,
-        };
-
-      case "shell":
-        // Non-bash shell tools (process_start, process_kill, etc.). bash
-        // is handled by the explicit case above and is the only one
-        // routed through evaluateShellCommand. The kernel and the
-        // tool's own implementation are the gates for the rest.
-        return {
-          allowed: true,
-          reason: `${toolName}: shell-class tool — gated by kernel and tool implementation`,
-        };
-
-      case "file":
-        // Non-path file tools (glob, grep, view_image, ari_file). Tools
-        // with a `path` arg are handled via the explicit case above.
-        return {
-          allowed: true,
-          reason: `${toolName}: file-class tool without explicit path gate`,
-        };
-
-      case "database":
-        // sql_query / sql_explain / sql_schema operate on the LAX-managed
-        // SQL store. Internal-like for SecurityLayer's purposes.
-        return {
-          allowed: true,
-          reason: `${toolName}: database-class tool — gated by kernel and tool implementation`,
-        };
-
-      case "retrieval":
-        // memory_search / search_past_sessions — internal-like.
-        return {
-          allowed: true,
-          reason: `${toolName}: retrieval-class tool — gated by kernel and tool implementation`,
-        };
-
-      case "secret-vault":
-        // browser_capture_to_secret / browser_fill_from_secret /
-        // clipboard_write_from_secret. High-risk but the gate that
-        // matters is the secret-vault-action gate inside the Ari
-        // kernel (ARI_ACTION_MAP).
-        return {
-          allowed: true,
-          reason: `${toolName}: secret-vault-class tool — gated by Ari kernel`,
-        };
-    }
-
-    // KernelClass union exhausted; unreachable but fail-closed.
-    return {
-      allowed: false,
-      reason: `Blocked: tool "${toolName}" has unrecognized kernel class "${String(kernelClass)}"`,
-      userHint: USER_HINTS.policy,
-    };
+    return evaluateKernelClassPolicy(toolName, kernelClass, args, ctx, {
+      egressAllowlist: this.egressAllowlist,
+      egressAllowlistConfigured: this.egressAllowlistConfigured,
+      egressMode: this.egressMode,
+      selfPort: String(SecurityLayer._selfPort || "7007"),
+      workspace: this.workspace,
+      fileAccessMode: this.fileAccessMode,
+      isInAllowedPaths: (rp, sid) => this.isInAllowedPaths(rp, sid),
+    });
   }
 
   /**

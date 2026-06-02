@@ -20,7 +20,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { InvokeScope } from "./types.js";
 import { AgentCatalog } from "./catalog.js";
-import { invokeAgent, AgentNotFoundError } from "./invoke.js";
+import { invokeAgent, awaitAgentRunning, AgentNotFoundError } from "./invoke.js";
 import { Handler } from "../agency/handler.js";
 import { AgentTemplateStore } from "../agent-store/index.js";
 
@@ -113,6 +113,16 @@ export function createAgentTools(): ToolDefinition[] {
               nameOverride: args.name_override ? String(args.name_override) : undefined,
             },
           );
+          // Lifecycle verification: invokeAgent void-fires runAgentViaDriver.
+          // A crash during driver init (provider misconfig, missing
+          // credentials, malformed system prompt) flips the FieldAgent to
+          // status="failed" via finalizeExternalRun but never surfaced to
+          // the caller before this check. Watch for the failure within 5s;
+          // success path is unchanged.
+          const reached = await awaitAgentRunning(ref.runId, 5000);
+          if (!reached.running) {
+            return err(`Agent spawn did not reach running state: ${reached.reason}`);
+          }
           const status = Handler.getInstance().getAgentStatus(ref.runId);
           if (Array.isArray(status)) return ok(`Agent spawned: ${ref.runId}`);
           return ok(

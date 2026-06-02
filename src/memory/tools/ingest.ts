@@ -24,18 +24,27 @@ export function createIngestTool(memory: MemoryIndex) {
 
       try {
         const { ingestConversations } = await import("../../conversation/ingest.js");
+        const chunksBefore = memory.countChunks("import/");
         const result = await ingestConversations(memory, target, (p) => {
           const total = p.totalConversations || 1;
           const done = p.processed + p.skipped;
           const pct = Math.round((done / total) * 100);
           onProgress?.(`${pct}%|${done}/${total} conversations, ${p.chunksCreated} chunks|${p.currentFile}`);
         });
+        const chunksAfter = memory.countChunks("import/");
+        const observed = chunksAfter - chunksBefore;
+        if (result.chunksCreated > 0 && observed < result.chunksCreated) {
+          return {
+            content: `Ingest verification failed: claimed ${result.chunksCreated} chunks, found ${observed} in DB. Some chunks did not persist.`,
+            isError: true,
+          };
+        }
         const fmtList = Object.entries(result.formats).map(([k, v]) => `${k}: ${v}`).join(", ");
         return {
           content: [
             `Ingest complete.`,
             `Conversations: ${result.processed} processed, ${result.skipped} skipped, ${result.errors} errors`,
-            `Chunks created: ${result.chunksCreated}`,
+            `Chunks created: ${result.chunksCreated} (verified: ${observed})`,
             `Formats: ${fmtList || "none"}`,
             `Total in database: ${memory.getIngestStats().total}`,
           ].join("\n"),

@@ -71,14 +71,21 @@ export function broadcastActiveChats(): void {
 
 /** Broadcast a message to ALL connected WebSocket clients (for agent
  *  events that don't target a specific session). Used by app-tools,
- *  autopilot, routes/apps, routes/settings/* via dynamic import. */
-export function broadcastAll(data: Record<string, unknown>): void {
+ *  autopilot, routes/apps, routes/settings/* via dynamic import.
+ *  Returns the number of OPEN clients that received the payload so
+ *  callers can surface "(no UI clients to notify)" hints — the
+ *  setting tool uses this to tell users to refresh manually when
+ *  they flip a UI-affecting toggle with no tabs open. */
+export function broadcastAll(data: Record<string, unknown>): number {
   const payload = JSON.stringify(data);
+  let sent = 0;
   for (const [ws] of clients) {
     if (ws.readyState === 1 /* OPEN */) {
       ws.send(payload);
+      sent++;
     }
   }
+  return sent;
 }
 
 export interface TerminateOptions {

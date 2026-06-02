@@ -9,6 +9,7 @@
 
 import type { ToolDefinition } from "../../types.js";
 import {
+  awaitOpRunning,
   canonicalLoopEntry,
   registerAdapterForOp,
 } from "../../canonical-loop/index.js";
@@ -156,7 +157,27 @@ export const opSubmitAsyncTool: ToolDefinition = {
       const { createCodexAdapter } = await import("../../canonical-loop/index.js");
       registerAdapterForOp(op.id, () => createCodexAdapter({ sessionId: sessionId || undefined }));
     }
-    canonicalLoopEntry(op, sessionId ? { sessionId } : {});
+    // Suppress the background probe inside canonicalLoopEntry — we're
+    // doing the same wait synchronously here so the model gets a truthful
+    // "is it running yet?" answer in the tool return.
+    canonicalLoopEntry(op, { ...(sessionId ? { sessionId } : {}), confirmRunning: false });
+
+    // Lifecycle verification: the scheduler may have enqueued behind a
+    // lane-cap or held the op in `queued` while the worker pool is full.
+    // Returning "Running in background" before the op actually leases is
+    // a lie that breaks downstream UX (the agent narrates a worker that
+    // hasn't started). Probe for the running transition; on timeout, tell
+    // the model the truth — queued, poll op_status to learn when it starts.
+    const ranSoon = await awaitOpRunning(op.id, 3000);
+    if (!ranSoon.running) {
+      return {
+        content:
+          `op ${op.id} queued (type=${op.type}, lane=${op.lane}) — ${ranSoon.reason}.\n` +
+          `Will start running once a worker slot opens. ` +
+          `The user will see a notification when it completes.\n` +
+          `Poll status: op_status(op_id="${op.id}")  |  block on it: op_wait(op_id="${op.id}")`,
+      };
+    }
 
     return {
       content:

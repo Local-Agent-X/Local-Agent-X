@@ -55,6 +55,64 @@ function synthesizeFromDisk(opId: string): OpResult | null {
   return null;
 }
 
+export type AwaitRunningResult = { running: true } | { running: false; reason: string };
+
+const POST_RUNNING_STATES: ReadonlySet<string> = new Set([
+  "running",
+  "paused",
+  "cancelling",
+  "cancelled",
+  "succeeded",
+  "failed",
+]);
+
+function checkRunningFromDisk(opId: string): AwaitRunningResult | "not_found" | null {
+  const op = readOp(opId);
+  if (!op) return "not_found";
+  const state = op.canonical?.state;
+  if (state && POST_RUNNING_STATES.has(state)) return { running: true };
+  return null;
+}
+
+export function awaitOpRunning(opId: string, timeoutMs = 5000): Promise<AwaitRunningResult> {
+  const fromDisk = checkRunningFromDisk(opId);
+  if (fromDisk === "not_found") return Promise.resolve({ running: false, reason: "op not found" });
+  if (fromDisk) return Promise.resolve(fromDisk);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
+
+    const finish = (result: AwaitRunningResult) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      try { off(); } catch { /* listener cleanup is best-effort */ }
+      resolve(result);
+    };
+
+    const off = subscribeOpEvents(opId, (event: CanonicalEvent) => {
+      if (event.type !== "state_changed") return;
+      const body = event.body as StateChangedBody | undefined;
+      const to = body?.to;
+      if (!to) return;
+      if (POST_RUNNING_STATES.has(to)) finish({ running: true });
+    });
+
+    // Race: state may have advanced between the disk read and the
+    // subscription. Re-check after attaching.
+    const racy = checkRunningFromDisk(opId);
+    if (racy === "not_found") { finish({ running: false, reason: "op not found" }); return; }
+    if (racy) { finish(racy); return; }
+
+    timer = setTimeout(
+      () => finish({ running: false, reason: `did not reach running within ${timeoutMs}ms` }),
+      timeoutMs,
+    );
+    timer.unref?.();
+  });
+}
+
 export function awaitCanonicalOp(opId: string, timeoutMs = 30 * 60 * 1000): Promise<OpResult | null> {
   const fromDisk = synthesizeFromDisk(opId);
   if (fromDisk) return Promise.resolve(fromDisk);

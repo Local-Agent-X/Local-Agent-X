@@ -6,6 +6,7 @@ import * as docx from "docx";
 import mammoth from "mammoth";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type AcquiredImage, type ImageSpec } from "./shared/image-acquire.js";
+import { verifyWriteLanded } from "./verify.js";
 
 /** Resolve ~ and relative paths to absolute Windows paths */
 function resolvePath(p: string): string {
@@ -218,6 +219,9 @@ const documentEdit: ToolDefinition = {
       const doc = buildDocument(updated);
       const buffer = await Packer.toBuffer(doc);
       await writeFile(filePath, buffer);
+
+      const verified = verifyWriteLanded(filePath, { minBytes: 1000 });
+      if (!verified.ok) return err(`Failed to edit document: ${verified.reason}`);
 
       return ok(`Replaced ${count} occurrence(s) of "${find}" with "${replace}" in ${filePath}.`);
     } catch (e: unknown) {

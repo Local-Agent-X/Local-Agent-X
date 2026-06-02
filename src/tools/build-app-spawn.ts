@@ -60,18 +60,29 @@ export async function runCliBuild(input: BuildSpawnInput): Promise<ToolResult> {
  * Heuristics: file exists, size > minBytes, content contains a closing
  * `</html>` or `</body>` OR the APP_READY marker.
  */
+// New bar: substantive markup, not just envelope tags — must contain at least one of <script, <link rel="stylesheet", id="root", or id="app".
 function artifactLooksComplete(indexPath: string, cliOutput: string): boolean {
   if (!existsSync(indexPath)) return false;
   try {
     const stat = statSync(indexPath);
     if (stat.size < 300) return false; // empty/stub
-    // Cheap content check on a tail slice — full <html> docs end with </html>.
-    const tail = readFileSync(indexPath, "utf-8").slice(-2000).toLowerCase();
-    if (tail.includes("</html>") || tail.includes("</body>")) return true;
+    const body = readFileSync(indexPath, "utf-8");
+    const tail = body.slice(-2000).toLowerCase();
+    const hasClosingTag = tail.includes("</html>") || tail.includes("</body>");
+    const lower = body.toLowerCase();
+    const hasSubstantive =
+      lower.includes("<script") ||
+      lower.includes("<link rel=\"stylesheet\"") ||
+      lower.includes("<link rel='stylesheet'") ||
+      lower.includes("id=\"root\"") ||
+      lower.includes("id='root'") ||
+      lower.includes("id=\"app\"") ||
+      lower.includes("id='app'");
+    if (hasClosingTag && hasSubstantive) return true;
     // Some valid-but-unusual outputs are React-ish single-element trees
     // without explicit </body>; accept if the agent printed APP_READY AND
-    // the file is non-trivial.
-    if (cliOutput.includes("APP_READY") && stat.size > 1500) return true;
+    // the file is non-trivial AND it contains substantive markup.
+    if (cliOutput.includes("APP_READY") && stat.size > 1500 && hasSubstantive) return true;
     return false;
   } catch { return false; }
 }

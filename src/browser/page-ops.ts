@@ -25,6 +25,12 @@ export async function extractTextFrom(page: Page, selector?: string): Promise<st
 /** Capture a base64 screenshot with metadata header. */
 export async function screenshotAsBase64(page: Page, engine: string): Promise<string> {
   const buffer = await page.screenshot({ type: "png", fullPage: false });
+  // Empty buffers come from Playwright timeout/closed-page paths — silently
+  // returning a "Screenshot captured" prefix on a 0-byte buffer is the worst
+  // kind of fake-pass. Throw so the outer handler surfaces it as an error.
+  if (!buffer || buffer.length === 0) {
+    throw new Error("Screenshot failed: empty buffer (page may have closed or timed out).");
+  }
   const base64 = buffer.toString("base64");
   const title = await page.title();
   const url = page.url();

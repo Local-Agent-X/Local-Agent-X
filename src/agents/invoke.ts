@@ -145,6 +145,66 @@ export function invokeDefinition(
  * transitions cleanly to `failed` and the AgentRunStore record gets
  * written with an error field, instead of silently hanging.
  */
+/**
+ * Lifecycle verification primitive — confirms a spawned agent run actually
+ * reached a non-failed state, or surfaces the init crash reason.
+ *
+ * Agent runs do NOT flow through the canonical-loop ops table; they live
+ * in Handler's FieldAgent registry. attachExternalRun sets status="working"
+ * synchronously, so the literal "did the run start?" check is trivially
+ * true. The interesting question is the truthful one for callers: did the
+ * void-fired runAgentViaDriver crash during init before producing any
+ * tokens? finalizeExternalRun flips status to "failed" on driver throw.
+ *
+ * Resolution order:
+ *   1. Agent already terminal → return immediately.
+ *   2. Subscribe to handler:agent-result for this runId, race a timeout.
+ *      If success:false fires within the window, the spawn failed init.
+ *   3. Timeout → assume still running.
+ *
+ * Symmetry with awaitOpRunning(opId, timeoutMs).
+ */
+export type AwaitAgentResult = { running: true } | { running: false; reason: string };
+
+export async function awaitAgentRunning(
+  runId: string,
+  timeoutMs = 5000,
+): Promise<AwaitAgentResult> {
+  const handler = Handler.getInstance();
+  // Read current status — agent may already be terminal (race against fast
+  // driver returns).
+  try {
+    const status = handler.getAgentStatus(runId) as { status: string };
+    if (status.status === "failed") return { running: false, reason: "agent run failed during init" };
+    if (status.status === "succeeded") return { running: true }; // already finished — counts as having run
+  } catch {
+    return { running: false, reason: `agent run ${runId} not found` };
+  }
+
+  return new Promise<AwaitAgentResult>((resolve) => {
+    let settled = false;
+    const finish = (r: AwaitAgentResult) => {
+      if (settled) return;
+      settled = true;
+      EventBus.off("handler:agent-result", onResult);
+      clearTimeout(timer);
+      resolve(r);
+    };
+    const onResult = (data: unknown) => {
+      const d = data as { agentId: string; success: boolean; error?: string };
+      if (d.agentId !== runId) return;
+      // Terminal during the window — only treat as "did not start" if the
+      // outcome was failure. A success this fast means the run did execute,
+      // just quickly; we accept it.
+      if (d.success) { finish({ running: true }); return; }
+      finish({ running: false, reason: d.error || "agent run failed during init" });
+    };
+    EventBus.on("handler:agent-result", onResult);
+    const timer = setTimeout(() => finish({ running: true }), timeoutMs);
+    timer.unref?.();
+  });
+}
+
 async function runAgentViaDriver(req: AgentRunDriverRequest, signal: AbortSignal): Promise<void> {
   const handler = Handler.getInstance();
   let outcome: { result: string; success: boolean; tokens?: number };

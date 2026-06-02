@@ -7,6 +7,7 @@ import PDFDocument from "pdfkit";
 import { PDFDocument as PDFLibDocument } from "pdf-lib";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
+import { verifyWriteLanded } from "./verify.js";
 
 // ── Path helper ──
 
@@ -147,6 +148,8 @@ const pdfCreate: ToolDefinition = {
       const filePath = resolvePath(args.file_path as string);
       await mkdir(dirname(filePath), { recursive: true });
       await writeFile(filePath, buf);
+      const verified = verifyWriteLanded(filePath, { minBytes: 100, mustContain: "%PDF-" });
+      if (!verified.ok) return fail(`Failed to create PDF: ${verified.reason}`);
       const imgSuffix = acquired.length ? `, ${acquired.length} image(s)` : "";
       return ok(`PDF created at ${filePath} (${buf.length} bytes${imgSuffix})`);
     } catch (e: unknown) {

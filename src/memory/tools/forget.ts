@@ -111,8 +111,23 @@ export function createForgetTool(memory: MemoryIndex) {
           results.push(`Would delete ${matching.length} fact(s):`);
           matching.slice(0, 10).forEach(f => results.push(`  - ${displayContent(f).slice(0, 80)}`));
         } else {
-          const deleted = memory.forgetFacts(fact);
-          results.push(`Deleted ${deleted} fact(s)`);
+          const claimedIds = matching.map(m => m.id);
+          const claimed = memory.forgetFacts(fact);
+          const stillPresent = claimedIds.length > 0
+            ? memory.findFacts(fact).filter(f => claimedIds.includes(f.id)).length
+            : 0;
+          const verified = claimed - stillPresent;
+          if (claimed > 0 && verified === 0) {
+            return {
+              content: `forget failed: marked ${claimed} fact(s) for deletion, but ${stillPresent} still present in DB.`,
+              isError: true,
+            };
+          }
+          if (verified < claimed) {
+            results.push(`Deleted ${verified} of ${claimed} fact(s) (verification confirmed)`);
+          } else {
+            results.push(`Deleted ${verified} fact(s)`);
+          }
         }
       }
 

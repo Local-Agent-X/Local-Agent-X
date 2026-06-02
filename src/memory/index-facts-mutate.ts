@@ -42,6 +42,8 @@ export interface OneFactResult {
   fact?: RetainedFact;
   newFactId?: number;
   oldFactId?: number;
+  indexFailed?: boolean;
+  indexError?: string;
 }
 
 function formatBullet(content: string, kind: FactKind, confidence: number): string {
@@ -66,7 +68,14 @@ export function rememberFact(
   }
   const newFact = facts[0];
   if (newFact.id !== undefined) autoInvalidateContradicting(db, newFact);
-  return { ok: true, fact: newFact, newFactId: newFact.id };
+  const tagged = newFact as RetainedFact & { indexFailed?: boolean; indexError?: string };
+  return {
+    ok: true,
+    fact: newFact,
+    newFactId: newFact.id,
+    indexFailed: tagged.indexFailed,
+    indexError: tagged.indexError,
+  };
 }
 
 // After inserting a fact, scan live facts that share at least one entity

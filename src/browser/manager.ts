@@ -129,6 +129,12 @@ export class BrowserManager {
     const page = await this.getPage(engine);
     const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
     const status = response?.status() ?? "unknown";
+    // HTTP error responses (404, 500, etc.) are NOT a successful navigation
+    // outcome — silently returning "Status: 404" as ok let agents treat broken
+    // pages as live. Surface via thrown Error so the outer handler converts to err().
+    if (typeof status === "number" && status >= 400) {
+      throw new Error(`Navigation failed: HTTP ${status} (${page.url()})`);
+    }
     try { await page.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
     await page.waitForTimeout(1000);
 
@@ -151,7 +157,28 @@ export class BrowserManager {
     const page = await this.getPage();
     await page.waitForSelector(selector, { state: "visible", timeout: 5000 });
     await page.fill(selector, value, { timeout: ACTION_TIMEOUT });
-    return `Filled "${selector}" with value (${value.length} chars)`;
+    // Best-effort readback: confirm the value actually landed. Masked inputs
+    // (type=password) return "" from inputValue() — skip verification rather
+    // than fail. If the readback itself throws (element gone, navigation,
+    // detach) we don't bury the underlying successful fill.
+    try {
+      const loc = page.locator(selector);
+      const actual = await loc.inputValue();
+      if (actual === value) {
+        return `Filled "${selector}" with value (${value.length} chars)`;
+      }
+      if (actual === "") {
+        const type = (await loc.getAttribute("type") || "").toLowerCase();
+        if (type === "password") {
+          return `Filled "${selector}" (verification skipped: masked input)`;
+        }
+      }
+      throw new Error(`Fill did not land: expected '${value}' got '${actual}'`);
+    } catch (e) {
+      // Re-throw the mismatch error — only swallow readback-machinery failures.
+      if ((e as Error).message?.startsWith("Fill did not land:")) throw e;
+      return `Filled "${selector}" (verification skipped: readback failed)`;
+    }
   }
 
   async select(selector: string, value: string): Promise<string> {

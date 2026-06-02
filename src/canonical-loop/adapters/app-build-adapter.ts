@@ -24,8 +24,10 @@
  * live behind a function-call boundary in src/tools/build-app-spawn.ts —
  * this adapter never imports `node:child_process` directly.
  */
+import { resolve } from "node:path";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { ProviderStateEnvelope } from "../contract-types.js";
+import { verifyWriteLanded } from "../../tools/verify.js";
 import { createAnthropicAdapter } from "./anthropic.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
@@ -157,6 +159,17 @@ class CliBuildAdapter implements Adapter {
     const content = result.content ?? "";
     const urlMatch = content.match(/APP_READY:\s*(\S+)/);
     const url = urlMatch ? urlMatch[1] : this.opts.appUrl;
+
+    const indexPath = resolve(this.opts.appDir, "index.html");
+    const verified = verifyWriteLanded(indexPath);
+    if (!verified.ok) {
+      report({ kind: "error", code: "artifact_missing", message: verified.reason, retryable: false });
+      return {
+        providerState: this.buildProviderState({ error: verified.reason, stopReason: "artifact_missing" }),
+        terminalReason: "error",
+      };
+    }
+
     const finalText = content.length > 0
       ? (content.includes("APP_READY") ? content : `${content}\n\nAPP_READY: ${url}`)
       : `APP_READY: ${url}`;

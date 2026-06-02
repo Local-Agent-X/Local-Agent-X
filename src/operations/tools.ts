@@ -74,9 +74,18 @@ export function createOperationTools(): ToolDefinition[] {
         // advances the state machine automatically. Agent just tells the user
         // the op is running and recommends operation_status for updates.
         try {
-          const { startExecutor } = await import("./executor.js");
+          const { startExecutor, awaitOperationStarted } = await import("./executor.js");
           const sessionId = (args._sessionId as string) || "";
           startExecutor(op.id, { workspaceDir: workspaceDir(), parentSessionId: sessionId });
+          // Lifecycle verification: startExecutor is fire-and-forget — a
+          // crash inside runExecutorLoop init flips op.status to "failed"
+          // but never surfaced to the model before this check. Probe the
+          // operations-runtime primitive for a 5s window; surface init
+          // failures as a tool error.
+          const reached = await awaitOperationStarted(op.id, { workspaceDir: workspaceDir(), timeoutMs: 5000 });
+          if (!reached.running) {
+            return { content: `Executor did not start: ${reached.reason}`, isError: true };
+          }
         } catch (e) {
           logger.warn(`[operation_start] Failed to start executor: ${(e as Error).message}`);
         }

@@ -22,10 +22,11 @@
  */
 import { z } from "zod";
 import { FLIPPABLE_SETTINGS, RUNTIME_SETTINGS, BROADCAST_KEYS } from "../settings-schema.js";
-import { getRuntimeConfig, saveConfig } from "../config.js";
+import { getRuntimeConfig, saveConfig, getConfigPath } from "../config.js";
 import { loadSettings, saveSettings } from "../settings.js";
 import type { ToolDefinition } from "../types.js";
 import { ok, err } from "./result-helpers.js";
+import { verifyWriteLanded } from "./verify.js";
 
 function listKnownFields(): string {
   return FLIPPABLE_SETTINGS.map((s) => {
@@ -96,13 +97,34 @@ export const settingTool: ToolDefinition = {
       const cfg = getRuntimeConfig();
       (cfg as unknown as Record<string, unknown>)[fieldName] = newValue;
       saveConfig(cfg);
+
+      // Sanity check: confirm the mutation landed on disk. If saveConfig
+      // silently truncated, wrote to the wrong path, or the rename failed,
+      // we'd otherwise return ok and the user would think a security
+      // toggle took effect when it didn't. mustContain is keyed on the
+      // serialized key/value pair the JSON.stringify(cfg, null, 2) emits —
+      // matches both boolean and string/number values.
+      const expected = `"${fieldName}": ${JSON.stringify(newValue)}`;
+      const verified = verifyWriteLanded(getConfigPath(), { mustContain: expected });
+      if (!verified.ok) {
+        return err(
+          `Saved ${fieldName} = ${JSON.stringify(newValue)} but post-write verify failed: ${verified.reason}. The toggle did NOT take effect.`,
+          { recovery: "Re-call setting with the same field/value; if it keeps failing, check ~/.lax/config.json permissions and disk space." },
+        );
+      }
     }
 
     // 3) Broadcast to all connected browsers so toggles/UI dropdowns re-sync.
+    // Capture the client count so we can tell the user when nothing
+    // received the update (UI-affecting setting + no open tabs → they
+    // need to refresh manually for the setting page to reflect it).
+    let broadcastClients = 0;
+    let broadcastAttempted = false;
     if (BROADCAST_KEYS.has(fieldName)) {
+      broadcastAttempted = true;
       try {
         const { broadcastAll } = await import("../chat-ws/index.js");
-        broadcastAll({ type: "settings_changed", settings: { [fieldName]: newValue } });
+        broadcastClients = broadcastAll({ type: "settings_changed", settings: { [fieldName]: newValue } });
       } catch {}
     }
 
@@ -114,11 +136,18 @@ export const settingTool: ToolDefinition = {
           ? " Verify with any `browser_*` call — it should return BLOCKED by tool-policy."
           : "";
 
-    return ok(`Set ${fieldName} = ${JSON.stringify(newValue)}.${verifyHint}`, {
+    const metadata: Record<string, unknown> = {
       field: fieldName,
       value: newValue,
       runtime: spec.runtime,
-    });
+    };
+    if (broadcastAttempted) {
+      metadata.broadcast_clients = broadcastClients;
+      if (broadcastClients === 0) {
+        metadata.userHint = `Setting saved (no active UI clients to notify; refresh the app to see the new ${fieldName} value).`;
+      }
+    }
+    return ok(`Set ${fieldName} = ${JSON.stringify(newValue)}.${verifyHint}`, metadata);
   },
   audiences: ["main-chat", "spawned-agent"],
 };

@@ -23,7 +23,11 @@ import { resolveAdapterFactory } from "./runtime.js";
 import { enqueueOp, pumpScheduler } from "./scheduler.js";
 import { transitionOp } from "./state-machine.js";
 import { readCanonicalEvents as readCanonicalEventsInternal } from "./store.js";
+import { awaitOpRunning } from "./await-op.js";
+import { createLogger } from "../logger.js";
 import type { CanonicalLane, StateChangedBody } from "./types.js";
+
+const entryLogger = createLogger("canonical-loop.entry");
 
 export {
   isCanonicalLoopEnabled,
@@ -222,7 +226,7 @@ export {
 
 export { listActiveCanonicalOps, type ActiveCanonicalOp } from "./active-ops.js";
 
-export { awaitCanonicalOp } from "./await-op.js";
+export { awaitCanonicalOp, awaitOpRunning, type AwaitRunningResult } from "./await-op.js";
 
 export {
   runChatViaCanonical,
@@ -269,7 +273,10 @@ export {
  * NOTE: signature unchanged from Issue 01 — `op_submit_async` consumers see
  * the same return shape regardless of routing (PRD §17 hard rule).
  */
-export function canonicalLoopEntry(op: Op, opts: { sessionId?: string } = {}): void {
+export function canonicalLoopEntry(
+  op: Op,
+  opts: { sessionId?: string; confirmRunning?: boolean } = {},
+): void {
   if (!op.canonical) op.canonical = {};
   op.canonical.flagValue = true;
   op.canonical.state = "queued";
@@ -296,6 +303,22 @@ export function canonicalLoopEntry(op: Op, opts: { sessionId?: string } = {}): v
   if (resolveAdapterFactory(op)) {
     enqueueOp(op.id, op.lane as CanonicalLane);
     pumpScheduler();
+    // PRD §17 hard rule keeps the SYNC return shape — but the loop now has
+    // a "did this op actually reach running" probe for callers that want
+    // it. We fire awaitOpRunning here as a background observer when
+    // confirmRunning !== false, so the failure case (lane-cap queue waits,
+    // adapter init crash) shows up in the log even if the caller doesn't
+    // poll. Callers needing the answer in-line still call awaitOpRunning
+    // themselves (see op_submit_async).
+    if (opts.confirmRunning !== false) {
+      void awaitOpRunning(op.id, 5000).then((r) => {
+        if (!r.running) {
+          entryLogger.warn(
+            `[canonicalLoopEntry] op ${op.id} did not reach running: ${r.reason}`,
+          );
+        }
+      });
+    }
   } else {
     queueMicrotask(() => failForMissingAdapter(op));
   }

@@ -194,8 +194,16 @@ if (Test-Path $LockFile) {
     }
 } else {
     Write-Warn "No lockfile at $LockFile — running bootstrap install (will float with upstream)."
-    Write-Step "Installing torch + torchaudio (must come before requirements.txt)..."
-    & $VenvPython -m pip install "torch==2.11.0" "torchaudio==2.11.0" --index-url $TorchIndex
+    # Pin torch/torchaudio to 2.6.0 (NOT current). torchaudio >= 2.7 dropped
+    # its native soundfile/sox backends in favor of torchcodec, which in turn
+    # requires the FFmpeg system shared libraries (libavcodec/libavformat/...).
+    # On Windows those need a manual FFmpeg install (winget/choco/manual DLLs)
+    # which defeats the one-button install. Pinning to 2.6.0 keeps the
+    # soundfile backend that ships with the venv and ducks the whole FFmpeg
+    # transitive dep. (We can't go older than 2.6.0 on cu126 — earlier torch
+    # builds don't ship CUDA 12.6 wheels.)
+    Write-Step "Installing torch + torchaudio 2.6.0 (must come before requirements.txt)..."
+    & $VenvPython -m pip install "torch==2.6.0" "torchaudio==2.6.0" --index-url $TorchIndex
     if ($LASTEXITCODE -ne 0) { Write-Err "torch install failed."; exit 1 }
 
     if (Test-Path $UpstreamReqs) {

@@ -186,7 +186,7 @@ async function onVoicePickChange(voice) {
     return;
   }
   if (!voice) return;
-  if (tierId === 'kokoro' || tierId === 'studio') { try { localStorage.setItem('lax_voice', voice); } catch {} }
+  if (tierId === 'kokoro' || tierId === 'studio' || tierId === 'studio-trained') { try { localStorage.setItem('lax_voice', voice); } catch {} }
   // Browser tier reads the chosen voice synchronously from localStorage at
   // utterance-build time (chat.js _browserResolveVoice). Server settings are
   // persisted async via _persist() below — that round-trip is too slow for

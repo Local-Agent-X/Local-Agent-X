@@ -8,6 +8,7 @@ import {
   getToolDecision,
   decisionRequiresPrompt,
   decisionDenies,
+  isDestructiveCommand,
 } from "../approval-manager.js";
 import type { Phase } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
@@ -25,7 +26,10 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
 
-  if (!decisionRequiresPrompt(decision)) return CONTINUE;
+  // Irreversible operations always confirm, even under a relaxed profile that
+  // would otherwise auto-allow them.
+  const destructive = isDestructiveCommand(ctx.tc.name, ctx.args);
+  if (!decisionRequiresPrompt(decision) && !destructive) return CONTINUE;
   if (ctx.callContext !== "local") return CONTINUE;
   if (!ctx.onEvent) return CONTINUE;
 
@@ -33,8 +37,11 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     toolName: ctx.tc.name,
     toolCallId: ctx.tc.id,
     sessionId: ctx.sessionId || "default",
-    context: ctx.approvalContext,
+    context: destructive
+      ? `⚠ Irreversible operation (${destructive}) — confirm before running. ${ctx.approvalContext}`
+      : ctx.approvalContext,
     args: ctx.args,
+    alwaysAsk: !!destructive,
     emit: ctx.onEvent,
   });
   if (approved) return CONTINUE;

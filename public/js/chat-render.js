@@ -113,6 +113,22 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
   const toolEvents = data.toolEvents || [];
   if (toolEvents.length > 0) {
     try {
+      // Pair each start with a DISTINCT end. A plain name-match via .find()
+      // resolved every same-named start to the FIRST end — so when one tool
+      // ran N times in a turn (e.g. 11× generate_image), the first result and
+      // its image rendered N times while the other N-1 never showed. Prefer
+      // the tool call id when both sides carry a matching one; otherwise fall
+      // back to consuming ends in order per tool name (codex ids are composite
+      // and don't always line up start↔end, so id-only pairing can miss).
+      const endsById = new Map();
+      const endsByName = new Map();
+      for (const t of toolEvents) {
+        if (t.type !== 'end') continue;
+        if (t.toolCallId) endsById.set(t.toolCallId, t);
+        if (!endsByName.has(t.name)) endsByName.set(t.name, []);
+        endsByName.get(t.name).push(t);
+      }
+      const nameCursor = new Map();
       for (const te of toolEvents) {
         if (te.type !== 'start') continue;
         // Route through appendToolCardGrouped so the swap matches the
@@ -120,7 +136,13 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
         // "Agent activity" group, consecutive same-tool calls collapse
         // into a single ×N card.
         const card = appendToolCardGrouped(bodyEl, te.name, te.args || '', te.riskLevel);
-        const endEvt = toolEvents.find(t => t.type === 'end' && t.name === te.name);
+        let endEvt = (te.toolCallId && endsById.get(te.toolCallId)) || null;
+        if (!endEvt) {
+          const list = endsByName.get(te.name) || [];
+          const i = nameCursor.get(te.name) || 0;
+          endEvt = list[i] || null;
+          nameCursor.set(te.name, i + 1);
+        }
         if (endEvt) {
           // Execution outcome, not just the approval decision. A tool can be
           // allowed-then-fail (bash exit 1, edit no-match, http 500); the

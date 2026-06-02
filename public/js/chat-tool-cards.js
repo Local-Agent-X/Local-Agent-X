@@ -274,11 +274,22 @@ function attachMediaPreview(card, toolName, result) {
   const host = card.closest('.msg-body') || card.closest('.msg.assistant') || card.parentElement;
   if (!host) return;
 
-  const re = /(\/(?:images|videos)\/[A-Za-z0-9._-]+)/g;
-  // Dedupe — tool results commonly emit the same URL twice (e.g. "Saved
-  // at /images/X.png. URL: /images/X.png") which would otherwise produce
-  // two side-by-side previews of the same artifact.
-  const matches = [...new Set([...result.matchAll(re)].map(m => m[1]))];
+  // Two shapes carry the artifact location:
+  //  • live tool_end text has a ready URL:  /images/X.png  or  /videos/X.mp4
+  //  • reloaded sessions carry the model-facing form the UI projection
+  //    persisted instead of the original result — "Image loaded:
+  //    workspace\images\X.png" — a bare backslash path with no URL. Without
+  //    matching that, generated images vanish on every chat reload.
+  // Normalize both to the auth-gated /images|/videos/<file> static route.
+  const found = [];
+  const urlRe = /\/(?:images|videos)\/[A-Za-z0-9._-]+/g;
+  for (const m of result.matchAll(urlRe)) found.push(m[0]);
+  const pathRe = /workspace[\\/](images|videos)[\\/]([A-Za-z0-9._-]+)/g;
+  for (const m of result.matchAll(pathRe)) found.push('/' + m[1] + '/' + m[2]);
+  // Dedupe — tool results commonly emit the same artifact twice (e.g. "Saved
+  // at workspace\images\X.png ... URL: /images/X.png") which would otherwise
+  // produce two side-by-side previews of the same image.
+  const matches = [...new Set(found)];
   if (matches.length === 0) return;
 
   const tok = (typeof AUTH_TOKEN === 'string' && AUTH_TOKEN) ? '?token=' + encodeURIComponent(AUTH_TOKEN) : '';

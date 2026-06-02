@@ -14,8 +14,8 @@
  *
  * Session-scoped "always allow" cache prevents re-prompting for the same
  * (tool, argsFingerprint) within one session. Fingerprint captures the
- * risk-relevant arg (binary for shell, parent dir for write, hostname for
- * network, action for browser) so a grant doesn't accidentally cover
+ * risk-relevant arg (full command for shell, parent dir for write, hostname
+ * for network, action for browser) so a grant doesn't accidentally cover
  * unrelated calls. Still re-prompts across sessions.
  */
 
@@ -82,10 +82,12 @@ export function computeArgsFingerprint(
   if (tool === "bash" || tool === "shell" || tool === "ari_shell") {
     const raw = typeof args.command === "string" ? args.command : "";
     // Strip leading env-var assignments: `FOO=bar BAZ=qux cmd ...`
-    const stripped = raw.replace(/^(\s*\w+=\S+\s+)+/, "").trimStart();
-    // Take chars up to first whitespace, pipe, semicolon, or chained-op.
-    const m = stripped.match(/^([^\s|;&]+)/);
-    return (m?.[1] ?? "").toLowerCase();
+    const stripped = raw.replace(/^(\s*\w+=\S+\s+)+/, "").trim();
+    // Fingerprint the FULL command (whitespace-normalized), not just the
+    // leading binary. Keying on the binary alone collapsed every subcommand of
+    // a multi-purpose tool into one grant — approving `git log` would then
+    // auto-approve `git push --force` / `git reset --hard` under the same key.
+    return stripped.replace(/\s+/g, " ");
   }
 
   if (tool === "write" || tool === "edit" || tool === "delete_file") {

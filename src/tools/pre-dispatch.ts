@@ -19,6 +19,7 @@ import {
   getToolDecision,
   decisionRequiresPrompt,
   decisionDenies,
+  isDestructiveCommand,
 } from "../approval-manager.js";
 import { getRuntimeConfig } from "../config.js";
 import { isProtectedSetting } from "../settings-schema.js";
@@ -189,13 +190,17 @@ export async function assertToolCallAllowed(
       });
     }
 
-    if (decisionRequiresPrompt(decision)) {
+    const destructive = isDestructiveCommand(call.name, call.args);
+    if (decisionRequiresPrompt(decision) || destructive) {
       const approved = await getApprovalManager().requestApproval({
         toolName: call.name,
         toolCallId: call.id,
         sessionId: ctx.sessionId,
-        context: ctx.approval.context || "",
+        context: destructive
+          ? `⚠ Irreversible operation (${destructive}) — confirm before running. ${ctx.approval.context || ""}`
+          : ctx.approval.context || "",
         args: call.args,
+        alwaysAsk: !!destructive,
         emit: ctx.approval.onEvent,
       });
       if (!approved) {

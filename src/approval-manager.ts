@@ -65,6 +65,7 @@ interface PendingApproval {
   sessionId: string;
   toolName: string;
   args: Record<string, unknown>;
+  alwaysAsk: boolean;
 }
 
 /**
@@ -121,6 +122,44 @@ function cacheKey(toolName: string, args: Record<string, unknown>): string {
   return `${toolName}::${computeArgsFingerprint(toolName, args)}`;
 }
 
+// Irreversible / hard-to-undo shell operations that must ALWAYS be confirmed,
+// regardless of how relaxed the autonomy profile is and without being
+// remembered for the session. The profile decides the *default* posture; this
+// list is a floor under it for the handful of operations that can destroy work
+// or data with no recovery. Patterns stop at the first command separator so a
+// later piped/chained token can't smuggle one in unmatched-by-position.
+const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  { pattern: /\bgit\s+push\b[^|;&]*\s(?:--force\b|--force-with-lease\b|-\w*f\w*\b)/i, reason: "git force-push" },
+  { pattern: /\bgit\s+push\b[^|;&]*\s(?:--delete\b|:\S)/i, reason: "git delete remote branch" },
+  { pattern: /\bgit\s+reset\b[^|;&]*--hard\b/i, reason: "git reset --hard" },
+  { pattern: /\bgit\s+clean\b[^|;&]*-\w*f\w*/i, reason: "git clean -f" },
+  { pattern: /\bgit\s+branch\b[^|;&]*\s-D\b/i, reason: "git force-delete branch" },
+  { pattern: /\bgit\s+filter-branch\b/i, reason: "git history rewrite" },
+  { pattern: /\brm\s+-\w*r\w*f\w*\b/i, reason: "rm -rf" },
+  { pattern: /\brm\s+-\w*f\w*r\w*\b/i, reason: "rm -fr" },
+  { pattern: /\brm\s+-[rf]\b[^|;&]*\s-[rf]\b/i, reason: "rm -r -f" },
+  { pattern: /\bdd\b[^|;&]*\sof=\/dev\//i, reason: "dd to a raw device" },
+  { pattern: /\bmkfs\b/i, reason: "filesystem format" },
+];
+
+/**
+ * If a shell tool call is an irreversible/destructive operation, return a short
+ * human reason; otherwise null. Used to force an approval prompt that bypasses
+ * both the relaxed-profile auto-allow and the remember-for-session cache.
+ */
+export function isDestructiveCommand(
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  const tool = toolName.toLowerCase();
+  if (tool !== "bash" && tool !== "shell" && tool !== "ari_shell") return null;
+  const cmd = typeof args.command === "string" ? args.command : "";
+  for (const { pattern, reason } of DESTRUCTIVE_COMMAND_PATTERNS) {
+    if (pattern.test(cmd)) return reason;
+  }
+  return null;
+}
+
 class ApprovalManager {
   private pending = new Map<string, PendingApproval>();
   // session → Set of tool names auto-approved for this session
@@ -141,13 +180,19 @@ class ApprovalManager {
      *  card (diff, command box, money receipt). Falls back to `argsPreview`
      *  JSON when omitted. */
     preview?: ActionPreview;
+    /** Force a prompt every time: skip the session auto-approve cache on both
+     *  read and write. Used for irreversible/destructive operations. */
+    alwaysAsk?: boolean;
     emit: (event: ServerEvent) => void;
   }): Promise<boolean> {
     // Session-scoped auto-approval short-circuit. Key is composite
     // (toolName, argsFingerprint) so a prior grant for one binary/host/dir
-    // does not cover unrelated calls under the same tool.
-    const auto = this.sessionAutoApprove.get(opts.sessionId);
-    if (auto?.has(cacheKey(opts.toolName, opts.args))) return true;
+    // does not cover unrelated calls under the same tool. Destructive ops
+    // (alwaysAsk) never short-circuit.
+    if (!opts.alwaysAsk) {
+      const auto = this.sessionAutoApprove.get(opts.sessionId);
+      if (auto?.has(cacheKey(opts.toolName, opts.args))) return true;
+    }
 
     const id = `apr-${this.nextId++}-${Date.now()}`;
 
@@ -159,7 +204,7 @@ class ApprovalManager {
         }
       }, APPROVAL_TIMEOUT_MS);
 
-      this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName, args: opts.args });
+      this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName, args: opts.args, alwaysAsk: !!opts.alwaysAsk });
 
       opts.emit({
         type: "approval_requested",
@@ -180,7 +225,8 @@ class ApprovalManager {
     clearTimeout(p.timer);
     this.pending.delete(id);
 
-    if (approved && rememberForSession) {
+    // Destructive ops are never remembered — they must re-confirm every time.
+    if (approved && rememberForSession && !p.alwaysAsk) {
       let auto = this.sessionAutoApprove.get(p.sessionId);
       if (!auto) { auto = new Set(); this.sessionAutoApprove.set(p.sessionId, auto); }
       auto.add(cacheKey(p.toolName, p.args));

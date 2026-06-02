@@ -1,18 +1,6 @@
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 
-export const GRAPH_STOP_WORDS = new Set([
-  "the", "this", "that", "what", "when", "where", "which", "who", "how",
-  "can", "could", "would", "should", "will", "shall", "may", "might",
-  "has", "have", "had", "was", "were", "been", "being", "are", "also",
-  "just", "not", "but", "and", "for", "with", "from", "into", "about",
-  "then", "than", "very", "here", "there", "some", "any", "all", "most",
-  "other", "each", "every", "both", "few", "more", "many", "such",
-  "new", "old", "good", "bad", "great", "big", "small", "long", "short",
-  "let", "get", "got", "set", "put", "use", "try", "run", "see", "say",
-  "yes", "hey", "sure", "okay", "thanks", "please", "sorry", "now",
-]);
-
 export interface OrchestratorInput {
   message: string;
   sessionId: string;

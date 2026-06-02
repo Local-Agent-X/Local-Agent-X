@@ -99,7 +99,6 @@ export function postProcess(
 }
 
 export function applyGraphBoost(
-  db: InstanceType<typeof Database>,
   traverseFromFn: (entity: string, maxHops: number) => Set<string>,
   results: MemorySearchResult[],
   query: string

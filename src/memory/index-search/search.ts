@@ -5,7 +5,8 @@ import { createLogger } from "../../logger.js";
 import type { SearchDeps, SearchOptions } from "./types.js";
 import { searchKeyword } from "./keyword-search.js";
 import { searchVector } from "./vector-search.js";
-import { postProcess } from "./post-process.js";
+import { postProcess, applyGraphBoost } from "./post-process.js";
+import { traverseFrom } from "../index-relations.js";
 
 const logger = createLogger("memory.index-search");
 
@@ -85,6 +86,7 @@ export async function searchInIndex(
     if (!deps.embeddingProvider && merged.length > 0) {
       const relaxedMin = Math.min(minScore, deps.config.textWeight);
       let processed = postProcess(deps.db, deps.config, merged, maxResults * 3, relaxedMin, { ...options, query });
+      processed = applyGraphBoost((e, h) => traverseFrom(deps.db, e, h), processed, query);
       if (options?.rerank && processed.length > 0) {
         try { const { rerankWithLLM } = await import("../reranker.js"); const rProvider = options.rerankModel?.startsWith("provider:") ? options.rerankModel.split(":")[1] : "ollama";
       const rModel = options.rerankModel?.startsWith("provider:") ? undefined : options.rerankModel;
@@ -95,6 +97,7 @@ export async function searchInIndex(
   }
 
   let processed = postProcess(deps.db, deps.config, merged, maxResults * 3, minScore, { ...options, query });
+  processed = applyGraphBoost((e, h) => traverseFrom(deps.db, e, h), processed, query);
 
   if (options?.rerank && processed.length > 0) {
     try {

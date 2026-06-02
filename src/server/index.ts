@@ -8,7 +8,7 @@ import { bootstrapTools } from "./bootstrap-tools.js";
 import { createBridgeHandler, bootstrapBridges } from "./bootstrap-bridges.js";
 import { createSessionHelpers } from "./session-helpers.js";
 import { createRequestHandler } from "./request-handler.js";
-import { createHttpServer, setupVoiceWs, wireWsChat, startConfigWatcher, logStartup, registerShutdown, bootstrapCanonicalLoop } from "./lifecycle.js";
+import { createHttpServer, setupVoiceWs, wireWsChat, startConfigWatcher, logStartup, registerShutdown, bootstrapCanonicalLoop, startSecurityKernel } from "./lifecycle.js";
 import { registerHandlerEvents } from "./handler-events.js";
 import { startBackgroundJobs } from "./background-jobs.js";
 import { createLogger } from "../logger.js";
@@ -253,6 +253,10 @@ export async function startServer(config: LAXConfig) {
 
   phaseSync("startConfigWatcher", () => startConfigWatcher(dataDir));
   phaseSync("bootstrapCanonicalLoop", () => bootstrapCanonicalLoop());
+
+  // Security guardian is a boot precondition — must be up before we accept
+  // a single request. When ariRequired, a failure here exits the process.
+  await phase("startSecurityKernel", () => startSecurityKernel({ config, dataDir }));
 
   let jobScheduler: import("./scheduler.js").JobScheduler | undefined;
   server.listen(config.port, "127.0.0.1", () => {

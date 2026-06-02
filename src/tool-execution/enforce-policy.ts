@@ -59,7 +59,13 @@ const ARI_ACTION_MAP: Record<string, string> = {
 
 async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId } = ctx;
-  if (isAriActive() && shouldGateInKernel(tc.name)) {
+  if (shouldGateInKernel(tc.name)) {
+    // Every gated tool goes through the single ARI decision. ariEvaluate
+    // fail-closes when the kernel is required but inactive (firewall === null
+    // && ariRequired), so an ARI that failed to start can't silently leave
+    // gated I/O ungated — it blocks. Guarding this branch on isAriActive()
+    // (as it once did) made that fail-closed path unreachable: an inactive
+    // kernel skipped the gate entirely.
     const ariResult = await ariEvaluate(tc.name, ARI_ACTION_MAP[tc.name] || "exec", args);
     if (!ariResult.allowed) {
       const hint = ariResult.userHint ?? USER_HINTS.policy;

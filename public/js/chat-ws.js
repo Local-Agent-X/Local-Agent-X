@@ -220,26 +220,20 @@ setTimeout(connectChatWs, 1000);
 
 function stopChat() {
   if (!activeChat) return;
+  // One stop authority. The WS `stop` aborts the turn's AbortController,
+  // which the canonical runner has wired to opCancel — the running op
+  // transitions cleanly to cancelling → cancelled server-side, killing any
+  // warm-pool CLI process. When the socket is down, the HTTP endpoint hits
+  // the same server path; no need to fire both.
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
     chatWs.send(JSON.stringify({ type: 'stop', sessionId: activeChat.id }));
-    // Also cancel any canonical chat op still running for this session.
-    // `cancel_op` routes through the canonical control API (`opCancel`)
-    // which transitions the op cleanly to "cancelling" → "cancelled" and
-    // signals the warm-pool to kill the CLI process. Without this, the
-    // canonical op kept running server-side after a stop click and the
-    // old `stop` only released the session lock.
-    for (const info of ChatStreamStore.inflightOps()) {
-      if (info.sessionId === activeChat.id) {
-        chatWs.send(JSON.stringify({ type: 'cancel_op', sessionId: activeChat.id, opId: info.opId }));
-      }
-    }
+  } else {
+    fetch(`${API}/api/chats/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ sessionId: activeChat.id }),
+    }).catch(() => {});
   }
-  // Also try HTTP fallback
-  fetch(`${API}/api/chats/stop`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-    body: JSON.stringify({ sessionId: activeChat.id }),
-  }).catch(() => {});
   // Force-end the local stream entry immediately. Without this the
   // STREAMING badge + inject-mode send button stay lit because we
   // force-close the WS below and the server's `done` event (which normally

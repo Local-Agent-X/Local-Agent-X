@@ -13,12 +13,14 @@ import { USER_HINTS } from "./types.js";
  * - operator: Full access (all tools, secrets management, audit)
  * - user: Chat + safe tools only (no secrets management, limited shell)
  * - readonly: Read-only access (view sessions, audit logs, health)
+ * - agent: In-process agent self-call principal — chat + benign self-calls,
+ *   but denied every sensitive sink (secrets, tokens, plugins, auth, audit, logs)
  *
  * Tokens are stored in ~/.lax/tokens.json with hashed values.
  * The original shared token from config.json becomes the "operator" token.
  */
 
-export type Role = "operator" | "user" | "readonly";
+export type Role = "operator" | "user" | "readonly" | "agent";
 
 export interface TokenEntry {
   id: string;          // Short identifier
@@ -74,6 +76,18 @@ const ROLE_PERMISSIONS: Record<Role, {
     allowedTools: [],
     deniedEndpoints: ["/api/chat", "/api/secrets"],
   },
+  agent: {
+    canChat: true,
+    canManageSecrets: false,
+    canViewAudit: false,
+    canManageTokens: false,
+    // HTTP endpoint gating is the control here; tool dispatch is governed
+    // elsewhere, so "*" keeps the agent loop's benign self-calls working.
+    allowedTools: "*",
+    // Deny every sensitive sink reachable over HTTP. Benign self-calls
+    // (/api/settings, theme, orgs) are not under any of these prefixes.
+    deniedEndpoints: ["/api/secrets", "/api/tokens", "/api/plugins", "/api/auth", "/api/audit", "/api/logs"],
+  },
 };
 
 function hashToken(token: string): string {
@@ -85,6 +99,10 @@ export class RBACManager {
   private filePath: string;
   private operatorTokenHash: string;
   private authCallCount = 0;
+  private internalAgentToken: string;
+  // Ephemeral per-process entry for the in-process agent self-call principal.
+  // Deliberately kept OUT of `this.tokens` so it is never persisted by save().
+  private internalAgentEntry: TokenEntry;
 
   constructor(dataDir: string, operatorToken: string) {
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -110,6 +128,19 @@ export class RBACManager {
       });
       this.save();
     }
+
+    // Mint a per-process ephemeral internal token for the in-process agent's
+    // own self-calls. Never persisted — lives only as a private field for the
+    // lifetime of this process.
+    const token = randomBytes(32).toString("hex");
+    this.internalAgentToken = token;
+    this.internalAgentEntry = {
+      id: "internal-agent",
+      name: "In-process agent self-call",
+      role: "agent",
+      tokenHash: hashToken(token),
+      createdAt: Date.now(),
+    };
   }
 
   private load(): void {
@@ -142,6 +173,15 @@ export class RBACManager {
     if (++this.authCallCount % 100 === 0) this.pruneExpired();
 
     const incomingHash = hashToken(bearerToken);
+
+    // Ephemeral in-process agent token: timing-safe match, never persisted.
+    {
+      const a = Buffer.from(incomingHash);
+      const b = Buffer.from(this.internalAgentEntry.tokenHash);
+      if (a.length === b.length && timingSafeEqual(a, b)) {
+        return { valid: true, entry: this.internalAgentEntry };
+      }
+    }
 
     for (const entry of this.tokens.values()) {
       // Timing-safe comparison of hashes
@@ -226,6 +266,36 @@ export class RBACManager {
     return ROLE_PERMISSIONS[role];
   }
 
+  /** Raw per-process internal agent token (for wiring into the agent's self-calls). */
+  getInternalAgentToken(): string {
+    return this.internalAgentToken;
+  }
+
+  /** Rotate the operator token in place. Re-hashes the operator-default entry
+   *  and updates operatorTokenHash. Leaves the per-process internal agent token
+   *  untouched (it is unrelated to the operator credential). */
+  rotateOperatorToken(newToken: string): void {
+    this.operatorTokenHash = hashToken(newToken);
+    const TOKEN_EXPIRY_DAYS = 90;
+    const existing = this.tokens.get("operator-default");
+    if (existing) {
+      existing.tokenHash = this.operatorTokenHash;
+      existing.createdAt = Date.now();
+      existing.lastUsed = undefined;
+      existing.expiresAt = Date.now() + TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+    } else {
+      this.tokens.set("operator-default", {
+        id: "operator-default",
+        name: "Default operator token",
+        role: "operator",
+        tokenHash: this.operatorTokenHash,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
+      });
+    }
+    this.save();
+  }
+
   /**
    * Rotate a token: revoke the old one and issue a new one with the same role/name.
    * Returns the new raw token (show once to the user).
@@ -273,4 +343,16 @@ export class RBACManager {
     if (pruned > 0) this.save();
     return pruned;
   }
+}
+
+// Module-level holder for the per-process internal agent token. Set at server
+// boot from the RBACManager instance so tool code (which isn't wired with the
+// manager) can read the token without re-threading it. Same pattern as
+// getSecretsStoreSingleton() in secrets.ts.
+let _internalAgentToken: string | null = null;
+export function setInternalAgentToken(t: string): void {
+  _internalAgentToken = t;
+}
+export function getInternalAgentToken(): string | null {
+  return _internalAgentToken;
 }

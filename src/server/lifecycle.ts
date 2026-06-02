@@ -349,6 +349,28 @@ export function startConfigWatcher(dataDir: string): void {
   });
 }
 
+// Start the AriKernel as a boot precondition. ARI is a primary security
+// guardian; when ariRequired (the default), a kernel that fails to start
+// must take the whole server down rather than let it serve unprotected —
+// the tool gate fail-closes too, but the app should never be "on" with the
+// guardian "off". Awaited before listen() so the socket never binds without it.
+export async function startSecurityKernel(deps: { config: LAXConfig; dataDir: string }): Promise<void> {
+  const { config, dataDir } = deps;
+  const active = await startAriKernel(join(dataDir, "ari-audit.db"), undefined, config.ariRequired);
+  if (active) {
+    logger.info(`  [ari] Audit active`);
+    return;
+  }
+  if (config.ariRequired) {
+    logger.error(
+      `  [ari] FATAL: AriKernel is required but failed to start. It is a primary security guardian — ` +
+      `refusing to bring the server up without it. To debug a wedged kernel, set LAX_ARI_REQUIRED=false (unsafe).`,
+    );
+    process.exit(1);
+  }
+  logger.warn(`  [ari] Kernel inactive (LAX_ARI_REQUIRED=false) — gated tools fall back to the other defense layers.`);
+}
+
 export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {
   const { config, dataDir } = deps;
   const masked = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
@@ -357,7 +379,6 @@ export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {
   writeFileSync(join(dataDir, ".startup-url"), realUrl, { mode: 0o600 });
   logger.info(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\http://127.0.0.1:${config.port}/?token=${masked}\x1b]8;;\x1b\\\n  Memory: ${dataDir}/memory/\n  Sessions: ${dataDir}/sessions/`);
   printAuditReport(runSecurityAudit({ authToken: config.authToken, workspace: config.workspace }));
-  startAriKernel(join(dataDir, "ari-audit.db"), undefined, config.ariRequired).then(a => { if (a) logger.info(`  [ari] Audit active`); else if (config.ariRequired) logger.error(`  [ari] CRITICAL: ARI failed`); });
   try { import("../auth/refresh.js").then(({ startAuthRefreshTimer }) => startAuthRefreshTimer()).catch(() => {}); } catch {}
 
   // Kill orphan Chrome processes from a previous server lifetime that still

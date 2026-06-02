@@ -34,12 +34,12 @@ Local Agent X is a single-user personal agent designed for a local workstation. 
 
 - [ ] Run on a dedicated user account with minimal privileges
 - [ ] Enable full-disk encryption on the host
-- [ ] Keep `~/.sax/` directory permissions at `0700`
-- [ ] Enable Docker sandbox (`SAX_SANDBOX=docker` or auto-detect)
-- [ ] Create `~/.sax/egress-allowlist.json` with approved domains
-- [ ] Review `~/.sax/tool-policy.json` for your use case
+- [ ] Keep `~/.lax/` directory permissions at `0700`
+- [ ] Enable Docker sandbox (`LAX_SANDBOX=docker` or auto-detect)
+- [ ] Create `~/.lax/egress-allowlist.json` with approved domains
+- [ ] Review `~/.lax/tool-policy.json` for your use case
 - [ ] Enable HTTPS in settings for encrypted localhost traffic
-- [ ] Monitor `~/.sax/audit/` logs for anomalies
+- [ ] Monitor `~/.lax/audit/` logs for anomalies
 - [ ] Export logs to SIEM via `GET /api/logs/export` (NDJSON format)
 - [ ] Do NOT expose port 7007 to the network
 - [ ] Do NOT share the bearer token across users
@@ -47,11 +47,11 @@ Local Agent X is a single-user personal agent designed for a local workstation. 
 
 ## Data Retention
 
-- Chat sessions: stored in `~/.sax/sessions/` as JSON (can be deleted per-session)
-- Audit logs: stored in `~/.sax/audit/` as JSONL (append-only, hash-chained)
-- Memory: stored in `~/.sax/memory/` as Markdown (synced if Agent Sync enabled)
-- Uploads: stored in `~/.sax/uploads/` (can be cleaned manually)
-- Secrets: encrypted at rest in `~/.sax/secrets.enc` (AES-256-GCM)
+- Chat sessions: stored in `~/.lax/sessions/` as JSON (can be deleted per-session)
+- Audit logs: stored in `~/.lax/audit/` as JSONL (append-only, hash-chained)
+- Memory: stored in `~/.lax/memory/` as Markdown (synced if Agent Sync enabled)
+- Uploads: stored in `~/.lax/uploads/` (can be cleaned manually)
+- Secrets: encrypted at rest in `~/.lax/secrets.enc` (AES-256-GCM)
 - No data is sent to external services except the configured LLM API (OpenAI/xAI)
 - PI (Personal Information) in chat is not automatically redacted from storage — use high-security session mode for sensitive conversations
 

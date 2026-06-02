@@ -423,4 +423,62 @@ describe("run-sandboxed redacts result content when taint fires", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // F4 defense-in-depth: confinement (the file-access gate) is the primary
+  // control for sql_query, but a secret-shaped value sitting in an in-workspace
+  // SQLite row must still taint + redact like web_fetch/http_request output —
+  // not pass through untainted. Guards run-sandboxed.ts:85 keeping sql_query in
+  // the output scan.
+  it("sql_query output containing a secret: result redacted and session tainted", async () => {
+    const secret = "AKIA0000000000000000"; // aws-access-key shape
+    const sqlStub: ToolDefinition = {
+      name: "sql_query",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      // Mirror the wrapExternalContent-wrapped markdown table the real tool returns.
+      async execute() {
+        return { content: `[external: sql_query]\n| api_key |\n| --- |\n| ${secret} |`, isError: false };
+      },
+    };
+    const sessionId = "redact-sql-test";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({
+      name: "sql_query",
+      args: { database: "workspace/app.db", query: "SELECT api_key FROM creds" },
+      tool: sqlStub,
+      sessionId,
+    });
+
+    await runSandboxedPhase(ctx);
+
+    expect(ctx.result).toBeDefined();
+    expect(ctx.result!.content).not.toContain(secret);
+    expect(ctx.result!.status).toBe("blocked");
+    expect(ctx.result!.metadata?.redacted).toBe(true);
+    expect(checkEgressTaint(sessionId).blocked).toBe(true);
+  });
+
+  it("benign sql_query output passes through unchanged", async () => {
+    const sqlStub: ToolDefinition = {
+      name: "sql_query",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() {
+        return { content: `| id | name |\n| --- | --- |\n| 1 | alice |`, isError: false };
+      },
+    };
+    const sessionId = "redact-sql-benign";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({
+      name: "sql_query",
+      args: { database: "workspace/app.db", query: "SELECT id, name FROM users" },
+      tool: sqlStub,
+      sessionId,
+    });
+
+    await runSandboxedPhase(ctx);
+    expect(ctx.result?.content).toContain("alice");
+    expect(ctx.result?.status).not.toBe("blocked");
+    expect(checkEgressTaint(sessionId).blocked).toBe(false);
+  });
 });

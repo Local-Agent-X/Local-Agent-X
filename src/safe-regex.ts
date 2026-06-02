@@ -15,12 +15,17 @@
  * Returns null if safe, or a description of the problem if unsafe.
  */
 export function checkRegexSafety(pattern: string): string | null {
-  // Nested quantifiers: (a+)+ or (a*)* or (a+)*
-  if (/\([^)]*[+*]\)[+*]/.test(pattern)) {
+  // A repetition quantifier: +, *, or a counted form {n} / {n,} / {n,m}.
+  // The counted forms are just as catastrophic as +/* when nested or applied
+  // to overlapping alternation (e.g. (a+){2,} or (a|a){10}), so they must be
+  // matched too — heuristic is conservative and may also flag benign {0,1}.
+  const QUANT = "(?:[+*]|\\{\\d+,?\\d*\\})";
+  // Nested quantifiers: (a+)+ or (a*)* or (a+)* or (a+){2,} or (a{2}){3}
+  if (new RegExp("\\([^)]*" + QUANT + "\\)" + QUANT).test(pattern)) {
     return "Nested quantifiers detected (e.g., (a+)+). This can cause catastrophic backtracking.";
   }
-  // Overlapping alternation with quantifiers: (a|a)+
-  if (/\(([^|)]+)\|(\1)[^)]*\)[+*]/.test(pattern)) {
+  // Overlapping alternation with quantifiers: (a|a)+ or (a|a){10}
+  if (new RegExp("\\(([^|)]+)\\|(\\1)[^)]*\\)" + QUANT).test(pattern)) {
     return "Overlapping alternation with quantifier detected. This can cause exponential backtracking.";
   }
   // Very long patterns (>500 chars) are suspicious

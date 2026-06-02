@@ -18,21 +18,21 @@ describe("computeArgsFingerprint", () => {
       expect(a).not.toBe(b);
     });
 
-    it("strips leading env-var assignments before taking the binary", () => {
+    it("strips leading env-var assignments but keeps the full command", () => {
       const withEnv = computeArgsFingerprint("bash", {
         command: "FOO=bar BAZ=qux git status",
       });
       const plain = computeArgsFingerprint("bash", { command: "git status" });
       expect(withEnv).toBe(plain);
-      expect(withEnv).toBe("git");
+      expect(withEnv).toBe("git status");
     });
 
-    it("is case-insensitive on the tool name and lowercases the binary", () => {
+    it("is case-insensitive on the tool name but preserves command case", () => {
       expect(computeArgsFingerprint("BASH", { command: "GIT status" })).toBe(
-        "git",
+        "GIT status",
       );
       expect(computeArgsFingerprint("ari_shell", { command: "ls -la" })).toBe(
-        "ls",
+        "ls -la",
       );
     });
 
@@ -41,20 +41,17 @@ describe("computeArgsFingerprint", () => {
       expect(computeArgsFingerprint("bash", { command: 42 })).toBe("");
     });
 
-    // BUG LOCK-IN: the bash fingerprint keys ONLY on the leading binary token,
-    // so `git log` and `git push --force` collapse to the same key "git".
-    // A "remember for session" grant on a benign `git log` therefore also
-    // auto-approves a destructive `git push --force`. We pin the CURRENT
-    // (buggy) behavior here; see bug_found in the structured result.
-    it("BUG: `git log` and `git push --force` share the same fingerprint", () => {
+    // The fingerprint keys on the FULL command, so risk-bearing subcommands and
+    // flags don't collapse together: a "remember for session" grant on a benign
+    // `git log` must NOT auto-approve a destructive `git push --force`.
+    it("`git log` and `git push --force` get distinct fingerprints", () => {
       const benign = computeArgsFingerprint("bash", { command: "git log" });
       const risky = computeArgsFingerprint("bash", {
         command: "git push --force",
       });
-      // Risk-bearing subcommand/flags are dropped — both reduce to "git".
-      expect(benign).toBe("git");
-      expect(risky).toBe("git");
-      expect(benign).toBe(risky);
+      expect(benign).toBe("git log");
+      expect(risky).toBe("git push --force");
+      expect(benign).not.toBe(risky);
     });
   });
 
@@ -219,15 +216,15 @@ describe("ApprovalManager auto-approve cache keying (cacheKey via public surface
     ).toBe(false);
   });
 
-  // BUG LOCK-IN: because the bash fingerprint is just the binary, a remembered
-  // grant on `git log` auto-approves `git push --force`. Pin current behavior.
-  it("BUG: granting `git log` auto-approves `git push --force`", async () => {
+  // Because the fingerprint is the full command, a remembered grant on a benign
+  // `git log` does NOT auto-approve a destructive `git push --force`.
+  it("granting `git log` does NOT auto-approve `git push --force`", async () => {
     expect(
       await grantAndCheck(
         { toolName: "bash", args: { command: "git log" } },
         { toolName: "bash", args: { command: "git push --force" } },
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 

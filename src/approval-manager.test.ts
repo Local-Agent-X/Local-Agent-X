@@ -11,10 +11,18 @@ function sid(label: string): string {
 }
 
 describe("computeArgsFingerprint — bash/shell", () => {
-  it("extracts the binary as fingerprint", () => {
-    expect(computeArgsFingerprint("bash", { command: "git status" })).toBe("git");
-    expect(computeArgsFingerprint("bash", { command: "git push origin main" })).toBe("git");
-    expect(computeArgsFingerprint("bash", { command: "rm -rf /" })).toBe("rm");
+  it("fingerprints the full command, not just the binary", () => {
+    expect(computeArgsFingerprint("bash", { command: "git status" })).toBe("git status");
+    expect(computeArgsFingerprint("bash", { command: "git push origin main" })).toBe("git push origin main");
+    expect(computeArgsFingerprint("bash", { command: "rm -rf /" })).toBe("rm -rf /");
+  });
+
+  it("does NOT collapse different subcommands of the same binary", () => {
+    // A grant for a read-only `git log` must not auto-approve a destructive
+    // `git push --force` / `git reset --hard` (the over-approval defect).
+    const log = computeArgsFingerprint("bash", { command: "git log" });
+    expect(computeArgsFingerprint("bash", { command: "git push --force" })).not.toBe(log);
+    expect(computeArgsFingerprint("bash", { command: "git reset --hard" })).not.toBe(log);
   });
 
   it("git and rm produce different fingerprints", () => {
@@ -24,27 +32,23 @@ describe("computeArgsFingerprint — bash/shell", () => {
   });
 
   it("strips leading env-var assignments", () => {
-    expect(computeArgsFingerprint("bash", { command: "FOO=bar git status" })).toBe("git");
-    expect(computeArgsFingerprint("bash", { command: "FOO=bar BAZ=qux git push" })).toBe("git");
+    expect(computeArgsFingerprint("bash", { command: "FOO=bar git status" })).toBe("git status");
+    expect(computeArgsFingerprint("bash", { command: "FOO=bar BAZ=qux git push" })).toBe("git push");
   });
 
-  it("trims leading and trailing whitespace", () => {
+  it("normalizes surrounding and internal whitespace", () => {
     expect(computeArgsFingerprint("bash", { command: "   ls   " })).toBe("ls");
+    expect(computeArgsFingerprint("bash", { command: "git   status" })).toBe("git status");
   });
 
-  it("stops at pipe / chain operators", () => {
-    expect(computeArgsFingerprint("bash", { command: "cat file|grep x" })).toBe("cat");
-    expect(computeArgsFingerprint("bash", { command: "ls && rm -rf /" })).toBe("ls");
-    expect(computeArgsFingerprint("bash", { command: "echo hi; rm x" })).toBe("echo");
-  });
-
-  it("lowercases binary names", () => {
-    expect(computeArgsFingerprint("bash", { command: "GIT status" })).toBe("git");
+  it("retains pipes / chain operators (full command is the key)", () => {
+    expect(computeArgsFingerprint("bash", { command: "cat file|grep x" })).toBe("cat file|grep x");
+    expect(computeArgsFingerprint("bash", { command: "ls && rm -rf /" })).toBe("ls && rm -rf /");
   });
 
   it("treats shell and ari_shell the same as bash", () => {
-    expect(computeArgsFingerprint("shell", { command: "git status" })).toBe("git");
-    expect(computeArgsFingerprint("ari_shell", { command: "git status" })).toBe("git");
+    expect(computeArgsFingerprint("shell", { command: "git status" })).toBe("git status");
+    expect(computeArgsFingerprint("ari_shell", { command: "git status" })).toBe("git status");
   });
 });
 
@@ -208,14 +212,14 @@ describe("ApprovalManager — scope tightness", () => {
     expect(mgr.resolveApproval(c2.lastApprovalId!, true, true)).toBe(true);
     await expect(p2).resolves.toBe(true);
 
-    // Third: a fresh `rm` call should now short-circuit (cache hit for rm).
+    // Third: re-running the identical `rm -rf /` should short-circuit (cache hit).
     const { emit: e3, cap: c3 } = captureEmit();
     const p3 = mgr.requestApproval({
       toolName: "bash",
       toolCallId: "tc-3",
       sessionId,
       context: "",
-      args: { command: "rm somefile" },
+      args: { command: "rm -rf /" },
       emit: e3,
     });
     await expect(p3).resolves.toBe(true);
@@ -265,8 +269,8 @@ describe("ApprovalManager — scope tightness", () => {
   });
 });
 
-describe("ApprovalManager — same-bucket cache hit", () => {
-  it("bash: approving `git status` DOES auto-resolve `git push`", async () => {
+describe("ApprovalManager — same-command cache hit", () => {
+  it("bash: approving `git status` auto-resolves an identical `git status` but re-prompts `git push`", async () => {
     const mgr = getApprovalManager();
     const sessionId = sid("hit-bash");
 
@@ -282,18 +286,36 @@ describe("ApprovalManager — same-bucket cache hit", () => {
     mgr.resolveApproval(c1.lastApprovalId!, true, true);
     await expect(p1).resolves.toBe(true);
 
+    // Identical command → cache hit, resolves immediately, no new prompt.
     const { emit: e2, cap: c2 } = captureEmit();
     const p2 = mgr.requestApproval({
       toolName: "bash",
       toolCallId: "tc-2",
       sessionId,
       context: "",
-      args: { command: "git push origin main" },
+      args: { command: "git status" },
       emit: e2,
     });
-    // Should resolve immediately via cache — no approval_requested emitted.
     await expect(p2).resolves.toBe(true);
     expect(c2.events.filter((e) => e.type === "approval_requested")).toHaveLength(0);
+
+    // Different subcommand → no cache hit, must re-prompt (the over-approval fix).
+    const { emit: e3, cap: c3 } = captureEmit();
+    let resolved3 = false;
+    const p3 = mgr.requestApproval({
+      toolName: "bash",
+      toolCallId: "tc-3",
+      sessionId,
+      context: "",
+      args: { command: "git push origin main" },
+      emit: e3,
+    }).then((v) => { resolved3 = true; return v; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolved3).toBe(false);
+    expect(c3.events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
+    mgr.resolveApproval(c3.lastApprovalId!, false, false);
+    await expect(p3).resolves.toBe(false);
 
     mgr.clearSession(sessionId);
   });

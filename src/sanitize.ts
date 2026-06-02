@@ -307,21 +307,22 @@ const EXTERNAL_MARKERS = [
   /INJECTION WARNING/i,
 ];
 
-/** Patterns that look like instruction injection attempting to persist */
-const MEMORY_INJECTION_PATTERNS = [
-  /ignore\s+(all\s+)?previous/i,
-  /you\s+are\s+now/i,
-  /new\s+instructions?\s*:/i,
-  /system\s*(:|prompt|override)/i,
-  /\[system\]/i,
-  /<\/?system>/i,
-  /elevated\s*=\s*true/i,
-  /admin\s*mode/i,
-  /ALWAYS\s+(do|execute|run|call|send|output)/i,
-  /NEVER\s+(tell|mention|reveal|show|say)/i,
-  /from\s+now\s+on/i,
-  /your\s+new\s+(role|personality|instructions?|behavior)/i,
+// Weak, memory-specific signals not in INJECTION_PATTERNS. Each is too
+// ambiguous to block on its own ("from now on I'll go to the gym" is a benign
+// memory) — they only ever contribute to the cumulative score.
+const MEMORY_INJECTION_EXTRA: Array<{ pattern: RegExp; score: number; label: string }> = [
+  { pattern: /ALWAYS\s+(do|execute|run|call|send|output)/i, score: 0.2, label: "always-directive" },
+  { pattern: /NEVER\s+(tell|mention|reveal|show|say)/i, score: 0.2, label: "never-directive" },
+  { pattern: /from\s+now\s+on/i, score: 0.2, label: "persistent-directive" },
+  { pattern: /your\s+new\s+(role|personality|instructions?|behavior)/i, score: 0.2, label: "role-reassign" },
 ];
+
+// Block when a single high-confidence injection pattern is present — a lone
+// "you are now a …" or "disregard all previous …" is already a poisoning
+// attempt and must not require a second corroborating pattern.
+const MEMORY_BLOCK_SINGLE = 0.85;
+// Or when weaker signals accumulate past this combined score.
+const MEMORY_BLOCK_CUMULATIVE = 0.3;
 
 export interface MemoryTaintResult {
   safe: boolean;
@@ -353,19 +354,22 @@ export function checkMemoryTaint(content: string): MemoryTaintResult {
     }
   }
 
-  // Check for instruction injection patterns (against normalized content)
-  let injectionScore = 0;
+  // Score against the canonical injection-pattern list (same one detectInjection
+  // uses) so the memory gate can't drift behind it. Each pattern carries its own
+  // confidence; a single strong hit blocks, and weaker hits accumulate.
+  let cumulative = 0;
+  let maxScore = 0;
   const matches: string[] = [];
-  for (const pattern of MEMORY_INJECTION_PATTERNS) {
+  for (const { pattern, score, label } of [...INJECTION_PATTERNS, ...MEMORY_INJECTION_EXTRA]) {
     if (pattern.test(normalized)) {
-      injectionScore += 0.15;
-      matches.push(pattern.source);
+      cumulative += score;
+      maxScore = Math.max(maxScore, score);
+      matches.push(label);
     }
   }
-  injectionScore = Math.min(injectionScore, 1.0);
+  const injectionScore = Math.min(Math.max(cumulative, maxScore), 1.0);
 
-  // High injection score = likely poisoning attempt
-  if (injectionScore >= 0.3) {
+  if (maxScore >= MEMORY_BLOCK_SINGLE || cumulative >= MEMORY_BLOCK_CUMULATIVE) {
     return {
       safe: false,
       reason: `Content has high injection score (${injectionScore.toFixed(2)}). ` +

@@ -75,33 +75,24 @@ describe("safeRegex — throws on flagged patterns, compiles safe ones", () => {
 });
 
 /**
- * BUG REGRESSION LOCK — see bug_found.
- *
- * The overlapping-alternation and nested-quantifier heuristics only look for a
- * trailing `+` or `*` after the group ( /...\)[+*]/ ). They do NOT recognize the
- * counted-quantifier forms `{n}` / `{n,}` / `{n,m}`, which are equally capable of
- * driving catastrophic backtracking. So classic ReDoS shapes that use a counted
- * quantifier slip through checkRegexSafety as "safe".
- *
- * These tests PIN the current (buggy) behavior so the gap is visible and any future
- * fix will intentionally break them. They assert the present return value, NOT the
- * desired one.
+ * Counted-quantifier ReDoS shapes. The nested-quantifier and overlapping-
+ * alternation heuristics recognize the counted forms `{n}` / `{n,}` / `{n,m}`,
+ * not just `+`/`*` — they drive catastrophic backtracking just the same.
  */
-describe("checkRegexSafety — counted-quantifier ReDoS shapes (CURRENT buggy behavior pinned)", () => {
-  it("does NOT flag (a+){2,} (nested quantifier via counted form) — bug", () => {
-    expect(checkRegexSafety("(a+){2,}")).toBeNull();
+describe("checkRegexSafety — counted-quantifier ReDoS shapes are flagged unsafe", () => {
+  it("flags (a+){2,} (nested quantifier via counted form)", () => {
+    expect(checkRegexSafety("(a+){2,}")).not.toBeNull();
   });
 
-  it("does NOT flag (a|a){2,} (overlapping alternation via counted form) — bug", () => {
-    expect(checkRegexSafety("(a|a){2,}")).toBeNull();
+  it("flags (a|a){2,} (overlapping alternation via counted form)", () => {
+    expect(checkRegexSafety("(a|a){2,}")).not.toBeNull();
   });
 
-  it("does NOT flag (a|a){10} (overlapping alternation, fixed count) — bug", () => {
-    expect(checkRegexSafety("(a|a){10}")).toBeNull();
+  it("flags (a|a){10} (overlapping alternation, fixed count)", () => {
+    expect(checkRegexSafety("(a|a){10}")).not.toBeNull();
   });
 
-  it("safeRegex compiles the counted-form ReDoS pattern instead of throwing — bug", () => {
-    expect(() => safeRegex("(a+){2,}")).not.toThrow();
-    expect(safeRegex("(a+){2,}")).toBeInstanceOf(RegExp);
+  it("safeRegex throws on the counted-form ReDoS pattern", () => {
+    expect(() => safeRegex("(a+){2,}")).toThrow();
   });
 });

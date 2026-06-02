@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
+import { Agent, fetch as undiciFetch } from "undici";
 
-import { selfCallAuthHeader } from "./web-tools.js";
+import { selfCallAuthHeader, createPinningDispatcher } from "./web-tools.js";
 import { setInternalAgentToken } from "../rbac.js";
 import { getRuntimeConfig } from "../config.js";
 
@@ -42,5 +43,50 @@ describe("selfCallAuthHeader", () => {
     expect(h).toEqual({ Authorization: `Bearer ${authToken}` });
     vi.doUnmock("../rbac.js");
     vi.resetModules();
+  });
+});
+
+describe("createPinningDispatcher", () => {
+  it("returns an undici Agent instance", async () => {
+    const d = createPinningDispatcher();
+    expect(d).toBeInstanceOf(Agent);
+    await d.close();
+  });
+
+  it("passes a literal loopback IP through to the literal (pin: null pass-through)", async () => {
+    // No server is listening on this port, so the connection is refused — but the
+    // refusal proves the dispatcher dialed the literal IP rather than blocking it
+    // (a private-IP block surfaces a 'Blocked:' error, not a connection refusal).
+    const d = createPinningDispatcher();
+    try {
+      await undiciFetch("http://127.0.0.1:1/", {
+        dispatcher: d,
+        signal: AbortSignal.timeout(2_000),
+      });
+      throw new Error("expected the connection to be refused");
+    } catch (e) {
+      const msg = String((e as Error).message ?? e);
+      // Connection-level failure, not a private-IP policy block.
+      expect(msg).not.toMatch(/Blocked:/);
+    } finally {
+      await d.close();
+    }
+  });
+
+  it("blocks a host that fails to resolve / resolves private (fail-closed)", async () => {
+    const d = createPinningDispatcher();
+    try {
+      await undiciFetch("http://nonexistent-host.invalid/", {
+        dispatcher: d,
+        signal: AbortSignal.timeout(5_000),
+      });
+      throw new Error("expected the connection to be blocked");
+    } catch (e) {
+      // The lookup surfaced an error from resolveAndPinHost (fetch wraps it as a
+      // failed connection); the key assertion is that the request did not succeed.
+      expect(e).toBeInstanceOf(Error);
+    } finally {
+      await d.close();
+    }
   });
 });

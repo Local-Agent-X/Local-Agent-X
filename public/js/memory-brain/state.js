@@ -27,6 +27,10 @@ export const state = {
   focused: false,
   panX: 0,
   panY: 0,
+  // Drill-down: id of the cluster currently isolated (-1 = none). The dot
+  // shader dims every other cluster to a faint ghost while this is set.
+  focusCluster: -1,
+  focusLabel: '',
 
   count: 0,
   // Per-dot memory records (index i ↔ point i), so a raycast hit maps to a

@@ -78,7 +78,9 @@ export function updateLod() {
   if (!state.camera || !state.points) return;
   // camera.z runs ~2.2 (near) .. 8 (far). t=0 near, 1 far.
   const t = Math.min(1, Math.max(0, (state.camera.position.z - 3.2) / 2.0));
-  const dotOp = 1 - 0.85 * t;
+  // At the overview the dots recede to near-dust so the ~20 labelled cluster
+  // blobs read as the navigable nodes, not 30k-dot soup.
+  const dotOp = 1 - 0.92 * t;
   state.dotOpacity = dotOp;
   if (state.mat) state.mat.uniforms.uOpacity.value = dotOp;
   if (blobMat) blobMat.uniforms.uOpacity.value = t;

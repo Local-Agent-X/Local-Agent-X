@@ -23,6 +23,7 @@ export function flyToCluster(c) {
   state.panY = v.y;
   state.zoomTarget = Math.max(1.3, v.z + FLY_DIST);
   state.spinTarget = 0;
+  isolateCluster(c.id, c.label);
 }
 
 export function clearFocus() {
@@ -32,6 +33,36 @@ export function clearFocus() {
   state.panY = 0;
   state.zoomTarget = 3.2;
   state.spinTarget = 1;
+  isolateCluster(-1, '');
+}
+
+function isolateCluster(id, label) {
+  state.focusCluster = id;
+  state.focusLabel = label;
+  if (state.mat) state.mat.uniforms.uFocusCluster.value = id;
+}
+
+// Back-out affordance: a chip shown only while a cluster is isolated. Click it
+// (or press Esc) to return to the overview. Created once, toggled each frame.
+let backBtn = null;
+export function wireDrillUi() {
+  if (backBtn || !state.container) return;
+  backBtn = document.createElement('button');
+  backBtn.className = 'mb-drill-back';
+  backBtn.style.display = 'none';
+  backBtn.addEventListener('click', clearFocus);
+  state.container.appendChild(backBtn);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') clearFocus(); });
+}
+
+export function updateDrillUi() {
+  if (!backBtn) return;
+  if (state.focused && state.focusCluster >= 0) {
+    backBtn.textContent = '← ' + (state.focusLabel || 'overview');
+    backBtn.style.display = '';
+  } else {
+    backBtn.style.display = 'none';
+  }
 }
 
 // Eases the camera toward the current pan target every frame. panX/panY are 0

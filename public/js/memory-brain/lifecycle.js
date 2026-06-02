@@ -13,6 +13,7 @@ import { setupClusterLabels, clearClusterLabels } from './labels.js';
 import { buildBrainWarp } from './brain-warp.js';
 import { applyMode, wireModeToggle } from './modes.js';
 import { ensureCoreNode } from './core-node.js';
+import { wireDrillUi } from './focus.js';
 
 const EMPTY_DOTS = 600;
 
@@ -34,6 +35,7 @@ export async function ensure() {
   wireInteraction();
   wirePicking();
   wireModeToggle();
+  wireDrillUi();
   window.addEventListener('resize', resize);
   resize();
 
@@ -102,6 +104,7 @@ function buildCloud(items, clusters) {
   const size = new Float32Array(n);
   const seed = new Float32Array(n);
   const color = new Float32Array(n * 3);
+  const cluster = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const it = items[i];
     pos[i * 3] = it.x;
@@ -113,8 +116,9 @@ function buildCloud(items, clusters) {
     color[i * 3 + 2] = rgb[2] / 255;
     size[i] = 0.5 + Math.random() * 0.6;
     seed[i] = Math.random();
+    cluster[i] = it.cluster ?? -1;
   }
-  return { pos, size, seed, color };
+  return { pos, size, seed, color, cluster };
 }
 
 export { pause, resume };

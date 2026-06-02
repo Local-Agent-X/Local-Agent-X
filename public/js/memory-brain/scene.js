@@ -10,15 +10,18 @@ const DOT_VERTEX = `
   attribute float aSize;
   attribute float aSeed;
   attribute vec3 aColor;
+  attribute float aCluster;
   uniform float uPxScale;
   uniform float uTime;
   varying float vTw;
   varying vec3 vColor;
+  varying float vCluster;
   void main() {
     // Each dot twinkles on its own phase so the cloud shimmers organically.
     float tw = 0.8 + 0.2 * sin(uTime * 1.5 + aSeed * 6.2831);
     vTw = tw;
     vColor = aColor;
+    vCluster = aCluster;
     vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
     float ps = aSize * uPxScale * tw * (16.0 / -mvPos.z);
     gl_PointSize = clamp(ps, 0.8, 7.0);
@@ -28,14 +31,20 @@ const DOT_VERTEX = `
 
 const DOT_FRAGMENT = `
   uniform float uOpacity;
+  uniform float uFocusCluster;
   varying float vTw;
   varying vec3 vColor;
+  varying float vCluster;
   void main() {
     vec2 c = gl_PointCoord - vec2(0.5);
     float d = length(c);
     if (d > 0.5) discard;
     float a = smoothstep(0.5, 0.28, d);
-    gl_FragColor = vec4(vColor, a * (0.4 + vTw * 0.4) * uOpacity);
+    // Drill-down: when a cluster is focused, its dots stay full and every other
+    // cluster recedes to a faint ghost (kept, not culled, so the surrounding
+    // structure still reads).
+    float focusDim = (uFocusCluster < 0.0 || abs(vCluster - uFocusCluster) < 0.5) ? 1.0 : 0.06;
+    gl_FragColor = vec4(vColor, a * (0.4 + vTw * 0.4) * uOpacity * focusDim);
   }
 `;
 
@@ -46,7 +55,7 @@ export function initThree() {
   state.renderer = new THREE.WebGLRenderer({ canvas: state.canvas, alpha: true, antialias: true });
   state.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   state.mat = new THREE.ShaderMaterial({
-    uniforms: { uPxScale: { value: 1.0 }, uTime: { value: 0 }, uOpacity: { value: 1.0 } },
+    uniforms: { uPxScale: { value: 1.0 }, uTime: { value: 0 }, uOpacity: { value: 1.0 }, uFocusCluster: { value: -1 } },
     vertexShader: DOT_VERTEX,
     fragmentShader: DOT_FRAGMENT,
     transparent: true,
@@ -57,8 +66,10 @@ export function initThree() {
 
 // Replace the rendered point cloud with a new set of positions/sizes/seeds.
 // `color` (Float32Array n*3) is optional — without it the dots default to the
-// house blue (used by the Phase-1 scatter and empty states).
-export function buildPoints({ pos, size, seed, color }) {
+// house blue (used by the Phase-1 scatter and empty states). `cluster`
+// (Float32Array n) is the per-dot cluster id the drill-down focus shader reads;
+// absent (scatter/empty) it defaults to -1 (never matches a focus target).
+export function buildPoints({ pos, size, seed, color, cluster }) {
   if (state.points) {
     state.scene.remove(state.points);
     state.points.geometry.dispose();
@@ -68,8 +79,15 @@ export function buildPoints({ pos, size, seed, color }) {
   g.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
   g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
   g.setAttribute('aColor', new THREE.BufferAttribute(color || defaultColor(size.length), 3));
+  g.setAttribute('aCluster', new THREE.BufferAttribute(cluster || minusOne(size.length), 1));
   state.points = new THREE.Points(g, state.mat);
   state.scene.add(state.points);
+}
+
+function minusOne(n) {
+  const a = new Float32Array(n);
+  a.fill(-1);
+  return a;
 }
 
 function defaultColor(n) {

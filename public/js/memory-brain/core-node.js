@@ -33,6 +33,10 @@ function defaultProfile() {
     identity: { name: '', emoji: '', tagline: '', vibe: '', portrait: '/agent-x-portrait.png' },
     heart: { orders: [], boundaries: [] },
     user: { fields: [] },
+    network: { associates: [], total: 0 },
+    memories: 0,
+    lastAmended: null,
+    contradictions: 0,
   };
 }
 
@@ -123,10 +127,47 @@ function buildDossier(p) {
       grid(p.user.fields.map((f) => [f.label, f.value]))));
   }
 
+  const net = p.network || { associates: [], total: 0 };
+  if (net.associates.length) {
+    const sec = sectionBody('§4', 'KNOWN ASSOCIATES', '→ THE NETWORK');
+    const wrap = el('div', 'mb-net');
+    for (const a of net.associates) {
+      const c = el('span', 'mb-net-chip');
+      c.append(textEl('span', 'mb-net-av', (a.name[0] || '?').toUpperCase()), textEl('span', null, a.name));
+      if (a.mentions) c.append(textEl('span', 'mb-net-n', '· ' + a.mentions));
+      wrap.append(c);
+    }
+    const more = net.total - net.associates.length;
+    if (more > 0) {
+      const m = el('span', 'mb-net-chip mb-net-more');
+      m.append(textEl('span', 'mb-net-av', '+'), textEl('span', null, more + ' more in The Network'));
+      wrap.append(m);
+    }
+    sec.append(wrap);
+    body.append(sec.section);
+  }
+
   d.append(body);
+  d.append(buildFooter(p));
   d.append(banner());
   overlay.append(d);
   return overlay;
+}
+
+function buildFooter(p) {
+  const foot = el('div', 'mb-dossier-foot');
+  const bits = [];
+  if (p.lastAmended) bits.push('LAST AMENDED ' + fmtDate(p.lastAmended));
+  if (typeof p.memories === 'number') bits.push(p.memories.toLocaleString() + ' MEMORIES');
+  bits.push('CONTRADICTIONS: ' + (p.contradictions || 0));
+  foot.textContent = bits.join('  ·  ');
+  return foot;
+}
+
+function fmtDate(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '·' + pad(d.getMonth() + 1) + '·' + pad(d.getDate());
 }
 
 // ── builders ──

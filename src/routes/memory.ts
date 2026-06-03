@@ -1,7 +1,7 @@
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody } from "../server-utils.js";
 import type { FactKind } from "../memory/index.js";
-import { readIdentityProfile } from "../memory/identity-profile.js";
+import { readIdentityProfile, humanizeSlug } from "../memory/identity-profile.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.memory");
@@ -50,9 +50,19 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
   }
 
   // Identity profile for the Core node (the agent's ID card / dossier): the
-  // parsed view of IDENTITY/HEART/USER.
+  // parsed view of IDENTITY/HEART/USER, plus the "network" of known associates
+  // (top entities) and registry totals for the footer.
   if (method === "GET" && url.pathname === "/api/memory/identity") {
-    json(200, await readIdentityProfile(ctx.memoryIndex.getMemoryDir()));
+    const profile = await readIdentityProfile(ctx.memoryIndex.getMemoryDir());
+    const stats = ctx.memoryIndex.getStats();
+    const associates = ctx.memoryIndex
+      .topEntities(8)
+      .map((e) => ({ name: humanizeSlug(e.slug), mentions: e.mentions }));
+    json(200, {
+      ...profile,
+      network: { associates, total: stats.totalEntities },
+      memories: stats.totalChunks,
+    });
     return true;
   }
 

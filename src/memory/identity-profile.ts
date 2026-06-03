@@ -4,13 +4,24 @@
 // only parses the already-trusted markdown into display fields. The card is a
 // live view: naming the agent or editing the files reshapes it on next read.
 
-import { readPersonalityFile } from "./personality.js";
+import { statSync } from "node:fs";
+import { join } from "node:path";
+import { readPersonalityFile, PERSONALITY_FILES } from "./personality.js";
+import { findContradictions } from "./contradiction-sweep.js";
 
 export interface IdentityProfile {
   named: boolean;
   identity: { name: string; emoji: string; tagline: string; vibe: string; portrait: string };
   heart: { orders: string[]; boundaries: string[] };
   user: { fields: Array<{ label: string; value: string }> };
+  lastAmended: number | null; // ms epoch of the most-recently-edited profile file
+  contradictions: number; // self-conflicting standing-order/restriction pairs
+}
+
+// "maria-lopez" → "Maria Lopez". Entity slugs are lowercase-hyphenated; this
+// restores a display name for the network chips.
+export function humanizeSlug(slug: string): string {
+  return slug.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 const DEFAULT_PORTRAIT = "/agent-x-portrait.png";
@@ -61,6 +72,9 @@ export async function readIdentityProfile(memDir: string): Promise<IdentityProfi
     .filter(([k, v]) => v && !/pronoun/i.test(k) && !/^\(.*\)$/.test(v))
     .map(([k, v]) => ({ label: k.replace(/\b\w/g, (c) => c.toUpperCase()), value: v }));
 
+  const heart = parseBullets(heartMd);
+  const rules = [...heart.orders, ...heart.boundaries].map((text, i) => ({ text, payload: i }));
+
   return {
     named,
     identity: {
@@ -70,7 +84,17 @@ export async function readIdentityProfile(memDir: string): Promise<IdentityProfi
       vibe: id.get("vibe") || "",
       portrait: id.get("portrait") || DEFAULT_PORTRAIT,
     },
-    heart: parseBullets(heartMd),
+    heart,
     user: { fields: userFields },
+    lastAmended: latestMtime(memDir),
+    contradictions: findContradictions(rules).length,
   };
+}
+
+function latestMtime(memDir: string): number | null {
+  let latest = 0;
+  for (const file of Object.values(PERSONALITY_FILES)) {
+    try { latest = Math.max(latest, statSync(join(memDir, file)).mtimeMs); } catch {}
+  }
+  return latest || null;
 }

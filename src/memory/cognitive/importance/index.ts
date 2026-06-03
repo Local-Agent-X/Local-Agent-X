@@ -1,16 +1,11 @@
 /**
  * Local Agent X — Memory Importance Scoring
  *
- * Scores and ranks memories by importance using weighted factors:
- * recency, frequency, user feedback, content richness, emotional weight.
- * Manages archival of low-importance memories.
+ * Scores a memory by weighted factors: recency, frequency, user feedback,
+ * content richness, emotional weight.
  */
 
-export type {
-  MemoryEntry,
-  ImportanceScore,
-  ArchiveResult,
-} from "./types.js";
+export type { ImportanceScore } from "./types.js";
 
 export { MemoryImportance } from "./importance.js";
 

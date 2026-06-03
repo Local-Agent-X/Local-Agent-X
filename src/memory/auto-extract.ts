@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryIndex } from "./index-core.js";
+import type { FactKind } from "./types.js";
 import { extractIdentityFactsWithLLM, type IdentityFacts } from "../classifiers/identity-extract.js";
 import {
   writeMemorySafely,
@@ -140,27 +141,25 @@ export async function autoExtractAndSave(
   // call; "my dog passed away" triggers empathy training → no `remember`
   // call. Server-side extraction makes capture model-agnostic.
   //
-  // Writes go through memory.rememberFact (NOT writeMemorySafely) because
-  // they target the bitemporal Facts DB, not a markdown file. The UNIQUE
-  // constraint on (kind, content, entities) handles the no-double-write
-  // case if the model ALSO called `remember` this turn. autoInvalidate
-  // supersedes older contradicting facts.
+  // Writes go through saveFactSmart → memory.retainSmart (NOT writeMemorySafely)
+  // because they target the bitemporal Facts DB, not a markdown file. The
+  // UNIQUE constraint on (kind, content, entities) handles the no-double-write
+  // case if the model ALSO called `remember` this turn. retainSmart adds
+  // semantic dedup on top: paraphrased restatements ("likes dark mode" vs
+  // "prefers dark mode") are merged/superseded by the resolver rather than
+  // piling up as separate rows the way the prior exact-match rememberFact did.
+  // See saveFactSmart for the cost gate (resolver skips the LLM when there's
+  // no near-duplicate candidate).
   if (facts.preference_rule) {
-    try {
-      memory.rememberFact(facts.preference_rule, { kind: "opinion", confidence: 0.85 });
+    if (await saveFactSmart(memory, facts.preference_rule, "opinion", 0.85)) {
       safeAppendDaily(memory, `Captured preference: ${facts.preference_rule}`, sessionId);
       logger.info(`[memory] Auto-saved preference: ${facts.preference_rule}`);
-    } catch (e) {
-      logger.warn(`[memory] preference write failed: ${(e as Error).message}`);
     }
   }
   if (facts.biographical_event) {
-    try {
-      memory.rememberFact(facts.biographical_event, { kind: "experience", confidence: 0.9 });
+    if (await saveFactSmart(memory, facts.biographical_event, "experience", 0.9)) {
       safeAppendDaily(memory, `Captured event: ${facts.biographical_event}`, sessionId);
       logger.info(`[memory] Auto-saved biographical event: ${facts.biographical_event}`);
-    } catch (e) {
-      logger.warn(`[memory] biographical_event write failed: ${(e as Error).message}`);
     }
   }
   // Named family / close relationships. "my wife's name is X" was
@@ -171,13 +170,10 @@ export async function autoExtractAndSave(
   // name as the @-entity so recallByEntity surfaces the fact later.
   if (facts.relationships) {
     for (const rel of facts.relationships) {
-      try {
-        const content = `@${rel.name} is the user's ${rel.relation}`;
-        memory.rememberFact(content, { kind: "world", confidence: 0.95 });
+      const content = `@${rel.name} is the user's ${rel.relation}`;
+      if (await saveFactSmart(memory, content, "world", 0.95)) {
         safeAppendDaily(memory, `Captured relationship: ${rel.relation} = ${rel.name}`, sessionId);
         logger.info(`[memory] Auto-saved relationship: ${rel.relation} = ${rel.name}`);
-      } catch (e) {
-        logger.warn(`[memory] relationship write failed: ${(e as Error).message}`);
       }
     }
   }
@@ -192,12 +188,9 @@ export async function autoExtractAndSave(
   // preference_rule.
   if (facts.personal_affinity) {
     for (const affinity of facts.personal_affinity) {
-      try {
-        memory.rememberFact(affinity, { kind: "opinion", confidence: 0.85 });
+      if (await saveFactSmart(memory, affinity, "opinion", 0.85)) {
         safeAppendDaily(memory, `Captured affinity: ${affinity}`, sessionId);
         logger.info(`[memory] Auto-saved affinity: ${affinity}`);
-      } catch (e) {
-        logger.warn(`[memory] affinity write failed: ${(e as Error).message}`);
       }
     }
   }
@@ -213,14 +206,55 @@ export async function autoExtractAndSave(
   // these are explicit user claims about their own life).
   if (facts.ongoing_state) {
     for (const state of facts.ongoing_state) {
-      try {
-        memory.rememberFact(state, { kind: "observation", confidence: 0.9 });
+      if (await saveFactSmart(memory, state, "observation", 0.9)) {
         safeAppendDaily(memory, `Captured ongoing state: ${state}`, sessionId);
         logger.info(`[memory] Auto-saved ongoing state: ${state}`);
-      } catch (e) {
-        logger.warn(`[memory] ongoing_state write failed: ${(e as Error).message}`);
       }
     }
+  }
+}
+
+// Letter prefixes parseFactLine expects (mirrors KIND_PREFIX in
+// index-facts-mutate.ts — kept local to avoid a cross-module dep just for a
+// 4-entry map). retainSmart parses the bullet back into kind/content/entities,
+// so emitting the same `- <prefix>(c=<conf>) <content>` shape rememberFact
+// used preserves every existing call site's kind + confidence exactly.
+const KIND_LETTER: Record<FactKind, string> = {
+  world: "W",
+  experience: "E",
+  opinion: "O",
+  observation: "S",
+};
+
+// Route a single auto-extracted fact through semantic dedup.
+//
+// COST: retainSmart's resolver only calls an LLM when findResolverCandidates
+// returns ≥1 near-duplicate (same entity, or FTS keyword overlap when there's
+// no entity). resolveFact short-circuits to a side-effect-free ADD with zero
+// LLM calls when the candidate set is empty — the common case for a genuinely
+// new fact. So the added cost is bounded to turns that actually restate
+// something already stored, which is exactly when we want the merge. The
+// resolver also uses a cheap local model (qwen2.5:3b) at temp 0 / 80 max
+// tokens, so even the worst case (several near-dup facts in one turn) is a
+// handful of tiny local completions, not a latency cliff. No gating beyond the
+// resolver's built-in candidate check was needed.
+//
+// Returns true when the fact was written or merged (caller logs + daily-log),
+// false on failure so the caller skips its bookkeeping. Errors are logged, not
+// thrown — one bad fact must not abort the rest of the extraction pass.
+async function saveFactSmart(
+  memory: MemoryIndex,
+  content: string,
+  kind: FactKind,
+  confidence: number,
+): Promise<boolean> {
+  const bullet = `- ${KIND_LETTER[kind]}(c=${confidence.toFixed(2)}) ${content.trim()}`;
+  try {
+    await memory.retainSmart(bullet, "auto-extract");
+    return true;
+  } catch (e) {
+    logger.warn(`[memory] ${kind} write failed: ${(e as Error).message}`);
+    return false;
   }
 }
 

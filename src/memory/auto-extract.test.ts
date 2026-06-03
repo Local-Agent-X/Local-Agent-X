@@ -22,6 +22,33 @@ vi.mock("../classifiers/identity-extract.js", () => ({
   extractIdentityFactsWithLLM: vi.fn(async () => __nextReturn),
 }));
 
+// The fact write path now routes through memory.retainSmart, which calls
+// resolveFact (an LLM call) when it finds near-duplicate candidates. No LLM is
+// configured in the test env, so the real resolver falls back to NOOP whenever
+// candidates exist (e.g. two facts that share an FTS keyword), which would
+// silently drop the second fact and make these write-path assertions flaky.
+// Mock resolveFact with a deterministic resolver: ADD any genuinely new fact,
+// and treat a candidate as a duplicate only when its content matches a
+// per-test paraphrase map. This keeps the multi-fact tests meaningful (each
+// distinct fact lands) while letting the dedup test assert a real merge.
+let __paraphraseOf: (newFact: string, candidate: string) => boolean = () => false;
+const resolveFactSpy = vi.fn(
+  async (
+    newFact: string,
+    candidates: Array<{ id: number; content: string; kind: string; timestamp: number }>,
+  ) => {
+    for (const c of candidates) {
+      if (__paraphraseOf(newFact, c.content)) {
+        return { op: "NOOP" as const, reason: `duplicate of "${c.content}"` };
+      }
+    }
+    return { op: "ADD" as const, reason: "new info" };
+  },
+);
+vi.mock("./resolver.js", () => ({
+  resolveFact: resolveFactSpy,
+}));
+
 const { MemoryIndex } = await import("../memory/index.js");
 const { autoExtractAndSave } = await import("./auto-extract.js");
 
@@ -30,6 +57,8 @@ let memory: InstanceType<typeof MemoryIndex>;
 
 beforeEach(() => {
   __nextReturn = null;
+  __paraphraseOf = () => false;
+  resolveFactSpy.mockClear();
   tempDir = mkdtempSync(join(tmpdir(), "lax-autoext-"));
   mkdirSync(join(tempDir, "memory", "bank", "entities"), { recursive: true });
   mkdirSync(join(tempDir, "memory", "session-summaries"), { recursive: true });
@@ -290,5 +319,38 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(liveFactsWhere("content = ?", "User shipped Calenbella v1 last Thursday")).toHaveLength(1);
     // No early return between handlers — all three fields landed.
     expect(liveFactsCount()).toBe(2);
+  });
+
+  // (3) Semantic dedup: the auto-save path routes through retainSmart, so a
+  // paraphrased restatement of an existing fact must NOT create a second row.
+  it("paraphrased preference does not create a second row — retainSmart NOOPs the duplicate", async () => {
+    // First write lands a real row.
+    __nextReturn = { preference_rule: "User prefers dark mode" };
+    await autoExtractAndSave(memory, "I like dark mode", "ok");
+    expect(liveFactsWhere("content = ?", "User prefers dark mode")).toHaveLength(1);
+
+    // Second turn restates it differently. Mark the new phrasing as a
+    // paraphrase of the stored one; the resolver returns NOOP and no row is
+    // added. (The candidate is reachable because both opinions share the FTS
+    // keyword "User" / "dark" / "mode".)
+    __paraphraseOf = (n, c) =>
+      n.includes("likes dark mode") && c === "User prefers dark mode";
+    __nextReturn = { preference_rule: "User likes dark mode" };
+    await autoExtractAndSave(memory, "honestly I just like dark mode", "ok");
+
+    expect(liveFactsWhere("kind = ?", "opinion")).toHaveLength(1);
+    expect(liveFactsWhere("content = ?", "User likes dark mode")).toHaveLength(0);
+    // The resolver was actually consulted on the second turn (proves the
+    // retainSmart path ran, not a bare exact-match insert).
+    expect(resolveFactSpy).toHaveBeenCalled();
+  });
+
+  it("auto-save writes go through the retainSmart resolver, not exact-match rememberFact", async () => {
+    __nextReturn = { preference_rule: "User prefers responses without filler" };
+    await autoExtractAndSave(memory, "no filler please", "got it");
+    // retainSmart → resolveFact is the new write path; rememberFact never
+    // touched the resolver. A single call here pins the routing.
+    expect(resolveFactSpy).toHaveBeenCalledTimes(1);
+    expect(liveFactsWhere("content = ?", "User prefers responses without filler")).toHaveLength(1);
   });
 });

@@ -5,6 +5,10 @@ import { createLogger } from "../../logger.js";
 
 const logger = createLogger("server.background-jobs.memory-bg");
 
+// Retention window for soft-invalidated facts before hard purge. Generous so
+// recallAsOf can still surface recently-superseded beliefs.
+const PURGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 export interface MemoryBgDeps {
   dataDir: string;
   sessionStore: SessionStore;
@@ -28,6 +32,16 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
         logger.info(`[memory-bg] Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated}`);
       }
     } catch (e) { logger.warn("[memory-bg] Consolidation:", (e as Error).message); }
+    try {
+      // GC for the bitemporal facts store. invalidateFact only soft-deletes
+      // (sets valid_to), keeping rows queryable via recallAsOf; nothing else
+      // ever removed them, so invalidated facts accumulated forever. Purge
+      // those past a generous retention window — 30d is long enough that any
+      // realistic "what did I believe last week" recall still resolves before
+      // the row is reclaimed. memory-bg polls every 6h, well finer than daily.
+      const purged = memoryIndex.purgeInvalidatedFacts(PURGE_RETENTION_MS);
+      if (purged > 0) logger.info(`[memory-bg] Purged ${purged} long-invalidated facts (>${PURGE_RETENTION_MS / (24 * 60 * 60 * 1000)}d)`);
+    } catch (e) { logger.warn("[memory-bg] Purge invalidated facts:", (e as Error).message); }
     try {
       const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000, recent = sessionStore.list().filter(s => s.updatedAt > cutoff && s.messageCount > 2);
       const dir = join(dataDir, "memory", "session-summaries"); mkdirSync(dir, { recursive: true }); let n = 0;

@@ -512,6 +512,16 @@
           <button class="action-btn" id="run-traces-refresh-btn" onclick="loadRunTracesList()" style="margin-top:8px">Refresh</button>
         </div>
         <div class="section-card">
+          <div class="section-title">Audit Log</div>
+          <div class="section-desc">Tamper-evident, hash-chained record of audited tool calls and policy decisions. Verify the chain to confirm no entry has been altered.</div>
+          <div id="audit-log-list" style="margin-top:8px;font-size:.78rem"></div>
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="action-btn" id="audit-log-refresh-btn" onclick="loadAuditLog()">Refresh</button>
+            <button class="action-btn" id="audit-verify-btn" onclick="verifyAuditChain()">Verify chain</button>
+            <span id="audit-verify-result" style="font-size:.78rem"></span>
+          </div>
+        </div>
+        <div class="section-card">
           <div class="section-title">Bash Sandbox</div>
           <div class="section-desc">Run shell commands inside a Docker container instead of directly on your host. Off by default — turning it on isolates bash but disables OS-native commands (ipconfig, Get-*, etc.) and all network access from bash.</div>
           <div class="field">
@@ -1136,6 +1146,7 @@
 <script src="/js/settings-file-access.js?v=v1"></script>
 <script src="/js/settings-rollback.js?v=v1"></script>
 <script src="/js/settings-run-traces.js?v=v1"></script>
+<script src="/js/settings-audit-log.js?v=v1"></script>
 <script src="/js/settings-sandbox.js?v=v1"></script>
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>

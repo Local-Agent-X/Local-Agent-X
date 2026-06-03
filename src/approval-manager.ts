@@ -160,6 +160,36 @@ export function isDestructiveCommand(
   return null;
 }
 
+/**
+ * The irreversibility floor: force an interactive confirm for any operation
+ * that can destroy work or data with no recovery, regardless of how relaxed
+ * the autonomy profile is. Returns a short human reason, or null.
+ *
+ * Two sources feed the floor:
+ *   1. Shell-text patterns (isDestructiveCommand) — `rm -rf`, `git push
+ *      --force`, etc. inside a bash/shell command string.
+ *   2. The "destructive" ToolRisk class — non-shell tools whose whole purpose
+ *      is an irreversible side effect (delete_file, process_kill,
+ *      memory_forget, marketplace_install). Without this, a destructive
+ *      non-shell tool auto-allowed under Power/Autonomous with no prompt.
+ *
+ * Scoped to "destructive" ONLY. money/secrets are deliberately NOT forced:
+ * they already resolve to "ask" under every profile except Autonomous, and
+ * Autonomous is the user explicitly opting into unattended money/secrets
+ * moves — forcing a confirm there would override that deliberate choice.
+ */
+export function requiresIrreversibleConfirm(
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  const shellReason = isDestructiveCommand(toolName, args);
+  if (shellReason !== null) return shellReason;
+  if (classifyToolRisk(toolName) === "destructive") {
+    return `destructive tool (${toolName}) — irreversible, confirm before running`;
+  }
+  return null;
+}
+
 class ApprovalManager {
   private pending = new Map<string, PendingApproval>();
   // session → Set of tool names auto-approved for this session

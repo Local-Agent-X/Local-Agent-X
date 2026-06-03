@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import * as path from "node:path";
-import { computeArgsFingerprint, getApprovalManager } from "./approval-manager.js";
+import {
+  computeArgsFingerprint,
+  getApprovalManager,
+  isDestructiveCommand,
+  requiresIrreversibleConfirm,
+} from "./approval-manager.js";
+import { classifyToolRisk } from "./autonomy/risk.js";
 import type { ServerEvent } from "./types.js";
 
 // Unique per-test session IDs so the singleton ApprovalManager doesn't bleed
@@ -318,6 +324,48 @@ describe("ApprovalManager — same-command cache hit", () => {
     await expect(p3).resolves.toBe(false);
 
     mgr.clearSession(sessionId);
+  });
+});
+
+describe("requiresIrreversibleConfirm — the floor", () => {
+  // Regression for the gap: the floor used to be shell-text-only, so a
+  // destructive NON-shell tool auto-allowed under Power/Autonomous with no
+  // confirm. These tools must now hit the floor on their ToolRisk class.
+  it("forces a confirm for destructive non-shell tools", () => {
+    // Sanity: confirm the taxonomy classes these as "destructive" (the key the
+    // floor reads). If a future re-class changes this, the floor coverage moves
+    // with it — and this assertion flags the change.
+    for (const tool of ["delete_file", "process_kill", "memory_forget", "marketplace_install"]) {
+      expect(classifyToolRisk(tool)).toBe("destructive");
+    }
+
+    expect(requiresIrreversibleConfirm("delete_file", { path: "/x" })).toMatch(/delete_file/);
+    expect(requiresIrreversibleConfirm("process_kill", { pid: 123 })).toMatch(/process_kill/);
+    expect(requiresIrreversibleConfirm("memory_forget", { id: "m1" })).toMatch(/memory_forget/);
+    expect(requiresIrreversibleConfirm("marketplace_install", { name: "pack" })).toMatch(/marketplace_install/);
+  });
+
+  it("preserves the shell-text floor", () => {
+    // Identical reasons to isDestructiveCommand — the wrapper passes them through.
+    expect(requiresIrreversibleConfirm("bash", { command: "rm -rf /tmp/x" }))
+      .toBe(isDestructiveCommand("bash", { command: "rm -rf /tmp/x" }));
+    expect(requiresIrreversibleConfirm("bash", { command: "rm -rf /tmp/x" })).toBeTruthy();
+    // A benign shell command is NOT a shell-pattern hit; bash itself is risk
+    // class "shell", not "destructive", so it falls through to null.
+    expect(requiresIrreversibleConfirm("bash", { command: "git status" })).toBeNull();
+  });
+
+  it("leaves reversible / safe tools unaffected (no spurious prompt)", () => {
+    expect(requiresIrreversibleConfirm("read", { path: "/x" })).toBeNull();
+    // workspace-write is reversible (rollback territory) — not the hard floor.
+    expect(classifyToolRisk("write")).not.toBe("destructive");
+    expect(requiresIrreversibleConfirm("write", { path: "/x" })).toBeNull();
+  });
+
+  it("does NOT force money/secrets tools (deliberate Autonomous opt-in is honored)", () => {
+    // The floor is scoped to "destructive" only; money/secrets resolve to
+    // "ask" everywhere except the explicitly-chosen Autonomous profile.
+    expect(requiresIrreversibleConfirm("read", {})).toBeNull();
   });
 });
 

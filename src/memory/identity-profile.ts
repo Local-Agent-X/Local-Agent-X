@@ -54,8 +54,11 @@ export async function readIdentityProfile(memDir: string): Promise<IdentityProfi
   const rawName = id.get("name") || "";
   const named = !!rawName && !NOT_NAMED.test(rawName);
 
+  // Drop empty values, the pronoun field, and unfilled template placeholders
+  // ("(casual / formal / technical / etc.)") so the handler section only shows
+  // real, declared facts.
   const userFields = [...parseScalars(userMd).entries()]
-    .filter(([, v]) => v)
+    .filter(([k, v]) => v && !/pronoun/i.test(k) && !/^\(.*\)$/.test(v))
     .map(([k, v]) => ({ label: k.replace(/\b\w/g, (c) => c.toUpperCase()), value: v }));
 
   return {

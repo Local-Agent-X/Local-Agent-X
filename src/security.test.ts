@@ -4,7 +4,15 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { SecurityLayer } from "./security/index.js";
-import { checkMemoryTaint, detectInjection, wrapExternalContent, stripControlChars } from "./sanitize.js";
+import {
+  checkMemoryTaint,
+  detectInjection,
+  wrapExternalContent,
+  stripControlChars,
+  registerRedactedSecretValue,
+  unregisterRedactedSecretValue,
+  redactKnownSecrets,
+} from "./sanitize.js";
 import { ToolPolicy, type ToolPolicyConfig } from "./tool-policy.js";
 import { RBACManager } from "./rbac.js";
 import { checkRegexSafety } from "./safe-regex.js";
@@ -619,4 +627,69 @@ describe("RBAC endpoint access control", () => {
   });
 
   try { rmSync(tmpDir, { recursive: true }); } catch {}
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Known-secret redaction — registration filter (isSecretShaped)
+//
+// REDACTED_SECRET_VALUES is a module-global set; each test unregisters
+// what it registers (in a finally) so no state leaks into other suites.
+// ═══════════════════════════════════════════════════════════════════
+
+describe("Known-secret redaction filter", () => {
+  it("does NOT register a numeric port → no over-redaction of benign substrings", () => {
+    registerRedactedSecretValue("47831");
+    try {
+      // Regression: the reported port-clobber bug. Must come back UNCHANGED.
+      expect(redactKnownSecrets("listening on 47831")).toBe("listening on 47831");
+    } finally {
+      unregisterRedactedSecretValue("47831");
+    }
+  });
+
+  it("does NOT register a 4-digit PIN", () => {
+    registerRedactedSecretValue("1234");
+    try {
+      expect(redactKnownSecrets("code 1234 sent")).toBe("code 1234 sent");
+    } finally {
+      unregisterRedactedSecretValue("1234");
+    }
+  });
+
+  it("does NOT register a low-entropy repeated-char value", () => {
+    registerRedactedSecretValue("aaaaaaaa");
+    try {
+      expect(redactKnownSecrets("value aaaaaaaa here")).toBe("value aaaaaaaa here");
+    } finally {
+      unregisterRedactedSecretValue("aaaaaaaa");
+    }
+  });
+
+  it("still redacts a genuine high-entropy token (GitHub PAT shape)", () => {
+    const token = "ghp_AbC123dEf456GhI789xyz";
+    registerRedactedSecretValue(token);
+    try {
+      expect(redactKnownSecrets(`token=${token}`)).toBe("token=[REDACTED_SECRET]");
+    } finally {
+      unregisterRedactedSecretValue(token);
+    }
+  });
+
+  it("redacts a genuine secret even when embedded in a larger token (matcher NOT weakened)", () => {
+    const token = "sk-live9aF3kZqWeRtY";
+    registerRedactedSecretValue(token);
+    try {
+      // No word boundaries: an embedded secret inside a bigger string still goes.
+      expect(redactKnownSecrets(`prefix${token}suffix`)).toBe("prefix[REDACTED_SECRET]suffix");
+    } finally {
+      unregisterRedactedSecretValue(token);
+    }
+  });
+
+  it("unregister removes a previously-registered secret", () => {
+    const token = "ghp_RemoveMe1234567890abc";
+    registerRedactedSecretValue(token);
+    unregisterRedactedSecretValue(token);
+    expect(redactKnownSecrets(`x=${token}`)).toBe(`x=${token}`);
+  });
 });

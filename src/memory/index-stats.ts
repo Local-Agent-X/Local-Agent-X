@@ -43,3 +43,16 @@ export function getStats(
     cacheSize: cache,
   };
 }
+
+// The agent's most-known entities, ranked by how often they're mentioned —
+// the "known associates" for the identity dossier's network view.
+export function topEntities(
+  db: InstanceType<typeof Database>,
+  limit: number,
+): Array<{ slug: string; mentions: number }> {
+  return db
+    .prepare(
+      "SELECT entity_slug AS slug, COUNT(*) AS mentions FROM entity_mentions GROUP BY entity_slug ORDER BY mentions DESC, entity_slug LIMIT ?",
+    )
+    .all(limit) as Array<{ slug: string; mentions: number }>;
+}

@@ -20,7 +20,7 @@ import * as FactsMutate from "./index-facts-mutate.js";
 import * as Relations from "./index-relations.js";
 import * as Reflectx from "./index-reflect.js";
 import { startWatcher, type WatcherHandle } from "./index-watcher.js";
-import { getStats } from "./index-stats.js";
+import { getStats, topEntities } from "./index-stats.js";
 import * as Atlas from "./index-atlas.js";
 import { getLayout } from "./atlas-layout.js";
 
@@ -392,6 +392,10 @@ export class MemoryIndex {
     cacheSize: number;
   } {
     return getStats(this.db, this.hasFts, this.hasVec);
+  }
+
+  topEntities(limit = 8): Array<{ slug: string; mentions: number }> {
+    return topEntities(this.db, limit);
   }
 
   markDirty(): void {

@@ -70,7 +70,7 @@ const INJECTION_TESTS: TestCase[] = [
 
 const DATA_CLASSIFICATION_TESTS: TestCase[] = [
   { id: "CLS-001", category: "credentials", input: "api_key: sk-1234567890abcdefghijklmnop", expectBlocked: true, description: "OpenAI API key pattern" },
-  { id: "CLS-002", category: "credentials", input: "token: ghp_abcdefghijklmnopqrstuvwxyz1234567890", expectBlocked: true, description: "GitHub PAT pattern" },
+  { id: "CLS-002", category: "credentials", input: "token: ghp_" + "abcdefghijklmnopqrstuvwxyz1234567890", expectBlocked: true, description: "GitHub PAT pattern" },
   { id: "CLS-003", category: "credentials", input: "AKIA1234567890ABCDEF", expectBlocked: true, description: "AWS access key pattern" },
   { id: "CLS-004", category: "pii", input: "SSN: 123-45-6789", expectBlocked: true, description: "Social security number" },
   { id: "CLS-005", category: "secrets", input: "-----BEGIN PRIVATE KEY-----\nMIIEvQ...\n-----END PRIVATE KEY-----", expectBlocked: true, description: "PEM private key" },

@@ -1,4 +1,3 @@
-import MemoryImportance from "../memory/cognitive/importance/index.js";
 import { PredictivePrefetcher } from "../predictive-prefetch.js";
 import { MemoryTierManager } from "../memory-tiers.js";
 import { MemoryCompressor } from "../memory/cognitive/compression/index.js";
@@ -20,17 +19,6 @@ export const backgroundSignals: CognitiveSignal[] = [
       PredictivePrefetcher.getInstance().learnSchedule(Date.now(), words.slice(0, 10), []);
     },
     health: () => PredictivePrefetcher.getInstance(),
-  },
-
-  {
-    id: "memory-importance",
-    scope: "profile",
-    record(input) {
-      if (input.message.length > 30) {
-        MemoryImportance.scoreMemory({ content: input.message, createdAt: Date.now() });
-      }
-    },
-    health: () => MemoryImportance,
   },
 
   {

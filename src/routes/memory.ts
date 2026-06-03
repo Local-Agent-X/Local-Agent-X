@@ -153,6 +153,23 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     return true;
   }
 
+  if (method === "GET" && url.pathname === "/api/memory/important") {
+    const raw = parseInt(url.searchParams.get("limit") || "20", 10);
+    const limit = Math.min(100, Math.max(1, isNaN(raw) ? 20 : raw));
+    const items = ctx.memoryIndex.topImportantFacts(limit).map(({ fact, importance }) => ({
+      id: fact.id,
+      content: fact.content,
+      kind: fact.kind,
+      entities: fact.entities,
+      timestamp: fact.timestamp,
+      score: importance.score,
+      level: importance.level,
+      factors: importance.factors,
+    }));
+    json(200, { items });
+    return true;
+  }
+
   if (method === "POST" && url.pathname === "/api/memory/reflect") {
     let body: Record<string, unknown>;
     try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON body" }); return true; }

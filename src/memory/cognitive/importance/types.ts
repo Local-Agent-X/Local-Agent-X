@@ -2,8 +2,8 @@ export interface ImportanceScore {
   score: number;
   factors: {
     recency: number;
-    frequency: number;
-    feedback: number;
+    reinforcement: number;
+    confidence: number;
     richness: number;
     emotional: number;
   };

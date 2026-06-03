@@ -69,7 +69,6 @@ export interface BackgroundReport {
   growth: string;
   narratives: number;
   graphEdges: number;
-  importanceScored: number;
   totalTimeMs: number;
 }
 

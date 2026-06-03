@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 
-import MemoryImportance from "../memory/cognitive/importance/index.js";
 import { NarrativeMemory } from "../narrative-memory.js";
 import { UnspokenDetector } from "../unspoken-detector.js";
 import { GrowthTracker } from "../growth-tracker.js";
@@ -18,7 +17,7 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
   // Note: consolidation, retain-from-logs, and reflect are scheduled directly
   // via the JobScheduler in src/server/background-jobs.ts. The orchestrator
   // owns the orchestrator-internal jobs only (compression, tiers, prefetch,
-  // unspoken, growth, narratives, graph, importance).
+  // unspoken, growth, narratives, graph).
 
   const compression = safeRun("memory-compression:bg", () => {
     const mc = MemoryCompressor.getInstance();
@@ -77,22 +76,6 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
     return memoryIndex.relationCount() - before;
   }, 0);
 
-  const importanceScored = safeRun("memory-importance:bg", () => {
-    if (!memoryIndex) return 0;
-    const recentFacts = memoryIndex.recallByTime(
-      new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-    );
-    let scored = 0;
-    for (const fact of recentFacts) {
-      MemoryImportance.scoreMemory({
-        content: fact.content,
-        createdAt: fact.timestamp,
-      });
-      scored++;
-    }
-    return scored;
-  }, 0);
-
   orchestratorState.lastBackgroundRun = Date.now();
   saveState(orchestratorState);
 
@@ -104,7 +87,6 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
     growth,
     narratives,
     graphEdges,
-    importanceScored,
     totalTimeMs: Date.now() - startTime,
   };
 }

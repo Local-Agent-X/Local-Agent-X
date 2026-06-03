@@ -1,9 +1,12 @@
+// Weights for surfacing the user's most important memories. Confidence (how
+// sure we are the fact is true) and emotional salience lead; recency is a light
+// tiebreaker so stable identity facts aren't buried under fresh chatter.
 export const WEIGHTS = {
-  recency: 0.25,
-  frequency: 0.30,
-  feedback: 0.20,
-  richness: 0.15,
-  emotional: 0.10,
+  recency: 0.10,
+  reinforcement: 0.15,
+  confidence: 0.30,
+  richness: 0.20,
+  emotional: 0.25,
 };
 
 export const RECENCY_HALF_LIFE_DAYS = 14;

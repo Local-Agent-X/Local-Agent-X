@@ -556,6 +556,14 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 .mb-net-chip{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:.72rem;color:var(--text);padding:5px 11px;border:1px solid var(--border);border-radius:20px;background:var(--hover)}
 .mb-net-av{width:20px;height:20px;border-radius:50%;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:.62rem;color:var(--accent);flex:0 0 auto}
 .mb-net-n,.mb-net-more{color:var(--muted)}
+.mb-dossier-mem{display:flex;align-items:baseline;gap:10px;font-family:var(--mono);font-size:.74rem;line-height:1.5;padding:7px 11px;background:var(--hover);border-left:2px solid var(--accent-dim);border-radius:0 3px 3px 0;margin-bottom:6px;color:var(--text)}
+.mb-mem-score{flex:0 0 auto;font-size:.78rem;font-weight:700;color:var(--accent);min-width:22px;text-align:right;font-variant-numeric:tabular-nums}
+.mb-mem-lvl{flex:0 0 auto;font-size:.56rem;letter-spacing:.1em;color:var(--muted);min-width:54px}
+.mb-mem-text{flex:1;color:var(--text)}
+.mb-dossier-mem.mb-mem-critical{border-left-color:var(--danger)}
+.mb-dossier-mem.mb-mem-critical .mb-mem-lvl{color:var(--danger)}
+.mb-dossier-mem.mb-mem-high{border-left-color:var(--accent)}
+.mb-dossier-mem.mb-mem-archive{opacity:.6}
 .mb-dossier-foot{flex:0 0 auto;padding:11px 18px;border-top:1px solid var(--border);font-family:var(--mono);font-size:.6rem;letter-spacing:.12em;color:var(--muted);text-align:right;text-transform:uppercase}
 .section-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:16px}
 .section-title{font-family:var(--mono);font-size:.8rem;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}

@@ -247,6 +247,20 @@ export function recallByKind(
   return rows.map(rowToFact);
 }
 
+// Every currently-valid fact across all kinds, newest first. Unlike
+// recallRecentFacts (kind-filtered, confidence-gated, entity-deduped for prompt
+// injection), this is the unfiltered candidate pool for importance ranking —
+// stable high-confidence facts must not be excluded before they can be scored.
+export function allValidFacts(
+  db: InstanceType<typeof Database>,
+  limit = 1000,
+): RetainedFact[] {
+  const rows = db
+    .prepare(`SELECT * FROM facts WHERE valid_to IS NULL ORDER BY timestamp DESC LIMIT ?`)
+    .all(limit) as Array<Record<string, unknown>>;
+  return rows.map(rowToFact);
+}
+
 export function recallByTime(
   db: InstanceType<typeof Database>,
   since: Date,

@@ -16,7 +16,8 @@ export async function ensureCoreNode() {
   const p = (await loadProfile()) || defaultProfile();
   slot.append(buildCard(p));
 
-  overlayEl = buildDossier(p);
+  const important = await loadImportant();
+  overlayEl = buildDossier(p, important);
   document.body.append(overlayEl);
 
   slot.firstChild.addEventListener('click', openDossier);
@@ -25,6 +26,11 @@ export async function ensureCoreNode() {
 async function loadProfile() {
   try { return await window.apiJson('/api/memory/identity'); }
   catch { return null; }
+}
+
+async function loadImportant() {
+  try { return (await window.apiJson('/api/memory/important?limit=8')).items || []; }
+  catch { return []; }
 }
 
 function defaultProfile() {
@@ -71,7 +77,7 @@ function buildCard(p) {
   return card;
 }
 
-function buildDossier(p) {
+function buildDossier(p, important) {
   const overlay = el('div', 'mb-dossier-overlay');
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeDossier(); });
 
@@ -147,6 +153,12 @@ function buildDossier(p) {
     body.append(sec.section);
   }
 
+  if (important && important.length) {
+    const sec = sectionBody('§5', 'PRIORITY INTEL', '→ IMPORTANCE RANK');
+    for (const it of important) sec.append(memoryRow(it));
+    body.append(sec.section);
+  }
+
   d.append(body);
   d.append(buildFooter(p));
   d.append(banner());
@@ -214,6 +226,16 @@ function order(isBoundary, code, text) {
   const o = el('div', 'mb-dossier-order' + (isBoundary ? ' boundary' : ''));
   o.append(textEl('span', 'mb-do-c', code), textEl('span', null, text));
   return o;
+}
+
+function memoryRow(item) {
+  const row = el('div', 'mb-dossier-mem mb-mem-' + (item.level || 'low'));
+  row.append(
+    textEl('span', 'mb-mem-score', String(item.score)),
+    textEl('span', 'mb-mem-lvl', (item.level || '').toUpperCase()),
+    textEl('span', 'mb-mem-text', item.content || ''),
+  );
+  return row;
 }
 
 function chip(kind, text) { return textEl('span', 'mb-dossier-chip ' + kind, text); }

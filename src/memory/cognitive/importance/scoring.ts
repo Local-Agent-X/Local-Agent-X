@@ -1,3 +1,4 @@
+import type { RetainedFact } from "../../types.js";
 import type { ImportanceScore } from "./types.js";
 import {
   EMOTION_KEYWORDS,
@@ -6,18 +7,14 @@ import {
   WEIGHTS,
 } from "./constants.js";
 
-export function calcRichness(content: string): number {
-  const length = content.length;
-  const lengthScore = Math.min(100, (length / 5000) * 100);
-
-  const entities =
-    (content.match(/@\w+/g)?.length || 0) +
-    (content.match(/\[\[.+?\]\]/g)?.length || 0) +
-    (content.match(/^#{1,3}\s/gm)?.length || 0) +
-    (content.match(/https?:\/\/\S+/g)?.length || 0);
-  const entityScore = Math.min(100, entities * 10);
-
-  return (lengthScore * 0.6 + entityScore * 0.4);
+export function calcRichness(content: string, entityCount: number): number {
+  // Facts are short atomic statements, not the long markdown documents this
+  // scorer was first written for. Scale length to a fact-realistic ceiling and
+  // lean on the entity tags the facts DB already extracted, rather than
+  // regex-scanning the body for @mentions / [[links]] that facts rarely carry.
+  const lengthScore = Math.min(100, (content.length / 300) * 100);
+  const entityScore = Math.min(100, entityCount * 25);
+  return lengthScore * 0.5 + entityScore * 0.5;
 }
 
 export function calcEmotional(content: string): number {
@@ -37,34 +34,30 @@ export function scoreToLevel(score: number): "critical" | "high" | "medium" | "l
   return "archive";
 }
 
-export function scoreMemory(memory: {
-  content: string;
-  createdAt: number;
-  lastAccessed?: number;
-  accessCount?: number;
-  userFeedback?: "positive" | "negative";
-}): ImportanceScore {
-  const now = Date.now();
-
-  const referenceTime = memory.lastAccessed || memory.createdAt;
-  const daysSince = Math.max(0, (now - referenceTime) / MS_PER_DAY);
+export function scoreFact(fact: RetainedFact, now: number): ImportanceScore {
+  // Recency anchors on the immutable creation `timestamp`, never `lastUpdated`.
+  // reinforceFacts() bumps lastUpdated on re-mention, and letting that drive
+  // recency made old biographical facts re-render as "fresh" — see
+  // memory/context.test.ts.
+  const daysSince = Math.max(0, (now - fact.timestamp) / MS_PER_DAY);
   const recency = Math.pow(0.5, daysSince / RECENCY_HALF_LIFE_DAYS) * 100;
 
-  const rawFreq = Math.log(Math.max(0, memory.accessCount || 0) + 1);
-  const maxFreq = Math.log(101);
-  const frequency = Math.min(100, (rawFreq / maxFreq) * 100);
+  // The facts DB has no access counter; the only "mentioned again" signal is
+  // lastUpdated pulling ahead of the creation timestamp (reinforceFacts), so
+  // reinforcement is binary: has this fact been re-mentioned since it landed.
+  const reinforcement = fact.lastUpdated > fact.timestamp ? 100 : 0;
 
-  let feedback = 50;
-  if (memory.userFeedback === "positive") feedback = 100;
-  else if (memory.userFeedback === "negative") feedback = 10;
+  // Confidence stands in for the user-feedback term the original formula
+  // expected — it is the trust signal facts actually carry (0..1).
+  const confidence = Math.max(0, Math.min(100, fact.confidence * 100));
 
-  const richness = calcRichness(memory.content);
-  const emotional = calcEmotional(memory.content);
+  const richness = calcRichness(fact.content, fact.entities.length);
+  const emotional = calcEmotional(fact.content);
 
   const score = Math.round(
     WEIGHTS.recency * recency +
-    WEIGHTS.frequency * frequency +
-    WEIGHTS.feedback * feedback +
+    WEIGHTS.reinforcement * reinforcement +
+    WEIGHTS.confidence * confidence +
     WEIGHTS.richness * richness +
     WEIGHTS.emotional * emotional
   );
@@ -75,8 +68,8 @@ export function scoreMemory(memory: {
     score: clampedScore,
     factors: {
       recency: Math.round(recency * 10) / 10,
-      frequency: Math.round(frequency * 10) / 10,
-      feedback,
+      reinforcement,
+      confidence: Math.round(confidence * 10) / 10,
       richness: Math.round(richness * 10) / 10,
       emotional: Math.round(emotional * 10) / 10,
     },

@@ -23,6 +23,7 @@ import { startWatcher, type WatcherHandle } from "./index-watcher.js";
 import { getStats, topEntities } from "./index-stats.js";
 import * as Atlas from "./index-atlas.js";
 import { getLayout } from "./atlas-layout.js";
+import { scoreFact, type ImportanceScore } from "./cognitive/importance/index.js";
 
 export class MemoryIndex {
   private db: InstanceType<typeof Database>;
@@ -339,6 +340,17 @@ export class MemoryIndex {
 
   reinforceFacts(ids: number[]): number {
     return FactsMutate.reinforceFacts(this.db, ids);
+  }
+
+  // The user's most important memories, highest score first. Scores the full
+  // valid-fact pool (capped) and ranks by the importance formula — confidence,
+  // emotional salience, richness, reinforcement, recency.
+  topImportantFacts(limit = 20): Array<{ fact: RetainedFact; importance: ImportanceScore }> {
+    const now = Date.now();
+    return Facts.allValidFacts(this.db, 1000)
+      .map((fact) => ({ fact, importance: scoreFact(fact, now) }))
+      .sort((a, b) => b.importance.score - a.importance.score)
+      .slice(0, Math.max(1, limit));
   }
 
   // ── Relations ──

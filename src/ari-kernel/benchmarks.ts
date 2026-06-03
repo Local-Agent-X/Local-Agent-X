@@ -75,7 +75,7 @@ const INJECTION_BENCHMARKS: BenchmarkCase[] = [
 
 const SECRET_BENCHMARKS: BenchmarkCase[] = [
   { id: "SEC-001", category: "secrets", subcategory: "api-key", input: "key: sk-1234567890abcdefghijklmnop", expectedResult: "detect", severity: "critical", description: "OpenAI API key" },
-  { id: "SEC-002", category: "secrets", subcategory: "api-key", input: "ghp_abcdefghijklmnopqrstuvwxyz1234567890", expectedResult: "detect", severity: "critical", description: "GitHub PAT" },
+  { id: "SEC-002", category: "secrets", subcategory: "api-key", input: "ghp_" + "abcdefghijklmnopqrstuvwxyz1234567890", expectedResult: "detect", severity: "critical", description: "GitHub PAT" },
   { id: "SEC-003", category: "secrets", subcategory: "pem", input: "-----BEGIN PRIVATE KEY-----\ndata\n-----END PRIVATE KEY-----", expectedResult: "detect", severity: "critical", description: "PEM private key" },
   { id: "SEC-004", category: "secrets", subcategory: "aws", input: "AKIA1234567890ABCDEF", expectedResult: "detect", severity: "critical", description: "AWS access key" },
   { id: "SEC-005", category: "secrets", subcategory: "clean", input: "Hello world this is normal text", expectedResult: "allow", severity: "low", description: "No secrets (should pass)" },

@@ -338,7 +338,7 @@ describe("Data classification", () => {
   });
 
   it("detects GitHub tokens", () => {
-    const c = classifyData("ghp_1234567890abcdefghijklmnopqrstuvwxyz1234");
+    const c = classifyData("ghp_" + "1234567890abcdefghijklmnopqrstuvwxyz1234");
     expect(c.labels).toContain("credentials");
   });
 

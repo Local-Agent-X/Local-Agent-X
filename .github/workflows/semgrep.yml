@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   semgrep:
@@ -26,20 +25,15 @@ jobs:
       - name: Install Semgrep
         run: pip install semgrep
 
-      # Findings surface in the Security tab via SARIF rather than gating the
-      # build — introducing SAST shouldn't red-wall main on a first-run backlog.
-      # Promote to a blocking `--error` once the existing findings are triaged.
+      # Findings print to the job log. Informational for now — without
+      # `--error` Semgrep exits 0 on findings, so this won't red-wall main on
+      # a first-run backlog. SARIF upload to the Security tab needs GitHub
+      # Advanced Security, which this private repo doesn't have; flip to
+      # `--error` (and add SARIF upload if GHAS is enabled) once triaged.
       - name: Scan
         run: >
-          semgrep scan --sarif --output semgrep.sarif
+          semgrep scan
           --config p/typescript
           --config p/security-audit
           --config p/nodejs
           --config p/owasp-top-ten
-          || true
-
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: semgrep.sarif

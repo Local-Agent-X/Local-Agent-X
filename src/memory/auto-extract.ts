@@ -71,7 +71,11 @@ export async function autoExtractAndSave(
     const identityPath = join(memory["memoryDir"], "IDENTITY.md");
     if (existsSync(identityPath)) {
       let content = readFileSync(identityPath, "utf-8");
-      content = content.replace(/^- Name:.*$/m, `- Name: ${facts.agent_name}`);
+      if (content.includes("- Name:")) {
+        content = content.replace(/^- Name:.*$/m, `- Name: ${facts.agent_name}`);
+      } else {
+        content += `\n- Name: ${facts.agent_name}`;
+      }
       try {
         writeMemorySafely({
           content,

@@ -59,9 +59,26 @@ const ACTION_VERB_TO_TOOLS: Array<{ verb: RegExp; tools: string[] }> = [
     "edit", "write", "http_request", "secret_save", "memory_update_profile",
     "cron_update", "mission_schedule_update", "email_setup", "browser", "bash",
   ] },
+  // "ran/restarted/executed/verified X" + RESULT claims ("check passed",
+  // "tests passed", "build succeeded", "npm run ...", "log confirms",
+  // "confirmed running"). Real failure: the model said "I restarted the
+  // bridge" and "npm run check passed" without calling any tool. Verbs are
+  // execution-specific on purpose — bare "checked"/"tested" are deliberately
+  // EXCLUDED so "I checked the docs" / "I tested the assumption" in benign
+  // prose don't false-positive. The result-claim phrases ("check passed",
+  // "build succeeded") only assert an outcome that requires a real run.
+  { verb: /\b(ran|restarted?|relaunch(?:ed)?|reboot(?:ed)?|executed?|verified?|validated?|(?:check|tests?|build)\s+(?:passed|passes|succeeded)|build\s+passes|npm\s+run\s+\S+|log\s+confirms?|confirmed\s+running)\b/i, tools: [
+    "bash", "process_start", "process_restart", "self_edit",
+  ] },
 ];
 
-const CLAIM_AT_REPLY_START_RE = /(?:^|\n)\s*[-*]?\s*(Removed|Unpinned|Deleted|Dropped|Cleared|Unscheduled|Added|Pinned|Scheduled|Created|Wrote|Built|Saved|Installed|Sent|Posted|Emailed|Messaged|Published|Mailed|Updated|Edited|Modified|Changed|Renamed|Patched|Configured|Noted|Remembered|Recorded|Logged|Bookmarked|Memorized|Stored)\b/i;
+const CLAIM_AT_REPLY_START_RE = /(?:^|\n)\s*[-*]?\s*(Removed|Unpinned|Deleted|Dropped|Cleared|Unscheduled|Added|Pinned|Scheduled|Created|Wrote|Built|Saved|Installed|Sent|Posted|Emailed|Messaged|Published|Mailed|Updated|Edited|Modified|Changed|Renamed|Patched|Configured|Noted|Remembered|Recorded|Logged|Bookmarked|Memorized|Stored|Ran|Restarted|Relaunched|Rebooted|Executed|Verified|Validated)\b/i;
+// Result-claim phrases ("check passed", "tests passed", "build succeeded",
+// "npm run check passed", "log confirms", "confirmed running") assert an
+// outcome that only a real run produces. They aren't first-person and need
+// not start a sentence, so they get their own gate or the function bails
+// before the verb-class regex ever sees them.
+const CLAIM_RESULT_RE = /\b((?:check|tests?|build)\s+(?:passed|passes|succeeded)|build\s+passes|npm\s+run\s+\S+|log\s+confirms?|confirmed\s+running)\b/i;
 // First-person claim — past tense for completed actions ("I saved X") plus
 // present/future-tense forms for memory verbs ("I'll remember", "I'll note",
 // "I will bookmark"). The future tense is treated as a claim too because
@@ -69,7 +86,7 @@ const CLAIM_AT_REPLY_START_RE = /(?:^|\n)\s*[-*]?\s*(Removed|Unpinned|Deleted|Dr
 // model commits to durable storage that won't actually happen unless we
 // force the retry. Non-memory verbs stay past-tense-only (claiming "I'll
 // send the email" is normal in-task language and shouldn't trigger a retry).
-const CLAIM_FIRST_PERSON_RE = /\bI(?:'ve|'ll| have| will)?\s+(removed|unpinned|deleted|dropped|cleared|unscheduled|added|pinned|scheduled|created|wrote|built|saved|installed|sent|posted|emailed|messaged|published|mailed|updated|edited|modified|changed|renamed|patched|configured|noted?|remembers?|remembered|records?|recorded|logs?|logged|bookmarks?|bookmarked|memorizes?|memorized|stores?|stored)\b/i;
+const CLAIM_FIRST_PERSON_RE = /\bI(?:'ve|'ll| have| will)?\s+(removed|unpinned|deleted|dropped|cleared|unscheduled|added|pinned|scheduled|created|wrote|built|saved|installed|sent|posted|emailed|messaged|published|mailed|updated|edited|modified|changed|renamed|patched|configured|noted?|remembers?|remembered|records?|recorded|logs?|logged|bookmarks?|bookmarked|memorizes?|memorized|stores?|stored|ran|restarted?|relaunched|rebooted|executed?|verified?|validated?)\b/i;
 
 /**
  * Return a nudge if the assistant's reply claims an action verb whose
@@ -83,7 +100,11 @@ export function checkUnmatchedActionClaim(
   if (!text) return null;
   const cleaned = stripCodeBlocks(text);
   if (!cleaned) return null;
-  if (!CLAIM_AT_REPLY_START_RE.test(cleaned) && !CLAIM_FIRST_PERSON_RE.test(cleaned)) return null;
+  if (
+    !CLAIM_AT_REPLY_START_RE.test(cleaned) &&
+    !CLAIM_FIRST_PERSON_RE.test(cleaned) &&
+    !CLAIM_RESULT_RE.test(cleaned)
+  ) return null;
   text = cleaned; // downstream verb-class regex tests use the cleaned form too
 
   // Find which verb classes the reply claims

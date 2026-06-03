@@ -12,11 +12,21 @@
 // per-op flag postCommitNudgePending so a commit detected by post-commit
 // surfaces a nudge on the iteration after.
 
+import { createHash } from "node:crypto";
 import { logRetry } from "../retry-telemetry.js";
 
 export interface LoopState {
   lastToolKey: string;
   sameToolCount: number;
+  // Result-awareness for exact-repeat: a stuck model repeats the same call AND
+  // gets the same result; a legitimate repeat (user asked for N identical runs,
+  // polling a changing status, a retry that progresses) gets a DIFFERENT result
+  // each time. lastResultSig is the signature of the last result for the
+  // current repeated key; identicalResultRepeats counts consecutive repeats
+  // that produced an unchanged result. Updated by noteToolResults() after
+  // dispatch. Exact-repeat aborts only when these confirm non-progress.
+  lastResultSig: string | null;
+  identicalResultRepeats: number;
   toolNameCounts: Map<string, number>;
   // Iterations elapsed since the last MUTATING tool call (write/edit/commit).
   // Build_app worker spun 96 bash calls + 0 file changes for 5 min before kill.
@@ -32,6 +42,8 @@ export function createLoopState(): LoopState {
   return {
     lastToolKey: "",
     sameToolCount: 0,
+    lastResultSig: null,
+    identicalResultRepeats: 0,
     toolNameCounts: new Map(),
     iterationsSinceMutation: 0,
     postCommitNudgePending: false,
@@ -117,17 +129,25 @@ export function checkToolLoops(
   const repeatLimit = isWeakOrMedium ? 2 : 3;
   const discoveryLimit = isWeakOrMedium ? DISCOVERY_LOOP_THRESHOLD_WEAK : DISCOVERY_LOOP_THRESHOLD;
 
-  // Exact-repeat detection
+  // Exact-repeat detection. Aborts only when the repeated call ALSO keeps
+  // producing the same result (confirmed via noteToolResults after each
+  // dispatch) — so a user-requested batch of identical commands or a poll
+  // whose result changes each turn isn't mistaken for a stuck spin. Detecting
+  // non-progress needs ≥2 observed results, so the abort lands one turn later
+  // than a result-blind check would; the no-progress + discovery guards below
+  // remain the backstop for everything this misses.
   const key = toolCalls.map(tc => `${tc.name}:${tc.arguments}`).join("|");
   if (key === state.lastToolKey) {
     state.sameToolCount++;
-    if (state.sameToolCount >= repeatLimit) {
+    if (state.identicalResultRepeats >= repeatLimit - 1) {
       logRetry({ kind: "loop-abort", tool: toolCalls[0]?.name, detail: { repeatLimit, modelTier: opts?.modelTier } });
-      return { abort: true, nudge: "\n\n(Detected repeated tool calls — stopping loop)" };
+      return { abort: true, nudge: "\n\n(Detected repeated tool calls with unchanging results — stopping loop)" };
     }
   } else {
     state.sameToolCount = 1;
     state.lastToolKey = key;
+    state.identicalResultRepeats = 0;
+    state.lastResultSig = null;
   }
 
   // Discovery-style loop detection: same READ-ONLY discovery tool called 8+
@@ -210,4 +230,27 @@ export function checkToolLoops(
   }
 
   return { abort: false, nudge: null };
+}
+
+/**
+ * Record the results of a turn's tool calls so the exact-repeat detector can
+ * tell a stuck spin (same call, same result) from legitimate repetition (same
+ * call, changing result). Call after dispatch with the same tool calls passed
+ * to checkToolLoops. Only tracks while the repeated key holds; a key change is
+ * reset by checkToolLoops on the next turn.
+ */
+export function noteToolResults(
+  toolCalls: Array<{ name: string; arguments: string }>,
+  state: LoopState,
+  results: Array<{ content: string }>,
+): void {
+  const key = toolCalls.map(tc => `${tc.name}:${tc.arguments}`).join("|");
+  if (key !== state.lastToolKey) return;
+  const sig = createHash("sha1")
+    .update(results.map(r => r.content).join(" "))
+    .digest("hex");
+  if (state.lastResultSig !== null) {
+    state.identicalResultRepeats = sig === state.lastResultSig ? state.identicalResultRepeats + 1 : 0;
+  }
+  state.lastResultSig = sig;
 }

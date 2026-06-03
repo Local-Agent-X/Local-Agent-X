@@ -18,7 +18,13 @@ export const actionClaimMiddleware: CanonicalMiddleware = {
   name: "action-claim",
 
   async afterModelCall(ctx) {
-    if (ctx.toolCalls.length > 0) return { kind: "continue" };
+    // NOTE: deliberately NOT gated on `ctx.toolCalls.length > 0`. Interleaved
+    // (mixed) turns — where the model calls some tools AND narrates a
+    // different, un-executed action ("I restarted the bridge", "npm run check
+    // passed") — must still be checked. This is safe: if the claimed verb's
+    // matching tool WAS called (ok, recorded in ctx.toolsCalledThisOp),
+    // checkUnmatchedActionClaim returns null; it only nudges when the claimed
+    // action maps to NO successful tool call.
     const flag = getMiddlewareState<FiredFlag>(
       ctx.op.id,
       "action-claim",

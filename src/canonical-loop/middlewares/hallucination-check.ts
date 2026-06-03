@@ -18,7 +18,15 @@ export const hallucinationCheckMiddleware: CanonicalMiddleware = {
   name: "hallucination-check",
 
   async afterModelCall(ctx) {
-    if (ctx.toolCalls.length > 0) return { kind: "continue" };
+    // NOTE: deliberately NOT gated on `ctx.toolCalls.length > 0`. The worker
+    // hallucination check must fire on EVERY turn (the file comment below),
+    // including interleaved turns that also made tool calls — that's where a
+    // "background worker is on it" narration with no successful spawn slips
+    // through. The approval check is also kept on mixed turns: its regex only
+    // matches explicit permission-request phrasing ("requires approval",
+    // "needs your approval"), which is never a benign noun-mention, so the
+    // false-positive risk on normal mixed turns is negligible. The creation
+    // check stays gated to turnIdx === 0 (unchanged).
     const text = ctx.assistantContent;
     if (!text) return { kind: "continue" };
 

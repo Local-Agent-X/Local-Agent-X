@@ -308,6 +308,10 @@ export class MemoryIndex {
     return Facts.validityStats(this.db);
   }
 
+  purgeInvalidatedFacts(olderThanMs: number): number {
+    return Facts.purgeInvalidatedFacts(this.db, this.hasFts, olderThanMs);
+  }
+
   // ── Single-fact agent API (used by remember / update_fact / forget tools) ──
 
   rememberFact(

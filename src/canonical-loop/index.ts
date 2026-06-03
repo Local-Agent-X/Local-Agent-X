@@ -23,11 +23,7 @@ import { resolveAdapterFactory } from "./runtime.js";
 import { enqueueOp, pumpScheduler } from "./scheduler.js";
 import { transitionOp } from "./state-machine.js";
 import { readCanonicalEvents as readCanonicalEventsInternal } from "./store.js";
-import { awaitOpRunning } from "./await-op.js";
-import { createLogger } from "../logger.js";
 import type { CanonicalLane, StateChangedBody } from "./types.js";
-
-const entryLogger = createLogger("canonical-loop.entry");
 
 export {
   isCanonicalLoopEnabled,
@@ -303,22 +299,13 @@ export function canonicalLoopEntry(
   if (resolveAdapterFactory(op)) {
     enqueueOp(op.id, op.lane as CanonicalLane);
     pumpScheduler();
-    // PRD §17 hard rule keeps the SYNC return shape — but the loop now has
-    // a "did this op actually reach running" probe for callers that want
-    // it. We fire awaitOpRunning here as a background observer when
-    // confirmRunning !== false, so the failure case (lane-cap queue waits,
-    // adapter init crash) shows up in the log even if the caller doesn't
-    // poll. Callers needing the answer in-line still call awaitOpRunning
-    // themselves (see op_submit_async).
-    if (opts.confirmRunning !== false) {
-      void awaitOpRunning(op.id, 5000).then((r) => {
-        if (!r.running) {
-          entryLogger.warn(
-            `[canonicalLoopEntry] op ${op.id} did not reach running: ${r.reason}`,
-          );
-        }
-      });
-    }
+    // confirmRunning is accepted for forward-compat with callers that
+    // pass it. The truthful "did it actually start" answer comes from
+    // calling awaitOpRunning directly (see op_submit_async). A previous
+    // implementation fired a background subscriber here for a passive
+    // warn-log; it raced with the test runner's awaitState pattern on
+    // CI Linux and was dropped.
+    void opts.confirmRunning;
   } else {
     queueMicrotask(() => failForMissingAdapter(op));
   }

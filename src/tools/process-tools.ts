@@ -19,8 +19,9 @@
  * last time, then evicted. Stdout/stderr buffer is capped per session
  * to bound memory.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { dirname, basename, resolve, sep } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err, running } from "./result-helpers.js";
 
@@ -30,6 +31,9 @@ const logger = createLogger("tools.process");
 interface ProcessSession {
   sessionId: string;
   command: string;
+  /** cwd/env the session was started with, so process_restart can reuse them. */
+  cwdHint?: string;
+  envHint?: Record<string, string>;
   pid: number | null;
   child: ChildProcess | null;
   startedAt: number;
@@ -90,6 +94,173 @@ function sanitizeEnv(extra?: Record<string, string>): Record<string, string> {
   return out;
 }
 
+/**
+ * Build a session, spawn the command in a detached process group (so a
+ * later `process.kill(-pid)` tree-kills any grandchild like a node server),
+ * and wire up stdout/stderr/exit capture. Shared by process_start and
+ * process_restart so there's exactly one spawn path. Returns the live
+ * session, or an error string if spawn threw synchronously.
+ */
+function startSession(
+  command: string,
+  cwd?: string,
+  env?: Record<string, string>,
+): { session: ProcessSession } | { error: string } {
+  const sessionId = newSessionId();
+  const isWin = process.platform === "win32";
+  const shell = isWin ? "powershell.exe" : "/bin/bash";
+  const shellArgs = isWin ? ["-NoProfile", "-Command", command] : ["-c", command];
+
+  let child: ChildProcess;
+  try {
+    // detached:true on non-Windows makes the child a process-group leader so
+    // process_kill's `process.kill(-pid, "SIGKILL")` reaches grandchildren
+    // (e.g. a node server holding a port). On Windows taskkill /T handles the
+    // tree, and detached would risk a stray console. Pipes are unaffected.
+    child = spawn(shell, shellArgs, {
+      env: sanitizeEnv(env),
+      cwd,
+      windowsHide: true,
+      detached: !isWin,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.unref();
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+
+  const session: ProcessSession = {
+    sessionId,
+    command,
+    cwdHint: cwd,
+    envHint: env,
+    pid: child.pid ?? null,
+    child,
+    startedAt: Date.now(),
+    exitedAt: null,
+    exitCode: null,
+    stdout: "",
+    stderr: "",
+    truncated: false,
+    totalBytes: 0,
+  };
+  SESSIONS.set(sessionId, session);
+
+  child.stdout?.setEncoding("utf-8");
+  child.stderr?.setEncoding("utf-8");
+  child.stdout?.on("data", (chunk: string) => {
+    session.totalBytes += chunk.length;
+    if (session.stdout.length + chunk.length <= MAX_BUFFER_BYTES) {
+      session.stdout += chunk;
+    } else {
+      session.truncated = true;
+      const room = MAX_BUFFER_BYTES - session.stdout.length;
+      if (room > 0) session.stdout += chunk.slice(0, room);
+    }
+  });
+  child.stderr?.on("data", (chunk: string) => {
+    session.totalBytes += chunk.length;
+    if (session.stderr.length + chunk.length <= MAX_BUFFER_BYTES) {
+      session.stderr += chunk;
+    } else {
+      session.truncated = true;
+      const room = MAX_BUFFER_BYTES - session.stderr.length;
+      if (room > 0) session.stderr += chunk.slice(0, room);
+    }
+  });
+  child.on("error", (e) => {
+    logger.warn(`session ${sessionId} spawn error: ${e.message}`);
+    session.exitCode = -1;
+    session.exitedAt = Date.now();
+    session.stderr += `\n[spawn error] ${e.message}`;
+  });
+  child.on("exit", (code) => {
+    session.exitCode = code;
+    session.exitedAt = Date.now();
+    session.child = null;
+  });
+
+  return { session };
+}
+
+/**
+ * Tree-kill a running session. Mirrors processKillTool's logic: negative-pid
+ * group kill on POSIX (works because startSession spawns detached), taskkill
+ * /T on Windows. No-op if already exited.
+ */
+function killSession(session: ProcessSession): void {
+  if (session.exitedAt !== null) return;
+  const pid = session.child?.pid;
+  if (process.platform === "win32" && pid) {
+    spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { windowsHide: true, stdio: "ignore" });
+  } else if (pid) {
+    try { process.kill(-pid, "SIGKILL"); } catch { session.child?.kill("SIGKILL"); }
+  } else {
+    session.child?.kill("SIGKILL");
+  }
+}
+
+/**
+ * Find every PID currently listening on a TCP port, cross-platform and
+ * self-contained (the voice-setup pidOnPort is Windows-only and lives in a
+ * route module — coupling here would be wrong). Returns integer PIDs; on any
+ * failure returns []. Used by process_restart to reclaim a port held by a
+ * stale/orphaned process before starting fresh.
+ */
+function pidsOnPort(port: number): number[] {
+  if (!Number.isInteger(port) || port <= 0) return [];
+  const isWin = process.platform === "win32";
+  try {
+    let out: string;
+    if (isWin) {
+      out = execFileSync("powershell.exe", [
+        "-NoProfile", "-Command",
+        `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess)`,
+      ], { encoding: "utf-8", timeout: 5000, windowsHide: true });
+    } else {
+      out = execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], { encoding: "utf-8", timeout: 5000 });
+    }
+    const pids = new Set<number>();
+    for (const line of out.split(/\r?\n/)) {
+      const n = Number(line.trim());
+      if (Number.isInteger(n) && n > 0) pids.add(n);
+    }
+    return [...pids];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Best-effort: which live sessions plausibly serve `absPath` (so a write/edit
+ * can warn that the running process still serves the OLD code until restarted).
+ * Conservative + side-effect free — only non-exited sessions, heuristic match:
+ * the session's cwdHint is an ancestor of absPath, OR the command string
+ * mentions the file's directory or basename. False negatives are fine (a missed
+ * note); we avoid false positives by not matching on partial substrings.
+ */
+export function runningSessionsForPath(absPath: string): { sessionId: string; command: string }[] {
+  const target = resolve(absPath);
+  const targetDir = dirname(target);
+  const base = basename(target);
+  const out: { sessionId: string; command: string }[] = [];
+  for (const s of SESSIONS.values()) {
+    if (s.exitedAt !== null) continue;
+    let match = false;
+    if (s.cwdHint) {
+      const cwd = resolve(s.cwdHint);
+      // Ancestor check: target is inside cwd (or equals it). Append sep so
+      // "/srv/app" doesn't match "/srv/application".
+      if (target === cwd || target.startsWith(cwd + sep)) match = true;
+    }
+    if (!match && (s.command.includes(targetDir) || s.command.includes(base))) match = true;
+    if (match) out.push({ sessionId: s.sessionId, command: s.command });
+  }
+  return out;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
+
 // ── process_start ────────────────────────────────────────────────────────
 
 export const processStartTool: ToolDefinition = {
@@ -110,73 +281,16 @@ export const processStartTool: ToolDefinition = {
     const command = String(args.command || "").trim();
     if (!command) return err("process_start: command is required");
 
-    const sessionId = newSessionId();
     const cwd = typeof args.cwd === "string" ? args.cwd : undefined;
-    const env = sanitizeEnv(args.env as Record<string, string> | undefined);
+    const env = args.env as Record<string, string> | undefined;
 
-    const isWin = process.platform === "win32";
-    const shell = isWin ? "powershell.exe" : "/bin/bash";
-    const shellArgs = isWin ? ["-NoProfile", "-Command", command] : ["-c", command];
-
-    let child: ChildProcess;
-    try {
-      child = spawn(shell, shellArgs, { env, cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    } catch (e) {
-      return err(`process_start: spawn failed: ${(e as Error).message}`);
-    }
-
-    const session: ProcessSession = {
-      sessionId,
-      command,
-      pid: child.pid ?? null,
-      child,
-      startedAt: Date.now(),
-      exitedAt: null,
-      exitCode: null,
-      stdout: "",
-      stderr: "",
-      truncated: false,
-      totalBytes: 0,
-    };
-    SESSIONS.set(sessionId, session);
-
-    child.stdout?.setEncoding("utf-8");
-    child.stderr?.setEncoding("utf-8");
-    child.stdout?.on("data", (chunk: string) => {
-      session.totalBytes += chunk.length;
-      if (session.stdout.length + chunk.length <= MAX_BUFFER_BYTES) {
-        session.stdout += chunk;
-      } else {
-        session.truncated = true;
-        const room = MAX_BUFFER_BYTES - session.stdout.length;
-        if (room > 0) session.stdout += chunk.slice(0, room);
-      }
-    });
-    child.stderr?.on("data", (chunk: string) => {
-      session.totalBytes += chunk.length;
-      if (session.stderr.length + chunk.length <= MAX_BUFFER_BYTES) {
-        session.stderr += chunk;
-      } else {
-        session.truncated = true;
-        const room = MAX_BUFFER_BYTES - session.stderr.length;
-        if (room > 0) session.stderr += chunk.slice(0, room);
-      }
-    });
-    child.on("error", (e) => {
-      logger.warn(`session ${sessionId} spawn error: ${e.message}`);
-      session.exitCode = -1;
-      session.exitedAt = Date.now();
-      session.stderr += `\n[spawn error] ${e.message}`;
-    });
-    child.on("exit", (code) => {
-      session.exitCode = code;
-      session.exitedAt = Date.now();
-      session.child = null;
-    });
+    const res = startSession(command, cwd, env);
+    if ("error" in res) return err(`process_start: spawn failed: ${res.error}`);
+    const { session } = res;
 
     return running(
-      sessionId,
-      `Started session ${sessionId}: ${command.slice(0, 80)}${command.length > 80 ? "..." : ""}\nPoll with process_status({session_id: "${sessionId}"}). Kill with process_kill.`,
+      session.sessionId,
+      `Started session ${session.sessionId}: ${command.slice(0, 80)}${command.length > 80 ? "..." : ""}\nPoll with process_status({session_id: "${session.sessionId}"}). Kill with process_kill.`,
       { command, pid: session.pid },
     );
   },
@@ -262,19 +376,109 @@ export const processKillTool: ToolDefinition = {
     }
     try {
       const pid = session.child?.pid;
-      if (process.platform === "win32" && pid) {
-        spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { windowsHide: true, stdio: "ignore" });
-      } else if (pid) {
-        try { process.kill(-pid, "SIGKILL"); } catch { session.child?.kill("SIGKILL"); }
-      } else {
-        session.child?.kill("SIGKILL");
-      }
-      return ok(`Killed session ${sessionId} (pid=${pid ?? "?"}).`);
+      killSession(session);
+      return ok(
+        `Killed session ${sessionId} (pid=${pid ?? "?"}).`,
+        {
+          recovery:
+            "Killing the process does not guarantee a network port it held is immediately free. " +
+            "To restart a server on the same port, confirm with process_list and use " +
+            "process_restart({ command, port }) to reclaim the port cleanly rather than assuming it's free.",
+        },
+      );
     } catch (e) {
       return err(`process_kill: ${(e as Error).message}`);
     }
   },
 };
+
+// ── process_restart ──────────────────────────────────────────────────────
+
+export const processRestartTool: ToolDefinition = {
+  name: "process_restart",
+  description:
+    "Restart: reclaims a port held by a stale/orphaned process, then starts fresh. Use when an edit won't take effect because an old process is still serving. Pass session_id to replace a tracked session (reusing its command/cwd/env unless overridden), and/or port to first SIGTERM/SIGKILL whatever is listening on that port before starting — so the new process won't hit EADDRINUSE. Returns a NEW session_id.",
+  parameters: {
+    type: "object",
+    properties: {
+      session_id: { type: "string", description: "Tracked session to replace (optional)." },
+      command: { type: "string", description: "Command to start. Required unless session_id is given." },
+      port: { type: "number", description: "TCP port to reclaim before starting (optional)." },
+      cwd: { type: "string", description: "Working directory (optional)." },
+      env: { type: "object", description: "Extra env vars (optional)." },
+    },
+    required: [],
+  },
+  async execute(args): Promise<ToolResult> {
+    gcSessions();
+
+    let command = typeof args.command === "string" ? args.command.trim() : "";
+    let cwd = typeof args.cwd === "string" ? args.cwd : undefined;
+    let env = args.env as Record<string, string> | undefined;
+
+    // Replace a tracked session: inherit its command/cwd/env, kill it, wait.
+    const oldSessionId = typeof args.session_id === "string" ? args.session_id.trim() : "";
+    if (oldSessionId) {
+      const old = SESSIONS.get(oldSessionId);
+      if (!old) return err(`process_restart: no such session "${oldSessionId}"`);
+      if (!command) command = old.command;
+      if (cwd === undefined) cwd = old.cwdHint;
+      if (env === undefined) env = old.envHint;
+      killSession(old);
+      const deadline = Date.now() + 3000;
+      while (old.exitedAt === null && Date.now() < deadline) await sleep(100);
+    }
+
+    if (!command) return err("process_restart: command is required (or pass a session_id to reuse one)");
+
+    // Reclaim the port BEFORE starting so the new process doesn't EADDRINUSE.
+    const port = typeof args.port === "number" ? Math.floor(args.port) : undefined;
+    if (port !== undefined && port > 0) {
+      const holders = pidsOnPort(port);
+      for (const pid of holders) {
+        try { process.platform === "win32" ? killWinPid(pid) : process.kill(pid, "SIGTERM"); } catch { /* gone */ }
+      }
+      if (holders.length > 0) await sleep(1000);
+      for (const pid of holders) {
+        try { process.platform === "win32" ? killWinPid(pid) : process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+      }
+      const deadline = Date.now() + 5000;
+      while (pidsOnPort(port).length > 0 && Date.now() < deadline) await sleep(200);
+      if (pidsOnPort(port).length > 0) {
+        return err(`process_restart: port ${port} is still held after kill attempt; not starting a doomed process.`);
+      }
+    }
+
+    const res = startSession(command, cwd, env);
+    if ("error" in res) return err(`process_restart: spawn failed: ${res.error}`);
+    const { session } = res;
+
+    // Confirm the new process actually grabbed the port.
+    let listenCheck = "skipped (no port)";
+    let boundPort: boolean | undefined;
+    if (port !== undefined && port > 0) {
+      boundPort = false;
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        // A grandchild (e.g. node under bash) holds the port, not necessarily
+        // session.pid itself — so "non-empty" is the signal we want.
+        if (pidsOnPort(port).length > 0) { boundPort = true; break; }
+        await sleep(200);
+      }
+      listenCheck = boundPort ? `listening on ${port}` : `NOT yet listening on ${port} (process may still be starting)`;
+    }
+
+    return running(
+      session.sessionId,
+      `Restarted as session ${session.sessionId}: ${command.slice(0, 80)}${command.length > 80 ? "..." : ""}\nListening check: ${listenCheck}\nPoll with process_status({session_id: "${session.sessionId}"}).`,
+      { command, pid: session.pid, bound_port: boundPort },
+    );
+  },
+};
+
+function killWinPid(pid: number): void {
+  spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { windowsHide: true, stdio: "ignore" });
+}
 
 // ── process_list ─────────────────────────────────────────────────────────
 
@@ -300,5 +504,6 @@ export const processTools: ToolDefinition[] = [
   processStartTool,
   processStatusTool,
   processKillTool,
+  processRestartTool,
   processListTool,
 ];

@@ -151,6 +151,12 @@ export interface SecurityDecision {
    * with the "translate tool failures, never parrot" prompt rule.
    */
   userHint?: string;
+  /**
+   * Suggested next move for the model when blocked — surfaces as a "Recovery:"
+   * line adjacent to the tool result (see result-helpers renderToolResultForModel).
+   * Right-time guidance so a denied call doesn't leave the model stuck.
+   */
+  recovery?: string;
   quarantined?: boolean;
 }
 

@@ -11,6 +11,7 @@ export interface KernelClassPolicyCtx {
   egressAllowlistConfigured: boolean;
   egressMode: EgressMode;
   selfPort: string;
+  localServicePorts: ReadonlySet<string>;
   workspace: string;
   fileAccessMode: FileAccessMode;
   isInAllowedPaths: (realPath: string, sessionId?: string) => boolean;
@@ -65,6 +66,7 @@ export function evaluateByKernelClass(
           policy.selfPort,
           args.url,
           policy.egressMode,
+          policy.localServicePorts,
         );
       }
       return {

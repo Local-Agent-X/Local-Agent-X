@@ -15,6 +15,8 @@ import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
 import { isRetryable, isRetryableTool } from "../resilience-policy.js";
+import { getToolTimeout, withTimeout, ToolTimeoutError } from "../tool-timeout.js";
+import { timeout } from "../tools/result-helpers.js";
 
 const logger = createLogger("tool-execution");
 
@@ -29,10 +31,18 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   const startedAt = Date.now();
   ctx.startedAt = startedAt;
   const shouldRetry = isRetryableTool(tc.name);
+  // Hang-catcher: bound each execute so a stuck tool yields a [timeout] result
+  // row instead of stranding the model with no result. ms <= 0 means the tool
+  // is exempt (long-runner) — call it directly, never pass 0 to withTimeout.
+  // withTimeout sits INSIDE the withRetry thunk so each attempt is bounded
+  // independently. NOTE: on timeout the underlying execute promise keeps
+  // running orphaned (no per-tool abort); acceptable — the point is the row.
+  const ms = getToolTimeout(tc.name);
+  const runOnce = () => (ms > 0 ? withTimeout(tool.execute(args, signal), ms, tc.name) : tool.execute(args, signal));
 
   try {
     if (shouldRetry) {
-      ctx.result = await withRetry(() => tool.execute(args, signal), {
+      ctx.result = await withRetry(runOnce, {
         maxRetries: 2,
         baseDelayMs: 500,
         maxDelayMs: 4000,
@@ -41,7 +51,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
         layer: "L1-tool",
       });
     } else {
-      ctx.result = await tool.execute(args, signal);
+      ctx.result = await runOnce();
     }
     // Taint detection + result redaction.
     //
@@ -114,7 +124,23 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       ctx.result = stub;
     }
   } catch (e) {
-    ctx.result = { content: `Tool error: ${(e as Error).message}`, isError: true };
+    if (e instanceof ToolTimeoutError) {
+      // A hung tool: hand the model a hard [timeout] row so it can't narrate
+      // "done" against silence. The execute promise is orphaned (no abort), so
+      // tell the model to VERIFY state rather than assume success or failure.
+      ctx.result = timeout(
+        `Tool "${e.toolName}" exceeded its ${e.ms}ms timeout and was abandoned. It may still be running in the background.`,
+        {
+          duration_ms: e.ms,
+          recovery:
+            `Do NOT assume this succeeded or failed. Verify actual state before continuing: ` +
+            `check process_status / process_list for a still-running process, and inspect the ` +
+            `filesystem for any partial output. If the work is long-running, re-run it via an async tool (e.g. process_start / op_submit_async) and poll.`,
+        },
+      );
+    } else {
+      ctx.result = { content: `Tool error: ${(e as Error).message}`, isError: true };
+    }
   }
 
   const result = ctx.result!;

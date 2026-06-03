@@ -5,6 +5,7 @@ import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
 import { validateSyntax } from "./syntax-validate.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
+import { runningSessionsForPath } from "./process-tools.js";
 
 // ── Edit-failure recovery helpers ────────────────────────────────────────
 // When edit() fails, the model previously saw a bare string like
@@ -97,6 +98,17 @@ function appUrlHint(absoluteFilePath: string): string {
   const port = process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007";
   const appUrl = `http://127.0.0.1:${port}/apps/${m[1]}/index.html`;
   return ` — App URL: ${appUrl} (include this URL verbatim in your reply to the user so it renders as a clickable link).`;
+}
+
+/** If a live process_start session plausibly serves the just-written file, warn
+ *  that it keeps serving the OLD code until restarted. Right-time guidance so an
+ *  edit doesn't silently appear to "not take effect" against a stale server. */
+function servedFileHint(absoluteFilePath: string): string {
+  const sessions = runningSessionsForPath(absoluteFilePath);
+  if (sessions.length === 0) return "";
+  const s = sessions[0];
+  const cmd = s.command.length > 60 ? s.command.slice(0, 60) + "..." : s.command;
+  return ` — Note: a running process (session ${s.sessionId}: ${cmd}) may be serving this file; it will keep serving the OLD code until you restart it (process_restart).`;
 }
 
 export const readTool: ToolDefinition = {
@@ -238,7 +250,7 @@ export const writeTool: ToolDefinition = {
       writeFileSync(filePath, toWrite, "utf-8");
       const syntaxIssue = validateSyntax(filePath, toWrite);
       return ok(
-        `Wrote ${filePath}${appUrlHint(filePath)}`,
+        `Wrote ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
         syntaxIssue ? { recovery: syntaxIssue } : undefined,
       );
     } catch (e) {
@@ -333,7 +345,7 @@ export const editTool: ToolDefinition = {
       writeFileSync(filePath, updated, "utf-8");
       const syntaxIssue = validateSyntax(filePath, updated);
       return ok(
-        `Edited ${filePath}${appUrlHint(filePath)}`,
+        `Edited ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
         syntaxIssue ? { recovery: syntaxIssue } : undefined,
       );
     } catch (e) {

@@ -559,6 +559,67 @@ describe("egress mode semantics", () => {
     expect(d.reason).toMatch(/strict.*no allowlist/i);
   });
 
+  it("evaluateWebFetch: loopback host + allowlisted local service port → allowed", () => {
+    const ports = new Set(["47831"]);
+    for (const url of ["http://127.0.0.1:47831/health", "http://localhost:47831/health"]) {
+      const d = evaluateWebFetch(new Set(), false, "7007", url, "permissive", ports);
+      expect(d.allowed).toBe(true);
+      expect(d.reason).toBe("Allowed local service");
+    }
+  });
+
+  it("evaluateWebFetch: loopback host + port NOT in allowlist → still blocked", () => {
+    const d = evaluateWebFetch(new Set(), false, "7007", "http://127.0.0.1:9999/health", "permissive", new Set(["47831"]));
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/private\/reserved/i);
+  });
+
+  it("evaluateWebFetch: loopback block on non-allowlisted port carries a localServicePorts recovery hint", () => {
+    // Right-time hint for the original "can't verify my bridge" failure — the
+    // model should learn it can allowlist its own service's port.
+    for (const url of ["http://127.0.0.1:9999/health", "http://[::1]:9999/health", "http://localhost:9999/health"]) {
+      const d = evaluateWebFetch(new Set(), false, "7007", url, "permissive", new Set(["47831"]));
+      expect(d.allowed).toBe(false);
+      expect(typeof d.recovery).toBe("string");
+      expect(d.recovery).toMatch(/localServicePorts/);
+    }
+  });
+
+  it("evaluateWebFetch: public host unaffected by local service ports", () => {
+    const d = evaluateWebFetch(new Set(), false, "7007", "https://example.com", "permissive", new Set(["47831"]));
+    expect(d.allowed).toBe(true);
+  });
+
+  it("evaluateWebFetch: non-loopback private IP + allowlisted port → still blocked", () => {
+    const d = evaluateWebFetch(new Set(), false, "7007", "http://10.0.0.5:47831/health", "permissive", new Set(["47831"]));
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/private\/reserved/i);
+  });
+
+  it("SecurityLayer: localServicePorts from security.json gates loopback health-checks", () => {
+    withLaxDir(
+      (dir) => {
+        writeFileSync(join(dir, "security.json"), JSON.stringify({ localServicePorts: [47831, "5050"] }), "utf-8");
+      },
+      () => {
+        const sec = new SecurityLayer(WORKSPACE, "common");
+        const allowed = sec.evaluate({
+          toolName: "web_fetch",
+          args: { url: "http://127.0.0.1:47831/health" },
+          sessionId: "t",
+        });
+        expect(allowed.allowed).toBe(true);
+        expect(allowed.reason).toBe("Allowed local service");
+        const blocked = sec.evaluate({
+          toolName: "web_fetch",
+          args: { url: "http://127.0.0.1:9999/health" },
+          sessionId: "t",
+        });
+        expect(blocked.allowed).toBe(false);
+      },
+    );
+  });
+
   it("permissive + populated allowlist: any public host still allowed (allowlist gates secrets, not surfing)", () => {
     withLaxDir(
       (dir) => writeFileSync(

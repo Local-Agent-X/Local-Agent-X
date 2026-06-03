@@ -58,6 +58,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   process_start:    { kernel: "shell",    risk: "shell" },
   process_status:   { kernel: "shell",    risk: "safe" },
   process_kill:     { kernel: "shell",    risk: "destructive" },
+  process_restart:  { kernel: "shell",    risk: "destructive" },
   process_list:     { kernel: "shell",    risk: "safe" },
 
   // ── Raw filesystem ──

@@ -44,6 +44,10 @@ export class SecurityLayer {
   // egress-allowlist feature fail-open on a default install.
   private egressAllowlistConfigured: boolean = false;
   private egressMode: EgressMode = "permissive";
+  // Loopback ports the operator trusts the agent to HTTP-health-check (e.g. a
+  // bridge or dev server it started). Loaded from ~/.lax/security.json. Only
+  // applies to literal loopback hosts — see evaluateWebFetch.
+  private localServicePorts: Set<string> = new Set();
   private sessionAllowedPaths = new Map<string, Set<string>>();
   fileAccessMode: FileAccessMode = "common";
 
@@ -93,6 +97,7 @@ export class SecurityLayer {
     this.workspace = resolve(workspace);
     this.fileAccessMode = fileAccessMode || this.loadFileAccessMode();
     this.egressMode = this.loadEgressMode();
+    this.localServicePorts = this.loadLocalServicePorts();
     // Load egress allowlist from ~/.lax/egress-allowlist.json.
     //
     // In permissive mode (default): allowlist is the "trusted destinations"
@@ -136,6 +141,26 @@ export class SecurityLayer {
       }
     } catch {}
     return "permissive";
+  }
+
+  private loadLocalServicePorts(): Set<string> {
+    const ports = new Set<string>();
+    try {
+      const cfgPath = join(getLaxDir(), "security.json");
+      if (existsSync(cfgPath)) {
+        const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+        if (Array.isArray(cfg.localServicePorts)) {
+          for (const p of cfg.localServicePorts) {
+            const n = Number(p);
+            if (Number.isInteger(n) && n > 0 && n <= 65535) ports.add(String(n));
+          }
+        }
+      }
+    } catch {}
+    if (ports.size > 0) {
+      logger.info(`[security] Local service ports loaded: ${ports.size} ports`);
+    }
+    return ports;
   }
 
   private loadFileAccessMode(): FileAccessMode {
@@ -239,6 +264,7 @@ export class SecurityLayer {
         String(SecurityLayer._selfPort || "7007"),
         String(args.url || ""),
         this.egressMode,
+        this.localServicePorts,
       );
     } else {
       decision = this.evaluateByKernelClass(toolName, TOOL_CLASS_MAP[toolName], args, ctx);
@@ -263,6 +289,7 @@ export class SecurityLayer {
           String(SecurityLayer._selfPort || "7007"),
           browserUrl,
           this.egressMode,
+          this.localServicePorts,
         );
       } catch {
         return { allowed: false, reason: "Blocked: invalid URL", userHint: USER_HINTS.network };
@@ -288,6 +315,7 @@ export class SecurityLayer {
       egressAllowlistConfigured: this.egressAllowlistConfigured,
       egressMode: this.egressMode,
       selfPort: String(SecurityLayer._selfPort || "7007"),
+      localServicePorts: this.localServicePorts,
       workspace: this.workspace,
       fileAccessMode: this.fileAccessMode,
       isInAllowedPaths: (rp, sid) => this.isInAllowedPaths(rp, sid),
@@ -306,6 +334,7 @@ export class SecurityLayer {
       String(SecurityLayer._selfPort || "7007"),
       url,
       this.egressMode,
+      this.localServicePorts,
     );
   }
 

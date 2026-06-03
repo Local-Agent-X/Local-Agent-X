@@ -6,6 +6,16 @@ import { USER_HINTS } from "../types.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("security.network-policy");
 
+// Right-time recovery for a LEGITIMATE local-service health-check that hits the
+// loopback/private-IP block. Ties the model to the localServicePorts allowlist
+// added for operator-trusted bridges/dev servers. NOT used for SSRF-attack
+// shapes (cloud metadata, hex/decimal-encoded IPs) — those should never be
+// allowlisted.
+const LOCAL_SERVICE_RECOVERY =
+  'If this is your own local service (a dev server / bridge you started), add its port to ' +
+  '"localServicePorts" in ~/.lax/security.json to allow loopback health-checks. ' +
+  "Otherwise verify the service via process_status/process_list or the filesystem instead of HTTP.";
+
 // ── SSRF: IP address validation helpers ──
 
 /** Strictly parse a decimal IPv4 address — rejects octal (0177) and hex (0x7f) formats */
@@ -132,6 +142,7 @@ export function evaluateWebFetch(
   selfPort: string,
   url: string,
   egressMode: EgressMode = "permissive",
+  localServicePorts: ReadonlySet<string> = new Set<string>(),
 ): SecurityDecision {
   let parsed: URL;
   try {
@@ -156,16 +167,25 @@ export function evaluateWebFetch(
     }
   }
 
+  // Allow health-checks to operator-trusted local services (e.g. a bridge or
+  // dev server the agent itself started). Literal loopback only — hostnames are
+  // never resolved here, preserving DNS-rebinding protection.
+  if (host === "127.0.0.1" || host === "localhost" || host === "::1") {
+    if (parsed.port && localServicePorts.has(parsed.port)) {
+      return { allowed: true, reason: "Allowed local service" };
+    }
+  }
+
   // Check blocked hostnames
   if (BLOCKED_HOSTNAMES.has(host)) {
-    return { allowed: false, reason: `Blocked: ${host} is a blocked hostname (SSRF protection)`, userHint: USER_HINTS.network };
+    return { allowed: false, reason: `Blocked: ${host} is a blocked hostname (SSRF protection)`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
   }
 
   // Check if it's a literal IP address
   // IPv4 — strict decimal only; octal (0177.0.0.1) and hex (0x7f.0.0.1) are blocked
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || /^0x[0-9a-f]/i.test(host) || /^0[0-7]+\./.test(host)) {
     if (isPrivateIPv4(host)) {
-      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv4 address`, userHint: USER_HINTS.network };
+      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv4 address`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
     }
   }
   // Block hex integer IPs (e.g., 0x7f000001 = 127.0.0.1)
@@ -184,7 +204,7 @@ export function evaluateWebFetch(
       return { allowed: false, reason: `Blocked: malformed IPv6 address brackets in ${host}`, userHint: USER_HINTS.network };
     }
     if (isPrivateIPv6(cleanHost)) {
-      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv6 address`, userHint: USER_HINTS.network };
+      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv6 address`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
     }
   }
 
@@ -292,9 +312,10 @@ export async function validateUrlWithDns(
   selfPort: string,
   url: string,
   egressMode: EgressMode = "permissive",
+  localServicePorts: ReadonlySet<string> = new Set<string>(),
 ): Promise<SecurityDecision> {
   // First do the synchronous check
-  const syncResult = evaluateWebFetch(egressAllowlist, egressAllowlistConfigured, selfPort, url, egressMode);
+  const syncResult = evaluateWebFetch(egressAllowlist, egressAllowlistConfigured, selfPort, url, egressMode, localServicePorts);
   if (!syncResult.allowed) return syncResult;
 
   const parsed = new URL(url);

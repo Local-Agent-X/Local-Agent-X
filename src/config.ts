@@ -3,6 +3,7 @@ import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { LAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
+import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("config");
@@ -126,11 +127,7 @@ const configSchema = z.object({
 });
 
 function getConfigDir(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || "";
-  if (!home) {
-    throw new Error("Cannot determine home directory: neither HOME nor USERPROFILE is set");
-  }
-  const dir = join(home, ".lax");
+  const dir = getLaxDir();
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }

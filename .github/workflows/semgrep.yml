@@ -1,0 +1,45 @@
+name: Semgrep SAST
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: '0 9 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    name: Semgrep scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      # Findings surface in the Security tab via SARIF rather than gating the
+      # build — introducing SAST shouldn't red-wall main on a first-run backlog.
+      # Promote to a blocking `--error` once the existing findings are triaged.
+      - name: Scan
+        run: >
+          semgrep scan --sarif --output semgrep.sarif
+          --config p/typescript
+          --config p/security-audit
+          --config p/nodejs
+          --config p/owasp-top-ten
+          || true
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif

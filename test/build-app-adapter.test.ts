@@ -17,13 +17,34 @@
  *     guard — closes the Phase-2 bug where abort flipped a flag but the
  *     subprocess kept running).
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Adapter, AdapterReport, TurnInput } from "../src/canonical-loop/adapter-contract.js";
 import {
   createAppBuildAdapter,
   APP_BUILD_ADAPTER_NAME,
   type CliBuildRunner,
 } from "../src/canonical-loop/adapters/app-build-adapter.js";
+
+// The adapter now verifies <appDir>/index.html exists before declaring
+// APP_READY (gap-fix in 3aef2fe3). Tests that assert successful adapter
+// outcomes must create a real index.html on disk; use makeAppDir() to
+// stage one and afterEach to clean up.
+const tempDirs: string[] = [];
+function makeAppDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "appbuild-test-"));
+  writeFileSync(join(dir, "index.html"), "<!doctype html><html><body>fixture</body></html>");
+  tempDirs.push(dir);
+  return dir;
+}
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const d = tempDirs.pop()!;
+    try { rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+});
 
 function emptyTurnInput(opId = "op_app_build_test", turnIdx = 0): TurnInput {
   return {
@@ -53,7 +74,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       strategy: "cli-subprocess",
       provider: "codex",
       appName: "x",
-      appDir: "/tmp/x",
+      appDir: makeAppDir(),
       appUrl: "http://localhost/x",
       prompt: "PROMPT-CODEX",
       systemPrompt: "PERSONA",
@@ -99,7 +120,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       strategy: "cli-subprocess",
       provider: "codex",
       appName: "z",
-      appDir: "/tmp/z",
+      appDir: makeAppDir(),
       appUrl: "http://localhost/z",
       prompt: "P",
       systemPrompt: "P",
@@ -121,7 +142,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       strategy: "cli-subprocess",
       provider: "codex",
       appName: "foo",
-      appDir: "/tmp/foo",
+      appDir: makeAppDir(),
       appUrl: "http://placeholder/should-be-replaced",
       prompt: "P",
       systemPrompt: "P",

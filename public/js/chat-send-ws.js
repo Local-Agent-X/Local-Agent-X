@@ -38,11 +38,17 @@ function _finalizeWsTurn(streamSessionId, streamChat) {
   // captured at startTurn. Single persistence point — no race with a mid-
   // stream save tick because there is no save tick.
   const finalized = ChatStreamStore.promoteLiveToMessages(streamSessionId, streamChat);
-  if (finalized) {
-    streamChat.updatedAt = Date.now();
-    saveChats();
-    renderSidebar();
+  if (!finalized) {
+    // Nothing to promote — either a turn that produced no output, or a
+    // redundant `done` replayed by the stuck-stream watchdog after the row
+    // was already finalized (promoteLiveToMessages is idempotent and now
+    // returns null on the second call). Skip the persist + rebuild so we
+    // don't re-paint or re-save for a no-op finalize.
+    return;
   }
+  streamChat.updatedAt = Date.now();
+  saveChats();
+  renderSidebar();
   // Single source of truth: messages[] now holds the finalized assistant
   // row (promoteLiveToMessages just spliced it in). The swap path already
   // painted the latest content; this rebuild atomically replaces the live

@@ -25,5 +25,20 @@ export default defineConfig({
       },
     },
     isolate: true,
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary", "lcov"],
+      include: ["src/**/*.ts", "packages/**/src/**/*.ts"],
+      exclude: ["**/*.test.ts", "**/*.d.ts", "**/dist/**", "**/__tests__/**"],
+      // Floor set a few points below the current baseline (lines 37.5%,
+      // functions 48.8%, branches 74.6%) — a regression ratchet, not a
+      // target. Raise these as coverage grows; never lower to make CI pass.
+      thresholds: {
+        statements: 35,
+        branches: 70,
+        functions: 45,
+        lines: 35,
+      },
+    },
   },
 });

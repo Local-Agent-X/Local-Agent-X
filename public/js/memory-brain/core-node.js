@@ -43,28 +43,27 @@ function codename(p) { return p.named ? p.identity.name : 'AGENT X'; }
 function taglineText(p) { return p.identity.tagline || (p.named ? '' : 'identity pending…'); }
 
 function buildCard(p) {
-  const card = el('div', 'mb-core-card');
+  const card = el('div', 'mb-core-card mb-core-bannercard');
+  card.append(banner());
 
-  const stripe = el('div', 'mb-core-stripe');
-  stripe.textContent = '▣ CORE · IDENTITY';
-
-  const top = el('div', 'mb-core-top');
+  const head = el('div', 'mb-core-bhead');
   const pf = el('div', 'mb-core-pf');
   pf.append(portraitImg(p));
-  const who = el('div', 'mb-core-who');
+  const who = el('div', 'mb-core-bwho');
   who.append(
-    textEl('div', 'mb-core-role', 'CODENAME'),
+    textEl('div', 'mb-core-role', 'PERSONNEL FILE · #AX-001'),
     textEl('h2', null, codename(p)),
-    textEl('div', 'mb-core-tag', taglineText(p)),
   );
-  top.append(pf, who);
+  head.append(pf, who, textEl('span', 'mb-core-open', 'OPEN FILE ▸'));
+  card.append(head);
 
-  const row = el('div', 'mb-core-row');
-  const live = el('span', 'mb-core-live');
-  live.append(el('span', 'mb-core-dot'), document.createTextNode('ACTIVE'));
-  row.append(live, textEl('span', null, '· CLEARANCE: OPERATOR'), textEl('span', 'mb-core-open', 'OPEN FILE ▸'));
-
-  card.append(stripe, top, row);
+  const chips = el('div', 'mb-core-bchips');
+  chips.append(
+    chip('live', '● LOADED IN ACTIVE SESSION'),
+    chip('grade', '◇ GRADE A1 · SELF-DECLARED'),
+    chip('lock', '🔒 EXEMPT FROM DECAY'),
+  );
+  card.append(chips);
   return card;
 }
 
@@ -97,8 +96,12 @@ function buildDossier(p) {
   );
   d.append(chips);
 
+  // Pinned header above (banner + identity + chips) and footer below; only this
+  // body scrolls, so the frame stays put.
+  const body = el('div', 'mb-dossier-body');
+
   const isDefaultPortrait = p.identity.portrait === '/agent-x-portrait.png';
-  d.append(section('§1', 'COVER IDENTITY', 'IDENTITY.md', grid([
+  body.append(section('§1', 'COVER IDENTITY', 'IDENTITY.md', grid([
     ['Codename', p.named ? p.identity.name : '— not yet named —'],
     ['Portrait', isDefaultPortrait ? 'stock (default)' : 'custom'],
     ['Tagline', p.identity.tagline || '—'],
@@ -113,13 +116,14 @@ function buildDossier(p) {
   if (!p.heart.orders.length && !p.heart.boundaries.length) {
     orders.append(textEl('div', 'mb-dossier-empty', 'No standing orders set yet.'));
   }
-  d.append(orders.section);
+  body.append(orders.section);
 
   if (p.user.fields.length) {
-    d.append(section('§3', 'THE HANDLER', 'USER.md',
+    body.append(section('§3', 'THE HANDLER', 'USER.md',
       grid(p.user.fields.map((f) => [f.label, f.value]))));
   }
 
+  d.append(body);
   d.append(banner());
   overlay.append(d);
   return overlay;

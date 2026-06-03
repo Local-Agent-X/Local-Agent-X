@@ -133,6 +133,18 @@
     const idx = Math.max(0, Math.min(raw, chat.messages.length));
     chat.messages.splice(idx, 0, msg);
     e.liveAnchorIndex = -1;
+    // Clear the live scratch so a second promote (the stuck-stream watchdog's
+    // reconnect_op replays a redundant `done`, which re-fires finalize → here)
+    // has nothing to promote and the guard above returns null — otherwise the
+    // still-populated content + liveAnchorIndex === -1 re-splices THIS row at
+    // index 0, duplicating the assistant message at the top of the chat. Mirror
+    // exactly what startTurn resets so a subsequent turn starts clean too.
+    e.content = '';
+    e.toolEvents = [];
+    e.chips = [];
+    e.approvals = [];
+    e.progressByTool = {};
+    e.stopNote = null;
     return msg;
   }
 

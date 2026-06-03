@@ -56,8 +56,19 @@ function getProcessImage(pid: number): string | null {
       return m ? m[1] : null;
     }
     if (process.platform === "linux") {
-      // /proc/<pid>/comm holds the basename. Doesn't fork a process.
-      return readFileSync(`/proc/${pid}/comm`, "utf-8").trim() || null;
+      // /proc/<pid>/comm holds the basename, but a process can rename it via
+      // its title (worker pools, vitest's forks runner do this). Trust comm
+      // when it already names our binary; otherwise fall back to the real
+      // executable from cmdline[0], which a title change can't alter.
+      const comm = readFileSync(`/proc/${pid}/comm`, "utf-8").trim();
+      if (/^node$/i.test(comm)) return comm;
+      try {
+        const argv0 = readFileSync(`/proc/${pid}/cmdline`, "utf-8").split("\0")[0];
+        if (argv0) return argv0.split(/[\\/]/).pop() || comm || null;
+      } catch {
+        // cmdline unreadable — fall back to comm below.
+      }
+      return comm || null;
     }
     // macOS / BSD: ps -o comm= prints just the command field, no header.
     const out = execSync(

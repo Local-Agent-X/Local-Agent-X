@@ -182,6 +182,24 @@ function detectScriptWrite(command: string): string | null {
   return null;
 }
 
+// Remove the contents of single- and double-quoted spans (and the quotes)
+// so shell separators that are literal inside an argument — e.g. the `;` in
+// `python -c "a; b"` — aren't mistaken for command chaining.
+function stripQuotedSpans(command: string): string {
+  let out = "";
+  let quote: string | null = null;
+  for (const c of command) {
+    if (quote) {
+      if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
 export function evaluateShellCommand(command: string): SecurityDecision {
   // Obfuscation detection
   try {
@@ -209,12 +227,16 @@ export function evaluateShellCommand(command: string): SecurityDecision {
       return { allowed: false, reason: "Blocked: multi-line commands not allowed.", userHint: USER_HINTS.commandShell };
     }
   } else {
-    // Bash: block backtick, $(), ${} (command substitution)
+    // Bash: block backtick, $(), ${} (command substitution). Kept on the raw
+    // command — backtick/$() inside double quotes are still expanded by bash.
     if (/[`\r\n]/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
       return { allowed: false, reason: "Blocked: shell metacharacters detected (backtick or command substitution).", userHint: USER_HINTS.commandShell };
     }
-    // Block ; (sequential chaining) and single & (background) but allow && and ||
-    if (/;/.test(command) || /(?<![&|])&(?![&|])/.test(command)) {
+    // Block ; (sequential chaining) and single & (background) but allow && and ||.
+    // These are only separators OUTSIDE quotes — a `;` inside
+    // `python -c "import json; ..."` is literal to the shell, not a chain.
+    const unquoted = stripQuotedSpans(command);
+    if (/;/.test(unquoted) || /(?<![&|])&(?![&|])/.test(unquoted)) {
       return { allowed: false, reason: "Blocked: use && instead of ; for chaining, and don't background processes with &.", userHint: USER_HINTS.commandShell };
     }
   }

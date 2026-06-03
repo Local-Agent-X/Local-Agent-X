@@ -31,7 +31,10 @@ export const PROJECTS_DIR = join(LAX_REPO_ROOT, "workspace", "apps");
 export function resolveProjectDir(raw: unknown): string | null {
   const s = String(raw || "").trim();
   if (!s) return null;
-  if (isAbsolute(s)) return s;
+  // isAbsolute() is platform-specific — on POSIX it doesn't recognize a
+  // Windows drive path like "C:\proj". Accept both so a path absolute on its
+  // origin OS passes through unchanged regardless of where this runs.
+  if (isAbsolute(s) || /^[a-zA-Z]:[\\/]/.test(s)) return s;
   if (isBareName(s)) return join(PROJECTS_DIR, s);
   return resolve(process.cwd(), s);
 }

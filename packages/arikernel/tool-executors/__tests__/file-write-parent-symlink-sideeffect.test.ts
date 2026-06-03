@@ -42,7 +42,7 @@ describe("FileExecutor write: parent symlink escape prevention", () => {
 
 	afterAll(async () => {
 		if (origRoot === undefined) {
-			process.env.FILE_EXECUTOR_ROOT = undefined;
+			delete process.env.FILE_EXECUTOR_ROOT;
 		} else {
 			process.env.FILE_EXECUTOR_ROOT = origRoot;
 		}

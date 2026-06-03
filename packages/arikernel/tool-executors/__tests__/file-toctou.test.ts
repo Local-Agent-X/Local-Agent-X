@@ -29,7 +29,7 @@ describe("FileExecutor TOCTOU mitigation", () => {
 
 	afterAll(async () => {
 		if (origRoot === undefined) {
-			process.env.FILE_EXECUTOR_ROOT = undefined;
+			delete process.env.FILE_EXECUTOR_ROOT;
 		} else {
 			process.env.FILE_EXECUTOR_ROOT = origRoot;
 		}
@@ -53,16 +53,27 @@ describe("FileExecutor TOCTOU mitigation", () => {
 	});
 
 	it("rejects symlinks pointing outside allowed root", async () => {
+		// Point at a real existing file outside the root so the escape is
+		// exercised on every platform (a nonexistent target like /etc/passwd
+		// only fails with ENOENT on Windows, which masks the security check).
+		const outsideDir = await mkdtemp(path.join(tmpdir(), "arikernel-outside-"));
+		const outsideFile = path.join(outsideDir, "secret.txt");
+		await writeFile(outsideFile, "top secret");
 		const linkPath = path.join(tmpDir, "evil-link");
 		try {
-			await symlink("/etc/passwd", linkPath);
+			await symlink(outsideFile, linkPath);
 		} catch {
 			// symlink creation may fail on Windows without privileges — skip
+			await rm(outsideDir, { recursive: true, force: true });
 			return;
 		}
-		await expect(executor.execute(makeToolCall("read", { path: linkPath }))).rejects.toThrow(
-			/symlink rejected|ELOOP|path escapes/i,
-		);
+		try {
+			await expect(executor.execute(makeToolCall("read", { path: linkPath }))).rejects.toThrow(
+				/symlink rejected|ELOOP|path escapes/i,
+			);
+		} finally {
+			await rm(outsideDir, { recursive: true, force: true });
+		}
 	});
 
 	it("rejects writes outside allowed root", async () => {

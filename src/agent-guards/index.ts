@@ -20,6 +20,7 @@ export {
 export { checkActedAndAsked } from "./acted-and-asked.js";
 export {
   checkToolLoops,
+  noteToolResults,
   createLoopState,
   type LoopState,
   NO_PROGRESS_LIMIT,

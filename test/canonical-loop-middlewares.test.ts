@@ -131,18 +131,35 @@ describe("loop-detection middleware", () => {
     expect(r.kind).toBe("continue");
   });
 
-  it("aborts after 3 identical tool calls (exact repeat, strong model)", async () => {
+  it("aborts repeated identical calls that keep producing the SAME result", async () => {
     const op = mkOp("loop-abort");
     const tc = mkToolCall("read", { path: "x" });
-    // call once
-    let r = await loopDetectionMiddleware.afterModelCall!(mkCtx({ op, toolCalls: [tc] }));
-    expect(r.kind).toBe("continue");
-    // call again — same key
-    r = await loopDetectionMiddleware.afterModelCall!(mkCtx({ op, toolCalls: [tc] }));
-    expect(r.kind).toBe("continue");
-    // third identical call → abort
-    r = await loopDetectionMiddleware.afterModelCall!(mkCtx({ op, toolCalls: [tc] }));
-    expect(r.kind).toBe("abort");
+    const sameResult: CanonicalToolResultView[] = [{ toolName: "read", toolCallId: tc.toolCallId, content: "unchanged output" }];
+    const turn = async () => {
+      const verdict = await loopDetectionMiddleware.afterModelCall!(mkCtx({ op, toolCalls: [tc] }));
+      await loopDetectionMiddleware.afterToolExecution!(mkCtx({ op, toolCalls: [tc], toolResults: sameResult }));
+      return verdict;
+    };
+    // Result-awareness needs ≥2 observed results to confirm non-progress, so the
+    // abort lands one turn later than a result-blind check (strong model).
+    expect((await turn()).kind).toBe("continue");
+    expect((await turn()).kind).toBe("continue");
+    expect((await turn()).kind).toBe("continue");
+    expect((await turn()).kind).toBe("abort");
+  });
+
+  it("does NOT abort repeated identical calls whose RESULT changes each time (user-requested repetition / polling)", async () => {
+    const op = mkOp("loop-progress");
+    const tc = mkToolCall("bash", { command: "sleep 1 && date" });
+    const turn = async (i: number) => {
+      const verdict = await loopDetectionMiddleware.afterModelCall!(mkCtx({ op, toolCalls: [tc] }));
+      const result: CanonicalToolResultView[] = [{ toolName: "bash", toolCallId: tc.toolCallId, content: `timestamp ${i}` }];
+      await loopDetectionMiddleware.afterToolExecution!(mkCtx({ op, toolCalls: [tc], toolResults: result }));
+      return verdict;
+    };
+    for (let i = 0; i < 6; i++) {
+      expect((await turn(i)).kind).toBe("continue");
+    }
   });
 });
 
@@ -204,12 +221,30 @@ describe("post-commit middleware", () => {
 // ── hallucination-check ──────────────────────────────────────────────────
 
 describe("hallucination-check middleware", () => {
-  it("ignores turns with tool calls", async () => {
+  it("continues on a benign mixed turn (tool calls + non-claim text)", async () => {
+    // Early-return on `toolCalls.length > 0` was removed so the worker check
+    // fires on mixed turns. Benign text on a mixed turn must still continue.
     const op = mkOp("hall-tools");
     const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
       op, toolCalls: [mkToolCall("bash")], assistantContent: "I will save it",
     }));
     expect(r.kind).toBe("continue");
+  });
+
+  it("fires worker-hallucination on a MIXED turn (tool calls + worker narration, no spawn)", async () => {
+    // Regression for the mixed-turn early-return removal: a turn that made a
+    // tool call but narrates a worker that was never spawned must still nudge.
+    verifyMock.mockResolvedValue(false); // worker path must ignore the verifier
+    const op = mkOp("hall-worker-mixed");
+    const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
+      op,
+      turnIdx: 2,
+      toolCalls: [mkToolCall("bash")],
+      assistantContent: "Background worker is building the PDF right now.",
+      toolsCalledThisOp: ["bash"], // bash ran, but no spawn-class tool
+    }));
+    expect(r.kind).toBe("nudge");
+    expect((r as { reason: string }).reason).toBe("worker-hallucination");
   });
 
   it("nudges on approval-hallucination text", async () => {
@@ -302,6 +337,33 @@ describe("action-claim middleware", () => {
     const r = await actionClaimMiddleware.afterModelCall!(mkCtx({
       op, assistantContent: "I noted in the bash output that X failed.",
       toolsCalledThisOp: ["read"],
+    }));
+    expect(r.kind).toBe("continue");
+  });
+
+  it("fires on a MIXED turn (tool calls present) when the exec claim has no matching successful tool", async () => {
+    // Regression for the mixed-turn early-return removal. The turn made a
+    // tool call (read), but claims it restarted the bridge with no
+    // process_restart/bash/etc. in the ok-ledger → must nudge.
+    verifyMock.mockResolvedValue(true);
+    const op = mkOp("action-claim-mixed");
+    const r = await actionClaimMiddleware.afterModelCall!(mkCtx({
+      op,
+      toolCalls: [mkToolCall("read", { path: "x" })],
+      assistantContent: "I restarted the bridge and it's running.",
+      toolsCalledThisOp: [], // read failed / not in ok-ledger
+    }));
+    expect(r.kind).toBe("nudge");
+    expect((r as { reason: string }).reason).toBe("action-claim");
+  });
+
+  it("does NOT fire on a mixed turn when the exec tool actually succeeded", async () => {
+    const op = mkOp("action-claim-mixed-ok");
+    const r = await actionClaimMiddleware.afterModelCall!(mkCtx({
+      op,
+      toolCalls: [mkToolCall("process_restart", { name: "bridge" })],
+      assistantContent: "I restarted the bridge and it's running.",
+      toolsCalledThisOp: ["process_restart"],
     }));
     expect(r.kind).toBe("continue");
   });

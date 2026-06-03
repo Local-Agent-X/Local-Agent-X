@@ -3,7 +3,7 @@ import { ShellExecutor, parseCommandString, validateCommand } from "../src/shell
 
 describe("validateCommand", () => {
 	it("accepts a simple command with safe arguments", () => {
-		expect(() => validateCommand("curl", ["https://example.com"])).not.toThrow();
+		expect(() => validateCommand("git", ["clone", "https://example.com"])).not.toThrow();
 	});
 
 	it("accepts command with no arguments", () => {
@@ -213,8 +213,8 @@ describe("ShellExecutor", () => {
 			toolClass: "shell",
 			action: "exec",
 			parameters: {
-				executable: "curl",
-				args: ["https://example.com; rm -rf /"],
+				executable: "git",
+				args: ["clone", "https://example.com; rm -rf /"],
 			},
 		});
 		expect(result.success).toBe(false);

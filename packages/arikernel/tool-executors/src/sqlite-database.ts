@@ -25,6 +25,7 @@
 import type { ToolCall, ToolResult } from "@arikernel/core";
 import type { ToolExecutor } from "./base.js";
 import { makeResult } from "./base.js";
+import { runPreDispatchGate } from "./pre-dispatch-gate.js";
 
 // ── Identifier validation ────────────────────────────────────────
 

@@ -71,8 +71,15 @@ jobs:
           echo "Lockfile present"
 
   test:
-    name: Tests
-    runs-on: ubuntu-latest
+    name: Unit tests
+    strategy:
+      fail-fast: false
+      matrix:
+        # LAX is Windows-primary with native deps; several invariants
+        # (DPAPI keychain, symlink containment, path resolution) only
+        # diverge off Linux, so the gate must validate both.
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -84,12 +91,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run vitest suite
-        run: npx vitest run
-
-      - name: Run tests
-        run: npm test
-        continue-on-error: true
+      - name: Unit tests (vitest)
+        run: npm run test:unit
 
       - name: Replay regression check
         run: npm run test:replay

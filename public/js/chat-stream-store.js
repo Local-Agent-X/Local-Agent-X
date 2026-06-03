@@ -35,6 +35,12 @@
     return {
       sessionId,
       content: '',
+      // Set when a tool event lands; the next stream delta is then the
+      // first text of a NEW model turn, so we open a paragraph break before
+      // it. Without this, turn N's trailing text and turn N+1's opening text
+      // concatenate into one run-on line ("...2026 .Step 2 completed...")
+      // because every turn's deltas append to the single `content` string.
+      toolsSinceText: false,
       toolEvents: [],
       // Out-of-band tool chip data (opId+actions metadata) — last write
       // wins per tool card, append-only across the turn.
@@ -90,6 +96,7 @@
   function startTurn(sessionId, anchorIdx) {
     const e = ensure(sessionId);
     e.content = '';
+    e.toolsSinceText = false;
     e.toolEvents = [];
     e.chips = [];
     e.progressByTool = {};
@@ -168,8 +175,12 @@
         e.lastActivityMs = now;
         break;
       case 'stream':
-        if (event.replace === true) e.content = event.text || '';
-        else if (typeof event.delta === 'string') e.content += event.delta;
+        if (event.replace === true) { e.content = event.text || ''; e.toolsSinceText = false; }
+        else if (typeof event.delta === 'string') {
+          if (e.toolsSinceText && e.content && !e.content.endsWith('\n')) e.content += '\n\n';
+          e.content += event.delta;
+          e.toolsSinceText = false;
+        }
         e.lastActivityMs = now;
         break;
       case 'tool_start':
@@ -181,6 +192,7 @@
         if (!event.toolCallId || !e.toolEvents.some(t => t.type === 'start' && t.toolCallId === event.toolCallId)) {
           e.toolEvents.push({ type: 'start', name: event.toolName, toolCallId: event.toolCallId, args: event.args, riskLevel: event.riskLevel });
         }
+        e.toolsSinceText = true;
         e.lastActivityMs = now;
         break;
       case 'tool_end': {
@@ -199,6 +211,7 @@
         if (!event.toolCallId || !e.toolEvents.some(t => t.type === 'end' && t.toolCallId === event.toolCallId)) {
           e.toolEvents.push({ type: 'end', name: event.toolName, toolCallId: event.toolCallId, allowed: event.allowed, status: event.status, result });
         }
+        e.toolsSinceText = true;
         e.lastActivityMs = now;
         break;
       }

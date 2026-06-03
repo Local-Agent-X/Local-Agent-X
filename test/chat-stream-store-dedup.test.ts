@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-type StreamEvent = { type: string; delta?: string; text?: string; replace?: boolean };
+type StreamEvent = { type: string; delta?: string; text?: string; replace?: boolean; toolName?: string; toolCallId?: string };
 interface ChatMessage { role: string; content: string }
 interface FakeChat { messages: ChatMessage[] }
 interface Store {
@@ -81,5 +81,48 @@ describe("ChatStreamStore.promoteLiveToMessages — double-done dedup", () => {
     }
     expect(chat.messages).toHaveLength(1);
     expect(chat.messages[0].content).toBe("Done.");
+  });
+});
+
+describe("ChatStreamStore.applyEvent — turn-boundary separation", () => {
+  const sessionId = "chat-turns";
+
+  it("opens a paragraph break between consecutive turns instead of running text together", () => {
+    const chat: FakeChat = { messages: [] };
+    ChatStreamStore.startTurn(sessionId, 0);
+
+    // Turn 1: text, then a tool call.
+    ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: "Step 1 done at 2026 ." });
+    ChatStreamStore.applyEvent(sessionId, { type: "tool_start", toolName: "bash", toolCallId: "c1" });
+    ChatStreamStore.applyEvent(sessionId, { type: "tool_end", toolName: "bash", toolCallId: "c1" });
+    // Turn 2: the model's next text must not glue onto "...2026 .".
+    ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: "Step 2 completed." });
+    ChatStreamStore.applyEvent(sessionId, { type: "done" });
+
+    const msg = ChatStreamStore.promoteLiveToMessages(sessionId, chat);
+    expect(msg).not.toBeNull();
+    expect(msg!.content).toBe("Step 1 done at 2026 .\n\nStep 2 completed.");
+  });
+
+  it("does not insert a break for deltas within the same turn", () => {
+    const chat: FakeChat = { messages: [] };
+    ChatStreamStore.startTurn(sessionId, 0);
+    ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: "Hello " });
+    ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: "world." });
+    ChatStreamStore.applyEvent(sessionId, { type: "done" });
+    const msg = ChatStreamStore.promoteLiveToMessages(sessionId, chat);
+    expect(msg!.content).toBe("Hello world.");
+  });
+
+  it("does not double up when the prior turn already ended with a newline", () => {
+    const chat: FakeChat = { messages: [] };
+    ChatStreamStore.startTurn(sessionId, 0);
+    ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: "Line one\n" });
+    ChatStreamStore.applyEvent(sessionId, { type: "tool_start", toolName: "bash", toolCallId: "c1" });
+    ChatStreamStore.applyEvent(sessionId, { type: "tool_end", toolName: "bash", toolCallId: "c1" });
+    ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: "Line two" });
+    ChatStreamStore.applyEvent(sessionId, { type: "done" });
+    const msg = ChatStreamStore.promoteLiveToMessages(sessionId, chat);
+    expect(msg!.content).toBe("Line one\nLine two");
   });
 });

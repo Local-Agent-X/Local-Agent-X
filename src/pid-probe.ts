@@ -16,7 +16,7 @@
 // separately and can't cross-import.
 
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readlinkSync } from "node:fs";
 
 /** Pure liveness probe. Returns true iff *some* process owns this PID.
  *  Use this when identity doesn't matter — e.g. polling for a kill to
@@ -56,19 +56,19 @@ function getProcessImage(pid: number): string | null {
       return m ? m[1] : null;
     }
     if (process.platform === "linux") {
-      // /proc/<pid>/comm holds the basename, but a process can rename it via
-      // its title (worker pools, vitest's forks runner do this). Trust comm
-      // when it already names our binary; otherwise fall back to the real
-      // executable from cmdline[0], which a title change can't alter.
-      const comm = readFileSync(`/proc/${pid}/comm`, "utf-8").trim();
-      if (/^node$/i.test(comm)) return comm;
+      // /proc/<pid>/exe is a symlink to the real binary. Prefer it over comm
+      // and cmdline[0], both of which live in the argv memory that a
+      // process.title change rewrites — worker pools and vitest's forks
+      // runner do exactly that, so comm/cmdline can read as the worker title
+      // instead of "node". /proc/exe is immune. Readable for our own PID;
+      // for a foreign PID it may be denied, so fall back to comm.
       try {
-        const argv0 = readFileSync(`/proc/${pid}/cmdline`, "utf-8").split("\0")[0];
-        if (argv0) return argv0.split(/[\\/]/).pop() || comm || null;
+        const exe = readlinkSync(`/proc/${pid}/exe`);
+        if (exe) return exe.split(/[\\/]/).pop() || null;
       } catch {
-        // cmdline unreadable — fall back to comm below.
+        // exe not permitted (foreign PID) or gone — fall back to comm.
       }
-      return comm || null;
+      return readFileSync(`/proc/${pid}/comm`, "utf-8").trim() || null;
     }
     // macOS / BSD: ps -o comm= prints just the command field, no header.
     const out = execSync(

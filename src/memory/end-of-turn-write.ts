@@ -124,14 +124,14 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<vo
   }
 }
 
-type ApplyWriteResult =
+export type ApplyWriteResult =
   | { ok: true }
   | { ok: false; blocked: true; reason: string }
   | { ok: false; blocked?: false; reason: string };
 
 // ── Decision parsing + apply ──
 
-interface WriteDecision {
+export interface WriteDecision {
   write: true;
   action: "append" | "replace_section";
   section_heading: string | null;
@@ -163,7 +163,7 @@ export function parseWriteDecision(raw: string): WriteDecision | null {
   return { write: true, action, section_heading, content };
 }
 
-async function applyWrite(d: WriteDecision, memory: MemoryIndex): Promise<ApplyWriteResult> {
+export async function applyWrite(d: WriteDecision, memory: MemoryIndex): Promise<ApplyWriteResult> {
   // Mirrors memory_update_profile's write path with the same char caps.
   // End-of-turn only writes USER.md — facts go through the agent's `remember`
   // tool during the turn, not this classifier.

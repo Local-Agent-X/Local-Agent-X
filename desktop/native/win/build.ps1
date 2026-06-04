@@ -24,12 +24,32 @@ if (-not $csc) {
     throw "csc.exe not found. Install .NET Framework 4.x developer tools (ships with every modern Windows)."
 }
 
+# Resolve System.Speech.dll to a FULL path. The legacy csc.exe does not search
+# the GAC by short name, so /reference:System.Speech.dll fails with CS0006 on
+# any machine that has the runtime + GAC but not the .NET Framework
+# reference-assembly pack (i.e. nearly every end-user box — the live install
+# failure). The assembly itself is always present because System.Speech ships
+# with the OS; we just have to hand csc its actual location. Prefer the GAC
+# copy; fall back to the fusion loader via reflection.
+$speechDll = Get-ChildItem "$env:WINDIR\Microsoft.NET\assembly\GAC_MSIL\System.Speech" `
+    -Recurse -Filter 'System.Speech.dll' -ErrorAction SilentlyContinue |
+    Select-Object -First 1 -ExpandProperty FullName
+if (-not $speechDll) {
+    try {
+        Add-Type -AssemblyName System.Speech -ErrorAction Stop
+        $speechDll = [System.Speech.Synthesis.SpeechSynthesizer].Assembly.Location
+    } catch { }
+}
+if (-not $speechDll -or -not (Test-Path $speechDll)) {
+    throw "System.Speech.dll could not be located (GAC + reflection both failed)."
+}
+
 & $csc `
     /nologo `
     /target:exe `
     /platform:anycpu `
     /optimize+ `
-    /reference:System.Speech.dll `
+    /reference:$speechDll `
     /out:$outExe `
     (Join-Path $here 'SpeechHelper.cs')
 

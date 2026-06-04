@@ -115,6 +115,35 @@ function has(cmd) {
   return spawnSync(cmd, ["--version"], { stdio: "ignore", shell: true }).status === 0;
 }
 
+// On Windows a freshly winget-installed Ollama lands in
+// %LOCALAPPDATA%\Programs\Ollama and updates the *persisted* user PATH — but
+// this already-running install process captured its PATH at launch, so a later
+// has("ollama") / `ollama pull` in the SAME run can't find it. The result: the
+// embedmodel step takes its "Ollama not on PATH" branch and the embedding model
+// silently never downloads (the live symptom on fresh Windows installs).
+// Prepend the known install dir to THIS process's PATH so the rest of the run
+// can use ollama immediately. (install.ps1 does the same for Node.) No-op off
+// Windows, if the dir is absent, or if it's already on PATH.
+function ensureOllamaOnPath() {
+  if (process.platform !== "win32") return;
+  const dir = join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "Programs", "Ollama");
+  const parts = (process.env.PATH || "").split(";");
+  if (existsSync(dir) && !parts.includes(dir)) {
+    process.env.PATH = `${dir};${process.env.PATH || ""}`;
+  }
+}
+
+// Cross-platform "stop any running `ollama serve`". pkill is Unix-only and is a
+// silent no-op on Windows, which left the daemon-restart + pull-retry paths
+// dead there; Windows kills the ollama.exe tree via taskkill instead.
+function killOllamaServe() {
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/F", "/IM", "ollama.exe", "/T"], { stdio: "ignore", shell: true });
+  } else {
+    spawnSync("pkill", ["-f", "ollama serve"], { stdio: "ignore" });
+  }
+}
+
 // Emit the plan once, before any step starts.
 ipc({ type: "plan", steps: STEPS_PLAN });
 
@@ -236,6 +265,7 @@ if (has("ollama")) {
   if (process.platform === "win32") {
     const r = run("winget", ["install", "Ollama.Ollama", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
     if (r.status !== 0) fail(`Ollama install failed (exit ${r.status}). Install manually from https://ollama.com/download`);
+    ensureOllamaOnPath(); // make the just-installed ollama visible to this run
     ok("Ollama installed");
   } else if (process.platform === "darwin") {
     const r = run("brew", ["install", "ollama"]);
@@ -332,7 +362,7 @@ async function ensureOllamaUp() {
   // Restart by killing any current ollama serve so the next one inits clean.
   if (await tagsResponding()) {
     log("Ollama daemon up but keypair missing — restarting to reinitialize…");
-    spawnSync("pkill", ["-f", "ollama serve"]);
+    killOllamaServe();
     await new Promise(r => setTimeout(r, 1500));
   } else {
     log("Starting Ollama daemon…");
@@ -348,6 +378,7 @@ async function ensureOllamaUp() {
   return false;
 }
 step("embedmodel", `Downloading ${EMBED_MODEL} (~670 MB, one-time)`);
+ensureOllamaOnPath(); // defensive: cover an install done in a prior run this process can't see
 if (has("ollama")) {
   const ready = await ensureOllamaUp();
   if (!ready) {
@@ -361,7 +392,7 @@ if (has("ollama")) {
     // partially (pulls are resumable + content-addressed).
     if (pull.status !== 0) {
       warn("Pull failed on first attempt — restarting daemon and retrying once…");
-      spawnSync("pkill", ["-f", "ollama serve"]);
+      killOllamaServe();
       await new Promise(r => setTimeout(r, 2000));
       const { spawn } = await import("node:child_process");
       spawn("ollama", ["serve"], { detached: true, stdio: "ignore" }).unref();

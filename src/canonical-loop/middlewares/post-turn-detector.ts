@@ -30,6 +30,7 @@ export const postTurnDetectorMiddleware: CanonicalMiddleware = {
     // ChatCompletionMessageParam[] view because computeEvidenceCount reads
     // assistant.tool_calls from that exact shape.
     const { readOpMessages } = await import("../store.js");
+    const { extractText } = await import("../turn-loop/content-extract.js");
     const rows = readOpMessages(ctx.op.id);
 
     // Highest enumerated step count across the op's genuine user instructions.
@@ -38,9 +39,7 @@ export const postTurnDetectorMiddleware: CanonicalMiddleware = {
     let enumeratedSteps = 0;
     for (const r of rows) {
       if (r.role !== "user") continue;
-      const c = r.content as { text?: unknown } | string | null;
-      const text = typeof c === "string" ? c : typeof c?.text === "string" ? c.text : "";
-      enumeratedSteps = Math.max(enumeratedSteps, countEnumeratedSteps(text));
+      enumeratedSteps = Math.max(enumeratedSteps, countEnumeratedSteps(extractText(r.content)));
     }
     const messagesView = rows.map(r => {
       if (r.role !== "assistant") {

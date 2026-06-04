@@ -1,0 +1,67 @@
+name: Rolling Installer (tracks main)
+
+# Builds a Windows GUI installer that, AT RUNTIME, downloads the latest `main`
+# branch source instead of a pinned tag — so it never needs rebuilding when app
+# code changes. This is the WIP/daily-update path: publish it ONCE to the stable
+# `rolling` pre-release, point your "Download for Windows" link at the asset URL
+# below, and every download thereafter installs current `main`:
+#
+#   https://github.com/<owner>/<repo>/releases/download/rolling/Install%20Local%20Agent%20X%20Windows%20Installer.exe
+#
+# Re-run this workflow ONLY when the installer itself changes (this csproj /
+# SourceDownloader / install-common.mjs), NOT on ordinary app updates.
+#
+# For reproducible, pinned releases use installer-release.yml instead (push a
+# v* tag); that path bakes in the tag and never tracks main.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # softprops/action-gh-release needs write to publish the asset
+
+jobs:
+  build-windows-rolling:
+    name: Windows rolling installer (.exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish main-tracking installer
+        # No -p:InstallerSourceTag → the csproj defaults to ref "main" / kind
+        # "heads", so the built .exe fetches refs/heads/main.tar.gz at runtime.
+        # The build commit doesn't matter — a stale build still serves latest
+        # main — but checkout@v4 gives us current installer code regardless.
+        shell: pwsh
+        run: |
+          dotnet publish installer/Installer.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishTrimmed=false `
+            --nologo
+          $src = "installer/bin/Release/net8.0/win-x64/publish/LocalAgentXInstaller.exe"
+          $dst = "Install Local Agent X Windows Installer.exe"
+          Copy-Item -LiteralPath $src -Destination $dst -Force
+          Write-Host ("Size: {0:N1} MB" -f ((Get-Item -LiteralPath $dst).Length / 1MB))
+
+      - name: Publish/refresh the `rolling` pre-release
+        # Re-uses the fixed `rolling` tag and replaces the asset in place, so the
+        # download URL is stable across re-runs.
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: rolling
+          name: Rolling installer (tracks main)
+          body: >
+            Auto-built Windows installer that downloads the latest `main` source
+            at install time. Always current; no per-update rebuild. For pinned
+            versions see the tagged releases.
+          prerelease: true
+          generate_release_notes: false
+          fail_on_unmatched_files: true
+          files: "Install Local Agent X Windows Installer.exe"

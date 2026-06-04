@@ -11,12 +11,22 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>LocalAgentX.Installer</RootNamespace>
     <AssemblyName>LocalAgentXInstaller</AssemblyName>
-    <!-- Source tag baked into the installer at build time. CI passes
-         -p:InstallerSourceTag=${{ github.ref_name }} so each release's
-         installer pins the matching source version. Local dev builds
-         fall through to "main". Read at runtime by SourceDownloader via
-         AssemblyMetadataAttribute below. -->
+    <!-- Source ref baked into the installer at build time, fetched at runtime
+         by SourceDownloader. Two modes:
+           - Branch tracking (default; ref unset or a branch name like "main"):
+             every run downloads the latest pushed commit of that branch, so a
+             single uploaded installer keeps serving current code with NO
+             rebuild per app update. This is the WIP/daily-update path.
+           - Tag pinning (release builds; -p:InstallerSourceTag=vX.Y.Z): a
+             version tag (matched by ^v\d) pins that exact snapshot forever, so
+             re-running an old installer is reproducible.
+         InstallerSourceRefKind chooses refs/heads/ vs refs/tags/ in the GitHub
+         archive URL; it's derived from the ref name but can be overridden with
+         -p:InstallerSourceRefKind if you ever track a branch named like a tag.
+         Both are surfaced to runtime via AssemblyMetadataAttribute below. -->
     <InstallerSourceTag Condition="'$(InstallerSourceTag)' == ''">main</InstallerSourceTag>
+    <InstallerSourceRefKind Condition="'$(InstallerSourceRefKind)' == '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(InstallerSourceTag)', '^v\d'))">tags</InstallerSourceRefKind>
+    <InstallerSourceRefKind Condition="'$(InstallerSourceRefKind)' == ''">heads</InstallerSourceRefKind>
     <!-- Win32 .exe icon shown in Explorer, the taskbar before the window paints,
          and Add/Remove Programs. The runtime Window.Icon (set in MainWindow.axaml)
          covers the title-bar icon once the UI is up. -->
@@ -27,6 +37,10 @@
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>SourceTag</_Parameter1>
       <_Parameter2>$(InstallerSourceTag)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>SourceRefKind</_Parameter1>
+      <_Parameter2>$(InstallerSourceRefKind)</_Parameter2>
     </AssemblyAttribute>
   </ItemGroup>
 

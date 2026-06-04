@@ -11,12 +11,14 @@ namespace LocalAgentX.Installer.Services;
 // developer-clone flow (.exe sitting inside a cloned repo) skips this
 // entirely.
 //
-// The tag to download is baked into the installer at build time via the
-// MSBuild property InstallerSourceTag, exposed at runtime through
-// [AssemblyMetadata("SourceTag", "...")]. Each installer pins the source
-// version it was built to install — re-running an old installer always
-// gets the same source it would have on day one, independent of newer
-// releases that have shipped since. Local dev builds default to "main".
+// The ref to download is baked in at build time via MSBuild properties
+// InstallerSourceTag (the ref name) + InstallerSourceRefKind ("heads" | "tags"),
+// surfaced at runtime as [AssemblyMetadata]. Two modes:
+//   - Branch tracking (default; e.g. ref "main", kind "heads"): every run
+//     fetches the latest pushed commit of that branch, so ONE uploaded
+//     installer keeps serving current code with no rebuild per app update.
+//   - Tag pinning (release builds; ref "vX.Y.Z", kind "tags"): re-running an
+//     old installer always reproduces that exact snapshot.
 public class SourceDownloader
 {
     private const string REPO_OWNER = "Local-Agent-X";
@@ -25,11 +27,12 @@ public class SourceDownloader
     public event Action<string>? OnStatus;
     public event Action<long, long?>? OnProgress;
 
-    public string Tag { get; } = ReadBuiltTag();
+    public string Tag { get; } = ReadMeta("SourceTag", "main");
+    public string RefKind { get; } = ReadMeta("SourceRefKind", "heads");
 
     public async Task<string> DownloadAndExtractAsync(string installDir, CancellationToken ct = default)
     {
-        var url = $"https://github.com/{REPO_OWNER}/{REPO_NAME}/archive/refs/tags/{Tag}.tar.gz";
+        var url = $"https://github.com/{REPO_OWNER}/{REPO_NAME}/archive/refs/{RefKind}/{Tag}.tar.gz";
         OnStatus?.Invoke($"Downloading source ({Tag})…");
 
         var tmpTgz = Path.Combine(Path.GetTempPath(), $"lax-source-{Guid.NewGuid():N}.tar.gz");
@@ -99,13 +102,14 @@ public class SourceDownloader
         await TarFile.ExtractToDirectoryAsync(gz, destDir, overwriteFiles: true, cancellationToken: ct);
     }
 
-    private static string ReadBuiltTag()
+    private static string ReadMeta(string key, string fallback)
     {
         var asm = Assembly.GetExecutingAssembly();
-        var tag = asm.GetCustomAttributes<AssemblyMetadataAttribute>()
-            .FirstOrDefault(m => m.Key == "SourceTag")?.Value;
-        // "main" is the local-dev fallback. CI sets InstallerSourceTag from
-        // ${{ github.ref_name }} so release builds always pin a specific tag.
-        return string.IsNullOrWhiteSpace(tag) ? "main" : tag!;
+        var val = asm.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(m => m.Key == key)?.Value;
+        // Local dev builds leave these unset, so they default to tracking the
+        // "main" branch (kind "heads"). CI sets SourceTag (+ SourceRefKind
+        // "tags" for vX.Y.Z) on release builds for a pinned snapshot.
+        return string.IsNullOrWhiteSpace(val) ? fallback : val!;
     }
 }

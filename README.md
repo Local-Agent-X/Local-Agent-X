@@ -84,3 +84,21 @@ Three lanes for change: **runtime state** flips through HTTP endpoints (settings
 Active development.
 
 Security contact: see [SECURITY.md](SECURITY.md).
+
+## License
+
+Local Agent X is **source-available** under the Apache License 2.0 with the
+[Commons Clause](https://commonsclause.com/) condition. See [LICENSE](LICENSE).
+
+In plain terms:
+
+- **Free, forever, for anyone** — use it, modify it, self-host it, read all the
+  source. Companies may run it internally for their own operations at no cost.
+- **You may not sell it.** No paid product, no commercial hosted/SaaS offering,
+  and no charging others for it or for support/hosting whose value comes from
+  the software.
+- There is no change date — these terms do not convert to a more permissive
+  license over time.
+
+Licensor: Peter Manrique. This summary is for convenience only; the [LICENSE](LICENSE)
+file is the binding text.

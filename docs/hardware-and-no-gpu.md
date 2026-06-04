@@ -19,14 +19,14 @@ LAX is a local-first agent — most of it runs fine on CPU. A few subsystems lea
 - **GPU**: ~50–200 ms per call.
 - **CPU**: ~12–25 seconds per call. Memory-live indexing of a single chat session can queue 10+ embed calls and back-pressure the chat pipeline behind it.
 - **Symptom of CPU-bound Ollama**: chat hangs on first turn after restart while the embedding queue drains; logs show repeated `[memory] Embedding total timeout exceeded (60s)`.
-- **Fix**: switch to cloud embeddings (see "Cloud routing") or set `LAX_MEMORY_LIVE=0`.
+- **Fix**: switch to cloud embeddings (see "Cloud routing"), or set `"embeddingProvider": "local"` in `~/.lax/settings.json` to use the bundled hash embedder (free, no Ollama — lower-quality recall but no CPU stalls).
 
 ### Voice STT — local Whisper (`local-whisper` provider)
 - **GPU**: real-time transcription, ~300 ms after speech-end.
 - **CPU**: 3–10 seconds for a short utterance, 30+ seconds for long ones.
 - **Fix**: pick a non-local STT tier (Groq, OpenAI, Mistral) — see [voice picker](#voice-tier-recommendations).
 
-### Voice TTS — Kokoro local (Tier 4 in-process ONNX)
+### Voice TTS — Kokoro in-process (Tier 4 ONNX; env-only via `LAX_VOICE_TIER4_PROVIDER=kokoro`)
 - **GPU**: ~1.2 s first-audio.
 - **CPU**: 2–4 s first-audio plus ongoing latency. Usable but laggy for back-and-forth voice chat.
 
@@ -61,17 +61,17 @@ Edit `~/.lax/settings.json`:
 
 Cost: ~$0.02 per million tokens (a few cents/day for typical use). Vector format is the same as Ollama's nomic/mxbai once normalized — past content stays searchable. Restart the server after editing.
 
-Alternative: set `LAX_MEMORY_LIVE=0` in the env. Past sessions remain searchable; new sessions just don't get indexed in real-time. Free, but degrades semantic recall over time.
+Alternative: set `"embeddingProvider": "local"` in `~/.lax/settings.json`. Sessions are still indexed in real-time, but with the bundled hash-based embedder instead of Ollama — free and no CPU stalls, at the cost of lower-quality semantic recall. Restart the server after editing.
 
 ### 2. Voice tier → Browser, Edge cloud, or OpenAI Realtime
 
 Open the Media tab and pick one of:
 
 - **Browser** — free, no install, works in any Chromium browser. Uses Web Speech API client-side for both STT and TTS. Robotic but instant. Recommended if you just want voice to work.
-- **Edge cloud** — Microsoft's edge-tts (no API key) for ~22 neural voices + Groq Whisper for STT (~250 ms latency). Needs `npm i msedge-tts mpg123-decoder` and a `GROQ_API_KEY` secret.
+- **Edge cloud** — Microsoft's edge-tts (no API key) for ~22 neural voices, paired with bundled local Whisper STT by default (no key). Ships with the app — no manual install. Optionally swap STT to cloud Groq/OpenAI/Mistral via the dropdown (needs the matching API key) for lower latency.
 - **OpenAI Realtime** — full-duplex, lowest latency, ~$0.06/min. Pay-per-minute. Needs `OPENAI_API_KEY` (or `OPENAI_REALTIME_KEY`).
 
-Don't pick "Kokoro local" or "Studio local" without a GPU — they'll work but feel slow.
+Don't pick "Studio local" without a GPU — its Python sidecars (Kokoro + faster-whisper, optional SoVITS/Chatterbox) are slow or won't start without CUDA.
 
 ### 3. Chat LLM → cloud provider (default)
 
@@ -90,7 +90,7 @@ If you want a local chat LLM and have an Ollama install with a small enough mode
 | Symptom | Cause | Fix |
 |---|---|---|
 | First chat after restart hangs 30–60s | Tool-RAG embedding all 170+ tools through CPU Ollama | Wait once; subsequent restarts hit the warm cache. Or switch embeddings to OpenAI. |
-| Chat stalls indefinitely | Memory-live queued embed backlog blocking prepareAgentRequest | Restart server (clears queue). Long-term: switch embeddings or set `LAX_MEMORY_LIVE=0`. |
+| Chat stalls indefinitely | Memory-live queued embed backlog blocking prepareAgentRequest | Restart server (clears queue). Long-term: switch `embeddingProvider` to `openai` (cloud) or `local` (bundled hash embedder). |
 | Voice chat mic captures audio but agent never responds | `voiceSttProvider: local-whisper` on a CPU-only box | Switch voice tier to Browser, Edge cloud, or OpenAI Realtime. |
 | `[ari] Kernel initialized` then voice session emits `voice_error` | Tier 4 trying to load Kokoro on CPU and timing out | Pick a non-local voice tier. |
 | `nvidia-smi: command not found` in logs | No NVIDIA GPU or driver missing | Confirm with `Get-CimInstance Win32_VideoController` (Windows). If integrated/AMD, treat as no-GPU. |

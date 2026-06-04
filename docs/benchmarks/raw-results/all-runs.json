@@ -3,7 +3,7 @@
   "dataset": "xiaowu0162/longmemeval-cleaned/longmemeval_s_cleaned.json",
   "total_questions": 500,
   "sessions_per_question": 53,
-  "system": "Open Agent X",
+  "system": "Local Agent X",
   "search": "hybrid BM25 (30%) + cosine vector (70%) + session grouping (20%) + temporal boost (15%)",
   "chunking": "conversation-pair (max 3200 chars)",
   "storage": "SQLite FTS5 + sqlite-vec",

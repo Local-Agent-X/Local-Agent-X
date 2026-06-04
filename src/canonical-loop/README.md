@@ -11,7 +11,7 @@ Decision #1). Adapters live alongside (e.g., `anthropic-adapter`,
 
 | File | Role | LOC limit |
 |---|---|---|
-| `index.ts` | Public entry — exports + `canonicalLoopEntry()` (the seam `op_submit_async` calls when the canonical flag is ON for the lane). | ≤ 400 |
+| `index.ts` | Public entry — re-exports the loop surface (store/schema/control-API/lease/recovery), the `runChatViaCanonical` / `runAgentViaCanonical` runners, the Anthropic + Codex adapters, and `sweepStaleCanonicalOps`, plus `canonicalLoopEntry()` (the seam `op_submit_async` calls when the canonical flag is ON for the lane). | ≤ 400 |
 | `types.ts` | Canonical-state, lane, event, op-fields, turn-row, message-row, provider-state-envelope shapes (PRD §5 / §9). | ≤ 400 |
 | `schema.ts` | On-disk paths under `~/.lax/operations/<opId>/` — canonical-events.jsonl, op-turns/, op-messages.jsonl. | ≤ 400 |
 | `store.ts` | Append-only writers/readers for `op_events`, `op_turns`, `op_messages`. Sole disk gateway. | ≤ 400 |
@@ -33,8 +33,16 @@ Decision #1). Adapters live alongside (e.g., `anthropic-adapter`,
 | `cancel-handler.ts` | Worker-side cancel primitives (Issue 06): `startCancelTracker`, `finalizeCancel`, `applyPreLeaseCancel`, `applyBoundaryCancel`. Drives `adapter.abort()` with a 1s race timeout; skips commit on partial turns. | ≤ 400 |
 | `lease.ts` | Op-level lease primitives (Issue 08): `acquireLease`, `heartbeatLease`, `releaseLease`, `isLeaseExpired`, `LeaseConfig` (defaults 30s/10s, configurable for tests). Sole writer of `leaseOwner` / `leaseExpiresAt`. | ≤ 400 |
 | `recovery.ts` | Crash-recovery orchestration (Issue 08): `recoverStaleOp` evicts the dead worker, clears the expired lease, emits `lease_lost reason="expired"`, and routes `running → queued` (re-enqueue) or `cancelling → cancelled` (terminal). | ≤ 400 |
-| `adapters/anthropic.ts` | Production Anthropic adapter (Issue 09). Implements the locked PRD §15 contract: streams text/tool-calls/errors, maps to canonical adapter_reports, finalizes assistant messages, returns provider_state envelope (256 KB cap). Sandbox-clean — no DB, no events writer, no `child_process`. | ≤ 400 |
+| `adapters/anthropic.ts` | Production Anthropic adapter (Issue 09). Implements the locked PRD §15 contract: streams text/tool-calls/errors, maps to canonical adapter_reports, finalizes assistant messages, returns provider_state envelope (256 KB cap). Sandbox-clean — no DB, no events writer, no `child_process`. Helpers (stream-consume, type shapes, byte/tool conversion) split into `adapters/anthropic/`. | ≤ 400 |
 | `adapters/anthropic-transport.ts` | Default transport that wraps `streamAnthropicResponse` (CLI proxy / direct API path) and `getAnthropicApiKey`. Translates provider stream events → canonical `TransportEvent`s. Lives outside the audited adapter file so subprocess primitives don't leak into the adapter surface. | ≤ 400 |
+
+> This table covers the v1.0 core modules. The runner entry points
+> (`chat-runner.ts`, `agent-runner.ts`), the `middlewares/`, `turn-loop/`,
+> `chat-runner/`, and `agent-runner/` helper subtrees, the `op-persist.ts`
+> persistence helper, and the additional adapters (`codex.ts`,
+> `openai-compat.ts`, `app-build-adapter.ts`, plus the `adapters/anthropic/`
+> helper dir) landed after v1.0 and are not enumerated here — read the
+> directory tree for the full surface.
 
 ## Boundaries
 
@@ -331,11 +339,15 @@ recoverStaleOp(opId):
       enqueue + pump scheduler            (replacement worker leases)
 ```
 
-Bulk variant `recoverStaleOps(opIds)` exists for janitor sweeps; the
-in-process v1 does not auto-run a janitor — callers (or tests) trigger
-recovery explicitly. Filesystem-backed v1 has no DB row-level guard, so
-recovery is the loop's authoritative way to take ownership back from a
-dead worker.
+Bulk variant `recoverStaleOps(opIds)` exists for ad-hoc/test sweeps.
+`sweepStaleCanonicalOps()` is a boot-time janitor that scans
+`~/.lax/operations/` and recovers any op left `running`/`cancelling` with an
+expired lease — the server wires it fire-and-forget at startup
+(`server/canonical-loop-bootstrap.ts`, via `setImmediate`). Beyond that
+one-shot boot sweep there is no timer-based janitor; otherwise callers (or
+tests) trigger recovery explicitly. Filesystem-backed v1 has no DB row-level
+guard, so recovery is the loop's authoritative way to take ownership back
+from a dead worker.
 
 ### Issue 08 events
 
@@ -373,6 +385,14 @@ Worker B reads op_turns[0], drives turn 1 with prior provider_state,
 
 Per-op event seq stays monotonic across the recovery boundary; turn 0
 is not re-driven, not re-committed, not re-emitted.
+
+### Wall-clock ceiling
+
+The worker arms a one-shot timer from `op.contextPack.budget.maxWallTimeMs`
+when that budget is set. On overrun it fires
+`opCancel(opId, "wall-clock-ceiling")`, so an over-budget op stops via the
+same running → cancelling → cancelled path as a user Stop — the single
+convergence point for chat, agents, cron, and sub-agents.
 
 ## Issue 09 — Anthropic adapter (production conformance)
 
@@ -482,7 +502,10 @@ audits on the canonical-loop source tree:
   `child_process`).
 - Exception: `adapters/anthropic-transport.ts` is the bounded
   transport-boundary file. The audit allow-lists this exact path
-  and audits everything else.
+  and audits everything else. Only `anthropic-transport.ts` is
+  allow-listed; later transports (`adapters/codex-transport.ts`) are
+  audited like any adapter file and must stay clean of
+  `FORBIDDEN_ADAPTER_IMPORTS`.
 - The `FORBIDDEN_ADAPTER_IMPORTS` set itself is locked — any change
   to the list fails the audit.
 
@@ -490,7 +513,7 @@ audits on the canonical-loop source tree:
 
 `test/canonical-loop-11-concurrency.test.ts` exercises the
 "5 concurrent ops mixed across lanes" scenario the PRD specifies.
-Lane caps are respected (interactive=1, build=2, ide=1, background=1),
+Lane caps are respected (interactive=1, build=2, ide=1, background=1, agent=3),
 per-op seq stays monotonic, no cross-op contamination of events,
 messages, provider_state, or workerIds.
 

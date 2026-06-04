@@ -1,44 +1,19 @@
-// Retry budgets and per-turn counters consumed by the orchestrator.
+// Retry budgets and per-turn counters consumed by the orchestrator. Both are
+// keyed by DetectorKind and derived from the detector registry — the budgets
+// and the full set of keys live there, not here.
 
-export interface RetryBudget {
-  planningOnly: number;
-  singleActionStop: number;
-  reasoningOnly: number;
-  emptyResponse: number;
-  uncommittedTurn: number;
-  evidenceStale: number;
-  incompleteMultiStep: number;
-}
+import { DETECTORS } from "./registry.js";
+import type { DetectorKind } from "./state.js";
 
-export const DEFAULT_RETRY_BUDGET: RetryBudget = {
-  planningOnly: 2,
-  singleActionStop: 2,
-  reasoningOnly: 2,
-  emptyResponse: 2,
-  uncommittedTurn: 1,
-  evidenceStale: 1,
-  // One nudge per remaining step for a reasonably long enumerated task.
-  incompleteMultiStep: 8,
-};
+/** Max nudges per detector kind for one turn. */
+export type RetryBudget = Record<DetectorKind, number>;
 
-export interface RetryCounters {
-  planningOnly: number;
-  singleActionStop: number;
-  reasoningOnly: number;
-  emptyResponse: number;
-  uncommittedTurn: number;
-  evidenceStale: number;
-  incompleteMultiStep: number;
-}
+/** How many nudges of each kind the orchestrator has already spent this turn. */
+export type RetryCounters = Record<DetectorKind, number>;
+
+export const DEFAULT_RETRY_BUDGET: RetryBudget =
+  Object.fromEntries(DETECTORS.map(d => [d.kind, d.budget])) as RetryBudget;
 
 export function createRetryCounters(): RetryCounters {
-  return {
-    planningOnly: 0,
-    singleActionStop: 0,
-    reasoningOnly: 0,
-    emptyResponse: 0,
-    uncommittedTurn: 0,
-    evidenceStale: 0,
-    incompleteMultiStep: 0,
-  };
+  return Object.fromEntries(DETECTORS.map(d => [d.kind, 0])) as RetryCounters;
 }

@@ -1,15 +1,8 @@
-// Runs detectors in order, applies waiting-on-user + image-context exemptions,
-// returns the first firing instruction whose budget still has room.
+// Runs the registered detectors in order, applies the waiting-on-user and
+// image-context exemptions, and returns the first firing instruction whose
+// budget still has room.
 
-import {
-  detectPlanningOnly,
-  detectSingleActionStop,
-  detectReasoningOnly,
-  detectEmptyResponse,
-  detectUncommittedTurn,
-  detectEvidenceStale,
-  detectIncompleteMultiStep,
-} from "./detectors.js";
+import { DETECTORS } from "./registry.js";
 import { isWaitingOnUser } from "./patterns.js";
 import type { RetryInstruction, TurnState } from "./state.js";
 import {
@@ -19,9 +12,9 @@ import {
 } from "./budget.js";
 
 /**
- * Run detectors in order, return the first firing instruction whose budget
- * still has room. Order matters — earlier detectors catch more specific
- * patterns, later ones are broader fallbacks.
+ * Run detectors in registry order, return the first firing instruction whose
+ * budget still has room. Order matters — earlier detectors catch more specific
+ * patterns, later ones are broader fallbacks (see registry.ts).
  */
 export function runPostTurnDetectors(
   state: TurnState,
@@ -34,34 +27,14 @@ export function runPostTurnDetectors(
   // the browser/tools with nothing new to act on.
   if (isWaitingOnUser(state.assistantText)) return null;
 
-  // Image-context exemption: when the user attached an image, the agent's
-  // expected reply is a description / answer, not an action plan. The three
-  // detectors below regex-match on phrases that read as "I'll do X" — but
-  // a sentence like "I see X in the image; you could try Y" matches that
-  // shape too, even though it's a complete answer. Empty-response / reasoning-
-  // only / single-action-stop are still safe to run because they catch
-  // genuinely broken paths (no text + no tools, etc.).
   const skipImageMisfiringDetectors = state.userMessageHasImages === true;
 
-  const checks: Array<{ run: (s: TurnState) => RetryInstruction | null; key: keyof RetryCounters }> = [
-    // Runs first: when a turn both stalls a plan and leaves enumerated steps
-    // unfinished, the multi-step nudge (which preserves the per-step summaries)
-    // is the right instruction to win.
-    { run: detectIncompleteMultiStep, key: "incompleteMultiStep" },
-    { run: detectPlanningOnly,       key: "planningOnly" },
-    { run: detectSingleActionStop,   key: "singleActionStop" },
-    { run: detectReasoningOnly,      key: "reasoningOnly" },
-    { run: detectEmptyResponse,      key: "emptyResponse" },
-    { run: detectUncommittedTurn,    key: "uncommittedTurn" },
-    { run: detectEvidenceStale,      key: "evidenceStale" },
-  ];
-  const IMAGE_MISFIRE_KEYS = new Set<keyof RetryCounters>(["planningOnly", "uncommittedTurn", "evidenceStale"]);
-  for (const { run, key } of checks) {
-    if (skipImageMisfiringDetectors && IMAGE_MISFIRE_KEYS.has(key)) continue;
-    const hit = run(state);
+  for (const spec of DETECTORS) {
+    if (skipImageMisfiringDetectors && spec.skipOnImages) continue;
+    const hit = spec.run(state);
     if (!hit) continue;
-    if (counters[key] >= budget[key]) continue;
-    counters[key] += 1;
+    if (counters[spec.kind] >= budget[spec.kind]) continue;
+    counters[spec.kind] += 1;
     return hit;
   }
   return null;

@@ -41,6 +41,16 @@ export interface ProviderMetaHttp {
   models: string[];
   defaultModel: string;
   /**
+   * Cheap/fast model for non-load-bearing background work (memory dream,
+   * etc.) when the user hasn't pinned an explicit model. Prefer a
+   * non-reasoning model: background jobs don't need chain-of-thought, and
+   * reasoning models either burn cost/latency or — on providers that hide
+   * reasoning server-side (OpenAI o-series) — stall the idle watchdog with
+   * no stream to keep it alive. Unset → caller falls back to the resolved
+   * default model. See backgroundModelFor().
+   */
+  backgroundModel?: string;
+  /**
    * Resolved baseURL for the OpenAI client. Functions cover providers
    * whose URL is runtime-configurable (local Ollama, custom). Returning
    * null means "config missing — caller should bail."
@@ -60,6 +70,8 @@ export interface ProviderMetaCli {
   label: string;
   models: string[];
   defaultModel: string;
+  /** Cheap/fast background model — see ProviderMetaHttp.backgroundModel. */
+  backgroundModel?: string;
   cliBinary: string;
   capabilities: ProviderCapabilities;
   /** Credential resolution adapter — the auth seam. */
@@ -99,6 +111,9 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "grok-build-0.1",
     ],
     defaultModel: "grok-4.3",
+    // Non-reasoning variant: no chain-of-thought to burn time on, and it
+    // sidesteps the reasoning-stream watchdog interaction entirely.
+    backgroundModel: "grok-4.20-0309-non-reasoning",
     baseURL: "https://api.x.ai/v1",
     envKey: "XAI_API_KEY",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_GROK },
@@ -110,6 +125,10 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     label: "OpenAI API",
     models: ["gpt-4o", "gpt-4o-mini", "o3-pro"],
     defaultModel: "o3-pro",
+    // Non-reasoning: the default o3-pro hides reasoning server-side, so a
+    // long think streams nothing and the idle watchdog can't tell it from a
+    // hang. gpt-4o-mini has no hidden think to stall on.
+    backgroundModel: "gpt-4o-mini",
     baseURL: "https://api.openai.com/v1",
     envKey: "OPENAI_API_KEY",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_OPENAI_FAMILY },
@@ -121,6 +140,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     label: "OpenAI Codex",
     models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
     defaultModel: "gpt-5.5",
+    backgroundModel: "gpt-5.4-mini",
     // Codex uses ChatGPT OAuth via getApiKey(); chat-runner routes it
     // through its own adapter, not openai-compat. baseURL here is the
     // direct OpenAI endpoint as a fallback for any HTTP path that does
@@ -144,6 +164,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "claude-opus-4-5",
     ],
     defaultModel: "claude-opus-4-8",
+    backgroundModel: "claude-haiku-4-5",
     cliBinary: "claude",
     capabilities: { tools: true, streaming: true, reasoning: false },
     auth: AUTH_PROVIDERS.anthropic,
@@ -158,6 +179,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "gemini-2.5-flash-preview-05-20",
     ],
     defaultModel: "gemini-2.5-pro-preview-05-06",
+    backgroundModel: "gemini-2.0-flash",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     envKey: "GEMINI_API_KEY",
     capabilities: { tools: true, streaming: true, reasoning: REASONING_GEMINI },
@@ -238,4 +260,14 @@ export function resolveBaseURL(
 export function isReasoningModel(id: ProviderId, model: string): boolean {
   const re = PROVIDERS[id]?.capabilities.reasoning;
   return re ? re.test(model) : false;
+}
+
+/**
+ * Model to use for cheap/fast background work on a provider. Returns the
+ * provider's `backgroundModel` when set, else `fallback` (typically the
+ * caller's resolved default model). Use for non-load-bearing jobs — memory
+ * dream, etc. — that shouldn't run on a flagship reasoner.
+ */
+export function backgroundModelFor(id: ProviderId, fallback: string): string {
+  return PROVIDERS[id]?.backgroundModel || fallback;
 }

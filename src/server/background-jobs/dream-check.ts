@@ -7,6 +7,7 @@ import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy.js";
 import { createLogger } from "../../logger.js";
 import { DREAM_SYSTEM_PROMPT } from "./prompts.js";
+import type { ProviderId } from "../../providers/provider-ids.js";
 
 const logger = createLogger("server.background-jobs.dream");
 
@@ -35,7 +36,10 @@ export function makeRunDreamCheck(deps: DreamCheckDeps): () => Promise<void> {
       startDream();
       const { resolveProvider: rp } = await import("../../agent-request/index.js");
       const { provider, apiKey, model } = await rp(config, secretsStore, dataDir);
-      const dreamModel = provider === "anthropic" ? "claude-haiku-4-5" : model;
+      const { backgroundModelFor } = await import("../../providers/registry.js");
+      // Dream is background memory consolidation — a cheap, non-reasoning
+      // model per provider, not the user's flagship default.
+      const dreamModel = backgroundModelFor(provider as ProviderId, model);
       const dreamSession: Session = { id: `dream-${Date.now()}`, title: "Memory Dream", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
       const dreamTools = allAgentTools.filter(t => ["read", "write", "edit", "glob", "grep", "memory_search", "memory_save"].includes(t.name));
 

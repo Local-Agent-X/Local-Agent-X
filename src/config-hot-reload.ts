@@ -1,6 +1,7 @@
 // ── Config Hot-Reload ── Watch config file and reload without restart
 
 import { watch, readFileSync, existsSync, type FSWatcher } from "node:fs";
+import { dirname, basename } from "node:path";
 import { EventBus } from "./event-bus.js";
 import { createLogger } from "./logger.js";
 
@@ -58,8 +59,18 @@ export class ConfigWatcher {
     this.currentConfig = parsed;
     this.running = true;
 
-    this.watcher = watch(configPath, () => {
-      this.scheduleReload();
+    // Watch the directory, not the file. saveConfig writes <name>.tmp and
+    // renames it over the config — an atomic swap that replaces the inode. A
+    // file watch stays bound to the old inode and goes silent after the
+    // rename (on macOS no further event fires at all), so hot-reload would
+    // never see a saved change. A directory watch survives the swap; filter to
+    // the config's own filename so the .tmp write and unrelated dir activity
+    // don't trigger reloads. A null filename (rare, some platforms) can't be
+    // matched, so reload defensively — the debounce + revalidate make a
+    // redundant reload cheap.
+    const file = basename(configPath);
+    this.watcher = watch(dirname(configPath), (_event, changed) => {
+      if (changed === null || changed === file) this.scheduleReload();
     });
 
     this.watcher.on("error", (err) => {

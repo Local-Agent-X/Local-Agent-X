@@ -37,6 +37,13 @@ const DREAM_STATE_PATH = join(LAX_DIR, "dream-state.json");
 const DEFAULT_BATCH_TOKENS = 20_000;
 // How many recent session JSONs the dream reads per cycle.
 const DEFAULT_SESSION_COUNT = 10;
+// Hard cap on batches per dream cycle. Each batch spawns its own worker
+// card in the AGENTS sidebar, so an uncapped pack over 10 sessions could
+// fan out into 5+ cards. Clamping to 3 keeps the sidebar legible; when the
+// token-budget pack would exceed this, sessions are redistributed into
+// exactly this many (larger) windows so none are dropped — haiku's window
+// has ample room above the conservative 20k budget.
+const MAX_DREAM_BATCHES = 3;
 
 interface DreamState {
   lastDreamAt: number;
@@ -172,13 +179,21 @@ export function listRecentSessionTranscripts(n = DEFAULT_SESSION_COUNT): Session
 export function buildDreamBatches(
   transcripts: SessionTranscript[],
   maxTokensPerBatch = DEFAULT_BATCH_TOKENS,
+  maxBatches = MAX_DREAM_BATCHES,
 ): SessionTranscript[][] {
+  // Raise the per-batch budget if the conservative default would fan out
+  // past maxBatches, so sessions stay balanced across the allowed windows
+  // rather than dumping the remainder into one oversized tail batch. The
+  // post-pack fold below is what actually guarantees the ceiling.
+  const totalTokens = transcripts.reduce((sum, t) => sum + t.approxTokens, 0);
+  const budget = Math.max(maxTokensPerBatch, Math.ceil(totalTokens / maxBatches));
+
   const batches: SessionTranscript[][] = [];
   let current: SessionTranscript[] = [];
   let currentTokens = 0;
 
   for (const t of transcripts) {
-    if (current.length > 0 && currentTokens + t.approxTokens > maxTokensPerBatch) {
+    if (current.length > 0 && currentTokens + t.approxTokens > budget) {
       batches.push(current);
       current = [];
       currentTokens = 0;
@@ -187,6 +202,15 @@ export function buildDreamBatches(
     currentTokens += t.approxTokens;
   }
   if (current.length > 0) batches.push(current);
+
+  // Greedy whole-session packing can spill one batch past maxBatches when
+  // the widened budget leaves no slack. Fold any overflow into the last
+  // allowed batch so the cap is a true ceiling on worker cards — never
+  // dropping a session, just accepting a larger final window.
+  if (batches.length > maxBatches) {
+    const overflow = batches.splice(maxBatches - 1);
+    batches.push(overflow.flat());
+  }
   return batches;
 }
 

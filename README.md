@@ -1,6 +1,6 @@
 # Local Agent X
 
-A self-hosted personal agent platform. Runs entirely on your machine — your files, your keys, your conversations. Speaks multiple LLM providers (Anthropic, OpenAI, Cerebras, Ollama, Codex CLI), so you're not locked into one vendor's pricing or availability.
+A self-hosted personal agent platform. Runs entirely on your machine — your files, your keys, your conversations. Speaks multiple LLM providers (Anthropic, OpenAI, Codex CLI, xAI Grok, Google Gemini, Cerebras, Ollama), so you're not locked into one vendor's pricing or availability.
 
 Beyond chat, it ships voice (push-to-talk and full-duplex), scheduled missions on cron, a tool-executor with a default-deny policy, and a workspace where the agent builds and serves its own small apps. The runtime UI is a single HTTP server you open in any browser. Self-modification routes through a `config/` directory that hot-reloads; deeper changes go through a `self_edit` tool wired into the runtime.
 
@@ -58,7 +58,7 @@ Each script is a thin wrapper that bootstraps Node + Ollama (if missing) and the
    - **OpenAI / Codex / Cerebras / Ollama** — paste an API key or point at a local endpoint.
 4. Talk to the agent. The chat box is the main entry point; voice and scheduled missions live under their own panels on the sidebar.
 
-Defaults are seeded into `~/.sax/settings.json` on first install (Anthropic + Sonnet 4.6, Ollama embeddings). Edit that file directly to change defaults, or change them from the UI.
+Embedding defaults are seeded into `~/.lax/settings.json` on first install (Ollama + `mxbai-embed-large`). Provider and chat model are not pre-seeded — you pick them on first run via Settings → Model Provider. Edit `~/.lax/settings.json` directly to change defaults, or change them from the UI.
 
 ## Dev commands
 
@@ -70,6 +70,7 @@ Defaults are seeded into `~/.sax/settings.json` on first install (Anthropic + So
 | `npm run build` | Build to `dist/` for production. |
 | `npm start` | Run the built artifact. |
 | `npm test` | Run the in-repo test suite. |
+| `npm run test:unit` | Run the vitest unit suite. |
 | `npm run test:fixtures` | Run prompt-fixture replay tests. |
 | `npx tsc --noEmit` | Typecheck without emitting. |
 
@@ -77,7 +78,7 @@ There is no separate lint step.
 
 ## Architecture overview
 
-Three lanes for change: **runtime state** flips through HTTP endpoints (settings, provider, theme — never edit files for live state), **self-modification** goes into the agent-editable `config/` directory which hot-reloads, and **external sites** flow through the `browser` tool rather than raw fetch. Every tool call runs through `tool-executor.ts` and the in-process Ari Kernel security layer; new tools need an explicit allow rule in `tool-policy.ts`. The architectural rules are non-negotiable and live in [AGENTS.md](AGENTS.md) — read that before touching the codebase.
+Three lanes for change: **runtime state** flips through HTTP endpoints (settings, provider, theme — never edit files for live state), **self-modification** goes into the agent-editable `config/` directory which hot-reloads, and **external sites** flow through the `browser` tool rather than raw fetch. Every tool call runs through `tool-executor.ts` and the in-process Ari Kernel security layer; new tools need an explicit allow rule in the per-tool policy table (`src/tool-policy/tool-policies.data.ts`). The architectural rules are non-negotiable and live in [AGENTS.md](AGENTS.md) — read that before touching the codebase.
 
 ## Status
 

@@ -96,7 +96,8 @@ Verified: `npm run build` clean; both new suites green.
 - **Chunk 7 — Orphan junction boot sweep (#11).** `sweepOrphanWorktreeJunctions`
   (worktree.ts) unlinks junctions in every `%TEMP%/lax-worktrees/*` orphan,
   removes the now-safe dir, then `git worktree prune` — wired into
-  `src/index.ts` boot (best-effort).
+  `src/index.ts`, deferred ~5s after `startServer` (guarded by
+  `LAX_SELF_EDIT_PROBE`) so its FS walk never blocks port-binding.
 
 Tests: `test/worktree-deps.test.ts` (+4 for `securitySensitiveChangedFiles`),
 `test/self-edit-rollback.test.ts`. Verified: `npm run build` clean; both
@@ -137,8 +138,8 @@ env scrubber already used for MCP children (`buildMcpChildEnv` +
 `env-credential-patterns.ts`); Pass 4 extends it to the self_edit child rather
 than forking a new scrubber.
 
-- **M1 — Child env scrub (the root-cause fix).** Both `claude -p` spawn sites
-  (`bypass-runner.ts`, `spawnClaude` in `self-edit-sandbox-gates.ts`) used to
+- **M1 — Child env scrub (the root-cause fix).** Both surgeon spawn sites
+  (`bypass-runner.ts` and `runCliSurgeon` in `self-edit/surgeon.ts`) used to
   pass `npmAugmentedEnv()` = `{...process.env}`, handing every credential in the
   LAX server env to the child. Replaced with `buildSelfEditChildEnv()`
   (`src/self-edit/child-env.ts`): default-deny — only the non-credential

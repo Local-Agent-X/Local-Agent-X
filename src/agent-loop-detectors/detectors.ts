@@ -17,6 +17,7 @@ import {
   COMPLETION_OPENER,
   COMPLETION_PHRASE_AT_SENTENCE_START,
   RETRY_SAFE_EXPLORATORY_TOOLS,
+  isExploratoryBashCommand,
 } from "./patterns.js";
 import type { RetryInstruction, TurnState } from "./state.js";
 
@@ -47,6 +48,18 @@ export function detectPlanningOnly(state: TurnState): RetryInstruction | null {
   return { kind: "planning-only", instruction: PLANNING_ONLY_INSTRUCTION };
 }
 
+/** Pull the bash command out of a tool call's JSON arguments and decide if it
+ *  was read-only exploration. Unparseable args → committing (safe). */
+function bashCallIsExploratory(argsJson?: string): boolean {
+  if (!argsJson) return false;
+  try {
+    const parsed = JSON.parse(argsJson) as { command?: unknown };
+    return isExploratoryBashCommand(typeof parsed.command === "string" ? parsed.command : "");
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Model ran ONE exploratory read tool, then emitted a continuation promise
  * but didn't follow through. This is the numberblocks-style bug.
@@ -55,6 +68,10 @@ export function detectSingleActionStop(state: TurnState): RetryInstruction | nul
   if (state.toolCallsThisIteration.length !== 1) return null;
   const onlyCall = state.toolCallsThisIteration[0];
   if (!RETRY_SAFE_EXPLORATORY_TOOLS.has(onlyCall.name)) return null;
+  // bash is also a committing tool — only treat it as exploration when the
+  // command is read-only. A committing command that summarizes its one step is
+  // doing real sequential work, not stalling.
+  if (onlyCall.name === "bash" && !bashCallIsExploratory(onlyCall.arguments)) return null;
   if (!state.assistantText) return null;
   // Needs either a future-promise phrase OR a continuation cue right after
   // the exploratory tool's summary.

@@ -78,3 +78,42 @@ export const RETRY_SAFE_EXPLORATORY_TOOLS = new Set([
   "web_fetch",
   "web_search",
 ]);
+
+// `bash` is in the set above, but it is also a committing (shell-risk) tool —
+// `sleep`, `npm`, `git`, and any write/redirect are real sequential work, not
+// exploration. The single-action-stop detector must only treat bash as
+// exploratory when the command is read-only; otherwise nudging "don't
+// summarize, act" suppresses the per-step narration the model SHOULD emit
+// between real steps. Unknown commands default to non-exploratory so the
+// detector errs toward leaving the nudge off (the safe direction).
+const READ_ONLY_BASH_BINS = new Set([
+  "ls", "dir", "cat", "head", "tail", "less", "more",
+  "grep", "egrep", "fgrep", "rg", "ag",
+  "find", "fd", "tree",
+  "pwd", "whoami", "hostname", "uname", "id", "date",
+  "wc", "stat", "file", "which", "whereis", "type", "command",
+  "realpath", "readlink", "basename", "dirname",
+  "env", "printenv", "echo", "printf",
+  "du", "df", "ps", "lsof", "ss", "netstat",
+  "sort", "uniq", "cut", "tr", "nl", "tac", "column",
+  "diff", "comm", "cksum", "sha256sum", "md5", "md5sum",
+  "jq", "yq",
+]);
+
+/**
+ * True if a bash command is pure read-only exploration (so a single-call stall
+ * should still be nudged). A compound command is exploratory only if EVERY
+ * segment is a read-only binary and there is no output redirection — one
+ * committing segment (`sleep 70 && date`) makes the whole turn real work.
+ */
+export function isExploratoryBashCommand(command: string): boolean {
+  if (!command) return false;
+  if (/[12]?>>?|>\||\btee\b/.test(command)) return false; // redirect / tee writes
+  for (const seg of command.split(/&&|\|\||[;|]|\n/)) {
+    const trimmed = seg.trim();
+    if (!trimmed) continue;
+    const bin = trimmed.split(/\s+/)[0].replace(/^.*\//, "");
+    if (!READ_ONLY_BASH_BINS.has(bin)) return false;
+  }
+  return true;
+}

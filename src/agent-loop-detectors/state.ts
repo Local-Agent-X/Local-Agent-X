@@ -6,7 +6,8 @@ export type DetectorKind =
   | "reasoning-only"
   | "empty-response"
   | "uncommitted-turn"
-  | "evidence-stale";
+  | "evidence-stale"
+  | "incomplete-multistep";
 
 export interface RetryInstruction {
   kind: DetectorKind;
@@ -39,6 +40,15 @@ export interface TurnState {
    * (3+ near-identical reply restatements per turn).
    */
   userMessageHasImages?: boolean;
+  /**
+   * Highest step number the user's instruction enumerated (e.g. "1) … 2) … 3)"
+   * → 3). 0 when the request isn't an enumerated multi-step task. Used by
+   * detectIncompleteMultiStep to notice a model that completed step N and
+   * yielded while N < this. Models like Claude finish all steps in one turn,
+   * so their final reply names the last step and the detector stays silent;
+   * models that yield after each committing step get nudged onward.
+   */
+  enumeratedSteps?: number;
 }
 
 /**

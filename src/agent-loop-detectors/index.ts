@@ -25,9 +25,10 @@ export {
   EMPTY_RESPONSE_INSTRUCTION,
   UNCOMMITTED_TURN_INSTRUCTION,
   EVIDENCE_STALE_INSTRUCTION,
+  INCOMPLETE_MULTISTEP_INSTRUCTION,
 } from "./instructions.js";
 
-export { isWaitingOnUser } from "./patterns.js";
+export { isWaitingOnUser, countEnumeratedSteps } from "./patterns.js";
 
 export {
   userMessageHasImages,
@@ -43,6 +44,7 @@ export {
   detectEmptyResponse,
   detectUncommittedTurn,
   detectEvidenceStale,
+  detectIncompleteMultiStep,
 } from "./detectors.js";
 
 export {

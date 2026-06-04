@@ -18,3 +18,6 @@ export const UNCOMMITTED_TURN_INSTRUCTION =
 
 export const EVIDENCE_STALE_INSTRUCTION =
   "You have been reading and searching without new findings for several rounds. Either take a different approach (different tool, different args, different source) or tell the user the exact blocker in one sentence. Do not repeat the same queries.";
+
+export const INCOMPLETE_MULTISTEP_INSTRUCTION =
+  "The user asked for several steps and you stopped after completing only one. Continue now with the next step. Write your per-step summary exactly as the user asked for it, then immediately proceed to the following step yourself — do not hand control back until every numbered step and any final report are done.";

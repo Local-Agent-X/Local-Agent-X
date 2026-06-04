@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isWaitingOnUser, isExploratoryBashCommand } from "./patterns.js";
+import { isWaitingOnUser, isExploratoryBashCommand, countEnumeratedSteps, highestClaimedStep } from "./patterns.js";
 
 describe("isWaitingOnUser — clarifying / choice questions", () => {
   // Regression: "I want to start a company" → agent asked "What do you want
@@ -64,5 +64,36 @@ describe("isExploratoryBashCommand", () => {
     "",
   ])("treats committing/unknown command %j as non-exploratory", (cmd) => {
     expect(isExploratoryBashCommand(cmd)).toBe(false);
+  });
+});
+
+describe("countEnumeratedSteps", () => {
+  it("counts the highest enumerated step in a multi-step instruction", () => {
+    expect(countEnumeratedSteps(
+      "Do these one at a time: 1) run sleep 70 && date, 2) run it again, 3) once more. Then report.",
+    )).toBe(3);
+  });
+
+  it("ignores bare numbers that aren't enumeration markers", () => {
+    expect(countEnumeratedSteps("run sleep 70 && date once")).toBe(0);
+  });
+
+  it("recognizes 'step N' phrasing", () => {
+    expect(countEnumeratedSteps("First do step 1, then step 2.")).toBe(2);
+  });
+
+  it("returns 0 for a single-step request", () => {
+    expect(countEnumeratedSteps("1) just do this one thing")).toBe(0);
+  });
+});
+
+describe("highestClaimedStep", () => {
+  it.each([
+    ["Step 1 complete: I ran the command.", 1],
+    ["**Step 2 summary:** done.", 2],
+    ["All done — step 1, step 2, and step 3 finished.", 3],
+    ["No step labels here.", 0],
+  ])("reads %j as %i", (text, n) => {
+    expect(highestClaimedStep(text as string)).toBe(n);
   });
 });

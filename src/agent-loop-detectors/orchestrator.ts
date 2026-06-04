@@ -8,6 +8,7 @@ import {
   detectEmptyResponse,
   detectUncommittedTurn,
   detectEvidenceStale,
+  detectIncompleteMultiStep,
 } from "./detectors.js";
 import { isWaitingOnUser } from "./patterns.js";
 import type { RetryInstruction, TurnState } from "./state.js";
@@ -43,6 +44,10 @@ export function runPostTurnDetectors(
   const skipImageMisfiringDetectors = state.userMessageHasImages === true;
 
   const checks: Array<{ run: (s: TurnState) => RetryInstruction | null; key: keyof RetryCounters }> = [
+    // Runs first: when a turn both stalls a plan and leaves enumerated steps
+    // unfinished, the multi-step nudge (which preserves the per-step summaries)
+    // is the right instruction to win.
+    { run: detectIncompleteMultiStep, key: "incompleteMultiStep" },
     { run: detectPlanningOnly,       key: "planningOnly" },
     { run: detectSingleActionStop,   key: "singleActionStop" },
     { run: detectReasoningOnly,      key: "reasoningOnly" },

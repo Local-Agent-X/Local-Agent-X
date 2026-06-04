@@ -71,7 +71,15 @@ export async function streamOnce(
         // reasoning and never emits a final `content` answer. Streaming
         // this live to chat would dump raw thoughts into the bubble,
         // which is bad UX — surface only as a final fallback below.
-        if (ev.delta) out.assembledThinking += ev.delta;
+        //
+        // Still ping the orchestrator so its idle watchdog knows the model
+        // is alive. Reasoning models can think for minutes before the first
+        // `content`/tool_call; without this the silent accumulation reads as
+        // a stall and the turn gets killed mid-thought.
+        if (ev.delta) {
+          out.assembledThinking += ev.delta;
+          report({ kind: "heartbeat" });
+        }
         continue;
       }
       if (ev.type === "tool_call") {

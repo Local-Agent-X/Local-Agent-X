@@ -50,6 +50,7 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   memory_update_profile: ["main-chat"],
   memory_stats:          ["main-chat"],
   memory_consolidate:    ["main-chat"],
+  memory_dream:          ["main-chat"],
   memory_ingest:         ["main-chat"],
 
   // Operations — long-horizon goal orchestration

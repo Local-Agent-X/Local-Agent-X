@@ -35,34 +35,60 @@ function isPresent(path, minBytes) {
   catch { return false; }
 }
 
+// CI packaging (electron-builder) needs the model baked into the artifact, so
+// there a failed fetch SHOULD fail the build — set WHISPER_FETCH_STRICT=1.
+// Source installs run this on the end-user machine, where a flaky HuggingFace
+// download must NOT abort the whole install: voice STT lazily downloads the
+// model on first use (whisper-model-fetch.ts), so pre-bundling is a best-effort
+// optimization here, not a hard requirement.
+const STRICT = process.env.WHISPER_FETCH_STRICT === "1";
+const MAX_ATTEMPTS = 3;
+
 async function fetchOne(file) {
   const dest = join(outDir, file.name);
   if (isPresent(dest, file.minBytes)) {
     console.log(`[whisper-bundle] ${file.name} already present — skipping`);
-    return;
+    return true;
   }
   const tmp = `${dest}.partial`;
-  console.log(`[whisper-bundle] fetching ${file.name}`);
-  const res = await fetch(`${base}/${file.name}`, { redirect: "follow" });
-  if (!res.ok || !res.body) {
-    throw new Error(`fetch ${file.name} failed: HTTP ${res.status}`);
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      console.log(`[whisper-bundle] fetching ${file.name}${attempt > 1 ? ` (attempt ${attempt}/${MAX_ATTEMPTS})` : ""}`);
+      const res = await fetch(`${base}/${file.name}`, { redirect: "follow" });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      await new Promise((resolve, reject) => {
+        const out = createWriteStream(tmp);
+        Readable.fromWeb(res.body).pipe(out);
+        out.on("finish", resolve);
+        out.on("error", reject);
+      });
+      await rename(tmp, dest);
+      const got = statSync(dest).size;
+      if (got < file.minBytes) throw new Error(`too small (${got} < ${file.minBytes} bytes)`);
+      return true;
+    } catch (err) {
+      try { await unlink(tmp); } catch { /* tmp may not exist */ }
+      const last = attempt === MAX_ATTEMPTS;
+      console.warn(`[whisper-bundle] ${file.name} failed: ${err.message}${last ? "" : " — retrying"}`);
+      if (last) return false;
+      await new Promise((r) => setTimeout(r, 1000 * attempt)); // linear backoff
+    }
   }
-  await new Promise((resolve, reject) => {
-    const out = createWriteStream(tmp);
-    Readable.fromWeb(res.body).pipe(out);
-    out.on("finish", resolve);
-    out.on("error", reject);
-  });
-  await rename(tmp, dest);
-  const got = statSync(dest).size;
-  if (got < file.minBytes) {
-    await unlink(dest);
-    throw new Error(`${file.name} too small (${got} < ${file.minBytes} bytes)`);
-  }
+  return false;
 }
 
 mkdirSync(outDir, { recursive: true });
+let allOk = true;
 for (const f of files) {
-  await fetchOne(f);
+  if (!(await fetchOne(f))) allOk = false;
 }
-console.log(`[whisper-bundle] tiny.en ready in ${outDir}`);
+
+if (allOk) {
+  console.log(`[whisper-bundle] tiny.en ready in ${outDir}`);
+} else if (STRICT) {
+  console.error("[whisper-bundle] model files missing and WHISPER_FETCH_STRICT=1 — failing build.");
+  process.exit(1);
+} else {
+  // Non-fatal: keep the install alive. Voice STT fetches the model at runtime.
+  console.warn("[whisper-bundle] could not pre-bundle the tiny.en model — voice STT will download it on first use. Continuing.");
+}

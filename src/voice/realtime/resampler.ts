@@ -13,7 +13,7 @@
 /** Resample 16kHz Int16 PCM → 24kHz Int16 PCM (ratio 3/2, linear interp). */
 export function upsample16to24(input: Int16Array): Int16Array {
   if (input.length === 0) return new Int16Array(0);
-  // Output length = ceil(input * 24/16) = ceil(input * 1.5)
+  // Output length = floor(input * 24/16) = floor(input * 1.5)
   const outLen = Math.floor((input.length * 3) / 2);
   const out = new Int16Array(outLen);
   const ratio = input.length / outLen; // ~0.6667

@@ -1,7 +1,6 @@
-// Public surface for the AriKernel package. Legacy `src/ari-kernel.ts`
-// re-exports from here so existing callers (routes/security,
-// server/lifecycle, tool-execution/enforce-policy, tests) don't need to
-// update import paths.
+// Public surface for the AriKernel package. Callers (routes/security,
+// server/lifecycle, tool-execution/enforce-policy, tests) import from this
+// directory.
 
 export { isAriActive } from "./state.js";
 export { getAriPresetForSession, HOST_CAPABILITY_MANIFEST } from "./manifest.js";

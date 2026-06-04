@@ -10,7 +10,7 @@
  * Three gates between subprocess-finished and merge-to-main:
  *   1. Build  — `npm run build` inside worktree must exit 0
  *   2. Bind   — spawn the worktree's server on a probe port; must bind
- *              within 60s. Catches code that compiles but won't boot.
+ *              within 150s. Catches code that compiles but won't boot.
  *   3. Smoke  — POST /api/chat to the probe instance with a tiny ping;
  *              must return 200 + non-empty body within 30s. Catches the
  *              case where the server boots but the agent loop is broken.
@@ -19,8 +19,8 @@
  * branch is preserved on disk for inspection (per existing mergeWorktree
  * behavior) and main tree stays untouched.
  *
- * Gate implementations + the claude -p spawner live in self-edit-sandbox-gates.ts
- * to keep both files under the 400-LOC limit.
+ * Gate implementations live in self-edit-sandbox-gates.ts; the surgeon spawner
+ * lives in self-edit/surgeon.ts. Split out to keep files under the 400-LOC limit.
  */
 
 import { rmSync } from "node:fs";

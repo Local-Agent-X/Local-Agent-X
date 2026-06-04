@@ -2,7 +2,7 @@
 	"name": "@arikernel/runtime",
 	"version": "0.1.2",
 	"description": "Main runtime orchestrator for AriKernel",
-	"license": "SEE LICENSE IN LICENSE.md",
+	"license": "SEE LICENSE IN ../../../LICENSE",
 	"type": "module",
 	"repository": {
 		"type": "git",

@@ -2,7 +2,7 @@
 	"name": "@arikernel/audit-log",
 	"version": "0.1.2",
 	"description": "SHA-256 hash-chained audit logging for AriKernel (tamper-evident, not tamper-proof)",
-	"license": "SEE LICENSE IN LICENSE.md",
+	"license": "SEE LICENSE IN ../../../LICENSE",
 	"type": "module",
 	"repository": {
 		"type": "git",

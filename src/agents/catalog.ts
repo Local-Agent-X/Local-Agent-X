@@ -7,7 +7,7 @@
  *      reviewer, writer, analyst, monitor, designer, ops, communicator,
  *      social-media).
  *
- *   2. seedDefaults in AgentTemplateStore at src/agent-store.ts (9
+ *   2. seedDefaults in AgentTemplateStore at src/agent-store/template-store.ts (9
  *      hardcoded "employee" templates: researcher, deep-researcher,
  *      coder, reviewer, browser, writer, analyst, sysadmin, ceo) plus
  *      any user-created/edited templates persisted in

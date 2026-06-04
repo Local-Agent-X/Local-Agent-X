@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isWaitingOnUser } from "./patterns.js";
+import { isWaitingOnUser, isExploratoryBashCommand } from "./patterns.js";
 
 describe("isWaitingOnUser — clarifying / choice questions", () => {
   // Regression: "I want to start a company" → agent asked "What do you want
@@ -38,5 +38,31 @@ describe("isWaitingOnUser — clarifying / choice questions", () => {
   it("still matches explicit asks for input", () => {
     expect(isWaitingOnUser("Send me the invoice and I'll proceed.")).toBe(true);
     expect(isWaitingOnUser("Let me know when you're ready.")).toBe(true);
+  });
+});
+
+describe("isExploratoryBashCommand", () => {
+  it.each([
+    "cat src/index.ts",
+    "ls -la",
+    "grep -rn foo src/",
+    "find . -name '*.ts'",
+    "head -50 file && tail -20 file",
+    "grep foo file | sort | uniq",
+    "pwd",
+  ])("treats read-only command %j as exploratory", (cmd) => {
+    expect(isExploratoryBashCommand(cmd)).toBe(true);
+  });
+
+  it.each([
+    "sleep 70 && date",       // the regression: one committing segment poisons the whole command
+    "npm run build",
+    "git commit -m wip",
+    "cat template > out.txt",  // redirect mutates the filesystem
+    "grep foo file | tee log",
+    "node script.js",
+    "",
+  ])("treats committing/unknown command %j as non-exploratory", (cmd) => {
+    expect(isExploratoryBashCommand(cmd)).toBe(false);
   });
 });

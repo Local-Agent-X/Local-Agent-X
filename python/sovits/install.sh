@@ -74,14 +74,17 @@ fi
 
 # ── Pick torch wheel index ─────────────────────────────────────────────────
 # Mac → default index (MPS via the standard wheel). Linux with NVIDIA →
-# cu126. Linux without NVIDIA → cpu.
+# cu126. Linux without NVIDIA → cpu. LAX_FORCE_CPU_TORCH=1 forces the cpu
+# wheel on the Linux CUDA branch (CI builds the CPU-only artifact this way).
 TORCH_INDEX=""
 case "$(uname -s)" in
     Darwin)
         TORCH_INDEX=""  # default index; torch ships MPS in the standard wheel
         ;;
     Linux)
-        if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+        if [ "$LAX_FORCE_CPU_TORCH" = "1" ]; then
+            TORCH_INDEX="https://download.pytorch.org/whl/cpu"
+        elif command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
             TORCH_INDEX="https://download.pytorch.org/whl/cu126"
         else
             TORCH_INDEX="https://download.pytorch.org/whl/cpu"
@@ -95,11 +98,16 @@ step "Upgrading pip..."
 "$VENV_PYTHON" -m pip install --upgrade pip --quiet
 
 # ── Install torch first (must precede upstream requirements.txt) ───────────
-step "Installing torch + torchaudio..."
+# Pin torch/torchaudio to 2.6.0 — same as install.ps1. 2.6.0 is the newest
+# build before torchaudio dropped its soundfile/sox backends for torchcodec
+# (which needs system FFmpeg libs), and it's the oldest build that ships cu126
+# wheels — so it matches the cu126 index selected above. torch 2.5.1 has no
+# cu126 wheel, which is why the previous pin failed on the Linux NVIDIA path.
+step "Installing torch + torchaudio 2.6.0..."
 if [ -n "$TORCH_INDEX" ]; then
-    "$VENV_PYTHON" -m pip install "torch==2.5.1" "torchaudio==2.5.1" --index-url "$TORCH_INDEX"
+    "$VENV_PYTHON" -m pip install "torch==2.6.0" "torchaudio==2.6.0" --index-url "$TORCH_INDEX"
 else
-    "$VENV_PYTHON" -m pip install "torch==2.5.1" "torchaudio==2.5.1"
+    "$VENV_PYTHON" -m pip install "torch==2.6.0" "torchaudio==2.6.0"
 fi
 
 # ── Filter upstream requirements (pyopenjtalk + source-opencc problems) ────

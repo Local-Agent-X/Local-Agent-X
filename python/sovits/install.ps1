@@ -159,11 +159,16 @@ if (-not (Test-Path $VenvPython)) {
 }
 
 # ── Detect GPU for torch wheel selection ────────────────────────────────────
+# LAX_FORCE_CPU_TORCH=1 forces the CPU wheel even on a GPU box — nvidia-smi
+# detection alone can't express "GPU present but build for CPU" (CI builds the
+# CPU-only artifact this way).
 $HasCuda = $false
-try {
-    $null = & nvidia-smi --query-gpu=name --format=csv 2>&1
-    if ($LASTEXITCODE -eq 0) { $HasCuda = $true }
-} catch { $HasCuda = $false }
+if ($env:LAX_FORCE_CPU_TORCH -ne '1') {
+    try {
+        $null = & nvidia-smi --query-gpu=name --format=csv 2>&1
+        if ($LASTEXITCODE -eq 0) { $HasCuda = $true }
+    } catch { $HasCuda = $false }
+}
 $TorchIndex = if ($HasCuda) { "https://download.pytorch.org/whl/cu126" } else { "https://download.pytorch.org/whl/cpu" }
 Write-Step "GPU detected: $HasCuda. Torch index: $TorchIndex"
 

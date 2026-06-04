@@ -1,7 +1,10 @@
 # packages/arikernel/AGENTS.md — Hands off unless fixing a specific bug
 
-This is the **vendored Ari Kernel** security layer. Originally a separate
-open-source project (MIT), now absorbed into SAX as `file:` dependencies.
+This is the **vendored Ari Kernel** security layer — formerly a standalone
+project, now absorbed into Local Agent X as `file:` dependencies. (Each
+package.json declares `SEE LICENSE IN LICENSE.md`, but no `LICENSE.md` ships in
+`packages/arikernel/`; the only license on disk is the repo-root Commons Clause
+`LICENSE` — worth reconciling.)
 
 ## Rules
 
@@ -15,20 +18,24 @@ open-source project (MIT), now absorbed into SAX as `file:` dependencies.
   were intentionally removed in commit 3278e5f because they existed only
   to support the now-deleted sidecar mode. Keep it lean — 6 packages total:
   `core`, `runtime`, `taint-tracker`, `policy-engine`, `audit-log`, `tool-executors`.
-- **Build with `npm run build:ari`.** Triggered automatically by `npm run build`.
-  Runs `tsup src/index.ts --format esm --dts` per package.
+- **Build with `npm run build:ari`.** Triggered automatically by `npm run build`
+  (and `postinstall`). Per package it runs two passes: `tsup src/index.ts
+  --format esm` for JS, then `tsc --emitDeclarationOnly --declaration` (strict
+  relaxed) for `.d.ts`. `--dts` is intentionally avoided — see the header
+  comment in `scripts/build-ari.js`.
 - **Don't upgrade to npm-hosted `@arikernel/*`.** We use local `file:` deps so
   the source lives inside this repo. Upstream npm packages may be stale or
   removed.
 
 ## Integration point
 
-`src/ari-kernel.ts` is the SAX-side wrapper. It imports `@arikernel/runtime`
-and calls `createKernel({ mode: "embedded" })` once at startup, then exposes
-`ariEvaluate()` / `isAriActive()` for the tool executor. If you need to change
-Ari's behavior, check whether the fix belongs in:
+`src/ari-kernel/` is the Local Agent X-side wrapper (public surface in
+`src/ari-kernel/index.ts`). It imports `@arikernel/runtime` and calls
+`createFirewall({ ..., mode: "embedded" })` once at startup (in `lifecycle.ts`),
+then exposes `ariEvaluate()` / `isAriActive()` for the tool executor. If you
+need to change Ari's behavior, check whether the fix belongs in:
 
-1. **The wrapper** (`src/ari-kernel.ts`) — mapping SAX tool names to Ari tool classes, fail-open vs fail-closed decisions, preset selection.
+1. **The wrapper** (`src/ari-kernel/`) — mapping tool names to Ari tool classes, fail-open vs fail-closed decisions, preset selection.
 2. **The kernel** (this directory) — actual policy rules, taint rules, engine logic.
 
 Start with #1. Only change #2 if the problem is fundamentally in the kernel.

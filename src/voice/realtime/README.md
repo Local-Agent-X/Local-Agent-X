@@ -16,9 +16,17 @@ LAX_REALTIME_MODEL=...            # optional, defaults to gpt-4o-realtime-previe
 LAX_REALTIME_INSTRUCTIONS=...     # optional system-style prompt
 ```
 
-The dispatcher in `voice-session.ts` checks `realtimeReadiness()` from
-`./index.ts` and, when ready, builds a session via
-`createRealtimeSessionFromEnv(ctx)` — same shape as `createGpuSession`.
+The dispatcher in `voice-session/index.ts` checks `realtimeReadiness()` and,
+when ready, builds a session via `createRealtimeSessionFromEnv(ctx, overrides)`
+— same shape as `createGpuSession`. The optional `overrides` (`{ voice, model }`)
+let settings.json win over the `LAX_REALTIME_*` env vars per session, so a UI
+change applies on the next session without a restart; any field absent from
+overrides falls back to env.
+
+If `realtimeReadiness()` reports not-ready (no `OPENAI_REALTIME_KEY` /
+`OPENAI_API_KEY`), the dispatcher logs a `warn` (`voiceMode=realtime but
+<reason> — falling back to normal pipeline`) and continues into the standard
+local STT + LLM + TTS pipeline rather than failing the session.
 
 ## Audio path
 

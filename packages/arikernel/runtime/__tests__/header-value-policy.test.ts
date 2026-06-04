@@ -50,7 +50,13 @@ function makeFirewall(name: string): Firewall {
 				{
 					toolClass: "file",
 					actions: ["read"],
-					constraints: { allowedPaths: ["./**", "/home/**"] },
+					// Reads below use cwd-relative sensitive paths. An absolute path like
+					// /home/.ssh/id_rsa is unreliable here: on macOS /home realpath-resolves
+					// through a firmlink (/System/Volumes/Data/home) while the non-existent
+					// target does not, so the canonicalized path no longer prefix-matches the
+					// grant base and the read is wrongly denied. Paths under cwd resolve
+					// symmetrically on every platform.
+					constraints: { allowedPaths: ["./**"] },
 				},
 			],
 		},
@@ -96,7 +102,7 @@ describe("HTTP GET custom header exfiltration after sensitive read", () => {
 		await fw.execute({
 			toolClass: "file",
 			action: "read",
-			parameters: { path: "/home/.ssh/id_rsa" },
+			parameters: { path: "./id_rsa" },
 			grantId: fileGrant.grant?.id,
 		});
 
@@ -122,7 +128,7 @@ describe("HTTP GET custom header exfiltration after sensitive read", () => {
 		await fw.execute({
 			toolClass: "file",
 			action: "read",
-			parameters: { path: "/home/.env" },
+			parameters: { path: "./.env" },
 			grantId: fileGrant.grant?.id,
 		});
 
@@ -147,7 +153,7 @@ describe("HTTP GET custom header exfiltration after sensitive read", () => {
 		await fw.execute({
 			toolClass: "file",
 			action: "read",
-			parameters: { path: "/home/.ssh/id_rsa" },
+			parameters: { path: "./id_rsa" },
 			grantId: fileGrant.grant?.id,
 		});
 
@@ -176,7 +182,7 @@ describe("HTTP GET custom header exfiltration after sensitive read", () => {
 		await fw.execute({
 			toolClass: "file",
 			action: "read",
-			parameters: { path: "/home/.ssh/id_rsa" },
+			parameters: { path: "./id_rsa" },
 			grantId: fileGrant.grant?.id,
 		});
 
@@ -214,7 +220,7 @@ describe("HTTP GET custom header exfiltration after sensitive read", () => {
 		await fw.execute({
 			toolClass: "file",
 			action: "read",
-			parameters: { path: "/home/.ssh/id_rsa" },
+			parameters: { path: "./id_rsa" },
 			grantId: fileGrant.grant?.id,
 		});
 

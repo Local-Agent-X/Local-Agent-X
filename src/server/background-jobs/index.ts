@@ -14,7 +14,7 @@ import { registerCronRunner } from "./cron-runner.js";
 import { registerWorkerRunnerForServer } from "./worker-runner.js";
 import { registerSelfEditSurgeonForServer } from "./self-edit-surgeon-runner.js";
 import { makeRunMemBg } from "./memory-bg.js";
-import { makeRunDreamCheck } from "./dream-check.js";
+import { registerDreamRunnerForServer } from "./dream-check.js";
 
 const logger = createLogger("server.background-jobs");
 
@@ -60,6 +60,10 @@ export function startBackgroundJobs(deps: {
     getOrCreateSession, saveSession,
   });
 
+  registerDreamRunnerForServer({
+    config, dataDir, sessionStore, secretsStore, security, toolPolicy, allAgentTools, saveSession,
+  });
+
   // Generic (in-loop) self_edit surgeon — last resort for providers with no
   // coding CLI. Builds its own per-worktree SecurityLayer, so no `security` dep.
   registerSelfEditSurgeonForServer({
@@ -89,7 +93,10 @@ export function startBackgroundJobs(deps: {
     name: "dream-check",
     intervalMs: 2 * 60 * 60 * 1000,
     startupDelayMs: 5 * 60 * 1000,
-    run: makeRunDreamCheck({ config, dataDir, sessionStore, secretsStore, security, toolPolicy, allAgentTools, saveSession }),
+    run: async () => {
+      const { triggerDream } = await import("../../memory/dream.js");
+      await triggerDream({ force: false }); // shouldDream() gates inside the runner
+    },
   });
 
   scheduler.register({

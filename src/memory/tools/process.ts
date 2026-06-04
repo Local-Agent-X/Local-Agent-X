@@ -44,15 +44,20 @@ export function createProcessTools(memory: MemoryIndex) {
         },
       },
       async execute(args: Record<string, unknown>) {
-        const { runExtraction } = await import("../extract.js");
-        const result = await runExtraction(memory, {
-          lookbackHours: typeof args.lookbackHours === "number" ? args.lookbackHours : undefined,
-          maxSessions: typeof args.maxSessions === "number" ? args.maxSessions : undefined,
-          maxChunksPerSession: typeof args.maxChunksPerSession === "number" ? args.maxChunksPerSession : undefined,
-          dryRun: Boolean(args.dryRun),
-          provider: args.provider as "ollama" | "anthropic" | "openai" | "auto" | undefined,
-          model: typeof args.model === "string" ? args.model : undefined,
+        const { runConsolidation } = await import("../consolidation-pipeline.js");
+        const { extraction: result, consolidation } = await runConsolidation(memory, {
+          extract: {
+            lookbackHours: typeof args.lookbackHours === "number" ? args.lookbackHours : undefined,
+            maxSessions: typeof args.maxSessions === "number" ? args.maxSessions : undefined,
+            maxChunksPerSession: typeof args.maxChunksPerSession === "number" ? args.maxChunksPerSession : undefined,
+            dryRun: Boolean(args.dryRun),
+            provider: args.provider as "ollama" | "anthropic" | "openai" | "auto" | undefined,
+            model: typeof args.model === "string" ? args.model : undefined,
+          },
+          consolidate: !args.dryRun,
+          reflect: !args.dryRun && 7,
         });
+        if (!result) return { content: "Consolidation produced no extraction result." };
         const elapsed = ((result.finishedAt - result.startedAt) / 1000).toFixed(1);
         const ops = result.operations;
         const lines = [
@@ -62,6 +67,7 @@ export function createProcessTools(memory: MemoryIndex) {
           `  Chunks analyzed: ${result.chunksAnalyzed}`,
           `  Facts extracted: ${result.factsExtracted}`,
           `  Operations: add=${ops.add} update=${ops.update} delete=${ops.delete} noop=${ops.noop}`,
+          consolidation ? `  Merged: ${consolidation.mergedCount} promoted=${consolidation.promotedCount}` : "",
           result.errors.length > 0 ? `  Errors: ${result.errors.length}` : "",
         ].filter(Boolean);
         if (result.decisions.length > 0 && result.decisions.length <= 10) {

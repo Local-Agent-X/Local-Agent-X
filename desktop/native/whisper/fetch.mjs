@@ -17,6 +17,7 @@ import { rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, "..", "dist-bin", "whisper-tiny-en");
@@ -54,14 +55,23 @@ async function fetchOne(file) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       console.log(`[whisper-bundle] fetching ${file.name}${attempt > 1 ? ` (attempt ${attempt}/${MAX_ATTEMPTS})` : ""}`);
-      const res = await fetch(`${base}/${file.name}`, { redirect: "follow" });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-      await new Promise((resolve, reject) => {
-        const out = createWriteStream(tmp);
-        Readable.fromWeb(res.body).pipe(out);
-        out.on("finish", resolve);
-        out.on("error", reject);
-      });
+      // Per-attempt timeout so a hung/stalled connection aborts and retries
+      // instead of blocking the whole install indefinitely.
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 120_000);
+      try {
+        const res = await fetch(`${base}/${file.name}`, { redirect: "follow", signal: ac.signal });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        // pipeline() rejects on errors from EITHER stream — critically the
+        // SOURCE: a network drop mid-download errors the read stream, which the
+        // old manual .pipe() left unhandled, hard-crashing the process (exit 1)
+        // and bypassing the retry/non-fatal logic below. That's what truncated
+        // the encoder at 3.4MB and aborted the install. pipeline() routes that
+        // error into the catch so we retry, then continue non-fatally.
+        await pipeline(Readable.fromWeb(res.body), createWriteStream(tmp));
+      } finally {
+        clearTimeout(timer);
+      }
       await rename(tmp, dest);
       const got = statSync(dest).size;
       if (got < file.minBytes) throw new Error(`too small (${got} < ${file.minBytes} bytes)`);

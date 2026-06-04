@@ -70,7 +70,7 @@ Key properties:
 
 | Technique | ID | Our Defense |
 |---|---|---|
-| LLM Prompt Injection | AML.T0051 | sanitize.ts (54+ patterns), content wrapping, canary tokens |
+| LLM Prompt Injection | AML.T0051 | sanitize.ts (35 patterns), content wrapping, canary tokens |
 | LLM Jailbreak | AML.T0054 | Session policies, ARI Kernel behavioral rules |
 | Adversarial Input | AML.T0048 | Homoglyph normalization, control char stripping |
 | Exfiltration via ML Model | AML.T0024 | Data lineage tracking, egress allowlist, encoding detection |
@@ -89,9 +89,9 @@ Layer 2:  Data Lineage       — Tracks sensitive reads → blocks egress when t
 Layer 3:  RBAC               — Role-based tool permissions enforced at execution time
 Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny), per-tool rate limits, host allowlists/denylists, configured via `~/.lax/tool-policy.json`
 Layer 5:  ThreatEngine       — Canary tokens, chain analysis (exfil patterns: read-sensitive → send-external), loop detection (generic repeat, ping-pong, circuit breaker), data classification (auto-tags credentials / PII / secrets / financial), encoding detection, adaptive scoring
-Layer 6:  Content Sanitizer  — 54+ injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
+Layer 6:  Content Sanitizer  — 35 injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
 Layer 7:  Memory Taint       — Blocks untrusted content from persisting to memory
-Layer 8:  Container Sandbox  — Docker auto-detected (LAX_SANDBOX=host to disable)
+Layer 8:  Container Sandbox  — Host by default; Docker opt-in (LAX_SANDBOX=docker or Settings)
 Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB, per-session threat scoring, daily JSONL files at `~/.lax/audit/`
 Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ```
@@ -99,11 +99,11 @@ Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ## Known Limitations
 
 1. **Single-user model** — RBAC adds roles (operator / user / readonly) but not full enterprise IAM (OIDC/SAML planned). Don't share a single instance between mutually untrusted users.
-2. **Docker sandbox auto-detects** — If Docker is available, bash runs in containers by default. Set `LAX_SANDBOX=host` to disable.
+2. **Docker sandbox is opt-in** — Bash runs on the host by default. Enable container isolation with `LAX_SANDBOX=docker` or the Sandbox toggle in Settings; if Docker is requested but unavailable it falls back to host.
 3. **Secrets encryption** — Uses OS keychain (DPAPI/Keychain) when available, falls back to scrypt N=131072 (~500ms/attempt).
 4. **Memory taint is heuristic** — Pattern-based detection + Unicode normalization can be evaded by sufficiently creative injection. ARI Kernel taint tracking adds formal enforcement.
 5. **No formal verification** — Security properties are tested empirically, not formally proven.
-6. **Egress allowlist is deny-by-default** — Outbound HTTP/web_fetch requests require `~/.lax/egress-allowlist.json` (a JSON array of allowed domains, wildcards like `*.example.com` supported). Missing or non-array file → all egress denied with a setup hint pointing at the path. Explicit empty `[]` is honored as "deny everything."
+6. **Egress allowlist has two modes** — Default is `permissive`: all public hosts are reachable (SSRF / private-IP / cloud-metadata blocks still apply), and `~/.lax/egress-allowlist.json` gates only secret-bearing request bodies at the tool layer. Opt into `strict` mode via `~/.lax/security.json` (`egressMode: "strict"`) for true deny-by-default egress, where only allowlisted domains pass (wildcards like `*.example.com` supported) and a missing or non-array file denies all egress with a setup hint. Explicit empty `[]` is honored as "deny everything."
 
 ## Incident Response
 

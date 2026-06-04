@@ -61,12 +61,19 @@ class SpeechHelper
         return sb.ToString();
     }
 
-    static void EmitReady() => EmitLine("{\"type\":\"ready\"}");
-    static void EmitStopped() => EmitLine("{\"type\":\"stopped\"}");
-    static void EmitResult(string text, bool isFinal) =>
+    // NOTE: plain method bodies (not expression-bodied `=>`) and no null-
+    // conditional `?.` below — the in-box .NET Framework csc.exe targeted here
+    // is the pre-Roslyn C# 5 compiler and rejects C# 6+ syntax.
+    static void EmitReady() { EmitLine("{\"type\":\"ready\"}"); }
+    static void EmitStopped() { EmitLine("{\"type\":\"stopped\"}"); }
+    static void EmitResult(string text, bool isFinal)
+    {
         EmitLine("{\"type\":\"result\",\"text\":" + EscapeJson(text) + ",\"isFinal\":" + (isFinal ? "true" : "false") + "}");
-    static void EmitError(string code, string message) =>
+    }
+    static void EmitError(string code, string message)
+    {
         EmitLine("{\"type\":\"error\",\"code\":" + EscapeJson(code) + ",\"message\":" + EscapeJson(message) + "}");
+    }
 
     static readonly object stdoutLock = new object();
     static void EmitLine(string line)
@@ -118,8 +125,8 @@ class SpeechHelper
         lock (engineLock)
         {
             if (!running) return;
-            try { engine?.RecognizeAsyncStop(); } catch { }
-            try { engine?.Dispose(); } catch { }
+            try { if (engine != null) engine.RecognizeAsyncStop(); } catch { }
+            try { if (engine != null) engine.Dispose(); } catch { }
             engine = null;
             running = false;
             EmitStopped();

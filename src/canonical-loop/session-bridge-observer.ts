@@ -15,7 +15,7 @@
  *   - state_changed  *      → failed     → bg_op_completed (status: failed)
  *   - state_changed  *      → cancelled  → bg_op_completed (status: cancelled)
  *   - error event                        → bg_op_progress (last error code)
- *   - turn_committed                     → bg_op_progress ("turn N committed")
+ *   - turn_committed                     → bg_op_progress ("turn N · <tools>")
  *
  * Skipped on purpose:
  *   - Stream chunks (op_stream channel) — too high frequency for the
@@ -324,11 +324,17 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
       }
       case "turn_committed": {
         const turnIdx = (b.turnIdx as number | undefined) ?? 0;
-        const messageCount = (b.messageCount as number | undefined) ?? 0;
+        const tools = (b.tools as { tool: string; status: string }[] | undefined) ?? [];
+        // Lead with what the worker actually DID this turn — the tool names,
+        // each flagged if it errored — instead of an opaque message count.
+        // Bare "turn N" with no tools means a pure text/reasoning turn.
+        const summary = tools.length > 0
+          ? tools.map((t) => (t.status === "error" ? `${t.tool} ✗` : t.tool)).join(", ")
+          : "thinking";
         broadcastToSession(sessionId, {
           type: "bg_op_progress",
           opId: event.opId,
-          line: `✓ turn ${turnIdx} committed (${messageCount} msg)`,
+          line: `✓ turn ${turnIdx} · ${summary}`,
         } as ServerEvent);
         return;
       }

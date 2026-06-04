@@ -160,6 +160,7 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
     turnIdx,
     messageCount: persistedMsgs.length,
     toolCount: input.toolCallSummary.length,
+    tools: input.toolCallSummary.map((t) => ({ tool: t.tool, status: t.resultStatus })),
   });
 
   if (redirectConsumed && appliedId != null) {

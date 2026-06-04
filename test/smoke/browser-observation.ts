@@ -1,33 +1,78 @@
 /**
- * Browser smoke tests — exercise BrowserManager + observation layer against
- * local fixture pages. No real sites, no LLM calls. Runs in ~5s.
+ * Browser observation-layer smoke test — exercises BrowserManager's
+ * navigate → snapshot → fillByRef → tabs path against local fixture pages.
+ * No real sites, no LLM calls. Runs in ~5s against the real agent Chrome.
  *
- *   tsx tests/browser-smoke.ts
+ *   npm run test:browser-smoke      (or: npx tsx test/smoke/browser-observation.ts)
  *
  * Pass = exit 0, fail = exit 1 with the failing assertion.
+ *
+ * This is an executable smoke SCRIPT, not a vitest test: it launches a real
+ * browser against the developer's real ~/.lax Chrome profile. The vitest suite
+ * is offline + HOME-isolated (every browser unit test stubs Playwright), so this
+ * lives outside the gate and is run on demand. It's the only check that covers
+ * the live observation layer — manager.test.ts only covers the fill-readback
+ * policy with a stubbed page.
  */
 import { createServer } from "node:http";
-import { readFileSync, existsSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { BrowserManager } from "../src/browser.js";
+import { BrowserManager } from "../../src/browser/index.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const FIXTURE_DIR = resolve(__dirname, "fixtures");
 const PORT = 19321;
+
+const LOGIN_HTML = `<!doctype html>
+<html>
+<head><title>Test Login</title></head>
+<body>
+  <h1>Sign in</h1>
+  <form id="f">
+    <label for="u">Username</label>
+    <input id="u" name="username" type="text" placeholder="Email or username" />
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="current-password" value="HARDCODED_SECRET_FOR_TEST" />
+    <button type="button" id="signin">Sign In</button>
+    <a href="/forgot">Forgot password?</a>
+  </form>
+  <div id="below" style="margin-top: 2000px;">
+    <button id="farbutton">Far Button</button>
+  </div>
+</body>
+</html>`;
+
+const DASHBOARD_HTML = `<!doctype html>
+<html>
+<head><title>Dashboard</title></head>
+<body>
+  <h1>Professional Dashboard</h1>
+  <nav>
+    <a href="/insights/media/12345">View insights (Post 1)</a>
+    <a href="/insights/media/67890">View insights (Post 2)</a>
+    <a href="/accounts/insights/?timeframe=30">Account analytics last 30 days</a>
+  </nav>
+  <div id="tiles">
+    <div class="tile"><h2>Accounts reached</h2><span id="r">1,079</span></div>
+    <div class="tile"><h2>Engagement</h2><span id="e">192</span></div>
+  </div>
+  <button id="editbtn">Edit profile</button>
+</body>
+</html>`;
+
+const PAGES: Record<string, string> = {
+  "login.html": LOGIN_HTML,
+  "dashboard.html": DASHBOARD_HTML,
+};
 
 function startFixtureServer(): Promise<{ close: () => void }> {
   return new Promise((res) => {
     const srv = createServer((req, out) => {
       const url = (req.url || "/").split("?")[0];
-      const path = url === "/" ? "login.html" : url.slice(1) + (url.endsWith(".html") ? "" : ".html");
-      const abs = join(FIXTURE_DIR, path);
-      if (existsSync(abs)) {
+      const name = url === "/" ? "login.html" : url.slice(1) + (url.endsWith(".html") ? "" : ".html");
+      const body = PAGES[name];
+      if (body) {
         out.writeHead(200, { "content-type": "text/html" });
-        out.end(readFileSync(abs));
+        out.end(body);
       } else {
-        out.writeHead(404); out.end("not found");
+        out.writeHead(404);
+        out.end("not found");
       }
     });
     srv.listen(PORT, "127.0.0.1", () => res({ close: () => srv.close() }));
@@ -56,7 +101,7 @@ async function main() {
     assert(nav.includes("Password"), "password field labeled as 'Password'");
 
     console.log("\n[3] offscreen elements are still visible (no viewport filter)");
-    assert(nav.includes("Far Button") || nav.includes("farbutton") || nav.toLowerCase().includes("far"), "far-offscreen button included in snapshot");
+    assert(nav.toLowerCase().includes("far"), "far-offscreen button included in snapshot");
 
     console.log("\n[4] durable refs persist across observations");
     // navigate() auto-snapshots; its return value INCLUDES the initial snapshot.

@@ -8,6 +8,7 @@ import type { ToolPolicy } from "../../tool-policy.js";
 import { createLogger } from "../../logger.js";
 import { DREAM_SYSTEM_PROMPT } from "./prompts.js";
 import type { ProviderId } from "../../providers/provider-ids.js";
+import { registerDreamRunner, type DreamRunResult } from "../../memory/dream.js";
 
 const logger = createLogger("server.background-jobs.dream");
 
@@ -22,18 +23,32 @@ export interface DreamCheckDeps {
   saveSession: (s: Session) => Promise<void>;
 }
 
-export function makeRunDreamCheck(deps: DreamCheckDeps): () => Promise<void> {
+/**
+ * Register the agentic dream as the on-demand runner. It captures the heavy
+ * server deps in a closure so the scheduler, the memory_dream tool, and the
+ * POST /memory/dream route can all invoke it through triggerDream() without
+ * holding those deps. This is the ONLY caller of the dream-state lock.
+ */
+export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
   const { config, dataDir, sessionStore, secretsStore, security, toolPolicy, allAgentTools, saveSession } = deps;
-  return async () => {
+
+  registerDreamRunner(async ({ force }): Promise<DreamRunResult> => {
+    const {
+      shouldDream, buildDreamPrompt, buildDreamPromptForBatch,
+      listRecentSessionTranscripts, buildDreamBatches,
+      startDream, completeDream, failDream,
+    } = await import("../../memory/dream.js");
+
+    // `force` drops the time/session thresholds but still honors the lock +
+    // 30-min crash recovery encoded in shouldDream(minHours, minSessions).
+    const gate = force ? shouldDream(0, 0) : shouldDream();
+    if (!gate) {
+      return { ran: false, reason: force ? "already running" : "gated", batches: 0, sessionsReviewed: 0 };
+    }
+
+    logger.info(`[dream] Starting memory consolidation${force ? " (forced)" : ""}...`);
+    startDream();
     try {
-      const {
-        shouldDream, buildDreamPrompt, buildDreamPromptForBatch,
-        listRecentSessionTranscripts, buildDreamBatches,
-        startDream, completeDream,
-      } = await import("../../memory/dream.js");
-      if (!shouldDream()) return;
-      logger.info("[dream] Starting memory consolidation...");
-      startDream();
       const { resolveProvider: rp } = await import("../../agent-request/index.js");
       const { provider, apiKey, model } = await rp(config, secretsStore, dataDir);
       const { backgroundModelFor } = await import("../../providers/registry.js");
@@ -84,9 +99,13 @@ export function makeRunDreamCheck(deps: DreamCheckDeps): () => Promise<void> {
       const recentCount = sessionStore.list().filter(s => s.updatedAt > Date.now() - 24 * 60 * 60 * 1000).length;
       completeDream(recentCount);
       logger.info(`[dream] Memory consolidation finished (${batches.length} batch(es))`);
+      return { ran: true, batches: batches.length, sessionsReviewed: recentCount };
     } catch (e) {
       logger.warn("[dream] Failed:", (e as Error).message);
-      try { const { failDream } = await import("../../memory/dream.js"); failDream(); } catch {}
+      failDream();
+      return { ran: false, reason: `error: ${(e as Error).message}`, batches: 0, sessionsReviewed: 0 };
     }
-  };
+  });
+
+  logger.info("[dream] Runner registered");
 }

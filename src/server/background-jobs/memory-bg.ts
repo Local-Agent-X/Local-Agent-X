@@ -19,17 +19,17 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
   const { dataDir, sessionStore, memoryIndex } = deps;
   return async () => {
     try { const { MemoryOrchestrator: MO } = await import("../../orchestrator/orchestrator.js"); const r = MO.getInstance().runBackground(memoryIndex); logger.info(`[memory-bg] ${r.totalTimeMs}ms`); } catch (e) { logger.warn("[memory-bg]", (e as Error).message); }
+    // Cheap consolidation stages (algorithmic consolidate + reflect) via the
+    // shared pipeline. Extract is left off here — it's LLM-driven and stays
+    // user-triggered through the memory_consolidate/memory_dream tools.
     try {
-      const reflectResult = await memoryIndex.reflect(7);
-      if (reflectResult.entitiesUpdated.length > 0 || reflectResult.opinionsUpdated > 0) {
-        logger.info(`[memory-bg] Reflect: ${reflectResult.entitiesUpdated.length} entities, ${reflectResult.opinionsUpdated} opinions`);
+      const { runConsolidation } = await import("../../memory/consolidation-pipeline.js");
+      const { consolidation, reflection } = await runConsolidation(memoryIndex, { consolidate: true, reflect: 7 });
+      if (reflection && (reflection.entitiesUpdated.length > 0 || reflection.opinionsUpdated > 0)) {
+        logger.info(`[memory-bg] Reflect: ${reflection.entitiesUpdated.length} entities, ${reflection.opinionsUpdated} opinions`);
       }
-    } catch (e) { logger.warn("[memory-bg] Reflect:", (e as Error).message); }
-    try {
-      const { MemoryConsolidator: MC } = await import("../../memory/cognitive/consolidation/index.js");
-      const report = MC.getInstance().consolidate();
-      if (report.mergedCount > 0 || report.promotedCount > 0) {
-        logger.info(`[memory-bg] Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated}`);
+      if (consolidation && (consolidation.mergedCount > 0 || consolidation.promotedCount > 0)) {
+        logger.info(`[memory-bg] Consolidation: merged=${consolidation.mergedCount} promoted=${consolidation.promotedCount} entities=${consolidation.entityPagesUpdated}`);
       }
     } catch (e) { logger.warn("[memory-bg] Consolidation:", (e as Error).message); }
     try {

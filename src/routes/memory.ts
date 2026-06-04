@@ -21,6 +21,27 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     return true;
   }
 
+  // Manual dream trigger — the only way to run the agentic dream on demand
+  // (the scheduler otherwise gates it behind shouldDream's 6h/2-session
+  // window). Runs the cheap consolidation pipeline, then force-runs the
+  // agentic reflection through the registered dream runner.
+  if (method === "POST" && url.pathname === "/api/memory/dream") {
+    const { runConsolidation } = await import("../memory/consolidation-pipeline.js");
+    const consolidation = await runConsolidation(ctx.memoryIndex, { extract: {}, consolidate: true, reflect: 7 });
+    const { triggerDream } = await import("../memory/dream.js");
+    const dream = await triggerDream({ force: true });
+    logger.info(`[memory] manual dream trigger: ran=${dream?.ran ?? "no-runner"} batches=${dream?.batches ?? 0}`);
+    json(200, {
+      consolidation: {
+        factsExtracted: consolidation.extraction?.factsExtracted ?? 0,
+        merged: consolidation.consolidation?.mergedCount ?? 0,
+        reflectedEntities: consolidation.reflection?.entitiesUpdated.length ?? 0,
+      },
+      dream: dream ?? { ran: false, reason: "no runner registered", batches: 0, sessionsReviewed: 0 },
+    });
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/api/memory/atlas") {
     const raw = parseInt(url.searchParams.get("limit") || "40000", 10);
     const limit = Math.min(40000, Math.max(1, Number.isFinite(raw) ? raw : 40000));

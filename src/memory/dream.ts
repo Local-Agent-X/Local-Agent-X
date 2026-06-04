@@ -342,3 +342,42 @@ export function failDream(): void {
   saveDreamState(state);
   logger.warn("[dream] Consolidation failed — lock released.");
 }
+
+// ── On-demand trigger seam ───────────────────────────────────────────────
+//
+// The agentic dream needs heavy server deps (security, toolPolicy, the agent
+// tool catalog, session IO) that only exist at server bootstrap — tools and
+// routes can't hold them. Mirroring registerWorkerRunner: the server registers
+// the dream runner once (deps captured in a closure), and any caller triggers
+// it through the deps-free triggerDream(). The registered runner is the ONLY
+// code permitted to touch the dream-state lock (shouldDream/startDream/
+// completeDream) — keeping a single owner and killing the historical
+// "stamp lastDreamAt without running" sabotage.
+
+export interface DreamRunResult {
+  /** Whether the agentic dream actually ran (false = gated/no-op). */
+  ran: boolean;
+  /** Why it didn't run, when ran is false (e.g. "gated", "already running"). */
+  reason?: string;
+  batches: number;
+  sessionsReviewed: number;
+}
+
+export type DreamRunner = (opts: { force?: boolean }) => Promise<DreamRunResult>;
+
+let registeredDreamRunner: DreamRunner | null = null;
+
+/** Wire the agentic dream at server startup. See registerDreamRunnerForServer. */
+export function registerDreamRunner(runner: DreamRunner): void {
+  registeredDreamRunner = runner;
+}
+
+/**
+ * Run the agentic dream on demand. `force` bypasses the shouldDream() time
+ * gate (used by the manual route/tool). Returns null when no runner is wired
+ * (e.g. headless contexts that never started background jobs).
+ */
+export async function triggerDream(opts: { force?: boolean } = {}): Promise<DreamRunResult | null> {
+  if (!registeredDreamRunner) return null;
+  return registeredDreamRunner(opts);
+}

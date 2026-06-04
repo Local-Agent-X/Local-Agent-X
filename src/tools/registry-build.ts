@@ -26,7 +26,6 @@ import { clipboardTools } from "./clipboard-tools.js";
 import { sqlTools } from "./sql-tools.js";
 import { taskTools } from "./task-tools.js";
 import { planTools } from "./plan-tools.js";
-import { buildDreamPrompt } from "../memory/dream.js";
 import { selfEditTool } from "./self-edit-tool.js";
 import { primalRunBuildPlanTool } from "../primal-auto-build/tool.js";
 import { startAppBuildTool, finalizeAppBuildTool } from "../primal-auto-build/app-build-tool.js";
@@ -52,9 +51,9 @@ export const allTools: ToolDefinition[] = applyPrompts([
   ...taskTools, ...planTools, ...autopilotTools, ...opTools,
   {
     name: "memory_dream",
-    description: "Trigger a memory consolidation (dream). Reviews recent sessions, extracts facts, runs reflection and consolidation, and reorganizes memory files. Returns a summary of what was processed.",
+    description: "Run a memory dream now: tidy stored facts (algorithmic merge/promote) AND launch the agentic reflection that reviews raw transcripts and rewrites memory files. The deep reflection runs as background worker agents. For LLM fact-extraction from recent chunks, use memory_consolidate.",
     parameters: { type: "object", properties: {}, required: [] },
-    async execute(): Promise<{ content: string; metadata?: Record<string, unknown> }> {
+    async execute(): Promise<{ content: string }> {
       const results: string[] = [];
       try {
         const { MemoryConsolidator } = await import("../memory/cognitive/consolidation/index.js");
@@ -62,13 +61,13 @@ export const allTools: ToolDefinition[] = applyPrompts([
         results.push(`Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated} contradictions=${report.contradictionsFound}`);
       } catch (e) { results.push(`Consolidation failed: ${(e as Error).message}`); }
       try {
-        const { completeDream, startDream } = await import("../memory/dream.js");
-        startDream();
-        completeDream(0);
-        results.push("Dream state updated");
-      } catch (e) { results.push(`Dream state update failed: ${(e as Error).message}`); }
-      results.push("\n--- LLM Dream Prompt (for deeper consolidation) ---\n" + buildDreamPrompt());
-      return { content: results.join("\n"), metadata: { isDreamPrompt: true } };
+        const { triggerDream } = await import("../memory/dream.js");
+        const r = await triggerDream({ force: true });
+        if (r === null) results.push("Agentic dream: runner not available (background jobs not started).");
+        else if (r.ran) results.push(`Agentic dream: launched, reviewed ${r.sessionsReviewed} session(s) across ${r.batches} batch(es).`);
+        else results.push(`Agentic dream: skipped (${r.reason}).`);
+      } catch (e) { results.push(`Agentic dream failed: ${(e as Error).message}`); }
+      return { content: results.join("\n") };
     },
   } satisfies ToolDefinition,
   {

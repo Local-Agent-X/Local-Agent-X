@@ -101,6 +101,32 @@ const READ_ONLY_BASH_BINS = new Set([
 ]);
 
 /**
+ * Highest step number the user enumerated in an instruction. Counts list
+ * markers ("1)", "2.") and "step N" phrasings; returns 0 when fewer than two
+ * distinct steps are present (not a multi-step task). Bare numbers that aren't
+ * enumeration markers (e.g. the "70" in "sleep 70") are ignored.
+ */
+export function countEnumeratedSteps(text: string): number {
+  if (!text) return 0;
+  const nums = new Set<number>();
+  for (const m of text.matchAll(/(?:^|[\s(])(\d{1,2})[).]/g)) nums.add(Number(m[1]));
+  for (const m of text.matchAll(/\bstep\s+(\d{1,2})\b/gi)) nums.add(Number(m[1]));
+  const max = nums.size ? Math.max(...nums) : 0;
+  return max >= 2 ? max : 0;
+}
+
+/**
+ * Highest step number a reply claims to be working on / done with ("Step 1
+ * complete", "**Step 2 summary:**"). 0 when the reply names no step.
+ */
+export function highestClaimedStep(text: string): number {
+  if (!text) return 0;
+  let max = 0;
+  for (const m of text.matchAll(/\bstep\s+(\d{1,2})\b/gi)) max = Math.max(max, Number(m[1]));
+  return max;
+}
+
+/**
  * True if a bash command is pure read-only exploration (so a single-call stall
  * should still be nudged). A compound command is exploratory only if EVERY
  * segment is a read-only binary and there is no output redirection — one

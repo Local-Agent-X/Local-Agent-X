@@ -9,6 +9,7 @@ import {
   EMPTY_RESPONSE_INSTRUCTION,
   UNCOMMITTED_TURN_INSTRUCTION,
   EVIDENCE_STALE_INSTRUCTION,
+  INCOMPLETE_MULTISTEP_INSTRUCTION,
 } from "./instructions.js";
 import {
   PLANNING_FUTURE_PROMISE,
@@ -18,6 +19,8 @@ import {
   COMPLETION_PHRASE_AT_SENTENCE_START,
   RETRY_SAFE_EXPLORATORY_TOOLS,
   isExploratoryBashCommand,
+  highestClaimedStep,
+  isWaitingOnUser,
 } from "./patterns.js";
 import type { RetryInstruction, TurnState } from "./state.js";
 
@@ -79,6 +82,25 @@ export function detectSingleActionStop(state: TurnState): RetryInstruction | nul
     return null;
   }
   return { kind: "single-action-stop", instruction: SINGLE_ACTION_STOP_INSTRUCTION };
+}
+
+/**
+ * User enumerated N steps; the model completed step M < N and yielded. This
+ * is the harness compensating for models that, unlike Claude, hand control
+ * back after each committing step instead of marching through the whole list.
+ * Keyed on the model's own "Step M" label (lowest-false-positive signal) and
+ * the user's enumerated step count — so a model that finishes every step in
+ * one turn (its reply names the last step) never trips it.
+ */
+export function detectIncompleteMultiStep(state: TurnState): RetryInstruction | null {
+  if (state.toolCallsThisIteration.length > 0) return null; // still working
+  if (!state.assistantText) return null;
+  const total = state.enumeratedSteps ?? 0;
+  if (total < 2) return null;
+  if (isWaitingOnUser(state.assistantText)) return null;
+  const claimed = highestClaimedStep(state.assistantText);
+  if (claimed === 0 || claimed >= total) return null;
+  return { kind: "incomplete-multistep", instruction: INCOMPLETE_MULTISTEP_INSTRUCTION };
 }
 
 /** Model emitted reasoning tokens but no user-visible text. */

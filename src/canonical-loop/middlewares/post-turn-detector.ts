@@ -20,7 +20,7 @@ export const postTurnDetectorMiddleware: CanonicalMiddleware = {
   name: "post-turn-detector",
 
   async afterModelCall(ctx) {
-    const { runPostTurnDetectors, computeEvidenceCount, userMessageHasImages, createRetryCounters } =
+    const { runPostTurnDetectors, computeEvidenceCount, userMessageHasImages, createRetryCounters, countEnumeratedSteps } =
       await import("../../agent-loop-detectors/index.js");
     const counters = getMiddlewareState(ctx.op.id, RETRY_COUNTERS_KEY, createRetryCounters);
 
@@ -31,6 +31,17 @@ export const postTurnDetectorMiddleware: CanonicalMiddleware = {
     // assistant.tool_calls from that exact shape.
     const { readOpMessages } = await import("../store.js");
     const rows = readOpMessages(ctx.op.id);
+
+    // Highest enumerated step count across the op's genuine user instructions.
+    // Injected nudges are also user rows but carry no "1) 2) 3)" enumeration,
+    // so taking the max keeps the original request's step count intact.
+    let enumeratedSteps = 0;
+    for (const r of rows) {
+      if (r.role !== "user") continue;
+      const c = r.content as { text?: unknown } | string | null;
+      const text = typeof c === "string" ? c : typeof c?.text === "string" ? c.text : "";
+      enumeratedSteps = Math.max(enumeratedSteps, countEnumeratedSteps(text));
+    }
     const messagesView = rows.map(r => {
       if (r.role !== "assistant") {
         return { role: r.role === "tool_result" ? "tool" : r.role, content: "" } as { role: string; content: unknown };
@@ -80,6 +91,7 @@ export const postTurnDetectorMiddleware: CanonicalMiddleware = {
       userMessageHasImages: userMessageHasImages(
         messagesView as Array<{ role: string; content: unknown }>,
       ),
+      enumeratedSteps,
     };
 
     const hit = runPostTurnDetectors(detectorState, counters);

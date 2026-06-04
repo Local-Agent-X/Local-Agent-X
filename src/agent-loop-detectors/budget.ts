@@ -7,6 +7,7 @@ export interface RetryBudget {
   emptyResponse: number;
   uncommittedTurn: number;
   evidenceStale: number;
+  incompleteMultiStep: number;
 }
 
 export const DEFAULT_RETRY_BUDGET: RetryBudget = {
@@ -16,6 +17,8 @@ export const DEFAULT_RETRY_BUDGET: RetryBudget = {
   emptyResponse: 2,
   uncommittedTurn: 1,
   evidenceStale: 1,
+  // One nudge per remaining step for a reasonably long enumerated task.
+  incompleteMultiStep: 8,
 };
 
 export interface RetryCounters {
@@ -25,6 +28,7 @@ export interface RetryCounters {
   emptyResponse: number;
   uncommittedTurn: number;
   evidenceStale: number;
+  incompleteMultiStep: number;
 }
 
 export function createRetryCounters(): RetryCounters {
@@ -35,5 +39,6 @@ export function createRetryCounters(): RetryCounters {
     emptyResponse: 0,
     uncommittedTurn: 0,
     evidenceStale: 0,
+    incompleteMultiStep: 0,
   };
 }

@@ -59,6 +59,17 @@ export interface TurnInput {
 export type AdapterReport =
   | { kind: "stream_chunk"; body: unknown }
   /**
+   * Liveness ping with no UI payload. Emitted while the adapter is making
+   * progress the user shouldn't see yet — chiefly a reasoning model
+   * streaming chain-of-thought into `reasoning_content`, which we
+   * accumulate silently rather than render. The orchestrator resets its
+   * idle watchdog on every report, so without this a long reasoning turn
+   * (grok-4 family, o-series, etc.) emits nothing for minutes and gets
+   * killed as "stalled" despite working. Consumers that only care about
+   * visible output ignore it.
+   */
+  | { kind: "heartbeat" }
+  /**
    * Emitted when an adapter post-processes its already-streamed text and
    * needs the UI to retract part of it. Used by openai-compat after the
    * tool-call-text-extractor synthesizes a tool call from JSON the model

@@ -21,7 +21,7 @@ Edit `~/.lax/mcp.json`. Each entry is one server:
 }
 ```
 
-The agent picks up the new tools on next config save (file watcher reloads automatically). Tools are namespaced as `mcp_<server>_<tool>`, e.g. `mcp_github_create_issue`. Filesystem MCP tools are filtered out at registration time because LAX's native `read`/`write`/`edit`/`grep`/`glob` already cover that surface with full ARI/security integration.
+The agent picks up the new tools on next config save (file watcher reloads automatically). Tools are namespaced as `mcp_<server>_<tool>`, e.g. `mcp_github_create_issue`. A server **named `filesystem`** is skipped entirely at connect time (the subprocess is never spawned) because LAX's native `read`/`write`/`edit`/`grep`/`glob` already cover that surface with full ARI/security integration. The skip is keyed on the server name, so a filesystem server configured under a different name would still connect and expose its tools.
 
 ## Placeholders — making one config work on every machine
 
@@ -78,7 +78,7 @@ The MCP manager watches `~/.lax/mcp.json`. On save:
 3. Servers are re-spawned with newly-resolved placeholders.
 4. New tools surface in the next agent turn's tool list.
 
-A 250ms debounce coalesces editor save-events. No server restart required for: adding a server, removing a server, flipping `disabled`, or saving a token in the vault that a server was waiting on.
+A 250ms debounce coalesces editor save-events. No server restart required for: adding a server, removing a server, or flipping `disabled`. Saving a previously-missing secret to the vault does **not** auto-start a server that was skipped for it — re-save `mcp.json` (touch it) or restart LAX, since the watcher only watches the config file, not the vault.
 
 ## Troubleshooting
 
@@ -88,9 +88,9 @@ A 250ms debounce coalesces editor save-events. No server restart required for: a
 
 **Tool not appearing in agent's tool list.** Confirm the server connected (look for `[mcp:<name>] Connected — N tools`). If the count is 0, the server didn't expose any tools. If non-zero but the agent doesn't pick them, the tool name might collide with a native one (LAX deduplicates by name).
 
-**Secret IS in the vault but server is still skipped.** Names are case-sensitive and must match exactly. `${secret:GITHUB_TOKEN}` looks up `GITHUB_TOKEN`, not `github_token`. Verify with `list_secrets` (UI) or read directly: `secretsStore.get("GITHUB_TOKEN")`.
+**Secret IS in the vault but server is still skipped.** Names are case-sensitive and must match exactly. `${secret:GITHUB_TOKEN}` looks up `GITHUB_TOKEN`, not `github_token`. Verify the saved name in the Secrets panel (or with the `list_secrets` tool).
 
-**Filesystem MCP tools missing on purpose.** They're filtered at registration time — LAX's native `read`/`write`/`edit`/`grep`/`glob` cover the same surface with full ARI policy and SecurityLayer path checking. The MCP filesystem server is fine to leave configured (its existence doesn't break anything), but its tools won't appear in the agent's surface.
+**Filesystem MCP tools missing on purpose.** A server named `filesystem` is skipped at connect time (never spawned) — LAX's native `read`/`write`/`edit`/`grep`/`glob` cover the same surface with full ARI policy and SecurityLayer path checking. The entry is fine to leave configured (its existence doesn't break anything), but its tools won't appear in the agent's surface unless you rename the server to something other than `filesystem`.
 
 ## Recommended servers to start with
 
@@ -109,5 +109,5 @@ The `mcp.json` template that ships with a fresh LAX install includes `filesystem
 ## Architecture notes
 
 - **In-process tool execution stays the default for LAX-native tools.** ARI, type safety, and latency advantages matter too much to route the 170+ native tools through MCP. MCP is the *interop boundary*, not the *execution path*.
-- **Per-call ARI evaluation still applies.** MCP tool calls go through the same `ariEvaluate` path as native tool calls. The only difference is the toolClass/action mapping — MCP tools currently default to `shell` class for policy purposes (the most conservative default).
+- **Per-call ARI evaluation still applies.** MCP tool calls go through the same ARI path as native calls. Because MCP tool names aren't in the `TOOLS` registry, the **autonomy risk tier** falls back to `shell` (the most conservative non-destructive tier; `src/autonomy/risk.ts`), and the **kernel classifier fail-closes** — unmapped tools are treated as an unaudited I/O surface and blocked unless explicitly classified (`src/ari-kernel/tool-class-map.ts`).
 - **No automatic trust of new servers.** Servers must be explicitly listed in `mcp.json` with `disabled: false`. Auto-discovery is not implemented and not planned.

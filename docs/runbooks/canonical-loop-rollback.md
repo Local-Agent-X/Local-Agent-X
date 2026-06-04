@@ -84,7 +84,7 @@ cancels them. Either:
 
 ```bash
 # Anything in {queued, running, paused, cancelling} is still active.
-grep -l '"state": "running"' ~/.lax/operations/*/operation.json
+grep -lE '"state": "(queued|running|paused|cancelling)"' ~/.lax/operations/*/operation.json
 ```
 
 ### 4. Deploy
@@ -193,9 +193,6 @@ adapter was producing real responses. It wasn't.
 
 ## Related
 
-- [docs/migration/worker-pool-retirement.md](../migration/worker-pool-retirement.md)
-  — the three-phase plan; Phase 2 deletes the fork lifecycle this
-  runbook used to roll back to.
 - [docs/canonical-loop-prd.md](../canonical-loop-prd.md) — PRD,
   including §17 flag semantics and §22 Definition of Done.
 - [src/canonical-loop/README.md](../../src/canonical-loop/README.md)

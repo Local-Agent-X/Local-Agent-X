@@ -4,6 +4,7 @@
 // in isOurServerProcess is what catches that.
 
 import { describe, it, expect } from "vitest";
+import { spawn } from "node:child_process";
 import { isPidAlive, isOurServerProcess } from "./pid-probe.js";
 
 // A PID we're confident is not assigned. Real PIDs on Windows fit in
@@ -29,8 +30,24 @@ describe("isPidAlive", () => {
 });
 
 describe("isOurServerProcess", () => {
-  it("returns true for the test process's own PID (vitest runs in node)", () => {
-    expect(isOurServerProcess(process.pid)).toBe(true);
+  it("returns true for a real (untitled) node process", async () => {
+    // Can't probe our own PID: vitest rewrites this worker's process.title and
+    // macOS `ps -o comm=` surfaces that title instead of "node". Spawn a plain
+    // node child (no title rewrite) and probe it — that's the contract that
+    // matters: a genuine node process reads as ours.
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+    try {
+      const pid = child.pid!;
+      // ps may not see the exec'd image for a few ms after spawn; poll briefly.
+      let ok = false;
+      for (let i = 0; i < 40 && !ok; i++) {
+        if (isOurServerProcess(pid)) ok = true;
+        else await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(ok).toBe(true);
+    } finally {
+      child.kill();
+    }
   });
 
   it("returns false for an unassigned PID", () => {

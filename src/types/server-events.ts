@@ -108,5 +108,5 @@ export type ServerEvent =
   // op_submit_async / self_edit results could carry the live op id to the
   // agent panel as a chip while the model never sees the id (and therefore
   // can't parrot it back as a fake delegation message — see
-  // tests/op-submit-async-self-block.test.ts).
+  // test/op-submit-async-self-block.test.ts).
   | { type: "tool_chip"; toolCallId?: string; chip: ToolChip };

@@ -47,7 +47,7 @@ export const opSubmitAsyncTool: ToolDefinition = {
       // guard self-block — the host op blocks its own delegations and the
       // returned BLOCKED message references the host's id. Models then
       // copy-paste the id back, narrating a fake delegation. See repro at
-      // tests/ops/op-submit-async-self-block.test.ts.
+      // test/op-submit-async-self-block.test.ts.
       const liveOps = listOpsForSession(sessionId)
         .map(id => readOp(id))
         .filter((o): o is NonNullable<typeof o> => !!o)

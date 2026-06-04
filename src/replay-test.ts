@@ -1,7 +1,7 @@
 /**
  * Deterministic replay tests.
  *
- * Loads recorded sessions from tests/fixtures/recordings/*.json and replays
+ * Loads recorded sessions from test/fixtures/recordings/*.json and replays
  * the structural assertions: every tool name in the recording still resolves,
  * arguments still parse, no tool result exceeded the budget, no infinite loop
  * patterns slipped through. This catches regressions where we rename a tool,
@@ -44,7 +44,7 @@ interface ReplayCheckResult {
   events: number;
 }
 
-const FIXTURES_DIR = resolve(process.cwd(), "tests", "fixtures", "recordings");
+const FIXTURES_DIR = resolve(process.cwd(), "test", "fixtures", "recordings");
 const MAX_RESULT_SIZE = 50_000;
 const LOOP_THRESHOLD = 12;
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Prompt regression runner. Sends each fixture under tests/prompt-fixtures/
+ * Prompt regression runner. Sends each fixture under test/prompt-fixtures/
  * through the live chat API, checks declared invariants, reports pass/fail.
  *
  * Usage: node scripts/run-prompt-fixtures.mjs
@@ -21,7 +21,7 @@ const TOKEN = process.env.LAX_TOKEN || (() => {
 })();
 if (!TOKEN) { console.error("[fixtures] No auth token found (LAX_TOKEN or ~/.lax/config.json)"); process.exit(2); }
 
-const FIXTURES_DIR = resolve("tests", "prompt-fixtures");
+const FIXTURES_DIR = resolve("test", "prompt-fixtures");
 if (!existsSync(FIXTURES_DIR)) { console.error(`[fixtures] ${FIXTURES_DIR} does not exist`); process.exit(2); }
 
 function parseFixture(content) {

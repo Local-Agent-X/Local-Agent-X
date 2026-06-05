@@ -97,11 +97,17 @@ export class AgentCatalog {
    * lives downstream.
    *
    * When `scope` is provided, the result is filtered to the project's
-   * roster (Project.agentIds). Definitions are matched against the
-   * roster by id. A scope pointing at a non-existent project returns
-   * an empty list. A roster entry pointing at a non-existent agent id
-   * is silently skipped — the catalog is the source of truth for what
-   * exists; the roster only declares membership.
+   * roster. Definitions are matched against the roster by id. This is
+   * the DISPLAY view ("your team here") — used by `agent_list`. A scope
+   * pointing at a non-existent project, or a project with an empty
+   * roster, yields an empty list: there is genuinely no team to show.
+   * A roster entry pointing at a non-existent agent id is silently
+   * skipped — the catalog is the source of truth for what exists; the
+   * roster only declares membership.
+   *
+   * NOTE: roster scoping here is for DISPLAY + org-chart, NOT access
+   * control. The spawn path (`get`) deliberately falls back to the full
+   * catalog when a scoped lookup is empty — see `get` below.
    */
   list(scope?: InvokeScope): AgentDefinition[] {
     const out: AgentDefinition[] = [];
@@ -144,15 +150,36 @@ export class AgentCatalog {
   }
 
   /** Look up by canonical id (template id OR "builtin-<role>") OR by
-   *  role slug. Returns undefined when nothing matches OR when the
-   *  agent isn't on the scoped project's roster.
+   *  role slug, for RESOLVE-TO-SPAWN. Returns undefined only when the
+   *  id/role matches nothing in the entire catalog.
+   *
+   *  Projects are an ORGANIZATIONAL grouping, not a hard permission
+   *  boundary. So scope is a PREFERENCE here, not a gate: we first try
+   *  to resolve within the scoped roster, but if that yields nothing —
+   *  because the project is missing/unknown (e.g. a stale project_id
+   *  passed by the model), the roster is empty (a brand-new project that
+   *  can't yet bootstrap its CEO), or the requested agent simply isn't
+   *  on the roster — we FALL BACK to the full unscoped catalog instead
+   *  of failing the spawn. The display path (`list(scope)`) stays
+   *  roster-scoped so "your team here" remains meaningful; only spawn
+   *  resolution degrades softly.
+   *
+   *  Future enhancement (intentionally NOT done here — unresolved
+   *  product decision): when a fallback resolves an agent that wasn't on
+   *  the project's roster, optionally auto-add it to the roster on spawn.
    *
    *  Accepting both id and role is intentional: legacy callers pass
    *  roles ("researcher"); newer callers should pass canonical ids
    *  ("tpl-..." or "builtin-researcher"). Both must work during the
    *  migration. Id wins on ambiguity. */
   get(idOrRole: string, scope?: InvokeScope): AgentDefinition | undefined {
-    const all = this.list(scope);
+    const scoped = this.list(scope);
+    const hit = scoped.find((d) => d.id === idOrRole) ?? scoped.find((d) => d.role === idOrRole);
+    if (hit) return hit;
+    if (!scope) return undefined; // already searched the full catalog
+    // Soft fallback: resolve against the full, unscoped catalog so a
+    // missing/empty/non-member project can't block a legitimate spawn.
+    const all = this.list();
     return all.find((d) => d.id === idOrRole) ?? all.find((d) => d.role === idOrRole);
   }
 }

@@ -42,10 +42,26 @@ Lookup: by canonical id (`builtin-researcher`, `tpl-<rand>`) OR by role slug
 The catalog and the invoke layer accept an optional `scope: { projectId }`.
 
 - **No scope** → main agent in a default chat. Full catalog.
-- **Scope set** → agents running inside a project. Catalog filtered to the
-  project's `agentIds`. Tool surface intersected with the project's
-  `allowedTools`. Empty/undefined `allowedTools` means "no project-level
-  restriction" — agents keep their definition's full surface.
+- **Scope set** → agents running inside a project. Tool surface intersected
+  with the project's `allowedTools`. Empty/undefined `allowedTools` means "no
+  project-level restriction" — agents keep their definition's full surface.
+
+Scope filters the **display** view, not access. Projects are an
+*organizational* grouping, not a hard permission boundary:
+
+- **Display (`AgentCatalog.list(scope)`, behind `agent_list`)** — filtered to
+  the project's roster. This is "your team here" + the org chart. A
+  missing/unknown project or an empty roster yields an empty team cleanly (no
+  throw, no hard error).
+- **Resolve-to-spawn (`AgentCatalog.get(idOrRole, scope)`, behind
+  `invokeAgent`/`agent_spawn`)** — tries the scoped roster first, then **falls
+  back to the full unscoped catalog** when the scoped lookup is empty because
+  the project is missing/unknown (e.g. a stale `project_id`), the roster is
+  empty (a brand-new project bootstrapping its CEO), or the requested agent
+  isn't on the roster. Resolution only fails when the id/role matches nothing
+  in the entire catalog. The roster is for the display view + org chart, not
+  access control, so a stale or empty scope degrades gracefully instead of
+  producing "no matching definition" → repeated failures → circuit breaker.
 
 ### Invocation
 

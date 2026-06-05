@@ -79,6 +79,65 @@ describe("extractToolCallsFromText — browser shorthand", () => {
   });
 });
 
+describe("extractToolCallsFromText — write/read prose narration", () => {
+  // Live failure 2026-06-05 (Nutrishop demo, xAI Grok): the CEO agent narrated
+  // FIVE write calls as prose in one turn, then "Committed" tripped the guard.
+  const GROK_FIVE_WRITES = [
+    'run tool write with path is /Users/dad/Projects/Local-Agent-X/workspace/subtask1-project-setup.txt content is Committed Subtask 1: Nutrishop McKinney Demo Project Setup. Status: Complete.',
+    'run tool write with path is /Users/dad/Projects/Local-Agent-X/workspace/subtask2-hire-agents.txt content is Committed Subtask 2: Hire 4 agents. Status: Complete.',
+    'run tool write with path is /Users/dad/Projects/Local-Agent-X/workspace/subtask3-product-catalog.txt content is Committed Subtask 3: Product Catalog Setup. Status: Complete.',
+    'run tool write with path is /Users/dad/Projects/Local-Agent-X/workspace/subtask4-marketing-strategy.txt content is Committed Subtask 4: Marketing Strategy. Status: Complete.',
+    'run tool write with path is /Users/dad/Projects/Local-Agent-X/workspace/subtask5-operations.txt content is Committed Subtask 5: Operations and Reporting. Status: Complete.',
+  ].join("\n");
+
+  it("reconstructs ALL five narrated write calls from one turn", () => {
+    const { toolCalls } = extractToolCallsFromText(GROK_FIVE_WRITES, TOOLS);
+    expect(toolCalls).toHaveLength(5);
+    expect(toolCalls.every((t) => t.name === "write")).toBe(true);
+    const first = JSON.parse(toolCalls[0].arguments);
+    expect(first.path).toBe("/Users/dad/Projects/Local-Agent-X/workspace/subtask1-project-setup.txt");
+    expect(first.content).toBe("Committed Subtask 1: Nutrishop McKinney Demo Project Setup. Status: Complete.");
+    const last = JSON.parse(toolCalls[4].arguments);
+    expect(last.path).toBe("/Users/dad/Projects/Local-Agent-X/workspace/subtask5-operations.txt");
+    expect(last.content).toBe("Committed Subtask 5: Operations and Reporting. Status: Complete.");
+  });
+
+  it("reconstructs a single write (path + content)", () => {
+    const text = "run tool write with path is /tmp/a.txt content is hello world";
+    const { toolCalls } = extractToolCallsFromText(text, TOOLS);
+    expect(toolCalls).toHaveLength(1);
+    expect(JSON.parse(toolCalls[0].arguments)).toEqual({ path: "/tmp/a.txt", content: "hello world" });
+  });
+
+  it("captures multi-line content verbatim to end-of-call", () => {
+    const text = "run tool write with path is /tmp/note.md content is line one\nline two\nline three";
+    const { toolCalls } = extractToolCallsFromText(text, TOOLS);
+    expect(toolCalls).toHaveLength(1);
+    expect(JSON.parse(toolCalls[0].arguments).content).toBe("line one\nline two\nline three");
+  });
+
+  it("reconstructs a read call (path only)", () => {
+    const text = "use tool read with path is /etc/hosts";
+    const { toolCalls } = extractToolCallsFromText(text, TOOLS);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].name).toBe("read");
+    expect(JSON.parse(toolCalls[0].arguments)).toEqual({ path: "/etc/hosts" });
+  });
+
+  it("does not fire on a write mention with no value markers", () => {
+    const { toolCalls } = extractToolCallsFromText("I'll write the results to a file shortly.", TOOLS);
+    expect(toolCalls).toHaveLength(0);
+  });
+
+  it("reconstructs mixed write + bash in one turn", () => {
+    const text = "run tool write with path is /tmp/x.txt content is hi\nrun tool bash with command is ls /tmp";
+    const { toolCalls } = extractToolCallsFromText(text, TOOLS);
+    expect(toolCalls).toHaveLength(2);
+    expect(toolCalls.map((t) => t.name)).toEqual(["write", "bash"]);
+    expect(JSON.parse(toolCalls[1].arguments).command).toBe("ls /tmp");
+  });
+});
+
 describe("extractToolCallsFromText — shell prose narration", () => {
   // Live failure 2026-06-04 (Nutrishop demo, xAI Grok): instead of a
   // structured tool_call OR a JSON leak, Grok narrated the bash call in

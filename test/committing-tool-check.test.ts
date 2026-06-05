@@ -33,6 +33,24 @@ describe("isCommittingTool", () => {
   it("returns false for unknown tool names", () => {
     expect(isCommittingTool("totally_made_up")).toBe(false);
   });
+
+  it("treats issue/agent-coordination writes as committing", () => {
+    // A CEO that created issues must read as having committed work, or the
+    // false-completion guard and the mid-turn-stale brake mis-fire on a
+    // legitimate run.
+    expect(isCommittingTool("issue_create")).toBe(true);
+    expect(isCommittingTool("issue_update")).toBe(true);
+    expect(isCommittingTool("issue_checkout")).toBe(true);
+    expect(isCommittingTool("issue_release")).toBe(true);
+    expect(isCommittingTool("agent_wakeup")).toBe(true);
+  });
+
+  it("keeps read-only issue/agent tools non-committing", () => {
+    expect(isCommittingTool("issue_list")).toBe(false);
+    expect(isCommittingTool("issue_search")).toBe(false);
+    expect(isCommittingTool("agent_whoami")).toBe(false);
+    expect(isCommittingTool("agent_team_list")).toBe(false);
+  });
 });
 
 describe("detectCommittingCalls", () => {

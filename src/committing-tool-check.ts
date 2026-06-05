@@ -42,15 +42,20 @@ const ARG_AWARE_TOOLS: ReadonlySet<string> = new Set<string>([
   "browser",       // click on commit-style buttons is committing
 ]);
 
-/** Explicit overrides for tool names referenced elsewhere in the codebase
- *  (loop-detection.ts, action-claim.ts) that are NOT in tool-registry.ts.
- *  Either legacy names from a prior rename or planned-but-unimplemented
- *  tools. When one of these lands in the registry with a committing-risk
- *  classification, remove it from here — the derivation will cover it. */
+/** Committing tools NOT covered by the registry derivation. `tool-registry.ts`
+ *  derives risk from the policy taxonomy, but plugin/integration tools register
+ *  via tools/plugins.ts and never enter that taxonomy, so their committing
+ *  status has to be declared here. Covers secrets, cron, messaging, and the
+ *  issue/agent-coordination writes. Without the issue/agent entries a CEO that
+ *  actually created issues reads as having committed nothing — tripping the
+ *  false-completion guard and denying the mid-turn-stale brake its progress
+ *  signal. If one of these later gains a committing-risk tier in the taxonomy,
+ *  drop it here. */
 const LEGACY_COMMITTING_OVERRIDES: ReadonlySet<string> = new Set<string>([
   "secret_save", "secret_delete",
   "cron_create", "cron_delete", "cron_update",
   "whatsapp_send", "telegram_send",
+  "issue_create", "issue_update", "issue_checkout", "issue_release", "agent_wakeup",
 ]);
 
 const COMMITTING_HTTP_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);

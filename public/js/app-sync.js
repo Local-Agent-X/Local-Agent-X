@@ -39,6 +39,7 @@ async function syncChatsFromServer() {
         const listTruncated = local.messages && typeof srv.messageCount === 'number' && srv.messageCount > local.messages.length;
         const hasTruncated = local.messages && local.messages.some(m => m._truncated || (typeof m.content === 'string' && m.content.length >= 9_900));
         if (!isStreamingNow && (listTruncated || hasTruncated)) local._needsHydrate = true;
+        local.serverBacked = true; // confirmed present on the server this sync
         merged.push(local);
       } else {
         // Server is newer or session is server-only. Build a metadata stub —
@@ -51,6 +52,7 @@ async function syncChatsFromServer() {
           messageCount: srv.messageCount,
           messages: (local && local.messages) || [],
           _needsHydrate: true,
+          serverBacked: true, // present in the server list this sync
         };
         if (local) {
           stub.projectId = local.projectId;
@@ -61,9 +63,17 @@ async function syncChatsFromServer() {
       }
     }
 
-    // Local-only sessions (not on server yet — newly created before first save)
+    // Sessions absent from the server response. A chat the server has NEVER
+    // confirmed is a genuine new local draft (created but not yet saved) — keep
+    // it. But a chat we previously saw from the server that's now missing was
+    // deleted server-side (or the backend was reset) — prune it instead of
+    // leaving a phantom that opens empty. We only get here on a 200 with the
+    // server as source of truth, so this is safe and self-healing: if the
+    // session really still exists, the next sync re-adds it as a stub.
     for (const local of chats) {
-      if (!seen.has(local.id)) merged.push(local);
+      if (seen.has(local.id)) continue;
+      if (local.serverBacked) continue; // orphaned — server dropped it; drop locally too
+      merged.push(local);
     }
 
     merged.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));

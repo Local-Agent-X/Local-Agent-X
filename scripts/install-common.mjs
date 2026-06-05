@@ -566,23 +566,28 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
   // domain-policy folder redirection.
   const repoRoot = process.cwd();
   const electronExe = join(repoRoot, "desktop", "node_modules", "electron", "dist", "electron.exe");
-  const mainJs = join(repoRoot, "desktop", "dist", "main.js");
+  // Launch dist/loader.js, NOT dist/main.js. loader.js calls app.setName(
+  // "Local Agent X") before Electron resolves the userData path; main.js does
+  // not, so launching it directly makes Electron fall back to the default
+  // "electron" app name and land localStorage/IndexedDB at %APPDATA%\electron\
+  // instead of %APPDATA%\Local Agent X\. (loader.js then require()s main.js.)
+  const entryJs = join(repoRoot, "desktop", "dist", "loader.js");
   const workDir = join(repoRoot, "desktop");
   const iconPath = join(repoRoot, "public", "icon.ico");
-  if (!existsSync(electronExe) || !existsSync(mainJs)) {
-    warn(`Desktop build artifacts missing (${electronExe} or ${mainJs}) — skipping shortcut creation`);
+  if (!existsSync(electronExe) || !existsSync(entryJs)) {
+    warn(`Desktop build artifacts missing (${electronExe} or ${entryJs}) — skipping shortcut creation`);
   } else {
     // Single-quoted PowerShell strings: backslashes literal, no var
     // interpolation. Apostrophes in usernames would break this; PS doesn't
     // support a clean escape inside single-quoted literals other than ''
     // doubling — accept that as an unlikely edge case rather than complicate.
     const psElectron = electronExe.replace(/'/g, "''");
-    const psMain = mainJs.replace(/'/g, "''");
+    const psEntry = entryJs.replace(/'/g, "''");
     const psWork = workDir.replace(/'/g, "''");
     const psIcon = existsSync(iconPath) ? iconPath.replace(/'/g, "''") : "";
     const ps = [
       `$electron = '${psElectron}'`,
-      `$mainJs   = '${psMain}'`,
+      `$entryJs  = '${psEntry}'`,
       `$workDir  = '${psWork}'`,
       `$iconPath = '${psIcon}'`,
       `$desktop  = [Environment]::GetFolderPath('Desktop')`,
@@ -593,7 +598,7 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
       `  $lnk = Join-Path $dir 'Local Agent X.lnk'`,
       `  $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)`,
       `  $s.TargetPath = $electron`,
-      `  $s.Arguments = '"' + $mainJs + '"'`,
+      `  $s.Arguments = '"' + $entryJs + '"'`,
       `  $s.WorkingDirectory = $workDir`,
       `  if ($iconPath) { $s.IconLocation = $iconPath }`,
       `  $s.Description = 'Local Agent X'`,

@@ -71,6 +71,10 @@ function saveChats() {
     if (c.archived) rec.archived = true;
     if (c.projectId) rec.projectId = c.projectId;
     if (c.compactedAt) rec.compactedAt = c.compactedAt;
+    // Remember whether this chat was ever confirmed by the server. The sync
+    // merge uses it to tell a genuinely-new local draft (keep) apart from a
+    // chat the server has since dropped (prune) — see syncChatsFromServer.
+    if (c.serverBacked) rec.serverBacked = true;
     return rec;
   });
   try {

@@ -82,12 +82,12 @@ export function extractToolCallsFromText(
     }
   }
 
-  // Structured JSON wins. Only fall back to shell-prose reconstruction when
-  // no JSON tool call was salvageable — keeps the cheap, unambiguous path
-  // first and the heuristic prose path strictly last.
+  // Structured JSON wins. Only fall back to prose reconstruction when no JSON
+  // tool call was salvageable — keeps the cheap, unambiguous path first and
+  // the heuristic prose path strictly last.
   if (calls.length === 0) {
-    const shell = extractShellProseCall(text, validToolNames);
-    if (shell) return { toolCalls: [shell.call], remainingText: shell.remainingText };
+    const prose = extractProseCalls(text, validToolNames);
+    if (prose.calls.length > 0) return { toolCalls: prose.calls, remainingText: prose.remainingText };
     return { toolCalls: [], remainingText: text };
   }
 
@@ -168,8 +168,8 @@ function classify(obj: Record<string, unknown>, validToolNames: Set<string>): Ex
     }
   }
 
-  // Pattern 3 (shell prose) is NOT classified here — it has no JSON to
-  // parse. It's handled by extractShellProseCall, called from the top-level
+  // Pattern 3 (prose narration) is NOT classified here — it has no JSON to
+  // parse. It's handled by extractProseCalls, called from the top-level
   // extractor only after JSON classification finds nothing.
 
   // Pattern 2: browser shorthand { action: "X", ref: N, ... }
@@ -194,62 +194,112 @@ function classify(obj: Record<string, unknown>, validToolNames: Set<string>): Ex
   return null;
 }
 
-/** Shell-style tools whose `command` arg can be reconstructed from a
- *  natural-language "run tool bash with command is …" narration. Kept
- *  small + explicit: only tools whose sole required arg is a shell string.
- *  First one present in validToolNames wins. */
-const SHELL_TOOL_NAMES: ReadonlyArray<string> = ["bash", "shell", "ari_shell"];
-
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Action verbs that open a narrated tool call ("run tool bash …"). */
+const PROSE_VERB = String.raw`(?:run|use|call|invoke|execute)`;
+
 /**
- * Prose-narration fallback for shell tools (Pattern 3).
+ * Tools whose prose narration can be reconstructed into a real call. Each
+ * entry lists the tool's args IN THE ORDER the model narrates them; the LAST
+ * arg captures verbatim to the segment end (handles unbounded values: shell
+ * heredocs, file content). A tool earns an entry only once we've observed the
+ * model narrate it AND its args are ordered scalars where the tail can be
+ * greedily captured — `edit`/`agent_spawn`/etc. are deliberately absent
+ * (object args or ambiguous unbounded boundaries) and ride the adapter's
+ * nudge+retry instead.
+ */
+const PROSE_RECONSTRUCTABLE: ReadonlyArray<{ name: string; args: ReadonlyArray<string> }> = [
+  { name: "bash", args: ["command"] },
+  { name: "shell", args: ["command"] },
+  { name: "ari_shell", args: ["command"] },
+  { name: "write", args: ["path", "content"] },
+  { name: "read", args: ["path"] },
+];
+
+/** Parse "arg1 is <v1> arg2 is <v2> … argN is <rest>" from one invocation's
+ *  text. Non-final args capture non-greedily up to the next arg's marker; the
+ *  final arg captures to end. An explicit value marker (is | : | =) is
+ *  required after each arg name — that's what separates a real invocation
+ *  ("path is f.txt") from a casual mention ("the write path"). Returns null
+ *  if any arg is missing or empty. */
+function parseNarratedArgs(
+  segment: string,
+  argNames: ReadonlyArray<string>,
+): Record<string, string> | null {
+  let pattern = "";
+  for (let i = 0; i < argNames.length; i++) {
+    const isFinal = i === argNames.length - 1;
+    pattern +=
+      String.raw`\b${escapeRegex(argNames[i])}\b\s*(?:is|:|=)\s*` +
+      (isFinal ? String.raw`([\s\S]+)` : String.raw`([\s\S]*?)\s*`);
+  }
+  const m = new RegExp(pattern, "i").exec(segment);
+  if (!m) return null;
+  const out: Record<string, string> = {};
+  for (let i = 0; i < argNames.length; i++) {
+    const v = (m[i + 1] || "").trim();
+    if (!v) return null;
+    out[argNames[i]] = v;
+  }
+  return out;
+}
+
+/**
+ * Prose-narration fallback (Pattern 3).
  *
  * Live failure 2026-06-04 (Nutrishop demo, xAI Grok): weaker OpenAI-compat
- * models sometimes DESCRIBE a shell call in English instead of emitting a
- * structured tool_call — or even the JSON the extractor above catches —
- * e.g. `run tool bash with command is cat > f << EOL …`. With no JSON to
- * parse, the call silently never dispatches and the trailing "File
- * committed." prose trips the false-completion guard.
+ * models DESCRIBE tool calls in English instead of emitting structured
+ * tool_calls — or even the JSON the extractor above catches — e.g.
+ * `run tool write with path is f.txt content is …`, often several in one
+ * turn. With no JSON to parse, the calls never dispatch and the trailing
+ * "Committed" prose trips the false-completion guard.
  *
- * Conservative by construction:
- *   - fires ONLY when a shell tool is in validToolNames, and
- *   - requires the full invocation shape: an action verb, the shell tool
- *     name, then `command` followed by an explicit value marker (is | : | =).
- *     The marker is what separates a real invocation ("…command is rm x")
- *     from a casual mention ("run the bash command to verify"), which must
- *     NOT synthesize a call.
- *
- * Everything after the marker is taken verbatim as the `command` arg —
- * heredocs and `&&` chains span newlines, so we capture to end-of-string.
- * The reconstructed call still flows through normal approval + the bash
- * sandbox downstream, so it gets the same safety as a structured call.
+ * Splits the text into one segment per invocation header (verb + a
+ * reconstructable, allowed tool name) and reconstructs each via
+ * parseNarratedArgs. Conservative: a segment with no value marker yields no
+ * call, so casual mentions ("run the bash command to verify") are ignored.
+ * Reconstructed calls flow through normal approval + sandbox downstream, so
+ * they get the same safety as structured calls.
  */
-function extractShellProseCall(
+function extractProseCalls(
   text: string,
   validToolNames: Set<string>,
-): { call: ExtractedToolCall; remainingText: string } | null {
-  const shellName = SHELL_TOOL_NAMES.find((n) => validToolNames.has(n));
-  if (!shellName) return null;
+): { calls: ExtractedToolCall[]; remainingText: string } {
+  const specs = PROSE_RECONSTRUCTABLE.filter((s) => validToolNames.has(s.name));
+  if (specs.length === 0) return { calls: [], remainingText: text };
 
-  // verb … <shell> … command (is|:|=) <COMMAND to end-of-string>
-  const re = new RegExp(
-    String.raw`\b(?:run|use|call|invoke|execute)\b[^\n]*?\b` +
-      escapeRegex(shellName) +
-      String.raw`\b[\s\S]*?\bcommand\b\s*(?:is|:|=)\s*([\s\S]+)`,
-    "i",
-  );
-  const m = re.exec(text);
-  if (!m || m.index === undefined) return null;
-  const command = m[1].trim();
-  if (!command) return null;
+  const nameAlt = specs.map((s) => escapeRegex(s.name)).join("|");
+  const headerRe = new RegExp(String.raw`\b${PROSE_VERB}\b[^\n]*?\b(${nameAlt})\b`, "gi");
 
-  return {
-    call: { id: nextId(), name: shellName, arguments: JSON.stringify({ command }) },
-    remainingText: text.slice(0, m.index).trim(),
-  };
+  const heads: Array<{ name: string; start: number; bodyStart: number }> = [];
+  let hm: RegExpExecArray | null;
+  while ((hm = headerRe.exec(text)) !== null) {
+    heads.push({ name: hm[1].toLowerCase(), start: hm.index, bodyStart: headerRe.lastIndex });
+    if (headerRe.lastIndex === hm.index) headerRe.lastIndex++;
+  }
+  if (heads.length === 0) return { calls: [], remainingText: text };
+
+  const calls: ExtractedToolCall[] = [];
+  const consumed: Array<[number, number]> = [];
+  for (let i = 0; i < heads.length; i++) {
+    const head = heads[i];
+    const segEnd = i + 1 < heads.length ? heads[i + 1].start : text.length;
+    const spec = specs.find((s) => s.name === head.name);
+    if (!spec) continue;
+    const args = parseNarratedArgs(text.slice(head.bodyStart, segEnd), spec.args);
+    if (!args) continue;
+    calls.push({ id: nextId(), name: head.name, arguments: JSON.stringify(args) });
+    consumed.push([head.start, segEnd]);
+  }
+  if (calls.length === 0) return { calls: [], remainingText: text };
+
+  consumed.sort((a, b) => b[0] - a[0]);
+  let working = text;
+  for (const [start, end] of consumed) working = working.slice(0, start) + working.slice(end);
+  return { calls, remainingText: working.trim() };
 }
 
 /**

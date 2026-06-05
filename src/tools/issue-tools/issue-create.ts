@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "../../types.js";
 import { IssueStore, type IssuePriority } from "../../agent-store/index.js";
-import { ok, err, getAgentProjectId } from "./shared.js";
+import { ok, err, getAgentProjectId, resolveProjectId } from "./shared.js";
 
 export const issueCreateTool: ToolDefinition = {
   name: "issue_create",
@@ -22,7 +22,12 @@ export const issueCreateTool: ToolDefinition = {
   async execute(args) {
     const store = IssueStore.getInstance();
     const assignee = String(args.assignee || "");
-    const projectId = args.project ? String(args.project) : (assignee ? getAgentProjectId(assignee) : undefined);
+    // Resolve the (possibly human-readable) project name to a canonical
+    // project id before scoping/guarding — see resolveProjectId. Passing
+    // the raw name through used to make the cross-project guard below
+    // compare a name against a `proj-...` id and falsely reject same-
+    // project assignments.
+    const projectId = resolveProjectId(args.project ? String(args.project) : undefined, assignee);
     // Cross-project assignment is not allowed. The acting agent must be
     // in the same project as the target; if they need work done in another
     // project, surface that as a blocker so the parent (CEO / user) can

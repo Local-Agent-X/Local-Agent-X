@@ -34,3 +34,33 @@ export function getAgentProjectId(agentId: string): string | undefined {
   const project = projectStore.getAgentProject(agentId);
   return project?.id;
 }
+
+/** Resolve a user-supplied `project` argument to a canonical project ID.
+ *
+ *  Agents (and the model driving them) refer to projects by their
+ *  human-readable NAME — e.g. "Nutrishop McKinney" — not the internal
+ *  `proj-...` id. Issue scoping (`projectId`) and the cross-project
+ *  assignment guard both compare against the canonical id returned by
+ *  ProjectStore, so a raw name leaks straight through as a bogus
+ *  "projectId" that can never equal a real id. That produced false
+ *  "agent is in a different project" rejections on issue_create.
+ *
+ *  Resolution order:
+ *    1. exact project id match (already canonical) → use as-is
+ *    2. case-insensitive name match → that project's id
+ *    3. no match → fall back to the assignee's own project (so the
+ *       issue still scopes correctly), else undefined.
+ */
+export function resolveProjectId(
+  project: string | undefined,
+  assignee?: string,
+): string | undefined {
+  const raw = project?.trim();
+  if (raw) {
+    const store = ProjectStore.getInstance();
+    if (store.get(raw)) return raw;          // already a canonical id
+    const byName = store.findByName(raw);
+    if (byName) return byName.id;            // name → id
+  }
+  return assignee ? getAgentProjectId(assignee) : undefined;
+}

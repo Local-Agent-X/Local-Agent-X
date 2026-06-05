@@ -76,9 +76,9 @@ function showOnboarding() {
     <div id="onboarding-modal">
       <div id="onboarding-steps">
         <div class="onboarding-step active" data-step="0">
+          <div class="onboarding-hero"><img src="/agent-x-portrait.png" alt="Local Agent X" class="onboarding-hero-img" draggable="false"></div>
           <h2 class="onboarding-title">Welcome to Local Agent X</h2>
           <p class="onboarding-desc">Your personal AI agent that runs locally. Let's get you set up in 3 quick steps.</p>
-          <div class="onboarding-art">&#9889;</div>
         </div>
         <div class="onboarding-step" data-step="1">
           <h2 class="onboarding-title">Choose Your AI Provider</h2>
@@ -111,7 +111,7 @@ function showOnboarding() {
         <div class="onboarding-step" data-step="4">
           <h2 class="onboarding-title">You're All Set!</h2>
           <p class="onboarding-desc">Start chatting with your agent. Use Ctrl+K anytime to open the command palette.</p>
-          <div class="onboarding-art" style="font-size:2.5rem">&#128640;</div>
+          <div class="onboarding-art onboarding-art-bolt"><svg viewBox="0 0 24 24" width="46" height="46" fill="currentColor" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
         </div>
       </div>
       <div class="onboarding-nav">

@@ -160,9 +160,10 @@ async function extractFactsFromSession(
   const transcript = chunks.map(c => c.text).join("\n---\n").slice(0, 8000); // cap context
   const prompt = buildExtractionPrompt(sessionPath, transcript);
 
-  // Bulk extraction prefers env-only credentials and rejects OAuth — the
-  // user's chat-time provider (often CLI subscription) can't serve hundreds
-  // of sequential API calls.
+  // Bulk extraction rejects Anthropic OAuth (a CLI subscription can't serve
+  // sequential bulk calls); otherwise it runs on the user's configured
+  // provider, resolved store-aware by dispatch, with a cheap non-reasoning
+  // model floor per provider.
   return dispatch({
     prompt,
     provider: opts.provider,
@@ -173,7 +174,6 @@ async function extractFactsFromSession(
     maxTokens: 500,
     timeoutMs: 60_000,
     rejectOAuth: true,
-    preferEnvKeys: true,
   });
 }
 

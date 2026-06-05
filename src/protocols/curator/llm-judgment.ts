@@ -49,7 +49,6 @@ Be terse. Be concrete. No filler.`;
   const out = await dispatch({
     prompt,
     provider: "auto",
-    preferEnvKeys: true,
     rejectOAuth: false,
     temperature: 0,
     maxTokens: 800,

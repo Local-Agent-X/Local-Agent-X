@@ -136,9 +136,9 @@ function fallbackPhase(goal: string): OperationPhase {
   };
 }
 
-// Decomposer needs a real Anthropic API key (not CLI subscription) — bulk
-// JSON planning calls can't go through OAuth. preferEnvKeys also skips the
-// user's chat-time provider preference.
+// Decomposer rejects Anthropic OAuth (a CLI subscription can't serve bulk JSON
+// planning); otherwise it runs on the user's configured provider, resolved
+// store-aware by dispatch.
 async function callDecomposer(goal: string, opts: DecomposerOptions): Promise<string | null> {
   return dispatch({
     prompt: buildPrompt(goal, opts.knownProtocols || []),
@@ -150,6 +150,5 @@ async function callDecomposer(goal: string, opts: DecomposerOptions): Promise<st
     maxTokens: 1500,
     timeoutMs: opts.timeoutMs ?? 30_000,
     rejectOAuth: true,
-    preferEnvKeys: true,
   });
 }

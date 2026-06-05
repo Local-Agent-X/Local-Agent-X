@@ -828,12 +828,19 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 
 /* ── Onboarding wizard (feature 99) ── */
 #onboarding-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(6px);z-index:30000;display:flex;align-items:center;justify-content:center}
-#onboarding-modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px 40px;max-width:520px;width:90%;box-shadow:0 8px 60px rgba(0,0,0,.5)}
+#onboarding-modal{background:linear-gradient(165deg,var(--surface-2),var(--surface));border:1px solid var(--border);border-radius:16px;padding:32px 40px;max-width:520px;width:90%;box-shadow:0 8px 60px rgba(0,0,0,.55),0 0 0 1px var(--accent-dim)}
 .onboarding-step{display:none;text-align:center}
 .onboarding-step.active{display:block}
-.onboarding-title{font-family:var(--mono);font-size:1.1rem;color:var(--accent);letter-spacing:1px;margin-bottom:8px}
+.onboarding-title{font-family:var(--mono);font-size:1.1rem;color:var(--accent);letter-spacing:1px;margin-bottom:8px;text-shadow:0 0 12px var(--accent-dim)}
 .onboarding-desc{font-size:.85rem;color:var(--muted);line-height:1.6;margin-bottom:20px}
-.onboarding-art{font-size:3rem;margin:16px 0}
+.onboarding-art{margin:16px 0;color:var(--accent)}
+.onboarding-art-bolt svg{filter:drop-shadow(0 0 10px var(--accent-dim))}
+/* Brand hero on the welcome step — the cyan-lit Agent X portrait with a
+   breathing glow that echoes the #logo treatment, replacing the off-theme
+   stock emoji. */
+.onboarding-hero{display:flex;justify-content:center;margin:2px 0 20px}
+.onboarding-hero-img{width:108px;height:108px;border-radius:50%;object-fit:cover;object-position:center 32%;border:1px solid var(--accent-dim);animation:obHeroGlow 3.2s ease-in-out infinite;user-select:none}
+@keyframes obHeroGlow{0%,100%{box-shadow:0 0 0 1px var(--border),0 0 22px var(--accent-dim)}50%{box-shadow:0 0 0 1px var(--border),0 0 42px var(--accent)}}
 .onboarding-options{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
 .onboarding-option{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 18px;text-align:left;color:var(--text);cursor:pointer;transition:all .15s;font-family:var(--font);font-size:.85rem}
 .onboarding-option:hover{border-color:var(--accent);background:var(--hover)}

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 
 namespace LocalAgentX.Installer.Services;
@@ -21,6 +22,12 @@ public class InstallProcess
             WorkingDirectory = repoRoot,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // Node writes its JSONL + forwarded child output (npm/ollama progress
+            // bars use █ ▒ block glyphs) as UTF-8. Without these, .NET decodes the
+            // streams with the console's ANSI codepage (CP1252 on Windows), turning
+            // every multi-byte char into mojibake (█ → "â–ˆ") in the details view.
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             UseShellExecute = false,
             CreateNoWindow = true,
         };

@@ -44,6 +44,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Agent-capabilities doc is in sync with the tool registry
+        run: |
+          npx tsx scripts/gen-agent-capabilities.ts
+          git diff --exit-code docs/agent-capabilities.md \
+            || { echo "::error::docs/agent-capabilities.md is stale — run 'npx tsx scripts/gen-agent-capabilities.ts' and commit the result."; exit 1; }
+
       - name: Type-check (clean tree, no working-dir bleed)
         run: npx tsc --noEmit
 

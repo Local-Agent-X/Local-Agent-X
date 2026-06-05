@@ -56,7 +56,7 @@ Each script is a thin wrapper that bootstraps Node + Ollama (if missing) and the
 3. Sign in a provider. Open **Settings → Model Provider**:
    - **Anthropic** — paste a `claude setup-token` from the Claude CLI (the Anthropic auth on Max plans routes through the CLI subprocess; see [AGENTS.md](AGENTS.md)).
    - **OpenAI / Codex / Cerebras / Ollama** — paste an API key or point at a local endpoint.
-4. Talk to the agent. The chat box is the main entry point; voice and scheduled missions live under their own panels on the sidebar.
+4. Talk to the agent. The chat box is the main entry point; voice and scheduled missions live under their own panels on the sidebar. See [docs/agent-capabilities.md](docs/agent-capabilities.md) for the things you can ask it to do (e.g. "change the app to dark mode", "build me a todo app", "dream now").
 
 Embedding defaults are seeded into `~/.lax/settings.json` on first install (Ollama + `mxbai-embed-large`). Provider and chat model are not pre-seeded — you pick them on first run via Settings → Model Provider. Edit `~/.lax/settings.json` directly to change defaults, or change them from the UI.
 
@@ -73,6 +73,7 @@ Embedding defaults are seeded into `~/.lax/settings.json` on first install (Olla
 | `npm run test:unit` | Run the vitest unit suite. |
 | `npm run test:fixtures` | Run prompt-fixture replay tests. |
 | `npx tsc --noEmit` | Typecheck without emitting. |
+| `npx tsx scripts/gen-agent-capabilities.ts` | Regenerate [docs/agent-capabilities.md](docs/agent-capabilities.md) from the tool registry. |
 
 There is no separate lint step.
 

@@ -8,8 +8,8 @@
 // so dragging right shrinks it).
 (function(){
   const BOUNDS = {
-    'ide-chat-panel':  { min: 240, max: 700, key: 'sax_ide_chat_w' },
-    'ide-files-panel': { min: 200, max: 600, key: 'sax_ide_files_w' },
+    'ide-chat-panel':  { min: 240, max: 700, key: 'lax_ide_chat_w' },
+    'ide-files-panel': { min: 200, max: 600, key: 'lax_ide_files_w' },
   };
 
   function restore(){

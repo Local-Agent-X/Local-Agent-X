@@ -111,11 +111,11 @@ export function evaluateFileAccess(
       const projectRoot = resolve(workspace, "..");
       const laxDir = resolve(homeDir, ".lax");
       const inProject = !relative(projectRoot, realPath).startsWith("..");
-      const inSax = !relative(laxDir, realPath).startsWith("..");
+      const inLax = !relative(laxDir, realPath).startsWith("..");
       const inExtraAllowed = allowedPathCheck(realPath, sessionId);
 
       if (fileAccessMode === "workspace") {
-        if (!inProject && !inSax && !inExtraAllowed) {
+        if (!inProject && !inLax && !inExtraAllowed) {
           return { allowed: false, reason: "Blocked: workspace mode — reads restricted to project directory only. Change to 'common' mode in Settings to access Downloads, Documents, etc.", userHint: USER_HINTS.fileSystem };
         }
       } else {
@@ -123,7 +123,7 @@ export function evaluateFileAccess(
           (d) => resolve(homeDir, d)
         );
         const inUserDir = userDirs.some((d) => !relative(d, realPath).startsWith(".."));
-        if (!inProject && !inSax && !inUserDir && !inExtraAllowed) {
+        if (!inProject && !inLax && !inUserDir && !inExtraAllowed) {
           return { allowed: false, reason: "Blocked: cannot read files outside project and user directories. Change to 'unrestricted' mode in Settings for full access.", userHint: USER_HINTS.fileSystem };
         }
       }
@@ -147,9 +147,6 @@ export function evaluateFileAccess(
       /[/\\]\.lax[/\\]secrets\./i,           // Encrypted secrets store
       /[/\\]\.lax[/\\]master\./i,            // Master encryption key
       /[/\\]\.lax[/\\]auth\.json$/i,         // OAuth tokens
-      /[/\\]\.sax[/\\]secrets\./i,           // Legacy ~/.sax/ paths (pre-rebrand)
-      /[/\\]\.sax[/\\]master\./i,            //   kept blocked so a stale install
-      /[/\\]\.sax[/\\]auth\.json$/i,         //   can't be exfiltrated either
     ];
     for (const pattern of coreProtectedFiles) {
       if (pattern.test(resolved) || pattern.test(realPath)) {

@@ -5,7 +5,7 @@
  * Replaces scattered inline string-matching with a centralized classifier
  * that the main retry loop consults for every API failure.
  *
- * Today this logic in SAX is scattered across:
+ * Today this logic in LAX is scattered across:
  *   - src/agent-guards.ts (EMPTY_RESULT_RE for dead-end detection)
  *   - src/ops/worker-entry.ts (REFUSAL_PATTERNS for worker output)
  *   - src/context-manager.ts (isContextOverflowError)

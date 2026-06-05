@@ -1,17 +1,17 @@
 // Desktop-specific settings persisted to ~/.lax/desktop-settings.json.
-// Distinct from SAX server config (config.ts) — these are Electron-only
+// Distinct from LAX server config (config.ts) — these are Electron-only
 // concerns (autostart, close-to-tray, global hotkey, window bounds,
 // renderer theme mirror).
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { SAX_DIR, DESKTOP_SETTINGS_PATH } from "./config";
+import { LAX_DIR, DESKTOP_SETTINGS_PATH } from "./config";
 
 export interface DesktopSettings {
   autostart: boolean;
   closeToTray: boolean;
   globalHotkey: string;
   windowBounds: { width: number; height: number };
-  // Mirrors the renderer's sax_theme so the BrowserWindow paint colour
+  // Mirrors the renderer's lax_theme so the BrowserWindow paint colour
   // matches the web UI's theme. Renderer toggles push the new value here
   // via IPC.
   theme: "dark" | "light" | "system";
@@ -36,7 +36,7 @@ function load(): DesktopSettings {
 }
 
 function save(s: DesktopSettings): void {
-  if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
   writeFileSync(DESKTOP_SETTINGS_PATH, JSON.stringify(s, null, 2), "utf-8");
 }
 

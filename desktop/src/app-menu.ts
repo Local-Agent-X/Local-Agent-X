@@ -8,10 +8,10 @@
 
 import { app, BrowserWindow, Menu, clipboard, shell } from "electron";
 import { restartServer } from "./server-process";
-import { getSAXConfig } from "./config";
+import { getLAXConfig } from "./config";
 
 function tokenizedAppUrl(): string {
-  const cfg = getSAXConfig();
+  const cfg = getLAXConfig();
   return `http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`;
 }
 

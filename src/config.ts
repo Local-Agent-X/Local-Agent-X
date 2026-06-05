@@ -157,44 +157,44 @@ export function loadConfig(): LAXConfig {
   // Environment variable overrides
   if (process.env.XAI_API_KEY) raw.openaiApiKey = process.env.XAI_API_KEY;
   if (process.env.OPENAI_API_KEY) raw.openaiApiKey = process.env.OPENAI_API_KEY;
-  const portEnv = process.env.LAX_PORT ?? process.env.SAX_PORT;
+  const portEnv = process.env.LAX_PORT;
   if (portEnv) raw.port = parseInt(portEnv, 10);
-  const authTokenEnv = process.env.LAX_AUTH_TOKEN ?? process.env.SAX_AUTH_TOKEN;
+  const authTokenEnv = process.env.LAX_AUTH_TOKEN;
   if (authTokenEnv) raw.authToken = authTokenEnv;
-  const workspaceEnv = process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE;
+  const workspaceEnv = process.env.LAX_WORKSPACE;
   if (workspaceEnv) raw.workspace = workspaceEnv;
-  const modelEnv = process.env.LAX_MODEL ?? process.env.SAX_MODEL;
+  const modelEnv = process.env.LAX_MODEL;
   if (modelEnv) raw.model = modelEnv;
 
   // Service URL overrides
-  const ollamaEnv = process.env.LAX_OLLAMA_URL ?? process.env.SAX_OLLAMA_URL;
+  const ollamaEnv = process.env.LAX_OLLAMA_URL;
   if (ollamaEnv) raw.ollamaUrl = ollamaEnv;
-  const ollamaCloudEnv = process.env.LAX_OLLAMA_CLOUD_URL ?? process.env.SAX_OLLAMA_CLOUD_URL;
+  const ollamaCloudEnv = process.env.LAX_OLLAMA_CLOUD_URL;
   if (ollamaCloudEnv) raw.ollamaCloudUrl = ollamaCloudEnv;
-  const sdEnv = process.env.LAX_SD_SERVER_URL ?? process.env.SAX_SD_SERVER_URL;
+  const sdEnv = process.env.LAX_SD_SERVER_URL;
   if (sdEnv) raw.sdServerUrl = sdEnv;
-  const videoEnv = process.env.LAX_VIDEO_SERVER_URL ?? process.env.SAX_VIDEO_SERVER_URL;
+  const videoEnv = process.env.LAX_VIDEO_SERVER_URL;
   if (videoEnv) raw.videoServerUrl = videoEnv;
-  const xttsEnv = process.env.LAX_XTTS_SERVER_URL ?? process.env.SAX_XTTS_SERVER_URL;
+  const xttsEnv = process.env.LAX_XTTS_SERVER_URL;
   if (xttsEnv) raw.xttsServerUrl = xttsEnv;
 
   // Limit/timeout overrides
-  const agentTimeoutEnv = process.env.LAX_AGENT_TIMEOUT_MS ?? process.env.SAX_AGENT_TIMEOUT_MS;
+  const agentTimeoutEnv = process.env.LAX_AGENT_TIMEOUT_MS;
   if (agentTimeoutEnv) raw.agentTimeoutMs = parseInt(agentTimeoutEnv, 10);
-  const maxUploadEnv = process.env.LAX_MAX_UPLOAD_BYTES ?? process.env.SAX_MAX_UPLOAD_BYTES;
+  const maxUploadEnv = process.env.LAX_MAX_UPLOAD_BYTES;
   if (maxUploadEnv) raw.maxUploadBytes = parseInt(maxUploadEnv, 10);
-  const rateLimitEnv = process.env.LAX_RATE_LIMIT_MAX ?? process.env.SAX_RATE_LIMIT_MAX;
+  const rateLimitEnv = process.env.LAX_RATE_LIMIT_MAX;
   if (rateLimitEnv) raw.rateLimitMax = parseInt(rateLimitEnv, 10);
 
   // Environment variable for profile override
-  const profileEnv = process.env.LAX_PROFILE ?? process.env.SAX_PROFILE;
+  const profileEnv = process.env.LAX_PROFILE;
   if (profileEnv) raw.profile = profileEnv;
 
   // AriKernel kill-switch override. Default-true via schema; this is the
   // emergency escape hatch for debugging a wedged kernel. Treat "false"
   // and "0" as off; anything else (including "true", "1", empty) keeps
   // the schema default.
-  const ariReqEnv = process.env.LAX_ARI_REQUIRED ?? process.env.SAX_ARI_REQUIRED;
+  const ariReqEnv = process.env.LAX_ARI_REQUIRED;
   if (ariReqEnv !== undefined) raw.ariRequired = ariReqEnv !== "false" && ariReqEnv !== "0";
 
   const config = configSchema.parse(raw);

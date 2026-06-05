@@ -30,7 +30,7 @@ async function loadLocalModels() {
     if (statusEl) statusEl.innerHTML = `<span class="status-badge ok"><span class="status-dot"></span> Running — ${models.length} model${models.length > 1 ? 's' : ''} available</span> <button class="btn" onclick="loadLocalModels()" style="padding:4px 10px;font-size:.7rem;margin-left:8px">Refresh</button>`;
     // Restore saved selection
     try {
-      const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+      const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
       if (s.model) sel.value = s.model;
     } catch {}
   } catch {
@@ -53,7 +53,7 @@ async function loadOllamaCloudModels() {
     }
     sel.innerHTML = models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
     try {
-      const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+      const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
       if (s.model && models.includes(s.model)) sel.value = s.model;
     } catch {}
   } catch {

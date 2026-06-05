@@ -78,32 +78,32 @@ let serverStartTime = Date.now();
 let _providersCache = null;
 let _providersCacheTime = 0;
 
-async function _primeSaxSettings() {
+async function _primeLaxSettings() {
   try {
     const r = await apiFetch('/api/settings');
     if (!r || !r.ok) return;
     const server = await r.json();
     if (!server || typeof server !== 'object') return;
-    const local = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    const local = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     // Server is source of truth for tier-defining keys — overwrite local
     // copies that might be stale from a previous session. We don't replace
     // the entire blob because settings.js stores some client-only keys
-    // (lax_*) under sax_settings too on some flows.
+    // (lax_*) under lax_settings too on some flows.
     const tierKeys = ['voiceMode', 'voiceEngine', 'voiceTier4Provider', 'voiceTier4Voice', 'voiceSttProvider', 'voiceRealtimeVoice', 'ttsVoice'];
     for (const k of tierKeys) if (k in server) local[k] = server[k];
-    localStorage.setItem('sax_settings', JSON.stringify(local));
+    localStorage.setItem('lax_settings', JSON.stringify(local));
   } catch {}
 }
 
 function initStatusBar() {
   const bar = document.getElementById('status-bar');
   if (!bar) return;
-  // Prime sax_settings from the server before the chat-bar renders. Without
+  // Prime lax_settings from the server before the chat-bar renders. Without
   // this, getActiveVoiceTier() reads stale localStorage and shows browser-
   // tier voices in the picker even when settings.json on disk says tier 2.
-  // Settings page also writes sax_settings, but the chat page is the entry
+  // Settings page also writes lax_settings, but the chat page is the entry
   // point users hit first — we can't assume settings.js has run this session.
-  _primeSaxSettings().then(() => ensureProvidersLoaded());
+  _primeLaxSettings().then(() => ensureProvidersLoaded());
   setInterval(updateStatusBar, 10000);
   apiFetch('/api/auth/status').then(r => r.json()).then(d => {
     if (d.uptime) serverStartTime = Date.now() - (d.uptime * 1000);
@@ -412,7 +412,7 @@ async function quickSwitchProvider(providerId) {
       body: JSON.stringify({ provider: providerId, model }),
     });
     // Update local settings cache too
-    try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); s.provider = providerId; s.model = model; localStorage.setItem('sax_settings', JSON.stringify(s)); } catch {}
+    try { const s = JSON.parse(localStorage.getItem('lax_settings') || '{}'); s.provider = providerId; s.model = model; localStorage.setItem('lax_settings', JSON.stringify(s)); } catch {}
     _providersCacheTime = 0; // Force refresh
     await loadProviders();
     updateStatusBar(true);
@@ -428,7 +428,7 @@ async function quickSwitchModel(model) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider, model }),
     });
-    try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); s.model = model; localStorage.setItem('sax_settings', JSON.stringify(s)); } catch {}
+    try { const s = JSON.parse(localStorage.getItem('lax_settings') || '{}'); s.model = model; localStorage.setItem('lax_settings', JSON.stringify(s)); } catch {}
     _providersCacheTime = 0;
     await loadProviders();
     updateStatusBar(true);

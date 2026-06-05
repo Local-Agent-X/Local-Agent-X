@@ -100,7 +100,7 @@ function _resolveSttProvider(tier) {
   if (!tier?.sttProviders?.length) return null;
   let picked = '';
   try {
-    const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     picked = String(s.voiceSttProvider || '').toLowerCase();
   } catch {}
   const found = tier.sttProviders.find(p => p.id === picked);
@@ -126,9 +126,9 @@ async function onSttProviderChange(tierId, providerId) {
   if (!provider) return;
   await _persist({ voiceSttProvider: provider.id });
   try {
-    const local = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    const local = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     local.voiceSttProvider = provider.id;
-    localStorage.setItem('sax_settings', JSON.stringify(local));
+    localStorage.setItem('lax_settings', JSON.stringify(local));
   } catch {}
   // Re-render so the dynamic secret prereq updates to match.
   await _refreshSecretNames();

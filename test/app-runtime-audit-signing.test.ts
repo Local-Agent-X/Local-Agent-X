@@ -27,23 +27,23 @@ import type { AuditEntry } from "../src/app-runtime/types.js";
 let tmpRoot: string;
 let prevDataDir: string | undefined;
 let prevAuditKey: string | undefined;
-let prevSaxAuditKey: string | undefined;
+let prevLaxAuditKey: string | undefined;
 
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "lax-audit-test-"));
   prevDataDir = process.env.LAX_DATA_DIR;
   prevAuditKey = process.env.LAX_AUDIT_KEY;
-  prevSaxAuditKey = process.env.SAX_AUDIT_KEY;
+  prevLaxAuditKey = process.env.LAX_AUDIT_KEY;
   process.env.LAX_DATA_DIR = tmpRoot;
   delete process.env.LAX_AUDIT_KEY;
-  delete process.env.SAX_AUDIT_KEY;
+  delete process.env.LAX_AUDIT_KEY;
   _resetAuditKeyCacheForTests();
 });
 
 afterEach(() => {
   if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDataDir;
   if (prevAuditKey === undefined) delete process.env.LAX_AUDIT_KEY; else process.env.LAX_AUDIT_KEY = prevAuditKey;
-  if (prevSaxAuditKey === undefined) delete process.env.SAX_AUDIT_KEY; else process.env.SAX_AUDIT_KEY = prevSaxAuditKey;
+  if (prevLaxAuditKey === undefined) delete process.env.LAX_AUDIT_KEY; else process.env.LAX_AUDIT_KEY = prevLaxAuditKey;
   _resetAuditKeyCacheForTests();
   try { rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* ignore */ }
 });

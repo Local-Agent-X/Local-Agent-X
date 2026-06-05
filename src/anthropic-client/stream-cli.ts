@@ -74,18 +74,18 @@ async function* streamViaWarmPoolPath(options: StreamOptions): AsyncGenerator<St
   const { model, messages, systemPrompt, tools } = options;
   const textOnlyMode = !tools || tools.length === 0;
 
-  let saxToken = "";
-  let saxPort = 7007;
+  let laxToken = "";
+  let laxPort = 7007;
   if (!textOnlyMode) {
     try {
       const { getRuntimeConfig } = await import("../config.js");
       const rc = getRuntimeConfig();
-      saxToken = rc.authToken;
-      saxPort = rc.port;
+      laxToken = rc.authToken;
+      laxPort = rc.port;
     } catch { /* swallow — falls back to text-only key below */ }
   }
 
-  const useMcp = !textOnlyMode && !!saxToken && !!options.sessionId;
+  const useMcp = !textOnlyMode && !!laxToken && !!options.sessionId;
   const fullPrompt = buildCliPrompt({
     systemPrompt,
     messages,
@@ -94,7 +94,7 @@ async function* streamViaWarmPoolPath(options: StreamOptions): AsyncGenerator<St
   });
 
   if (!useMcp) {
-    logger.info(`[wp-gate] → text-only shared pool (textOnly=${textOnlyMode} hasToken=${!!saxToken})`);
+    logger.info(`[wp-gate] → text-only shared pool (textOnly=${textOnlyMode} hasToken=${!!laxToken})`);
     yield* streamViaWarmPool(
       { model, permissionMode: "plan" },
       { prompt: fullPrompt, signal: options.signal },
@@ -106,8 +106,8 @@ async function* streamViaWarmPoolPath(options: StreamOptions): AsyncGenerator<St
         model,
         permissionMode: "bypassPermissions",
         sessionId: options.sessionId!,
-        saxPort,
-        saxToken,
+        laxPort,
+        laxToken,
       },
       { prompt: fullPrompt, signal: options.signal },
     );
@@ -137,19 +137,19 @@ async function* streamViaColdSpawn(options: StreamOptions): AsyncGenerator<Strea
 
   const args = buildCliArgs({ model, textOnlyMode });
 
-  let saxToken = "";
-  let saxPort = 7007;
+  let laxToken = "";
+  let laxPort = 7007;
   try {
     const { getRuntimeConfig } = await import("../config.js");
     const rc = getRuntimeConfig();
-    saxToken = rc.authToken;
-    saxPort = rc.port;
+    laxToken = rc.authToken;
+    laxPort = rc.port;
   } catch {}
 
   const mcpConfigPath = await setupMcpConfig({
     textOnlyMode,
-    saxToken,
-    saxPort,
+    laxToken,
+    laxPort,
     sessionId: options.sessionId,
   });
   if (mcpConfigPath) args.push("--mcp-config", mcpConfigPath);

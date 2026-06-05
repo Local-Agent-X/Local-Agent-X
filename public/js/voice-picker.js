@@ -41,9 +41,9 @@ function _resolveActiveTierId(saved) {
 function getActiveVoiceTier() {
   // Used by the chat bar — reads localStorage cache so it doesn't need to
   // round-trip /api/settings on every render. settings.js mirrors server
-  // truth into sax_settings on each loadSettings.
+  // truth into lax_settings on each loadSettings.
   let s = {};
-  try { s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); } catch {}
+  try { s = JSON.parse(localStorage.getItem('lax_settings') || '{}'); } catch {}
   return getTierById(_resolveActiveTierId(s)) || getTierById(C.DEFAULT_TIER_ID);
 }
 window.getActiveVoiceTier = getActiveVoiceTier;
@@ -162,11 +162,11 @@ async function onTierChange(tierId) {
     localStorage.removeItem('lax_browser_voice');
   } catch {}
   await _persist({ ...tier.settings, voiceTier4Voice: '', voiceRealtimeVoice: '', ttsVoice: '' });
-  // Refresh sax_settings cache so getActiveVoiceTier() (chat-bar reader) sees the new tier.
+  // Refresh lax_settings cache so getActiveVoiceTier() (chat-bar reader) sees the new tier.
   try {
-    const local = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    const local = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     Object.assign(local, tier.settings, { voiceTier4Voice: '', voiceRealtimeVoice: '', ttsVoice: '' });
-    localStorage.setItem('sax_settings', JSON.stringify(local));
+    localStorage.setItem('lax_settings', JSON.stringify(local));
   } catch {}
   await loadVoicePicker({ ...tier.settings, voiceTier4Voice: '', voiceRealtimeVoice: '' });
   // Re-render the chat bar so its voice list re-filters.

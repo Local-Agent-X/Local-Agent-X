@@ -4,7 +4,7 @@
  * posture into the unified evaluator as a backstop. Runs last (highest
  * priority number) so it only fires when no other pack allowed the call.
  *
- * Note: SAX's default-policy pack already enforces deny-by-default for any
+ * Note: LAX's default-policy pack already enforces deny-by-default for any
  * tool with no matching allow rule, so this pack is usually a no-op. It
  * exists so the F4 unification covers the arikernel policy surface
  * explicitly — same posture, single dispatcher.

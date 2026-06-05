@@ -240,7 +240,7 @@ function updateAgentFeed(agentId, update) {
       if (linkEl) {
         var rawUrl = update.resultUrl;
         var needsAuth = rawUrl.indexOf('/api/') === 0 || rawUrl.indexOf('http://127.0.0.1') === 0 || rawUrl.indexOf('http://localhost') === 0;
-        var token = (typeof AUTH_TOKEN !== 'undefined' && AUTH_TOKEN) ? AUTH_TOKEN : (localStorage.getItem('sax_token') || '');
+        var token = (typeof AUTH_TOKEN !== 'undefined' && AUTH_TOKEN) ? AUTH_TOKEN : (localStorage.getItem('lax_token') || '');
         var authedUrl = (needsAuth && token && rawUrl.indexOf('token=') === -1)
           ? rawUrl + (rawUrl.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(token)
           : rawUrl;

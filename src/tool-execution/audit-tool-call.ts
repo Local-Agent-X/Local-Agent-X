@@ -67,7 +67,7 @@ function evaluateThreat(ctx: ToolCallContext): void {
     let isOwnApp = false;
     if (tc.name === "browser") {
       const urlArg = String(args.url || "");
-      const appPort = process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007";
+      const appPort = process.env.LAX_PORT ?? "7007";
       if (new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${appPort}`, "i").test(urlArg)) {
         isOwnApp = true;
       }

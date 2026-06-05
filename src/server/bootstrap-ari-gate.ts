@@ -1,17 +1,17 @@
 /**
- * Translates AriKernel `ToolCall` shapes into SAX tool calls and routes them
+ * Translates AriKernel `ToolCall` shapes into LAX tool calls and routes them
  * through the shared `assertToolCallAllowed` chain. Wired into AriKernel
  * tool-executors at boot via `setPreDispatchGate`. Closes F3 (DRY-AUDIT.md).
  *
- * AriKernel ToolCall uses {toolClass, action}; SAX tool names are singular
- * ("read", "write", "bash"). The mapping below is best-effort — when a SAX
+ * AriKernel ToolCall uses {toolClass, action}; LAX tool names are singular
+ * ("read", "write", "bash"). The mapping below is best-effort — when a LAX
  * tool name can't be derived (e.g. http+get is one of http_request/web_fetch/
  * browser), we pick the most-locked-down equivalent so policy errs strict.
  *
  * Also wires the AriKernel `Pipeline.intercept` step at line 353 through the
- * SAX-side unified policy evaluator (rule packs from 2C.2). Closes the
+ * LAX-side unified policy evaluator (rule packs from 2C.2). Closes the
  * follow-up flagged in docs/dry-repair-reports/2C.2.md — pipeline.ts:353
- * previously skipped the consolidated SAX rule packs and only ran the typed
+ * previously skipped the consolidated LAX rule packs and only ran the typed
  * `PolicyEngine.evaluate`. Now it consults both, in series.
  */
 import type { ToolCall } from "@arikernel/core";
@@ -55,7 +55,7 @@ export function wireAriPreDispatch(security: SecurityLayer, toolPolicy?: ToolPol
 
   // Wire the AriKernel Pipeline.intercept pre-check (item 5 from 2C.3):
   // the kernel-side typed PolicyEngine.evaluate now runs in series with
-  // the SAX unified evaluator, so the same rule packs that gate chat-path
+  // the LAX unified evaluator, so the same rule packs that gate chat-path
   // calls also gate kernel-side tool calls. The typed PolicyEngine still
   // runs second to enforce capability tokens / taint rules.
   setUnifiedPolicyPreCheck(async (tc: ToolCall) => {

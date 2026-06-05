@@ -229,7 +229,7 @@ function notifyTaskComplete(title) {
   const n = new Notification('Agent X — Task Complete', {
     body: title || 'Your agent has finished responding.',
     icon: '/favicon.ico',
-    tag: 'sax-complete'
+    tag: 'lax-complete'
   });
   n.onclick = () => { window.focus(); n.close(); };
 }

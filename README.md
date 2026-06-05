@@ -45,7 +45,7 @@ Clone or download the repository first, then run the installer for your OS from 
 
 Each script is a thin wrapper that bootstraps Node + Ollama (if missing) and then runs the shared core at [scripts/install-common.mjs](scripts/install-common.mjs); `install.command` itself just hands off to `install.sh` so there's one source of truth.
 
-**What you end up with on macOS:** a real `Local Agent X.app` in `/Applications`, Spotlight- and Launchpad-launchable. Clicking the red X **hides** the window — the server stays alive in the **menu bar** (top-right, next to the clock) so scheduled missions and background jobs keep running. To actually stop the server, use the menu-bar icon's **Quit** item. Headless mode (`npm run dev`) still works for development and is what install.command uses to seed `dist/` for the packaged app. Set `SAX_SKIP_APP=1` to skip the .app build during install if you only want the headless server.
+**What you end up with on macOS:** a real `Local Agent X.app` in `/Applications`, Spotlight- and Launchpad-launchable. Clicking the red X **hides** the window — the server stays alive in the **menu bar** (top-right, next to the clock) so scheduled missions and background jobs keep running. To actually stop the server, use the menu-bar icon's **Quit** item. Headless mode (`npm run dev`) still works for development and is what install.command uses to seed `dist/` for the packaged app. Set `LAX_SKIP_APP=1` to skip the .app build during install if you only want the headless server.
 
 **First-time install on macOS is slow (~3–5 min, ~500 MB)** because it builds the Electron bundle and produces the .app. Subsequent runs are fast (electron-builder caches its downloads).
 

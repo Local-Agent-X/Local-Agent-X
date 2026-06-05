@@ -1,7 +1,7 @@
 // Kokoro-82M engine wrapper.
 //
 // kokoro-js bundles @huggingface/transformers + phonemizer and ships a
-// `KokoroTTS` class. The rest of SAX speaks one-sentence-in / one-PCM-out
+// `KokoroTTS` class. The rest of LAX speaks one-sentence-in / one-PCM-out
 // (see src/voice/tts-stream.ts), so this wrapper exposes that exact shape:
 // `synth(text)` returns a single PCM frame for the whole utterance. We do
 // NOT use kokoro's TextSplitterStream because the orchestrator already chunks

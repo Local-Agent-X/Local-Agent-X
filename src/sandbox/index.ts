@@ -152,7 +152,7 @@ export function getSandboxMode(): SandboxMode {
     }
     return runtimeMode;
   }
-  const envMode = (process.env.LAX_SANDBOX ?? process.env.SAX_SANDBOX ?? "").toLowerCase();
+  const envMode = (process.env.LAX_SANDBOX ?? "").toLowerCase();
   // Aliases for host (no container).
   if (envMode === "host" || envMode === "disabled" || envMode === "off" || envMode === "none" || envMode === "false") {
     return "host";

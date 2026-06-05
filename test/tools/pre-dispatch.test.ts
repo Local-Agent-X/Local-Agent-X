@@ -12,9 +12,9 @@ import * as approvalModule from "../../src/approval-manager.js";
 import { assertToolCallAllowed } from "../../src/tools/pre-dispatch.js";
 
 // Regression test for DRY-AUDIT.md F3 — the AriKernel tool dispatcher
-// previously skipped SAX's approval/security gates. After this fix, every
+// previously skipped LAX's approval/security gates. After this fix, every
 // concrete executor calls runPreDispatchGate at the top of execute(), and
-// the SAX bootstrap wires that gate to assertToolCallAllowed.
+// the LAX bootstrap wires that gate to assertToolCallAllowed.
 
 describe("AriKernel pre-dispatch gate (F3 closure)", () => {
   const root = join(tmpdir(), `pre-dispatch-${randomBytes(4).toString("hex")}`);

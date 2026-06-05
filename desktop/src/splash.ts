@@ -54,7 +54,7 @@ let s=0;const h=document.getElementById('h');
 // hint with the default "Warming up…" / "Still loading…" text.
 window.__laxSplashTimer=setInterval(()=>{s++;
 if(s===15){h.textContent='Warming up the agent runtime — usually 15-30 seconds.';h.classList.add('show');}
-else if(s===45){h.textContent='Still loading. Check ~/.lax/sax-server.log if this hangs.';}
+else if(s===45){h.textContent='Still loading. Check ~/.lax/logs/server.log if this hangs.';}
 },1000);
 // Called by main.ts when reconcile / server boot fails. Stops the
 // spinner, reveals the action buttons. The buttons themselves are

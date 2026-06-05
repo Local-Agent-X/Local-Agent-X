@@ -60,7 +60,7 @@ function serializeMcpContent(results: Array<{ role: string; content: unknown }>)
  *     └─ spawns: node src/mcp-bridge.js
  *           └─ HTTP POST /api/mcp/tools   (list)
  *           └─ HTTP POST /api/mcp/call    (execute)
- *                 └─ runs in main SAX process with Ari + policy + approval
+ *                 └─ runs in main LAX process with Ari + policy + approval
  */
 export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -107,7 +107,7 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
 
       // Run through the same path as other agent tool calls: security, policy,
       // RBAC, Ari all apply. Caller role is operator (MCP bridge is trusted —
-      // only reachable on localhost, authed via SAX auth token).
+      // only reachable on localhost, authed via LAX auth token).
       const { executeToolCalls } = await import("../tool-executor.js");
       const toolMap = new Map(ctx.allAgentTools.map(t => [t.name, t]));
       const results = await executeToolCalls(

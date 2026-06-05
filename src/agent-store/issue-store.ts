@@ -1,6 +1,6 @@
 // Issue/task store. Issues are LAX-N-prefixed, persisted in a single
 // JSON file. Checkout/release is the cooperative lock so two agents
-// don't pick up the same issue. Legacy SAX-N prefix is accepted on read
+// don't pick up the same issue. Legacy LAX-N prefix is accepted on read
 // for installs predating the rebrand; new IDs use LAX-.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -53,10 +53,10 @@ export class IssueStore {
       if (existsSync(ISSUES_FILE)) {
         this.issues = JSON.parse(readFileSync(ISSUES_FILE, "utf-8"));
         // Derive counter from highest existing ID. Accept both legacy
-        // "SAX-N" and new "LAX-N" so existing issue files continue to
+        // "LAX-N" and new "LAX-N" so existing issue files continue to
         // work after the rebrand. New issues are created with LAX-.
         for (const i of this.issues) {
-          const num = parseInt(i.id.replace(/^(SAX|LAX)-/, ""), 10);
+          const num = parseInt(i.id.replace(/^LAX-/, ""), 10);
           if (num > this.counter) this.counter = num;
         }
       }

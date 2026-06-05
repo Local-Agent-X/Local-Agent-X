@@ -6,7 +6,7 @@
 // shared-dom, shared-api follow in that order.
 
 // Auth token (localStorage persists across tabs/sessions, sessionStorage as backup)
-let AUTH_TOKEN = localStorage.getItem('sax_token') || sessionStorage.getItem('sax_token') || '';
+let AUTH_TOKEN = localStorage.getItem('lax_token') || sessionStorage.getItem('lax_token') || '';
 const urlToken = new URLSearchParams(location.search).get('token');
 // In Electron the renderer URL never goes to a browser history / address
 // bar / clipboard — the only consequence of stripping the token via
@@ -18,16 +18,16 @@ const urlToken = new URLSearchParams(location.search).get('token');
 const isElectron = /Electron/i.test(navigator.userAgent);
 if (urlToken) {
   AUTH_TOKEN = urlToken;
-  localStorage.setItem('sax_token', urlToken);
-  sessionStorage.setItem('sax_token', urlToken);
+  localStorage.setItem('lax_token', urlToken);
+  sessionStorage.setItem('lax_token', urlToken);
   if (!isElectron) {
     const cleanUrl = new URL(location.href);
     cleanUrl.searchParams.delete('token');
     history.replaceState(null, '', cleanUrl.pathname + cleanUrl.hash);
   }
 } else if (AUTH_TOKEN) {
-  localStorage.setItem('sax_token', AUTH_TOKEN);
-  sessionStorage.setItem('sax_token', AUTH_TOKEN);
+  localStorage.setItem('lax_token', AUTH_TOKEN);
+  sessionStorage.setItem('lax_token', AUTH_TOKEN);
 }
 
 const API = '';

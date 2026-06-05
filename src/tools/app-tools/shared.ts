@@ -1,6 +1,6 @@
 /**
  * Shared helpers for the app-tools modules — actor resolution, ToolResult
- * shorthand, and the LAX/SAX port lookup repeated across every tool that
+ * shorthand, and the LAX/LAX port lookup repeated across every tool that
  * builds an app URL.
  */
 
@@ -14,5 +14,5 @@ export function getActor(args: Record<string, unknown>): string {
 }
 
 export function getAppPort(): number {
-  return parseInt(process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007", 10);
+  return parseInt(process.env.LAX_PORT ?? "7007", 10);
 }

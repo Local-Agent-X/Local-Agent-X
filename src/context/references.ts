@@ -2,7 +2,7 @@
  * Context references — file/url reference handling for context injection.
  *
  * Dedicated module for "user mentioned a file or URL,
- * fetch it and inject as context." Today SAX handles file refs through
+ * fetch it and inject as context." Today LAX handles file refs through
  * the read tool (lazy, agent-driven) which is fine — this file is a
  * placeholder for when we want eager reference resolution at turn start.
  *

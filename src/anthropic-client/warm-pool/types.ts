@@ -16,9 +16,9 @@ export interface WarmPoolKey {
    */
   sessionId?: string;
   /** Required when sessionId is set. */
-  saxPort?: number;
+  laxPort?: number;
   /** Required when sessionId is set. */
-  saxToken?: string;
+  laxToken?: string;
 }
 
 export interface WarmProcess {

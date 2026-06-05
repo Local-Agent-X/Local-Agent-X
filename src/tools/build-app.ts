@@ -173,7 +173,7 @@ export const buildAppTool: ToolDefinition = {
     const strategy = resolveBuildStrategy(provider);
 
     const appDir = resolve("workspace", "apps", appName);
-    const port = process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007";
+    const port = process.env.LAX_PORT ?? "7007";
     const appUrl = `http://127.0.0.1:${port}/apps/${appName}/index.html`;
 
     // Collision guard before mkdir so a refused build leaves no empty dir

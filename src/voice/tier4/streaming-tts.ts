@@ -1,4 +1,4 @@
-// Adapter: KokoroEngine → SAX StreamingTTS contract (see src/voice/tts-stream.ts).
+// Adapter: KokoroEngine → LAX StreamingTTS contract (see src/voice/tts-stream.ts).
 //
 // The orchestrator in src/voice/voice-session.ts calls `tts.speak(sentence)`
 // per sentence and expects `onAudio(pcm, sampleRate)` callbacks plus an

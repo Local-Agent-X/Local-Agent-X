@@ -54,7 +54,7 @@ function enterIdeView(appId, appName, appUrl, buildPrompt) {
   // can drop the user back into the same IDE session instead of dumping
   // them at the apps gallery. Restore happens in ideRestoreSession() on
   // page init.
-  try { localStorage.setItem('sax_ide_open', JSON.stringify({ id: appId, name: appName, url: appUrl })); } catch {}
+  try { localStorage.setItem('lax_ide_open', JSON.stringify({ id: appId, name: appName, url: appUrl })); } catch {}
 
   // Set app name
   const nameEl = document.getElementById('ide-app-name');
@@ -132,7 +132,7 @@ function exitIdeView() {
   if (body) body.style.display = '';
   if (ide) ide.style.display = 'none';
   document.body.classList.remove('ide-fullscreen');
-  try { localStorage.removeItem('sax_ide_open'); } catch {}
+  try { localStorage.removeItem('lax_ide_open'); } catch {}
   loadApps();
 }
 
@@ -141,7 +141,7 @@ function exitIdeView() {
 // restore them to the same IDE session so they don't lose their place.
 function ideRestoreSession() {
   try {
-    const raw = localStorage.getItem('sax_ide_open');
+    const raw = localStorage.getItem('lax_ide_open');
     if (!raw) return false;
     const saved = JSON.parse(raw);
     if (!saved || !saved.id) return false;

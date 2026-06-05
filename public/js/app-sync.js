@@ -109,14 +109,14 @@ async function syncProjectsFromServer() {
   } catch { /* leave cached snapshot */ }
 }
 
-// One-shot migration from the legacy sax_projects_v1 localStorage key.
+// One-shot migration from the legacy lax_projects_v1 localStorage key.
 // Reads any frontend-only projects the user created before the backend
 // became the source of truth, posts them to the server, then clears the
 // legacy key. Runs once per install.
 async function migrateLegacyLocalStorageProjects() {
-  if (localStorage.getItem('sax_projects_migrated_v1') === 'done') return;
+  if (localStorage.getItem('lax_projects_migrated_v1') === 'done') return;
   let legacy = [];
-  try { legacy = JSON.parse(localStorage.getItem('sax_projects_v1') || '[]'); } catch { legacy = []; }
+  try { legacy = JSON.parse(localStorage.getItem('lax_projects_v1') || '[]'); } catch { legacy = []; }
   if (Array.isArray(legacy) && legacy.length > 0) {
     for (const p of legacy) {
       if (!p?.name) continue;
@@ -129,8 +129,8 @@ async function migrateLegacyLocalStorageProjects() {
       } catch { /* one project failing shouldn't block the rest */ }
     }
   }
-  try { localStorage.setItem('sax_projects_migrated_v1', 'done'); } catch {}
-  try { localStorage.removeItem('sax_projects_v1'); } catch {}
+  try { localStorage.setItem('lax_projects_migrated_v1', 'done'); } catch {}
+  try { localStorage.removeItem('lax_projects_v1'); } catch {}
   await syncProjectsFromServer();
 }
 

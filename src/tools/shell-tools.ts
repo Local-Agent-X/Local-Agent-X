@@ -133,7 +133,7 @@ export const bashTool: ToolDefinition = {
       /api[_-]?key/i, /secret/i, /token/i, /password/i, /passwd/i,
       /private[_-]?key/i, /access[_-]?key/i, /auth/i, /credential/i,
       /^AWS_/i, /^AZURE_/i, /^GCP_/i, /^GOOGLE_/i,
-      /^OPENAI/i, /^XAI/i, /^SAX_AUTH/i, /^SAX_.*KEY/i, /^LAX_AUTH/i, /^LAX_.*KEY/i,
+      /^OPENAI/i, /^XAI/i, /^LAX_AUTH/i, /^LAX_.*KEY/i,
       /^GITHUB_/i, /^SLACK_/i, /^STRIPE_/i, /^LINEAR_/i,
       /^NPM_TOKEN/i, /^DOCKER_/i, /^CI_/i,
     ];

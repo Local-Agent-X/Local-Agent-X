@@ -14,7 +14,7 @@ import type { ToolDefinition } from "../../src/types.js";
 // Regression test for DRY-AUDIT.md F2 (final / 2C.3). The AriKernel
 // FileExecutor / HttpExecutor / ShellExecutor / DatabaseExecutor /
 // RetrievalExecutor used to be reachable only via the parallel kernel
-// dispatch path. After the collapse they are SAX ToolDefinitions in the
+// dispatch path. After the collapse they are LAX ToolDefinitions in the
 // unified registry, callable through the chat-path single dispatcher
 // (`executeSingleTool` / `dispatchSingleToolCall`). Capability tokens,
 // taint labels, and sandbox properties surface as fields on the unified
@@ -64,7 +64,7 @@ describe("Unified dispatcher — F2 final collapse", () => {
       makeCtx(toolMap),
     );
 
-    // Bridge ran through the unified dispatcher and produced a SAX ToolResult.
+    // Bridge ran through the unified dispatcher and produced a LAX ToolResult.
     // The dispatcher's tool message body always ends up in `content`.
     expect(result.content).toContain("ok.txt");
     expect(result.content).toContain("hi");
@@ -116,7 +116,7 @@ describe("Unified dispatcher — F2 final collapse", () => {
         },
         makeCtx(toolMap),
       );
-      // Either the SAX pre-dispatch gate blocked it (security layer),
+      // Either the LAX pre-dispatch gate blocked it (security layer),
       // or the FileExecutor rejected the path internally — both are
       // acceptable. What MUST NOT happen is the file content leaking.
       expect(result.content).not.toContain("secret");

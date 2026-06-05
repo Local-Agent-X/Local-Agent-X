@@ -268,16 +268,16 @@ textarea {
   </section>
 
 <script>
-let AUTH_TOKEN = sessionStorage.getItem('sax_token') || localStorage.getItem('sax_token') || '';
+let AUTH_TOKEN = sessionStorage.getItem('lax_token') || localStorage.getItem('lax_token') || '';
 const urlToken = new URLSearchParams(location.search).get('token');
 if (urlToken) {
   AUTH_TOKEN = urlToken;
-  sessionStorage.setItem('sax_token', urlToken);
+  sessionStorage.setItem('lax_token', urlToken);
   const cleanUrl = new URL(location.href);
   cleanUrl.searchParams.delete('token');
   history.replaceState(null, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
 } else if (AUTH_TOKEN) {
-  sessionStorage.setItem('sax_token', AUTH_TOKEN);
+  sessionStorage.setItem('lax_token', AUTH_TOKEN);
 }
 const API = '';
 
@@ -285,10 +285,10 @@ let tasks = loadTasks();
 let selectedId = null;
 
 function loadTasks(){
-  try { return JSON.parse(localStorage.getItem('sax_tasks_v1') || '[]'); }
+  try { return JSON.parse(localStorage.getItem('lax_tasks_v1') || '[]'); }
   catch { return []; }
 }
-function persist(){ localStorage.setItem('sax_tasks_v1', JSON.stringify(tasks)); }
+function persist(){ localStorage.setItem('lax_tasks_v1', JSON.stringify(tasks)); }
 function uid(){ return 'task-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,7); }
 function esc(s){ const d=document.createElement('div'); d.textContent=String(s||''); return d.innerHTML.replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
 

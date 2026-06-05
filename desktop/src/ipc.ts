@@ -7,7 +7,7 @@
 
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, shell, systemPreferences } from "electron";
 import { join } from "path";
-import { getProjectRoot, reloadSAXConfig, getSAXConfig } from "./config";
+import { getProjectRoot, reloadLAXConfig, getLAXConfig } from "./config";
 import { type DesktopSettings, getSetting, setSetting } from "./settings";
 import { bgForTheme, overlayForTheme, applyNativeTheme } from "./theme";
 import {
@@ -29,7 +29,7 @@ export function setupIPC(): void {
   ipcMain.handle("get-server-status", async () => {
     return {
       running: await isServerRunning(),
-      port: getSAXConfig().port,
+      port: getLAXConfig().port,
       pid: getServerPid(),
     };
   });
@@ -139,12 +139,12 @@ export function setupIPC(): void {
   });
 
   ipcMain.handle("open-in-browser", () => {
-    const cfg = getSAXConfig();
+    const cfg = getLAXConfig();
     return shell.openExternal(`http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`);
   });
 
   ipcMain.handle("copy-app-url", () => {
-    const cfg = getSAXConfig();
+    const cfg = getLAXConfig();
     clipboard.writeText(`http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`);
   });
 

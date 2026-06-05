@@ -5,7 +5,7 @@ behavior regressions before they bite in production.
 
 ## Usage
 
-Start the SAX server, then:
+Start the LAX server, then:
 
 ```
 node scripts/run-prompt-fixtures.mjs

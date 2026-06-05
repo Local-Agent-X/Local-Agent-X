@@ -4,7 +4,7 @@
  * Scoring/ranking which memory hits, which past messages, which references
  * make the cut for this turn's context window budget.
  *
- * Today SAX's curation logic is split between:
+ * Today LAX's curation logic is split between:
  *   - memoryManager.buildTurnContext (memory hit selection)
  *   - prepare-request.ts (Codex-vs-Anthropic context truncation)
  *   - tool-filter.ts (which tools to expose)

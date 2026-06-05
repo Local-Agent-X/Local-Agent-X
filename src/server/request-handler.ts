@@ -191,7 +191,7 @@ export function createRequestHandler(deps: {
           h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
           h["Cache-Control"] = "no-cache, must-revalidate"; h["Pragma"] = "no-cache";
           let html = readFileSync(appFile, "utf-8");
-          const iso = `<script>sessionStorage.removeItem('sax_token');localStorage.removeItem('sax_token');delete window.__AUTH_TOKEN__;history.replaceState(null,'',location.pathname);</script>`;
+          const iso = `<script>sessionStorage.removeItem('lax_token');localStorage.removeItem('lax_token');delete window.__AUTH_TOKEN__;history.replaceState(null,'',location.pathname);</script>`;
           html = html.includes("<head>") ? html.replace("<head>", "<head>" + iso) : html.includes("<body>") ? html.replace("<body>", "<body>" + iso) : iso + html;
           res.writeHead(200, h); res.end(html); return;
         }

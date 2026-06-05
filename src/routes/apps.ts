@@ -45,7 +45,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     return true;
   }
 
-  // Serve rendered app HTML (from AppRegistry — SAX-native app definitions)
+  // Serve rendered app HTML (from AppRegistry — LAX-native app definitions)
   const appMatch = url.pathname.match(/^\/(apps|dashboards)\/([a-zA-Z0-9_-]+)\/?$/);
   if (method === "GET" && appMatch) {
     const appId = appMatch[2];

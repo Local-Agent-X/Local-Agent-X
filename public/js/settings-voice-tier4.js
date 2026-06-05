@@ -15,9 +15,9 @@ async function onVoiceEngineChange(engine) {
     // Mirror to localStorage so a fresh load picks up the same choice before
     // the server fetch races back.
     try {
-      const saved = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+      const saved = JSON.parse(localStorage.getItem('lax_settings') || '{}');
       saved.voiceEngine = engine;
-      localStorage.setItem('sax_settings', JSON.stringify(saved));
+      localStorage.setItem('lax_settings', JSON.stringify(saved));
     } catch {}
     refreshVoiceEngineStatus(engine);
     if (typeof refreshVoiceTier4Visibility === 'function') refreshVoiceTier4Visibility(engine);
@@ -61,9 +61,9 @@ async function onTier4SettingChange(key, raw) {
     if (typeof apiPost === 'function') await apiPost('/api/settings', payload);
     else await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     try {
-      const saved = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+      const saved = JSON.parse(localStorage.getItem('lax_settings') || '{}');
       if (value === null) delete saved[key]; else saved[key] = value;
-      localStorage.setItem('sax_settings', JSON.stringify(saved));
+      localStorage.setItem('lax_settings', JSON.stringify(saved));
     } catch {}
   } catch (e) {
     console.warn('[tier4-settings] save failed:', key, e);

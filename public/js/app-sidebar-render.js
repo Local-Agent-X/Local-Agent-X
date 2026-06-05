@@ -163,7 +163,7 @@ function renderChatList() {
   // Archived section — collapsed by default, click label to toggle visibility
   const archivedChats = chats.filter(c => c.archived && !c.id?.startsWith('wa-') && !c.id?.startsWith('tg-'));
   if (archivedChats.length > 0) {
-    const isOpen = localStorage.getItem('sax_archived_open') === '1';
+    const isOpen = localStorage.getItem('lax_archived_open') === '1';
     html += `<div class="chat-group-label" style="cursor:pointer;user-select:none" onclick="toggleArchivedSection()">${isOpen ? '&#9662;' : '&#9656;'} Archived (${archivedChats.length})</div>`;
     if (isOpen) {
       html += archivedChats.map(renderItem).join('');
@@ -174,8 +174,8 @@ function renderChatList() {
 }
 
 function toggleArchivedSection() {
-  const open = localStorage.getItem('sax_archived_open') === '1';
-  localStorage.setItem('sax_archived_open', open ? '0' : '1');
+  const open = localStorage.getItem('lax_archived_open') === '1';
+  localStorage.setItem('lax_archived_open', open ? '0' : '1');
   renderChatList();
 }
 

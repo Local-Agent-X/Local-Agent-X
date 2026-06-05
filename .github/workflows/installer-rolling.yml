@@ -1,15 +1,23 @@
 name: Rolling Installer (tracks main)
 
-# Builds a Windows GUI installer that, AT RUNTIME, downloads the latest `main`
-# branch source instead of a pinned tag — so it never needs rebuilding when app
-# code changes. This is the WIP/daily-update path: publish it ONCE to the stable
-# `rolling` pre-release, point your "Download for Windows" link at the asset URL
-# below, and every download thereafter installs current `main`:
+# Builds the Windows .exe AND the macOS .dmg GUI installers that, AT RUNTIME,
+# download the latest `main` branch source instead of a pinned tag — so neither
+# needs rebuilding when app code changes. This is the WIP/daily-update path:
+# publish ONCE to the stable `rolling` pre-release, point the website's
+# "Download for Windows / Mac" links at the asset URLs below, and every download
+# thereafter installs current `main`:
 #
-#   https://github.com/<owner>/<repo>/releases/download/rolling/Install%20Local%20Agent%20X%20Windows%20Installer.exe
+#   https://github.com/<owner>/<repo>/releases/download/rolling/Install.Local.Agent.X.Windows.Installer.exe
+#   https://github.com/<owner>/<repo>/releases/download/rolling/Install.Local.Agent.X.Mac.Installer.dmg
 #
 # Re-run this workflow ONLY when the installer itself changes (this csproj /
-# SourceDownloader / install-common.mjs), NOT on ordinary app updates.
+# SourceDownloader / install-common.mjs / build-mac-installer.sh), NOT on
+# ordinary app updates — the built installers already serve latest main.
+#
+# The macOS path is the SAME signing + notarization flow as installer-release.yml
+# (same secrets), so the rolling .dmg is still a one-click, no-Gatekeeper install.
+# The only difference vs the tagged release: no -p:InstallerSourceTag is passed,
+# so the csproj defaults to ref "main" / kind "heads" (refs/heads/main.tar.gz).
 #
 # For reproducible, pinned releases use installer-release.yml instead (push a
 # v* tag); that path bakes in the tag and never tracks main.
@@ -50,18 +58,201 @@ jobs:
           Copy-Item -LiteralPath $src -Destination $dst -Force
           Write-Host ("Size: {0:N1} MB" -f ((Get-Item -LiteralPath $dst).Length / 1MB))
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-rolling
+          path: "Install Local Agent X Windows Installer.exe"
+          if-no-files-found: error
+
+  build-macos-rolling:
+    name: macOS rolling installer (.dmg, signed + notarized)
+    runs-on: macos-latest
+    # KEYCHAIN_PATH is exported via $GITHUB_ENV in the first step below —
+    # job-level `env` can't reference ${{ runner.* }}, only step-level can.
+    env:
+      DMG_PATH: installer/dist-mac/Install Local Agent X Mac Installer.dmg
+      APP_PATH: installer/dist-mac/Install Local Agent X Mac Installer.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Import Developer ID certificate into temp keychain
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
+        run: |
+          KEYCHAIN_PATH="${RUNNER_TEMP}/build.keychain-db"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          CERT_PATH="${RUNNER_TEMP}/cert.p12"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$MACOS_KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_CERTIFICATE_PWD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple: -s -k "$MACOS_KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | tr -d '"')
+          rm -f "$CERT_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Build + sign .app bundle (main-tracking)
+        # NO INSTALLER_SOURCE_TAG → build-mac-installer.sh defaults SRC_TAG to
+        # "main", and the csproj maps that to refs/heads/main: the .dmg fetches
+        # latest main source at install time, exactly like the Windows rolling
+        # build. This is the ONLY difference vs installer-release.yml's mac job.
+        env:
+          APPLE_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          chmod +x scripts/build-mac-installer.sh
+          ./scripts/build-mac-installer.sh
+
+      - name: Reclaim disk space before .dmg packaging
+        run: |
+          sudo rm -rf ~/Library/Developer/CoreSimulator || true
+          sudo rm -rf /Library/Developer/CoreSimulator || true
+          ACTIVE_XCODE="$(xcode-select -p 2>/dev/null | sed -E 's|/Contents/Developer$||')"
+          for x in /Applications/Xcode_*.app; do
+            if [ "$x" != "$ACTIVE_XCODE" ]; then
+              echo "removing $x"
+              sudo rm -rf "$x" || true
+            fi
+          done
+          rm -rf installer/bin installer/obj || true
+          df -h /
+
+      - name: Package .app into .dmg
+        # See installer-release.yml for why we don't use the one-shot
+        # `-srcfolder ... -format UDZO` (it auto-sizes the intermediate image
+        # with no padding and fails with "No space left on device"). Build a
+        # padded read/write image, ditto the .app in, detach, convert to UDZO.
+        run: |
+          set -euo pipefail
+          VOL="Local Agent X"
+          RW_DMG="${RUNNER_TEMP}/lax-installer-rw.dmg"
+          MOUNT_DIR="${RUNNER_TEMP}/lax-installer-mnt"
+          APP_MB=$(du -sm "$APP_PATH" | awk '{print $1}')
+          SIZE_MB=$(( APP_MB + 200 ))
+          echo "app=${APP_MB}MB -> image=${SIZE_MB}MB"
+          hdiutil create -volname "$VOL" -fs HFS+ -size "${SIZE_MB}m" -ov "$RW_DMG"
+          mkdir -p "$MOUNT_DIR"
+          hdiutil attach "$RW_DMG" -mountpoint "$MOUNT_DIR" -nobrowse
+          ditto "$APP_PATH" "$MOUNT_DIR/$(basename "$APP_PATH")"
+          hdiutil detach "$MOUNT_DIR"
+          hdiutil convert "$RW_DMG" -format UDZO -ov -o "$DMG_PATH"
+          rm -f "$RW_DMG"
+          ls -la installer/dist-mac
+
+      - name: Sign the .dmg
+        env:
+          APPLE_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          codesign --force --sign "$APPLE_SIGN_IDENTITY" --timestamp "$DMG_PATH"
+          codesign --verify --verbose=2 "$DMG_PATH"
+
+      - name: Notarize .dmg with notarytool
+        id: notarize
+        env:
+          MACOS_API_KEY_P8: ${{ secrets.MACOS_API_KEY_P8 }}
+          MACOS_API_KEY_ID: ${{ secrets.MACOS_API_KEY_ID }}
+          MACOS_API_ISSUER_ID: ${{ secrets.MACOS_API_ISSUER_ID }}
+        run: |
+          set -u
+          KEY_PATH="${RUNNER_TEMP}/AuthKey.p8"
+          echo "$MACOS_API_KEY_P8" | base64 --decode > "$KEY_PATH"
+          trap 'rm -f "$KEY_PATH"' EXIT
+          SUBMIT_JSON=$(xcrun notarytool submit "$DMG_PATH" \
+            --key "$KEY_PATH" \
+            --key-id "$MACOS_API_KEY_ID" \
+            --issuer "$MACOS_API_ISSUER_ID" \
+            --output-format json) || { echo "::error::notarytool submit failed"; exit 1; }
+          echo "$SUBMIT_JSON"
+          SUBMISSION_ID=$(echo "$SUBMIT_JSON" | jq -r '.id')
+          echo "::notice title=Notary submission::$SUBMISSION_ID"
+          DEADLINE=$(( $(date -u +%s) + 5400 ))
+          LAST_STATUS=""
+          while [ "$(date -u +%s)" -lt "$DEADLINE" ]; do
+            INFO_JSON=$(xcrun notarytool info "$SUBMISSION_ID" \
+              --key "$KEY_PATH" \
+              --key-id "$MACOS_API_KEY_ID" \
+              --issuer "$MACOS_API_ISSUER_ID" \
+              --output-format json 2>&1) || INFO_JSON=""
+            STATUS=$(echo "$INFO_JSON" | jq -r '.status // empty' 2>/dev/null || echo "")
+            if [ "$STATUS" != "$LAST_STATUS" ]; then
+              echo "[$(date -u +%H:%M:%S)] notarize status: ${STATUS:-<network err, retrying>}"
+              LAST_STATUS="$STATUS"
+            fi
+            case "$STATUS" in
+              Accepted)
+                echo "✅ Apple accepted submission $SUBMISSION_ID"
+                exit 0
+                ;;
+              Invalid|Rejected)
+                echo "::error::Apple rejected submission $SUBMISSION_ID with status=$STATUS"
+                xcrun notarytool log "$SUBMISSION_ID" \
+                  --key "$KEY_PATH" --key-id "$MACOS_API_KEY_ID" --issuer "$MACOS_API_ISSUER_ID" || true
+                exit 1
+                ;;
+            esac
+            sleep 30
+          done
+          echo "::error::Timed out after 90 min. Submission ID: $SUBMISSION_ID"
+          exit 1
+
+      - name: Staple notarization ticket to .dmg
+        run: xcrun stapler staple "$DMG_PATH"
+
+      - name: Verify Gatekeeper assessment
+        run: |
+          spctl --assess --type open --context context:primary-signature \
+            --verbose=2 "$DMG_PATH"
+
+      - name: Delete temp keychain
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer-rolling
+          path: "installer/dist-mac/Install Local Agent X Mac Installer.dmg"
+          if-no-files-found: error
+
+  publish-rolling:
+    name: Publish/refresh the `rolling` pre-release
+    needs: [build-windows-rolling, build-macos-rolling]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: List downloaded artifacts
+        run: find dist -type f | sort
+
       - name: Publish/refresh the `rolling` pre-release
-        # Re-uses the fixed `rolling` tag and replaces the asset in place, so the
-        # download URL is stable across re-runs.
+        # Re-uses the fixed `rolling` tag and replaces the assets in place, so the
+        # download URLs are stable across re-runs.
         uses: softprops/action-gh-release@v2
         with:
           tag_name: rolling
           name: Rolling installer (tracks main)
           body: >
-            Auto-built Windows installer that downloads the latest `main` source
-            at install time. Always current; no per-update rebuild. For pinned
-            versions see the tagged releases.
+            Auto-built Windows + macOS installers that download the latest `main`
+            source at install time. Always current; no per-update rebuild. The
+            macOS .dmg is signed + Apple-notarized (one-click, no Gatekeeper
+            prompt). For pinned versions see the tagged releases.
           prerelease: true
           generate_release_notes: false
           fail_on_unmatched_files: true
-          files: "Install Local Agent X Windows Installer.exe"
+          files: |
+            dist/windows-installer-rolling/Install Local Agent X Windows Installer.exe
+            dist/macos-installer-rolling/Install Local Agent X Mac Installer.dmg

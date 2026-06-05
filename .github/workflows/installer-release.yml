@@ -312,6 +312,9 @@ jobs:
           generate_release_notes: false
           draft: false
           prerelease: false
+          # Pinned version releases never take the "Latest" badge — the rolling
+          # release is the featured Latest download (see release.yml note).
+          make_latest: false
           fail_on_unmatched_files: true
           files: |
             dist/windows-installer/Install Local Agent X Windows Installer.exe

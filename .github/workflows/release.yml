@@ -65,3 +65,8 @@ jobs:
             ```
           draft: false
           prerelease: false
+          # Version tags are pinned/archived snapshots — they must NOT take the
+          # "Latest" badge. The `rolling` release (installer-rolling.yml) is the
+          # featured Latest download so new users always get the main-tracking,
+          # auto-latest installer instead of a frozen version.
+          make_latest: false

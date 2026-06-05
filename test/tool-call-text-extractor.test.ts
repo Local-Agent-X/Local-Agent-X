@@ -5,7 +5,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { extractToolCallsFromText } from "../src/canonical-loop/adapters/tool-call-text-extractor.js";
+import {
+  extractToolCallsFromText,
+  proseLooksLikeToolCall,
+} from "../src/canonical-loop/adapters/tool-call-text-extractor.js";
 
 const TOOLS = new Set(["browser", "read", "write", "bash"]);
 
@@ -73,6 +76,71 @@ describe("extractToolCallsFromText — browser shorthand", () => {
     const text = '{"action":"click","ref":49}';
     const { toolCalls } = extractToolCallsFromText(text, new Set(["read"]));
     expect(toolCalls).toHaveLength(0);
+  });
+});
+
+describe("extractToolCallsFromText — shell prose narration", () => {
+  // Live failure 2026-06-04 (Nutrishop demo, xAI Grok): instead of a
+  // structured tool_call OR a JSON leak, Grok narrated the bash call in
+  // plain English. The JSON extractor can't see it; the call never fires
+  // and the trailing "File committed." trips the false-completion guard.
+  const GROK_PROSE = [
+    "run tool bash with command is cat > /Users/dad/Projects/Local-Agent-X/workspace/nutrishop_execution_start.md << 'EOL'",
+    "Project execution started by CEO.",
+    "Agents: 4 hired.",
+    "Subtasks ready for assignment.",
+    "EOL",
+    'ls /Users/dad/Projects/Local-Agent-X/workspace/ && echo "File committed."',
+  ].join("\n");
+
+  it("reconstructs a bash call from the exact Grok narration (with heredoc)", () => {
+    const { toolCalls } = extractToolCallsFromText(GROK_PROSE, TOOLS);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].name).toBe("bash");
+    const cmd = JSON.parse(toolCalls[0].arguments).command as string;
+    expect(cmd).toContain("cat > /Users/dad/Projects/Local-Agent-X/workspace/nutrishop_execution_start.md");
+    expect(cmd).toContain("EOL"); // heredoc body captured, not truncated at newline
+    expect(cmd).toContain('echo "File committed."');
+  });
+
+  it("reconstructs a single-line bash narration", () => {
+    const { toolCalls } = extractToolCallsFromText("run tool bash with command is ls -la /tmp", TOOLS);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].name).toBe("bash");
+    expect(JSON.parse(toolCalls[0].arguments).command).toBe("ls -la /tmp");
+  });
+
+  it("does not fire when no shell tool is allowed", () => {
+    const { toolCalls } = extractToolCallsFromText("run tool bash with command is ls", new Set(["read", "browser"]));
+    expect(toolCalls).toHaveLength(0);
+  });
+
+  it("does not fire on a casual mention without a value marker", () => {
+    // No "is/:/=" after "command" — this is explanatory prose, not an invocation.
+    const { toolCalls } = extractToolCallsFromText("I'll run the bash command to verify the workspace.", TOOLS);
+    expect(toolCalls).toHaveLength(0);
+  });
+
+  it("structured JSON still wins over prose when both could match", () => {
+    const text = 'run tool bash\n{"name":"read","arguments":{"path":"a.txt"}}';
+    const { toolCalls } = extractToolCallsFromText(text, TOOLS);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].name).toBe("read");
+  });
+});
+
+describe("proseLooksLikeToolCall", () => {
+  it("detects a 'run tool <name>' narration", () => {
+    expect(proseLooksLikeToolCall("run tool bash with command is ls", TOOLS)).toBe(true);
+  });
+  it("detects 'call the read tool' narration", () => {
+    expect(proseLooksLikeToolCall("Next I'll call the read tool on the file.", TOOLS)).toBe(true);
+  });
+  it("is false for a normal completion with no invocation language", () => {
+    expect(proseLooksLikeToolCall("Done — the workspace looks healthy and all agents are hired.", TOOLS)).toBe(false);
+  });
+  it("is false for empty input", () => {
+    expect(proseLooksLikeToolCall("", TOOLS)).toBe(false);
   });
 });
 

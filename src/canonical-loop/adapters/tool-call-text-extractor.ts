@@ -72,7 +72,6 @@ export function extractToolCallsFromText(
 
   // Walk the string looking for balanced JSON objects.
   const objects = findJsonObjects(working);
-  if (objects.length === 0) return { toolCalls: [], remainingText: text };
 
   const consumedRanges: Array<[number, number]> = [];
   for (const obj of objects) {
@@ -83,7 +82,14 @@ export function extractToolCallsFromText(
     }
   }
 
-  if (calls.length === 0) return { toolCalls: [], remainingText: text };
+  // Structured JSON wins. Only fall back to shell-prose reconstruction when
+  // no JSON tool call was salvageable — keeps the cheap, unambiguous path
+  // first and the heuristic prose path strictly last.
+  if (calls.length === 0) {
+    const shell = extractShellProseCall(text, validToolNames);
+    if (shell) return { toolCalls: [shell.call], remainingText: shell.remainingText };
+    return { toolCalls: [], remainingText: text };
+  }
 
   // Remove consumed JSON blocks from the working text. Walk back-to-front
   // so indices stay valid.
@@ -162,6 +168,10 @@ function classify(obj: Record<string, unknown>, validToolNames: Set<string>): Ex
     }
   }
 
+  // Pattern 3 (shell prose) is NOT classified here — it has no JSON to
+  // parse. It's handled by extractShellProseCall, called from the top-level
+  // extractor only after JSON classification finds nothing.
+
   // Pattern 2: browser shorthand { action: "X", ref: N, ... }
   // Only fires when "browser" is in validToolNames. We also accept the
   // `coords`, `text`, `url`, `target` keys that the browser tool's other
@@ -182,4 +192,92 @@ function classify(obj: Record<string, unknown>, validToolNames: Set<string>): Ex
   }
 
   return null;
+}
+
+/** Shell-style tools whose `command` arg can be reconstructed from a
+ *  natural-language "run tool bash with command is …" narration. Kept
+ *  small + explicit: only tools whose sole required arg is a shell string.
+ *  First one present in validToolNames wins. */
+const SHELL_TOOL_NAMES: ReadonlyArray<string> = ["bash", "shell", "ari_shell"];
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Prose-narration fallback for shell tools (Pattern 3).
+ *
+ * Live failure 2026-06-04 (Nutrishop demo, xAI Grok): weaker OpenAI-compat
+ * models sometimes DESCRIBE a shell call in English instead of emitting a
+ * structured tool_call — or even the JSON the extractor above catches —
+ * e.g. `run tool bash with command is cat > f << EOL …`. With no JSON to
+ * parse, the call silently never dispatches and the trailing "File
+ * committed." prose trips the false-completion guard.
+ *
+ * Conservative by construction:
+ *   - fires ONLY when a shell tool is in validToolNames, and
+ *   - requires the full invocation shape: an action verb, the shell tool
+ *     name, then `command` followed by an explicit value marker (is | : | =).
+ *     The marker is what separates a real invocation ("…command is rm x")
+ *     from a casual mention ("run the bash command to verify"), which must
+ *     NOT synthesize a call.
+ *
+ * Everything after the marker is taken verbatim as the `command` arg —
+ * heredocs and `&&` chains span newlines, so we capture to end-of-string.
+ * The reconstructed call still flows through normal approval + the bash
+ * sandbox downstream, so it gets the same safety as a structured call.
+ */
+function extractShellProseCall(
+  text: string,
+  validToolNames: Set<string>,
+): { call: ExtractedToolCall; remainingText: string } | null {
+  const shellName = SHELL_TOOL_NAMES.find((n) => validToolNames.has(n));
+  if (!shellName) return null;
+
+  // verb … <shell> … command (is|:|=) <COMMAND to end-of-string>
+  const re = new RegExp(
+    String.raw`\b(?:run|use|call|invoke|execute)\b[^\n]*?\b` +
+      escapeRegex(shellName) +
+      String.raw`\b[\s\S]*?\bcommand\b\s*(?:is|:|=)\s*([\s\S]+)`,
+    "i",
+  );
+  const m = re.exec(text);
+  if (!m || m.index === undefined) return null;
+  const command = m[1].trim();
+  if (!command) return null;
+
+  return {
+    call: { id: nextId(), name: shellName, arguments: JSON.stringify({ command }) },
+    remainingText: text.slice(0, m.index).trim(),
+  };
+}
+
+/**
+ * Cheap predicate: does this assistant text READ like the model narrated a
+ * tool call instead of emitting one? Used by the openai-compat adapter to
+ * decide whether to inject a wire-format-error nudge and retry the turn
+ * once (mirrors the Anthropic adapter's `<wire-format-error: … emitted as
+ * text — retry…>` recovery). Distinct from extractToolCallsFromText: this
+ * only DETECTS the smell; extraction may still fail to reconstruct args,
+ * which is exactly when the nudge+retry earns its keep.
+ *
+ * Tighter than "mentions a tool name" — requires an action verb near a
+ * valid tool name, or near the literal word "tool". A normal completion
+ * ("all agents are hired") returns false.
+ */
+export function proseLooksLikeToolCall(
+  text: string,
+  validToolNames: Set<string>,
+): boolean {
+  if (!text || typeof text !== "string") return false;
+  for (const name of validToolNames) {
+    const re = new RegExp(
+      String.raw`\b(?:run|use|call|invoke|execute)\b[^\n]{0,30}\b` +
+        escapeRegex(name) +
+        String.raw`\b`,
+      "i",
+    );
+    if (re.test(text)) return true;
+  }
+  return /\b(?:run|use|call|invoke|execute)\b[^\n]{0,20}\btool\b/i.test(text);
 }

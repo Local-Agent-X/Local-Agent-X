@@ -43,6 +43,11 @@ export async function registerProviderAdapter(
       apiKey: finalTarget.apiKey,
       temperature,
       sessionId,
+      // Spawned field agents are expected to act. Force a real tool call on
+      // turn 0 so weaker OpenAI-compat models (xAI Grok) can't open by
+      // narrating the call as prose instead of emitting it. Turn-0 only;
+      // the openai-compat adapter releases the pin afterward.
+      requireToolOnFirstTurn: true,
     }),
   );
 }

@@ -56,6 +56,7 @@ const LEGACY_COMMITTING_OVERRIDES: ReadonlySet<string> = new Set<string>([
   "cron_create", "cron_delete", "cron_update",
   "whatsapp_send", "telegram_send",
   "issue_create", "issue_update", "issue_checkout", "issue_release", "agent_wakeup",
+  "project_brief_update",
 ]);
 
 const COMMITTING_HTTP_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);

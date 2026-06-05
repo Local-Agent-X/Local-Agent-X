@@ -18,10 +18,19 @@
 // for those primitives, not primitives themselves.
 
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { ProjectStore } from "../agent-store/index.js";
+import { ProjectStore, type Project } from "../agent-store/index.js";
+import { readProjectBrief, updateProjectBrief } from "../memory/project-brief.js";
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
+
+/** Resolve a project by id (proj-...) or case-insensitive name. Lets the
+ *  brief tools accept whichever the model has on hand — it usually knows the
+ *  name, not the id. */
+function resolveProject(ref: string): Project | null {
+  const store = ProjectStore.getInstance();
+  return store.get(ref) ?? store.findByName(ref);
+}
 
 /** Broadcast a "projects_changed" event so any open client refreshes
  *  its Projects sidebar / agent-page list. Mirrors the
@@ -173,6 +182,70 @@ export function createProjectTools(): ToolDefinition[] {
         await seedRosters(projectId, [agentId]);
         await broadcastProjectsChanged();
         return ok(`Added ${agentId} to ${project.name} (id: ${projectId}).`);
+      },
+    },
+
+    {
+      name: "project_brief_read",
+      description:
+        "Read a project's living brief — the evolving narrative of what the project is, " +
+        "its goals, current state, and decisions. Use this to answer questions about a " +
+        "project ('what's the latest on X?') without being scoped into it, or to get up " +
+        "to speed before working on one. Briefs are shared and readable across the whole " +
+        "system — you never need to be 'in' the project to read it.",
+      parameters: {
+        type: "object",
+        properties: {
+          project: { type: "string", description: "Project name or id (proj-...)" },
+        },
+        required: ["project"],
+      },
+      async execute(args) {
+        const ref = String(args.project ?? "").trim();
+        if (!ref) return err("project_brief_read requires a `project` (name or id).");
+        const project = resolveProject(ref);
+        if (!project) return err(`Project not found: ${ref}. Use project_list to see available projects.`);
+        const brief = await readProjectBrief(project.id);
+        if (!brief) {
+          return ok(
+            `'${project.name}' has no brief yet. It gets written as agents record what the ` +
+            `project is and what's happening — use project_brief_update to start it.`,
+          );
+        }
+        return ok(`Brief for '${project.name}':\n\n${brief}`);
+      },
+    },
+
+    {
+      name: "project_brief_update",
+      description:
+        "Record something into a project's living brief — a change in goals, a decision, a " +
+        "new fact about the business, a status shift. Any agent on the project can update " +
+        "it; the brief is the shared source of truth other agents read. Pass markdown for " +
+        "just the part you're adding or correcting (e.g. a '## Competitors' section) — it's " +
+        "merged into the brief, and a repeated heading replaces its old version so the brief " +
+        "stays current instead of piling up. Keep it concise and factual.",
+      parameters: {
+        type: "object",
+        properties: {
+          project: { type: "string", description: "Project name or id (proj-...)" },
+          content: { type: "string", description: "Markdown to merge into the brief (a section or corrected fact)" },
+        },
+        required: ["project", "content"],
+      },
+      async execute(args) {
+        const ref = String(args.project ?? "").trim();
+        const content = String(args.content ?? "").trim();
+        if (!ref) return err("project_brief_update requires a `project` (name or id).");
+        if (!content) return err("project_brief_update requires non-empty `content`.");
+        const project = resolveProject(ref);
+        if (!project) return err(`Project not found: ${ref}. Use project_list to see available projects.`);
+        try {
+          await updateProjectBrief(project.id, content, { title: project.name });
+          return ok(`Updated brief for '${project.name}'.`);
+        } catch (e) {
+          return err(`Failed to update brief: ${String(e)}`);
+        }
       },
     },
   ];

@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryIndex } from "../memory/index.js";
 import { buildContextBlock } from "./context.js";
+import { updateProjectBrief } from "./project-brief.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -352,5 +353,24 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
 
     expect(core).toMatch(/loves hiking \(@peter\)/);
     expect(core).toMatch(/adopted puppies \(@gigi, @rex\)/);
+  });
+});
+
+describe("<project_brief> injection", () => {
+  it("injects the active project's brief when projectId is set", async () => {
+    const pid = "proj-ctx-test1";
+    await updateProjectBrief(pid, "# Nutrishop\n\n- Goal: $1M revenue", { memDir: memory.getMemoryDir() });
+
+    const block = await buildContextBlock(memory, { skipDailyLog: true, projectId: pid });
+    expect(block).toContain("<project_brief>");
+    expect(block).toContain("Goal: $1M revenue");
+  });
+
+  it("omits the brief when no projectId is set", async () => {
+    const pid = "proj-ctx-test2";
+    await updateProjectBrief(pid, "# Secret\n\n- nothing to see", { memDir: memory.getMemoryDir() });
+
+    const block = await buildContextBlock(memory, { skipDailyLog: true });
+    expect(block).not.toContain("<project_brief>");
   });
 });

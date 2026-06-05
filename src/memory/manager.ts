@@ -17,6 +17,7 @@ import { buildContextBlock, autoSearchContext } from "./context.js";
 import { autoExtractAndSave } from "./auto-extract.js";
 import { findKnownProjectsInMessage, buildKnownProjectsNudge } from "./known-projects.js";
 import { appendToDailyLogSafely } from "./write-safely.js";
+import { getSessionProject } from "../session/project.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("memory.manager");
@@ -75,9 +76,13 @@ export class MemoryManager {
       notifications: [],
     };
 
+    // The active project for this session, if the chat is nested under one.
+    // Threaded into buildContextBlock so the project's brief is injected.
+    const projectId = getSessionProject(input.sessionId);
+
     if (input.minimalMode) {
       try {
-        out.contextBlock = await buildContextBlock(this.index, { sessionId: input.sessionId });
+        out.contextBlock = await buildContextBlock(this.index, { sessionId: input.sessionId, projectId });
       } catch (e) {
         logger.warn("buildContextBlock (minimal) failed:", (e as Error).message);
       }
@@ -90,6 +95,7 @@ export class MemoryManager {
           skipDailyLog: input.skipDailyLog,
           userMessage: input.userMessage,
           sessionId: input.sessionId,
+          projectId,
         });
       } catch (e) {
         logger.warn("buildContextBlock (lite) failed:", (e as Error).message);
@@ -116,6 +122,7 @@ export class MemoryManager {
         userMessage: input.userMessage,
         skipDailyLog: input.skipDailyLog,
         sessionId: input.sessionId,
+        projectId,
       }).catch((e) => {
         logger.warn("buildContextBlock failed:", (e as Error).message);
         return "";

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import type { MemoryIndex } from "./index-core.js";
 import { ensurePersonalityFiles, readPersonalityFile } from "./personality.js";
+import { readProjectBrief } from "./project-brief.js";
 import type { FactKind } from "./types.js";
 import { extractKeywords, safeReadTextFile } from "./utils.js";
 
@@ -53,7 +54,7 @@ function filterDailyLogToSession(content: string, sessionId: string): string {
 
 export async function buildContextBlock(
   memory: MemoryIndex,
-  opts: { skipDailyLog?: boolean; sanitizeDailyLog?: boolean; userMessage?: string; sessionId?: string } = {},
+  opts: { skipDailyLog?: boolean; sanitizeDailyLog?: boolean; userMessage?: string; sessionId?: string; projectId?: string } = {},
 ): Promise<string> {
   const sections: string[] = [];
   const memDir = memory["memoryDir"];
@@ -95,6 +96,20 @@ export async function buildContextBlock(
   const user = await readPersonalityFile(memDir, "user");
   if (user) {
     sections.push(`<user_profile>\n${user}\n</user_profile>`);
+  }
+
+  // Active project's living brief. Only when this turn is scoped to a
+  // project (set via the session→project map). The brief is the shared,
+  // evolving narrative every agent on the project reads; updates flow back
+  // through project_brief_update.
+  if (opts.projectId) {
+    const brief = await readProjectBrief(opts.projectId, memDir);
+    if (brief) {
+      sections.push(
+        `<project_brief>\n(the current state of this project. Weave it in naturally; ` +
+        `record changes via project_brief_update — do not repeat this block verbatim.)\n\n${brief}\n</project_brief>`,
+      );
+    }
   }
 
   if (!opts.skipDailyLog) {

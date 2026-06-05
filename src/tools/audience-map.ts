@@ -113,6 +113,11 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   project_create:    ["main-chat", "build-intent"],
   project_list:      ["main-chat", "build-intent"],
   project_add_agent: ["main-chat", "build-intent"],
+  // Project brief — the main agent answers project questions by reading the
+  // brief, so it must be eager (not deferred). Spawned agents get both via
+  // IDENTITY_TOOLS in tool-search.ts, not here.
+  project_brief_read:   ["main-chat", "build-intent"],
+  project_brief_update: ["main-chat"],
   agent_status: ["main-chat", "build-intent"],
   agent_cancel: ["main-chat"],
   agent_output: ["main-chat"],

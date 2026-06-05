@@ -1,6 +1,6 @@
-// SAX server connection config + project-root resolution. Read once at
+// LAX server connection config + project-root resolution. Read once at
 // boot from ~/.lax/config.json and cached. Restart Server menu calls
-// reloadSAXConfig() so port/token changes pick up without an Electron
+// reloadLAXConfig() so port/token changes pick up without an Electron
 // restart.
 
 import { app } from "electron";
@@ -8,9 +8,9 @@ import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
 
-export const SAX_DIR = join(homedir(), ".lax");
-export const CONFIG_PATH = join(SAX_DIR, "config.json");
-export const DESKTOP_SETTINGS_PATH = join(SAX_DIR, "desktop-settings.json");
+export const LAX_DIR = join(homedir(), ".lax");
+export const CONFIG_PATH = join(LAX_DIR, "config.json");
+export const DESKTOP_SETTINGS_PATH = join(LAX_DIR, "desktop-settings.json");
 
 // In packaged mode __dirname is inside app.asar — use config to find the
 // live repo. Sentinel is src/index.ts (not dist/index.js) — we run the
@@ -85,16 +85,16 @@ export const ICON_PATH = PROJECT_ROOT
   ? join(PROJECT_ROOT, "public", "icon.png")
   : join(process.resourcesPath || __dirname, "icon.png");
 
-export interface SAXConfig {
+export interface LAXConfig {
   port: number;
   authToken: string;
 }
 
-const DEFAULTS: SAXConfig = { port: 7007, authToken: "" };
+const DEFAULTS: LAXConfig = { port: 7007, authToken: "" };
 
-let cached: SAXConfig | null = null;
+let cached: LAXConfig | null = null;
 
-export function loadSAXConfig(): SAXConfig {
+export function loadLAXConfig(): LAXConfig {
   try {
     if (existsSync(CONFIG_PATH)) {
       const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
@@ -107,12 +107,12 @@ export function loadSAXConfig(): SAXConfig {
   return { ...DEFAULTS };
 }
 
-export function getSAXConfig(): SAXConfig {
-  if (!cached) cached = loadSAXConfig();
+export function getLAXConfig(): LAXConfig {
+  if (!cached) cached = loadLAXConfig();
   return cached;
 }
 
-export function reloadSAXConfig(): SAXConfig {
-  cached = loadSAXConfig();
+export function reloadLAXConfig(): LAXConfig {
+  cached = loadLAXConfig();
   return cached;
 }

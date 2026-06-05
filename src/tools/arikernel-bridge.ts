@@ -1,8 +1,8 @@
 /**
  * AriKernel executor bridge — exposes the six vendored AriKernel executors
- * (file, http, shell, database, retrieval, sqlite-database) as SAX
+ * (file, http, shell, database, retrieval, sqlite-database) as LAX
  * ToolDefinitions in the unified registry. Closes DRY-AUDIT.md F2 part 2 by
- * removing the parallel "AriKernel dispatch path" — any SAX-side caller that
+ * removing the parallel "AriKernel dispatch path" — any LAX-side caller that
  * needs the kernel's I/O implementation now goes through `executeSingleTool`
  * via these adapter tools, and the AriKernel-specific safety properties
  * (capability tokens, taint labels, sandboxing) surface as fields on the
@@ -17,7 +17,7 @@
  *     enforcement, header inspection survive).
  *   - Shell sandboxing (ShellExecutor's metacharacter rejection, blocked
  *     interpreters, environment sanitization, cwd boundary survive).
- *   - Capability tokens — when a SAX caller wants kernel-side capability
+ *   - Capability tokens — when a LAX caller wants kernel-side capability
  *     enforcement, it passes `_capabilityGrantId` in args; the adapter
  *     places it on the AriKernel ToolCall.grantId.
  *   - Taint labels — input taint passes through `_taintLabels`; output
@@ -77,10 +77,10 @@ function stripInternal(args: Record<string, unknown>): Record<string, unknown> {
 function buildToolCall(cfg: BridgeConfig, args: BridgeArgs): ToolCall {
   return {
     id: generateId(),
-    runId: args._runId ?? "sax-bridge",
+    runId: args._runId ?? "lax-bridge",
     sequence: 0,
     timestamp: now(),
-    principalId: args._principalId ?? "sax",
+    principalId: args._principalId ?? "lax",
     toolClass: cfg.toolClass,
     action: args.action ?? cfg.defaultAction,
     parameters: stripInternal(args) as Record<string, unknown>,
@@ -100,7 +100,7 @@ function renderContent(toolName: string, ari: AriToolResult): string {
   }
 }
 
-function toSaxResult(toolName: string, ari: AriToolResult): ToolResult {
+function toLaxResult(toolName: string, ari: AriToolResult): ToolResult {
   const content = renderContent(toolName, ari);
   const metadata: Record<string, unknown> = {
     arikernel: {
@@ -135,7 +135,7 @@ function buildBridge(cfg: BridgeConfig): ToolDefinition {
       const tc = buildToolCall(cfg, args as BridgeArgs);
       try {
         const result = await cfg.executor.execute(tc);
-        return toSaxResult(cfg.toolName, result);
+        return toLaxResult(cfg.toolName, result);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         return {
@@ -151,7 +151,7 @@ function buildBridge(cfg: BridgeConfig): ToolDefinition {
 
 /**
  * Build the canonical six-executor bridge bundle. Each adapter wraps a
- * vendored executor; the unified registry is the single index the SAX
+ * vendored executor; the unified registry is the single index the LAX
  * dispatcher consults to find them.
  */
 export function createArikernelBridgeTools(options?: { sqliteDatabase?: SqliteDatabase }): ToolDefinition[] {

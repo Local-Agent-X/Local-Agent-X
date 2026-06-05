@@ -10,7 +10,7 @@
 
 import { BrowserWindow, Menu, MenuItem, shell } from "electron";
 import { join } from "path";
-import { ICON_PATH, getProjectRoot, getSAXConfig } from "./config";
+import { ICON_PATH, getProjectRoot, getLAXConfig } from "./config";
 import { bgForTheme, overlayForTheme } from "./theme";
 import { getSetting, setSetting } from "./settings";
 import { buildSplashDataUrl } from "./splash";
@@ -48,7 +48,7 @@ export function isStuckOnSplash(gracePeriodMs: number): boolean {
 
 export function createWindow(): void {
   const bounds = getSetting("windowBounds");
-  const saxConfig = getSAXConfig();
+  const laxConfig = getLAXConfig();
 
   mainWindow = new BrowserWindow({
     width: bounds.width,
@@ -70,8 +70,8 @@ export function createWindow(): void {
     },
   });
 
-  const url = `http://127.0.0.1:${saxConfig.port}/?token=${saxConfig.authToken}`;
-  const serverOrigin = `http://127.0.0.1:${saxConfig.port}`;
+  const url = `http://127.0.0.1:${laxConfig.port}/?token=${laxConfig.authToken}`;
+  const serverOrigin = `http://127.0.0.1:${laxConfig.port}`;
 
   // Show the branded splash IMMEDIATELY so the user sees something the
   // moment the window appears. Poll /api/health in the background and
@@ -243,7 +243,7 @@ function openDocByPath(pathname: string): void {
 }
 
 function handleWindowOpen(openUrl: string): Electron.WindowOpenHandlerResponse {
-  const saxConfig = getSAXConfig();
+  const laxConfig = getLAXConfig();
   console.log(`[desktop] windowOpenHandler: ${openUrl}`);
 
   // External links → system browser
@@ -252,7 +252,7 @@ function handleWindowOpen(openUrl: string): Electron.WindowOpenHandlerResponse {
     return { action: "deny" };
   }
 
-  const appOrigin = `http://127.0.0.1:${saxConfig.port}`;
+  const appOrigin = `http://127.0.0.1:${laxConfig.port}`;
   if (openUrl.startsWith(appOrigin)) {
     const pathname = new URL(openUrl).pathname;
     const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
@@ -300,8 +300,8 @@ function buildAppWindow(hidden: boolean): BrowserWindow {
 // for the OS overlay so both halves of the top 32px share one color.
 // Skipped on the warm-up URL (/api/health) since that's not a real app page.
 function attachAppDragStrip(appWin: BrowserWindow): void {
-  const saxConfig = getSAXConfig();
-  const appOrigin = `http://127.0.0.1:${saxConfig.port}`;
+  const laxConfig = getLAXConfig();
+  const appOrigin = `http://127.0.0.1:${laxConfig.port}`;
   appWin.webContents.on("did-finish-load", () => {
     const currentUrl = appWin.webContents.getURL() || "";
     if (!currentUrl.startsWith(appOrigin) || currentUrl.includes("/api/health")) return;
@@ -329,7 +329,7 @@ export function prewarmAppWindow(): void {
   const tryWarm = (): void => {
     isServerRunning().then((up) => {
       if (!up) { setTimeout(tryWarm, 2000); return; }
-      const saxConfig = getSAXConfig();
+      const laxConfig = getLAXConfig();
       const w = buildAppWindow(true);
       attachAppDragStrip(w);
       w.webContents.once("did-finish-load", () => {
@@ -342,7 +342,7 @@ export function prewarmAppWindow(): void {
         warmingScheduled = false;
         if (!w.isDestroyed()) w.destroy();
       });
-      w.loadURL(`http://127.0.0.1:${saxConfig.port}/api/health?token=${saxConfig.authToken}`);
+      w.loadURL(`http://127.0.0.1:${laxConfig.port}/api/health?token=${laxConfig.authToken}`);
     }).catch(() => setTimeout(tryWarm, 2000));
   };
   tryWarm();
@@ -356,9 +356,9 @@ function consumeWarmAppWindow(): BrowserWindow | null {
 }
 
 function openAppWindow(targetUrl: string): void {
-  const saxConfig = getSAXConfig();
+  const laxConfig = getLAXConfig();
   const separator = targetUrl.includes("?") ? "&" : "?";
-  const fullUrl = `${targetUrl}${separator}token=${saxConfig.authToken}`;
+  const fullUrl = `${targetUrl}${separator}token=${laxConfig.authToken}`;
 
   const warm = consumeWarmAppWindow();
   if (warm) {

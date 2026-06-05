@@ -32,7 +32,7 @@ function _browserResolveVoice() {
   // mirror so their previous pick keeps working without a re-pick.
   if (!want) {
     try {
-      const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+      const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
       if (s.voiceTier4Provider === 'browser' && s.voiceTier4Voice) want = String(s.voiceTier4Voice);
     } catch {}
   }

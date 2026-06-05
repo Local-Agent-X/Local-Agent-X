@@ -7,11 +7,11 @@
  * Expected env (set by anthropic-client.ts when writing the MCP config):
  *   LAX_MCP_URL   — base URL of the Local Agent X server (e.g. http://127.0.0.1:7007)
  *   LAX_MCP_TOKEN — Local Agent X auth token for the endpoints
- *   (legacy SAX_MCP_URL / SAX_MCP_TOKEN still read as fallback)
+ *   (legacy LAX_MCP_URL / LAX_MCP_TOKEN still read as fallback)
  */
 
-const BASE = process.env.LAX_MCP_URL ?? process.env.SAX_MCP_URL;
-const TOKEN = process.env.LAX_MCP_TOKEN ?? process.env.SAX_MCP_TOKEN;
+const BASE = process.env.LAX_MCP_URL;
+const TOKEN = process.env.LAX_MCP_TOKEN;
 // Use the latest released MCP spec version. Claude CLI 2.1.116 rejects
 // servers that announce an unknown protocolVersion with a silent `status:
 // "failed"` in the init event. Stick to spec releases (2024-11-05,

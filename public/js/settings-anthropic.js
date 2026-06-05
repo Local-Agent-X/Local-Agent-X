@@ -248,7 +248,7 @@ async function checkVoiceCaps() {
   // user's saved voice preference (the live picker on the chat page is the
   // source of truth for what's actually selected).
   try {
-    const saved = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    const saved = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     const voice = localStorage.getItem('lax_voice') || saved.ttsVoice || 'am_michael';
     const stt = document.getElementById('stt-status'), tts = document.getElementById('tts-status');
     if (stt) { stt.className = 'status-badge ok'; stt.innerHTML = '<span class="status-dot"></span> faster-whisper (sidecar)'; }

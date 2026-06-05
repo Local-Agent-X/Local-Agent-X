@@ -14,7 +14,7 @@ export function renderClientScript(appId: string, apiBase: string): string {
 
   var APP_ID = ${JSON.stringify(appId)};
   var API = ${JSON.stringify(apiBase)};
-  var AUTH = localStorage.getItem('sax_token') || '';
+  var AUTH = localStorage.getItem('lax_token') || '';
   var headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + AUTH };
 
   // ── Event dispatch to server ──

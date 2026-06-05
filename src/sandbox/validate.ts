@@ -23,7 +23,6 @@ const HOME_RELATIVE_DENY_DIRS = [
   ".docker",
   ".kube",
   ".lax",
-  ".sax",
   ".codex",
 ];
 

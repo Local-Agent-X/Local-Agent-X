@@ -215,7 +215,7 @@ const DANGEROUS_FLAGS: DangerousFlag[] = [
   {
     flag: "LAX_ALLOW_NETWORK_TOOLS=true",
     description: "Direct network tools (curl, wget) allowed in bash",
-    check: () => (process.env.LAX_ALLOW_NETWORK_TOOLS ?? process.env.SAX_ALLOW_NETWORK_TOOLS) === "true",
+    check: () => (process.env.LAX_ALLOW_NETWORK_TOOLS) === "true",
   },
   {
     flag: "NODE_TLS_REJECT_UNAUTHORIZED=0",
@@ -225,7 +225,7 @@ const DANGEROUS_FLAGS: DangerousFlag[] = [
   {
     flag: "LAX_DISABLE_SECURITY",
     description: "Security layer entirely disabled",
-    check: () => !!(process.env.LAX_DISABLE_SECURITY ?? process.env.SAX_DISABLE_SECURITY),
+    check: () => !!(process.env.LAX_DISABLE_SECURITY),
   },
   {
     flag: "No tool policy file",

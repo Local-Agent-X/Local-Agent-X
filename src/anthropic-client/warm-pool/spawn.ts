@@ -59,11 +59,11 @@ export function spawnWarmProcess(key: WarmPoolKey, callbacks: SpawnCallbacks): W
   // start. This is the bigger win for tool-using turns (saves ~600ms per
   // turn, compounds across the session).
   let mcpConfigPath: string | null = null;
-  if (key.sessionId && key.saxPort && key.saxToken) {
+  if (key.sessionId && key.laxPort && key.laxToken) {
     try {
       mcpConfigPath = writeMcpConfig({
-        port: key.saxPort,
-        token: key.saxToken,
+        port: key.laxPort,
+        token: key.laxToken,
         sessionId: key.sessionId,
         tag: `warmpool-${key.sessionId}`,
       });

@@ -1,6 +1,5 @@
 // WebSocket auth — token via query param OR Sec-WebSocket-Protocol
-// subprotocol. Accept legacy "sax-auth" too so cached old chat.js
-// sessions still connect across the rebrand.
+// subprotocol.
 
 import type { IncomingMessage } from "node:http";
 import { timingSafeEqual } from "node:crypto";
@@ -12,8 +11,7 @@ export function extractAuthToken(req: IncomingMessage): string {
 
   const protocols = req.headers["sec-websocket-protocol"] || "";
   const parts = protocols.split(",").map(s => s.trim());
-  let authIdx = parts.indexOf("lax-auth");
-  if (authIdx < 0) authIdx = parts.indexOf("sax-auth");
+  const authIdx = parts.indexOf("lax-auth");
   if (authIdx >= 0 && parts[authIdx + 1]) {
     return parts[authIdx + 1];
   }

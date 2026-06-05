@@ -19,7 +19,7 @@
 import { createRequire } from "node:module";
 import type { ModelPaths } from "./stt-model-fetch.js";
 
-// sherpa-onnx is a CommonJS native addon. SAX itself runs as ESM ("type":
+// sherpa-onnx is a CommonJS native addon. LAX itself runs as ESM ("type":
 // "module"), so the bare `require` identifier doesn't exist at runtime —
 // we synthesize one via createRequire. This also keeps the load lazy so
 // voice-off users never pay the ~native addon init cost.

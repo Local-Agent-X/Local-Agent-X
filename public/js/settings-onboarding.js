@@ -2,7 +2,7 @@
 //
 // First-run wizard: provider pick → connect (OAuth or API key) → voice
 // preference → done. Server-side `onboarded` flag in settings.json + a
-// localStorage `sax_onboarded` mirror so port changes don't re-trigger.
+// localStorage `lax_onboarded` mirror so port changes don't re-trigger.
 //
 // Extracted from settings.js as part of the 400-LOC god-file split.
 //
@@ -19,7 +19,7 @@ async function shouldShowOnboarding() {
   // positive case only, never a gate. Without this, wiping ~/.lax/ for a
   // fresh-install test doesn't touch ~/Library/Application Support/
   // local-agent-x-desktop/Local Storage/, so a previous install's
-  // `sax_onboarded=1` flag survives the wipe and the wizard never
+  // `lax_onboarded=1` flag survives the wipe and the wizard never
   // fires on the re-install. First-time users never hit this bug (no
   // prior localStorage), only re-installers — which made it invisible
   // until the fresh-install test today caught it.
@@ -36,7 +36,7 @@ async function shouldShowOnboarding() {
     const r = await apiFetch('/api/settings');
     if (!r.ok) throw new Error('settings ' + r.status);
     const s = await r.json();
-    if (s.onboarded) { localStorage.setItem('sax_onboarded', '1'); return false; }
+    if (s.onboarded) { localStorage.setItem('lax_onboarded', '1'); return false; }
     // Only count as onboarded if a provider is ACTIVE (has working
     // credentials), not just "registered" in the catalog. /api/providers
     // returns local/ollama + ollama-cloud as registered entries even when
@@ -50,20 +50,20 @@ async function shouldShowOnboarding() {
     const d = await p.json();
     const hasActive = (d.current && d.current.provider) || (Array.isArray(d.providers) && d.providers.some(pr => pr.active));
     if (hasActive) {
-      localStorage.setItem('sax_onboarded', '1');
+      localStorage.setItem('lax_onboarded', '1');
       apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
       return false;
     }
     // Server says not-onboarded and no active provider — clear any stale
     // localStorage flag so the wizard fires on every subsequent page
     // load until the user actually connects something.
-    localStorage.removeItem('sax_onboarded');
+    localStorage.removeItem('lax_onboarded');
     return true;
   } catch {
     // Server unreachable or errored — fall back to localStorage so we
     // don't re-prompt a user who's already onboarded. Do NOT wipe the
     // flag here; that's the self-reinforcing-loop trap.
-    return !localStorage.getItem('sax_onboarded');
+    return !localStorage.getItem('lax_onboarded');
   }
 }
 
@@ -284,15 +284,15 @@ function selectOnboardVoice(enabled) {
 }
 
 function finishOnboarding() {
-  localStorage.setItem('sax_onboarded', '1');
+  localStorage.setItem('lax_onboarded', '1');
   // Also save server-side so it survives port changes.
   apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
   if (_onboardProvider) {
     const defaults = { codex: 'gpt-5.3-codex', anthropic: 'claude-sonnet-4-6', xai: 'grok-3-mini', gemini: 'gemini-2.0-flash', local: '', custom: '' };
-    const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     s.provider = _onboardProvider;
     if (defaults[_onboardProvider]) s.model = defaults[_onboardProvider];
-    localStorage.setItem('sax_settings', JSON.stringify(s));
+    localStorage.setItem('lax_settings', JSON.stringify(s));
     apiPost('/api/settings', { provider: s.provider, model: s.model }).catch(() => {});
   }
   const overlay = document.getElementById('onboarding-overlay');

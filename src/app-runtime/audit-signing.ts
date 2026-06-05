@@ -6,7 +6,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import type { AuditEntry } from "./types.js";
 
 // Persistent HMAC key for tamper detection. Resolution order:
-//   1. process.env.LAX_AUDIT_KEY / SAX_AUDIT_KEY (ops-managed override)
+//   1. process.env.LAX_AUDIT_KEY / LAX_AUDIT_KEY (ops-managed override)
 //   2. <laxDir>/audit-key on disk, 32 random bytes, mode 0o600
 //   3. In-process random fallback if disk read/write fails (loud error logged)
 //
@@ -38,7 +38,7 @@ function loadOrCreateDiskKey(): Buffer {
 
 export function getAuditHmacKey(): Buffer | string {
   if (cachedKey !== null) return cachedKey;
-  const envKey = process.env.LAX_AUDIT_KEY ?? process.env.SAX_AUDIT_KEY;
+  const envKey = process.env.LAX_AUDIT_KEY;
   if (envKey) {
     cachedKey = envKey;
     return cachedKey;

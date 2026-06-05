@@ -1,13 +1,13 @@
 // ── Notification Center ──
 
 let _notifications = [];
-try { _notifications = JSON.parse(localStorage.getItem('sax_notifications') || '[]'); } catch {}
+try { _notifications = JSON.parse(localStorage.getItem('lax_notifications') || '[]'); } catch {}
 
 function addNotification(text, type) {
   type = type || 'info';
   _notifications.unshift({ text, type, time: Date.now(), read: false });
   if (_notifications.length > 50) _notifications.pop();
-  localStorage.setItem('sax_notifications', JSON.stringify(_notifications));
+  localStorage.setItem('lax_notifications', JSON.stringify(_notifications));
   renderNotifications();
   updateNotifBadge();
 }
@@ -22,7 +22,7 @@ function renderNotifications() {
   el.innerHTML = _notifications.map((n, i) => {
     const ago = timeAgo(n.time);
     const color = n.type === 'error' ? 'var(--danger)' : n.type === 'success' ? 'var(--accent)' : 'var(--text)';
-    return `<div class="notif-item" style="opacity:${n.read ? '.5' : '1'}" onclick="_notifications[${i}].read=true;localStorage.setItem('sax_notifications',JSON.stringify(_notifications));renderNotifications();updateNotifBadge()">
+    return `<div class="notif-item" style="opacity:${n.read ? '.5' : '1'}" onclick="_notifications[${i}].read=true;localStorage.setItem('lax_notifications',JSON.stringify(_notifications));renderNotifications();updateNotifBadge()">
       <div style="color:${color}">${esc(n.text)}</div>
       <div class="notif-time">${ago}</div>
     </div>`;
@@ -56,7 +56,7 @@ function toggleNotifPanel() {
 
 function clearNotifications() {
   _notifications = [];
-  localStorage.setItem('sax_notifications', '[]');
+  localStorage.setItem('lax_notifications', '[]');
   renderNotifications();
   updateNotifBadge();
 }

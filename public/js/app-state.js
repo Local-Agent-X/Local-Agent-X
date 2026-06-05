@@ -6,7 +6,7 @@
 
 // One-shot cleanup: tag system was removed 2026-05-26. Drop the orphaned
 // localStorage keys so existing users don't carry dead state forever.
-try { localStorage.removeItem('sax_chat_tags'); localStorage.removeItem('sax_all_tags'); } catch {}
+try { localStorage.removeItem('lax_chat_tags'); localStorage.removeItem('lax_all_tags'); } catch {}
 
 let chats = loadChatsFromCache(); // Start with cache, then fetch from server
 let projects = loadProjects();
@@ -15,22 +15,22 @@ let projects = loadProjects();
 try { window.projects = projects; window.activeChat = null; } catch {}
 let activeChat = null;
 let expandedProjects = new Set();
-let projectsCollapsed = (() => { try { return localStorage.getItem('sax_projects_collapsed') === '1'; } catch { return false; } })();
-let projectLastAccessed = (() => { try { return JSON.parse(localStorage.getItem('sax_project_last_accessed') || '{}'); } catch { return {}; } })();
-let mobileSectionCollapsed = (() => { try { return localStorage.getItem('sax_mobile_collapsed') === '1'; } catch { return false; } })();
-function saveProjectsCollapsed() { try { localStorage.setItem('sax_projects_collapsed', projectsCollapsed ? '1' : '0'); } catch {} }
-function saveProjectLastAccessed() { try { localStorage.setItem('sax_project_last_accessed', JSON.stringify(projectLastAccessed)); } catch {} }
-function saveMobileSectionCollapsed() { try { localStorage.setItem('sax_mobile_collapsed', mobileSectionCollapsed ? '1' : '0'); } catch {} }
+let projectsCollapsed = (() => { try { return localStorage.getItem('lax_projects_collapsed') === '1'; } catch { return false; } })();
+let projectLastAccessed = (() => { try { return JSON.parse(localStorage.getItem('lax_project_last_accessed') || '{}'); } catch { return {}; } })();
+let mobileSectionCollapsed = (() => { try { return localStorage.getItem('lax_mobile_collapsed') === '1'; } catch { return false; } })();
+function saveProjectsCollapsed() { try { localStorage.setItem('lax_projects_collapsed', projectsCollapsed ? '1' : '0'); } catch {} }
+function saveProjectLastAccessed() { try { localStorage.setItem('lax_project_last_accessed', JSON.stringify(projectLastAccessed)); } catch {} }
+function saveMobileSectionCollapsed() { try { localStorage.setItem('lax_mobile_collapsed', mobileSectionCollapsed ? '1' : '0'); } catch {} }
 function touchProject(id) { if (!id) return; projectLastAccessed[id] = Date.now(); saveProjectLastAccessed(); }
 let serverSyncing = false; // Prevent save loops
 let chatSearchQuery = ''; // Chat search filter
 let pinnedChatIds = loadPinnedChats(); // Pinned chat IDs
 
-function loadPinnedChats() { try { return JSON.parse(localStorage.getItem('sax_pinned_chats') || '[]'); } catch { return []; } }
-function savePinnedChats() { localStorage.setItem('sax_pinned_chats', JSON.stringify(pinnedChatIds)); }
+function loadPinnedChats() { try { return JSON.parse(localStorage.getItem('lax_pinned_chats') || '[]'); } catch { return []; } }
+function savePinnedChats() { localStorage.setItem('lax_pinned_chats', JSON.stringify(pinnedChatIds)); }
 
 // Cache-only load (instant, for page load)
-function loadChatsFromCache() { try { return JSON.parse(localStorage.getItem('sax_chats_v2') || '[]'); } catch { return []; } }
+function loadChatsFromCache() { try { return JSON.parse(localStorage.getItem('lax_chats_v2') || '[]'); } catch { return []; } }
 
 // Save: write to localStorage immediately, push to server in background
 function saveChats() {
@@ -78,12 +78,12 @@ function saveChats() {
     return rec;
   });
   try {
-    localStorage.setItem('sax_chats_v2', JSON.stringify(toSave));
+    localStorage.setItem('lax_chats_v2', JSON.stringify(toSave));
   } catch (e) {
     // Quota exceeded — prune oldest chats and retry
     console.warn('[storage] Quota exceeded, pruning old chats');
     while (toSave.length > 5) { toSave.pop(); }
-    try { localStorage.setItem('sax_chats_v2', JSON.stringify(toSave)); } catch {}
+    try { localStorage.setItem('lax_chats_v2', JSON.stringify(toSave)); } catch {}
   }
 }
 
@@ -94,12 +94,12 @@ function saveChats() {
 function loadProjects() {
   // Synchronous bootstrap from localStorage cache so the first render
   // isn't empty. Server sync replaces this within a few hundred ms.
-  try { return JSON.parse(localStorage.getItem('sax_projects_cache_v1') || '[]'); } catch { return []; }
+  try { return JSON.parse(localStorage.getItem('lax_projects_cache_v1') || '[]'); } catch { return []; }
 }
 function saveProjects() {
   // Cache the latest server snapshot so first paint after reload is
   // populated. Not the source of truth.
-  try { localStorage.setItem('sax_projects_cache_v1', JSON.stringify(projects)); } catch {}
+  try { localStorage.setItem('lax_projects_cache_v1', JSON.stringify(projects)); } catch {}
 }
 
 // Tombstones: track deleted session IDs so sync doesn't resurrect them.
@@ -112,7 +112,7 @@ function _isIntegrationSessionId(id) {
 }
 function getDeletedIds() {
   try {
-    const raw = JSON.parse(localStorage.getItem('sax_deleted_sessions') || '{}');
+    const raw = JSON.parse(localStorage.getItem('lax_deleted_sessions') || '{}');
     for (const k of Object.keys(raw)) { if (_isIntegrationSessionId(k)) delete raw[k]; }
     return raw;
   } catch { return {}; }
@@ -124,6 +124,6 @@ function markDeleted(id) {
   // Prune tombstones older than 30 days
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   for (const [k, v] of Object.entries(deleted)) { if (v < cutoff) delete deleted[k]; }
-  localStorage.setItem('sax_deleted_sessions', JSON.stringify(deleted));
+  localStorage.setItem('lax_deleted_sessions', JSON.stringify(deleted));
 }
 function isDeleted(id) { return !!getDeletedIds()[id]; }

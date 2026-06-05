@@ -59,7 +59,7 @@ ${content}
 <script>
   // Expose API helper for custom pages
   const API = window.location.origin;
-  const AUTH_TOKEN = localStorage.getItem('sax_token') || '';
+  const AUTH_TOKEN = localStorage.getItem('lax_token') || '';
   async function apiGet(path) {
     const r = await fetch(API + path, { headers: { Authorization: 'Bearer ' + AUTH_TOKEN } });
     return r.json();
@@ -91,7 +91,7 @@ ${content}
       else registry.push({ name, title, createdAt: Date.now() });
       writeFileSync(registryPath, JSON.stringify(registry, null, 2), "utf-8");
 
-      const port = process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007";
+      const port = process.env.LAX_PORT ?? "7007";
       return { content: `Page created: http://127.0.0.1:${port}/${name}.html\nTitle: ${title}\nRegistered in sidebar.` };
     } catch (e) {
       return { content: `Failed to create page: ${(e as Error).message}`, isError: true };

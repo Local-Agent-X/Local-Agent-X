@@ -178,7 +178,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   setInternalAgentToken(rbac.getInternalAgentToken());
   setBrowserAuthContext(config.authToken, String(config.port));
   _t();
-  // Wire SAX's shared pre-dispatch chain into AriKernel's tool executors so
+  // Wire LAX's shared pre-dispatch chain into AriKernel's tool executors so
   // any direct executor invocation (outside the chat-path's no-op observer
   // setup) still hits security + tool-policy. Closes F3 in DRY-AUDIT.md.
   //

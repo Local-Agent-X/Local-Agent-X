@@ -217,7 +217,7 @@ function fileFallbackGetOrCreate(dataDir: string): Buffer {
     salt = randomBytes(32);
     writeFileSync(saltPath, salt, { mode: 0o600 });
   }
-  // Renamed from "sax-secrets" to "lax-secrets" in the SAX→LAX rebrand.
+  // Secrets live under the "lax-secrets" identity (file-fallback path only).
   // Anyone using the file-fallback path (no DPAPI/Keychain/libsecret available)
   // and upgrading from a pre-rebrand build will need to re-import secrets —
   // their existing secrets.enc was encrypted with the old identity and won't

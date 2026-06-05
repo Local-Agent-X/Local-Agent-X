@@ -59,7 +59,7 @@ $DRY_RUN && prefix="[dry-run]"
 echo "$prefix Reset plan:"
 echo "  LAX data dir : $LAX_DIR"
 echo "  Workspace    : $WORKSPACE_DIR"
-echo "  Server logs  : /tmp/sax-server.log, /tmp/lax-server.log"
+echo "  Server logs  : /tmp/lax-server.log"
 echo "  Keep secrets : $KEEP_SECRETS"
 echo "  Wipe apps    : $WIPE_WORKSPACE"
 echo ""
@@ -117,7 +117,7 @@ fi
 # /tmp logs — purely informational, but a clean log makes the next boot
 # much easier to read.
 echo "$prefix [4/4] Wiping /tmp server logs..."
-$DRY_RUN || rm -f /tmp/sax-server.log /tmp/lax-server.log 2>/dev/null || true
+$DRY_RUN || rm -f /tmp/lax-server.log 2>/dev/null || true
 
 echo ""
 echo "$prefix Done. Next \`npm run dev\` boots as a fresh install."

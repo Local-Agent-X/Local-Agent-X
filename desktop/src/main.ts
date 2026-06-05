@@ -10,7 +10,7 @@
 import { app, globalShortcut } from "electron";
 import { join } from "path";
 
-import { loadSAXConfig, reloadSAXConfig, getSAXConfig, ICON_PATH, PROJECT_ROOT, PROJECT_ROOT_ERROR, getProjectRoot } from "./config";
+import { loadLAXConfig, reloadLAXConfig, getLAXConfig, ICON_PATH, PROJECT_ROOT, PROJECT_ROOT_ERROR, getProjectRoot } from "./config";
 import { resolveAndPersistProjectRoot } from "./project-root-resolver";
 import { getSetting } from "./settings";
 import { applyNativeTheme } from "./theme";
@@ -144,7 +144,7 @@ app.commandLine.appendSwitch("enable-media-stream");
 // permission-request handler in app.ready controls media grants explicitly.
 
 app.on("ready", async () => {
-  loadSAXConfig();
+  loadLAXConfig();
 
   // Sync Windows' own chrome theme to our renderer's theme BEFORE the
   // window opens. Otherwise Windows paints the titleBarOverlay strip in
@@ -164,7 +164,7 @@ app.on("ready", async () => {
     "clipboard-read",
     "clipboard-sanitized-write",
   ]);
-  const APP_ORIGIN = `http://127.0.0.1:${getSAXConfig().port}`;
+  const APP_ORIGIN = `http://127.0.0.1:${getLAXConfig().port}`;
 
   // Auto-open downloaded document files instead of just saving them.
   session.defaultSession.on("will-download", (_event: unknown, item: Electron.DownloadItem) => {
@@ -392,7 +392,7 @@ app.on("ready", async () => {
       setRestarting(true);
       await stopServer();
       await new Promise(r => setTimeout(r, 1000));
-      const cfg = reloadSAXConfig();
+      const cfg = reloadLAXConfig();
       console.log("[desktop] Tray restart on port", cfg.port);
       startServer();
       setRestarting(false);

@@ -11,7 +11,7 @@
  *     audience filtering, and dispatch (see src/tool-search.ts re-export).
  *   - AriKernel: toolClass-keyed filter via getByToolClass(); the
  *     ExecutorRegistry inside the arikernel package is the matching
- *     in-package store (no longer self-constructing) and the SAX side
+ *     in-package store (no longer self-constructing) and the LAX side
  *     wires the two together at boot.
  *
  * MCP tools register here directly during boot (see bootstrap-tools.ts) —
@@ -115,7 +115,7 @@ export class UnifiedToolRegistry {
    * AriKernel view — tools tagged with the given `toolClass`. The kernel's
    * own ExecutorRegistry holds the live `ToolExecutor` instances; this
    * view is the source of truth for "which tools belong to which class"
-   * (used for filtering/inspection and for SAX-side mirroring at boot).
+   * (used for filtering/inspection and for LAX-side mirroring at boot).
    */
   getByToolClass(toolClass: ToolClass): ToolDefinition[] {
     const out: ToolDefinition[] = [];

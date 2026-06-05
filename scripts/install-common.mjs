@@ -343,7 +343,7 @@ stepDone("npm");
 // Only then call `ollama pull`. On pull failure, retry once after
 // restarting the daemon — covers the rare case where a stale daemon
 // process started before ~/.ollama was created.
-const OLLAMA_URL = process.env.LAX_OLLAMA_URL || process.env.SAX_OLLAMA_URL || "http://127.0.0.1:11434";
+const OLLAMA_URL = process.env.LAX_OLLAMA_URL || "http://127.0.0.1:11434";
 const KEYPAIR_PATH = join(homedir(), ".ollama", "id_ed25519");
 async function tagsResponding() {
   try {
@@ -487,10 +487,10 @@ stepDone("config");
 
 // 7. macOS: build the Mac .app and install it to /Applications.
 step("desktop", process.platform === "darwin" ? "Electron .app build (~3–5 min)" : process.platform === "win32" ? "Electron desktop bundle build" : null);
-//    Set SAX_SKIP_APP=1 to skip (useful for headless dev iteration).
+//    Set LAX_SKIP_APP=1 to skip (useful for headless dev iteration).
 let appInstalled = false;
 let appBuildPath = null;
-if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
+if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   log("Building Local Agent X.app — this is the slow step the first time (~3–5 min, ~500MB).");
 
   let r = run(
@@ -527,7 +527,7 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
   } else {
     warn(`Could not copy to /Applications (permission denied?). Built app is at:\n  ${appBuildPath}`);
   }
-} else if (process.platform === "win32" && !process.env.SAX_SKIP_APP) {
+} else if (process.platform === "win32" && !process.env.LAX_SKIP_APP) {
   // Build the Electron desktop subproject so desktop-launch.bat actually
   // launches something. The .bat invokes desktop/node_modules/.bin/electron.cmd
   // with desktop/dist/main.js — both produced here. We skip electron-builder

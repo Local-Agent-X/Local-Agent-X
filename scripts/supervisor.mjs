@@ -24,7 +24,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 // ── Tunables (env-overridable) ─────────────────────────────────────────────
 
-const PORT = parseInt(process.env.LAX_PORT || process.env.SAX_PORT || "7007", 10);
+const PORT = parseInt(process.env.LAX_PORT || "7007", 10);
 const HEAP_LIMIT_MB = parseInt(process.env.LAX_HEAP_LIMIT_MB || "4096", 10);
 const HEAP_PRESSURE_RATIO = parseFloat(process.env.LAX_HEAP_PRESSURE_RATIO || "0.85");
 const PROBE_INTERVAL_MS = parseInt(process.env.LAX_PROBE_INTERVAL_MS || "30000", 10);

@@ -153,7 +153,7 @@ setInterval(() => {
 // ── Update checker (runs on startup) ──
 (async function checkForUpdates() {
   // Don't annoy users — only check once per session, and respect dismissal
-  if (sessionStorage.getItem('sax_update_dismissed')) return;
+  if (sessionStorage.getItem('lax_update_dismissed')) return;
   try {
     const res = await apiFetch('/api/updates/check');
     const data = await res.json();
@@ -175,7 +175,7 @@ setInterval(() => {
 function dismissUpdate() {
   const banner = document.getElementById('update-banner');
   if (banner) { banner.style.display = 'none'; banner.className = ''; }
-  sessionStorage.setItem('sax_update_dismissed', '1');
+  sessionStorage.setItem('lax_update_dismissed', '1');
 }
 
 // Pull + relaunch flow triggered from the boot-time banner. Mirrors

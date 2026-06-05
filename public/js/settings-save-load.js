@@ -1,6 +1,6 @@
 // ── Settings: Save / Load (server round-trip) ──
 //
-// saveSettings reads every \`sax_*\` localStorage key, posts to
+// saveSettings reads every \`lax_*\` localStorage key, posts to
 // /api/settings, and refreshes the in-memory cache. loadSettings is the
 // inverse — pulls from the server on page load and primes localStorage.
 // Sits at the end of the providers section because it's the consumer of
@@ -26,14 +26,14 @@ async function saveSettings() {
     voiceEngine: document.getElementById('cfg-voice-engine')?.value,
     sandbox: document.getElementById('cfg-sandbox')?.value,
   };
-  localStorage.setItem('sax_settings', JSON.stringify(s));
+  localStorage.setItem('lax_settings', JSON.stringify(s));
   // Save API key to encrypted secrets store (never plain settings.json)
   const apiKeyInput = document.getElementById('cfg-api-key');
   const apiKeyStatus = document.getElementById('api-key-status');
   if (apiKeyInput && apiKeyInput.value && PROVIDER_KEY_CONFIG[provider]) {
     try {
       await apiPost('/api/secrets', { name: PROVIDER_KEY_CONFIG[provider].secretName, value: apiKeyInput.value });
-      localStorage.setItem('sax_apikey_' + provider, 'saved'); // flag only, not the actual key
+      localStorage.setItem('lax_apikey_' + provider, 'saved'); // flag only, not the actual key
       if (apiKeyStatus) { apiKeyStatus.className = 'status-badge ok'; apiKeyStatus.innerHTML = '<span class="status-dot"></span> Key saved securely'; }
     } catch (e) {
       if (apiKeyStatus) { apiKeyStatus.className = 'status-badge err'; apiKeyStatus.innerHTML = '<span class="status-dot"></span> Failed to save key'; }
@@ -64,10 +64,10 @@ async function loadSettings() {
     // Server is the source of truth — localStorage is just a cache
     let serverSettings = {};
     try { const r = await apiFetch('/api/settings'); serverSettings = await r.json(); } catch {}
-    const local = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    const local = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     const s = { ...local, ...serverSettings };
     // Sync localStorage with server (so they don't fight)
-    localStorage.setItem('sax_settings', JSON.stringify(s));
+    localStorage.setItem('lax_settings', JSON.stringify(s));
     const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
     set('cfg-port', s.port);
     set('cfg-provider', s.provider); set('cfg-model', s.model); set('cfg-temperature', s.temperature);

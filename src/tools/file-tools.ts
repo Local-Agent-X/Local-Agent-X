@@ -95,7 +95,7 @@ function similarity(a: string, b: string): number {
 function appUrlHint(absoluteFilePath: string): string {
   const m = absoluteFilePath.replace(/\\/g, "/").match(/\/workspace\/apps\/([^/]+)\//);
   if (!m) return "";
-  const port = process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007";
+  const port = process.env.LAX_PORT ?? "7007";
   const appUrl = `http://127.0.0.1:${port}/apps/${m[1]}/index.html`;
   return ` — App URL: ${appUrl} (include this URL verbatim in your reply to the user so it renders as a clickable link).`;
 }

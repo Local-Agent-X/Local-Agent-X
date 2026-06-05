@@ -1,4 +1,4 @@
-// SAX server child-process lifecycle. Prefers the compiled dist/index.js
+// LAX server child-process lifecycle. Prefers the compiled dist/index.js
 // (plain node) over src/index.ts (tsx) WHEN the build is current — node
 // skips tsx's per-file transpile, which on a Defender-heavy Windows box cost
 // ~17s of cold start. "Current" means no source file is newer than the
@@ -16,7 +16,7 @@ import { ChildProcess, spawn, execSync } from "child_process";
 import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { getProjectRoot, getSAXConfig, reloadSAXConfig, type SAXConfig } from "./config";
+import { getProjectRoot, getLAXConfig, reloadLAXConfig, type LAXConfig } from "./config";
 import { isPidAlive, isOurServerProcess } from "./pid-probe";
 
 const PID_FILE = join(homedir(), ".lax", "server.pid");
@@ -129,7 +129,7 @@ export async function isServerRunning(): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2000);
-    const res = await fetch(`http://127.0.0.1:${getSAXConfig().port}/api/health`, {
+    const res = await fetch(`http://127.0.0.1:${getLAXConfig().port}/api/health`, {
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -304,14 +304,14 @@ export function startServer(handlers?: ServerEventHandlers): void {
 //
 // Callers handle the post-ready URL reload themselves (so this module
 // doesn't need to know about BrowserWindow).
-export async function restartServer(): Promise<{ ready: boolean; cfg: SAXConfig }> {
+export async function restartServer(): Promise<{ ready: boolean; cfg: LAXConfig }> {
   setRestarting(true);
   await stopServer();
   // Brief pause — child process exit doesn't synchronously release the
   // port on all platforms; without this the new spawn occasionally
   // fails with EADDRINUSE.
   await new Promise(r => setTimeout(r, 1000));
-  const cfg = reloadSAXConfig();
+  const cfg = reloadLAXConfig();
   console.log(`[desktop] Restarting on port ${cfg.port}`);
   startServer();
   setRestarting(false);
@@ -322,7 +322,7 @@ export async function restartServer(): Promise<{ ready: boolean; cfg: SAXConfig 
 export function stopServer(): Promise<void> {
   return new Promise((resolve) => {
     if (!serverProcess) { resolve(); return; }
-    console.log("[desktop] Stopping SAX server (pid: " + serverProcess.pid + ")...");
+    console.log("[desktop] Stopping LAX server (pid: " + serverProcess.pid + ")...");
     const proc = serverProcess;
     const pid = proc.pid;
     const forceKill = setTimeout(() => {

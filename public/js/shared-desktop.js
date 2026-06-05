@@ -7,6 +7,6 @@ try {
   window.desktop?.onServerCrash?.((info) => {
     console.warn('[desktop] Server crashed:', info);
     window.desktop?.showNotification?.('Local Agent X', 'Server crashed — restarting automatically');
-    document.dispatchEvent(new CustomEvent('sax:server-crashed', { detail: info }));
+    document.dispatchEvent(new CustomEvent('lax:server-crashed', { detail: info }));
   });
 } catch { /* preload bridge unavailable, browser context */ }

@@ -5,7 +5,7 @@
 
 function handleSettingsChanged(msg) {
   if (msg.settings.theme && typeof applyTheme === 'function') {
-    localStorage.setItem('sax_theme', msg.settings.theme);
+    localStorage.setItem('lax_theme', msg.settings.theme);
     applyTheme(msg.settings.theme);
     // Agent-driven theme changes arrive here (not via toggleTheme), so mirror
     // the choice to the Electron wrapper too — otherwise the renderer flips
@@ -16,10 +16,10 @@ function handleSettingsChanged(msg) {
   // Provider / model change from agent → force-refresh the status bar's
   // dropdowns so it stops showing the stale previous provider.
   if (msg.settings.provider || msg.settings.model) {
-    try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    try { const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
       if (msg.settings.provider) s.provider = msg.settings.provider;
       if (msg.settings.model) s.model = msg.settings.model;
-      localStorage.setItem('sax_settings', JSON.stringify(s)); } catch {}
+      localStorage.setItem('lax_settings', JSON.stringify(s)); } catch {}
     _providersCacheTime = 0;
     if (typeof loadProviders === 'function') loadProviders().then(() => updateStatusBar()).catch(() => {});
   }
@@ -61,12 +61,12 @@ function handleSidebarClearChats() {
     // Heal prior mistake: drop any integration-prefix tombstones so the
     // Messaging section comes back on next sync.
     try {
-      const t = JSON.parse(localStorage.getItem('sax_deleted_sessions') || '{}');
+      const t = JSON.parse(localStorage.getItem('lax_deleted_sessions') || '{}');
       let mutated = false;
       for (const k of Object.keys(t)) {
         if (_isIntegrationSessionId(k)) { delete t[k]; mutated = true; }
       }
-      if (mutated) localStorage.setItem('sax_deleted_sessions', JSON.stringify(t));
+      if (mutated) localStorage.setItem('lax_deleted_sessions', JSON.stringify(t));
     } catch {}
 
     if (typeof chats !== 'undefined' && Array.isArray(chats)) {

@@ -127,7 +127,7 @@ async function initVoiceVisualsToggle() {
   } catch { /* leave default checked state */ }
 }
 function onVoiceVisualsToggle(checked) {
-  const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('sax_token') || '');
+  const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('lax_token') || '');
   fetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
@@ -150,7 +150,7 @@ async function initBridgeVoicePreference() {
 }
 function onBridgeVoicePreferenceChange(value) {
   if (!['auto','sovits','chatterbox','lite'].includes(value)) return;
-  const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('sax_token') || '');
+  const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('lax_token') || '');
   fetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },

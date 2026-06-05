@@ -83,7 +83,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
 
   cronService.onExecute(async (jobId, prompt, _ctx) => {
     const missionStartMs = Date.now();
-    const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE ?? join(getLaxDir(), "workspace")), "workspace");
+    const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? join(getLaxDir(), "workspace")), "workspace");
     const sessionId = `cron-${jobId}-${Date.now()}`;
     const cleanedPrompt = stripSaveInstructions(stripCronPreamble(prompt));
     const jobMeta = cronService.get(jobId);

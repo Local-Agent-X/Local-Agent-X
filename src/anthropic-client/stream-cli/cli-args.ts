@@ -46,24 +46,24 @@ export function buildCliArgs(input: CliArgsInput): string[] {
 
 export interface McpConfigSetupInput {
   textOnlyMode: boolean;
-  saxToken: string;
-  saxPort: number;
+  laxToken: string;
+  laxPort: number;
   sessionId?: string;
 }
 
 /**
- * Write a per-turn MCP config file pointing at the local SAX bridge and
+ * Write a per-turn MCP config file pointing at the local LAX bridge and
  * return its path (or null when MCP can't be wired). Caller is responsible
  * for unlinking the file after the subprocess exits.
  */
 export async function setupMcpConfig(input: McpConfigSetupInput): Promise<string | null> {
-  if (input.textOnlyMode || !input.saxToken) return null;
+  if (input.textOnlyMode || !input.laxToken) return null;
   try {
     const { writeMcpConfig } = await import("../mcp-config.js");
     const tag = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return writeMcpConfig({
-      port: input.saxPort,
-      token: input.saxToken,
+      port: input.laxPort,
+      token: input.laxToken,
       sessionId: input.sessionId,
       tag,
     });

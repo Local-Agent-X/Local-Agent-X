@@ -14,7 +14,7 @@
 export const DENY_PREFIXES: readonly string[] = [
   "ANTHROPIC_", "OPENAI_", "AWS_", "GOOGLE_", "AZURE_", "GCP_",
   "STRIPE_", "TWILIO_", "SENDGRID_", "MAILGUN_",
-  "LAX_AUTH_", "SAX_AUTH_", "LAX_MCP_TOKEN",
+  "LAX_AUTH_", "LAX_MCP_TOKEN",
 ];
 
 export const DENY_SUBSTRINGS: readonly string[] = [

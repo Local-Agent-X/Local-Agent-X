@@ -157,12 +157,35 @@ jobs:
 
       - name: Package .app into .dmg
         # hdiutil ships with macOS; no extra deps. UDZO = compressed
-        # read-only, the standard format for distribution DMGs.
+        # read-only, the standard distribution format.
+        #
+        # NOT the one-shot `-srcfolder ... -format UDZO`: that auto-sizes the
+        # intermediate read/write image to the exact content size with zero
+        # padding, then fails with "No space left on device" while copying the
+        # .app *into the freshly-mounted volume* — even with 100+GB free on the
+        # host disk (the image is too small, not the runner). Build explicitly:
+        # create a padded read/write image, ditto the .app in, detach, then
+        # convert to the compressed read-only UDZO we ship.
         run: |
-          hdiutil create -volname "Local Agent X" \
-            -srcfolder "$APP_PATH" \
-            -ov -format UDZO \
-            "$DMG_PATH"
+          set -euo pipefail
+          VOL="Local Agent X"
+          RW_DMG="${RUNNER_TEMP}/lax-installer-rw.dmg"
+          MOUNT_DIR="${RUNNER_TEMP}/lax-installer-mnt"
+          APP_MB=$(du -sm "$APP_PATH" | awk '{print $1}')
+          SIZE_MB=$(( APP_MB + 200 ))   # generous padding for FS overhead
+          echo "app=${APP_MB}MB -> image=${SIZE_MB}MB"
+
+          # Empty read/write image (omit -format → defaults to UDRW).
+          hdiutil create -volname "$VOL" -fs HFS+ \
+            -size "${SIZE_MB}m" -ov "$RW_DMG"
+
+          mkdir -p "$MOUNT_DIR"
+          hdiutil attach "$RW_DMG" -mountpoint "$MOUNT_DIR" -nobrowse
+          ditto "$APP_PATH" "$MOUNT_DIR/$(basename "$APP_PATH")"
+          hdiutil detach "$MOUNT_DIR"
+
+          hdiutil convert "$RW_DMG" -format UDZO -ov -o "$DMG_PATH"
+          rm -f "$RW_DMG"
           ls -la installer/dist-mac
 
       - name: Sign the .dmg

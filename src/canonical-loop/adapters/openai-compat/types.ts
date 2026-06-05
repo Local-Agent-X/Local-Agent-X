@@ -23,6 +23,15 @@ export interface OpenAICompatAdapterOptions {
    * narrate or chain. Undefined = "auto" (no force).
    */
   forcedToolChoice?: { type: "tool"; name: string };
+  /**
+   * Force the model to emit SOME tool call on turn 0 (`tool_choice:
+   * "required"`) when tools are available and no specific forcedToolChoice
+   * is pinned. Set by the agent-runner path: spawned field agents are
+   * expected to act, and weaker OpenAI-compat models (xAI Grok) otherwise
+   * narrate their first tool call as prose instead of calling it. Turn-0
+   * only; the pin releases afterward. No-op when the agent has no tools.
+   */
+  requireToolOnFirstTurn?: boolean;
 }
 
 export interface StreamOnceResult {

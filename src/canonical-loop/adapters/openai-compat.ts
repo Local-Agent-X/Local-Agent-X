@@ -42,6 +42,7 @@ import {
 import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
+import { proseLooksLikeToolCall } from "./tool-call-text-extractor.js";
 
 export { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./openai-compat/types.js";
 export type { OpenAICompatAdapterOptions, OpenAICompatTarget } from "./openai-compat/types.js";
@@ -73,6 +74,14 @@ export class OpenAICompatAdapter implements Adapter {
     // pin releases so the agent can narrate / chain.
     const forced = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
     const forcedInList = forced && input.tools.some(t => t.name === forced.name);
+    // Layer 1: when no specific tool is pinned, agents still force *some*
+    // tool call on turn 0 so weak models can't open with a prose-narrated
+    // tool call. Turn-0 only; releases afterward. No-op without tools.
+    const requireTool =
+      input.turnIdx === 0 &&
+      !forcedInList &&
+      this.opts.requireToolOnFirstTurn === true &&
+      input.tools.length > 0;
 
     const req: ProviderRequest = {
       apiKey,
@@ -88,7 +97,11 @@ export class OpenAICompatAdapter implements Adapter {
       temperature: this.opts.temperature ?? 0.7,
       sessionId: this.opts.sessionId,
       signal: this.aborter.signal,
-      ...(forcedInList && forced ? { toolChoice: forced } : {}),
+      ...(forcedInList && forced
+        ? { toolChoice: forced }
+        : requireTool
+          ? { toolChoice: "required" as const }
+          : {}),
     };
 
     this.inflight = this.runStreamOnce(req, report);
@@ -96,7 +109,43 @@ export class OpenAICompatAdapter implements Adapter {
 
     // Tool-call-in-text fallback: some models emit tool calls as raw JSON
     // inside `content` instead of populating tool_calls. Detect + rewrite.
-    applyToolCallTextFallback(result, report, model, new Set(req.tools.map(t => t.name)));
+    const toolNameSet = new Set(req.tools.map(t => t.name));
+    applyToolCallTextFallback(result, report, model, toolNameSet);
+
+    // Layer 2: prose-narration recovery. If extraction couldn't salvage a
+    // call but the text READS like a narrated tool call (e.g. Grok's "run
+    // tool bash with command is …" with no value marker the extractor could
+    // anchor on), inject a wire-format-error nudge and retry the turn ONCE
+    // with tool_choice forced. Mirrors the Anthropic adapter's
+    // `<wire-format-error: … emitted as text — retry…>` recovery. Mutually
+    // exclusive with the empty-response retry below (that fires on zero
+    // text; this fires on prose). No-op for healthy providers.
+    const narratedToolCall =
+      !this.aborted &&
+      !result.interruptedByInject &&
+      !result.firstError &&
+      result.pendingToolCalls.length === 0 &&
+      req.tools.length > 0 &&
+      proseLooksLikeToolCall(result.assembledText, toolNameSet);
+    if (narratedToolCall) {
+      logger.info(`${model} narrated a tool call as prose — nudging for a real tool_call and retrying once`);
+      const nudgeReq: ProviderRequest = {
+        ...req,
+        messages: [
+          ...req.messages,
+          { role: "assistant", content: result.assembledText },
+          {
+            role: "user",
+            content:
+              "<wire-format-error: your previous reply described a tool call in prose but did not emit one — it was NOT executed and produced no result. Reissue it now as a real structured tool call (function call), not as text.>",
+          },
+        ],
+        toolChoice: "required",
+      };
+      this.inflight = this.runStreamOnce(nudgeReq, report);
+      result = await this.inflight;
+      applyToolCallTextFallback(result, report, model, toolNameSet);
+    }
 
     // Empty-response retry. Some models (qwen2:7b is the canonical
     // offender) accept the `tools` field, run for several seconds, then

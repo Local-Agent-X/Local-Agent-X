@@ -146,6 +146,19 @@ function updateOnboardingUI() {
   if (_onboardStep === 2) populateConnectStep();
 }
 
+// Shared "— OR USE AN API KEY —" block for the connect step. `opts.divider`
+// (default true) shows the separator when an OAuth button sits above it;
+// `opts.primary` makes Save the primary action for key-only providers.
+function obApiKeyBlock(provider, secretName, placeholder, hint, opts = {}) {
+  const divider = opts.divider === false ? '' :
+    '<span style="color:var(--muted);font-size:.7rem;letter-spacing:.04em;margin-top:16px">— OR USE AN API KEY —</span>';
+  const cls = opts.primary ? 'primary' : 'secondary';
+  return `${divider}
+      <input type="password" id="ob-api-key" placeholder="${placeholder}" style="width:100%;max-width:360px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.9rem">
+      <button class="action-btn ${cls}" onclick="onboardSaveKey('${provider}','${secretName}')" style="padding:8px 24px">Save Key</button>
+      <span style="color:var(--muted);font-size:.72rem">${hint}</span>`;
+}
+
 function populateConnectStep() {
   const container = document.getElementById('ob-connect-content');
   const desc = document.getElementById('ob-connect-desc');
@@ -153,16 +166,18 @@ function populateConnectStep() {
   if (!container) return;
 
   if (_onboardProvider === 'codex') {
-    desc.textContent = 'Sign in with your OpenAI account to use GPT models for free.';
+    desc.textContent = 'Sign in with ChatGPT (free), or paste an OpenAI API key.';
     container.innerHTML = `
       <button class="action-btn primary" onclick="onboardOAuth('openai')" style="padding:10px 32px;font-size:1rem">Sign In with OpenAI</button>
       <span style="color:var(--muted);font-size:.75rem">Requires a ChatGPT account (free tier works)</span>
+      ${obApiKeyBlock('openai', 'OPENAI_API_KEY', 'sk-...', 'Get one at platform.openai.com/api-keys')}
     `;
   } else if (_onboardProvider === 'anthropic') {
-    desc.textContent = 'Sign in with your Anthropic account to use Claude models. Anthropic may require Extra Usage for external-tool traffic.';
+    desc.textContent = 'Sign in with your Anthropic account, or paste an Anthropic API key.';
     container.innerHTML = `
       <button class="action-btn primary" onclick="onboardOAuth('anthropic')" style="padding:10px 32px;font-size:1rem">Sign In with Claude</button>
       <span style="color:var(--muted);font-size:.75rem">Subscription auth; Anthropic may require Extra Usage</span>
+      ${obApiKeyBlock('anthropic', 'ANTHROPIC_API_KEY', 'sk-ant-...', 'Get one at console.anthropic.com')}
     `;
   } else if (_onboardProvider === 'xai') {
     desc.textContent = 'Sign in with SuperGrok / X Premium+, or paste an xAI API key.';
@@ -189,6 +204,17 @@ function populateConnectStep() {
       <input type="password" id="ob-api-key" placeholder="sk-..." style="width:100%;max-width:360px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.9rem">
       <button class="action-btn primary" onclick="onboardSaveKey('openai','OPENAI_API_KEY')" style="padding:8px 24px">Save Key</button>
       <span style="color:var(--muted);font-size:.75rem">Get your key at platform.openai.com/api-keys</span>
+    `;
+  } else if (_onboardProvider === 'gemini') {
+    desc.textContent = 'Paste your Google Gemini API key.';
+    container.innerHTML = obApiKeyBlock('gemini', 'GEMINI_API_KEY', 'AIza...', 'Get one at ai.google.dev', { divider: false, primary: true });
+  } else if (_onboardProvider === 'custom') {
+    desc.textContent = 'Connect any OpenAI-compatible endpoint.';
+    container.innerHTML = `
+      <input type="text" id="ob-custom-url" placeholder="https://api.example.com/v1" style="width:100%;max-width:360px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.85rem;font-family:var(--mono)">
+      <input type="password" id="ob-api-key" placeholder="Enter API key..." style="width:100%;max-width:360px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.9rem">
+      <button class="action-btn primary" onclick="onboardSaveCustom()" style="padding:8px 24px">Save</button>
+      <span style="color:var(--muted);font-size:.72rem">Any OpenAI-compatible API (e.g. https://api.deepseek.com/v1)</span>
     `;
   } else if (_onboardProvider === 'local') {
     desc.textContent = 'Make sure Ollama is running on your machine.';
@@ -249,11 +275,32 @@ async function onboardSaveKey(provider, secretName) {
   }
   try {
     await apiPost('/api/secrets', { name: secretName, value: input.value.trim() });
+    // Route finishOnboarding to the key-based provider — e.g. picking
+    // "OpenAI Codex" then saving a key means the real provider is "openai",
+    // not the OAuth "codex".
+    _onboardProvider = provider;
     if (status) { status.style.color = 'var(--accent)'; status.textContent = 'Key saved securely! Click Next to continue.'; }
     input.value = '';
     input.placeholder = '••••••••  (saved)';
   } catch (e) {
     if (status) status.textContent = 'Failed to save key. Try again.';
+  }
+}
+
+async function onboardSaveCustom() {
+  const url = (document.getElementById('ob-custom-url')?.value || '').trim();
+  const input = document.getElementById('ob-api-key');
+  const status = document.getElementById('ob-connect-status');
+  if (!input || !input.value.trim()) { if (status) status.textContent = 'Please enter your API key.'; return; }
+  try {
+    if (url) await apiPost('/api/settings', { customBaseUrl: url });
+    await apiPost('/api/secrets', { name: 'CUSTOM_API_KEY', value: input.value.trim() });
+    _onboardProvider = 'custom';
+    if (status) { status.style.color = 'var(--accent)'; status.textContent = 'Saved! Click Next to continue.'; }
+    input.value = '';
+    input.placeholder = '••••••••  (saved)';
+  } catch (e) {
+    if (status) status.textContent = 'Failed to save. Try again.';
   }
 }
 
@@ -274,8 +321,9 @@ async function onboardCheckOllama() {
 
 function selectOnboardProvider(provider) {
   _onboardProvider = provider;
-  document.querySelectorAll('.onboarding-option').forEach(b => b.classList.remove('selected'));
-  event.currentTarget.classList.add('selected');
+  // Picking a provider jumps straight to its connect step — no separate
+  // "select, then click Next". Back returns here to switch providers.
+  onboardStep(1);
 }
 
 function selectOnboardVoice(enabled) {

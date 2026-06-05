@@ -54,11 +54,14 @@ export function resolveToolsForRequest(
   // Non-chat audiences: return everything tagged with this audience.
   let result = all.filter(t => t.audiences?.includes(req.audience));
 
-  // Spawned-agent applies a per-template intersection if set, always
-  // preserving the identity helpers (agent_whoami, issue_*, etc).
+  // Spawned-agent: the per-template allow-list defines the surface, and the
+  // identity/coordination helpers (agent_whoami, issue_*, etc.) are always
+  // included. Resolve from the full set — identity and most template tools
+  // carry no spawned-agent audience tag, so filtering the audience-gated
+  // subset would drop them and the agent would get neither.
   if (req.audience === "spawned-agent" && req.templateAllowedTools && req.templateAllowedTools.length > 0) {
     const allowed = new Set(req.templateAllowedTools);
-    result = result.filter(t => allowed.has(t.name) || IDENTITY_TOOLS.has(t.name));
+    result = all.filter(t => allowed.has(t.name) || IDENTITY_TOOLS.has(t.name));
   }
 
   return result;

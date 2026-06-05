@@ -244,13 +244,22 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: rolling
-          name: Rolling installer (tracks main)
+          name: Local Agent X — Latest Install (Windows + macOS)
           body: >
-            Auto-built Windows + macOS installers that download the latest `main`
-            source at install time. Always current; no per-update rebuild. The
-            macOS .dmg is signed + Apple-notarized (one-click, no Gatekeeper
-            prompt). For pinned versions see the tagged releases.
-          prerelease: true
+            **The recommended download.** Windows + macOS installers that fetch
+            the latest source at install time, so a fresh install is always
+            current. The macOS .dmg is signed + Apple-notarized (one-click, no
+            Gatekeeper prompt); the Windows .exe shows the normal SmartScreen
+            "More info → Run anyway" prompt. Note: this updates *new* installs —
+            it does not auto-update an app you already installed (re-run the
+            installer to refresh). For a specific pinned version, see the
+            individual `vX.Y.Z` releases below.
+          # Featured "Latest" release: non-prerelease + make_latest so new users
+          # landing on the releases page get this auto-latest installer first,
+          # not a frozen version tag. The `rolling` tag keeps the download URL
+          # stable across rebuilds.
+          prerelease: false
+          make_latest: true
           generate_release_notes: false
           fail_on_unmatched_files: true
           files: |

@@ -248,12 +248,12 @@ jobs:
           body: >
             **The recommended download.** Windows + macOS installers that fetch
             the latest source at install time, so a fresh install is always
-            current. The macOS .dmg is signed + Apple-notarized (one-click, no
-            Gatekeeper prompt); the Windows .exe shows the normal SmartScreen
-            "More info → Run anyway" prompt. Note: this updates *new* installs —
-            it does not auto-update an app you already installed (re-run the
-            installer to refresh). For a specific pinned version, see the
-            individual `vX.Y.Z` releases below.
+            current. After install, the app checks `main` on launch and offers a
+            one-click in-app update (with a notification banner), so you stay
+            current without re-downloading. The macOS .dmg is signed +
+            Apple-notarized (one-click, no Gatekeeper prompt); the Windows .exe
+            shows the normal SmartScreen "More info → Run anyway" prompt. For a
+            specific pinned version, see the individual `vX.Y.Z` releases below.
           # Featured "Latest" release: non-prerelease + make_latest so new users
           # landing on the releases page get this auto-latest installer first,
           # not a frozen version tag. The `rolling` tag keeps the download URL

@@ -194,15 +194,64 @@ function genShape(name) {
   return out;
 }
 
-// Mood presets — for v1 each maps to an emoji glyph (smiley/etc) so we
-// get expressive faces without hand-authoring vertex compositions.
+// Mood presets — parametric particle compositions. Emoji glyphs (the v1
+// approach) pixel-sampled into ~2.2k dots collapse into an unreadable blob
+// (a 🤔 face becomes a featureless cloud), so each mood is drawn from math
+// like genShape's heart/spiral instead. First-pass proportions — tune by eye.
 function genMood(value) {
-  const map = {
-    happy: '🙂', sad: '🙁', thinking: '🤔',
-    confused: '😕', excited: '🤩', error: '⚠️',
-  };
-  const ch = map[value] || '🙂';
-  return genGlyph(ch, 152);
+  const N = state.basePositions.length / 3;
+  const out = new Float32Array(state.basePositions.length);
+  const j = (s) => (Math.random() - 0.5) * s;
+  const put = (i, x, y) => { out[i * 3] = x; out[i * 3 + 1] = y; out[i * 3 + 2] = j(0.06); };
+
+  if (value === 'happy' || value === 'sad') {
+    // Curved mouth (U = smile, ∩ = frown) + two eyes.
+    const smile = value === 'happy';
+    for (let i = 0; i < N; i++) {
+      const r = i / N;
+      if (r < 0.7) {
+        const a = Math.PI * (smile ? 1 + (r / 0.7) : (r / 0.7)); // bottom vs top arc
+        put(i, 0.85 * Math.cos(a) + j(0.04), 0.85 * Math.sin(a) + (smile ? 0.15 : -0.15) + j(0.04));
+      } else if (r < 0.85) {
+        put(i, -0.42 + j(0.13), 0.45 + j(0.13));   // left eye
+      } else {
+        put(i, 0.42 + j(0.13), 0.45 + j(0.13));    // right eye
+      }
+    }
+  } else if (value === 'thinking') {
+    for (let i = 0; i < N; i++) {           // contemplative spiral
+      const u = i / N;
+      const a = u * Math.PI * 8;
+      const rad = 0.15 + u * 1.0;
+      put(i, rad * Math.cos(a) + j(0.03), rad * Math.sin(a) + j(0.03));
+    }
+  } else if (value === 'excited') {
+    const RAYS = 8;
+    for (let i = 0; i < N; i++) {            // starburst
+      const a = ((i % RAYS) / RAYS) * Math.PI * 2;
+      const rad = 0.1 + Math.random() * 1.15;
+      put(i, rad * Math.cos(a) + j(0.05), rad * Math.sin(a) + j(0.05));
+    }
+  } else if (value === 'error') {
+    for (let i = 0; i < N; i++) {            // X — two crossed diagonals
+      const u = (i / N) * 2 - 1;
+      const diag = i % 2 === 0 ? 1 : -1;
+      put(i, u * 1.1 + j(0.05), u * 1.1 * diag + j(0.05));
+    }
+  } else {                                   // confused → question mark
+    for (let i = 0; i < N; i++) {
+      const r = i / N;
+      if (r < 0.75) {
+        const a = -Math.PI * 0.35 + (r / 0.75) * Math.PI * 1.7; // hook
+        put(i, 0.5 * Math.cos(a) + j(0.04), 0.55 + 0.5 * Math.sin(a) + j(0.04));
+      } else if (r < 0.9) {
+        put(i, j(0.05), 0.05 - ((r - 0.75) / 0.15) * 0.35 + j(0.05)); // stem
+      } else {
+        put(i, j(0.07), -0.7 + j(0.07));     // dot
+      }
+    }
+  }
+  return out;
 }
 
 // Multiply every position by the mesh's current rotation matrix and write

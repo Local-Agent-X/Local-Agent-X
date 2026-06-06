@@ -9,6 +9,7 @@ import type { Op } from "../../ops/types.js";
 import { readLatestOpTurn, readOpMessages } from "../store.js";
 import { getToolsForOp } from "../runtime.js";
 import { readOp } from "../../ops/op-store.js";
+import { buildSituationalAwareness } from "./situational-awareness.js";
 
 export function buildTurnInput(
   op: Op,
@@ -39,6 +40,18 @@ export function buildTurnInput(
     tools: getToolsForOp(op.id),
   };
   if (pendingRedirect) input.pendingRedirect = pendingRedirect;
+
+  // Ephemeral situational-awareness digest. Interactive lane only (chat +
+  // voice) — background/build workers have their own evidence-history gates
+  // and we don't want to perturb their soak behavior. Prepended to the turn's
+  // last user message so it rides into every adapter (all replay
+  // input.messages) without being persisted to op_messages. Recomputed each
+  // turn; never accumulates.
+  if (op.lane === "interactive") {
+    const digest = buildSituationalAwareness(op, turnIdx);
+    if (digest) input.messages = prependDigestToLastUser(input.messages, digest);
+  }
+
   return input;
 }
 
@@ -65,6 +78,33 @@ export function collapseAdjacentUserMessages(messages: CanonicalMessage[]): Cano
     }
     out.push(m);
   }
+  return out;
+}
+
+// Prepend the situational-awareness digest to the text of the last user
+// message, ephemerally. We target the last user row (not a trailing append)
+// so we never create consecutive user messages and the model reads the
+// context immediately before the request it's answering. Continuation turns
+// (last row is assistant/tool_result) target the most recent user message
+// earlier in the array — the model re-reads the digest as it keeps working.
+// Returns a new array; the matched row is shallow-copied so op_messages and
+// other readers are untouched.
+function prependDigestToLastUser(messages: CanonicalMessage[], digest: string): CanonicalMessage[] {
+  let idx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") { idx = i; break; }
+  }
+  if (idx === -1) return messages;
+
+  const target = messages[idx];
+  const existing = userText(target.content);
+  const merged = `${digest}\n\n${existing}`;
+  const nextContent = hasImages(target.content)
+    ? { ...(target.content as Record<string, unknown>), text: merged }
+    : { text: merged };
+
+  const out = messages.slice();
+  out[idx] = { ...target, content: nextContent };
   return out;
 }
 

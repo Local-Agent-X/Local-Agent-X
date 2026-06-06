@@ -10,7 +10,7 @@ import { getRetryContext } from "../retry-context.js";
 import { recordCircuitFailure, recordCircuitSuccess } from "../circuit-breaker.js";
 import { recordToolCall as recordToolStat } from "../tool-tracker.js";
 import { recordToolCall as recordRateLimit } from "./rate-limiter.js";
-import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage.js";
+import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput, redactSecretSpans } from "../data-lineage.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
@@ -92,21 +92,39 @@ export const runSandboxedPhase: Phase = async (ctx) => {
         }
       }
     }
-    // sql_query returns row DATA read from a SQLite file; like web_fetch/
-    // http_request it can surface secret-shaped bytes (an API key stored in a
-    // table), so scan its output and taint the session on a hit. Confinement
-    // (the file-access gate) is the primary control; this is defense-in-depth
-    // so the redaction+egress-block path covers DB reads, not just HTTP.
-    if (tc.name === "http_request" || tc.name === "web_fetch" || tc.name === "sql_query") {
+    // sql_query returns row DATA read from a LOCAL SQLite file — an owned data
+    // source, like a local file read. A secret stored in a table is OUR secret,
+    // so a hit gets the full owned-source treatment: taint + whole-result redact.
+    if (tc.name === "sql_query") {
       const body = typeof ctx.result?.content === "string" ? ctx.result.content : "";
       if (body.length > 0) {
         const det = detectSecretsInOutput(body);
         if (det.matched) {
-          recordSensitiveRead(sessionId || "default", "secret", `${tc.name}:${det.kinds.join(",")}`);
+          recordSensitiveRead(sessionId || "default", "secret", `sql_query:${det.kinds.join(",")}`);
           logger.warn(
-            `${tc.name} response contained secret-shaped content (kinds: ${det.kinds.join(", ")}) — session tainted`,
+            `sql_query output contained secret-shaped content (kinds: ${det.kinds.join(", ")}) — session tainted`,
           );
-          redactReason = `${tc.name} response contained secret-shaped content (${det.kinds.join(", ")})`;
+          redactReason = `sql_query output contained secret-shaped content (${det.kinds.join(", ")})`;
+        }
+      }
+    }
+    // web_fetch / http_request bodies are UNTRUSTED INBOUND content from the
+    // public internet — NOT a secret this system owns. A secret-shaped span is
+    // coincidental (a slug, a sample key in docs) or a prompt-injection payload.
+    // Strip those spans from the model's view (so it can't echo/exfil them) but
+    // KEEP the rest of the page and DON'T taint the session: blanket-redacting +
+    // egress-blocking on a coincidental `sk-…` match bricked whole agent runs.
+    // Exfil of OUR secrets is guarded by the owned-source branches above + the
+    // egress allowlist — not by bytes arriving from a trade site.
+    if (tc.name === "http_request" || tc.name === "web_fetch") {
+      const body = typeof ctx.result?.content === "string" ? ctx.result.content : "";
+      if (body.length > 0 && ctx.result && !ctx.result.isError) {
+        const red = redactSecretSpans(body);
+        if (red.matched) {
+          ctx.result = { ...ctx.result, content: red.text };
+          logger.warn(
+            `${tc.name} response had secret-shaped span(s) redacted inline (kinds: ${red.kinds.join(", ")}) — not tainting (untrusted inbound source)`,
+          );
         }
       }
     }

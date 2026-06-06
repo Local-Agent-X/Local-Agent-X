@@ -14,11 +14,12 @@
 //   {"type":"step","id":"npm","state":"done"}
 //   {"type":"step","id":"npm","state":"error","message":"..."}
 //   {"type":"log","level":"info|ok|warn|error","id":"<currentStep|null>","line":"..."}
+//   {"type":"progress","id":"<currentStep>","percent":0-100}  ← live % for the bar
 //   {"type":"complete"}    ← final success
 //   {"type":"fatal","message":"..."}  ← terminal failure
 // Prose mode behavior is unchanged when --ipc is absent.
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -88,6 +89,26 @@ const fail = (m) => {
   process.exit(1);
 };
 
+// Collapse captured child output into clean log lines for the IPC stream.
+// npm and ollama animate their progress bars with bare carriage returns
+// (`\r`, no newline) — redrawing one physical line dozens-to-hundreds of
+// times. A naive `/\r?\n/` split treats that whole burst as a SINGLE line,
+// so every redraw frame's █ ▒ ░ block glyphs concatenate into one giant
+// wall of symbols in the GUI's details view (the live symptom on macOS).
+// Normalize CRLF first so real Windows newlines are preserved, then for any
+// line that still contains a bare `\r`, keep only the final frame — the last
+// rendered state of that animation (e.g. the "100%" bar), dropping the rest.
+function cleanLines(raw) {
+  const out = [];
+  for (const physical of (raw || "").replace(/\r\n/g, "\n").split("\n")) {
+    const frame = physical.includes("\r")
+      ? physical.slice(physical.lastIndexOf("\r") + 1)
+      : physical;
+    if (frame.trim()) out.push(frame);
+  }
+  return out;
+}
+
 // In IPC mode child process stdout would corrupt the JSONL stream if it
 // inherited the terminal. Capture stdout/stderr into memory and emit each
 // non-empty line as a {type:"log"} event tagged with the current step.
@@ -103,13 +124,80 @@ function run(cmd, args, opts = {}) {
     encoding: "utf-8",
     ...opts,
   });
-  for (const line of (result.stdout || "").split(/\r?\n/)) {
-    if (line.trim()) ipc({ type: "log", level: "info", id: currentStepId, line });
+  for (const line of cleanLines(result.stdout)) {
+    ipc({ type: "log", level: "info", id: currentStepId, line });
   }
-  for (const line of (result.stderr || "").split(/\r?\n/)) {
-    if (line.trim()) ipc({ type: "log", level: "warn", id: currentStepId, line });
+  for (const line of cleanLines(result.stderr)) {
+    ipc({ type: "log", level: "warn", id: currentStepId, line });
   }
   return result;
+}
+
+// Pull a percentage out of a progress line to drive the GUI's live bar.
+// npm/ollama/electron-builder all print a trailing "NN%" (ollama:
+// "pulling a1b2…  37% ▕███▏ 250/670 MB"). Take the LAST match on the frame
+// so the most-recent number wins; clamp to 0-100. Returns null when absent.
+function parsePercent(line) {
+  const matches = line.match(/(\d{1,3})\s*%/g);
+  if (!matches) return null;
+  const n = parseInt(matches[matches.length - 1], 10);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? n : null;
+}
+
+// Streaming sibling of run() for the long steps (npm install, ollama pull,
+// electron-builder). spawnSync buffers everything and only emits on exit, so
+// the GUI sits silent for minutes then dumps a wall of text; this streams
+// stdout/stderr live. It breaks on BOTH \r and \n so each carriage-return
+// animation frame is its own line (no symbol-wall pile-up), forwards the
+// final rendered frame, and emits {type:"progress",percent} so the installer
+// drives a real percentage bar. Returns a spawnSync-shaped {status} so
+// callers keep checking `.status !== 0` unchanged. Prose mode is untouched.
+function runStreaming(cmd, args, opts = {}) {
+  if (!IPC) {
+    return Promise.resolve(
+      spawnSync(cmd, args, { stdio: "inherit", shell: process.platform === "win32", ...opts }),
+    );
+  }
+  return new Promise((resolve) => {
+    const stepId = currentStepId;
+    const child = spawn(cmd, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
+      ...opts,
+    });
+    let lastPct = -1;
+    const bufs = { info: "", warn: "" };
+    const pump = (level, text) => {
+      const t = text.trim();
+      if (!t) return;
+      ipc({ type: "log", level, id: stepId, line: t });
+      const pct = parsePercent(t);
+      if (pct !== null && pct !== lastPct) {
+        lastPct = pct;
+        ipc({ type: "progress", id: stepId, percent: pct });
+      }
+    };
+    const sink = (level) => (chunk) => {
+      bufs[level] += chunk.toString("utf-8");
+      let idx;
+      while ((idx = bufs[level].search(/[\r\n]/)) !== -1) {
+        pump(level, bufs[level].slice(0, idx));
+        bufs[level] = bufs[level].slice(idx + 1);
+      }
+    };
+    child.stdout?.on("data", sink("info"));
+    child.stderr?.on("data", sink("warn"));
+    child.on("error", (err) => {
+      pump("warn", String(err?.message || err));
+      resolve({ status: -1, error: err });
+    });
+    child.on("close", (code) => {
+      // Flush trailing partials that never hit a delimiter.
+      pump("info", bufs.info); bufs.info = "";
+      pump("warn", bufs.warn); bufs.warn = "";
+      resolve({ status: code ?? -1 });
+    });
+  });
 }
 function has(cmd) {
   return spawnSync(cmd, ["--version"], { stdio: "ignore", shell: true }).status === 0;
@@ -290,10 +378,10 @@ stepDone("ollama");
 const npmLogLevel = process.env.LAX_NPM_LOGLEVEL || "error";
 step("npm", "npm install (5-10 min on first install)");
 log("Installing npm dependencies…");
-let res = run("npm", ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`]);
+let res = await runStreaming("npm", ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`]);
 if (res.status !== 0) {
   warn("First attempt failed. Retrying with --legacy-peer-deps…");
-  res = run("npm", [
+  res = await runStreaming("npm", [
     "install",
     "--no-audit",
     "--no-fund",
@@ -385,7 +473,7 @@ if (has("ollama")) {
     warn(`Ollama daemon didn't come up at ${OLLAMA_URL} — skipping model pull. Re-run later: ollama pull ${EMBED_MODEL}`);
   } else {
     log(`Pulling ${EMBED_MODEL} (~670MB, one-time)…`);
-    let pull = run("ollama", ["pull", EMBED_MODEL]);
+    let pull = await runStreaming("ollama", ["pull", EMBED_MODEL]);
     // One retry on transient registry/keypair errors. spawn returns the
     // child's exit code; ollama exits non-zero on any pull failure, so
     // restart-then-retry is safe even when the first try succeeded
@@ -401,7 +489,7 @@ if (has("ollama")) {
         await new Promise(r => setTimeout(r, 1000));
         if (await ollamaReady()) break;
       }
-      pull = run("ollama", ["pull", EMBED_MODEL]);
+      pull = await runStreaming("ollama", ["pull", EMBED_MODEL]);
     }
     if (pull.status === 0) ok("Memory engine ready");
     else warn(`Pull failed twice — semantic memory unavailable. Re-run later: ollama pull ${EMBED_MODEL}`);
@@ -453,7 +541,7 @@ stepDone("settings");
 //    stopping for, not silencing.
 step("build", "tsc + arikernel (1-2 min)");
 log("Building server (npm run build)…");
-res = run("npm", ["run", "build"]);
+res = await runStreaming("npm", ["run", "build"]);
 if (res.status !== 0) fail("npm run build failed. Fix the build errors above before re-running install — the runtime refuses to boot when its security layer (AriKernel pre-dispatch gate) can't wire.");
 ok("Server build complete");
 stepDone("build");
@@ -493,17 +581,17 @@ let appBuildPath = null;
 if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   log("Building Local Agent X.app — this is the slow step the first time (~3–5 min, ~500MB).");
 
-  let r = run(
+  let r = await runStreaming(
     "npm",
     ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`],
     { cwd: "desktop" },
   );
   if (r.status !== 0) fail("desktop npm install failed.");
 
-  r = run("npm", ["run", "build"], { cwd: "desktop" });
+  r = await runStreaming("npm", ["run", "build"], { cwd: "desktop" });
   if (r.status !== 0) fail("desktop tsc build failed.");
 
-  r = run("npm", ["run", "dist"], { cwd: "desktop" });
+  r = await runStreaming("npm", ["run", "dist"], { cwd: "desktop" });
   if (r.status !== 0) fail("electron-builder failed.");
 
   // electron-builder writes to mac-arm64/ on Apple Silicon, mac/ on Intel.
@@ -536,13 +624,13 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   // completed and created shortcuts, but double-clicking either shortcut
   // exited in milliseconds because dist/main.js + electron.cmd didn't exist.
   log("Building Electron desktop bundle…");
-  let dr = run(
+  let dr = await runStreaming(
     "npm",
     ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`],
     { cwd: "desktop" },
   );
   if (dr.status !== 0) fail("desktop npm install failed.");
-  dr = run("npm", ["run", "build"], { cwd: "desktop" });
+  dr = await runStreaming("npm", ["run", "build"], { cwd: "desktop" });
   if (dr.status !== 0) fail("desktop tsc build failed.");
   ok("Desktop bundle built");
 

@@ -89,6 +89,13 @@
                         <TextBlock Text="{Binding CurrentStepLabel}" FontSize="14" FontWeight="SemiBold"/>
                         <TextBlock Text="{Binding CurrentStepDetail}" Opacity="0.65" FontSize="12"
                                    TextWrapping="Wrap"/>
+                        <!-- Live progress: indeterminate pulse for steps with no
+                             clean %, determinate for ones that stream a percent
+                             (e.g. the ollama model pull). -->
+                        <ProgressBar Minimum="0" Maximum="100"
+                                     Value="{Binding ProgressValue}"
+                                     IsIndeterminate="{Binding ProgressIndeterminate}"
+                                     Height="6" Margin="0,6,0,0"/>
                     </StackPanel>
 
                     <ScrollViewer Grid.Row="1" Margin="0,14,0,0">

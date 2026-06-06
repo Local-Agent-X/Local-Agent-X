@@ -1,4 +1,7 @@
+using System;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace LocalAgentX.Installer.Services;
@@ -65,6 +68,12 @@ public class NodeBootstrap
                     "-c", "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"",
                 });
                 if (!brewOk) return false;
+                // The Homebrew installer writes to /opt/homebrew/bin (Apple
+                // Silicon) or /usr/local/bin (Intel), but our process PATH was
+                // captured before that dir existed — splice it in so the brew
+                // calls below resolve without re-launching the app.
+                SplicePath("/opt/homebrew/bin");
+                SplicePath("/usr/local/bin");
             }
             var nodeOk = RunStreaming("brew", new[] { "install", "node@22" });
             if (!nodeOk) return false;
@@ -75,6 +84,17 @@ public class NodeBootstrap
         OnStatus?.Invoke("Installing Node 22 via apt…");
         RunStreaming("/bin/bash", new[] { "-c", "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -" });
         return RunStreaming("sudo", new[] { "apt-get", "install", "-y", "nodejs" });
+    }
+
+    // Prepend a dir to this process's PATH if it exists and isn't already
+    // there. Child processes spawned afterward inherit the updated PATH.
+    static void SplicePath(string dir)
+    {
+        if (!Directory.Exists(dir)) return;
+        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var sep = OperatingSystem.IsWindows() ? ';' : ':';
+        if (path.Split(sep).Contains(dir)) return;
+        Environment.SetEnvironmentVariable("PATH", $"{dir}{sep}{path}");
     }
 
     bool HasOnPath(string cmd)

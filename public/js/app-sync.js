@@ -26,19 +26,20 @@ async function syncChatsFromServer() {
       seen.add(srv.id);
       if (deletedIds[srv.id]) continue;
       const local = localMap.get(srv.id);
-      // Mid-stream protection: NEVER replace the local chat object while a
-      // stream is in flight for this session. Replacing it orphans the
-      // streamChat closure reference in sendMessage. Per-session via the
-      // store so concurrent streams (main chat + IDE app-builder) each
-      // protect their own object.
-      const isStreamingNow = !!(local && typeof window.isStreaming === 'function' && window.isStreaming(srv.id));
-      if (local && (isStreamingNow || local.updatedAt >= srv.updatedAt)) {
+      // Mid-stream protection: NEVER replace the local chat object while the
+      // session is active — streaming OR mid-finalize (status off 'streaming'
+      // but the turn isn't persisted server-side yet). Replacing it orphans the
+      // streamChat closure reference in sendMessage and drops the unpersisted
+      // user message. Per-session via the store so concurrent streams (main
+      // chat + IDE app-builder) each protect their own object.
+      const isActiveNow = !!(local && typeof window.isActive === 'function' && window.isActive(srv.id));
+      if (local && (isActiveNow || local.updatedAt >= srv.updatedAt)) {
         // Local copy is at-or-newer than server — keep it but tag if we
         // know full content is bigger than what's cached, so selectChat
         // knows to hydrate on click.
         const listTruncated = local.messages && typeof srv.messageCount === 'number' && srv.messageCount > local.messages.length;
         const hasTruncated = local.messages && local.messages.some(m => m._truncated || (typeof m.content === 'string' && m.content.length >= 9_900));
-        if (!isStreamingNow && (listTruncated || hasTruncated)) local._needsHydrate = true;
+        if (!isActiveNow && (listTruncated || hasTruncated)) local._needsHydrate = true;
         local.serverBacked = true; // confirmed present on the server this sync
         // Heal a local copy that lost its projectId (older cache, or a prior
         // sync that dropped it) from the server's now-durable value. Local is
@@ -153,6 +154,19 @@ async function hydrateChat(chat) {
     session.projectId = chat.projectId || session.projectId;
     session.compactedAt = chat.compactedAt;
     if (chat.archived) session.archived = true;
+    // Don't let a stale server snapshot overwrite messages the client just
+    // produced locally. A turn's user message + finalized assistant live only
+    // in memory until the server persists them; a hydrate that races that
+    // window returns fewer messages than we hold and would blow away the
+    // in-flight turn (question vanishes, reply re-anchors to the bottom). When
+    // the local copy is at-or-ahead of the fetched snapshot, keep local
+    // messages and the newer timestamp.
+    const localMsgs = Array.isArray(chat.messages) ? chat.messages : [];
+    const serverMsgs = Array.isArray(session.messages) ? session.messages : [];
+    if ((chat.updatedAt || 0) > (session.updatedAt || 0) || localMsgs.length > serverMsgs.length) {
+      delete session.messages;
+      session.updatedAt = Math.max(chat.updatedAt || 0, session.updatedAt || 0);
+    }
     // Mutate in place so the activeChat pointer (and any closures holding it)
     // stay valid. Replace messages, copy server fields.
     Object.assign(chat, session);

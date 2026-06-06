@@ -137,7 +137,17 @@
     if (e.approvals.length) msg._approvals = e.approvals.map(a => ({ ...a }));
     if (e.stopNote) msg._stopNote = { ...e.stopNote };
     const raw = typeof e.liveAnchorIndex === 'number' ? e.liveAnchorIndex : chat.messages.length;
-    const idx = Math.max(0, Math.min(raw, chat.messages.length));
+    let idx = Math.max(0, Math.min(raw, chat.messages.length));
+    // Self-correct a stale anchor: if the array was rebuilt under us (a racing
+    // hydrate/sync) the captured index can land the reply before the user
+    // prompt that triggered it. An assistant reply must follow its user turn —
+    // if the clamped slot is at or before the trailing user message, drop the
+    // reply to the end so it can't render above the question.
+    let lastUserIdx = -1;
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+      if (chat.messages[i] && chat.messages[i].role === 'user') { lastUserIdx = i; break; }
+    }
+    if (lastUserIdx >= 0 && idx <= lastUserIdx) idx = chat.messages.length;
     chat.messages.splice(idx, 0, msg);
     e.liveAnchorIndex = -1;
     // Clear the live scratch so a second promote (the stuck-stream watchdog's

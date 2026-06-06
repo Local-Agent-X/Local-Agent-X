@@ -243,8 +243,12 @@ function selectChat(id) {
   focusChatInput();
   // Lazy hydration: if the sidebar handed us a metadata stub (or a known-stale
   // local copy), fetch the full session JSON now. One fetch per click instead
-  // of N on page load. Skip if we're already streaming into this chat.
-  if (activeChat && activeChat._needsHydrate && !isThisChatStreaming) {
+  // of N on page load. Skip while the chat is active — streaming OR mid-finalize
+  // (status off 'streaming' but the turn's user message + reply aren't yet
+  // persisted server-side). Hydrating in that window would fetch a stale
+  // snapshot and clobber the in-flight turn.
+  const isThisChatActive = !!(typeof window.isActive === 'function' && window.isActive(id));
+  if (activeChat && activeChat._needsHydrate && !isThisChatActive) {
     hydrateChat(activeChat).catch(e => console.warn('[hydrate] failed:', e?.message));
   }
 }

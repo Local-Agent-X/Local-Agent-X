@@ -6,7 +6,7 @@
  * check fires every turn; creation check only on turn 0 (the canonical
  * analogue of legacy `ctx.iteration === 0` — first turn of the op).
  */
-import type { CanonicalMiddleware } from "./types.js";
+import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import {
   checkApprovalHallucination,
   checkCreationHallucination,
@@ -16,6 +16,7 @@ import { verifyClaimHallucinationWithLLM } from "../../classifiers/claim-verify.
 
 export const hallucinationCheckMiddleware: CanonicalMiddleware = {
   name: "hallucination-check",
+  when: isWorkerOp,
 
   async afterModelCall(ctx) {
     // NOTE: deliberately NOT gated on `ctx.toolCalls.length > 0`. The worker

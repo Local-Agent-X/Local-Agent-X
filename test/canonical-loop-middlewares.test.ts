@@ -51,7 +51,7 @@ vi.mock("../src/classifiers/claim-verify.js", () => ({
 import { verifyClaimHallucinationWithLLM } from "../src/classifiers/claim-verify.js";
 const verifyMock = vi.mocked(verifyClaimHallucinationWithLLM);
 
-function mkOp(label: string, type: string = "chat_turn"): Op {
+function mkOp(label: string, type: string = "chat_turn", lane: Op["lane"] = "interactive"): Op {
   const id = newOpId(`mw_${label}`);
   tracked.push(id);
   return {
@@ -59,7 +59,7 @@ function mkOp(label: string, type: string = "chat_turn"): Op {
     type,
     task: `mw ${label}`,
     contextPack: { preferredProvider: "anthropic" } as Op["contextPack"],
-    lane: "interactive",
+    lane,
     retryPolicy: { maxRecoveryAttempts: 3, backoffMs: [5_000] },
     ownerId: "test-mw",
     visibility: "private",
@@ -372,9 +372,10 @@ describe("action-claim middleware", () => {
 // ── premature-completion ─────────────────────────────────────────────────
 
 describe("premature-completion middleware", () => {
-  it("when() exempts chat_turn ops, applies to worker ops", () => {
-    expect(prematureCompletionMiddleware.when?.(mkCtx({ op: mkOp("pc-chat", "chat_turn") }))).toBe(false);
-    expect(prematureCompletionMiddleware.when?.(mkCtx({ op: mkOp("pc-work", "research") }))).toBe(true);
+  it("when() exempts interactive ops (chat + voice), applies to worker ops", () => {
+    expect(prematureCompletionMiddleware.when?.(mkCtx({ op: mkOp("pc-chat", "chat_turn", "interactive") }))).toBe(false);
+    expect(prematureCompletionMiddleware.when?.(mkCtx({ op: mkOp("pc-voice", "voice_turn", "interactive") }))).toBe(false);
+    expect(prematureCompletionMiddleware.when?.(mkCtx({ op: mkOp("pc-work", "research", "agent") }))).toBe(true);
   });
 
   it("nudges a worker op that ends tool-lessly with nothing committed", async () => {
@@ -486,14 +487,24 @@ describe("mid-turn-stale middleware", () => {
     expect((r as { kind: string }).kind).toBe("continue");
   });
 
-  it("first strike nudges; second strike aborts", () => {
-    const op = mkOp("stale-strikes");
-    // first strike
+  it("worker op: first strike nudges; second strike aborts", () => {
+    const op = mkOp("stale-worker", "agent_turn", "agent");
     const r1 = midTurnStaleMiddleware.beforeTurn!(mkCtx({
       op, turnIdx: 6, evidenceHistory: [3, 3, 3],
     }));
     expect((r1 as { kind: string }).kind).toBe("nudge");
-    // second strike: state already remembers nudged → abort
+    const r2 = midTurnStaleMiddleware.beforeTurn!(mkCtx({
+      op, turnIdx: 7, evidenceHistory: [3, 3, 3],
+    }));
+    expect((r2 as { kind: string }).kind).toBe("abort");
+  });
+
+  it("interactive op: first strike is silent (no leaked nudge) but the circuit-breaker still aborts", () => {
+    const op = mkOp("stale-interactive");
+    const r1 = midTurnStaleMiddleware.beforeTurn!(mkCtx({
+      op, turnIdx: 6, evidenceHistory: [3, 3, 3],
+    }));
+    expect((r1 as { kind: string }).kind).toBe("continue");
     const r2 = midTurnStaleMiddleware.beforeTurn!(mkCtx({
       op, turnIdx: 7, evidenceHistory: [3, 3, 3],
     }));

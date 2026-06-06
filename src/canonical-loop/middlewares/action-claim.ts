@@ -7,7 +7,7 @@
  * "turn" of legacy maps to "op" in canonical, so the per-op fired flag is
  * the equivalent guard).
  */
-import type { CanonicalMiddleware } from "./types.js";
+import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { checkUnmatchedActionClaim } from "../../agent-guards/index.js";
 import { verifyClaimHallucinationWithLLM } from "../../classifiers/claim-verify.js";
@@ -16,6 +16,9 @@ interface FiredFlag { fired: boolean }
 
 export const actionClaimMiddleware: CanonicalMiddleware = {
   name: "action-claim",
+  // Worker-only: on interactive/voice turns the model verbalizes this
+  // correction ("the system is correcting me…") instead of acting on it.
+  when: isWorkerOp,
 
   async afterModelCall(ctx) {
     // NOTE: deliberately NOT gated on `ctx.toolCalls.length > 0`. Interleaved

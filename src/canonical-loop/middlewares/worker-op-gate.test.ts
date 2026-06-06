@@ -2,6 +2,12 @@ import { describe, it, expect } from "vitest";
 import { isWorkerOp, type CanonicalLoopContext } from "./types.js";
 import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
+import { actionClaimMiddleware } from "./action-claim.js";
+import { hallucinationCheckMiddleware } from "./hallucination-check.js";
+import { loopDetectionMiddleware } from "./loop-detection.js";
+import { selfCheckMiddleware } from "./self-check.js";
+import { deadEndMiddleware } from "./dead-end.js";
+import { postCommitMiddleware } from "./post-commit.js";
 
 function ctxWithLane(lane: string): CanonicalLoopContext {
   return { op: { lane } } as unknown as CanonicalLoopContext;
@@ -24,7 +30,16 @@ describe("nudge middlewares gate on isWorkerOp", () => {
   // they're skipped on the interactive lane. mid-turn-stale is intentionally
   // NOT here: its second-strike abort is the circuit-breaker that caps a
   // spinning interactive/voice turn, so it must keep running everywhere.
-  const middlewares = [postTurnDetectorMiddleware, prematureCompletionMiddleware];
+  const middlewares = [
+    postTurnDetectorMiddleware,
+    prematureCompletionMiddleware,
+    actionClaimMiddleware,
+    hallucinationCheckMiddleware,
+    loopDetectionMiddleware,
+    selfCheckMiddleware,
+    deadEndMiddleware,
+    postCommitMiddleware,
+  ];
 
   for (const mw of middlewares) {
     it(`${mw.name}: off for interactive, on for worker`, () => {

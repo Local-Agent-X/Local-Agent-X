@@ -8,7 +8,7 @@
  * `post-commit` — sibling to loop-detection's `LoopState` but kept
  * separate so the two middlewares can clear independently in tests.
  */
-import type { CanonicalMiddleware } from "./types.js";
+import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import {
   checkPostCommit,
@@ -18,6 +18,7 @@ import {
 
 export const postCommitMiddleware: CanonicalMiddleware = {
   name: "post-commit",
+  when: isWorkerOp,
 
   afterToolExecution(ctx) {
     const state = getMiddlewareState<LoopState>(

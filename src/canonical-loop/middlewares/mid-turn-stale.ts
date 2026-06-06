@@ -10,7 +10,7 @@
  *
  * Two-strike: first staleness window nudges; second aborts.
  */
-import type { CanonicalMiddleware } from "./types.js";
+import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { createLogger } from "../../logger.js";
 
@@ -52,8 +52,16 @@ export const midTurnStaleMiddleware: CanonicalMiddleware = {
 
     if (!flag.nudged) {
       flag.nudged = true;
-      logger.warn(`first-strike nudge: evidence flat for ${STALE_WINDOW} turns`);
-      return { kind: "nudge", message: STALE_NUDGE, reason: "stale-warning" };
+      // The visible "you're spinning, change approach" nudge is worker-only —
+      // on interactive/voice the model verbalizes it. Interactive turns skip
+      // straight to silent first-strike; the second strike still aborts (below),
+      // so the circuit-breaker that caps a spinning voice turn stays intact.
+      if (isWorkerOp(ctx)) {
+        logger.warn(`first-strike nudge: evidence flat for ${STALE_WINDOW} turns`);
+        return { kind: "nudge", message: STALE_NUDGE, reason: "stale-warning" };
+      }
+      logger.warn(`first-strike (interactive, silent): evidence flat for ${STALE_WINDOW} turns`);
+      return { kind: "continue" };
     }
 
     logger.warn(`second-strike abort: evidence still flat after nudge`);

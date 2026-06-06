@@ -15,7 +15,7 @@ import { resolveProvider } from "./resolve-provider.js";
 import { createLogger } from "../logger.js";
 
 import { buildContext, isTrivialToolRequest } from "./prepare-request/build-context.js";
-import { selectTools } from "./prepare-request/tool-selection.js";
+import { selectTools, type ToolSelectionResult } from "./prepare-request/tool-selection.js";
 import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
 import { buildSystemPrompt } from "./prepare-request/build-system-prompt.js";
 
@@ -57,16 +57,33 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // before build-context so we know the tier (weak-tier context strip)
   // and before system-prompt build so forceBuildIntent can drive the
   // CLI nudge.
-  end = stepStart("selectTools");
-  const toolSel = await selectTools({
-    message: input.message,
-    channel: input.channel,
-    allAgentTools: input.allAgentTools,
-    bridgeTools: input.bridgeTools,
-    resolvedProvider: resolved.provider,
-    resolvedModel: resolved.model,
-  });
-  end();
+  //
+  // Lean callers (voice) override tools + prompt downstream, so the whole
+  // selection — including the ~1.5-6s intent classifier — is wasted work on
+  // their critical path. Skip it; just compute the tier (cheap, sync) which
+  // build-context still needs for the weak-model strip.
+  let toolSel: ToolSelectionResult;
+  if (input.leanPrep) {
+    const { classifyModel } = await import("../model-tiers.js");
+    toolSel = {
+      tools: [],
+      tier: classifyModel(resolved.model) as ToolSelectionResult["tier"],
+      intentVerdict: null,
+      forceBuildIntent: false,
+      isBridge: false,
+    };
+  } else {
+    end = stepStart("selectTools");
+    toolSel = await selectTools({
+      message: input.message,
+      channel: input.channel,
+      allAgentTools: input.allAgentTools,
+      bridgeTools: input.bridgeTools,
+      resolvedProvider: resolved.provider,
+      resolvedModel: resolved.model,
+    });
+    end();
+  }
 
   // 4. Build per-turn memory + context (skip heavy parts for bridges/cron).
   // The memory pipeline runs for every provider — the orchestrator's
@@ -87,19 +104,31 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   });
   end();
 
-  // 5. Memory-curate nudge detection (Stage 1 regex + Stage 2 LLM). Runs
-  // for the side-effect boosts even when LAX_MEMORY_INPROMPT_NUDGE is
-  // unset — the boost counter is read by the end-of-turn memory write.
-  end = stepStart("detectAndBoostCurate");
-  const memoryCurateBlock = await detectAndBoostCurate({
-    message: input.message,
-    sessionMessages: input.sessionMessages,
-    sessionId: input.sessionId,
-    resolvedProvider: resolved.provider,
-    resolvedModel: resolved.model,
-    resolvedApiKey: resolved.apiKey,
-  });
-  end();
+  // 5. Memory-curate nudge detection (Stage 1 regex + Stage 2 LLM). Its
+  // RETURN value is empty unless LAX_MEMORY_INPROMPT_NUDGE=1; its only other
+  // effect is a per-session boost counter the (post-reply) end-of-turn pass
+  // reads. So awaiting it just added ~1.5-2s of pre-model latency for nothing
+  // user-visible. Fire-and-forget by default; the boost lands long before
+  // end-of-turn. Only block on it when the in-prompt nudge is actually on.
+  // Lean callers (voice) skip it entirely.
+  let memoryCurateBlock = "";
+  if (!input.leanPrep) {
+    const curateInput = {
+      message: input.message,
+      sessionMessages: input.sessionMessages,
+      sessionId: input.sessionId,
+      resolvedProvider: resolved.provider,
+      resolvedModel: resolved.model,
+      resolvedApiKey: resolved.apiKey,
+    };
+    if (process.env.LAX_MEMORY_INPROMPT_NUDGE === "1") {
+      end = stepStart("detectAndBoostCurate");
+      memoryCurateBlock = await detectAndBoostCurate(curateInput);
+      end();
+    } else {
+      void detectAndBoostCurate(curateInput).catch(() => {});
+    }
+  }
 
   // 6. Build the final system prompt (base + blocks + provider rider +
   // build-intent CLI nudge if applicable).

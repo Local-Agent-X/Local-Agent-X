@@ -126,6 +126,7 @@ function showOnboarding() {
 }
 
 function onboardStep(dir) {
+  stopOnboardAuthPoll(); // any navigation cancels an in-flight sign-in watch
   _onboardStep += dir;
   if (_onboardStep >= ONBOARD_TOTAL) { finishOnboarding(); return; }
   if (_onboardStep < 0) _onboardStep = 0;
@@ -227,6 +228,78 @@ function populateConnectStep() {
     container.innerHTML = '';
   }
   if (status) status.textContent = '';
+
+  // If this provider is already signed in (re-running onboarding, or returning
+  // to this step after login), show the connected state instead of the button.
+  stopOnboardAuthPoll();
+  const oauthType = _onboardProvider === 'codex' ? 'openai'
+    : (OB_OAUTH[_onboardProvider] ? _onboardProvider : null);
+  if (oauthType) {
+    obIsAuthed(oauthType).then(ok => {
+      if (ok && _onboardStep === 2 && _onboardProvider === (oauthType === 'openai' ? 'codex' : oauthType)) {
+        renderOnboardConnected(oauthType);
+      }
+    });
+  }
+}
+
+// OAuth providers reachable from the connect step. All three status routes
+// return { authenticated }. `label` is what the signed-in confirmation shows.
+const OB_OAUTH = {
+  openai:    { endpoint: '/api/auth/status',           label: 'OpenAI' },
+  anthropic: { endpoint: '/api/auth/anthropic/status', label: 'Claude' },
+  xai:       { endpoint: '/api/auth/xai/status',        label: 'xAI' },
+};
+
+let _onboardAuthPoll = null;
+
+function stopOnboardAuthPoll() {
+  if (_onboardAuthPoll) { clearInterval(_onboardAuthPoll); _onboardAuthPoll = null; }
+}
+
+async function obIsAuthed(type) {
+  const cfg = OB_OAUTH[type];
+  if (!cfg) return false;
+  try {
+    const r = await apiFetch(cfg.endpoint);
+    const s = await r.json();
+    return !!s.authenticated;
+  } catch { return false; }
+}
+
+// Replace the sign-in button + key field with a "Signed in" confirmation.
+function renderOnboardConnected(type) {
+  stopOnboardAuthPoll();
+  const cfg = OB_OAUTH[type] || { label: 'your account' };
+  const container = document.getElementById('ob-connect-content');
+  const desc = document.getElementById('ob-connect-desc');
+  const status = document.getElementById('ob-connect-status');
+  if (desc) desc.textContent = "You're connected.";
+  if (status) status.textContent = '';
+  if (!container) return;
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;color:var(--accent);font-size:1.05rem;font-weight:600;text-shadow:0 0 12px var(--accent-dim)">
+      <span style="font-size:1.2rem">✓</span> Signed in with ${cfg.label}
+    </div>
+    <span style="color:var(--muted);font-size:.72rem;margin-top:6px;max-width:320px;line-height:1.5">
+      Click Next to continue. To use a different provider, hit <strong style="color:var(--text)">Back</strong> and pick another.
+    </span>`;
+}
+
+function startOnboardAuthPoll(type) {
+  stopOnboardAuthPoll();
+  let attempts = 0;
+  _onboardAuthPoll = setInterval(async () => {
+    attempts++;
+    if (await obIsAuthed(type)) {
+      // Guard against a late tick landing after the user navigated away.
+      if (_onboardStep === 2) renderOnboardConnected(type);
+      else stopOnboardAuthPoll();
+      if (typeof checkAuth === 'function') checkAuth(); // refresh sidebar dot
+      return;
+    }
+    if (attempts > 150) stopOnboardAuthPoll(); // ~5min @ 2s
+  }, 2000);
 }
 
 async function onboardOAuth(type) {
@@ -243,7 +316,9 @@ async function onboardOAuth(type) {
       // window.open for long URLs in Electron) and returns `opened: true`
       // when it did. Skip the redundant window.open in that case.
       if (!res.opened) window.open(res.authUrl, '_blank', 'width=600,height=700');
-      if (status) status.textContent = 'Sign-in window opened — complete login there, then click Next.';
+      if (status) status.textContent = 'Sign-in window opened — complete login in the browser…';
+      // Watch for completion and flip the step to the signed-in state.
+      startOnboardAuthPoll(type);
     } else if (res.error) {
       if (status) status.textContent = 'Error: ' + res.error;
     }

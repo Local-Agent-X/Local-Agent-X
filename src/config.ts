@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkSync, readdirSync, cpSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { LAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
 import { getLaxDir } from "./lax-data-dir.js";
@@ -206,6 +206,22 @@ export function loadConfig(): LAXConfig {
   if (raw.autoUpdate === undefined) config.autoUpdate = profileDefaults.autoUpdate;
   if (!raw.logLevel) config.logLevel = profileDefaults.logLevel;
 
+  // Workspace location. The packaged desktop app sets LAX_DOCUMENTS_DIR so the
+  // agent workspace lives in the user's Documents (findable in Finder/Explorer,
+  // survives updates) instead of the hidden install dir that "./workspace"
+  // resolves into. When the saved value is still the legacy default, move any
+  // existing files over once and persist the absolute path — after that the
+  // value is non-legacy and this never runs again. Dev / standalone server
+  // (no LAX_DOCUMENTS_DIR) keeps "./workspace".
+  const docsDir = process.env.LAX_DOCUMENTS_DIR;
+  const legacyWorkspace = raw.workspace === undefined || raw.workspace === "./workspace";
+  if (docsDir && legacyWorkspace) {
+    const newWorkspace = join(docsDir, "Local Agent X");
+    migrateWorkspace(resolve(config.workspace), newWorkspace);
+    config.workspace = newWorkspace;
+    saveConfig(config);
+  }
+
   // Inject actual app URL into system prompt (works with any port)
   const appUrl = `http://127.0.0.1:${config.port}`;
   config.systemPrompt = config.systemPrompt.replace(/\{\{APP_URL\}\}/g, appUrl);
@@ -235,6 +251,35 @@ export function saveConfig(config: LAXConfig): void {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
     throw e;
   }
+}
+
+// Move files off the legacy install-dir workspace into the new Documents
+// workspace. Per-entry and non-clobbering; falls back to copy+delete when a
+// rename would cross devices. Best-effort — a failed entry is logged and
+// skipped rather than aborting startup.
+function migrateWorkspace(oldWorkspace: string, newWorkspace: string): void {
+  if (oldWorkspace === newWorkspace) return;
+  mkdirSync(newWorkspace, { recursive: true });
+  if (!existsSync(oldWorkspace)) return;
+  let moved = 0;
+  for (const entry of readdirSync(oldWorkspace)) {
+    const from = join(oldWorkspace, entry);
+    const to = join(newWorkspace, entry);
+    if (existsSync(to)) continue; // never overwrite something already at the destination
+    try {
+      renameSync(from, to);
+      moved++;
+    } catch {
+      try {
+        cpSync(from, to, { recursive: true });
+        rmSync(from, { recursive: true, force: true });
+        moved++;
+      } catch (e) {
+        logger.warn(`[config] workspace migrate skipped "${entry}": ${(e as Error).message}`);
+      }
+    }
+  }
+  if (moved) logger.info(`[config] migrated ${moved} workspace item(s): ${oldWorkspace} → ${newWorkspace}`);
 }
 
 export function getAuthPath(): string {

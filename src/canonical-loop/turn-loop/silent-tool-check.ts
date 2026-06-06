@@ -11,6 +11,15 @@ import type { ToolCall } from "../contract-types.js";
  * NOT silent — the model legitimately needs the next turn to interpret
  * the result.
  */
+
+// Fire-and-forget tools whose entire effect is a UI side-effect with no result
+// the model needs to read back. Without this, a voice turn that morphs the
+// sphere (voice_visual) was treated as needing a follow-up turn — the model
+// re-spoke its reply, so the user heard/saw it twice.
+const SILENT_FIRE_AND_FORGET_TOOLS = new Set([
+  "voice_visual",
+]);
+
 const MEMORY_WRITE_TOOLS = new Set([
   "remember",
   "update_fact",
@@ -26,6 +35,7 @@ const SILENT_BROWSER_ACTIONS = new Set([
 ]);
 
 export function isSilentToolCall(c: ToolCall): boolean {
+  if (SILENT_FIRE_AND_FORGET_TOOLS.has(c.tool)) return true;
   if (MEMORY_WRITE_TOOLS.has(c.tool)) return true;
   if (c.tool === "browser") {
     const action = (c.args as { action?: string } | null)?.action;

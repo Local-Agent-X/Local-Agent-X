@@ -13,9 +13,10 @@
  * invoked with the phase-scoped prompt.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Operation, OperationEvent, OperationPhase } from "./types.js";
+import { getRuntimeConfig } from "../config.js";
 import { decomposeGoal } from "./decomposer.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
@@ -35,6 +36,15 @@ export interface ConductorOptions {
 
 const MAX_PHASE_ATTEMPTS = 3;
 
+/** Canonical operations root: <workspace>/operations, honoring the
+ *  user-configured workspace (which the desktop migrates to ~/Documents).
+ *  All op call sites default here so they can't drift back to the old
+ *  cwd-relative location after the workspace moves. Callers may still
+ *  override via opts.workspaceDir. */
+export function defaultOperationsDir(): string {
+  return join(resolve(getRuntimeConfig().workspace), "operations");
+}
+
 function newOperationId(): string {
   return `op_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
 }
@@ -49,7 +59,7 @@ function ensureWorkspace(workspaceDir: string): void {
 
 /** Create a new Operation — decompose goal, write plan to disk, return the spec. */
 export async function createOperation(goal: string, opts: ConductorOptions = {}): Promise<Operation> {
-  const workspaceDir = opts.workspaceDir || join(process.cwd(), "workspace", "operations");
+  const workspaceDir = opts.workspaceDir || defaultOperationsDir();
   ensureWorkspace(workspaceDir);
 
   const decomp = await decomposeGoal(goal, { provider: opts.provider, model: opts.model, knownProtocols: opts.knownProtocols });

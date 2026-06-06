@@ -15,12 +15,11 @@
  * via operation_status (or the UI sidebar). This eliminates the "agent forgets
  * to chain calls" class of bug entirely.
  */
-import { join } from "node:path";
 import type { Operation } from "./types.js";
 import {
   loadOperation, writeOperation, nextPhase, buildPhasePrompt,
   markPhaseStarted, markPhaseCompleted, markPhaseFailed,
-  pauseOperation, addEvent, appendPhaseLog,
+  pauseOperation, addEvent, appendPhaseLog, defaultOperationsDir,
 } from "./conductor.js";
 
 import { createLogger } from "../logger.js";
@@ -43,7 +42,7 @@ export interface ExecutorOptions {
  * in the background and updates operation state on disk.
  */
 export function startExecutor(operationId: string, opts: ExecutorOptions = {}): void {
-  const workspaceDir = opts.workspaceDir || join(process.cwd(), "workspace", "operations");
+  const workspaceDir = opts.workspaceDir || defaultOperationsDir();
   // If already running, ignore
   if (activeExecutors.has(operationId)) return;
 
@@ -105,7 +104,7 @@ export async function awaitOperationStarted(
   operationId: string,
   opts: { workspaceDir?: string; timeoutMs?: number } = {},
 ): Promise<AwaitExecutorResult> {
-  const workspaceDir = opts.workspaceDir || join(process.cwd(), "workspace", "operations");
+  const workspaceDir = opts.workspaceDir || defaultOperationsDir();
   const timeoutMs = opts.timeoutMs ?? 5000;
   const deadline = Date.now() + timeoutMs;
   const pollMs = 100;

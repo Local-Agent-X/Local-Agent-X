@@ -11,27 +11,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { unlinkSync } from "node:fs";
 import { npmAugmentedEnv } from "../cli-path.js";
 import { writeMcpConfig } from "../mcp-config.js";
+import { disallowedTools } from "../stream-cli/cli-args.js";
 import { createLogger } from "../../logger.js";
 import type { WarmPoolKey, WarmProcess } from "./types.js";
 import { keyStr } from "./types.js";
 
 const logger = createLogger("anthropic-client.warm-pool.spawn");
-
-// Block ALL Claude Code native tools regardless of MCP/text-only mode.
-// Without this, plan mode still leaks the model into emitting Read/Bash/
-// Glob/Grep/AskUserQuestion calls — the user sees the agent "exploring"
-// their filesystem on a "hi". Local Agent X's own tools are surfaced via
-// MCP (when MCP is wired below); the native set is always off.
-const DISALLOWED_TOOLS = [
-  "Bash", "Read", "Write", "Edit", "Glob", "Grep",
-  "WebFetch", "WebSearch", "TodoWrite", "ToolSearch",
-  "NotebookEdit", "Task", "AskUserQuestion", "Skill",
-  "CronCreate", "CronDelete", "CronList",
-  "EnterPlanMode", "ExitPlanMode",
-  "EnterWorktree", "ExitWorktree",
-  "Monitor", "TaskOutput", "TaskStop",
-  "ScheduleWakeup", "PushNotification", "RemoteTrigger",
-].join(",");
 
 export interface SpawnCallbacks {
   /** Called when this process exits; pool uses it to wake waiters and
@@ -50,7 +35,7 @@ export function spawnWarmProcess(key: WarmPoolKey, callbacks: SpawnCallbacks): W
     "--no-session-persistence",
     "--permission-mode", key.permissionMode,
     "--verbose",
-    "--disallowed-tools", DISALLOWED_TOOLS,
+    "--disallowed-tools", disallowedTools(key.permissionMode === "plan").join(","),
   ];
 
   // MCP bridge wiring: required when this pool entry is bound to a chat

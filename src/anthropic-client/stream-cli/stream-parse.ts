@@ -7,6 +7,7 @@
 
 import { cleanUrls, filterStreamDelta, parseToolCalls, stripToolCallBlocks } from "../parse.js";
 import { newToolCallId } from "../request.js";
+import { NATIVE_CLI_TOOL_SET } from "./cli-args.js";
 import type { StreamEvent } from "../types.js";
 import { createLogger } from "../../logger.js";
 
@@ -106,6 +107,18 @@ export function* processStreamLine(
     for (const b of content as Array<Record<string, unknown>>) {
       if (b?.type === "tool_use" && b.name) {
         const name = String(b.name);
+        if (NATIVE_CLI_TOOL_SET.has(name)) {
+          // Native Claude tool (e.g. WebSearch): the CLI subprocess runs it and
+          // folds the tool_result into its final text. It is NOT a LAX tool, so
+          // yielding a tool_call would make the outer loop re-dispatch a tool it
+          // doesn't own → tool-map miss → default-deny → spurious BLOCKED in the
+          // model's context. Surface as activity (UI card + no-tool-fallback
+          // guard) and let the subprocess's text carry the answer.
+          logger.info(`[claude] native CLI tool (subprocess-handled): ${name}`);
+          const nativeArgs = typeof b.input === "object" && b.input ? b.input : {};
+          yield { type: "mcp_activity", name, arguments: JSON.stringify(nativeArgs) };
+          continue;
+        }
         if (name.startsWith("mcp__")) {
           logger.info(`[claude] MCP tool_use (handled via bridge): ${name}`);
           // Signal to the agent loop that tool activity happened, so its

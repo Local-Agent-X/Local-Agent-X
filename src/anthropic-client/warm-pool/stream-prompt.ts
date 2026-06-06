@@ -11,6 +11,7 @@
 import type { StreamEvent } from "../types.js";
 import { createLogger } from "../../logger.js";
 import { acquire, release } from "./pool.js";
+import { NATIVE_CLI_TOOL_SET } from "../stream-cli/cli-args.js";
 import type { WarmPoolKey } from "./types.js";
 
 const logger = createLogger("anthropic-client.warm-pool.stream");
@@ -168,7 +169,10 @@ function* processFrame(frame: Record<string, unknown>, ctx: FrameContext): Gener
       if (block?.type !== "tool_use" || typeof block.name !== "string") continue;
       const argStr = JSON.stringify(block.input ?? {});
       const name = block.name as string;
-      if (name.startsWith("mcp__")) {
+      if (NATIVE_CLI_TOOL_SET.has(name) || name.startsWith("mcp__")) {
+        // Native Claude tools (e.g. WebSearch) and MCP-bridged tools both run
+        // inside the CLI subprocess; surfacing them as a tool_call would make
+        // the outer loop re-dispatch a tool it doesn't own → spurious BLOCKED.
         yield { type: "mcp_activity", name, arguments: argStr };
       } else {
         const id = (typeof block.id === "string" && block.id) ? block.id : `${name}_${Date.now().toString(36)}`;

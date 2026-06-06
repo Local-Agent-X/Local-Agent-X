@@ -5,7 +5,7 @@
 
 import type { ToolDefinition } from "../../types.js";
 import { filterToolsForMessage } from "../tool-filter.js";
-import { classifyIntent, hasLiteralToolCall, NO_SPAWN_OVERRIDE_RE } from "../../classifiers/intent-classifier.js";
+import { classifyIntent, hasLiteralToolCall, mightNeedToolForcing, NO_SPAWN_OVERRIDE_RE } from "../../classifiers/intent-classifier.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("agent-request.prepare-request.tools");
@@ -44,7 +44,11 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   const skipClassifier =
     isBridge ||
     NO_SPAWN_OVERRIDE_RE.test(input.message) ||
-    hasLiteralToolCall(input.message);
+    hasLiteralToolCall(input.message) ||
+    // Cheap regex pre-gate: skip the LLM classifier (a 3-8s CLI round-trip on
+    // Anthropic) on ordinary conversation that can't map to a forceable
+    // intent. It returned "free"/null on those turns anyway.
+    !mightNeedToolForcing(input.message);
   if (!skipClassifier) {
     const t0 = Date.now();
     logger.info(`[step] classifyIntent START`);

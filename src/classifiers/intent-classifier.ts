@@ -179,3 +179,25 @@ export const NO_SPAWN_OVERRIDE_RE = /\b(?:don'?t|do\s*not|no)\s+(?:spawn|delegat
 export function hasLiteralToolCall(message: string): boolean {
   return /\b[a-z_][a-z0-9_]+\s*\(\s*\{/i.test(message);
 }
+
+/**
+ * Cheap pre-gate: does this message even plausibly map to one of the three
+ * forceable intents (build_app / agent_spawn / self_edit)? If not, there's
+ * nothing for the LLM classifier to do but return "free" — so skip it.
+ *
+ * Why this matters: the classifier is an LLM round-trip (on Anthropic it's a
+ * Claude-CLI call, 3-8s on Windows). Run on every turn it dominated
+ * time-to-first-token while returning "free"/null on ordinary conversation.
+ * This gate runs it ONLY when an artifact/delegation/bug signal is present.
+ *
+ * Deliberately GENEROUS — a false positive just runs the classifier (which
+ * then correctly says "free"); a false negative skips forcing on a real
+ * build/spawn/fix, but the model still has the tool and can call it itself.
+ * So when unsure, lean toward returning true.
+ */
+const TOOL_FORCING_SIGNAL_RE =
+  /\b(build|make|create|scaffold|generate|design|develop|set\s*up|spin\s*up|whip\s*up|rebuild|redesign)\b|\b(app|dashboard|page|site|website|webapp|tool|tracker|calculator|form|landing|widget|game|bot|ui)\b|\b(research|delegate|spawn|agent|worker|sub[-\s]?agent|scan|investigate|summari[sz]e|review|crawl|browse)\b|\b(broken|does\s*n'?t\s+work|do\s*n'?t\s+work|wo\s*n'?t|not\s+working|stuck|bug|glitch|crash(?:ing|es|ed)?|freeze|frozen|froze|fix|error|fails?|failing|broke)\b/i;
+
+export function mightNeedToolForcing(message: string): boolean {
+  return TOOL_FORCING_SIGNAL_RE.test(message || "");
+}

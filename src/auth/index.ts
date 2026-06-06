@@ -333,10 +333,10 @@ export function initiateOAuthLogin(): { authUrl: string; promise: Promise<OAuthT
 
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(`
-          <html><body style="background:#0a0a0f;color:#00ff41;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-            <div style="text-align:center">
-              <h1>Local Agent X</h1>
-              <p>Authentication successful. You can close this tab.</p>
+          <html><body style="background:#0a0a0f;color:#c8d0e0;font-family:'Cascadia Code','Fira Code','Consolas',monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+            <div style="text-align:center;background:linear-gradient(165deg,#131325,#0f0f18);border:1px solid #1a1a2e;border-radius:16px;padding:32px 48px;box-shadow:0 8px 60px rgba(0,0,0,.55),0 0 0 1px #30cccc88">
+              <h1 style="color:#40f0f0;letter-spacing:2px;text-shadow:0 0 12px #30cccc88;margin:0 0 8px">Local Agent X</h1>
+              <p style="margin:0">Authentication successful. <span style="color:#666680">You can close this tab.</span></p>
             </div>
           </body></html>
         `);

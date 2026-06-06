@@ -31,12 +31,15 @@ export interface ConsolidationOptions {
   consolidate?: boolean;
   /** Run reflect (default true / 7 days). A number sets the lookback days. */
   reflect?: boolean | number;
+  /** Ingest operational failures from the action ledger (default true; zero-LLM). */
+  operational?: boolean;
 }
 
 export interface ConsolidationSummary {
   extraction?: ExtractionResult;
   consolidation?: ConsolidationReport;
   reflection?: { entitiesUpdated: string[]; opinionsUpdated: number };
+  operational?: { ingested: number; scanned: number };
   elapsedMs: number;
 }
 
@@ -63,11 +66,17 @@ export async function runConsolidation(
     summary.reflection = await memory.reflect(sinceDays);
   }
 
+  if (opts.operational !== false) {
+    const { ingestOperationalOutcomes } = await import("./operational-ingest.js");
+    summary.operational = ingestOperationalOutcomes(memory);
+  }
+
   summary.elapsedMs = Date.now() - startedAt;
   logger.info(
     `[consolidation] extract=${summary.extraction?.factsExtracted ?? "-"} ` +
     `merged=${summary.consolidation?.mergedCount ?? "-"} ` +
     `reflectEntities=${summary.reflection?.entitiesUpdated.length ?? "-"} ` +
+    `opIngested=${summary.operational?.ingested ?? "-"} ` +
     `${summary.elapsedMs}ms`,
   );
   return summary;

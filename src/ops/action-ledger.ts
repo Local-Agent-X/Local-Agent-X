@@ -17,7 +17,7 @@
  * reads cheap (no global scan) and lets a session's history be dropped wholesale
  * if needed.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
@@ -49,6 +49,13 @@ const TASK_MAX_CHARS = 200;
 
 function ledgerDir(): string {
   return join(getLaxDir(), "action-log");
+}
+
+/** The directory holding per-session ledger files. Exposed so memory-side
+ *  consumers (operational-ingest) can place their own watermark state beside
+ *  the ledgers without duplicating the path. */
+export function actionLogDir(): string {
+  return ledgerDir();
 }
 
 // Session ids can contain path-hostile characters (uuids are fine, but voice
@@ -109,6 +116,40 @@ export function readSessionActions(
     logger.warn(`read failed sess=${sessionId}: ${(e as Error).message}`);
     return [];
   }
+}
+
+/**
+ * Read entries from EVERY session's ledger with ts strictly after `sinceTs`
+ * (pass "" for all), sorted oldest→newest across sessions. For cross-session
+ * consumers like operational memory consolidation. Dotfiles (e.g. a consumer's
+ * watermark state) are skipped.
+ */
+export function readAllEntriesSince(sinceTs: string): ActionLedgerEntry[] {
+  const dir = ledgerDir();
+  if (!existsSync(dir)) return [];
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter(f => f.endsWith(".jsonl") && !f.startsWith("."));
+  } catch {
+    return [];
+  }
+  const out: ActionLedgerEntry[] = [];
+  for (const f of files) {
+    try {
+      const raw = readFileSync(join(dir, f), "utf-8");
+      for (const line of raw.split("\n")) {
+        const t = line.trim();
+        if (!t) continue;
+        try {
+          const e = JSON.parse(t) as ActionLedgerEntry;
+          if (sinceTs && e.ts <= sinceTs) continue;
+          out.push(e);
+        } catch { /* skip malformed line */ }
+      }
+    } catch { /* skip unreadable file */ }
+  }
+  out.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+  return out;
 }
 
 /**

@@ -107,16 +107,19 @@ function _resolveSttProvider(tier) {
   return found || tier.sttProviders[0];
 }
 
-function _renderSttProviderPicker(tier) {
-  if (!tier?.sttProviders?.length) return '';
+// Populate the dedicated STT provider field (its own labeled .field in the
+// card, not buried in the prereq status box). Hidden for tiers that don't
+// expose an STT provider choice (Browser, Studio, Realtime).
+function _renderSttField(tier) {
+  const field = document.getElementById('voice-stt-field');
+  const sel = document.getElementById('cfg-voice-stt');
+  if (!field || !sel) return;
+  if (!tier?.sttProviders?.length) { field.style.display = 'none'; return; }
+  field.style.display = '';
   const current = _resolveSttProvider(tier)?.id || tier.sttProviders[0].id;
-  const opts = tier.sttProviders.map(p =>
+  sel.innerHTML = tier.sttProviders.map(p =>
     `<option value="${_esc(p.id)}"${p.id === current ? ' selected' : ''}>${_esc(p.label)}</option>`,
   ).join('');
-  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--border)">`
-    + `<div style="font-size:.78rem">STT provider</div>`
-    + `<select onchange="onSttProviderChange('${_esc(tier.id)}', this.value)" style="font-size:.75rem;padding:3px 6px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px">${opts}</select>`
-    + `</div>`;
 }
 
 async function onSttProviderChange(tierId, providerId) {
@@ -137,15 +140,20 @@ async function onSttProviderChange(tierId, providerId) {
 window.onSttProviderChange = onSttProviderChange;
 
 function _renderTierStatus(tier) {
-  const wrap = document.getElementById('voice-tier-status');
-  if (!wrap) return;
+  // Tier description lives under the System select as a field hint.
+  const detailEl = document.getElementById('voice-tier-detail');
+  if (detailEl) detailEl.textContent = tier?.detail || '';
+  // STT provider is a real setting — render it as its own labeled field.
+  _renderSttField(tier);
+
   // Build the effective prereqs list. For tiers with sttProviders we
   // synthesize a `secret:` prereq from the user's selected provider so the
-  // same row can show "GROQ_API_KEY · Set" or "OPENAI_API_KEY · Missing"
-  // depending on the dropdown above.
+  // same row can show "GROQ_API_KEY · Set" or "OPENAI_API_KEY · Missing".
+  // Local Whisper has no secret, so no row is added — only push when the
+  // chosen provider actually needs a key.
   const provider = _resolveSttProvider(tier);
   const effectivePrereqs = tier.prerequisites.slice();
-  if (provider) {
+  if (provider && provider.secret) {
     effectivePrereqs.push({
       kind: `secret:${provider.secret}`,
       label: `${provider.secret} (for STT)`,
@@ -158,9 +166,17 @@ function _renderTierStatus(tier) {
     status.className = 'status-badge ' + (allOk ? 'ok' : 'warn');
     status.innerHTML = `<span class="status-dot"></span> ${allOk ? 'Ready: ' : 'Setup needed: '}${_esc(tier.label)}`;
   }
+
+  // Prerequisites panel — diagnostics only, parked at the bottom of the card
+  // under a clear header so it reads as status, not configuration.
+  const wrap = document.getElementById('voice-tier-status');
+  if (!wrap) return;
+  if (!effectivePrereqs.length) { wrap.innerHTML = ''; return; }
   const rows = effectivePrereqs.map((p, i) => _renderPrereqRow(p, i, tier.id)).join('');
-  const sttPicker = _renderSttProviderPicker(tier);
-  wrap.innerHTML = `<div style="margin-top:10px;padding:10px 12px;background:var(--surface);border-radius:8px;border:1px solid var(--border)"><div style="font-size:.74rem;color:var(--muted);margin-bottom:4px">${_esc(tier.detail)}</div>${rows}${sttPicker}</div>`;
+  wrap.innerHTML = `<div style="margin-top:6px;padding:10px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border)">`
+    + `<div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Prerequisites</div>`
+    + rows
+    + `</div>`;
 }
 
 async function onTierPrereqAction(tierId, action, target, btn) {

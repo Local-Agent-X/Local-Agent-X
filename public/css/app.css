@@ -462,11 +462,14 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
      breakpoint — no auto-fit, so cards never reflow/jump on resize. */
 .tab-pane{display:none;max-width:860px;margin:0 auto}
 .tab-pane.active{display:block}
-/* Media: 6 varied cards in a fixed 2-col grid (start-aligned — cards differ,
-   so ragged bottoms read as normal). */
+/* Media: 6 varied cards of differing heights. A row-based grid leaves big
+   gaps under the short cards, so use a masonry-style 2-column layout — cards
+   flow down column 1 then column 2 and the browser balances the split, so a
+   tall card (Voice System) sits at the top with no dead space below the short
+   ones. break-inside:avoid keeps each card whole. */
 #stab-image.tab-pane{max-width:1280px}
-#stab-image.tab-pane.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
-#stab-image .section-card{margin-bottom:0}
+#stab-image.tab-pane.active{display:block;columns:2;column-gap:16px}
+#stab-image .section-card{margin:0 0 16px;break-inside:avoid;-webkit-column-break-inside:avoid}
 /* Communications: two mirrored bridge cards, equal height (stretch) so the
    pair lines up cleanly. Future channels wrap into the 2-col grid. */
 #stab-whatsapp.tab-pane{max-width:1280px}
@@ -479,7 +482,7 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 /* Collapse the fixed 2-col grid tabs to a single column on narrow viewports
    (one breakpoint, so cards drop cleanly instead of reflowing column count). */
 @media (max-width:900px){
-  #stab-image.tab-pane.active,
+  #stab-image.tab-pane.active{columns:1}
   #stab-whatsapp.tab-pane.active{grid-template-columns:1fr}
   #integrations-list{grid-template-columns:1fr}
 }

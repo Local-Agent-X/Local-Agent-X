@@ -14,7 +14,7 @@
 <script src="/vendor/highlightjs/highlight.min.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb9"/>
+<link rel="stylesheet" href="/css/app.css?v=vb10"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
      Import map lets `import * as THREE from 'three'` resolve cleanly in
@@ -389,19 +389,32 @@
       </div>
       <!-- Image & Video -->
       <div id="stab-image" class="tab-pane">
+        <!-- ─── SPEECH ─── (Voice System + Input lead; media generation follows) -->
         <div class="section-card">
-          <div class="section-title">Image Generation</div>
-          <div id="img-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div class="field"><label class="field-label">Default Engine</label><select class="field-select" id="cfg-image-engine"><option value="sd-local">Stable Diffusion (Local GPU)</option><option value="comfyui">ComfyUI (Local)</option><option value="dalle">DALL-E (OpenAI API)</option><option value="none">None</option></select></div>
-          <div class="toggle-row"><div><div class="toggle-label">Prefer Grok for media</div><div class="toggle-desc">Use xAI Grok Imagine for image &amp; video whenever xAI is connected — even when your chat provider is something else. The model can still override per message (e.g. "make this with DALL-E").</div></div><div id="cfg-toggle-grok-media" class="toggle on" onclick="toolPolicyToggle('preferGrokForMedia', this)"></div></div>
-          <div class="btn-row"><button class="action-btn primary" onclick="checkServer('image')">Check Server</button><button class="action-btn secondary" onclick="startServer('image')">Start SD Server</button></div>
+          <div class="section-title">Voice System</div>
+          <div class="section-desc">Pick the system that produces the agent's speech and listens to your mic. Prerequisites — install or start — appear at the bottom of this card; no separate setup panel.</div>
+          <div id="voice-engine-status" class="status-badge warn"><span class="status-dot"></span> Loading…</div>
+          <div class="field"><label class="field-label">System</label><select class="field-select" id="cfg-voice-tier" onchange="onTierChange(this.value)"><option value="">Loading…</option></select><div class="field-hint" id="voice-tier-detail"></div></div>
+          <div class="field" id="voice-stt-field" style="display:none"><label class="field-label">Speech-to-text</label><select class="field-select" id="cfg-voice-stt" onchange="onSttProviderChange(document.getElementById('cfg-voice-tier').value, this.value)"></select></div>
+          <div class="field-row">
+            <div class="field"><label class="field-label">Voice</label><select class="field-select" id="cfg-voice-voice" onchange="onVoicePickChange(this.value)"><option value="">Loading…</option></select></div>
+            <div class="field" style="max-width:140px"><label class="field-label">Speed</label><input class="field-input" id="cfg-voice-speed" type="number" step="0.05" min="0.5" max="2" placeholder="1.15" onchange="onVoiceSpeedChange(this.value)"/><div class="field-hint">0.5–2.0</div></div>
+          </div>
+          <div id="voice-tier-status"></div>
+          <div id="voice-tier4-options" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+            <div style="font-family:var(--mono);font-size:.65rem;color:var(--accent);letter-spacing:1px;margin-bottom:8px">ADVANCED — IN-PROCESS DEVICE</div>
+            <div class="field-row">
+              <div class="field"><label class="field-label">TTS device</label><select class="field-select" id="cfg-voice-tier4-device" onchange="onTier4SettingChange('voiceTier4Device', this.value)"><option value="">Auto</option><option value="cpu">CPU</option><option value="dml">DirectML (GPU)</option><option value="cuda">CUDA (GPU)</option></select></div>
+              <div class="field"><label class="field-label">TTS dtype</label><select class="field-select" id="cfg-voice-tier4-dtype" onchange="onTier4SettingChange('voiceTier4Dtype', this.value)"><option value="">Auto</option><option value="fp32">fp32</option><option value="fp16">fp16</option><option value="q8">q8</option><option value="q4">q4</option></select></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label class="field-label">Whisper model</label><select class="field-select" id="cfg-voice-whisper-model" onchange="onTier4SettingChange('voiceWhisperModel', this.value)"><option value="">Auto (tiny.en)</option><option value="tiny.en">tiny.en (fastest)</option><option value="base.en">base.en</option><option value="small.en">small.en (best)</option></select></div>
+              <div class="field"><label class="field-label">Whisper device</label><select class="field-select" id="cfg-voice-whisper-device" onchange="onTier4SettingChange('voiceWhisperDevice', this.value)"><option value="">Auto</option><option value="cpu">CPU</option><option value="dml">DirectML (GPU)</option><option value="cuda">CUDA (GPU)</option></select></div>
+            </div>
+            <input type="hidden" id="cfg-voice-tier4-voice" value=""/>
+            <input type="hidden" id="cfg-voice-tier4-speed" value=""/>
+          </div>
         </div>
-        <div class="section-card">
-          <div class="section-title">Video Generation</div>
-          <div id="vid-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div class="btn-row"><button class="action-btn primary" onclick="checkServer('video')">Check Server</button><button class="action-btn secondary" onclick="startServer('video')">Start Video Server</button></div>
-        </div>
-        <!-- ─── SPEECH ─── (STT + TTS + sidecar tier status all adjacent) -->
         <div class="section-card">
           <div class="section-title">Voice Input</div>
           <div class="section-desc">How the mic is gated during a voice session. Off = always-on (VAD-driven). Push-to-talk = mic open only while a key is held. Toggle = tap to start/stop.</div>
@@ -419,29 +432,18 @@
             <div class="field-hint">Default Space. Avoid keys you use during normal typing.</div>
           </div>
         </div>
+        <!-- ─── MEDIA GENERATION ─── -->
         <div class="section-card">
-          <div class="section-title">Voice System</div>
-          <div class="section-desc">Pick the system that produces the agent's speech and listens to your mic. Each option lists what it needs — install or start prerequisites right here, no separate setup panel.</div>
-          <div id="voice-engine-status" class="status-badge warn"><span class="status-dot"></span> Loading…</div>
-          <div class="field"><label class="field-label">System</label><select class="field-select" id="cfg-voice-tier" onchange="onTierChange(this.value)"><option value="">Loading…</option></select></div>
-          <div id="voice-tier-status"></div>
-          <div class="field-row" style="margin-top:14px">
-            <div class="field"><label class="field-label">Voice</label><select class="field-select" id="cfg-voice-voice" onchange="onVoicePickChange(this.value)"><option value="">Loading…</option></select></div>
-            <div class="field" style="max-width:140px"><label class="field-label">Speed</label><input class="field-input" id="cfg-voice-speed" type="number" step="0.05" min="0.5" max="2" placeholder="1.15" onchange="onVoiceSpeedChange(this.value)"/><div class="field-hint">0.5–2.0</div></div>
-          </div>
-          <div id="voice-tier4-options" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-            <div style="font-family:var(--mono);font-size:.65rem;color:var(--accent);letter-spacing:1px;margin-bottom:8px">ADVANCED — IN-PROCESS DEVICE</div>
-            <div class="field-row">
-              <div class="field"><label class="field-label">TTS device</label><select class="field-select" id="cfg-voice-tier4-device" onchange="onTier4SettingChange('voiceTier4Device', this.value)"><option value="">Auto</option><option value="cpu">CPU</option><option value="dml">DirectML (GPU)</option><option value="cuda">CUDA (GPU)</option></select></div>
-              <div class="field"><label class="field-label">TTS dtype</label><select class="field-select" id="cfg-voice-tier4-dtype" onchange="onTier4SettingChange('voiceTier4Dtype', this.value)"><option value="">Auto</option><option value="fp32">fp32</option><option value="fp16">fp16</option><option value="q8">q8</option><option value="q4">q4</option></select></div>
-            </div>
-            <div class="field-row">
-              <div class="field"><label class="field-label">Whisper model</label><select class="field-select" id="cfg-voice-whisper-model" onchange="onTier4SettingChange('voiceWhisperModel', this.value)"><option value="">Auto (tiny.en)</option><option value="tiny.en">tiny.en (fastest)</option><option value="base.en">base.en</option><option value="small.en">small.en (best)</option></select></div>
-              <div class="field"><label class="field-label">Whisper device</label><select class="field-select" id="cfg-voice-whisper-device" onchange="onTier4SettingChange('voiceWhisperDevice', this.value)"><option value="">Auto</option><option value="cpu">CPU</option><option value="dml">DirectML (GPU)</option><option value="cuda">CUDA (GPU)</option></select></div>
-            </div>
-            <input type="hidden" id="cfg-voice-tier4-voice" value=""/>
-            <input type="hidden" id="cfg-voice-tier4-speed" value=""/>
-          </div>
+          <div class="section-title">Image Generation</div>
+          <div id="img-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
+          <div class="field"><label class="field-label">Default Engine</label><select class="field-select" id="cfg-image-engine"><option value="sd-local">Stable Diffusion (Local GPU)</option><option value="comfyui">ComfyUI (Local)</option><option value="dalle">DALL-E (OpenAI API)</option><option value="none">None</option></select></div>
+          <div class="toggle-row"><div><div class="toggle-label">Prefer Grok for media</div><div class="toggle-desc">Use xAI Grok Imagine for image &amp; video whenever xAI is connected — even when your chat provider is something else. The model can still override per message (e.g. "make this with DALL-E").</div></div><div id="cfg-toggle-grok-media" class="toggle on" onclick="toolPolicyToggle('preferGrokForMedia', this)"></div></div>
+          <div class="btn-row"><button class="action-btn primary" onclick="checkServer('image')">Check Server</button><button class="action-btn secondary" onclick="startServer('image')">Start SD Server</button></div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Video Generation</div>
+          <div id="vid-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
+          <div class="btn-row"><button class="action-btn primary" onclick="checkServer('video')">Check Server</button><button class="action-btn secondary" onclick="startServer('video')">Start Video Server</button></div>
         </div>
         <div class="section-card">
           <div class="section-title">Bridge Voice (Telegram &amp; WhatsApp)</div>
@@ -1154,7 +1156,7 @@
 <!-- voice-picker split: core defines the `let` cache vars + _esc that
      the other two read from shared script scope, so it must load first. -->
 <script src="/js/voice-picker.js?v=v7"></script>
-<script src="/js/voice-picker-prereqs.js?v=v1"></script>
+<script src="/js/voice-picker-prereqs.js?v=v2"></script>
 <script src="/js/voice-picker-options.js?v=v1"></script>
 <script src="/js/secrets.js"></script>
 <!-- Missions modules. cron.js owns shared state (cronJobs, selectedJob, …)

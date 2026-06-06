@@ -6,14 +6,21 @@ document.addEventListener('click', (e) => {
   const href = link.getAttribute('href');
   if (!href) return;
 
+  // Text/doc formats the server serves inline (md/txt/json/pdf/images/…) open
+  // in-app via the /files/ URL. Only true binaries (Office formats) go to the
+  // desktop opener, which hands them to their native app. Without this split,
+  // Electron sent every link to the OS default app — e.g. macOS opening a .md
+  // README in Xcode.
+  const ext = (href.split('?')[0].split('.').pop() || '').toLowerCase();
+  const inlineable = ['md', 'markdown', 'txt', 'json', 'csv', 'pdf', 'html', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
   const isElectron = window.desktop?.isDesktop;
 
-  if (isElectron && window.desktop?.openFile) {
-    // In Electron: ask main process to open the file directly from disk
+  if (isElectron && window.desktop?.openFile && !inlineable.includes(ext)) {
     const filename = href.split('/files/')[1]?.split('?')[0];
     if (filename) window.desktop.openFile('workspace/' + decodeURIComponent(filename));
   } else {
-    // Browser: open in new tab (server sends Content-Disposition: attachment for docs)
+    // Browser, or an inlineable file in Electron: open the /files/ URL so the
+    // content renders instead of launching an external editor.
     window.open(href, '_blank');
   }
 });

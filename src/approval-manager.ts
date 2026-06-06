@@ -122,6 +122,34 @@ function cacheKey(toolName: string, args: Record<string, unknown>): string {
   return `${toolName}::${computeArgsFingerprint(toolName, args)}`;
 }
 
+// Exact-args key for in-flight coalescing and decline suppression. Unlike
+// cacheKey (which uses the COARSE risk fingerprint so an auto-approve grant
+// covers a whole dir/host), this keys on the full canonical args — declining
+// delete_file(a.json) must NOT suppress the card for delete_file(b.json) in
+// the same dir. Keyed per-session so one session's declines never leak to
+// another.
+function canonicalArgs(args: Record<string, unknown>): string {
+  try {
+    const keys = Object.keys(args).sort();
+    const ordered: Record<string, unknown> = {};
+    for (const k of keys) ordered[k] = args[k];
+    return JSON.stringify(ordered);
+  } catch {
+    return "";
+  }
+}
+
+function exactKey(sessionId: string, toolName: string, args: Record<string, unknown>): string {
+  return `${sessionId}::${toolName}::${canonicalArgs(args)}`;
+}
+
+// How long a decline/timeout suppresses an IDENTICAL re-issue. The retry
+// storm collapses in milliseconds once repeats resolve instantly, so this is
+// just a GC backstop for non-chat runs (agent/cron) that don't call
+// clearDeclines at a turn boundary. Chat turns reset declines per user turn,
+// so a deliberate re-request after the model gives up still prompts.
+const DECLINE_SUPPRESS_MS = 60_000;
+
 // Irreversible / hard-to-undo shell operations that must ALWAYS be confirmed,
 // regardless of how relaxed the autonomy profile is and without being
 // remembered for the session. The profile decides the *default* posture; this
@@ -194,7 +222,21 @@ class ApprovalManager {
   private pending = new Map<string, PendingApproval>();
   // session → Set of tool names auto-approved for this session
   private sessionAutoApprove = new Map<string, Set<string>>();
+  // exactKey → the in-flight approval promise, so a duplicate identical call
+  // (e.g. the model emitting delete_file(x) twice in one parallel turn) shares
+  // ONE card instead of stacking a second.
+  private inflight = new Map<string, Promise<boolean>>();
+  // exactKey → timestamp of the last decline/timeout. A re-issue of the same
+  // call is auto-declined without a new card until the entry is cleared (next
+  // user turn) or ages past DECLINE_SUPPRESS_MS.
+  private declined = new Map<string, number>();
   private nextId = 1;
+
+  private gcDeclined(now: number): void {
+    for (const [k, ts] of this.declined) {
+      if (now - ts > DECLINE_SUPPRESS_MS) this.declined.delete(k);
+    }
+  }
 
   /**
    * Request approval. Returns a promise that resolves to true (approved) or false (denied/timeout).
@@ -224,9 +266,25 @@ class ApprovalManager {
       if (auto?.has(cacheKey(opts.toolName, opts.args))) return true;
     }
 
+    // Decline suppression + in-flight coalescing, keyed on EXACT args. Stops
+    // the runaway where a declined/timed-out destructive call (delete_file)
+    // gets re-issued every model round, spawning a fresh card each time and
+    // keeping the turn alive (so "STREAMING" never clears). A re-issue of an
+    // identical, recently-declined call is auto-declined silently; an
+    // identical call already awaiting a decision rides the same card.
+    const ekey = exactKey(opts.sessionId, opts.toolName, opts.args);
+    const now = Date.now();
+    this.gcDeclined(now);
+    const declinedAt = this.declined.get(ekey);
+    if (declinedAt !== undefined && now - declinedAt < DECLINE_SUPPRESS_MS) {
+      return false;
+    }
+    const existing = this.inflight.get(ekey);
+    if (existing) return existing;
+
     const id = `apr-${this.nextId++}-${Date.now()}`;
 
-    return new Promise<boolean>((resolve) => {
+    const promise = new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(id)) {
           opts.emit({ type: "approval_timeout", approvalId: id, toolName: opts.toolName, toolCallId: opts.toolCallId });
@@ -246,6 +304,23 @@ class ApprovalManager {
         preview: opts.preview,
       });
     });
+
+    this.inflight.set(ekey, promise);
+    void promise.then((approved) => {
+      this.inflight.delete(ekey);
+      if (!approved) this.declined.set(ekey, Date.now());
+      else this.declined.delete(ekey);
+    });
+    return promise;
+  }
+
+  /** Clear decline-suppression for a session. Called at each user-turn start
+   *  so a deliberate re-request after the model gave up still prompts. */
+  clearDeclines(sessionId: string): void {
+    const prefix = `${sessionId}::`;
+    for (const k of this.declined.keys()) {
+      if (k.startsWith(prefix)) this.declined.delete(k);
+    }
   }
 
   /** Called when user clicks Approve / Deny / Always allow in UI. */
@@ -269,6 +344,7 @@ class ApprovalManager {
   /** Clear auto-approvals for a session (e.g. session ended). */
   clearSession(sessionId: string): void {
     this.sessionAutoApprove.delete(sessionId);
+    this.clearDeclines(sessionId);
     // Deny any still-pending approvals for this session
     for (const [id, p] of this.pending) {
       if (p.sessionId === sessionId) {

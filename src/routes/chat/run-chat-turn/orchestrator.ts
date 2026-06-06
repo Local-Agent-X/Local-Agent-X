@@ -54,6 +54,13 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
 
   message = await expandSlash(message, sessionId);
 
+  // Fresh user turn → drop any decline-suppression from the prior turn's tool
+  // loop, so a deliberate re-request ("yes, delete it") prompts normally.
+  try {
+    const { getApprovalManager } = await import("../../../approval-manager.js");
+    getApprovalManager().clearDeclines(sessionId);
+  } catch {}
+
   // Wait for any in-flight write from a prior turn to land before reading
   // session state. Without this, a fast next-turn (e.g. user types "yes"
   // while the prior turn's saveSession is still queued) can race the LRU

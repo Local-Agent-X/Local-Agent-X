@@ -158,13 +158,20 @@ export function evaluateFileAccess(
       }
     }
 
-    // Block all writes to platform source — src/ and public/ are the platform itself
-    // Users build custom apps via the apps system, not by editing platform files
-    const isPlatformFile = /[/\\](src|public)[/\\]/i.test(resolved) || /[/\\](src|public)[/\\]/i.test(realPath);
-    if (isPlatformFile) {
+    // Block writes to the LAX platform's own source. <repoRoot>/src and
+    // <repoRoot>/public ARE the platform — but the check is anchored to the
+    // repo root, NOT a bare "/src/" substring. User apps live under workspace/
+    // and legitimately use a src/ convention (Astro mandates src/pages/; Vite,
+    // Next, Vue, SvelteKit all use src/) — those must NOT be caught. workspace/
+    // is the user-app sandbox; everything else under the repo is platform.
+    const projectRoot = resolve(workspace, "..");
+    const inWorkspace = !relative(workspace, realPath).startsWith("..");
+    const inPlatform = !relative(projectRoot, realPath).startsWith("..");
+    const touchesSrcOrPublic = /[/\\](src|public)[/\\]/i.test(realPath);
+    if (inPlatform && !inWorkspace && touchesSrcOrPublic) {
       return {
         allowed: false,
-        reason: `Blocked: cannot modify platform files (src/ or public/). Use app_create to build custom apps instead.`,
+        reason: `Blocked: cannot modify platform files (src/ or public/). Build apps under workspace/ instead.`,
         userHint: USER_HINTS.secrets,
       };
     }

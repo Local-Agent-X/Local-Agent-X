@@ -110,6 +110,17 @@ describe("AgentCatalog soft-resolution fallback", () => {
     expect(member!.id).toBe(memberTpl.id);
   });
 
+  it("get() resolves by display name, case-insensitively (orchestrator guesses the label)", () => {
+    const cat = AgentCatalog.getInstance();
+    // A model that passes the human label "cat-mbr-…" instead of the role
+    // slug must still resolve the same agent — this kills the cosmetic
+    // 'No agent definition found' failure + retry.
+    const byName = cat.get(memberTpl.name, { projectId: project.id });
+    expect(byName?.id).toBe(memberTpl.id);
+    const byLoudName = cat.get(memberTpl.name.toUpperCase(), { projectId: project.id });
+    expect(byLoudName?.id).toBe(memberTpl.id);
+  });
+
   it("get() still returns undefined when nothing in the catalog matches", () => {
     const cat = AgentCatalog.getInstance();
     expect(cat.get("totally-unknown-role-xyz", { projectId: project.id })).toBeUndefined();

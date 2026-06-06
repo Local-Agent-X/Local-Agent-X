@@ -35,6 +35,7 @@ export class OTAManager {
   private historyPath: string;
   private backupDir: string;
   private updatesDir: string;
+  private installedCommitPath: string;
   private repoOwner: string;
   private repoName: string;
 
@@ -49,6 +50,56 @@ export class OTAManager {
     this.historyPath = join(this.laxDir, "update-history.json");
     this.backupDir = join(this.laxDir, "backups");
     this.updatesDir = join(this.laxDir, "updates");
+    this.installedCommitPath = join(this.laxDir, "installed-source.json");
+  }
+
+  // ── Rolling channel (tarball installs that track `main`) ──
+  //
+  // A git checkout knows its commit via `git rev-parse`; a tarball install
+  // doesn't, so we record the commit we last applied here and compare it to
+  // remote main HEAD to decide "is there an update".
+
+  async readInstalledCommit(): Promise<string | null> {
+    try {
+      const raw = await readFile(this.installedCommitPath, "utf-8");
+      const v = JSON.parse(raw) as { commit?: string };
+      return v.commit || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async writeInstalledCommit(commit: string): Promise<void> {
+    await this.init();
+    await writeFile(
+      this.installedCommitPath,
+      JSON.stringify({ commit, updatedAt: new Date().toISOString() }, null, 2),
+      "utf-8"
+    );
+  }
+
+  // Remote main HEAD via the unauthenticated commits API — the same public
+  // reachability the installer's tarball download already depends on.
+  async checkMainCommit(): Promise<{ commit: string; subject: string }> {
+    const url = `https://api.github.com/repos/${this.repoOwner}/${this.repoName}/commits/main`;
+    const r = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
+    if (!r.ok) throw new Error(`GitHub API error: ${r.status}`);
+    const data = (await r.json()) as { sha: string; commit?: { message?: string } };
+    return { commit: data.sha, subject: (data.commit?.message || "").split("\n")[0] };
+  }
+
+  // Download the latest `main` source tarball. Unlike downloadUpdate (release
+  // assets, checksum-verified), main publishes no SHA256SUMS — integrity rests
+  // on HTTPS plus the extract. Returns the local tarball path for applyUpdate.
+  async downloadMainTarball(): Promise<string> {
+    await this.init();
+    const url = `https://github.com/${this.repoOwner}/${this.repoName}/archive/refs/heads/main.tar.gz`;
+    const r = await fetch(url, { redirect: "follow" });
+    if (!r.ok) throw new Error(`Download failed: ${r.status}`);
+    const buffer = Buffer.from(await r.arrayBuffer());
+    const tarPath = join(this.updatesDir, `main-${Date.now()}.tar.gz`);
+    await writeFile(tarPath, buffer);
+    return tarPath;
   }
 
   async init(): Promise<void> {
@@ -147,10 +198,12 @@ export class OTAManager {
     installDir: string,
     currentVersion: string
   ): Promise<void> {
-    // backup current version
+    // backup current version. Skip node_modules/.git and our own state dirs:
+    // node_modules is regenerable and copying it can be hundreds of MB, which
+    // would make an in-place update hang; rollback reinstalls deps anyway.
     const backupPath = join(this.backupDir, `${currentVersion}-${Date.now()}`);
     await mkdir(backupPath, { recursive: true });
-    await this.copyDirectory(installDir, backupPath);
+    await this.copyDirectory(installDir, backupPath, new Set(["node_modules", ".git", "backups", "updates"]));
 
     // extract update
     const extractDir = join(this.updatesDir, `extract-${Date.now()}`);
@@ -251,15 +304,16 @@ export class OTAManager {
     }
   }
 
-  private async copyDirectory(src: string, dest: string): Promise<void> {
+  private async copyDirectory(src: string, dest: string, skip?: Set<string>): Promise<void> {
     const { readdir } = await import("node:fs/promises");
     await mkdir(dest, { recursive: true });
     const entries = await readdir(src, { withFileTypes: true });
     for (const entry of entries) {
+      if (skip && skip.has(entry.name)) continue;
       const srcPath = join(src, entry.name);
       const destPath = join(dest, entry.name);
       if (entry.isDirectory()) {
-        await this.copyDirectory(srcPath, destPath);
+        await this.copyDirectory(srcPath, destPath, skip);
       } else {
         await copyFile(srcPath, destPath);
       }

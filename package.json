@@ -1,6 +1,6 @@
 {
   "name": "local-agent-x",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "description": "Personal AI agent with voice conversation, runtime security, and free OpenAI subscription access",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Peter Manrique",

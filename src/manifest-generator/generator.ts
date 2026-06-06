@@ -26,7 +26,7 @@ export function generateManifest(): AppManifest {
     apps: scanApps(),
     configFiles: scanConfigFiles(),
     bridges: ["WhatsApp", "Telegram"],
-    integrations: ["Google (Gmail, Calendar, Drive, YouTube)", "GitHub", "Slack", "Discord", "Twitter/X", "Facebook", "Instagram", "Spotify", "eBay", "Notion", "Email (SMTP)"],
+    integrations: ["Google (Gmail, Calendar, Drive, YouTube)", "GitHub", "Slack", "Discord", "X", "Facebook", "Instagram", "Spotify", "eBay", "Notion", "Email (SMTP)"],
   };
   return manifest;
 }

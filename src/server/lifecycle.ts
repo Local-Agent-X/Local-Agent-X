@@ -226,10 +226,14 @@ export async function setupVoiceWs(deps: {
           tools: voiceTools,
           security, toolPolicy, rbac,
           sessionId,
-          // 2 iterations when visuals are on: 1 for the optional voice_visual
-          // tool call, 1 for the spoken reply continuation. The cooldown +
-          // per-turn cap inside the tool prevents runaway loops.
-          maxIterations: visualsEnabled ? 2 : 1,
+          // Single turn, always. The old 2-iteration mode (1 for the optional
+          // voice_visual call, 1 for the "spoken reply continuation") made the
+          // model emit a FULL spoken reply in BOTH iterations — they streamed
+          // back to back and showed/spoke the reply twice. The model emits its
+          // reply text and the optional voice_visual call in one turn; the tool
+          // still dispatches within that turn (fire-and-forget — its result
+          // doesn't inform the reply), so visuals keep working without the dupe.
+          maxIterations: 1,
           temperature: prepared.temperature,
           signal,
           onEvent,

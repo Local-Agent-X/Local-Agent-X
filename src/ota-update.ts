@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile, readFile, rm, copyFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
 import { getLaxDir } from "./lax-data-dir.js";
 
@@ -198,14 +198,7 @@ export class OTAManager {
     installDir: string,
     currentVersion: string
   ): Promise<void> {
-    // backup current version. Skip node_modules/.git and our own state dirs:
-    // node_modules is regenerable and copying it can be hundreds of MB, which
-    // would make an in-place update hang; rollback reinstalls deps anyway.
-    const backupPath = join(this.backupDir, `${currentVersion}-${Date.now()}`);
-    await mkdir(backupPath, { recursive: true });
-    await this.copyDirectory(installDir, backupPath, new Set(["node_modules", ".git", "backups", "updates"]));
-
-    // extract update
+    // Extract first so we can back up exactly what this update will overwrite.
     const extractDir = join(this.updatesDir, `extract-${Date.now()}`);
     await mkdir(extractDir, { recursive: true });
 
@@ -218,6 +211,15 @@ export class OTAManager {
         `tar xzf "${tarPath}" -C "${extractDir}" --strip-components=1`,
       ]);
     }
+
+    // Back up ONLY the install files this update overwrites — never the whole
+    // install dir. For desktop builds the install dir IS the Electron userData
+    // dir, so a whole-dir copy hits Singleton sockets/lock files (copyfile
+    // ENOENT on SingletonCookie) and gigabytes of cache. The overlapping
+    // source is all we need to roll back.
+    const backupPath = join(this.backupDir, `${currentVersion}-${Date.now()}`);
+    await mkdir(backupPath, { recursive: true });
+    await this.backupOverlap(extractDir, installDir, backupPath);
 
     // apply extracted files over install dir
     await this.copyDirectory(extractDir, installDir);
@@ -304,19 +306,42 @@ export class OTAManager {
     }
   }
 
-  private async copyDirectory(src: string, dest: string, skip?: Set<string>): Promise<void> {
+  private async copyDirectory(src: string, dest: string): Promise<void> {
     const { readdir } = await import("node:fs/promises");
     await mkdir(dest, { recursive: true });
     const entries = await readdir(src, { withFileTypes: true });
     for (const entry of entries) {
-      if (skip && skip.has(entry.name)) continue;
       const srcPath = join(src, entry.name);
       const destPath = join(dest, entry.name);
       if (entry.isDirectory()) {
-        await this.copyDirectory(srcPath, destPath, skip);
+        await this.copyDirectory(srcPath, destPath);
       } else {
         await copyFile(srcPath, destPath);
       }
     }
+  }
+
+  // Back up only the install files an update will overwrite — i.e. the paths
+  // present in the freshly-extracted tarball. Walks the extract, and for each
+  // file copies the CURRENT install version into the backup. Install-only
+  // files (node_modules, caches, Electron userData state, sockets) are never
+  // touched because the tarball doesn't contain them.
+  private async backupOverlap(extractDir: string, installDir: string, backupPath: string): Promise<void> {
+    const { readdir, stat } = await import("node:fs/promises");
+    const walk = async (rel: string): Promise<void> => {
+      const entries = await readdir(join(extractDir, rel), { withFileTypes: true });
+      for (const entry of entries) {
+        const childRel = rel ? join(rel, entry.name) : entry.name;
+        if (entry.isDirectory()) { await walk(childRel); continue; }
+        const installFile = join(installDir, childRel);
+        try {
+          if (!(await stat(installFile)).isFile()) continue;
+          const dest = join(backupPath, childRel);
+          await mkdir(dirname(dest), { recursive: true });
+          await copyFile(installFile, dest);
+        } catch { /* not present in install (new file) — nothing to roll back */ }
+      }
+    };
+    await walk("");
   }
 }

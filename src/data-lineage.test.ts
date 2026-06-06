@@ -9,6 +9,7 @@ import {
   clearSessionTaint,
   isSensitivePath,
   detectSecretsInOutput,
+  redactSecretSpans,
 } from "./data-lineage.js";
 import { runSandboxedPhase } from "./tool-execution/run-sandboxed.js";
 import type { ToolCallContext } from "./tool-execution/context.js";
@@ -270,6 +271,53 @@ describe("detectSecretsInOutput — negative cases", () => {
   });
 });
 
+describe("openai-key pattern precision (false-positive that bricked agent runs)", () => {
+  it("does NOT match a hyphenated slug from a public page", () => {
+    // Real OpenAI keys have a contiguous base62 body; the old pattern allowed
+    // inner `-`/`_`, so a product slug tripped it and tainted the whole run.
+    const res = detectSecretsInOutput("order code sk-supplement-formula-2026-batch-xyz here");
+    expect(res.matched).toBe(false);
+  });
+
+  it("still matches a real legacy key shape", () => {
+    const res = detectSecretsInOutput("sk-" + "Ab12".repeat(6));
+    expect(res.kinds).toContain("openai-key");
+  });
+
+  it("still matches a project-scoped key shape", () => {
+    const res = detectSecretsInOutput("sk-proj-" + "Ab12".repeat(8));
+    expect(res.kinds).toContain("openai-key");
+  });
+});
+
+describe("redactSecretSpans — surgical inline redaction for untrusted inbound content", () => {
+  it("replaces the secret span with a marker and keeps surrounding text", () => {
+    const body = "Trends report. Contact AKIAIOSFODNN7EXAMPLE for access. The end.";
+    const red = redactSecretSpans(body);
+    expect(red.matched).toBe(true);
+    expect(red.kinds).toContain("aws-access-key");
+    expect(red.text).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(red.text).toContain("[redacted-secret:aws-access-key]");
+    // The non-secret content survives — the whole page isn't discarded.
+    expect(red.text).toContain("Trends report.");
+    expect(red.text).toContain("The end.");
+  });
+
+  it("redacts every occurrence, not just the first", () => {
+    const body = `a AKIA0000000000000000 b AKIA1111111111111111 c`;
+    const red = redactSecretSpans(body);
+    expect(red.text).not.toMatch(/AKIA\d/);
+    expect(red.text.match(/\[redacted-secret:aws-access-key\]/g)?.length).toBe(2);
+  });
+
+  it("passes benign content through unchanged", () => {
+    const body = "Creatine and collagen demand rose in Q2 2026.";
+    const red = redactSecretSpans(body);
+    expect(red.matched).toBe(false);
+    expect(red.text).toBe(body);
+  });
+});
+
 describe("detectSecretsInOutput — 256KB cap", () => {
   it("does not detect a secret pattern past the 256KB cap", () => {
     const filler = "x".repeat(300_000);
@@ -315,19 +363,12 @@ describe("secret-taint integration", () => {
     expect(checkEgressTaint("test-end-to-end").blocked).toBe(true);
   });
 
-  it("end-to-end via http result: openai-key shape taints session", () => {
-    clearSessionTaint("test-http-e2e");
-    expect(checkEgressTaint("test-http-e2e").blocked).toBe(false);
-
-    const fakeBody = `{"key":"sk-abc123xyz456789012345"}`;
-    const det = detectSecretsInOutput(fakeBody);
-    expect(det.matched).toBe(true);
-    if (det.matched) {
-      recordSensitiveRead("test-http-e2e", "secret", `http_request:${det.kinds.join(",")}`);
-    }
-    const egress = checkEgressTaint("test-http-e2e");
-    expect(egress.blocked).toBe(true);
-    expect(egress.reason).toMatch(/openai-key/);
+  it("owned-source read still taints when recorded (primitive unchanged)", () => {
+    clearSessionTaint("test-owned-e2e");
+    expect(checkEgressTaint("test-owned-e2e").blocked).toBe(false);
+    // Owned sources (local fs / bash / sql) still taint via the primitive.
+    recordSensitiveRead("test-owned-e2e", "secret", "bash:aws-access-key");
+    expect(checkEgressTaint("test-owned-e2e").blocked).toBe(true);
   });
 });
 
@@ -456,6 +497,66 @@ describe("run-sandboxed redacts result content when taint fires", () => {
     expect(ctx.result!.status).toBe("blocked");
     expect(ctx.result!.metadata?.redacted).toBe(true);
     expect(checkEgressTaint(sessionId).blocked).toBe(true);
+  });
+
+  // The run-killer fix: a secret-shaped span in UNTRUSTED INBOUND web content
+  // must be redacted from the model's view but must NOT discard the whole page
+  // or taint the session's egress (a coincidental `sk-…`/AKIA on a trade page
+  // previously bricked every downstream tool call for the run).
+  it("web_fetch with a secret-shaped span: span redacted inline, page kept, NO taint", async () => {
+    const secret = "AKIA0000000000000000";
+    const fetchStub: ToolDefinition = {
+      name: "web_fetch",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() {
+        return { content: `Supplement market grew. Ref ${secret}. Collagen up 12%.`, isError: false };
+      },
+    };
+    const sessionId = "web-fetch-inbound";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({
+      name: "web_fetch",
+      args: { url: "https://example-trade-site.com/report" },
+      tool: fetchStub,
+      sessionId,
+    });
+
+    await runSandboxedPhase(ctx);
+
+    expect(ctx.result).toBeDefined();
+    // Secret stripped from the model's view...
+    expect(ctx.result!.content).not.toContain(secret);
+    expect(ctx.result!.content).toContain("[redacted-secret:aws-access-key]");
+    // ...but the rest of the page survives (not blanket-redacted to a stub)...
+    expect(ctx.result!.content).toContain("Collagen up 12%");
+    expect(ctx.result!.status).not.toBe("blocked");
+    // ...and egress is NOT tainted — downstream search/fetch still work.
+    expect(checkEgressTaint(sessionId).blocked).toBe(false);
+  });
+
+  it("benign web_fetch passes through unchanged", async () => {
+    const fetchStub: ToolDefinition = {
+      name: "web_fetch",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() {
+        return { content: "Creatine and collagen demand rose in Q2 2026.", isError: false };
+      },
+    };
+    const sessionId = "web-fetch-benign";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({
+      name: "web_fetch",
+      args: { url: "https://example.com" },
+      tool: fetchStub,
+      sessionId,
+    });
+
+    await runSandboxedPhase(ctx);
+    expect(ctx.result?.content).toContain("Creatine and collagen");
+    expect(ctx.result?.status).not.toBe("blocked");
+    expect(checkEgressTaint(sessionId).blocked).toBe(false);
   });
 
   it("benign sql_query output passes through unchanged", async () => {

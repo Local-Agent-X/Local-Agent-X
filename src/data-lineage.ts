@@ -204,7 +204,10 @@ const SECRET_SCAN_CAP = 256 * 1024;
 // generic openai pattern so the more specific kind wins for `sk-ant-...`.
 const SECRET_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
   { kind: "anthropic-key", re: /sk-ant-[A-Za-z0-9_-]{20,}/ },
-  { kind: "openai-key", re: /sk-(?!ant-)[A-Za-z0-9_-]{20,}/ },
+  // Real OpenAI keys are a typed prefix + a CONTIGUOUS base62 body (no inner
+  // `-`/`_`). The old `[A-Za-z0-9_-]{20,}` matched any hyphenated slug
+  // (`sk-supplement-formula-001-batch`), bricking agent runs on public pages.
+  { kind: "openai-key", re: /sk-(?!ant-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9]{20,}/ },
   { kind: "aws-access-key", re: /AKIA[0-9A-Z]{16}/ },
   { kind: "github-pat", re: /ghp_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{82,}/ },
   { kind: "slack-token", re: /xox[abp]-[A-Za-z0-9-]{10,}/ },
@@ -247,6 +250,36 @@ export function detectSecretsInOutput(text: string): { matched: boolean; kinds: 
   }
 
   return { matched: kinds.size > 0, kinds: [...kinds] };
+}
+
+/**
+ * Redact secret-shaped substrings IN PLACE, returning the cleaned text + kinds.
+ *
+ * Unlike {@link detectSecretsInOutput} (report-only, caller taints the session),
+ * this surgically replaces each matched span with `[redacted-secret:<kind>]` so
+ * the surrounding content survives. Used for UNTRUSTED INBOUND content
+ * (web_fetch / http_request bodies): a secret-shaped span there is coincidental
+ * or an injection attempt, not a secret this system owns — so we strip it from
+ * the model's view (no echo/exfil) WITHOUT discarding the whole page or tainting
+ * egress. Owned-secret reads (local fs / bash / sql) keep the heavier
+ * detect→taint→full-redact path.
+ */
+export function redactSecretSpans(text: string): { text: string; matched: boolean; kinds: string[] } {
+  if (!text || typeof text !== "string") return { text: text ?? "", matched: false, kinds: [] };
+  // Bounded scan, mirroring detectSecretsInOutput: redact within the cap, pass
+  // the tail through unchanged (a missed secret past 256KB is the accepted edge).
+  const head = text.length > SECRET_SCAN_CAP ? text.slice(0, SECRET_SCAN_CAP) : text;
+  const tail = text.length > SECRET_SCAN_CAP ? text.slice(SECRET_SCAN_CAP) : "";
+  let out = head;
+  const kinds = new Set<string>();
+  const redactWith = (re: RegExp, kind: string) => {
+    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+    out = out.replace(g, () => { kinds.add(kind); return `[redacted-secret:${kind}]`; });
+  };
+  for (const { kind, re } of SECRET_PATTERNS) redactWith(re, kind);
+  redactWith(AWS_SECRET_LINE_RE, "aws-secret");
+  redactWith(KEYWORD_NEAR_VALUE_RE, "keyword-near-value");
+  return { text: out + tail, matched: kinds.size > 0, kinds: [...kinds] };
 }
 
 /**

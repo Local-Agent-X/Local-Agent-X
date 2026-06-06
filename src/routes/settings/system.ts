@@ -122,7 +122,28 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
       let localCommit = "";
       try { localCommit = execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }).trim(); }
       catch {
-        json(200, { localVersion, localCommit: "", remoteVersion: localVersion, remoteCommit: "", updateAvailable: false, releaseNotes: "", error: "Not a git checkout — auto-update unavailable." });
+        // Not a git checkout (installed/tarball build) — fall back to the
+        // rolling channel: compare the last-installed commit to remote main
+        // HEAD. The very first check before any in-app update has no recorded
+        // commit, so we optimistically report an update is available.
+        try {
+          const { OTAManager } = await import("../../ota-update.js");
+          const ota = new OTAManager();
+          const installed = await ota.readInstalledCommit();
+          const { commit, subject } = await ota.checkMainCommit();
+          const updateAvailable = installed ? installed !== commit : true;
+          json(200, {
+            localVersion,
+            localCommit: installed ? installed.slice(0, 7) : "",
+            remoteVersion: localVersion,
+            remoteCommit: commit.slice(0, 7),
+            updateAvailable,
+            releaseNotes: subject,
+            rolling: true,
+          });
+        } catch (e) {
+          json(200, { localVersion, localCommit: "", remoteVersion: localVersion, remoteCommit: "", updateAvailable: false, releaseNotes: "", error: safeErrorMessage(e) });
+        }
         return true;
       }
       const now = Date.now();
@@ -176,7 +197,29 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
       // brick their install — refuse it loudly instead of failing mid-pull.
       let fromCommit = "";
       try { fromCommit = execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }).trim(); }
-      catch { json(400, { ok: false, error: "Not a git repository — auto-update needs a git checkout. Reinstall from GitHub to enable updates." }); return true; }
+      catch {
+        // Not a git checkout — rolling/tarball install. Re-download main and
+        // apply via OTAManager (backup → extract over the install dir →
+        // record the new commit). The desktop relaunches to finish.
+        try {
+          const { OTAManager } = await import("../../ota-update.js");
+          const ota = new OTAManager();
+          const installed = (await ota.readInstalledCommit()) || "";
+          const { commit } = await ota.checkMainCommit();
+          if (installed && installed === commit) {
+            json(200, { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), output: "Already up to date." });
+            return true;
+          }
+          const tarPath = await ota.downloadMainTarball();
+          await ota.applyUpdate(tarPath, repoRoot, installed || "rolling");
+          await ota.writeInstalledCommit(commit);
+          _updateCache = null;
+          json(200, { ok: true, fromCommit: installed ? installed.slice(0, 7) : "", toCommit: commit.slice(0, 7), output: "Updated from main — relaunch to finish.", rolling: true });
+        } catch (e) {
+          json(500, { ok: false, error: safeErrorMessage(e) });
+        }
+        return true;
+      }
       const dirty = execSync("git status --porcelain", { cwd: repoRoot, encoding: "utf-8" }).trim();
       if (dirty) {
         json(409, { ok: false, error: "Local changes detected. Commit or stash before updating.", dirty: dirty.split("\n").slice(0, 10) });

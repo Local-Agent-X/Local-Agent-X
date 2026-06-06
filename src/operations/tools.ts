@@ -14,20 +14,19 @@
  * prompt, executes it via its normal tool loop, and calls operation_advance
  * when done.
  */
-import { join } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import {
   createOperation, loadOperation, listOperations,
   nextPhase, buildPhasePrompt, markPhaseStarted, markPhaseCompleted,
   markPhaseFailed, pauseOperation, cancelOperation, appendPhaseLog,
-  statusSummary,
+  statusSummary, defaultOperationsDir,
 } from "./conductor.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("operations.tools");
 
 function workspaceDir(): string {
-  return join(process.cwd(), "workspace", "operations");
+  return defaultOperationsDir();
 }
 
 export function createOperationTools(): ToolDefinition[] {

@@ -26,15 +26,18 @@
  *     reason matches /idle|stalled|stop/i; otherwise drains silently.
  *   - Idle processes evict after 30 minutes; bounded resource use.
  *
- * Behind `LAX_CLAUDE_WARM_POOL=1`. When unset, callers fall back to the
- * per-request `streamViaCliWithTools` path unchanged.
+ * Default ON. Cold-spawning the Claude CLI on every call is the dominant
+ * Anthropic latency, especially on Windows (~2-5s per spawn) — it hit the
+ * classifier AND every chat turn. Opt OUT with `LAX_CLAUDE_WARM_POOL=0`
+ * (falls back to the per-request `streamViaCliWithTools` cold-spawn path).
  *
  * Helpers split into ./warm-pool/* — this file is the public surface.
  */
 
 export function isWarmPoolEnabled(): boolean {
   const raw = (process.env.LAX_CLAUDE_WARM_POOL ?? "").trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+  // Default-on: only an explicit falsey opt-out disables it.
+  return !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
 }
 
 export { streamViaWarmPool } from "./warm-pool/stream-prompt.js";

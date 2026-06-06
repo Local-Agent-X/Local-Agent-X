@@ -48,16 +48,14 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   if (!skipClassifier) {
     const t0 = Date.now();
     logger.info(`[step] classifyIntent START`);
-    // The classifier inherits the user's CHAT model by default. On Anthropic
-    // that means Opus classifies a one-word verdict in ~6s — the single
-    // largest chunk of pre-model latency (measured 2026-06-06). Pin Sonnet
-    // for Anthropic classification only: 4× faster, no quality loss on a
-    // 4-way label, same provider (no cross-provider regression), and Sonnet
-    // is allowed under the no-Haiku-for-classifiers rule. Other providers
-    // already classify in 1.5-2.5s, so leave them on their selected model.
-    const classifyModelOverride =
-      input.resolvedProvider === "anthropic" ? "claude-sonnet-4-6" : undefined;
-    try { intentVerdict = await classifyIntent(input.message, { model: classifyModelOverride }); }
+    // Uses the user's selected provider+model. We tried pinning Sonnet on
+    // Anthropic to cut classify latency (2026-06-06) but it returned null
+    // (the CLI Sonnet path produced unparseable output) AND wasn't faster —
+    // the real Anthropic cost was the cold CLI spawn, since fixed by
+    // defaulting the warm pool on (warm-pool.ts). Reverted to the selected
+    // model so verdicts are valid; the warm pool keeps the classify process
+    // hot after its first call.
+    try { intentVerdict = await classifyIntent(input.message); }
     catch (e) { logger.info(`[intent] classifier threw — skipping: ${(e as Error).message}`); }
     logger.info(`[step] classifyIntent ${Date.now() - t0}ms verdict=${intentVerdict?.kind || "null"}`);
   }

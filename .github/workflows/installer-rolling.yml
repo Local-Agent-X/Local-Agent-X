@@ -145,6 +145,13 @@ jobs:
           mkdir -p "$MOUNT_DIR"
           hdiutil attach "$RW_DMG" -mountpoint "$MOUNT_DIR" -nobrowse
           ditto "$APP_PATH" "$MOUNT_DIR/$(basename "$APP_PATH")"
+          # Brand the mounted volume with the LAX icon. .VolumeIcon.icns lives
+          # inside the image filesystem, so it survives signing, notarization,
+          # and HTTP download — unlike a custom icon on the .dmg *file*, which
+          # is stored in an extended attribute GitHub strips on download.
+          cp installer/mac-bundle/icon.icns "$MOUNT_DIR/.VolumeIcon.icns"
+          SetFile -c icnC "$MOUNT_DIR/.VolumeIcon.icns" || true
+          SetFile -a C "$MOUNT_DIR" || true
           hdiutil detach "$MOUNT_DIR"
           hdiutil convert "$RW_DMG" -format UDZO -ov -o "$DMG_PATH"
           rm -f "$RW_DMG"

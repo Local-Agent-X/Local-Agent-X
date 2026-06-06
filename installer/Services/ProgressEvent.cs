@@ -14,6 +14,7 @@ public class ProgressEvent
     [JsonPropertyName("message")] public string? Message { get; set; }
     [JsonPropertyName("level")] public string? Level { get; set; }
     [JsonPropertyName("line")] public string? Line { get; set; }
+    [JsonPropertyName("percent")] public int? Percent { get; set; }
 }
 
 public class StepPlan

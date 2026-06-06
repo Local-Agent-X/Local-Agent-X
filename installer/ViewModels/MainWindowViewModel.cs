@@ -27,6 +27,13 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string _logText = "";
     [ObservableProperty] private string _errorMessage = "";
 
+    // Live progress bar. While a step runs we show an indeterminate (pulsing)
+    // bar — most steps (npm install, tsc, electron-builder) have no clean
+    // percentage. When install-common.mjs streams a {type:"progress"} event
+    // (ollama's model pull does), we flip to determinate and track the value.
+    [ObservableProperty] private double _progressValue;
+    [ObservableProperty] private bool _progressIndeterminate = true;
+
     // Computed flags for XAML IsVisible bindings — CommunityToolkit's
     // [ObservableProperty] doesn't auto-fire dependent props, so we notify
     // them manually in OnScreenChanged.
@@ -215,6 +222,10 @@ public partial class MainWindowViewModel : ObservableObject
                     {
                         CurrentStepLabel = step.Label;
                         CurrentStepDetail = evt.Detail ?? "";
+                        // New step: pulse indeterminately until/unless it
+                        // streams a real percentage.
+                        ProgressIndeterminate = true;
+                        ProgressValue = 0;
                     }
                     if (evt.State == "error")
                     {
@@ -222,6 +233,14 @@ public partial class MainWindowViewModel : ObservableObject
                     }
                     break;
                 }
+
+            case "progress":
+                if (evt.Percent is int pct)
+                {
+                    ProgressIndeterminate = false;
+                    ProgressValue = Math.Clamp(pct, 0, 100);
+                }
+                break;
 
             case "log":
                 _log.AppendLine($"[{evt.Level ?? "info"}] {evt.Line}");

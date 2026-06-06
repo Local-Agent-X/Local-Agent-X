@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { Session } from "../types.js";
+import { setSessionProject } from "../session/project.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.session-helpers");
@@ -47,7 +48,14 @@ export function createSessionHelpers(deps: {
     let s = sessions.get(id);
     if (s) { sessions.delete(id); sessions.set(id, s); return s; }
     s = sessionStore.load(id) ?? undefined;
-    if (s) { sessions.set(id, s); if (sessions.size > maxCached) sessions.delete(sessions.keys().next().value!); return s; }
+    if (s) {
+      // Seed the in-memory project map from the durable field so agent_*
+      // spawns auto-scope even on a cold session (heartbeat/scheduled runs
+      // that never replay an incoming msg.projectId). The map is a cache of
+      // this field; the chat turn refreshes it from the live request.
+      if (s.projectId) setSessionProject(s.id, s.projectId);
+      sessions.set(id, s); if (sessions.size > maxCached) sessions.delete(sessions.keys().next().value!); return s;
+    }
     s = { id, title: "New Chat", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
     sessions.set(id, s); if (sessions.size > maxCached) sessions.delete(sessions.keys().next().value!); return s;
   }

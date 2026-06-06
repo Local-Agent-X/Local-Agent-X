@@ -15,7 +15,7 @@ async function syncChatsFromServer() {
   try {
     const res = await fetch(`${API}/api/sessions`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     if (!res.ok) return;
-    const serverList = await res.json(); // [{id, title, updatedAt, messageCount}]
+    const serverList = await res.json(); // [{id, title, updatedAt, messageCount, projectId}]
 
     const localMap = new Map(chats.map(c => [c.id, c]));
     const merged = [];
@@ -40,6 +40,10 @@ async function syncChatsFromServer() {
         const hasTruncated = local.messages && local.messages.some(m => m._truncated || (typeof m.content === 'string' && m.content.length >= 9_900));
         if (!isStreamingNow && (listTruncated || hasTruncated)) local._needsHydrate = true;
         local.serverBacked = true; // confirmed present on the server this sync
+        // Heal a local copy that lost its projectId (older cache, or a prior
+        // sync that dropped it) from the server's now-durable value. Local is
+        // at-or-newer, so don't overwrite an existing local projectId.
+        if (srv.projectId && !local.projectId) local.projectId = srv.projectId;
         merged.push(local);
       } else {
         // Server is newer or session is server-only. Build a metadata stub —
@@ -54,8 +58,12 @@ async function syncChatsFromServer() {
           _needsHydrate: true,
           serverBacked: true, // present in the server list this sync
         };
+        // Server's projectId is now durable and authoritative; fall back to
+        // the local value only for sessions saved before the backend tracked
+        // it. This is the fix for the sync-drops-projectId bug that silently
+        // unscoped project chats.
+        stub.projectId = srv.projectId || (local && local.projectId) || undefined;
         if (local) {
-          stub.projectId = local.projectId;
           stub.compactedAt = local.compactedAt;
           if (local.archived) stub.archived = true;
         }
@@ -139,8 +147,10 @@ async function hydrateChat(chat) {
     const res = await fetch(`${API}/api/sessions/${chat.id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     if (!res.ok) { delete chat._needsHydrate; return; }
     const session = await res.json();
-    // Preserve client-only fields the server doesn't know about.
-    session.projectId = chat.projectId;
+    // projectId is now server-durable: prefer the local value (may be a fresh
+    // move not yet synced), fall back to the server's so a null local can't
+    // wipe the binding. compactedAt stays client-only.
+    session.projectId = chat.projectId || session.projectId;
     session.compactedAt = chat.compactedAt;
     if (chat.archived) session.archived = true;
     // Mutate in place so the activeChat pointer (and any closures holding it)

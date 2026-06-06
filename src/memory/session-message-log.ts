@@ -37,6 +37,7 @@ export interface SessionMetaRow {
   title: string;
   createdAt: number;
   updatedAt: number;
+  projectId?: string;
 }
 
 export interface SessionMessageRow {
@@ -155,6 +156,7 @@ export function readSessionLog(dir: string, id: string): Session | null {
     title: meta.title,
     createdAt: meta.createdAt,
     updatedAt: meta.updatedAt,
+    ...(meta.projectId ? { projectId: meta.projectId } : {}),
     messages: projectedMessages,
   };
 }
@@ -271,6 +273,7 @@ export function writeSessionLog(dir: string, session: Session): void {
     title: session.title,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    ...(session.projectId ? { projectId: session.projectId } : {}),
   };
 
   const lines: string[] = [JSON.stringify(meta)];

@@ -64,6 +64,15 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   const session = ctx.getOrCreateSession(sessionId);
   if (session.messages.length === 0) session.title = message.slice(0, 60) + (message.length > 60 ? "..." : "");
 
+  // Persist the chat→project link onto the durable session so it survives
+  // client-side sync and seeds future cold loads. The in-memory map (set
+  // above) is the live read surface; this is its durable backing. Mirror the
+  // request exactly — a chat moved out of a project clears it.
+  {
+    const pid = typeof projectId === "string" && projectId ? projectId : undefined;
+    if (session.projectId !== pid) { session.projectId = pid; void ctx.saveSession(session); }
+  }
+
   let doneEmitted = false;
   let lockHeld = false;
   let onEventInstalled = false;

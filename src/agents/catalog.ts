@@ -173,13 +173,23 @@ export class AgentCatalog {
    *  ("tpl-..." or "builtin-researcher"). Both must work during the
    *  migration. Id wins on ambiguity. */
   get(idOrRole: string, scope?: InvokeScope): AgentDefinition | undefined {
+    // id / role match exactly; display name matches case-insensitively so an
+    // orchestrator that guesses "Supplement Trends Researcher" resolves the
+    // same agent as the "supplement-trends-researcher" slug. id/role win.
+    const name = idOrRole.trim().toLowerCase();
+    const match = (d: AgentDefinition) =>
+      d.id === idOrRole || d.role === idOrRole || d.name?.trim().toLowerCase() === name;
     const scoped = this.list(scope);
-    const hit = scoped.find((d) => d.id === idOrRole) ?? scoped.find((d) => d.role === idOrRole);
+    const hit = scoped.find((d) => d.id === idOrRole)
+      ?? scoped.find((d) => d.role === idOrRole)
+      ?? scoped.find(match);
     if (hit) return hit;
     if (!scope) return undefined; // already searched the full catalog
     // Soft fallback: resolve against the full, unscoped catalog so a
     // missing/empty/non-member project can't block a legitimate spawn.
     const all = this.list();
-    return all.find((d) => d.id === idOrRole) ?? all.find((d) => d.role === idOrRole);
+    return all.find((d) => d.id === idOrRole)
+      ?? all.find((d) => d.role === idOrRole)
+      ?? all.find(match);
   }
 }

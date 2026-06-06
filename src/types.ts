@@ -222,6 +222,14 @@ export interface Session {
   /** Message index at which the fork was taken */
   forkAtIndex?: number;
   /**
+   * Project this chat is nested under, if any. Durable home for the
+   * chat→project link (previously client-localStorage-only, which made it
+   * fragile across sync). Seeds the in-memory currentProjectBySession map
+   * so agent_* spawns from this chat auto-scope to the project roster +
+   * its per-project model override. Absent = not in a project.
+   */
+  projectId?: string;
+  /**
    * Compaction lives as a leading `{role:"system", content:"[COMPACTED CONTEXT — …]"}`
    * entry in `messages` (round-tripped through a `summary` row in the
    * jsonl log). `compactedSummary` / `compactedAt` no longer exist as

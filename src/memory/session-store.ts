@@ -32,7 +32,7 @@ export class SessionStore {
   private dir: string;
   private metadataCache = new Map<
     string,
-    { id: string; title: string; updatedAt: number; messageCount: number }
+    { id: string; title: string; updatedAt: number; messageCount: number; projectId?: string }
   >();
 
   constructor(dataDir: string) {
@@ -52,6 +52,7 @@ export class SessionStore {
       title: session.title,
       updatedAt: session.updatedAt,
       messageCount: session.messages.length,
+      projectId: session.projectId,
     });
     this.saveMetadataCache();
   }
@@ -71,7 +72,7 @@ export class SessionStore {
     return readSessionLogForUI(this.dir, id);
   }
 
-  list(): Array<{ id: string; title: string; updatedAt: number; messageCount: number }> {
+  list(): Array<{ id: string; title: string; updatedAt: number; messageCount: number; projectId?: string }> {
     return [...this.metadataCache.values()].sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
@@ -95,6 +96,7 @@ export class SessionStore {
           title: string;
           updatedAt: number;
           messageCount: number;
+          projectId?: string;
         }>;
         for (const entry of entries) {
           this.metadataCache.set(entry.id, entry);
@@ -117,6 +119,7 @@ export class SessionStore {
         title: session.title,
         updatedAt: session.updatedAt,
         messageCount: session.messages.length,
+        projectId: session.projectId,
       });
     }
     this.saveMetadataCache();

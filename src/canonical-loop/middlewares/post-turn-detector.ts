@@ -11,13 +11,17 @@
  * behavior (model sees the nudge on the next turn), just plumbed through
  * op_messages instead of a layer.
  */
-import type { CanonicalMiddleware } from "./types.js";
+import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 
 const RETRY_COUNTERS_KEY = "post-turn-detector-counters";
 
 export const postTurnDetectorMiddleware: CanonicalMiddleware = {
   name: "post-turn-detector",
+
+  // Worker-only: the commit/act/blocker nudges leak into interactive replies
+  // (and get spoken in voice). See isWorkerOp.
+  when: isWorkerOp,
 
   async afterModelCall(ctx) {
     const { runPostTurnDetectors, computeEvidenceCount, userMessageHasImages, createRetryCounters, countEnumeratedSteps } =

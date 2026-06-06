@@ -1,61 +1,53 @@
 import { describe, it, expect } from "vitest";
 import { composeDigest } from "./situational-awareness.js";
-import type { OpTurnRow } from "../types.js";
+import type { LedgerAction } from "../../ops/action-ledger.js";
 
-function turn(tools: Array<[string, "ok" | "error" | "cancelled"]>, usage?: { in: number; out: number }): OpTurnRow {
-  return {
-    opId: "op1",
-    turnIdx: 0,
-    providerState: {
-      adapterName: "anthropic",
-      adapterVersion: "1",
-      providerPayload: usage ? { usageInputTokens: usage.in, usageOutputTokens: usage.out } : {},
-    },
-    toolCallSummary: tools.map(([tool, resultStatus]) => ({ tool, argsHash: "h", resultStatus, durationMs: 1 })),
-    terminalReason: "done",
-    redirectConsumed: false,
-    createdAt: "2026-06-06T00:00:00Z",
-  };
+function acts(...pairs: Array<[string, "ok" | "error" | "cancelled"]>): LedgerAction[] {
+  return pairs.map(([tool, status]) => ({ tool, status }));
 }
 
 describe("composeDigest", () => {
-  it("turn 0 returns null (fresh request, nothing to summarize)", () => {
-    expect(composeDigest({ turnIdx: 0, turns: [], firstUserText: "x" })).toBeNull();
+  it("returns null when there's nothing useful (turn 0, no recent actions)", () => {
+    expect(composeDigest({ turnIdx: 0, totalTokens: 0, recent: [], firstUserText: "x" })).toBeNull();
   });
 
-  it("always includes a pace line once past turn 0", () => {
-    const d = composeDigest({ turnIdx: 1, turns: [], firstUserText: "" });
+  it("shows recent actions even at turn 0 (fresh message / voice utterance)", () => {
+    const d = composeDigest({ turnIdx: 0, totalTokens: 0, recent: acts(["edit", "ok"]), firstUserText: "" });
+    expect(d).toContain("Recent actions");
+    expect(d).toContain("edit✓");
+    expect(d).not.toContain("Turn 1"); // pace suppressed at turn 0
+  });
+
+  it("includes a pace line once past turn 0", () => {
+    const d = composeDigest({ turnIdx: 1, totalTokens: 0, recent: [], firstUserText: "" });
     expect(d).toContain("Turn 2 of this request");
   });
 
-  it("summarizes recent tool actions with outcome marks", () => {
+  it("summarizes recent cross-conversation actions with outcome marks", () => {
     const d = composeDigest({
       turnIdx: 2,
-      turns: [turn([["edit", "ok"]]), turn([["bash", "error"]])],
+      totalTokens: 0,
+      recent: acts(["edit", "ok"], ["bash", "error"], ["web_search", "cancelled"]),
       firstUserText: "",
     });
-    expect(d).toContain("Recent actions: edit✓, bash✗");
+    expect(d).toContain("edit✓, bash✗, web_search⊘");
   });
 
-  it("sums token usage across turns into the pace line", () => {
-    const d = composeDigest({
-      turnIdx: 2,
-      turns: [turn([], { in: 1000, out: 500 }), turn([], { in: 2000, out: 1500 })],
-      firstUserText: "",
-    });
+  it("renders the token total in the pace line", () => {
+    const d = composeDigest({ turnIdx: 2, totalTokens: 5000, recent: [], firstUserText: "" });
     expect(d).toContain("~5k tokens used so far");
   });
 
   it("omits the goal restatement until the request has scrolled away", () => {
-    const early = composeDigest({ turnIdx: 2, turns: [], firstUserText: "build the thing" });
+    const early = composeDigest({ turnIdx: 2, totalTokens: 0, recent: [], firstUserText: "build the thing" });
     expect(early).not.toContain("Original request");
-    const late = composeDigest({ turnIdx: 6, turns: [], firstUserText: "build the thing" });
+    const late = composeDigest({ turnIdx: 6, totalTokens: 0, recent: [], firstUserText: "build the thing" });
     expect(late).toContain('Original request: "build the thing"');
   });
 
   it("clips a long goal restatement", () => {
     const long = "a".repeat(300);
-    const d = composeDigest({ turnIdx: 6, turns: [], firstUserText: long });
+    const d = composeDigest({ turnIdx: 6, totalTokens: 0, recent: [], firstUserText: long });
     expect(d).toContain("…");
     expect(d!.length).toBeLessThan(300);
   });

@@ -96,6 +96,13 @@ export const plugins: ToolPlugin[] = [
     },
   },
   {
+    id: "readMyLogs",
+    async register(ctx) {
+      const { createReadMyLogsTool } = await import("./read-my-logs-tool.js");
+      return [createReadMyLogsTool(() => ctx.activeBrowserSessionIdRef.value)];
+    },
+  },
+  {
     id: "voiceVisual",
     async register() {
       const { createVoiceVisualTool } = await import("../voice/voice-visual-tool.js");

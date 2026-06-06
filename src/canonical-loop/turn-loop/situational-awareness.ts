@@ -6,19 +6,21 @@
  * re-reading the whole conversation. Three things the replayed history does
  * NOT surface compactly:
  *
- *   - Recent actions + outcomes — which tools ran the last few turns and
- *     whether they succeeded. The raw tool_result rows are verbose and easy
- *     to lose; this is the one-line receipt.
- *   - Pace / budget — how deep into the op we are and roughly how many tokens
- *     it has burned. Lets the model self-pace instead of looping blind.
- *   - Goal restatement — on long ops the original request has scrolled far
+ *   - Recent actions + outcomes — which tools ran recently and whether they
+ *     succeeded. Sourced from the action ledger (ops/action-ledger.ts), so it
+ *     spans the last few CONVERSATION messages, not just the current request's
+ *     tool-iteration turns.
+ *   - Pace / budget — how deep into the current request we are and roughly how
+ *     many tokens it has burned. Lets the model self-pace instead of looping
+ *     blind. Stays per-request (per-op).
+ *   - Goal restatement — on long requests the original ask has scrolled far
  *     back; a one-liner keeps it anchored. Skipped early when it's still
  *     visible right above.
  *
- * The digest is EPHEMERAL: built fresh each turn from op_turns/op_messages and
- * prepended to the turn's last user message in build-input.ts. It is never
- * written to op_messages, so it does not accumulate across turns and the
- * persisted transcript / UI never sees it.
+ * The digest is EPHEMERAL: built fresh each turn and prepended to the turn's
+ * last user message in build-input.ts. It is never written to op_messages, so
+ * it does not accumulate across turns and the persisted transcript / UI never
+ * sees it.
  *
  * Capability awareness is deliberately NOT here: the adapter already ships the
  * full tool surface (TurnInput.tools) to the model every turn, so a "tools you
@@ -27,9 +29,11 @@
 import type { Op } from "../../ops/types.js";
 import { readOpTurns, readOpMessages } from "../store.js";
 import type { OpTurnRow } from "../types.js";
+import { getSessionForOp } from "../../ops/session-bridge.js";
+import { recentActions, type LedgerAction } from "../../ops/action-ledger.js";
 
-// How many recent turns to summarize in the "recent actions" line.
-const RECENT_TURNS = 5;
+// Max recent tool actions to surface in the recent-actions line.
+const RECENT_ACTIONS_CAP = 8;
 // Below this turn index the original request is still visible just above, so a
 // goal restatement is noise. At/after it the request has scrolled away.
 const GOAL_RESTATE_AFTER_TURN = 6;
@@ -40,32 +44,33 @@ const CLOSE = "[END CONTEXT]";
 
 /**
  * Build the digest block for `op` at `turnIdx`, or null when there is nothing
- * worth saying (turn 0 — no history yet, fresh request right there). Does the
- * disk reads, then defers to the pure `composeDigest`.
+ * worth saying. Does the disk reads, then defers to the pure `composeDigest`.
  */
 export function buildSituationalAwareness(op: Op, turnIdx: number): string | null {
-  if (turnIdx <= 0) return null;
-  const turns = readOpTurns(op.id);
+  const sessionId = getSessionForOp(op.id) ?? "";
+  const recent = sessionId ? recentActions(sessionId, RECENT_ACTIONS_CAP) : [];
+  const totalTokens = sumTokens(readOpTurns(op.id));
   const firstUserText =
     turnIdx >= GOAL_RESTATE_AFTER_TURN ? firstUserMessageText(op.id) : "";
-  return composeDigest({ turnIdx, turns, firstUserText });
+  return composeDigest({ turnIdx, totalTokens, recent, firstUserText });
 }
 
 /** Pure digest formatter — no IO, so it's unit-testable. */
 export function composeDigest(input: {
   turnIdx: number;
-  turns: OpTurnRow[];
+  totalTokens: number;
+  recent: LedgerAction[];
   firstUserText: string;
 }): string | null {
-  const { turnIdx, turns, firstUserText } = input;
-  if (turnIdx <= 0) return null;
-
+  const { turnIdx, totalTokens, recent, firstUserText } = input;
   const lines: string[] = [];
 
-  lines.push(paceLine(turnIdx, turns));
+  // Pace only earns its line once we're past the first model turn of the
+  // request — "Turn 1" is noise.
+  if (turnIdx >= 1) lines.push(paceLine(turnIdx, totalTokens));
 
-  const recent = recentActionsLine(turns);
-  if (recent) lines.push(recent);
+  const recentLine = recentActionsLine(recent);
+  if (recentLine) lines.push(recentLine);
 
   if (turnIdx >= GOAL_RESTATE_AFTER_TURN) {
     const goal = goalLine(firstUserText);
@@ -76,32 +81,30 @@ export function composeDigest(input: {
   return [OPEN, ...lines, CLOSE].join("\n");
 }
 
-function paceLine(turnIdx: number, turns: OpTurnRow[]): string {
-  let inTok = 0;
-  let outTok = 0;
+function sumTokens(turns: OpTurnRow[]): number {
+  let total = 0;
   for (const t of turns) {
     const p = t.providerState?.providerPayload as
       | { usageInputTokens?: number; usageOutputTokens?: number }
       | undefined;
-    if (typeof p?.usageInputTokens === "number") inTok += p.usageInputTokens;
-    if (typeof p?.usageOutputTokens === "number") outTok += p.usageOutputTokens;
+    if (typeof p?.usageInputTokens === "number") total += p.usageInputTokens;
+    if (typeof p?.usageOutputTokens === "number") total += p.usageOutputTokens;
   }
-  const total = inTok + outTok;
-  const tokenPart = total > 0 ? ` · ~${Math.round(total / 1000)}k tokens used so far` : "";
+  return total;
+}
+
+function paceLine(turnIdx: number, totalTokens: number): string {
+  const tokenPart = totalTokens > 0 ? ` · ~${Math.round(totalTokens / 1000)}k tokens used so far` : "";
   return `Turn ${turnIdx + 1} of this request${tokenPart}.`;
 }
 
-function recentActionsLine(turns: OpTurnRow[]): string | null {
-  const recent = turns.slice(-RECENT_TURNS);
-  const parts: string[] = [];
-  for (const t of recent) {
-    for (const c of t.toolCallSummary ?? []) {
-      const mark = c.resultStatus === "ok" ? "✓" : c.resultStatus === "error" ? "✗" : "⊘";
-      parts.push(`${c.tool}${mark}`);
-    }
-  }
-  if (parts.length === 0) return null;
-  return `Recent actions: ${parts.join(", ")}`;
+function recentActionsLine(recent: LedgerAction[]): string | null {
+  if (recent.length === 0) return null;
+  const parts = recent.map(a => {
+    const mark = a.status === "ok" ? "✓" : a.status === "error" ? "✗" : "⊘";
+    return `${a.tool}${mark}`;
+  });
+  return `Recent actions (across this conversation): ${parts.join(", ")}`;
 }
 
 function firstUserMessageText(opId: string): string {

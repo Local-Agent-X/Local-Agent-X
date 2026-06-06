@@ -25,6 +25,8 @@ import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
 import { readOp } from "../ops/op-store.js";
+import { getSessionForOp } from "../ops/session-bridge.js";
+import { appendActionLedger } from "../ops/action-ledger.js";
 import type { Op } from "../ops/types.js";
 import type {
   CanonicalMessageRole,
@@ -161,6 +163,22 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
     messageCount: persistedMsgs.length,
     toolCount: input.toolCallSummary.length,
     tools: input.toolCallSummary.map((t) => ({ tool: t.tool, status: t.resultStatus })),
+  });
+
+  // Operational action ledger — the one write site. Denormalizes this turn's
+  // {tool, status} summary into a session-keyed log so the agent can recall
+  // what it did across messages once the op completes (op_turns is per-op and
+  // the session→op map drops finished ops). Tool-less turns are skipped inside
+  // appendActionLedger. Best-effort; never blocks the commit.
+  appendActionLedger({
+    ts: turnRow.createdAt,
+    sessionId: getSessionForOp(op.id) ?? "",
+    opId: op.id,
+    opType: op.type,
+    turnIdx,
+    task: op.task,
+    actions: input.toolCallSummary.map((t) => ({ tool: t.tool, status: t.resultStatus })),
+    terminalReason: input.terminalReason,
   });
 
   if (redirectConsumed && appliedId != null) {

@@ -320,6 +320,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   sidebar_clear:  { kernel: "internal", risk: "workspace-write" },
   voice_visual:   { kernel: "internal", risk: "safe", rules: [{ id: "allow-voice-visual", decision: "allow", reason: "Particle visualizer (UI-only side effect, rate-limited)", priority: 50 }] },
   session_status: { kernel: "internal", risk: "safe", rules: [{ id: "allow-session-status", decision: "allow", reason: "Current session info", priority: 50 }] },
+  read_my_logs:   { kernel: "internal", risk: "safe", rules: [{ id: "allow-read-my-logs", decision: "allow", reason: "Agent's own action history (read-only)", priority: 50 }] },
   setting:        { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-setting", decision: "allow", reason: "Agent settings flip (toggles, theme, provider — runtime state user can also change via UI)", priority: 50 }] },
   clipboard_read:  { kernel: "internal", risk: "safe" },
   clipboard_write: { kernel: "internal", risk: "workspace-write" },

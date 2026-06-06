@@ -4,12 +4,12 @@
  * turn-loop reads noTools+text as "done" (turn-loop.ts ~307-316) and the op
  * completes having taken no action toward the task. Force one more turn.
  *
- * Chat ops legitimately answer tool-lessly, so `when` exempts chat_turn.
- * Fires at most once per op — the fire-once cap is the safety valve: a real
- * research/analysis worker that answers with text gets ONE nudge, re-affirms,
- * and completes.
+ * Interactive ops (chat + voice) legitimately answer tool-lessly, so `when`
+ * exempts them via isWorkerOp. Fires at most once per op — the fire-once cap is
+ * the safety valve: a real research/analysis worker that answers with text gets
+ * ONE nudge, re-affirms, and completes.
  */
-import type { CanonicalMiddleware } from "./types.js";
+import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 
 interface FiredFlag { fired: boolean }
@@ -19,9 +19,7 @@ const TASK_MAX = 280;
 export const prematureCompletionMiddleware: CanonicalMiddleware = {
   name: "premature-completion",
 
-  when(ctx) {
-    return ctx.op.type !== "chat_turn";
-  },
+  when: isWorkerOp,
 
   afterModelCall(ctx) {
     if (ctx.toolCalls.length > 0) return { kind: "continue" };

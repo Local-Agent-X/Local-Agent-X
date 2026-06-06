@@ -85,6 +85,20 @@ export interface CanonicalLoopContext {
   onEvent?: (event: ServerEvent) => void;
 }
 
+/**
+ * True for autonomous worker runs (agent_spawn / build / background), false for
+ * interactive chat + voice turns. The worker-progress middlewares
+ * (post-turn-detector, premature-completion, mid-turn-stale) gate on this:
+ * their commit/act/abort nudges are meant to push a STALLING WORKER. On an
+ * interactive turn there's nothing to commit, so the model verbalizes its
+ * compliance ("No commit tool applies here…", "Exact blocker: …") — which leaks
+ * into the reply and gets spoken aloud in voice. `lane` is the canonical
+ * interactive-vs-worker split; chat_turn and voice_turn are both "interactive".
+ */
+export function isWorkerOp(ctx: CanonicalLoopContext): boolean {
+  return ctx.op.lane !== "interactive";
+}
+
 export type CanonicalMiddlewareResult =
   | { kind: "continue" }
   | { kind: "nudge"; message: string; reason: string }

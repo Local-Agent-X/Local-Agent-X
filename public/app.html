@@ -1069,14 +1069,14 @@
      chat-send module. Under the single-file serve-time bundle a boot throw in
      app.js halts the WHOLE bundle, so this forward-reference — harmless when
      scripts were isolated — left ChatStreamStore permanently undefined. -->
-<script src="/js/chat-stream-store.js?v=v2"></script>
+<script src="/js/chat-stream-store.js?v=v3"></script>
 <!-- App shell modules. Load order matters: state.js defines the `let`
      bindings (chats, projects, activeChat, …) used by every other module.
      app.js runs the top-level boot last, so it must come after all
      function-defining modules. -->
 <script src="/js/app-state.js?v=v1"></script>
-<script src="/js/app-sync.js?v=v1"></script>
-<script src="/js/app-sidebar-actions.js?v=v1"></script>
+<script src="/js/app-sync.js?v=v2"></script>
+<script src="/js/app-sidebar-actions.js?v=v2"></script>
 <script src="/js/app-sidebar-render.js?v=v1"></script>
 <script src="/js/app.js?v=va6"></script>
 <script type="module" src="/js/voice-sphere.js?v=vb8"></script>
@@ -1125,7 +1125,7 @@
 <script src="/js/chat-send-http.js?v=v3"></script>
 <script src="/js/chat-send.js?v=v9"></script>
 <script src="/js/chat-uploads.js?v=v3"></script>
-<script src="/js/chat.js?v=vd4"></script>
+<script src="/js/chat.js?v=vd5"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
 <!-- settings.js modules — load BEFORE settings.js for the same reason. -->
 <script src="/js/settings-whatsapp.js?v=v1"></script>

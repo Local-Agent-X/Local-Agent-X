@@ -12,6 +12,16 @@ function isStreaming(sessionId) {
 }
 window.isStreaming = isStreaming;
 
+// Broader than isStreaming: true while streaming OR while the session carries a
+// server-active marker (running bg op). Guards that protect in-memory state
+// from a racing server sync/hydrate key on this so they also cover the brief
+// finalize window where status has flipped off 'streaming' but the turn isn't
+// yet persisted server-side.
+function isActive(sessionId) {
+  return !!sessionId && ChatStreamStore.isActive(sessionId);
+}
+window.isActive = isActive;
+
 function init_chat() {
   const stopBtn = document.getElementById('stop-btn');
   if (stopBtn) stopBtn.style.display = 'none';

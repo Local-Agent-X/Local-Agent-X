@@ -55,13 +55,12 @@ export function createStreamingVAD(paths: VadModelPaths, cb: VadCallback = {}): 
     sileroVad: {
       model: paths.model,
       threshold: 0.55,           // slightly above default to reduce false triggers
-      // 400ms — tightest setting that still rides through natural mid-
-      // sentence pauses (breath, "uh"). Combined with the 250ms pre-roll
-      // buffer in voice-session, total post-speech-to-final latency drops
-      // to ~400ms (VAD) + ~700-900ms (Whisper small.en) = ~1.1sec, which
-      // is the floor for offline Whisper. To go lower we'd need streaming
-      // Whisper or to fall back on Zipformer's noisier real-time final.
-      minSilenceDuration: 0.4,
+      // 300ms — endpoint a touch faster than the old 400ms. Live streaming
+      // partials now show in the chat thread while the user speaks, so the
+      // perceived latency is already gone; this just trims the real wait.
+      // Going much lower risks endpointing on natural mid-sentence pauses
+      // (breath, "uh") — dial back toward 0.4 if it starts clipping.
+      minSilenceDuration: 0.3,
       minSpeechDuration: 0.2,    // sec — ignore clicks/breaths shorter than this
       windowSize: 512,
       maxSpeechDuration: 20,

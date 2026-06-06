@@ -56,6 +56,8 @@ let voiceMicStream = null;
 let voiceCurrentMsgEl = null;  // assistant chat bubble being built
 let voiceCurrentMsgBody = null;
 let voiceCurrentMsgText = '';
+let voicePartialEl = null;     // live user bubble while STT streams partials
+let voicePartialBody = null;
 let _voiceSilenceTimer = null; // sphere → idle if no audio frame for 800ms
 // Browser-tier voice chat uses Web Speech API for STT (same as dictate) so the
 // "no install" promise actually holds. Server still runs the LLM + TTS, only

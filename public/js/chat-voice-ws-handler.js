@@ -46,16 +46,27 @@ function handleVoiceWsMessage(e) {
     case 'vad_speech_end':   isListening = false; updateVoiceUI();
       window.VoiceSphere && VoiceSphere.setState('thinking'); break;
     case 'final': {
-      if (!msg.text) break;
       // Dictate mode: route Whisper finals into the message textarea instead
       // of the chat thread. User reviews + sends manually.
       if (dictateMode) {
-        appendDictatedText(msg.text);
+        if (msg.text) appendDictatedText(msg.text);
+        break;
+      }
+      // Voice mode: Whisper's final is authoritative. If a live partial bubble
+      // is showing, replace its text in place (no second bubble); otherwise add
+      // one. Empty final = noise → drop any pending partial bubble.
+      if (!msg.text) {
+        if (voicePartialEl) { voicePartialEl.remove(); voicePartialEl = null; voicePartialBody = null; }
         break;
       }
       const empty = document.getElementById('empty');
       if (empty) empty.remove();
-      if (typeof addMessageEl === 'function') addMessageEl('user', msg.text);
+      if (voicePartialBody) {
+        voicePartialBody.textContent = msg.text;
+        voicePartialEl = null; voicePartialBody = null;
+      } else if (typeof addMessageEl === 'function') {
+        addMessageEl('user', msg.text);
+      }
       if (typeof activeChat !== 'undefined' && activeChat) {
         activeChat.messages.push({ role: 'user', content: msg.text });
         activeChat.updatedAt = Date.now();
@@ -63,17 +74,24 @@ function handleVoiceWsMessage(e) {
       break;
     }
     case 'partial': {
-      // Streaming Sherpa partial — show in the ghost preview row below the
-      // textarea. Only renders during dictate mode (in voice mode we let
-      // the chat thread handle it). Each partial REPLACES the prior partial
-      // (Sherpa rewrites as it gets more audio); on speech-end the `final`
-      // event commits to textarea via appendDictatedText and clears the row.
-      if (!dictateMode || !msg.text) break;
-      const preview = document.getElementById('dictate-preview');
-      if (preview) {
-        preview.textContent = msg.text;
-        preview.style.display = 'block';
+      if (!msg.text) break;
+      // Streaming Sherpa partial — rewritten in place as more audio arrives.
+      if (dictateMode) {
+        // Dictate: ghost preview row below the textarea; `final` commits it.
+        const preview = document.getElementById('dictate-preview');
+        if (preview) { preview.textContent = msg.text; preview.style.display = 'block'; }
+        break;
       }
+      // Voice mode: show the user's words live in a pending bubble so
+      // transcription feels instant. The `final` event swaps in Whisper's
+      // authoritative text and releases the bubble.
+      const empty = document.getElementById('empty');
+      if (empty) empty.remove();
+      if (!voicePartialEl && typeof addMessageEl === 'function') {
+        voicePartialEl = addMessageEl('user', '');
+        voicePartialBody = voicePartialEl && voicePartialEl.querySelector('.msg-body');
+      }
+      if (voicePartialBody) voicePartialBody.textContent = msg.text;
       break;
     }
     case 'agent_start': {

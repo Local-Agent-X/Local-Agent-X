@@ -10,7 +10,7 @@
  *
  * Two-strike: first staleness window nudges; second aborts.
  */
-import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
+import type { CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { createLogger } from "../../logger.js";
 
@@ -32,10 +32,9 @@ const STALE_NUDGE = [
 export const midTurnStaleMiddleware: CanonicalMiddleware = {
   name: "mid-turn-stale",
 
-  // Worker-only: the "you're spinning, change approach / abort" nudge is for
-  // autonomous loops, not interactive chat + voice. See isWorkerOp.
-  when: isWorkerOp,
-
+  // NOT gated to worker ops: the second-strike abort is the circuit-breaker
+  // that caps a spinning interactive/voice turn. Gating it off let a looping
+  // voice turn spam to max-iterations.
   beforeTurn(ctx) {
     if (ctx.turnIdx < MIN_ITERATION) return { kind: "continue" };
     if (ctx.committingToolsThisOp.size > 0) return { kind: "continue" };

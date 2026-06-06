@@ -6,6 +6,21 @@ function md(s) {
   const placeholders = [];
   function ph(html) { const i = placeholders.length; placeholders.push(html); return '\x00PH' + i + '\x00'; }
 
+  // Shared builder for workspace/report file links: 📄 + filename, routed
+  // through the auth-gated /files/ route. The .file-download class is what
+  // the global click handler (shared-dom.js) intercepts to open the file
+  // natively in Electron; file-link is kept for existing CSS.
+  const FILE_EXT = /\.(?:docx?|xlsx?|pptx?|pdf|csv|md|markdown|txt|json)$/i;
+  function fileLink(rawPath) {
+    const token = AUTH_TOKEN || '';
+    const clean = rawPath.replace(/^\.\//, '').replace(/\\/g, '/');
+    const ws = clean.match(/^workspace\/(.+)$/i);
+    const rel = (ws ? ws[1] : clean).replace(/^\/+/, '');
+    const fileUrl = '/files/' + rel + (token ? '?token=' + token : '');
+    const fileName = clean.split('/').pop();
+    return `<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link file-link file-download">📄 ${esc(fileName)}</a>`;
+  }
+
   let h = s;
 
   // 1. Extract code blocks first (protect from further processing).
@@ -95,17 +110,18 @@ function md(s) {
   // 3. Escape HTML
   h = esc(h);
 
-  // 3.5. Auto-linkify bare workspace file paths (e.g., workspace/report.docx)
-  h = h.replace(/(?:^|\s)((?:\.\/)?workspace\/[^\s<>"]+\.(?:docx?|xlsx?|pptx?|pdf|csv))/gi, (match, filePath) => {
-    const token = AUTH_TOKEN || '';
-    const clean = filePath.replace(/^\.\//, '');
-    const fileName = clean.split('/').pop();
-    const fileUrl = '/files/' + clean.replace(/^workspace\//, '') + (token ? '?token=' + token : '');
-    return match.replace(filePath, ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link file-link">📄 ${fileName}</a>`));
+  // 3.5. Auto-linkify bare workspace file paths (e.g., workspace/report.md)
+  h = h.replace(/(?:^|\s)((?:\.\/)?workspace\/[^\s<>"]+\.(?:docx?|xlsx?|pptx?|pdf|csv|md|markdown|txt|json))/gi, (match, filePath) => {
+    return match.replace(filePath, ph(fileLink(filePath)));
   });
 
-  // 4. Inline formatting
-  h = h.replace(/`([^`]+)`/g, (_, c) => ph(`<code class="inline-code">${c}</code>`));
+  // 4. Inline formatting. A backtick-wrapped workspace path becomes a clickable
+  // file link instead of plain code — agents report "written to
+  // `workspace/foo.md`", and users expect to click straight through to open it.
+  h = h.replace(/`([^`]+)`/g, (_, c) => {
+    if (/^(?:\.\/)?workspace\/\S+/i.test(c) && FILE_EXT.test(c)) return ph(fileLink(c));
+    return ph(`<code class="inline-code">${c}</code>`);
+  });
   h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
   h = h.replace(/~~(.+?)~~/g, '<del>$1</del>');

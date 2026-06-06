@@ -10,7 +10,8 @@ const logger = createLogger("anthropic-client.stream-cli.args");
 // Native CLI tools to disallow on every spawn, regardless of mode. Without
 // this the model emits native tool calls in plan mode (the user sees the
 // agent "exploring" their fs on a "hi"). LAX's tools come through MCP when
-// MCP is wired below; the native set is always off.
+// MCP is wired below; the native set is always off — EXCEPT the entries in
+// ENABLED_NATIVE_TOOLS below, in tool mode.
 const DISALLOWED_NATIVE_TOOLS = [
   "Bash", "Read", "Write", "Edit", "Glob", "Grep",
   "WebFetch", "WebSearch", "TodoWrite", "ToolSearch",
@@ -21,6 +22,35 @@ const DISALLOWED_NATIVE_TOOLS = [
   "Monitor", "TaskOutput", "TaskStop",
   "ScheduleWakeup", "PushNotification", "RemoteTrigger",
 ];
+
+// Native Claude tools we DO let the model use in tool mode. WebSearch is
+// Anthropic's server-side search, executed inside the CLI subprocess (results
+// fold into the final text) — robust, no key, and the replacement for the flaky
+// LAX web_search scraper. The stream parser must skip these so they aren't
+// re-dispatched in LAX's outer loop; it imports this same set to stay in sync.
+// WebFetch is intentionally NOT here: arbitrary URL fetches must route through
+// LAX's web_fetch so the egress allowlist + data-lineage gate still apply.
+export const ENABLED_NATIVE_TOOLS: readonly string[] = ["WebSearch"];
+
+// Lookup form shared by BOTH stream parsers (cold-spawn stream-parse +
+// warm-pool stream-prompt) so a native tool is skipped identically on every
+// path instead of each parser keeping its own copy.
+export const NATIVE_CLI_TOOL_SET: ReadonlySet<string> = new Set(ENABLED_NATIVE_TOOLS);
+
+// When the LAX MCP search tool is also offered, the model prefers it over native
+// WebSearch — so to actually route search to native we disallow it. web_fetch is
+// left available; only search moves to native.
+const FORCE_NATIVE_DISALLOW = ["mcp__lax__web_search"];
+
+export function disallowedTools(textOnlyMode: boolean): string[] {
+  // Plan mode can't execute tools anyway; keep the native set fully off there so
+  // the orchestrator never "searches while thinking".
+  if (textOnlyMode) return DISALLOWED_NATIVE_TOOLS;
+  return [
+    ...DISALLOWED_NATIVE_TOOLS.filter((t) => !ENABLED_NATIVE_TOOLS.includes(t)),
+    ...FORCE_NATIVE_DISALLOW,
+  ];
+}
 
 export interface CliArgsInput {
   model: string;
@@ -40,7 +70,7 @@ export function buildCliArgs(input: CliArgsInput): string[] {
     // Text-only (orchestration): plan mode — Claude thinks but can't execute tools
     // Tool mode: bypass all permissions so tools execute immediately
     "--permission-mode", input.textOnlyMode ? "plan" : "bypassPermissions",
-    "--disallowed-tools", DISALLOWED_NATIVE_TOOLS.join(","),
+    "--disallowed-tools", disallowedTools(input.textOnlyMode).join(","),
   ];
 }
 

@@ -33,6 +33,11 @@ export interface AgentRequestInput {
   bridgeTools: ToolDefinition[];
   /** Skip heavy memory orchestrator (bridges, cron) */
   skipMemory?: boolean;
+  /** Lean prep: skip the intent classifier + memory-curate steps whose
+   *  output the caller discards (voice overrides tools + prompt). Keeps
+   *  memory/context + system-prompt build. Cuts ~2 pre-model LLM round-trips
+   *  off time-to-first-token for those callers. */
+  leanPrep?: boolean;
   /** Override system prompt (sub-agents) */
   systemPromptOverride?: string;
   /** Max messages to keep in history (default 30 for bridges, 40 for web) */

@@ -107,6 +107,10 @@ export async function setupVoiceWs(deps: {
         config, dataDir,
         memoryIndex, memoryManager, integrations, secretsStore,
         allAgentTools, bridgeTools,
+        // Voice overrides tools (voiceTools) and the system prompt below, so
+        // the intent classifier + memory-curate steps are pure waste on the
+        // voice critical path. Lean prep skips them — keeps persona/memory.
+        leanPrep: true,
       });
 
       if (!prepared.apiKey) {

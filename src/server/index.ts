@@ -152,6 +152,29 @@ export async function startServer(config: LAXConfig) {
     }
   })();
 
+  // Pre-warm the memory RETRIEVAL path (embed query + vector + reranker +
+  // orchestrator). The tool-RAG warm above loads the embedder, but the
+  // reranker (a separate cross-encoder) lazy-loads on the first real
+  // retrieval — measured 2026-06-06 as a 3-10s spike on the first chat/voice
+  // turn of a session (buildTurnContextCached cold). Firing one throwaway
+  // retrieval at boot moves that cost off the user's first turn. skipDailyLog
+  // so the warmup leaves no session side-effects. Fire-and-forget.
+  void (async () => {
+    try {
+      const t0 = Date.now();
+      const { buildTurnContextCached } = await import("../agent-request/turn-context-cache.js");
+      await buildTurnContextCached(memoryManager, {
+        userMessage: "warmup",
+        sessionId: "boot-warmup",
+        sessionMessages: [],
+        skipDailyLog: true,
+      });
+      bootLogger.info(`[memory] retrieval path pre-warmed in ${Date.now() - t0}ms`);
+    } catch (e) {
+      bootLogger.warn(`[memory] pre-warm failed: ${(e as Error).message}`);
+    }
+  })();
+
   // Wire autopilot tool context — resolves provider/model/key on each invocation
   // so auth refreshes don't leave stale credentials inside the autopilot tools.
   const { setAutopilotToolsContext } = await import("../autopilot/tools.js");

@@ -454,15 +454,35 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 .tab-pill:hover{border-color:var(--accent);color:var(--text)}
 .tab-pill.active{background:#1a1a30;border-color:var(--accent);color:var(--accent)}
 .settings-content{flex:1;overflow-y:auto;padding:24px}
-.tab-pane{display:none;max-width:720px}
+/* Settings layout system. Two archetypes:
+   - Form/single-column tabs: capped width, CENTERED (margin auto) so they
+     don't hug the left and leave a void on wide screens.
+   - Grid tabs (Media / Communication / Integrations / Memory): wider, also
+     centered, with a FIXED 2-column grid that collapses to 1 col at one
+     breakpoint — no auto-fit, so cards never reflow/jump on resize. */
+.tab-pane{display:none;max-width:860px;margin:0 auto}
 .tab-pane.active{display:block}
-/* Media tab has 7 cards (image+video+stt+tts+voice-engine+sidecars) which
-   stacked in one 720px column waste the right half of a wide viewport.
-   Make it a fluid 2-column auto-fit grid that drops to 1 column under
-   ~860px viewport width. Other tabs stay single-column form-like. */
-#stab-image.tab-pane{max-width:1320px}
-#stab-image.tab-pane.active{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;align-items:start}
+/* Media: 6 varied cards in a fixed 2-col grid (start-aligned — cards differ,
+   so ragged bottoms read as normal). */
+#stab-image.tab-pane{max-width:1280px}
+#stab-image.tab-pane.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
 #stab-image .section-card{margin-bottom:0}
+/* Communications: two mirrored bridge cards, equal height (stretch) so the
+   pair lines up cleanly. Future channels wrap into the 2-col grid. */
+#stab-whatsapp.tab-pane{max-width:1280px}
+#stab-whatsapp.tab-pane.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:stretch}
+#stab-whatsapp .section-card{margin-bottom:0}
+/* Integrations: the service list fills the width as a 2-up grid instead of a
+   narrow single column of rows. */
+#stab-integrations.tab-pane{max-width:1100px}
+#integrations-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:8px}
+/* Collapse the fixed 2-col grid tabs to a single column on narrow viewports
+   (one breakpoint, so cards drop cleanly instead of reflowing column count). */
+@media (max-width:900px){
+  #stab-image.tab-pane.active,
+  #stab-whatsapp.tab-pane.active{grid-template-columns:1fr}
+  #integrations-list{grid-template-columns:1fr}
+}
 #stab-memory.tab-pane{max-width:1280px}
 .mem-core-fullrow{display:block;margin-bottom:4px}
 .mem-core-fullrow .mb-core-card{width:100%}

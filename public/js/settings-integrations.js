@@ -13,7 +13,7 @@ async function loadIntegrations() {
     const list = await apiJson('/api/integrations');
     if (!Array.isArray(list) || list.length === 0) { el.innerHTML = '<p style="color:var(--muted)">No integrations available. Restart the server if you just updated.</p>'; return; }
     el.innerHTML = list.map(i => `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:var(--bg2)">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
         <div style="display:flex;align-items:center;gap:10px;flex:1">
           <span style="font-size:1.4rem">${esc(i.icon || '🔌')}</span>
           <div>

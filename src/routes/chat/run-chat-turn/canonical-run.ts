@@ -69,11 +69,19 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
     logger.info(`[timing] canonical/chat ${prepared.model} ${canonicalElapsed}ms (sess=${sessionId.slice(0, 16)})`);
 
     const assistantText = getFullResponseText().trim();
+
+    // Emit `done` BEFORE persisting. The stream content is complete here; the
+    // client finalizes off this signal (promotes its live row, saves locally,
+    // clears the STREAMING indicator + stop button). Server-side persistence
+    // (session save + memory chunk indexing) ran AFTER this and added 2-3s of
+    // phantom streaming to the UI — worse as the session grows. Persistence is
+    // server-only state and the client never waits on it, so decouple them.
+    wrappedOnEvent({ type: "done", usage: canonicalUsage });
+
     await persistTurnState({
       canonicalOpId, message, assistantText, session, ctx, sessionId,
     });
 
-    wrappedOnEvent({ type: "done", usage: canonicalUsage });
     return { doneEmitted: true };
   } catch (e) {
     logger.error(`[chat] canonical chat path threw: ${(e as Error).message}`);

@@ -2,7 +2,7 @@
  * Dead-end detector — 3 empty tool results in a row → nudge a re-plan.
  * Canonical-loop port of src/agent-loop/middlewares/dead-end.ts.
  */
-import type { CanonicalMiddleware } from "./types.js";
+import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import {
   checkDeadEnd,
@@ -12,6 +12,7 @@ import {
 
 export const deadEndMiddleware: CanonicalMiddleware = {
   name: "dead-end",
+  when: isWorkerOp,
 
   afterToolExecution(ctx) {
     const state = getMiddlewareState<DeadEndState>(

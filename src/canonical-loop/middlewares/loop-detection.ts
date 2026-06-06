@@ -5,7 +5,7 @@
  * Fires in afterModelCall so it sees this turn's tool calls before dispatch.
  * State is per-op so the lastToolKey / sameToolCount carry across turns.
  */
-import type { CanonicalMiddleware } from "./types.js";
+import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import {
   checkToolLoops,
@@ -23,6 +23,7 @@ function toLoopCalls(toolCalls: { tool: string; args: unknown }[]): { name: stri
 
 export const loopDetectionMiddleware: CanonicalMiddleware = {
   name: "loop-detection",
+  when: isWorkerOp,
 
   async afterModelCall(ctx) {
     if (ctx.toolCalls.length === 0) return { kind: "continue" };

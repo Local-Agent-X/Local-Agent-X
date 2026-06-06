@@ -4,7 +4,7 @@
  * inject a reflection prompt. Canonical-loop port of
  * src/agent-loop/middlewares/self-check.ts. Fires at most once per OP.
  */
-import type { CanonicalMiddleware } from "./types.js";
+import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { detectUnresolvedErrors, buildReflectionPrompt } from "../../agent-guards/index.js";
 import { readOpMessages } from "../store.js";
@@ -14,6 +14,7 @@ interface FiredFlag { fired: boolean }
 
 export const selfCheckMiddleware: CanonicalMiddleware = {
   name: "self-check",
+  when: isWorkerOp,
 
   afterModelCall(ctx) {
     if (ctx.toolCalls.length > 0) return { kind: "continue" };

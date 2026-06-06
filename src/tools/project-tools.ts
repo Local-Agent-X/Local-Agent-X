@@ -73,12 +73,20 @@ export function createProjectTools(): ToolDefinition[] {
         "the Agents page Projects tab; agents added to it can be scoped via project_id " +
         "on agent_list / agent_spawn. Optionally seed with agent template ids — they " +
         "become real roster entries (with CEO-led reportsTo wiring when builtin-ceo is " +
-        "in the list).",
+        "in the list). Pass `summary` to seed the project brief, then interview the " +
+        "user to flesh it out — the brief becomes the shared context every agent reads.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Project display name (e.g. 'Nutrishop McKinney')" },
           description: { type: "string", description: "One-line description" },
+          summary: {
+            type: "string",
+            description:
+              "Optional paragraph on what this project/business is about — goals, " +
+              "what it does, current state. Seeds the project brief. After creating, " +
+              "interview the user to flesh it out (the tool result will remind you).",
+          },
           agent_ids: {
             type: "array",
             items: { type: "string" },
@@ -131,11 +139,33 @@ export function createProjectTools(): ToolDefinition[] {
             allowedTools: Array.isArray(args.allowed_tools) ? args.allowed_tools.map(String) : undefined,
           });
           await seedRosters(project.id, agentIds);
+
+          // Seed the brief from the summary. Best-effort: a failed brief write
+          // must not fail project creation (the project already exists).
+          const summary = args.summary ? String(args.summary).trim() : "";
+          if (summary) {
+            try {
+              await updateProjectBrief(project.id, `## Overview\n${summary}`, { title: project.name });
+            } catch (e) {
+              // swallow — project is created; brief can be filled in later
+              void e;
+            }
+          }
+
           await broadcastProjectsChanged();
           const rosterLine = agentIds.length > 0
             ? ` Seeded roster: ${agentIds.length} agent(s).`
             : ` Roster is empty; call project_add_agent to populate it.`;
-          return ok(`Created project '${project.name}' (id: ${project.id}).${rosterLine}`);
+          const briefLine = summary ? ` Brief started from your summary.` : "";
+          // Drive the onboarding interview: the model runs it in its normal
+          // conversation loop, recording answers via project_brief_update. The
+          // brief is the project's shared source of truth for every agent.
+          const interviewLine =
+            ` Now interview the user to build the brief — ask a few clarifying questions` +
+            ` (goals, current state, key products/people, success metrics, constraints),` +
+            ` a couple at a time, and record each answer with project_brief_update` +
+            ` (project='${project.name}'). Keep it conversational, not a form.`;
+          return ok(`Created project '${project.name}' (id: ${project.id}).${rosterLine}${briefLine}${interviewLine}`);
         } catch (e) {
           return err(`Failed to create project: ${String(e)}`);
         }

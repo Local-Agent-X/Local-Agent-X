@@ -170,9 +170,11 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   self_edit: { kernel: "internal", risk: "destructive", rules: [{ id: "allow-self-edit", decision: "allow", reason: "Agent self-repair via Claude Code subprocess", priority: 50 }] },
 
   // ── Project containers (project_* glob) ──
-  project_create:    { kernel: "internal", risk: "workspace-write" },
-  project_list:      { kernel: "internal", risk: "safe" },
-  project_add_agent: { kernel: "internal", risk: "workspace-write" },
+  project_create:       { kernel: "internal", risk: "workspace-write" },
+  project_list:         { kernel: "internal", risk: "safe" },
+  project_add_agent:    { kernel: "internal", risk: "workspace-write" },
+  project_brief_read:   { kernel: "internal", risk: "safe" },
+  project_brief_update: { kernel: "internal", risk: "workspace-write" },
 
   // ── Agent / swarm / delegation orchestration ──
   agent_spawn:     { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-agent-spawn", decision: "allow", reason: "Agent delegation", priority: 50 }] },

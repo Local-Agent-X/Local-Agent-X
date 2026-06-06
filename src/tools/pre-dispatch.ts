@@ -206,7 +206,8 @@ export async function assertToolCallAllowed(
       if (!approved) {
         throw new ToolBlocked({
           stage: "approval",
-          reason: `declined approval for ${call.name}`,
+          reason: `User declined (or did not confirm) ${call.name}. Do NOT re-issue this exact call — an identical retry is auto-declined this turn. Move on or report what you couldn't complete.`,
+          recovery: `The user did not approve this action. Re-issuing the same call will not prompt again. Skip it and continue, or tell the user what you need them to approve.`,
           userHint: USER_HINTS.policy,
         });
       }

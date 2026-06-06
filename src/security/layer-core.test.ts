@@ -441,6 +441,47 @@ describe("SecurityLayer kernel-class dispatch", () => {
   });
 });
 
+// The platform-source write guard protects <repoRoot>/src and
+// <repoRoot>/public (the LAX platform itself) while leaving user apps under
+// workspace/ free to use a src/ convention (Astro, Vite, Next, …). Before the
+// anchor fix a bare "/src/" substring blocked every framework scaffold built
+// in the workspace.
+describe("platform-source write guard (anchored to repo root)", () => {
+  const ws = resolve(WORKSPACE);
+
+  it("allows writing src/ inside a workspace app (Astro scaffold)", () => {
+    const path = resolve(ws, "my-site/src/pages/index.astro");
+    const d = evaluateFileAccess(ws, "common", () => false, "write", path);
+    expect(d.allowed).toBe(true);
+  });
+
+  it("allows writing public/ inside a workspace app", () => {
+    const path = resolve(ws, "my-site/public/favicon.ico");
+    const d = evaluateFileAccess(ws, "common", () => false, "write", path);
+    expect(d.allowed).toBe(true);
+  });
+
+  it("blocks writing the platform's own src/ even in unrestricted mode", () => {
+    const path = resolve(ws, "../src/server/routes.ts");
+    const d = evaluateFileAccess(ws, "unrestricted", () => false, "write", path);
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/platform files/i);
+  });
+
+  it("blocks writing the platform's own public/ even in unrestricted mode", () => {
+    const path = resolve(ws, "../public/app.html");
+    const d = evaluateFileAccess(ws, "unrestricted", () => false, "write", path);
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/platform files/i);
+  });
+
+  it("allows a workspace-app src/ write in unrestricted mode too", () => {
+    const path = resolve(ws, "my-site/src/components/Hero.tsx");
+    const d = evaluateFileAccess(ws, "unrestricted", () => false, "write", path);
+    expect(d.allowed).toBe(true);
+  });
+});
+
 // Egress mode is `permissive` by default — agent can surf the public web
 // while SSRF/private-IP/cloud-metadata blocks remain in force. The previous
 // deny-by-default model broke autonomous web research without adding real

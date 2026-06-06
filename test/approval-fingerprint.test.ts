@@ -262,25 +262,43 @@ describe("ApprovalManager.resolveApproval — timeout is never cached as approve
     expect(await p1).toBe(false);
     expect(events.some((e) => e.type === "approval_timeout")).toBe(true);
 
-    // A timed-out approval must NOT be remembered: the next identical request
-    // must prompt again (new approval_requested), not short-circuit.
+    // A timed-out approval must NOT be remembered as APPROVED. The next
+    // identical re-issue within the turn is auto-declined (false) WITHOUT a
+    // new card — this is the runaway guard (a re-issued declined destructive
+    // call must not keep spawning fresh approval prompts).
     const before = events.length;
-    const p2 = mgr.requestApproval({
+    expect(
+      await mgr.requestApproval({
+        toolName: "bash",
+        toolCallId: "tc2",
+        sessionId: SESSION,
+        context: "ctx",
+        args: { command: "git status" },
+        emit,
+      }),
+    ).toBe(false);
+    expect(
+      events.slice(before).some((e) => e.type === "approval_requested"),
+    ).toBe(false);
+
+    // A fresh user turn clears suppression: an identical request prompts
+    // again (and is still NOT auto-approved — resolves false on clearSession).
+    mgr.clearDeclines(SESSION);
+    const before2 = events.length;
+    const p3 = mgr.requestApproval({
       toolName: "bash",
-      toolCallId: "tc2",
+      toolCallId: "tc3",
       sessionId: SESSION,
       context: "ctx",
       args: { command: "git status" },
       emit,
     });
-    const reprompted = events
-      .slice(before)
-      .some((e) => e.type === "approval_requested");
-    expect(reprompted).toBe(true);
+    expect(
+      events.slice(before2).some((e) => e.type === "approval_requested"),
+    ).toBe(true);
 
-    // Clean up the still-pending second approval.
     mgr.clearSession(SESSION);
-    expect(await p2).toBe(false);
+    expect(await p3).toBe(false);
   });
 
   it("resolveApproval on a timed-out (already-deleted) id returns false / no-op", async () => {
@@ -308,11 +326,25 @@ describe("ApprovalManager.resolveApproval — timeout is never cached as approve
     const accepted = mgr.resolveApproval(requested!.approvalId, true, true);
     expect(accepted).toBe(false);
 
-    // Confirm no auto-approval leaked in: a fresh identical request re-prompts.
+    // Confirm no auto-approval leaked in. Within the turn an identical
+    // re-issue is auto-declined (false). After clearDeclines (new user turn)
+    // it re-prompts again — and still resolves false, never auto-approved.
+    expect(
+      await mgr.requestApproval({
+        toolName: "bash",
+        toolCallId: "tc3",
+        sessionId: SESSION,
+        context: "ctx",
+        args: { command: "git status" },
+        emit,
+      }),
+    ).toBe(false);
+
+    mgr.clearDeclines(SESSION);
     const before = events.length;
     const p2 = mgr.requestApproval({
       toolName: "bash",
-      toolCallId: "tc3",
+      toolCallId: "tc4",
       sessionId: SESSION,
       context: "ctx",
       args: { command: "git status" },

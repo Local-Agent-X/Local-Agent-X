@@ -201,7 +201,23 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
     // stacks a "Worker: op_voice_..." card in the AGENTS sidebar — exactly
     // the original triage symptom "Voice spawns an agent per sentence".
     const op = readOp(event.opId);
-    if (op?.type === "chat_turn" || op?.type === "agent_spawn" || op?.type === "voice_turn") return;
+    if (op?.type === "chat_turn" || op?.type === "agent_spawn" || op?.type === "voice_turn") {
+      // Suppressed from the AGENTS sidebar (these surface elsewhere), but the
+      // session→op binding MUST still be released on terminal state. Skipping
+      // it leaks every past chat_turn into listOpsForSession forever, which
+      // (a) fires the worker-redirect Haiku classifier on EVERY later turn —
+      // even on Codex/Grok, since that classifier hardcodes the Anthropic CLI —
+      // and (b) poisons the system prompt with phantom "[PARALLEL CONTEXT]"
+      // workers. Exactly the leak releaseOpFromSession's doc warns about.
+      if (event.type === "state_changed") {
+        const to = (event.body as Record<string, unknown> | undefined)?.to;
+        if (to === "succeeded" || to === "failed" || to === "cancelled") {
+          releaseOpFromSession(event.opId);
+          teardownStreamForwarder(event.opId);
+        }
+      }
+      return;
+    }
 
     const task = getTaskForOp(event.opId) ?? "";
     const b = (event.body ?? {}) as Record<string, unknown>;

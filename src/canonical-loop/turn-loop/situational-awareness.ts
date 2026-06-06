@@ -31,6 +31,9 @@ import { readOpTurns, readOpMessages } from "../store.js";
 import type { OpTurnRow } from "../types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { recentActions, type LedgerAction } from "../../ops/action-ledger.js";
+import { createLogger } from "../../logger.js";
+
+const logger = createLogger("canonical-loop.situational-awareness");
 
 // Max recent tool actions to surface in the recent-actions line.
 const RECENT_ACTIONS_CAP = 8;
@@ -52,7 +55,12 @@ export function buildSituationalAwareness(op: Op, turnIdx: number): string | nul
   const totalTokens = sumTokens(readOpTurns(op.id));
   const firstUserText =
     turnIdx >= GOAL_RESTATE_AFTER_TURN ? firstUserMessageText(op.id) : "";
-  return composeDigest({ turnIdx, totalTokens, recent, firstUserText });
+  const digest = composeDigest({ turnIdx, totalTokens, recent, firstUserText });
+  // Debug seam: the digest is ephemeral (injected into the prompt, never
+  // persisted), so this log is the only way to observe what the model actually
+  // received. Enable debug logging to watch it live.
+  if (digest) logger.debug(`op=${op.id} turn=${turnIdx} digest:\n${digest}`);
+  return digest;
 }
 
 /** Pure digest formatter — no IO, so it's unit-testable. */

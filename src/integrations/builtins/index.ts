@@ -9,7 +9,6 @@ import { instagramIntegration } from "./instagram.js";
 import { spotifyIntegration } from "./spotify.js";
 import { ebayIntegration } from "./ebay.js";
 import { notionIntegration } from "./notion.js";
-import { whatsappIntegration } from "./whatsapp.js";
 import { emailIntegration } from "./email.js";
 
 export const BUILTIN_INTEGRATIONS: IntegrationConfig[] = [
@@ -23,6 +22,5 @@ export const BUILTIN_INTEGRATIONS: IntegrationConfig[] = [
   spotifyIntegration,
   ebayIntegration,
   notionIntegration,
-  whatsappIntegration,
   emailIntegration,
 ];

@@ -1,5 +1,5 @@
 /**
- * Social Media Protocol Pack — Instagram, Twitter/X, Facebook, TikTok protocols.
+ * Social Media Protocol Pack — Instagram, X, Facebook, TikTok protocols.
  */
 
 import type { Protocol } from "../../protocols/index.js";
@@ -28,24 +28,24 @@ export const instagramStoryMission: Protocol = {
 
 export const twitterPostMission: Protocol = {
   name: "x_post",
-  description: "Post on X (formerly Twitter) with optional media, polls, threads, and scheduling.",
+  description: "Post on X with optional media, polls, threads, and scheduling.",
   triggers: ["tweet", "post on twitter", "post on x", "tweet this", "share on twitter", "post to x"],
   learnablePreferences: ["twitter_username", "tweet_style", "default_hashtags_twitter", "thread_style"],
   rules: [
-    "Twitter character limit is 280 per tweet (or 25,000 for premium).",
-    "For threads: number each tweet mentally, aim for 1-3 key points per tweet.",
-    "Check if user has Twitter/X Blue for extended features (longer tweets, edit).",
-    "Always preview the tweet before posting.",
-    "For images: max 4 per tweet, max 5MB GIFs, max 512MB video.",
+    "X character limit is 280 per post (or 25,000 for premium).",
+    "For threads: number each post mentally, aim for 1-3 key points per post.",
+    "Check if user has X Premium for extended features (longer posts, edit).",
+    "Always preview the post before posting.",
+    "For images: max 4 per post, max 5MB GIFs, max 512MB video.",
   ],
   steps: [
-    { id: "gather", instruction: "Collect tweet content, media, and preferences (thread vs single, poll, schedule)." },
-    { id: "draft", instruction: "Draft the tweet(s). Show character count. Get approval." },
-    { id: "open_twitter", instruction: "Navigate to twitter.com/x.com, verify login." },
-    { id: "compose", instruction: "Open the tweet composer." },
-    { id: "insert_content", instruction: "Enter the tweet text. Attach media if any." },
-    { id: "review", instruction: "Preview before posting.", validate: "Tweet content and media correct" },
-    { id: "publish", instruction: "Click Post. Confirm the tweet is live.", requiresUserAction: true },
+    { id: "gather", instruction: "Collect post content, media, and preferences (thread vs single, poll, schedule)." },
+    { id: "draft", instruction: "Draft the post(s). Show character count. Get approval." },
+    { id: "open_x", instruction: "Navigate to x.com, verify login." },
+    { id: "compose", instruction: "Open the post composer." },
+    { id: "insert_content", instruction: "Enter the post text. Attach media if any." },
+    { id: "review", instruction: "Preview before posting.", validate: "Post content and media correct" },
+    { id: "publish", instruction: "Click Post. Confirm the post is live.", requiresUserAction: true },
   ],
 };
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkSync, readdirSync, cpSync, rmSync, lstatSync, symlinkSync, readlinkSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkSync, readdirSync, cpSync, rmSync, lstatSync, symlinkSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import type { LAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
@@ -217,7 +217,10 @@ export function loadConfig(): LAXConfig {
   const docsDir = process.env.LAX_DOCUMENTS_DIR ? deOneDrive(process.env.LAX_DOCUMENTS_DIR) : undefined;
   const legacyWorkspace = raw.workspace === undefined || raw.workspace === "./workspace";
   if (docsDir && legacyWorkspace) {
-    const newWorkspace = join(docsDir, "Local Agent X");
+    // iCloud-synced Documents (macOS) → keep the high-write workspace on
+    // local-only disk instead of seeding it into a sync engine that evicts
+    // files; otherwise use the findable ~/Documents default.
+    const newWorkspace = isCloudSyncedDir(docsDir) ? localOnlyWorkspace() : join(docsDir, "Local Agent X");
     migrateWorkspace(resolve(config.workspace), newWorkspace);
     config.workspace = newWorkspace;
     saveConfig(config);
@@ -232,6 +235,23 @@ export function loadConfig(): LAXConfig {
     migrateWorkspace(resolve(config.workspace), resolve(healed));
     config.workspace = healed;
     saveConfig(config);
+  }
+
+  // macOS analogue: self-heal a workspace persisted under a cloud-synced
+  // Documents (older build, or iCloud "Desktop & Documents" switched on after
+  // install) by relocating it to local-only disk. The workspace inherits the
+  // sync from its parent Documents dir, so check the parent's identity as well
+  // as the path itself (third-party File Providers live under CloudStorage).
+  if (process.platform === "darwin") {
+    const ws = resolve(config.workspace);
+    if (isCloudStoragePath(ws) || isCloudSyncedDir(dirname(ws))) {
+      const local = localOnlyWorkspace();
+      if (resolve(local) !== ws) {
+        migrateWorkspace(ws, local);
+        config.workspace = local;
+        saveConfig(config);
+      }
+    }
   }
 
   // The static file server (and a few tools) read from config.workspace, while
@@ -295,6 +315,52 @@ function deOneDrive(dir: string): string {
   // relocation to another drive is left untouched.
   if (!existsSync(join(homedir(), "Documents"))) return dir;
   return stripped;
+}
+
+// macOS analogue of the OneDrive guard. iCloud "Desktop & Documents Folders"
+// sync (and third-party File Providers under ~/Library/CloudStorage) back the
+// user's Documents with a sync engine that evicts idle files to dataless
+// placeholders — a generated video then reads back as 0 bytes and renders as a
+// blank player, and config.json's atomic rename can be locked mid-write. So the
+// high-write agent workspace must stay on local-only disk. Unlike OneDrive KFM
+// (a recognizable path segment), Apple firmlinks ~/Documents to the CloudDocs
+// store WITHOUT changing the path string, so this is detected by identity
+// (same device+inode as the canonical CloudDocs Documents), not by pattern.
+const CLOUD_STORAGE_RE = /[\\/]Library[\\/](Mobile Documents[\\/]com~apple~CloudDocs|CloudStorage)[\\/]/i;
+
+// Pure + exported for tests: is the path string itself under a known cloud
+// provider mount? Catches third-party File Providers (Dropbox, Google Drive,
+// OneDrive-for-Mac under ~/Library/CloudStorage) and an already-resolved iCloud
+// path. The inode check below covers Apple's path-preserving Documents sync.
+export function isCloudStoragePath(dir: string): boolean {
+  return CLOUD_STORAGE_RE.test(dir);
+}
+
+// darwin-only: is `dir` backed by iCloud "Desktop & Documents" sync? The path
+// string stays /Users/x/Documents, so compare device+inode against the
+// canonical CloudDocs Documents directory. Returns false when that directory is
+// absent (sync off) or on non-macOS.
+function isCloudSyncedDir(dir: string): boolean {
+  if (process.platform !== "darwin") return false;
+  if (isCloudStoragePath(dir)) return true;
+  try {
+    const target = statSync(dir);
+    const cloudDocs = statSync(
+      join(homedir(), "Library", "Mobile Documents", "com~apple~CloudDocs", "Documents"),
+    );
+    return target.dev === cloudDocs.dev && target.ino === cloudDocs.ino;
+  } catch {
+    return false; // CloudDocs Documents missing → Desktop & Documents sync is off
+  }
+}
+
+// Local-only workspace home for cloud-synced Macs. ~/.lax is a home dotfolder
+// the iCloud Documents feature never touches, and already holds config/memory/
+// logs — so the workspace sits beside its own data, off the sync engine. This
+// trades the Finder-discoverability of the ~/Documents default for correctness,
+// the same call the Windows guard makes by leaving OneDrive.
+function localOnlyWorkspace(): string {
+  return join(getLaxDir(), "workspace");
 }
 
 // Ensure <cwd>/workspace and config.workspace are the SAME physical directory.

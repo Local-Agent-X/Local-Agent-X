@@ -28,6 +28,45 @@ const NODE_MAJOR_MIN = 22;
 const EMBED_MODEL = "mxbai-embed-large";
 const IPC = process.argv.includes("--ipc");
 
+// Windows uninstaller written into the install dir + registered in Add/Remove
+// Programs (see the win32 desktop step). String.raw keeps PowerShell's `\` and
+// `$` literal. __INSTALL_DIR__ is substituted at write time. It self-relaunches
+// from %TEMP% so it can delete its own directory, and asks (Yes/No/Cancel)
+// before removing ~/.lax — that's the user's chats, memory, and saved keys.
+const UNINSTALL_PS1 = String.raw`# Local Agent X uninstaller — registered by scripts/install-common.mjs.
+param([switch]$FromTemp)
+$ErrorActionPreference = 'SilentlyContinue'
+$InstallDir = '__INSTALL_DIR__'
+$RegKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\LocalAgentX'
+
+# Re-launch from %TEMP% so we can delete our own install dir without a self-lock.
+if (-not $FromTemp) {
+  $tmp = Join-Path $env:TEMP 'lax-uninstall.ps1'
+  Copy-Item -LiteralPath $PSCommandPath -Destination $tmp -Force
+  Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',('"' + $tmp + '"'),'-FromTemp'
+  return
+}
+
+Add-Type -AssemblyName System.Windows.Forms
+$nl = [Environment]::NewLine
+$ans = [System.Windows.Forms.MessageBox]::Show('Remove Local Agent X?' + $nl + $nl + 'Also delete your data (chats, memory, saved API keys)? Choose No to keep it for a future reinstall.', 'Uninstall Local Agent X', [System.Windows.Forms.MessageBoxButtons]::YesNoCancel, [System.Windows.Forms.MessageBoxIcon]::Warning)
+if ($ans -eq [System.Windows.Forms.DialogResult]::Cancel) { return }
+
+Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
+$paths = @($InstallDir, (Join-Path $env:APPDATA 'electron'), (Join-Path $env:APPDATA 'Local Agent X'))
+if ($ans -eq [System.Windows.Forms.DialogResult]::Yes) { $paths += (Join-Path $env:USERPROFILE '.lax') }
+foreach ($p in $paths) { if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue } }
+
+$desktop = [Environment]::GetFolderPath('Desktop')
+$startMenu = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'
+foreach ($lnk in @((Join-Path $desktop 'Local Agent X.lnk'), (Join-Path $startMenu 'Local Agent X.lnk'))) { if (Test-Path -LiteralPath $lnk) { Remove-Item -LiteralPath $lnk -Force -ErrorAction SilentlyContinue } }
+
+Remove-Item -LiteralPath $RegKey -Recurse -Force -ErrorAction SilentlyContinue
+[System.Windows.Forms.MessageBox]::Show('Local Agent X has been removed.' + $nl + '(Ollama and the AI model were left installed.)', 'Uninstall complete', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+`;
+
 // The step plan emitted up front so the UI can render the full list before
 // any step runs. Step ids must match the ones passed to step()/stepDone()/
 // stepError() below — a typo means the UI gets an event for an unknown id.
@@ -705,6 +744,40 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
       appInstalled = true;
     } else {
       warn(`Shortcut creation failed (exit ${r.status}) — launch manually: ${batPath}`);
+    }
+  }
+
+  // Register an Add/Remove Programs entry (Settings → Installed apps) so users
+  // can uninstall cleanly instead of hunting down folders. Standalone installs
+  // only — a dev clone (.git present) must never get an uninstaller that would
+  // delete the repo. Writes uninstall.ps1 into the install dir and points the
+  // HKCU UninstallString at it (per-user, no admin needed).
+  if (!existsSync(join(repoRoot, ".git"))) {
+    try {
+      const appVersion = (() => { try { return JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")).version || "0.0.0"; } catch { return "0.0.0"; } })();
+      const uninstallPs1 = join(repoRoot, "uninstall.ps1");
+      writeFileSync(uninstallPs1, UNINSTALL_PS1.replace(/__INSTALL_DIR__/g, repoRoot.replace(/'/g, "''")));
+      const iconIco = join(repoRoot, "public", "icon.ico");
+      const dispIcon = existsSync(iconIco) ? iconIco : electronExe;
+      const uninstallCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${uninstallPs1}"`;
+      const q = (s) => String(s).replace(/'/g, "''");
+      const regPs = [
+        `$k='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\LocalAgentX'`,
+        `New-Item -Path $k -Force | Out-Null`,
+        `Set-ItemProperty $k DisplayName 'Local Agent X'`,
+        `Set-ItemProperty $k DisplayIcon '${q(dispIcon)}'`,
+        `Set-ItemProperty $k DisplayVersion '${q(appVersion)}'`,
+        `Set-ItemProperty $k Publisher 'Local Agent X'`,
+        `Set-ItemProperty $k InstallLocation '${q(repoRoot)}'`,
+        `Set-ItemProperty $k UninstallString '${q(uninstallCmd)}'`,
+        `Set-ItemProperty $k NoModify 1 -Type DWord`,
+        `Set-ItemProperty $k NoRepair 1 -Type DWord`,
+      ].join("; ");
+      const rr = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", regPs], { stdio: IPC ? ["ignore", "pipe", "pipe"] : "inherit" });
+      if (rr.status === 0) ok("Registered uninstaller — Settings → Installed apps → Local Agent X");
+      else warn(`Uninstaller registration failed (exit ${rr.status}); manual folder removal still works`);
+    } catch (e) {
+      warn(`Uninstaller registration skipped: ${e.message}`);
     }
   }
 } else if (process.platform === "linux") {

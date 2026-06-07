@@ -20,7 +20,7 @@
 // Prose mode behavior is unchanged when --ipc is absent.
 
 import { spawnSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -65,6 +65,38 @@ foreach ($lnk in @((Join-Path $desktop 'Local Agent X.lnk'), (Join-Path $startMe
 
 Remove-Item -LiteralPath $RegKey -Recurse -Force -ErrorAction SilentlyContinue
 [System.Windows.Forms.MessageBox]::Show('Local Agent X has been removed.' + $nl + '(Ollama and the AI model were left installed.)', 'Uninstall complete', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+`;
+
+// macOS uninstaller dropped into /Applications next to the app (no Add/Remove
+// Programs on Mac). __SOURCE_DIR__ is substituted at write time. No re-exec
+// needed — on Unix the running script and the app can be deleted in place.
+const UNINSTALL_COMMAND = String.raw`#!/bin/bash
+# Local Agent X uninstaller (macOS). Removes the app + data; leaves Ollama.
+SRC_DIR='__SOURCE_DIR__'
+
+ANS=$(osascript <<'APPLESCRIPT'
+try
+  set q to display dialog "Remove Local Agent X?" & return & return & "Also delete your data (chats, memory, saved API keys)? Click Keep Data to keep it for a future reinstall." buttons {"Cancel", "Keep Data", "Delete Data"} default button "Keep Data" with icon caution with title "Uninstall Local Agent X"
+  return button returned of q
+on error
+  return "Cancel"
+end try
+APPLESCRIPT
+)
+if [ "$ANS" = "Cancel" ] || [ -z "$ANS" ]; then exit 0; fi
+
+osascript -e 'tell application "Local Agent X" to quit' >/dev/null 2>&1
+pkill -f "Local Agent X.app" >/dev/null 2>&1
+sleep 1
+
+rm -rf "/Applications/Local Agent X.app"
+rm -rf "$SRC_DIR"
+rm -rf "$HOME/Library/Application Support/electron"
+if [ "$ANS" = "Delete Data" ]; then rm -rf "$HOME/.lax"; fi
+rm -f "/Applications/Uninstall Local Agent X.command"
+
+osascript -e 'display dialog "Local Agent X has been removed." & return & "(Ollama and the AI model were left installed.)" buttons {"OK"} default button "OK" with title "Uninstall complete"' >/dev/null 2>&1
+exit 0
 `;
 
 // The step plan emitted up front so the UI can render the full list before
@@ -653,6 +685,21 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
     appInstalled = true;
   } else {
     warn(`Could not copy to /Applications (permission denied?). Built app is at:\n  ${appBuildPath}`);
+  }
+
+  // macOS has no Add/Remove Programs — drop a discoverable uninstaller next to
+  // the app in /Applications. Standalone installs only (.git → dev clone, skip
+  // so it can never delete the repo). Double-clicking it removes the app + the
+  // source/userData dir; it asks before deleting ~/.lax and leaves Ollama.
+  if (appInstalled && !existsSync(join(process.cwd(), ".git"))) {
+    try {
+      const cmdPath = "/Applications/Uninstall Local Agent X.command";
+      writeFileSync(cmdPath, UNINSTALL_COMMAND.replace(/__SOURCE_DIR__/g, process.cwd().replace(/'/g, "'\\''")));
+      chmodSync(cmdPath, 0o755);
+      ok('Uninstaller added — /Applications → "Uninstall Local Agent X"');
+    } catch (e) {
+      warn(`Uninstaller not added: ${e.message}`);
+    }
   }
 } else if (process.platform === "win32" && !process.env.LAX_SKIP_APP) {
   // Build the Electron desktop subproject so desktop-launch.bat actually

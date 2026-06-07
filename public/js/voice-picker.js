@@ -10,6 +10,10 @@
 //     (both exposed on window so chat-status-bar.js mirrors the filter).
 
 const C = window.LAX_VOICE_CATALOG;
+// Browser tier relies on the Web Speech API key, which Electron-Chromium
+// strips — so it's hidden from the picker in the desktop app (Edge is the
+// zero-setup default there). Still offered in real browsers.
+const IS_ELECTRON = /electron/i.test(navigator.userAgent || '');
 let _kokoroCatalog = null;
 let _setupStatus = null;          // last /api/voices/setup/status response
 let _secretNames = null;          // last /api/secrets list (uppercased name set)
@@ -28,7 +32,7 @@ function _resolveActiveTierId(saved) {
   // Existing users with the removed realtime tier (voiceMode='realtime', which
   // also set voiceEngine='tier4') fall through to the tier4/kokoro→studio
   // migration below — same pattern as the dropped Kokoro-local tier.
-  if (saved?.voiceMode === 'browser') return 'browser';
+  if (saved?.voiceMode === 'browser') return IS_ELECTRON ? C.DEFAULT_TIER_ID : 'browser';
   if (saved?.voiceEngine === 'python') return 'studio';
   if (saved?.voiceTier4Provider === 'edge-tts') return 'edge';
   // The standalone Kokoro-local tier was removed from the picker. Existing
@@ -114,7 +118,8 @@ async function loadVoicePicker(saved) {
   } catch {}
 
   const tierId = _resolveActiveTierId(saved || {});
-  tierSel.innerHTML = C.TIERS.map(t =>
+  const visibleTiers = C.TIERS.filter(t => !(IS_ELECTRON && t.id === 'browser'));
+  tierSel.innerHTML = visibleTiers.map(t =>
     `<option value="${_esc(t.id)}"${t.id === tierId ? ' selected' : ''}>${_esc(t.label)} — ${_esc(t.tagline)}</option>`,
   ).join('');
 

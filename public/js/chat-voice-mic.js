@@ -375,7 +375,6 @@ function cleanupVoiceResources() {
   _voiceBrowserTtsBuf = "";
   voiceWS = null; voiceCtx = null; voiceMicNode = null; voicePlaybackNode = null; voiceMicStream = null;
   voiceCurrentMsgEl = null; voiceCurrentMsgBody = null; voiceCurrentMsgText = '';
-  voicePartialEl = null; voicePartialBody = null;
   const ttsBtn = document.getElementById('tts-toggle');
   if (ttsBtn) { ttsBtn.textContent = 'VOICE OFF'; ttsBtn.className = ''; }
   if (window.VoiceSphere) { try { VoiceSphere.hide(); } catch {} }

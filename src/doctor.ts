@@ -5,9 +5,10 @@
  */
 
 import { existsSync, accessSync, constants } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { getLaxDir } from "./lax-data-dir.js";
+import { workspaceRoot } from "./config.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
@@ -46,7 +47,7 @@ function checkConfigExists(): DiagnosticResult {
 }
 
 function checkWorkspace(): DiagnosticResult {
-  const wsDir = resolve("workspace");
+  const wsDir = workspaceRoot();
   if (!existsSync(wsDir)) {
     return { name: "Workspace directory", status: "warn", message: "workspace/ not found", fix: "It will be auto-created on first use" };
   }

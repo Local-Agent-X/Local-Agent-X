@@ -8,6 +8,7 @@ import type { ToolDefinition } from "../../types.js";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ok, err } from "./shared.js";
+import { workspacePath } from "../../config.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 
 export const sidebarPin: ToolDefinition = {
@@ -29,7 +30,7 @@ export const sidebarPin: ToolDefinition = {
 
     // Resolve the app URL — check workspace/apps/ for a matching folder
     const dataDir = getLaxDir();
-    const workspaceApps = resolve("workspace", "apps");
+    const workspaceApps = workspacePath("apps");
     const slug = name.toLowerCase().replace(/\s+/g, "-");
 
     let pageUrl = "";

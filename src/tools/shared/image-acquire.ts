@@ -18,6 +18,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { workspacePath } from "../../config.js";
 import { dnsPinCheck } from "../../browser/guards.js";
 
 export interface ImageSpec {
@@ -304,7 +305,7 @@ export async function acquireImages(
   opts: AcquireOptions = {},
 ): Promise<AcquiredImage[]> {
   if (!Array.isArray(specs) || specs.length === 0) return [];
-  const workspaceRoot = opts.workspaceRoot ?? resolve(process.cwd(), "workspace");
+  const workspaceRoot = opts.workspaceRoot ?? workspacePath();
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
   const maxDim = opts.maxDim ?? DEFAULT_MAX_DIM;
   const out: AcquiredImage[] = [];

@@ -219,8 +219,11 @@ export function loadConfig(): LAXConfig {
   if (docsDir && legacyWorkspace) {
     // iCloud-synced Documents (macOS) → keep the high-write workspace on
     // local-only disk instead of seeding it into a sync engine that evicts
-    // files; otherwise use the findable ~/Documents default.
-    const newWorkspace = isCloudSyncedDir(docsDir) ? localOnlyWorkspace() : join(docsDir, "Local Agent X");
+    // files; otherwise nest under ~/Documents/Local Agent X/workspace so the
+    // "Local Agent X" container mirrors the repo layout (workspace/ holds
+    // apps/, images/, videos/, downloads/, …) and the cwd↔workspace junction
+    // bridges two identically-named "workspace" dirs.
+    const newWorkspace = isCloudSyncedDir(docsDir) ? localOnlyWorkspace() : join(docsDir, "Local Agent X", "workspace");
     migrateWorkspace(resolve(config.workspace), newWorkspace);
     config.workspace = newWorkspace;
     saveConfig(config);
@@ -416,7 +419,23 @@ function migrateWorkspace(oldWorkspace: string, newWorkspace: string): void {
   for (const entry of readdirSync(oldWorkspace)) {
     const from = join(oldWorkspace, entry);
     const to = join(newWorkspace, entry);
-    if (existsSync(to)) continue; // never overwrite something already at the destination
+    if (existsSync(to)) {
+      // Collision. If BOTH sides are directories, merge recursively instead of
+      // skipping the whole subtree — otherwise a pre-created empty dir at the
+      // destination (apps/images/videos/missions) strands the source's contents
+      // and ensureWorkspaceLink then refuses to junction, leaving a split-brain
+      // workspace (apps written to cwd, served from config.workspace). A
+      // file-vs-anything collision is still left in place (never clobber).
+      try {
+        if (statSync(from).isDirectory() && statSync(to).isDirectory()) {
+          migrateWorkspace(from, to);
+          if (readdirSync(from).length === 0) rmSync(from, { recursive: true, force: true });
+        }
+      } catch (e) {
+        logger.warn(`[config] workspace merge skipped "${entry}": ${(e as Error).message}`);
+      }
+      continue;
+    }
     try {
       renameSync(from, to);
       moved++;
@@ -452,4 +471,21 @@ export function getRuntimeConfig(): LAXConfig {
     _runtimeConfig = loadConfig();
   }
   return _runtimeConfig;
+}
+
+// Canonical workspace-root resolver — the single source of truth for where the
+// agent's files live (~/Documents/Local Agent X/workspace in the packaged app).
+// App builds, app discovery, and the static file server MUST resolve through
+// this, NOT cwd-relative resolve("workspace"), which only lands in the right
+// place when the cwd↔workspace junction happens to be intact. Generated apps
+// and media write here and the server serves from here, so they always agree
+// regardless of which directory the process was launched from.
+export function workspaceRoot(): string {
+  return resolve(getRuntimeConfig().workspace);
+}
+
+// Resolve a path inside the workspace, preserving its internal structure
+// (e.g. workspacePath("apps", name) → <workspace>/apps/<name>). Never flattens.
+export function workspacePath(...segments: string[]): string {
+  return resolve(workspaceRoot(), ...segments);
 }

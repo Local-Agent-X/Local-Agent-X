@@ -104,6 +104,7 @@ async function checkSettingsAuth() {
     const discBtn = document.getElementById('btn-disconnect');
     const cliEl = document.getElementById('codex-cli-status');
     const cliBtn = document.getElementById('btn-install-codex-cli');
+    const cliLoginBtn = document.getElementById('btn-codex-cli-login');
     if (!el) return;
     if (d.authenticated) {
       el.className = 'status-badge ok'; el.innerHTML = '<span class="status-dot"></span> Connected — ' + (d.method === 'oauth' ? 'OpenAI OAuth' : 'API Key');
@@ -125,14 +126,17 @@ async function checkSettingsAuth() {
         cliEl.className = 'status-badge err';
         cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI not found — install it for reliable app building via Codex (otherwise falls back to Claude CLI)';
         if (cliBtn) cliBtn.style.display = '';
+        if (cliLoginBtn) cliLoginBtn.style.display = 'none';
       } else if (d.cliAuthenticated === false) {
         cliEl.className = 'status-badge warn';
-        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed but NOT signed in — run <code>codex login</code> in Terminal to enable build_app. The LAX "Sign in with OpenAI" button only authenticates LAX itself; the CLI has its own credential store at ~/.codex/auth.json.';
+        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed but not signed in — click "Sign in via Codex CLI" below, or reconnect OpenAI above (that signs the CLI in too).';
         if (cliBtn) cliBtn.style.display = 'none';
+        if (cliLoginBtn) cliLoginBtn.style.display = '';
       } else {
         cliEl.className = 'status-badge ok';
         cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed and signed in — app builder will use subprocess for reliable large file writes';
         if (cliBtn) cliBtn.style.display = 'none';
+        if (cliLoginBtn) cliLoginBtn.style.display = 'none';
       }
     }
   } catch {}

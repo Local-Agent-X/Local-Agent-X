@@ -327,6 +327,54 @@ function rerenderLiveMessage(sessionId) {
   _rerenderRafs.set(sessionId, token);
 }
 
+// Finalize the live streaming bubble IN PLACE — no #messages wipe. Replaces
+// only the one live node with its finalized form (same single-node swap the
+// streaming rerender does every frame, so it's visually seamless), instead of
+// renderMessages() tearing down and rebuilding the whole thread. The thread
+// rebuild is what made every completed turn flash: the smoothly-streamed bubble
+// plus every other message vanished and repainted at once. Returns false when
+// the live node can't be located so the caller falls back to a full render.
+function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
+  const el = document.getElementById('messages');
+  if (!el || !finalizedMsg) return false;
+  let oldNode = _liveMessageNodes.get(sessionId);
+  if (!oldNode || !document.contains(oldNode)) {
+    const all = el.querySelectorAll('.msg.assistant');
+    oldNode = all[all.length - 1] || null;
+  }
+  if (!oldNode) return false;
+  // Reshape the finalized message (promoteLiveToMessages output) back into the
+  // store snapshot _buildLiveAssistantInto reads. Painting from the final
+  // content here also covers the post-`done` frame the rAF rerender skips
+  // (it bails once isStreaming flips false).
+  const store = {
+    content: finalizedMsg.content || '',
+    toolEvents: finalizedMsg._tools || [],
+    chips: finalizedMsg._chips || [],
+    progressByTool: finalizedMsg._progressByTool || {},
+    approvals: finalizedMsg._approvals || [],
+    stopNote: finalizedMsg._stopNote || null,
+  };
+  const tmp = document.createElement('div');
+  const fresh = _buildLiveAssistantInto(tmp, store);
+  if (!fresh) return false;
+  preserveOpenState(oldNode, fresh);
+  if (oldNode.classList.contains('pin-bottom')) fresh.classList.add('pin-bottom');
+  // Drop the streaming affordance — this is the terminal paint.
+  fresh.querySelectorAll('.msg-body.streaming').forEach(b => b.classList.remove('streaming'));
+  // A tools-only turn (no text) leaves _buildLiveAssistantInto's "thinking"
+  // placeholder in the body; the finalized bubble must not look like it's
+  // still working. Matches the full-render output (no dots).
+  fresh.querySelectorAll('.msg-body .thinking').forEach(t => t.remove());
+  const footer = fresh.querySelector('.msg-footer');
+  if (footer && finalizedMsg.timestamp && typeof formatMsgTime === 'function') {
+    footer.innerHTML = `<span class="msg-time">${formatMsgTime(finalizedMsg.timestamp)}</span>`;
+  }
+  oldNode.replaceWith(fresh);
+  _liveMessageNodes.delete(sessionId);
+  return true;
+}
+
 function renderMessages() {
   const el = document.getElementById('messages');
   if (!el) return;

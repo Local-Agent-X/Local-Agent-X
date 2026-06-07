@@ -141,6 +141,13 @@ const _earlyPort = (() => {
 app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", `http://127.0.0.1:${_earlyPort}`);
 app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
 app.commandLine.appendSwitch("enable-media-stream");
+// The sandboxed audio service can't load third-party virtual audio drivers
+// (Steam Streaming Microphone, VB-Cable, OBS, NVIDIA Broadcast, …), so
+// getUserMedia silently captured nothing from them in the desktop app even
+// though the same device works in a normal browser. Disabling the audio
+// sandbox lets the audio process reach those devices. Out-of-process audio
+// stays on (only the sandbox is dropped), so the blast radius is small.
+app.commandLine.appendSwitch("disable-features", "AudioServiceSandbox");
 // permission-request handler in app.ready controls media grants explicitly.
 
 app.on("ready", async () => {

@@ -49,13 +49,16 @@ function _finalizeWsTurn(streamSessionId, streamChat) {
   streamChat.updatedAt = Date.now();
   saveChats();
   renderSidebar();
-  // Single source of truth: messages[] now holds the finalized assistant
-  // row (promoteLiveToMessages just spliced it in). The swap path already
-  // painted the latest content; this rebuild atomically replaces the live
-  // synth with the finalized row and clears any straggling state.
+  // messages[] now holds the finalized assistant row (promoteLiveToMessages
+  // just spliced it in). Swap ONLY the live bubble in place — a full
+  // renderMessages() here wipes and rebuilds the entire thread, which is the
+  // flash the user sees on every completed turn. Fall back to a full render
+  // only if the live node can't be located.
   const viewing = !!(activeChat && activeChat.id === streamSessionId);
-  if (viewing && typeof renderMessages === 'function') {
-    renderMessages();
+  if (viewing) {
+    if (!finalizeLiveMessageInPlace(streamSessionId, finalized) && typeof renderMessages === 'function') {
+      renderMessages();
+    }
   }
   updateContextBar();
   flushTTS();

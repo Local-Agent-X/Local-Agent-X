@@ -112,12 +112,16 @@ function _finalizeHttpTurn(ctx, streamSessionId, streamChat) {
     if (stopBtn2) stopBtn2.style.display = 'none';
     document.getElementById('send-btn').disabled = false;
     if (ctx.isViewingThis()) {
-      renderMessages();
+      // In-place finalize to avoid the full-thread rebuild flash; fall back to
+      // a full render when there's no live node (or nothing was streamed).
+      if (!(finalized && finalizeLiveMessageInPlace(streamSessionId, finalized))) {
+        renderMessages();
+      }
       // Do NOT hydrate here. hydrateChat does Object.assign(chat, serverSession)
       // which overwrites in-flight / recently-typed local messages the server
       // hasn't persisted yet — observed dropping 2 messages mid-conversation.
-      // The store + activeChat.messages already hold the truth; renderMessages
-      // is sufficient. Mirrors the WS-path fix.
+      // The store + activeChat.messages already hold the truth. Mirrors the
+      // WS-path fix.
     }
     updateContextBar();
   } catch (renderErr) { console.error('[chat] finalize render error:', renderErr); }

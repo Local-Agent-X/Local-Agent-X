@@ -174,10 +174,10 @@ function populateConnectStep() {
       ${obApiKeyBlock('openai', 'OPENAI_API_KEY', 'sk-...', 'Get one at platform.openai.com/api-keys')}
     `;
   } else if (_onboardProvider === 'anthropic') {
-    desc.textContent = 'Sign in with your Anthropic account, or paste an Anthropic API key.';
+    desc.textContent = 'Sign in with your Claude subscription (via the Claude CLI), or paste an Anthropic API key.';
     container.innerHTML = `
       <button class="action-btn primary" onclick="onboardOAuth('anthropic')" style="padding:10px 32px;font-size:1rem">Sign In with Claude</button>
-      <span style="color:var(--muted);font-size:.75rem">Subscription auth; Anthropic may require Extra Usage</span>
+      <span style="color:var(--muted);font-size:.75rem">Subscription auth runs through the Claude CLI (must be installed)</span>
       ${obApiKeyBlock('anthropic', 'ANTHROPIC_API_KEY', 'sk-ant-...', 'Get one at console.anthropic.com')}
     `;
   } else if (_onboardProvider === 'xai') {
@@ -305,7 +305,11 @@ function startOnboardAuthPoll(type) {
 async function onboardOAuth(type) {
   const status = document.getElementById('ob-connect-status');
   const endpoints = {
-    anthropic: '/api/auth/anthropic/login',
+    // Anthropic subscription auth is CLI-only — Anthropic doesn't accept
+    // subscription tokens outside the official claude CLI. Run `claude auth
+    // login` (writes ~/.claude/.credentials.json, which chat + build_app both
+    // read) instead of the in-app OAuth those tokens can't satisfy.
+    anthropic: '/api/auth/anthropic/cli-login',
     xai: '/api/auth/xai/login',
   };
   try {

@@ -20,6 +20,7 @@ import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { workspacePath } from "../config.js";
 import type { ToolDefinition } from "../types.js";
+import { PROVIDERS } from "../providers/registry.js";
 import {
   renderPerBuildContext,
   renderPersonaPrompt,
@@ -93,6 +94,18 @@ export function resolveBuildProvider(
     }
   } catch { /* fall through */ }
   return "anthropic";
+}
+
+/**
+ * Resolve the model the build subprocess should use. The Codex CLI's own
+ * default is a retired model (gpt-5.3-codex), so build_app must pass one
+ * explicitly: the chat's runtime model when it's valid for the provider,
+ * else the provider's registry default.
+ */
+export function resolveBuildModel(provider: string, runtimeModel: string | undefined): string | undefined {
+  const meta = PROVIDERS[provider as keyof typeof PROVIDERS];
+  if (runtimeModel && meta?.models.includes(runtimeModel)) return runtimeModel;
+  return meta?.defaultModel || undefined;
 }
 
 export function resolveBuildStrategy(provider: string): AgentExecStrategy {
@@ -172,6 +185,8 @@ export const buildAppTool: ToolDefinition = {
 
     const provider = resolveBuildProvider(backend, forcedProvider ? { forcedProvider } : {});
     const strategy = resolveBuildStrategy(provider);
+    const runtimeModel = args._runtimeModel ? String(args._runtimeModel) : undefined;
+    const buildModel = resolveBuildModel(provider, runtimeModel);
 
     const appDir = workspacePath("apps", appName);
     const port = process.env.LAX_PORT ?? "7007";
@@ -276,6 +291,7 @@ export const buildAppTool: ToolDefinition = {
       prompt: cliPrompt,
       systemPrompt: personaPrompt,
       sessionId: sessionId || undefined,
+      model: buildModel,
     }));
 
     canonicalLoopEntry(op, sessionId ? { sessionId } : {});

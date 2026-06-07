@@ -5,7 +5,7 @@ import { getLaxDir } from "../../lax-data-dir.js";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { createLogger } from "../../logger.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, okWithVideo, resolveMediaProvider, findRecentLocalImage, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
+import { ok, err, okWithVideo, resolveMediaProvider, findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
 
 const xaiLogger = createLogger("image-tools.xai");
 
@@ -39,7 +39,7 @@ async function generateViaXaiVideo(
       u.match(/(?:^\/uploads\/|^workspace\/uploads\/)([A-Za-z0-9._-]+)/);
     if (m) {
       const fname = m[1];
-      const fromImages = join("workspace", "images", fname);
+      const fromImages = join(workspaceDir("images"), fname);
       if (existsSync(fromImages)) return fromImages;
       const fromUploads = join(getLaxDir(), "uploads", fname);
       if (existsSync(fromUploads)) return fromUploads;
@@ -152,7 +152,7 @@ async function generateViaXaiVideo(
   const vidRes = await fetch(videoUrl, { signal: AbortSignal.timeout(60_000) });
   if (!vidRes.ok) return ok(`Video generated!\nPrompt: ${prompt}\nView: ${videoUrl}\n(Could not save locally)`);
   const buffer = Buffer.from(await vidRes.arrayBuffer());
-  const videosDir = join("workspace", "videos");
+  const videosDir = workspaceDir("videos");
   if (!existsSync(videosDir)) mkdirSync(videosDir, { recursive: true });
   const filename = `grok_${Date.now()}.mp4`;
   const savePath = join(videosDir, filename);
@@ -300,7 +300,7 @@ export const generateVideoTool: ToolDefinition = {
       };
 
       const localUrl = `http://127.0.0.1:${getRuntimeConfig().port}/videos/${data.filename}`;
-      const savePath = join("workspace", "videos", data.filename);
+      const savePath = join(workspaceDir("videos"), data.filename);
 
       return okWithVideo(
         `Video generated!\n` +

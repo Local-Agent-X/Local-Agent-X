@@ -25,7 +25,9 @@ function getTierById(id) {
 window.getTierById = getTierById;
 
 function _resolveActiveTierId(saved) {
-  if (saved?.voiceMode === 'realtime') return 'realtime';
+  // Existing users with the removed realtime tier (voiceMode='realtime', which
+  // also set voiceEngine='tier4') fall through to the tier4/kokoro→studio
+  // migration below — same pattern as the dropped Kokoro-local tier.
   if (saved?.voiceMode === 'browser') return 'browser';
   if (saved?.voiceEngine === 'python') return 'studio';
   if (saved?.voiceTier4Provider === 'edge-tts') return 'edge';
@@ -54,7 +56,6 @@ function voiceFitsTier(voiceId, tier) {
   if (pool.includes('clones') && (voiceId.startsWith('sv:') || voiceId.startsWith('cb:'))) return true;
   if (pool.includes('kokoro') && /^[abm]?[fmb]?_/.test(voiceId)) return true;
   if (pool.includes('edge') && /^en-[A-Z]{2}-.+Neural$/.test(voiceId)) return true;
-  if (pool.includes('realtime') && C.REALTIME_VOICES.some(([id]) => id === voiceId)) return true;
   if (pool.includes('browser')) return true; // browser SR returns OS voices, can't validate
   return false;
 }
@@ -93,7 +94,6 @@ function _resolveCurrentVoice(saved, tierId) {
   if (lax && tier && voiceFitsTier(lax, tier)) return lax;
   const v = saved?.voiceTier4Voice;
   if (v && tier && voiceFitsTier(v, tier)) return v;
-  if (tierId === 'realtime') return saved?.voiceRealtimeVoice || 'alloy';
   if (tierId === 'edge') return C.EDGE_VOICES[0][1][0];
   if (tierId === 'browser') return '';
   return _kokoroCatalog?.default || 'am_michael';
@@ -192,8 +192,7 @@ async function onVoicePickChange(voice) {
   // persisted async via _persist() below — that round-trip is too slow for
   // streaming TTS, hence the dedicated key.
   if (tierId === 'browser') { try { localStorage.setItem('lax_browser_voice', voice); } catch {} }
-  const payload = tierId === 'realtime' ? { voiceRealtimeVoice: voice } : { voiceTier4Voice: voice, ttsVoice: voice };
-  await _persist(payload);
+  await _persist({ voiceTier4Voice: voice, ttsVoice: voice });
   try {
     if (typeof voiceWS !== 'undefined' && voiceWS && voiceWS.readyState === 1) {
       const speed = parseFloat(localStorage.getItem('lax_speed') || '1.15');

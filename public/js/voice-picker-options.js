@@ -1,6 +1,6 @@
 // ── Media tab voice picker — voice-list option builders ──
 // Per-tier <option> HTML for the Voice dropdown. Reads catalog (window.C
-// → C.EDGE_VOICES, C.REALTIME_VOICES) and _kokoroCatalog from
+// → C.EDGE_VOICES) and _kokoroCatalog from
 // voice-picker.js, plus window._sovitsVoices / window._chatterboxVoices
 // populated by chat-voice-modals.js after the user trains/imports clones.
 
@@ -39,12 +39,6 @@ function _edgeOptions(current) {
   ).join('');
 }
 
-function _realtimeOptions(current) {
-  return C.REALTIME_VOICES.map(([id, label]) =>
-    `<option value="${_esc(id)}"${id === current ? ' selected' : ''}>${_esc(label)}</option>`,
-  ).join('');
-}
-
 function _browserOptions(current) {
   let voices = [];
   try { voices = (window.speechSynthesis?.getVoices?.() || []).filter(v => v.lang?.startsWith('en')); } catch {}
@@ -74,7 +68,6 @@ function _studioOptions(current) {
 function _voiceListForTier(tierId, current) {
   if (tierId === 'browser') return _browserOptions(current);
   if (tierId === 'edge') return _edgeOptions(current);
-  if (tierId === 'realtime') return _realtimeOptions(current);
   if (tierId === 'studio') return _studioOptions(current);
   return _kokoroOptions(current);
 }

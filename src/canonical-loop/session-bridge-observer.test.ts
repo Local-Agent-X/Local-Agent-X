@@ -22,7 +22,7 @@ function makeOp(id: string, type: string): void {
 }
 
 function stateChanged(opId: string, to: string): CanonicalEvent {
-  return { type: "state_changed", opId, body: { from: "running", to } } as CanonicalEvent;
+  return { type: "state_changed", opId, body: { from: "running", to } } as unknown as CanonicalEvent;
 }
 
 afterEach(() => {

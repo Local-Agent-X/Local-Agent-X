@@ -72,11 +72,11 @@ export async function setupVoiceWs(deps: {
   } = deps;
   try {
     const { setupVoiceWebSocket, setVoiceSessionFactory } = await import("../voice/audio-ws.js");
-    const { createVoiceSessionFactory } = await import("../voice/voice-session.js");
+    const { createVoiceSessionFactory } = await import("../voice/voice-session/index.js");
     const { prepareAgentRequest } = await import("../agent-request/index.js");
     setupVoiceWebSocket(server, config.authToken);
 
-    const voiceTurnRunner: import("../voice/voice-session.js").VoiceTurnRunner = async ({ text, history, signal, onDelta, onVisual, sessionId: voiceSessionId }) => {
+    const voiceTurnRunner: import("../voice/voice-session/index.js").VoiceTurnRunner = async ({ text, history, signal, onDelta, onVisual, sessionId: voiceSessionId }) => {
       // Per-connection voice session id. The previous hardcoded "voice" caused
       // every concurrent voice connection to share global session-scoped state
       // (active onEvent callback, browser session, sub-agent inheritance).

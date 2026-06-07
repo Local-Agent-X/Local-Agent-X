@@ -12,7 +12,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { VoiceSession, VoiceSessionContext } from "./audio-ws.js";
 import { createGPUBridge, type GPUBridge } from "./gpu-bridge.js";
-import type { VoiceTurnRunner } from "./voice-session.js";
+import type { VoiceTurnRunner } from "./voice-session/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("voice.gpu-session");

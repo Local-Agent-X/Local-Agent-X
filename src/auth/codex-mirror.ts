@@ -6,12 +6,13 @@
  * writes a copy of LAX's OAuth tokens there on every saveTokens (login
  * + refresh) so the CLI can authenticate without a separate flow.
  *
- * The mirror is opt-in (default OFF) because it doubles the on-disk
- * credential surface — stolen laptop / leaked backup leaks two files
- * instead of one. Users who actively need build_app enable the env var.
+ * The mirror is ON by default: a user who connected Codex needs the CLI for
+ * build_app, and a silent "build_app can't authenticate" failure is a worse
+ * outcome than the doubled on-disk credential surface (both files are mode
+ * 0600, same machine, same tokens). Security-conscious setups opt out.
  *
  * Two independent env-var gates:
- *   - LAX_MIRROR_CODEX_AUTH=1  → write the ~/.codex/auth.json mirror
+ *   - LAX_MIRROR_CODEX_AUTH=0  → DISABLE the ~/.codex/auth.json mirror
  *   - LAX_INSTALL_CODEX_CLI=1  → if codex is not on PATH, run
  *                                `npm install -g @openai/codex` in the
  *                                background
@@ -32,12 +33,13 @@ import type { OAuthTokens } from "../types.js";
 
 const logger = createLogger("auth");
 
-/** Exported for tests. Reads LAX_MIRROR_CODEX_AUTH; default OFF. */
+/** Exported for tests. Reads LAX_MIRROR_CODEX_AUTH; default ON, opt out with
+ *  LAX_MIRROR_CODEX_AUTH=0 (or false/off/no). */
 export function isCodexMirrorEnabled(): boolean {
   const raw = process.env.LAX_MIRROR_CODEX_AUTH;
-  if (typeof raw !== "string") return false;
+  if (typeof raw !== "string") return true;
   const v = raw.toLowerCase();
-  return v === "1" || v === "true";
+  return !(v === "0" || v === "false" || v === "off" || v === "no");
 }
 
 /**
@@ -60,7 +62,7 @@ let _mirrorDisabledNoticeFired = false;
 export function warnMirrorDisabledOnce(): void {
   if (_mirrorDisabledNoticeFired) return;
   _mirrorDisabledNoticeFired = true;
-  logger.info("[auth] Codex CLI credential mirror is disabled (LAX_MIRROR_CODEX_AUTH unset). build_app's Codex subprocess will not auto-authenticate from LAX tokens. To enable, set LAX_MIRROR_CODEX_AUTH=1; alternatively run `codex login` directly.");
+  logger.info("[auth] Codex CLI credential mirror is OFF (LAX_MIRROR_CODEX_AUTH=0). build_app's Codex subprocess will not auto-authenticate from LAX tokens — remove the opt-out, or run `codex login` directly.");
 }
 
 /** Test seam: reset the once-fired flag so cases can observe their own log. */

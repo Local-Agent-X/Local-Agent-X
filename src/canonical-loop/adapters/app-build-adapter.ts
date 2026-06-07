@@ -73,6 +73,8 @@ export interface CliBuildRunnerInput {
   prompt: string;
   appDir: string;
   appUrl: string;
+  /** Model slug forwarded to the CLI subprocess. */
+  model?: string;
   /** Per-turn abort signal. When this fires the runner MUST kill the
    *  subprocess tree and reject — that's how `adapter.abort()` cancels
    *  in-flight builds (closes Phase 2 gap A). */
@@ -138,6 +140,7 @@ class CliBuildAdapter implements Adapter {
         prompt: this.opts.prompt,
         appDir: this.opts.appDir,
         appUrl: this.opts.appUrl,
+        model: this.opts.model,
         signal: this.controller.signal,
         onEvent,
       });
@@ -223,6 +226,7 @@ const defaultCliRunner: CliBuildRunner = async (input) => {
     prompt: input.prompt,
     appDir: input.appDir,
     appUrl: input.appUrl,
+    model: input.model,
     signal: input.signal,
     onEvent: input.onEvent,
   });

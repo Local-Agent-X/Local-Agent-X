@@ -39,6 +39,10 @@ export interface BuildSpawnInput {
   prompt: string;
   appDir: string;
   appUrl: string;
+  /** Model slug to pass to the CLI. Omit to use the CLI's own default —
+   *  but the Codex CLI's default is a retired model, so build_app resolves
+   *  one (the provider's registry default) and always passes it. */
+  model?: string;
   signal?: AbortSignal;
   onEvent?: (e: { type: string; [k: string]: unknown }) => void;
 }
@@ -88,7 +92,7 @@ function artifactLooksComplete(indexPath: string, cliOutput: string): boolean {
 }
 
 async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
-  const { prompt, appDir, appUrl, signal, onEvent } = input;
+  const { prompt, appDir, appUrl, signal, onEvent, model } = input;
   const indexPath = resolve(appDir, "index.html");
   try {
     const stdout = await runSpawn({
@@ -98,6 +102,7 @@ async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
         "--dangerously-bypass-approvals-and-sandbox",
         "--skip-git-repo-check",
         "--color", "never",
+        ...(model ? ["--model", model] : []),
       ],
       cwd: appDir,
       stdin: prompt,

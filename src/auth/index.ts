@@ -128,14 +128,11 @@ export function saveTokens(tokens: OAuthTokens): void {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
     throw e;
   }
-  // Bridge to the Codex CLI's own credential store, gated by
-  // LAX_MIRROR_CODEX_AUTH. When enabled, every saveTokens (initial
-  // login AND refresh) writes ~/.codex/auth.json so the CLI subprocess
-  // used by build_app can authenticate without a separate `codex login`.
-  // Default is OFF: the mirror doubles the on-disk credential surface,
-  // so users opt in explicitly when they need build_app. With the gate
-  // off we also skip the @openai/codex auto-install — no point pulling
-  // a CLI we can't authenticate.
+  // Bridge to the Codex CLI's own credential store. Every saveTokens
+  // (initial login AND refresh) writes ~/.codex/auth.json so the CLI
+  // subprocess used by build_app authenticates from the same login — no
+  // separate `codex login`. Default ON; opt out with LAX_MIRROR_CODEX_AUTH=0
+  // (which also skips the @openai/codex auto-install).
   if (isCodexMirrorEnabled()) {
     mirrorImpl.fn(tokens);
   } else {

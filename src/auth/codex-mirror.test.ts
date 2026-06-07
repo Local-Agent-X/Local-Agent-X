@@ -80,19 +80,19 @@ afterEach(() => {
 });
 
 describe("isCodexMirrorEnabled", () => {
-  it("returns false when LAX_MIRROR_CODEX_AUTH is unset", () => {
+  it("returns true when LAX_MIRROR_CODEX_AUTH is unset (default on)", () => {
     delete process.env.LAX_MIRROR_CODEX_AUTH;
-    expect(isCodexMirrorEnabled()).toBe(false);
-  });
-
-  it.each(["1", "true", "TRUE", "True"])("returns true for truthy value %s", (val) => {
-    process.env.LAX_MIRROR_CODEX_AUTH = val;
     expect(isCodexMirrorEnabled()).toBe(true);
   });
 
-  it.each(["0", "false", "no", "", "random_garbage"])("returns false for non-truthy value %j", (val) => {
+  it.each(["0", "false", "FALSE", "off", "no"])("returns false for opt-out value %s", (val) => {
     process.env.LAX_MIRROR_CODEX_AUTH = val;
     expect(isCodexMirrorEnabled()).toBe(false);
+  });
+
+  it.each(["1", "true", "TRUE", "", "random_garbage"])("returns true for any non-opt-out value %j", (val) => {
+    process.env.LAX_MIRROR_CODEX_AUTH = val;
+    expect(isCodexMirrorEnabled()).toBe(true);
   });
 });
 
@@ -149,8 +149,8 @@ describe("warnMirrorDisabledOnce", () => {
 });
 
 describe("saveTokens gate", () => {
-  it("does NOT call the Codex mirror when LAX_MIRROR_CODEX_AUTH is unset, and fires the disabled-once notice", () => {
-    delete process.env.LAX_MIRROR_CODEX_AUTH;
+  it("does NOT call the Codex mirror when LAX_MIRROR_CODEX_AUTH=0, and fires the disabled-once notice", () => {
+    process.env.LAX_MIRROR_CODEX_AUTH = "0";
     const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -174,8 +174,8 @@ describe("saveTokens gate", () => {
     expect(noticeHits.length).toBe(1);
   });
 
-  it("DOES call the Codex mirror when LAX_MIRROR_CODEX_AUTH=1", () => {
-    process.env.LAX_MIRROR_CODEX_AUTH = "1";
+  it("DOES call the Codex mirror by default (LAX_MIRROR_CODEX_AUTH unset)", () => {
+    delete process.env.LAX_MIRROR_CODEX_AUTH;
     const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -184,9 +184,9 @@ describe("saveTokens gate", () => {
 
     expect(mirrorSpy).toHaveBeenCalledTimes(1);
     expect(mirrorSpy).toHaveBeenCalledWith(tokens);
-    // Disabled-once notice must NOT fire when the gate is open.
+    // Disabled-once notice must NOT fire when the mirror is on.
     const noticeHits = logSpy.mock.calls.filter(
-      (args) => typeof args[0] === "string" && args[0].includes("Codex CLI credential mirror is disabled"),
+      (args) => typeof args[0] === "string" && args[0].includes("Codex CLI credential mirror is OFF"),
     );
     expect(noticeHits.length).toBe(0);
   });

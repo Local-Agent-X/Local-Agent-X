@@ -9,15 +9,13 @@
 // here when LAX_VOICE_GPU=1. Both modes implement the same VoiceSession
 // shape, so audio-ws.ts doesn't need to know which path is active.
 
-import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { VoiceSession, VoiceSessionContext } from "./audio-ws.js";
 import { createGPUBridge, type GPUBridge } from "./gpu-bridge.js";
+import { createVoiceTurnMachine, SENTENCE_TERMINATOR, type TurnSpeaker } from "./voice-session/turn-runner.js";
 import type { VoiceTurnRunner } from "./voice-session/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("voice.gpu-session");
-
-const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 // Long-clause early-flush: if the LLM is grinding out a long comma-heavy
 // sentence, fire the first clause to TTS as soon as it's >= ~60 chars and
 // has a comma. Cuts time-to-first-audio by 200-500ms on those sentences
@@ -30,27 +28,89 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
   let bridge: GPUBridge | null = null;
   let bridgeReady = false;
   let closed = false;
-  let activeTurn: AbortController | null = null;
-  let llmDone = false;
   let pendingTtsCount = 0;
   let nextSentenceId = 1;
-  let history: ChatCompletionMessageParam[] = [];
   const pendingFrames: Int16Array[] = [];
-
-  // Playback-end estimator. The bridge's onAudioDone fires when the
-  // sidecar finishes shipping audio chunks, but the browser still has
-  // ~1-3sec of audio buffered in its playback ring. If we clear
-  // activeTurn at audio_done, barge-in stops working during that tail.
-  // Tracking samples-shipped + a constant rate lets us schedule the
-  // real end-of-playback.
-  let expectedPlaybackEndMs = 0;
-  let pendingClearTimer: NodeJS.Timeout | null = null;
-  const PLAYBACK_TAIL_MS = 250; // grace for browser scheduler / network jitter
 
   // Per-session voice settings, controlled live by the browser via the
   // voice_settings WS message. Undefined = use sidecar's env defaults.
   let voiceOverride: string | undefined;
   let speedOverride: number | undefined;
+
+  // GPU speaker: clause-split long sentences + early-flush the first clause so
+  // time-to-first-audio stays low on the sidecar's RTF~1 hardware. Each chunk
+  // bumps pendingTtsCount; onAudioDone counts it back down and signals the
+  // machine when the queue empties.
+  const LONG_SENTENCE_CHARS = 50;
+  let sentenceBuf = "";
+  let firstClauseFlushed = false;
+  let queuedThisTurn = false;
+  const speakChunk = (text: string): void => {
+    if (!text || !bridge) return;
+    pendingTtsCount++;
+    bridge.speak(text, nextSentenceId++, { voice: voiceOverride, speed: speedOverride });
+    firstClauseFlushed = true;
+    queuedThisTurn = true;
+  };
+  const speakSentence = (raw: string): void => {
+    const sentence = raw.trim();
+    if (!sentence) return;
+    if (sentence.length < LONG_SENTENCE_CHARS) { speakChunk(sentence); return; }
+    // Split a long sentence on commas/semicolons so each chunk's synth time
+    // stays under the previous chunk's playback time (no audible gap).
+    const parts: string[] = [];
+    let remaining = sentence;
+    while (remaining.length > 0) {
+      const m = CLAUSE_BREAK.exec(remaining);
+      if (!m || m.index < CLAUSE_MIN_CHARS - 10) break;
+      const cut = m.index + m[0].length;
+      parts.push(remaining.slice(0, cut).trim());
+      remaining = remaining.slice(cut);
+    }
+    if (remaining.trim()) parts.push(remaining.trim());
+    for (const p of parts) speakChunk(p);
+  };
+  const speaker: TurnSpeaker = {
+    reset() { sentenceBuf = ""; firstClauseFlushed = false; queuedThisTurn = false; },
+    feed(delta) {
+      sentenceBuf += delta;
+      // Sentence terminators (.!?) — preferred boundary.
+      while (true) {
+        const m = SENTENCE_TERMINATOR.exec(sentenceBuf);
+        if (!m) break;
+        const cutEnd = m.index + m[0].length;
+        speakSentence(sentenceBuf.slice(0, cutEnd));
+        sentenceBuf = sentenceBuf.slice(cutEnd);
+      }
+      // Early-clause flush: no period yet but the buffer is long and has a
+      // clause break — emit the FIRST clause so TTS starts sooner. Once per
+      // turn; after that speakSentence's splitter handles long sentences.
+      if (!firstClauseFlushed && sentenceBuf.length >= CLAUSE_MIN_CHARS) {
+        const m = CLAUSE_BREAK.exec(sentenceBuf);
+        if (m && m.index >= CLAUSE_MIN_CHARS - 10) {
+          const cutEnd = m.index + m[0].length;
+          speakChunk(sentenceBuf.slice(0, cutEnd).trim());
+          sentenceBuf = sentenceBuf.slice(cutEnd);
+        }
+      }
+    },
+    flushTail() {
+      const tail = sentenceBuf.trim();
+      if (tail) speakSentence(tail);
+      sentenceBuf = "";
+    },
+    hasQueued() { return queuedThisTurn; },
+    pendingCount() { return pendingTtsCount; },
+  };
+
+  const machine = createVoiceTurnMachine({
+    ctx,
+    runTurn,
+    speaker,
+    cancelTts: () => { try { bridge?.cancelTTS(); } catch { /* already idle */ } },
+    isClosed: () => closed,
+    logger,
+  });
 
   bridge = createGPUBridge({
     onReady: (gpu) => {
@@ -66,52 +126,27 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     },
     onSpeechStart: () => {
       ctx.sendEvent({ type: "vad_speech_start" });
-      // Barge-in: user started talking while agent was replying
-      if (activeTurn) {
-        logger.info(`[gpu-session] ${ctx.sessionId}: barge-in → interrupting agent`);
-        if (pendingClearTimer) { clearTimeout(pendingClearTimer); pendingClearTimer = null; }
-        try { activeTurn.abort(); } catch {}
-        try { bridge?.cancelTTS(); } catch {}
-        ctx.sendEvent({ type: "tts_interrupt" });
-        activeTurn = null;
-        llmDone = false;
-        pendingTtsCount = 0;
-        expectedPlaybackEndMs = 0;
-      }
+      // Barge-in (no-op when idle): machine aborts the turn, cancels TTS, tells
+      // the browser to drop pending audio. Reset our chunk counter so late
+      // audio_done callbacks from the killed turn don't bleed into the next.
+      machine.interrupt();
+      pendingTtsCount = 0;
     },
     onSpeechEnd: () => { ctx.sendEvent({ type: "vad_speech_end" }); },
     onPartial: (text) => { ctx.sendEvent({ type: "partial", text }); },
     onFinal: (text, ms) => {
-      ctx.sendEvent({ type: "final", text, sttMs: ms });
-      handleFinalTranscript(text);
+      // The machine emits the `final` event (with sttMs) after its guards.
+      void machine.handleFinalTranscript(text, ms);
     },
     onAudioChunk: (pcm, sr /*, id, isFinal */) => {
       ctx.sendAudio(pcm);
-      // Push expected end-of-playback forward by this chunk's duration.
-      // Sample count / sample rate gives playback duration in seconds.
-      const now = Date.now();
-      const chunkMs = (pcm.length / (sr || 24000)) * 1000;
-      expectedPlaybackEndMs = Math.max(now, expectedPlaybackEndMs) + chunkMs;
+      machine.noteAudioShipped((pcm.length / (sr || 24000)) * 1000);
     },
     onAudioDone: (_sentenceId, _ms, _cancelled) => {
       pendingTtsCount = Math.max(0, pendingTtsCount - 1);
-      if (llmDone && pendingTtsCount === 0 && activeTurn) {
-        ctx.sendEvent({ type: "tts_idle" });
-        // Sidecar drained its TTS queue, but the browser ring still has
-        // buffered audio. Schedule activeTurn release at the estimated
-        // true end-of-playback so barge-in keeps working.
-        if (pendingClearTimer) clearTimeout(pendingClearTimer);
-        const delay = Math.max(0, expectedPlaybackEndMs - Date.now() + PLAYBACK_TAIL_MS);
-        pendingClearTimer = setTimeout(() => {
-          pendingClearTimer = null;
-          if (activeTurn && !closed) {
-            activeTurn = null;
-            llmDone = false;
-            expectedPlaybackEndMs = 0;
-            ctx.sendEvent({ type: "playback_complete" });
-          }
-        }, delay);
-      }
+      // Last chunk drained — the machine's drain signal (it gates on llmDone +
+      // an active turn internally and schedules the real end-of-playback).
+      if (pendingTtsCount === 0) machine.markTtsDrained();
     },
     onError: (message) => {
       ctx.sendEvent({ type: "voice_error", message });
@@ -133,144 +168,6 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     }
     if (!closed) ctx.sendEvent({ type: "voice_error", message: `GPU sidecar unavailable: ${e.message}. Make sure the Python sidecar is running on ${process.env.LAX_VOICE_PORT || 7008}.` });
   });
-
-  async function handleFinalTranscript(rawText: string): Promise<void> {
-    if (closed) return;
-    const utterance = rawText.trim();
-    if (!utterance) return;
-    if (activeTurn) {
-      logger.info(`[gpu-session] ${ctx.sessionId}: ignoring final while turn in progress`);
-      return;
-    }
-
-    // Dictate mode: skip the agent + TTS, transcript already went to client
-    // via the `final` event at line 85 above. Same guard as voice-session.ts.
-    if (ctx.mode === "dictate") {
-      logger.info(`[gpu-session] ${ctx.sessionId}: dictate final, skipping agent/TTS`);
-      return;
-    }
-
-    ctx.sendEvent({ type: "agent_start" });
-    activeTurn = new AbortController();
-    llmDone = false;
-    pendingTtsCount = 0;
-
-    let sentenceBuf = "";
-    let firstClauseFlushed = false;  // only flush the early clause once per turn
-    // Long-sentence threshold for clause splitting. Sentences longer than
-    // this AND containing a comma get split on the comma before TTS, so
-    // each chunk's synth time stays under the previous chunk's playback
-    // time. Without this, a long sentence like "X is a myth, and Y is Z"
-    // synthesizes in ~4s while sentence 1 only plays for ~1.5s — leaving
-    // an audible gap. With this, both halves synth in ~2s and pipeline
-    // closes the gap.
-    const LONG_SENTENCE_CHARS = 50;  // was 80; lower triggers clause split on more sentences
-    const speakChunk = (text: string) => {
-      if (!text || !bridge) return;
-      pendingTtsCount++;
-      bridge.speak(text, nextSentenceId++, { voice: voiceOverride, speed: speedOverride });
-      firstClauseFlushed = true;
-    };
-    /** Send a complete sentence to TTS, splitting on commas if it's long. */
-    const speakSentence = (sentence: string) => {
-      sentence = sentence.trim();
-      if (!sentence) return;
-      if (sentence.length < LONG_SENTENCE_CHARS) {
-        speakChunk(sentence);
-        return;
-      }
-      // Split on commas. Last clause keeps the period.
-      const parts: string[] = [];
-      let remaining = sentence;
-      while (remaining.length > 0) {
-        const m = CLAUSE_BREAK.exec(remaining);
-        if (!m || m.index < CLAUSE_MIN_CHARS - 10) break;
-        const cut = m.index + m[0].length;
-        parts.push(remaining.slice(0, cut).trim());
-        remaining = remaining.slice(cut);
-      }
-      if (remaining.trim()) parts.push(remaining.trim());
-      for (const p of parts) speakChunk(p);
-    };
-    const flushSentences = (): void => {
-      // Sentence terminators (.!?) — preferred boundary
-      while (true) {
-        const m = SENTENCE_TERMINATOR.exec(sentenceBuf);
-        if (!m) break;
-        const cutEnd = m.index + m[0].length;
-        const sentence = sentenceBuf.slice(0, cutEnd);
-        sentenceBuf = sentenceBuf.slice(cutEnd);
-        speakSentence(sentence);
-      }
-      // Early-clause flush: if no period yet but the buffer is long and
-      // has a comma break, emit the first clause so TTS can start sooner.
-      // Only fires for the FIRST clause of a turn — after that we'd rather
-      // wait for full sentences so the speakSentence() splitter handles it.
-      if (!firstClauseFlushed && sentenceBuf.length >= CLAUSE_MIN_CHARS) {
-        const m = CLAUSE_BREAK.exec(sentenceBuf);
-        if (m && m.index >= CLAUSE_MIN_CHARS - 10) {
-          const cutEnd = m.index + m[0].length;
-          const clause = sentenceBuf.slice(0, cutEnd).trim();
-          sentenceBuf = sentenceBuf.slice(cutEnd);
-          speakChunk(clause);
-        }
-      }
-    };
-
-    try {
-      const result = await runTurn({
-        text: utterance,
-        history,
-        sessionId: ctx.sessionId,
-        signal: activeTurn.signal,
-        onDelta: (delta) => {
-          if (closed || activeTurn?.signal.aborted || !delta) return;
-          ctx.sendEvent({ type: "assistant_delta", text: delta });
-          sentenceBuf += delta;
-          flushSentences();
-        },
-        onVisual: (kind, value, durationMs) => {
-          if (closed) return;
-          ctx.sendEvent({ type: "visual", kind, value, durationMs });
-        },
-      });
-
-      if (activeTurn?.signal.aborted) {
-        // Persist partial history on barge-in (runTurn returns it with
-        // an "[interrupted by user]" marker) so the next turn has a
-        // record of what was said.
-        history = result.updatedHistory;
-        ctx.sendEvent({ type: "assistant_interrupted" });
-        activeTurn = null;
-        return;
-      }
-
-      const tail = sentenceBuf.trim();
-      if (tail) speakSentence(tail);
-      sentenceBuf = "";
-      history = result.updatedHistory;
-      ctx.sendEvent({ type: "assistant_done", text: result.assistantText });
-      llmDone = true;
-      // If TTS already drained while LLM was still streaming (rare but
-      // possible for very short replies), close the turn now.
-      if (pendingTtsCount === 0) {
-        ctx.sendEvent({ type: "tts_idle" });
-        ctx.sendEvent({ type: "playback_complete" });
-        activeTurn = null;
-        llmDone = false;
-      }
-    } catch (e) {
-      const msg = (e as Error).message || String(e);
-      if (activeTurn?.signal.aborted) {
-        logger.info(`[gpu-session] ${ctx.sessionId}: turn aborted (barge-in)`);
-        ctx.sendEvent({ type: "assistant_interrupted" });
-      } else {
-        logger.warn(`[gpu-session] ${ctx.sessionId}: turn failed: ${msg}`);
-        ctx.sendEvent({ type: "agent_error", message: msg });
-      }
-      activeTurn = null;
-    }
-  }
 
   return {
     onMicFrame(frame: Int16Array) {
@@ -297,8 +194,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     close() {
       if (closed) return;
       closed = true;
-      if (pendingClearTimer) { clearTimeout(pendingClearTimer); pendingClearTimer = null; }
-      try { activeTurn?.abort(); } catch {}
+      machine.close();
       try { bridge?.close(); } catch {}
       pendingFrames.length = 0;
     },

@@ -1,5 +1,13 @@
 # Voice Stack Consolidation Plan
 
+> **STATUS (2026-06-06):** Steps 1 & 2 shipped. The two shims are gone
+> (`src/voice.ts` was already removed; `src/voice/voice-session.ts` deleted —
+> callers import the module directly). The forked per-turn state machine
+> (§3.1) is now the single canonical `voice-session/turn-runner.ts`
+> (`createVoiceTurnMachine`); both the in-process and GPU factories drive it
+> with an injected `TurnSpeaker` + `cancelTts`. Remaining/optional: §3.2
+> (realtime scaffolding — dormant), Step 4 (relocate `bridge-voice/`).
+
 **Audit basis commit:** `8d7784c` (HEAD at audit time).
 **Scope:** the voice stack only — `src/voice/`, `src/bridge-voice/`, `src/voice.ts`, `python/voice/server.py`. The OpenAI Realtime code is in `src/voice/realtime/` — there is **no** `src/routes/voice-realtime.ts` (request typo; flagged here so the next pass doesn't go hunting for it).
 

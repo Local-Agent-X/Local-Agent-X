@@ -7,7 +7,6 @@
 // speech-start during an active turn aborts the LLM call, cancels TTS,
 // tells the browser to drop pending audio.
 
-import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { createLogger } from "../../logger.js";
 import type { VoiceSession, VoiceSessionContext } from "../audio-ws.js";
 import type { StreamingSTT } from "../stt-stream.js";
@@ -21,11 +20,10 @@ import type { Tier4StreamingTTS } from "../tier4/types.js";
 import { resolveVoiceSettings } from "./settings.js";
 import { createAudioBuffers } from "./audio-buffers.js";
 import { initializeVoiceStack } from "./model-init.js";
+import { createVoiceTurnMachine, SENTENCE_TERMINATOR, type TurnSpeaker } from "./turn-runner.js";
 import type { VoiceTurnRunner, SecretLookup } from "./types.js";
 
 const logger = createLogger("voice.voice-session");
-
-const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 
 export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: SecretLookup = () => "") {
   return (ctx: VoiceSessionContext): VoiceSession => {
@@ -69,21 +67,46 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
     let whisper: WhisperTranscriber | null = null;
     let stackReady = false;
     let closed = false;
-    let activeTurn: AbortController | null = null;
-    let llmDone = false;
-    let ttsQueuedThisTurn = false;
-    // Playback-completion estimator. Browser ring buffer holds 1-3s
-    // beyond what the worker emitted, so onIdle is too early to clear
-    // activeTurn — barge-in would stop while audio is still playing.
-    // Track samples-shipped to schedule the real end-of-playback.
-    let expectedPlaybackEndMs = 0;
-    let pendingClearTimer: NodeJS.Timeout | null = null;
     let ttsSampleRate = 22050;
-    const PLAYBACK_TAIL_MS = 250; // grace for browser scheduler / network jitter
-    let history: ChatCompletionMessageParam[] = [];
     const pendingFrames: Int16Array[] = [];
 
     const buffers = createAudioBuffers();
+
+    // In-process speaker: stream text to the Tier-4 / CPU TTS worker one whole
+    // sentence at a time. The worker emits a single onIdle when its queue
+    // drains (ttsCallbacks.onIdle below) — that is the machine's drain signal.
+    let sentenceBuf = "";
+    let ttsQueued = false;
+    const speaker: TurnSpeaker = {
+      reset() { sentenceBuf = ""; ttsQueued = false; },
+      feed(delta) {
+        if (!tts) return;
+        sentenceBuf += delta;
+        while (true) {
+          const m = SENTENCE_TERMINATOR.exec(sentenceBuf);
+          if (!m) break;
+          const cutEnd = m.index + m[0].length;
+          const sentence = sentenceBuf.slice(0, cutEnd).trim();
+          sentenceBuf = sentenceBuf.slice(cutEnd);
+          if (sentence) { tts.speak(sentence); ttsQueued = true; }
+        }
+      },
+      flushTail() {
+        const tail = sentenceBuf.trim();
+        if (tail && tts) { tts.speak(tail); ttsQueued = true; }
+        sentenceBuf = "";
+      },
+      hasQueued() { return ttsQueued; },
+    };
+
+    const machine = createVoiceTurnMachine({
+      ctx,
+      runTurn,
+      speaker,
+      cancelTts: () => { try { tts?.cancel(); } catch { /* already idle */ } },
+      isClosed: () => closed,
+      logger,
+    });
 
     // Browser tier shortcut: when the client *can* do STT itself (real
     // browser with Web Speech API), we skip the entire server stack —
@@ -120,27 +143,11 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
           onAudio: (pcm: Int16Array) => {
             if (closed) return;
             ctx.sendAudio(pcm);
-            const now = Date.now();
-            const chunkMs = (pcm.length / ttsSampleRate) * 1000;
-            expectedPlaybackEndMs = Math.max(now, expectedPlaybackEndMs) + chunkMs;
+            machine.noteAudioShipped((pcm.length / ttsSampleRate) * 1000);
           },
           onIdle: () => {
-            if (closed) return;
-            ctx.sendEvent({ type: "tts_idle" });
-            // Worker done synthesizing, but browser ring still has buffered
-            // audio. Schedule activeTurn release at estimated true end.
-            if (llmDone && activeTurn) {
-              if (pendingClearTimer) clearTimeout(pendingClearTimer);
-              const delay = Math.max(0, expectedPlaybackEndMs - Date.now() + PLAYBACK_TAIL_MS);
-              pendingClearTimer = setTimeout(() => {
-                pendingClearTimer = null;
-                if (activeTurn && !closed) {
-                  activeTurn = null;
-                  llmDone = false;
-                  ctx.sendEvent({ type: "playback_complete" });
-                }
-              }, delay);
-            }
+            // Worker drained its synth queue — the machine's drain signal.
+            if (!closed) machine.markTtsDrained();
           },
           onError: (err: Error) => {
             logger.warn(`[voice-session] ${ctx.sessionId}: tts error: ${err.message}`);
@@ -182,17 +189,9 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
 
     function handleSpeechStart(): void {
       if (closed) return;
-      // Barge-in: user started talking while the agent was mid-reply.
-      if (activeTurn) {
-        logger.info(`[voice-session] ${ctx.sessionId}: barge-in detected → interrupting agent`);
-        if (pendingClearTimer) { clearTimeout(pendingClearTimer); pendingClearTimer = null; }
-        try { activeTurn.abort(); } catch {}
-        try { tts?.cancel(); } catch {}
-        ctx.sendEvent({ type: "tts_interrupt" });
-        activeTurn = null;
-        llmDone = false;
-        expectedPlaybackEndMs = 0;
-      }
+      // Barge-in (no-op when idle): the machine aborts the turn, cancels TTS,
+      // and tells the browser to drop pending audio.
+      machine.interrupt();
       ctx.sendEvent({ type: "vad_speech_start" });
       buffers.begin();
     }
@@ -211,6 +210,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
       if (!whisper) return;
 
       ctx.sendEvent({ type: "whisper_transcribing" });
+      const sttStart = Date.now();
       whisper.transcribe(audio)
         .then((text) => {
           if (closed) return;
@@ -219,110 +219,12 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
             ctx.sendEvent({ type: "whisper_empty" });
             return;
           }
-          handleFinalTranscript(t);
+          void machine.handleFinalTranscript(t, Date.now() - sttStart);
         })
         .catch((e: Error) => {
           logger.warn(`[voice-session] ${ctx.sessionId}: whisper failed: ${e.message}`);
           if (!closed) ctx.sendEvent({ type: "whisper_error", message: e.message });
         });
-    }
-
-    async function handleFinalTranscript(utterance: string): Promise<void> {
-      if (closed) return;
-      if (activeTurn) {
-        logger.info(`[voice-session] ${ctx.sessionId}: ignoring final while turn in progress: "${utterance.slice(0, 40)}"`);
-        return;
-      }
-
-      ctx.sendEvent({ type: "final", text: utterance });
-
-      // Dictate mode: emit the transcript to the client and stop. Skip
-      // agent_start / runTurn / TTS — the user only wanted speech-to-text
-      // and the client routes `final` into the message textarea. Without
-      // this guard the agent would still run server-side and TTS would
-      // synthesize a reply the user never asked for.
-      if (ctx.mode === "dictate") {
-        logger.info(`[voice-session] ${ctx.sessionId}: dictate final, skipping agent/TTS: "${utterance.slice(0, 40)}"`);
-        return;
-      }
-
-      ctx.sendEvent({ type: "agent_start" });
-      activeTurn = new AbortController();
-      llmDone = false;
-      ttsQueuedThisTurn = false;
-
-      let sentenceBuf = "";
-      const flushCompletedSentences = (): void => {
-        if (!tts) return;
-        while (true) {
-          const m = SENTENCE_TERMINATOR.exec(sentenceBuf);
-          if (!m) break;
-          const cutEnd = m.index + m[0].length;
-          const sentence = sentenceBuf.slice(0, cutEnd).trim();
-          sentenceBuf = sentenceBuf.slice(cutEnd);
-          if (sentence) {
-            tts.speak(sentence);
-            ttsQueuedThisTurn = true;
-          }
-        }
-      };
-
-      try {
-        const result = await runTurn({
-          text: utterance,
-          history,
-          sessionId: ctx.sessionId,
-          signal: activeTurn.signal,
-          onDelta: (delta) => {
-            if (closed || activeTurn?.signal.aborted) return;
-            if (!delta) return;
-            ctx.sendEvent({ type: "assistant_delta", text: delta });
-            sentenceBuf += delta;
-            flushCompletedSentences();
-          },
-          onVisual: (kind, value, durationMs) => {
-            if (closed) return;
-            ctx.sendEvent({ type: "visual", kind, value, durationMs });
-          },
-        });
-
-        if (activeTurn?.signal.aborted) {
-          // Persist partial history on abort — runTurn catches the abort
-          // and returns updatedHistory with an "[interrupted by user]"
-          // marker so the next turn has a record of the exchange.
-          history = result.updatedHistory;
-          ctx.sendEvent({ type: "assistant_interrupted" });
-          activeTurn = null;
-        } else {
-          const tail = sentenceBuf.trim();
-          if (tail && tts) {
-            tts.speak(tail);
-            ttsQueuedThisTurn = true;
-          }
-          history = result.updatedHistory;
-          ctx.sendEvent({ type: "assistant_done", text: result.assistantText });
-          // Don't clear activeTurn here — TTS queue may still be draining
-          // (LLM often bursts the reply faster than synthesis keeps up).
-          // Hold until onIdle so barge-in stays live through playback.
-          // Empty/short replies queue nothing → clear immediately since
-          // onIdle won't fire.
-          if (!ttsQueuedThisTurn) {
-            activeTurn = null;
-          } else {
-            llmDone = true;
-          }
-        }
-      } catch (e) {
-        const msg = (e as Error).message || String(e);
-        if (activeTurn?.signal.aborted) {
-          logger.info(`[voice-session] ${ctx.sessionId}: turn aborted (barge-in)`);
-          ctx.sendEvent({ type: "assistant_interrupted" });
-        } else {
-          logger.warn(`[voice-session] ${ctx.sessionId}: turn failed: ${msg}`);
-          ctx.sendEvent({ type: "agent_error", message: msg });
-        }
-        activeTurn = null;
-      }
     }
 
     return {
@@ -357,7 +259,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
           ctx.sendEvent({ type: "partial", text: t });
           return;
         }
-        handleFinalTranscript(t).catch((e) => {
+        machine.handleFinalTranscript(t).catch((e) => {
           logger.warn(`[voice-session] ${ctx.sessionId}: handleFinalTranscript failed: ${(e as Error).message}`);
         });
       },
@@ -380,8 +282,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
       close() {
         if (closed) return;
         closed = true;
-        if (pendingClearTimer) { clearTimeout(pendingClearTimer); pendingClearTimer = null; }
-        try { activeTurn?.abort(); } catch {}
+        machine.close();
         try { stt?.close(); } catch {}
         try { tts?.close(); } catch {}
         try { vad?.close(); } catch {}

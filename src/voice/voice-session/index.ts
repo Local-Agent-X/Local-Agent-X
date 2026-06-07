@@ -34,10 +34,15 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
     // without restart.
     const voiceSettings = resolveVoiceSettings();
 
-    // OpenAI Realtime full-duplex takes over the whole session when
-    // voiceMode=realtime (settings or LAX_VOICE_MODE). Falls through to
-    // the normal pipeline if the API key is missing.
-    const realtimeWanted = voiceSettings.mode === "realtime" || process.env.LAX_VOICE_MODE === "realtime";
+    // OpenAI Realtime full-duplex is no longer a user-facing voice-chat tier
+    // (removed from the media-page picker — it's cloud pay-per-minute and
+    // bypasses LAX tools/memory/persona, so it's not the main agent). It stays
+    // available as an env-gated capability for phone/meeting-bot use cases.
+    // Activation is env-ONLY now: a stale settings.voiceMode="realtime" from
+    // before the picker change must NOT silently route main-agent voice to the
+    // cloud, so we deliberately ignore voiceSettings.mode here. Settings still
+    // supply the voice/model overrides below when env opts in.
+    const realtimeWanted = process.env.LAX_VOICE_MODE === "realtime";
     if (realtimeWanted) {
       const ready = realtimeReadiness();
       if (ready.ready) {

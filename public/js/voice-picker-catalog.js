@@ -16,20 +16,10 @@
 // `voicePool`: which voice prefixes/IDs the chat-bar should expose for this tier:
 //   "kokoro"  → all am_*/af_*/bm_*/bf_* (and any other Kokoro languages)
 //   "edge"    → en-* Neural names from EDGE_VOICES
-//   "realtime"→ alloy/echo/fable/onyx/nova/shimmer
 //   "browser" → window.speechSynthesis.getVoices() runtime list
 //   "clones"  → sv:* + cb:* (only on tiers where the python sidecar dispatches them)
 
 window.LAX_VOICE_CATALOG = {
-  REALTIME_VOICES: [
-    ['alloy', 'Alloy (default)'],
-    ['echo', 'Echo'],
-    ['fable', 'Fable'],
-    ['onyx', 'Onyx'],
-    ['nova', 'Nova'],
-    ['shimmer', 'Shimmer'],
-  ],
-
   EDGE_VOICES: [
     ['en-US female', [
       'en-US-AriaNeural', 'en-US-SamNeural', 'en-US-MichelleNeural',
@@ -108,17 +98,13 @@ window.LAX_VOICE_CATALOG = {
         { kind: 'sidecar:studio', label: 'Chatterbox sidecar (optional — for zero-shot clones)', optional: true },
       ],
     },
-    {
-      id: 'realtime',
-      label: 'OpenAI Realtime',
-      tagline: 'Full duplex · lowest latency · ~$0.06/min',
-      detail: 'Browser audio is proxied straight to OpenAI Realtime; STT/LLM/TTS all happen there. 6 voices. Pay-per-minute.',
-      settings: { voiceMode: 'realtime', voiceEngine: 'tier4', voiceTier4Provider: 'kokoro', voiceSttProvider: 'local-whisper' },
-      voicePool: ['realtime'],
-      prerequisites: [
-        { kind: 'secret:OPENAI_API_KEY', label: 'OPENAI_API_KEY (or OPENAI_REALTIME_KEY)' },
-      ],
-    },
+    // NOTE: "OpenAI Realtime" (voiceMode=realtime) was removed from the picker.
+    // It proxies the whole session to OpenAI's speech-to-speech API — cloud
+    // pay-per-minute, requires a metered OPENAI_API_KEY, and bypasses LAX's
+    // tools/memory/persona, so it's not the main agent. The dispatcher branch
+    // and src/voice/realtime/* stay in the codebase; activate it for
+    // phone/meeting-bot use cases via LAX_VOICE_MODE=realtime (env) — it's no
+    // longer a user-facing voice-chat tier.
   ],
 
   // Default tier when settings.json has no voice keys at all (fresh user).

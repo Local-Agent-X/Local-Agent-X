@@ -1,5 +1,4 @@
 const MODEL_CONTEXTS: Record<string, number> = {
-  "gpt-5.3-codex": 128_000,
   "gpt-5.3-codex-spark": 128_000,
   "gpt-5.4": 272_000,        // Native 1.05M, default working 272k
   "gpt-5.4-mini": 272_000,

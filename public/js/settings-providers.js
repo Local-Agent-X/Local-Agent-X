@@ -89,8 +89,7 @@ const PROVIDER_MODELS = {
   codex: [
     { value: 'gpt-5.5', label: 'GPT-5.5 (1M ctx, $5/$30)' },
     { value: 'gpt-5.4', label: 'GPT-5.4' },
-    { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini (default, faster)' },
-    { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
+    { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini (faster)' },
   ],
   anthropic: [
     { value: 'claude-opus-4-8', label: 'Claude Opus 4.8 (frontier, 1M context)' },

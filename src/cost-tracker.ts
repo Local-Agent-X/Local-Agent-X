@@ -31,7 +31,6 @@ const PRICING: Record<string, ModelPricing> = {
   // OpenAI
   "gpt-5.5": { input: 5, output: 30 },
   "gpt-5.5-pro": { input: 30, output: 180 },
-  "gpt-5.3-codex": { input: 2, output: 8 },
   "gpt-4o": { input: 2.50, output: 10 },
   "gpt-4o-mini": { input: 0.15, output: 0.60 },
   "gpt-4.1": { input: 2, output: 8 },

@@ -1,12 +1,13 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
+import { workspacePath } from "../../../config.js";
 
 const STOP = new Set(["the", "and", "for", "app", "site", "page", "what", "where"]);
 const ENTRY_CANDIDATES = ["index.html", "app.html", "app.js", "main.js", "index.js"];
 
 export function findMatchingApps(query: string): Array<{ name: string; entryFile?: string }> {
   if (!query || query.length < 3) return [];
-  const appsDir = resolve(process.cwd(), "workspace", "apps");
+  const appsDir = workspacePath("apps");
   if (!existsSync(appsDir)) return [];
 
   const tokens = query

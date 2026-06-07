@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
 import { createLogger } from "../logger.js";
+import { workspacePath } from "../config.js";
 
 const logger = createLogger("sync.tombstones");
 
@@ -37,7 +38,7 @@ export function tombstonePaths(dataDir: string, syncDir: string): TombstonePaths
   return {
     snapshotFile: join(dataDir, "sync-state", "last-pushed-apps.json"),
     tombstonesDir: join(syncDir, ".tombstones"),
-    appsDir: join(resolve("workspace"), "apps"),
+    appsDir: workspacePath("apps"),
   };
 }
 

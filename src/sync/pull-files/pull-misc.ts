@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { type SyncConfig } from "../constants.js";
+import { workspaceRoot } from "../../config.js";
 import { pullDir } from "../mirror.js";
 import { applyTombstones, tombstonePaths } from "../tombstones.js";
 
@@ -24,7 +25,7 @@ export function pullSessions(dataDir: string, syncDir: string, config: SyncConfi
 export function pullWorkspaceOrProtocols(dataDir: string, syncDir: string, config: SyncConfig): void {
   if (config.syncWorkspace) {
     const syncWs = join(syncDir, "workspace");
-    const ws = resolve("workspace");
+    const ws = workspaceRoot();
     if (existsSync(syncWs)) {
       if (!existsSync(ws)) mkdirSync(ws, { recursive: true });
       // Workspace pull is additive-only — files only get copied IN, never
@@ -38,7 +39,7 @@ export function pullWorkspaceOrProtocols(dataDir: string, syncDir: string, confi
     // without pulling apps/downloads/etc. Additive only.
     const syncProto = join(syncDir, "workspace", "protocols");
     if (existsSync(syncProto)) {
-      const ws = resolve("workspace");
+      const ws = workspaceRoot();
       const localProto = join(ws, "protocols");
       if (!existsSync(localProto)) mkdirSync(localProto, { recursive: true });
       pullDir(syncProto, localProto, /* additiveOnly */ true);

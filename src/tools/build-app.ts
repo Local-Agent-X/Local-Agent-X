@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { workspacePath } from "../config.js";
 import type { ToolDefinition } from "../types.js";
 import {
   renderPerBuildContext,
@@ -172,7 +173,7 @@ export const buildAppTool: ToolDefinition = {
     const provider = resolveBuildProvider(backend, forcedProvider ? { forcedProvider } : {});
     const strategy = resolveBuildStrategy(provider);
 
-    const appDir = resolve("workspace", "apps", appName);
+    const appDir = workspacePath("apps", appName);
     const port = process.env.LAX_PORT ?? "7007";
     const appUrl = `http://127.0.0.1:${port}/apps/${appName}/index.html`;
 

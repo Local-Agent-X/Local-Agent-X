@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
+import { workspaceRoot, workspacePath } from "../config.js";
 import {
   BRAIN_BINARY_FILES,
   BRAIN_DIRS,
@@ -89,7 +90,7 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
   }
 
   if (config.syncWorkspace) {
-    const workspace = resolve("workspace");
+    const workspace = workspaceRoot();
     if (existsSync(workspace)) {
       // Workspace push uses tombstone-driven deletion (see
       // writeTombstonesForDeletedApps + applyTombstones). The mirror is
@@ -104,7 +105,7 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
     // protocols + imported SKILL.md packs propagate without dragging
     // apps/files/downloads along. Additive — never delete remote entries
     // from a partial-subset push.
-    const protocolsDir = resolve("workspace", "protocols");
+    const protocolsDir = workspacePath("protocols");
     if (existsSync(protocolsDir)) {
       const target = join(syncDir, "workspace", "protocols");
       if (!existsSync(target)) mkdirSync(target, { recursive: true });

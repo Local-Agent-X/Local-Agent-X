@@ -16,7 +16,8 @@
  */
 
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { workspacePath } from "../config.js";
 
 const MAX_CATALOG_ENTRIES = 30;
 const CACHE_TTL_MS = 60_000;
@@ -82,7 +83,7 @@ function buildCatalog(memoryDir: string): string {
 }
 
 function scanApps(): CatalogEntry[] {
-  const appsDir = resolve(process.cwd(), "workspace", "apps");
+  const appsDir = workspacePath("apps");
   if (!existsSync(appsDir)) return [];
 
   let entries: string[];

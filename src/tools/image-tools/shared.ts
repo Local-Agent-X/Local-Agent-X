@@ -5,15 +5,27 @@
  */
 
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ToolResult } from "../../types.js";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { getRuntimeConfig } from "../../config.js";
 import { loadSettings } from "../../settings.js";
 import type { SecretsStore } from "../../secrets.js";
 import { resolveCredential } from "../../auth/resolve.js";
 
 export function ok(content: string): ToolResult { return { content }; }
 export function err(content: string): ToolResult { return { content, isError: true }; }
+
+/** Absolute path to a subdir (images/videos/…) of the CANONICAL workspace.
+ *  The static file server serves /images, /videos and /files from
+ *  resolve(config.workspace, subdir); generated media MUST be written to the
+ *  same root or it 404s. The packaged desktop app relocates the workspace to
+ *  ~/Documents, so a cwd-relative "workspace/" diverges from where the server
+ *  reads — that divergence is exactly what makes generated videos render as a
+ *  dead player. Single source of truth: always resolve against config.workspace. */
+export function workspaceDir(subdir: string): string {
+  return resolve(getRuntimeConfig().workspace, subdir);
+}
 
 /** Like ok(), but rides the generated image bytes on `_image` so the chat
  *  tool dispatcher harvests them — feeds the model the image AND lets the
@@ -106,7 +118,7 @@ export async function resolveMediaProvider(
 export function findRecentLocalImage(): string | null {
   const candidates: Array<{ path: string; mtime: number }> = [];
   const exts = /\.(png|jpg|jpeg|webp)$/i;
-  for (const dir of [join("workspace", "images"), join(getLaxDir(), "uploads")]) {
+  for (const dir of [workspaceDir("images"), join(getLaxDir(), "uploads")]) {
     if (!existsSync(dir)) continue;
     try {
       for (const f of readdirSync(dir)) {

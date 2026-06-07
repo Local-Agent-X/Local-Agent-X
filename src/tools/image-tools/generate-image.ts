@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, okWithImage, resolveMediaProvider } from "./shared.js";
+import { ok, err, okWithImage, resolveMediaProvider, workspaceDir } from "./shared.js";
 
 /** Stable Diffusion server URL — configurable via config.sdServerUrl */
 function getSDServerUrl(): string { return getRuntimeConfig().sdServerUrl; }
@@ -43,8 +43,9 @@ async function generateViaXai(
   const first = data.data?.[0];
   if (!first?.url && !first?.b64_json) return err("xAI returned no image.");
 
-  // Write into workspace/images/ so the /images/<file> static mount serves it.
-  const imagesDir = join("workspace", "images");
+  // Write into the canonical workspace images/ so the /images/<file> static
+  // mount (served from config.workspace) finds it.
+  const imagesDir = workspaceDir("images");
   if (!existsSync(imagesDir)) mkdirSync(imagesDir, { recursive: true });
   const filename = `grok_${Date.now()}.png`;
   const savePath = join(imagesDir, filename);
@@ -209,7 +210,7 @@ export const generateImageTool: ToolDefinition = {
       };
 
       const localUrl = `http://127.0.0.1:${getRuntimeConfig().port}/images/${data.filename}`;
-      const savePath = join("workspace", "images", data.filename);
+      const savePath = join(workspaceDir("images"), data.filename);
       const text =
         `Image generated!\n` +
         `Prompt: ${prompt}\n` +

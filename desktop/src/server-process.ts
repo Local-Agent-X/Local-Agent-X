@@ -219,9 +219,9 @@ export function startServer(handlers?: ServerEventHandlers): void {
       ...process.env,
       PATH: augmentedPath,
       LAX_PARENT_PID: String(process.pid),
-      // OS-correct Documents path (handles Windows/OneDrive redirection) so the
-      // server defaults the agent workspace to ~/Documents/Local Agent X
-      // instead of the hidden install dir.
+      // OS Documents path. May be OneDrive-redirected on Windows (Known Folder
+      // Move); the server sanitizes that to the real on-disk ~/Documents — a
+      // high-write agent workspace must not live under OneDrive. See config.ts.
       LAX_DOCUMENTS_DIR: electron.app.getPath("documents"),
       ...(bundledModelsDir ? { LAX_BUNDLED_MODELS_DIR: bundledModelsDir } : {}),
     },

@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkSync, readdirSync, cpSync, rmSync } from "node:fs";
+import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkSync, readdirSync, cpSync, rmSync, lstatSync, symlinkSync, readlinkSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import type { LAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
 import { getLaxDir } from "./lax-data-dir.js";
@@ -213,7 +214,7 @@ export function loadConfig(): LAXConfig {
   // existing files over once and persist the absolute path — after that the
   // value is non-legacy and this never runs again. Dev / standalone server
   // (no LAX_DOCUMENTS_DIR) keeps "./workspace".
-  const docsDir = process.env.LAX_DOCUMENTS_DIR;
+  const docsDir = process.env.LAX_DOCUMENTS_DIR ? deOneDrive(process.env.LAX_DOCUMENTS_DIR) : undefined;
   const legacyWorkspace = raw.workspace === undefined || raw.workspace === "./workspace";
   if (docsDir && legacyWorkspace) {
     const newWorkspace = join(docsDir, "Local Agent X");
@@ -221,6 +222,24 @@ export function loadConfig(): LAXConfig {
     config.workspace = newWorkspace;
     saveConfig(config);
   }
+
+  // Self-heal a workspace that was previously persisted into OneDrive (older
+  // build, or a manual migration). The bad path is already saved as an
+  // absolute value, so the legacy-only block above won't catch it — correct it
+  // here and move the data onto the real disk.
+  const healed = deOneDrive(config.workspace);
+  if (healed !== config.workspace) {
+    migrateWorkspace(resolve(config.workspace), resolve(healed));
+    config.workspace = healed;
+    saveConfig(config);
+  }
+
+  // The static file server (and a few tools) read from config.workspace, while
+  // most file tools resolve agent paths against <cwd>/workspace. They MUST be
+  // the same directory or generated files 404 / land where nothing serves
+  // them. When the workspace was relocated off the cwd, bridge the two with a
+  // junction so every reader and writer converges on one physical directory.
+  ensureWorkspaceLink(config.workspace);
 
   // Inject actual app URL into system prompt (works with any port)
   const appUrl = `http://127.0.0.1:${config.port}`;
@@ -250,6 +269,72 @@ export function saveConfig(config: LAXConfig): void {
   } catch (e) {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
     throw e;
+  }
+}
+
+// Windows "Known Folder Move" redirects Documents into ...\OneDrive\Documents,
+// and Electron's getPath("documents") faithfully returns that. A high-write
+// agent workspace must NOT live under OneDrive: the sync client locks files
+// mid-write, breaks our atomic config.json rename, and adds per-op latency.
+// Map a OneDrive Documents path back to the real on-disk ~/Documents when that
+// exists (a genuine relocation to another drive is left untouched).
+// Pure transform: drop the "\OneDrive" segment sitting immediately before
+// "\Documents", leaving the on-disk path. ...\OneDrive\Documents\X →
+// ...\Documents\X. A path without that exact shape is returned unchanged.
+// Exported for tests — the regex is the bug-prone part.
+export function stripOneDriveDocuments(dir: string): string {
+  if (!/[\\/]OneDrive[\\/]Documents([\\/]|$)/i.test(dir)) return dir;
+  return dir.replace(/[\\/]OneDrive(?=[\\/]Documents)/i, "");
+}
+
+function deOneDrive(dir: string): string {
+  if (process.platform !== "win32") return dir;
+  const stripped = stripOneDriveDocuments(dir);
+  if (stripped === dir) return dir;
+  // Only redirect if the real on-disk Documents actually exists, so a genuine
+  // relocation to another drive is left untouched.
+  if (!existsSync(join(homedir(), "Documents"))) return dir;
+  return stripped;
+}
+
+// Ensure <cwd>/workspace and config.workspace are the SAME physical directory.
+// They're only naturally equal in dev (workspace = "./workspace"); once the
+// workspace is relocated (Documents), cwd-relative file tools and the
+// config.workspace-based static server diverge. A directory junction (Windows)
+// / symlink (POSIX) bridges them with zero per-tool path rewrites. Idempotent
+// and non-destructive: a real cwd/workspace dir has its contents migrated into
+// the target first, and is only removed once empty.
+function ensureWorkspaceLink(workspace: string): void {
+  const target = resolve(workspace);
+  const link = resolve("workspace");
+  if (link === target) return; // dev default — already one directory
+  // Already the same physical directory via a junction/symlink (in EITHER
+  // direction — e.g. Documents\Local Agent X → repo\workspace)? realpathSync
+  // resolves the link so we recognize it and skip, instead of trying to
+  // migrate a directory onto itself.
+  try {
+    if (existsSync(link) && existsSync(target) && realpathSync(link) === realpathSync(target)) return;
+  } catch { /* not resolvable yet — fall through to link creation */ }
+  try {
+    mkdirSync(target, { recursive: true });
+    const st = existsSync(link) ? lstatSync(link) : null;
+    if (st?.isSymbolicLink()) {
+      if (resolve(readlinkSync(link)) === target) return; // already linked correctly
+      unlinkSync(link); // points elsewhere — relink below
+    } else if (st?.isDirectory()) {
+      migrateWorkspace(link, target);
+      if (readdirSync(link).length > 0) {
+        logger.warn(`[config] ${link} still has files after migrate — leaving real dir, NOT junctioning (resolve manually)`);
+        return;
+      }
+      rmSync(link, { recursive: true, force: true });
+    } else if (st) {
+      return; // a file named "workspace" — leave it, don't clobber
+    }
+    symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
+    logger.info(`[config] linked ${link} → ${target} (single workspace dir)`);
+  } catch (e) {
+    logger.warn(`[config] could not link workspace to ${target}: ${(e as Error).message}`);
   }
 }
 

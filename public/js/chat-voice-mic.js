@@ -99,6 +99,16 @@ async function startVoiceMode() {
     // worklet receives TTS PCM only when the server is also doing TTS —
     // browser tier uses speechSynthesis instead.
     voiceCtx = new AudioContext();
+    // This runs after the WS-open await above, so it's off the original
+    // user-gesture call stack — Chromium starts the context 'suspended'
+    // (silent mic analyser → sphere doesn't move, no mic-capture worklet
+    // frames, no TTS playback). A real browser's sticky activation masks
+    // this; Windows Electron does not, which is why voice was dead there.
+    // Resume explicitly so all three audio paths come alive.
+    if (voiceCtx.state === 'suspended') {
+      try { await voiceCtx.resume(); } catch (err) { console.warn('[voice] AudioContext resume failed:', err && err.message); }
+    }
+    console.log(`[voice] AudioContext state=${voiceCtx.state}`);
     if (useClientStt) {
       // Real browser + browser tier: nothing to register; webkit handles
       // capture + recognition, speechSynthesis handles playback.
@@ -123,6 +133,8 @@ async function startVoiceMode() {
     voiceMicStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     });
+    const _micTrack = voiceMicStream.getAudioTracks()[0];
+    if (_micTrack) console.log(`[voice] mic track: label="${_micTrack.label}" enabled=${_micTrack.enabled} muted=${_micTrack.muted} state=${_micTrack.readyState}`);
     const source = voiceCtx.createMediaStreamSource(voiceMicStream);
     if (!useClientStt) {
       voiceMicNode = new AudioWorkletNode(voiceCtx, 'mic-capture');

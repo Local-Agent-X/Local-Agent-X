@@ -223,6 +223,18 @@ async function loadProviders() {
   } catch { return null; }
 }
 
+// Force the bottom status-bar pickers to re-read /api/providers right now and
+// re-render. Call this after ANY provider is connected/disconnected (OAuth
+// sign-in, key save, etc.) so a newly added provider shows up immediately
+// instead of only after a page refresh. Bypasses the 30s loadProviders cache.
+async function refreshProviderPicker() {
+  _providersCache = null;
+  _providersCacheTime = 0;
+  try { await loadProviders(); } catch {}
+  try { updateStatusBar(true); } catch {}
+}
+window.refreshProviderPicker = refreshProviderPicker;
+
 // Render whatever the first hit returns, then keep refetching until the
 // server's provider caches warm (or we hit the ceiling). Without this the
 // picker boxes sat empty until a manual provider switch, since updateStatusBar

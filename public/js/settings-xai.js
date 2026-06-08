@@ -4,6 +4,7 @@
 // Anthropic auth blocks. OAuth bearer is wire-identical to XAI_API_KEY on
 // api.x.ai/v1, so the existing openai-http adapter consumes either.
 
+let _xaiWasAuthed = null;
 async function checkXaiAuth() {
   try {
     const d = await apiJson('/api/auth/xai/status');
@@ -11,6 +12,10 @@ async function checkXaiAuth() {
     const loginBtn = document.getElementById('btn-xai-login');
     const discBtn = document.getElementById('btn-xai-disconnect');
     if (!el) return;
+    // Refresh the chat provider picker on the connect/disconnect transition
+    // (this is polled, so only fire on a real change — not every tick).
+    if (_xaiWasAuthed !== null && _xaiWasAuthed !== !!d.authenticated) window.refreshProviderPicker?.();
+    _xaiWasAuthed = !!d.authenticated;
     if (d.authenticated) {
       el.className = 'status-badge ok';
       let label;

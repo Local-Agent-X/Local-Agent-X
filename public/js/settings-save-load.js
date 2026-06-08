@@ -55,6 +55,9 @@ async function saveSettings() {
   }
   // Also save sync config to server
   await saveSyncConfig();
+  // A saved key/provider may have just added (or switched) a provider — refresh
+  // the chat picker so it shows up without a page reload.
+  window.refreshProviderPicker?.();
   const el = document.getElementById('save-status');
   if (el) { el.textContent = 'Saved'; setTimeout(() => el.textContent = '', 2000); }
 }

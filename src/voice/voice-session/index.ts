@@ -20,7 +20,7 @@ import type { Tier4StreamingTTS } from "../tier4/types.js";
 import { resolveVoiceSettings } from "./settings.js";
 import { createAudioBuffers } from "./audio-buffers.js";
 import { initializeVoiceStack } from "./model-init.js";
-import { createVoiceTurnMachine, SENTENCE_TERMINATOR, type TurnSpeaker } from "./turn-runner.js";
+import { createVoiceTurnMachine, SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./turn-runner.js";
 import type { VoiceTurnRunner, SecretLookup } from "./types.js";
 
 const logger = createLogger("voice.voice-session");
@@ -77,8 +77,9 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
     // drains (ttsCallbacks.onIdle below) — that is the machine's drain signal.
     let sentenceBuf = "";
     let ttsQueued = false;
+    let firstChunkSpoken = false;
     const speaker: TurnSpeaker = {
-      reset() { sentenceBuf = ""; ttsQueued = false; },
+      reset() { sentenceBuf = ""; ttsQueued = false; firstChunkSpoken = false; },
       feed(delta) {
         if (!tts) return;
         sentenceBuf += delta;
@@ -88,7 +89,17 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
           const cutEnd = m.index + m[0].length;
           const sentence = sentenceBuf.slice(0, cutEnd).trim();
           sentenceBuf = sentenceBuf.slice(cutEnd);
-          if (sentence) { tts.speak(sentence); ttsQueued = true; }
+          if (sentence) { tts.speak(sentence); ttsQueued = true; firstChunkSpoken = true; }
+        }
+        // First-chunk flush: start speaking the reply's opening ASAP so the
+        // voice leads the text instead of trailing it. Fires once per turn.
+        if (!firstChunkSpoken) {
+          const cut = firstChunkCut(sentenceBuf);
+          if (cut > 0) {
+            const chunk = sentenceBuf.slice(0, cut).trim();
+            if (chunk) { tts.speak(chunk); ttsQueued = true; firstChunkSpoken = true; }
+            sentenceBuf = sentenceBuf.slice(cut);
+          }
         }
       },
       flushTail() {

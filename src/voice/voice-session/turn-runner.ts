@@ -22,6 +22,23 @@ import type { VoiceTurnRunner } from "./types.js";
 
 export const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 
+/** Earliest cut point for the OPENING TTS chunk, so the voice starts reading
+ *  while the reply is still streaming instead of trailing it — the dominant
+ *  felt-latency lever for slow synthesis (clone voices). Returns the slice end
+ *  at the first clause break (≥4 chars in) or a word boundary (≥`minChars`),
+ *  or -1 when there's not enough yet. Engine speakers call this once per turn
+ *  for the first chunk, then fall back to sentence/clause flushing for the
+ *  bulk (which has better prosody). */
+export function firstChunkCut(buf: string, minChars = 12): number {
+  const clause = /[,;:]\s+/.exec(buf);
+  if (clause && clause.index >= 4) return clause.index + clause[0].length;
+  if (buf.length >= minChars) {
+    const space = buf.indexOf(" ", minChars);
+    if (space > 0) return space + 1;
+  }
+  return -1;
+}
+
 const PLAYBACK_TAIL_MS = 250; // grace for browser scheduler / network jitter
 
 interface TurnLogger {

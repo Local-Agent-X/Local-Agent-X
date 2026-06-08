@@ -266,53 +266,30 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     json(200, { ok: true }); return true;
   }
   if (method === "POST" && url.pathname === "/api/auth/anthropic/cli-login") {
+    // Paste-the-code OAuth: build the same authorize URL the `claude` CLI uses
+    // and hand it to the browser. The user pastes the resulting code back via
+    // /cli-login-submit. We do NOT spawn the CLI here — a backgrounded CLI opens
+    // the browser a second time and can never receive the code, which is the
+    // dead-end this replaces.
     try {
-      const { spawn } = await import("node:child_process");
-      const env = npmAugmentedEnv();
-      try { _execSync("claude --version", { timeout: 5000, stdio: "pipe", env }); }
-      catch { json(400, { error: "Claude CLI not installed. Install it first." }); return true; }
-
-      if (cliLoginProc && cliLoginProc.exitCode === null) {
-        try { cliLoginProc.kill(); } catch {}
-      }
-      const proc = spawn("claude", ["auth", "login", "--claudeai"], { shell: true, stdio: ["pipe", "pipe", "pipe"], detached: false, windowsHide: true, env });
-      cliLoginProc = proc;
-      proc.on("exit", code => { logger.info(`[cli-login] claude auth login exited (${code})`); if (cliLoginProc === proc) cliLoginProc = null; });
-
-      const urlRegex = /https?:\/\/(?:claude\.com|claude\.ai|console\.anthropic\.com|platform\.claude\.com|anthropic\.com)\/[^\s'"<>]+/i;
-      let captured = "";
-      let buffered = "";
-      const stripAnsi = (s: string) => s.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
-      const onChunk = (chunk: Buffer) => {
-        const clean = stripAnsi(chunk.toString());
-        buffered += clean;
-        if (!captured) {
-          const m = buffered.match(urlRegex);
-          if (m) captured = m[0].replace(/[)\].,;]+$/, "");
-        }
-        logger.info(`[cli-login] output: ${clean.slice(0, 400).replace(/\n/g, "\\n")}`);
-      };
-      proc.stdout?.on("data", onChunk);
-      proc.stderr?.on("data", onChunk);
-
-      const deadline = Date.now() + 8000;
-      while (!captured && Date.now() < deadline && proc.exitCode === null) await new Promise(r => setTimeout(r, 100));
-
-      if (captured) {
-        logger.info(`[cli-login] captured OAuth URL`);
-        json(200, { ok: true, authUrl: captured });
-      } else {
-        try { proc.kill(); } catch {}
-        json(500, { error: "Could not capture login URL from `claude login` within 8s. Run `claude login` in a terminal instead." });
-      }
+      const { startAnthropicCliOAuth } = await import("../../auth/anthropic.js");
+      const { authUrl } = startAnthropicCliOAuth();
+      json(200, { ok: true, authUrl });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }
+  if (method === "POST" && url.pathname === "/api/auth/anthropic/cli-login-submit") {
+    try {
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+      const code = String((body as { code?: string }).code || "").trim();
+      const { completeAnthropicCliOAuth } = await import("../../auth/anthropic.js");
+      await completeAnthropicCliOAuth(code);
+      json(200, { ok: true, method: "cli-session" });
+    } catch (e) { json(400, { error: safeErrorMessage(e) }); }
+    return true;
+  }
   if (method === "POST" && url.pathname === "/api/auth/anthropic/cli-login-cancel") {
-    if (cliLoginProc && cliLoginProc.exitCode === null) {
-      try { cliLoginProc.kill(); } catch {}
-      cliLoginProc = null;
-    }
+    try { const { cancelAnthropicCliOAuth } = await import("../../auth/anthropic.js"); cancelAnthropicCliOAuth(); } catch {}
     json(200, { ok: true }); return true;
   }
 
@@ -478,6 +455,5 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
   return false;
 };
 
-let cliLoginProc: import("node:child_process").ChildProcess | null = null;
 let codexCliLoginProc: import("node:child_process").ChildProcess | null = null;
 let grokCliLoginProc: import("node:child_process").ChildProcess | null = null;

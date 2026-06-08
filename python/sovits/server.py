@@ -125,9 +125,10 @@ async def lifespan(app: FastAPI):
     api_v2_script = os.path.join(repo_dir, "api_v2.py")
 
     # Skip spawn if something is already on the port (manual launch / tests).
+    # trust_env=False: never route the localhost probe through a user proxy.
     already_up = False
     try:
-        async with httpx.AsyncClient(timeout=2.0) as c:
+        async with httpx.AsyncClient(timeout=2.0, trust_env=False) as c:
             r = await c.get(f"{API_V2_URL}/docs")
             already_up = r.status_code == 200
     except Exception:

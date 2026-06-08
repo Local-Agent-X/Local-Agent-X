@@ -71,7 +71,9 @@ function killPid(pid: number): boolean {
  * is still alive eating GPU. Matches on `tier.procMatch` (all substrings must
  * be present in the command line).
  */
-async function findSidecarPids(tier: VoiceTier): Promise<number[]> {
+interface SidecarProc { pid: number; ppid: number; }
+
+async function findSidecarPids(tier: VoiceTier): Promise<SidecarProc[]> {
   const markers = tier.procMatch;
   if (!markers || markers.length === 0) return [];
   if (IS_WIN) {
@@ -81,14 +83,14 @@ async function findSidecarPids(tier: VoiceTier): Promise<number[]> {
     const script =
       `Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue | ` +
       `Where-Object { $_.CommandLine -and ${conds} } | ` +
-      `Select-Object -ExpandProperty ProcessId`;
+      `ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId)" }`;
     try {
       const { stdout } = await execFileAsync(
         "powershell.exe",
         ["-NoProfile", "-NonInteractive", "-Command", script],
         { timeout: 10_000, windowsHide: true },
       );
-      return stdout.split(/\r?\n/).map(s => s.trim()).filter(s => /^\d+$/.test(s)).map(s => parseInt(s, 10));
+      return parseProcLines(stdout);
     } catch {
       return [];
     }
@@ -98,17 +100,47 @@ async function findSidecarPids(tier: VoiceTier): Promise<number[]> {
   try {
     const { stdout } = await execFileAsync("pgrep", ["-f", markers[markers.length - 1]], { timeout: 5000 });
     const pids = stdout.split(/\s+/).filter(s => /^\d+$/.test(s)).map(s => parseInt(s, 10));
-    const out: number[] = [];
+    const out: SidecarProc[] = [];
     for (const pid of pids) {
       try {
-        const { stdout: cl } = await execFileAsync("ps", ["-p", String(pid), "-o", "command="], { timeout: 3000 });
-        if (markers.every(m => cl.toLowerCase().includes(m.toLowerCase()))) out.push(pid);
+        const { stdout: info } = await execFileAsync("ps", ["-p", String(pid), "-o", "ppid=,command="], { timeout: 3000 });
+        const m = info.trim().match(/^(\d+)\s+(.*)$/);
+        if (m && markers.every(k => m[2].toLowerCase().includes(k.toLowerCase()))) out.push({ pid, ppid: parseInt(m[1], 10) });
       } catch { /* gone */ }
     }
     return out;
   } catch {
     return [];
   }
+}
+
+function parseProcLines(stdout: string): SidecarProc[] {
+  const out: SidecarProc[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const m = line.trim().match(/^(\d+),(\d+)$/);
+    if (m) out.push({ pid: parseInt(m[1], 10), ppid: parseInt(m[2], 10) });
+  }
+  return out;
+}
+
+/**
+ * Expand a set of root pids to include their descendants WITHIN `procs`. The
+ * venv launcher LAX tracks (`running` pid) spawns the real python worker as a
+ * child; for SoVITS both match the same signature because "sovits" is in the
+ * script path, so a naive keep-the-tracked-pid kills the worker. Keeping the
+ * tracked pid's subtree spares the worker the launcher actually owns.
+ */
+function withDescendants(procs: SidecarProc[], roots: Iterable<number>): Set<number> {
+  const keep = new Set<number>();
+  for (const r of roots) if (r) keep.add(r);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const p of procs) {
+      if (!keep.has(p.pid) && keep.has(p.ppid)) { keep.add(p.pid); grew = true; }
+    }
+  }
+  return keep;
 }
 
 /**
@@ -123,8 +155,8 @@ export async function reapOrphanSidecars(): Promise<number> {
   let killed = 0;
   for (const tier of TIERS) {
     if (tier.kind === "native" || !tier.procMatch || tier.port <= 0) continue;
-    const pids = await findSidecarPids(tier);
-    if (pids.length === 0) continue;
+    const procs = await findSidecarPids(tier);
+    if (procs.length === 0) continue;
     const mine = running.get(tier.id)?.pid ?? null;
     const onPort = pidOnPort(tier.port);
     const healthy = (await probeHealth(tier.healthUrl)).ok;
@@ -134,9 +166,12 @@ export async function reapOrphanSidecars(): Promise<number> {
     // null) and we don't own it, skip the tier entirely rather than blind-kill
     // every matching pid — that blind kill was taking down healthy sidecars.
     if (healthy && !onPort && !mine) continue;
-    const keep = mine ?? (healthy && onPort ? onPort : null);
-    for (const pid of pids) {
-      if (pid === keep) continue;
+    // Keep the owned/listening process AND its child subtree: the tracked pid
+    // is the venv launcher, the real worker is its child and matches the same
+    // signature, so keeping only the root would kill the worker.
+    const keep = withDescendants(procs, [mine ?? 0, onPort ?? 0]);
+    for (const { pid } of procs) {
+      if (keep.has(pid)) continue;
       if (killPid(pid)) {
         killed++;
         logger.info(`[voice-setup] reaped orphan ${tier.id} pid=${pid} (port ${tier.port}, healthy=${healthy})`);
@@ -214,9 +249,12 @@ export function killTier(tierId: string): void {
     // whatever's in the running map at resolution time so a replacement that
     // startTierAndWait spawns right after this call isn't killed.
     if (tier.procMatch) {
-      void findSidecarPids(tier).then(pids => {
-        const keep = running.get(tierId)?.pid ?? null;
-        for (const pid of pids) if (pid !== keep) killPid(pid);
+      void findSidecarPids(tier).then(procs => {
+        // Spare the tracked launcher AND its worker subtree (see withDescendants).
+        const keep = withDescendants(procs, [running.get(tierId)?.pid ?? 0]);
+        const victims = procs.map(p => p.pid).filter(pid => !keep.has(pid));
+        if (victims.length) logger.info(`[voice-setup] killTier ${tierId} sweep: keep=[${[...keep].join(",")}] killing=[${victims.join(",")}]`);
+        for (const pid of victims) killPid(pid);
       }).catch(() => {});
     }
   }

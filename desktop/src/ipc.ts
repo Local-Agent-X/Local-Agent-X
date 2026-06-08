@@ -5,7 +5,7 @@
 // settings checkbox) and OS-level chrome (titleBarOverlay, app
 // background, autostart registration).
 
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, shell, systemPreferences } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, shell, systemPreferences } from "electron";
 import { join } from "path";
 import { getProjectRoot, reloadLAXConfig, getLAXConfig } from "./config";
 import { type DesktopSettings, getSetting, setSetting } from "./settings";
@@ -136,6 +136,38 @@ export function setupIPC(): void {
     setQuitting(true);
     app.relaunch();
     app.quit();
+  });
+
+  // Native folder picker for the Settings → Server workspace location. Returns
+  // the chosen absolute path, or null if the user canceled. Cross-platform —
+  // Electron's dialog is the OS-native picker on Windows and macOS.
+  ipcMain.handle("select-folder", async (_e, opts?: { title?: string; defaultPath?: string }) => {
+    const win = getMainWindow();
+    if (!win) return null;
+    const result = await dialog.showOpenDialog(win, {
+      title: opts?.title || "Choose folder",
+      ...(opts?.defaultPath ? { defaultPath: opts.defaultPath } : {}),
+      properties: ["openDirectory", "createDirectory"],
+    });
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+  });
+
+  // Native OK/Cancel confirmation — used for the "restart required" prompt when
+  // a reboot-only server field (port, workspace) is changed. Returns true when
+  // the user accepts.
+  ipcMain.handle("confirm", async (_e, opts: { message: string; detail?: string; okLabel?: string }) => {
+    const win = getMainWindow();
+    if (!win) return false;
+    const result = await dialog.showMessageBox(win, {
+      type: "question",
+      buttons: [opts.okLabel || "OK", "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      message: opts.message,
+      ...(opts.detail ? { detail: opts.detail } : {}),
+    });
+    return result.response === 0;
   });
 
   ipcMain.handle("open-in-browser", () => {

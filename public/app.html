@@ -306,7 +306,7 @@
         <div class="section-card">
           <div class="section-title">Server</div>
           <div class="section-desc">Local server configuration. Changes require restart.</div>
-          <div class="field-row"><div class="field"><label class="field-label">Port</label><input class="field-input" id="cfg-port" type="number" value="7007"/></div><div class="field"><label class="field-label">Workspace</label><input class="field-input" id="cfg-workspace" value="./workspace"/></div></div>
+          <div class="field-row"><div class="field"><label class="field-label">Port</label><input class="field-input" id="cfg-port" type="number" value="7007" onchange="onPortFieldChange()"/></div><div class="field"><label class="field-label">Workspace</label><div style="display:flex;gap:6px;align-items:center"><input class="field-input" id="cfg-workspace" value="./workspace" style="flex:1;min-width:0"/><button type="button" class="action-btn" id="cfg-workspace-browse" onclick="pickWorkspaceFolder()" title="Choose a workspace folder">Browse…</button></div></div></div>
         </div>
         <div class="section-card">
           <div class="section-title">Updates</div>
@@ -472,7 +472,7 @@
           <div class="field">
             <label class="field-label">Access Mode</label>
             <select class="field-select" id="cfg-file-access" onchange="setFileAccessMode(this.value)">
-              <option value="workspace">Workspace Only — project files + memory only</option>
+              <option value="workspace">Workspace Only — workspace folder + memory only</option>
               <option value="common" selected>Common — + Downloads, Documents, Desktop, Pictures</option>
               <option value="unrestricted">Unrestricted — read any file on the computer</option>
             </select>

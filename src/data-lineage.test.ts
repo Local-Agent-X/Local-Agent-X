@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { homedir, tmpdir } from "node:os";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -181,6 +181,45 @@ describe("bash taint integration", () => {
     expect(checkEgressTaint("test-session").blocked).toBe(true);
     clearSessionTaint("test-session");
     expect(checkEgressTaint("test-session").blocked).toBe(false);
+  });
+});
+
+describe("sticky session taint — no decay window", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    clearSessionTaint("sticky-session");
+  });
+
+  it("egress stays blocked long after the old 5-minute window would have elapsed", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-08T00:00:00Z"));
+    clearSessionTaint("sticky-session");
+
+    recordSensitiveRead("sticky-session", "sensitive_file", "/home/u/.ssh/id_rsa");
+    expect(checkEgressTaint("sticky-session").blocked).toBe(true);
+
+    // Advance well past the former 5-minute decay window (now +1 hour).
+    vi.advanceTimersByTime(60 * 60 * 1000);
+
+    // Sticky semantics: the session is STILL tainted; egress stays blocked.
+    expect(checkEgressTaint("sticky-session").blocked).toBe(true);
+    // And the kernel still receives the taint source.
+    expect(getKernelTaintSources("sticky-session")).toContain("rag");
+  });
+
+  it("propagated taint also persists past the old window", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-08T00:00:00Z"));
+    clearSessionTaint("sticky-child");
+    clearSessionTaint("sticky-session");
+
+    recordSensitiveRead("sticky-child", "sensitive_file", "/home/u/.ssh/id_rsa");
+    expect(propagateTaint("sticky-child", "sticky-session")).toBe(1);
+
+    vi.advanceTimersByTime(60 * 60 * 1000);
+    expect(checkEgressTaint("sticky-session").blocked).toBe(true);
+
+    clearSessionTaint("sticky-child");
   });
 });
 

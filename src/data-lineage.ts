@@ -43,21 +43,16 @@ export function checkEgressTaint(sessionId: string): { blocked: boolean; reason?
   const taints = sessionTaint.get(sessionId);
   if (!taints || taints.length === 0) return { blocked: false };
 
-  // Any sensitive data in the context within the last 5 minutes blocks egress
-  const TAINT_WINDOW_MS = 5 * 60 * 1000;
-  const now = Date.now();
-  const activeTaints = taints.filter(t => now - t.timestamp < TAINT_WINDOW_MS);
-
-  if (activeTaints.length > 0) {
-    const sources = [...new Set(activeTaints.map(t => `${t.source}:${t.target.slice(0, 40)}`))];
-    return {
-      blocked: true,
-      reason: `Egress blocked: session contains tainted data from sensitive sources (${sources.join(", ")}). ` +
-        `Data lineage tracking prevents exfiltration even through transforms.`,
-    };
-  }
-
-  return { blocked: false };
+  // STICKY taint: once a session has read sensitive data it stays tainted for
+  // the session's life. The recorded timestamp is kept for audit/display only —
+  // it does NOT expire the taint (a 5-min decay window silently un-tainted
+  // sessions and weakened enforcement; the model can't "un-see" the bytes).
+  const sources = [...new Set(taints.map(t => `${t.source}:${t.target.slice(0, 40)}`))];
+  return {
+    blocked: true,
+    reason: `Egress blocked: session contains tainted data from sensitive sources (${sources.join(", ")}). ` +
+      `Data lineage tracking prevents exfiltration even through transforms.`,
+  };
 }
 
 /** Clear taint for a session (e.g., on new chat) */
@@ -85,10 +80,11 @@ const KERNEL_TAINT_SOURCE: Record<TaintSource, string> = {
 };
 
 /**
- * Read the current session's ACTIVE taint as AriKernel taint-source strings,
- * for feeding into ariEvaluate's 4th `taintLabels` arg. Uses the same
- * active-window semantics as checkEgressTaint (a stale read past the window
- * doesn't gate). Returns deduped kernel sources; [] when the session is clean.
+ * Read the current session's taint as AriKernel taint-source strings, for
+ * feeding into ariEvaluate's 4th `taintLabels` arg. STICKY: every recorded
+ * sensitive read counts regardless of elapsed time (mirrors checkEgressTaint —
+ * a sensitive read keeps the session tainted for its life). Returns deduped
+ * kernel sources; [] when the session is clean.
  *
  * This is the bridge between chunk 3's recordSensitiveRead and the kernel's
  * behavioral taint rules: the kernel only blocks tainted shell/egress if it
@@ -97,11 +93,8 @@ const KERNEL_TAINT_SOURCE: Record<TaintSource, string> = {
 export function getKernelTaintSources(sessionId: string): string[] {
   const taints = sessionTaint.get(sessionId);
   if (!taints || taints.length === 0) return [];
-  const TAINT_WINDOW_MS = 5 * 60 * 1000;
-  const now = Date.now();
   const sources = new Set<string>();
   for (const t of taints) {
-    if (now - t.timestamp >= TAINT_WINDOW_MS) continue;
     sources.add(KERNEL_TAINT_SOURCE[t.source]);
   }
   return [...sources];
@@ -112,10 +105,10 @@ export function getKernelTaintSources(sessionId: string): string[] {
  *
  * When a sub-agent (child session) has read sensitive data, its taint must
  * follow the result back to the parent so the parent's egress / kernel gates
- * see it. Copies the child's ACTIVE taint entries into the target session,
- * preserving the original source/target but re-stamping the timestamp to the
- * propagation moment (so the parent's active window starts when it consumes the
- * child result, not when the child first read). No-op when the child is clean.
+ * see it. Copies ALL of the child's taint entries into the target session
+ * (taint is sticky — no active-window filter), preserving the original
+ * source/target. recordSensitiveRead re-stamps the timestamp to the
+ * propagation moment for audit only. No-op when the child is clean.
  *
  * Returns the number of taint entries propagated (for logging / tests).
  */
@@ -123,11 +116,8 @@ export function propagateTaint(fromSessionId: string, toSessionId: string): numb
   if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return 0;
   const fromTaints = sessionTaint.get(fromSessionId);
   if (!fromTaints || fromTaints.length === 0) return 0;
-  const TAINT_WINDOW_MS = 5 * 60 * 1000;
-  const now = Date.now();
   let count = 0;
   for (const t of fromTaints) {
-    if (now - t.timestamp >= TAINT_WINDOW_MS) continue;
     recordSensitiveRead(toSessionId, t.source, t.target);
     count++;
   }

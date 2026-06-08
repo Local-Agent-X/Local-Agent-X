@@ -11,6 +11,7 @@ import { recordCircuitFailure, recordCircuitSuccess } from "../circuit-breaker.j
 import { recordToolCall as recordToolStat } from "../tool-tracker.js";
 import { recordToolCall as recordRateLimit } from "./rate-limiter.js";
 import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput, redactSecretSpans } from "../data-lineage.js";
+import { hasCapability } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
@@ -19,6 +20,12 @@ import { getToolTimeout, withTimeout, ToolTimeoutError } from "../tool-timeout.j
 import { timeout } from "../tools/result-helpers.js";
 
 const logger = createLogger("tool-execution");
+
+// Sensitive-read tools whose taint is gated on the READ PATH (not on scanning
+// returned content): a file read / pattern list. Their content scan is
+// deliberately omitted to preserve canonical read/glob/grep behavior — output
+// secret-scanning applies only to data-returning sensitive-read sinks.
+const PATH_GATED_READS: ReadonlySet<string> = new Set(["read", "glob", "grep"]);
 
 export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
@@ -63,9 +70,13 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // overwrite ctx.result.content with a stub: the gate prevents exfil AND
     // the redaction prevents the first sight.
     let redactReason: string | null = null;
-    if (tc.name === "read" && isSensitivePath(String(args.path || ""))) {
+    const isSensitiveRead = hasCapability(tc.name, "sensitive-read");
+    // Path-carrying sensitive-read sinks (read, ari_file, glob, grep, …): a read
+    // of a sensitive path taints + redacts. Was keyed to "read" only; now every
+    // sensitive-read synonym that takes a `path` arg is covered the same way.
+    if (isSensitiveRead && tc.name !== "bash" && args.path && isSensitivePath(String(args.path))) {
       recordSensitiveRead(sessionId || "default", "sensitive_file", String(args.path));
-      redactReason = `read of sensitive path ${String(args.path)}`;
+      redactReason = `${tc.name} of sensitive path ${String(args.path)}`;
     }
     if (tc.name === "bash") {
       const cmd = String(args.command || "");
@@ -92,19 +103,22 @@ export const runSandboxedPhase: Phase = async (ctx) => {
         }
       }
     }
-    // sql_query returns row DATA read from a LOCAL SQLite file — an owned data
-    // source, like a local file read. A secret stored in a table is OUR secret,
+    // Owned-source DATA reads (sql_query, email_read, memory_search, ari_file
+    // read, ari_retrieval, ari_database, ari_sqlite) return row/record content
+    // from a LOCAL or account-owned source. A secret stored there is OUR secret,
     // so a hit gets the full owned-source treatment: taint + whole-result redact.
-    if (tc.name === "sql_query") {
+    // Keyed on the sensitive-read CLASS (excluding bash — handled above — and the
+    // path-listing read/glob/grep, whose existing behavior is path-gated only).
+    if (isSensitiveRead && !PATH_GATED_READS.has(tc.name) && tc.name !== "bash") {
       const body = typeof ctx.result?.content === "string" ? ctx.result.content : "";
       if (body.length > 0) {
         const det = detectSecretsInOutput(body);
         if (det.matched) {
-          recordSensitiveRead(sessionId || "default", "secret", `sql_query:${det.kinds.join(",")}`);
+          recordSensitiveRead(sessionId || "default", "secret", `${tc.name}:${det.kinds.join(",")}`);
           logger.warn(
-            `sql_query output contained secret-shaped content (kinds: ${det.kinds.join(", ")}) — session tainted`,
+            `${tc.name} output contained secret-shaped content (kinds: ${det.kinds.join(", ")}) — session tainted`,
           );
-          redactReason = `sql_query output contained secret-shaped content (${det.kinds.join(", ")})`;
+          redactReason = `${tc.name} output contained secret-shaped content (${det.kinds.join(", ")})`;
         }
       }
     }

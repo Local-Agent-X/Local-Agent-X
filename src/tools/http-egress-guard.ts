@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { scanForSecrets } from "../security/secret-scanner.js";
 import { matchEgressList } from "../security/network-policy.js";
 import { getLaxDir } from "../lax-data-dir.js";
+import { isSensitivePath } from "../data-lineage.js";
 
 let trustedDestinationsCache: { fingerprint: number; set: Set<string> } | null = null;
 
@@ -99,5 +100,46 @@ export function checkOutboundRequest(args: GuardArgs): GuardBlock | null {
       `If this destination should receive credentials, add it to ~/.lax/egress-allowlist.json. ` +
       `For stored secrets prefer {{SECRET_NAME}} placeholders over hardcoded values.`,
     meta: { url, method, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
+  };
+}
+
+/**
+ * Generic outbound-secret scan for NON-http egress sinks (email_send body,
+ * clipboard_write content, process_start command/args, browser navigation data,
+ * ari_http body). Mirrors the secret-shape half of {@link checkOutboundRequest}
+ * but without an HTTP destination: there is no per-host allowlist to fall back
+ * on, so any secret-shaped span is refused — these channels can't carry an
+ * exfiltration allowlist exemption. `sink` names the egress tool for the message.
+ *
+ * Returns null if the payload may proceed. `{{SECRET_NAME}}` placeholders are not
+ * secret-shaped, so they pass cleanly (the secrets store resolves them later).
+ */
+export function checkOutboundPayload(sink: string, text: string): GuardBlock | null {
+  if (!text) return null;
+  const scan = scanForSecrets(text);
+  if (scan.clean) return null;
+  const kinds = [...new Set(scan.matches.map(m => m.pattern))].join(", ");
+  return {
+    message:
+      `Refusing ${sink}: outbound payload contains secret-shaped content (${kinds}). ` +
+      `This channel can carry data off-box and has no destination allowlist, so credentials may not leave through it. ` +
+      `Prefer {{SECRET_NAME}} placeholders over hardcoded values, or remove the credential from the payload.`,
+    meta: { sink, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
+  };
+}
+
+/**
+ * Reject an egress attachment that points at a sensitive file (e.g. ~/.lax
+ * secrets, an SSH key, a .env). `paths` is the list of file paths the sink
+ * would read+attach (e.g. email_send attachments). Returns null if clean.
+ */
+export function checkAttachmentPaths(sink: string, paths: readonly string[]): GuardBlock | null {
+  const offending = paths.filter(p => isSensitivePath(p));
+  if (offending.length === 0) return null;
+  return {
+    message:
+      `Refusing ${sink}: cannot attach sensitive file(s) (${offending.join(", ")}). ` +
+      `Credential / secret files (.env, SSH keys, ~/.lax secrets, keychains) may not be sent off-box as attachments.`,
+    meta: { sink, blocked_by: "sensitive-attachment", paths: offending },
   };
 }

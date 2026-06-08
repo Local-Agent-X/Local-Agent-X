@@ -582,4 +582,66 @@ describe("run-sandboxed redacts result content when taint fires", () => {
     expect(ctx.result?.status).not.toBe("blocked");
     expect(checkEgressTaint(sessionId).blocked).toBe(false);
   });
+
+  // Capability-class re-keying: sensitive reads via SYNONYMS (ari_file path,
+  // email_read / memory_search output) must record the sensitive read (arming
+  // the egress gate) AND trigger redaction — exactly like read/sql_query.
+  it("ari_file read of a sensitive path: records sensitive read + redacts", async () => {
+    const sentinel = "ARI_FILE_SENTINEL_77c2";
+    const dir = mkdtempSync(join(tmpdir(), "lineage-arifile-"));
+    const file = join(dir, "secrets.json");
+    writeFileSync(file, sentinel, "utf-8");
+    const stub: ToolDefinition = {
+      name: "ari_file",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() { return { content: sentinel, isError: false }; },
+    };
+    const sessionId = "redact-arifile-test";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({ name: "ari_file", args: { action: "read", path: file }, tool: stub, sessionId });
+    try {
+      await runSandboxedPhase(ctx);
+      expect(ctx.result!.content).not.toContain(sentinel);
+      expect(ctx.result!.status).toBe("blocked");
+      expect(ctx.result!.metadata?.redacted).toBe(true);
+      expect(checkEgressTaint(sessionId).blocked).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("email_read output containing a secret: records sensitive read + redacts", async () => {
+    const secret = "AKIA0000000000000000";
+    const stub: ToolDefinition = {
+      name: "email_read",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() { return { content: `From: ops\nBody: api key ${secret}`, isError: false }; },
+    };
+    const sessionId = "redact-emailread-test";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({ name: "email_read", args: { folder: "INBOX" }, tool: stub, sessionId });
+    await runSandboxedPhase(ctx);
+    expect(ctx.result!.content).not.toContain(secret);
+    expect(ctx.result!.status).toBe("blocked");
+    expect(checkEgressTaint(sessionId).blocked).toBe(true);
+  });
+
+  it("memory_search output containing a secret: records sensitive read + redacts", async () => {
+    const secret = "AKIA0000000000000000";
+    const stub: ToolDefinition = {
+      name: "memory_search",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() { return { content: `recalled: stored token ${secret}`, isError: false }; },
+    };
+    const sessionId = "redact-memsearch-test";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({ name: "memory_search", args: { query: "token" }, tool: stub, sessionId });
+    await runSandboxedPhase(ctx);
+    expect(ctx.result!.content).not.toContain(secret);
+    expect(ctx.result!.status).toBe("blocked");
+    expect(checkEgressTaint(sessionId).blocked).toBe(true);
+  });
 });

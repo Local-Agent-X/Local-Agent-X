@@ -26,4 +26,12 @@ export const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
 // Tools that require worktree isolation for delegated agents.
 // If a delegated agent has a worktree (session in allowedPaths), these are safe.
 // If not (e.g. Codex agents), block them to prevent uncontrolled writes.
-export const WORKTREE_REQUIRED_TOOLS = new Set(["write", "edit", "bash"]);
+//
+// Keyed on workspace-write + shell CAPABILITY membership, not literal names, so
+// the kernel-bridge synonyms (ari_file write, ari_shell, process_start) require
+// worktree isolation identically to their canonical equivalents (write/edit/bash).
+// Canonical {write, edit, bash} are preserved; the synonyms are newly added.
+export const WORKTREE_REQUIRED_TOOLS = new Set([
+  "write", "edit", "bash",
+  "ari_file", "ari_shell", "process_start",
+]);

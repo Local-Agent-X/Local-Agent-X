@@ -220,9 +220,17 @@ export class SecurityLayer {
       const sessionKey = ctx.sessionId;
       const hasWorktree = this.sessionAllowedPaths.has(sessionKey) && this.sessionAllowedPaths.get(sessionKey)!.size > 0;
       if (!hasWorktree) {
+        // ari_file is a single bridge tool whose action (read|write) lives in
+        // args.action — a read never mutates source, and a write to user-content
+        // territory is exempt just like write/edit. So gate only ari_file WRITES
+        // to source paths, mirroring the write/edit reasoning above.
+        const ariFileAction = toolName === "ari_file" ? String(args.action || "read") : null;
+        const ariFileExempt = ariFileAction === "read" ||
+          (ariFileAction === "write" && this.isUserContentPath(String(args.path || "")));
         const isContentWrite =
-          (toolName === "write" || toolName === "edit") &&
-          this.isUserContentPath(String(args.path || ""));
+          ((toolName === "write" || toolName === "edit") &&
+            this.isUserContentPath(String(args.path || ""))) ||
+          ariFileExempt;
         if (!isContentWrite) {
           return {
             allowed: false,

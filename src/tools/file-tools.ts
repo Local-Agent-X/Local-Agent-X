@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, statSync, readdirSync } from "node:fs";
-import { resolve, dirname, basename } from "node:path";
+import { dirname, basename } from "node:path";
+import { resolveAgentPath } from "../workspace/paths.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
@@ -127,7 +128,7 @@ export const readTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
-    const filePath = resolve(String(args.path));
+    const filePath = resolveAgentPath(String(args.path));
     if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
 
     // Binary-file guard. Without this, reading a .png/.pdf/.zip/etc with
@@ -204,7 +205,7 @@ export const writeTool: ToolDefinition = {
     required: ["path", "content"],
   },
   async execute(args) {
-    const filePath = resolve(String(args.path));
+    const filePath = resolveAgentPath(String(args.path));
     const content = String(args.content);
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
     const skipSecretScan = ["css", "svg"].includes(ext);
@@ -273,7 +274,7 @@ export const editTool: ToolDefinition = {
     required: ["path", "old_string", "new_string"],
   },
   async execute(args) {
-    const filePath = resolve(String(args.path));
+    const filePath = resolveAgentPath(String(args.path));
     if (!existsSync(filePath)) {
       const siblings = suggestSiblingPaths(filePath);
       return err(
@@ -389,7 +390,7 @@ export const deleteFileTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
-    const filePath = resolve(String(args.path));
+    const filePath = resolveAgentPath(String(args.path));
     if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
     try {
       const st = statSync(filePath);

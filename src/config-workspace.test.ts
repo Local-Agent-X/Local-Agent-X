@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { stripOneDriveDocuments, isCloudStoragePath } from "./config.js";
+import { stripOneDriveDocuments, isCloudStoragePath } from "./workspace/lifecycle.js";
 
 // Regression: on Windows with OneDrive "Known Folder Move", the agent
 // workspace was being placed under ...\OneDrive\Documents\Local Agent X, where

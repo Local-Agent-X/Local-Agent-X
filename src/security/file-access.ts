@@ -1,5 +1,5 @@
-import { resolve, relative } from "node:path";
-import { realpathSync, lstatSync } from "node:fs";
+import { resolve, relative, dirname, basename, join, isAbsolute } from "node:path";
+import { realpathSync } from "node:fs";
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
@@ -38,6 +38,29 @@ const SENSITIVE_PATTERNS = [
   /[/\\]\.boto$/i,                            // AWS boto config
 ];
 
+// Canonical real path that follows symlinks/junctions at every EXISTING
+// segment. For a target that doesn't exist yet (write to a new file), the
+// deepest existing ancestor is canonicalized and the absent tail re-appended,
+// so a junction in the parent chain is resolved while the new leaf is kept.
+// Rethrows only ELOOP (symlink cycle) so the caller can treat it as an attack.
+function realpathDeep(target: string): string {
+  let tail = "";
+  let cur = target;
+  for (let i = 0; i < 64; i++) {
+    try {
+      const real = realpathSync(cur);
+      return tail ? resolve(real, tail) : real;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ELOOP") throw e;
+      const parent = dirname(cur);
+      if (parent === cur) return target; // reached filesystem root unresolved
+      tail = tail ? join(basename(cur), tail) : basename(cur);
+      cur = parent;
+    }
+  }
+  return target;
+}
+
 export function evaluateFileAccess(
   workspace: string,
   fileAccessMode: FileAccessMode,
@@ -50,27 +73,35 @@ export function evaluateFileAccess(
     return { allowed: false, reason: "Blocked: null byte in file path", userHint: USER_HINTS.fileSystem };
   }
 
-  // Normalize the path
-  const resolved = resolve(rawPath);
+  // Resolve a RELATIVE agent path the SAME way the file tool that opens it does
+  // (src/workspace/paths.ts → resolveAgentPath): anchored to the PROJECT ROOT
+  // (workspace parent), never process.cwd(). Anchoring both sides to the same
+  // root means the gated path is byte-for-byte the opened path — no resolution
+  // TOCTOU. Absolute paths (incl. the sql layer's pre-resolved db path) pass
+  // through unchanged.
+  const rawWorkspace = resolve(workspace);
+  const resolved = isAbsolute(rawPath)
+    ? resolve(rawPath)
+    : resolve(rawWorkspace, "..", rawPath);
 
-  // Symlink detection: resolve to real path and check for escape
+  // Canonicalize BOTH the workspace root and the target to their real on-disk
+  // paths before any containment check. realpathSync follows symlinks AND
+  // Windows directory junctions at EVERY segment, not just the final one. The
+  // agent workspace is commonly relocated (packaged app → ~/Documents) and
+  // bridged back to <cwd>/workspace by a junction; a path traversing that
+  // junction is lexically "outside" config.workspace but physically inside it.
+  // lstat on the final segment can't see a mid-path junction — resolving the
+  // whole path (and the workspace the same way) keeps the two comparable.
+  workspace = realpathDeep(rawWorkspace);
   let realPath: string;
   try {
-    // lstat to detect symlinks without following
-    const stat = lstatSync(resolved);
-    if (stat.isSymbolicLink()) {
-      // Follow the symlink and check where it actually points
-      realPath = realpathSync(resolved);
-    } else {
-      realPath = resolved;
-    }
+    realPath = realpathDeep(resolved);
   } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    // ELOOP = too many symlinks (attack), ENOENT = file doesn't exist yet (ok for write)
-    if (code === "ELOOP") {
+    // ELOOP = symlink cycle (attack). realpathDeep only rethrows this; ENOENT
+    // for a not-yet-created write target is handled internally (ancestor walk).
+    if ((e as NodeJS.ErrnoException).code === "ELOOP") {
       return { allowed: false, reason: "Blocked: symlink loop detected (possible attack)", userHint: USER_HINTS.fileSystem };
     }
-    // File doesn't exist yet — for writes, use the resolved path
     realPath = resolved;
   }
 

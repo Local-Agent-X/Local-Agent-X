@@ -157,7 +157,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   sql_explain:         { kernel: "database", risk: "safe" },
   sql_schema:          { kernel: "database", risk: "safe" },
   ari_database:        { kernel: "internal", risk: "workspace-write" },
-  ari_sqlite_database: { kernel: "internal", risk: "workspace-write" },
+  ari_sqlite:          { kernel: "internal", risk: "workspace-write" },
 
   // ── Retrieval / search ──
   ari_retrieval:        { kernel: "internal",  risk: "safe" },

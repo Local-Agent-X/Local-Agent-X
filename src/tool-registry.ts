@@ -81,6 +81,8 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "clipboard_write",           // crosses into another app's read surface
   "process_start",             // spawns a subprocess that can carry data off-box
   "browser",                   // browser navigation/fetch actions (browser_* below)
+  "extract_site_assets",       // model-controlled url → off-box GET (was DNS-pin only)
+  "youtube_analyze",           // model-derived url → off-box GET + yt-dlp spawn
 ]);
 
 // Sensitive-read = can surface file/secret/PII content into the model context.
@@ -108,6 +110,18 @@ const CAPABILITY_SETS: Record<CapabilityClass, ReadonlySet<string>> = {
   "sensitive-read": SENSITIVE_READ_TOOLS,
   "workspace-write": WORKSPACE_WRITE_TOOLS,
   "shell": SHELL_TOOLS,
+};
+
+// Read-only view of the capability-class membership, exposed for the build-time
+// name-drift assertion (capability-class-gates.test.ts). Every member here must
+// resolve to a real registered tool (or an explicitly-whitelisted bare synonym)
+// — name drift like `ari_sqlite_database` or a forgotten egress registration
+// becomes a TEST FAILURE instead of a silent fail-closed/fail-open hole.
+export const CAPABILITY_CLASS_MEMBERS: Record<CapabilityClass, readonly string[]> = {
+  "egress": [...EGRESS_TOOLS],
+  "sensitive-read": [...SENSITIVE_READ_TOOLS],
+  "workspace-write": [...WORKSPACE_WRITE_TOOLS],
+  "shell": [...SHELL_TOOLS],
 };
 
 /**

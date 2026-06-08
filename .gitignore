@@ -82,3 +82,6 @@ vt-results.json
 # Local scratch backup dirs created during refactors. Prefixed `temp-`
 # so the convention is clear: temporary, not for history.
 temp-*/
+
+# Local dev/testing convention notes — kept out of history
+TESTING.md

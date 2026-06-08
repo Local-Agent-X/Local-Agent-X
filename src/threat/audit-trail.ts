@@ -1,8 +1,8 @@
-import { createHash, createHmac } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash, createHmac, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-import { getAuditHmacKey } from "../app-runtime/audit-signing.js";
+import { computeAuditMarkerMac, getAuditHmacKey } from "../app-runtime/audit-signing.js";
 import { createLogger } from "../logger.js";
 import type { DataLabel } from "./classification.js";
 import type { ThreatLevel } from "./scoring.js";
@@ -92,6 +92,10 @@ function canonicalPayload(e: AuditEntry): string {
     ["threatLevel", e.threatLevel ?? null],
     ["dataLabels", e.dataLabels ?? null],
     ["prevHash", e.prevHash],
+    // Bind the scheme tag INTO the keyed digest so it can't be stripped or
+    // swapped to downgrade an entry onto the unkeyed legacy verify path
+    // without breaking the HMAC.
+    ["hashScheme", e.hashScheme ?? null],
   ]);
 }
 
@@ -129,12 +133,60 @@ function anchorPathFor(auditFilePath: string): string {
   return auditFilePath.replace(/\.jsonl$/, ".anchors.jsonl");
 }
 
+// ── hmac-v1 era marker ───────────────────────────────────────────────
+// Once a single hmac-v1 entry has ever been written, the audit dir is in the
+// "hmac-v1 era" and verify() MUST refuse to fall back to the unkeyed legacy
+// path for ANY row — otherwise a filesystem-only attacker rewrites the whole
+// file as self-consistent plain-SHA-256 (no key needed) and verify passes.
+//
+// The marker lives next to the audit data and is SEALED under the audit key: it
+// stores a keyed MAC over a fixed string, so an attacker without the key can
+// neither forge the marker nor delete-then-recreate it convincingly. Deleting
+// the marker entirely doesn't help the attacker either — a chain that still
+// contains hmac-v1 rows is verified as hmac-v1 regardless (see verify()).
+const MARKER_PAYLOAD = "lax-audit-hmac-v1-era";
+
+/** `<auditDir>/.hmac-v1.marker` — one per audit dir, not per day. */
+function markerPathFor(auditFilePath: string): string {
+  return join(dirname(auditFilePath), ".hmac-v1.marker");
+}
+
+/** Write the era marker (idempotent) sealed under the audit key, mode 0o600. */
+function writeEraMarker(markerPath: string): void {
+  if (existsSync(markerPath)) return;
+  const body = JSON.stringify({ era: "hmac-v1", mac: computeAuditMarkerMac(MARKER_PAYLOAD) });
+  // Atomic tmp+rename, mirroring writeAtomic() in audit-signing.ts.
+  const tmp = `${markerPath}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
+  writeFileSync(tmp, body, { mode: 0o600 });
+  renameSync(tmp, markerPath);
+}
+
+/**
+ * Is the hmac-v1 era marker present for this audit dir? A present marker — even
+ * one that's forged/corrupt — keeps the era active and the legacy fallback
+ * off-limits: presence alone is the fail-closed signal, and a present-but-
+ * invalid marker is itself tamper evidence. (The MAC is what stops an attacker
+ * RECREATING a convincing marker after deletion; it can't validate without the
+ * key.) An attacker who deletes the marker still can't downgrade a chain that
+ * retains any hmac-v1 row — verify() reads the row tags as the second era
+ * signal.
+ */
+function eraMarkerPresent(markerPath: string): boolean {
+  return existsSync(markerPath);
+}
+
 /**
  * Verify the anchor chain and reconcile it with the main chain heads.
  *
- * Returns `checked: false` when no anchor file exists (a log written before
- * anchoring shipped — verified on the main chain alone, no regression). When
- * an anchor file IS present, every anchor must (a) carry a valid keyed MAC,
+ * A missing anchor file is only benign for a genuinely PRE-ANCHORING log (no
+ * hmac-v1 rows, no era marker) — `anchoringInUse: false` → `checked: false`,
+ * verified on the main chain alone with no regression. Once anchoring is in use
+ * (`anchoringInUse: true`, i.e. hmac-v1 data or the marker is present) an absent
+ * anchor file is TRUNCATION EVIDENCE — the attacker who drops trailing main-chain
+ * lines also deletes the anchor that would pin the true count — so it fails
+ * CLOSED rather than degrading to a main-chain-only pass.
+ *
+ * When an anchor file IS present, every anchor must (a) carry a valid keyed MAC,
  * (b) link to its predecessor, and (c) match the main chain head at its seq —
  * and the anchor count must equal the number of main entries. A short main
  * chain against a longer anchor chain is exactly the tail-truncation this
@@ -144,8 +196,13 @@ function anchorPathFor(auditFilePath: string): string {
 function verifyAnchors(
   anchorFile: string,
   heads: { seq: number; hash: string }[],
+  anchoringInUse: boolean,
 ): { checked: boolean; broken: boolean; brokenAt?: number } {
-  if (existsSync(anchorFile) === false) return { checked: false, broken: false };
+  if (existsSync(anchorFile) === false) {
+    // Anchoring in use but the anchor file is gone → truncation, fail closed.
+    if (anchoringInUse) return { checked: true, broken: true, brokenAt: 0 };
+    return { checked: false, broken: false };
+  }
   let lines: string[];
   try {
     lines = readFileSync(anchorFile, "utf-8").trim().split("\n").filter(Boolean);
@@ -184,6 +241,7 @@ export class CryptoAuditTrail {
   private seq = 0;
   private filePath: string;
   private anchorPath: string;
+  private markerPath: string;
 
   constructor(dataDir: string) {
     const auditDir = join(dataDir, "audit");
@@ -192,6 +250,7 @@ export class CryptoAuditTrail {
     const date = new Date().toISOString().slice(0, 10);
     this.filePath = join(auditDir, `${date}.jsonl`);
     this.anchorPath = anchorPathFor(this.filePath);
+    this.markerPath = markerPathFor(this.filePath);
     // Resume chain from existing file
     if (existsSync(this.filePath)) {
       try {
@@ -233,6 +292,14 @@ export class CryptoAuditTrail {
 
     this.entries.push(full);
 
+    // First hmac-v1 write enters the "hmac-v1 era" — persist the sealed marker
+    // so verify() can refuse the unkeyed legacy fallback from here on. Best
+    // effort: a marker write failure must not crash the agent, and the chain
+    // still verifies as hmac-v1 on its own scheme tags.
+    try {
+      writeEraMarker(this.markerPath);
+    } catch { /* marker write failure shouldn't crash the agent */ }
+
     // Append to daily file (JSONL format)
     try {
       writeFileSync(this.filePath, JSON.stringify(full) + "\n", { flag: "a", mode: 0o600 });
@@ -261,13 +328,17 @@ export class CryptoAuditTrail {
   /**
    * Verify the integrity of the audit chain.
    *
-   * Migration/compat: entries tagged `hashScheme: "hmac-v1"` are recomputed
-   * with the keyed HMAC over the full field set. Entries WITHOUT that tag are
-   * pre-upgrade legacy rows written with plain SHA-256 over the narrow field
-   * set — they're verified under the legacy scheme so an existing dev audit
-   * file still validates (and boot never crashes). A fresh chain is entirely
-   * hmac-v1; tampering with any newly-hashed field (threatScore/dataLabels/
-   * role) breaks it, and a plain-SHA-256 forgery of an hmac-v1 row fails.
+   * Fail-closed era gate: once the audit dir has entered the "hmac-v1 era"
+   * (the sealed `.hmac-v1.marker` is present, OR the chain itself contains any
+   * hmac-v1 row), EVERY entry must be `hashScheme: "hmac-v1"` and is recomputed
+   * with the keyed HMAC. The unkeyed legacy SHA-256 branch is then UNREACHABLE,
+   * so an attacker can't rewrite the file as self-consistent plain-SHA-256 rows
+   * (no key needed) and have it pass — that downgrade now returns `valid:false`.
+   *
+   * The legacy branch survives ONLY for the genuine pre-marker back-compat
+   * window: an old dev file with NO marker and NO hmac-v1 rows. There it still
+   * verifies under plain SHA-256 so an existing pre-upgrade audit file validates
+   * and boot never crashes. A fresh install is 100% hmac-v1.
    */
   static verify(filePath: string): { valid: boolean; brokenAt?: number; total: number; anchorChecked?: boolean } {
     if (existsSync(filePath) === false) return { valid: true, total: 0 };
@@ -275,9 +346,28 @@ export class CryptoAuditTrail {
     let prevHash = GENESIS_PREV_HASH;
     const heads: { seq: number; hash: string }[] = [];
 
+    // hmac-v1 era is active if the sealed marker exists OR any row is tagged
+    // hmac-v1. Either makes the legacy fallback off-limits for the whole chain
+    // (deleting the marker doesn't downgrade a chain that still has hmac-v1
+    // rows; rewriting every row as legacy is exactly the C1 attack we reject).
+    const markerPath = markerPathFor(filePath);
+    const parsed: (AuditEntry | null)[] = lines.map(l => {
+      try { return JSON.parse(l) as AuditEntry; } catch { return null; }
+    });
+    const eraActive =
+      eraMarkerPresent(markerPath) ||
+      parsed.some(e => e !== null && e.hashScheme === "hmac-v1");
+
     for (let i = 0; i < lines.length; i++) {
       try {
         const entry = JSON.parse(lines[i]) as AuditEntry;
+
+        // Era gate: in the hmac-v1 era, refuse any non-hmac-v1 row. This is the
+        // line that closes the legacy-downgrade forge — the unkeyed branch
+        // below is unreachable once the era is active.
+        if (eraActive && entry.hashScheme !== "hmac-v1") {
+          return { valid: false, brokenAt: i, total: lines.length };
+        }
 
         // Reject NULL/empty anchors except the single legitimate genesis row.
         // Only index 0 may carry the GENESIS anchor; any later GENESIS/empty
@@ -308,8 +398,11 @@ export class CryptoAuditTrail {
     // Cross-check against the external anchor chain. The linear chain above
     // can't detect tail-truncation (a valid prefix is still a valid chain);
     // the anchor file pins (seq, head, count) so a dropped tail no longer
-    // matches. Absent anchor file → pre-anchoring log, skip (back-compat).
-    const anchorResult = verifyAnchors(anchorPathFor(filePath), heads);
+    // matches. Once anchoring is in use (hmac-v1 era), an ABSENT anchor file is
+    // itself truncation evidence and fails closed — the attacker who drops the
+    // tail also deletes the anchor. Only a genuine pre-anchoring log (no era,
+    // no anchor) skips the cross-check.
+    const anchorResult = verifyAnchors(anchorPathFor(filePath), heads, eraActive);
     if (anchorResult.broken) {
       return { valid: false, brokenAt: anchorResult.brokenAt, total: lines.length, anchorChecked: true };
     }

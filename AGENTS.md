@@ -52,7 +52,6 @@ Don't skip. Try the cheapest step first. Only escalate when the one below return
 
 - **No file over 400 LOC.** If it grows, split into focused modules.
 - **No god files.** One responsibility per module.
-- **No AI co-author lines in commits.** No "Co-authored-by: Claude" or similar.
 - **No mentions of Claude, Anthropic, OpenAI, or any AI tool** in commits, PRs, or code comments.
 - **Read before edit.** Don't write changes to code you haven't opened.
 - **Prefer editing existing files over creating new ones.**

@@ -174,6 +174,20 @@ export class CodexAdapter implements Adapter {
       pendingToolCalls.length === 0;
     if (noOutput) {
       logger.info(`${req.model} returned empty turn — retrying once`);
+      // An empty turn on the subscription endpoint is almost always a truncated
+      // tool call: the model tried to emit a whole file in one oversized
+      // write/edit, hit the endpoint's unraisable output cap, and the partial
+      // call was dropped (see flushOnAbnormalClose). A bare retry re-runs the
+      // identical request, so the model repeats the same oversized call and
+      // burns turns. Guide the retry to write incrementally so it adapts.
+      req.messages = [
+        ...req.messages,
+        {
+          role: "user",
+          content:
+            "Your previous response was cut off before it finished. If you were creating or editing a large file, the output exceeded the size limit — build it up in smaller steps: create the file with `write`, then add or change sections with separate `edit` calls. Keep each individual tool call's content modest.",
+        },
+      ];
       this.aborter = new AbortController();
       req.signal = this.aborter.signal;
       this.inflight = consume();

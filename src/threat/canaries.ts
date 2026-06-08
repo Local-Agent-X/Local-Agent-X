@@ -1,5 +1,9 @@
 import { randomBytes } from "node:crypto";
 
+import { decodedPayloadViews } from "../security/secret-scanner.js";
+import { getLaxDir } from "../lax-data-dir.js";
+import { CryptoAuditTrail } from "./audit-trail.js";
+
 // ═══════════════════════════════════════════════════════════════════
 // CANARY TOKENS — Hidden phrases that detect prompt-injection leaks
 // ═══════════════════════════════════════════════════════════════════
@@ -63,4 +67,91 @@ export function checkCanaries(output: string, canaries: string[]): string | null
     }
   }
   return null;
+}
+
+// ───────────────────────────────────────────────────────────────────
+// SESSION CANARY REGISTRY — reachable by the egress seam
+// ───────────────────────────────────────────────────────────────────
+//
+// The model-output canary check (ThreatEngine.checkOutput) holds its canaries
+// inside the per-turn ThreatEngine instance. The egress gate (enforce-policy)
+// has only a sessionId, so it needs a session→canaries lookup to check outbound
+// payloads against the RIGHT tokens. This is that single, shared registry — NOT
+// a second canary generator. ThreatEngine registers its active set here on
+// construct / reset / rotate; the gate reads it. Same tokens, one source.
+
+const sessionCanaries = new Map<string, string[]>();
+
+/** Record (or replace) the active canary set for a session. Called by the
+ *  ThreatEngine whose canaries are also embedded in the model's system prompt,
+ *  so the egress check uses exactly the tokens the model could leak. */
+export function registerSessionCanaries(sessionId: string, canaries: string[]): void {
+  sessionCanaries.set(sessionId, canaries);
+}
+
+/** The session's active canary tokens (empty when none registered). */
+export function getSessionCanaries(sessionId: string): string[] {
+  return sessionCanaries.get(sessionId) ?? [];
+}
+
+/** Drop a session's canaries (e.g. on session teardown). */
+export function clearSessionCanaries(sessionId: string): void {
+  sessionCanaries.delete(sessionId);
+}
+
+/**
+ * Check an OUTBOUND payload against a session's active canaries — across the raw
+ * text AND the secret-scanner's decoded/normalized views, so a base64/hex/
+ * percent-encoded or homoglyph copy of a canary is still caught. Reuses
+ * checkCanaries (the same matcher the model-output path uses), so detection
+ * semantics can't drift between the two checks. Returns the tripped CANARY
+ * string (which token + how it was found) or null. A hit is definitive
+ * exfiltration of context: canaries are unique random tokens that never
+ * legitimately appear in a tool payload (near-zero false positives).
+ */
+export function checkCanariesInPayload(sessionId: string, payload: string): string | null {
+  if (!payload) return null;
+  const canaries = sessionCanaries.get(sessionId);
+  if (!canaries || canaries.length === 0) return null;
+  for (const view of decodedPayloadViews(payload)) {
+    const hit = checkCanaries(view, canaries);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// ── Canary-exfil audit (tamper-evident) ──────────────────────────────────────
+//
+// A canary in an outbound payload is definitive context exfiltration. We record
+// it to the SAME hash-chained audit trail the rest of the security route uses
+// (getLaxDir(), as the declassify path does), so a trip surfaces in review.
+// Lazily constructed; overridable for tests via _setCanaryAuditTrail so the
+// event can be read back from a temp dir without touching the real ~/.lax chain.
+let canaryAuditTrail: CryptoAuditTrail | null = null;
+function getCanaryAuditTrail(): CryptoAuditTrail {
+  if (!canaryAuditTrail) canaryAuditTrail = new CryptoAuditTrail(getLaxDir());
+  return canaryAuditTrail;
+}
+
+/** Test hook — inject an audit trail rooted at a temp dir. Pass null to reset. */
+export function _setCanaryAuditTrail(trail: CryptoAuditTrail | null): void {
+  canaryAuditTrail = trail;
+}
+
+/**
+ * Append a tamper-evident "canary_exfil_detected" event for a canary found in
+ * an egress payload. The reason names the SINK (tool) only — it must NEVER
+ * contain the raw canary value (a canary is a tripwire; revealing it teaches
+ * evasion). decision:"block" — an unconditional hard block (the audit schema's
+ * deny-class decision, same value the model-output canary trip records under).
+ */
+export function recordCanaryExfilAudit(sessionId: string, toolName: string): void {
+  getCanaryAuditTrail().record({
+    sessionId,
+    event: "canary_exfil_detected",
+    toolName,
+    decision: "block",
+    reason: `Canary token detected in outbound payload of egress sink "${toolName}" — definitive context exfiltration. Hard-blocked.`,
+    controlsApplied: ["Canary"],
+  });
 }

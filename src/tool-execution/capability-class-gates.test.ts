@@ -7,12 +7,17 @@
 // identically to their canonical equivalents.
 
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
-import { dataLineageGate, egressGuardGate } from "./enforce-policy.js";
+import { mkdtempSync, rmSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { dataLineageGate, egressGuardGate, canaryEgressGate } from "./enforce-policy.js";
 import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../security/types.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage.js";
 import { scanForSecrets } from "../security/secret-scanner.js";
 import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/known-secrets.js";
+import { generateCanaries, registerSessionCanaries, clearSessionCanaries, _setCanaryAuditTrail } from "../threat/canaries.js";
+import { CryptoAuditTrail } from "../threat/audit-trail.js";
 import type { ToolCallContext } from "./context.js";
 
 function makeCtx(name: string, args: Record<string, unknown>, sessionId: string): ToolCallContext {
@@ -167,5 +172,73 @@ describe("egressGuardGate — known-secret-value (the user's ACTUAL stored secre
     const blob = Buffer.from(STORED, "utf8").toString("base64");
     const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: `data=${blob}` }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("halt");
+  });
+});
+
+describe("canaryEgressGate — canary in an outbound payload is hard-blocked + audited", () => {
+  const sessionId = "cap-class-canary";
+  const canaries = generateCanaries();
+  const CANARY = canaries[0]; // e.g. CANARY-<id>-ALPHA
+  let auditDir: string;
+
+  beforeEach(() => {
+    // Arm the session's canary set (as ThreatEngine does), and inject a temp
+    // audit trail so the exfil event can be read back without touching ~/.lax.
+    registerSessionCanaries(sessionId, canaries);
+    auditDir = mkdtempSync(join(tmpdir(), "lax-canary-audit-"));
+    _setCanaryAuditTrail(new CryptoAuditTrail(auditDir));
+  });
+  afterAll(() => {
+    clearSessionCanaries(sessionId);
+    _setCanaryAuditTrail(null);
+  });
+
+  function auditPath(): string {
+    const dir = join(auditDir, "audit");
+    const files = readdirSync(dir).filter(f => f.endsWith(".jsonl"));
+    return join(dir, files[0]);
+  }
+
+  it("hard-blocks an egress-class call whose payload contains a canary, and audits it WITHOUT the raw token", () => {
+    const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: `leaked: ${CANARY}` }, sessionId);
+    const outcome = canaryEgressGate(ctx);
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.allowed).toBe(false);
+    expect(ctx.result?.metadata?.layer).toBe("canary");
+    // Model-visible block text must NOT echo the raw canary value.
+    expect(ctx.result?.content).not.toContain(CANARY);
+
+    // A canary_exfil_detected event is appended and the chain verifies.
+    const raw = readFileSync(auditPath(), "utf-8").trim();
+    expect(raw).toContain("canary_exfil_detected");
+    expect(raw).toContain("email_send");
+    expect(raw).toContain('"controlsApplied":["Canary"]');
+    // The raw canary token must NEVER appear in the audit record.
+    expect(raw).not.toContain(CANARY);
+    expect(CryptoAuditTrail.verify(auditPath()).valid).toBe(true);
+  });
+
+  it("blocks the base64-encoded form of the canary (decode-view reuse)", () => {
+    const blob = Buffer.from(CANARY, "utf8").toString("base64");
+    const ctx = makeCtx("clipboard_write", { text: `copy ${blob}` }, sessionId);
+    expect(canaryEgressGate(ctx).kind).toBe("halt");
+    expect(ctx.result?.metadata?.layer).toBe("canary");
+  });
+
+  it("does NOT block an egress payload with no canary (taint behavior unchanged)", () => {
+    const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: "nothing secret here" }, sessionId);
+    expect(canaryEgressGate(ctx).kind).toBe("continue");
+  });
+
+  it("is a no-op for non-egress tools even if the payload would contain a canary", () => {
+    const ctx = makeCtx("read", { path: `/tmp/${CANARY}` }, sessionId);
+    expect(canaryEgressGate(ctx).kind).toBe("continue");
+  });
+
+  it("does not fire for a session with no registered canaries", () => {
+    const clean = "cap-class-canary-none";
+    clearSessionCanaries(clean);
+    const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: `leaked: ${CANARY}` }, clean);
+    expect(canaryEgressGate(ctx).kind).toBe("continue");
   });
 });

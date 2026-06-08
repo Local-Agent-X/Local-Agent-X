@@ -46,12 +46,22 @@ async function saveSettings() {
   const embModel = document.getElementById('cfg-emb-model')?.value || '';
   const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature, maxIterations: maxIter, embeddingProvider: embProvider === 'none' ? undefined : embProvider, embeddingModel: embModel || undefined };
   if (s.port) settingsPayload.port = s.port;
+  // Workspace save location. Like port, it persists to config.json and takes
+  // effect on restart — the migration of existing files runs at next boot,
+  // when the old app instance has released the folder.
+  const wsEl = document.getElementById('cfg-workspace');
+  const wsVal = wsEl?.value?.trim();
+  if (wsVal) settingsPayload.workspace = wsVal;
   const customUrl = document.getElementById('cfg-custom-url');
   if (customUrl && customUrl.value) settingsPayload.customBaseUrl = customUrl.value;
   await apiPost('/api/settings', settingsPayload);
   // If port changed, tell user to restart the app
   if (s.port && String(s.port) !== String(currentPort)) {
     alert('Port changed to ' + s.port + '. Please quit and relaunch Local Agent X for this to take effect.');
+  }
+  // If workspace changed, tell user to restart — files migrate on next boot.
+  if (wsVal && wsEl && wsVal !== wsEl.dataset.loaded) {
+    alert('Workspace changed to ' + wsVal + '. Quit and relaunch Local Agent X — your existing files move to the new location on restart.');
   }
   // Also save sync config to server
   await saveSyncConfig();
@@ -73,6 +83,11 @@ async function loadSettings() {
     localStorage.setItem('lax_settings', JSON.stringify(s));
     const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
     set('cfg-port', s.port);
+    // Show the REAL saved workspace (e.g. the relocated Documents path), and
+    // stash it so save can tell whether the user actually changed it.
+    set('cfg-workspace', s.workspace);
+    const wsEl = document.getElementById('cfg-workspace');
+    if (wsEl && s.workspace !== undefined) wsEl.dataset.loaded = s.workspace;
     set('cfg-provider', s.provider); set('cfg-model', s.model); set('cfg-temperature', s.temperature);
     // Store saved model and trigger provider change to populate dropdown
     const modelInput = document.getElementById('cfg-model');

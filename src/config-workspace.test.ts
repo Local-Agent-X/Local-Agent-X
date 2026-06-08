@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { stripOneDriveDocuments, isCloudStoragePath } from "./workspace/lifecycle.js";
+import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, readlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { stripOneDriveDocuments, isCloudStoragePath, migrateWorkspace, ensureWorkspaceLink } from "./workspace/lifecycle.js";
 
 // Regression: on Windows with OneDrive "Known Folder Move", the agent
 // workspace was being placed under ...\OneDrive\Documents\Local Agent X, where
@@ -55,5 +58,62 @@ describe("isCloudStoragePath", () => {
 
   it("leaves the local-only ~/.lax workspace untouched", () => {
     expect(isCloudStoragePath("/Users/dad/.lax/workspace")).toBe(false);
+  });
+});
+
+// Changing the workspace location in Settings must not strand the user's apps,
+// images, and docs. migrateWorkspace moves them non-destructively (per-entry,
+// merge dirs, never clobber); ensureWorkspaceLink runs it when the cwd link is
+// retargeted to a new workspace at boot.
+describe("migrateWorkspace (non-destructive merge)", () => {
+  const temps: string[] = [];
+  const mk = () => { const d = mkdtempSync(join(tmpdir(), "ws-mig-")); temps.push(d); return d; };
+  afterEach(() => { for (const d of temps.splice(0)) { try { rmSync(d, { recursive: true, force: true }); } catch {} } });
+
+  it("moves files from the old workspace into the new one", () => {
+    const base = mk();
+    const oldWs = join(base, "old"), newWs = join(base, "new");
+    mkdirSync(join(oldWs, "apps", "demo"), { recursive: true });
+    writeFileSync(join(oldWs, "apps", "demo", "index.html"), "<h1>hi</h1>");
+    migrateWorkspace(oldWs, newWs);
+    expect(readFileSync(join(newWs, "apps", "demo", "index.html"), "utf-8")).toBe("<h1>hi</h1>");
+  });
+
+  it("merges into an existing destination without clobbering its files", () => {
+    const base = mk();
+    const oldWs = join(base, "old"), newWs = join(base, "new");
+    mkdirSync(join(oldWs, "apps"), { recursive: true });
+    writeFileSync(join(oldWs, "apps", "a.txt"), "from-old");
+    mkdirSync(join(newWs, "apps"), { recursive: true });
+    writeFileSync(join(newWs, "apps", "a.txt"), "KEEP-new"); // collision
+    writeFileSync(join(newWs, "apps", "b.txt"), "from-new");
+    migrateWorkspace(oldWs, newWs);
+    expect(readFileSync(join(newWs, "apps", "a.txt"), "utf-8")).toBe("KEEP-new"); // not clobbered
+    expect(readFileSync(join(newWs, "apps", "b.txt"), "utf-8")).toBe("from-new"); // preserved
+  });
+});
+
+describe("ensureWorkspaceLink retargets + migrates on a workspace change", () => {
+  const temps: string[] = [];
+  const mk = () => { const d = mkdtempSync(join(tmpdir(), "ws-link-")); temps.push(d); return d; };
+  afterEach(() => { for (const d of temps.splice(0)) { try { rmSync(d, { recursive: true, force: true }); } catch {} } });
+
+  it("relinks the cwd workspace to the new location AND migrates the old contents", () => {
+    const base = mk();
+    const oldWs = join(base, "old-workspace");
+    const newWs = join(base, "new-workspace");
+    const link = join(base, "cwd-workspace"); // stand-in for <cwd>/workspace
+    mkdirSync(join(oldWs, "apps", "demo"), { recursive: true });
+    writeFileSync(join(oldWs, "apps", "demo", "index.html"), "<h1>old</h1>");
+
+    let linkable = true;
+    try { symlinkSync(oldWs, link, process.platform === "win32" ? "junction" : "dir"); }
+    catch { linkable = false; } // unprivileged POSIX symlink — skip assertions
+    if (!linkable) return;
+
+    ensureWorkspaceLink(newWs, link);
+
+    expect(resolve(readlinkSync(link))).toBe(resolve(newWs));         // relinked
+    expect(readFileSync(join(newWs, "apps", "demo", "index.html"), "utf-8")).toBe("<h1>old</h1>"); // migrated
   });
 });

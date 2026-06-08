@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
@@ -93,6 +93,30 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
     }
 
+    // Workspace save location: same persistence path as port — config.json,
+    // honored at next boot. We deliberately do NOT touch ctx.config.workspace
+    // live: the running server is still serving from (and holding open) the old
+    // workspace, and loadConfig migrates + re-links the folder at the next boot,
+    // once this app instance has exited. Validate by creating the directory;
+    // persist the raw value the user entered (loadConfig resolves it). An
+    // invalid path is dropped — the next GET re-syncs the box to reality.
+    if (typeof body.workspace === "string" && body.workspace.trim()) {
+      const wsPath = body.workspace.trim();
+      let valid = true;
+      try {
+        const resolved = resolve(wsPath);
+        if (existsSync(resolved) && !statSync(resolved).isDirectory()) valid = false;
+        else mkdirSync(resolved, { recursive: true });
+      } catch { valid = false; }
+      if (valid) {
+        const configPath = join(ctx.dataDir, "config.json");
+        let cfg: Record<string, unknown> = {};
+        try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
+        cfg.workspace = wsPath;
+        atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+      }
+    }
+
     // Runtime-bound fields: validate, then mirror into config.json + ctx.config
     // so getRuntimeConfig() returns the new value on the next read. Invalid
     // values are dropped silently — the field stays at its old runtime value
@@ -124,6 +148,17 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       const live = (ctx.config as unknown as Record<string, unknown>)[field.field];
       if (live !== undefined) merged[field.field] = live;
     }
+    // port + workspace live in config.json (not settings.json / RUNTIME_SETTINGS),
+    // so the overlay above doesn't surface them — read them directly so Settings
+    // shows the real, persisted (pending-restart) values, not the HTML defaults.
+    try {
+      const configPath = join(ctx.dataDir, "config.json");
+      if (existsSync(configPath)) {
+        const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
+        if (cfg.port !== undefined) merged.port = cfg.port;
+        if (cfg.workspace !== undefined) merged.workspace = cfg.workspace;
+      }
+    } catch {}
     json(200, merged);
     return true;
   }

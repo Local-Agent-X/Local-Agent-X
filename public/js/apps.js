@@ -184,12 +184,33 @@ function openApp(urlOrId) {
 async function deleteApp(id, name) {
   if (!confirm('Delete app "' + name + '"? This removes all state, events, and audit logs.')) return;
   try {
-    await fetch(`${API}/api/apps/${id}`, {
+    const r = await fetch(`${API}/api/apps/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
     });
-    loadApps();
-  } catch {}
+    if (!r.ok) { loadApps(); return; } // error → fall back to a full refresh
+    // Remove just this card instead of rebuilding the whole grid. The old
+    // loadApps() rebuilt grid.innerHTML and re-ran the stagger animation on
+    // every card, which read as a full page refresh on each delete.
+    const nameEl = document.querySelector('.app-card-name[data-id="' + CSS.escape(id) + '"]');
+    const card = nameEl ? nameEl.closest('.app-card') : null;
+    if (!card) { loadApps(); return; }
+    // Keep _appsRenderKey in sync with the post-delete server state so the 5s
+    // poll sees no diff and doesn't rebuild (+re-stagger) the grid right after.
+    _appsRenderKey = _appsRenderKey.split('|').filter(seg => !seg.startsWith(id + ':')).join('|');
+    card.style.transition = 'opacity .18s ease, transform .18s ease';
+    card.style.opacity = '0';
+    card.style.transform = 'scale(.96)';
+    setTimeout(() => {
+      const grid = card.parentElement;
+      card.remove();
+      if (grid && grid.querySelectorAll('.app-card').length === 0) {
+        const empty = document.getElementById('apps-empty');
+        if (empty) empty.style.display = '';
+        _appsRenderKey = '__empty__';
+      }
+    }, 180);
+  } catch { loadApps(); }
 }
 
 // Click-to-edit on app name. Swaps the span for an input; Enter commits,

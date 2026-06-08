@@ -1,5 +1,5 @@
 import type { AuditEvent, RunContext } from "@arikernel/core";
-import { verifyChain } from "./hash-chain.js";
+import { genesisHash, verifyChain } from "./hash-chain.js";
 import type { AuditStore } from "./store.js";
 
 export interface ReplayResult {
@@ -28,9 +28,26 @@ export function replayRun(store: AuditStore, runId: string): ReplayResult | null
 		data: JSON.stringify({ toolCall: e.toolCall, decision: e.decision, result: e.result }),
 	}));
 
-	const chainResult = verifyChain(chainData);
+	// Recompute with the same HMAC key the chain was written under. Without the
+	// key, a plain-SHA-256 forgery would NOT reproduce these hashes.
+	const chainResult = verifyChain(chainData, store.getHmacKey());
 
 	const integrity: ReplayIntegrity = { ...chainResult };
+
+	// Reject NULL/empty chain anchors mid-stream. Only the genesis anchor
+	// (previousHash === genesisHash()) is a legitimate root. Any other empty
+	// or NULL previousHash means the chain was truncated or re-rooted.
+	for (let i = 0; i < events.length; i++) {
+		const prev = events[i].previousHash;
+		const isEmptyAnchor = prev == null || prev === "";
+		const isGenesis = prev === genesisHash();
+		if (isEmptyAnchor || (i > 0 && isGenesis)) {
+			integrity.valid = false;
+			if (integrity.brokenAt === undefined) integrity.brokenAt = i;
+			integrity.anchorValid = false;
+			break;
+		}
+	}
 
 	// Verify anchor: first event's previousHash must match the run's start_previous_hash
 	if (runContext.startPreviousHash != null && events.length > 0) {

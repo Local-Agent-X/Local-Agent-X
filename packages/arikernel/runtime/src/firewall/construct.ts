@@ -83,7 +83,7 @@ export function constructFirewall(options: FirewallOptions): ConstructedFirewall
 
 	const policyEngine = new PolicyEngine(options.policies);
 	const taintTracker = new TaintTracker();
-	const auditStore = new AuditStore(options.auditLog ?? "./audit.db");
+	const auditStore = new AuditStore(options.auditLog ?? "./audit.db", options.auditHmacKey);
 	const executorRegistry = new ExecutorRegistry();
 	const tokenStore: ITokenStore = options.tokenStore ?? new TokenStore();
 

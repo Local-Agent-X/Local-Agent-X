@@ -10,6 +10,7 @@ import { TokenStore, createFirewall } from "@arikernel/runtime";
 import type { Firewall, FirewallHooks } from "@arikernel/runtime";
 
 import { createLogger } from "../logger.js";
+import { getAuditHmacKey } from "../app-runtime/audit-signing.js";
 import {
   getFirewall, setFirewall,
   setTokenStore,
@@ -41,6 +42,16 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
     const hooks: FirewallHooks = {
       onApprovalRequired: async () => true,
     };
+    // Provision the audit-chain HMAC key via the SAME mechanism token
+    // signing uses (per-install <laxDir>/audit-key, 0600, or LAX_AUDIT_KEY
+    // override). Threading it into the firewall upgrades the audit hash chain
+    // from plain SHA-256 (any file writer can forge) to HMAC-SHA256 (must
+    // extract the in-process key). Honest limit: a full kernel-process
+    // compromise can still read this key from memory.
+    const auditHmacKeyRaw = getAuditHmacKey();
+    const auditHmacKey = Buffer.isBuffer(auditHmacKeyRaw)
+      ? auditHmacKeyRaw
+      : Buffer.from(auditHmacKeyRaw);
     const firewall = createFirewall({
       principal: {
         name: HOST_PRINCIPAL_NAME,
@@ -51,6 +62,7 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
       mode: "embedded",
       tokenStore,
       hooks,
+      auditHmacKey,
     });
     setFirewall(firewall);
 

@@ -1,10 +1,14 @@
 /**
  * Detect data exfiltration attempts via URLs and HTTP headers.
  *
- * Three public surfaces:
- *   - isSuspiciousGetExfil(url): GET-based exfil via query/path/subdomain
- *   - hasEncodedPayload(url):    base64/hex chunks in query params
- *   - suspiciousHeaderValue:     encoded secrets in HTTP header values
+ * Public surfaces:
+ *   - isSuspiciousGetExfil(url):        GET-based exfil via query/path/subdomain
+ *   - pathDripEncodedBytes(url):        cumulative encoded-looking path bytes,
+ *                                       including SHORT (<16 char) hex/base64
+ *                                       segments — used only on tainted/
+ *                                       sensitive-read runs (H11 path-drip)
+ *   - hasEncodedPayload(url):           base64/hex chunks in query params
+ *   - suspiciousHeaderValue:            encoded secrets in HTTP header values
  */
 
 // ── Suspicious GET exfil detection ────────────────────────────────
@@ -194,6 +198,67 @@ function isSuspiciousHostname(hostname: string): boolean {
 	if (cumulativeEncodedBytes > MAX_CUMULATIVE_PATH_PAYLOAD) return true;
 
 	return false;
+}
+
+// ── Path-drip detection (tainted / sensitive-read runs only) ──────
+//
+// isSuspiciousGetExfil() deliberately ignores hex/base64 path segments
+// shorter than 16 chars so that normal short IDs (commit hashes, REST
+// ids) on CLEAN runs are not flagged. That tolerance is the H11 bypass:
+// an attacker can drip a secret as many <16-char hex segments with no
+// query string. pathDripEncodedBytes() closes the gap by counting EVERY
+// encoded-looking segment — including the short ones — and is only ever
+// consulted once a run is tainted or has observed a sensitive read.
+
+/** Shortest path segment considered an encoded chunk in drip accounting. */
+const MIN_DRIP_SEGMENT_LENGTH = 6;
+
+/**
+ * Sum the byte length of all encoded-looking path segments in a URL,
+ * counting short hex/base32/base64url segments that isSuspiciousGetExfil()
+ * ignores. Returns 0 for unparseable URLs or paths with no encoded segments.
+ *
+ * A segment counts as encoded when it is >= MIN_DRIP_SEGMENT_LENGTH and is
+ * pure hex, base32-like, or mixed base64url — the same alphabets used by
+ * encodedPathSegmentLength(), but without its length floor. Normal lowercase
+ * path words (e.g. "notifications") and UUIDs (hyphenated) are excluded so a
+ * legitimately-structured path on a tainted run is not flagged.
+ */
+export function pathDripEncodedBytes(url: string): number {
+	try {
+		const parsed = new URL(url);
+		const segments = parsed.pathname.split("/").filter(Boolean);
+		let total = 0;
+		for (const segment of segments) {
+			total += dripSegmentLength(segment);
+		}
+		return total;
+	} catch {
+		return 0;
+	}
+}
+
+/**
+ * Encoded-byte contribution of a single path segment for drip accounting.
+ * Unlike encodedPathSegmentLength(), short hex/base64url segments still count.
+ */
+function dripSegmentLength(segment: string): number {
+	if (segment.length < MIN_DRIP_SEGMENT_LENGTH) return 0;
+	if (segment.includes("-")) return 0; // UUID-shaped / hyphenated REST ids
+	// Pure hex (e.g. "4d795365") — the H11 attack vector.
+	if (PATH_HEX_RE.test(segment)) return segment.length;
+	// Base32-like: needs a digit 2-7 to distinguish from all-caps words.
+	if (PATH_BASE32_RE.test(segment) && /[2-7]/.test(segment)) return segment.length;
+	// Base64url-like: require >= 2 of upper/lower/digit to avoid flagging
+	// normal lowercase path words.
+	if (PATH_BASE64URL_RE.test(segment)) {
+		const hasUpper = /[A-Z]/.test(segment);
+		const hasLower = /[a-z]/.test(segment);
+		const hasDigit = /[0-9]/.test(segment);
+		const mixCount = (hasUpper ? 1 : 0) + (hasLower ? 1 : 0) + (hasDigit ? 1 : 0);
+		if (mixCount >= 2) return segment.length;
+	}
+	return 0;
 }
 
 // ── Low-entropy encoding detection ───────────────────────────────

@@ -60,5 +60,7 @@ export interface QuarantineInfo {
 
 export interface HostnameEgressRecord {
 	totalQueryBytes: number;
+	/** Cumulative encoded-looking URL-path bytes sent to this host (H11 drip). */
+	totalPathPayloadBytes: number;
 	requestCount: number;
 }

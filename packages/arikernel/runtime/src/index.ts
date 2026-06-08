@@ -9,7 +9,12 @@ export { SidecarProxyExecutor, createSidecarProxies, SidecarHttpClient } from ".
 export type { SidecarProxyConfig, SidecarHttpClientConfig } from "./sidecar-proxy.js";
 export type { FirewallHooks } from "./hooks.js";
 export { CapabilityIssuer, setUntrustedSources, getUntrustedSources } from "./issuer.js";
-export { RunStateTracker, isSuspiciousGetExfil, hasEncodedPayload } from "./run-state.js";
+export {
+	RunStateTracker,
+	isSuspiciousGetExfil,
+	pathDripEncodedBytes,
+	hasEncodedPayload,
+} from "./run-state.js";
 export type {
 	RunStatePolicy,
 	RunStateCounters,

@@ -1,7 +1,30 @@
 import type { ToolCall } from "@arikernel/core";
 import { SAFE_GET_HEADERS, VALUE_INSPECTED_HEADERS } from "@arikernel/tool-executors";
-import { isSuspiciousGetExfil, suspiciousHeaderValue } from "../run-state.js";
+import type { RunStateTracker } from "../run-state.js";
+import { isSuspiciousGetExfil, pathDripEncodedBytes, suspiciousHeaderValue } from "../run-state.js";
 import { type PipelineContext, checkBehavioralRules, denyQuarantinedAction } from "./context.js";
+
+/** Taint sources that, like a sensitive read, warrant treating GETs as egress. */
+const EGRESS_TAINT_SOURCES: ReadonlySet<string> = new Set(["web", "rag", "email"]);
+
+/** Whether the run carries web/rag/email taint (mirrors the behavioral-rule check). */
+function hasEgressTaint(runState: RunStateTracker): boolean {
+	if (!runState.tainted) return false;
+	for (const source of runState.taintSources) {
+		if (EGRESS_TAINT_SOURCES.has(source)) return true;
+	}
+	return false;
+}
+
+/** Whether a URL targets a host that is NOT on the egress allowlist. */
+function isNonAllowlistedHost(runState: RunStateTracker, url: string): boolean {
+	try {
+		return !runState.isAllowlistedHost(new URL(url).hostname);
+	} catch {
+		// Unparseable URL: not a clean allowlisted GET — leave to downstream policy.
+		return false;
+	}
+}
 
 // Step 1.5b: Pre-execution run-state signals. Track taint, egress, sensitive
 // reads and emit security events before policy evaluation. Returning here may
@@ -40,25 +63,53 @@ function trackHttpSignals(ctx: PipelineContext, toolCall: ToolCall): void {
 	if (!runState) return;
 	const isWriteEgress = runState.isEgressAction(toolCall.action);
 	const httpUrl = String(toolCall.parameters.url ?? "");
-	const isGetExfil =
-		!isWriteEgress &&
-		(toolCall.action === "get" || toolCall.action === "head") &&
-		isSuspiciousGetExfil(httpUrl);
+	const isGet = toolCall.action === "get" || toolCall.action === "head";
+	const isGetExfil = !isWriteEgress && isGet && isSuspiciousGetExfil(httpUrl);
 
-	if ((toolCall.action === "get" || toolCall.action === "head") && httpUrl.includes("?")) {
+	// On a security-sensitive run (sensitive read observed, or web/rag/email
+	// taint), a GET/HEAD to a non-allowlisted host that CARRIES A PAYLOAD is
+	// reclassified as outbound egress. Previously "carries a payload" meant only
+	// a query string ("?"), which let H11 drip a secret through URL PATH SEGMENTS
+	// with no query. We now also feed the encoded path bytes into the per-host/
+	// per-run drip budget and treat any present encoded path bytes as a payload.
+	// A plain content GET (no query, no encoded path) stays allowed so normal
+	// page fetches after a sensitive read are not over-blocked.
+	// When the run is already restricted, enforceRestrictedMode (Step 1.5a) owns
+	// the path-drip accounting for this request and has already returned/thrown,
+	// so we skip it here to avoid double-counting the same encoded path bytes.
+	const sensitiveContext = runState.sensitiveReadObserved || hasEgressTaint(runState);
+	let isPathDripExfil = false;
+	let hasEncodedPathPayload = false;
+	if (!isWriteEgress && isGet && sensitiveContext && !runState.restricted) {
+		try {
+			const hostname = new URL(httpUrl).hostname;
+			if (!runState.isAllowlistedHost(hostname)) {
+				hasEncodedPathPayload = pathDripEncodedBytes(httpUrl) > 0;
+				isPathDripExfil = runState.recordEncodedPathEgress(httpUrl);
+			}
+		} catch {
+			/* unparseable URL — leave to downstream policy */
+		}
+	}
+
+	if (isGet && httpUrl.includes("?")) {
 		runState.recordHttpGetEgress(httpUrl);
 	}
 
-	// After a sensitive read, treat any GET with query params as potential exfil.
-	// This closes the slow-drip gap where small GETs evade isSuspiciousGetExfil thresholds.
+	// After a sensitive read (or in a tainted run), a GET/HEAD to a non-
+	// allowlisted host that carries a payload — query string OR encoded path
+	// segments — is reclassified as an egress_attempt so Rule 3 can fire. This
+	// closes the slow-drip gap where small path-segment GETs evaded both the
+	// isSuspiciousGetExfil thresholds and the "?"-keyed query check.
 	const isSensitiveGetExfil =
 		!isWriteEgress &&
 		!isGetExfil &&
-		(toolCall.action === "get" || toolCall.action === "head") &&
-		runState.sensitiveReadObserved &&
-		httpUrl.includes("?");
+		isGet &&
+		sensitiveContext &&
+		isNonAllowlistedHost(runState, httpUrl) &&
+		(httpUrl.includes("?") || hasEncodedPathPayload);
 
-	if (isWriteEgress || isGetExfil || isSensitiveGetExfil) {
+	if (isWriteEgress || isGetExfil || isSensitiveGetExfil || isPathDripExfil) {
 		runState.recordEgressAttempt();
 		ctx.persistentTaint?.recordEgress(httpUrl);
 		runState.pushEvent({
@@ -66,15 +117,32 @@ function trackHttpSignals(ctx: PipelineContext, toolCall: ToolCall): void {
 			type: "egress_attempt",
 			toolClass: toolCall.toolClass,
 			action: toolCall.action,
-			metadata: { url: toolCall.parameters.url, getExfil: isGetExfil || undefined },
+			metadata: {
+				url: toolCall.parameters.url,
+				getExfil: isGetExfil || undefined,
+				pathDrip: isPathDripExfil || undefined,
+			},
 		});
-		if (checkBehavioralRules(ctx, toolCall)) {
+		const quarantined = checkBehavioralRules(ctx, toolCall);
+		if (quarantined) {
 			denyQuarantinedAction(
 				ctx,
 				toolCall,
 				isGetExfil
 					? "behavioral rule triggered by suspicious GET exfiltration"
 					: "behavioral rule triggered by egress attempt",
+			);
+		}
+		// The path-drip budget is a standalone backstop: once a tainted/
+		// sensitive-read run has dripped more than the per-request or per-run
+		// encoded-path budget to a non-allowlisted host, deny even if no
+		// behavioral sequence rule matched this step. This is the slow-drip
+		// defense that the per-host accounting now actually enforces.
+		if (isPathDripExfil) {
+			denyQuarantinedAction(
+				ctx,
+				toolCall,
+				"encoded-path drip budget exceeded to non-allowlisted host after sensitive read",
 			);
 		}
 	}

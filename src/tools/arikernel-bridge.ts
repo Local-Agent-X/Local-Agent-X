@@ -36,8 +36,9 @@
  *   session-policy and run identity. Forged `_runId`/`_principalId`/
  *   `_capabilityGrantId`/`_taintLabels` are dropped for security decisions.
  */
-import type { ToolCall, ToolClass, ToolResult as AriToolResult, TaintLabel } from "@arikernel/core";
+import type { ToolCall, ToolClass, ToolResult as AriToolResult, TaintLabel, TaintSource } from "@arikernel/core";
 import { generateId, now } from "@arikernel/core";
+import { getKernelTaintSources } from "../data-lineage.js";
 import {
   DatabaseExecutor,
   FileExecutor,
@@ -104,6 +105,20 @@ export function buildToolCall(cfg: BridgeConfig, args: BridgeArgs): ToolCall {
   // identity or slip a restrictive session policy). Fall back to a fresh id;
   // NEVER to a model-supplied value.
   const runId = args._sessionId ?? generateId();
+  // Taint is injected by the runtime, not the caller. The model cannot
+  // self-declare or self-clear taint, so `_taintLabels` is ignored. We look up
+  // the live session's taint from the trusted data-lineage tracker, keyed off
+  // the runtime-stamped `_sessionId` — so a sub-agent / prior sensitive read in
+  // THIS session carries into the kernel's tainted-shell / tainted-egress rules.
+  // Stays [] only when the session genuinely has no active taint.
+  const taintLabels: TaintLabel[] = args._sessionId
+    ? getKernelTaintSources(args._sessionId).map(source => ({
+        source: source as TaintSource,
+        origin: "runtime",
+        confidence: 1.0,
+        addedAt: now(),
+      }))
+    : [];
   return {
     id: generateId(),
     runId,
@@ -116,10 +131,7 @@ export function buildToolCall(cfg: BridgeConfig, args: BridgeArgs): ToolCall {
     toolClass: cfg.toolClass,
     action: args.action ?? cfg.defaultAction,
     parameters: stripInternal(args) as Record<string, unknown>,
-    // Taint is injected by the runtime, not the caller. The model cannot
-    // self-declare or self-clear taint, so `_taintLabels` is ignored. Chunk 4
-    // will wire real session taint in here from trusted runtime context.
-    taintLabels: [],
+    taintLabels,
     // Capability grants are minted server-side via a trusted path; the bridge
     // never reads `_capabilityGrantId` from args. Until that path is wired,
     // leave grantId undefined and let the kernel's grant gate decide.

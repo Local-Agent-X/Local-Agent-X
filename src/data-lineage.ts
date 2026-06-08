@@ -65,6 +65,75 @@ export function clearSessionTaint(sessionId: string): void {
   sessionTaint.delete(sessionId);
 }
 
+// LAX → AriKernel taint-source mapping. The kernel's behavioral deny rules
+// (deny-tainted-shell / deny-tainted-http-write) key on the kernel's untrusted-
+// content sources ["web","rag","email"]; the kernel also recognizes
+// "user-provided" (NOT in the deny set — the user's own input is trusted).
+//
+// LAX's taint model is COARSER than the kernel's: "the session touched sensitive
+// bytes" rather than a fine-grained provenance lattice. So every LAX source that
+// represents untrusted-or-sensitive content the model has now seen maps onto a
+// kernel source the deny rules recognize, so a sensitive read here lights up the
+// kernel's tainted-shell / tainted-egress enforcement. `user_data` is the one
+// trusted source and maps to "user-provided" (intentionally outside the deny set).
+const KERNEL_TAINT_SOURCE: Record<TaintSource, string> = {
+  web: "web",
+  memory: "rag",
+  sensitive_file: "rag",
+  secret: "rag",
+  user_data: "user-provided",
+};
+
+/**
+ * Read the current session's ACTIVE taint as AriKernel taint-source strings,
+ * for feeding into ariEvaluate's 4th `taintLabels` arg. Uses the same
+ * active-window semantics as checkEgressTaint (a stale read past the window
+ * doesn't gate). Returns deduped kernel sources; [] when the session is clean.
+ *
+ * This is the bridge between chunk 3's recordSensitiveRead and the kernel's
+ * behavioral taint rules: the kernel only blocks tainted shell/egress if it
+ * actually receives non-empty taint, and this is where LAX hands it over.
+ */
+export function getKernelTaintSources(sessionId: string): string[] {
+  const taints = sessionTaint.get(sessionId);
+  if (!taints || taints.length === 0) return [];
+  const TAINT_WINDOW_MS = 5 * 60 * 1000;
+  const now = Date.now();
+  const sources = new Set<string>();
+  for (const t of taints) {
+    if (now - t.timestamp >= TAINT_WINDOW_MS) continue;
+    sources.add(KERNEL_TAINT_SOURCE[t.source]);
+  }
+  return [...sources];
+}
+
+/**
+ * Propagate taint from one session into another (parent ← child).
+ *
+ * When a sub-agent (child session) has read sensitive data, its taint must
+ * follow the result back to the parent so the parent's egress / kernel gates
+ * see it. Copies the child's ACTIVE taint entries into the target session,
+ * preserving the original source/target but re-stamping the timestamp to the
+ * propagation moment (so the parent's active window starts when it consumes the
+ * child result, not when the child first read). No-op when the child is clean.
+ *
+ * Returns the number of taint entries propagated (for logging / tests).
+ */
+export function propagateTaint(fromSessionId: string, toSessionId: string): number {
+  if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return 0;
+  const fromTaints = sessionTaint.get(fromSessionId);
+  if (!fromTaints || fromTaints.length === 0) return 0;
+  const TAINT_WINDOW_MS = 5 * 60 * 1000;
+  const now = Date.now();
+  let count = 0;
+  for (const t of fromTaints) {
+    if (now - t.timestamp >= TAINT_WINDOW_MS) continue;
+    recordSensitiveRead(toSessionId, t.source, t.target);
+    count++;
+  }
+  return count;
+}
+
 // Basenames that are credential files regardless of where they live on disk.
 // Match is case-insensitive but exact — `secrets.json` matches, `mysecrets.json`
 // and `secrets.py` do not.

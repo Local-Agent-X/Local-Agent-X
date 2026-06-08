@@ -8,7 +8,7 @@
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
-import { checkEgressTaint } from "../data-lineage.js";
+import { checkEgressTaint, getKernelTaintSources } from "../data-lineage.js";
 import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
 import { checkOutboundRequest, checkOutboundPayload, checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
@@ -68,7 +68,14 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     // gated I/O ungated — it blocks. Guarding this branch on isAriActive()
     // (as it once did) made that fail-closed path unreachable: an inactive
     // kernel skipped the gate entirely.
-    const ariResult = await ariEvaluate(tc.name, ARI_ACTION_MAP[tc.name] || "exec", args);
+    // Feed the live session's taint (recorded by data-lineage when a
+    // sensitive/web/rag read occurred) into the kernel as the 4th arg, so the
+    // kernel's behavioral deny-tainted-shell / deny-tainted-http rules actually
+    // fire. Without this the kernel always saw empty taint and those rules were
+    // dead code. The MODEL can't supply taint — it comes from the trusted
+    // runtime tracker keyed off the session id.
+    const taintLabels = getKernelTaintSources(sessionId || "default");
+    const ariResult = await ariEvaluate(tc.name, ARI_ACTION_MAP[tc.name] || "exec", args, taintLabels);
     if (!ariResult.allowed) {
       const hint = ariResult.userHint ?? USER_HINTS.policy;
       return terminate(ctx, { rendered: "raw", content: `User hint: ${hint}\n${ariResult.reason}`, allowed: false });

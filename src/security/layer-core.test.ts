@@ -868,6 +868,51 @@ describe("structured-document file-access confinement (TOOL_PATH_ARGS)", () => {
   });
 });
 
+// On Windows with OneDrive "Known Folder Move", the user's real Documents lives
+// at %OneDrive%\Documents, not ~/Documents — so common mode (which is supposed
+// to grant the user's own folders) was blocking their actual Documents and
+// forcing them all the way to unrestricted. Common mode must recognize the
+// OneDrive-redirected folders.
+describe("common mode recognizes OneDrive-redirected user folders (KFM)", () => {
+  const HOME = resolve("/kfm-home");
+  const ONEDRIVE = resolve("/kfm-home/OneDrive");
+  const ws = resolve(HOME, "project", "workspace");
+  let saved: Record<string, string | undefined> = {};
+
+  beforeAll(() => {
+    saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, OneDrive: process.env.OneDrive };
+    process.env.HOME = HOME;
+    process.env.USERPROFILE = HOME;
+    process.env.OneDrive = ONEDRIVE;
+  });
+  afterAll(() => {
+    for (const k of ["HOME", "USERPROFILE", "OneDrive"]) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it("common: a read under %OneDrive%\\Documents is allowed", () => {
+    const p = resolve(ONEDRIVE, "Documents", "2024 May order.xlsx");
+    expect(evaluateFileAccess(ws, "common", () => false, "read", p).allowed).toBe(true);
+  });
+
+  it("common: the literal ~/Documents still works (non-OneDrive folder)", () => {
+    const p = resolve(HOME, "Documents", "notes.txt");
+    expect(evaluateFileAccess(ws, "common", () => false, "read", p).allowed).toBe(true);
+  });
+
+  it("common: a path outside both home and OneDrive is still blocked", () => {
+    const p = resolve("/some/other/root/secret.txt");
+    expect(evaluateFileAccess(ws, "common", () => false, "read", p).allowed).toBe(false);
+  });
+
+  it("workspace mode: OneDrive Documents stays blocked (project only)", () => {
+    const p = resolve(ONEDRIVE, "Documents", "x.xlsx");
+    expect(evaluateFileAccess(ws, "workspace", () => false, "read", p).allowed).toBe(false);
+  });
+});
+
 // bash is the universal go-to tool, and historically it ignored the file-access
 // mode entirely — `cat /etc/passwd` ran in "workspace only". This best-effort
 // guard makes bash OBEY the same boundary (the sound POSIX kernel hard-wall is

@@ -383,6 +383,45 @@ describe("isDestructiveCommand — structured {executable, args[]} form", () => 
   });
 });
 
+describe("isDestructiveCommand — process_start/process_restart parity (H2)", () => {
+  // Regression for the silent-RCE gap: the matcher early-returned null unless
+  // the tool was bash/shell/ari_shell, so process_start({command:"git push
+  // --force"}) ran SILENTLY on the Normal profile while the identical bash
+  // forced an unskippable confirm. The defense is now keyed on the spawn
+  // primitive — process_start spawns the same /bin/bash -c <command>.
+  it("flags git force-push via process_start (was silently allowed)", () => {
+    expect(isDestructiveCommand("process_start", { command: "git push --force origin main" }))
+      .not.toBeNull();
+  });
+
+  it("gives process_start the SAME reason as bash for the identical command", () => {
+    const cmd = "git push --force origin main";
+    expect(isDestructiveCommand("process_start", { command: cmd }))
+      .toBe(isDestructiveCommand("bash", { command: cmd }));
+  });
+
+  it("flags git reset --hard and git clean -fdx via process_start", () => {
+    expect(isDestructiveCommand("process_start", { command: "git reset --hard HEAD~50" }))
+      .not.toBeNull();
+    expect(isDestructiveCommand("process_start", { command: "git clean -fdx" })).not.toBeNull();
+  });
+
+  it("flags the same via process_restart", () => {
+    expect(isDestructiveCommand("process_restart", { command: "git push --force origin main" }))
+      .not.toBeNull();
+  });
+
+  it("returns null for a benign process_start command", () => {
+    expect(isDestructiveCommand("process_start", { command: "ls" })).toBeNull();
+    expect(isDestructiveCommand("process_restart", { command: "npm run dev" })).toBeNull();
+  });
+
+  it("forces an irreversible confirm for a destructive process_start", () => {
+    expect(requiresIrreversibleConfirm("process_start", { command: "git push --force origin main" }))
+      .not.toBeNull();
+  });
+});
+
 describe("requiresIrreversibleConfirm — the floor", () => {
   // Regression for the gap: the floor used to be shell-text-only, so a
   // destructive NON-shell tool auto-allowed under Power/Autonomous with no

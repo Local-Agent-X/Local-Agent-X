@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -108,5 +109,114 @@ describe("CryptoAuditTrail — getRecent", () => {
     }
     expect(a.getRecent(5)).toHaveLength(5);
     expect(a.getRecent(5)[4].reason).toBe("r29");
+  });
+});
+
+describe("CryptoAuditTrail — HMAC keyed chain + full-field coverage", () => {
+  it("a fresh chain written under the new code verifies as valid (hmac-v1)", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({
+      sessionId: "s", event: "tool_executed", decision: "block", reason: "scored high",
+      role: "operator", threatScore: 92, threatLevel: "high", dataLabels: ["secret"],
+    });
+    a.record({ sessionId: "s", event: "tick", decision: "allow", reason: "ok" });
+    const path = dailyAuditPath();
+    const first = JSON.parse(readFileSync(path, "utf-8").trim().split("\n")[0]);
+    expect(first.hashScheme).toBe("hmac-v1");
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(true);
+    expect(r.total).toBe(2);
+  });
+
+  it("tampering with threatScore (previously NOT hashed) now FAILS verification", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "block", reason: "r", threatScore: 90, role: "operator" });
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "r2" });
+    const path = dailyAuditPath();
+    const lines = readFileSync(path, "utf-8").trim().split("\n");
+    const tampered = JSON.parse(lines[0]);
+    tampered.threatScore = 1; // downgrade severity without touching reason/decision
+    lines[0] = JSON.stringify(tampered);
+    writeFileSync(path, lines.join("\n") + "\n");
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(false);
+    expect(r.brokenAt).toBe(0);
+  });
+
+  it("tampering with dataLabels or role now FAILS verification", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "r", role: "operator", dataLabels: ["secret"] });
+    const path = dailyAuditPath();
+    const lines = readFileSync(path, "utf-8").trim().split("\n");
+    const t1 = JSON.parse(lines[0]);
+    t1.role = "readonly";
+    writeFileSync(path, JSON.stringify(t1) + "\n");
+    expect(CryptoAuditTrail.verify(path).valid).toBe(false);
+
+    const t2 = JSON.parse(lines[0]);
+    t2.dataLabels = [];
+    writeFileSync(path, JSON.stringify(t2) + "\n");
+    expect(CryptoAuditTrail.verify(path).valid).toBe(false);
+  });
+
+  it("a plain SHA-256 forgery (no HMAC key) does NOT produce a valid chain", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "r", threatScore: 5 });
+    const path = dailyAuditPath();
+    const entry = JSON.parse(readFileSync(path, "utf-8").trim().split("\n")[0]);
+    // Attacker rewrites the row and recomputes the hash with plain SHA-256
+    // (they don't have the key). Keep hashScheme so it goes through the keyed
+    // verify path — the forged hash will not match the HMAC.
+    entry.threatScore = 999;
+    const forgedPayload = JSON.stringify(entry);
+    entry.hash = createHash("sha256").update(forgedPayload).digest("hex");
+    writeFileSync(path, JSON.stringify(entry) + "\n");
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(false);
+    expect(r.brokenAt).toBe(0);
+  });
+
+  it("a non-genesis NULL/empty previousHash anchor is rejected (truncation/re-root)", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "1" });
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "2" });
+    const path = dailyAuditPath();
+    const lines = readFileSync(path, "utf-8").trim().split("\n");
+    const second = JSON.parse(lines[1]);
+    second.prevHash = ""; // empty anchor mid-chain = re-rooted
+    lines[1] = JSON.stringify(second);
+    writeFileSync(path, lines.join("\n") + "\n");
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(false);
+    expect(r.brokenAt).toBe(1);
+
+    // A second GENESIS anchor mid-chain is likewise rejected.
+    const lines2 = readFileSync(path, "utf-8").trim().split("\n");
+    const reanchor = JSON.parse(lines2[1]);
+    reanchor.prevHash = "GENESIS";
+    lines2[1] = JSON.stringify(reanchor);
+    writeFileSync(path, lines2.join("\n") + "\n");
+    expect(CryptoAuditTrail.verify(path).valid).toBe(false);
+  });
+
+  it("legacy plain-SHA-256 entries (no hashScheme tag) still verify — boot compat", () => {
+    // Simulate a pre-upgrade audit file written under the old narrow scheme.
+    const legacy = {
+      seq: 0, timestamp: new Date().toISOString(), sessionId: "s", event: "x",
+      decision: "allow", reason: "legacy", prevHash: "GENESIS",
+    } as Record<string, unknown>;
+    const payload = JSON.stringify({
+      seq: legacy.seq, timestamp: legacy.timestamp, sessionId: legacy.sessionId,
+      event: legacy.event, toolName: undefined, decision: legacy.decision,
+      reason: legacy.reason, prevHash: legacy.prevHash,
+    });
+    legacy.hash = createHash("sha256").update(payload).digest("hex");
+    const auditDir = join(dataDir, "audit");
+    const date = new Date().toISOString().slice(0, 10);
+    const path = join(auditDir, `${date}.jsonl`);
+    // Ensure the audit dir exists by constructing a trail first.
+    new CryptoAuditTrail(dataDir);
+    writeFileSync(path, JSON.stringify(legacy) + "\n");
+    expect(CryptoAuditTrail.verify(path).valid).toBe(true);
   });
 });

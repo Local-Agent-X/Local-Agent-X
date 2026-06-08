@@ -117,6 +117,15 @@ export class AuditStore {
 		}
 	}
 
+	/**
+	 * Expose the HMAC key so the replay/verify path recomputes the chain with
+	 * the same key it was written under. Returns undefined when the chain was
+	 * written as plain SHA-256 (no key provisioned).
+	 */
+	getHmacKey(): Buffer | undefined {
+		return this.hmacKey;
+	}
+
 	private getLastHash(): string {
 		const row = this.db.prepare("SELECT hash FROM events ORDER BY rowid DESC LIMIT 1").get() as
 			| { hash: string }

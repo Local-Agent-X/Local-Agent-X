@@ -11,6 +11,7 @@ import {
 } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
+import { evaluateShellPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
 import { TOOL_CLASS_MAP } from "../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../tool-registry.js";
@@ -270,7 +271,21 @@ export class SecurityLayer {
     } else if (pathArgs) {
       decision = this.evaluatePathArgs(pathArgs, args, ctx);
     } else if (toolName === "bash") {
-      decision = evaluateShellCommand(String(args.command || ""));
+      const command = String(args.command || "");
+      // 1) command-shape vetting (denylist / obfuscation / metachars), then
+      // 2) confine bash to the file-access mode — the same boundary the file
+      //    tools obey — so "workspace only" means bash too. Best-effort on
+      //    Windows (parses the command); the planned POSIX path adds a kernel
+      //    hard-wall. See shell-path-guard.ts.
+      decision = evaluateShellCommand(command);
+      if (decision.allowed) {
+        decision = evaluateShellPaths(command, {
+          workspace: this.workspace,
+          fileAccessMode: this.fileAccessMode,
+          allowedPathCheck: (rp, sid) => this.isInAllowedPaths(rp, sid),
+          sessionId: ctx.sessionId,
+        });
+      }
     } else if (toolName === "web_fetch" || toolName === "http_request") {
       decision = evaluateWebFetch(
         this.egressAllowlist,

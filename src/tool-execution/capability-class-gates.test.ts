@@ -6,11 +6,13 @@
 // worktree enforcement. These tests assert that synonyms are now enforced
 // identically to their canonical equivalents.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
 import { dataLineageGate, egressGuardGate } from "./enforce-policy.js";
 import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../security/types.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage.js";
+import { scanForSecrets } from "../security/secret-scanner.js";
+import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/known-secrets.js";
 import type { ToolCallContext } from "./context.js";
 
 function makeCtx(name: string, args: Record<string, unknown>, sessionId: string): ToolCallContext {
@@ -133,5 +135,37 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
 
   it("is a no-op for non-egress tools", () => {
     expect(egressGuardGate(makeCtx("read", { path: "/tmp/x" }, sessionId)).kind).toBe("continue");
+  });
+});
+
+describe("egressGuardGate — known-secret-value (the user's ACTUAL stored secret)", () => {
+  const sessionId = "cap-class-known-value";
+  // A long, isSecretShaped but DELIBERATELY low-entropy readable value — it
+  // matches no credential pattern AND no entropy run, so on its own the scan is
+  // clean. The ONLY reason the guard can block it is that it's a REGISTERED
+  // known secret value (eager-populated from the SecretsStore on load).
+  const STORED = "right-pony-cylinder-marble-secret-value";
+
+  beforeAll(() => registerRedactedSecretValue(STORED));
+  afterAll(() => unregisterRedactedSecretValue(STORED));
+
+  it("the value matches no pattern on its own — proving the block comes from the registry", () => {
+    unregisterRedactedSecretValue(STORED);
+    expect(scanForSecrets(`x=${STORED}`).clean).toBe(true);
+    registerRedactedSecretValue(STORED);
+    expect(scanForSecrets(`x=${STORED}`).clean).toBe(false);
+  });
+
+  it("blocks egress of the stored value literally", () => {
+    const ctx = makeCtx("clipboard_write", { text: `copy ${STORED}` }, sessionId);
+    const outcome = egressGuardGate(ctx);
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.result?.metadata?.layer).toBe("egress-guard");
+  });
+
+  it("blocks egress of the stored value base64-encoded (decode-view reuse)", () => {
+    const blob = Buffer.from(STORED, "utf8").toString("base64");
+    const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: `data=${blob}` }, sessionId);
+    expect(egressGuardGate(ctx).kind).toBe("halt");
   });
 });

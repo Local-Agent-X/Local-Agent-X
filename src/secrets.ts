@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { getOrCreateMasterKey, type KeychainProvider } from "./keychain.js";
+import { registerRedactedSecretValue } from "./security/known-secrets.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("secrets");
@@ -160,6 +161,13 @@ export class SecretsStore {
     for (const entry of raw.secrets) {
       try {
         const value = decrypt(entry.encrypted, this.key);
+        // Proactively register the plaintext with the known-secret-value
+        // registry so the egress scanner / taint path / redactor can match the
+        // user's ACTUAL secrets the moment the store loads — without waiting for
+        // the value to first be used in a browser fill / clipboard write.
+        // isSecretShaped gates inside register(), so short/numeric values
+        // (ports, PINs) are skipped (no false-positive egress blocks).
+        registerRedactedSecretValue(value);
         this.secrets.set(entry.name, {
           name: entry.name,
           value,
@@ -257,6 +265,9 @@ export class SecretsStore {
     const existing = this.secrets.get(name);
     const metaObj: SecretMetadata = typeof meta === "string" ? { service: meta } : (meta || {});
     const url = metaObj.url ?? existing?.url;
+    // Register the new/updated value so it's immediately matchable by the egress
+    // scanner (gated by isSecretShaped inside register()).
+    registerRedactedSecretValue(value);
     this.secrets.set(name, {
       name,
       value,

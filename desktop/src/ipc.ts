@@ -110,6 +110,16 @@ export function setupIPC(): void {
     const mainWindow = getMainWindow();
     if (mainWindow) mainWindow.webContents.toggleDevTools();
   });
+
+  // Edit actions for the Windows/Linux in-window titlebar. The HTML bar
+  // can't carry Electron menu roles, so it routes here and we drive the
+  // focused webContents — the same effect roles give the native Mac menu.
+  ipcMain.handle("titlebar-edit", (_e, role: "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll") => {
+    const wc = getMainWindow()?.webContents;
+    if (wc) wc[role]();
+  });
+
+  ipcMain.handle("show-about", () => app.showAboutPanel());
   ipcMain.handle("open-file", (_e, relativePath: string) => {
     // Resolve against PROJECT_ROOT, not process.cwd() — the old `..` hack
     // happened to work on Windows when cwd was `<repo>/desktop`, but

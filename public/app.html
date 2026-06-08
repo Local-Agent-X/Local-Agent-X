@@ -14,7 +14,7 @@
 <script src="/vendor/highlightjs/highlight.min.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb10"/>
+<link rel="stylesheet" href="/css/app.css?v=vb11"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
      Import map lets `import * as THREE from 'three'` resolve cleanly in
@@ -25,6 +25,63 @@
 </script>
 </head>
 <body>
+
+<!-- Desktop in-window titlebar — Windows/Linux Electron only. Shown via the
+     platform-win body class, set in desktop/src/preload.ts before first
+     paint; macOS uses the native top-of-screen menu (desktop/src/app-menu.ts)
+     and a plain browser never gets the class, so the bar stays hidden in both.
+     Behavior is wired in /js/desktop-titlebar.js. -->
+<div id="desktop-titlebar">
+  <img id="dtb-favicon" src="/favicon.png" alt=""/>
+  <div class="dtb-menu">
+    <span class="dtb-btn">File</span>
+    <div class="dtb-dd">
+      <div class="dtb-item" data-action="open-in-browser">Open in Browser</div>
+      <div class="dtb-item" data-action="copy-app-url">Copy App URL</div>
+      <div class="dtb-sep"></div>
+      <div class="dtb-item" data-action="restart-server">Restart Server</div>
+      <div class="dtb-sep"></div>
+      <div class="dtb-item" data-action="quit">Quit</div>
+    </div>
+  </div>
+  <div class="dtb-menu">
+    <span class="dtb-btn">Edit</span>
+    <div class="dtb-dd">
+      <div class="dtb-item" data-action="edit:undo">Undo</div>
+      <div class="dtb-item" data-action="edit:redo">Redo</div>
+      <div class="dtb-sep"></div>
+      <div class="dtb-item" data-action="edit:cut">Cut</div>
+      <div class="dtb-item" data-action="edit:copy">Copy</div>
+      <div class="dtb-item" data-action="edit:paste">Paste</div>
+      <div class="dtb-item" data-action="edit:selectAll">Select All</div>
+    </div>
+  </div>
+  <div class="dtb-menu">
+    <span class="dtb-btn">View</span>
+    <div class="dtb-dd">
+      <div class="dtb-item" data-action="reload">Reload</div>
+      <div class="dtb-item" data-action="toggle-agents">Toggle Agents</div>
+      <div class="dtb-item" data-action="toggle-devtools">Toggle DevTools</div>
+      <div class="dtb-sep"></div>
+      <div class="dtb-item" data-action="zoom-in">Zoom In</div>
+      <div class="dtb-item" data-action="zoom-out">Zoom Out</div>
+      <div class="dtb-item" data-action="zoom-reset">Reset Zoom</div>
+    </div>
+  </div>
+  <div class="dtb-menu">
+    <span class="dtb-btn">Window</span>
+    <div class="dtb-dd">
+      <div class="dtb-item" data-action="minimize">Minimize</div>
+      <div class="dtb-item" data-action="close-to-tray">Close to Tray</div>
+    </div>
+  </div>
+  <div class="dtb-menu">
+    <span class="dtb-btn">Help</span>
+    <div class="dtb-dd">
+      <div class="dtb-item" data-action="about">About</div>
+    </div>
+  </div>
+</div>
 
 <!-- Skip to content link (accessibility feature 100) -->
 <a href="#main" class="skip-to-content" id="skip-link">Skip to main content</a>
@@ -1188,6 +1245,7 @@
 <script type="module" src="/js/agents.js?v=v4"></script>
 <script src="/js/shortcuts.js"></script>
 <script src="/js/app-sidebar-toggle.js?v=v1"></script>
+<script src="/js/desktop-titlebar.js?v=v1"></script>
 
 <!-- ═══ Global Search Modal ═══ -->
 <div id="global-search-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:20000;align-items:flex-start;justify-content:center;padding-top:12vh">

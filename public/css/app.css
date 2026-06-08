@@ -46,10 +46,25 @@
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover{background:#b0b0bc}
 body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
 /* simple-mode removed — all features visible to all users */
-/* Electron desktop: title bar pushes entire app down */
-body.desktop-frame{height:calc(100vh - 32px);margin-top:32px}
-body.desktop-frame #sidebar-expand-btn{top:52px !important}
-body.desktop-frame #agents-toggle{top:52px !important}
+/* Electron desktop, Windows/Linux: the in-window titlebar (#desktop-titlebar
+   in app.html) hosts the menus and reserves the top 32px so the OS min/max/
+   close overlay, which paints in that same strip, never sits on top of page
+   content. Gated by platform-win (set in desktop/src/preload.ts); hidden by
+   default so macOS and a plain browser never render it. */
+#desktop-titlebar{display:none}
+body.platform-win{height:calc(100vh - 32px);margin-top:32px}
+body.platform-win #desktop-titlebar{display:flex;position:fixed;top:0;left:0;right:0;height:32px;z-index:99999;align-items:center;background:var(--bg);-webkit-app-region:drag;font-size:12px;user-select:none}
+body.platform-win #sidebar-expand-btn{top:52px !important}
+body.platform-win #agents-toggle{top:52px !important}
+#desktop-titlebar #dtb-favicon{width:16px;height:16px;margin:0 8px;-webkit-app-region:no-drag}
+#desktop-titlebar .dtb-menu{position:relative;-webkit-app-region:no-drag}
+#desktop-titlebar .dtb-btn{display:block;padding:4px 8px;color:var(--muted);cursor:pointer}
+#desktop-titlebar .dtb-menu.open .dtb-btn{color:var(--accent);background:var(--hover)}
+#desktop-titlebar .dtb-dd{display:none;position:absolute;top:100%;left:0;min-width:180px;background:var(--bg);border:1px solid var(--border);box-shadow:0 4px 12px rgba(0,0,0,.5);padding:4px 0}
+#desktop-titlebar .dtb-menu.open .dtb-dd{display:block}
+#desktop-titlebar .dtb-item{padding:6px 12px;color:var(--text);cursor:pointer;white-space:nowrap}
+#desktop-titlebar .dtb-item:hover{background:var(--hover)}
+#desktop-titlebar .dtb-sep{height:1px;margin:4px 0;background:var(--border)}
 body.agents-panel-open #agents-toggle{display:none !important}
 body::after{content:'';position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(64,240,240,.012) 2px,rgba(64,240,240,.012) 4px);z-index:9999}
 
@@ -94,8 +109,8 @@ body.platform-darwin #sidebar.collapsed + #main .page-header{padding-left:76px}
    lights aren't drawn on top of it. !important is required because the
    button carries an inline style="top:14px" in app.html (set for the
    non-Electron browser case) which would otherwise win the cascade.
-   The existing body.desktop-frame rule does similar at top:52px but
-   that class is never applied; this replaces it for Electron-macOS. */
+   Windows/Linux use the platform-win rule above (top:52px, clearing the
+   in-window titlebar); this is the macOS counterpart. */
 body.platform-darwin #sidebar-expand-btn{top:40px !important}
 
 /* Brand row — AGENT X logo + New Chat button + collapse arrow on a

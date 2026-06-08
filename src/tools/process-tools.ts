@@ -24,6 +24,9 @@ import { randomBytes } from "node:crypto";
 import { dirname, basename, resolve, sep } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err, running } from "./result-helpers.js";
+import { buildSanitizedEnv } from "./shell-tools.js";
+import { evaluateShellCommand } from "../security/shell-policy.js";
+import { getSandboxMode } from "../sandbox/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("tools.process");
@@ -81,17 +84,12 @@ function newSessionId(): string {
   return `px-${randomBytes(4).toString("hex")}`;
 }
 
+// Credential scrub: process_* spawn a shell exactly like bash, so they must
+// scrub the same way. Delegates to the shared bash env-scrub (credential-name
+// + high-entropy-value allowlist) instead of copying the full process.env,
+// which leaked sidecar secrets to every background command.
 function sanitizeEnv(extra?: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (!v) continue;
-    if (v.includes("\0")) continue;
-    out[k] = v;
-  }
-  if (extra) for (const [k, v] of Object.entries(extra)) {
-    if (typeof v === "string" && !v.includes("\0")) out[k] = v;
-  }
-  return out;
+  return buildSanitizedEnv(extra);
 }
 
 /**
@@ -106,6 +104,27 @@ function startSession(
   cwd?: string,
   env?: Record<string, string>,
 ): { session: ProcessSession } | { error: string } {
+  // Same command vetting bash gets: denylist + metachar/obfuscation scan.
+  // process_start spawns through /bin/bash -c (or powershell -Command), so an
+  // unvetted command here is identical RCE to an unvetted bash call.
+  const verdict = evaluateShellCommand(command);
+  if (!verdict.allowed) {
+    return { error: `blocked by shell policy: ${verdict.reason}` };
+  }
+
+  // Honor sandbox mode. process_* keeps a live ChildProcess handle for
+  // polling/kill, which the synchronous docker exec path (execInSandbox)
+  // can't provide — so rather than silently host-spawning and defeating the
+  // sandbox, refuse and point the caller at bash (which has a real docker
+  // path) or at disabling the sandbox.
+  if (getSandboxMode() === "docker") {
+    return {
+      error:
+        "Sandbox mode is docker — process_start cannot run a tracked background session inside the container. " +
+        "Use bash for one-shot commands (it routes through the sandbox), or set LAX_SANDBOX=host / toggle Sandbox off in Settings to allow host background processes.",
+    };
+  }
+
   const sessionId = newSessionId();
   const isWin = process.platform === "win32";
   const shell = isWin ? "powershell.exe" : "/bin/bash";

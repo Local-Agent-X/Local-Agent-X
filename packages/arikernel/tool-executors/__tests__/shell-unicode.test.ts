@@ -4,7 +4,7 @@ import { parseCommandString, validateCommand } from "../src/shell.js";
 describe("shell executor: unicode bypass prevention", () => {
 	it("blocks fullwidth semicolon in arguments", () => {
 		// ；(U+FF1B) normalizes to ; which is a metacharacter
-		expect(() => validateCommand("git", ["\uFF1Brm"])).toThrow("shell metacharacters");
+		expect(() => validateCommand("grep", ["\uFF1Brm"])).toThrow("shell metacharacters");
 	});
 
 	it("blocks fullwidth dollar sign in executable", () => {
@@ -20,7 +20,7 @@ describe("shell executor: unicode bypass prevention", () => {
 	});
 
 	it("allows clean ASCII executables and args", () => {
-		expect(() => validateCommand("git", ["status"])).not.toThrow();
+		expect(() => validateCommand("grep", ["status"])).not.toThrow();
 		expect(() => validateCommand("ls", ["-la"])).not.toThrow();
 	});
 });

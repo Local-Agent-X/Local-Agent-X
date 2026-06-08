@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { ShellExecutor, parseCommandString, validateCommand } from "../src/shell.js";
 
 describe("validateCommand", () => {
-	it("accepts a simple command with safe arguments", () => {
-		expect(() => validateCommand("git", ["clone", "https://example.com"])).not.toThrow();
+	it("accepts an allowlisted command with safe arguments", () => {
+		// git is deliberately OUT of the allowlist (destructive subcommands are
+		// hard to vet at the basename level); use an allowlisted binary here.
+		expect(() => validateCommand("grep", ["-n", "foo", "file.txt"])).not.toThrow();
 	});
 
 	it("accepts command with no arguments", () => {
@@ -213,8 +215,10 @@ describe("ShellExecutor", () => {
 			toolClass: "shell",
 			action: "exec",
 			parameters: {
-				executable: "git",
-				args: ["clone", "https://example.com; rm -rf /"],
+				// allowlisted executable so the metachar check (not the allowlist
+				// gate) is what rejects the injected argument.
+				executable: "grep",
+				args: ["foo", "file.txt; rm -rf /"],
 			},
 		});
 		expect(result.success).toBe(false);
@@ -252,5 +256,53 @@ describe("ShellExecutor", () => {
 		});
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("metacharacters");
+	});
+
+	// ── Allowlist enforcement (structured form) ──────────────────────────────
+
+	it("rejects find -exec arg-injection primitive (not in allowlist)", async () => {
+		const result = await executor.execute({
+			id: "tc-allow-1",
+			toolClass: "shell",
+			action: "exec",
+			parameters: { executable: "find", args: ["/", "-exec", "rm", "{}", ";"] },
+		});
+		expect(result.success).toBe(false);
+		// find is explicitly in the named denylist → "Blocked shell interpreter"
+		expect(result.error).toContain("Blocked shell interpreter");
+	});
+
+	it("rejects a non-allowlisted executable", async () => {
+		const result = await executor.execute({
+			id: "tc-allow-2",
+			toolClass: "shell",
+			action: "exec",
+			parameters: { executable: "git", args: ["status"] },
+		});
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Executable not allowed");
+	});
+
+	it("accepts an allowlisted executable (echo)", async () => {
+		const result = await executor.execute({
+			id: "tc-allow-3",
+			toolClass: "shell",
+			action: "exec",
+			parameters: { executable: "echo", args: ["hello"] },
+		});
+		expect(result.success).toBe(true);
+		expect((result.data as { stdout: string }).stdout).toContain("hello");
+	});
+
+	it("rejects an absolute path to a non-allowed binary (no PATH games)", async () => {
+		const result = await executor.execute({
+			id: "tc-allow-4",
+			toolClass: "shell",
+			action: "exec",
+			parameters: { executable: "/usr/bin/curl", args: ["https://example.com"] },
+		});
+		expect(result.success).toBe(false);
+		// curl is in the named denylist
+		expect(result.error).toContain("Blocked shell interpreter");
 	});
 });

@@ -4,6 +4,7 @@ import type { FileAccessMode, ToolCallContext } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { resolvePath as resolveSqlDbPath } from "../tools/sql-tools.js";
 import { evaluateWebFetch, type EgressMode } from "./network-policy.js";
+import { evaluateShellCommand } from "./shell-policy.js";
 import type { KernelClass } from "../tool-registry.js";
 
 export interface KernelClassPolicyCtx {
@@ -74,15 +75,28 @@ export function evaluateByKernelClass(
         reason: `${toolName}: http-class tool with no URL arg — destination is internal`,
       };
 
-    case "shell":
-      // Non-bash shell tools (process_start, process_kill, etc.). bash
-      // is handled by the explicit case above and is the only one
-      // routed through evaluateShellCommand. The kernel and the
-      // tool's own implementation are the gates for the rest.
+    case "shell": {
+      // Non-bash shell tools (process_start, ari_shell, etc.) spawn the same
+      // subprocess bash does, so route them through the SAME command vetting
+      // instead of an unconditional allow. Build the command string from
+      // whichever form the call uses: a literal `command`, or the structured
+      // `{executable, args[]}` form (synthesize it so the denylist/metachar
+      // scan sees the real command). Tools with no command to inspect
+      // (process_status/kill/list operate on a session_id, not a command)
+      // fall through to the kernel/tool-impl gate as before.
+      let command = typeof args.command === "string" ? args.command : "";
+      if (!command && typeof args.executable === "string") {
+        const parts = Array.isArray(args.args) ? args.args.map((a) => String(a)) : [];
+        command = [args.executable, ...parts].join(" ");
+      }
+      if (command) {
+        return evaluateShellCommand(command);
+      }
       return {
         allowed: true,
-        reason: `${toolName}: shell-class tool — gated by kernel and tool implementation`,
+        reason: `${toolName}: shell-class tool with no command arg — gated by kernel and tool implementation`,
       };
+    }
 
     case "file":
       // Non-path file tools (glob, grep, view_image, ari_file). Tools

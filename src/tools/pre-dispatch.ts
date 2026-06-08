@@ -96,7 +96,11 @@ export async function assertToolCallAllowed(
   // These sit ABOVE the rule packs so a flipped-off category short-circuits
   // before any rule eval. Cheap, predictable, user-visible.
   const cfg = getRuntimeConfig();
-  if (call.name === "bash" && cfg.enableShell === false) {
+  // The shell kill-switch covers every shell-class tool, not just `bash`: the
+  // process_* family spawns the same /bin/bash -c (or powershell) subprocess,
+  // so leaving them on while Shell is off would be a silent bypass of the
+  // user's own toggle.
+  if ((call.name === "bash" || call.name.startsWith("process_")) && cfg.enableShell === false) {
     throw new ToolBlocked({
       stage: "tool-policy",
       reason: "Shell Access is disabled in Settings → Security → Tool Policy.",
@@ -180,7 +184,7 @@ export async function assertToolCallAllowed(
   // active autonomy profile). The four-valued Decision branches into:
   // run silently, prompt the user, or block outright.
   if (ctx.approval && ctx.callContext === "local") {
-    const decision = getToolDecision(call.name);
+    const decision = getToolDecision(call.name, ctx.sessionId);
 
     if (decisionDenies(decision)) {
       throw new ToolBlocked({

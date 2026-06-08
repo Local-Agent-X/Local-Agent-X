@@ -306,9 +306,9 @@ async function onboardOAuth(type) {
   const status = document.getElementById('ob-connect-status');
   const endpoints = {
     // Anthropic subscription auth is CLI-only — Anthropic doesn't accept
-    // subscription tokens outside the official claude CLI. Run `claude auth
-    // login` (writes ~/.claude/.credentials.json, which chat + build_app both
-    // read) instead of the in-app OAuth those tokens can't satisfy.
+    // subscription tokens outside the official claude CLI. The paste-the-code
+    // flow exchanges the code and writes ~/.claude/.credentials.json, which
+    // chat + build_app both read.
     anthropic: '/api/auth/anthropic/cli-login',
     xai: '/api/auth/xai/login',
   };
@@ -316,6 +316,24 @@ async function onboardOAuth(type) {
     const endpoint = endpoints[type] || '/api/auth/login';
     const res = await apiPost(endpoint, {});
     if (res.authUrl) {
+      // Anthropic uses paste-the-code: open the authorize page, then show a box
+      // for the code it displays. No polling — completion is the code submit.
+      if (type === 'anthropic') {
+        window.open(res.authUrl, '_blank', 'noopener');
+        const container = document.getElementById('ob-connect-content');
+        if (container) {
+          container.innerHTML =
+            '<div style="font-size:.85rem;line-height:1.5;max-width:380px;text-align:center">' +
+            'Approve in the browser tab that just opened (or <a href="' + res.authUrl + '" target="_blank" rel="noopener">open it again</a>), ' +
+            'then paste the code it shows:</div>' +
+            '<input type="text" id="ob-anthropic-code" placeholder="paste code from the authorization page" style="width:100%;max-width:380px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.85rem;font-family:var(--mono)">' +
+            '<button class="action-btn primary" onclick="onboardSubmitAnthropicCode()" style="padding:8px 24px">Finish sign-in</button>';
+          const inp = document.getElementById('ob-anthropic-code');
+          if (inp) { inp.focus(); inp.addEventListener('keydown', e => { if (e.key === 'Enter') onboardSubmitAnthropicCode(); }); }
+        }
+        if (status) { status.style.color = ''; status.textContent = 'Browser opened — approve, then paste the code here.'; }
+        return;
+      }
       // xAI's server spawns the browser itself (more reliable than
       // window.open for long URLs in Electron) and returns `opened: true`
       // when it did. Skip the redundant window.open in that case.
@@ -328,6 +346,22 @@ async function onboardOAuth(type) {
     }
   } catch (e) {
     if (status) status.textContent = 'Failed to start sign-in. Try again or set up in Settings later.';
+  }
+}
+
+async function onboardSubmitAnthropicCode() {
+  const input = document.getElementById('ob-anthropic-code');
+  const status = document.getElementById('ob-connect-status');
+  const code = (input?.value || '').trim();
+  if (!code) { if (status) { status.style.color = ''; status.textContent = 'Paste the code first.'; } return; }
+  if (status) { status.style.color = ''; status.textContent = 'Exchanging code…'; }
+  try {
+    await apiPost('/api/auth/anthropic/cli-login-submit', { code });
+    _onboardProvider = 'anthropic';
+    if (typeof checkAuth === 'function') checkAuth();
+    renderOnboardConnected('anthropic');
+  } catch (e) {
+    if (status) { status.style.color = 'var(--err,#c33)'; status.textContent = (e && e.message) || 'Code exchange failed. Click Sign In with Claude and try again.'; }
   }
 }
 

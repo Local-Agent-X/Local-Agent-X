@@ -4,9 +4,10 @@
  * Rejects two families of ReDoS-prone patterns:
  *   1. Nested quantifiers, e.g. (a+)+, (a*)*b, (a|b+)* — a quantifier applied to a
  *      group that itself contains a quantifier.
- *   2. Overlapping alternation under an unbounded quantifier, e.g. (a|a)*,
- *      ([a-zA-Z]|[a-zA-Z0-9])*, (\w|\d)+ — a group with a top-level alternation,
- *      quantified by *, +, or {n,}, whose branches share a possible first character.
+ *   2. Overlapping alternation under a repeating quantifier, e.g. (a|a)*,
+ *      ([a-zA-Z]|[a-zA-Z0-9])*, (\w|\d)+, (a|a){10} — a group with a top-level
+ *      alternation, quantified by *, +, or a counted {n}/{n,}/{n,m} (anything but
+ *      the non-repeating ?), whose branches share a possible first character.
  *      These cause catastrophic backtracking on a long priming run followed by one
  *      non-matching char (the canonical "evil regex" shape).
  *
@@ -17,42 +18,21 @@
  * acceptable trade — the operator gets a clear error and rewrites the rule — versus
  * letting a kernel-freezing pattern load. See FIRST-CHAR DISJOINTNESS LIMITS below.
  *
+ * It also rejects two cheaper shapes: a pattern longer than 500 chars (too
+ * complex to analyze/run safely) and adjacent quantified wildcards (.*.* /
+ * .+.+, quadratic backtracking).
+ *
  * Combined with the runtime MAX_REGEX_INPUT_LENGTH bound in matcher.ts,
  * this provides defense-in-depth against regex-based DoS.
  *
- * SYNC NOTE: The overlapping-alternation helpers below (isUnboundedQuantifierAt,
- * splitTopLevelAlternation, hasOverlappingAlternation, firstCharSet,
- * charClassFirstSet, setsOverlap) are mirrored as a PARALLEL IMPLEMENTATION in
- * the root app at src/safe-regex.ts. The two checkRegexSafety functions have
- * intentionally diverged (the root copy also enforces a >500-char bound and an
- * adjacent-wildcard check), so they are not a single shared import. If you change
- * the overlapping-alternation logic here, mirror it in src/safe-regex.ts.
+ * SINGLE SOURCE OF TRUTH: this is the one regex-safety checker for the whole
+ * project. The root app re-exports it (src/safe-regex.ts) rather than keeping a
+ * parallel copy — a previous fork let a ReDoS fix land in one place but not the
+ * other. Do not reintroduce a second implementation.
  */
 
 /** Characters that indicate a quantifier follows a group. */
 const QUANTIFIERS = new Set(["*", "+", "?", "{"]);
-
-/**
- * Unbounded quantifiers — the only ones that make overlapping alternation
- * catastrophic. `?` and `{n,m}` with a finite upper bound cannot blow up
- * super-linearly, so we don't flag alternation-overlap under them.
- *
- * Detected positionally: `*`, `+`, or `{` that opens an open-ended `{n,}`.
- */
-function isUnboundedQuantifierAt(pattern: string, idx: number): boolean {
-	const ch = pattern[idx];
-	if (ch === "*" || ch === "+") return true;
-	if (ch === "{") {
-		// Open-ended range like {2,} or {0,} is unbounded; {2,5} or {3} is bounded.
-		const close = pattern.indexOf("}", idx);
-		if (close === -1) return false; // literal '{' — not a quantifier
-		const body = pattern.slice(idx + 1, close);
-		// Unbounded iff it contains a comma with nothing after it (e.g. "2," or ",").
-		const comma = body.indexOf(",");
-		return comma !== -1 && body.slice(comma + 1).trim() === "";
-	}
-	return false;
-}
 
 /**
  * Check if a regex pattern has nested quantifiers (a quantifier applied to a
@@ -69,11 +49,21 @@ export function checkRegexSafety(pattern: string): string | null {
 		return null;
 	}
 
+	// A very long pattern is suspicious and expensive to analyze/run — reject
+	// before the structural scan.
+	if (pattern.length > 500) {
+		return `Regex pattern exceeds 500 characters — too complex for safe execution (potential ReDoS).`;
+	}
+
+	// Adjacent quantified wildcards (.*.* / .+.+) cause quadratic backtracking.
+	if (/\.\*\.\*/.test(pattern) || /\.+\.+/.test(pattern)) {
+		return `Regex pattern '${pattern}' contains adjacent wildcards (e.g. .*.*) — quadratic backtracking risk.`;
+	}
+
 	// Detect nested quantifiers by tracking group depth and quantifier presence.
 	// We also record where each open paren started so that, when a group closes
 	// under an unbounded quantifier, we can re-scan its body for overlapping
 	// top-level alternation.
-	let quantifierInCurrentGroup = false;
 	const groupHasQuantifier: boolean[] = [];
 	const groupStart: number[] = []; // index just AFTER each '(' currently open
 	let escaped = false;
@@ -121,17 +111,21 @@ export function checkRegexSafety(pattern: string): string | null {
 				// Check if the group itself is quantified
 				const next = pattern[i + 1];
 				if (next && QUANTIFIERS.has(next)) {
-					if (innerHasQuantifier) {
-						return `Regex pattern '${pattern}' contains nested quantifiers (potential ReDoS). A quantified group contains a quantifier — this can cause catastrophic backtracking.`;
-					}
-
-					// Overlapping-alternation check: only unbounded quantifiers
-					// (*, +, {n,}) can produce catastrophic backtracking here.
-					if (isUnboundedQuantifierAt(pattern, i + 1)) {
+					// Overlapping alternation under a REPEATING quantifier — `*`, `+`, or a
+					// counted form `{n}`/`{n,}`/`{n,m}` — is catastrophic: a long priming run
+					// can be split between branches that share a first character in
+					// exponentially many ways. `?` (zero-or-one) is the only quantifier that
+					// cannot repeat, so it is exempt. Checked BEFORE the nested case so an
+					// alternation group like `(a|a?)+` reports the more specific overlap cause.
+					if (next !== "?") {
 						const body = pattern.slice(start, i);
 						if (hasOverlappingAlternation(body)) {
-							return `Regex pattern '${pattern}' contains an unbounded-quantified group with overlapping alternation branches (potential ReDoS). Branches like '(a|a)*' or '([a-z]|[a-z0-9])*' share a first character and cause catastrophic backtracking. Rewrite the rule so the alternation branches are disjoint or remove the quantifier.`;
+							return `Regex pattern '${pattern}' contains a quantified group with overlapping alternation branches (potential ReDoS). Branches like '(a|a)*' or '([a-z]|[a-z0-9])*' share a first character and cause catastrophic backtracking. Rewrite the rule so the alternation branches are disjoint or remove the quantifier.`;
 						}
+					}
+
+					if (innerHasQuantifier) {
+						return `Regex pattern '${pattern}' contains nested quantifiers (potential ReDoS). A quantified group contains a quantifier — this can cause catastrophic backtracking.`;
 					}
 
 					// Mark parent group as having a quantifier
@@ -147,7 +141,6 @@ export function checkRegexSafety(pattern: string): string | null {
 			if (groupHasQuantifier.length > 0) {
 				groupHasQuantifier[groupHasQuantifier.length - 1] = true;
 			}
-			quantifierInCurrentGroup = true;
 		}
 	}
 

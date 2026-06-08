@@ -31,6 +31,18 @@ describe("CronService — list / toggle / delete / nextRunAt", () => {
     expect(cron2.list().find(j => j.id === job.id)?.name).toBe("daily-report");
   });
 
+  it("create() persists a per-job autonomy profile and survives reload", () => {
+    const job = cron.create("autonomous-job", "1h", "do it", false, { profile: "Autonomous" });
+    expect(job.profile).toBe("Autonomous");
+    const cron2 = new CronService(dataDir);
+    expect(cron2.list().find(j => j.id === job.id)?.profile).toBe("Autonomous");
+  });
+
+  it("create() omits profile when none is given (inherits global)", () => {
+    const job = cron.create("plain-job", "1h", "do it");
+    expect(job.profile).toBeUndefined();
+  });
+
   it("toggle() flips enabled and clears consecutive failure streak on resume", () => {
     const job = cron.create("temp", "1h", "x");
     // Simulate a failure streak then pause.

@@ -14,7 +14,7 @@ import { CONTINUE } from "./context.js";
 const logger = createLogger("tool-execution");
 
 export const captureRollbackPhase: Phase = async (ctx) => {
-  if (getToolDecision(ctx.tc.name) !== "allow-with-rollback") return CONTINUE;
+  if (getToolDecision(ctx.tc.name, ctx.sessionId) !== "allow-with-rollback") return CONTINUE;
   try {
     const contract = captureRollback(
       ctx.tc.id,

@@ -59,3 +59,40 @@ export function saveProfileName(name: ProfileName): void {
 }
 
 export const PROFILE_STORE_PATH = STORE_FILE;
+
+// ── Per-session profile overrides ───────────────────────────
+// Unattended runs (a cron job marked Autonomous, say) need a profile that
+// differs from the global one without rewriting the persisted setting. The
+// override is keyed by sessionId and lives in memory only — set when the run
+// starts, cleared when it ends. Resolution: a session override wins over the
+// persisted global profile (see getToolDecision).
+const sessionProfiles = new Map<string, ProfileName>();
+
+export function setSessionProfile(sessionId: string, name: ProfileName): void {
+  sessionProfiles.set(sessionId, name);
+}
+
+export function clearSessionProfile(sessionId: string): void {
+  sessionProfiles.delete(sessionId);
+}
+
+export function getSessionProfile(sessionId: string): ProfileName | undefined {
+  return sessionProfiles.get(sessionId);
+}
+
+/** Copy a parent session's profile override onto a child session, if the
+ *  parent has one. Used when spawning a sub-agent so it runs under the same
+ *  contract as its (e.g. cron-pinned-to-Autonomous) parent instead of falling
+ *  back to the global profile. Captured at spawn time because the spawned run
+ *  starts asynchronously — by the time it reads its profile, the parent run
+ *  may have already torn its override down. Returns the inherited profile, or
+ *  undefined when there was nothing to inherit. */
+export function inheritSessionProfile(
+  parentSessionId: string | undefined,
+  childSessionId: string,
+): ProfileName | undefined {
+  if (!parentSessionId) return undefined;
+  const parent = sessionProfiles.get(parentSessionId);
+  if (parent) sessionProfiles.set(childSessionId, parent);
+  return parent;
+}

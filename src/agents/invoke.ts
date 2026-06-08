@@ -34,6 +34,7 @@ import { ProjectStore } from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { EventBus } from "../event-bus.js";
 import { dispatchAgentRun, type AgentRunDriverRequest } from "./runtime.js";
+import { inheritSessionProfile } from "../autonomy/profile-store.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agents.invoke");
@@ -97,6 +98,14 @@ export function invokeDefinition(
     parentAgentId: opts.parentAgentId,
     templateId,
   });
+
+  // Inherit the parent's per-session autonomy profile (e.g. a cron job pinned
+  // to Autonomous) onto this run's auto-minted tool session. Done here, synchronously
+  // while the parent override is still live — the run dispatches async, by which
+  // point a cron parent may have already cleared its override. The driver tears
+  // this down in its finally. Skipped for an explicit opts.sessionId: that's a
+  // shared/borrowed session (operation phases) whose lifecycle the caller owns.
+  if (!opts.sessionId) inheritSessionProfile(opts.parentSessionId, `agent-${agentId}`);
 
   EventBus.emit("handler:agent-spawn", {
     agentId,

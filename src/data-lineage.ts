@@ -14,6 +14,7 @@
  */
 
 import { homedir } from "node:os";
+import { scanForSecrets } from "./security/secret-scanner.js";
 
 export type TaintSource = "sensitive_file" | "secret" | "memory" | "web" | "user_data";
 
@@ -258,35 +259,44 @@ function expandTilde(p: string): string {
 // cheap on huge stdout dumps.
 const SECRET_SCAN_CAP = 256 * 1024;
 
-// High-precision secret patterns. Order doesn't matter — every pattern that
-// fires contributes its kind to the result. Anthropic is checked BEFORE the
-// generic openai pattern so the more specific kind wins for `sk-ant-...`.
-const SECRET_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
-  { kind: "anthropic-key", re: /sk-ant-[A-Za-z0-9_-]{20,}/ },
-  // Real OpenAI keys are a typed prefix + a CONTIGUOUS base62 body (no inner
-  // `-`/`_`). The old `[A-Za-z0-9_-]{20,}` matched any hyphenated slug
-  // (`sk-supplement-formula-001-batch`), bricking agent runs on public pages.
-  { kind: "openai-key", re: /sk-(?!ant-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9]{20,}/ },
-  { kind: "aws-access-key", re: /AKIA[0-9A-Z]{16}/ },
-  { kind: "github-pat", re: /ghp_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{82,}/ },
-  { kind: "slack-token", re: /xox[abp]-[A-Za-z0-9-]{10,}/ },
+// Supplemental secret shapes the CANONICAL catalog (security/credential-patterns.ts
+// CREDENTIAL_PATTERNS) does NOT yet cover. The taint/redaction path here used to
+// carry its own ~9-pattern set that DRIFTED below the egress guard (scanForSecrets),
+// so a Stripe/Supabase/npm/SendGrid key the egress path caught did not taint the
+// session. That drift is now gone: detectSecretsInOutput / redactSecretSpans run the
+// canonical scanForSecrets (all 27 shapes), and this list only adds the few shapes
+// canonical lacks — so the taint path is a strict SUPERSET of both the old inline set
+// and the egress guard, with no detection regression.
+//
+// REMAINING DRIFT (intentional, reported in S1): these four belong in the canonical
+// catalog; converging them there is out of scope for S1 (it forbids editing the
+// catalog). Until then they live here so Google keys, JWTs, OpenAI project/service
+// keys, and bare PEM BEGIN markers still taint.
+const SUPPLEMENTAL_SECRET_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
+  // OpenAI project/service/admin keys: typed prefix then CONTIGUOUS base62 body.
+  // Canonical's "OpenAI API Key" (/sk-[a-zA-Z0-9]{20,}/) stops at the `-` after
+  // `proj`/`svcacct`/`admin`, so these need their own shape. The contiguous body
+  // (no inner `-`/`_`) keeps a hyphenated product slug from false-positiving.
+  { kind: "openai-scoped-key", re: /sk-(?:proj|svcacct|admin)-[A-Za-z0-9]{20,}/ },
+  // Google API key (AIza…) — not in canonical.
   { kind: "google-key", re: /AIza[0-9A-Za-z_-]{35}/ },
+  // JWT (three base64url segments) — not in canonical.
   { kind: "jwt", re: /eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/ },
-  { kind: "private-key-block", re: /-----BEGIN (RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY-----/ },
+  // Bare PEM BEGIN marker. Canonical "Private Key (PEM)" requires a matching END
+  // block; a truncated/streamed key that shows only the header must still taint.
+  { kind: "private-key-block", re: /-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY-----/ },
 ];
-
-// AWS secret access keys are pure base64-ish; flag only when keyword anchor
-// appears on the same line to avoid blasting every random 40-char token.
-const AWS_SECRET_LINE_RE = /aws_secret_access_key[^\n]*[A-Za-z0-9/+=]{40,}/i;
-
-// "password: <value>" style: keyword + delimiter + ≥20-char value.
-const KEYWORD_NEAR_VALUE_RE =
-  /(?:password|token|secret|api[_-]?key|apikey|bearer)\s*[:=]\s*['"]?([A-Za-z0-9._/+=-]{20,})/i;
 
 /**
  * Scan text (bash stdout, http response body, web fetch body) for secret-shaped
- * substrings. Returns `kinds` (pattern names) only — NEVER the matched value,
- * so logging the result can't leak the secret.
+ * substrings. Returns `kinds` (canonical pattern names + the supplemental kinds
+ * above) only — NEVER the matched value, so logging the result can't leak the
+ * secret. `kinds` is informational (taint-target label / log line); no downstream
+ * logic keys on specific strings.
+ *
+ * Sources its catalog from the canonical scanForSecrets (security/secret-scanner.ts)
+ * so taint, redaction and the http egress guard agree on "what is a secret", plus
+ * the supplemental shapes canonical doesn't yet cover.
  *
  * Caller responsibility: if `matched` is true, call recordSensitiveRead with
  * source "secret" to taint the session.
@@ -296,16 +306,12 @@ export function detectSecretsInOutput(text: string): { matched: boolean; kinds: 
   const slice = text.length > SECRET_SCAN_CAP ? text.slice(0, SECRET_SCAN_CAP) : text;
   const kinds = new Set<string>();
 
-  for (const { kind, re } of SECRET_PATTERNS) {
+  for (const m of scanForSecrets(slice).matches) {
+    kinds.add(m.pattern);
+  }
+
+  for (const { kind, re } of SUPPLEMENTAL_SECRET_PATTERNS) {
     if (re.test(slice)) kinds.add(kind);
-  }
-
-  if (AWS_SECRET_LINE_RE.test(slice)) {
-    kinds.add("aws-secret");
-  }
-
-  if (KEYWORD_NEAR_VALUE_RE.test(slice)) {
-    kinds.add("keyword-near-value");
   }
 
   return { matched: kinds.size > 0, kinds: [...kinds] };
@@ -329,15 +335,44 @@ export function redactSecretSpans(text: string): { text: string; matched: boolea
   // the tail through unchanged (a missed secret past 256KB is the accepted edge).
   const head = text.length > SECRET_SCAN_CAP ? text.slice(0, SECRET_SCAN_CAP) : text;
   const tail = text.length > SECRET_SCAN_CAP ? text.slice(SECRET_SCAN_CAP) : "";
-  let out = head;
   const kinds = new Set<string>();
-  const redactWith = (re: RegExp, kind: string) => {
+
+  // Collect every span to redact: canonical scanner spans (all 27 catalog shapes)
+  // + the supplemental shapes canonical lacks. Replace end-to-start so earlier
+  // replacements don't invalidate later indices.
+  const spans: Array<{ start: number; end: number; kind: string }> = [];
+  for (const m of scanForSecrets(head).matches) {
+    spans.push({ start: m.startIndex, end: m.endIndex, kind: m.pattern });
+  }
+  for (const { kind, re } of SUPPLEMENTAL_SECRET_PATTERNS) {
     const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
-    out = out.replace(g, () => { kinds.add(kind); return `[redacted-secret:${kind}]`; });
-  };
-  for (const { kind, re } of SECRET_PATTERNS) redactWith(re, kind);
-  redactWith(AWS_SECRET_LINE_RE, "aws-secret");
-  redactWith(KEYWORD_NEAR_VALUE_RE, "keyword-near-value");
+    let match: RegExpExecArray | null;
+    while ((match = g.exec(head)) !== null) {
+      spans.push({ start: match.index, end: match.index + match[0].length, kind });
+    }
+  }
+
+  // Drop spans fully contained in an earlier (kept) span so overlapping
+  // canonical+supplemental matches don't double-redact the same bytes.
+  spans.sort((a, b) => a.start - b.start || b.end - a.end);
+  const kept: typeof spans = [];
+  let coveredTo = -1;
+  for (const s of spans) {
+    if (s.start >= coveredTo) {
+      kept.push(s);
+      coveredTo = s.end;
+    } else if (s.end > coveredTo) {
+      // Partial overlap (different pattern extends further): keep, advance cover.
+      kept.push(s);
+      coveredTo = s.end;
+    }
+  }
+
+  let out = head;
+  for (const s of [...kept].sort((a, b) => b.start - a.start)) {
+    kinds.add(s.kind);
+    out = out.slice(0, s.start) + `[redacted-secret:${s.kind}]` + out.slice(s.end);
+  }
   return { text: out + tail, matched: kinds.size > 0, kinds: [...kinds] };
 }
 

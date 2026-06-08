@@ -224,41 +224,44 @@ describe("sticky session taint — no decay window", () => {
 });
 
 describe("detectSecretsInOutput — positive cases", () => {
+  // `kinds` now carry the CANONICAL catalog name (credential-patterns.ts) for the
+  // shapes that catalog owns, plus supplemental kinds (google-key, jwt,
+  // openai-scoped-key, private-key-block) for shapes the catalog doesn't yet cover.
   it("matches OpenAI-style API key", () => {
     const res = detectSecretsInOutput("sk-abc123xyz456789012345");
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("openai-key");
+    expect(res.kinds).toContain("OpenAI API Key");
   });
 
   it("matches Anthropic-style API key", () => {
     const secret = "sk-ant-" + "deadbeef" + "a".repeat(30);
     const res = detectSecretsInOutput(secret);
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("anthropic-key");
+    expect(res.kinds).toContain("Anthropic API Key");
   });
 
   it("matches AWS access key ID", () => {
     const res = detectSecretsInOutput("AKIAIOSFODNN7EXAMPLE");
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("aws-access-key");
+    expect(res.kinds).toContain("AWS Access Key");
   });
 
   it("matches AWS secret access key when keyword anchors the line", () => {
     const res = detectSecretsInOutput("aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("aws-secret");
+    expect(res.kinds).toContain("AWS Secret Key");
   });
 
   it("matches GitHub PAT (ghp_ form)", () => {
     const res = detectSecretsInOutput("ghp_" + "a".repeat(36));
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("github-pat");
+    expect(res.kinds).toContain("GitHub PAT");
   });
 
   it("matches Slack bot token", () => {
     const res = detectSecretsInOutput("xoxb-1234567890-abcdef123456");
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("slack-token");
+    expect(res.kinds).toContain("Slack Token");
   });
 
   it("matches Google API key", () => {
@@ -284,7 +287,35 @@ describe("detectSecretsInOutput — positive cases", () => {
   it("matches keyword-near-value heuristic", () => {
     const res = detectSecretsInOutput("password: abcdef1234567890ABCDE");
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("keyword-near-value");
+    expect(res.kinds).toContain("Key-Value Secret");
+  });
+
+  // S1 convergence: modern keys that exist in the canonical catalog but were
+  // ABSENT from the old inline taint set — previously the egress guard caught
+  // them leaving while the taint path did NOT (the documented defect). Now the
+  // taint path sources the canonical catalog, so they taint too.
+  it("matches a Stripe live key (was missed by the old inline set)", () => {
+    const res = detectSecretsInOutput("sk_live_" + "a".repeat(24));
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("Stripe Live Key");
+  });
+
+  it("matches a Supabase token (was missed by the old inline set)", () => {
+    const res = detectSecretsInOutput("sbp_" + "a".repeat(24));
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("Supabase Token");
+  });
+
+  it("matches a SendGrid key (was missed by the old inline set)", () => {
+    const res = detectSecretsInOutput("SG." + "a".repeat(22) + "." + "b".repeat(22));
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("Sendgrid Key");
+  });
+
+  it("matches an npm token (was missed by the old inline set)", () => {
+    const res = detectSecretsInOutput("npm_" + "a".repeat(36));
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("npm Token");
   });
 });
 
@@ -322,12 +353,15 @@ describe("openai-key pattern precision (false-positive that bricked agent runs)"
 
   it("still matches a real legacy key shape", () => {
     const res = detectSecretsInOutput("sk-" + "Ab12".repeat(6));
-    expect(res.kinds).toContain("openai-key");
+    expect(res.kinds).toContain("OpenAI API Key");
   });
 
   it("still matches a project-scoped key shape", () => {
+    // Project/service/admin keys aren't covered by the canonical "OpenAI API
+    // Key" shape (its body stops at the `-` after `proj`), so they surface via
+    // the supplemental openai-scoped-key kind.
     const res = detectSecretsInOutput("sk-proj-" + "Ab12".repeat(8));
-    expect(res.kinds).toContain("openai-key");
+    expect(res.kinds).toContain("openai-scoped-key");
   });
 });
 
@@ -336,9 +370,9 @@ describe("redactSecretSpans — surgical inline redaction for untrusted inbound 
     const body = "Trends report. Contact AKIAIOSFODNN7EXAMPLE for access. The end.";
     const red = redactSecretSpans(body);
     expect(red.matched).toBe(true);
-    expect(red.kinds).toContain("aws-access-key");
+    expect(red.kinds).toContain("AWS Access Key");
     expect(red.text).not.toContain("AKIAIOSFODNN7EXAMPLE");
-    expect(red.text).toContain("[redacted-secret:aws-access-key]");
+    expect(red.text).toContain("[redacted-secret:AWS Access Key]");
     // The non-secret content survives — the whole page isn't discarded.
     expect(red.text).toContain("Trends report.");
     expect(red.text).toContain("The end.");
@@ -348,7 +382,7 @@ describe("redactSecretSpans — surgical inline redaction for untrusted inbound 
     const body = `a AKIA0000000000000000 b AKIA1111111111111111 c`;
     const red = redactSecretSpans(body);
     expect(red.text).not.toMatch(/AKIA\d/);
-    expect(red.text.match(/\[redacted-secret:aws-access-key\]/g)?.length).toBe(2);
+    expect(red.text.match(/\[redacted-secret:AWS Access Key\]/g)?.length).toBe(2);
   });
 
   it("passes benign content through unchanged", () => {
@@ -372,7 +406,7 @@ describe("detectSecretsInOutput — 256KB cap", () => {
     const input = filler + " AKIA0000000000000000";
     const res = detectSecretsInOutput(input);
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("aws-access-key");
+    expect(res.kinds).toContain("AWS Access Key");
   });
 });
 
@@ -568,7 +602,7 @@ describe("run-sandboxed redacts result content when taint fires", () => {
     expect(ctx.result).toBeDefined();
     // Secret stripped from the model's view...
     expect(ctx.result!.content).not.toContain(secret);
-    expect(ctx.result!.content).toContain("[redacted-secret:aws-access-key]");
+    expect(ctx.result!.content).toContain("[redacted-secret:AWS Access Key]");
     // ...but the rest of the page survives (not blanket-redacted to a stub)...
     expect(ctx.result!.content).toContain("Collagen up 12%");
     expect(ctx.result!.status).not.toBe("blocked");

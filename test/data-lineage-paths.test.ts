@@ -151,22 +151,27 @@ describe("detectSecretsInOutput", () => {
   // Secret-shaped fixtures are assembled at runtime rather than written as
   // literals so the precommit/CI secret-scanner doesn't flag this test's diff.
   // The runtime value is identical to a real prefix; the detector sees no difference.
-  it("detects an anthropic key as anthropic-key (specific wins over openai)", () => {
+  // `kinds` now carry the CANONICAL catalog name for catalog-owned shapes, plus
+  // supplemental kinds (openai-scoped-key, private-key-block) for shapes the
+  // canonical catalog doesn't yet cover.
+  it("detects an anthropic key as Anthropic API Key (specific wins over openai)", () => {
     const res = detectSecretsInOutput("key=sk-ant-" + "api03-" + "A".repeat(24));
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("anthropic-key");
-    expect(res.kinds).not.toContain("openai-key");
+    expect(res.kinds).toContain("Anthropic API Key");
+    expect(res.kinds).not.toContain("OpenAI API Key");
   });
 
-  it("detects a generic openai-style key", () => {
+  it("detects a project-scoped openai-style key", () => {
+    // sk-proj- isn't covered by the canonical "OpenAI API Key" shape, so it
+    // surfaces via the supplemental openai-scoped-key kind.
     const res = detectSecretsInOutput("token sk-proj-" + "ABCDEFGHIJKLMNOPQRSTUVWX");
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("openai-key");
+    expect(res.kinds).toContain("openai-scoped-key");
   });
 
   it("detects an AWS access key id", () => {
     const res = detectSecretsInOutput("AKIA" + "IOSFODNN7EXAMPLE");
-    expect(res.kinds).toContain("aws-access-key");
+    expect(res.kinds).toContain("AWS Access Key");
   });
 
   it("detects a private key PEM block header", () => {
@@ -176,7 +181,7 @@ describe("detectSecretsInOutput", () => {
 
   it("detects keyword-near-value (password: <long value>)", () => {
     const res = detectSecretsInOutput("password: hunter2hunter2hunter2hunter2");
-    expect(res.kinds).toContain("keyword-near-value");
+    expect(res.kinds).toContain("Key-Value Secret");
   });
 
   it("does NOT match a short / unremarkable string", () => {

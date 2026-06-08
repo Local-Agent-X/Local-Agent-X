@@ -31,7 +31,7 @@
 
 <!-- Mobile hamburger (feature 95) -->
 <button id="mobile-menu-btn" class="mobile-only" onclick="toggleMobileSidebar()" aria-label="Toggle sidebar menu">&#9776;</button>
-<button id="sidebar-expand-btn" onclick="toggleSidebarCollapse()" title="Expand sidebar" aria-label="Expand sidebar" style="display:none;position:fixed;top:14px;left:8px;z-index:100;background:var(--surface);border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:1.1rem;padding:4px 8px;border-radius:6px">&#9776;</button>
+<button id="sidebar-expand-btn" onclick="toggleSidebarCollapse()" title="Expand sidebar" aria-label="Expand sidebar" style="display:none;position:fixed;top:14px;left:8px;z-index:100;-webkit-app-region:no-drag;background:var(--surface);border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:1.1rem;padding:4px 8px;border-radius:6px">&#9776;</button>
 
 <!-- ═══ SIDEBAR (persists across all pages) ═══ -->
 <div id="sidebar" role="navigation" aria-label="Sidebar navigation">
@@ -111,7 +111,7 @@
   <!-- VOICE INDICATORS (global) -->
   <div id="voice-indicator" role="status" aria-live="polite"></div>
   <div id="voice-engine-badge" role="status" aria-live="polite" title="Voice engine that actually loaded"></div>
-  <button id="agents-toggle" onclick="toggleAgentFeeds()" aria-label="Toggle agents panel" title="Show/hide agents panel" style="position:fixed;top:8px;right:16px;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:var(--mono);font-size:.68rem;color:var(--muted);transition:all .15s">AGENTS <span id="agents-toggle-count" style="color:var(--accent)">0</span></button>
+  <button id="agents-toggle" onclick="toggleAgentFeeds()" aria-label="Toggle agents panel" title="Show/hide agents panel" style="position:fixed;top:8px;right:16px;z-index:200;-webkit-app-region:no-drag;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:var(--mono);font-size:.68rem;color:var(--muted);transition:all .15s">AGENTS <span id="agents-toggle-count" style="color:var(--accent)">0</span></button>
 
   <!-- ══ NOTIFICATION CENTER ══ -->
   <div id="notif-panel" class="notif-panel">

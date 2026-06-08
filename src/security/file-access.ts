@@ -136,7 +136,13 @@ export function evaluateFileAccess(
   // Check for directory traversal (.. in path after resolution)
   const rel = relative(workspace, realPath);
   if (rel.startsWith("..")) {
-    const homeDir = resolve(process.env.HOME || process.env.USERPROFILE || "");
+    // Canonicalize home the SAME way the target was (realpathDeep above), so the
+    // containment checks compare like with like. realPath has every symlink
+    // segment resolved; a non-realpath'd home breaks the comparison whenever the
+    // home prefix is itself a symlink (macOS temp homes live under /var, which is
+    // a symlink to /private/var; a relocated/junctioned home does the same), and
+    // common mode then wrongly blocks the user's own Documents/Downloads.
+    const homeDir = realpathDeep(resolve(process.env.HOME || process.env.USERPROFILE || ""));
 
     // Unrestricted mode: allow reads/writes anywhere (except core protected files and system dirs)
     if (fileAccessMode === "unrestricted") {

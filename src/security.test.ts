@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -31,6 +31,7 @@ describe("SecurityLayer", () => {
   let sec: SecurityLayer;
   let savedLaxDir: string | undefined;
   let suiteLaxDir: string;
+  let suiteWorkspaceRoot: string;
 
   beforeAll(() => {
     savedLaxDir = process.env.LAX_DATA_DIR;
@@ -41,13 +42,20 @@ describe("SecurityLayer", () => {
       JSON.stringify(["api.github.com", "google.com", "172.32.0.1"]),
       "utf-8",
     );
-    sec = new SecurityLayer("./workspace");
+    // Hermetic workspace: a real, realpath-resolved temp dir rather than the
+    // literal "./workspace", which on a dev machine that ran the packaged app is
+    // a relocation symlink the file-access gate would follow out of the repo.
+    suiteWorkspaceRoot = realpathSync(mkdtempSync(join(tmpdir(), "security-ws-")));
+    const workspace = join(suiteWorkspaceRoot, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    sec = new SecurityLayer(workspace);
   });
 
   afterAll(() => {
     if (savedLaxDir === undefined) delete process.env.LAX_DATA_DIR;
     else process.env.LAX_DATA_DIR = savedLaxDir;
     rmSync(suiteLaxDir, { recursive: true, force: true });
+    rmSync(suiteWorkspaceRoot, { recursive: true, force: true });
   });
 
   // ── SSRF ──

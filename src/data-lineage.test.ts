@@ -19,6 +19,7 @@ import {
   declassifyTaintSource,
   _setDeclassifyAuditTrail,
 } from "./data-lineage.js";
+import { Handler } from "./agency/handler.js";
 import { CryptoAuditTrail } from "./threat/audit-trail.js";
 import { runSandboxedPhase } from "./tool-execution/run-sandboxed.js";
 import type { ToolCallContext } from "./tool-execution/context.js";
@@ -935,6 +936,87 @@ describe("propagateTaint — parent ← child sub-agent propagation", () => {
     recordSensitiveRead(sid, "web", "http://x");
     expect(propagateTaint(sid, sid)).toBe(0);
     clearSessionTaint(sid);
+  });
+});
+
+// Regression for finding H4 (HIGH): a sub-agent's tool calls record taint under
+// `req.sessionId ?? agent-<id>` (handler-events.ts: runSessionId). The Handler's
+// completion path (pushCompletionToParent) must propagate FROM that SAME bucket.
+// Before the fix it re-derived `agent-<id>` unconditionally, so an
+// operations-executor phase spawned with a BORROWED sessionId (`agent-op-<id>`)
+// recorded taint under the borrowed id while propagation read an EMPTY
+// `agent-<id>` map — orphaning the taint and leaving the parent CLEAN.
+//
+// We drive the real seam: attachExternalRun (storing the borrowed runSessionId) →
+// record taint under that bucket → finalizeExternalRun (fires
+// pushCompletionToParent) → assert the parent is now tainted.
+describe("Handler completion → taint propagation from the child's ACTUAL session (H4)", () => {
+  afterEach(() => {
+    Handler.resetInstance();
+  });
+
+  it("propagates from a BORROWED sessionId (ops-phase) the child's tools recorded under", () => {
+    const handler = Handler.getInstance();
+    const parent = "chat-parent-h4-borrowed";
+    const borrowed = "agent-op-OP123"; // what operations/executor passes as opts.sessionId
+    clearSessionTaint(parent);
+    clearSessionTaint(borrowed);
+
+    // Spawn a phase agent the way invokeDefinition does: parent linkage + the
+    // borrowed runtime session it will record taint under.
+    const { agentId } = handler.attachExternalRun({
+      name: "op-phase",
+      role: "operator",
+      task: "do a phase",
+      parentSessionId: parent,
+      runSessionId: borrowed,
+    });
+    clearSessionTaint(`agent-${agentId}`); // ensure the re-derived bucket is empty
+
+    // Parent starts clean.
+    expect(checkEgressTaint(parent).blocked).toBe(false);
+
+    // The phase's tools read a sensitive file — recorded under the BORROWED id.
+    recordSensitiveRead(borrowed, "sensitive_file", "/Users/x/.ssh/id_rsa", "ssh private key bytes here");
+
+    // Completion fires pushCompletionToParent. Pre-fix this copied nothing
+    // (read the empty `agent-<id>` bucket) and the parent stayed CLEAN.
+    handler.finalizeExternalRun(agentId, { result: "phase done", success: true });
+
+    expect(checkEgressTaint(parent).blocked).toBe(true);
+    expect(getKernelTaintSources(parent)).toContain("rag");
+
+    clearSessionTaint(parent);
+    clearSessionTaint(borrowed);
+  });
+
+  it("still propagates in the DEFAULT case (no borrowed sessionId → agent-<id>)", () => {
+    const handler = Handler.getInstance();
+    const parent = "chat-parent-h4-default";
+    clearSessionTaint(parent);
+
+    // No runSessionId — the run uses its auto-minted `agent-<id>` tool session.
+    const { agentId } = handler.attachExternalRun({
+      name: "spawned",
+      role: "researcher",
+      task: "research",
+      parentSessionId: parent,
+    });
+    const auto = `agent-${agentId}`;
+    clearSessionTaint(auto);
+
+    expect(checkEgressTaint(parent).blocked).toBe(false);
+
+    // Child records taint under the default `agent-<id>` bucket.
+    recordSensitiveRead(auto, "web", "https://internal.example/secret");
+
+    handler.finalizeExternalRun(agentId, { result: "done", success: true });
+
+    expect(checkEgressTaint(parent).blocked).toBe(true);
+    expect(getKernelTaintSources(parent)).toContain("web");
+
+    clearSessionTaint(parent);
+    clearSessionTaint(auto);
   });
 });
 

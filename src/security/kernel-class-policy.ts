@@ -113,7 +113,7 @@ export function evaluateByKernelClass(
 
     case "database": {
       // sql_* open a CALLER-SUPPLIED path (args.database) directly — not a
-      // confined managed store (unlike ari_database/ari_sqlite_database,
+      // confined managed store (unlike ari_database/ari_sqlite,
       // whose store path is internal). Gate it through the read/write file-
       // access policy. Mutations gate as a write; else read. Normalize with
       // the EXACT helper the tool opens with (resolveSqlDbPath): evaluate-

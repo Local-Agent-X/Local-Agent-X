@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getLaxDir } from "../../lax-data-dir.js";
 import { type AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
 import { stripEphemeralMessages } from "../../providers/sanitize.js";
@@ -84,7 +83,12 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
 
   cronService.onExecute(async (jobId, prompt, _ctx) => {
     const missionStartMs = Date.now();
-    const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? join(getLaxDir(), "workspace")), "workspace");
+    // Confine scheduled jobs to the SAME workspace the rest of the app uses
+    // (config.workspace — the single source of truth, which tracks a Settings
+    // workspace move), at the tightest "workspace only" mode since cron runs
+    // unattended. Previously this read LAX_WORKSPACE ?? ~/.lax/workspace, so a
+    // user who moved their workspace had cron jobs pointed at the wrong folder.
+    const cronSecurity = new SecurityLayer(config.workspace, "workspace");
     const sessionId = `cron-${jobId}-${Date.now()}`;
     const cleanedPrompt = stripSaveInstructions(stripCronPreamble(prompt));
     const jobMeta = cronService.get(jobId);

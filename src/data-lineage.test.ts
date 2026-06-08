@@ -902,14 +902,14 @@ describe("declassification — deliberate, audited untaint (T2)", () => {
   // Read the single daily audit file the temp trail wrote (parse JSONL → rows).
   function auditEntries(): Array<Record<string, unknown>> {
     const dir = join(auditDir, "audit");
-    const files = readdirSync(dir).filter(f => f.endsWith(".jsonl"));
+    const files = readdirSync(dir).filter(f => f.endsWith(".jsonl") && !f.endsWith(".anchors.jsonl"));
     expect(files).toHaveLength(1);
     const path = join(dir, files[0]);
     return readFileSync(path, "utf-8").trim().split("\n").map(l => JSON.parse(l) as Record<string, unknown>);
   }
   function auditPath(): string {
     const dir = join(auditDir, "audit");
-    return join(dir, readdirSync(dir).filter(f => f.endsWith(".jsonl"))[0]);
+    return join(dir, readdirSync(dir).filter(f => f.endsWith(".jsonl") && !f.endsWith(".anchors.jsonl"))[0]);
   }
 
   const SECRET_CONTENT = "BEGIN PRIVATE BLOB: super-secret-payload-marker-7f3a9c1e-quux-zonk END";
@@ -977,7 +977,7 @@ describe("declassification — deliberate, audited untaint (T2)", () => {
 
     // New-chat reset is NOT a declassification — the audit trail stays empty.
     const dir = join(auditDir, "audit");
-    expect(readdirSync(dir).filter(f => f.endsWith(".jsonl"))).toHaveLength(0);
+    expect(readdirSync(dir).filter(f => f.endsWith(".jsonl") && !f.endsWith(".anchors.jsonl"))).toHaveLength(0);
   });
 
   it("nothing automatic untaints: checkEgressTaint alone never clears the session", () => {

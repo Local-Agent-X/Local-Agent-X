@@ -11,7 +11,7 @@
 
 import type { VoiceSession, VoiceSessionContext } from "./audio-ws.js";
 import { createGPUBridge, type GPUBridge } from "./gpu-bridge.js";
-import { createVoiceTurnMachine, SENTENCE_TERMINATOR, type TurnSpeaker } from "./voice-session/turn-runner.js";
+import { createVoiceTurnMachine, SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./voice-session/turn-runner.js";
 import type { VoiceTurnRunner } from "./voice-session/index.js";
 
 import { createLogger } from "../logger.js";
@@ -82,15 +82,15 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
         speakSentence(sentenceBuf.slice(0, cutEnd));
         sentenceBuf = sentenceBuf.slice(cutEnd);
       }
-      // Early-clause flush: no period yet but the buffer is long and has a
-      // clause break — emit the FIRST clause so TTS starts sooner. Once per
-      // turn; after that speakSentence's splitter handles long sentences.
-      if (!firstClauseFlushed && sentenceBuf.length >= CLAUSE_MIN_CHARS) {
-        const m = CLAUSE_BREAK.exec(sentenceBuf);
-        if (m && m.index >= CLAUSE_MIN_CHARS - 10) {
-          const cutEnd = m.index + m[0].length;
-          speakChunk(sentenceBuf.slice(0, cutEnd).trim());
-          sentenceBuf = sentenceBuf.slice(cutEnd);
+      // First-chunk flush: get the reply's OPENING to TTS as fast as possible
+      // so the clone starts reading while the rest still streams — the fix for
+      // "voice starts way after the text". Fires once; sentence terminators +
+      // speakSentence's clause splitter handle the bulk with better prosody.
+      if (!firstClauseFlushed) {
+        const cut = firstChunkCut(sentenceBuf);
+        if (cut > 0) {
+          speakChunk(sentenceBuf.slice(0, cut).trim());
+          sentenceBuf = sentenceBuf.slice(cut);
         }
       }
     },

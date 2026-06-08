@@ -9,6 +9,8 @@ import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
 import { checkEgressTaint } from "../data-lineage.js";
+import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
+import { checkOutboundRequest, checkOutboundPayload, checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit } from "../circuit-breaker.js";
 import { checkToolRateLimit } from "./rate-limiter.js";
@@ -96,8 +98,7 @@ async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
     const { getWorktreePath } = await import("../agency/worktree.js");
     const wtPath = getWorktreePath(agentId);
     if (!wtPath) return;
-    const pathTools = ["read", "write", "edit", "glob", "grep"];
-    if (pathTools.includes(tc.name) && args.path) {
+    if (WORKTREE_PATH_TOOLS.has(tc.name) && args.path) {
       const rawPath = String(args.path);
       const isAbsolute = rawPath.startsWith("/") || rawPath.includes(":");
       if (isAbsolute) {
@@ -157,8 +158,97 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
   return CONTINUE;
 }
 
-function dataLineageGate(ctx: ToolCallContext): PhaseOutcome {
-  if (!["http_request", "web_fetch"].includes(ctx.tc.name)) return CONTINUE;
+// Extract the OUTBOUND payload an egress-class sink would emit, so the secret
+// scan covers every channel (not just http body). Returns the scannable text +
+// any file paths the sink would attach. Keyed by tool name because each sink
+// carries its payload in differently-named args.
+function egressPayload(name: string, args: Record<string, unknown>): { text: string; attachmentPaths: string[] } {
+  const parts: string[] = [];
+  const attachmentPaths: string[] = [];
+  const push = (v: unknown) => { if (v != null && v !== "") parts.push(String(v)); };
+  switch (name) {
+    case "http_request":
+    case "ari_http":
+      push(args.body);
+      if (args.headers && typeof args.headers === "object") {
+        for (const v of Object.values(args.headers as Record<string, unknown>)) push(v);
+      }
+      break;
+    case "email_send":
+      push(args.to); push(args.cc); push(args.subject); push(args.body);
+      if (args.attachments) {
+        try {
+          const paths = JSON.parse(String(args.attachments));
+          if (Array.isArray(paths)) for (const p of paths) attachmentPaths.push(String(p));
+        } catch { /* malformed attachments JSON — the tool will reject it */ }
+      }
+      break;
+    case "clipboard_write":
+      push(args.text);
+      break;
+    case "process_start":
+      push(args.command);
+      if (Array.isArray(args.args)) for (const a of args.args) push(a);
+      break;
+    default:
+      // browser navigation/fetch + other egress synonyms: scan url + any
+      // model-supplied data payload generically.
+      push(args.url); push(args.body); push(args.data); push(args.value); push(args.text);
+      break;
+  }
+  return { text: parts.join("\n"), attachmentPaths };
+}
+
+// Outbound-secret scan for EVERY egress-class sink — keyed on capability class,
+// not tool name, so ari_http / email_send / clipboard_write / process_start /
+// browser are scanned identically to http_request. http_request keeps its own
+// in-tool checkOutboundRequest call (defense in depth); this gate adds the same
+// protection to the synonyms that never had it. Also rejects email_send (and
+// any egress sink) attaching a sensitive file path.
+export function egressGuardGate(ctx: ToolCallContext): PhaseOutcome {
+  const { tc, args } = ctx;
+  if (!hasCapability(tc.name, "egress")) return CONTINUE;
+
+  // Sensitive-attachment check (Spec F): a sink that reads+sends a file path.
+  const { text, attachmentPaths } = egressPayload(tc.name, args as Record<string, unknown>);
+  if (attachmentPaths.length > 0) {
+    const att = checkAttachmentPaths(tc.name, attachmentPaths);
+    if (att) {
+      const result: ToolResult = {
+        content: `BLOCKED by egress guard: ${att.message}`,
+        isError: true,
+        status: "blocked",
+        metadata: { layer: "egress-guard", ...att.meta, recovery: "Remove the sensitive file from the attachment list — credential/secret files may not be sent off-box.", userHint: USER_HINTS.network },
+      };
+      return terminate(ctx, { rendered: "model", result, allowed: false });
+    }
+  }
+
+  // Outbound-secret scan. http-shaped sinks go through the host-allowlist-aware
+  // checkOutboundRequest; the rest through the destination-less payload scan.
+  let block: { message: string; meta: Record<string, unknown> } | null = null;
+  if (tc.name === "http_request" || tc.name === "ari_http") {
+    block = checkOutboundRequest({
+      url: String(args.url ?? ""),
+      method: String(args.method ?? "POST").toUpperCase(),
+      body: args.body,
+      headers: args.headers,
+    });
+  } else {
+    block = checkOutboundPayload(tc.name, text);
+  }
+  if (!block) return CONTINUE;
+  const result: ToolResult = {
+    content: `BLOCKED by egress guard: ${block.message}`,
+    isError: true,
+    status: "blocked",
+    metadata: { layer: "egress-guard", ...block.meta, recovery: "Use {{SECRET_NAME}} placeholders instead of hardcoded credentials, or remove the secret from the outbound payload. Add a trusted destination to ~/.lax/egress-allowlist.json only if it legitimately needs credentials.", userHint: USER_HINTS.network },
+  };
+  return terminate(ctx, { rendered: "model", result, allowed: false });
+}
+
+export function dataLineageGate(ctx: ToolCallContext): PhaseOutcome {
+  if (!hasCapability(ctx.tc.name, "egress")) return CONTINUE;
   const egress = checkEgressTaint(ctx.sessionId || "default");
   if (!egress.blocked) return CONTINUE;
   const result: ToolResult = {
@@ -280,6 +370,8 @@ export const enforcePolicyPhase: Phase = async (ctx) => {
   outcome = await runPreDispatch(ctx);
   if (outcome.kind !== "continue") return outcome;
   outcome = dataLineageGate(ctx);
+  if (outcome.kind !== "continue") return outcome;
+  outcome = egressGuardGate(ctx);
   if (outcome.kind !== "continue") return outcome;
 
   outcome = lookupTool(ctx);

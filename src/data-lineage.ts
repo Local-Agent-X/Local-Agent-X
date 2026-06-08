@@ -14,7 +14,8 @@
  */
 
 import { homedir } from "node:os";
-import { scanForSecrets } from "./security/secret-scanner.js";
+import { createHash } from "node:crypto";
+import { scanForSecrets, decodedPayloadViews } from "./security/secret-scanner.js";
 
 export type TaintSource = "sensitive_file" | "secret" | "memory" | "web" | "user_data";
 
@@ -23,19 +24,111 @@ interface TaintEntry {
   target: string;     // file path, secret name, URL, etc.
   timestamp: number;
   runId: string;
+  // Content fingerprints: SHA-256 hashes (truncated) of normalized content
+  // shingles, captured at read time. Privacy-preserving — NO plaintext is
+  // stored. They let a later egress check prove which tainted bytes appear in
+  // an outbound payload (findTaintInPayload) WITHOUT keeping the raw content.
+  // Empty when the read carried no content (3-arg back-compat call sites).
+  fingerprints: string[];
+}
+
+// ── Content fingerprints ───────────────────────────────────────────────────
+//
+// A fingerprint is the SHA-256 of a normalized content SHINGLE (a fixed-length
+// window of the content). Overlapping shingles mean a CHUNK of the sensitive
+// content — not just the whole blob — can be detected in a payload, even after
+// it's been sliced, reflowed, or partially quoted. We never store plaintext;
+// only the hashes, capped per entry. Matching is exact-hash, so a hit is a real
+// content overlap (near-zero false positives) — random text won't collide.
+
+// Char-window shingle width. Wide enough that a window is unlikely to recur in
+// unrelated prose (no false match), narrow enough that a quoted chunk of the
+// secret still produces at least one shared window.
+const SHINGLE_WIDTH = 24;
+// Step between shingle starts. < width so windows overlap (a chunk that doesn't
+// align to a window boundary still shares one). 8 keeps the count bounded.
+const SHINGLE_STEP = 8;
+// Max fingerprints kept per entry (memory bound: ~32 * 16 bytes hex ≈ 0.5KB).
+const MAX_FINGERPRINTS = 32;
+// Max content bytes fingerprinted. Beyond this we sample the head only; a missed
+// overlap on a multi-hundred-KB read is the accepted edge (mirrors the scanner's
+// 256KB cap), and it keeps hashing cheap on huge stdout dumps.
+const MAX_FINGERPRINT_CONTENT = 64 * 1024;
+// Truncated digest length (hex chars). 16 hex = 64 bits — collision-safe for the
+// handful of shingles we store while halving memory vs a full digest.
+const FP_DIGEST_HEX = 16;
+
+// Collapse whitespace runs so reflowed/indented copies of the same bytes still
+// hash equal; lowercase for case-insensitive overlap on prose-y content. Applied
+// to BOTH the recorded content and the payload views before shingling.
+function normalizeForFingerprint(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function shingleHash(window: string): string {
+  return createHash("sha256").update(window).digest("hex").slice(0, FP_DIGEST_HEX);
+}
+
+// Shingle `norm` into window hashes at the given step, capped at `max` hashes.
+function shingleHashes(norm: string, step: number, max: number): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i + SHINGLE_WIDTH <= norm.length && out.size < max; i += step) {
+    out.add(shingleHash(norm.slice(i, i + SHINGLE_WIDTH)));
+  }
+  return out;
+}
+
+/**
+ * Compute content fingerprints for sensitive content: hashes of normalized
+ * char-window shingles at SHINGLE_STEP (sparse — keeps the stored set bounded by
+ * MAX_FINGERPRINTS). Returns [] for empty/too-short content (nothing a single
+ * window could cover) so a short read just records provenance, not a fingerprint
+ * that could over-match.
+ *
+ * Alignment note: the RECORDED side is sparse (bounded memory); the PAYLOAD side
+ * is shingled DENSE (step 1, see findTaintInPayload) so any recorded window that
+ * is actually present in a payload is found regardless of where the chunk sits —
+ * only one side needs step-1 to guarantee detection of a substring overlap.
+ */
+function computeFingerprints(content: string): string[] {
+  if (!content) return [];
+  const sliced = content.length > MAX_FINGERPRINT_CONTENT ? content.slice(0, MAX_FINGERPRINT_CONTENT) : content;
+  const norm = normalizeForFingerprint(sliced);
+  if (norm.length < SHINGLE_WIDTH) return [];
+  return [...shingleHashes(norm, SHINGLE_STEP, MAX_FINGERPRINTS)];
+}
+
+// Dense (step-1) payload fingerprints for overlap matching. Bounded by input
+// length (MAX_FINGERPRINT_CONTENT) and a generous hash cap so a single huge
+// view can't blow up memory; one view rarely approaches it in practice.
+const MAX_PAYLOAD_FINGERPRINTS = MAX_FINGERPRINT_CONTENT;
+function payloadFingerprints(view: string): Set<string> {
+  if (!view) return new Set();
+  const sliced = view.length > MAX_FINGERPRINT_CONTENT ? view.slice(0, MAX_FINGERPRINT_CONTENT) : view;
+  const norm = normalizeForFingerprint(sliced);
+  if (norm.length < SHINGLE_WIDTH) return new Set();
+  return shingleHashes(norm, 1, MAX_PAYLOAD_FINGERPRINTS);
 }
 
 // Per-session taint state
 const sessionTaint = new Map<string, TaintEntry[]>();
 
-/** Record a sensitive data read */
-export function recordSensitiveRead(sessionId: string, source: TaintSource, target: string): void {
+/**
+ * Record a sensitive data read.
+ *
+ * `content` is OPTIONAL and additive (3-arg call sites keep working): when
+ * provided, content fingerprints are captured so a later egress check can prove
+ * which tainted bytes appear in an outbound payload. The source/target
+ * provenance recording is unchanged either way. No plaintext is stored.
+ */
+export function recordSensitiveRead(sessionId: string, source: TaintSource, target: string, content?: string): void {
   if (!sessionTaint.has(sessionId)) sessionTaint.set(sessionId, []);
   sessionTaint.get(sessionId)!.push({
     source,
     target,
     timestamp: Date.now(),
     runId: sessionId,
+    fingerprints: content ? computeFingerprints(content) : [],
   });
 }
 
@@ -53,6 +146,69 @@ export function checkEgressTaint(sessionId: string): { blocked: boolean; reason?
     blocked: true,
     reason: `Egress blocked: session contains tainted data from sensitive sources (${sources.join(", ")}). ` +
       `Data lineage tracking prevents exfiltration even through transforms.`,
+  };
+}
+
+/**
+ * Payload-overlap primitive: which tainted sources have CONTENT present in
+ * `payload`. Fingerprints the payload — its raw form AND the secret-scanner's
+ * decoded/normalized views (so a base64/hex/percent-encoded or homoglyph copy of
+ * the tainted bytes still matches) — and intersects against each entry's
+ * recorded shingle hashes. An overlap counts only on a real shingle-hash match,
+ * so unrelated text never false-matches (near-zero FP). Entries recorded without
+ * content (no fingerprints) can't produce evidence here and are skipped — they
+ * still gate egress via checkEgressTaint's presence floor.
+ *
+ * Returns the matching {source, target} pairs (deduped); [] when no tainted
+ * bytes are found in the payload.
+ */
+export function findTaintInPayload(sessionId: string, payload: string): Array<{ source: TaintSource; target: string }> {
+  const taints = sessionTaint.get(sessionId);
+  if (!taints || taints.length === 0 || !payload) return [];
+
+  // Hash the payload across every evasion view, REUSING the scanner's decoders
+  // (no duplicate decode/normalize logic), then shingle each view the same way
+  // recorded content was shingled so the hashes are comparable.
+  const payloadHashes = new Set<string>();
+  for (const view of decodedPayloadViews(payload)) {
+    for (const h of payloadFingerprints(view)) payloadHashes.add(h);
+  }
+  if (payloadHashes.size === 0) return [];
+
+  const seen = new Set<string>();
+  const out: Array<{ source: TaintSource; target: string }> = [];
+  for (const t of taints) {
+    if (t.fingerprints.length === 0) continue;
+    if (!t.fingerprints.some(fp => payloadHashes.has(fp))) continue;
+    const key = `${t.source}:${t.target}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ source: t.source, target: t.target });
+  }
+  return out;
+}
+
+/**
+ * Payload-aware egress check: the presence-based floor (checkEgressTaint) PLUS
+ * content-overlap evidence when the outbound payload is in hand. The BLOCK
+ * decision is identical to checkEgressTaint (sticky/presence-based — unchanged);
+ * `evidence` only SHARPENS the reason by naming which tainted sources actually
+ * have bytes in this payload. Additive: the gate can keep calling
+ * checkEgressTaint, or call this when it has the payload text.
+ */
+export function checkEgressTaintWithPayload(
+  sessionId: string,
+  payload: string,
+): { blocked: boolean; reason?: string; evidence: Array<{ source: TaintSource; target: string }> } {
+  const base = checkEgressTaint(sessionId);
+  if (!base.blocked) return { ...base, evidence: [] };
+  const evidence = findTaintInPayload(sessionId, payload);
+  if (evidence.length === 0) return { ...base, evidence };
+  const named = [...new Set(evidence.map(e => `${e.source}:${e.target.slice(0, 40)}`))];
+  return {
+    blocked: true,
+    reason: `${base.reason} Outbound payload contains bytes from tainted source(s): ${named.join(", ")}.`,
+    evidence,
   };
 }
 
@@ -117,9 +273,14 @@ export function propagateTaint(fromSessionId: string, toSessionId: string): numb
   if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return 0;
   const fromTaints = sessionTaint.get(fromSessionId);
   if (!fromTaints || fromTaints.length === 0) return 0;
+  if (!sessionTaint.has(toSessionId)) sessionTaint.set(toSessionId, []);
+  const target = sessionTaint.get(toSessionId)!;
   let count = 0;
   for (const t of fromTaints) {
-    recordSensitiveRead(toSessionId, t.source, t.target);
+    // Preserve the child's fingerprints so the parent's evidence path can still
+    // attribute payload bytes to the original source. Re-stamp timestamp to the
+    // propagation moment (audit only); source/target/fingerprints carried as-is.
+    target.push({ source: t.source, target: t.target, timestamp: Date.now(), runId: toSessionId, fingerprints: t.fingerprints });
     count++;
   }
   return count;

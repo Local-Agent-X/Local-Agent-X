@@ -433,4 +433,50 @@ export function containsSecrets(text: string): boolean {
   return false;
 }
 
+/**
+ * Expand `text` into every view a content-overlap check should inspect: the raw
+ * text, its NFKC/homoglyph/control-stripped normalized view, and the decoded
+ * payload of each base64/hex/percent-encoded run inside it (one extra layer for
+ * double-encoding, matching scanEncodedViews). REUSES the same ENCODED_SCHEMES +
+ * buildNormalizedView machinery the scanner's evasion passes use, so a taint
+ * overlap check can't drift from the secret scanner on "what counts as the same
+ * bytes under encoding." Bounded by MAX_DECODED_BUDGET so a huge payload can't
+ * blow up CPU.
+ *
+ * The raw text is always views[0]; the rest are derived. Callers should treat
+ * the strings as content to fingerprint/search — never echo them (a decoded run
+ * may itself be a secret).
+ */
+export function decodedPayloadViews(text: string): string[] {
+  const views: string[] = [text];
+  if (!text) return views;
+
+  const norm = buildNormalizedView(text).normalized;
+  if (norm !== text) views.push(norm);
+
+  let budget = MAX_DECODED_BUDGET;
+  for (const scheme of ENCODED_SCHEMES) {
+    if (budget <= 0) break;
+    scheme.re.lastIndex = 0;
+    for (const m of text.matchAll(scheme.re)) {
+      if (budget <= 0) break;
+      const decoded = scheme.decode(m[0]);
+      if (decoded === null) continue;
+      budget -= decoded.length;
+      views.push(decoded);
+      // One extra layer (base64-of-base64 / base64-of-hex), as scanEncodedViews.
+      for (const inner of ENCODED_SCHEMES) {
+        const fresh = new RegExp(inner.re.source, inner.re.flags);
+        const im = fresh.exec(decoded);
+        if (!im) continue;
+        const innerDecoded = inner.decode(im[0]);
+        if (innerDecoded === null) continue;
+        budget -= innerDecoded.length;
+        views.push(innerDecoded);
+      }
+    }
+  }
+  return views;
+}
+
 export type { ScanResult };

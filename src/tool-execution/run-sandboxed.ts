@@ -75,7 +75,11 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // of a sensitive path taints + redacts. Was keyed to "read" only; now every
     // sensitive-read synonym that takes a `path` arg is covered the same way.
     if (isSensitiveRead && tc.name !== "bash" && args.path && isSensitivePath(String(args.path))) {
-      recordSensitiveRead(sessionId || "default", "sensitive_file", String(args.path));
+      // Pass the read content so the taint entry carries fingerprints — lets a
+      // later egress block name which tainted bytes are in the payload. Content
+      // is fingerprinted (hashed), never stored as plaintext.
+      const fileContent = typeof ctx.result?.content === "string" ? ctx.result.content : undefined;
+      recordSensitiveRead(sessionId || "default", "sensitive_file", String(args.path), fileContent);
       redactReason = `${tc.name} of sensitive path ${String(args.path)}`;
     }
     if (tc.name === "bash") {
@@ -95,7 +99,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       if (stdout.length > 0) {
         const det = detectSecretsInOutput(stdout);
         if (det.matched) {
-          recordSensitiveRead(sessionId || "default", "secret", `bash:${det.kinds.join(",")}`);
+          recordSensitiveRead(sessionId || "default", "secret", `bash:${det.kinds.join(",")}`, stdout);
           logger.warn(
             `bash output contained secret-shaped content (kinds: ${det.kinds.join(", ")}) — session tainted`,
           );
@@ -114,7 +118,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       if (body.length > 0) {
         const det = detectSecretsInOutput(body);
         if (det.matched) {
-          recordSensitiveRead(sessionId || "default", "secret", `${tc.name}:${det.kinds.join(",")}`);
+          recordSensitiveRead(sessionId || "default", "secret", `${tc.name}:${det.kinds.join(",")}`, body);
           logger.warn(
             `${tc.name} output contained secret-shaped content (kinds: ${det.kinds.join(", ")}) — session tainted`,
           );

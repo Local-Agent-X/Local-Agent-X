@@ -31,6 +31,10 @@ const SESSION_SCOPED_TOOLS = new Set([
   "self_edit",
   "build_app",
   "agent_escalate",
+  // AriKernel bridge synonyms: stamp the trusted `_sessionId` so the bridge
+  // derives runId/principal from trusted context (arikernel-bridge.ts), not
+  // from forged model-supplied `_runId`/`_principalId`.
+  "ari_file", "ari_http", "ari_shell", "ari_database", "ari_retrieval", "ari_sqlite",
 ]);
 
 function deriveCallContext(sessionId: string | undefined): CallContext {

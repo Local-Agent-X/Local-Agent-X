@@ -78,6 +78,60 @@ function recordAvSuspectKill(
   } catch { /* best-effort */ }
 }
 
+// Env scrub for spawned subprocesses. Copies only a known-safe allowlist of
+// vars plus any var that's neither a credential-name match nor a high-entropy
+// secret-looking value. Shared by bash and the process_* family so both spawn
+// paths scrub identically — process_start previously copied the FULL
+// process.env, leaking sidecar credentials to every background command.
+const SAFE_ENV_KEYS = new Set([
+  "PATH", "HOME", "USER", "USERNAME", "USERPROFILE", "SHELL",
+  "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "TMPDIR", "TEMP", "TMP",
+  "NODE_ENV", "NODE_PATH", "NPM_CONFIG_PREFIX",
+  "COMPUTERNAME", "HOSTNAME", "OS", "PROCESSOR_ARCHITECTURE",
+  "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
+  "PROGRAMFILES", "PROGRAMFILES(X86)", "APPDATA", "LOCALAPPDATA",
+  "CommonProgramFiles", "CommonProgramFiles(x86)",
+  "PWD", "OLDPWD", "SHLVL", "LOGNAME",
+  "GIT_EXEC_PATH", "GIT_TEMPLATE_DIR",
+  "EDITOR", "VISUAL", "PAGER",
+]);
+const CREDENTIAL_ENV_PATTERNS = [
+  /api[_-]?key/i, /secret/i, /token/i, /password/i, /passwd/i,
+  /private[_-]?key/i, /access[_-]?key/i, /auth/i, /credential/i,
+  /^AWS_/i, /^AZURE_/i, /^GCP_/i, /^GOOGLE_/i,
+  /^OPENAI/i, /^XAI/i, /^LAX_AUTH/i, /^LAX_.*KEY/i,
+  /^GITHUB_/i, /^SLACK_/i, /^STRIPE_/i, /^LINEAR_/i,
+  /^NPM_TOKEN/i, /^DOCKER_/i, /^CI_/i,
+];
+
+/**
+ * Build a credential-scrubbed environment for a spawned subprocess. Starts
+ * from process.env, keeps only the SAFE_ENV_KEYS allowlist plus vars that
+ * don't look like credentials (by name) or secrets (by high-entropy value),
+ * then overlays caller-supplied `extra` vars (still NUL-filtered). Pure +
+ * side-effect free so both bash and process_* can share it.
+ */
+export function buildSanitizedEnv(extra?: Record<string, string>): Record<string, string> {
+  const sanitizedEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!value) continue;
+    if (SAFE_ENV_KEYS.has(key)) {
+      sanitizedEnv[key] = value;
+      continue;
+    }
+    if (CREDENTIAL_ENV_PATTERNS.some((p) => p.test(key))) continue;
+    if (value.includes("\0")) continue;
+    if (value.length >= 32 && /^[A-Za-z0-9+/=_-]+$/.test(value)) continue;
+    sanitizedEnv[key] = value;
+  }
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (typeof v === "string" && !v.includes("\0")) sanitizedEnv[k] = v;
+    }
+  }
+  return sanitizedEnv;
+}
+
 export const bashTool: ToolDefinition = {
   name: "bash",
   description:
@@ -117,39 +171,7 @@ export const bashTool: ToolDefinition = {
       return err("Cannot open URLs in the system browser — use the browser tool instead.");
     }
 
-    const SAFE_ENV_KEYS = new Set([
-      "PATH", "HOME", "USER", "USERNAME", "USERPROFILE", "SHELL",
-      "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "TMPDIR", "TEMP", "TMP",
-      "NODE_ENV", "NODE_PATH", "NPM_CONFIG_PREFIX",
-      "COMPUTERNAME", "HOSTNAME", "OS", "PROCESSOR_ARCHITECTURE",
-      "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
-      "PROGRAMFILES", "PROGRAMFILES(X86)", "APPDATA", "LOCALAPPDATA",
-      "CommonProgramFiles", "CommonProgramFiles(x86)",
-      "PWD", "OLDPWD", "SHLVL", "LOGNAME",
-      "GIT_EXEC_PATH", "GIT_TEMPLATE_DIR",
-      "EDITOR", "VISUAL", "PAGER",
-    ]);
-    const CREDENTIAL_PATTERNS = [
-      /api[_-]?key/i, /secret/i, /token/i, /password/i, /passwd/i,
-      /private[_-]?key/i, /access[_-]?key/i, /auth/i, /credential/i,
-      /^AWS_/i, /^AZURE_/i, /^GCP_/i, /^GOOGLE_/i,
-      /^OPENAI/i, /^XAI/i, /^LAX_AUTH/i, /^LAX_.*KEY/i,
-      /^GITHUB_/i, /^SLACK_/i, /^STRIPE_/i, /^LINEAR_/i,
-      /^NPM_TOKEN/i, /^DOCKER_/i, /^CI_/i,
-    ];
-
-    const sanitizedEnv: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (!value) continue;
-      if (SAFE_ENV_KEYS.has(key)) {
-        sanitizedEnv[key] = value;
-        continue;
-      }
-      if (CREDENTIAL_PATTERNS.some((p) => p.test(key))) continue;
-      if (value.includes("\0")) continue;
-      if (value.length >= 32 && /^[A-Za-z0-9+/=_-]+$/.test(value)) continue;
-      sanitizedEnv[key] = value;
-    }
+    const sanitizedEnv = buildSanitizedEnv();
 
     let cmd = command;
     if (process.platform === "win32") {

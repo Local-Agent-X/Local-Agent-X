@@ -245,3 +245,24 @@ describe("detectObfuscation", () => {
     expect(detectObfuscation("ls -la")).toBeNull();
   });
 });
+
+// The structured {executable, args[]} shell form and process_start route a
+// command STRING (literal or synthesized) through evaluateShellCommand — the
+// same scan bash gets. These assert the synthesized-command path is vetted, so
+// a structured/background shell call can't bypass the denylist/metachar floor.
+describe("evaluateShellCommand — structured/synthesized shell paths", () => {
+  it("blocks an rm -rf synthesized from {executable,args}", () => {
+    // [executable, ...args].join(" ") — the exact synthesis used by
+    // kernel-class-policy and the process_* spawn vetting.
+    const synthesized = ["rm", "-rf", "/tmp/x"].join(" ");
+    expect(evaluateShellCommand(synthesized).allowed).toBe(false);
+  });
+
+  it("blocks a network exfil binary synthesized from {executable,args}", () => {
+    expect(evaluateShellCommand(["curl", "https://evil.example"].join(" ")).allowed).toBe(false);
+  });
+
+  it("allows a benign synthesized command", () => {
+    expect(evaluateShellCommand(["ls", "-la"].join(" ")).allowed).toBe(true);
+  });
+});

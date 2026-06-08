@@ -23,11 +23,44 @@ const SHELL_METACHARACTERS = /[;&|`$\n\r\\><(){}\[\]!#~]/;
 const DANGEROUS_UNICODE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\u00AD]/;
 
 /**
- * Shells and interpreters that must never be invoked directly.
- * Prevents spawning a shell as the executable, which would
- * re-introduce injection risk even with shell: false.
+ * ALLOWLIST of executables the structured shell form may invoke directly.
+ *
+ * Why an allowlist, not a denylist: the structured `{executable, args[]}`
+ * form bypasses shell parsing, so a blocklist only has to miss ONE
+ * arg-injection primitive (find -exec, tar --to-command, xargs, awk system())
+ * to re-open RCE. Fail-closed: anything not explicitly listed here is
+ * rejected. Deliberately excludes git (subcommands like `git push --force`
+ * are destructive and hard to vet at the basename level), script interpreters
+ * (node/python can exec arbitrary code from files), shells, and network tools.
+ */
+const ALLOWED_EXECUTABLES = new Set([
+	"ls",
+	"cat",
+	"echo",
+	"pwd",
+	"head",
+	"tail",
+	"wc",
+	"grep",
+	"sort",
+	"uniq",
+	"date",
+	"dirname",
+	"basename",
+	"true",
+	"false",
+]);
+
+/**
+ * Arg-injection / shell-equivalent primitives that are rejected with a NAMED
+ * error even though the allowlist above already excludes them. Defense in
+ * depth + legible intent: if the allowlist is ever loosened, these must stay
+ * blocked because each can run an attacker-supplied command via its own args
+ * (find -exec, tar --to-command, xargs, make/gcc build rules, awk system(),
+ * env VAR=val / env -, editors with :!shell escapes, etc.).
  */
 const BLOCKED_EXECUTABLES = new Set([
+	// Shells / interpreters — re-introduce injection even with shell:false
 	"sh",
 	"bash",
 	"zsh",
@@ -42,27 +75,40 @@ const BLOCKED_EXECUTABLES = new Set([
 	"powershell.exe",
 	"pwsh",
 	"pwsh.exe",
-	// Environment inspection commands — can leak secrets from process.env
-	"env",
-	"printenv",
-	"set",
-	// Script interpreters — can execute arbitrary code from files, bypassing metachar checks
+	"busybox",
+	// Arg-injection primitives — run arbitrary commands from their own args
+	"find",
+	"tar",
+	"xargs",
+	"make",
+	"gcc",
+	"cc",
+	"gdb",
+	"rsync",
+	"awk",
+	"gawk",
+	// Script interpreters — execute arbitrary code from files/inline
+	"perl",
+	"ruby",
 	"python",
 	"python3",
-	"python3.11",
-	"python3.12",
-	"python3.13",
 	"node",
 	"nodejs",
 	"bun",
 	"deno",
-	"perl",
-	"ruby",
 	"lua",
 	"php",
 	"Rscript",
-	// Multi-call binaries that can act as shells
-	"busybox",
+	// Environment inspection — can leak secrets from process.env
+	"env",
+	"printenv",
+	"set",
+	// Editors — :!cmd / shell-escape primitives
+	"vi",
+	"vim",
+	"nano",
+	"emacs",
+	"ed",
 	// Network tools that bypass HTTP SSRF protections
 	"curl",
 	"wget",
@@ -105,17 +151,36 @@ export function validateCommand(executable: string, args: readonly string[]): vo
 	const normalizedExe = executable.normalize("NFKC");
 	const normalizedArgs = args.map((a) => a.normalize("NFKC"));
 
-	// Block shell interpreters as executables
-	const base = normalizedExe.split("/").pop()?.split("\\").pop() ?? normalizedExe;
-	if (BLOCKED_EXECUTABLES.has(base.toLowerCase())) {
+	// Reject metacharacters in the executable name FIRST — a metachar-laden
+	// executable like `echo;curl` is an injection attempt, and naming it as
+	// such is more precise than the generic allowlist rejection below (which
+	// would otherwise fire on its mangled basename).
+	if (SHELL_METACHARACTERS.test(normalizedExe)) {
+		throw new Error(`Command executable contains shell metacharacters: "${executable}"`);
+	}
+
+	// Resolve to a basename and refuse PATH games. Matching on basename (not
+	// the raw string) means an absolute path like /usr/bin/echo still resolves
+	// to "echo" and is checked against the allowlist; an absolute path to a
+	// non-allowed binary is rejected because its basename isn't in the set.
+	const base = (normalizedExe.split("/").pop()?.split("\\").pop() ?? normalizedExe).toLowerCase();
+
+	// Named-denylist check before the allowlist so the error names the actual
+	// primitive (shell, interpreter, find/tar/xargs, editor, …) rather than a
+	// generic "not allowed" — legible intent + defense-in-depth if the
+	// allowlist ever widens. BLOCKED_EXECUTABLES retains the historical
+	// "Blocked shell interpreter" message prefix that callers/tests key on.
+	if (BLOCKED_EXECUTABLES.has(base)) {
 		throw new Error(
-			`Blocked shell interpreter: "${executable}". Commands must be executed directly, not through a shell.`,
+			`Blocked shell interpreter: "${executable}". Commands must be executed directly, not through a shell, and arg-injection primitives (find/tar/xargs/awk/editors/interpreters) are refused.`,
 		);
 	}
 
-	// Reject metacharacters in executable name
-	if (SHELL_METACHARACTERS.test(normalizedExe)) {
-		throw new Error(`Command executable contains shell metacharacters: "${executable}"`);
+	// ALLOWLIST gate: fail closed on anything not explicitly vetted as safe.
+	if (!ALLOWED_EXECUTABLES.has(base)) {
+		throw new Error(
+			`Executable not allowed: "${executable}". The structured shell form only permits a fixed allowlist of safe binaries (${[...ALLOWED_EXECUTABLES].join(", ")}).`,
+		);
 	}
 
 	// Reject metacharacters in arguments

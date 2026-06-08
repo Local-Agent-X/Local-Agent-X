@@ -273,11 +273,34 @@ describe("SecurityLayer kernel-class dispatch", () => {
   // ── 8: shell-class non-bash ──
 
   describe("shell-class non-bash tools", () => {
-    it("process_start: allowed with kernel-deferral reason", () => {
+    // Shell-class non-bash tools (process_start, ari_shell) now route their
+    // command through the SAME evaluateShellCommand scan bash gets, instead of
+    // an unconditional allow — closing the structured/background-shell bypass.
+    it("process_start: a benign command is allowed", () => {
       const sec = makeLayer();
       const d = sec.evaluate({
         toolName: "process_start",
-        args: { command: "node", args: ["script.js"] },
+        args: { command: "node script.js" },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(true);
+    });
+
+    it("process_start: a denylisted command is blocked (no longer auto-allowed)", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "process_start",
+        args: { command: "rm -rf /tmp/x" },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+    });
+
+    it("shell-class tool with no command arg falls through to kernel/tool gate", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "process_status",
+        args: { session_id: "px-abc" },
         sessionId: "t",
       });
       expect(d.allowed).toBe(true);

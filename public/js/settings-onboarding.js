@@ -327,7 +327,10 @@ async function onboardOAuth(type) {
             'Approve in the browser tab that just opened (or <a href="' + res.authUrl + '" target="_blank" rel="noopener">open it again</a>), ' +
             'then paste the code it shows:</div>' +
             '<input type="text" id="ob-anthropic-code" placeholder="paste code from the authorization page" style="width:100%;max-width:380px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.85rem;font-family:var(--mono)">' +
-            '<button class="action-btn primary" onclick="onboardSubmitAnthropicCode()" style="padding:8px 24px">Finish sign-in</button>';
+            '<div style="display:flex;gap:8px;justify-content:center">' +
+            '  <button class="action-btn" onclick="onboardPasteAnthropicCode()" style="padding:8px 24px" title="Paste the copied code from your clipboard">Paste</button>' +
+            '  <button class="action-btn primary" onclick="onboardSubmitAnthropicCode()" style="padding:8px 24px">Finish sign-in</button>' +
+            '</div>';
           const inp = document.getElementById('ob-anthropic-code');
           if (inp) { inp.focus(); inp.addEventListener('keydown', e => { if (e.key === 'Enter') onboardSubmitAnthropicCode(); }); }
         }
@@ -346,6 +349,20 @@ async function onboardOAuth(type) {
     }
   } catch (e) {
     if (status) status.textContent = 'Failed to start sign-in. Try again or set up in Settings later.';
+  }
+}
+
+async function onboardPasteAnthropicCode() {
+  const input = document.getElementById('ob-anthropic-code');
+  const status = document.getElementById('ob-connect-status');
+  try {
+    const text = String((await navigator.clipboard.readText()) || '').trim();
+    if (!text) { if (status) { status.style.color = ''; status.textContent = 'Clipboard is empty — copy the code on the Anthropic page first.'; } return; }
+    if (input) input.value = text;
+    onboardSubmitAnthropicCode();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--err,#c33)'; status.textContent = 'Couldn’t read the clipboard. Paste manually (⌘V) and click Finish sign-in.'; }
+    if (input) input.focus();
   }
 }
 

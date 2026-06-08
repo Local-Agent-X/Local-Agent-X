@@ -15,7 +15,7 @@ import { bgForTheme, overlayForTheme } from "./theme";
 import { getSetting, setSetting } from "./settings";
 import { buildSplashDataUrl } from "./splash";
 import { isServerRunning, isQuittingFlag } from "./server-process";
-import { MAIN_WINDOW_TITLEBAR_JS, buildAppDragStripJs } from "./window-injections";
+import { buildAppDragStripJs } from "./window-injections";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -125,13 +125,9 @@ export function createWindow(): void {
     }, LOAD_RETRY_DELAY_MS);
   });
 
-  // Inject the custom title bar menu into the page (Windows/Linux only).
-  // Skip on macOS — the native menu bar at the top of the screen already
-  // covers these actions, and the native window chrome already supplies
-  // traffic lights.
-  // Inject the custom title bar menu (Windows/Linux only). On macOS the
-  // native top-of-screen menu + the traffic-light padding (handled in
-  // app.css via the platform-darwin body class set by preload) cover it.
+  // The in-window titlebar (Windows/Linux) ships in app.html, gated by the
+  // platform-win body class the preload sets before first paint — no runtime
+  // injection. macOS uses the native top-of-screen menu (app-menu.ts).
   mainWindow.webContents.on("did-finish-load", () => {
     const currentUrl = mainWindow?.webContents.getURL() ?? "";
     if (!currentUrl.startsWith(serverOrigin)) return;
@@ -139,8 +135,6 @@ export function createWindow(): void {
     // sticks across every future boot. Pin each app load back to 100%; the
     // user can still zoom within a session via the View menu.
     mainWindow?.webContents.setZoomFactor(1);
-    if (process.platform === "darwin") return;
-    mainWindow?.webContents.executeJavaScript(MAIN_WINDOW_TITLEBAR_JS);
   });
 
   mainWindow.once("ready-to-show", () => {

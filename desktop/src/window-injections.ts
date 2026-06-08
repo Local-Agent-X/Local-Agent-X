@@ -1,121 +1,16 @@
-// JavaScript injected into BrowserWindow renderers. Kept as plain string
-// constants instead of executable functions because the body runs inside
-// the renderer's context — different `window`, different DOM, no access
-// to anything in main. The main-process file just calls
+// JavaScript injected into BrowserWindow renderers. Kept as a plain string
+// because the body runs inside the renderer's context — different `window`,
+// different DOM, no access to anything in main. The main-process file calls
 // webContents.executeJavaScript(STRING) on the right lifecycle event.
+//
+// Only the child app-window drag strip lives here: its tint is sampled from
+// the (arbitrary, user-built) app's body background at runtime, which static
+// CSS can't do. The main window's titlebar is the opposite — fixed LAX
+// chrome — so it ships as real HTML in app.html, gated by the platform-win
+// body class the preload sets, rather than being injected.
 
 import { nativeTheme } from "electron";
 import type { DesktopSettings } from "./settings";
-
-// Titlebar injected into the main window on Windows/Linux. macOS uses the
-// native top-of-screen menu bar — skipped there.
-//
-// Why a template string instead of a .js file shipped alongside: this
-// runs in the renderer's CSP-sandboxed context, has no module loader,
-// and depends on var() CSS variables exposed by the LAX app. A file
-// boundary would only buy a marginal IDE win at the cost of a build-
-// step concern. Plain string is fine.
-export const MAIN_WINDOW_TITLEBAR_JS = `
-(function() {
-  if (document.getElementById('desktop-titlebar')) return;
-  const bar = document.createElement('div');
-  bar.id = 'desktop-titlebar';
-  bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:32px;z-index:99999;display:flex;align-items:center;background:var(--bg, #0a0a0f);-webkit-app-region:drag;font-family:"Segoe UI",sans-serif;font-size:12px;user-select:none;';
-
-  const menus = [
-    { label:'File', items:['Open in Browser','Copy App URL','—','Restart Server','—','Quit'] },
-    { label:'Edit', items:['Undo','Redo','—','Cut','Copy','Paste'] },
-    { label:'View', items:['Reload','Toggle Agents','Toggle DevTools','—','Zoom In','Zoom Out','Reset Zoom'] },
-    { label:'Window', items:['Minimize','Close to Tray'] },
-    { label:'Help', items:['About'] }
-  ];
-
-  let openMenu = null;
-  function closeAllMenus() {
-    document.querySelectorAll('.dtb-dd').forEach(d => d.style.display='none');
-    document.querySelectorAll('.dtb-btn').forEach(b => { b.style.color='var(--muted, #888)'; b.style.background=''; });
-    openMenu = null;
-  }
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('#desktop-titlebar')) closeAllMenus();
-  });
-
-  const favicon = document.createElement('img');
-  favicon.src = '/favicon.png';
-  favicon.style.cssText = 'width:16px;height:16px;margin:0 8px 0 8px;-webkit-app-region:no-drag;';
-  bar.appendChild(favicon);
-
-  menus.forEach(menu => {
-    const btn = document.createElement('div');
-    btn.className = 'dtb-btn';
-    btn.textContent = menu.label;
-    btn.style.cssText = 'padding:4px 8px;color:var(--muted, #888);cursor:pointer;-webkit-app-region:no-drag;position:relative;';
-
-    const dd = document.createElement('div');
-    dd.className = 'dtb-dd';
-    dd.style.cssText = 'display:none;position:absolute;top:100%;left:0;background:var(--bg, #0a0a0f);border:1px solid var(--border, #1a1a2f);min-width:180px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:100000;padding:4px 0;';
-
-    menu.items.forEach(item => {
-      if (item === '—') {
-        const sep = document.createElement('div');
-        sep.style.cssText = 'height:1px;background:var(--border, #1a1a2f);margin:4px 0;';
-        dd.appendChild(sep);
-      } else {
-        const it = document.createElement('div');
-        it.textContent = item;
-        it.style.cssText = 'padding:6px 12px;color:var(--text, #ccc);cursor:pointer;';
-        it.onmouseenter = () => it.style.background='var(--hover, #1a1a2f)';
-        it.onmouseleave = () => it.style.background='';
-        it.onclick = (e) => {
-          e.stopPropagation();
-          closeAllMenus();
-          if(window.desktop) {
-            if(item==='Quit') window.desktop.quit();
-            if(item==='Restart Server') window.desktop.restartServer();
-            if(item==='Open in Browser') window.desktop.openInBrowser?.();
-            if(item==='Copy App URL') window.desktop.copyAppUrl?.();
-            if(item==='Toggle DevTools') window.desktop.toggleDevTools();
-          }
-          if(item==='Reload') location.reload();
-          if(item==='Toggle Agents') { const b=document.getElementById('agents-toggle'); if(b) b.click(); }
-          if(item==='Zoom In') document.body.style.zoom=(parseFloat(document.body.style.zoom||'1')+0.1)+'';
-          if(item==='Zoom Out') document.body.style.zoom=(parseFloat(document.body.style.zoom||'1')-0.1)+'';
-          if(item==='Reset Zoom') document.body.style.zoom='1';
-          if(item==='Minimize') window.desktop?.toggleWindow();
-          if(item==='Close to Tray') window.desktop?.toggleWindow();
-        };
-        dd.appendChild(it);
-      }
-    });
-
-    btn.appendChild(dd);
-
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      if (openMenu === dd) { closeAllMenus(); return; }
-      closeAllMenus();
-      dd.style.display='block';
-      btn.style.color='var(--accent, #40f0f0)';
-      btn.style.background='var(--hover, #1a1a2f)';
-      openMenu = dd;
-    };
-    btn.onmouseenter = () => {
-      if (openMenu && openMenu !== dd) {
-        closeAllMenus();
-        dd.style.display='block';
-        btn.style.color='var(--accent, #40f0f0)';
-        btn.style.background='var(--hover, #1a1a2f)';
-        openMenu = dd;
-      }
-    };
-
-    bar.appendChild(btn);
-  });
-
-  document.body.prepend(bar);
-  document.body.classList.add('desktop-frame');
-})();
-`;
 
 // Drag strip injected into child app windows.
 //

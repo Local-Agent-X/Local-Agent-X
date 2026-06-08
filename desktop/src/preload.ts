@@ -6,13 +6,18 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 // Platform body-class — set as early as possible so renderer CSS can
-// condition layout on macOS without waiting for IPC. Previous attempt
-// used main.webContents.insertCSS at did-finish-load, which silently
-// no-op'd in some boot orderings (verified via DevTools:
-// document.styleSheets had zero injected sheets). Adding the class from
+// condition window-chrome layout without waiting for IPC. macOS gets
+// `platform-darwin` (native traffic-light spacing); Windows/Linux get
+// `platform-win`, which shows the in-window titlebar shipped in app.html
+// and reserves the 32px top strip for the OS min/max/close overlay.
+// Previous attempt used main.webContents.insertCSS at did-finish-load,
+// which silently no-op'd in some boot orderings (verified via DevTools:
+// document.styleSheets had zero injected sheets). Setting the class from
 // the preload's DOMContentLoaded listener is deterministic — the class
-// is on <body> before any layout pass.
-if (process.platform === "darwin") {
+// is on <body> before any layout pass, so the bar can't disappear on a
+// later client-side re-render the way the old injected version did.
+{
+  const platformClass = process.platform === "darwin" ? "platform-darwin" : "platform-win";
   // preload runs in a renderer context with DOM available, but the
   // desktop tsconfig doesn't include the DOM lib (it's mostly a
   // Node/Electron-main project). Cast through globalThis to access
@@ -23,7 +28,7 @@ if (process.platform === "darwin") {
     addEventListener: (ev: string, cb: () => void, opts?: { once?: boolean }) => void;
   } }).document;
   const apply = () => {
-    try { doc.body.classList.add("platform-darwin"); } catch {}
+    try { doc.body.classList.add(platformClass); } catch {}
   };
   if (doc.readyState === "loading") {
     doc.addEventListener("DOMContentLoaded", apply, { once: true });
@@ -72,6 +77,13 @@ contextBridge.exposeInMainWorld("desktop", {
   toggleDevTools: () => ipcRenderer.invoke("toggle-devtools"),
   quit: () => ipcRenderer.invoke("quit-app"),
   relaunchApp: () => ipcRenderer.invoke("relaunch-app"),
+
+  // In-window titlebar (Windows/Linux). The bar is HTML so it can't use
+  // Electron menu roles directly — these route Edit actions and About
+  // through main, matching what the native macOS menu does via roles.
+  editCommand: (role: "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll") =>
+    ipcRenderer.invoke("titlebar-edit", role),
+  showAbout: () => ipcRenderer.invoke("show-about"),
 
   // Open the tokenized LAX URL in the user's default browser (escape hatch
   // for Web Speech API, sharing with another tool on the same box, etc.)

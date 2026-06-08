@@ -913,6 +913,29 @@ describe("common mode recognizes OneDrive-redirected user folders (KFM)", () => 
   });
 });
 
+// "Workspace Only" must mean the workspace FOLDER (and its children), not the
+// folder's PARENT — otherwise pointing the workspace at C:\Users\me\workspace
+// would expose all of C:\Users\me. Common mode stays broader (project + user
+// dirs) by design.
+describe("workspace mode confines to the workspace folder, not its parent", () => {
+  const ws = resolve(WORKSPACE); // <cwd>/workspace — parent is the project root
+
+  it("allows reads anywhere UNDER the workspace", () => {
+    const p = resolve(ws, "apps", "demo", "index.html");
+    expect(evaluateFileAccess(ws, "workspace", () => false, "read", p).allowed).toBe(true);
+  });
+
+  it("blocks a read in the workspace's PARENT (project root) — the tightening", () => {
+    const p = resolve(ws, "..", "package.json");
+    expect(evaluateFileAccess(ws, "workspace", () => false, "read", p).allowed).toBe(false);
+  });
+
+  it("common mode still allows the project root (broader by design)", () => {
+    const p = resolve(ws, "..", "package.json");
+    expect(evaluateFileAccess(ws, "common", () => false, "read", p).allowed).toBe(true);
+  });
+});
+
 // bash is the universal go-to tool, and historically it ignored the file-access
 // mode entirely — `cat /etc/passwd` ran in "workspace only". This best-effort
 // guard makes bash OBEY the same boundary (the sound POSIX kernel hard-wall is

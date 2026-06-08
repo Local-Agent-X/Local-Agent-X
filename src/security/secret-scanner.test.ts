@@ -84,7 +84,57 @@ describe("scanForSecrets — unicode-obfuscated detection", () => {
   });
 });
 
+describe("scanForSecrets — encoding-evasion regressions (H7/H8)", () => {
+  // H7: a key carried as base64 of UTF-16LE bytes. The receiver recovers it via
+  // `.toString('utf16le')`; the latin1 decode renders it NUL-interleaved so the
+  // catalog regex (needs contiguous chars) and the known-value substring check
+  // both miss it, and a low-entropy ASCII prefix drops the encoded blob below the
+  // entropy floor — the DECODE path's new utf16le view is what must catch it.
+  //
+  // No-prefix variant: the decoded utf16le view is `sk-ant-…` at string start, so
+  // the catalog's `\b(sk-ant-…)` fires directly.
+  it("H7: catches a utf16le-base64 sk-ant key with no prefix (catalog)", () => {
+    const blob = Buffer.from(ANT_KEY, "utf16le").toString("base64");
+    const r = scanForSecrets(`payload=${blob}`);
+    expect(r.clean).toBe(false);
+  });
+
+  // Prefixed variant: 40 ASCII chars sit directly before `sk-ant`, so the
+  // catalog's `\b` boundary can't fire (pre-existing catalog behavior, not the
+  // decode fix) — the known-value pass over the utf16le view catches it instead.
+  // This is the reliable exploit per the finding, and the known-value pass is the
+  // intended defense.
+  it("H7: catches a utf16le-base64 key behind a low-entropy prefix (known-value)", () => {
+    const blob = Buffer.from("A".repeat(40) + ANT_KEY, "utf16le").toString("base64");
+    registerRedactedSecretValue(ANT_KEY);
+    try {
+      const r = scanForSecrets(`payload=${blob}`);
+      expect(r.clean).toBe(false);
+      expect(r.matches.some((m) => m.type === "known-secret-value")).toBe(true);
+    } finally {
+      unregisterRedactedSecretValue(ANT_KEY);
+    }
+  });
+
+  // H8: combining acute (U+0301) after every character. NFKC alone leaves the
+  // letter+mark pairs intact; the scanner view must NFKD-decompose and strip the
+  // U+0300–U+036F block so the bare run re-forms.
+  it("H8: catches a key with a combining mark after each character", () => {
+    const interleaved = [...ANT_KEY].map((c) => c + "́").join("");
+    const r = scanForSecrets(`key: ${interleaved}`);
+    expect(r.clean).toBe(false);
+  });
+});
+
 describe("scanForSecrets — negatives (no new false positives)", () => {
+  it("legitimate accented prose stays clean (NFKD strip is detection-only)", () => {
+    expect(scanForSecrets("café résumé naïve coöperate").clean).toBe(true);
+  });
+
+  it("a normal plaintext sk-ant key still detects after the NFKD change", () => {
+    expect(scanForSecrets(`token ${ANT_KEY} here`).clean).toBe(false);
+  });
+
   it("base64 of a non-secret stays clean", () => {
     const blob = Buffer.from("hello world, this is fine", "utf8").toString("base64");
     expect(scanForSecrets(`note=${blob}`).clean).toBe(true);
@@ -217,6 +267,22 @@ describe("scanForSecrets — known-secret-value detection", () => {
     // Never echoes the value through the match object.
     expect(m!.value).toBe("");
     expect(redactSecrets(text)).not.toContain(KNOWN);
+  });
+
+  it("H8: flags a registered value with a combining mark after each char (known-value pass)", () => {
+    register(KNOWN);
+    const interleaved = [...KNOWN].map((c) => c + "́").join("");
+    const r = scanForSecrets(`body=${interleaved}`);
+    expect(r.clean).toBe(false);
+    expect(r.matches.some((x) => x.type === "known-secret-value")).toBe(true);
+  });
+
+  it("H7: flags a registered value as base64-of-UTF-16LE (known-value pass)", () => {
+    register(KNOWN);
+    const blob = Buffer.from("A".repeat(40) + KNOWN, "utf16le").toString("base64");
+    const r = scanForSecrets(`payload=${blob}`);
+    expect(r.clean).toBe(false);
+    expect(r.matches.some((x) => x.type === "known-secret-value")).toBe(true);
   });
 
   it("flags the base64-encoded form of a registered value (decode-view reuse)", () => {

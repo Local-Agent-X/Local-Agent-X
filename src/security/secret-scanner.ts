@@ -87,7 +87,11 @@ const BASE64_RUN_RE = /[A-Za-z0-9+/_-]{16,}={0,2}/g;
 const HEX_RUN_RE = /\b[0-9a-fA-F]{32,}\b/g;
 const PERCENT_RUN_RE = /(?:%[0-9a-fA-F]{2}|[^\s%]){8,}/g;
 
-function decodeBase64(run: string): string | null {
+// Decode a base64/base64url run to its raw bytes, applying the same
+// normalize + round-trip sanity the catalog decode relies on. Returns the
+// Buffer (so callers can take MULTIPLE text interpretations of the same bytes)
+// or null when the run isn't real base64.
+function decodeBase64Buffer(run: string): Buffer | null {
   // Normalize base64url → base64 and length-sanity before decoding.
   const normalized = run.replace(/-/g, "+").replace(/_/g, "/");
   const unpadded = normalized.replace(/=+$/, "");
@@ -98,10 +102,37 @@ function decodeBase64(run: string): string | null {
     if (buf.length === 0) return null;
     // Re-encoding round-trip filters out runs that aren't actually base64.
     if (buf.toString("base64").replace(/=+$/, "") !== unpadded) return null;
-    return buf.toString("latin1");
+    return buf;
   } catch {
     return null;
   }
+}
+
+function decodeBase64(run: string): string | null {
+  const buf = decodeBase64Buffer(run);
+  return buf === null ? null : buf.toString("latin1");
+}
+
+// Text interpretations of a base64 run's bytes for the catalog + known-value
+// passes. A receiver can recover a secret from base64 of UTF-16LE bytes
+// (`Buffer.from(key,'utf16le').toString('base64')`), which the latin1 view above
+// renders as a NUL-interleaved string — so `decoded.includes(value)` and the
+// catalog regexes (which need contiguous chars) both miss it. We additionally
+// surface the utf16le view for BOTH byte orders so the recovered key is a
+// contiguous run again. swap16 mutates the buffer in place, so decode a fresh
+// copy for the second order.
+function base64TextViews(run: string): string[] {
+  const buf = decodeBase64Buffer(run);
+  if (buf === null) return [];
+  const views = [buf.toString("latin1"), buf.toString("utf16le")];
+  // swap16() requires an even byte length; an odd-length buffer can't be a clean
+  // utf16le string in the other byte order, so only the as-decoded order applies.
+  if (buf.length >= 2 && buf.length % 2 === 0) {
+    const swapped = Buffer.from(buf);
+    swapped.swap16();
+    views.push(swapped.toString("utf16le"));
+  }
+  return views;
 }
 
 function decodeHex(run: string): string | null {
@@ -131,6 +162,15 @@ interface EncodedScheme {
   label: string;
 }
 
+// All decoded text interpretations of a run for one scheme. base64 yields the
+// latin1 + utf16le (both byte orders) views (see base64TextViews); hex/percent
+// have a single decoding.
+function runDecodeViews(scheme: EncodedScheme, run: string): string[] {
+  if (scheme.label === "base64") return base64TextViews(run);
+  const decoded = scheme.decode(run);
+  return decoded === null ? [] : [decoded];
+}
+
 const ENCODED_SCHEMES: EncodedScheme[] = [
   { re: BASE64_RUN_RE, decode: decodeBase64, label: "base64" },
   { re: HEX_RUN_RE, decode: decodeHex, label: "hex" },
@@ -156,24 +196,32 @@ function scanEncodedViews(text: string): SecretMatch[] {
       if (budget <= 0) break;
       const run = m[0];
       const index = m.index ?? 0;
-      const decoded = scheme.decode(run);
-      if (decoded === null) continue;
-      budget -= decoded.length;
+      // For base64, scan every byte interpretation (latin1 + both-endian
+      // utf16le) so a key carried as base64-of-UTF-16LE is recovered as a
+      // contiguous run; other schemes have a single decoding.
+      const decodedViews =
+        scheme.label === "base64" ? base64TextViews(run) : runDecodeViews(scheme, run);
+      if (decodedViews.length === 0) continue;
+      budget -= decodedViews[0].length;
 
-      let name = firstMatchName(decoded);
-      // One extra layer: a base64-of-base64 (or base64-of-hex) wrapper. Use a
-      // fresh regex per scheme so no shared lastIndex state leaks.
-      if (!name) {
-        for (const inner of ENCODED_SCHEMES) {
-          const fresh = new RegExp(inner.re.source, inner.re.flags);
-          const im = fresh.exec(decoded);
-          if (!im) continue;
-          const innerDecoded = inner.decode(im[0]);
-          if (innerDecoded === null) continue;
-          budget -= innerDecoded.length;
-          name = firstMatchName(innerDecoded);
-          if (name) break;
+      let name: string | undefined;
+      for (const decoded of decodedViews) {
+        name = firstMatchName(decoded);
+        // One extra layer: a base64-of-base64 (or base64-of-hex) wrapper. Use a
+        // fresh regex per scheme so no shared lastIndex state leaks.
+        if (!name) {
+          for (const inner of ENCODED_SCHEMES) {
+            const fresh = new RegExp(inner.re.source, inner.re.flags);
+            const im = fresh.exec(decoded);
+            if (!im) continue;
+            const innerDecoded = inner.decode(im[0]);
+            if (innerDecoded === null) continue;
+            budget -= innerDecoded.length;
+            name = firstMatchName(innerDecoded);
+            if (name) break;
+          }
         }
+        if (name) break;
       }
       if (!name) continue;
 
@@ -200,13 +248,28 @@ function scanEncodedViews(text: string): SecretMatch[] {
 // lets callers emit a span over the real offending run. Shared by the
 // credential-pattern normalized pass and the known-value normalized pass so the
 // (potentially expensive) fold + index map is built once per scan.
+// Combining diacritical marks (U+0300–U+036F). An attacker can interleave one
+// after every secret character ("s" + U+0301 + "k" + U+0301 + …); NFKC only
+// composes base+mark where a precomposed form exists, so the bare ASCII run
+// never re-forms and every pass misses it. We NFKD-decompose then strip this
+// block so `letter+mark` collapses to the bare letter. SCOPED TO THE SCANNER
+// VIEW — user-facing text rendering (sanitize.ts) is unchanged.
+const COMBINING_MARKS_RE = /[̀-ͯ]/g;
+
 function buildNormalizedView(text: string): { normalized: string; outToOrig: number[] } {
   let normalized = "";
   const outToOrig: number[] = []; // normalized char index → original text index
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (stripControlChars(ch) === "") continue; // control / zero-width → dropped
-    const folded = normalizeHomoglyphs(ch).normalize("NFKC");
+    // NFKC folds fullwidth/compatibility homoglyphs; NFKD then re-splits any
+    // base+mark and we drop the marks, so an interleaved-diacritic secret
+    // collapses to the detectable bare run. A char that IS only a combining
+    // mark folds to "" and is dropped (no output index → not in the map).
+    const folded = normalizeHomoglyphs(ch)
+      .normalize("NFKC")
+      .normalize("NFKD")
+      .replace(COMBINING_MARKS_RE, "");
     for (let k = 0; k < folded.length; k++) outToOrig.push(i);
     normalized += folded;
   }
@@ -315,9 +378,11 @@ function scanKnownValues(
     for (const m of text.matchAll(scheme.re)) {
       const run = m[0];
       const index = m.index ?? 0;
-      const decoded = scheme.decode(run);
-      if (decoded === null) continue;
-      if (values.some((v) => decoded.includes(v))) {
+      // Check every byte interpretation of the run (latin1 + both-endian
+      // utf16le for base64) so a value carried as base64-of-UTF-16LE — which the
+      // latin1 view renders NUL-interleaved — is still recovered contiguously.
+      const decodedViews = runDecodeViews(scheme, run);
+      if (decodedViews.some((d) => values.some((v) => d.includes(v)))) {
         out.push(knownValueMatch(index, index + run.length));
       }
     }
@@ -460,10 +525,14 @@ export function decodedPayloadViews(text: string): string[] {
     scheme.re.lastIndex = 0;
     for (const m of text.matchAll(scheme.re)) {
       if (budget <= 0) break;
-      const decoded = scheme.decode(m[0]);
-      if (decoded === null) continue;
+      // base64 surfaces latin1 + both-endian utf16le views (a key carried as
+      // base64-of-UTF-16LE is contiguous only in the utf16le view); other
+      // schemes have a single decoding.
+      const runViews = runDecodeViews(scheme, m[0]);
+      if (runViews.length === 0) continue;
+      const decoded = runViews[0];
       budget -= decoded.length;
-      views.push(decoded);
+      for (const v of runViews) views.push(v);
       // One extra layer (base64-of-base64 / base64-of-hex), as scanEncodedViews.
       for (const inner of ENCODED_SCHEMES) {
         const fresh = new RegExp(inner.re.source, inner.re.flags);

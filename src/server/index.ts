@@ -51,17 +51,15 @@ export async function startServer(config: LAXConfig) {
   // session-to-op binding used by op_status / sidebar wiring.
   const { bootstrapProviderMatrix } = await import("../ops/provider-matrix.js");
   const { initSessionBridge, setSessionPersister } = await import("../ops/session-bridge.js");
-  const { setIdleNudgePersister } = await import("../ops/idle-nudge.js");
   bootstrapProviderMatrix();
   initSessionBridge();
   // Persist worker completion acks (session-bridge worker-completed path)
-  // AND idle-nudge proactive narrations ("Quick heads up — that op just
-  // finished…") into session.messages. Without persistence the UI shows
-  // the auto-narration but the agent's history doesn't, so a follow-up
-  // user reply like "yes" arrives at the next turn with no antecedent in
-  // context — the agent sees only its prior "Started …" reply and
-  // misinterprets the "yes" as confirming a fresh spawn. Both surfaces
-  // share the same persister shape.
+  // into session.messages. The idle-nudge proactive narration deliberately
+  // does NOT persist: it announces completion live to the user, but the
+  // agent's antecedent for a follow-up reply ("yes") comes from the
+  // pending-notifications completion block injected into the system prompt
+  // on the next turn — a provider-uniform channel that doesn't depend on a
+  // synthetic transcript message.
   const persistAssistant = (sessionId: string, content: string) => {
     try {
       const session = sessionStore.load(sessionId);
@@ -72,7 +70,6 @@ export async function startServer(config: LAXConfig) {
     } catch { /* persister must never break worker completion */ }
   };
   setSessionPersister(persistAssistant);
-  setIdleNudgePersister(persistAssistant);
 
   // Auto-resume any orchestrator runs that were in flight when LAX last
   // died. Fire-and-forget — never blocks boot. Skips if the feature flag

@@ -8,10 +8,10 @@
 
 import type { KernelClass, ToolRisk } from "../tool-registry.js";
 import type { ToolPolicyRule } from "./types.js";
-import { TOOL_POLICIES, type ToolPolicyEntry, type ToolRateLimit } from "./tool-policies.data.js";
+import { TOOL_POLICIES, type ToolPolicyEntry, type ToolRateLimit, type PathArgSpec } from "./tool-policies.data.js";
 
 export { TOOL_POLICIES } from "./tool-policies.data.js";
-export type { ToolPolicyEntry, ToolRateLimit } from "./tool-policies.data.js";
+export type { ToolPolicyEntry, ToolRateLimit, PathArgSpec } from "./tool-policies.data.js";
 
 export interface DerivedToolEntry {
   kernel: KernelClass;
@@ -49,4 +49,16 @@ export function deriveRateLimits(): Array<ToolRateLimit & { tool: string }> {
     if (entry.rateLimit) limits.push({ tool, ...entry.rateLimit });
   }
   return limits;
+}
+
+/** Tool → caller-supplied file path arg(s). SecurityLayer.evaluate() consumes
+ *  this to gate every declared path through the file-access mode, so structured
+ *  document tools (spreadsheet/document/pdf/presentation/ocr/image) are confined
+ *  identically to the raw read/write/edit tools. */
+export function derivePathArgs(): Record<string, PathArgSpec[]> {
+  const out: Record<string, PathArgSpec[]> = {};
+  for (const [tool, entry] of Object.entries(TOOL_POLICIES)) {
+    if (entry.pathArgs && entry.pathArgs.length > 0) out[tool] = entry.pathArgs;
+  }
+  return out;
 }

@@ -1,14 +1,10 @@
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type AcquiredImage, type ImageSpec } from "./shared/image-acquire.js";
-
-function resolvePath(p: string): string {
-  if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));
-  if (p === "~") return homedir();
-  return resolve(p);
-}
+// Resolve caller paths the SAME way SecurityLayer's file-access gate does
+// (project-root anchored, no ~ expansion) so the gated path == the opened path.
+import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function makePptx(): Promise<any> {

@@ -13,11 +13,24 @@ import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
 import { TOOL_CLASS_MAP } from "../ari-kernel/tool-class-map.js";
-import type { KernelClass } from "../tool-registry.js";
+import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../tool-registry.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("security.layer-core");
+
+// Extract a list of path strings from a JSON-array-string arg (pdf_merge.files).
+// A malformed value yields no paths — the tool's own JSON.parse then fails, so
+// nothing is opened; never throw out of the security gate.
+function parseJsonPathArray(raw: unknown): string[] {
+  if (typeof raw !== "string" || raw.length === 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Security layer that evaluates tool calls before execution.
@@ -243,26 +256,19 @@ export class SecurityLayer {
 
     let decision: SecurityDecision;
 
-    // Per-tool explicit cases handle the tools whose ARGUMENTS carry the
-    // routing signal SecurityLayer needs to gate (path, command, url).
-    // Everything else falls through to class-based dispatch on the
-    // kernel taxonomy declared in src/tool-registry.ts.
+    // Tools whose ARGUMENTS carry the routing signal (command, url) get an
+    // explicit case; everything else falls to kernel-class dispatch. File sinks
+    // are gated DECLARATIVELY: any tool opening a caller path declares it in
+    // TOOL_PATH_ARGS, and every declared arg runs the same evaluateFileAccess
+    // gate — covering the raw fs tools AND the structured-document tools
+    // (spreadsheet/document/presentation/pdf/ocr/image/search) under ONE
+    // boundary, closing the bypass where office tools (classed "internal")
+    // reached the filesystem without ever hitting the file-access mode.
+    const pathArgs = TOOL_PATH_ARGS[toolName];
     if (toolName === "browser") {
       decision = this.evaluateBrowser(args);
-    } else if (
-      toolName === "read" ||
-      toolName === "write" ||
-      toolName === "edit" ||
-      toolName === "delete_file"
-    ) {
-      decision = evaluateFileAccess(
-        this.workspace,
-        this.fileAccessMode,
-        (rp, sid) => this.isInAllowedPaths(rp, sid),
-        toolName,
-        String(args.path || ""),
-        ctx.sessionId,
-      );
+    } else if (pathArgs) {
+      decision = this.evaluatePathArgs(pathArgs, args, ctx);
     } else if (toolName === "bash") {
       decision = evaluateShellCommand(String(args.command || ""));
     } else if (toolName === "web_fetch" || toolName === "http_request") {
@@ -280,6 +286,41 @@ export class SecurityLayer {
 
     this.auditLog.push({ timestamp: Date.now(), tool: toolName, decision });
     return decision;
+  }
+
+  /**
+   * Gate every declared file-path argument through the file-access mode — the
+   * single confinement boundary for ALL file sinks (raw fs tools and structured-
+   * document tools alike), so the mode means the same thing whichever tool opens
+   * the file. One blocked path blocks the call. No TOCTOU: the tools resolve the
+   * raw arg via resolveAgentPath and evaluateFileAccess re-derives the identical
+   * absolute path, so the validated path is byte-for-byte the opened path.
+   */
+  private evaluatePathArgs(
+    specs: readonly PathArgSpec[],
+    args: Record<string, unknown>,
+    ctx: ToolCallContext,
+  ): SecurityDecision {
+    for (const spec of specs) {
+      const raw = args[spec.arg];
+      const paths = spec.json
+        ? parseJsonPathArray(raw)
+        : typeof raw === "string" && raw.length > 0
+          ? [raw]
+          : [];
+      for (const p of paths) {
+        const decision = evaluateFileAccess(
+          this.workspace,
+          this.fileAccessMode,
+          (rp, sid) => this.isInAllowedPaths(rp, sid),
+          spec.action,
+          p,
+          ctx.sessionId,
+        );
+        if (!decision.allowed) return decision;
+      }
+    }
+    return { allowed: true, reason: "File access allowed" };
   }
 
   private evaluateBrowser(args: Record<string, unknown>): SecurityDecision {

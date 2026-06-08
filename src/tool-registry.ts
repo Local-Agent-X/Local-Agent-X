@@ -15,7 +15,9 @@
 // auditPolicyCoverage at boot (and the orphan test), not papered over by a
 // silent risk-tier fallback.
 
-import { deriveTools } from "./tool-policy/tool-policies.js";
+import { deriveTools, derivePathArgs } from "./tool-policy/tool-policies.js";
+import type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
+export type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
 
 export type KernelClass =
   | "file"
@@ -51,6 +53,11 @@ export const GATED_KERNEL_CLASSES: ReadonlySet<KernelClass> = new Set<KernelClas
 
 /** Concrete-tool taxonomy, projected from the unified policy table. */
 export const TOOLS: Record<string, ToolEntry> = deriveTools();
+
+// Tool → caller-supplied file path arg(s). SecurityLayer routes each through
+// evaluateFileAccess so the file-access mode confines EVERY file sink — not just
+// the four raw fs tools. A path-opening tool absent here bypasses confinement.
+export const TOOL_PATH_ARGS: Record<string, PathArgSpec[]> = derivePathArgs();
 
 // ── Capability classes (THE single source of truth for I/O-sink gating) ──
 //

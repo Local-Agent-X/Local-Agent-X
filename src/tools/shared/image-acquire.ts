@@ -16,7 +16,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { workspacePath } from "../../config.js";
 import { dnsPinCheck } from "../../browser/guards.js";
@@ -237,17 +237,19 @@ async function fetchFromUrl(url: string): Promise<Buffer> {
 }
 
 function resolveLocalPath(source: string, workspaceRoot: string): string {
-  if (isAbsolute(source)) return resolve(source);
-  // Block path traversal: resolved file must stay under workspaceRoot.
+  // BOTH absolute and relative sources must resolve to a file UNDER the
+  // workspace. The absolute branch previously returned resolve(source) with no
+  // containment check — an agent could embed ANY image file from anywhere on
+  // disk (a private photo, or past the mime gate an arbitrary file) into a
+  // generated document, side-stepping the file-access boundary that gates the
+  // document's own path. This helper's contract is "local image, relative to
+  // workspaceRoot"; confine both forms to honor it. (External images stay
+  // reachable via http(s):// URLs, which route through the egress gate.)
   const base = resolve(workspaceRoot);
-  const resolved = resolve(base, source);
   const baseWithSep = base.endsWith(sep) ? base : base + sep;
+  const resolved = isAbsolute(source) ? resolve(source) : resolve(base, source);
   if (resolved !== base && !resolved.startsWith(baseWithSep)) {
-    throw new Error(`Path traversal blocked for "${source}" — must resolve under ${base}`);
-  }
-  // Defensive: normalize and check no leading ".." escapes after normalization.
-  if (normalize(source).split(sep).includes("..") && !resolved.startsWith(baseWithSep) && resolved !== base) {
-    throw new Error(`Path traversal blocked for "${source}"`);
+    throw new Error(`Path traversal blocked for "${source}" — image must resolve under the workspace (${base})`);
   }
   return resolved;
 }

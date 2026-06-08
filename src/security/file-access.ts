@@ -169,13 +169,19 @@ export function evaluateFileAccess(
       // Reads: check based on mode
       const projectRoot = resolve(workspace, "..");
       const laxDir = resolve(homeDir, ".lax");
+      const inWorkspace = !relative(workspace, realPath).startsWith("..");
       const inProject = !relative(projectRoot, realPath).startsWith("..");
       const inLax = !relative(laxDir, realPath).startsWith("..");
       const inExtraAllowed = allowedPathCheck(realPath, sessionId);
 
       if (fileAccessMode === "workspace") {
-        if (!inProject && !inLax && !inExtraAllowed) {
-          return { allowed: false, reason: "Blocked: workspace mode — reads restricted to project directory only. Change to 'common' mode in Settings to access Downloads, Documents, etc.", userHint: USER_HINTS.fileSystem };
+        // Workspace-only is the WORKSPACE folder itself + everything under it,
+        // plus the agent's own data dir (~/.lax: memory/config) and any session
+        // worktree. NOT the workspace's PARENT — a user who points the workspace
+        // at e.g. C:\Users\me\workspace must not thereby expose all of
+        // C:\Users\me. (Children of the workspace are reachable via inWorkspace.)
+        if (!inWorkspace && !inLax && !inExtraAllowed) {
+          return { allowed: false, reason: "Blocked: workspace mode — reads restricted to the workspace folder only. Change to 'common' mode in Settings to access Downloads, Documents, etc.", userHint: USER_HINTS.fileSystem };
         }
       } else {
         const inUserDir = userContentDirs(homeDir).some((d) => !relative(d, realPath).startsWith(".."));

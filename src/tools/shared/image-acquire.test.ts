@@ -43,10 +43,10 @@ describe("acquireImages", () => {
     expect(out).toEqual([]);
   });
 
-  it("reads a local PNG by absolute path", async () => {
+  it("reads a local PNG by absolute path (under the workspace)", async () => {
     const p = join(workspaceRoot, "tiny.png");
     writeFileSync(p, PNG_1x1);
-    const [img] = await acquireImages([{ source: p }]);
+    const [img] = await acquireImages([{ source: p }], { workspaceRoot });
     expect(img.mimeType).toBe("image/png");
     expect(img.width).toBe(1);
     expect(img.height).toBe(1);
@@ -56,10 +56,26 @@ describe("acquireImages", () => {
   it("reads a local JPEG and parses dimensions", async () => {
     const p = join(workspaceRoot, "tiny.jpg");
     writeFileSync(p, JPEG_2x3);
-    const [img] = await acquireImages([{ source: p }]);
+    const [img] = await acquireImages([{ source: p }], { workspaceRoot });
     expect(img.mimeType).toBe("image/jpeg");
     expect(img.width).toBe(2);
     expect(img.height).toBe(3);
+  });
+
+  // The closed bypass: an ABSOLUTE path OUTSIDE the workspace must be refused,
+  // so an agent can't embed an arbitrary on-disk image into a generated
+  // document to side-step the file-access boundary. (Previously the absolute
+  // branch returned the path unchecked.)
+  it("blocks an absolute path outside the workspace", async () => {
+    const outside = join(tmpdir(), "img-acq-outside.png");
+    writeFileSync(outside, PNG_1x1);
+    try {
+      await expect(
+        acquireImages([{ source: outside }], { workspaceRoot }),
+      ).rejects.toThrow(/under the workspace|traversal blocked/i);
+    } finally {
+      try { rmSync(outside, { force: true }); } catch {}
+    }
   });
 
   it("resolves relative paths under workspaceRoot", async () => {
@@ -82,14 +98,14 @@ describe("acquireImages", () => {
   it("throws on bad MIME", async () => {
     const p = join(workspaceRoot, "not-image.txt");
     writeFileSync(p, "hello world");
-    await expect(acquireImages([{ source: p }])).rejects.toThrow(/unsupported or undetectable type/);
+    await expect(acquireImages([{ source: p }], { workspaceRoot })).rejects.toThrow(/unsupported or undetectable type/);
   });
 
   it("throws when bytes exceed maxBytes", async () => {
     const p = join(workspaceRoot, "tiny2.png");
     writeFileSync(p, PNG_1x1);
     await expect(
-      acquireImages([{ source: p }], { maxBytes: 8 }),
+      acquireImages([{ source: p }], { maxBytes: 8, workspaceRoot }),
     ).rejects.toThrow(/exceeds size cap/);
   });
 
@@ -103,7 +119,7 @@ describe("acquireImages", () => {
   it("forwards source and caption fields", async () => {
     const p = join(workspaceRoot, "tiny3.png");
     writeFileSync(p, PNG_1x1);
-    const [img] = await acquireImages([{ source: p, caption: "hello" }]);
+    const [img] = await acquireImages([{ source: p, caption: "hello" }], { workspaceRoot });
     expect(img.source).toBe(p);
     expect(img.caption).toBe("hello");
   });

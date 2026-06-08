@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import { createLogger } from "../logger.js";
+// Resolve caller paths the SAME way SecurityLayer's file-access gate does
+// (project-root anchored, no ~ expansion) so the gated path == the opened path.
+import { resolveAgentPath } from "../workspace/paths.js";
 
 const logger = createLogger("tools.vision");
 
@@ -20,10 +22,9 @@ export const viewImageTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
-    const { resolve } = await import("node:path");
     const { readFileSync, existsSync } = await import("node:fs");
 
-    const filePath = resolve(String(args.path));
+    const filePath = resolveAgentPath(String(args.path));
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
 
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
@@ -67,10 +68,9 @@ export const sendVideoTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
-    const { resolve } = await import("node:path");
     const { existsSync, statSync } = await import("node:fs");
 
-    const filePath = resolve(String(args.path || ""));
+    const filePath = resolveAgentPath(String(args.path || ""));
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
 
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
@@ -254,7 +254,7 @@ export const ocrTool: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const filePath = resolve(String(args.path));
+      const filePath = resolveAgentPath(String(args.path));
       if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
       const { recognizeTextNative, recognizeText } = await import("./ocr-tool.js");
       let result;

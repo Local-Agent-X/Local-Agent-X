@@ -8,19 +8,13 @@ type Cell = ExcelJSTypes.Cell;
 type CellValue = ExcelJSTypes.CellValue;
 type CellFormulaValue = ExcelJSTypes.CellFormulaValue;
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
 import { verifyWriteLanded } from "./verify.js";
-
-// ── Path helper ──
-
-function resolvePath(p: string): string {
-  if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));
-  if (p === "~") return homedir();
-  return resolve(p);
-}
+// Resolve caller paths the SAME way SecurityLayer's file-access gate does
+// (project-root anchored, no ~ expansion) so the gated path == the opened path.
+import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 
 // ── Helpers ──
 

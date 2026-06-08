@@ -6,6 +6,7 @@ import { SecurityLayer } from "./layer-core.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
 import { evaluateWebFetch } from "./network-policy.js";
+import { TOOL_PATH_ARGS } from "../tool-registry.js";
 
 // All tests build a SecurityLayer with an explicit fileAccessMode so the
 // constructor doesn't read ~/.lax/security.json and produce host-dependent
@@ -768,5 +769,99 @@ describe("egress mode semantics", () => {
         expect(unlisted.allowed).toBe(true);
       },
     );
+  });
+});
+
+// The office/vision tools (spreadsheet/document/presentation/pdf/ocr/image)
+// are kernel:"internal" and historically skipped file-access confinement
+// entirely — an agent in "workspace only" mode could spreadsheet_read ANY xlsx
+// on disk (the breach: reading ~/Documents/2024 May order.xlsx outside the
+// workspace). Each now declares its caller path in TOOL_PATH_ARGS and is gated
+// through the SAME evaluateFileAccess boundary as read/write. These tests pin
+// that workspace-only is a HARD boundary for every declared file sink.
+describe("structured-document file-access confinement (TOOL_PATH_ARGS)", () => {
+  const ws = resolve(WORKSPACE);
+  // An absolute path outside the project root AND outside ~/.lax — blocked in
+  // workspace mode. The filename mirrors the real breach report. Anchored to
+  // tmpdir (not the suite's LAX dir, which is only set in beforeAll).
+  const OUTDIR = resolve(tmpdir(), "lax-confine-test");
+  const OUTSIDE = resolve(OUTDIR, "2024 May order.xlsx");
+  const INSIDE = resolve(ws, "data.xlsx");
+
+  it("workspace mode: spreadsheet_read OUTSIDE the project is blocked (the breach)", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    const d = sec.evaluate({ toolName: "spreadsheet_read", args: { file_path: OUTSIDE }, sessionId: "t" });
+    expect(d.allowed).toBe(false);
+  });
+
+  it("workspace mode: spreadsheet_read INSIDE the workspace is still allowed", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    const d = sec.evaluate({ toolName: "spreadsheet_read", args: { file_path: INSIDE }, sessionId: "t" });
+    expect(d.allowed).toBe(true);
+  });
+
+  it("spreadsheet_read verdict == evaluateFileAccess(read) — same gate, not a parallel one", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    const expected = evaluateFileAccess(ws, "workspace", () => false, "read", OUTSIDE);
+    const d = sec.evaluate({ toolName: "spreadsheet_read", args: { file_path: OUTSIDE }, sessionId: "t" });
+    expect(d.allowed).toBe(expected.allowed);
+    expect(d.reason).toBe(expected.reason);
+  });
+
+  it("workspace mode: document_create WRITE outside the workspace is blocked", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    const d = sec.evaluate({
+      toolName: "document_create",
+      args: { file_path: resolve(OUTDIR, "out.docx"), content: "x" },
+      sessionId: "t",
+    });
+    expect(d.allowed).toBe(false);
+  });
+
+  it("pdf_merge: an out-of-bounds member of the files[] JSON array blocks the call", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    const d = sec.evaluate({
+      toolName: "pdf_merge",
+      args: { files: JSON.stringify([resolve(ws, "a.pdf"), OUTSIDE]), output_path: resolve(ws, "merged.pdf") },
+      sessionId: "t",
+    });
+    expect(d.allowed).toBe(false);
+  });
+
+  it("ocr / view_image (path arg) are confined outside the workspace", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    for (const toolName of ["ocr", "view_image"]) {
+      const d = sec.evaluate({ toolName, args: { path: resolve(OUTDIR, "img.png") }, sessionId: "t" });
+      expect(d.allowed, toolName).toBe(false);
+    }
+  });
+
+  // COVERAGE: no declared file sink may bypass workspace confinement. For every
+  // tool in TOOL_PATH_ARGS, an out-of-bounds absolute path on EACH declared arg
+  // must be blocked in workspace mode. Fails the build the moment a tool
+  // declares a path arg the gate doesn't actually enforce.
+  it("every TOOL_PATH_ARGS arg blocks an out-of-bounds path in workspace mode", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    for (const [toolName, specs] of Object.entries(TOOL_PATH_ARGS)) {
+      for (const spec of specs) {
+        const val = spec.json ? JSON.stringify([OUTSIDE]) : OUTSIDE;
+        const d = sec.evaluate({ toolName, args: { [spec.arg]: val }, sessionId: "t" });
+        expect(d.allowed, `${toolName}.${spec.arg} must be confined`).toBe(false);
+      }
+    }
+  });
+
+  // Guard against silent regression: the known office/vision sinks must stay
+  // declared. Removing a declaration (re-opening the bypass) fails here.
+  it("known office/vision file sinks are declared in TOOL_PATH_ARGS", () => {
+    for (const t of [
+      "spreadsheet_read", "spreadsheet_write", "spreadsheet_edit", "spreadsheet_query",
+      "document_create", "document_read", "document_edit", "document_template",
+      "presentation_create", "presentation_add_slide", "presentation_from_outline",
+      "pdf_read", "pdf_create", "pdf_merge", "pdf_extract_tables",
+      "ocr", "view_image", "send_video",
+    ]) {
+      expect(TOOL_PATH_ARGS[t], `${t} must declare pathArgs`).toBeTruthy();
+    }
   });
 });

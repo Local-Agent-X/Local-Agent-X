@@ -1,6 +1,5 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { PDFParse } from "pdf-parse";
 // @ts-expect-error — no type declarations for pdfkit
 import PDFDocument from "pdfkit";
@@ -8,14 +7,9 @@ import { PDFDocument as PDFLibDocument } from "pdf-lib";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
 import { verifyWriteLanded } from "./verify.js";
-
-// ── Path helper ──
-
-function resolvePath(p: string): string {
-  if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));
-  if (p === "~") return homedir();
-  return resolve(p);
-}
+// Resolve caller paths the SAME way SecurityLayer's file-access gate does
+// (project-root anchored, no ~ expansion) so the gated path == the opened path.
+import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 
 // ── Helpers ──
 

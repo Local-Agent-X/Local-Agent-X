@@ -30,6 +30,25 @@ export interface ToolRateLimit {
   action: "block" | "warn" | "throttle";
 }
 
+// A caller-supplied filesystem path that a tool opens. Declaring it here is
+// what subjects the tool to the file-access mode (workspace/common/unrestricted)
+// — SecurityLayer.evaluate() runs EVERY declared arg through evaluateFileAccess
+// before dispatch, so the mode is a uniform hard boundary across every file sink
+// (raw read/write, spreadsheet, document, presentation, pdf, ocr, image, search)
+// rather than just the four raw fs tools. A tool that opens a path WITHOUT a
+// declaration here silently bypasses confinement — that was the office-doc
+// breach. The coverage test in tool-policies.test.ts guards the known sinks.
+export interface PathArgSpec {
+  /** Argument name holding the path (e.g. "file_path", "path", "output_path"). */
+  arg: string;
+  /** Action token handed to evaluateFileAccess. "write"/"edit" trigger write-
+   *  confinement + core-file protection; "read"/"delete_file" gate as a read. */
+  action: "read" | "write" | "edit" | "delete_file";
+  /** Arg value is a JSON-array string of paths (pdf_merge.files). Each element
+   *  is gated independently. */
+  json?: boolean;
+}
+
 export interface ToolPolicyEntry {
   /** Present on concrete tools — feeds TOOLS / TOOL_CLASS_MAP / TOOL_RISK. */
   kernel?: KernelClass;
@@ -39,6 +58,9 @@ export interface ToolPolicyEntry {
   rules?: Array<Omit<ToolPolicyRule, "tool">>;
   /** Sliding-window rate cap (was DEFAULT_LIMITS in tool-execution/rate-limiter.ts). */
   rateLimit?: ToolRateLimit;
+  /** Caller-supplied file path arg(s) this tool opens — gated through the file-
+   *  access mode by SecurityLayer. See PathArgSpec. */
+  pathArgs?: PathArgSpec[];
 }
 
 export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
@@ -62,9 +84,10 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   process_list:     { kernel: "shell",    risk: "safe" },
 
   // ── Raw filesystem ──
-  read:        { kernel: "file", risk: "safe", rules: [{ id: "allow-read", decision: "allow", reason: "File read (path-checked by SecurityLayer)", priority: 50 }] },
+  read:        { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-read", decision: "allow", reason: "File read (path-checked by SecurityLayer)", priority: 50 }] },
   write: {
     kernel: "file", risk: "workspace-write",
+    pathArgs: [{ arg: "path", action: "write" }],
     rateLimit: { maxCalls: 50, windowMs: 60_000, action: "warn" },
     rules: [
       { id: "deny-write-system", decision: "deny", reason: "Blocked: cannot write to system directories", priority: 90, argMatch: { path: "C:\\Windows*" } },
@@ -74,6 +97,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   },
   edit: {
     kernel: "file", risk: "workspace-write",
+    pathArgs: [{ arg: "path", action: "edit" }],
     rules: [
       { id: "deny-edit-system", decision: "deny", reason: "Blocked: cannot edit system files", priority: 90, argMatch: { path: "C:\\Windows*" } },
       { id: "deny-edit-node-modules", decision: "deny", reason: "Blocked: do not edit directly in node_modules", priority: 80, argMatch: { path: "*node_modules*" } },
@@ -82,11 +106,11 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   },
   // delete_file is the path-bounded alternative to `bash rm` — single file
   // per call, directories refused, workspace-bounded by SecurityLayer.
-  delete_file: { kernel: "file", risk: "destructive", rules: [{ id: "allow-delete-file", decision: "allow", reason: "Single-file delete (path-checked by SecurityLayer, directories refused)", priority: 50 }] },
-  glob:        { kernel: "file", risk: "safe", rules: [{ id: "allow-glob", decision: "allow", reason: "File pattern search (read-only)", priority: 50 }] },
-  grep:        { kernel: "file", risk: "safe", rules: [{ id: "allow-grep", decision: "allow", reason: "Content search (read-only)", priority: 50 }] },
-  view_image:  { kernel: "file", risk: "safe", rules: [{ id: "allow-view-image", decision: "allow", reason: "Image viewing (path-checked)", priority: 50 }] },
-  send_video:  { kernel: "file", risk: "safe", rules: [{ id: "allow-send-video", decision: "allow", reason: "Sends a local video to the user over their own bridge (path-checked read)", priority: 50 }] },
+  delete_file: { kernel: "file", risk: "destructive", pathArgs: [{ arg: "path", action: "delete_file" }], rules: [{ id: "allow-delete-file", decision: "allow", reason: "Single-file delete (path-checked by SecurityLayer, directories refused)", priority: 50 }] },
+  glob:        { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-glob", decision: "allow", reason: "File pattern search (read-only)", priority: 50 }] },
+  grep:        { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-grep", decision: "allow", reason: "Content search (read-only)", priority: 50 }] },
+  view_image:  { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-view-image", decision: "allow", reason: "Image viewing (path-checked)", priority: 50 }] },
+  send_video:  { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-send-video", decision: "allow", reason: "Sends a local video to the user over their own bridge (path-checked read)", priority: 50 }] },
   ari_file:    { kernel: "internal", risk: "workspace-write" },
 
   // ── Network ──
@@ -265,7 +289,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   generate_video: { kernel: "internal", risk: "workspace-write", rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
   camera_capture: { kernel: "internal", risk: "workspace-write" },
   screen_capture: { kernel: "internal", risk: "workspace-write" },
-  ocr:            { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction", priority: 50 }] },
+  ocr:            { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction", priority: 50 }] },
 
   // ── Apps (app_* glob) ──
   app_create:      { kernel: "internal", risk: "workspace-write" },
@@ -335,22 +359,26 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   enter_plan_mode: { kernel: "internal", risk: "safe", rules: [{ id: "allow-enter-plan", decision: "allow", reason: "Enter read-only plan mode", priority: 50 }] },
   exit_plan_mode:  { kernel: "internal", risk: "safe", rules: [{ id: "allow-exit-plan", decision: "allow", reason: "Exit plan mode", priority: 50 }] },
 
-  // ── Structured workspace documents (bounded by SecurityLayer) ──
-  spreadsheet_read:          { kernel: "internal", risk: "safe" },
-  spreadsheet_write:         { kernel: "internal", risk: "workspace-write" },
-  spreadsheet_edit:          { kernel: "internal", risk: "workspace-write" },
-  spreadsheet_query:         { kernel: "internal", risk: "safe" },
-  document_create:           { kernel: "internal", risk: "workspace-write" },
-  document_edit:             { kernel: "internal", risk: "workspace-write" },
-  document_read:             { kernel: "internal", risk: "safe" },
-  document_template:         { kernel: "internal", risk: "safe" },
-  presentation_create:       { kernel: "internal", risk: "workspace-write" },
-  presentation_add_slide:    { kernel: "internal", risk: "workspace-write" },
-  presentation_from_outline: { kernel: "internal", risk: "workspace-write" },
-  pdf_create:                { kernel: "internal", risk: "workspace-write" },
-  pdf_read:                  { kernel: "internal", risk: "safe" },
-  pdf_extract_tables:        { kernel: "internal", risk: "safe" },
-  pdf_merge:                 { kernel: "internal", risk: "workspace-write" },
+  // ── Structured workspace documents ──
+  // kernel:"internal" = no kernel-side taint/grant pipeline; file-access-mode
+  // confinement is enforced by SecurityLayer via the pathArgs declarations
+  // below (these tools open CALLER-supplied paths — without a declaration they
+  // bypassed the workspace boundary entirely, the office-doc breach).
+  spreadsheet_read:          { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
+  spreadsheet_write:         { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
+  spreadsheet_edit:          { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
+  spreadsheet_query:         { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
+  document_create:           { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
+  document_edit:             { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
+  document_read:             { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
+  document_template:         { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "template_path", action: "read" }, { arg: "output_path", action: "write" }] },
+  presentation_create:       { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
+  presentation_add_slide:    { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
+  presentation_from_outline: { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
+  pdf_create:                { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
+  pdf_read:                  { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
+  pdf_extract_tables:        { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
+  pdf_merge:                 { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "files", action: "read", json: true }, { arg: "output_path", action: "write" }] },
 
   // ── Glob-family rules (cover concrete tools above + tools registered
   //    outside TOOLS). No kernel/risk — these are policy patterns only. ──

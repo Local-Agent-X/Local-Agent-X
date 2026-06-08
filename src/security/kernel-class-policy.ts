@@ -99,11 +99,16 @@ export function evaluateByKernelClass(
     }
 
     case "file":
-      // Non-path file tools (glob, grep, view_image, ari_file). Tools
-      // with a `path` arg are handled via the explicit case above.
+      // Every file-class tool opens a caller-supplied path, so it MUST declare
+      // its path arg(s) in TOOL_PATH_ARGS — SecurityLayer.evaluate() then gates
+      // them through evaluateFileAccess BEFORE class dispatch, and the call
+      // never reaches here. Arriving here means a file-class tool shipped
+      // without a pathArgs declaration: that is exactly the confinement bypass
+      // this refactor closed, so fail closed rather than rubber-stamp it.
       return {
-        allowed: true,
-        reason: `${toolName}: file-class tool without explicit path gate`,
+        allowed: false,
+        reason: `Blocked: file-class tool "${toolName}" has no declared path arg — add pathArgs in src/tool-policy/tool-policies.data.ts so its file access is confined.`,
+        userHint: USER_HINTS.fileSystem,
       };
 
     case "database": {

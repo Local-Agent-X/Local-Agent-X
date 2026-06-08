@@ -89,13 +89,21 @@ export interface CliBuildRunnerResult {
 
 export type CliBuildRunner = (input: CliBuildRunnerInput) => Promise<CliBuildRunnerResult>;
 
+// The ChatGPT subscription endpoint caps a single response's output, so codex
+// emitting a whole large file in one write/edit gets truncated and dropped.
+// Steer it to build the file incrementally from the first turn. Only codex
+// needs this — other in-canonical providers have no such cap. The codex.ts
+// empty-turn retry is the backstop if it still over-reaches once.
+const CODEX_INCREMENTAL_NOTE =
+  "\n\nOUTPUT LIMIT: on this provider a single tool call's output is capped — emitting a whole large file in one `write` or `edit` gets truncated. Build the file up in steps: `write` a compact index.html first (structure + base styles), then add styles, scripts, and sections with separate `edit` calls. Keep each tool call's content modest (a few KB).";
+
 export async function createAppBuildAdapter(opts: AppBuildAdapterOptions): Promise<Adapter> {
   if (opts.strategy === "cli-subprocess") {
     return new CliBuildAdapter(opts);
   }
   const factory = opts.providerAdapterFactory ?? defaultProviderAdapterFactory;
   return factory(opts.provider, {
-    systemPrompt: opts.systemPrompt,
+    systemPrompt: opts.provider === "codex" ? opts.systemPrompt + CODEX_INCREMENTAL_NOTE : opts.systemPrompt,
     sessionId: opts.sessionId,
     model: opts.model,
   });

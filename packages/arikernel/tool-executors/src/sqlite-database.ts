@@ -122,7 +122,12 @@ export class SqliteDatabaseExecutor implements ToolExecutor {
 		if (selectedCols.length > MAX_COLUMNS) {
 			return this.fail(callId, start, `Too many columns (max ${MAX_COLUMNS})`);
 		}
-		if (selectedCols[0] !== "*") {
+		// A bare `*` as the SOLE column is legitimate (SELECT *). Any other shape
+		// — including `["*", <payload>]` — must have EVERY column validated against
+		// the identifier allowlist; a leading `*` must NOT short-circuit per-column
+		// validation, or a second token injects an unvalidated SELECT-clause string.
+		const isBareStar = selectedCols.length === 1 && selectedCols[0] === "*";
+		if (!isBareStar) {
 			for (const col of selectedCols) {
 				const colErr = validateIdentifier(col, "column");
 				if (colErr) return this.fail(callId, start, colErr);

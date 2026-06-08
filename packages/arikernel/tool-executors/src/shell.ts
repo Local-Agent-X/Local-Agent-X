@@ -273,24 +273,34 @@ function spawnSafe(
 	options: { timeout: number; cwd: string; maxBuffer: number },
 ): Promise<{ stdout: string; stderr: string }> {
 	return new Promise((resolve, reject) => {
-		// SECURITY: Sanitize environment — strip known secret-carrying variables
-		// to prevent leaking sidecar credentials to child processes.
-		const sanitizedEnv = { ...process.env };
-		const SECRET_ENV_PATTERNS = [
-			"SECRET",
-			"TOKEN",
-			"KEY",
-			"PASSWORD",
-			"CREDENTIAL",
-			"AUTH",
-			"API_KEY",
-			"PRIVATE",
-			"SIGNING",
-		];
-		for (const key of Object.keys(sanitizedEnv)) {
-			const upper = key.toUpperCase();
-			if (SECRET_ENV_PATTERNS.some((p) => upper.includes(p))) {
-				delete sanitizedEnv[key];
+		// SECURITY: Build the child environment from an ALLOWLIST of known-safe
+		// variables — NOT a denylist. A substring denylist only has to miss one
+		// secret-shaped name (DATABASE_URL, AWS_SECRET_ACCESS_KEY without the
+		// matched substring, arbitrary sidecar creds) to leak it to the child.
+		// Anything not explicitly listed is dropped; the full process.env is
+		// never passed. Mirrors the canonical allowlist in
+		// src/tools/shell-tools.ts `buildSanitizedEnv` (SAFE_ENV_KEYS) — this
+		// package can't import from src/, so the safe set is duplicated here.
+		const SAFE_ENV_KEYS = new Set([
+			"PATH",
+			"HOME",
+			"USER",
+			"LOGNAME",
+			"LANG",
+			"LC_ALL",
+			"LC_CTYPE",
+			"TERM",
+			"TMPDIR",
+			"SHELL",
+			"PWD",
+		]);
+		const sanitizedEnv: Record<string, string> = {};
+		for (const [key, value] of Object.entries(process.env)) {
+			if (value === undefined) continue;
+			// LC_* locale variables are safe (LC_NUMERIC, LC_TIME, …); allow the
+			// whole family alongside the explicitly-named LC_ALL / LC_CTYPE.
+			if (SAFE_ENV_KEYS.has(key) || key.startsWith("LC_")) {
+				sanitizedEnv[key] = value;
 			}
 		}
 

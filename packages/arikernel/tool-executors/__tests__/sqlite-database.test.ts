@@ -185,6 +185,34 @@ describe("SqliteDatabaseExecutor", () => {
 		expect(result.error).toMatch(/invalid characters/i);
 	});
 
+	it("accepts a sole '*' as SELECT-all", async () => {
+		const result = await executor.execute(
+			makeToolCall("query", { table: "users", columns: ["*"] }),
+		);
+		expect(result.success).toBe(true);
+		expect((result.data as { rowCount: number }).rowCount).toBe(3);
+	});
+
+	it("accepts a list of valid identifier columns", async () => {
+		const result = await executor.execute(
+			makeToolCall("query", { table: "users", columns: ["name", "email"] }),
+		);
+		expect(result.success).toBe(true);
+		const data = result.data as { rows: Array<{ name: string; email: string }> };
+		expect(data.rows[0]).toEqual({ name: "alice", email: "alice@example.com" });
+	});
+
+	it("rejects a payload column smuggled after a leading '*' (no validation skip)", async () => {
+		const result = await executor.execute(
+			makeToolCall("query", {
+				table: "users",
+				columns: ["*", "(SELECT password FROM secrets)"],
+			}),
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toMatch(/invalid characters/i);
+	});
+
 	it("rejects WHERE key with injection", async () => {
 		const result = await executor.execute(
 			makeToolCall("query", {

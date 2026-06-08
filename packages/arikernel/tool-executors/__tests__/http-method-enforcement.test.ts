@@ -209,6 +209,41 @@ describe("HTTP method enforcement", () => {
 		);
 	});
 
+	// ── Protocol allowlist (http/https only) ──────────────────────────────────
+
+	it("accepts http: URLs", async () => {
+		mockSsrfSafeRequest.mockResolvedValue(mockOkResponse());
+		const executor = new HttpExecutor();
+		const result = await executor.execute(
+			makeToolCall({ action: "get", parameters: { url: "http://example.com/page" } }),
+		);
+		expect(result.success).toBe(true);
+		expect(mockSsrfSafeRequest).toHaveBeenCalled();
+	});
+
+	it("accepts https: URLs", async () => {
+		mockSsrfSafeRequest.mockResolvedValue(mockOkResponse());
+		const executor = new HttpExecutor();
+		const result = await executor.execute(
+			makeToolCall({ action: "get", parameters: { url: "https://example.com/page" } }),
+		);
+		expect(result.success).toBe(true);
+		expect(mockSsrfSafeRequest).toHaveBeenCalled();
+	});
+
+	it.each(["gopher://example.com/_", "file:///etc/passwd", "ftp://example.com/x"])(
+		"rejects disallowed protocol %s before any request runs",
+		async (url) => {
+			const executor = new HttpExecutor();
+			const result = await executor.execute(
+				makeToolCall({ action: "get", parameters: { url } }),
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("not allowed");
+			expect(mockSsrfSafeRequest).not.toHaveBeenCalled();
+		},
+	);
+
 	it("action=put sends PUT, not overridable", async () => {
 		mockSsrfSafeRequest.mockResolvedValue(mockOkResponse());
 		const executor = new HttpExecutor();

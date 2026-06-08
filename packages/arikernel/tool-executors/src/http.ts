@@ -14,6 +14,14 @@ const MAX_URL_LENGTH = 2048;
 /** Maximum number of redirects to follow. */
 const MAX_REDIRECTS = 5;
 
+/**
+ * URL schemes this executor may dispatch. Strictly `http:`/`https:` — anything
+ * else (gopher:, file:, ftp:, data:, dict:, …) is rejected before any request
+ * or SSRF logic runs, since the SSRF/DNS-pinning layer only reasons about
+ * HTTP(S) and exotic schemes are classic SSRF / local-file exfil vectors.
+ */
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
+
 /** HTTP methods that must not carry a request body (RFC 9110 §9.3.1, §9.3.2). */
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
@@ -85,6 +93,33 @@ export class HttpExecutor implements ToolExecutor {
 				start,
 				undefined,
 				`URL exceeds maximum length (${MAX_URL_LENGTH} chars). Possible data exfiltration attempt.`,
+			);
+			return { ...result, taintLabels: [webTaintLabel(url)] };
+		}
+
+		// Protocol allowlist — reject non-HTTP(S) schemes (gopher/file/ftp/data/…)
+		// BEFORE any request or SSRF logic. Parsed here with the same URL parser
+		// the SSRF layer uses downstream; an unparseable URL is rejected too.
+		let parsedProtocol: string;
+		try {
+			parsedProtocol = new URL(url).protocol;
+		} catch {
+			const result = makeResult(
+				toolCall.id,
+				false,
+				start,
+				undefined,
+				`Invalid URL: '${url}'.`,
+			);
+			return { ...result, taintLabels: [webTaintLabel(url)] };
+		}
+		if (!ALLOWED_PROTOCOLS.has(parsedProtocol)) {
+			const result = makeResult(
+				toolCall.id,
+				false,
+				start,
+				undefined,
+				`URL protocol '${parsedProtocol}' is not allowed. Only http: and https: are permitted.`,
 			);
 			return { ...result, taintLabels: [webTaintLabel(url)] };
 		}

@@ -88,15 +88,6 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     } catch (e) { json(500, { error: `Install failed: ${safeErrorMessage(e)}` }); }
     return true;
   }
-  if (method === "POST" && url.pathname === "/api/auth/anthropic/login") {
-    try {
-      const { initiateAnthropicLogin } = await import("../../auth/anthropic.js");
-      const { authUrl, promise } = initiateAnthropicLogin();
-      promise.then(() => logger.info("Anthropic login completed")).catch((e) => logger.warn("Anthropic login failed:", e.message));
-      json(200, { ok: true, authUrl });
-    } catch (e) { json(500, { error: safeErrorMessage(e) }); }
-    return true;
-  }
   if (method === "POST" && url.pathname === "/api/auth/anthropic/logout") {
     try { const { deleteAnthropicTokens } = await import("../../auth/anthropic.js"); deleteAnthropicTokens(); json(200, { ok: true }); }
     catch (e) { json(500, { error: safeErrorMessage(e) }); }

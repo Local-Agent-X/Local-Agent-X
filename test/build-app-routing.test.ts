@@ -78,8 +78,8 @@ describe("resolveBuildProvider — backend arg + settings fallback", () => {
 });
 
 describe("resolveBuildStrategy — template-driven strategy split", () => {
-  it("codex provider → cli-subprocess", () => {
-    expect(resolveBuildStrategy("codex")).toBe("cli-subprocess");
+  it("codex provider → in-canonical-sub-agent (template default; CLI dropped after gpt-5.3-codex retired)", () => {
+    expect(resolveBuildStrategy("codex")).toBe("in-canonical-sub-agent");
   });
 
   it("anthropic provider → cli-subprocess", () => {

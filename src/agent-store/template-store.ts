@@ -54,7 +54,7 @@ export class AgentTemplateStore {
   private static instance: AgentTemplateStore;
   private templates: AgentTemplate[] = [];
 
-  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateManagerModel(); this.seedDefaults(); }
+  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateAppBuilderCodexStrategy(); this.migrateManagerModel(); this.seedDefaults(); }
 
   /**
    * Strip deprecated org-membership fields from persisted templates.
@@ -101,6 +101,23 @@ export class AgentTemplateStore {
     t.updatedAt = Date.now();
     this.persist();
     logger.info("[agents] migrated app-builder template: list_directory → glob");
+  }
+
+  /**
+   * Move codex builds off the cli-subprocess path onto the in-canonical
+   * default (HTTP, like grok). The codex CLI's advantage was the tuned
+   * gpt-5.3-codex model, retired by OpenAI; gpt-5.5 in the codex CLI over-plans
+   * and overruns the build wall-clock ceiling. Dropping the persisted codex
+   * override lets it inherit `default`. anthropic keeps cli-subprocess (the
+   * claude CLI stays fast). Idempotent: no codex override → left alone.
+   */
+  private migrateAppBuilderCodexStrategy(): void {
+    const t = this.templates.find(x => x.id === "app-builder");
+    if (t?.providerStrategy?.codex !== "cli-subprocess") return;
+    delete t.providerStrategy.codex;
+    t.updatedAt = Date.now();
+    this.persist();
+    logger.info("[agents] migrated app-builder: codex build path cli-subprocess → in-canonical");
   }
 
   /**
@@ -282,7 +299,10 @@ export class AgentTemplateStore {
         allowedTools: ["write", "read", "edit", "bash", "glob"],
         icon: "🛠",
         providerStrategy: {
-          codex: "cli-subprocess",
+          // codex builds via the in-canonical default (HTTP, like grok). Its
+          // CLI advantage was the tuned gpt-5.3-codex model, retired by OpenAI;
+          // gpt-5.5 in the codex CLI over-plans and overruns the wall-clock
+          // ceiling. anthropic keeps the claude CLI — it stays fast.
           anthropic: "cli-subprocess",
           default: "in-canonical-sub-agent",
         },

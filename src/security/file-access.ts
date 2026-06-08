@@ -61,6 +61,34 @@ function realpathDeep(target: string): string {
   return target;
 }
 
+// Folder names common mode treats as the user's own content.
+const USER_FOLDER_NAMES = ["Downloads", "Documents", "Desktop", "Pictures", "Videos", "Music"];
+
+// The directories common mode allows reads from. A literal ~/<Folder> list is
+// wrong on Windows when OneDrive "Known Folder Move" is on: Documents, Desktop,
+// and Pictures are redirected to %OneDrive%\<Folder> (e.g.
+// C:\Users\me\OneDrive\Documents), so checking only ~/Documents misses the
+// user's REAL Documents and common mode wrongly blocks it — the user had to go
+// fully unrestricted just to read their own spreadsheet. OneDrive exports its
+// root via env vars (OneDrive / OneDriveConsumer / OneDriveCommercial); read
+// those and add the same folders under each root. Env-var lookups only — no
+// filesystem probing, because this runs on every file tool call. Unset on
+// non-OneDrive / non-Windows machines, so their behavior is unchanged.
+// (A non-OneDrive KFM redirect to another drive would need the known-folder
+// registry; OneDrive is the dominant case and is covered without that cost.)
+function userContentDirs(homeDir: string): string[] {
+  const roots = new Set<string>([resolve(homeDir)]);
+  for (const envVar of ["OneDrive", "OneDriveConsumer", "OneDriveCommercial"]) {
+    const root = process.env[envVar];
+    if (root && root.trim()) roots.add(resolve(root));
+  }
+  const dirs: string[] = [];
+  for (const root of roots) {
+    for (const name of USER_FOLDER_NAMES) dirs.push(resolve(root, name));
+  }
+  return dirs;
+}
+
 export function evaluateFileAccess(
   workspace: string,
   fileAccessMode: FileAccessMode,
@@ -150,10 +178,7 @@ export function evaluateFileAccess(
           return { allowed: false, reason: "Blocked: workspace mode — reads restricted to project directory only. Change to 'common' mode in Settings to access Downloads, Documents, etc.", userHint: USER_HINTS.fileSystem };
         }
       } else {
-        const userDirs = ["Downloads", "Documents", "Desktop", "Pictures", "Videos", "Music"].map(
-          (d) => resolve(homeDir, d)
-        );
-        const inUserDir = userDirs.some((d) => !relative(d, realPath).startsWith(".."));
+        const inUserDir = userContentDirs(homeDir).some((d) => !relative(d, realPath).startsWith(".."));
         if (!inProject && !inLax && !inUserDir && !inExtraAllowed) {
           return { allowed: false, reason: "Blocked: cannot read files outside project and user directories. Change to 'unrestricted' mode in Settings for full access.", userHint: USER_HINTS.fileSystem };
         }

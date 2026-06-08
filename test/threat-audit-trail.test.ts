@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { CryptoAuditTrail } from "../src/threat/audit-trail.js";
+import { CryptoAuditTrail, getSharedAuditTrail } from "../src/threat/audit-trail.js";
 
 let dataDir: string;
 
@@ -287,6 +287,41 @@ describe("CryptoAuditTrail — HMAC keyed chain + full-field coverage", () => {
     new CryptoAuditTrail(dataDir);
     writeFileSync(path, JSON.stringify(legacy) + "\n");
     expect(CryptoAuditTrail.verify(path).valid).toBe(true);
+  });
+});
+
+describe("getSharedAuditTrail — single-writer integrity (H10)", () => {
+  it("returns the SAME instance for repeated calls on the same dataDir", () => {
+    const a = getSharedAuditTrail(dataDir);
+    const b = getSharedAuditTrail(dataDir);
+    expect(a).toBe(b);
+  });
+
+  it("two writers for the same dataDir interleaved keep the chain valid", () => {
+    // Both writers resolve to the SAME shared instance, so interleaved record()
+    // calls stay on one serialized chain head. Pre-fix, two separate `new`
+    // instances at the same head wrote conflicting prevHash/seq and broke verify.
+    const w1 = getSharedAuditTrail(dataDir);
+    const w2 = getSharedAuditTrail(dataDir);
+    expect(w1).toBe(w2);
+    w1.record({ sessionId: "s", event: "x", decision: "allow", reason: "w1-a" });
+    w2.record({ sessionId: "s", event: "x", decision: "block", reason: "w2-a" });
+    w1.record({ sessionId: "s", event: "x", decision: "allow", reason: "w1-b" });
+    w2.record({ sessionId: "s", event: "x", decision: "warn", reason: "w2-b" });
+    const r = CryptoAuditTrail.verify(dailyAuditPath());
+    expect(r.valid).toBe(true);
+    expect(r.total).toBe(4);
+  });
+
+  it("proves the test has teeth: two SEPARATE `new` instances interleaved DESYNC", () => {
+    // The bug being fixed: independent instances against the same daily file each
+    // track their own head, so interleaved appends collide and verify() fails.
+    const a = new CryptoAuditTrail(dataDir);
+    const b = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "a1" });
+    b.record({ sessionId: "s", event: "x", decision: "allow", reason: "b1" });
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "a2" });
+    expect(CryptoAuditTrail.verify(dailyAuditPath()).valid).toBe(false);
   });
 });
 

@@ -133,6 +133,12 @@ function anchorPathFor(auditFilePath: string): string {
   return auditFilePath.replace(/\.jsonl$/, ".anchors.jsonl");
 }
 
+/** Today's daily-file date stamp (UTC, YYYY-MM-DD) — drives the file name and
+ *  the midnight rollover check. */
+function currentAuditDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 // ── hmac-v1 era marker ───────────────────────────────────────────────
 // Once a single hmac-v1 entry has ever been written, the audit dir is in the
 // "hmac-v1 era" and verify() MUST refuse to fall back to the unkeyed legacy
@@ -239,18 +245,38 @@ export class CryptoAuditTrail {
   private prevHash = GENESIS_PREV_HASH;
   private prevAnchor = GENESIS_ANCHOR_HASH;
   private seq = 0;
-  private filePath: string;
-  private anchorPath: string;
-  private markerPath: string;
+  private auditDir: string;
+  private fileDate: string;
+  // Assigned via resolveForDate() in the constructor (and on each daily
+  // rollover); the `!` tells TS the constructor path guarantees them.
+  private filePath!: string;
+  private anchorPath!: string;
+  private markerPath!: string;
 
   constructor(dataDir: string) {
-    const auditDir = join(dataDir, "audit");
-    if (!existsSync(auditDir)) mkdirSync(auditDir, { recursive: true, mode: 0o700 });
-    // Daily audit files
-    const date = new Date().toISOString().slice(0, 10);
-    this.filePath = join(auditDir, `${date}.jsonl`);
+    this.auditDir = join(dataDir, "audit");
+    if (!existsSync(this.auditDir)) mkdirSync(this.auditDir, { recursive: true, mode: 0o700 });
+    // Daily audit files — resolve today's file and resume its chains.
+    this.fileDate = currentAuditDate();
+    this.resolveForDate(this.fileDate);
+  }
+
+  /**
+   * Point filePath/anchorPath/markerPath at `<auditDir>/<date>.jsonl` and resume
+   * seq/prevHash/prevAnchor from that file. For a brand-new day the file does
+   * not exist yet, so the chains reset to genesis — exactly the behavior a fresh
+   * per-day instance would have. Shared with the constructor so the daily
+   * ROLLOVER path (a long-lived shared instance crossing midnight) and first-file
+   * resume use one code path.
+   */
+  private resolveForDate(date: string): void {
+    this.fileDate = date;
+    this.filePath = join(this.auditDir, `${date}.jsonl`);
     this.anchorPath = anchorPathFor(this.filePath);
     this.markerPath = markerPathFor(this.filePath);
+    this.prevHash = GENESIS_PREV_HASH;
+    this.prevAnchor = GENESIS_ANCHOR_HASH;
+    this.seq = 0;
     // Resume chain from existing file
     if (existsSync(this.filePath)) {
       try {
@@ -275,6 +301,14 @@ export class CryptoAuditTrail {
 
   /** Record an audit entry with cryptographic chaining */
   record(entry: Omit<AuditEntry, "seq" | "hash" | "prevHash" | "timestamp">): AuditEntry {
+    // Daily rollover: a long-lived (shared) instance must not keep appending to
+    // a stale date after midnight. If the calendar day has advanced, re-resolve
+    // to the new day's file and resume its chains (genesis for a brand-new day).
+    // Done synchronously before computing the entry so seq/prevHash reflect the
+    // file we're about to write.
+    const today = currentAuditDate();
+    if (today !== this.fileDate) this.resolveForDate(today);
+
     const full: AuditEntry = {
       ...entry,
       seq: this.seq++,
@@ -412,4 +446,44 @@ export class CryptoAuditTrail {
   getRecent(count: number = 20): AuditEntry[] {
     return this.entries.slice(-count);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SHARED SINGLE-WRITER REGISTRY (finding H10)
+// ═══════════════════════════════════════════════════════════════════
+//
+// Multiple independent writers (declassify in data-lineage, canary-exfil in
+// canaries, every per-turn ThreatEngine) all target the SAME daily audit file.
+// Each `new CryptoAuditTrail` only resumes the chain head in its constructor,
+// then mutates its OWN in-memory seq/prevHash and blind-appends. Two live
+// instances at the same head write conflicting prevHash/seq (and colliding
+// anchor counts), permanently breaking verify() during NORMAL operation — a
+// denial-of-integrity an attacker can trigger by interleaving writes.
+//
+// Fix: hand every writer for a given audit location the SAME instance. record()
+// is synchronous (no await between reading prevHash and appending), so Node's
+// single thread naturally serializes interleaved record() calls on one shared
+// instance — no lock needed.
+//
+// Concurrency honesty: this closes the SAME-PROCESS multi-instance desync, which
+// is the actual bug. The app writes audit from a single process, so that's the
+// whole exposure. It does NOT add cross-PROCESS file locking — if two OS
+// processes ever wrote this file concurrently they could still race the append;
+// that's out of scope here (no flock) because no such second writer exists.
+const sharedAuditTrails = new Map<string, CryptoAuditTrail>();
+
+/**
+ * Return the process-wide SHARED CryptoAuditTrail for `<dataDir>/audit`,
+ * constructing it once and memoizing per resolved audit location. Repeated calls
+ * for the same dataDir return the SAME object, so all writers for one daily file
+ * stay on a single serialized chain head.
+ */
+export function getSharedAuditTrail(dataDir: string): CryptoAuditTrail {
+  const key = join(dataDir, "audit");
+  let trail = sharedAuditTrails.get(key);
+  if (!trail) {
+    trail = new CryptoAuditTrail(dataDir);
+    sharedAuditTrails.set(key, trail);
+  }
+  return trail;
 }

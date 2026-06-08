@@ -28,7 +28,7 @@ import { loadSettings, reloadSettings } from "../settings.js";
 
 import { canaryPromptBlock, checkCanaries, generateCanaries, registerSessionCanaries } from "./canaries.js";
 import { classifyData, type DataLabel } from "./classification.js";
-import { CryptoAuditTrail } from "./audit-trail.js";
+import { CryptoAuditTrail, getSharedAuditTrail } from "./audit-trail.js";
 import { THREAT_SCORES, ThreatScorer, type ThreatLevel, type ThreatScorerOptions } from "./scoring.js";
 import { ToolChainAnalyzer } from "./tool-chain.js";
 
@@ -102,7 +102,11 @@ export class ThreatEngine {
   constructor(dataDir: string, sessionId: string = "default") {
     this.chain = new ToolChainAnalyzer();
     this.scorer = new ThreatScorer(readThreatScorerOptions());
-    this.audit = new CryptoAuditTrail(dataDir);
+    // Shared single-writer audit trail (finding H10): every per-turn ThreatEngine
+    // (and the read-only "audit-read" engine) targets the same daily file, so
+    // they must share ONE instance or their independent chain heads collide and
+    // break verify() during normal operation.
+    this.audit = getSharedAuditTrail(dataDir);
     this.canaries = generateCanaries();
     this.sessionId = sessionId;
     // Publish this session's canaries to the shared registry so the egress

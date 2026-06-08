@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { scanForSecrets, decodedPayloadViews } from "./security/secret-scanner.js";
 import { getLaxDir } from "./lax-data-dir.js";
-import { CryptoAuditTrail } from "./threat/audit-trail.js";
+import { CryptoAuditTrail, getSharedAuditTrail } from "./threat/audit-trail.js";
 
 export type TaintSource = "sensitive_file" | "secret" | "memory" | "web" | "user_data";
 
@@ -252,7 +252,11 @@ export interface DeclassifyResult {
 // the operator's audit log. Overridable for tests via _setDeclassifyAuditTrail.
 let declassifyAuditTrail: CryptoAuditTrail | null = null;
 function getDeclassifyAuditTrail(): CryptoAuditTrail {
-  if (!declassifyAuditTrail) declassifyAuditTrail = new CryptoAuditTrail(getLaxDir());
+  // Shared single-writer instance (finding H10): all writers for the canonical
+  // daily file get the SAME CryptoAuditTrail so interleaved record() calls stay
+  // on one serialized chain head. An explicitly-injected test trail still wins
+  // (it sets declassifyAuditTrail non-null before this getter runs).
+  if (!declassifyAuditTrail) declassifyAuditTrail = getSharedAuditTrail(getLaxDir());
   return declassifyAuditTrail;
 }
 

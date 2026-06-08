@@ -83,6 +83,16 @@ contextBridge.exposeInMainWorld("desktop", {
   // File operations
   openFile: (relativePath: string) => ipcRenderer.invoke("open-file", relativePath),
 
+  // Native folder picker (Settings → Server workspace). Resolves to the chosen
+  // absolute path, or null if the user canceled.
+  selectFolder: (opts?: { title?: string; defaultPath?: string }): Promise<string | null> =>
+    ipcRenderer.invoke("select-folder", opts),
+
+  // Native OK/Cancel confirm — for the restart-required prompt on a port /
+  // workspace change. Resolves true when the user accepts.
+  confirm: (opts: { message: string; detail?: string; okLabel?: string }): Promise<boolean> =>
+    ipcRenderer.invoke("confirm", opts),
+
   // App-window chrome tinting. App pages call this with their detected
   // body background color and a contrasting symbol color; main repaints
   // the native titleBarOverlay so the OS button strip blends with the

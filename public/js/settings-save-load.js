@@ -83,11 +83,16 @@ async function loadSettings() {
     localStorage.setItem('lax_settings', JSON.stringify(s));
     const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
     set('cfg-port', s.port);
+    const portEl = document.getElementById('cfg-port');
+    if (portEl && s.port !== undefined) portEl.dataset.loaded = String(s.port);
     // Show the REAL saved workspace (e.g. the relocated Documents path), and
-    // stash it so save can tell whether the user actually changed it.
+    // stash it so a change can be detected for the confirm-restart prompt.
     set('cfg-workspace', s.workspace);
     const wsEl = document.getElementById('cfg-workspace');
     if (wsEl && s.workspace !== undefined) wsEl.dataset.loaded = s.workspace;
+    // The native folder picker only works in the desktop app — hide it in a browser.
+    const browseBtn = document.getElementById('cfg-workspace-browse');
+    if (browseBtn && !window.desktop?.isDesktop) browseBtn.style.display = 'none';
     set('cfg-provider', s.provider); set('cfg-model', s.model); set('cfg-temperature', s.temperature);
     // Store saved model and trigger provider change to populate dropdown
     const modelInput = document.getElementById('cfg-model');
@@ -112,5 +117,65 @@ async function loadSettings() {
     if (s.provider) onProviderChange(s.provider);
   } catch {}
   checkSyncStatus();
+}
+
+// ── Server fields that require a restart (workspace location, port) ──
+// Picking a new folder or committing a new port pops a confirm-restart prompt
+// right then: accept → persist + restart now (the server reboot migrates the
+// workspace and rebinds the port); cancel → revert the field. The desktop app
+// uses native dialogs + an in-place server restart; a plain browser falls back
+// to a save + a manual-restart notice.
+
+async function pickWorkspaceFolder() {
+  const wsEl = document.getElementById('cfg-workspace');
+  if (!wsEl) return;
+  if (!window.desktop?.selectFolder) {
+    alert('The folder picker is only available in the desktop app — type the workspace path manually here in the browser.');
+    return;
+  }
+  const picked = await window.desktop.selectFolder({ title: 'Choose workspace folder', defaultPath: wsEl.value || undefined });
+  if (!picked) return; // user canceled the OS picker
+  const prev = wsEl.dataset.loaded ?? wsEl.value;
+  if (picked === prev) { wsEl.value = picked; return; } // unchanged
+  wsEl.value = picked;
+  await applyServerChangeWithRestart('workspace', picked, prev, wsEl);
+}
+
+function onPortFieldChange() {
+  const el = document.getElementById('cfg-port');
+  if (!el) return;
+  const prev = el.dataset.loaded ?? String(location.port || '7007');
+  const val = (el.value || '').trim();
+  if (!val || val === prev) return; // no real change
+  applyServerChangeWithRestart('port', parseInt(val, 10), prev, el);
+}
+
+async function applyServerChangeWithRestart(kind, value, prev, el) {
+  const human = kind === 'workspace' ? 'workspace location' : 'port';
+  const detail = kind === 'workspace'
+    ? 'Local Agent X will restart and move your existing files to the new workspace.'
+    : 'Local Agent X will restart to listen on the new port.';
+  let ok;
+  if (window.desktop?.confirm) {
+    ok = await window.desktop.confirm({ message: `Apply the new ${human} and restart now?`, detail, okLabel: 'Restart now' });
+  } else {
+    ok = confirm(`Apply the new ${human}? Local Agent X must restart to take effect.`);
+  }
+  if (!ok) { el.value = prev; return; } // revert the field — change abandoned
+  try {
+    await apiPost('/api/settings', { [kind]: value });
+    el.dataset.loaded = String(value);
+  } catch (e) {
+    alert('Failed to save the new ' + human + '.');
+    el.value = prev;
+    return;
+  }
+  if (window.desktop?.restartServer) {
+    // Reboots the server child (its loadConfig migrates the workspace + rebinds
+    // the port) and reloads the window to the new port. Page reloads here.
+    await window.desktop.restartServer();
+  } else {
+    alert('Saved. Quit and relaunch Local Agent X to apply the new ' + human + '.');
+  }
 }
 

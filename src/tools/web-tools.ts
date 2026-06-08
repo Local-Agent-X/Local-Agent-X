@@ -6,7 +6,31 @@ import type { SecretsStore } from "../secrets.js";
 import { ok, err } from "./result-helpers.js";
 import { checkOutboundRequest } from "./http-egress-guard.js";
 import { getInternalAgentToken } from "../rbac.js";
-import { resolveAndPinHost } from "../security/network-policy.js";
+import { resolveAndPinHost, evaluateEgressForUrl } from "../security/network-policy.js";
+
+/** Thrown inside a redirect loop when a cross-host redirect target fails the
+ *  egress policy re-check (strict-mode allowlist bypass via 302). Carries the
+ *  policy reason so the tool can fail closed with an actionable message rather
+ *  than a generic fetch error. */
+class EgressRedirectBlocked extends Error {
+  constructor(public readonly blockedUrl: string, reason: string) {
+    super(reason);
+    this.name = "EgressRedirectBlocked";
+  }
+}
+
+/** Re-run the egress policy on a redirect target when it crosses to a new host.
+ *  Same-host redirects are not re-checked (the allowlist is host-scoped and the
+ *  origin was already gated pre-dispatch). Throws EgressRedirectBlocked if the
+ *  new host is denied. SSRF/private-IP is handled separately by the pinning
+ *  dispatcher on every hop. */
+function assertRedirectEgressAllowed(fromUrl: string, toUrl: string): void {
+  if (new URL(fromUrl).host === new URL(toUrl).host) return;
+  const decision = evaluateEgressForUrl(toUrl);
+  if (!decision.allowed) {
+    throw new EgressRedirectBlocked(toUrl, decision.reason);
+  }
+}
 
 /** Auth header for a loopback self-call to our own server, or null for any
  *  external URL (so the token never leaks off-box). Uses the least-privilege
@@ -100,6 +124,10 @@ export const webFetchTool: ToolDefinition = {
         let redirects = 0;
         while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirects < 5) {
           const location = new URL(r.headers.get("location")!, currentUrl).toString();
+          // Re-check the egress policy on a cross-host redirect: the pre-dispatch
+          // gate only validated the initial URL, so an allowlisted host could
+          // 302 to a non-allowlisted host in strict mode. Fail closed.
+          assertRedirectEgressAllowed(currentUrl, location);
           if (selfAuth && new URL(currentUrl).origin !== new URL(location).origin) selfAuth = null;
           currentUrl = location;
           r = await undiciFetch(currentUrl, {
@@ -156,6 +184,9 @@ export const webFetchTool: ToolDefinition = {
         truncated: truncated || undefined,
       });
     } catch (e) {
+      if (e instanceof EgressRedirectBlocked) {
+        return err(e.message, { url, blocked_url: e.blockedUrl, duration_ms: Date.now() - startMs });
+      }
       return err(`Fetch failed: ${(e as Error).message}`, { url, duration_ms: Date.now() - startMs });
     } finally {
       await dispatcher.close().catch(() => {});
@@ -275,6 +306,9 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
 
           while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirectCount < MAX_REDIRECTS) {
             const location = new URL(r.headers.get("location")!, currentUrl).toString();
+            // Re-check the egress policy on a cross-host redirect (strict-mode
+            // allowlist bypass via 302). Fail closed before following.
+            assertRedirectEgressAllowed(currentUrl, location);
             const origOrigin = new URL(currentUrl).origin;
             const newOrigin = new URL(location).origin;
 
@@ -360,6 +394,14 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         };
         return res.ok ? ok(output, meta) : err(output, meta);
       } catch (e) {
+        if (e instanceof EgressRedirectBlocked) {
+          return err(e.message, {
+            url,
+            method,
+            blocked_url: e.blockedUrl,
+            duration_ms: Date.now() - startMs,
+          });
+        }
         return err(`HTTP request failed: ${(e as Error).message}`, {
           url,
           method,

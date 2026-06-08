@@ -1,7 +1,10 @@
 import { promises as dns } from "node:dns";
 import { isIP } from "node:net";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("security.network-policy");
@@ -237,6 +240,94 @@ export function evaluateWebFetch(
   }
 
   return { allowed: true, reason: "Web fetch allowed" };
+}
+
+/** Egress policy config as loaded from disk, in the shape evaluateWebFetch wants. */
+export interface EgressConfig {
+  allowlist: Set<string>;
+  configured: boolean;
+  mode: EgressMode;
+  localServicePorts: Set<string>;
+}
+
+/**
+ * Load the current egress policy from `getLaxDir()`:
+ *   - egress-allowlist.json → allowlist (lowercased) + configured flag
+ *   - security.json         → egressMode + localServicePorts
+ *
+ * Mirrors the SecurityLayer constructor's load semantics exactly (same
+ * filenames, same lowercase normalization, same permissive default, same
+ * fail-soft on any read/parse error). Self-contained — it does NOT depend on
+ * a SecurityLayer instance — so it can be reused to re-check a URL outside the
+ * pre-dispatch gate (e.g. a cross-host redirect target in web-tools.ts).
+ *
+ * NOTE: intentionally a standalone loader rather than an extraction of the
+ * constructor body. The constructor sets instance fields and emits info logs
+ * as a side effect; rewiring it to consume this would be a larger, riskier
+ * change than the H5 follow-up warrants. Both paths share the same disk
+ * format, so they stay consistent by construction.
+ */
+export function loadEgressConfig(): EgressConfig {
+  const dir = getLaxDir();
+
+  let allowlist = new Set<string>();
+  let configured = false;
+  try {
+    const allowlistPath = join(dir, "egress-allowlist.json");
+    if (existsSync(allowlistPath)) {
+      const parsed = JSON.parse(readFileSync(allowlistPath, "utf-8"));
+      if (Array.isArray(parsed)) {
+        allowlist = new Set(parsed.map((d: unknown) => String(d).toLowerCase()));
+        configured = true;
+      }
+    }
+  } catch (e) {
+    logger.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
+  }
+
+  let mode: EgressMode = "permissive";
+  const localServicePorts = new Set<string>();
+  try {
+    const cfgPath = join(dir, "security.json");
+    if (existsSync(cfgPath)) {
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+      if (cfg.egressMode === "strict" || cfg.egressMode === "permissive") {
+        mode = cfg.egressMode;
+      }
+      if (Array.isArray(cfg.localServicePorts)) {
+        for (const p of cfg.localServicePorts) {
+          const n = Number(p);
+          if (Number.isInteger(n) && n > 0 && n <= 65535) localServicePorts.add(String(n));
+        }
+      }
+    }
+  } catch {}
+
+  return { allowlist, configured, mode, localServicePorts };
+}
+
+/**
+ * Re-run the egress policy against a single URL using the current on-disk
+ * config. Used by the web-tools redirect loops to re-check a cross-host
+ * redirect target against the egress allowlist BEFORE following it — the
+ * pre-dispatch SecurityLayer gate only ever saw the INITIAL url, so without
+ * this an allowlisted host could 302 to a non-allowlisted host in strict mode
+ * (egress-allowlist bypass via redirect). Fails closed: any decision that
+ * isn't `allowed` stops the redirect.
+ *
+ * selfPort defaults to "7007" (the SecurityLayer default) so a redirect that
+ * loops back to our own server still resolves as a self-call.
+ */
+export function evaluateEgressForUrl(url: string, selfPort = "7007"): SecurityDecision {
+  const cfg = loadEgressConfig();
+  return evaluateWebFetch(
+    cfg.allowlist,
+    cfg.configured,
+    selfPort,
+    url,
+    cfg.mode,
+    cfg.localServicePorts,
+  );
 }
 
 /** Resolve a hostname to a single validated public IP for connection pinning.

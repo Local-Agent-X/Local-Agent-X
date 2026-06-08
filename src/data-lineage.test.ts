@@ -224,9 +224,9 @@ describe("sticky session taint — no decay window", () => {
 });
 
 describe("detectSecretsInOutput — positive cases", () => {
-  // `kinds` now carry the CANONICAL catalog name (credential-patterns.ts) for the
-  // shapes that catalog owns, plus supplemental kinds (google-key, jwt,
-  // openai-scoped-key, private-key-block) for shapes the catalog doesn't yet cover.
+  // `kinds` carry the CANONICAL catalog name (credential-patterns.ts). The four
+  // shapes that used to live in a local supplemental set (Google keys, JWTs,
+  // OpenAI scoped keys, bare PEM markers) are now in that catalog too.
   it("matches OpenAI-style API key", () => {
     const res = detectSecretsInOutput("sk-abc123xyz456789012345");
     expect(res.matched).toBe(true);
@@ -267,7 +267,7 @@ describe("detectSecretsInOutput — positive cases", () => {
   it("matches Google API key", () => {
     const res = detectSecretsInOutput("AIza" + "a".repeat(35));
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("google-key");
+    expect(res.kinds).toContain("Google API Key");
   });
 
   it("matches JWT-shaped string", () => {
@@ -275,13 +275,13 @@ describe("detectSecretsInOutput — positive cases", () => {
     const jwt = `eyJ${seg}.eyJ${seg}.${seg}`;
     const res = detectSecretsInOutput(jwt);
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("jwt");
+    expect(res.kinds).toContain("JWT");
   });
 
   it("matches private key block markers", () => {
     const res = detectSecretsInOutput("-----BEGIN RSA PRIVATE KEY-----");
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("private-key-block");
+    expect(res.kinds).toContain("Private Key Marker (PEM)");
   });
 
   it("matches keyword-near-value heuristic", () => {
@@ -358,10 +358,10 @@ describe("openai-key pattern precision (false-positive that bricked agent runs)"
 
   it("still matches a project-scoped key shape", () => {
     // Project/service/admin keys aren't covered by the canonical "OpenAI API
-    // Key" shape (its body stops at the `-` after `proj`), so they surface via
-    // the supplemental openai-scoped-key kind.
+    // Key" shape (its body stops at the `-` after `proj`), so the catalog
+    // carries a dedicated "OpenAI Scoped Key" entry for them.
     const res = detectSecretsInOutput("sk-proj-" + "Ab12".repeat(8));
-    expect(res.kinds).toContain("openai-scoped-key");
+    expect(res.kinds).toContain("OpenAI Scoped Key");
   });
 });
 

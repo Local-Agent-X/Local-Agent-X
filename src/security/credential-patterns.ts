@@ -41,7 +41,15 @@ export interface CredentialPattern {
 export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   // ── Provider / vendor API keys ──
   { type: "api_key", name: "Anthropic API Key", regex: /\b(sk-ant-[a-zA-Z0-9_-]{20,})/g },
+  // OpenAI project/service/admin keys: a typed prefix then a CONTIGUOUS base62
+  // body. The generic "OpenAI API Key" shape below stops at the `-` after
+  // `proj`/`svcacct`/`admin`, so these scoped keys need their own entry. The
+  // contiguous body (no inner `-`/`_`) keeps a hyphenated product slug like
+  // `sk-supplement-formula-2026` from false-positiving. Listed BEFORE the
+  // generic shape so the more-specific name wins in firstMatchName ordering.
+  { type: "api_key", name: "OpenAI Scoped Key", regex: /\b(sk-(?:proj|svcacct|admin)-[A-Za-z0-9]{20,})/g },
   { type: "api_key", name: "OpenAI API Key", regex: /\b(sk-[a-zA-Z0-9]{20,})/g },
+  { type: "api_key", name: "Google API Key", regex: /\b(AIza[0-9A-Za-z_-]{35})\b/g },
   { type: "api_key", name: "xAI API Key", regex: /\b(xai-[a-zA-Z0-9]{20,})/g },
   { type: "api_key", name: "Stripe Live Key", regex: /\b(sk_live_[a-zA-Z0-9]{20,})/g },
   { type: "api_key", name: "Stripe Test Key", regex: /\b(sk_test_[a-zA-Z0-9]{20,})/g },
@@ -73,7 +81,15 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
 
   // ── Cryptographic ──
   { type: "crypto", name: "Private Key (PEM)", regex: /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----/g },
+  // Bare PEM BEGIN marker. "Private Key (PEM)" above requires a matching END
+  // block; a truncated/streamed key that shows only the header must still trip
+  // (taint + egress). A bare BEGIN-PRIVATE-KEY line is never benign content.
+  { type: "crypto", name: "Private Key Marker (PEM)", regex: /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+|DSA\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----/g },
   { type: "crypto", name: "Certificate", regex: /-----BEGIN\s+CERTIFICATE-----/g },
+  // JWT: three base64url segments. The leading `eyJ` is base64url of `{"`, so a
+  // JWT header/payload always starts there — a strong, low-FP anchor. Gates
+  // egress now too: a model-emitted JWT in an outbound body is a token leak.
+  { type: "crypto", name: "JWT", regex: /\b(eyJ[A-Za-z0-9_-]{18,}\.eyJ[A-Za-z0-9_-]{18,}\.[A-Za-z0-9_-]{18,})/g },
 
   // ── Database ──
   { type: "database", name: "Database Connection String", regex: /(?:mongodb|postgres|mysql|redis):\/\/[^\s"']{10,}/gi },

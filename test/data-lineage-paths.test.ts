@@ -151,9 +151,8 @@ describe("detectSecretsInOutput", () => {
   // Secret-shaped fixtures are assembled at runtime rather than written as
   // literals so the precommit/CI secret-scanner doesn't flag this test's diff.
   // The runtime value is identical to a real prefix; the detector sees no difference.
-  // `kinds` now carry the CANONICAL catalog name for catalog-owned shapes, plus
-  // supplemental kinds (openai-scoped-key, private-key-block) for shapes the
-  // canonical catalog doesn't yet cover.
+  // `kinds` carry the CANONICAL catalog name for every shape — the OpenAI scoped
+  // key and bare PEM marker now live in that catalog too (no supplemental set).
   it("detects an anthropic key as Anthropic API Key (specific wins over openai)", () => {
     const res = detectSecretsInOutput("key=sk-ant-" + "api03-" + "A".repeat(24));
     expect(res.matched).toBe(true);
@@ -162,11 +161,11 @@ describe("detectSecretsInOutput", () => {
   });
 
   it("detects a project-scoped openai-style key", () => {
-    // sk-proj- isn't covered by the canonical "OpenAI API Key" shape, so it
-    // surfaces via the supplemental openai-scoped-key kind.
+    // sk-proj- isn't covered by the canonical "OpenAI API Key" shape, so the
+    // catalog carries a dedicated "OpenAI Scoped Key" entry.
     const res = detectSecretsInOutput("token sk-proj-" + "ABCDEFGHIJKLMNOPQRSTUVWX");
     expect(res.matched).toBe(true);
-    expect(res.kinds).toContain("openai-scoped-key");
+    expect(res.kinds).toContain("OpenAI Scoped Key");
   });
 
   it("detects an AWS access key id", () => {
@@ -176,7 +175,7 @@ describe("detectSecretsInOutput", () => {
 
   it("detects a private key PEM block header", () => {
     const res = detectSecretsInOutput("-----BEGIN OPENSSH PRIVATE KEY-----\nabc");
-    expect(res.kinds).toContain("private-key-block");
+    expect(res.kinds).toContain("Private Key Marker (PEM)");
   });
 
   it("detects keyword-near-value (password: <long value>)", () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve, join } from "node:path";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { SecurityLayer } from "./layer-core.js";
 import { evaluateFileAccess } from "./file-access.js";
@@ -10,8 +10,18 @@ import { TOOL_PATH_ARGS } from "../tool-registry.js";
 
 // All tests build a SecurityLayer with an explicit fileAccessMode so the
 // constructor doesn't read ~/.lax/security.json and produce host-dependent
-// results.
-const WORKSPACE = "./workspace";
+// results. The workspace is a real, realpath-resolved temp dir (NOT the literal
+// "./workspace") so the suite is hermetic: a developer who has run the packaged
+// app leaves a <repo>/workspace relocation symlink in the checkout, and because
+// evaluateFileAccess realpaths the workspace, a symlinked ./workspace would
+// anchor "project root" to the symlink target's parent and break every
+// containment assertion. Resolving the temp root through realpathSync also
+// collapses the macOS /var → /private/var symlink, so the test's lexical paths
+// and the gate's realpath'd paths agree.
+const WORKSPACE_ROOT = realpathSync(mkdtempSync(join(tmpdir(), "lax-ws-")));
+const WORKSPACE = join(WORKSPACE_ROOT, "workspace");
+mkdirSync(WORKSPACE, { recursive: true });
+afterAll(() => rmSync(WORKSPACE_ROOT, { recursive: true, force: true }));
 
 // Isolated LAX_DATA_DIR for the main suite, populated with a known egress
 // allowlist so the deny-by-default semantics don't make every "public URL

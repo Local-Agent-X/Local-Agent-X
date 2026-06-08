@@ -240,9 +240,11 @@ export function evaluateWebFetch(
 }
 
 /** Resolve a hostname to a single validated public IP for connection pinning.
- *  - Literal IPv4/IPv6 (host is already an IP): returns { ok: true, pin: null }
- *    — there is no DNS to pin; literal addresses are validated synchronously by
- *    evaluateWebFetch, and loopback self-calls are permitted there.
+ *  - Literal IPv4/IPv6 (host is already an IP): validated synchronously here —
+ *    a private/reserved/metadata literal is BLOCKED (ok: false), a public literal
+ *    returns { ok: true, pin: null } (nothing to resolve). This guard runs on
+ *    EVERY redirect hop, so a 302 to e.g. 169.254.169.254 can't slip through
+ *    (evaluateWebFetch only validates the original pre-redirect URL).
  *  - Hostname: resolves A + AAAA; if ANY resolved address is private/reserved,
  *    blocks (DNS-rebinding protection); otherwise returns the first valid
  *    address as the pin (prefer IPv4 if present, else IPv6).
@@ -251,9 +253,33 @@ export async function resolveAndPinHost(host: string): Promise<
   | { ok: true; pin: { address: string; family: 4 | 6 } | null }
   | { ok: false; reason: string }
 > {
-  // Literal IP — nothing to resolve, nothing to pin. Treat a host containing
-  // ":" as an IPv6 literal, matching the existing validateUrlWithDns guard.
-  if (isIP(host) !== 0 || host.includes(":")) {
+  // Literal IP — nothing to resolve, but it MUST still be checked for
+  // private/reserved/metadata ranges before we allow the connection. Treat a
+  // host containing ":" as an IPv6 literal, matching the existing
+  // validateUrlWithDns guard.
+  const ipVersion = isIP(host);
+
+  // IPv4 literal (dotted-quad).
+  if (ipVersion === 4 || /^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    if (isPrivateIPv4(host)) {
+      return {
+        ok: false,
+        reason: `Blocked: literal private/reserved IP ${host} (SSRF protection)`,
+      };
+    }
+    return { ok: true, pin: null };
+  }
+
+  // IPv6 literal (may arrive bracketed as [::1]). Mirror the bracket-strip +
+  // v4-mapped handling used by evaluateWebFetch above.
+  if (ipVersion === 6 || host.includes(":")) {
+    const cleanHost = host.replace(/^\[/, "").replace(/\]$/, "");
+    if (isPrivateIPv6(cleanHost)) {
+      return {
+        ok: false,
+        reason: `Blocked: literal private/reserved IP ${host} (SSRF protection)`,
+      };
+    }
     return { ok: true, pin: null };
   }
 

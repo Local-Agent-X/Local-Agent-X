@@ -195,7 +195,7 @@ describe("canaryEgressGate — canary in an outbound payload is hard-blocked + a
 
   function auditPath(): string {
     const dir = join(auditDir, "audit");
-    const files = readdirSync(dir).filter(f => f.endsWith(".jsonl"));
+    const files = readdirSync(dir).filter(f => f.endsWith(".jsonl") && !f.endsWith(".anchors.jsonl"));
     return join(dir, files[0]);
   }
 

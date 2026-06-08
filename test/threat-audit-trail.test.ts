@@ -17,9 +17,11 @@ afterEach(() => {
 });
 
 function dailyAuditPath(): string {
-  // CryptoAuditTrail writes to <dataDir>/audit/<YYYY-MM-DD>.jsonl
+  // CryptoAuditTrail writes to <dataDir>/audit/<YYYY-MM-DD>.jsonl plus a
+  // sibling <YYYY-MM-DD>.anchors.jsonl (external anchor chain) — exclude the
+  // latter so this resolves the main log only.
   const auditDir = join(dataDir, "audit");
-  const files = readdirSync(auditDir).filter(f => f.endsWith(".jsonl"));
+  const files = readdirSync(auditDir).filter(f => f.endsWith(".jsonl") && !f.endsWith(".anchors.jsonl"));
   expect(files).toHaveLength(1);
   return join(auditDir, files[0]);
 }
@@ -197,6 +199,58 @@ describe("CryptoAuditTrail — HMAC keyed chain + full-field coverage", () => {
     lines2[1] = JSON.stringify(reanchor);
     writeFileSync(path, lines2.join("\n") + "\n");
     expect(CryptoAuditTrail.verify(path).valid).toBe(false);
+  });
+
+  it("a fresh chain reports anchorChecked: true (anchor file present)", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "1" });
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "2" });
+    const r = CryptoAuditTrail.verify(dailyAuditPath());
+    expect(r.valid).toBe(true);
+    expect(r.anchorChecked).toBe(true);
+  });
+
+  it("detects TAIL-TRUNCATION that the linear chain alone cannot", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "1" });
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "2" });
+    a.record({ sessionId: "s", event: "x", decision: "block", reason: "3" });
+    const path = dailyAuditPath();
+
+    // Drop the last entry. The remaining 2-line file is a VALID chain prefix —
+    // the linear hash-chain has no way to know a third entry ever existed.
+    const lines = readFileSync(path, "utf-8").trim().split("\n");
+    expect(lines).toHaveLength(3);
+    writeFileSync(path, lines.slice(0, 2).join("\n") + "\n");
+
+    // The anchor file still records 3 heads → the truncation is caught.
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(false);
+    expect(r.anchorChecked).toBe(true);
+  });
+
+  it("detects a forged anchor head (anchor/chain divergence)", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "1" });
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "2" });
+    const path = dailyAuditPath();
+    const anchorPath = path.replace(/\.jsonl$/, ".anchors.jsonl");
+    const alines = readFileSync(anchorPath, "utf-8").trim().split("\n");
+    const tampered = JSON.parse(alines[0]);
+    tampered.chainHash = "f".repeat(64); // rewrite the pinned head, no key to re-MAC
+    alines[0] = JSON.stringify(tampered);
+    writeFileSync(anchorPath, alines.join("\n") + "\n");
+    expect(CryptoAuditTrail.verify(path).valid).toBe(false);
+  });
+
+  it("verifies a pre-anchoring log (no anchor file) with anchorChecked: false", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "1" });
+    const path = dailyAuditPath();
+    rmSync(path.replace(/\.jsonl$/, ".anchors.jsonl"), { force: true });
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(true);
+    expect(r.anchorChecked).toBe(false);
   });
 
   it("legacy plain-SHA-256 entries (no hashScheme tag) still verify — boot compat", () => {

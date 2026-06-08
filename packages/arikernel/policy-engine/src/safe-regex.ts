@@ -19,6 +19,14 @@
  *
  * Combined with the runtime MAX_REGEX_INPUT_LENGTH bound in matcher.ts,
  * this provides defense-in-depth against regex-based DoS.
+ *
+ * SYNC NOTE: The overlapping-alternation helpers below (isUnboundedQuantifierAt,
+ * splitTopLevelAlternation, hasOverlappingAlternation, firstCharSet,
+ * charClassFirstSet, setsOverlap) are mirrored as a PARALLEL IMPLEMENTATION in
+ * the root app at src/safe-regex.ts. The two checkRegexSafety functions have
+ * intentionally diverged (the root copy also enforces a >500-char bound and an
+ * adjacent-wildcard check), so they are not a single shared import. If you change
+ * the overlapping-alternation logic here, mirror it in src/safe-regex.ts.
  */
 
 /** Characters that indicate a quantifier follows a group. */

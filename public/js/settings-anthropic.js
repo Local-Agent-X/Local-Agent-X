@@ -117,6 +117,7 @@ async function doClaudeCliLogin() {
       '<div style="margin-bottom:6px"><strong>Step 2.</strong> Copy the code the page shows and paste it here:</div>' +
       '<div style="display:flex;gap:8px;max-width:520px">' +
       '  <input id="anthropic-cli-code" class="field-input" type="text" placeholder="paste code from the authorization page" autocomplete="off" style="flex:1" />' +
+      '  <button id="btn-anthropic-cli-paste" class="action-btn" onclick="pasteClaudeCliCode()" title="Paste the copied code from your clipboard">Paste</button>' +
       '  <button id="btn-anthropic-cli-submit" class="action-btn primary" onclick="submitClaudeCliCode()">Finish sign-in</button>' +
       '</div>' +
       '<div id="anthropic-cli-code-msg" class="field-hint" style="margin-top:6px"></div>';
@@ -130,6 +131,25 @@ async function doClaudeCliLogin() {
   } catch (e) {
     status.innerHTML = '<span style="color:var(--err,#c33)">' + esc(e.message || 'Login failed') + '</span>';
     btn.disabled = false; btn.textContent = 'Sign in via Claude CLI';
+  }
+}
+
+// Read the clipboard into the code box and submit in one click. Anthropic's
+// page has a copy button, so this completes the round-trip: copy there → Paste here.
+async function pasteClaudeCliCode() {
+  const input = document.getElementById('anthropic-cli-code');
+  const msg = document.getElementById('anthropic-cli-code-msg');
+  try {
+    const text = String((await navigator.clipboard.readText()) || '').trim();
+    if (!text) {
+      if (msg) { msg.style.color = 'var(--err,#c33)'; msg.textContent = 'Clipboard is empty — copy the code on the Anthropic page first.'; }
+      return;
+    }
+    if (input) input.value = text;
+    submitClaudeCliCode();
+  } catch (e) {
+    if (msg) { msg.style.color = 'var(--err,#c33)'; msg.textContent = 'Couldn’t read the clipboard. Paste manually (⌘V) and click Finish sign-in.'; }
+    if (input) input.focus();
   }
 }
 

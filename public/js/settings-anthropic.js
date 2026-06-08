@@ -81,6 +81,7 @@ async function saveAnthropicSetupToken() {
     await apiPost('/api/auth/anthropic/setup-token', { token });
     input.value = '';
     await checkAnthropicAuth();
+    window.refreshProviderPicker?.();
   } catch (e) {
     if (el) { el.className = 'status-badge err'; el.innerHTML = '<span class="status-dot"></span> ' + esc(e.message || 'Failed to save token'); }
   } finally {
@@ -170,6 +171,7 @@ async function submitClaudeCliCode() {
     if (cancelBtn) cancelBtn.style.display = 'none';
     if (btn) { btn.style.display = ''; btn.disabled = false; btn.textContent = 'Re-sign in'; }
     checkAnthropicAuth();
+    window.refreshProviderPicker?.(); // show Anthropic in the chat picker without a page refresh
   } catch (e) {
     if (msg) { msg.style.color = 'var(--err,#c33)'; msg.textContent = e.message || 'Code exchange failed. Try signing in again.'; }
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Finish sign-in'; }
@@ -240,6 +242,7 @@ async function doAnthropicDisconnect() {
   try { await apiFetch('/api/auth/anthropic/logout', { method: 'POST' }); } catch {}
   try { await apiFetch('/api/auth/anthropic/cli-logout', { method: 'POST' }); } catch {}
   checkAnthropicAuth();
+  window.refreshProviderPicker?.(); // drop Anthropic from the picker on disconnect too
 }
 
 async function checkServer(type) {

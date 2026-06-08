@@ -476,4 +476,8 @@ function finishOnboarding() {
   const overlay = document.getElementById('onboarding-overlay');
   if (overlay) overlay.remove();
   newChat();
+  // The status bar's provider picker was built at page load (before the user
+  // connected anything in the wizard) — refresh it so the just-connected
+  // provider is selectable without a reload.
+  window.refreshProviderPicker?.();
 }

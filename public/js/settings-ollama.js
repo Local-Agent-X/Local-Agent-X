@@ -105,6 +105,7 @@ async function connectOllamaCloud() {
       const curProvider = document.getElementById('cfg-provider')?.value;
       if (curProvider === 'ollama-cloud') await loadOllamaCloudModels();
       else if (curProvider === 'local') await loadLocalModels();
+      window.refreshProviderPicker?.();
     } else {
       const errMsg = (j && j.error) || 'unreachable';
       if (statusEl) { statusEl.textContent = `Failed: ${errMsg}`; statusEl.style.color = 'var(--err, #c66)'; }

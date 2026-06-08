@@ -91,10 +91,12 @@ describe("SecurityLayer kernel-class dispatch", () => {
 
     it("bash: routes through evaluateShellCommand (safe command allowed)", () => {
       const sec = makeLayer();
-      const expected = evaluateShellCommand("ls");
+      // bash passes through two layers now — command-shape vetting
+      // (evaluateShellCommand) then file-access confinement (the path guard).
+      // A path-free safe command clears both.
+      expect(evaluateShellCommand("ls").allowed).toBe(true);
       const d = sec.evaluate({ toolName: "bash", args: { command: "ls" }, sessionId: "t" });
-      expect(d.allowed).toBe(expected.allowed);
-      expect(d.reason).toBe(expected.reason);
+      expect(d.allowed).toBe(true);
     });
 
     it("bash: blocks shell metacharacters", () => {
@@ -863,5 +865,63 @@ describe("structured-document file-access confinement (TOOL_PATH_ARGS)", () => {
     ]) {
       expect(TOOL_PATH_ARGS[t], `${t} must declare pathArgs`).toBeTruthy();
     }
+  });
+});
+
+// bash is the universal go-to tool, and historically it ignored the file-access
+// mode entirely — `cat /etc/passwd` ran in "workspace only". This best-effort
+// guard makes bash OBEY the same boundary (the sound POSIX kernel hard-wall is
+// the planned follow-up; this is the Windows-today layer). It reuses the SAME
+// evaluateFileAccess gate, so the mode means one thing across every tool.
+describe("bash obeys the file-access mode (shell path guard)", () => {
+  const bash = (sec: SecurityLayer, command: string) =>
+    sec.evaluate({ toolName: "bash", args: { command }, sessionId: "t" });
+
+  it("workspace mode: reading an absolute path outside the project is blocked", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    expect(bash(sec, "cat /etc/passwd").allowed).toBe(false);
+  });
+
+  it("workspace mode: reading a Windows path outside the project is blocked", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    expect(bash(sec, 'type "C:\\Users\\peter\\Documents\\2024 May order.xlsx"').allowed).toBe(false);
+  });
+
+  it("workspace mode: a redirect (write) target outside the workspace is blocked", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    expect(bash(sec, "echo secret > ~/exfil.txt").allowed).toBe(false);
+  });
+
+  it("workspace mode: a `..` climb out of the project is blocked", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    expect(bash(sec, "cat ../../../../etc/shadow").allowed).toBe(false);
+  });
+
+  it("workspace mode: ordinary in-project commands still run", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    for (const cmd of ["git status", "ls -la", "npm test", "cat package.json", "grep foo src/index.ts"]) {
+      expect(bash(sec, cmd).allowed, cmd).toBe(true);
+    }
+  });
+
+  it("workspace mode: redirect to /dev/null is not mistaken for an escape", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    expect(bash(sec, "echo hi > /dev/null").allowed).toBe(true);
+  });
+
+  it("common mode: reading ~/Documents is allowed, /etc is not", () => {
+    const sec = new SecurityLayer(WORKSPACE, "common");
+    expect(bash(sec, "cat ~/Documents/notes.txt").allowed).toBe(true);
+    expect(bash(sec, "cat /etc/passwd").allowed).toBe(false);
+  });
+
+  it("unrestricted mode: bash reaches anywhere (guard is a no-op)", () => {
+    const sec = new SecurityLayer(WORKSPACE, "unrestricted");
+    expect(bash(sec, "cat /etc/hosts").allowed).toBe(true);
+  });
+
+  it("the command-shape vetting still runs first (obfuscation blocked regardless of mode)", () => {
+    const sec = new SecurityLayer(WORKSPACE, "unrestricted");
+    expect(bash(sec, "echo $'\\162\\155'").allowed).toBe(false);
   });
 });

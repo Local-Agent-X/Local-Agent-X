@@ -178,12 +178,14 @@ describe("SecurityLayer", () => {
     });
 
     // Octal false-positive regression: a Windows path with a year-numbered
-    // folder (…\2024 May order.xlsx) contains "\202", which the old bare-octal
-    // heuristic mistook for an octal escape and blocked in EVERY file-access
-    // mode — the "blocked even in unrestricted" symptom. A bare \NNN is not
-    // shell-interpreted (`echo \162` prints "162"), so legitimate paths pass.
+    // folder (…\2024…) contains "\202", which the old bare-octal heuristic
+    // mistook for an octal escape and blocked in EVERY file-access mode — the
+    // "blocked even in unrestricted" symptom. A bare \NNN is not shell-
+    // interpreted (`echo \162` prints "162"), so legitimate paths pass. Use a
+    // workspace-relative path so this stays mode-independent (the file-access
+    // path guard only confines paths that could escape the workspace).
     it("allows a Windows path containing \\2024 (not octal obfuscation)", () => {
-      const d = sec.evaluate({ toolName: "bash", args: { command: 'type "C:\\Users\\peter\\Documents\\2024 May order.xlsx"' }, sessionId: "t" });
+      const d = sec.evaluate({ toolName: "bash", args: { command: 'type "reports\\2024 summary.txt"' }, sessionId: "t" });
       expect(d.allowed).toBe(true);
     });
 

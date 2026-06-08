@@ -202,8 +202,21 @@ describe("detectObfuscation", () => {
     expect(detectObfuscation("\\x72\\x6d -rf /")).toMatch(/hex-encoded/);
   });
 
-  it("flags octal-encoded characters", () => {
-    expect(detectObfuscation("echo \\162\\155")).toMatch(/octal-encoded/);
+  // A BARE \NNN is not shell-interpreted (`echo \162` prints "162") and the old
+  // bare-octal check false-positived on Windows paths like ...\2024... — so it
+  // was removed. Octal obfuscation is still caught in its INTERPRETED forms:
+  // $'\162' (ANSI-C) and printf '\162', asserted below.
+  it("does NOT flag a bare \\NNN sequence (Windows-path false positive)", () => {
+    expect(detectObfuscation("type C:\\reports\\2024\\q1.txt")).toBeNull();
+    expect(detectObfuscation("echo \\162\\155")).toBeNull();
+  });
+
+  it("flags ANSI-C octal escapes ($'\\162')", () => {
+    expect(detectObfuscation("echo $'\\162\\155'")).toMatch(/octal/i);
+  });
+
+  it("flags printf octal escapes", () => {
+    expect(detectObfuscation("printf '\\162\\155'")).toMatch(/printf/i);
   });
 
   it("flags unicode escapes", () => {

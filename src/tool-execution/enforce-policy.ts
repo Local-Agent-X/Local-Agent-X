@@ -8,7 +8,7 @@
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
-import { checkEgressTaint, getKernelTaintSources } from "../data-lineage.js";
+import { checkEgressTaint, checkEgressTaintWithPayload, getKernelTaintSources } from "../data-lineage.js";
 import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
 import { checkOutboundRequest, checkOutboundPayload, checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
@@ -256,7 +256,12 @@ export function egressGuardGate(ctx: ToolCallContext): PhaseOutcome {
 
 export function dataLineageGate(ctx: ToolCallContext): PhaseOutcome {
   if (!hasCapability(ctx.tc.name, "egress")) return CONTINUE;
-  const egress = checkEgressTaint(ctx.sessionId || "default");
+  // Presence-based floor is UNCHANGED: a tainted session blocks egress. We use
+  // the payload-aware variant only to ENRICH the reason with content-overlap
+  // evidence (which tainted bytes are actually in this outbound payload) — it
+  // makes the same block decision as checkEgressTaint.
+  const { text } = egressPayload(ctx.tc.name, ctx.args as Record<string, unknown>);
+  const egress = checkEgressTaintWithPayload(ctx.sessionId || "default", text);
   if (!egress.blocked) return CONTINUE;
   const result: ToolResult = {
     content: `BLOCKED by data lineage: ${egress.reason}`,

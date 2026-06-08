@@ -12,6 +12,8 @@ import {
   redactSecretSpans,
   getKernelTaintSources,
   propagateTaint,
+  findTaintInPayload,
+  checkEgressTaintWithPayload,
 } from "./data-lineage.js";
 import { runSandboxedPhase } from "./tool-execution/run-sandboxed.js";
 import type { ToolCallContext } from "./tool-execution/context.js";
@@ -718,6 +720,89 @@ describe("run-sandboxed redacts result content when taint fires", () => {
     expect(ctx.result!.content).not.toContain(secret);
     expect(ctx.result!.status).toBe("blocked");
     expect(checkEgressTaint(sessionId).blocked).toBe(true);
+  });
+});
+
+describe("content fingerprints + payload-overlap evidence (T1)", () => {
+  const SESS = "fp-session";
+  beforeEach(() => clearSessionTaint(SESS));
+  afterEach(() => clearSessionTaint(SESS));
+
+  // A chunk of secret content that's long enough to shingle and unlikely to
+  // recur in unrelated prose.
+  const SECRET_CONTENT =
+    "BEGIN PRIVATE BLOB: super-secret-payload-marker-7f3a9c1e-quux-zonk-data END";
+
+  it("a content read carries fingerprints; findTaintInPayload detects a chunk of that exact content", () => {
+    recordSensitiveRead(SESS, "sensitive_file", "/home/u/.ssh/id_rsa", SECRET_CONTENT);
+    // A payload that quotes a CHUNK (not the whole blob) of the tainted content.
+    const payload = `Here is some data: super-secret-payload-marker-7f3a9c1e-quux-zonk-data — done.`;
+    const hits = findTaintInPayload(SESS, payload);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].source).toBe("sensitive_file");
+    expect(hits[0].target).toBe("/home/u/.ssh/id_rsa");
+  });
+
+  it("detects a base64-encoded form of the tainted content (decode-view reuse)", () => {
+    recordSensitiveRead(SESS, "secret", "bash:blob", SECRET_CONTENT);
+    const b64 = Buffer.from(SECRET_CONTENT, "utf-8").toString("base64");
+    const payload = `exfil attempt blob=${b64} trailing`;
+    const hits = findTaintInPayload(SESS, payload);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].target).toBe("bash:blob");
+  });
+
+  it("NEGATIVE: a payload with none of the tainted content returns []", () => {
+    recordSensitiveRead(SESS, "sensitive_file", "/home/u/.ssh/id_rsa", SECRET_CONTENT);
+    const payload = "Completely unrelated quarterly sales prose about collagen and creatine demand.";
+    expect(findTaintInPayload(SESS, payload)).toEqual([]);
+  });
+
+  it("NEGATIVE: a 3-arg read (no content) produces no fingerprint evidence", () => {
+    recordSensitiveRead(SESS, "sensitive_file", "/home/u/.ssh/id_rsa");
+    // Even a payload echoing the target path yields no fingerprint hit (no content recorded).
+    expect(findTaintInPayload(SESS, "/home/u/.ssh/id_rsa contents here")).toEqual([]);
+  });
+
+  it("checkEgressTaint still blocks a tainted session (presence floor unchanged)", () => {
+    // No content at all → presence floor must still block.
+    recordSensitiveRead(SESS, "sensitive_file", "/home/u/.ssh/id_rsa");
+    expect(checkEgressTaint(SESS).blocked).toBe(true);
+  });
+
+  it("checkEgressTaintWithPayload blocks on presence even when payload carries NO tainted bytes; evidence []", () => {
+    recordSensitiveRead(SESS, "sensitive_file", "/home/u/.ssh/id_rsa", SECRET_CONTENT);
+    const res = checkEgressTaintWithPayload(SESS, "totally benign outbound text");
+    // Presence-based floor: still blocked.
+    expect(res.blocked).toBe(true);
+    // But no content overlap → no evidence sources named.
+    expect(res.evidence).toEqual([]);
+  });
+
+  it("checkEgressTaintWithPayload names the source when the payload carries tainted bytes", () => {
+    recordSensitiveRead(SESS, "sensitive_file", "/home/u/.ssh/id_rsa", SECRET_CONTENT);
+    const payload = `POST body: super-secret-payload-marker-7f3a9c1e-quux-zonk-data`;
+    const res = checkEgressTaintWithPayload(SESS, payload);
+    expect(res.blocked).toBe(true);
+    expect(res.evidence.length).toBeGreaterThan(0);
+    expect(res.reason).toMatch(/payload contains bytes|id_rsa|sensitive_file/i);
+  });
+
+  it("a clean session never blocks regardless of payload content", () => {
+    const res = checkEgressTaintWithPayload(SESS, "anything at all");
+    expect(res.blocked).toBe(false);
+    expect(res.evidence).toEqual([]);
+  });
+
+  it("no plaintext content is stored on the taint entry (fingerprints are hashes)", () => {
+    recordSensitiveRead(SESS, "secret", "bash:blob", SECRET_CONTENT);
+    // The overlap primitive works, proving fingerprints exist — but a serialized
+    // view of the session's evidence path must never echo the plaintext content.
+    const res = checkEgressTaintWithPayload(SESS, "benign");
+    expect(JSON.stringify(res)).not.toContain("super-secret-payload-marker");
+    // findTaintInPayload returns provenance only, never content.
+    const hits = findTaintInPayload(SESS, SECRET_CONTENT);
+    expect(JSON.stringify(hits)).not.toContain("super-secret-payload-marker");
   });
 });
 

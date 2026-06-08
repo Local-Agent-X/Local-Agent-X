@@ -1,6 +1,19 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, configDefaults } from "vitest/config";
 
 export default defineConfig({
+  // The @arikernel/* packages are consumed via their built dist/ in production,
+  // but dist is gitignored and only rebuilt by `npm run build` — so tests would
+  // otherwise run against a STALE dist. policy-engine owns the canonical
+  // checkRegexSafety the app re-exports (src/safe-regex.ts); resolve it to
+  // SOURCE here so tests exercise the live checker, not a stale build.
+  resolve: {
+    alias: {
+      "@arikernel/policy-engine": fileURLToPath(
+        new URL("./packages/arikernel/policy-engine/src/index.ts", import.meta.url),
+      ),
+    },
+  },
   test: {
     include: [
       "test/**/*.test.ts",

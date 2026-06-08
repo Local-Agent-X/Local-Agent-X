@@ -461,7 +461,10 @@ describe("DENY_ALL_RULE", () => {
 });
 
 describe("checkRegexSafety — overlapping-alternation ReDoS (H9)", () => {
-	// REJECT: unbounded-quantified groups with overlapping alternation branches.
+	// REJECT: groups with overlapping alternation branches under a REPEATING
+	// quantifier. A counted form (`{n}`/`{n,m}`) repeats too — `(a|a){50}` hangs
+	// on a crafted input just like `(a|a)+` — so the checker fails closed on the
+	// whole class; only the non-repeating `?` is exempt (see ACCEPT list).
 	it.each([
 		["(a|a)*", "identical literal branches"],
 		["(a|ab)*", "branches sharing first char 'a'"],
@@ -472,6 +475,8 @@ describe("checkRegexSafety — overlapping-alternation ReDoS (H9)", () => {
 		["(ab|a)+", "prefix-overlapping branches under +"],
 		["([0-9]|[0-9a-f]){2,}", "open-ended {n,} range over overlapping classes"],
 		["(?:a|a)*", "non-capturing group with overlapping branches"],
+		["(a|a){10}", "overlapping branches under a fixed count {10}"],
+		["(a|a){1,3}", "overlapping branches under a bounded-but-repeating {1,3}"],
 	])("rejects %s (%s)", (pattern) => {
 		expect(checkRegexSafety(pattern)).not.toBeNull();
 	});
@@ -493,8 +498,7 @@ describe("checkRegexSafety — overlapping-alternation ReDoS (H9)", () => {
 		["(cat|dog)+", "disjoint literal branches (different first chars)"],
 		["(foo|bar)*", "disjoint literal branches"],
 		["(abc|xyz)*", "disjoint multi-char branches"],
-		["(a|b)?", "overlapping shape but BOUNDED quantifier '?'"],
-		["(a|a){1,3}", "overlapping branches but FINITE-bounded {1,3}"],
+		["(a|b)?", "disjoint branches, non-repeating '?'"],
 		["^(GET|POST|DELETE)$", "anchored disjoint method alternation, unquantified"],
 		["(?:a|b)*", "non-capturing group, disjoint branches"],
 	])("accepts %s (%s)", (pattern) => {

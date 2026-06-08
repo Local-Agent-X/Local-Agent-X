@@ -30,7 +30,10 @@ const PRESETS: Record<PolicyPreset, Omit<SessionPolicy, "preset">> = {
     allowNetworkTools: true,
   },
   "high-security": {
-    blockedTools: new Set(["bash", "browser", "http_request", "web_fetch"]),
+    // ari_* are the AriKernel bridge synonyms — same I/O capability as their
+    // canonical counterparts, so they must be denied here too (otherwise a
+    // model could call ari_shell/ari_http to slip a block on bash/http_request).
+    blockedTools: new Set(["bash", "browser", "http_request", "web_fetch", "ari_shell", "ari_http"]),
     allowedTools: new Set(),
     maxBashTimeout: 0,
     allowFileWrites: true,
@@ -46,7 +49,12 @@ const PRESETS: Record<PolicyPreset, Omit<SessionPolicy, "preset">> = {
     allowNetworkTools: true,
   },
   "read-only": {
-    blockedTools: new Set(["bash", "write", "edit", "browser"]),
+    // ari_shell (bash), ari_http (network), and ari_file writes are the
+    // AriKernel bridge synonyms of the blocked canonical tools. Block the
+    // shell/network synonyms outright; ari_file write is gated by the
+    // allowFileWrites category check below (it also covers reads, which stay
+    // allowed). Without these a model could do shell/IO via the ari_* path.
+    blockedTools: new Set(["bash", "write", "edit", "browser", "ari_shell", "ari_http"]),
     allowedTools: new Set(),
     maxBashTimeout: 0,
     allowFileWrites: false,
@@ -115,7 +123,9 @@ export function checkSessionPolicy(sessionId: string, toolName: string): string 
   if (!policy.allowBrowser && toolName === "browser") {
     return `Blocked by session policy (${policy.preset}): browser disabled`;
   }
-  if (!policy.allowNetworkTools && (toolName === "http_request" || toolName === "web_fetch")) {
+  // ari_http is the AriKernel bridge synonym for http_request — same network
+  // capability, so the network category check must cover it too.
+  if (!policy.allowNetworkTools && (toolName === "http_request" || toolName === "web_fetch" || toolName === "ari_http")) {
     return `Blocked by session policy (${policy.preset}): network tools disabled`;
   }
 

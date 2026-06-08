@@ -42,6 +42,12 @@ export function wireAriPreDispatch(security: SecurityLayer, toolPolicy?: ToolPol
   setPreDispatchGate(async (tc: ToolCall) => {
     const name = mapToolName(tc.toolClass, tc.action);
     const args = (tc.parameters || {}) as Record<string, unknown>;
+    // Key session-policy enforcement on the TRUSTED dispatch session id.
+    // tc.runId is now derived by the bridge from the runtime-stamped
+    // `_sessionId` (arikernel-bridge.ts buildToolCall), never from a
+    // model-supplied `_runId` — so a compromised model can't forge a runId to
+    // dodge a restrictive session preset. Fall back to "ari-default" only when
+    // no trusted session id is present.
     await assertToolCallAllowed(
       { id: tc.id, name, args },
       {
@@ -70,6 +76,9 @@ export function wireAriPreDispatch(security: SecurityLayer, toolPolicy?: ToolPol
     const decision = await evaluatePolicy(
       { id: tc.id, name, args },
       packs,
+      // Same trusted-session-id keying as the pre-dispatch gate above:
+      // tc.runId is bridge-derived from the runtime-stamped `_sessionId`,
+      // not from model-supplied `_runId`.
       { sessionId: tc.runId || "ari-default", callContext: "delegated" },
     );
     if (!decision.allowed) {

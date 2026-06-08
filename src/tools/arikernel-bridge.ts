@@ -17,11 +17,24 @@
  *     enforcement, header inspection survive).
  *   - Shell sandboxing (ShellExecutor's metacharacter rejection, blocked
  *     interpreters, environment sanitization, cwd boundary survive).
- *   - Capability tokens — when a LAX caller wants kernel-side capability
- *     enforcement, it passes `_capabilityGrantId` in args; the adapter
- *     places it on the AriKernel ToolCall.grantId.
- *   - Taint labels — input taint passes through `_taintLabels`; output
- *     taint surfaces on `result.metadata.taintLabels`.
+ *   - Capability tokens — a kernel-side capability grant must be MINTED by a
+ *     trusted server-side path, never declared by the model. The adapter
+ *     therefore does NOT read `_capabilityGrantId` from args (a compromised
+ *     model could otherwise forge a grant id). Until a trusted minting path is
+ *     wired, ToolCall.grantId is left undefined and the kernel's own grant
+ *     gate decides entitlement.
+ *   - Taint labels — output taint surfaces on `result.metadata.taintLabels`.
+ *     INPUT taint is injected by the runtime, not the caller: the model cannot
+ *     self-declare (or self-clear) taint, so `_taintLabels` from args is
+ *     ignored.
+ *
+ * Trust-critical envelope sanitization:
+ *   The bridge derives runId / principalId / taint / grant from TRUSTED
+ *   RUNTIME CONTEXT, never from `_`-prefixed model args. The runtime stamps a
+ *   trusted `_sessionId` for these tools (resolve-tool.ts SESSION_SCOPED_TOOLS);
+ *   that — not the model-supplied `_runId`/`_principalId` — is what keys
+ *   session-policy and run identity. Forged `_runId`/`_principalId`/
+ *   `_capabilityGrantId`/`_taintLabels` are dropped for security decisions.
  */
 import type { ToolCall, ToolClass, ToolResult as AriToolResult, TaintLabel } from "@arikernel/core";
 import { generateId, now } from "@arikernel/core";
@@ -39,6 +52,13 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 
 interface BridgeArgs {
   action?: string;
+  // Trusted runtime-injected context (see resolve-tool.ts SESSION_SCOPED_TOOLS).
+  // This is the ONLY identity field the bridge trusts.
+  _sessionId?: string;
+  // Model-supplied `_`-fields. Present in the type so we can explicitly
+  // STRIP them — they are never read for trust decisions. A compromised model
+  // sets these to launder identity / capability / taint; the bridge ignores
+  // them and derives everything from trusted context above.
   _capabilityGrantId?: string;
   _taintLabels?: TaintLabel[];
   _principalId?: string;
@@ -46,7 +66,7 @@ interface BridgeArgs {
   [key: string]: unknown;
 }
 
-interface BridgeConfig {
+export interface BridgeConfig {
   toolName: string;
   toolClass: ToolClass;
   description: string;
@@ -74,18 +94,36 @@ function stripInternal(args: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-function buildToolCall(cfg: BridgeConfig, args: BridgeArgs): ToolCall {
+// Exported for the envelope-sanitization test (arikernel-bridge-envelope.test.ts):
+// the trust-critical assertion is that this function derives runId/principal/
+// taint/grant from trusted context only, never from forged model `_`-fields.
+export function buildToolCall(cfg: BridgeConfig, args: BridgeArgs): ToolCall {
+  // runId keys session-policy enforcement (bootstrap-ari-gate.ts), so it must
+  // come from TRUSTED context — the runtime-stamped `_sessionId` — not from a
+  // model-supplied `_runId` (which a compromised model could forge to launder
+  // identity or slip a restrictive session policy). Fall back to a fresh id;
+  // NEVER to a model-supplied value.
+  const runId = args._sessionId ?? generateId();
   return {
     id: generateId(),
-    runId: args._runId ?? "lax-bridge",
+    runId,
     sequence: 0,
     timestamp: now(),
-    principalId: args._principalId ?? "lax",
+    // No trusted principal is injected by the runtime today, so we fall back to
+    // the generic "lax" principal. We deliberately do NOT read `_principalId`
+    // from args — the model cannot impersonate a principal.
+    principalId: "lax",
     toolClass: cfg.toolClass,
     action: args.action ?? cfg.defaultAction,
     parameters: stripInternal(args) as Record<string, unknown>,
-    taintLabels: args._taintLabels ?? [],
-    grantId: args._capabilityGrantId,
+    // Taint is injected by the runtime, not the caller. The model cannot
+    // self-declare or self-clear taint, so `_taintLabels` is ignored. Chunk 4
+    // will wire real session taint in here from trusted runtime context.
+    taintLabels: [],
+    // Capability grants are minted server-side via a trusted path; the bridge
+    // never reads `_capabilityGrantId` from args. Until that path is wired,
+    // leave grantId undefined and let the kernel's grant gate decide.
+    grantId: undefined,
   };
 }
 

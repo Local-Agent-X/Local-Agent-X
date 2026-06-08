@@ -1,5 +1,13 @@
-import { describe, it, expect } from "vitest";
-import { generateCanaries, canaryPromptBlock, checkCanaries } from "../src/threat/canaries.js";
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+  generateCanaries,
+  canaryPromptBlock,
+  checkCanaries,
+  registerSessionCanaries,
+  getSessionCanaries,
+  clearSessionCanaries,
+  checkCanariesInPayload,
+} from "../src/threat/canaries.js";
 
 describe("generateCanaries", () => {
   it("returns three distinct canary strings", () => {
@@ -82,5 +90,43 @@ describe("checkCanaries", () => {
     const obfuscated = "CANARY-abcd1234 -ALPHA";
     const r = checkCanaries(obfuscated, canaries);
     expect(r).not.toBeNull();
+  });
+});
+describe("session canary registry + payload check", () => {
+  const sessionId = "canary-registry-test";
+  const canaries = generateCanaries();
+
+  beforeEach(() => {
+    clearSessionCanaries(sessionId);
+  });
+
+  it("register/get/clear round-trip", () => {
+    expect(getSessionCanaries(sessionId)).toEqual([]);
+    registerSessionCanaries(sessionId, canaries);
+    expect(getSessionCanaries(sessionId)).toEqual(canaries);
+    clearSessionCanaries(sessionId);
+    expect(getSessionCanaries(sessionId)).toEqual([]);
+  });
+
+  it("checkCanariesInPayload trips on a raw canary in the payload", () => {
+    registerSessionCanaries(sessionId, canaries);
+    const hit = checkCanariesInPayload(sessionId, `outbound: ${canaries[0]} tail`);
+    expect(hit).not.toBeNull();
+  });
+
+  it("checkCanariesInPayload trips on a base64-encoded canary (decode-view reuse)", () => {
+    registerSessionCanaries(sessionId, canaries);
+    const blob = Buffer.from(canaries[1], "utf8").toString("base64");
+    const hit = checkCanariesInPayload(sessionId, `body=${blob}`);
+    expect(hit).not.toBeNull();
+  });
+
+  it("returns null when the payload has no canary", () => {
+    registerSessionCanaries(sessionId, canaries);
+    expect(checkCanariesInPayload(sessionId, "nothing to see here")).toBeNull();
+  });
+
+  it("returns null when the session has no registered canaries", () => {
+    expect(checkCanariesInPayload(sessionId, canaries[0])).toBeNull();
   });
 });

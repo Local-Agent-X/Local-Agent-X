@@ -9,6 +9,7 @@ import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
 import { checkEgressTaint, checkEgressTaintWithPayload, getKernelTaintSources } from "../data-lineage.js";
+import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
 import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
 import { checkOutboundRequest, checkOutboundPayload, checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
@@ -272,6 +273,30 @@ export function dataLineageGate(ctx: ToolCallContext): PhaseOutcome {
   return terminate(ctx, { rendered: "model", result, allowed: false });
 }
 
+// Canary reinforcement of egress. Taint/secret detection is heuristic; a canary
+// token is deterministic PROOF — a unique random token planted in the model's
+// context that must NEVER legitimately appear in an outbound payload. If one
+// shows up in an egress-class payload (raw OR any decoded view), that is
+// definitive exfiltration of context: hard-block UNCONDITIONALLY (independent of
+// taint state) and write a tamper-evident audit event. The block reason and
+// audit reason name the SINK only — the raw canary is never echoed into
+// model-visible text or the log (a tripwire revealed teaches evasion).
+export function canaryEgressGate(ctx: ToolCallContext): PhaseOutcome {
+  if (!hasCapability(ctx.tc.name, "egress")) return CONTINUE;
+  const sessionId = ctx.sessionId || "default";
+  const { text } = egressPayload(ctx.tc.name, ctx.args as Record<string, unknown>);
+  const tripped = checkCanariesInPayload(sessionId, text);
+  if (!tripped) return CONTINUE;
+  recordCanaryExfilAudit(sessionId, ctx.tc.name);
+  const result: ToolResult = {
+    content: `BLOCKED by canary tripwire: a session canary token was detected in the outbound payload of "${ctx.tc.name}". This is definitive exfiltration of protected context.`,
+    isError: true,
+    status: "blocked",
+    metadata: { layer: "canary", recovery: "Do not include internal reference codes in outbound payloads. This call was blocked and recorded.", userHint: USER_HINTS.network },
+  };
+  return terminate(ctx, { rendered: "model", result, allowed: false });
+}
+
 function lookupTool(ctx: ToolCallContext): PhaseOutcome {
   const tool = ctx.toolMap.get(ctx.tc.name);
   if (!tool) {
@@ -382,6 +407,8 @@ export const enforcePolicyPhase: Phase = async (ctx) => {
   outcome = await runPreDispatch(ctx);
   if (outcome.kind !== "continue") return outcome;
   outcome = dataLineageGate(ctx);
+  if (outcome.kind !== "continue") return outcome;
+  outcome = canaryEgressGate(ctx);
   if (outcome.kind !== "continue") return outcome;
   outcome = egressGuardGate(ctx);
   if (outcome.kind !== "continue") return outcome;

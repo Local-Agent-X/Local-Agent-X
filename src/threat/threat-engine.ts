@@ -26,7 +26,7 @@
 
 import { loadSettings, reloadSettings } from "../settings.js";
 
-import { canaryPromptBlock, checkCanaries, generateCanaries } from "./canaries.js";
+import { canaryPromptBlock, checkCanaries, generateCanaries, registerSessionCanaries } from "./canaries.js";
 import { classifyData, type DataLabel } from "./classification.js";
 import { CryptoAuditTrail } from "./audit-trail.js";
 import { THREAT_SCORES, ThreatScorer, type ThreatLevel, type ThreatScorerOptions } from "./scoring.js";
@@ -66,7 +66,7 @@ export function _invalidateThreatSettingsCacheForTests(): void {
 }
 
 export { classifyData, type DataClassification, type DataLabel } from "./classification.js";
-export { generateCanaries, canaryPromptBlock, checkCanaries } from "./canaries.js";
+export { generateCanaries, canaryPromptBlock, checkCanaries, checkCanariesInPayload, getSessionCanaries, registerSessionCanaries, clearSessionCanaries } from "./canaries.js";
 export { ThreatScorer, THREAT_SCORES, type ThreatLevel } from "./scoring.js";
 export { ToolChainAnalyzer } from "./tool-chain.js";
 export { CryptoAuditTrail } from "./audit-trail.js";
@@ -105,6 +105,10 @@ export class ThreatEngine {
     this.audit = new CryptoAuditTrail(dataDir);
     this.canaries = generateCanaries();
     this.sessionId = sessionId;
+    // Publish this session's canaries to the shared registry so the egress
+    // seam can check outbound payloads against the SAME tokens embedded in the
+    // model's system prompt (these are also what checkOutput watches for).
+    registerSessionCanaries(this.sessionId, this.canaries);
   }
 
   /** Get canary tokens for system prompt injection */
@@ -262,6 +266,7 @@ export class ThreatEngine {
     this.scorer.reset();
     this.canaries = generateCanaries();
     if (newSessionId) this.sessionId = newSessionId;
+    registerSessionCanaries(this.sessionId, this.canaries);
   }
 
   // ── Canary token rotation ──
@@ -275,6 +280,7 @@ export class ThreatEngine {
     if (intervalMs) this.canaryRotationIntervalMs = intervalMs;
     this.canaryRotationTimer = setInterval(() => {
       this.canaries = generateCanaries();
+      registerSessionCanaries(this.sessionId, this.canaries);
       this.audit.record({
         sessionId: this.sessionId,
         event: "canary_rotated",
@@ -297,6 +303,7 @@ export class ThreatEngine {
   /** Force immediate canary rotation */
   rotateCanariesNow(): string[] {
     this.canaries = generateCanaries();
+    registerSessionCanaries(this.sessionId, this.canaries);
     return this.canaries;
   }
 

@@ -11,7 +11,6 @@ async function checkAnthropicAuth() {
   try {
     const d = await apiJson('/api/auth/anthropic/status');
     const el = document.getElementById('anthropic-auth-status');
-    const loginBtn = document.getElementById('btn-anthropic-login');
     const discBtn = document.getElementById('btn-anthropic-disconnect');
     const cliLoginBtn = document.getElementById('btn-anthropic-cli-login');
     const cliEl = document.getElementById('claude-cli-status');
@@ -22,8 +21,8 @@ async function checkAnthropicAuth() {
     const hasValidAuth = d.authenticated && (usingCliSession || !d.expired);
     const optionsBlock = document.getElementById('anthropic-options');
     // Always show the options block — even when connected, the user may want
-    // to switch auth methods (CLI ↔ setup-token ↔ direct OAuth). Connected
-    // buttons render as "Already Connected" (disabled) per the OpenAI pattern.
+    // to switch auth methods (CLI login ↔ setup-token). Connected buttons
+    // render as "Already Connected" (disabled) per the OpenAI pattern.
     if (optionsBlock) optionsBlock.style.display = '';
     if (hasValidAuth) {
       el.className = 'status-badge ok';
@@ -32,14 +31,6 @@ async function checkAnthropicAuth() {
         usingCliSession ? 'Connected — Claude CLI login (auto-detected from ~/.claude/.credentials.json)' :
         'Connected — Stale direct OAuth tokens (third-party use blocked by Anthropic TOS — disconnect and use CLI login)';
       el.innerHTML = '<span class="status-dot"></span> ' + label;
-      // OAuth sign-in button: when connected via OAuth, mark "Already Connected".
-      // For other methods (CLI session / setup-token), leave the OAuth button
-      // available as a way to switch to the direct OAuth tier.
-      if (loginBtn) {
-        const oauthActive = d.method === 'oauth';
-        loginBtn.textContent = oauthActive ? 'Already Connected' : 'Sign in with Anthropic OAuth';
-        loginBtn.disabled = oauthActive;
-      }
       // CLI-login button: when CLI session is the active auth, mark "Already Connected".
       if (cliLoginBtn) {
         cliLoginBtn.textContent = usingCliSession ? 'Already Connected' : 'Sign in via Claude CLI';
@@ -51,7 +42,6 @@ async function checkAnthropicAuth() {
     } else {
       el.className = 'status-badge err';
       el.innerHTML = '<span class="status-dot"></span> Not connected';
-      if (loginBtn) { loginBtn.textContent = 'Sign in with Anthropic OAuth'; loginBtn.disabled = false; }
       if (cliLoginBtn) { cliLoginBtn.textContent = 'Sign in via Claude CLI'; cliLoginBtn.disabled = false; }
       if (discBtn) discBtn.style.display = 'none';
     }
@@ -200,15 +190,6 @@ async function installClaudeCli() {
     if (cliEl) { cliEl.className = 'status-badge err'; cliEl.innerHTML = '<span class="status-dot"></span> Install failed: ' + esc(e.message); }
     if (btn) { btn.disabled = false; btn.textContent = 'Retry Install'; }
   }
-}
-
-async function doAnthropicLogin() {
-  try {
-    const d = await apiPost('/api/auth/anthropic/login', {});
-    if (d.authUrl) window.open(d.authUrl, '_blank');
-    setTimeout(checkAnthropicAuth, 5000);
-    setTimeout(checkAnthropicAuth, 15000);
-  } catch (e) { console.error('Anthropic login failed:', e); }
 }
 
 async function doAnthropicDisconnect() {

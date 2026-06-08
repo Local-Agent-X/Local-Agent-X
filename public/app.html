@@ -275,7 +275,7 @@
             <button class="action-btn" style="margin-top:6px;font-size:.7rem;padding:4px 10px" onclick="toggleAnthropicOptions()">Show connection options ▾</button>
           </div>
           <div id="anthropic-options" style="margin-top:10px">
-            <div class="field-hint" style="margin-bottom:6px"><strong>Three ways to connect</strong> (only one needed):</div>
+            <div class="field-hint" style="margin-bottom:6px"><strong>Two ways to connect</strong> (only one needed):</div>
             <div class="field" style="margin-top:10px">
               <label class="field-label">Option 1 — Claude CLI login (easiest)</label>
               <div class="btn-row">
@@ -295,17 +295,10 @@
               </div>
               <div class="field-hint">Run <code>claude setup-token</code> in terminal, paste here. Stored encrypted; routes through CLI subprocess.</div>
             </div>
-            <div class="field" style="margin-top:14px;display:none" data-anthropic-direct-oauth>
-              <label class="field-label">Option 3 — Direct OAuth (DISABLED)</label>
-              <div class="field-hint" style="color:var(--muted);margin-bottom:6px">Anthropic's TOS prohibits using Pro/Max OAuth tokens in third-party tools (incl. Local Agent X). Tokens obtained via this flow return "Not logged in" on inference. Use Option 1 or 2 instead — both route through the CLI subprocess, which IS permitted and now bills against the Agent SDK credit pool. Hidden by default; only re-expose if Anthropic publishes a third-party OAuth scope.</div>
-              <div class="btn-row">
-                <button id="btn-anthropic-login" class="action-btn" onclick="doAnthropicLogin()">Sign in with Anthropic OAuth</button>
-                <button id="btn-anthropic-disconnect" class="action-btn danger" onclick="doAnthropicDisconnect()" style="display:none">Disconnect</button>
-              </div>
-            </div>
             <div class="field" style="margin-top:14px">
               <div class="btn-row">
                 <button id="btn-install-claude-cli" class="action-btn" onclick="installClaudeCli()" style="display:none">Install Claude CLI</button>
+                <button id="btn-anthropic-disconnect" class="action-btn danger" onclick="doAnthropicDisconnect()" style="display:none">Disconnect</button>
               </div>
             </div>
           </div>

@@ -57,7 +57,9 @@ describe("credential-patterns — inline value redaction", () => {
   // is added without a fixture line here, this fixture stops covering the union.
   const fixtures: Array<[string, string]> = [
     ["Anthropic key", `sk-ant-${TAIL}${TAIL}`],
+    ["OpenAI scoped key", `sk-proj-abcdefghij1234567890ABCD`],
     ["OpenAI key", `sk-${TAIL}${TAIL}`],
+    ["Google API key", `AIza${"a".repeat(35)}`],
     ["GitHub PAT", `ghp_abcdefghij1234567890ABCDEFGHIJ123456`],
     ["GitHub fine-grained PAT", `github_pat_${TAIL}${TAIL}`],
     ["GitHub OAuth", `gho_abcdefghij1234567890ABCDEFGHIJ123456`],
@@ -80,6 +82,7 @@ describe("credential-patterns — inline value redaction", () => {
     ["npm", `npm_abcdefghij1234567890ABCDEFGHIJ123456`],
     ["Supabase", `sbp_${TAIL}`],
     ["SendGrid", `SG.${TAIL}.${TAIL}`],
+    ["JWT", `eyJ${"a".repeat(20)}.eyJ${"b".repeat(20)}.${"c".repeat(20)}`],
     ["Bearer header", `Authorization: Bearer ${TAIL}${TAIL}`],
     ["api_key=value", `api_key="${TAIL}abc"`],
     ["client_secret base64", `client_secret: ${"A".repeat(40)}=`],

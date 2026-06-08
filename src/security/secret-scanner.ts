@@ -10,6 +10,7 @@
  */
 
 import { CREDENTIAL_PATTERNS } from "./credential-patterns.js";
+import { detectHighEntropyTokens } from "./entropy-detector.js";
 import { normalizeHomoglyphs, stripControlChars } from "../sanitize.js";
 
 export interface SecretMatch {
@@ -265,6 +266,23 @@ export function scanForSecrets(text: string): ScanResult {
   // points at the real offending bytes in `text`.
   matches.push(...scanNormalizedView(text, matches));
   matches.push(...scanEncodedViews(text));
+
+  // Additive entropy pass: catch UNKNOWN secrets (random tokens with no
+  // recognizable prefix) the catalog can't match. De-duped against catalog
+  // matches — only emit for runs not already covered by a known shape so we
+  // don't relabel an Anthropic/GitHub key as a generic high-entropy token.
+  for (const e of detectHighEntropyTokens(text)) {
+    const covered = matches.some(m => m.startIndex < e.endIndex && e.startIndex < m.endIndex);
+    if (covered) continue;
+    matches.push({
+      type: "high-entropy-token",
+      pattern: "High-Entropy Token",
+      value: e.value.slice(0, 20) + (e.value.length > 20 ? "..." : ""),
+      masked: maskSecret(e.value),
+      startIndex: e.startIndex,
+      endIndex: e.endIndex,
+    });
+  }
 
   // Deduplicate by position
   const seen = new Set<string>();

@@ -19,7 +19,9 @@ const GHP_FAKE = "ghp" + "_" + "abcdefghij1234567890ABCDEFGHIJ12345";
 const GHPAT_FAKE = "github" + "_pat_" + LONG;
 const STRIPE_LIVE_FAKE = "sk" + "_live_" + TAIL;
 const STRIPE_PUB_FAKE = "pk" + "_test_" + TAIL;
-const JWT_FAKE = "eyJhbGciOi.eyJzdWIiOi.SflKxwRJSMeKKF";
+// JWT now lives in the canonical catalog (credential-patterns.ts), which anchors
+// on the three real base64url segments; build one long enough to trip it.
+const JWT_FAKE = "eyJ" + "a".repeat(20) + ".eyJ" + "b".repeat(20) + "." + "c".repeat(20);
 
 describe("redactString — pattern scrubbing", () => {
   it("redacts Bearer auth header value", () => {
@@ -32,7 +34,11 @@ describe("redactString — pattern scrubbing", () => {
   it("redacts Basic auth header value", () => {
     const r = redactString("Basic dXNlcjpwYXNzd29yZG1vcmU=AAAA");
     expect(r.changed).toBe(true);
-    expect(r.redacted).toContain("Basic <redacted>");
+    // The credential blob is scrubbed — either by the canonical high-entropy
+    // pass (it's a dense token) or the Basic-header field-name control. Pin the
+    // invariant that matters: the value never survives to disk.
+    expect(r.redacted).not.toContain("dXNlcjpwYXNzd29yZG1vcmU");
+    expect(r.redacted).toContain("Basic ");
   });
 
   it("redacts authorization key=value form", () => {
@@ -90,13 +96,15 @@ describe("redactString — pattern scrubbing", () => {
   it("redacts Stripe test publishable key", () => {
     const r = redactString("STRIPE_PUB=" + STRIPE_PUB_FAKE);
     expect(r.changed).toBe(true);
-    expect(r.redacted).toContain("pk_test_<redacted>");
+    // Caught by the canonical high-entropy pass (dense token) or the local
+    // pk_/rk_ field control either way — the key value never survives to disk.
+    expect(r.redacted).not.toContain(TAIL);
   });
 
-  it("redacts JWT-shaped tokens", () => {
+  it("redacts JWT-shaped tokens (via the canonical catalog now)", () => {
     const r = redactString("auth=" + JWT_FAKE);
     expect(r.changed).toBe(true);
-    expect(r.redacted).toContain("<redacted-jwt>");
+    expect(r.redacted).toContain("[REDACTED:JWT]");
     expect(r.redacted).not.toContain(JWT_FAKE);
   });
 

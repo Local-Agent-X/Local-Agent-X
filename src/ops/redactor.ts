@@ -36,15 +36,17 @@ import { redactSecrets } from "../security/secret-scanner.js";
  * key reached disk un-redacted because the local set didn't know those shapes.
  * Now every catalog shape (all 27) is scrubbed before disk-append.
  *
- * The two entries below are NOT secret shapes the catalog owns; they stay local:
+ * The entries below are NOT secret value-shapes the catalog owns; they stay local:
  *   1. AUTH-HEADER scrubbing by field NAME/context (Bearer/Basic header value,
  *      `authorization: <value>` lines) — a field-name control, not a value-shape
  *      match, mirroring SENSITIVE_FIELD_NAMES below. The canonical "Bearer Token"
  *      shape covers Bearer bodies but not the `Basic ` scheme or the bare
  *      authorization-line form, so this is kept to preserve that coverage.
- *   2. Stripe PUBLISHABLE / restricted keys (`pk_`/`rk_`) and JWTs — shapes the
- *      canonical catalog doesn't (yet) carry. Kept so disk redaction doesn't
- *      regress. (Remaining intentional drift, reported in S1.)
+ *   2. Stripe PUBLISHABLE / restricted keys (`pk_`/`rk_`) — a shape the canonical
+ *      catalog doesn't carry. Kept so disk redaction doesn't regress.
+ *
+ * (JWTs moved INTO the canonical catalog — they're scrubbed by redactSecrets in
+ * redactString below, so no local JWT entry is needed here.)
  *
  * Each replaces the matched value with a stable redacted form so disk diffs
  * don't suddenly show different masking each run.
@@ -56,8 +58,6 @@ const SUPPLEMENTAL_PATTERNS: Array<{ name: string; re: RegExp; replacement: stri
   { name: "authorization-line", re: /(["']?[Aa]uthorization["']?\s*[:=]\s*["']?)([^"'\s]{16,})/g, replacement: "$1<redacted>" },
   // Stripe publishable / restricted keys — canonical only carries sk_live/sk_test.
   { name: "stripe-pub-key", re: /\b(pk|rk)_(test|live)_[A-Za-z0-9]{16,}/g, replacement: "$1_$2_<redacted>" },
-  // JWT-shaped (three b64url segments with dots) — not in the canonical catalog.
-  { name: "jwt", re: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, replacement: "<redacted-jwt>" },
 ];
 
 /**

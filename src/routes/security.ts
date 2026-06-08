@@ -17,7 +17,7 @@ import { ThreatEngine } from "../threat/threat-engine.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.security");
 
-export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
+export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   if (method === "GET" && url.pathname === "/api/security/dashboard") {
@@ -60,6 +60,31 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
   }
   if (method === "POST" && url.pathname === "/api/security/injection-tests") {
     json(200, runInjectionTests()); return true;
+  }
+
+  // Declassification — the EXPLICIT, AUDITED untaint trigger. A deliberate
+  // operator action that releases a session's egress taint so a previously
+  // taint-blocked send can proceed. Distinct from the silent new-chat reset
+  // (clearSessionTaint): every declassify is attributed and written to the
+  // tamper-evident audit chain by data-lineage. Operator/user only — readonly
+  // and agent roles cannot loosen the egress floor. Optional `source` clears
+  // only one TaintSource (e.g. release web-derived taint, keep secret-derived).
+  if (method === "POST" && url.pathname === "/api/security/declassify") {
+    if (role !== "operator" && role !== "user") {
+      json(403, { error: "Declassification requires operator or user role" }); return true;
+    }
+    const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+    const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (!sessionId) { json(400, { error: "sessionId is required" }); return true; }
+    if (!reason) { json(400, { error: "reason is required" }); return true; }
+    const { declassifySession, declassifyTaintSource } = await import("../data-lineage.js");
+    const opts = { reason, authorizedBy: role };
+    const result = typeof body.source === "string" && body.source
+      ? declassifyTaintSource(sessionId, body.source as import("../data-lineage.js").TaintSource, opts)
+      : declassifySession(sessionId, opts);
+    logger.info(`[security] Declassified ${result.cleared} taint entr${result.cleared === 1 ? "y" : "ies"} for session ${sessionId} (by ${role})`);
+    json(200, { ok: true, ...result }); return true;
   }
 
   // File access mode

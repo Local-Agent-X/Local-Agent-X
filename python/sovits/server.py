@@ -158,27 +158,14 @@ async def lifespan(app: FastAPI):
                 log.info("[api_v2] %s", line.rstrip())
         asyncio.create_task(_drain())
 
-        # Poll /docs until ready — first launch is heavy (model files + CUDA
-        # context, can take 30-60s on RTX 3060). Bail at 120s so the wrapper
-        # doesn't hang forever if api_v2 crashed.
-        ready = False
-        async with httpx.AsyncClient(timeout=2.0) as c:
-            for i in range(120):
-                if api_v2_proc.poll() is not None:
-                    log.error("api_v2 exited early (code %s) — synth will fail", api_v2_proc.returncode)
-                    api_v2_proc = None
-                    break
-                try:
-                    r = await c.get(f"{API_V2_URL}/docs")
-                    if r.status_code == 200:
-                        ready = True
-                        log.info("api_v2 ready after %ds", i + 1)
-                        break
-                except Exception:
-                    pass
-                await asyncio.sleep(1)
-        if not ready and api_v2_proc:
-            log.warning("api_v2 didn't report ready in 120s but process is alive — synth may still work")
+        # Do NOT block startup on api_v2's cold-load. GPT-SoVITS takes 30-120s
+        # to load weights + build its CUDA context; if we awaited that here the
+        # wrapper wouldn't bind :7012 for the whole window, and the Node process
+        # manager (startTierAndWait's health probe + the 60s orphan reaper) would
+        # see a non-listening port and kill the still-loading wrapper. Yield now
+        # so :7012 comes up in seconds; /healthz reports api_v2's real readiness,
+        # and /synth (120s client timeout) waits for it on the first request.
+        log.info("api_v2 spawned (pid=%s); loading in background — synth waits until ready", api_v2_proc.pid)
 
     try:
         yield

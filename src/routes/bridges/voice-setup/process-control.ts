@@ -128,6 +128,12 @@ export async function reapOrphanSidecars(): Promise<number> {
     const mine = running.get(tier.id)?.pid ?? null;
     const onPort = pidOnPort(tier.port);
     const healthy = (await probeHealth(tier.healthUrl)).ok;
+    // A responding /healthz means a working server is serving this port — the
+    // reaper is for hung/orphan processes, not live ones. If we can't pin the
+    // listener's pid (pidOnPort is racy: a transient PowerShell failure returns
+    // null) and we don't own it, skip the tier entirely rather than blind-kill
+    // every matching pid — that blind kill was taking down healthy sidecars.
+    if (healthy && !onPort && !mine) continue;
     const keep = mine ?? (healthy && onPort ? onPort : null);
     for (const pid of pids) {
       if (pid === keep) continue;

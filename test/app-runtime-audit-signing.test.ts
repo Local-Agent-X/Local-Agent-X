@@ -134,28 +134,32 @@ describe("verifyAuditEntry", () => {
   });
 });
 
-describe("persistent HMAC key", () => {
-  it("creates <laxDir>/audit-key with mode 0o600 on first use", () => {
+describe("persistent HMAC key (keychain-sealed seed)", () => {
+  it("seals the seed to audit-key.enc (no plaintext) with mode 0o600 on first use", () => {
     signAuditEntry(baseEntry());
-    const keyFile = join(tmpRoot, "audit-key");
-    expect(existsSync(keyFile)).toBe(true);
-    const buf = readFileSync(keyFile);
-    expect(buf.length).toBe(32);
-    // POSIX file modes — Windows does not enforce 0o600 the same way, so
-    // only assert on POSIX. The bytes-written check above is OS-agnostic.
+    const encFile = join(tmpRoot, "audit-key.enc");
+    const plainFile = join(tmpRoot, "audit-key");
+    // The at-rest seed is now sealed under the keychain master key; the old
+    // plaintext audit-key is never written.
+    expect(existsSync(encFile)).toBe(true);
+    expect(existsSync(plainFile)).toBe(false);
     if (process.platform !== "win32") {
-      const mode = statSync(keyFile).mode & 0o777;
+      const mode = statSync(encFile).mode & 0o777;
       expect(mode).toBe(0o600);
     }
   });
 
-  it("reuses an existing on-disk key across resolves", () => {
+  it("migrates a legacy plaintext audit-key into the sealed store, preserving bytes", () => {
     const knownKey = Buffer.from("a".repeat(64), "hex");
     writeFileSync(join(tmpRoot, "audit-key"), knownKey, { mode: 0o600 });
     _resetAuditKeyCacheForTests();
     const resolved = getAuditHmacKey();
     expect(Buffer.isBuffer(resolved)).toBe(true);
+    // Same bytes — a migration, not a rotation: existing chains still verify.
     expect((resolved as Buffer).equals(knownKey)).toBe(true);
+    // Plaintext is wiped; the sealed form replaces it.
+    expect(existsSync(join(tmpRoot, "audit-key"))).toBe(false);
+    expect(existsSync(join(tmpRoot, "audit-key.enc"))).toBe(true);
 
     // Cross-check: signing produces the HMAC computed with that exact key.
     const entry = baseEntry();
@@ -164,7 +168,17 @@ describe("persistent HMAC key", () => {
     expect(signAuditEntry(entry)).toBe(expected);
   });
 
-  it("env override beats on-disk key", () => {
+  it("re-opens the sealed seed on a later resolve (round-trips across cache reset)", () => {
+    const first = getAuditHmacKey();
+    expect(Buffer.isBuffer(first)).toBe(true);
+    const firstBytes = Buffer.from(first as Buffer);
+    _resetAuditKeyCacheForTests();
+    const second = getAuditHmacKey();
+    expect(Buffer.isBuffer(second)).toBe(true);
+    expect((second as Buffer).equals(firstBytes)).toBe(true);
+  });
+
+  it("env override beats the sealed seed", () => {
     const diskKey = Buffer.from("b".repeat(64), "hex");
     writeFileSync(join(tmpRoot, "audit-key"), diskKey, { mode: 0o600 });
     process.env.LAX_AUDIT_KEY = "envkeyvalue";

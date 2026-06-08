@@ -1,39 +1,108 @@
-import { createHash, createHmac, randomBytes } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
+import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { getOrCreateMasterKey } from "../keychain.js";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createLogger } from "../logger.js";
 import type { AuditEntry } from "./types.js";
 
-// Persistent HMAC key for tamper detection. Resolution order:
-//   1. process.env.LAX_AUDIT_KEY / LAX_AUDIT_KEY (ops-managed override)
-//   2. <laxDir>/audit-key on disk, 32 random bytes, mode 0o600
-//   3. In-process random fallback if disk read/write fails (loud error logged)
+const logger = createLogger("audit.signing");
+
+// Persistent HMAC key (the audit "seed") for tamper detection. Resolution:
+//   1. process.env.LAX_AUDIT_KEY (ops-managed override — never persisted)
+//   2. <laxDir>/audit-key.enc — the seed sealed with the OS-keychain master
+//      key (AES-256-GCM). A legacy plaintext <laxDir>/audit-key is migrated
+//      into this form on first read (SAME bytes — a migration, never a
+//      rotation) and then securely wiped.
+//   3. In-process random fallback if the seed can't be resolved (loud error).
 //
-// Cached per-process. Persisting to disk is the whole point — signatures
-// must survive process restarts so a hash-chained audit log stays verifiable
-// across crashes and reboots.
+// Why sealed: a plaintext seed file let a filesystem-only attacker read it and
+// forge the entire chain — directly defeating the "filesystem-only attacker
+// cannot forge" property the audit trail advertises. Sealing it under the
+// keychain master key means an at-rest/disk/backup/swap reader gets only
+// ciphertext; forging now needs the OS-login-gated master key.
+// Honest limit: a LIVE process can still recover the seed (it holds the master
+// key), so this closes the at-rest vector, NOT a live-process compromise.
+// True forward-secrecy would need the seed escrowed off-device.
+//
+// Cached per-process. Persisting is the whole point — signatures must survive
+// restarts so a hash-chained audit log stays verifiable across reboots.
 
 let cachedKey: Buffer | string | null = null;
 
-function keyPath(): string {
+function encPath(): string {
+  return join(getLaxDir(), "audit-key.enc");
+}
+
+function plaintextPath(): string {
   return join(getLaxDir(), "audit-key");
 }
 
-function loadOrCreateDiskKey(): Buffer {
-  const path = keyPath();
-  if (existsSync(path)) {
-    return readFileSync(path);
-  }
-  const fresh = randomBytes(32);
-  // Atomic write: tmp + rename, mode 0o600. Rename is atomic on a single
-  // filesystem; two racing processes may both write, but each ends with a
-  // valid 32-byte key file, and one wins the rename. The losing process
-  // will reload the winner's key on next call (cache is in-memory).
+/** AES-256-GCM seal: output hex = iv(12) || authTag(16) || ciphertext. */
+function sealSeed(seed: Buffer, masterKey: Buffer): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", masterKey, iv);
+  const ct = Buffer.concat([cipher.update(seed), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ct]).toString("hex");
+}
+
+/** Inverse of sealSeed. Throws if the auth tag fails (wrong master key). */
+function openSeed(hex: string, masterKey: Buffer): Buffer {
+  const data = Buffer.from(hex, "hex");
+  const iv = data.subarray(0, 12);
+  const authTag = data.subarray(12, 28);
+  const ct = data.subarray(28);
+  const decipher = createDecipheriv("aes-256-gcm", masterKey, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(ct), decipher.final()]);
+}
+
+/** Atomic write (tmp + rename), mode 0o600 — mirrors the old key writer. */
+function writeAtomic(path: string, contents: string | Buffer): void {
   const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
-  writeFileSync(tmp, fresh, { mode: 0o600 });
+  writeFileSync(tmp, contents, { mode: 0o600 });
   renameSync(tmp, path);
-  return fresh;
+}
+
+/** Best-effort wipe of a plaintext seed file: overwrite then unlink. */
+function shredPlaintext(path: string): void {
+  try {
+    if (!existsSync(path)) return;
+    const size = statSync(path).size;
+    if (size > 0) writeFileSync(path, randomBytes(size), { mode: 0o600 });
+    unlinkSync(path);
+  } catch { /* best-effort — namespace removal is the point, not forensic erasure */ }
+}
+
+function loadOrCreateProtectedKey(): Buffer {
+  // file-fallback never throws (returns a machine-identity key); keychain
+  // strength tracks the provider. Seal strength == master-key strength.
+  const masterKey = getOrCreateMasterKey(getLaxDir()).key;
+  const enc = encPath();
+  const plain = plaintextPath();
+
+  // 1. Sealed seed already present — open it (and drop any stale plaintext).
+  if (existsSync(enc)) {
+    const seed = openSeed(readFileSync(enc, "utf-8").trim(), masterKey);
+    shredPlaintext(plain);
+    return seed;
+  }
+
+  // 2. Legacy plaintext seed — migrate the SAME bytes into the sealed store,
+  //    then wipe the plaintext. Not a rotation: existing chains still verify.
+  if (existsSync(plain)) {
+    const seed = readFileSync(plain);
+    writeAtomic(enc, sealSeed(seed, masterKey));
+    shredPlaintext(plain);
+    logger.info("[audit] migrated plaintext audit seed into keychain-sealed store (audit-key.enc)");
+    return seed;
+  }
+
+  // 3. First run — generate a fresh seed and store only the sealed form.
+  const seed = randomBytes(32);
+  writeAtomic(enc, sealSeed(seed, masterKey));
+  return seed;
 }
 
 export function getAuditHmacKey(): Buffer | string {
@@ -44,14 +113,18 @@ export function getAuditHmacKey(): Buffer | string {
     return cachedKey;
   }
   try {
-    cachedKey = loadOrCreateDiskKey();
+    cachedKey = loadOrCreateProtectedKey();
     return cachedKey;
   } catch (err) {
-    // Disk unavailable (permissions, missing dir, read-only fs). Fall back
-    // to an in-process random key. Same risk profile as the old behavior:
-    // signatures don't survive a restart. Loud log so this is visible.
+    // Seed unresolvable: keychain/master-key unavailable, or an existing
+    // audit-key.enc that won't open (master key rotated). We do NOT
+    // regenerate over an existing sealed seed — that would silently
+    // invalidate every prior entry (the keychain.ts:217 rotation incident
+    // class). Fall back to an in-process key so auditing continues this
+    // process; entries won't verify across restart until the seed is
+    // recovered. Loud log so it's visible.
     // eslint-disable-next-line no-console
-    console.error("[audit] failed to persist HMAC key, using in-process fallback:", err);
+    console.error("[audit] failed to resolve sealed HMAC seed, using in-process fallback:", err);
     cachedKey = randomBytes(32);
     return cachedKey;
   }

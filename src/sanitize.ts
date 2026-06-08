@@ -1,4 +1,16 @@
 import { randomBytes } from "node:crypto";
+import {
+  isSecretShaped,
+  knownSecretValues,
+  registerRedactedSecretValue,
+  unregisterRedactedSecretValue,
+} from "./security/known-secrets.js";
+
+// Re-export the known-secret registry surface from its canonical home
+// (security/known-secrets.ts) so existing importers of sanitize.ts keep
+// working. The registry was moved out of this file so secret-scanner.ts can
+// also read it without an import cycle (it already imports sanitize.ts).
+export { isSecretShaped, registerRedactedSecretValue, unregisterRedactedSecretValue };
 
 /**
  * External Content Sanitizer
@@ -190,56 +202,21 @@ export function detectInjection(text: string): Array<{ label: string; score: num
  * @returns Wrapped content safe for LLM context injection
  */
 /**
- * In-memory registry of secret plaintext values to scrub from any content
- * heading to the LLM. Populated by browser_fill_from_secret after a successful
- * fill so the value — now sitting in a DOM input — can't leak back via snapshot,
- * extract, screenshot OCR, or any other tool result that flows through
+ * Redact all known secret values from a string. Safe to call on any content.
+ *
+ * The registry it reads is populated by browser_fill_from_secret / clipboard
+ * writes AND proactively from the SecretsStore on load/add, so a value sitting
+ * in a DOM input or echoed by a tool result can't leak back via snapshot,
+ * extract, screenshot OCR, or any other tool result flowing through
  * wrapExternalContent.
- *
- * This is belt-and-suspenders on top of the existing password-input scrub in
- * extract.ts: that one handles the specific input element, this one handles
- * incidental leaks (form-serialized dumps, errors that echo field values,
- * evaluate() outputs, etc.).
  */
-const REDACTED_SECRET_VALUES = new Set<string>();
-
-/**
- * Gate the redaction catalog to plausibly-secret values only.
- *
- * WHY: `redactKnownSecrets` does an aggressive unanchored substring replace, so
- * registering a short or purely-numeric value (a port like "47831", a 4-digit
- * PIN, a record id) would clobber every benign occurrence of that substring in
- * later output ("listening on 47831" → "listening on [REDACTED_SECRET]").
- *
- * This is a security scrubber, so a false negative (missing a real secret) is
- * worse than over-redaction — we therefore only TIGHTEN the registration input
- * and deliberately do NOT weaken the matcher (no word boundaries; a genuine
- * secret embedded in a larger token must still be caught). Real secrets (API
- * keys, tokens, passwords) are long and mixed, so they sail through this gate.
- */
-function isSecretShaped(value: string): boolean {
-  if (value.length < 6) return false; // too short to be a real secret (port/PIN guard)
-  if (/^\d+$/.test(value)) return false; // purely numeric → ports, PINs, ids
-  const distinct = new Set(value).size;
-  if (distinct < 4) return false; // low entropy (e.g. "aaaaaaaa", "abababab")
-  return true;
-}
-
-/** Register a plaintext value to redact from any outgoing external content. */
-export function registerRedactedSecretValue(value: string): void {
-  if (value && isSecretShaped(value)) REDACTED_SECRET_VALUES.add(value);
-}
-
-/** Clear a previously-registered value (e.g. on secret rotation or deletion). */
-export function unregisterRedactedSecretValue(value: string): void {
-  REDACTED_SECRET_VALUES.delete(value);
-}
-
-/** Redact all known secret values from a string. Safe to call on any content. */
 export function redactKnownSecrets(content: string): string {
-  if (REDACTED_SECRET_VALUES.size === 0) return content;
+  // Longest-first so a value that is a substring of another redacts the most
+  // specific match first.
+  const values = knownSecretValues();
+  if (values.length === 0) return content;
   let out = content;
-  for (const v of REDACTED_SECRET_VALUES) {
+  for (const v of values) {
     if (!v) continue;
     // Global literal replace — no regex special-char problems.
     out = out.split(v).join("[REDACTED_SECRET]");

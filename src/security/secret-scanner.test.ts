@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import { scanForSecrets, redactSecrets } from "./secret-scanner.js";
+import {
+  registerRedactedSecretValue,
+  unregisterRedactedSecretValue,
+} from "./known-secrets.js";
 
 // Assemble a real-shaped Anthropic key at runtime from fragments so CI's own
 // secret scanner doesn't flag this test's diff. Never write the literal.
@@ -181,4 +185,62 @@ describe("scanForSecrets — high-entropy detector (false-positive traps stay cl
       expect(scanForSecrets(text).clean).toBe(true);
     });
   }
+});
+
+// ── Known-secret-value detection (the user's ACTUAL stored secrets) ──────────
+describe("scanForSecrets — known-secret-value detection", () => {
+  // A long, isSecretShaped value (len>=6, not all-numeric, >=4 distinct chars)
+  // that is DELIBERATELY low-entropy readable prose: it trips NO credential
+  // pattern and NO entropy run, so when it is NOT registered the scan is clean.
+  // That makes the ONLY reason it can flag be the known-value registry — and
+  // keeps the "stays clean once unregistered" assertion non-flaky.
+  const KNOWN = "correct-horse-battery-staple-passphrase";
+  const registered: string[] = [];
+
+  function register(v: string): void {
+    registerRedactedSecretValue(v);
+    registered.push(v);
+  }
+
+  afterEach(() => {
+    while (registered.length) unregisterRedactedSecretValue(registered.pop()!);
+  });
+
+  it("flags a registered value appearing literally, with a real redactable span", () => {
+    register(KNOWN);
+    const text = `body={"token":"${KNOWN}"}`;
+    const r = scanForSecrets(text);
+    expect(r.clean).toBe(false);
+    const m = r.matches.find(x => x.type === "known-secret-value");
+    expect(m).toBeTruthy();
+    expect(text.slice(m!.startIndex, m!.endIndex)).toBe(KNOWN);
+    // Never echoes the value through the match object.
+    expect(m!.value).toBe("");
+    expect(redactSecrets(text)).not.toContain(KNOWN);
+  });
+
+  it("flags the base64-encoded form of a registered value (decode-view reuse)", () => {
+    register(KNOWN);
+    const blob = Buffer.from(KNOWN, "utf8").toString("base64");
+    const text = `payload=${blob}`;
+    const r = scanForSecrets(text);
+    expect(r.clean).toBe(false);
+    expect(r.matches.some(x => x.type === "known-secret-value")).toBe(true);
+    // The whole encoded blob is the redactable span.
+    expect(redactSecrets(text)).not.toContain(blob);
+  });
+
+  it("does NOT register / flag a non-secret-shaped value (no false positive)", () => {
+    register("8080");   // purely numeric → gated out
+    register("true");   // too short → gated out
+    const text = "server listening on 8080, debug=true";
+    expect(scanForSecrets(text).clean).toBe(true);
+  });
+
+  it("stays clean once a registered value is unregistered (rotation/deletion)", () => {
+    register(KNOWN);
+    expect(scanForSecrets(`x=${KNOWN}`).clean).toBe(false);
+    unregisterRedactedSecretValue(registered.pop()!);
+    expect(scanForSecrets(`x=${KNOWN}`).clean).toBe(true);
+  });
 });

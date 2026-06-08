@@ -12,6 +12,7 @@
 import { CREDENTIAL_PATTERNS } from "./credential-patterns.js";
 import { detectHighEntropyTokens } from "./entropy-detector.js";
 import { normalizeHomoglyphs, stripControlChars } from "../sanitize.js";
+import { knownSecretValues, hasKnownSecretValues } from "./known-secrets.js";
 
 export interface SecretMatch {
   type: string;
@@ -190,19 +191,16 @@ function scanEncodedViews(text: string): SecretMatch[] {
   return out;
 }
 
-/**
- * Detect secrets visible only after unicode normalization: homoglyph
- * substitution + control/zero-width stripping (reusing sanitize.ts), then NFKC
- * — the same canonical fold checkMemoryTaint applies, which collapses
- * fullwidth/compatibility homoglyphs to their ASCII form. Stripping deletes
- * chars and NFKC can expand one char into several, so the normalized view's
- * indices don't line up with the original; we build a per-output-char map back
- * to the source index so the emitted span covers the real offending run.
- */
-function scanNormalizedView(text: string, rawMatches: SecretMatch[]): SecretMatch[] {
-  // Build the normalized view char-by-char so we can map every output position
-  // back to the source index. stripControlChars derives the deletion set (no
-  // duplicated char class); normalizeHomoglyphs + NFKC fold each surviving char.
+// Build the normalized view char-by-char so every output position maps back to
+// the source index: homoglyph substitution + control/zero-width stripping
+// (reusing sanitize.ts), then NFKC — the same canonical fold checkMemoryTaint
+// applies, which collapses fullwidth/compatibility homoglyphs to their ASCII
+// form. Stripping deletes chars and NFKC can expand one char into several, so
+// indices don't line up with the original; the per-output-char map (outToOrig)
+// lets callers emit a span over the real offending run. Shared by the
+// credential-pattern normalized pass and the known-value normalized pass so the
+// (potentially expensive) fold + index map is built once per scan.
+function buildNormalizedView(text: string): { normalized: string; outToOrig: number[] } {
   let normalized = "";
   const outToOrig: number[] = []; // normalized char index → original text index
   for (let i = 0; i < text.length; i++) {
@@ -212,6 +210,20 @@ function scanNormalizedView(text: string, rawMatches: SecretMatch[]): SecretMatc
     for (let k = 0; k < folded.length; k++) outToOrig.push(i);
     normalized += folded;
   }
+  return { normalized, outToOrig };
+}
+
+/**
+ * Detect secrets visible only after unicode normalization, using the prebuilt
+ * normalized view. Spans are mapped back to the original text so redaction
+ * removes the real offending run. Additive over raw matches.
+ */
+function scanNormalizedView(
+  text: string,
+  rawMatches: SecretMatch[],
+  view: { normalized: string; outToOrig: number[] }
+): SecretMatch[] {
+  const { normalized, outToOrig } = view;
   if (normalized === text) return [];
 
   const out: SecretMatch[] = [];
@@ -241,6 +253,93 @@ function scanNormalizedView(text: string, rawMatches: SecretMatch[]): SecretMatc
   return out;
 }
 
+// ── Known-secret-value detection ───────────────────────────────────────────
+//
+// The egress check with the fewest false positives is matching the user's
+// ACTUAL stored secret values (registered from the SecretsStore) — not "looks
+// secret-ish." A registered value (or its encoded/normalized form) appearing in
+// an outbound payload makes the scan NOT clean even when it matches no pattern,
+// so the egress guard BLOCKS and the taint path TAINTS. Spans always point at
+// the real offending bytes in `text` so redactSecrets strips something real.
+
+/** Find every occurrence of `needle` in `hay`, returning [start,end) spans. */
+function findAllSpans(hay: string, needle: string): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  if (!needle) return spans;
+  let from = 0;
+  for (;;) {
+    const idx = hay.indexOf(needle, from);
+    if (idx === -1) break;
+    spans.push({ start: idx, end: idx + needle.length });
+    from = idx + needle.length;
+  }
+  return spans;
+}
+
+function knownValueMatch(start: number, end: number): SecretMatch {
+  // Never echo the value: mask is fixed and `value` is empty so the literal
+  // secret can't leak through a logged SecretMatch.
+  return {
+    type: "known-secret-value",
+    pattern: "Known Secret Value",
+    value: "",
+    masked: "***",
+    startIndex: start,
+    endIndex: end,
+  };
+}
+
+/**
+ * Detect any registered known secret value in `text` — raw, in a decoded
+ * encoded-run, or in the normalized view — reusing the SAME decode/normalize
+ * machinery the credential passes use. Values are gated by isSecretShaped at
+ * registration time, so short/low-entropy values never reach here (no FP).
+ */
+function scanKnownValues(
+  text: string,
+  view: { normalized: string; outToOrig: number[] }
+): SecretMatch[] {
+  if (!hasKnownSecretValues()) return [];
+  const values = knownSecretValues(); // longest-first
+  const out: SecretMatch[] = [];
+
+  // 1) Raw occurrences.
+  for (const v of values) {
+    for (const s of findAllSpans(text, v)) out.push(knownValueMatch(s.start, s.end));
+  }
+
+  // 2) Encoded views: a value hidden inside a base64/hex/percent run. Attribute
+  //    to the ORIGINAL encoded blob so redaction removes the whole thing.
+  for (const scheme of ENCODED_SCHEMES) {
+    scheme.re.lastIndex = 0;
+    for (const m of text.matchAll(scheme.re)) {
+      const run = m[0];
+      const index = m.index ?? 0;
+      const decoded = scheme.decode(run);
+      if (decoded === null) continue;
+      if (values.some((v) => decoded.includes(v))) {
+        out.push(knownValueMatch(index, index + run.length));
+      }
+    }
+  }
+
+  // 3) Normalized view: a value split/disguised by homoglyphs or zero-width
+  //    chars. Map the normalized span back to the source bytes.
+  const { normalized, outToOrig } = view;
+  if (normalized !== text) {
+    for (const v of values) {
+      for (const s of findAllSpans(normalized, v)) {
+        const origStart = outToOrig[s.start] ?? s.start;
+        const origEnd =
+          s.end - 1 < outToOrig.length ? (outToOrig[s.end - 1] ?? s.end - 1) + 1 : text.length;
+        out.push(knownValueMatch(origStart, origEnd));
+      }
+    }
+  }
+
+  return out;
+}
+
 /** Scan text for secret patterns */
 export function scanForSecrets(text: string): ScanResult {
   const matches: SecretMatch[] = [];
@@ -261,11 +360,20 @@ export function scanForSecrets(text: string): ScanResult {
     }
   }
 
+  // Build the normalized view once; both the credential-pattern normalized pass
+  // and the known-value normalized pass reuse it (one fold + index map per scan).
+  const normalizedView = buildNormalizedView(text);
+
   // Additive evasion-resistant passes: a secret present only in a normalized or
   // decoded view of the text still makes the result NOT clean, with a span that
   // points at the real offending bytes in `text`.
-  matches.push(...scanNormalizedView(text, matches));
+  matches.push(...scanNormalizedView(text, matches, normalizedView));
   matches.push(...scanEncodedViews(text));
+
+  // Known-secret-value pass: a registered stored secret value (raw, encoded, or
+  // normalized) makes the scan NOT clean even when it matches no pattern, so the
+  // egress guard blocks and the taint path taints on the user's ACTUAL secrets.
+  matches.push(...scanKnownValues(text, normalizedView));
 
   // Additive entropy pass: catch UNKNOWN secrets (random tokens with no
   // recognizable prefix) the catalog can't match. De-duped against catalog

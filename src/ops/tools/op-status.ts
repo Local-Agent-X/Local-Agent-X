@@ -5,7 +5,7 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
-import { schedulerSnapshot } from "../../canonical-loop/index.js";
+import { schedulerSnapshot, readOpTurns } from "../../canonical-loop/index.js";
 import { readCheckpoint } from "../checkpoint.js";
 import { readEvents } from "../event-log.js";
 import { listOps, readOp } from "../op-store.js";
@@ -18,7 +18,7 @@ import {
 
 export const opStatusTool: ToolDefinition = {
   name: "op_status",
-  description: "Inspect an op by id. Returns status, recent events, and checkpoint. Without an opId, lists ops you submitted in this session (plus pool / queue summary).",
+  description: "Inspect an op by id. Returns status, recent turn-by-turn activity (what the worker is doing/did each turn), and checkpoint. Without an opId, lists ops you submitted in this session (plus pool / queue summary).",
   parameters: {
     type: "object",
     properties: {
@@ -83,8 +83,28 @@ export const opStatusTool: ToolDefinition = {
       }
     }
 
-    const events = readEvents(opId).slice(-(typeof args.events_tail === "number" ? args.events_tail : 10));
+    const tail = typeof args.events_tail === "number" ? args.events_tail : 10;
     const checkpoint = readCheckpoint(opId);
+
+    // Canonical-loop ops (app-builds, sub-agents) record per-turn tool
+    // activity in the canonical store; the legacy event log stays empty for
+    // them. Surface the turn narrative — the same "turn N · read, edit"
+    // activity the sidebar shows — so the agent can answer "what's it doing?"
+    const turns = readOpTurns(opId);
+    const turnLines = turns.slice(-Math.min(tail, 8)).map(t => {
+      const tools = t.toolCallSummary.length === 0
+        ? "thinking"
+        : t.toolCallSummary.map(c => c.resultStatus === "ok" ? c.tool : `${c.tool} (${c.resultStatus})`).join(", ");
+      return `  turn ${t.turnIdx}: ${tools}${t.terminalReason ? `  [${t.terminalReason}]` : ""}`;
+    });
+
+    // Legacy worker-pool ops record activity here instead of op_turns.
+    const events = readEvents(opId).slice(-tail);
+    const eventLines = events.map(e => `  [${e.type}] ${JSON.stringify(e.payload).slice(0, 120)}`);
+
+    const activity =
+      (turnLines.length > 0 ? `\nrecent turns (${turns.length} total):\n${turnLines.join("\n")}\n` : "") +
+      (eventLines.length > 0 ? `\nrecent events (${events.length}):\n${eventLines.join("\n")}` : "");
 
     return {
       content:
@@ -92,8 +112,7 @@ export const opStatusTool: ToolDefinition = {
         `task: ${op.task}\n` +
         (checkpoint ? `checkpoint: ${checkpoint.lastSafeBoundary.label} @ ${checkpoint.lastSafeBoundary.timestamp}\n` : "") +
         (op.lastFailureReason ? `last failure: ${op.lastFailureReason}\n` : "") +
-        `\nrecent events (${events.length}):\n` +
-        events.map(e => `  [${e.type}] ${JSON.stringify(e.payload).slice(0, 120)}`).join("\n"),
+        (activity || "\n(no turn activity recorded yet)"),
     };
   },
 };

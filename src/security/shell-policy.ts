@@ -42,6 +42,20 @@ const BLOCKED_COMMANDS = [
   /\bsftp\s/i,                              // sftp
   /\brsync\s/i,                             // rsync
   /\bftp\s/i,                               // ftp
+  // ── DNS / automation / opener clients (egress that bypasses HTTP/SSRF) ──
+  // These reach the network or hand a URL to another app (DNS-tunnel exfil,
+  // browser-launch-as-exfil, AppleScript-wrapped shell). `\bword\s` requires
+  // the binary be immediately followed by whitespace, so `open ` matches but
+  // `openssl `/`/usr/bin/openfoo` do not.
+  /\bdig\s/i,                               // DNS lookup (data-in-subdomain exfil)
+  /\bhost\s/i,                              // DNS lookup
+  /\bnslookup\s/i,                          // DNS lookup
+  /\bgetent\s/i,                            // NSS lookup (hosts → DNS)
+  /\bping\s/i,                              // ICMP (data-in-hostname exfil)
+  /\btraceroute\s/i,                        // route probe (egress)
+  /\bosascript\s/i,                         // macOS AppleScript (wraps `do shell script`)
+  /\bopen\s/i,                              // macOS opener (launches browser/app w/ URL)
+  /\bxdg-open\s/i,                          // Linux opener (launches browser/app w/ URL)
   /Invoke-WebRequest\b/i,                   // PowerShell web
   /Invoke-RestMethod\b/i,                   // PowerShell REST
   /\bIwr\b/i,                               // PowerShell alias
@@ -190,6 +204,20 @@ function detectScriptWrite(command: string): string | null {
 // Remove the contents of single- and double-quoted spans (and the quotes)
 // so shell separators that are literal inside an argument — e.g. the `;` in
 // `python -c "a; b"` — aren't mistaken for command chaining.
+// Commands that hand a URL to the system browser / an external app. Rejected
+// with a specific "use the browser tool instead" message (which has CDP
+// attach, audit logging, and no system-app launch). Lives here — not inline in
+// bashTool — so EVERY bash-spawning path (bash, process_start, process_restart)
+// inherits it. Covers the cross-platform openers: start/open/xdg-open/explorer
+// with an http(s):// or www. target, plus the PowerShell/rundll32 idioms.
+// NOTE: no trailing `\b` here. A trailing `\b` anchored on `https?:` never
+// matched a real URL — `:` → `/` in `https://…` is non-word→non-word, so there
+// is no word boundary, and the inline copy this replaced silently failed to
+// block `open https://…` (only `open https:foo`). The leading `\b` is what
+// prevents substring false-positives; the branch contents anchor the rest.
+const BROWSER_OPEN_CMDS =
+  /\b(start\s+(https?:|www\.|"?https?:)|explorer\s+(https?:|"?https?:)|open\s+(https?:|"?https?:)|xdg-open\s+(https?:|"?https?:)|sensible-browser|wslview\s|powershell.*Start-Process.*https?:|rundll32\s+url\.dll)/i;
+
 function stripQuotedSpans(command: string): string {
   let out = "";
   let quote: string | null = null;
@@ -214,6 +242,18 @@ export function evaluateShellCommand(command: string): SecurityDecision {
     }
   } catch {
     // Don't crash on obfuscation check failure — allow the command through
+  }
+
+  // Reject launching a URL in the system browser — route to the browser tool
+  // (CDP attach + audit) instead. Checked here so the specific message wins
+  // over the generic denylist hit on `open`/`xdg-open`, and so every
+  // bash-spawning path (bash, process_start) enforces it.
+  if (BROWSER_OPEN_CMDS.test(command)) {
+    return {
+      allowed: false,
+      reason: "Cannot open URLs in the system browser — use the browser tool instead.",
+      userHint: USER_HINTS.commandShell,
+    };
   }
 
   // Block heredoc + inline-script writes (forces use of write/edit tools)

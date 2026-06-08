@@ -10,8 +10,10 @@
  *   - matching is case-insensitive and separator-agnostic (POSIX + Windows).
  *
  * checkEgressTaint reads Date.now(); we drive it with vitest fake timers so the
- * 5-minute window assertions are deterministic. Each taint test uses a unique
- * session id and clears it afterward so module-level Map state never leaks.
+ * sticky-taint assertions are deterministic. Session taint is presence-based:
+ * once a sensitive read is recorded the session stays tainted for its life (no
+ * decay window). Each taint test uses a unique session id and clears it
+ * afterward so module-level Map state never leaks.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -191,7 +193,7 @@ describe("detectSecretsInOutput", () => {
   });
 });
 
-describe("checkEgressTaint — time-windowed gate (fake timers)", () => {
+describe("checkEgressTaint — sticky session taint (fake timers)", () => {
   const SESS = "lax-lineage-egress-test";
 
   afterEach(() => {
@@ -213,7 +215,7 @@ describe("checkEgressTaint — time-windowed gate (fake timers)", () => {
     expect(res.reason).toMatch(/sensitive_file/);
   });
 
-  it("still blocks just inside the 5-minute window", () => {
+  it("still blocks a few minutes after the read (no short decay)", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-02T00:00:00Z"));
     recordSensitiveRead(SESS, "secret", "api-key");
@@ -221,12 +223,13 @@ describe("checkEgressTaint — time-windowed gate (fake timers)", () => {
     expect(checkEgressTaint(SESS).blocked).toBe(true);
   });
 
-  it("stops blocking once every taint is older than the 5-minute window", () => {
+  it("taint is sticky — still blocks long after the read (no decay window)", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-02T00:00:00Z"));
     recordSensitiveRead(SESS, "secret", "api-key");
-    vi.advanceTimersByTime(5 * 60 * 1000);
-    expect(checkEgressTaint(SESS)).toEqual({ blocked: false });
+    // Advance far past any former decay window; presence-based taint persists.
+    vi.advanceTimersByTime(60 * 60 * 1000);
+    expect(checkEgressTaint(SESS).blocked).toBe(true);
   });
 
   it("truncates long targets in the reason to 40 chars", () => {

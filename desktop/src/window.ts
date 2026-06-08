@@ -307,9 +307,11 @@ function attachAppDragStrip(appWin: BrowserWindow): void {
     if (!currentUrl.startsWith(appOrigin) || currentUrl.includes("/api/health")) return;
     const js = buildAppDragStripJs(getSetting("theme"));
     appWin.webContents.executeJavaScript(js).catch(() => { /* page unloaded */ });
-    // macOS traffic-light padding is handled by app.css via the
-    // platform-darwin body class set in preload.ts — applies to
-    // any window that loads the preload, this one included.
+    // On macOS the injected strip is a transparent drag region with no
+    // body padding, so the app fills the window and the native traffic
+    // lights float over its top-left corner — no bar covering the app.
+    // On Windows/Linux the strip is opaque and reserves 32px so content
+    // clears the titleBarOverlay window controls.
   });
 }
 

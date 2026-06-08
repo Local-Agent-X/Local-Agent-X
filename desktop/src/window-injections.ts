@@ -117,17 +117,43 @@ export const MAIN_WINDOW_TITLEBAR_JS = `
 })();
 `;
 
-// Drag strip injected into child app windows. Reads the app's effective
-// body background, paints the strip with it, and reports the hex back to
-// main so the OS chrome overlay matches — eliminates the LAX-theme-strip-
-// over-app-content seam. Reserves 80px on the left for traffic lights
-// (Mac); on Windows/Linux the strip extends to right:0 so titleBarOverlay
-// paints over the right edge and no dark sliver remains.
+// Drag strip injected into child app windows.
+//
+// Windows/Linux: the native min/max/X controls live in a titleBarOverlay
+// painted over the top-right, so the app needs a real top bar to host them.
+// The strip reads the app's effective body background, paints itself with
+// it, reports the hex back to main so the overlay matches (killing the
+// LAX-theme-strip-over-app-content seam), and reserves 32px of body padding
+// so app content doesn't slide under the bar. Extends to right:0 so the
+// overlay has no dark sliver beside it.
+//
+// macOS: the window controls are the native traffic lights, which simply
+// float over the top-left corner — there is no menu or overlay that needs
+// to live in a bar. So an opaque strip here is pure overhead that visually
+// covers the app and shoves its content down. Instead we lay down a
+// transparent, full-width drag region (so the frameless window stays
+// draggable from its top edge) and add NO body padding: the app fills the
+// window and the traffic lights float over its content, the way a native
+// mac app looks.
 export function buildAppDragStripJs(theme: DesktopSettings["theme"]): string {
-  const reserveLeft = process.platform === "darwin" ? 80 : 0;
+  const isMac = process.platform === "darwin";
   const reserveRight = 0;
   const isDark = theme === "dark" || (theme === "system" && nativeTheme.shouldUseDarkColors);
   const fallbackBg = isDark ? "#0a0a0f" : "#ffffff";
+
+  if (isMac) {
+    // Invisible drag region only — no tint, no padding, no overlay report.
+    return `
+    (() => {
+      if (document.getElementById('__lax_drag_strip')) return;
+      const bar = document.createElement('div');
+      bar.id = '__lax_drag_strip';
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:32px;z-index:2147483647;background:transparent;-webkit-app-region:drag;pointer-events:auto;';
+      document.body.appendChild(bar);
+    })();
+  `;
+  }
+
   return `
     (() => {
       if (document.getElementById('__lax_drag_strip')) return;
@@ -152,7 +178,7 @@ export function buildAppDragStripJs(theme: DesktopSettings["theme"]): string {
 
       const bar = document.createElement('div');
       bar.id = '__lax_drag_strip';
-      bar.style.cssText = 'position:fixed;top:0;left:${reserveLeft}px;right:${reserveRight}px;height:32px;z-index:2147483647;background:' + tint + ';-webkit-app-region:drag;pointer-events:auto;';
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:${reserveRight}px;height:32px;z-index:2147483647;background:' + tint + ';-webkit-app-region:drag;pointer-events:auto;';
       document.body.appendChild(bar);
 
       if (window.desktop && window.desktop.reportChromeTint) {

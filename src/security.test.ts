@@ -177,6 +177,27 @@ describe("SecurityLayer", () => {
       expect(d.allowed).toBe(false);
     });
 
+    // Octal false-positive regression: a Windows path with a year-numbered
+    // folder (…\2024 May order.xlsx) contains "\202", which the old bare-octal
+    // heuristic mistook for an octal escape and blocked in EVERY file-access
+    // mode — the "blocked even in unrestricted" symptom. A bare \NNN is not
+    // shell-interpreted (`echo \162` prints "162"), so legitimate paths pass.
+    it("allows a Windows path containing \\2024 (not octal obfuscation)", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: 'type "C:\\Users\\peter\\Documents\\2024 May order.xlsx"' }, sessionId: "t" });
+      expect(d.allowed).toBe(true);
+    });
+
+    // The REAL octal-escape vectors — the shell-INTERPRETED forms — stay blocked.
+    it("still blocks ANSI-C octal escapes ($'\\162\\155')", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: "echo $'\\162\\155'" }, sessionId: "t" });
+      expect(d.allowed).toBe(false);
+    });
+
+    it("still blocks printf octal escapes", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: "printf '\\162\\155'" }, sessionId: "t" });
+      expect(d.allowed).toBe(false);
+    });
+
     it("blocks very long commands (encoded payloads)", () => {
       const d = sec.evaluate({ toolName: "bash", args: { command: "a".repeat(2001) }, sessionId: "t" });
       expect(d.allowed).toBe(false);

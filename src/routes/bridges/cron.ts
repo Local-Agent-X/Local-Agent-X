@@ -1,5 +1,6 @@
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../server-utils.js";
+import { isProfileName } from "../../autonomy/profiles.js";
 
 export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -15,15 +16,17 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     json(200, { missions, settings: ctx.cronService.getSettings() }); return true;
   }
   if (method === "POST" && url.pathname === "/api/cron") {
-    const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; provider?: string; model?: string };
+    const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; provider?: string; model?: string; profile?: string };
     if (!body.name || !body.schedule || !body.prompt) { json(400, { error: "name, schedule, and prompt are required" }); return true; }
-    try { json(200, { ok: true, job: ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob, { provider: body.provider, model: body.model }) }); }
+    if (body.profile !== undefined && !isProfileName(body.profile)) { json(400, { error: `Invalid profile "${body.profile}"` }); return true; }
+    try { json(200, { ok: true, job: ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob, { provider: body.provider, model: body.model, profile: body.profile }) }); }
     catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }
   if (method === "PATCH" && url.pathname.startsWith("/api/cron/")) {
     const id = url.pathname.split("/").pop()!;
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+    if ((body as { profile?: unknown }).profile !== undefined && !isProfileName((body as { profile?: unknown }).profile)) { json(400, { error: "Invalid profile" }); return true; }
     try {
       const job = ctx.cronService.update(id, body);
       if (!job) { json(404, { error: "Job not found" }); return true; }

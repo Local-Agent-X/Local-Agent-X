@@ -834,6 +834,20 @@
         <div class="field"><label class="field-label">Mission Name</label><input class="field-input" id="new-cron-name" placeholder="Daily report"/></div>
         <div class="field"><label class="field-label">Schedule <span style="color:var(--muted);font-weight:400">— cron expression or interval (e.g. <code>every 1h</code>, <code>daily 9am</code>, <code>0 9 * * *</code>)</span></label><input class="field-input" id="new-cron-schedule" placeholder="every 1h / daily 9am"/></div>
         <div class="field"><label class="field-label">Agent Instructions</label><textarea class="field-input" id="new-cron-prompt" rows="6" placeholder="Check my email and summarize the most important threads..." style="resize:vertical;font-family:var(--mono);font-size:.78rem"></textarea></div>
+        <div class="field"><label class="field-label">Model <span style="color:var(--muted);font-weight:400">— optional; defaults to your chat model</span></label>
+          <div style="display:flex;gap:8px">
+            <select class="field-input" id="new-cron-provider" onchange="populateMissionModels(this.value)" style="flex:1"></select>
+            <select class="field-input" id="new-cron-model" style="flex:1"></select>
+          </div>
+        </div>
+        <div class="field"><label class="field-label">Autonomy <span style="color:var(--muted);font-weight:400">— what this mission may do unattended</span></label>
+          <select class="field-input" id="new-cron-profile">
+            <option value="">Default — inherit global (approval-tier actions block unattended)</option>
+            <option value="Autonomous">Autonomous — run everything, including money &amp; secrets</option>
+            <option value="Power">Power — everything except money &amp; secrets</option>
+            <option value="Developer">Developer — shell &amp; destructive with rollback</option>
+          </select>
+        </div>
         <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
           <button class="action-btn secondary" onclick="closeMissionModal()">Cancel</button>
           <button class="action-btn primary" onclick="addCronJob()">Schedule Mission</button>

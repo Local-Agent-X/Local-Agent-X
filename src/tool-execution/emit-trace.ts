@@ -23,7 +23,7 @@ export const emitTraceStartPhase: Phase = async (ctx) => {
     toolCallId: ctx.tc.id,
     toolName: ctx.tc.name,
     risk: classifyToolRisk(ctx.tc.name),
-    decision: getToolDecision(ctx.tc.name),
+    decision: getToolDecision(ctx.tc.name, ctx.sessionId),
     args: capValue(ctx.args),
   });
   return CONTINUE;

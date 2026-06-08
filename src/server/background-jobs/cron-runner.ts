@@ -15,6 +15,7 @@ import type { IntegrationRegistry } from "../../integrations/index.js";
 import { validateMissionOutput } from "../../cron/output-validation.js";
 import { createLogger } from "../../logger.js";
 import { CRON_SYSTEM_PROMPT } from "./prompts.js";
+import { setSessionProfile, clearSessionProfile } from "../../autonomy/profile-store.js";
 
 const logger = createLogger("server.background-jobs.cron");
 
@@ -107,6 +108,11 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     const cronTools = prepared.tools.filter(t => !t.name.startsWith("mission_schedule_") && t.name !== "write" && t.name !== "edit");
     const externalCancelController = new AbortController();
     cronService.registerRunAbort(jobId, externalCancelController);
+    // Pin this run's tool-approval decisions to the job's profile (if set).
+    // Without it, ask-tier tools the job needs (network-write, comms, money)
+    // block unattended under the global profile. Cleared in finally so the
+    // override never outlives the run.
+    if (jobMeta?.profile) setSessionProfile(sessionId, jobMeta.profile);
     let result;
     try {
       result = await runAgentViaCanonical(wrappedPrompt, [], {
@@ -126,6 +132,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
       });
     } finally {
       cronService.unregisterRunAbort(jobId);
+      clearSessionProfile(sessionId);
     }
     const session = getOrCreateSession(sessionId);
     session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);

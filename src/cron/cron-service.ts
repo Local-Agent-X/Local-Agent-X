@@ -33,6 +33,7 @@ import {
   type ExecuteHandler,
 } from "./cron-service-types.js";
 import { runJob } from "./cron-service-execute.js";
+import type { ProfileName } from "../autonomy/profiles.js";
 
 export type { CronJob, CronSettings, ExecuteResult, ExecuteContext, ExecuteHandler } from "./cron-service-types.js";
 
@@ -211,7 +212,7 @@ export class CronService {
     return runJob(this, job, opts);
   }
 
-  create(name: string, schedule: string, prompt: string, systemJob?: boolean, opts?: { provider?: string; model?: string }): CronJob {
+  create(name: string, schedule: string, prompt: string, systemJob?: boolean, opts?: { provider?: string; model?: string; profile?: ProfileName }): CronJob {
     if (prompt.length > 5000) throw new Error("Cron job prompt too long (max 5000 characters)");
     if (!schedule || schedule.trim().length === 0) throw new Error("Schedule is required");
     // Validate the schedule by attempting to compute next-run time. Without
@@ -236,6 +237,7 @@ export class CronService {
       createdAt: new Date().toISOString(),
       ...(opts?.provider ? { provider: opts.provider } : {}),
       ...(opts?.model ? { model: opts.model } : {}),
+      ...(opts?.profile ? { profile: opts.profile } : {}),
     };
     this.jobs_internal.set(id, job);
     this.saveJobs();

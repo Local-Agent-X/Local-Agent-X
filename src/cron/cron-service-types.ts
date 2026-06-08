@@ -7,6 +7,7 @@
  */
 
 import type { CronRunStatus } from "./run-history.js";
+import type { ProfileName } from "../autonomy/profiles.js";
 
 export interface CronJob {
   id: string;
@@ -21,6 +22,10 @@ export interface CronJob {
    *  time from settings.json + the legacy anthropic→sonnet-4-6 pin). */
   provider?: string;
   model?: string;
+  /** Per-job autonomy profile. Overrides the global profile for this job's
+   *  unattended run only (see setSessionProfile). Undefined = inherit the
+   *  global profile — under which ask-tier actions block unattended. */
+  profile?: ProfileName;
   lastRun?: string;
   lastResult?: string;
   lastReportPath?: string;

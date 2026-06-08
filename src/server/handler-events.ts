@@ -15,6 +15,7 @@ import type { ToolPolicy } from "../tool-policy.js";
 import type { AgentRunStore, AgentTemplateStore } from "../agent-store/index.js";
 
 import { createLogger } from "../logger.js";
+import { clearSessionProfile } from "../autonomy/profile-store.js";
 const logger = createLogger("server.handler-events");
 
 interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string; templateId?: string | null }
@@ -61,6 +62,7 @@ export function registerHandlerEvents(deps: {
   const agentRunDriver: AgentRunDriver = async (req, signal) => {
     const { agentId, task, systemPrompt, role, parentSessionId, templateId, tools: invocationTools, modelOverride } = req;
     logger.info(`[handler] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
+    const runSessionId = req.sessionId ?? `agent-${agentId}`;
 
     const template = templateId ? agentTemplateStore.get(templateId) : null;
     const projectStore = ProjectStore.getInstance();
@@ -171,7 +173,7 @@ export function registerHandlerEvents(deps: {
       // via this options.signal, so Handler.cancelAgent → opCancel works.
       const agentResult = await runAgentViaCanonical(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock,
-        tools: spawnedTools, security, toolPolicy, sessionId: req.sessionId ?? `agent-${agentId}`, maxIterations: config.maxIterations, temperature: config.temperature,
+        tools: spawnedTools, security, toolPolicy, sessionId: runSessionId, maxIterations: config.maxIterations, temperature: config.temperature,
         wallClockMs: config.agentTimeoutMs,
         opType: "agent_spawn",
         lane: "agent",
@@ -229,6 +231,11 @@ export function registerHandlerEvents(deps: {
       const p = extractAgentOutput(agentSession.messages);
       const msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e);
       return { result: p ? `[${msg}]\n\n${p}` : msg, success: false };
+    } finally {
+      // Tear down any inherited per-session profile override (set at spawn in
+      // invoke.ts). Only for the auto-minted per-run session — an explicit
+      // req.sessionId is a shared/borrowed session whose lifecycle the caller owns.
+      if (!req.sessionId) clearSessionProfile(runSessionId);
     }
   };
   registerAgentRunDriver(agentRunDriver);

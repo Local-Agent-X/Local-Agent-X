@@ -3,9 +3,44 @@
 // wired to the list-row buttons (Run, Stop, Toggle, Clear-error).
 // State + list rendering live in cron.js; detail panel in cron-detail.js.
 
+// Provider/model data for the mission model picker. Server is the single
+// source of truth (/api/providers/registry) — same feed the apps gallery uses.
+let MISSION_PROVIDERS = [];
+let MISSION_MODELS = {};
+
+async function initMissionModelSelector() {
+  const provSel = document.getElementById('new-cron-provider');
+  const modelSel = document.getElementById('new-cron-model');
+  if (!provSel || !modelSel) return;
+  try {
+    const reg = await apiFetch('/api/providers/registry').then(r => r.json());
+    MISSION_PROVIDERS = (reg.providers || []).map(p => ({ value: p.id, label: p.label }));
+    MISSION_MODELS = Object.fromEntries((reg.providers || []).map(p => [p.id, p.models]));
+  } catch { /* leave whatever we had; the empty "default" option still works */ }
+  // Leading blank = "use my chat default" — keeps the model optional.
+  provSel.innerHTML = '<option value="">Default</option>' +
+    MISSION_PROVIDERS.map(p => `<option value="${p.value}">${p.label}</option>`).join('');
+  provSel.value = '';
+  populateMissionModels('');
+}
+
+function populateMissionModels(provider) {
+  const modelSel = document.getElementById('new-cron-model');
+  if (!modelSel) return;
+  const models = provider ? (MISSION_MODELS[provider] || []) : [];
+  if (models.length) {
+    modelSel.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+    modelSel.disabled = false;
+  } else {
+    modelSel.innerHTML = '<option value="">default</option>';
+    modelSel.disabled = true;
+  }
+}
+
 function openMissionModal() {
   const o = document.getElementById('mission-modal-overlay'); if (!o) return;
   o.classList.add('visible');
+  initMissionModelSelector();
   setTimeout(() => document.getElementById('new-cron-name')?.focus(), 50);
 }
 function closeMissionModal() { document.getElementById('mission-modal-overlay')?.classList.remove('visible'); }
@@ -18,8 +53,15 @@ async function addCronJob() {
     alert('Name, schedule, and instructions are all required.');
     return;
   }
+  const provider = document.getElementById('new-cron-provider')?.value || '';
+  const model = (provider && document.getElementById('new-cron-model')?.value) || '';
+  const profile = document.getElementById('new-cron-profile')?.value || '';
+  const body = { name, schedule, prompt };
+  if (provider) body.provider = provider;
+  if (model) body.model = model;
+  if (profile) body.profile = profile;
   try {
-    const data = await apiPost('/api/cron', { name, schedule, prompt });
+    const data = await apiPost('/api/cron', body);
     if (data.ok && data.job) {
       cronJobs.push(data.job);
       document.getElementById('new-cron-name').value = '';

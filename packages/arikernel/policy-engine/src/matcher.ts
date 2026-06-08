@@ -1,4 +1,5 @@
 import type { PolicyMatch, TaintLabel, ToolCall } from "@arikernel/core";
+import { checkRegexSafety } from "./safe-regex.js";
 
 /**
  * Maximum input length for regex evaluation. Inputs exceeding this limit
@@ -91,11 +92,14 @@ function matchesParameters(
 				);
 			}
 
-			// ReDoS protection: reject patterns with nested quantifiers
-			if (/(\+|\*|\{)\s*(\+|\*|\{)/.test(matcher.pattern) || /\([^)]*(\+|\*)[^)]*\)\s*(\+|\*|\{)/.test(matcher.pattern)) {
-				throw new UnsafeMatchError(
-					`Policy pattern for '${key}' contains potentially unsafe nested quantifiers`,
-				);
+			// ReDoS protection (fail-closed backstop): screen the pattern with the
+			// same static analysis used at policy load time. This catches nested
+			// quantifiers AND unbounded-quantified overlapping alternation
+			// ((a|a)*, (\w|\d)+, ...), so a dangerous pattern that somehow reached
+			// runtime without passing through the loader still cannot run.
+			const safetyError = checkRegexSafety(matcher.pattern);
+			if (safetyError) {
+				throw new UnsafeMatchError(safetyError);
 			}
 
 			try {

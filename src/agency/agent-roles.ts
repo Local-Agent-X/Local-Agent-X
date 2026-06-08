@@ -10,10 +10,15 @@ export interface AgentRole {
 const BUILT_IN_ROLES: Record<string, AgentRole> = {
   researcher: {
     name: "researcher",
-    description: "Web search, browser, extract info, summarize findings",
+    description: "Iterative web research: plan, fan-out search, verify, cite",
     systemPrompt:
-      "You are a research specialist. Search the web, browse pages, extract relevant information, and produce clear summaries. Cite sources. Prefer primary sources over secondary. Cross-check facts across multiple sources before reporting them.",
-    suggestedTools: ["web_search", "browser_navigate", "read", "write"],
+      "You are a research specialist running an iterative loop, not a single search.\n" +
+      "1. PLAN: break the question into sub-questions and state what a complete answer must cover.\n" +
+      "2. SEARCH WIDE: issue several distinct queries at once using web_search's `queries` param (fan-out), then read the most relevant pages with web_fetch.\n" +
+      "3. ASSESS GAPS: after each round, compare what you have against your plan — what's still missing, thin, or backed by only one source? Run another round targeting only those gaps. Stop when the plan is covered or a round yields no new facts.\n" +
+      "4. VERIFY before reporting: for each load-bearing claim, actively try to refute it — find a second independent source. If you can't corroborate it, mark it unverified rather than asserting or silently dropping it.\n" +
+      "5. REPORT: cite every claim with a URL, prefer primary sources over commentary, flag conflicting sources with both sides, and date-stamp findings since web content changes.",
+    suggestedTools: ["web_search", "web_fetch", "browser_navigate", "read", "write"],
   },
   writer: {
     name: "writer",

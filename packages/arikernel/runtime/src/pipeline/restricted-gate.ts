@@ -21,6 +21,7 @@ export function enforceRestrictedMode(ctx: PipelineContext, toolCall: ToolCall):
 	// After sensitive read, budget is 0 — all parameterized GETs are blocked.
 	let isGetBudgetExhausted = false;
 	let isEncodedExfil = false;
+	let isPathDripExfil = false;
 	if (
 		isSafeAction &&
 		!isGetExfil &&
@@ -39,17 +40,33 @@ export function enforceRestrictedMode(ctx: PipelineContext, toolCall: ToolCall):
 		if (!isGetBudgetExhausted && hasEncodedPayload(url)) {
 			isEncodedExfil = true;
 		}
+		// De-"?"-keyed path-drip backstop: a path-segment GET to a non-allowlisted
+		// host accumulates encoded path bytes against the per-host/per-run budget
+		// even with NO query string. This mirrors trackHttpSignals so a quarantined
+		// run cannot keep dripping a secret through path segments (H11). After a
+		// sensitive read the tolerance drops to zero (strict), exactly like the
+		// query-GET budget=0 rule — any encoded path byte to a non-allowlisted
+		// host is blocked.
+		if (
+			!isGetBudgetExhausted &&
+			!isEncodedExfil &&
+			runState.recordEncodedPathEgress(url, runState.sensitiveReadObserved)
+		) {
+			isPathDripExfil = true;
+		}
 	}
 
-	if (!isSafeAction || isGetExfil || isGetBudgetExhausted || isEncodedExfil) {
+	if (!isSafeAction || isGetExfil || isGetBudgetExhausted || isEncodedExfil || isPathDripExfil) {
 		const reason = isEncodedExfil
 			? "HTTP GET with encoded payload blocked in quarantine. Base64/hex data detected in query parameters."
-			: isGetBudgetExhausted
-				? `HTTP GET with query parameters blocked: quarantine GET budget exhausted (${runState.quarantineGetCount} requests). Potential slow-drip exfiltration.`
-				: isGetExfil
-					? `Suspicious data exfiltration via GET query parameters blocked in restricted mode. '${toolCall.toolClass}.${toolCall.action}' denied.`
-					: `Run entered restricted mode at ${runState.restrictedAt} after ${runState.counters.deniedActions} denied sensitive actions. ` +
-						`Only read-only safe actions are allowed. '${toolCall.toolClass}.${toolCall.action}' is blocked.`;
+			: isPathDripExfil
+				? "HTTP GET with encoded path segments blocked in quarantine. Encoded-path drip budget exceeded for non-allowlisted host. Potential slow-drip exfiltration."
+				: isGetBudgetExhausted
+					? `HTTP GET with query parameters blocked: quarantine GET budget exhausted (${runState.quarantineGetCount} requests). Potential slow-drip exfiltration.`
+					: isGetExfil
+						? `Suspicious data exfiltration via GET query parameters blocked in restricted mode. '${toolCall.toolClass}.${toolCall.action}' denied.`
+						: `Run entered restricted mode at ${runState.restrictedAt} after ${runState.counters.deniedActions} denied sensitive actions. ` +
+							`Only read-only safe actions are allowed. '${toolCall.toolClass}.${toolCall.action}' is blocked.`;
 		const decision: Decision = {
 			verdict: "deny",
 			matchedRule: null,

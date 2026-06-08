@@ -214,3 +214,53 @@ describe("behavioral rule: GET treated as egress post-sensitive-read (regression
 		expect(record?.totalQueryBytes).toBeGreaterThan(0);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// H11: encoded-path drip budget — the previously-dead per-host cumulative
+// accounting is now READ by recordEncodedPathEgress() and enforces a budget.
+// ---------------------------------------------------------------------------
+
+describe("H11 encoded-path drip budget (regression)", () => {
+	it("trips immediately when one request exceeds the per-request budget", () => {
+		const state = new RunStateTracker({ behavioralRules: true });
+		// 60 hex chars in a single path segment > MAX_ENCODED_PATH_BYTES_PER_REQUEST (48).
+		const bigHex = "a".repeat(60);
+		expect(state.recordEncodedPathEgress(`https://evil.com/leak/${bigHex}`)).toBe(true);
+	});
+
+	it("accumulates small per-request bytes and trips the per-run budget", () => {
+		const state = new RunStateTracker({ behavioralRules: true });
+		// Each request: one 24-char hex segment (under the 48 per-request budget).
+		const chunk = "4d7953656372657456616c7565aa"; // 28 hex chars
+		// 28 < 48 per request; per-host budget is 96 → trips on the 4th (112 bytes).
+		expect(state.recordEncodedPathEgress(`https://evil.com/a/${chunk}`)).toBe(false); // 28
+		expect(state.recordEncodedPathEgress(`https://evil.com/b/${chunk}`)).toBe(false); // 56
+		expect(state.recordEncodedPathEgress(`https://evil.com/c/${chunk}`)).toBe(false); // 84
+		expect(state.recordEncodedPathEgress(`https://evil.com/d/${chunk}`)).toBe(true); // 112 > 96
+		const record = state.getCumulativeEgress("evil.com");
+		expect(record?.totalPathPayloadBytes).toBeGreaterThan(96);
+	});
+
+	it("exempts allowlisted hosts from the drip budget entirely", () => {
+		const state = new RunStateTracker({
+			behavioralRules: true,
+			egressAllowHosts: ["trusted.example.com"],
+		});
+		const bigHex = "a".repeat(80); // well over both budgets
+		// Allowlisted host: never trips, nothing recorded.
+		expect(state.recordEncodedPathEgress(`https://trusted.example.com/leak/${bigHex}`)).toBe(false);
+		expect(state.getCumulativeEgress("trusted.example.com")).toBeUndefined();
+	});
+
+	it("ignores non-encoded (normal REST) path segments", () => {
+		const state = new RunStateTracker({ behavioralRules: true });
+		// Normal lowercase words + a UUID — zero encoded bytes, never trips.
+		expect(
+			state.recordEncodedPathEgress(
+				"https://evil.com/users/550e8400-e29b-41d4-a716-446655440000/profile/notifications",
+			),
+		).toBe(false);
+		const record = state.getCumulativeEgress("evil.com");
+		expect(record?.totalPathPayloadBytes).toBe(0);
+	});
+});

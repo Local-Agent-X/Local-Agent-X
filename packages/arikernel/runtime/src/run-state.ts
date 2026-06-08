@@ -22,5 +22,6 @@ export type {
 export {
 	hasEncodedPayload,
 	isSuspiciousGetExfil,
+	pathDripEncodedBytes,
 	suspiciousHeaderValue,
 } from "./run-state/exfil-detection.js";

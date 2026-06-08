@@ -140,6 +140,12 @@ async def lifespan(app: FastAPI):
         log.error("api_v2.py not found at %s — synth will fail", api_v2_script)
     else:
         log.info("spawning api_v2 (port %s, cwd %s)...", api_v2_port, repo_dir)
+        # encoding=utf-8 + errors=replace is load-bearing: GPT-SoVITS prints
+        # Chinese inference banners (e.g. "推理") as UTF-8. Decoding them with
+        # Windows' default cp1252 codec (what text=True alone uses) raises
+        # UnicodeDecodeError inside _drain, which kills the drain task. Once
+        # nobody reads api_v2's stdout its pipe buffer fills (~64KB) and api_v2
+        # blocks on its next print — it hangs mid-synth and looks like a crash.
         api_v2_proc = subprocess.Popen(
             [sys.executable, api_v2_script, "-a", "127.0.0.1", "-p", api_v2_port],
             cwd=repo_dir,
@@ -147,13 +153,19 @@ async def lifespan(app: FastAPI):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
-        # Drain stdout to our log so users can see api_v2's progress.
+        # Drain stdout to our log so users can see api_v2's progress. Guarded so
+        # a single bad line can never kill the drain (a dead drain stalls api_v2).
         async def _drain():
             assert api_v2_proc is not None and api_v2_proc.stdout is not None
             loop = asyncio.get_event_loop()
             while api_v2_proc.poll() is None:
-                line = await loop.run_in_executor(None, api_v2_proc.stdout.readline)
+                try:
+                    line = await loop.run_in_executor(None, api_v2_proc.stdout.readline)
+                except Exception:
+                    continue
                 if not line:
                     break
                 log.info("[api_v2] %s", line.rstrip())

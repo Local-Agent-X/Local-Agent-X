@@ -38,6 +38,12 @@ export interface PendingNotification {
   filesChanged: string[];
   task: string;             // the original user message that spawned the op
   completedAt: number;      // epoch ms
+  // Set once the idle-nudge has proactively announced this completion to the
+  // user. The notification stays in the queue (so the agent's next real turn
+  // still gets the completion context — a reply like "yes" needs an
+  // antecedent), but this flag tells the agent it was already announced so it
+  // doesn't re-announce on that turn.
+  surfacedViaNudge?: boolean;
 }
 
 const queues = new Map<string, PendingNotification[]>();
@@ -80,6 +86,30 @@ export function drainPendingNotifications(sessionId: string): PendingNotificatio
   const fresh = q.filter(n => now - n.completedAt < TTL_MS);
   queues.delete(sessionId);
   return fresh;
+}
+
+/**
+ * Mark a session's fresh notifications as surfaced-via-nudge and return the
+ * ones newly marked. Unlike {@link drainPendingNotifications}, this does NOT
+ * remove them from the queue — the proactive nudge announces completion to
+ * the user, but the agent still needs the completion context on its next
+ * real turn (otherwise a reply like "yes" lands with no antecedent and the
+ * agent can't tell the op finished). Already-surfaced items are skipped so a
+ * second nudge fire doesn't re-announce the same completion.
+ */
+export function markSurfacedViaNudge(sessionId: string): PendingNotification[] {
+  if (!sessionId) return [];
+  const q = queues.get(sessionId);
+  if (!q || q.length === 0) return [];
+  const now = Date.now();
+  const newly: PendingNotification[] = [];
+  for (const n of q) {
+    if (now - n.completedAt >= TTL_MS) continue;
+    if (n.surfacedViaNudge) continue;
+    n.surfacedViaNudge = true;
+    newly.push(n);
+  }
+  return newly;
 }
 
 /**
@@ -139,10 +169,13 @@ export function formatNotificationsForSystemPrompt(notifications: PendingNotific
     const truncatedNote = n.summary.length > SUMMARY_PREVIEW_CHARS
       ? ` …[full summary withheld — ${n.summary.length} chars total; available via op_status(op_id="${n.opId}") if user asks]`
       : "";
+    const nudgedNote = n.surfacedViaNudge
+      ? `\n   [ALREADY ANNOUNCED to the user via a proactive heads-up ("…that op just finished. Want me to walk through what landed?"). Do NOT re-announce it. If the user's current message is accepting that offer ("yes", "sure", "go ahead"), proceed directly with the next action (walkthrough/diff/summary). Otherwise don't bring it up again unless they ask.]`
+      : "";
     return (
       `${statusEmoji} Background op \`${n.opId}\` ${n.status}${filesLine}.\n` +
       `   Original task: "${n.task.slice(0, 160)}${n.task.length > 160 ? "..." : ""}"\n` +
-      `   Preview: ${preview}${truncatedNote}`
+      `   Preview: ${preview}${truncatedNote}${nudgedNote}`
     );
   });
   return (

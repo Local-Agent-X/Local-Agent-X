@@ -12,13 +12,15 @@
  *   - Worker completes → session-bridge calls schedule()
  *   - User sends a message before timer fires → cancel() (queue gets drained
  *     naturally on the next turn, no nudge needed)
- *   - Timer fires with queue still populated → push a `bg_op_nudge` chat
- *     event AND drain the queue (so the agent doesn't double-narrate on
- *     the user's eventual next turn)
- *   - Timer fires with queue already empty → no-op
+ *   - Timer fires with fresh completions → push a `bg_op_nudge` chat event
+ *     and mark those completions surfaced. They STAY in the queue so the
+ *     agent's next real turn still has the completion context (a reply like
+ *     "yes" needs an antecedent), but the surfaced flag stops the agent from
+ *     re-announcing them.
+ *   - Timer fires with nothing fresh (queue empty or all already surfaced) → no-op
  */
 import type { ServerEvent } from "../types.js";
-import { drainPendingNotifications, type PendingNotification } from "./pending-notifications.js";
+import { markSurfacedViaNudge, type PendingNotification } from "./pending-notifications.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.idle-nudge");
 
@@ -65,14 +67,9 @@ export function isLastMessageCasual(sessionId: string): boolean {
 }
 
 let broadcaster: ((sessionId: string, event: ServerEvent) => void) | null = null;
-let persister: ((sessionId: string, content: string) => void) | null = null;
 
 export function setIdleNudgeBroadcaster(fn: (sessionId: string, event: ServerEvent) => void): void {
   broadcaster = fn;
-}
-
-export function setIdleNudgePersister(fn: (sessionId: string, content: string) => void): void {
-  persister = fn;
 }
 
 export function scheduleIdleNudge(sessionId: string, taskHint?: string): void {
@@ -115,9 +112,9 @@ function fireNudge(sessionId: string): void {
     logger.warn(`fired session=${sessionId} but no broadcaster registered — nudge dropped`);
     return;
   }
-  const items = drainPendingNotifications(sessionId);
+  const items = markSurfacedViaNudge(sessionId);
   if (items.length === 0) {
-    logger.info(`fired session=${sessionId} but queue empty — user must have replied first`);
+    logger.info(`fired session=${sessionId} but nothing fresh — user replied first or already announced`);
     return;
   }
 
@@ -127,10 +124,6 @@ function fireNudge(sessionId: string): void {
     logger.info(`pushed session=${sessionId} ops=${items.length} text="${text.slice(0, 80)}..."`);
   } catch (e) {
     logger.warn(`broadcast threw for session=${sessionId}: ${(e as Error).message}`);
-  }
-
-  if (persister) {
-    try { persister(sessionId, text); } catch { /* persistence is best-effort */ }
   }
 }
 

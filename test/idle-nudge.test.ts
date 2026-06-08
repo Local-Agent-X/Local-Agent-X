@@ -6,7 +6,6 @@ import {
   recordSessionLastMessage,
   scheduleIdleNudge,
   setIdleNudgeBroadcaster,
-  setIdleNudgePersister,
 } from "../src/ops/idle-nudge.js";
 import { drainPendingNotifications, pushPendingNotification } from "../src/ops/pending-notifications.js";
 
@@ -15,7 +14,6 @@ const sid = (tag: string): string => `nudge-test-${tag}-${Date.now()}-${counter+
 
 afterEach(() => {
   setIdleNudgeBroadcaster(null as unknown as Parameters<typeof setIdleNudgeBroadcaster>[0]);
-  setIdleNudgePersister(null as unknown as Parameters<typeof setIdleNudgePersister>[0]);
 });
 
 describe("recordSessionLastMessage + isLastMessageCasual", () => {
@@ -275,34 +273,39 @@ describe("scheduleIdleNudge — broadcaster + persister payload", () => {
     expect(captured.event?.text.length).toBeGreaterThan(0);
   });
 
-  it("invokes persister alongside broadcaster on fire", () => {
-    const s = sid("persist");
+  it("keeps the completion in the queue after firing, marked surfaced", () => {
+    const s = sid("retain-on-fire");
     setIdleNudgeBroadcaster(() => {});
-    let persisted = "";
-    setIdleNudgePersister((_sessionId, content) => { persisted = content; });
     pushPendingNotification(s, {
-      opId: "op-persist",
-      task: "this op finished while user was away and we want it persisted",
+      opId: "op-retain",
+      task: "an op completed in the background and the nudge should retain it on fire",
       status: "completed",
       completedAt: Date.now(),
     });
     scheduleIdleNudge(s);
     vi.advanceTimersByTime(120_000);
-    expect(persisted.length).toBeGreaterThan(0);
+    // The agent's next real turn still needs the completion context, so the
+    // nudge must NOT have drained the queue — it stays, flagged surfaced.
+    const drained = drainPendingNotifications(s);
+    expect(drained).toHaveLength(1);
+    expect(drained[0].surfacedViaNudge).toBe(true);
   });
 
-  it("drains the queue after firing (subsequent drain returns empty)", () => {
-    const s = sid("drain-on-fire");
-    setIdleNudgeBroadcaster(() => {});
+  it("does not re-announce an already-surfaced completion on a second fire", () => {
+    const s = sid("no-double-fire");
+    let fires = 0;
+    setIdleNudgeBroadcaster(() => { fires++; });
     pushPendingNotification(s, {
-      opId: "op-drain",
-      task: "an op completed in the background and the nudge should drain it on fire",
+      opId: "op-once",
+      task: "an op completed and a second nudge fire must not re-announce it",
       status: "completed",
       completedAt: Date.now(),
     });
     scheduleIdleNudge(s);
     vi.advanceTimersByTime(120_000);
-    expect(drainPendingNotifications(s)).toEqual([]);
+    scheduleIdleNudge(s);
+    vi.advanceTimersByTime(120_000);
+    expect(fires).toBe(1);
   });
 
   it("text mentions 'finished' for completed status (single op)", () => {

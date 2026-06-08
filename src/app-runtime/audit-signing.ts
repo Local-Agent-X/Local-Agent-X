@@ -136,6 +136,16 @@ export function _resetAuditKeyCacheForTests(): void {
   cachedKey = null;
 }
 
+// Keyed MAC over a fixed marker string, used by the threat audit trail to seal
+// its "hmac-v1 era has begun" marker file under the SAME audit key. Computing or
+// validating the marker requires the key, so a filesystem-only attacker can
+// neither forge the marker nor delete-and-recreate it convincingly — exactly the
+// property the sealed seed gives the key itself. Kept here (not in audit-trail)
+// so all audit-key use stays behind this one provider.
+export function computeAuditMarkerMac(marker: string): string {
+  return createHmac("sha256", getAuditHmacKey()).update(marker).digest("hex");
+}
+
 export function signAuditEntry(entry: Omit<AuditEntry, "signature">): string {
   const payload = `${entry.id}|${entry.timestamp}|${entry.actor}|${entry.action}|${entry.appId}|${entry.prevHash}`;
   return createHmac("sha256", getAuditHmacKey()).update(payload).digest("hex").slice(0, 16);

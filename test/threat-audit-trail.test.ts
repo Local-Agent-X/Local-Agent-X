@@ -243,11 +243,26 @@ describe("CryptoAuditTrail — HMAC keyed chain + full-field coverage", () => {
     expect(CryptoAuditTrail.verify(path).valid).toBe(false);
   });
 
-  it("verifies a pre-anchoring log (no anchor file) with anchorChecked: false", () => {
-    const a = new CryptoAuditTrail(dataDir);
-    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "1" });
-    const path = dailyAuditPath();
-    rmSync(path.replace(/\.jsonl$/, ".anchors.jsonl"), { force: true });
+  it("verifies a GENUINE pre-anchoring log (legacy-only, no marker, no anchor) with anchorChecked: false", () => {
+    // The genuine back-compat case the anchor cross-check may still skip: an
+    // old dev file with NO hmac-v1 rows, NO era marker, and NO anchor file.
+    // (A chain written by record() is hmac-v1 and lays down the marker, so its
+    // missing anchor now fails CLOSED — see the C2 regression test below.)
+    const legacy = {
+      seq: 0, timestamp: new Date().toISOString(), sessionId: "s", event: "x",
+      decision: "allow", reason: "legacy", prevHash: "GENESIS",
+    } as Record<string, unknown>;
+    const payload = JSON.stringify({
+      seq: legacy.seq, timestamp: legacy.timestamp, sessionId: legacy.sessionId,
+      event: legacy.event, toolName: undefined, decision: legacy.decision,
+      reason: legacy.reason, prevHash: legacy.prevHash,
+    });
+    legacy.hash = createHash("sha256").update(payload).digest("hex");
+    const auditDir = join(dataDir, "audit");
+    const date = new Date().toISOString().slice(0, 10);
+    const path = join(auditDir, `${date}.jsonl`);
+    new CryptoAuditTrail(dataDir); // make the audit dir; does not write a marker
+    writeFileSync(path, JSON.stringify(legacy) + "\n");
     const r = CryptoAuditTrail.verify(path);
     expect(r.valid).toBe(true);
     expect(r.anchorChecked).toBe(false);
@@ -272,5 +287,86 @@ describe("CryptoAuditTrail — HMAC keyed chain + full-field coverage", () => {
     new CryptoAuditTrail(dataDir);
     writeFileSync(path, JSON.stringify(legacy) + "\n");
     expect(CryptoAuditTrail.verify(path).valid).toBe(true);
+  });
+});
+
+describe("CryptoAuditTrail.verify — fail CLOSED against filesystem-only forgery", () => {
+  // Reconstruct the legacy (pre-upgrade) hash exactly as the old writer did:
+  // plain SHA-256 over the narrow field set, no key required. This is what a
+  // filesystem-only attacker (no HMAC key) can compute.
+  function legacyHash(e: Record<string, unknown>): string {
+    const payload = JSON.stringify({
+      seq: e.seq, timestamp: e.timestamp, sessionId: e.sessionId,
+      event: e.event, toolName: e.toolName, decision: e.decision,
+      reason: e.reason, prevHash: e.prevHash,
+    });
+    return createHash("sha256").update(payload).digest("hex");
+  }
+
+  it("C1: once hmac-v1 era is active, a self-consistent legacy (no-hashScheme, plain-SHA-256) rewrite FAILS", () => {
+    // Write a real hmac-v1 chain so the sealed era marker is laid down.
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "block", reason: "incriminating", threatScore: 99 });
+    a.record({ sessionId: "s", event: "x", decision: "block", reason: "also bad", threatScore: 88 });
+    const path = dailyAuditPath();
+
+    // Attacker (no key) deletes the anchor file and rewrites the main log as a
+    // fully self-consistent plain-SHA-256 chain that OMITS hashScheme, pointing
+    // verify() at the unkeyed legacy branch. Pre-fix this returned valid:true.
+    rmSync(path.replace(/\.jsonl$/, ".anchors.jsonl"), { force: true });
+    let prev = "GENESIS";
+    const forged: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const e: Record<string, unknown> = {
+        seq: i, timestamp: new Date().toISOString(), sessionId: "s",
+        event: "x", decision: "allow", reason: "innocuous", prevHash: prev,
+      };
+      e.hash = legacyHash(e);
+      prev = e.hash as string;
+      forged.push(JSON.stringify(e));
+    }
+    writeFileSync(path, forged.join("\n") + "\n");
+
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(false);
+    expect(r.brokenAt).toBe(0);
+  });
+
+  it("C1b: the marker alone (era active) rejects legacy rows even with no hmac-v1 rows left on disk", () => {
+    // Lay down the marker via a real hmac-v1 write, then replace the file with
+    // a legacy-only chain. The marker file remains → era stays active → the
+    // unkeyed legacy path is off-limits even though no hmac-v1 row survives.
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "block", reason: "real", threatScore: 50 });
+    const path = dailyAuditPath();
+    rmSync(path.replace(/\.jsonl$/, ".anchors.jsonl"), { force: true });
+    const legacy: Record<string, unknown> = {
+      seq: 0, timestamp: new Date().toISOString(), sessionId: "s",
+      event: "x", decision: "allow", reason: "innocuous", prevHash: "GENESIS",
+    };
+    legacy.hash = legacyHash(legacy);
+    writeFileSync(path, JSON.stringify(legacy) + "\n");
+    expect(CryptoAuditTrail.verify(path).valid).toBe(false);
+  });
+
+  it("C2: deleting the anchor file and dropping the last main-chain line FAILS (no fail-open)", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "1" });
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "2" });
+    a.record({ sessionId: "s", event: "x", decision: "block", reason: "3-incriminating" });
+    const path = dailyAuditPath();
+
+    // Attacker deletes the anchor (which would pin count=3) and drops the last
+    // main-chain line. The 2-line prefix is a valid hmac-v1 chain on its own;
+    // pre-fix verify() returned valid:true / anchorChecked:false. Now the
+    // missing anchor with hmac-v1 data present is treated as truncation.
+    rmSync(path.replace(/\.jsonl$/, ".anchors.jsonl"), { force: true });
+    const lines = readFileSync(path, "utf-8").trim().split("\n");
+    expect(lines).toHaveLength(3);
+    writeFileSync(path, lines.slice(0, 2).join("\n") + "\n");
+
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(false);
+    expect(r.anchorChecked).toBe(true);
   });
 });

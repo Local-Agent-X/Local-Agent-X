@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { scanForSecrets } from "../security/secret-scanner.js";
 import { matchEgressList } from "../security/network-policy.js";
 import { getLaxDir } from "../lax-data-dir.js";
-import { isSensitivePath } from "../data-lineage.js";
+import { isSensitiveAttachmentPath } from "../data-lineage.js";
 
 let trustedDestinationsCache: { fingerprint: number; set: Set<string> } | null = null;
 
@@ -134,7 +134,7 @@ export function checkOutboundPayload(sink: string, text: string): GuardBlock | n
  * would read+attach (e.g. email_send attachments). Returns null if clean.
  */
 export function checkAttachmentPaths(sink: string, paths: readonly string[]): GuardBlock | null {
-  const offending = paths.filter(p => isSensitivePath(p));
+  const offending = paths.filter(p => isSensitiveAttachmentPath(p));
   if (offending.length === 0) return null;
   return {
     message:

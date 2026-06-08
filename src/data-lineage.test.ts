@@ -8,6 +8,7 @@ import {
   checkEgressTaint,
   clearSessionTaint,
   isSensitivePath,
+  isSensitiveAttachmentPath,
   detectSecretsInOutput,
   redactSecretSpans,
   getKernelTaintSources,
@@ -87,6 +88,60 @@ describe("isSensitivePath — pattern spec table", () => {
       expect(isSensitivePath(path)).toBe(expected);
     });
   }
+});
+
+describe("isSensitiveAttachmentPath — egress-attachment sink (stricter)", () => {
+  // The attachment sink reads a file AND ships it off-box, so a miss is
+  // exfiltration. This predicate is a superset of isSensitivePath with
+  // whole-directory rules for the app's own vault (.lax) and credential stores
+  // (.ssh, .aws, .gnupg). Finding H6: ~/.lax/secrets.enc, ~/.ssh/deploy_key,
+  // and ~/.aws/sso/cache/*.json previously slipped past the guard.
+  const home = homedir();
+  const cases: Array<[string, boolean, string?]> = [
+    // -- Must block (the H6 attack targets) --
+    ["~/.lax/secrets.enc", true, "the app's OWN vault — leading ~ resolves via dir segment"],
+    [join(home, ".lax", "secrets.enc"), true, "absolute form of the vault"],
+    ["~/.ssh/deploy_key", true, "private key with a non-canonical filename"],
+    ["~/.ssh/id_ed25519_work", true, "any file under .ssh is a potential key"],
+    ["~/.ssh/id_ed25519_anything", true],
+    ["~/.aws/sso/cache/abc.json", true, "plaintext SSO token cache"],
+    ["~/.aws/credentials", true],
+    ["/Users/x/.gnupg/secring.gpg", true, "whole .gnupg dir"],
+    ["/srv/app/secrets.enc", true, "encrypted vault container by extension"],
+    ["/etc/ssl/private/server.pem", true, "inherited from isSensitivePath"],
+    ["/etc/ssl/private/server.key", true, "inherited from isSensitivePath"],
+    ["/project/.env", true, "inherited from isSensitivePath"],
+
+    // -- Must NOT block (benign — no taint-storm / no over-blocking) --
+    ["~/projects/readme.md", false, "ordinary doc"],
+    ["~/.ssh/known_hosts", false, "host fingerprints, low-risk"],
+    ["~/.ssh/id_rsa.pub", false, "public key"],
+    ["~/.ssh/work.pub", false, "any public key"],
+    ["/repo/README.md", false],
+    ["/repo/src/secrets.py", false, "source file, not a vault"],
+    ["", false],
+  ];
+
+  for (const [path, expected, note] of cases) {
+    const label = note ? `${path}  (${note})` : path;
+    it(`${expected ? "blocks" : "allows"}: ${label}`, () => {
+      expect(isSensitiveAttachmentPath(path)).toBe(expected);
+    });
+  }
+
+  it("covers a relocated LAX_DATA_DIR (dir not literally named .lax)", () => {
+    const prev = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = "/var/lib/agentx-state";
+    try {
+      expect(isSensitiveAttachmentPath("/var/lib/agentx-state/secrets.enc")).toBe(true);
+      // A like-named segment elsewhere also trips, which is acceptable
+      // over-blocking for an attachment sink.
+      expect(isSensitiveAttachmentPath("/home/x/agentx-state/notes.txt")).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.LAX_DATA_DIR;
+      else process.env.LAX_DATA_DIR = prev;
+    }
+  });
 });
 
 describe("extractSensitivePathsFromCommand", () => {

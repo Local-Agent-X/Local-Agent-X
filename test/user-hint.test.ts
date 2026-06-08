@@ -98,8 +98,15 @@ describe("userHint on blocked-tool responses", () => {
       expect(d.userHint).toBe(USER_HINTS.secrets);
     });
 
-    it("write to platform source (src/) is blocked with secrets hint", () => {
-      const target = join(ws, "src", "anything.ts");
+    it("write to platform source (repoRoot/src) is blocked with secrets hint", () => {
+      // Per commit 7d024f80: the platform-source guard is anchored to the repo
+      // root and exempts the workspace/ sandbox — user apps legitimately use a
+      // src/ convention (Astro, Vite, Next) and must NOT be blocked. Only
+      // <repoRoot>/src and <repoRoot>/public (in-platform, NOT in-workspace) are
+      // protected. The workspace is <projectRoot>/workspace, so a sibling
+      // <projectRoot>/src path is in-platform but outside the workspace.
+      const projectRoot = join(ws, "..");
+      const target = join(projectRoot, "src", "anything.ts");
       const d = evaluateFileAccess(ws, "unrestricted", allowNothing, "write", target);
       expect(d.allowed).toBe(false);
       expect(d.userHint).toBe(USER_HINTS.secrets);

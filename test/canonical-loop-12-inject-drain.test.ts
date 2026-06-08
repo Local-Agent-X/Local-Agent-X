@@ -139,12 +139,17 @@ describe("Issue 12 — inject drained at next turn (chat_turn op)", () => {
     offStream();
 
     // Adapter saw two turns; turn 1's messages include the inject as a
-    // user-role row. Find it by content text — the seed produces no text
-    // rows in this test (no chat-runner pre-seed), so the inject is the
-    // only user message at turnIdx=1.
-    // turn-loop wraps the inject body with a temporal-context marker so
-    // the model knows this message arrived mid-turn. Assert the wrapped
-    // form here (and that the user's text is preserved verbatim inside).
+    // user-role row. turn-loop wraps the inject body with a temporal-context
+    // marker so the model knows this message arrived mid-turn; the wrapped
+    // form (with the user's text preserved verbatim) must reach the adapter.
+    //
+    // The ephemeral situational-awareness digest (build-input.ts) prepends a
+    // "[SITUATIONAL CONTEXT …]" block to the turn's LAST user message in the
+    // model's view — which on turn 1 is exactly this inject row. So the
+    // adapter-visible text legitimately carries that prefix; the inject's
+    // wrapped form is preserved verbatim at the END. Assert containment of
+    // the wrapped form (not whole-string equality) so the test pins the
+    // inject surfacing without coupling to the ephemeral digest framing.
     const expectedText = "[mid-turn user message] actually use blue not red";
     expect(adapter.turnInputs).toHaveLength(2);
     const turn1Messages = adapter.turnInputs[1].messages;
@@ -152,7 +157,7 @@ describe("Issue 12 — inject drained at next turn (chat_turn op)", () => {
       m => m.role === "user" &&
         m.turnIdx === 1 &&
         typeof (m.content as { text?: unknown })?.text === "string" &&
-        (m.content as { text: string }).text === expectedText,
+        (m.content as { text: string }).text.endsWith(expectedText),
     );
     expect(injectRow, "inject must appear as a user message on turn 1").toBeDefined();
 
@@ -330,13 +335,17 @@ describe("Issue 12 — terminal end_turn with pending inject extends the worker 
 
     // Turn 1's input contains the inject as a user message, wrapped with
     // the temporal-context marker so the model knows it arrived mid-turn.
+    // As above, the ephemeral situational-awareness digest prepends a
+    // "[SITUATIONAL CONTEXT …]" block to the turn's last user message (this
+    // inject) in the model's view, so assert the wrapped form is preserved
+    // verbatim at the END rather than whole-string equality.
     const expected = "[mid-turn user message] actually skip the pink cup line — never added";
     const turn1Messages = adapter.turnInputs[1].messages;
     const injectRow = turn1Messages.find(
       m => m.role === "user" &&
         m.turnIdx === 1 &&
         typeof (m.content as { text?: unknown })?.text === "string" &&
-        (m.content as { text: string }).text === expected,
+        (m.content as { text: string }).text.endsWith(expected),
     );
     expect(injectRow, "inject must surface as a user message on turn 1").toBeDefined();
 

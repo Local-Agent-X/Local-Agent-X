@@ -120,7 +120,7 @@ describe("AriKernel pre-dispatch gate (F3 closure)", () => {
             approval: { onEvent: () => {} },
           },
         ),
-      ).rejects.toThrow(/declined approval for write/);
+      ).rejects.toThrow(/User declined \(or did not confirm\) write/);
       expect(approvalCalls).toEqual(["write"]);
     } finally {
       approvalMgr.requestApproval = original;

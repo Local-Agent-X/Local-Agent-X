@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { decodedPayloadViews } from "../security/secret-scanner.js";
 import { getLaxDir } from "../lax-data-dir.js";
-import { CryptoAuditTrail } from "./audit-trail.js";
+import { CryptoAuditTrail, getSharedAuditTrail } from "./audit-trail.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // CANARY TOKENS — Hidden phrases that detect prompt-injection leaks
@@ -129,7 +129,10 @@ export function checkCanariesInPayload(sessionId: string, payload: string): stri
 // event can be read back from a temp dir without touching the real ~/.lax chain.
 let canaryAuditTrail: CryptoAuditTrail | null = null;
 function getCanaryAuditTrail(): CryptoAuditTrail {
-  if (!canaryAuditTrail) canaryAuditTrail = new CryptoAuditTrail(getLaxDir());
+  // Shared single-writer instance (finding H10): same daily file, same trail as
+  // the declassify path, so interleaved record() calls stay on one serialized
+  // chain head. An injected test trail still wins (set non-null before this runs).
+  if (!canaryAuditTrail) canaryAuditTrail = getSharedAuditTrail(getLaxDir());
   return canaryAuditTrail;
 }
 

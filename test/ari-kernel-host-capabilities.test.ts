@@ -171,4 +171,48 @@ describe("AriKernel host capability manifest", () => {
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/blocked|denied|untrusted|tainted/i);
   });
+
+  it("denies shell END-TO-END once the live session is tainted (Chunk 4 wire-in)", async () => {
+    // This is the real production path the gate uses: a sensitive read records
+    // session taint → getKernelTaintSources reads it back as kernel labels →
+    // ariEvaluate receives non-empty taint → deny-tainted-shell fires. Proves
+    // the kernel rule (not just the chunk-3 dataLineageGate) now enforces.
+    const { recordSensitiveRead, getKernelTaintSources, clearSessionTaint } = await import(
+      "../src/data-lineage.js"
+    );
+    const SID = "chat-e2e-taint-shell";
+    clearSessionTaint(SID);
+
+    // Clean session: shell is only require-approval (delegated → allowed), so
+    // the kernel allows it.
+    const clean = await ariEvaluate("bash", "exec", { command: "id" }, getKernelTaintSources(SID));
+    expect(clean.allowed, `clean session should not be shell-denied: ${clean.reason}`).toBe(true);
+
+    // A web read taints the session.
+    recordSensitiveRead(SID, "web", "https://attacker.example/inject");
+    const sources = getKernelTaintSources(SID);
+    expect(sources).toContain("web");
+
+    // Now the SAME shell call is denied by the kernel's deny-tainted-shell rule.
+    const tainted = await ariEvaluate("bash", "exec", { command: "id" }, sources);
+    expect(tainted.allowed).toBe(false);
+    expect(tainted.reason).toMatch(/untrusted|tainted|forbidden|denied|blocked/i);
+    clearSessionTaint(SID);
+  });
+
+  it("a sensitive-file read taints the session and denies shell at the kernel", async () => {
+    // sensitive_file maps to a kernel untrusted-content source (rag), which the
+    // deny-tainted-shell rule recognizes — so reading ~/.aws/credentials also
+    // shuts the shell, not just web content.
+    const { recordSensitiveRead, getKernelTaintSources, clearSessionTaint } = await import(
+      "../src/data-lineage.js"
+    );
+    const SID = "chat-e2e-taint-file";
+    clearSessionTaint(SID);
+    recordSensitiveRead(SID, "sensitive_file", "/Users/x/.aws/credentials");
+    const result = await ariEvaluate("bash", "exec", { command: "cat foo" }, getKernelTaintSources(SID));
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/untrusted|tainted|forbidden|denied|blocked/i);
+    clearSessionTaint(SID);
+  });
 });

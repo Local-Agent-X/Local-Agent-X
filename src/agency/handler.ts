@@ -8,6 +8,7 @@
 import { EventBus } from "../event-bus.js";
 import { AgencyMessageBus } from "./message-bus.js";
 import { appendTraceEvent } from "../agents/run-trace.js";
+import { propagateTaint } from "../data-lineage.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agency.handler");
@@ -335,6 +336,22 @@ export class Handler {
   ): void {
     const parent = agent.parentSessionId;
     if (!parent) return;
+    // Taint propagation (parent ← child): if the sub-agent read sensitive data
+    // during its run, that taint must follow its result back to the parent so
+    // the parent's egress + kernel gates see it. The child's tool calls run
+    // under the `agent-<id>` session (server/handler-events.ts), which is where
+    // data-lineage recorded its taint. Capture it at completion time, before the
+    // result is enqueued into the parent's context. Best-effort: a propagation
+    // failure must never block the completion notice.
+    try {
+      const childSession = `agent-${agent.id}`;
+      const moved = propagateTaint(childSession, parent);
+      if (moved > 0) {
+        logger.info(`[handler] propagated ${moved} taint label(s) from sub-agent ${agent.id} → parent session ${parent}`);
+      }
+    } catch (e) {
+      logger.error(`[handler] taint propagation failed for sub-agent ${agent.id} → parent ${parent}: ${(e as Error).message}`);
+    }
     // Loud-log if completion-queue plumbing fails. Previously the empty
     // catches swallowed import errors and enqueue errors — symptom was
     // the parent's session never learning the sub-agent finished, and

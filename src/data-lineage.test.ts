@@ -10,6 +10,8 @@ import {
   isSensitivePath,
   detectSecretsInOutput,
   redactSecretSpans,
+  getKernelTaintSources,
+  propagateTaint,
 } from "./data-lineage.js";
 import { runSandboxedPhase } from "./tool-execution/run-sandboxed.js";
 import type { ToolCallContext } from "./tool-execution/context.js";
@@ -643,5 +645,78 @@ describe("run-sandboxed redacts result content when taint fires", () => {
     expect(ctx.result!.content).not.toContain(secret);
     expect(ctx.result!.status).toBe("blocked");
     expect(checkEgressTaint(sessionId).blocked).toBe(true);
+  });
+});
+
+describe("getKernelTaintSources — LAX → kernel taint mapping", () => {
+  it("returns [] for a clean session", () => {
+    clearSessionTaint("clean-1");
+    expect(getKernelTaintSources("clean-1")).toEqual([]);
+  });
+
+  it("maps web → web, memory → rag, sensitive_file/secret → rag, user_data → user-provided", () => {
+    const sid = "map-1";
+    clearSessionTaint(sid);
+    recordSensitiveRead(sid, "web", "http://x");
+    recordSensitiveRead(sid, "memory", "note");
+    recordSensitiveRead(sid, "sensitive_file", "/Users/x/.aws/credentials");
+    recordSensitiveRead(sid, "secret", "bash:openai-key");
+    recordSensitiveRead(sid, "user_data", "form-input");
+    const sources = getKernelTaintSources(sid).sort();
+    // web/memory/sensitive_file/secret all land in the kernel deny-set
+    // (web/rag); user_data maps to user-provided (intentionally NOT denied).
+    expect(sources).toEqual(["rag", "user-provided", "web"]);
+    clearSessionTaint(sid);
+  });
+
+  it("web/rag sources are the ones the kernel deny-tainted-shell rule keys on", () => {
+    const sid = "map-2";
+    clearSessionTaint(sid);
+    recordSensitiveRead(sid, "web", "http://x");
+    expect(getKernelTaintSources(sid)).toContain("web");
+    clearSessionTaint(sid);
+  });
+});
+
+describe("propagateTaint — parent ← child sub-agent propagation", () => {
+  it("carries a child's sensitive read into the parent session", () => {
+    const child = "agent-abc123";
+    const parent = "chat-parent-1";
+    clearSessionTaint(child);
+    clearSessionTaint(parent);
+
+    // Parent starts clean.
+    expect(checkEgressTaint(parent).blocked).toBe(false);
+    expect(getKernelTaintSources(parent)).toEqual([]);
+
+    // Child reads a sensitive file.
+    recordSensitiveRead(child, "sensitive_file", "/Users/x/.ssh/id_rsa");
+
+    // Propagation (as fired at sub-agent completion) taints the parent.
+    const moved = propagateTaint(child, parent);
+    expect(moved).toBe(1);
+    expect(checkEgressTaint(parent).blocked).toBe(true);
+    // And the parent now hands the kernel non-empty taint on its next gated call.
+    expect(getKernelTaintSources(parent)).toContain("rag");
+
+    clearSessionTaint(child);
+    clearSessionTaint(parent);
+  });
+
+  it("is a no-op when the child is clean", () => {
+    const child = "agent-clean";
+    const parent = "chat-parent-2";
+    clearSessionTaint(child);
+    clearSessionTaint(parent);
+    expect(propagateTaint(child, parent)).toBe(0);
+    expect(checkEgressTaint(parent).blocked).toBe(false);
+  });
+
+  it("does not propagate a session into itself", () => {
+    const sid = "agent-self";
+    clearSessionTaint(sid);
+    recordSensitiveRead(sid, "web", "http://x");
+    expect(propagateTaint(sid, sid)).toBe(0);
+    clearSessionTaint(sid);
   });
 });

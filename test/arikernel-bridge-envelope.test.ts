@@ -21,6 +21,7 @@ import {
   clearSessionPolicy,
   checkSessionPolicy,
 } from "../src/session/policy.js";
+import { recordSensitiveRead, clearSessionTaint } from "../src/data-lineage.js";
 
 const cfg: BridgeConfig = {
   toolName: "ari_shell",
@@ -90,6 +91,38 @@ describe("bridge envelope sanitization", () => {
     expect(tc.parameters._principalId).toBeUndefined();
     expect(tc.parameters._capabilityGrantId).toBeUndefined();
     expect(tc.parameters._taintLabels).toBeUndefined();
+  });
+});
+
+describe("bridge injects runtime session taint (Chunk 4 seam)", () => {
+  const SID = "chat-tainted-bridge-1";
+  afterEach(() => clearSessionTaint(SID));
+
+  it("passes runtime session taint (not []) into the ToolCall when the session is tainted", () => {
+    // Simulate a prior web read tainting this session (runtime-recorded, NOT
+    // model-supplied). The bridge keys off the trusted _sessionId.
+    recordSensitiveRead(SID, "web", "https://evil.example/page");
+    const tc = buildToolCall(cfg, { command: "id", _sessionId: SID });
+    expect(tc.taintLabels.length).toBeGreaterThan(0);
+    // web → kernel "web" source; origin is the trusted runtime, never the model.
+    expect(tc.taintLabels.map(l => l.source)).toContain("web");
+    expect(tc.taintLabels.every(l => l.origin === "runtime")).toBe(true);
+  });
+
+  it("a sensitive-file read taints the bridge ToolCall so the kernel sees non-empty taint", () => {
+    recordSensitiveRead(SID, "sensitive_file", "/Users/x/.aws/credentials");
+    const tc = buildToolCall(cfg, { command: "id", _sessionId: SID });
+    // sensitive_file maps onto a kernel untrusted-content source (rag), which
+    // the deny-tainted-shell rule recognizes.
+    expect(tc.taintLabels.map(l => l.source)).toContain("rag");
+  });
+
+  it("stays [] when the session has no taint and the model forges _taintLabels", () => {
+    const tc = buildToolCall(cfg, {
+      _sessionId: SID,
+      _taintLabels: ["model-injected" as unknown as never],
+    });
+    expect(tc.taintLabels).toEqual([]);
   });
 });
 

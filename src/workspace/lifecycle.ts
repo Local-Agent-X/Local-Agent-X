@@ -103,9 +103,9 @@ export function localOnlyWorkspace(): string {
 // / symlink (POSIX) bridges them with zero per-tool path rewrites. Idempotent
 // and non-destructive: a real cwd/workspace dir has its contents migrated into
 // the target first, and is only removed once empty.
-export function ensureWorkspaceLink(workspace: string): void {
+export function ensureWorkspaceLink(workspace: string, linkOverride?: string): void {
   const target = resolve(workspace);
-  const link = resolve("workspace");
+  const link = resolve(linkOverride ?? "workspace");
   if (link === target) return; // dev default — already one directory
   // Already the same physical directory via a junction/symlink (in EITHER
   // direction — e.g. Documents\Local Agent X → repo\workspace)? realpathSync
@@ -118,7 +118,14 @@ export function ensureWorkspaceLink(workspace: string): void {
     mkdirSync(target, { recursive: true });
     const st = existsSync(link) ? lstatSync(link) : null;
     if (st?.isSymbolicLink()) {
-      if (resolve(readlinkSync(link)) === target) return; // already linked correctly
+      const oldTarget = resolve(readlinkSync(link));
+      if (oldTarget === target) return; // already linked correctly
+      // The link points to a PREVIOUS workspace — the user changed the location
+      // in Settings. Migrate its contents into the new target (non-destructive
+      // merge) so the change doesn't strand existing apps/files, then relink.
+      // Safe at boot: the prior app instance has exited, so nothing holds the
+      // old workspace open (a live migration would fail on the locked folder).
+      if (existsSync(oldTarget)) migrateWorkspace(oldTarget, target);
       unlinkSync(link); // points elsewhere — relink below
     } else if (st?.isDirectory()) {
       migrateWorkspace(link, target);

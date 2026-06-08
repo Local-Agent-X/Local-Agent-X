@@ -153,6 +153,36 @@ export function isAnthropicTokenExpired(tokens: AnthropicTokens | null): boolean
   return !!tokens.expiresAt && Date.now() > tokens.expiresAt;
 }
 
+/**
+ * True when the Claude CLI itself is logged in — ~/.claude/.credentials.json
+ * holds an OAuth token (what the paste-the-code flow and `claude auth login`
+ * both write) or config.json shows an account/key. The chat/build subprocess
+ * authenticates from these files, so this — NOT loadAnthropicTokens() (our
+ * ~/.lax setup-token store) — is the real "Anthropic is usable" signal. Both
+ * the auth status route and the provider list must agree on it, or Settings
+ * says "Connected" while the chat picker omits Anthropic (the exact bug this
+ * fixes).
+ */
+export function isAnthropicCliAuthenticated(): boolean {
+  try {
+    const credPath = join(homedir(), ".claude", ".credentials.json");
+    if (existsSync(credPath)) {
+      try {
+        const cred = JSON.parse(readFileSync(credPath, "utf-8"));
+        if (cred?.claudeAiOauth?.accessToken || cred?.primaryApiKey) return true;
+      } catch { /* corrupt file → not authed */ }
+    }
+    const configPath = join(homedir(), ".claude", "config.json");
+    if (existsSync(configPath)) {
+      try {
+        const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
+        if (cfg.oauthAccount || cfg.primaryApiKey || cfg.customApiKeyResponses) return true;
+      } catch { /* corrupt file → not authed */ }
+    }
+  } catch { /* fs error → not authed */ }
+  return false;
+}
+
 export function saveAnthropicSetupToken(token: string): void {
   const trimmed = token.trim();
   if (!trimmed || trimmed.length < 20) {

@@ -20,7 +20,7 @@
 import type { ProviderId } from "../providers/provider-ids.js";
 import type { SecretsStore } from "../secrets.js";
 import { createLogger } from "../logger.js";
-import { getAnthropicApiKey, loadAnthropicTokens } from "./anthropic.js";
+import { getAnthropicApiKey, loadAnthropicTokens, isAnthropicCliAuthenticated } from "./anthropic.js";
 import { getApiKey, loadTokens } from "./index.js";
 import { getXaiApiKey, loadXaiTokens } from "./xai.js";
 
@@ -94,7 +94,7 @@ function anthropicAuth(): AuthProvider {
       return warnMissing(id);
     },
     hasCredential() {
-      return !!loadAnthropicTokens();
+      return !!loadAnthropicTokens() || isAnthropicCliAuthenticated();
     },
   };
 }

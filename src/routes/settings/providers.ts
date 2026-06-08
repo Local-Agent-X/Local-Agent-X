@@ -19,11 +19,15 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
   // Providers
   if (method === "GET" && url.pathname === "/api/providers") {
     const { loadTokens } = await import("../../auth/index.js");
-    const { loadAnthropicTokens } = await import("../../auth/anthropic.js");
+    const { loadAnthropicTokens, isAnthropicCliAuthenticated } = await import("../../auth/anthropic.js");
     const { loadXaiTokens } = await import("../../auth/xai.js");
     const providers: Array<{ id: string; name: string; models: string[]; active: boolean }> = [];
     const hasOpenAIOAuth = !!loadTokens();
-    const hasAnthropicOAuth = !!loadAnthropicTokens();
+    // Count BOTH our setup-token store (~/.lax) and the CLI's own credential
+    // file (~/.claude) — the paste-the-code sign-in writes the latter, and the
+    // chat subprocess authenticates from it. Without the CLI check a CLI-signed
+    // user is "Connected" in Settings but missing from this picker.
+    const hasAnthropicOAuth = !!loadAnthropicTokens() || isAnthropicCliAuthenticated();
     const hasXaiOAuth = !!loadXaiTokens();
     const hasXaiKey = ctx.secretsStore.has("XAI_API_KEY") || hasXaiOAuth;
     const hasCerebrasKey = ctx.secretsStore.has("CEREBRAS_API_KEY");

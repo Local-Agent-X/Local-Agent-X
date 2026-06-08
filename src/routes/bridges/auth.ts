@@ -127,31 +127,12 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
       // Output looks like "2.1.116 (Claude Code)" — keep just the semver head.
       const m = out.match(/(\d+\.\d+\.\d+)/);
       cliVersion = m ? m[1] : out;
-      // Check if claude CLI has its own auth session by reading its config file.
-      // If the CLI is logged in (oauthAccount present or API key set), builds/chat work
-      // without us holding OAuth tokens.
+      // The CLI is logged in when ~/.claude/.credentials.json (OAuth) or
+      // config.json (account/key) is present — shared with /api/providers via
+      // one helper so Settings and the chat picker never disagree.
       try {
-        const { existsSync: exists, readFileSync: readF } = await import("node:fs");
-        const { homedir } = await import("node:os");
-        const { join: j } = await import("node:path");
-        // OAuth tokens live in .credentials.json; legacy API key / oauthAccount may
-        // also appear in config.json. Either signal means the CLI is logged in.
-        const credPath = j(homedir(), ".claude", ".credentials.json");
-        if (exists(credPath)) {
-          try {
-            const cred = JSON.parse(readF(credPath, "utf-8"));
-            if (cred?.claudeAiOauth?.accessToken || cred?.primaryApiKey) cliAuthenticated = true;
-          } catch {}
-        }
-        if (!cliAuthenticated) {
-          const configPath = j(homedir(), ".claude", "config.json");
-          if (exists(configPath)) {
-            try {
-              const cfg = JSON.parse(readF(configPath, "utf-8"));
-              if (cfg.oauthAccount || cfg.primaryApiKey || cfg.customApiKeyResponses) cliAuthenticated = true;
-            } catch {}
-          }
-        }
+        const { isAnthropicCliAuthenticated } = await import("../../auth/anthropic.js");
+        cliAuthenticated = isAnthropicCliAuthenticated();
       } catch {}
     } catch {}
     // Treat as authenticated if we have valid tokens OR the CLI itself is logged in

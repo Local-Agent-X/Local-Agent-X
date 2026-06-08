@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { createVoiceTurnMachine, type TurnSpeaker, type VoiceTurnMachineDeps } from "./turn-runner.js";
+import { createVoiceTurnMachine, firstChunkCut, type TurnSpeaker, type VoiceTurnMachineDeps } from "./turn-runner.js";
 import type { VoiceTurnRunner } from "./types.js";
 
 // Seam test for the canonical voice turn machine: drives a real turn through
@@ -102,6 +102,17 @@ describe("voice turn machine", () => {
     expect(h.types()).toContain("tts_interrupt");
     expect(h.types()).toContain("assistant_interrupted");
     expect(h.types()).not.toContain("assistant_done");
+  });
+
+  it("firstChunkCut opens fast: clause break, else word boundary, else wait", () => {
+    // Clause break ≥4 chars in → cut right after it ("Sure, ").
+    expect("Sure, let me look".slice(0, firstChunkCut("Sure, let me look"))).toBe("Sure, ");
+    // No early clause → first word boundary at/after the min length.
+    expect(firstChunkCut("Let me take a look")).toBeGreaterThan(0);
+    expect("Let me take a look".slice(0, firstChunkCut("Let me take a look")).trim().length).toBeGreaterThanOrEqual(12);
+    // Too short / no boundary yet → wait (-1).
+    expect(firstChunkCut("Hello")).toBe(-1);
+    expect(firstChunkCut("supercalifragilistic")).toBe(-1); // long but no space yet
   });
 
   it("queued turn holds until drain, then schedules playback_complete", async () => {

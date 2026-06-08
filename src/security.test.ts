@@ -433,6 +433,26 @@ describe("ReDoS prevention", () => {
   it("rejects very long patterns", () => {
     expect(checkRegexSafety("a".repeat(501))).not.toBeNull();
   });
+
+  // Overlapping-alternation under an unbounded quantifier — the (a|a)* family
+  // where branches merely share a first character (not just identical branches).
+  it("rejects overlapping alternation under unbounded quantifier", () => {
+    expect(checkRegexSafety("(a|a)*")).not.toBeNull();
+    expect(checkRegexSafety("^([a-zA-Z]|[a-zA-Z0-9])*$")).not.toBeNull();
+    expect(checkRegexSafety("(\\w|\\d)+")).not.toBeNull();
+    expect(checkRegexSafety("(.|x)*")).not.toBeNull();
+    expect(checkRegexSafety("(ab|a)+")).not.toBeNull();
+    expect(checkRegexSafety("([a-z]|[a-z0-9]){2,}")).not.toBeNull(); // unbounded {n,}
+  });
+
+  it("allows disjoint, bounded, or unquantified alternations", () => {
+    expect(checkRegexSafety("^(npm test|npm run lint)$")).toBeNull();
+    expect(checkRegexSafety("(a|b)*")).toBeNull();
+    expect(checkRegexSafety("(cat|dog)+")).toBeNull();
+    expect(checkRegexSafety("(a|a)")).toBeNull(); // overlap but no quantifier
+    expect(checkRegexSafety("([a-z]|[A-Z])?")).toBeNull(); // bounded quantifier
+    expect(checkRegexSafety("^[a-z]+$")).toBeNull();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════

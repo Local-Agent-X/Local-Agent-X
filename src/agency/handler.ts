@@ -96,6 +96,7 @@ export class Handler {
       messageQueue: [],
       templateId: config.templateId,
       parentSessionId: config.parentSessionId || "",
+      runSessionId: config.runSessionId,
       abortController: ac,
     };
     this.agents.set(agentId, agent);
@@ -338,13 +339,19 @@ export class Handler {
     if (!parent) return;
     // Taint propagation (parent ← child): if the sub-agent read sensitive data
     // during its run, that taint must follow its result back to the parent so
-    // the parent's egress + kernel gates see it. The child's tool calls run
-    // under the `agent-<id>` session (server/handler-events.ts), which is where
-    // data-lineage recorded its taint. Capture it at completion time, before the
-    // result is enqueued into the parent's context. Best-effort: a propagation
-    // failure must never block the completion notice.
+    // the parent's egress + kernel gates see it. The child's tool calls record
+    // taint under `req.sessionId ?? agent-<id>` (server/handler-events.ts:
+    // runSessionId) — for operations-executor phases that's a borrowed id like
+    // `agent-op-<opId>`, NOT `agent-<id>`. We stored that exact bucket as
+    // runSessionId at spawn time, so propagate FROM it; falling back to
+    // `agent-<id>` for the default (auto-minted-session) case. Using the
+    // re-derived `agent-<id>` unconditionally orphaned the taint whenever a
+    // borrowed session was set (finding H4). Best-effort: a propagation failure
+    // must never block the completion notice. (Note: run-sandboxed already
+    // redacts raw tool results before the child model sees them — this is the
+    // egress-taint floor, defense in depth, not the sole barrier.)
     try {
-      const childSession = `agent-${agent.id}`;
+      const childSession = agent.runSessionId ?? `agent-${agent.id}`;
       const moved = propagateTaint(childSession, parent);
       if (moved > 0) {
         logger.info(`[handler] propagated ${moved} taint label(s) from sub-agent ${agent.id} → parent session ${parent}`);

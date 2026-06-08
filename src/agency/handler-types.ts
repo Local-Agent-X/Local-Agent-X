@@ -11,6 +11,13 @@ export interface FieldAgent extends AgencyAgent {
   templateId?: string;
   /** Captured at spawn time to avoid the singleton race on Handler.currentSessionId */
   parentSessionId?: string;
+  /** Borrowed/synthetic runtime session id this run's tools record taint under
+   *  (the `opts.sessionId` passed to invokeDefinition — e.g. `agent-op-<id>` for
+   *  operations-executor phases). Undefined when the run uses its auto-minted
+   *  `agent-<id>` session. pushCompletionToParent propagates taint FROM this
+   *  bucket so it always matches where the child's tools actually recorded —
+   *  see handler-events.ts `runSessionId = req.sessionId ?? agent-<agentId>`. */
+  runSessionId?: string;
 }
 
 export interface FieldAgentStatus {
@@ -39,6 +46,10 @@ export interface SpawnConfig {
   parentSessionId?: string;
   parentAgentId?: string;
   templateId?: string;
+  /** Borrowed runtime session id (invokeDefinition's `opts.sessionId`). When set,
+   *  the run's tools record taint under this id instead of `agent-<id>`; stored on
+   *  the FieldAgent so completion-time taint propagation reads the right bucket. */
+  runSessionId?: string;
 }
 
 export type AgentUpdateCallback = (agentId: string, update: {

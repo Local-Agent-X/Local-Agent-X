@@ -97,6 +97,11 @@ export function invokeDefinition(
     parentSessionId: opts.parentSessionId,
     parentAgentId: opts.parentAgentId,
     templateId,
+    // The borrowed runtime session (operations-executor phases pass one) is the
+    // bucket this run's tools record taint under (handler-events.ts:
+    // runSessionId = req.sessionId ?? agent-<id>). Store it so completion-time
+    // taint propagation reads the right bucket instead of re-deriving agent-<id>.
+    runSessionId: opts.sessionId,
   });
 
   // Inherit the parent's per-session autonomy profile (e.g. a cron job pinned

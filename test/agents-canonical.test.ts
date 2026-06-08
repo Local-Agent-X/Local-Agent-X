@@ -206,17 +206,32 @@ describe("AgentCatalog — project scoping", () => {
     expect(scoped[0].id).toBe("builtin-researcher");
   });
 
-  it("get(role, scope) resolves only agents on the roster", () => {
+  it("get(role, scope) prefers the roster but soft-falls-back to the full catalog", () => {
+    // Contract changed in b5feb9bf ("soft-fallback agent resolution past
+    // missing/empty/non-member project scope"): scope on the SPAWN path
+    // (get) is a PREFERENCE, not a permission gate. A roster member still
+    // resolves via the scoped path; an off-roster agent that exists in the
+    // global catalog falls back instead of returning undefined. Only the
+    // DISPLAY path (list(scope)) stays hard-scoped to the roster. get() now
+    // returns undefined ONLY when nothing in the entire catalog matches.
     const projectId = createTestProject(["builtin-researcher"]);
     expect(AgentCatalog.getInstance().get("researcher", { projectId })?.id).toBe("builtin-researcher");
-    expect(AgentCatalog.getInstance().get("ceo", { projectId })).toBeUndefined();
+    // CEO is off-roster but exists globally → soft fallback resolves it.
+    expect(AgentCatalog.getInstance().get("ceo", { projectId })?.role).toBe("ceo");
+    // A role that exists nowhere still misses.
+    expect(AgentCatalog.getInstance().get("totally-unknown-role-xyz", { projectId })).toBeUndefined();
   });
 
-  it("invokeAgent throws AgentNotFoundError when the agent isn't on the project roster", () => {
+  it("invokeAgent soft-falls-back for an off-roster agent, but throws when nothing matches", () => {
+    // Per b5feb9bf, off-roster-but-cataloged agents resolve via fallback
+    // (projects are an organizational grouping, not a hard permission
+    // boundary). AgentNotFoundError now fires only when the id/role matches
+    // nothing in the entire catalog.
     const projectId = createTestProject(["builtin-researcher"]);
-    // CEO exists in the global catalog but not on this project — scoped
-    // lookup must miss, otherwise the org boundary is purely decorative.
-    expect(() => invokeAgent("ceo", "do a thing", { scope: { projectId } })).toThrow(AgentNotFoundError);
+    expect(invokeAgent("ceo", "do a thing", { scope: { projectId } }).definition.role).toBe("ceo");
+    expect(() => invokeAgent("totally-unknown-role-xyz", "do a thing", { scope: { projectId } })).toThrow(
+      AgentNotFoundError,
+    );
   });
 });
 

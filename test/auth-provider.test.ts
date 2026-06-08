@@ -7,6 +7,10 @@ import type { SecretsStore } from "../src/secrets.js";
 vi.mock("../src/auth/anthropic.js", () => ({
   getAnthropicApiKey: vi.fn(),
   loadAnthropicTokens: vi.fn(),
+  // anthropic hasCredential() also probes the Claude CLI's own credential store.
+  // Default it to "not signed in" so these tests exercise the saved-token path
+  // in isolation; a test that wants the CLI path can override this mock.
+  isAnthropicCliAuthenticated: vi.fn(() => false),
 }));
 vi.mock("../src/auth/index.js", () => ({
   getApiKey: vi.fn(),

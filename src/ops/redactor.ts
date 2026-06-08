@@ -24,30 +24,40 @@
  */
 
 import type { OpEvent } from "./types.js";
+import { redactSecrets } from "../security/secret-scanner.js";
 
 // ── Patterns ───────────────────────────────────────────────────────────────
 
 /**
- * Patterns that match known secret-shaped strings. Each replaces the matched
- * value with a stable redacted form so disk diffs don't suddenly show
- * different masking each run.
+ * Secret-SHAPE scrubbing is delegated to the canonical scanner
+ * (security/secret-scanner.ts redactSecrets, backed by credential-patterns.ts
+ * CREDENTIAL_PATTERNS). This used to be a ~9-pattern local copy that drifted
+ * below the canonical catalog — an event holding a Stripe/Supabase/npm/SendGrid
+ * key reached disk un-redacted because the local set didn't know those shapes.
+ * Now every catalog shape (all 27) is scrubbed before disk-append.
+ *
+ * The two entries below are NOT secret shapes the catalog owns; they stay local:
+ *   1. AUTH-HEADER scrubbing by field NAME/context (Bearer/Basic header value,
+ *      `authorization: <value>` lines) — a field-name control, not a value-shape
+ *      match, mirroring SENSITIVE_FIELD_NAMES below. The canonical "Bearer Token"
+ *      shape covers Bearer bodies but not the `Basic ` scheme or the bare
+ *      authorization-line form, so this is kept to preserve that coverage.
+ *   2. Stripe PUBLISHABLE / restricted keys (`pk_`/`rk_`) and JWTs — shapes the
+ *      canonical catalog doesn't (yet) carry. Kept so disk redaction doesn't
+ *      regress. (Remaining intentional drift, reported in S1.)
+ *
+ * Each replaces the matched value with a stable redacted form so disk diffs
+ * don't suddenly show different masking each run.
  */
-const SECRET_PATTERNS: Array<{ name: string; re: RegExp; replacement: string }> = [
-  // Bearer / Basic auth headers
+const SUPPLEMENTAL_PATTERNS: Array<{ name: string; re: RegExp; replacement: string }> = [
+  // Bearer / Basic auth headers (field-name/context control, not a value shape)
   { name: "bearer-header", re: /\b(Bearer|Basic)\s+[A-Za-z0-9._\-+/=]{16,}/g, replacement: "$1 <redacted>" },
-  // Authorization: <anything> form (catch-all)
+  // Authorization: <anything> form (catch-all, field-name control)
   { name: "authorization-line", re: /(["']?[Aa]uthorization["']?\s*[:=]\s*["']?)([^"'\s]{16,})/g, replacement: "$1<redacted>" },
-  // Common API key prefixes
-  { name: "openai-key", re: /\bsk-[A-Za-z0-9_-]{20,}/g, replacement: "sk-<redacted>" },
-  { name: "anthropic-key", re: /\bsk-ant-[A-Za-z0-9_-]{20,}/g, replacement: "sk-ant-<redacted>" },
-  { name: "xai-key", re: /\bxai-[A-Za-z0-9_-]{20,}/g, replacement: "xai-<redacted>" },
-  { name: "github-token", re: /\bghp_[A-Za-z0-9]{30,}/g, replacement: "ghp_<redacted>" },
-  { name: "github-fgpat", re: /\bgithub_pat_[A-Za-z0-9_]{50,}/g, replacement: "github_pat_<redacted>" },
-  { name: "stripe-key", re: /\b(sk|pk|rk)_(test|live)_[A-Za-z0-9]{16,}/g, replacement: "$1_$2_<redacted>" },
-  // JWT-shaped (three b64url segments with dots)
+  // Stripe publishable / restricted keys — canonical only carries sk_live/sk_test.
+  { name: "stripe-pub-key", re: /\b(pk|rk)_(test|live)_[A-Za-z0-9]{16,}/g, replacement: "$1_$2_<redacted>" },
+  // JWT-shaped (three b64url segments with dots) — not in the canonical catalog.
   { name: "jwt", re: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, replacement: "<redacted-jwt>" },
-  // Generic 32+ hex / b64-ish blobs that look like keys (last resort)
-  // Disabled by default — too aggressive, would scrub commit SHAs and content hashes
 ];
 
 /**
@@ -120,9 +130,11 @@ export function redactEventForDisk(event: OpEvent): OpEvent {
  * log lines that aren't structured events but still go to disk.
  */
 export function redactString(s: string): { changed: boolean; redacted: string } {
-  let out = s;
-  let changed = false;
-  for (const { re, replacement } of SECRET_PATTERNS) {
+  // Canonical secret-shape scrub (all 27 catalog shapes) → stable `[REDACTED:name]`.
+  let out = redactSecrets(s);
+  let changed = out !== s;
+  // Supplemental: auth-header/field-name forms + shapes the catalog lacks.
+  for (const { re, replacement } of SUPPLEMENTAL_PATTERNS) {
     if (re.test(out)) {
       changed = true;
       out = out.replace(re, replacement);

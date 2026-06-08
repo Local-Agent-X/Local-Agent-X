@@ -41,10 +41,13 @@ describe("redactString — pattern scrubbing", () => {
     expect(r.redacted).not.toContain("abcdefghijklmnop12345");
   });
 
+  // Secret-SHAPE redaction now flows through the canonical scanner, so catalog
+  // shapes render as the stable `[REDACTED:<catalog name>]` form. The invariant
+  // every test pins is the same: the secret VALUE never survives to disk.
   it("redacts OpenAI sk-style key", () => {
     const r = redactString("call with " + OPENAI_FAKE);
     expect(r.changed).toBe(true);
-    expect(r.redacted).toContain("sk-<redacted>");
+    expect(r.redacted).toContain("[REDACTED:OpenAI API Key]");
     expect(r.redacted).not.toContain(TAIL);
   });
 
@@ -57,25 +60,31 @@ describe("redactString — pattern scrubbing", () => {
   it("redacts xAI key", () => {
     const r = redactString("token " + XAI_FAKE);
     expect(r.changed).toBe(true);
-    expect(r.redacted).toContain("xai-<redacted>");
+    expect(r.redacted).toContain("[REDACTED:xAI API Key]");
+    expect(r.redacted).not.toContain(TAIL);
   });
 
   it("redacts GitHub classic PAT", () => {
     const r = redactString("export GH_TOKEN=" + GHP_FAKE);
     expect(r.changed).toBe(true);
-    expect(r.redacted).toContain("ghp_<redacted>");
+    // The `GH_TOKEN=ghp_…` context trips the canonical Key-Value Secret shape;
+    // the PAT value is gone either way.
+    expect(r.redacted).not.toContain(GHP_FAKE);
+    expect(r.redacted).toContain("[REDACTED:");
   });
 
   it("redacts GitHub fine-grained PAT", () => {
     const r = redactString("token=" + GHPAT_FAKE);
     expect(r.changed).toBe(true);
-    expect(r.redacted).toContain("github_pat_<redacted>");
+    expect(r.redacted).not.toContain(GHPAT_FAKE);
+    expect(r.redacted).toContain("[REDACTED:");
   });
 
   it("redacts Stripe live secret key", () => {
     const r = redactString("STRIPE=" + STRIPE_LIVE_FAKE);
     expect(r.changed).toBe(true);
-    expect(r.redacted).toContain("sk_live_<redacted>");
+    expect(r.redacted).toContain("[REDACTED:Stripe Live Key]");
+    expect(r.redacted).not.toContain(TAIL);
   });
 
   it("redacts Stripe test publishable key", () => {
@@ -105,8 +114,10 @@ describe("redactString — pattern scrubbing", () => {
   it("redacts multiple secrets in one string", () => {
     const r = redactString("token=" + GHP_FAKE + " and key=" + OPENAI_FAKE);
     expect(r.changed).toBe(true);
-    expect(r.redacted).toContain("ghp_<redacted>");
-    expect(r.redacted).toContain("sk-<redacted>");
+    // Both secret values are gone (each redacted to a canonical marker).
+    expect(r.redacted).not.toContain(GHP_FAKE);
+    expect(r.redacted).not.toContain(OPENAI_FAKE);
+    expect(r.redacted).toContain("[REDACTED:");
   });
 });
 
@@ -221,7 +232,7 @@ describe("redactEventForDisk — pattern scrubbing inside payload", () => {
     const out = redactEventForDisk(evt);
     expect(out.redacted).toBe(true);
     const line = (out.payload as { log_line: string }).log_line;
-    expect(line).toContain("sk-<redacted>");
+    expect(line).toContain("[REDACTED:OpenAI API Key]");
     expect(line).not.toContain(TAIL);
   });
 
@@ -234,7 +245,7 @@ describe("redactEventForDisk — pattern scrubbing inside payload", () => {
     const out = redactEventForDisk(evt);
     expect(out.redacted).toBe(true);
     const arr = (out.payload as { a: { b: { c: string[] } } }).a.b.c;
-    expect(arr[0]).toContain("sk-<redacted>");
+    expect(arr[0]).toContain("[REDACTED:OpenAI API Key]");
     expect(arr[1]).toBe("ok");
   });
 

@@ -503,6 +503,90 @@ export function isSensitivePath(filePath: string): boolean {
   return false;
 }
 
+// --- Egress-attachment sink: stricter than the read-taint predicate above ---
+//
+// `isSensitivePath` is the READ-TAINT predicate: reading a matching file taints
+// the session. It is deliberately NARROW (anchored basenames / extensions /
+// known cred-dir pairs) because over-flagging there causes taint storms —
+// the app reads its own `.lax` data dir and routine `.enc`/key files constantly,
+// and tainting on each would block every subsequent egress. The existing spec
+// table even encodes that `.ssh/known_hosts`, `.ssh/*.pub`, etc. are NOT tainted.
+//
+// The email-attachment sink has the opposite risk profile: a file is read AND
+// shipped off-box, so a miss is an exfiltration. Here we err toward blocking.
+// This predicate is a SUPERSET of `isSensitivePath` plus whole-directory rules
+// for the app's own secrets dir and common credential stores. It is used ONLY by
+// the attachment guard (http-egress-guard.ts), never for read-taint.
+
+// Directories whose entire contents are off-limits to attach. Any file at any
+// depth inside one of these is sensitive for the attachment sink.
+// `.lax` (the app's own secrets/vault dir) plus the canonical credential stores.
+const ATTACHMENT_SENSITIVE_DIR_NAMES: ReadonlySet<string> = new Set([
+  ".gnupg", ".ssh", ".aws", ".lax",
+]);
+
+// Basenames/extensions that signal an encrypted vault or key container and must
+// never leave as an attachment. Supplements SENSITIVE_EXTENSIONS (.pem/.key/...).
+const ATTACHMENT_SENSITIVE_EXTENSIONS: ReadonlyArray<string> = [".enc"];
+
+// Inside `.ssh`, these are low-risk and may be attached (host fingerprints,
+// public keys). Everything else under `.ssh` is a potential private key with an
+// arbitrary filename, so it is blocked. NB: `.ssh/config` is intentionally NOT
+// listed — `isSensitivePath` already flags it (DIR_SCOPED_FILES), and it can
+// reference IdentityFile/ProxyCommand secrets, so blocking it is correct.
+const SSH_BENIGN_BASENAMES: ReadonlySet<string> = new Set([
+  "known_hosts", "known_hosts.old", "authorized_keys",
+]);
+
+/**
+ * Stricter sensitive-path check for the egress-attachment sink (email_send
+ * attachments, etc.). Returns true if attaching this file would ship credential
+ * or secret material off-box.
+ *
+ * Superset of {@link isSensitivePath}, plus:
+ *  - any file under `.ssh` / `.aws` / `.lax` / `.gnupg` (whole-dir), EXCEPT a
+ *    short allowlist of benign `.ssh` files (`known_hosts`, `config`, `*.pub`);
+ *  - the resolved LAX data dir basename, so a relocated `LAX_DATA_DIR` (a dir not
+ *    literally named `.lax`) is still covered;
+ *  - `.enc` containers (e.g. the `secrets.enc` vault).
+ *
+ * Segment-based matching, so `~/.lax/secrets.enc`, `/Users/x/.lax/secrets.enc`,
+ * and a `LAX_DATA_DIR`-relocated dir all resolve identically — a leading `~`
+ * does not need expansion to match a directory-name segment.
+ */
+export function isSensitiveAttachmentPath(filePath: string): boolean {
+  if (!filePath) return false;
+  // The narrow read-taint predicate already covers the anchored cases
+  // (.env, id_rsa, *.pem, .aws/credentials, .gnupg/*, ...).
+  if (isSensitivePath(filePath)) return true;
+
+  const segs = pathSegments(filePath);
+  if (segs.length === 0) return false;
+  const segsLower = segs.map(s => s.toLowerCase());
+  const base = segsLower[segsLower.length - 1];
+
+  // Whole-directory rules. `.ssh` is handled separately (benign-file allowlist).
+  for (const seg of segsLower) {
+    if (seg === ".ssh") {
+      if (base.endsWith(".pub")) return false;
+      if (SSH_BENIGN_BASENAMES.has(base)) return false;
+      return true;
+    }
+    if (ATTACHMENT_SENSITIVE_DIR_NAMES.has(seg)) return true;
+  }
+
+  // Relocated LAX data dir (LAX_DATA_DIR points at a dir not named `.lax`).
+  const laxBase = pathSegments(getLaxDir()).pop()?.toLowerCase();
+  if (laxBase && segsLower.includes(laxBase)) return true;
+
+  // Encrypted vault containers (e.g. secrets.enc).
+  for (const ext of ATTACHMENT_SENSITIVE_EXTENSIONS) {
+    if (base.endsWith(ext)) return true;
+  }
+
+  return false;
+}
+
 /** Get session taint summary */
 export function getTaintSummary(sessionId: string): { count: number; sources: string[] } {
   const taints = sessionTaint.get(sessionId) || [];

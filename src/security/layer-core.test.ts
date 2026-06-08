@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve, join } from "node:path";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { SecurityLayer } from "./layer-core.js";
 import { evaluateFileAccess } from "./file-access.js";
@@ -502,6 +502,67 @@ describe("platform-source write guard (anchored to repo root)", () => {
     const path = resolve(ws, "my-site/src/components/Hero.tsx");
     const d = evaluateFileAccess(ws, "unrestricted", () => false, "write", path);
     expect(d.allowed).toBe(true);
+  });
+});
+
+// Relocated-workspace junction: the packaged app moves the workspace into
+// ~/Documents and bridges <cwd>/workspace → there with a directory junction
+// (symlink on POSIX). An agent reading an app file via the bridged path is
+// lexically "outside" config.workspace but physically inside it. The
+// containment check MUST follow the junction (realpath every segment) or every
+// such read is wrongly blocked — the bug that surfaced as "BLOCKED by security:
+// cannot read files outside project and user directories" on an app's own file.
+describe("relocated-workspace junction is transparent to containment", () => {
+  let realWs: string;
+  let bridge: string; // a link that points INTO realWs, sitting elsewhere
+  let linkable = true;
+
+  beforeAll(() => {
+    const base = mkdtempSync(join(tmpdir(), "ws-junction-"));
+    realWs = join(base, "real", "workspace");
+    mkdirSync(join(realWs, "apps", "demo"), { recursive: true });
+    writeFileSync(join(realWs, "apps", "demo", "index.html"), "<h1>hi</h1>", "utf-8");
+    bridge = join(base, "bridge-workspace");
+    try {
+      // "junction" on Windows mirrors the real ensureWorkspaceLink; "dir" symlink elsewhere.
+      symlinkSync(realWs, bridge, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      linkable = false; // unprivileged POSIX without symlink rights — skip assertions
+    }
+  });
+
+  it("allows a read through the junction into the real workspace", () => {
+    if (!linkable) return;
+    // config.workspace is the REAL location; the agent's path traverses the bridge.
+    const viaBridge = join(bridge, "apps", "demo", "index.html");
+    const d = evaluateFileAccess(realWs, "common", () => false, "read", viaBridge);
+    expect(d.allowed).toBe(true);
+  });
+
+  it("still blocks a read that genuinely escapes the workspace", () => {
+    if (!linkable) return;
+    const outside = join(bridge, "..", "..", "elsewhere", "secret.txt");
+    const d = evaluateFileAccess(realWs, "common", () => false, "read", outside);
+    expect(d.allowed).toBe(false);
+  });
+});
+
+// A relative agent path must resolve the SAME way the file tool that opens it
+// does (resolveAgentPath): anchored to the project root (workspace parent), not
+// process.cwd(). This is what lets a relocated-workspace install read its own
+// app files via the agent's "workspace/apps/<id>/..." convention without a
+// false "outside project and user directories" block.
+describe("relative agent paths anchor to the project root, not cwd", () => {
+  const ws = resolve(WORKSPACE); // ends in /workspace, so parent is the project root
+
+  it("allows a workspace-prefixed relative read (lands inside the workspace)", () => {
+    const d = evaluateFileAccess(ws, "common", () => false, "read", "workspace/apps/demo/index.html");
+    expect(d.allowed).toBe(true);
+  });
+
+  it("blocks a relative path that climbs out of the project root", () => {
+    const d = evaluateFileAccess(ws, "workspace", () => false, "read", "../../../../../../etc/shadow");
+    expect(d.allowed).toBe(false);
   });
 });
 

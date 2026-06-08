@@ -6,7 +6,6 @@ import { getThreatDashboard } from "../threat/threat-dashboard.js";
 import { listPolicies, createPolicy, deletePolicy } from "../ari-kernel/policy-editor.js";
 import { listEgressRules, addEgressRule } from "../security/egress-policy.js";
 import { scanForSecrets } from "../security/secret-scanner.js";
-import { getRecentFileAccess } from "../file-audit.js";
 import { queryAuditLog, getAuditSummary } from "../ari-kernel/audit-viewer.js";
 import { runBenchmarks } from "../ari-kernel/benchmarks.js";
 import { runInjectionTests } from "../security-tests.js";
@@ -47,9 +46,6 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
   }
   if (method === "GET" && url.pathname === "/api/security/audit/summary") {
     json(200, await getAuditSummary()); return true;
-  }
-  if (method === "GET" && url.pathname === "/api/security/file-access") {
-    json(200, getRecentFileAccess(50)); return true;
   }
   if (method === "POST" && url.pathname === "/api/security/scan") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }

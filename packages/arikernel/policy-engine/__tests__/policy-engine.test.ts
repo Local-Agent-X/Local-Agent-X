@@ -6,7 +6,10 @@ import {
 	DENY_ALL_RULE,
 	PolicyEngine,
 	UnsafeMatchError,
+	checkRegexSafety,
+	loadPolicies,
 	matchesRule,
+	validatePolicyRegexSafety,
 } from "../src/index.js";
 
 function makeToolCall(overrides: Partial<ToolCall> = {}): ToolCall {
@@ -454,5 +457,87 @@ describe("DENY_ALL_RULE", () => {
 
 	it("verdict is deny", () => {
 		expect(DENY_ALL_RULE.decision).toBe("deny");
+	});
+});
+
+describe("checkRegexSafety — overlapping-alternation ReDoS (H9)", () => {
+	// REJECT: unbounded-quantified groups with overlapping alternation branches.
+	it.each([
+		["(a|a)*", "identical literal branches"],
+		["(a|ab)*", "branches sharing first char 'a'"],
+		["([a-z]|[a-z0-9])*", "overlapping character classes"],
+		["^([a-zA-Z]|[a-zA-Z0-9])*$", "canonical evil regex with anchors"],
+		["(\\w|\\d)+", "shorthand classes (un-enumerable → fail closed)"],
+		["(.|x)*", "dot branch overlaps everything"],
+		["(ab|a)+", "prefix-overlapping branches under +"],
+		["([0-9]|[0-9a-f]){2,}", "open-ended {n,} range over overlapping classes"],
+		["(?:a|a)*", "non-capturing group with overlapping branches"],
+	])("rejects %s (%s)", (pattern) => {
+		expect(checkRegexSafety(pattern)).not.toBeNull();
+	});
+
+	// Keep existing nested-quantifier detection working (no regression).
+	it.each([["(a+)+"], ["(a*)*b"], ["(a|b+)*"]])("still rejects nested quantifier %s", (pattern) => {
+		expect(checkRegexSafety(pattern)).not.toBeNull();
+	});
+
+	// ACCEPT: legitimate, safe policy patterns (including real example-policy rules).
+	it.each([
+		["^\\./src/", "real rule: anchored relative-path literal (code-assistant.yaml)"],
+		["^\\./output/", "real rule: anchored relative-path literal (web-researcher.yaml)"],
+		["^(npm test|npm run lint|tsc --noEmit)", "real rule: NON-quantified command alternation"],
+		["evil\\.com", "simple literal"],
+		["^/api/.*$", "anchored path with trailing .*"],
+		["[a-zA-Z0-9]+", "single quantified character class (no alternation)"],
+		["(a|b)*", "disjoint single-char alternation branches"],
+		["(cat|dog)+", "disjoint literal branches (different first chars)"],
+		["(foo|bar)*", "disjoint literal branches"],
+		["(abc|xyz)*", "disjoint multi-char branches"],
+		["(a|b)?", "overlapping shape but BOUNDED quantifier '?'"],
+		["(a|a){1,3}", "overlapping branches but FINITE-bounded {1,3}"],
+		["^(GET|POST|DELETE)$", "anchored disjoint method alternation, unquantified"],
+		["(?:a|b)*", "non-capturing group, disjoint branches"],
+	])("accepts %s (%s)", (pattern) => {
+		expect(checkRegexSafety(pattern)).toBeNull();
+	});
+
+	it("validatePolicyRegexSafety reports the overlapping-alternation rule", () => {
+		const errors = validatePolicyRegexSafety([
+			{ id: "evil", match: { parameters: { url: { pattern: "([a-zA-Z]|[a-zA-Z0-9])*" } } } },
+			{ id: "ok", match: { parameters: { url: { pattern: "^\\./src/" } } } },
+		]);
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toContain("evil");
+	});
+
+	it("loadPolicies (real validation entry point) rejects an overlapping-alternation rule", () => {
+		const badRule: PolicyRule = {
+			id: "deny-evil-regex",
+			name: "Deny via evil regex",
+			priority: 1,
+			match: { toolClass: "http", parameters: { url: { pattern: "(a|a)*" } } },
+			decision: "deny",
+			reason: "x",
+		};
+		expect(() => loadPolicies([badRule])).toThrow(/unsafe regex/i);
+	});
+
+	it("loadPolicies accepts the real example-policy command alternation rule", () => {
+		const goodRule: PolicyRule = {
+			id: "allow-build-cmds",
+			name: "Allow build commands",
+			priority: 1,
+			match: { toolClass: "shell", parameters: { cmd: { pattern: "^(npm test|npm run lint|tsc --noEmit)" } } },
+			decision: "allow",
+			reason: "x",
+		};
+		expect(loadPolicies([goodRule])).toHaveLength(1);
+	});
+
+	it("matcher inline guard fails closed on an overlapping-alternation pattern", () => {
+		const tc = makeToolCall({ parameters: { url: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!" } });
+		expect(() => matchesRule({ parameters: { url: { pattern: "(a|a)*" } } }, tc, [])).toThrow(
+			UnsafeMatchError,
+		);
 	});
 });

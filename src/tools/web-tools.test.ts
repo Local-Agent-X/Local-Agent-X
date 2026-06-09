@@ -27,7 +27,7 @@ vi.mock("undici", async (importActual) => {
 });
 
 // Imported AFTER the mock is registered so web-tools binds to the mocked fetch.
-const { selfCallAuthHeader, createPinningDispatcher, webFetchTool, createHttpRequestTool } =
+const { selfCallAuthHeader, createPinningDispatcher, canonicalFetch, webFetchTool, createHttpRequestTool } =
   await import("./web-tools.js");
 
 /** Minimal undici-Response stand-in for the fields the tools read. */
@@ -287,6 +287,40 @@ describe("cross-host redirect egress re-check", () => {
     // URL() compresses the literal to [2002:808:808::] when the redirect is followed.
     expect(seen).toContain("http://[2002:808:808::]/");
     expect(res.content).toContain("PUBLIC PAGE");
+  });
+
+  // canonicalFetch is the ONE pinned manual-redirect fetch the content-tool
+  // image path now shares with web_fetch. It must enforce the same per-hop SSRF
+  // gate: a 302 to a metadata literal is rejected BEFORE the hop is followed,
+  // and an initial literal private/loopback IP never connects.
+  it("canonicalFetch: rejects a 302 to a metadata literal (per-hop SSRF, fail-closed)", async () => {
+    const seen: string[] = [];
+    undiciMock.handler = (url) => {
+      seen.push(url);
+      if (url.startsWith("https://public-a.example")) {
+        return fakeResponse({ status: 302, headers: { location: "http://169.254.169.254/" } });
+      }
+      return fakeResponse({ status: 200, body: "METADATA LEAK" });
+    };
+
+    await expect(
+      canonicalFetch("https://public-a.example/page"),
+    ).rejects.toThrow(/private\/reserved|SSRF|metadata/i);
+    expect(seen).toEqual(["https://public-a.example/page"]); // never followed the redirect
+    expect(seen).not.toContain("http://169.254.169.254/");
+  });
+
+  it("canonicalFetch: rejects an initial literal loopback IP before connecting", async () => {
+    const seen: string[] = [];
+    undiciMock.handler = (url) => {
+      seen.push(url);
+      return fakeResponse({ status: 200, body: "LOOPBACK LEAK" });
+    };
+
+    await expect(
+      canonicalFetch("http://127.0.0.1/"),
+    ).rejects.toThrow(/private\/reserved|SSRF|Blocked/i);
+    expect(seen).toEqual([]); // never connected
   });
 
   // Same-host redirect (A → A/other) is fine even in strict mode — the

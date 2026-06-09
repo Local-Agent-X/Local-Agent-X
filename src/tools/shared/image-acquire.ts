@@ -5,8 +5,9 @@
  * and caches images for every tool that embeds them (pptx, docx, pdf,
  * xlsx, html). All tools call this; no parallel image logic anywhere.
  *
- * Network fetches go through the same SSRF gate as `web_fetch` and
- * `http_request` (`dnsPinCheck` in src/browser/guards.ts). Blocked
+ * Network fetches go through the same hardened SSRF gate as `web_fetch`
+ * and `http_request` (`canonicalFetch` in src/tools/web-egress.ts:
+ * per-hop literal-IP + DNS-pin + scheme check, fail-closed). Blocked
  * fetches throw — callers surface the error to the user; we never
  * fall back to a placeholder.
  *
@@ -19,7 +20,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { workspacePath } from "../../config.js";
-import { dnsPinCheck } from "../../browser/guards.js";
+import { canonicalFetch, EgressRedirectBlocked } from "../web-egress.js";
 
 export interface ImageSpec {
   /** URL (http(s)://...) or local path (absolute, or relative to workspaceRoot). Auto-detected. */
@@ -209,25 +210,27 @@ async function fetchFromUrl(url: string): Promise<Buffer> {
   const cached = await readCached(url);
   if (cached) return cached;
 
-  const blocked = await dnsPinCheck(url);
-  if (blocked) throw new Error(`Image fetch blocked for ${describeSource(url)}: ${blocked}`);
-
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "LocalAgentX/0.1",
-      Accept: "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/*",
-    },
-    signal: AbortSignal.timeout(30_000),
-    redirect: "follow",
-  });
+  // Route through the ONE hardened pinned fetch (per-hop literal-IP + DNS-pin +
+  // scheme check, fail-closed) — same SSRF coverage web_fetch gets. This
+  // supersedes the old final-only dnsPinCheck: every redirect hop is validated
+  // BEFORE connecting, so a 302 to a private/metadata host can't slip through.
+  let res;
+  try {
+    res = await canonicalFetch(url, {
+      headers: {
+        "User-Agent": "LocalAgentX/0.1",
+        Accept: "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/*",
+      },
+      timeoutMs: 30_000,
+    });
+  } catch (e) {
+    if (e instanceof EgressRedirectBlocked) {
+      throw new Error(`Image fetch blocked for ${describeSource(url)}: ${e.message}`);
+    }
+    throw new Error(`Image fetch failed for ${describeSource(url)}: ${(e as Error).message}`);
+  }
   if (!res.ok) {
     throw new Error(`Image fetch failed for ${describeSource(url)}: HTTP ${res.status} ${res.statusText}`);
-  }
-  // Re-pin final URL after redirects in case the server bounced us to a private host.
-  const finalUrl = res.url || url;
-  if (finalUrl !== url) {
-    const blockedFinal = await dnsPinCheck(finalUrl);
-    if (blockedFinal) throw new Error(`Image fetch blocked after redirect for ${describeSource(url)}: ${blockedFinal}`);
   }
 
   const ab = await res.arrayBuffer();

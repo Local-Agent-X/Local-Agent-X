@@ -53,6 +53,11 @@ export function initThree() {
   state.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
   state.camera.position.z = state.zoomTarget;
   state.renderer = new THREE.WebGLRenderer({ canvas: state.canvas, alpha: true, antialias: true });
+  // Pin the buffer transparent. The dark panel is the container gradient behind
+  // a see-through canvas; without an explicit alpha-0 clear, the antialias
+  // multisample buffer can resolve to opaque white before the first render and
+  // hide the gradient (intermittent white-panel flash on first tab open).
+  state.renderer.setClearColor(0x000000, 0);
   state.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   state.mat = new THREE.ShaderMaterial({
     uniforms: { uPxScale: { value: 1.0 }, uTime: { value: 0 }, uOpacity: { value: 1.0 }, uFocusCluster: { value: -1 } },

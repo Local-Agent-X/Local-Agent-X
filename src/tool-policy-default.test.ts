@@ -19,6 +19,7 @@ import { ToolPolicy, auditPolicyCoverage, type ToolPolicyConfig } from "./tool-p
 import { DEFAULT_POLICY } from "./tool-policy/default-rules.js";
 import { deriveRateLimits } from "./tool-policy/tool-policies.js";
 import { TOOLS } from "./tool-registry.js";
+import { allTools } from "./tools/registry-build.js";
 
 function defaultPolicy(): ToolPolicy {
   return new ToolPolicy(DEFAULT_POLICY);
@@ -34,6 +35,23 @@ describe("orphan check — every kernel tool has a policy rule", () => {
 
   it("returns null for a tool with no entry and no rule", () => {
     expect(defaultPolicy().findCoveringRule("not_a_real_tool_xyz")).toBeNull();
+  });
+});
+
+// The orphan check above runs table → rule. This runs the other direction:
+// registry → table. A tool can be registered (in allTools, exposed via
+// audience-map) yet absent from the policy table — in which case it falls to
+// default-deny, and any naive "just allow it" fix lacking pathArgs would skip
+// SecurityLayer confinement. That exact gap shipped once for edit_lines /
+// multi_edit; this guards the seam the orphan check can't see (it sources its
+// names FROM the table, so a registry/table mismatch is invisible to it).
+describe("registry coverage — every registered tool has a policy entry", () => {
+  it("leaves no allTools entry uncovered by DEFAULT_POLICY", () => {
+    const report = auditPolicyCoverage(allTools.map((t) => t.name), defaultPolicy());
+    expect(
+      report.uncovered,
+      `registered tools missing a tool-policies.data.ts entry (would be default-denied): ${report.uncovered.join(", ")}`,
+    ).toEqual([]);
   });
 });
 

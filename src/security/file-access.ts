@@ -1,5 +1,5 @@
 import { resolve, relative, dirname, basename, join, isAbsolute } from "node:path";
-import { realpathSync } from "node:fs";
+import { realpathSync, openSync, closeSync, readFileSync, constants } from "node:fs";
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
@@ -263,5 +263,82 @@ export function evaluateFileAccess(
     }
   }
 
-  return { allowed: true, reason: "File access allowed" };
+  // Hand back the canonical inode the checks above bound to (realPath). The
+  // read sinks open THIS path with O_NOFOLLOW (see openValidatedRead) instead
+  // of re-deriving a raw lexical path, so the inode validated here is the inode
+  // opened — closing the symlink-swap TOCTOU (R4-19).
+  return { allowed: true, reason: "File access allowed", canonicalPath: realPath };
+}
+
+// fs.constants.O_NOFOLLOW is POSIX-only; on Windows it is undefined. Falling
+// back to 0 leaves the open flags unchanged there — the realpath-then-revalidate
+// leg still applies, and Windows symlink creation requires elevation, so the
+// residual risk is lower. (O_RDONLY is 0 on every platform, so this OR is the
+// read-only flag set with NOFOLLOW added where the platform supports it.)
+const READ_NOFOLLOW_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+
+/**
+ * Open the VALIDATED canonical inode for a READ sink, atomically closing the
+ * check-on-string / open-on-inode TOCTOU (R4-19). Mirrors the email tool's
+ * canonicalizeAttachmentPath pattern (re-canonicalize so the checked inode is
+ * the read inode), and hardens it the way checkAttachmentPaths could not: the
+ * leaf is opened with O_NOFOLLOW, so a symlink swapped in at the canonical leaf
+ * BETWEEN realpath and open is rejected (ELOOP) rather than followed.
+ *
+ * Steps:
+ *   1. realpathDeep(absPath) — follow every existing symlink/junction segment,
+ *      exactly as the pre-dispatch gate did, so we bind to the same inode.
+ *   2. Re-check that inode against SENSITIVE_PATTERNS. The gate already ran the
+ *      mode/containment check on this realpath; re-running the inode-bound
+ *      sensitivity check here means a leaf repointed at ~/.ssh/id_rsa after the
+ *      gate is caught at open time. (Mode/containment is NOT re-evaluated here:
+ *      the active mode + worktree allowlist are SecurityLayer instance state not
+ *      available at the sink, and re-deriving them would risk false-blocking a
+ *      legitimate worktree read; the sensitivity rules are mode-independent and
+ *      are the leg that actually defeats the id_rsa swap.)
+ *   3. openSync(realPath, O_RDONLY | O_NOFOLLOW). If the leaf is now a symlink,
+ *      the kernel rejects the open with ELOOP — fail closed.
+ *
+ * Returns the open fd plus the canonical path so the caller can fstat/read the
+ * exact inode it just validated. The caller MUST close the fd. A genuine open
+ * error (ENOENT, EACCES, ELOOP, …) is surfaced, never swallowed.
+ */
+export function openValidatedRead(absPath: string): { fd: number; canonicalPath: string } {
+  let canonicalPath: string;
+  try {
+    canonicalPath = realpathDeep(absPath);
+  } catch (e) {
+    // ELOOP = symlink cycle (attack). realpathDeep only rethrows this.
+    if ((e as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new Error("Blocked: symlink loop detected (possible attack)");
+    }
+    throw e;
+  }
+
+  const normalized = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
+  for (const pattern of SENSITIVE_PATTERNS) {
+    if (pattern.test(normalized)) {
+      throw new Error(`Blocked: matches sensitive path pattern ${pattern.source}`);
+    }
+  }
+
+  // O_NOFOLLOW on the leaf: a symlink swapped in at canonicalPath between the
+  // realpath above and this open is rejected (ELOOP) rather than followed.
+  const fd = openSync(canonicalPath, READ_NOFOLLOW_FLAGS);
+  return { fd, canonicalPath };
+}
+
+/**
+ * Convenience wrapper over {@link openValidatedRead} for sinks that just want
+ * the bytes: opens the validated canonical inode with O_NOFOLLOW, reads it
+ * fully, and closes the fd. Preserves the caller's own size caps / encoding —
+ * it returns a raw Buffer and never swallows an open or read error.
+ */
+export function readValidatedFile(absPath: string): Buffer {
+  const { fd } = openValidatedRead(absPath);
+  try {
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 }

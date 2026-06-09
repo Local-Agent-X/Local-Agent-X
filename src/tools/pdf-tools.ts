@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { PDFParse } from "pdf-parse";
 // @ts-expect-error — no type declarations for pdfkit
@@ -10,6 +10,7 @@ import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { readValidatedFile } from "../security/file-access.js";
 
 // ── Helpers ──
 
@@ -54,7 +55,9 @@ const pdfRead: ToolDefinition = {
   async execute(args) {
     try {
       const filePath = resolvePath(args.file_path as string);
-      const buf = await readFile(filePath);
+      // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) so a
+      // symlink swapped in after the gate (R4-19) is rejected, not parsed.
+      const buf = readValidatedFile(filePath);
       const parser = new PDFParse({ data: new Uint8Array(buf) });
       const info = await parser.getInfo();
       const meta = {
@@ -172,7 +175,9 @@ const pdfMerge: ToolDefinition = {
 
       const merged = await PDFLibDocument.create();
       for (const p of paths) {
-        const buf = await readFile(p);
+        // Read each input from its VALIDATED canonical inode (realpath +
+        // O_NOFOLLOW leaf) so a symlink swap after the gate (R4-19) is rejected.
+        const buf = readValidatedFile(p);
         const src = await PDFLibDocument.load(buf);
         const copied = await merged.copyPages(src, src.getPageIndices());
         for (const page of copied) merged.addPage(page);
@@ -204,7 +209,9 @@ const pdfExtractTables: ToolDefinition = {
   async execute(args) {
     try {
       const filePath = resolvePath(args.file_path as string);
-      const buf = await readFile(filePath);
+      // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) so a
+      // symlink swapped in after the gate (R4-19) is rejected, not parsed.
+      const buf = readValidatedFile(filePath);
       const parser = new PDFParse({ data: new Uint8Array(buf) });
       const textResult = await parser.getText();
       await parser.destroy();

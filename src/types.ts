@@ -158,6 +158,15 @@ export interface SecurityDecision {
    */
   recovery?: string;
   quarantined?: boolean;
+  /**
+   * Canonical (realpath-resolved, every symlink/junction segment followed)
+   * absolute path the gate validated. Populated only when `allowed` is true.
+   * Sinks open THIS inode (via the read helper, with O_NOFOLLOW on the leaf)
+   * so the path the gate approved is byte-for-byte the path opened — closing
+   * the check-on-string / open-on-inode symlink-swap TOCTOU (R4-19). Callers
+   * that only need the allow/deny verdict ignore it.
+   */
+  canonicalPath?: string;
 }
 
 /**

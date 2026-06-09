@@ -9,12 +9,14 @@ type CellValue = ExcelJSTypes.CellValue;
 type CellFormulaValue = ExcelJSTypes.CellFormulaValue;
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { Readable } from "node:stream";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
 import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { readValidatedFile } from "../security/file-access.js";
 
 // ── Helpers ──
 
@@ -26,11 +28,18 @@ function fail(msg: string): ToolResult {
 }
 
 async function openWorkbook(filePath: string): Promise<Workbook> {
+  // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) and load
+  // exceljs from those bytes, so a symlink swapped in after the gate (R4-19) is
+  // rejected rather than parsed. exceljs reads the buffer/stream, never reopens
+  // the path itself, so there is no second lexical open to race.
+  const buf = readValidatedFile(filePath);
   const wb = new ExcelJS.Workbook();
   if (filePath.endsWith(".csv")) {
-    await wb.csv.readFile(filePath);
+    await wb.csv.read(Readable.from(buf));
   } else {
-    await wb.xlsx.readFile(filePath);
+    // exceljs bundles an older Buffer interface; the runtime is the same Node
+    // Buffer, so cast through unknown (same interop as addImage below).
+    await wb.xlsx.load(buf as unknown as Parameters<typeof wb.xlsx.load>[0]);
   }
   return wb;
 }

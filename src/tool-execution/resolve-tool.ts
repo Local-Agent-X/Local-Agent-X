@@ -26,6 +26,9 @@ const SESSION_SCOPED_TOOLS = new Set([
   "agent_spawn", "browser_capture_to_secret", "browser_fill_from_secret",
   "session_status", "request_secret", "request_secrets",
   "voice_visual",
+  // task_create stamps the session onto the task so the open-steps completion
+  // gate can scope "unfinished work" to this conversation (task-tools.ts).
+  "task_create",
   "op_submit", "op_submit_async", "op_wait", "op_status",
   "memory_search", "search_past_sessions", "memory_save",
   "self_edit",

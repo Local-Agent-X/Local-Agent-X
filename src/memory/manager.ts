@@ -45,6 +45,14 @@ export interface TurnContext {
   smartContext: string;
   memoryContext: string;
   notifications: Array<{ type: string; message: string; priority: number }>;
+  /**
+   * The known-projects scanner found prior content for a domain/project the
+   * user just mentioned. The recall is delivered as a NUDGE (the model must
+   * call search_past_sessions to fetch it) — this flag lets callers force that
+   * tool on providers that won't reach for it on their own (see
+   * providerUndercallsTools).
+   */
+  knownProjectsFound: boolean;
 }
 
 export interface PersistTurnInput {
@@ -74,6 +82,7 @@ export class MemoryManager {
       smartContext: "",
       memoryContext: "",
       notifications: [],
+      knownProjectsFound: false,
     };
 
     // The active project for this session, if the chat is nested under one.
@@ -163,7 +172,10 @@ export class MemoryManager {
 
     out.contextBlock = contextBlock;
     out.relevantMemories = relevantMemories;
-    if (knownProjectsNudge) out.smartContext = knownProjectsNudge;
+    if (knownProjectsNudge) {
+      out.smartContext = knownProjectsNudge;
+      out.knownProjectsFound = true;
+    }
     if (orch) {
       out.memoryContext = orch.contextInjection ? `\n\n${orch.contextInjection}` : "";
       out.notifications = orch.notifications || [];

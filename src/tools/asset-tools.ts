@@ -1,10 +1,10 @@
-import { promises as dns } from "node:dns";
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { resolve as resolvePath, join, basename, extname } from "node:path";
 import { createHash } from "node:crypto";
 import type { ToolDefinition } from "../types.js";
 import { ok, err } from "./result-helpers.js";
 import { createLogger } from "../logger.js";
+import { canonicalFetch, EgressRedirectBlocked } from "./web-egress.js";
 
 const logger = createLogger("tools.asset-tools");
 
@@ -14,23 +14,6 @@ const TOTAL_BYTES_CAP = 80 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 30_000;
 const ALLOWED_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".svg"]);
 const ALLOWED_MIME_PREFIX = "image/";
-
-async function dnsPinUrl(url: string): Promise<string | null> {
-  try {
-    const host = new URL(url).hostname;
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":")) return null;
-    const addrs = await dns.resolve4(host).catch(() => [] as string[]);
-    for (const ip of addrs) {
-      const parts = ip.split(".").map(Number);
-      const [a, b] = parts;
-      if (a === 127 || a === 10 || a === 0 || a >= 224) return `Blocked (private/loopback): ${host}`;
-      if (a === 192 && b === 168) return `Blocked (private): ${host}`;
-      if (a === 172 && b >= 16 && b <= 31) return `Blocked (private): ${host}`;
-      if (a === 169 && b === 254) return `Blocked (link-local): ${host}`;
-    }
-  } catch { /* DNS miss is fine */ }
-  return null;
-}
 
 function absolutize(url: string, base: string): string | null {
   try { return new URL(url, base).toString(); } catch { return null; }
@@ -103,14 +86,18 @@ function safeFilename(url: string, fallbackIndex: number, mime?: string): string
   return name;
 }
 
-async function fetchWithTimeout(url: string, accept: string, ms: number): Promise<Response> {
-  return fetch(url, {
+/** Fetch through the ONE hardened, SSRF-pinned egress gate (canonicalFetch:
+ *  per-hop literal-IP + DNS-pin + scheme check, fail-closed on any redirect to a
+ *  private/loopback/metadata host). Preserves the User-Agent / Accept headers and
+ *  timeout the old bespoke fetch carried; the per-redirect SSRF re-validation and
+ *  pinning replace the deleted dnsPinUrl + `redirect:"follow"` fork. */
+function fetchPinned(url: string, accept: string, ms: number) {
+  return canonicalFetch(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (compatible; LocalAgentX/1.0)",
       Accept: accept,
     },
-    signal: AbortSignal.timeout(ms),
-    redirect: "follow",
+    timeoutMs: ms,
   });
 }
 
@@ -137,12 +124,11 @@ async function downloadOne(
   maxBytes: number,
   usedNames: Set<string>,
 ): Promise<DownloadedImage | { url: string; error: string }> {
-  const pinErr = await dnsPinUrl(url);
-  if (pinErr) return { url, error: pinErr };
-  let res: Response;
+  let res: Awaited<ReturnType<typeof fetchPinned>>;
   try {
-    res = await fetchWithTimeout(url, "image/*,*/*;q=0.8", FETCH_TIMEOUT_MS);
+    res = await fetchPinned(url, "image/*,*/*;q=0.8", FETCH_TIMEOUT_MS);
   } catch (e) {
+    if (e instanceof EgressRedirectBlocked) return { url, error: `blocked (SSRF): ${e.message}` };
     return { url, error: `fetch failed: ${(e as Error).message}` };
   }
   if (!res.ok) return { url, error: `HTTP ${res.status}` };
@@ -201,9 +187,6 @@ export const extractSiteAssetsTool: ToolDefinition = {
       Math.min(50 * 1024 * 1024, Number(args.max_bytes_per_image ?? MAX_BYTES_PER_IMAGE_DEFAULT)),
     );
 
-    const pinErr = await dnsPinUrl(url);
-    if (pinErr) return err(pinErr);
-
     let outDir: string;
     try { outDir = ensureInsideCwd(outputDir); }
     catch (e) { return err((e as Error).message); }
@@ -211,10 +194,11 @@ export const extractSiteAssetsTool: ToolDefinition = {
 
     let html: string;
     try {
-      const res = await fetchWithTimeout(url, "text/html,application/xhtml+xml", FETCH_TIMEOUT_MS);
+      const res = await fetchPinned(url, "text/html,application/xhtml+xml", FETCH_TIMEOUT_MS);
       if (!res.ok) return err(`Source page returned HTTP ${res.status}`);
       html = await res.text();
     } catch (e) {
+      if (e instanceof EgressRedirectBlocked) return err(`Failed to fetch source: blocked (SSRF): ${e.message}`);
       return err(`Failed to fetch source: ${(e as Error).message}`);
     }
 

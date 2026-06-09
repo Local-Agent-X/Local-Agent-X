@@ -18,9 +18,10 @@
 
 import { spawn } from "child_process";
 import { createHash } from "crypto";
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, cpSync, rmSync } from "fs";
 import { join, relative } from "path";
 import { homedir } from "os";
+import { Script } from "vm";
 
 // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
 // PATH that excludes Homebrew, nvm, and asdf. Without this augment, our
@@ -133,6 +134,30 @@ function runStep(cmd: string, args: string[], cwd: string): Promise<void> {
   });
 }
 
+// First emitted .js file that V8 can't even parse, or null if all parse.
+// A zero exit from `tsc` does NOT guarantee loadable output: a regex literal
+// containing a raw U+2028/U+2029 (JS line terminator) compiles "fine" but
+// throws "Invalid regular expression: missing /" the instant Node parses it,
+// which bricked the main process before any window or the splash existed.
+// new Script() runs the same V8 parser eagerly without executing the module.
+function firstUnparseableJs(distDir: string): { file: string; error: string } | null {
+  const files: string[] = [];
+  const walk = (p: string): void => {
+    for (const name of readdirSync(p)) {
+      const full = join(p, name);
+      const st = statSync(full);
+      if (st.isDirectory()) walk(full);
+      else if (name.endsWith(".js")) files.push(full);
+    }
+  };
+  if (existsSync(distDir)) walk(distDir);
+  for (const f of files) {
+    try { new Script(readFileSync(f, "utf-8"), { filename: f }); }
+    catch (e) { return { file: f, error: (e as Error).message }; }
+  }
+  return null;
+}
+
 // sha256 of an empty buffer — sha256SrcTree returns this when the walk
 // finds zero .ts files (typically: projectRoot points at a directory that
 // doesn't contain desktop/src). Hardcoded so the comparison is obvious at
@@ -192,7 +217,28 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   }
   if (srcChanged) {
     onStatus?.("Building app updates…");
+    const distDir = join(projectRoot, "desktop", "dist");
+    const backupDir = `${distDir}.prev`;
+    const haveBackup = existsSync(distDir);
+    if (haveBackup) {
+      rmSync(backupDir, { recursive: true, force: true });
+      cpSync(distDir, backupDir, { recursive: true });
+    }
     await runStep("npm", ["run", "build"], join(projectRoot, "desktop"));
+    const bad = firstUnparseableJs(distDir);
+    if (bad) {
+      if (haveBackup) {
+        rmSync(distDir, { recursive: true, force: true });
+        cpSync(backupDir, distDir, { recursive: true });
+      }
+      rmSync(backupDir, { recursive: true, force: true });
+      throw new Error(
+        `Build produced unloadable output: ${relative(projectRoot, bad.file)} — ${bad.error}. ` +
+        `Reverted dist/ to the previous build so the app isn't bricked — the splash and Repair stay usable. ` +
+        `Fix the source (or update again) and relaunch.`,
+      );
+    }
+    if (haveBackup) rmSync(backupDir, { recursive: true, force: true });
     ranSteps.push("desktop tsc build");
   }
 

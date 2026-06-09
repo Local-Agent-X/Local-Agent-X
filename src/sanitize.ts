@@ -50,7 +50,12 @@ const INJECTION_PATTERNS: Array<{ pattern: RegExp; score: number; label: string 
   { pattern: /forget\s+(everything|all|your|the)/i, score: 0.9, label: "memory-wipe" },
   { pattern: /you\s+are\s+now\s+a/i, score: 0.9, label: "identity-hijack" },
   { pattern: /new\s+instructions?\s*:/i, score: 0.85, label: "new-instructions" },
-  { pattern: /system\s*(:|prompt|message|override|command)/i, score: 0.85, label: "system-spoof" },
+  // NOTE: the bare "system:" colon form was removed — it false-flagged benign
+  // markdown headings ("Scoring System:", "Nervous System:"). A real
+  // "System: <do X>" injection is still caught: the imperative payload trips a
+  // higher-confidence pattern (identity-hijack / instruction-override) or the
+  // weak persistent/always directives accumulate past the cumulative threshold.
+  { pattern: /system\s*(prompt|message|override|command)/i, score: 0.85, label: "system-spoof" },
   { pattern: /\[system\s*(message)?\]/i, score: 0.85, label: "system-tag" },
   { pattern: /<\/?system>/i, score: 0.85, label: "system-xml" },
   { pattern: /elevated\s*=\s*true/i, score: 0.8, label: "elevation-flag" },
@@ -72,7 +77,7 @@ const INJECTION_PATTERNS: Array<{ pattern: RegExp; score: number; label: string 
   { pattern: /imagine\s+you\s+(are|have|were|can)/i, score: 0.75, label: "identity-imagine" },
   { pattern: /do\s+not\s+follow\s+(your|the|any)\s+(rules?|instructions?|guidelines?)/i, score: 0.9, label: "rule-bypass" },
   { pattern: /jailbreak/i, score: 0.95, label: "jailbreak-keyword" },
-  { pattern: /DAN\s*(mode|prompt)?/i, score: 0.9, label: "dan-jailbreak" },
+  { pattern: /\bDAN\b\s*(mode|prompt)?/i, score: 0.9, label: "dan-jailbreak" },
   { pattern: /developer\s+mode\s*(:|enabled|on|true|output)/i, score: 0.85, label: "dev-mode-inject" },
   { pattern: /\bplease\s+ignore\s+(the|your|all|any)\s+(safety|security|guard|filter)/i, score: 0.9, label: "safety-bypass" },
   { pattern: /output\s+(your|the)\s+(system|initial|original)\s+(prompt|instructions?|message)/i, score: 0.85, label: "prompt-leak" },

@@ -39,6 +39,12 @@ jobs:
           tar -czf local-agent-x-${VERSION}.tar.gz dist/ public/ package.json package-lock.json SECURITY.md THREAT-MODEL.md LICENSE
 
       - name: Generate checksums
+        # Hashes the SAME local-agent-x-*.tar.gz asset uploaded below, so the
+        # advertised `sha256sum -c checksums-sha256.txt` manual verification is
+        # real. Note: there is no in-app auto-verify to keep this asset name in
+        # sync with — the dead OTAManager.checkForUpdates/downloadUpdate release
+        # path was removed (R4-07), since the app updates via the rolling
+        # commit-pinned channel, not these v* source tarballs.
         run: |
           sha256sum local-agent-x-*.tar.gz > checksums-sha256.txt
           cat checksums-sha256.txt

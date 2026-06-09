@@ -72,7 +72,9 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     execFileSync("tar", ["czf", tarPath, "-C", root, "pkg"]);
 
     const m = new OTAManager("o", "r", join(root, "lax"));
-    await expect(m.applyUpdate(tarPath, installDir, "v0")).resolves.toBeUndefined();
+    await expect(
+      m.applyUpdate(tarPath, installDir, "v0", "deadbeefcafebabe0000000000000000feedface")
+    ).resolves.toBeUndefined();
 
     // Update applied.
     expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("NEW");
@@ -91,5 +93,39 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     expect(existsSync(join(backupDir, "SingletonLock"))).toBe(false);
 
     rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe("OTAManager — rolling-channel integrity gate (R4-06)", () => {
+  // applyUpdate is the single chokepoint that runs `tar xzf` + copyDirectory
+  // over the live install dir. These assert no code path reaches that extract
+  // without bytes bound to a resolved commit, and that the download is pinned
+  // to the immutable per-commit archive rather than the mutable branch ref.
+
+  it("applyUpdate REFUSES to extract bytes not bound to a resolved commit", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-ota-gate-"));
+    const installDir = join(root, "install");
+    const pkgDir = join(root, "pkg");
+    mkdirSync(join(installDir, "src"), { recursive: true });
+    mkdirSync(join(pkgDir, "src"), { recursive: true });
+    writeFileSync(join(installDir, "src", "app.ts"), "OLD");
+    writeFileSync(join(pkgDir, "src", "app.ts"), "NEW");
+    const tarPath = join(root, "rel.tar.gz");
+    execFileSync("tar", ["czf", tarPath, "-C", root, "pkg"]);
+
+    const m = new OTAManager("o", "r", join(root, "lax"));
+    // Empty commit ⇒ no integrity binding ⇒ must throw BEFORE extracting.
+    await expect(m.applyUpdate(tarPath, installDir, "v0", "")).rejects.toThrow(
+      /no resolved commit/i
+    );
+    // The install file must be untouched — nothing was extracted over it.
+    expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("OLD");
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("downloadMainTarball REFUSES to fetch without a resolved commit", async () => {
+    // Empty commit ⇒ no immutable URL to pin ⇒ must reject before any fetch.
+    await expect(ota.downloadMainTarball("")).rejects.toThrow(/no resolved commit/i);
   });
 });

@@ -205,13 +205,19 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
           const { OTAManager } = await import("../../ota-update.js");
           const ota = new OTAManager();
           const installed = (await ota.readInstalledCommit()) || "";
+          // Resolve main → an immutable commit sha FIRST, then download and
+          // extract that exact commit's archive. Binding the download + the
+          // recorded marker to this one resolved sha (instead of a mutable
+          // refs/heads/main.tar.gz fetched separately) is the integrity
+          // guarantee: the bytes we extract ARE `commit`, and applyUpdate
+          // refuses to extract anything not bound to a resolved commit.
           const { commit } = await ota.checkMainCommit();
           if (installed && installed === commit) {
             json(200, { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), output: "Already up to date." });
             return true;
           }
-          const tarPath = await ota.downloadMainTarball();
-          await ota.applyUpdate(tarPath, repoRoot, installed || "rolling");
+          const tarPath = await ota.downloadMainTarball(commit);
+          await ota.applyUpdate(tarPath, repoRoot, installed || "rolling", commit);
           await ota.writeInstalledCommit(commit);
           _updateCache = null;
           json(200, { ok: true, fromCommit: installed ? installed.slice(0, 7) : "", toCommit: commit.slice(0, 7), output: "Updated from main — relaunch to finish.", rolling: true });

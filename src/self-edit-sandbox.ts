@@ -20,12 +20,11 @@
  * behavior) and main tree stays untouched.
  *
  * Gate implementations live in self-edit-sandbox-gates.ts; the surgeon spawner
- * lives in self-edit/surgeon.ts. Split out to keep files under the 400-LOC limit.
+ * lives in self-edit/surgeon.ts; naming + probe-port helpers live in
+ * self-edit-sandbox-naming.ts. Split out to keep files under the 400-LOC limit.
  */
 
 import { rmSync } from "node:fs";
-import { createHash } from "node:crypto";
-import { createServer } from "node:net";
 import { type ChildProcess } from "node:child_process";
 import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getWorktreeChangedFiles, securitySensitiveChangedFiles } from "./agency/worktree.js";
 import { recordMerge } from "./self-edit-rollback.js";
@@ -35,14 +34,11 @@ import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockB
 import { fingerprintParentDeps, restoreParentDeps } from "./self-edit/parent-deps-guard.js";
 import { scanWorktreeForStagedSecrets } from "./self-edit/exfil-scan.js";
 import { redactSecrets } from "./security/secret-scanner.js";
+import { slugify, nowSlug, pickProbePort } from "./self-edit-sandbox-naming.js";
+export { pickProbePort } from "./self-edit-sandbox-naming.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("self-edit.sandbox");
-
-// ── Config ─────────────────────────────────────────────────────────────────
-
-const PROBE_PORT_MIN = 7100;
-const PROBE_PORT_MAX = 7999;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -80,47 +76,6 @@ export interface SandboxOpts {
   /** Optional progress sink — surfaced to the chat UI via tool_progress so the
    *  user can see which gate the sandbox is on. */
   onProgress?: (message: string) => void;
-}
-
-// ── Naming + port ─────────────────────────────────────────────────────────
-
-function slugify(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "edit";
-}
-
-function nowSlug(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-}
-
-/** Resolve to true if nothing currently holds `port` on 127.0.0.1. */
-function isProbePortFree(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.once("error", () => resolve(false));
-    srv.once("listening", () => srv.close(() => resolve(true)));
-    srv.listen(port, "127.0.0.1");
-  });
-}
-
-/**
- * Pick a FREE probe port. Hashing pid+time alone (the old behavior) could hand
- * two concurrent probes — e.g. a sandbox bind gate and an autopilot end-of-shift
- * boot proof, which don't share the global lock — the same port. The loser then
- * either fails with a false "did not bind" or, worse, the bind poll hits the
- * OTHER probe and reports a false PASS. We start at the hashed offset (keeps
- * probes spread across the range) and walk forward to the first port nothing is
- * listening on. A tiny TOCTOU window remains between this check and the probe's
- * own listen; the bind gate's exit-code check still catches an EADDRINUSE there.
- */
-export async function pickProbePort(): Promise<number> {
-  const span = PROBE_PORT_MAX - PROBE_PORT_MIN;
-  const h = createHash("sha1").update(`${process.pid}-${Date.now()}`).digest();
-  const start = h.readUInt16BE(0) % span;
-  for (let i = 0; i < span; i++) {
-    const port = PROBE_PORT_MIN + ((start + i) % span);
-    if (await isProbePortFree(port)) return port;
-  }
-  return PROBE_PORT_MIN + start; // whole range busy — let the bind gate surface it
 }
 
 // ── Main entry ─────────────────────────────────────────────────────────────

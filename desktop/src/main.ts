@@ -38,8 +38,8 @@ import { shutdownNativeSpeech } from "./native-speech";
 // (which can form `</script>` / `<!--`) unescaped.
 function jsLiteral(s: string): string {
   return JSON.stringify(s)
-    .replace(/ /g, "\\u2028")
-    .replace(/ /g, "\\u2029")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029")
     .replace(/</g, "\\u003C");
 }
 

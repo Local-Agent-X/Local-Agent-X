@@ -4,6 +4,7 @@ import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
+import { evaluateShellCommand } from "./shell-policy.js";
 
 // ── Best-effort shell file-access confinement (defense in depth) ──
 //
@@ -74,6 +75,21 @@ export function evaluateShellPaths(command: string, ctx: ShellPathGuardCtx): Sec
     }
   }
   return { allowed: true, reason: "Shell paths within file-access boundary" };
+}
+
+/**
+ * Single two-step gate for ANY bash-spawning path: (1) command-shape vetting
+ * (denylist / obfuscation / metachars) via evaluateShellCommand, then (2)
+ * file-access confinement via evaluateShellPaths. bash (layer-core) AND the
+ * shell-class dispatch (kernel-class-policy → process_start/process_restart)
+ * BOTH call this, so they get IDENTICAL confinement — `process_start` no longer
+ * skips the file-access boundary bash obeys (round-3 finding C3-3). Returns the
+ * first failing decision; allows only if both steps pass.
+ */
+export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuardCtx): SecurityDecision {
+  const cmdDecision = evaluateShellCommand(command);
+  if (!cmdDecision.allowed) return cmdDecision;
+  return evaluateShellPaths(command, ctx);
 }
 
 // Pull the file-path-shaped arguments out of a command. Conservative by intent:

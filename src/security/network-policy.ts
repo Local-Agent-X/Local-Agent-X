@@ -19,6 +19,19 @@ const logger = createLogger("security.network-policy");
 export type EgressMode = "permissive" | "strict";
 
 /**
+ * Canonicalize a URL host for blocklist/allowlist comparison: lowercase and
+ * strip a SINGLE trailing dot. WHATWG `new URL()` preserves a trailing dot on a
+ * non-IP host, so `metadata.google.internal.` and `metadata.google.internal`
+ * are distinct hostname strings even though DNS treats them identically. Apply
+ * this ONCE at every point a host is derived from a parsed URL so `h` and `h.`
+ * yield identical verdicts. Only a trailing `.` is stripped — IPv4/IPv6
+ * literals carry no trailing dot, so this is a no-op for them.
+ */
+function canonicalizeHost(host: string): string {
+  return host.toLowerCase().replace(/\.$/, "");
+}
+
+/**
  * Match a hostname against the egress list (exact host or *.domain.com wildcard).
  * Rejects overly broad wildcards (*.com, *.org) — wildcard must have ≥2 labels.
  */
@@ -53,7 +66,7 @@ export function evaluateWebFetch(
     return { allowed: false, reason: `Blocked: protocol ${parsed.protocol} not allowed (only http/https)`, userHint: USER_HINTS.network };
   }
 
-  const host = parsed.hostname.toLowerCase();
+  const host = canonicalizeHost(parsed.hostname);
 
   // Allow requests to the agent's own server BEFORE any other checks.
   // The agent needs to call its own API for settings, theme, orgs, etc.
@@ -238,6 +251,10 @@ export async function resolveAndPinHost(host: string): Promise<
   | { ok: true; pin: { address: string; family: 4 | 6 } | null }
   | { ok: false; reason: string }
 > {
+  // Canonicalize once at ingest (lowercase + strip a single trailing dot) so a
+  // trailing-dot hostname resolves/blocks identically to its dotless form.
+  host = canonicalizeHost(host);
+
   // Literal IP — nothing to resolve, but it MUST still be checked for
   // private/reserved/metadata ranges before we allow the connection. Treat a
   // host containing ":" as an IPv6 literal, matching the existing
@@ -330,7 +347,7 @@ export async function validateUrlWithDns(
   if (!syncResult.allowed) return syncResult;
 
   const parsed = new URL(url);
-  const host = parsed.hostname;
+  const host = canonicalizeHost(parsed.hostname);
 
   // Skip DNS check for literal IPs (already validated above)
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":")) {

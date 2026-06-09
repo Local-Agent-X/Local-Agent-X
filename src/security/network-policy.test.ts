@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveAndPinHost, validateUrlWithDns, evaluateWebFetch } from "./network-policy.js";
+import { BLOCKED_HOSTNAMES } from "./ip-classification.js";
 
 const EMPTY_ALLOWLIST = new Set<string>();
 
@@ -129,5 +130,32 @@ describe("validateUrlWithDns — literal-IP regression", () => {
       "permissive",
     );
     expect(decision.allowed).toBe(false);
+  });
+});
+
+// R4-17 (defense-in-depth): WHATWG `new URL()` PRESERVES a trailing dot on a
+// non-IP host, so `metadata.google.internal.` is a distinct hostname string
+// from `metadata.google.internal` even though DNS treats them identically. The
+// synchronous gate must canonicalize the host (lowercase + strip a single
+// trailing dot) so a trailing-dot blocked host can't slip an ALLOW past a
+// future http-class tool that trusts the synchronous verdict without a DNS pin.
+describe("evaluateWebFetch — trailing-dot host canonicalization (R4-17)", () => {
+  // Iterate the ACTUAL blocklist constant so this assertion can't drift if the
+  // list grows. For every entry, the dotless and dotted forms must yield the
+  // SAME verdict (both blocked).
+  it.each([...BLOCKED_HOSTNAMES])("blocks both %s and its trailing-dot form identically", (h) => {
+    const dotless = webFetch(`http://${h}/`);
+    const dotted = webFetch(`http://${h}./`);
+    expect(dotted.allowed).toBe(dotless.allowed);
+    expect(dotted.allowed).toBe(false);
+  });
+
+  // Regression: a normal allowlisted PUBLIC host typed with a trailing dot must
+  // still match its allow entry in strict mode (no new false-positive block of
+  // legitimate traffic).
+  it("still ALLOWS an allowlisted public host typed with a trailing dot (strict mode)", () => {
+    const allowlist = new Set<string>(["example.com"]);
+    const decision = evaluateWebFetch(allowlist, true, "7007", "http://example.com./", "strict");
+    expect(decision.allowed).toBe(true);
   });
 });

@@ -17,6 +17,7 @@
 import type { CanonicalMiddleware } from "./types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { getOpenTasksForSession } from "../../tools/task-tools.js";
+import { readOpTurns } from "../store.js";
 
 /**
  * Last open-task set we already nudged about, per session. Keyed by SESSION
@@ -31,6 +32,32 @@ const lastNudgedSignature = new Map<string, string>();
 
 export const openStepsMiddleware: CanonicalMiddleware = {
   name: "open-steps",
+
+  /**
+   * Turn-0 plan seed. Worker runs are unattended, so a model that skips
+   * planning gives up silently with nobody watching — seed the instruction
+   * in-conversation, where weak models actually comply, instead of relying
+   * on the system-prompt directive they ignore. Conditional phrasing keeps
+   * single-action ops from manufacturing one-step task lists. The build lane
+   * is excluded: primal-auto-build has its own phase plan, and a second
+   * planning directive there would fork the source of truth.
+   */
+  beforeTurn(ctx) {
+    if (ctx.turnIdx !== 0) return { kind: "continue" };
+    if (ctx.op.lane !== "agent" && ctx.op.lane !== "background") return { kind: "continue" };
+    if (!ctx.toolNames.has("task_create")) return { kind: "continue" };
+    const sessionId = getSessionForOp(ctx.op.id);
+    if (!sessionId || getOpenTasksForSession(sessionId).length > 0) return { kind: "continue" };
+    return {
+      kind: "nudge",
+      reason: "open-steps-seed",
+      message:
+        "Before you start: if this task involves multiple distinct steps, lay them out " +
+        "with task_create (one per step), mark each with task_update as you complete it, " +
+        "and do not finish while any step is still open. If it's a single action, skip " +
+        "the list and just do it.",
+    };
+  },
 
   afterModelCall(ctx) {
     // Only when the turn is about to end: an answer with no tool calls. A turn
@@ -59,3 +86,29 @@ export const openStepsMiddleware: CanonicalMiddleware = {
     return { kind: "nudge", message, reason: "open-steps" };
   },
 };
+
+/**
+ * Loud-partial warning for a turn that is genuinely terminating with steps
+ * still open (the give-up moment after the nudge above was spent). Returns
+ * null unless THIS op successfully called a task tool — a later chat turn
+ * that never touched the list ("thanks!") must not be nagged about steps an
+ * earlier op left open.
+ *
+ * MUST stay under 200 chars: extractAgentOutput (server-utils.ts) picks the
+ * last assistant message >200 chars as a mission's report, and this warning
+ * trailing the real report must never displace it.
+ */
+export function openStepsTerminationWarning(opId: string): string | null {
+  const sessionId = getSessionForOp(opId);
+  if (!sessionId) return null;
+  const open = getOpenTasksForSession(sessionId);
+  if (open.length === 0) return null;
+  const touchedTasks = readOpTurns(opId).some((turn) =>
+    (turn.toolCallSummary ?? []).some((s) => s.resultStatus === "ok" && s.tool.startsWith("task_")),
+  );
+  if (!touchedTasks) return null;
+  const names = open.map((t) => t.description).join("; ");
+  const headline = `⚠️ Stopped with ${open.length} step${open.length === 1 ? "" : "s"} still open: `;
+  const budget = 199 - headline.length;
+  return headline + (names.length > budget ? names.slice(0, budget - 1) + "…" : names);
+}

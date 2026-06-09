@@ -5,6 +5,19 @@ import {
   registerRedactedSecretValue,
   unregisterRedactedSecretValue,
 } from "./security/known-secrets.js";
+import {
+  INJECTION_PATTERNS,
+  ANGLE_HOMOGLYPHS,
+  INVISIBLE_CHARS,
+  CONTROL_CHARS,
+  SYSTEM_INJECTION_TAG_RE,
+  SYSTEM_INJECTION_LONE_TAG_RE,
+  HARNESS_SCAFFOLD_PATTERNS,
+  EXTERNAL_MARKERS,
+  MEMORY_INJECTION_EXTRA,
+  MEMORY_BLOCK_SINGLE,
+  MEMORY_BLOCK_CUMULATIVE,
+} from "./injection-patterns.js";
 
 // Re-export the known-secret registry surface from its canonical home
 // (security/known-secrets.ts) so existing importers of sanitize.ts keep
@@ -42,84 +55,6 @@ export function stripHtmlComments(s: string): string {
  * - Nested boundary detection
  */
 
-// ── Suspicious patterns (prompt injection indicators) ──
-
-const INJECTION_PATTERNS: Array<{ pattern: RegExp; score: number; label: string }> = [
-  // Direct instruction hijacking
-  { pattern: /ignore\s+(all\s+)?previous\s+instructions/i, score: 0.95, label: "instruction-override" },
-  { pattern: /forget\s+(everything|all|your|the)/i, score: 0.9, label: "memory-wipe" },
-  { pattern: /you\s+are\s+now\s+a/i, score: 0.9, label: "identity-hijack" },
-  { pattern: /new\s+instructions?\s*:/i, score: 0.85, label: "new-instructions" },
-  // NOTE: the bare "system:" colon form was removed — it false-flagged benign
-  // markdown headings ("Scoring System:", "Nervous System:"). A real
-  // "System: <do X>" injection is still caught: the imperative payload trips a
-  // higher-confidence pattern (identity-hijack / instruction-override) or the
-  // weak persistent/always directives accumulate past the cumulative threshold.
-  { pattern: /system\s*(prompt|message|override|command)/i, score: 0.85, label: "system-spoof" },
-  { pattern: /\[system\s*(message)?\]/i, score: 0.85, label: "system-tag" },
-  { pattern: /<\/?system>/i, score: 0.85, label: "system-xml" },
-  { pattern: /elevated\s*=\s*true/i, score: 0.8, label: "elevation-flag" },
-  { pattern: /admin\s*mode\s*(:|enabled|on|true)/i, score: 0.8, label: "admin-mode" },
-  // Tool manipulation
-  { pattern: /call\s+the\s+(bash|shell|write|edit)\s+tool/i, score: 0.7, label: "tool-steering" },
-  { pattern: /execute\s+(this|the\s+following)\s+command/i, score: 0.65, label: "command-injection" },
-  { pattern: /run\s+`[^`]+`/i, score: 0.6, label: "backtick-command" },
-  // Exfiltration attempts
-  { pattern: /send\s+(this|the|all|my)\s+(data|info|secret|token|key)/i, score: 0.75, label: "exfil-request" },
-  { pattern: /curl\s+https?:\/\//i, score: 0.6, label: "exfil-curl" },
-  { pattern: /rm\s+-rf/i, score: 0.9, label: "destructive-command" },
-  { pattern: /delete\s+all/i, score: 0.65, label: "delete-all" },
-  // ── Fuzzy / synonym variants (bypass resistance) ──
-  { pattern: /disregard\s+(all\s+)?(previous|prior|earlier|above)/i, score: 0.95, label: "instruction-override-synonym" },
-  { pattern: /override\s+(your|the|all)\s+(instructions?|rules?|guidelines?|constraints?)/i, score: 0.9, label: "override-synonym" },
-  { pattern: /pretend\s+(you\s+are|to\s+be|you're)/i, score: 0.85, label: "identity-pretend" },
-  { pattern: /act\s+as\s+(if\s+you\s+are|an?\s+)/i, score: 0.8, label: "identity-act-as" },
-  { pattern: /imagine\s+you\s+(are|have|were|can)/i, score: 0.75, label: "identity-imagine" },
-  { pattern: /do\s+not\s+follow\s+(your|the|any)\s+(rules?|instructions?|guidelines?)/i, score: 0.9, label: "rule-bypass" },
-  { pattern: /jailbreak/i, score: 0.95, label: "jailbreak-keyword" },
-  { pattern: /\bDAN\b\s*(mode|prompt)?/i, score: 0.9, label: "dan-jailbreak" },
-  { pattern: /developer\s+mode\s*(:|enabled|on|true|output)/i, score: 0.85, label: "dev-mode-inject" },
-  { pattern: /\bplease\s+ignore\s+(the|your|all|any)\s+(safety|security|guard|filter)/i, score: 0.9, label: "safety-bypass" },
-  { pattern: /output\s+(your|the)\s+(system|initial|original)\s+(prompt|instructions?|message)/i, score: 0.85, label: "prompt-leak" },
-  { pattern: /what\s+(is|are)\s+your\s+(system|initial|original)\s+(prompt|instructions?)/i, score: 0.7, label: "prompt-probe" },
-  { pattern: /repeat\s+(the\s+)?(text|words?|content)\s+(above|before|prior)/i, score: 0.8, label: "context-extract" },
-  // ── Semantic injection (intent-based, not just keyword) ──
-  { pattern: /\b(secretly|covertly|without\s+(the\s+)?user\s+knowing)\b/i, score: 0.85, label: "covert-action" },
-  { pattern: /\b(hide|conceal|obscure)\s+(this|the|your)\s+(action|output|response)/i, score: 0.8, label: "stealth-action" },
-  { pattern: /\bdo\s+not\s+(tell|inform|alert|notify)\s+(the\s+)?user/i, score: 0.9, label: "hide-from-user" },
-  { pattern: /\b(before|after)\s+responding.*\b(also|first|quietly)\b/i, score: 0.7, label: "side-channel" },
-  { pattern: /\binsert\s+(into|in)\s+(the|your)\s+(response|output|reply).*\b(hidden|invisible)\b/i, score: 0.85, label: "hidden-payload" },
-  { pattern: /\bencode\s+(the|this|your|all)\s+(response|output|data)\s+(in|as|to)\s+(base64|hex|rot13)/i, score: 0.9, label: "encoding-exfil" },
-];
-
-// ── Unicode homoglyph detection ──
-
-// Characters that look like < > but are Unicode variants
-const ANGLE_HOMOGLYPHS = /[\uFF1C\uFE64\u2329\u27E8\u3008\uFF1E\uFE65\u232A\u27E9\u3009\u276C\u276D\u2770\u2771\uFE3B\uFE3C]/g;
-// Invisible format characters that can be used to hide text
-const INVISIBLE_CHARS = /[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u2061\u2062\u2063\u2064\u00AD\u034F\u180E]/g;
-// Unicode control characters
-const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
-
-// ── System-tag injection stripping ──
-// Tags like <system-reminder>, <system>, <human>, <assistant> embedded in
-// tool results (e.g. from a malicious web page or evaluate() call) are
-// interpreted as real protocol frames by some models (Anthropic in particular).
-// Strip the whole block — tag + content — before it reaches the model.
-
-const SYSTEM_INJECTION_TAG_NAMES = [
-  "system-reminder", "system", "human", "assistant", "user", "admin", "operator",
-];
-const SYSTEM_INJECTION_TAG_RE = new RegExp(
-  `<(${SYSTEM_INJECTION_TAG_NAMES.join("|")})(\\s[^>]*)?>([\\s\\S]*?)<\\/(${SYSTEM_INJECTION_TAG_NAMES.join("|")})>`,
-  "gi"
-);
-// Also strip lone opening/closing tags (no content) — e.g. </system> alone
-const SYSTEM_INJECTION_LONE_TAG_RE = new RegExp(
-  `<\\/?( ${SYSTEM_INJECTION_TAG_NAMES.join("|")})(\\s[^>]*)?>`,
-  "gi"
-);
-
 /** Strip pseudo-system XML tags that could hijack model behavior when embedded in tool results. */
 export function stripSystemInjectionTags(text: string): string {
   let result = text.replace(SYSTEM_INJECTION_TAG_RE, "[CONTENT-STRIPPED]");
@@ -128,22 +63,6 @@ export function stripSystemInjectionTags(text: string): string {
 }
 
 // ── Harness scaffolding stripping ──
-// The agent harness injects scaffolding INTO user messages: <system-reminder>
-// context blocks and anti-loop / self-check nudges ("SYSTEM: You have called
-// read 8 times. Stop searching and produce your final output.", "[Self-check]
-// The following tool errors occurred..."). This is NOT user-authored content
-// and must never be mined into durable memory. A worker once saved "stop
-// searching after 11 instructions" as a fact — it had extracted one of these.
-// Anchored, tight regexes only; err toward leaving real prose in over false-
-// stripping (a false strip loses a real fact).
-
-const HARNESS_SCAFFOLD_PATTERNS: RegExp[] = [
-  /<system-reminder>[\s\S]*?<\/system-reminder>/gi,
-  /^\s*SYSTEM:\s*You have called[\s\S]*?(?:\n\n|$)/gim,
-  /you have called \w+ \d+ times[\s\S]*?(?:final output\.?|$)/gi,
-  /stop searching and produce your final output\.?/gi,
-  /^\s*\[Self-check\][\s\S]*?(?:\n\n|$)/gim,
-];
 
 /**
  * Remove agent-harness scaffolding from a message before any memory extraction.
@@ -318,30 +237,6 @@ export function sanitizeSemiTrusted(content: string): string {
 // Prevents untrusted external content from being persisted into
 // high-trust memory/profile files, which would create permanent
 // instruction hijacks (durable prompt injection).
-
-/** Markers that indicate content originated from an external/untrusted source */
-const EXTERNAL_MARKERS = [
-  /<<<EXTERNAL_UNTRUSTED_CONTENT/i,
-  /\[MARKER_SANITIZED\]/i,
-  /INJECTION WARNING/i,
-];
-
-// Weak, memory-specific signals not in INJECTION_PATTERNS. Each is too
-// ambiguous to block on its own ("from now on I'll go to the gym" is a benign
-// memory) — they only ever contribute to the cumulative score.
-const MEMORY_INJECTION_EXTRA: Array<{ pattern: RegExp; score: number; label: string }> = [
-  { pattern: /ALWAYS\s+(do|execute|run|call|send|output)/i, score: 0.2, label: "always-directive" },
-  { pattern: /NEVER\s+(tell|mention|reveal|show|say)/i, score: 0.2, label: "never-directive" },
-  { pattern: /from\s+now\s+on/i, score: 0.2, label: "persistent-directive" },
-  { pattern: /your\s+new\s+(role|personality|instructions?|behavior)/i, score: 0.2, label: "role-reassign" },
-];
-
-// Block when a single high-confidence injection pattern is present — a lone
-// "you are now a …" or "disregard all previous …" is already a poisoning
-// attempt and must not require a second corroborating pattern.
-const MEMORY_BLOCK_SINGLE = 0.85;
-// Or when weaker signals accumulate past this combined score.
-const MEMORY_BLOCK_CUMULATIVE = 0.3;
 
 export interface MemoryTaintResult {
   safe: boolean;

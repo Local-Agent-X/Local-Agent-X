@@ -32,10 +32,7 @@ const PARA_SEP = String.fromCharCode(0x2029);
 // silence the gate — split the file instead.
 const GRANDFATHERED = new Set([
   "src/security/layer-core.ts",
-  "src/threat/audit-trail.ts",
   "src/threat/threat-engine.ts",
-  "src/security/network-policy.ts",
-  "src/security/shell-policy.ts",
   "src/tool-execution/enforce-policy.ts",
   "src/self-edit-sandbox.ts",
   "src/secrets.ts",

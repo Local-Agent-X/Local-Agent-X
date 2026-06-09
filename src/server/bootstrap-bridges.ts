@@ -8,6 +8,9 @@ import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
 import { resolveSession, buildChannelContext, type ChannelType } from "../session/router.js";
 import { detectInjection } from "../sanitize.js";
 import { getVoicePref, setVoicePref, type BridgePlatform } from "../bridge-voice/index.js";
+import { scanForSecrets } from "../security/secret-scanner.js";
+import { checkCanariesInPayload } from "../threat/canaries.js";
+import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { COMPACTION_PREFIX } from "../types.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex, MemoryManager } from "../memory/index.js";
@@ -269,6 +272,24 @@ export function createBridgeHandler(deps: {
         if (images.length > 0) {
           logger.info(`[bridge:${platform}] sending ${images.length} image(s) to ${from}`);
           for (const img of images) {
+            // Re-gate the BYTES actually about to leave the box (egress
+            // output-bytes, R4-12b). The pre-dispatch egress gates scanned the
+            // tool's INPUT args; the decoded result image is a new payload that
+            // never re-entered any gate. A diffusion render won't carry a 32-char
+            // canary, but a renamed TEXT file / SVG-with-token shipped as an
+            // "image" would — so scan the decoded byte view for secrets + the
+            // session's canaries and BLOCK the one offending item (skip it, log;
+            // don't crash the whole forward loop). Mirrors egressGuardGate /
+            // canaryEgressGate's decision shape.
+            const view = img.toString("utf-8");
+            if (!scanForSecrets(view).clean) {
+              logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: outbound bytes contain a secret-shaped value`);
+              continue;
+            }
+            if (checkCanariesInPayload(route.sessionKey, view)) {
+              logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: a session canary token was detected in the outbound image bytes (context exfiltration)`);
+              continue;
+            }
             if (channelType === "whatsapp") {
               await getWhatsappBridge().sendImage(from, img).catch((e: Error) => logger.error(`[whatsapp] image send failed: ${e.message}`));
             } else if (channelType === "telegram") {
@@ -289,6 +310,16 @@ export function createBridgeHandler(deps: {
           const abs = resolve(path);
           if (sentVideos.has(abs)) continue;
           sentVideos.add(abs);
+          // Re-gate the exact path about to ship off-box (egress output-bytes,
+          // R4-12b). The pre-dispatch egress gate's checkAttachmentPaths ran on
+          // the INPUT arg; this closes the path TOCTOU by re-running the same
+          // sensitive-attachment + byte-scan predicate on the resolved path
+          // immediately before send. Block the one offending clip; don't crash.
+          const att = checkAttachmentPaths(`bridge:${platform} video forward`, [abs]);
+          if (att) {
+            logger.error(`[bridge:${platform}] BLOCKED video forward to ${from}: ${att.message}`);
+            continue;
+          }
           try {
             const buf = readFileSync(abs);
             if (buf.length > maxBytes) {

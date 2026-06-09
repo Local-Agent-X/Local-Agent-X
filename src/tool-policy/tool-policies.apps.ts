@@ -11,8 +11,8 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   // ── Media generation / capture ──
   generate_image: { kernel: "internal", risk: "workspace-write", offBoxFetch: true, rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-image", decision: "allow", reason: "Image generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
   generate_video: { kernel: "internal", risk: "workspace-write", offBoxFetch: true, rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
-  camera_capture: { kernel: "internal", risk: "workspace-write" },
-  screen_capture: { kernel: "internal", risk: "workspace-write" },
+  camera_capture: { kernel: "internal", risk: "workspace-write", offBoxFetch: true },
+  screen_capture: { kernel: "internal", risk: "workspace-write", offBoxFetch: true },
   ocr:            { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction", priority: 50 }] },
 
   // ── Apps (app_* glob) ──

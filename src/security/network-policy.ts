@@ -55,7 +55,20 @@ function isPrivateIPv4(ip: string): boolean {
 
 /** Normalize an IPv6 address to its canonical compressed form */
 function normalizeIPv6(ip: string): string {
-  const cleaned = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  let cleaned = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  // A trailing dotted-quad (e.g. 64:ff9b::169.254.169.254 or ::ffff:1.2.3.4)
+  // occupies the LAST 32 bits = two hex groups. Rewrite it to those two groups
+  // up front so the group math below is correct and the embedded IPv4 survives
+  // expansion (parseInt would otherwise truncate "169.254.169.254" to 0x169).
+  const dotted = cleaned.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const v4 = parseStrictIPv4(dotted[1]);
+    if (v4) {
+      const hi = ((v4[0] << 8) | v4[1]).toString(16);
+      const lo = ((v4[2] << 8) | v4[3]).toString(16);
+      cleaned = cleaned.slice(0, dotted.index) + `${hi}:${lo}`;
+    }
+  }
   // Expand :: notation to full form, then re-compress
   let groups: string[];
   if (cleaned.includes("::")) {
@@ -104,6 +117,35 @@ function isPrivateIPv6(ip: string): boolean {
   // IPv4-compatible IPv6 (::a.b.c.d)
   const v4compat = original.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
   if (v4compat) return isPrivateIPv4(v4compat[1]);
+
+  // ── Embedded-IPv4 transition prefixes (NAT64 / 6to4) ──
+  // These standard mechanisms wrap an IPv4 address inside an IPv6 literal, so a
+  // literal like 64:ff9b::169.254.169.254 or 2002:a9fe:a9fe:: reaches the
+  // embedded IPv4 (here, cloud metadata) while looking like a benign IPv6 host.
+  // Decode the embedded v4 from the normalized 8-group form and range-check it
+  // with isPrivateIPv4; only a private/reserved/metadata embedding is blocked,
+  // so a transition literal wrapping a PUBLIC IPv4 (e.g. 2002:0808:0808:: =
+  // 8.8.8.8) is still allowed.
+  const groups = normalized.split(":");
+  if (groups.length === 8) {
+    const g = groups.map(h => parseInt(h, 16) & 0xffff);
+    const v4From = (hi: number, lo: number) =>
+      `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+
+    // NAT64 well-known prefix 64:ff9b::/96 (RFC6052): the embedded IPv4 is the
+    // last 32 bits (groups 6-7). Also covers the local-use prefix 64:ff9b:1::/48
+    // (RFC8215), whose low 32 bits likewise hold the embedded v4.
+    if ((g[0] === 0x64 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) ||
+        (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 0x0001)) {
+      if (isPrivateIPv4(v4From(g[6], g[7]))) return true;
+    }
+
+    // 6to4 prefix 2002::/16 (RFC3056): the embedded IPv4 is bits 16-48
+    // (groups 1-2), e.g. 2002:a9fe:a9fe:: = 169.254.169.254.
+    if (g[0] === 0x2002) {
+      if (isPrivateIPv4(v4From(g[1], g[2]))) return true;
+    }
+  }
 
   return false;
 }

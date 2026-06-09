@@ -226,6 +226,69 @@ describe("cross-host redirect egress re-check", () => {
     expect(res.content).toContain("PAGE FROM B");
   });
 
+  // Round-3 C3-23: the pinning dispatcher validates SSRF inside connect.lookup,
+  // but undici never calls connect.lookup for a literal IP, so a 302 to a
+  // literal private/metadata IP (including a NAT64/6to4 embedded-IPv4 literal)
+  // would connect unchecked. The synchronous per-hop assertLiteralIpEgressAllowed
+  // must block it BEFORE the redirect is followed — even in permissive mode and
+  // even though the cross-host egress allowlist check is a no-op in permissive.
+  it.each([
+    ["http://169.254.169.254/latest/meta-data/", "literal IPv4 metadata"],
+    ["http://[64:ff9b::169.254.169.254]/", "NAT64 IPv6 metadata"],
+    ["http://[2002:a9fe:a9fe::]/", "6to4 IPv6 metadata"],
+  ])("permissive mode: blocks a 302 to %s before connecting (web_fetch)", async (target) => {
+    // No security.json / allowlist → permissive default (egress allowlist off).
+    const seen: string[] = [];
+    undiciMock.handler = (url) => {
+      seen.push(url);
+      if (url.startsWith("https://public-a.example")) {
+        return fakeResponse({ status: 302, headers: { location: target } });
+      }
+      return fakeResponse({ status: 200, body: "METADATA LEAK" });
+    };
+
+    const res = await webFetchTool.execute({ url: "https://public-a.example/page" });
+
+    expect(res.isError).toBe(true);
+    expect(res.content).toMatch(/private\/reserved|SSRF|metadata/i);
+    expect(seen).toEqual(["https://public-a.example/page"]);
+    expect(seen).not.toContain(target);
+    expect(res.content).not.toContain("METADATA LEAK");
+  });
+
+  it("permissive mode: blocks an INITIAL fetch to a NAT64 metadata literal (web_fetch)", async () => {
+    const seen: string[] = [];
+    undiciMock.handler = (url) => {
+      seen.push(url);
+      return fakeResponse({ status: 200, body: "METADATA LEAK" });
+    };
+
+    const res = await webFetchTool.execute({ url: "http://[64:ff9b::169.254.169.254]/" });
+
+    expect(res.isError).toBe(true);
+    expect(res.content).toMatch(/private\/reserved|SSRF|metadata/i);
+    expect(seen).toEqual([]); // never connected
+  });
+
+  it("permissive mode: a 302 to a PUBLIC 6to4 literal is still followed (no over-block)", async () => {
+    const seen: string[] = [];
+    undiciMock.handler = (url) => {
+      seen.push(url);
+      if (url.startsWith("https://public-a.example")) {
+        // 2002:0808:0808:: = 6to4 wrapping public 8.8.8.8 — legitimate.
+        return fakeResponse({ status: 302, headers: { location: "http://[2002:0808:0808::]/" } });
+      }
+      return fakeResponse({ status: 200, body: "PUBLIC PAGE" });
+    };
+
+    const res = await webFetchTool.execute({ url: "https://public-a.example/page" });
+
+    expect(res.isError).toBeFalsy();
+    // URL() compresses the literal to [2002:808:808::] when the redirect is followed.
+    expect(seen).toContain("http://[2002:808:808::]/");
+    expect(res.content).toContain("PUBLIC PAGE");
+  });
+
   // Same-host redirect (A → A/other) is fine even in strict mode — the
   // allowlist is host-scoped, so a path change on an allowlisted host passes.
   it("strict mode: same-host redirect is still followed", async () => {

@@ -10,6 +10,11 @@ interface Task {
   status: "pending" | "in_progress" | "completed" | "failed";
   parent_id?: string;
   output?: string;
+  /** Session that created the task. Lets the open-steps completion gate scope
+   *  "unfinished work" to the conversation that declared it, instead of every
+   *  task ever synced from any session or device. Absent on legacy/pre-scoping
+   *  tasks — those simply never match a live session, so they never nag. */
+  session_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -54,7 +59,8 @@ const taskCreate: ToolDefinition = {
       return { content: `Parent task ${parentId} not found`, isError: true };
     const id = randomUUID();
     const ts = now();
-    tasks.set(id, { id, description, status: "pending", parent_id: parentId, created_at: ts, updated_at: ts });
+    const sessionId = (args._sessionId as string) || undefined;
+    tasks.set(id, { id, description, status: "pending", parent_id: parentId, session_id: sessionId, created_at: ts, updated_at: ts });
     saveTasks(tasks);
     return { content: `Task created: ${id}\nDescription: ${description}`, metadata: { id } };
   },
@@ -143,3 +149,15 @@ const taskGet: ToolDefinition = {
 };
 
 export const taskTools: ToolDefinition[] = [taskCreate, taskUpdate, taskList, taskGet];
+
+/** Open (pending / in_progress) tasks a given session created — the signal the
+ *  open-steps completion gate reads to decide whether a turn that's about to end
+ *  has left declared work unfinished. Scoped to sessionId so a task from another
+ *  conversation or synced device never counts against this one. Returns id +
+ *  description so the gate can name the remaining steps in its nudge. */
+export function getOpenTasksForSession(sessionId: string): { id: string; description: string }[] {
+  if (!sessionId) return [];
+  return [...loadTasks().values()]
+    .filter((t) => t.session_id === sessionId && (t.status === "pending" || t.status === "in_progress"))
+    .map((t) => ({ id: t.id, description: t.description }));
+}

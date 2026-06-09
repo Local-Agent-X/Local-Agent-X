@@ -11,7 +11,10 @@
  *                         premature-completion (worker ops only — forces one
  *                         more turn when a non-chat op ends tool-lessly with
  *                         nothing committed; runs AFTER action-claim so a
- *                         claim-mismatch nudge wins first), self-check,
+ *                         claim-mismatch nudge wins first), open-steps
+ *                         (forces continuation when the model left declared
+ *                         task-list steps unfinished; runs on interactive too,
+ *                         its open-tasks signal is safe for chat), self-check,
  *                         post-turn-detector, auto-build-app
  *                         (anthropic, runs AFTER post-turn-detector so the
  *                         detector sees the original empty-toolCalls state
@@ -28,6 +31,7 @@ import { postCommitMiddleware } from "./post-commit.js";
 import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
+import { openStepsMiddleware } from "./open-steps.js";
 import { selfCheckMiddleware } from "./self-check.js";
 import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
 import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
@@ -42,6 +46,7 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     hallucinationCheckMiddleware,
     actionClaimMiddleware,
     prematureCompletionMiddleware,
+    openStepsMiddleware,
     selfCheckMiddleware,
     postTurnDetectorMiddleware,
     autoBuildAppMiddleware,

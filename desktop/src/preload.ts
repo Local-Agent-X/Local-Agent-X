@@ -95,6 +95,9 @@ contextBridge.exposeInMainWorld("desktop", {
   // File operations
   openFile: (relativePath: string) => ipcRenderer.invoke("open-file", relativePath),
 
+  // Reveal the ~/.lax/uploads folder in the OS file manager.
+  openUploadsFolder: () => ipcRenderer.invoke("open-uploads-folder"),
+
   // Native folder picker (Settings → Server workspace). Resolves to the chosen
   // absolute path, or null if the user canceled.
   selectFolder: (opts?: { title?: string; defaultPath?: string }): Promise<string | null> =>

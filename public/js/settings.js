@@ -79,6 +79,7 @@ function init_settings() {
   checkVoiceCaps();
   loadToolsList();
   loadFileAccessMode();
+  loadUploadsStats();
   // loadSelfModify removed — platform files always protected
   loadIntegrations();
   waCheckStatus();
@@ -91,6 +92,7 @@ function switchTab(id) {
   const pane = document.getElementById('stab-' + id); if (pane) pane.classList.add('active');
   if (event?.target) event.target.classList.add('active');
   if (id === 'image' && typeof refreshVoiceSetup === 'function') refreshVoiceSetup();
+  if (id === 'image' && typeof loadUploadsStats === 'function') loadUploadsStats();
   if (window.MemoryBrain) { if (id === 'memory') window.MemoryBrain.ensure(); else window.MemoryBrain.pause(); }
 }
 

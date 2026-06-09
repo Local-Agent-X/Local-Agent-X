@@ -513,6 +513,15 @@
             <span>Agent-controlled particle visuals</span>
           </label>
         </div>
+        <div class="section-card">
+          <div class="section-title">Uploads Storage</div>
+          <div class="section-desc">Images and files you paste or attach in chat are kept here so the agent can re-read them. Identical files are stored once. There's no size limit — clear them whenever you like.</div>
+          <div id="uploads-stats" style="font-size:.82rem;color:var(--text);margin:8px 0">Loading…</div>
+          <div class="btn-row">
+            <button class="action-btn secondary" onclick="clearUploads(this)">Clear all uploads</button>
+            <button class="action-btn" id="uploads-open-folder" style="display:none" onclick="openUploadsFolder()">Open folder</button>
+          </div>
+        </div>
       </div>
       <!-- Security -->
       <div id="stab-security" class="tab-pane">
@@ -1214,6 +1223,7 @@
 <script src="/js/settings-search.js?v=v1"></script>
 <script src="/js/settings-integrations.js?v=v1"></script>
 <script src="/js/settings-import-export.js?v=v1"></script>
+<script src="/js/settings-uploads.js?v=v1"></script>
 <script src="/js/settings-voice-engines.js?v=v1"></script>
 <script src="/js/settings.js?v=vc1"></script>
 <script src="/js/voice-picker-catalog.js?v=v3"></script>

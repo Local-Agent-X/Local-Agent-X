@@ -1,11 +1,23 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { getOrCreateMasterKey, type KeychainProvider } from "./keychain.js";
 import { registerRedactedSecretValue } from "./security/known-secrets.js";
+import { deriveOrigin, encrypt, decrypt } from "./secrets-crypto.js";
+import type {
+  SecretEntry,
+  SecretMetadata,
+  SecretMetaView,
+  SecretsFileEntry,
+  SecretsFile,
+} from "./secrets-types.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("secrets");
+
+// Re-export the public surface so existing `./secrets.js` import paths stay
+// identical after the crypto/type split.
+export { deriveOrigin } from "./secrets-crypto.js";
+export type { SecretMetadata, SecretMetaView } from "./secrets-types.js";
 
 /**
  * Encrypted secrets store for API keys and tokens.
@@ -22,93 +34,6 @@ const logger = createLogger("secrets");
  * 3. Linux libsecret (tied to desktop session)
  * 4. Machine-identity derivation (hostname+username+random salt) — last resort
  */
-
-interface SecretEntry {
-  name: string;
-  value: string;       // encrypted at rest, decrypted in memory
-  service?: string;    // e.g. "github", "slack", "linear"
-  account?: string;    // username/email paired with this password
-  url?: string;        // login page URL
-  notes?: string;      // free-form user-visible notes
-  origin?: string;     // origin derived from url (scheme://host[:port]); authoritative for fill gating
-  createdBySession?: string; // agent session that captured this secret; enables auto-approval of same-session reuse
-  approvedFills?: Array<{ origin: string; approvedAt: number }>; // user-approved (secret, origin) pairs for automated fill
-  addedAt: number;
-  updatedAt: number;
-}
-
-export interface SecretMetadata {
-  service?: string;
-  account?: string;
-  url?: string;
-  notes?: string;
-  origin?: string;
-  createdBySession?: string;
-}
-
-/** Metadata view returned to callers — never includes the plaintext value. */
-export interface SecretMetaView {
-  name: string;
-  service?: string;
-  account?: string;
-  url?: string;
-  notes?: string;
-  origin?: string;
-  createdBySession?: string;
-  approvedFills?: Array<{ origin: string; approvedAt: number }>;
-  addedAt: number;
-  updatedAt: number;
-}
-
-interface SecretsFileEntry {
-  name: string;
-  service?: string;
-  account?: string;
-  url?: string;
-  notes?: string;
-  origin?: string;
-  createdBySession?: string;
-  approvedFills?: Array<{ origin: string; approvedAt: number }>;
-  addedAt: number;
-  updatedAt: number;
-  encrypted: string; // hex: iv(12) + authTag(16) + ciphertext
-}
-
-interface SecretsFile {
-  version: 1;
-  secrets: SecretsFileEntry[];
-}
-
-/** Derive a canonical origin (scheme://host[:port]) from an arbitrary URL. Returns undefined on failure. */
-export function deriveOrigin(url: string | undefined | null): string | undefined {
-  if (!url) return undefined;
-  try {
-    return new URL(url).origin;
-  } catch {
-    return undefined;
-  }
-}
-
-function encrypt(plaintext: string, key: Buffer): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const encrypted = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return Buffer.concat([iv, authTag, encrypted]).toString("hex");
-}
-
-function decrypt(hex: string, key: Buffer): string {
-  const data = Buffer.from(hex, "hex");
-  const iv = data.subarray(0, 12);
-  const authTag = data.subarray(12, 28);
-  const ciphertext = data.subarray(28);
-  const decipher = createDecipheriv("aes-256-gcm", key, iv);
-  decipher.setAuthTag(authTag);
-  const result = decipher.update(ciphertext) + decipher.final("utf-8");
-  // Zero the raw buffer to limit exposure of ciphertext material in memory
-  data.fill(0);
-  return result;
-}
 
 export class SecretsStore {
   private filePath: string;

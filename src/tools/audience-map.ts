@@ -18,6 +18,8 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   read:        ["main-chat", "spawned-agent", "operator", "build-intent"],
   write:       ["main-chat", "spawned-agent", "operator", "build-intent"],
   edit:        ["main-chat", "spawned-agent", "operator", "build-intent"],
+  edit_lines:  ["main-chat", "spawned-agent", "operator", "build-intent"],
+  multi_edit:  ["main-chat", "spawned-agent", "operator", "build-intent"],
   delete_file: ["main-chat"],
   bash:        ["main-chat", "spawned-agent", "operator", "build-intent"],
   glob:        ["main-chat", "build-intent"],

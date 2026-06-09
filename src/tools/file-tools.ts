@@ -1,12 +1,15 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, statSync, readdirSync } from "node:fs";
 import { dirname, basename } from "node:path";
 import { resolveAgentPath } from "../workspace/paths.js";
-import type { ToolDefinition } from "../types.js";
+import type { ToolDefinition, ToolResult } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
 import { validateSyntax } from "./syntax-validate.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 import { runningSessionsForPath } from "./process-tools.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("file-tools");
 
 // ── Edit-failure recovery helpers ────────────────────────────────────────
 // When edit() fails, the model previously saw a bare string like
@@ -87,6 +90,67 @@ function similarity(a: string, b: string): number {
     }
   }
   return longest / long.length;
+}
+
+function leadingWhitespace(line: string): string {
+  return line.match(/^[ \t]*/)?.[0] ?? "";
+}
+
+// Tier-3 edit fallback. The model reproduced a block's content and RELATIVE
+// indentation but guessed the absolute indent wrong — every line shifted by the
+// same leading-whitespace prefix. Models other than Claude do this constantly
+// (Grok edit loop, 2026-06-09: 5 failed edits → circuit-breaker open, zero
+// edits landed, purely because old_string's indent didn't byte-match). The two
+// existing tiers (exact, then CRLF) don't cover it. Here: match lines by their
+// TRIMMED content; require the block to be UNIQUE; rebase new_string from the
+// model's indent frame onto the file's real one so relative structure is kept;
+// splice by byte offset so CRLF and the rest of the file are untouched. Bail
+// (caller falls through to the exact-match error) on no match, >1 match, or a
+// new_string line that isn't in the model's indent frame — a wrong-indent write
+// is worse than a failed edit, so never guess when the mapping is unclear.
+function whitespaceTolerantEdit(
+  content: string,
+  oldStr: string,
+  newStr: string,
+): { kind: "ok"; updated: string } | { kind: "none" } | { kind: "ambiguous" } {
+  const fileLines = content.split("\n");
+  const oldLines = oldStr.split("\n");
+  const oldTrim = oldLines.map((l) => l.trim());
+
+  let start = -1;
+  for (let i = 0; i + oldLines.length <= fileLines.length; i++) {
+    let hit = true;
+    for (let j = 0; j < oldLines.length; j++) {
+      if (fileLines[i + j].trim() !== oldTrim[j]) { hit = false; break; }
+    }
+    if (!hit) continue;
+    if (start !== -1) return { kind: "ambiguous" };
+    start = i;
+  }
+  if (start === -1) return { kind: "none" };
+
+  const matched = fileLines.slice(start, start + oldLines.length);
+  const anchor = oldTrim.findIndex((t) => t.length > 0);
+  if (anchor === -1) return { kind: "none" }; // whitespace-only block, too risky
+  const fileWs = leadingWhitespace(matched[anchor]);
+  const oldWs = leadingWhitespace(oldLines[anchor]);
+
+  const newLines = newStr.split("\n").map((line) => {
+    if (line.trim() === "") return "";
+    const ws = leadingWhitespace(line);
+    if (!ws.startsWith(oldWs)) return null; // not in the model's indent frame
+    return fileWs + line.slice(oldWs.length);
+  });
+  if (newLines.some((l) => l === null)) return { kind: "none" };
+
+  const eol = matched.some((l) => l.endsWith("\r")) ? "\r\n" : "\n";
+  const offsetStart = fileLines.slice(0, start).reduce((n, l) => n + l.length + 1, 0);
+  const windowLen = matched.join("\n").length;
+  const updated =
+    content.slice(0, offsetStart) +
+    (newLines as string[]).join(eol) +
+    content.slice(offsetStart + windowLen);
+  return { kind: "ok", updated };
 }
 
 /** When write/edit touches a file under workspace/apps/<name>/, append a
@@ -260,16 +324,92 @@ export const writeTool: ToolDefinition = {
   },
 };
 
+// Models sometimes paste the read tool's "<lineNo>\t" gutter into an anchor or
+// replacement string. Strip it so a cosmetically-mangled value still matches /
+// writes clean content. Only touches lines that literally start "<digits>\t" —
+// real source lines don't, so this is safe to apply unconditionally.
+function stripReadGutter(s: string): string {
+  return s.replace(/^\d+\t/gm, "");
+}
+
+type EditApply =
+  | { ok: true; updated: string; tolerant?: boolean }
+  | { ok: false; message: string; recovery?: string };
+
+// The shared string-replacement core used by `edit` and `multi_edit`. Three
+// match tiers, each only reached when the prior misses, none guessing silently:
+//   1. exact substring (covers LF files + perfectly-quoted CRLF)
+//   2. CRLF-converted (file uses \r\n, model emitted \n) — preserves the file's
+//      line-ending style. Original failure: 2026-05-12, ~90-call edit loop.
+//   3. whitespace-tolerant (right content, wrong indentation) — see
+//      whitespaceTolerantEdit. Original failure: 2026-06-09 Grok edit loop.
+function applyStringEdit(content: string, rawOld: string, rawNew: string, replaceAll: boolean): EditApply {
+  const oldStr = stripReadGutter(rawOld);
+  const newStr = stripReadGutter(rawNew);
+
+  let effOld = oldStr;
+  let effNew = newStr;
+  if (!content.includes(effOld) && oldStr.includes("\n")) {
+    const crlfOld = oldStr.replace(/\r?\n/g, "\r\n");
+    if (content.includes(crlfOld)) {
+      effOld = crlfOld;
+      effNew = newStr.replace(/\r?\n/g, "\r\n");
+    }
+  }
+
+  if (content.includes(effOld)) {
+    const occurrences = content.split(effOld).length - 1;
+    if (occurrences > 1 && !replaceAll) {
+      const matches = locateOccurrences(content, effOld);
+      return {
+        ok: false,
+        message: `old_string found ${occurrences} times. Add surrounding context to make it unique, or pass replace_all:true.`,
+        recovery:
+          `Matches at lines: ${matches.map((m) => m.line).join(", ")}.\n` +
+          matches.map((m, i) => `Match ${i + 1} (around L${m.line}):\n${m.snippet}`).join("\n\n"),
+      };
+    }
+    const updated = replaceAll ? content.split(effOld).join(effNew) : content.replace(effOld, effNew);
+    return { ok: true, updated };
+  }
+
+  const tolerant = whitespaceTolerantEdit(content, oldStr, newStr);
+  if (tolerant.kind === "ok") return { ok: true, updated: tolerant.updated, tolerant: true };
+
+  const nearby = suggestNearbyLines(content, oldStr);
+  const recovery = nearby.length
+    ? `Closest lines matching the first line of your old_string:\n${nearby.map((h) => `  L${h.line}: ${h.text}`).join("\n")}\n` +
+      `Pick one and include 3-5 lines of surrounding context — or use edit_lines with the line number shown above.`
+    : `No close matches found. Re-read the file: your anchor text is wrong or stale.`;
+  const ambiguous = tolerant.kind === "ambiguous"
+    ? " Its content matches multiple places ignoring whitespace — add more surrounding context to disambiguate."
+    : "";
+  return { ok: false, message: `old_string not found.${ambiguous} Make sure it matches exactly.`, recovery };
+}
+
+// Guard + write + post-write syntax check, shared by every edit-family tool.
+function commitEdit(filePath: string, updated: string, verb: string): ToolResult {
+  const guard = checkAppWrite(filePath, updated);
+  if (!guard.allow) return err(writeGuardRejectionMessage(guard.reason ?? "policy violation"));
+  writeFileSync(filePath, updated, "utf-8");
+  const syntaxIssue = validateSyntax(filePath, updated);
+  return ok(
+    `${verb} ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
+    syntaxIssue ? { recovery: syntaxIssue } : undefined,
+  );
+}
+
 export const editTool: ToolDefinition = {
   name: "edit",
   description:
-    "Edit a file by replacing an exact string match. The old_string must match exactly (including whitespace). PREFER THIS over `bash sed/awk/heredoc` for targeted edits — edit has no length limit, bash is capped at 2000 chars. Use for changing a function, a config value, a single line.",
+    "Edit a file by replacing a string. Matching is forgiving — it tolerates CRLF/LF and indentation differences, so you don't need byte-perfect whitespace, but the content must be right. PREFER THIS over `bash sed/awk/heredoc` for targeted edits (no length limit; bash is capped at 2000 chars). Pass replace_all:true to change every occurrence. If you know the line numbers from a recent read, edit_lines is even more reliable; to make several changes at once, use multi_edit.",
   parameters: {
     type: "object",
     properties: {
       path: { type: "string", description: "File path to edit" },
-      old_string: { type: "string", description: "Exact string to find and replace" },
+      old_string: { type: "string", description: "String to find and replace. Whitespace-tolerant, but content must match." },
       new_string: { type: "string", description: "Replacement string" },
+      replace_all: { type: "boolean", description: "Replace every occurrence instead of requiring a unique match. Default false." },
     },
     required: ["path", "old_string", "new_string"],
   },
@@ -287,68 +427,115 @@ export const editTool: ToolDefinition = {
 
     try {
       const content = readFileSync(filePath, "utf-8");
-      const oldStr = String(args.old_string);
-      const newStr = String(args.new_string);
+      const res = applyStringEdit(content, String(args.old_string), String(args.new_string), Boolean(args.replace_all));
+      if (!res.ok) return err(`${res.message} (${filePath})`, res.recovery ? { recovery: res.recovery } : undefined);
+      if (res.tolerant) logger.info(`[edit] whitespace-tolerant match used for ${filePath} (exact old_string missed; relative indentation preserved)`);
+      return commitEdit(filePath, res.updated, "Edited");
+    } catch (e) {
+      return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
+    }
+  },
+};
 
-      // Line-ending tolerance. The model emits LF (\n) almost universally.
-      // Files saved on Windows or from certain editors use CRLF (\r\n). Doing
-      // strict substring match on those means every multi-line edit fails
-      // with "old_string not found" even when the content is semantically
-      // identical. Live failure (2026-05-12, sample-app todo question-blocks):
-      // ~90 tool-call loop because each edit failed → agent re-read →
-      // tried another anchor → failed again. Root cause was CRLF in the file
-      // vs LF in old_string. Strategy:
-      //   1. Try direct match (covers LF files + perfectly-quoted CRLF).
-      //   2. If miss AND old_string contains \n, retry with old_string
-      //      converted to CRLF. Translate new_string to CRLF too so the
-      //      file's line-ending style is preserved.
-      //   3. If still no match, report the original "not found" error.
-      // No "tolerant match" applied silently when the line endings really
-      // ARE different — that would erase the LF/CRLF distinction the file's
-      // owner relies on. We only switch when the file already uses CRLF.
-      let effOld = oldStr;
-      let effNew = newStr;
-      if (!content.includes(effOld) && oldStr.includes("\n")) {
-        const crlfOld = oldStr.replace(/\r?\n/g, "\r\n");
-        if (content.includes(crlfOld)) {
-          effOld = crlfOld;
-          effNew = newStr.replace(/\r?\n/g, "\r\n");
+export const editLinesTool: ToolDefinition = {
+  name: "edit_lines",
+  description:
+    "Edit a file by LINE NUMBER instead of by matching text — pairs with the line numbers `read` returns, so you never have to reproduce exact whitespace. Replace a range by passing start_line + end_line; insert by passing start_line + insert (before|after) and no end_line. Both bounds are 1-based and inclusive. Most reliable edit when you've just read the file.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "File path to edit" },
+      start_line: { type: "number", description: "1-based line. With end_line: first line to replace. Without: the insertion anchor." },
+      end_line: { type: "number", description: "1-based inclusive last line to replace. Omit to insert rather than replace." },
+      new_string: { type: "string", description: "Replacement / inserted text. May span multiple lines; no trailing newline needed." },
+      insert: { type: "string", enum: ["before", "after"], description: "Where to insert relative to start_line when end_line is omitted. Default after." },
+    },
+    required: ["path", "start_line", "new_string"],
+  },
+  async execute(args) {
+    const filePath = resolveAgentPath(String(args.path));
+    if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
+
+    try {
+      const content = readFileSync(filePath, "utf-8");
+      const crlf = content.includes("\r\n");
+      const lines = content.replace(/\r\n/g, "\n").split("\n");
+      const total = lines.length;
+      const start = Number(args.start_line);
+      if (!Number.isInteger(start) || start < 1 || start > total + 1) {
+        return err(`start_line ${args.start_line} out of range — file has ${total} lines (insert allowed up to ${total + 1}).`);
+      }
+      const newLines = stripReadGutter(String(args.new_string)).replace(/\r\n/g, "\n").split("\n");
+
+      let out: string[];
+      let verb: string;
+      if (args.end_line !== undefined && args.end_line !== null) {
+        const end = Number(args.end_line);
+        if (!Number.isInteger(end) || end < start || end > total) {
+          return err(`end_line ${args.end_line} out of range — must be between start_line (${start}) and ${total}.`);
         }
+        out = [...lines.slice(0, start - 1), ...newLines, ...lines.slice(end)];
+        verb = `Replaced lines ${start}-${end} of`;
+      } else {
+        const at = String(args.insert ?? "after") === "before" ? start - 1 : start;
+        out = [...lines.slice(0, at), ...newLines, ...lines.slice(at)];
+        verb = `Inserted ${newLines.length} line(s) into`;
       }
+      const joined = out.join("\n");
+      return commitEdit(filePath, crlf ? joined.replace(/\n/g, "\r\n") : joined, verb);
+    } catch (e) {
+      return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
+    }
+  },
+};
 
-      if (!content.includes(effOld)) {
-        const nearby = suggestNearbyLines(content, oldStr);
-        const recovery = nearby.length
-          ? `Closest lines matching the first line of your old_string:\n${nearby.map((h) => `  L${h.line}: ${h.text}`).join("\n")}\nPick one and include 3-5 lines of surrounding context in old_string.`
-          : `No close matches found. Re-read the file to see current content; the file may have been edited or your anchor text is wrong.`;
-        return err(
-          `old_string not found in ${filePath}. Make sure it matches exactly.`,
-          { recovery },
-        );
+export const multiEditTool: ToolDefinition = {
+  name: "multi_edit",
+  description:
+    "Apply several string edits to ONE file in a single call, in order, ATOMICALLY — if any edit fails to match, none are written and the file is left untouched. Each edit is {old_string, new_string} with the same forgiving matching as `edit` (and optional replace_all). Use to make multiple changes to one file without re-reading between each.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "File path to edit" },
+      edits: {
+        type: "array",
+        description: "Edits applied in order; each matches against the result of the previous one.",
+        items: {
+          type: "object",
+          properties: {
+            old_string: { type: "string", description: "String to find. Whitespace-tolerant." },
+            new_string: { type: "string", description: "Replacement string" },
+            replace_all: { type: "boolean", description: "Replace every occurrence. Default false." },
+          },
+          required: ["old_string", "new_string"],
+        },
+      },
+    },
+    required: ["path", "edits"],
+  },
+  async execute(args) {
+    const filePath = resolveAgentPath(String(args.path));
+    if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
+    const edits = Array.isArray(args.edits) ? args.edits : [];
+    if (edits.length === 0) return err("multi_edit requires a non-empty `edits` array.");
+
+    try {
+      let content = readFileSync(filePath, "utf-8");
+      let tolerantUsed = 0;
+      for (let i = 0; i < edits.length; i++) {
+        const e = (edits[i] ?? {}) as Record<string, unknown>;
+        const res = applyStringEdit(content, String(e.old_string), String(e.new_string), Boolean(e.replace_all));
+        if (!res.ok) {
+          return err(
+            `multi_edit aborted at edit ${i + 1}/${edits.length} — no changes written. ${res.message} (${filePath})`,
+            res.recovery ? { recovery: res.recovery } : undefined,
+          );
+        }
+        if (res.tolerant) tolerantUsed++;
+        content = res.updated;
       }
-
-      const occurrences = content.split(effOld).length - 1;
-      if (occurrences > 1) {
-        const matches = locateOccurrences(content, effOld);
-        const recovery =
-          `Matches at lines: ${matches.map((m) => m.line).join(", ")}.\n` +
-          matches.map((m, i) => `Match ${i + 1} (around L${m.line}):\n${m.snippet}`).join("\n\n") +
-          `\n\nPick the one you want and include 3-5 lines around it in old_string so it matches only that location.`;
-        return err(
-          `old_string found ${occurrences} times in ${filePath}. Provide more context to make it unique.`,
-          { recovery },
-        );
-      }
-
-      const updated = content.replace(effOld, effNew);
-      const guard = checkAppWrite(filePath, updated);
-      if (!guard.allow) return err(writeGuardRejectionMessage(guard.reason ?? "policy violation"));
-      writeFileSync(filePath, updated, "utf-8");
-      const syntaxIssue = validateSyntax(filePath, updated);
-      return ok(
-        `Edited ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
-        syntaxIssue ? { recovery: syntaxIssue } : undefined,
-      );
+      if (tolerantUsed) logger.info(`[multi_edit] whitespace-tolerant match used for ${tolerantUsed}/${edits.length} edits in ${filePath}`);
+      return commitEdit(filePath, content, `Applied ${edits.length} edit(s) to`);
     } catch (e) {
       return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
     }

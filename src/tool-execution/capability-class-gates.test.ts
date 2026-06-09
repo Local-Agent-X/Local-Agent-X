@@ -6,8 +6,8 @@
 // worktree enforcement. These tests assert that synonyms are now enforced
 // identically to their canonical equivalents.
 
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, readdirSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataLineageGate, egressGuardGate, canaryEgressGate } from "./enforce-policy.js";
@@ -225,6 +225,72 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
 
   it("is a no-op for non-egress tools", () => {
     expect(egressGuardGate(makeCtx("read", { path: "/tmp/x" }, sessionId)).kind).toBe("continue");
+  });
+});
+
+describe("egressGuardGate — attachment TOCTOU (C3-9: symlink + byte scan)", () => {
+  const sessionId = "cap-class-attach-toctou";
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "lax-attach-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function emailCtx(paths: string[]) {
+    return makeCtx("email_send", {
+      to: "a@b.com", subject: "x", body: "see attached",
+      attachments: JSON.stringify(paths),
+    }, sessionId);
+  }
+
+  it("blocks a symlink whose REALPATH is a sensitive target (innocent .txt → .ssh/id_rsa)", () => {
+    // Lay down a private-key-shaped file under a .ssh-named dir, then point an
+    // innocent-looking /tmp/notes.txt at it. The lexical predicate would PASS on
+    // "notes.txt"; the realpath-based check must catch the .ssh/id_rsa target.
+    const sshDir = join(tmp, ".ssh");
+    mkdirSync(sshDir, { recursive: true });
+    const key = join(sshDir, "id_rsa");
+    writeFileSync(key, "-----BEGIN OPENSSH PRIVATE KEY-----\nnotreal\n");
+    const link = join(tmp, "notes.txt");
+    symlinkSync(key, link);
+
+    const ctx = emailCtx([link]);
+    const outcome = egressGuardGate(ctx);
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.result?.metadata?.blocked_by).toBe("sensitive-attachment");
+  });
+
+  it("blocks an attachment whose BYTES contain a secret even though its path is innocent", () => {
+    // Path is a plain .txt with no sensitive segment; contents carry an
+    // Anthropic-style key, so the byte scan must block it.
+    const file = join(tmp, "harmless-report.txt");
+    writeFileSync(file, "summary\napi=sk-ant-api03-" + "A".repeat(80) + "\n");
+    const ctx = emailCtx([file]);
+    const outcome = egressGuardGate(ctx);
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.result?.metadata?.blocked_by).toBe("sensitive-attachment");
+  });
+
+  it("allows a genuinely innocent attachment (plain .txt, no secret, not a symlink)", () => {
+    const file = join(tmp, "report.txt");
+    writeFileSync(file, "Quarterly numbers look good. No credentials here.\n");
+    expect(egressGuardGate(emailCtx([file])).kind).toBe("continue");
+  });
+
+  it("blocks ~/.git-credentials and a gcloud ADC path as attachments", () => {
+    // Lexical predicate coverage (C3-10): these need no realpath to trip.
+    const gitCreds = join(tmp, ".git-credentials");
+    writeFileSync(gitCreds, "https://user:tok@github.com\n");
+    expect(egressGuardGate(emailCtx([gitCreds])).kind).toBe("halt");
+
+    const adcDir = join(tmp, ".config", "gcloud");
+    mkdirSync(adcDir, { recursive: true });
+    const adc = join(adcDir, "application_default_credentials.json");
+    writeFileSync(adc, "{\"refresh_token\":\"x\"}\n");
+    expect(egressGuardGate(emailCtx([adc])).kind).toBe("halt");
   });
 });
 

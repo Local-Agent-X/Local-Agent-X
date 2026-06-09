@@ -432,6 +432,14 @@ const SENSITIVE_BASENAMES: ReadonlySet<string> = new Set([
   "credentials.json", "credentials.db",
   // Windows DPAPI-protected master keys (Chromium, etc.).
   "master.dpapi", "master.key",
+  // Git stored-credentials (plaintext https creds).
+  ".git-credentials",
+  // gcloud Application Default Credentials (refresh token / SA key, plaintext).
+  "application_default_credentials.json",
+  // Postgres / MySQL client password files.
+  ".pgpass", ".my.cnf",
+  // Databricks CLI config (host + PAT token).
+  ".databrickscfg",
 ]);
 
 // Suffix matches for key material containers. Endpoint-anchored, so a
@@ -453,13 +461,21 @@ const DIR_SCOPED_FILES: ReadonlyArray<readonly [string, string]> = [
   // gcloud + gh credential stores live under ~/.config/<tool>/...
   ["gcloud", "credentials.db"],
   ["gcloud", "access_tokens.db"],
-  ["gcloud", "legacy_credentials"],
   ["gh", "hosts.yml"],
+  // rclone remote configs hold cloud-storage tokens/keys.
+  ["rclone", "rclone.conf"],
+  // sops age keys.txt: ~/.config/sops/age/keys.txt — parent dir is `age`.
+  ["age", "keys.txt"],
 ];
 
 // Directories whose entire contents are credential material. Any file at any
-// depth inside one of these is flagged.
-const SENSITIVE_DIR_NAMES: ReadonlySet<string> = new Set([".gnupg"]);
+// depth inside one of these is flagged — matched mid-path, not just as a
+// basename's parent. `.gnupg` is the GPG home. `legacy_credentials` is gcloud's
+// per-account OAuth store (~/.config/gcloud/legacy_credentials/<acct>/adc.json):
+// the old `["gcloud","legacy_credentials"]` DIR_SCOPED_FILES rule was DEAD — it
+// expected `legacy_credentials` as a BASENAME, but the real layout has it as a
+// mid-path directory, so every adc.json under it slipped through.
+const SENSITIVE_DIR_NAMES: ReadonlySet<string> = new Set([".gnupg", "legacy_credentials"]);
 
 function pathSegments(p: string): string[] {
   return p.split(/[\\/]/).filter(Boolean);
@@ -523,6 +539,12 @@ export function isSensitivePath(filePath: string): boolean {
 // `.lax` (the app's own secrets/vault dir) plus the canonical credential stores.
 const ATTACHMENT_SENSITIVE_DIR_NAMES: ReadonlySet<string> = new Set([
   ".gnupg", ".ssh", ".aws", ".lax",
+  // gcloud config dir holds ADC, legacy_credentials, db token stores — the whole
+  // tree is off-limits as an attachment (stricter than read-taint, which only
+  // flags the specific known stores to avoid tainting benign gcloud config).
+  "gcloud",
+  // sops age key dir + rclone config dir.
+  "age", "rclone",
 ]);
 
 // Basenames/extensions that signal an encrypted vault or key container and must

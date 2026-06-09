@@ -43,7 +43,12 @@ const SENSITIVE_PATTERNS = [
 // deepest existing ancestor is canonicalized and the absent tail re-appended,
 // so a junction in the parent chain is resolved while the new leaf is kept.
 // Rethrows only ELOOP (symlink cycle) so the caller can treat it as an attack.
-function realpathDeep(target: string): string {
+//
+// Exported so the egress-attachment guard (http-egress-guard.ts) canonicalizes
+// an attachment path the SAME way the file tools do BEFORE running its
+// sensitivity predicate — closing the check-on-string / read-on-inode TOCTOU
+// where a symlink (/tmp/notes.txt → ~/.ssh/id_rsa) sails past a lexical check.
+export function realpathDeep(target: string): string {
   let tail = "";
   let cur = target;
   for (let i = 0; i < 64; i++) {

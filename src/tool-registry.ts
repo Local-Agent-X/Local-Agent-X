@@ -157,3 +157,32 @@ export function hasCapability(name: string, cls: CapabilityClass): boolean {
 export const WORKTREE_PATH_TOOLS: ReadonlySet<string> = new Set([
   ...WORKSPACE_WRITE_TOOLS, "read", "glob", "grep",
 ]);
+
+/**
+ * Build-time invariant: no single tool may be BOTH an egress sink AND a
+ * sensitive-read sink. Such a tool could self-race within its own pipeline —
+ * its egress check (policy phase) and its taint floor-set (sandbox phase) run
+ * in one dispatch, so the floor it sets could never gate its own egress, and
+ * the batcher's no-co-batch rule (which keeps the two classes in separate
+ * batches) collapses to a no-op for a tool that is its own counterparty.
+ * Keeping the two classes disjoint is what lets a sensitive read always taint
+ * before any egress tool observes the floor.
+ *
+ * Throws on violation so the gap fails the build (and the boot path) instead of
+ * silently re-opening the R4-09 race. Called at module load below and asserted
+ * directly in capability-class-gates.test.ts.
+ */
+export function validateCapabilitySets(): void {
+  const overlap = [...EGRESS_TOOLS].filter((name) => SENSITIVE_READ_TOOLS.has(name));
+  if (overlap.length > 0) {
+    throw new Error(
+      `capability-set invariant violated: tool(s) are BOTH egress and sensitive-read ` +
+      `(${overlap.join(", ")}) — a tool that is both could self-race its own egress gate ` +
+      `against its own taint floor. Split the capability or re-scope the tool.`,
+    );
+  }
+}
+
+// Enforce the disjointness invariant at module load (build/boot time), so a
+// future edit that makes a tool both classes fails fast rather than at runtime.
+validateCapabilitySets();

@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import { readValidatedFile } from "../../security/file-access.js";
+import { readValidatedFile } from "../../security/validated-io.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { workspacePath } from "../../config.js";
 import { canonicalFetch, EgressRedirectBlocked } from "../web-egress.js";

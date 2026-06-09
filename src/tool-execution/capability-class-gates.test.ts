@@ -11,7 +11,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, readFileSyn
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataLineageGate, egressGuardGate, canaryEgressGate } from "./enforce-policy.js";
-import { hasCapability, WORKTREE_PATH_TOOLS, CAPABILITY_CLASS_MEMBERS, TOOLS } from "../tool-registry.js";
+import { hasCapability, WORKTREE_PATH_TOOLS, CAPABILITY_CLASS_MEMBERS, TOOLS, validateCapabilitySets } from "../tool-registry.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 import { getAllTools } from "../tools/registry-build.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../security/types.js";
@@ -60,6 +60,18 @@ describe("capability-class membership (single source of truth)", () => {
       expect(hasCapability(t, "sensitive-read")).toBe(true);
     }
     expect(hasCapability("http_request", "sensitive-read")).toBe(false);
+  });
+
+  it("no tool is BOTH egress and sensitive-read (gate-atomicity invariant, R4-09)", () => {
+    // A tool that is both could self-race within its own pipeline: its egress
+    // check (policy phase) runs before its taint floor-set (sandbox phase), so
+    // the floor it sets could never gate its own egress. validateCapabilitySets
+    // throws on violation; assert the sets are disjoint directly too so a
+    // regression names the offending tool.
+    const egress = new Set(CAPABILITY_CLASS_MEMBERS.egress);
+    const both = CAPABILITY_CLASS_MEMBERS["sensitive-read"].filter((t) => egress.has(t));
+    expect(both, `tools that are BOTH egress and sensitive-read: ${both.join(", ")}`).toEqual([]);
+    expect(() => validateCapabilitySets()).not.toThrow();
   });
 
   it("worktree path tools + WORKTREE_REQUIRED include ari_file", () => {

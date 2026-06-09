@@ -78,6 +78,41 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   const ms = getToolTimeout(tc.name);
   const runOnce = () => (ms > 0 ? withTimeout(tool.execute(args, signal), ms, tc.name) : tool.execute(args, signal));
 
+  // ── Pre-execute taint FLOOR-set (R4-09 defense-in-depth) ─────────────────
+  //
+  // The egress gate (dataLineageGate) CHECKS the taint floor in the policy
+  // phase; the sensitive-read taint WRITE used to happen only AFTER
+  // ctx.result = await runOnce() below. Within one Promise.all batch sharing a
+  // sessionId, a co-batched egress tool could therefore observe an EMPTY floor.
+  // The batcher (executeToolCalls) already keeps egress and sensitive-read
+  // tools in SEPARATE sequential batches — this is the second line of defense:
+  // when the read is sensitive KNOWABLE FROM ARGS, set the floor synchronously
+  // here, before execute, so the floor is up before any egress check can run.
+  //
+  // No content is passed (the bytes aren't read yet) — content fingerprints are
+  // still added by the post-execute path below. The post-execute floor-set is
+  // made idempotent against this pre-set so we don't accumulate a redundant
+  // content-less entry for the same target.
+  const isSensitiveReadCap = hasCapability(tc.name, "sensitive-read");
+  let preTaintedPath: string | null = null;
+  if (isSensitiveReadCap && tc.name !== "bash" && typeof args.path === "string" && args.path) {
+    let taintPath: string;
+    try {
+      taintPath = realpathDeep(resolveAgentPath(String(args.path)));
+    } catch {
+      taintPath = String(args.path);
+    }
+    if (isSensitivePath(taintPath)) {
+      recordSensitiveRead(sessionId || "default", "sensitive_file", taintPath);
+      preTaintedPath = taintPath;
+    }
+  } else if (tc.name === "bash") {
+    const cmd = String(args.command || "");
+    for (const p of extractSensitivePathsFromCommand(cmd)) {
+      recordSensitiveRead(sessionId || "default", "sensitive_file", p);
+    }
+  }
+
   try {
     if (shouldRetry) {
       ctx.result = await withRetry(runOnce, {
@@ -123,11 +158,18 @@ export const runSandboxedPhase: Phase = async (ctx) => {
         taintPath = rawArgPath;
       }
       if (isSensitivePath(taintPath)) {
-        // Pass the read content so the taint entry carries fingerprints — lets a
-        // later egress block name which tainted bytes are in the payload. Content
-        // is fingerprinted (hashed), never stored as plaintext.
+        // The FLOOR was already set pre-execute (preTaintedPath) so a co-batched
+        // egress check couldn't see an empty floor. This post-execute record is
+        // the content-bearing UPGRADE: pass the read content so the taint entry
+        // carries fingerprints — lets a later egress block name which tainted
+        // bytes are in the payload. Content is fingerprinted (hashed), never
+        // stored as plaintext. Idempotency: if we already floor-set this exact
+        // path AND there's no content to fingerprint, skip the duplicate (the
+        // floor is presence-based, so a second content-less entry adds nothing).
         const fileContent = typeof ctx.result?.content === "string" ? ctx.result.content : undefined;
-        recordSensitiveRead(sessionId || "default", "sensitive_file", taintPath, fileContent);
+        if (!(preTaintedPath === taintPath && !fileContent)) {
+          recordSensitiveRead(sessionId || "default", "sensitive_file", taintPath, fileContent);
+        }
         redactReason = `${tc.name} of sensitive path ${taintPath}`;
       }
     }
@@ -135,9 +177,11 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       const cmd = String(args.command || "");
       const matches = extractSensitivePathsFromCommand(cmd);
       if (matches.length > 0) {
-        for (const p of matches) {
-          recordSensitiveRead(sessionId || "default", "sensitive_file", p);
-        }
+        // The floor for these paths was already set pre-execute (synchronously
+        // from the command args), so a co-batched egress check can't observe an
+        // empty floor. We do NOT re-record here (the floor is presence-based and
+        // these reads carry no per-path content to fingerprint) — just emit the
+        // warn + redact stub as before.
         logger.warn(
           `bash command referenced sensitive paths; session ${sessionId || "default"} now tainted for egress`,
           { paths: matches },

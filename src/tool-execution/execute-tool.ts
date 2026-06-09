@@ -19,6 +19,7 @@ import { captureRollbackPhase } from "./capture-rollback.js";
 import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
 import { auditPhase } from "./audit-tool-call.js";
+import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
 
 async function executeSingleTool(
   tc: { id: string; name: string; arguments: string },
@@ -164,6 +165,39 @@ function isParallelSafe(t: ToolDefinition | undefined): boolean {
   return Boolean(t.readOnly) || Boolean(t.concurrencySafe);
 }
 
+// Gate-atomicity guard (R4-09): an egress-capability tool and a sensitive-read
+// / path-reading tool must NEVER share one Promise.all batch (one sessionId,
+// concurrent). If they did, the egress tool's taint check (policy phase) could
+// race the sensitive read's taint floor-set (sandbox phase) and observe an
+// empty floor — letting `[read('~/.ssh/id_rsa'), web_search(...)]` exfiltrate.
+// Splitting the two classes into separate sequential batches preserves call
+// order, so the read completes (and taints) before the egress tool runs.
+//
+// "Path-reading" includes the worktree path tools (read/glob/grep/...) even
+// though some carry no sensitive-read capability label, because a read of a
+// sensitive PATH taints from args in the sandbox phase regardless of the
+// tool's class — so it, too, must not co-batch with an egress tool.
+function isEgressClass(name: string): boolean {
+  return hasCapability(name, "egress");
+}
+function isReadClass(name: string): boolean {
+  return hasCapability(name, "sensitive-read") || WORKTREE_PATH_TOOLS.has(name);
+}
+
+// Can `candidate` join a parallel batch that already contains `members`
+// without putting the egress class and the sensitive-read/path class in the
+// same concurrent batch? The two classes are mutually exclusive within a batch.
+function isBatchCompatible(candidate: string, members: Array<{ name: string }>): boolean {
+  const candEgress = isEgressClass(candidate);
+  const candRead = isReadClass(candidate);
+  if (!candEgress && !candRead) return true;
+  for (const m of members) {
+    if (candEgress && isReadClass(m.name)) return false;
+    if (candRead && isEgressClass(m.name)) return false;
+  }
+  return true;
+}
+
 export async function executeToolCalls(
   toolCalls: Array<{ id: string; name: string; arguments: string }>,
   toolMap: Map<string, ToolDefinition>,
@@ -189,7 +223,11 @@ export async function executeToolCalls(
       const batch: typeof toolCalls = [tc];
       while (i + 1 < toolCalls.length) {
         const next = toolCalls[i + 1];
-        if (isParallelSafe(toolMap.get(next.name))) {
+        // Stop the batch at a parallel-unsafe tool, OR at one that would put the
+        // egress class and the sensitive-read/path class in the same concurrent
+        // Promise.all (R4-09). The next tool still runs — just in the next
+        // (sequential) batch, after this one's reads have completed and tainted.
+        if (isParallelSafe(toolMap.get(next.name)) && isBatchCompatible(next.name, batch)) {
           batch.push(next);
           i++;
         } else break;

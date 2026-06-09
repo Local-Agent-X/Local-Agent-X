@@ -17,8 +17,9 @@ import { getAllTools } from "../tools/registry-build.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../security/types.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage.js";
 import { scanForSecrets } from "../security/secret-scanner.js";
+import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/known-secrets.js";
-import { generateCanaries, registerSessionCanaries, clearSessionCanaries, _setCanaryAuditTrail } from "../threat/canaries.js";
+import { generateCanaries, registerSessionCanaries, clearSessionCanaries, checkCanariesInPayload, _setCanaryAuditTrail } from "../threat/canaries.js";
 import { CryptoAuditTrail } from "../threat/audit-trail.js";
 import type { ToolCallContext } from "./context.js";
 
@@ -151,6 +152,26 @@ describe("name-drift guard — every capability-set member resolves to a real to
     }
     const unenrolled = offBox.filter(name => !egress.has(name));
     expect(unenrolled, `offBoxFetch tools missing from EGRESS_TOOLS: ${unenrolled.join(", ")}`).toEqual([]);
+  });
+
+  it("every tool whose OUTPUT the bridge forwards off-box (_image/_media) is egress-class (regression: R4-12b)", () => {
+    // The bridge forward loop (server/bootstrap-bridges.ts) ships a tool's
+    // RESULT bytes off-box: it forwards any tool result carrying images[] (an
+    // `_image` emitter) via sendImage/sendPhoto, and any result.media.kind ===
+    // "video" (a `_media` emitter) via sendVideo. Those forwarded bytes are
+    // re-scanned in the loop, but the scan only fires for EGRESS-class tools
+    // (the loop reuses the egress secret/canary/attachment helpers). So EVERY
+    // media-emitting tool must be egress-class — a NEW image/video emitter that
+    // isn't enrolled would have its output forwarded UNSCANNED. Enumerated here
+    // so dropping one (or adding an unenrolled emitter) fails CI.
+    const MEDIA_EMITTERS = [
+      "view_image", "screen_capture", "camera_capture", // emit images[]
+      "generate_image",                                  // emits images[]
+      "generate_video", "send_video",                    // emit media.{kind:"video",path}
+    ];
+    for (const t of MEDIA_EMITTERS) {
+      expect(hasCapability(t, "egress"), `${t} forwards output bytes off-box via the bridge but is NOT egress-class — its forwarded output would skip the secret/canary/attachment scan`).toBe(true);
+    }
   });
 });
 
@@ -398,5 +419,58 @@ describe("canaryEgressGate — canary in an outbound payload is hard-blocked + a
     clearSessionCanaries(clean);
     const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: `leaked: ${CANARY}` }, clean);
     expect(canaryEgressGate(ctx).kind).toBe("continue");
+  });
+});
+
+describe("bridge OUTPUT-byte forward scan (R4-12b: the bytes shipped off-box re-enter a gate)", () => {
+  // The bridge forward loop (server/bootstrap-bridges.ts) re-gates the RESULT
+  // bytes it forwards off-box using the SAME helpers the egress gates use:
+  //   - decoded image bytes → scanForSecrets + checkCanariesInPayload (block the
+  //     item on a trip — catches a renamed text file / SVG-with-token shipped as
+  //     an "image"),
+  //   - video .media.path → checkAttachmentPaths (closes the path TOCTOU).
+  // These tests pin the decision shape the loop depends on: a clean image passes,
+  // a secret/canary-bearing one trips, and a sensitive video path is refused.
+  const sessionId = "cap-class-forward";
+  const canaries = generateCanaries();
+  const CANARY = canaries[0];
+  let tmp: string;
+
+  beforeEach(() => {
+    registerSessionCanaries(sessionId, canaries);
+    tmp = mkdtempSync(join(tmpdir(), "lax-forward-"));
+  });
+  afterEach(() => {
+    clearSessionCanaries(sessionId);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("a benign decoded image (no secret, no canary) forwards", () => {
+    const img = Buffer.from("this is a plain caption with no credentials at all");
+    const view = img.toString("utf-8");
+    expect(scanForSecrets(view).clean).toBe(true);
+    expect(checkCanariesInPayload(sessionId, view)).toBeNull();
+  });
+
+  it("a renamed-text 'image' whose bytes are a secret trips the scan (blocked in the loop)", () => {
+    const img = Buffer.from("not really an image\napi=sk-ant-api03-" + "A".repeat(80) + "\n");
+    expect(scanForSecrets(img.toString("utf-8")).clean).toBe(false);
+  });
+
+  it("an 'image' whose bytes carry a session canary trips the canary check", () => {
+    const img = Buffer.from(`<svg><text>${CANARY}</text></svg>`);
+    expect(checkCanariesInPayload(sessionId, img.toString("utf-8"))).not.toBeNull();
+  });
+
+  it("a video path resolving to a secret-shaped file is refused by checkAttachmentPaths", () => {
+    const vid = join(tmp, "clip.mp4");
+    writeFileSync(vid, "-----BEGIN OPENSSH PRIVATE KEY-----\nnotreal\n");
+    expect(checkAttachmentPaths("bridge:test video forward", [vid])).not.toBeNull();
+  });
+
+  it("a genuinely benign video path passes checkAttachmentPaths", () => {
+    const vid = join(tmp, "ok.mp4");
+    writeFileSync(vid, "\x00\x00\x00\x18ftypmp42 plain video bytes, no credentials\n");
+    expect(checkAttachmentPaths("bridge:test video forward", [vid])).toBeNull();
   });
 });

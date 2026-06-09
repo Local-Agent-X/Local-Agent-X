@@ -85,3 +85,13 @@ temp-*/
 
 # Local dev/testing convention notes — kept out of history
 TESTING.md
+
+# Red-team / security audit reports. These map every defense by file:line,
+# state the conceded architectural limits, and can carry live unpatched
+# findings with repro steps — a playbook for an attacker. This is a PUBLIC
+# repo; these stay local-only. Block the whole class so a future round's
+# report can't be `git add .`'d in by accident.
+ari-redteam-*.md
+*-redteam-*.md
+*-security-report.md
+*-threat-report.md

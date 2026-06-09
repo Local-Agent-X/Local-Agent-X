@@ -31,6 +31,13 @@ const logger = createLogger("keychain");
 const SERVICE_NAME = "lax";
 const ACCOUNT_NAME = "master-key";
 
+// Basenames this module persists under the LAX data dir (file-fallback salt,
+// the DPAPI-sealed master key, and the secrets vault). Exported so the
+// build-time enrollment assertion (keychain.test.ts) can pin them to the
+// canonical APP_AT_REST_SECRET_BASENAMES set without re-typing the strings —
+// adding a new key/seed file here without enrolling it there fails CI.
+export const KEYCHAIN_AT_REST_BASENAMES = ["secrets.salt", "master.dpapi", "secrets.enc"] as const;
+
 // All child processes on Windows use CREATE_NO_WINDOW via execFileSync + windowsHide
 const HIDDEN = { windowsHide: true } as const;
 
@@ -209,7 +216,7 @@ function libsecretAvailable(): boolean {
 // ═══════════════════════════════════════════════════════════════════
 
 function fileFallbackGetOrCreate(dataDir: string): Buffer {
-  const saltPath = join(dataDir, "secrets.salt");
+  const saltPath = join(dataDir, KEYCHAIN_AT_REST_BASENAMES[0]);
   let salt: Buffer;
   if (existsSync(saltPath)) {
     salt = readFileSync(saltPath);
@@ -237,8 +244,8 @@ function fileFallbackGetOrCreate(dataDir: string): Buffer {
  */
 export function getOrCreateMasterKey(dataDir: string): KeychainResult {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  const dpapiPath = join(dataDir, "master.dpapi");
-  const secretsPath = join(dataDir, "secrets.enc");
+  const dpapiPath = join(dataDir, KEYCHAIN_AT_REST_BASENAMES[1]);
+  const secretsPath = join(dataDir, KEYCHAIN_AT_REST_BASENAMES[2]);
 
   // Escape hatch: skip every OS keychain provider and go straight to the
   // file fallback. Use when the OS keychain GUI ("Keychain Not Found",

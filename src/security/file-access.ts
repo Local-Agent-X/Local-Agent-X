@@ -3,6 +3,38 @@ import { realpathSync, openSync, closeSync, readFileSync, writeFileSync, constan
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
+import { isAppAtRestSecretBasename } from "./known-secrets.js";
+
+// ── The app's OWN at-rest secret/key/seed files under a `.lax` data dir ──
+//
+// Derived from the ONE canonical enumeration (security/known-secrets.ts) so this
+// read gate / write block can never drift from the read-taint classifier or the
+// attachment denylist. We scope the match to a `.lax` dir segment so a user file
+// that happens to be named e.g. `auth.json` outside the data dir isn't caught by
+// THIS rule (auth.json/master.* still match the cross-location SENSITIVE_PATTERNS
+// below where they already did) — the new coverage this adds is `audit-key` /
+// `audit-key.enc` / `secrets.salt` under the app's data dir.
+function isAppAtRestSecretUnderLax(p: string): boolean {
+  const segs = p.split(/[\\/]/).filter(Boolean);
+  if (segs.length < 2) return false;
+  if (!isAppAtRestSecretBasename(segs[segs.length - 1])) return false;
+  for (let i = 0; i < segs.length - 1; i++) {
+    if (segs[i].toLowerCase() === ".lax") return true;
+  }
+  return false;
+}
+
+// Whether a (already case-normalized) path matches any always-blocked sensitive
+// rule: the regex catalog below OR the app's own at-rest key/seed files under
+// its data dir. ONE checker so the pre-dispatch gate and the read sink stay in
+// lockstep.
+function matchesSensitivePath(normalized: string): RegExp | "app-at-rest-secret" | null {
+  for (const pattern of SENSITIVE_PATTERNS) {
+    if (pattern.test(normalized)) return pattern;
+  }
+  if (isAppAtRestSecretUnderLax(normalized)) return "app-at-rest-secret";
+  return null;
+}
 
 // ── Sensitive path patterns (always blocked for read/write/edit) ──
 
@@ -221,14 +253,22 @@ export function evaluateFileAccess(
       /[/\\]\.lax[/\\]master\./i,            // Master encryption key
       /[/\\]\.lax[/\\]auth\.json$/i,         // OAuth tokens
     ];
-    for (const pattern of coreProtectedFiles) {
-      if (pattern.test(resolved) || pattern.test(realPath)) {
-        return {
-          allowed: false,
-          reason: `Blocked: protected platform file. Use the apps system to build custom interfaces.`,
-          userHint: USER_HINTS.secrets,
-        };
-      }
+    // The app's OWN at-rest key/seed files under its `.lax` data dir
+    // (audit-key, audit-key.enc, secrets.*, master.*, secrets.salt, auth.json).
+    // Derived from the ONE canonical enumeration (security/known-secrets.ts) so a
+    // tool can't write/overwrite a key file the read-taint path also covers — the
+    // `secrets.`/`master.`/`auth.json` regexes below predate the audit seed and
+    // missed `audit-key`/`audit-key.enc`/`secrets.salt`; deriving here closes that.
+    const blockedByCorePattern =
+      isAppAtRestSecretUnderLax(resolved) ||
+      isAppAtRestSecretUnderLax(realPath) ||
+      coreProtectedFiles.some((pattern) => pattern.test(resolved) || pattern.test(realPath));
+    if (blockedByCorePattern) {
+      return {
+        allowed: false,
+        reason: `Blocked: protected platform file. Use the apps system to build custom interfaces.`,
+        userHint: USER_HINTS.secrets,
+      };
     }
 
     // Block writes to the LAX platform's own source. <repoRoot>/src and
@@ -253,14 +293,13 @@ export function evaluateFileAccess(
   // Check sensitive paths against both resolved and real paths
   const normalizedResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
   const normalizedRealPath = process.platform === "win32" ? realPath.toLowerCase() : realPath;
-  for (const pattern of SENSITIVE_PATTERNS) {
-    if (pattern.test(normalizedResolved) || pattern.test(normalizedRealPath)) {
-      return {
-        allowed: false,
-        reason: `Blocked: matches sensitive path pattern ${pattern.source}`,
-        userHint: USER_HINTS.secrets,
-      };
-    }
+  const match = matchesSensitivePath(normalizedResolved) ?? matchesSensitivePath(normalizedRealPath);
+  if (match) {
+    return {
+      allowed: false,
+      reason: `Blocked: matches sensitive path pattern ${typeof match === "string" ? match : match.source}`,
+      userHint: USER_HINTS.secrets,
+    };
   }
 
   // Hand back the canonical inode the checks above bound to (realPath). The
@@ -316,10 +355,9 @@ export function openValidatedRead(absPath: string): { fd: number; canonicalPath:
   }
 
   const normalized = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
-  for (const pattern of SENSITIVE_PATTERNS) {
-    if (pattern.test(normalized)) {
-      throw new Error(`Blocked: matches sensitive path pattern ${pattern.source}`);
-    }
+  const match = matchesSensitivePath(normalized);
+  if (match) {
+    throw new Error(`Blocked: matches sensitive path pattern ${typeof match === "string" ? match : match.source}`);
   }
 
   // O_NOFOLLOW on the leaf: a symlink swapped in at canonicalPath between the

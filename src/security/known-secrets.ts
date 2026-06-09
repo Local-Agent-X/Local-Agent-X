@@ -17,6 +17,48 @@
  * SECURITY: never log, echo, or otherwise emit the registered values.
  */
 
+// ── App-owned at-rest secret/key/seed files ──────────────────────────────
+//
+// The basenames of the key/seed/vault files THIS app persists under
+// getLaxDir(). They are the strongest possible "is this a secret file" signal
+// for our OWN files: we KNOW exactly what we write, so we match THOSE basenames
+// rather than guessing. This is the ONE canonical enumeration — the read-taint
+// classifier (data-lineage-paths.ts isSensitivePath / extractSensitivePaths…),
+// the file-access read gate + write block (file-access.ts SENSITIVE_PATTERNS /
+// coreProtectedFiles) ALL derive from it so they can never drift apart and
+// leave one of our own key files read-untainted or write-unprotected again.
+//
+// Lives here (a security/ leaf module both detection-layer consumers already
+// import, with no dependency on app-runtime) to avoid the layering inversion of
+// the detection layer reaching up into audit-signing.ts. A build-time assertion
+// (see the keychain/audit tests) pins this set to what the writer modules
+// (audit-signing.ts, keychain.ts) actually persist, so a NEW writer that adds a
+// key/seed file fails CI until its basename is enrolled here.
+//
+// SECURITY: enrollment is the gate — adding a writer without adding its
+// basename here means that file is neither tainted on read nor write-protected.
+export const APP_AT_REST_SECRET_BASENAMES: ReadonlySet<string> = new Set([
+  // audit-signing.ts — the HMAC audit seed (legacy plaintext + sealed forms).
+  "audit-key",
+  "audit-key.enc",
+  // keychain.ts — file-fallback salt + the secrets vault + DPAPI/file master keys.
+  "secrets.salt",
+  "secrets.enc",
+  "master.dpapi",
+  "master.key",
+  // OAuth/credential tokens persisted under the data dir.
+  "auth.json",
+]);
+
+/**
+ * Whether `basename` is one of the app's own at-rest secret/key/seed files
+ * (case-insensitive). Pass a bare basename, not a full path.
+ */
+export function isAppAtRestSecretBasename(basename: string): boolean {
+  if (!basename) return false;
+  return APP_AT_REST_SECRET_BASENAMES.has(basename.toLowerCase());
+}
+
 // In-memory registry of secret plaintext values to detect/scrub from any
 // content heading off-box. Populated proactively from the SecretsStore on
 // load/add, and lazily by browser_fill_from_secret / clipboard_write.

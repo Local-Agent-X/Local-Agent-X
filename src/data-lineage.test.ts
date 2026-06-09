@@ -69,6 +69,12 @@ describe("isSensitivePath — pattern spec table", () => {
     ["/srv/app/secrets.toml", true],
     ["/srv/app/credentials.json", true],
     ["/home/x/auth.json", true],
+    // -- R4-04/R4-05: the app's OWN at-rest key/seed/vault files (was a drift) --
+    ["/Users/x/.lax/audit-key", true, "audit HMAC seed (legacy plaintext) — was read-untainted"],
+    ["/Users/x/.lax/audit-key.enc", true, "sealed audit seed — .enc was attachment-only before"],
+    ["/Users/x/.lax/secrets.salt", true, "file-fallback key salt — was not in SENSITIVE_BASENAMES"],
+    ["/Users/x/.lax/secrets.enc", true, "encrypted secrets vault"],
+    ["/Users/x/.lax/master.dpapi", true, "DPAPI-sealed master key"],
     ["/home/x/.gnupg/secring.gpg", true, "any file inside ~/.gnupg"],
     ["C:\\Users\\me\\.aws\\credentials", true, "windows path separator"],
     ["C:\\Users\\me\\.ssh\\id_rsa", true],
@@ -174,6 +180,16 @@ describe("extractSensitivePathsFromCommand", () => {
   it("matches Windows absolute paths", () => {
     const matches = extractSensitivePathsFromCommand("type C:\\Users\\me\\.aws\\credentials");
     expect(matches).toContain("C:\\Users\\me\\.aws\\credentials");
+  });
+
+  it("taints a read of the app's OWN audit seed (R4-04 drift fix)", () => {
+    // `cat ~/.lax/audit-key` was previously read-untainted because audit-key
+    // wasn't in the sensitivity enumeration. It must now be extracted as a
+    // sensitive path so the read taints the session.
+    const matches = extractSensitivePathsFromCommand("cat ~/.lax/audit-key");
+    expect(matches.length).toBeGreaterThan(0);
+    expect(matches[0]).toMatch(/audit-key/);
+    expect(isSensitivePath(matches[0].replace(/^~/, homedir()))).toBe(true);
   });
 
   it("strips surrounding quotes", () => {

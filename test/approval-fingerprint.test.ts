@@ -27,6 +27,15 @@ describe("computeArgsFingerprint", () => {
       expect(withEnv).toBe("git status");
     });
 
+    it("strips a pathological env-prefix without catastrophic backtracking (ReDoS regression)", () => {
+      // The old `/^(\s*\w+=\S+\s+)+/` backtracks exponentially on many
+      // multi-space-separated assignments before a non-matching tail. The
+      // token-split implementation is linear, so this returns immediately
+      // rather than hanging the approval path.
+      const command = "a=b  ".repeat(2000) + "git status";
+      expect(computeArgsFingerprint("bash", { command })).toBe("git status");
+    });
+
     it("is case-insensitive on the tool name but preserves command case", () => {
       expect(computeArgsFingerprint("BASH", { command: "GIT status" })).toBe(
         "GIT status",

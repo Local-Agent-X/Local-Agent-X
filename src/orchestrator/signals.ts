@@ -56,8 +56,14 @@ export function mergeSignals(signals: ModuleSignal[], previousHashes: string[], 
 
 export function sanitizeSignal(raw: string): string {
   let s = raw.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
-  s = s.replace(/\[(?:system|assistant|user|INST)\][\s:]/gi, "");
-  s = s.replace(/<\/?(?:system|assistant|user|s|im_start|im_end)[^>]*>/gi, "");
+  // Strip prompt-injection markers to a fixpoint: a single pass leaves
+  // overlapping/nested forms (`<sys<system>tem>`) intact, so loop until stable.
+  let prev: string;
+  do {
+    prev = s;
+    s = s.replace(/\[(?:system|assistant|user|INST)\][\s:]/gi, "");
+    s = s.replace(/<\/?(?:system|assistant|user|s|im_start|im_end)[^>]*>/gi, "");
+  } while (s !== prev);
   return s;
 }
 

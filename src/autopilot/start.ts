@@ -14,6 +14,7 @@
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createNamedWorktree } from "../agency/worktree.js";
+import { randomId } from "../util/ids.js";
 import { acquireLock, registerExitCleanup } from "./lock.js";
 import { runAutopilotLoop } from "./loop.js";
 import type { AutopilotConfig, StartAutopilotRequest } from "./types.js";
@@ -120,7 +121,7 @@ function nowSlug(): string {
 }
 
 function newOpId(): string {
-  return "op_ap_" + Math.random().toString(36).slice(2, 10);
+  return randomId("op_ap");
 }
 
 /** Look up the repo root we're running from. */

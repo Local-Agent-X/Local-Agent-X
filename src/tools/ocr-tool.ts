@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { randomBytes } from "node:crypto";
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 /** Validate OCR language code: only allow Tesseract-valid patterns like 'eng', 'eng+fra', 'chi_sim' */
 function validateLang(lang: string): string {
@@ -109,7 +109,7 @@ writeFileSync(${JSON.stringify(outPath.replace(/\\/g, "/"))}, JSON.stringify(out
   try {
     writeFileSync(scriptPath, script, "utf-8");
 
-    execSync(`node "${scriptPath}"`, {
+    execFileSync(process.execPath, [scriptPath], {
       timeout: 60_000,
       stdio: "ignore",
       env: { ...process.env, NODE_OPTIONS: "" },

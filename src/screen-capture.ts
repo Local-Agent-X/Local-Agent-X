@@ -3,7 +3,7 @@
  * Uses PowerShell on Windows for zero-dependency screenshots.
  */
 
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
@@ -186,8 +186,9 @@ foreach ($s in $screens) {
     writeFileSync(scriptPath, ps, "utf-8");
     let output = "";
     try {
-      output = execSync(
-        `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`,
+      output = execFileSync(
+        "powershell",
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
         { encoding: "utf-8", timeout: 5000, windowsHide: true },
       ).trim();
     } finally {

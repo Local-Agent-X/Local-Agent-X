@@ -1,6 +1,7 @@
 import type { RouteHandler } from "../server-context.js";
 import type { ServerEvent } from "../types.js";
 import { sseWrite, corsHeaders, jsonResponse, safeParseBody, safeErrorMessage } from "../server-utils.js";
+import { randomId } from "../util/ids.js";
 import { ChatRequestSchema, validateBody } from "../route-schemas.js";
 import { createLogger } from "../logger.js";
 import { handleAutoDelegateRoutes } from "./chat/auto-delegate-routes.js";
@@ -79,7 +80,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     if (!message) { json(400, { error: "message is required" }); return true; }
     const timeoutMs = Math.min(Math.max(Number(evalBody.timeoutMs) || 60_000, 5_000), 120_000);
 
-    const evalSessionId = `eval-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const evalSessionId = randomId("eval");
     // Mark the session as dry-run BEFORE we kick off the chat turn so the
     // very first tool dispatch hits the short-circuit. Cleared in `finally`.
     markDryRunSession(evalSessionId);

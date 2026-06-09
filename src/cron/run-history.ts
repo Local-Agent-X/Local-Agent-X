@@ -10,6 +10,7 @@
 
 import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { randomId } from "../util/ids.js";
 
 export type CronRunStatus = "success" | "failed" | "error" | "skipped";
 
@@ -118,7 +119,7 @@ export class RunHistoryStore {
 
 /** Generate a compact, sortable run id. */
 export function newRunId(): string {
-  return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return randomId("run");
 }
 
 /** Truncate an output snippet for safe storage in history. */

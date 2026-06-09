@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { safeReadTextFile } from "./utils.js";
 import { writeMemorySafely } from "./write-safely.js";
 import { findContradictions } from "./contradiction-sweep.js";
+import { stripHtmlComments } from "../sanitize.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.personality");
@@ -112,7 +113,7 @@ export async function readPersonalityFile(
   const content = safeReadTextFile(filePath);
   if (!content || !content.trim()) return null;
 
-  const cleaned = content.replace(/<!--[\s\S]*?-->/g, "").trim() || null;
+  const cleaned = stripHtmlComments(content).trim() || null;
   if (!cleaned) return null;
 
   // Taint-check: profile files load into every system prompt, so a poisoned

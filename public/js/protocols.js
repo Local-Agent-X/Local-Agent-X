@@ -334,4 +334,3 @@ function protocolRun() {
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
-function cssEscape(s) { return String(s).replace(/"/g, '\\"'); }

@@ -139,7 +139,7 @@ function scoreMatch(text: string, command: VoiceCommand): CommandMatch | null {
   let bestScore = 0;
 
   for (const pattern of command.patterns) {
-    const patternWords = pattern.replace("*", "").trim().split(/\s+/).filter(Boolean);
+    const patternWords = pattern.replace(/\*/g, "").trim().split(/\s+/).filter(Boolean);
     const matches = patternWords.filter((w) => textWords.has(w)).length;
     const score = matches / patternWords.length;
     if (score > bestScore) bestScore = score;

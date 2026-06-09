@@ -477,8 +477,11 @@ function ideAddMessage(role, text, isPlaceholder, attachments) {
     el.id = 'ide-assistant-active';
   } else {
     const attachHtml = __ideAttachmentHtml(attachments);
-    const body = typeof md === 'function' ? md(text || '') : (text || '');
-    el.innerHTML = attachHtml + body;
+    const body = typeof md === 'function' ? md(text || '') : esc(text || '');
+    // Route the final markup through the DOM allowlist sanitizer: md() already
+    // sanitizes, but the no-md fallback and attachHtml must not reach innerHTML
+    // raw. sanitizeHtml is idempotent on already-safe content.
+    el.innerHTML = sanitizeHtml(attachHtml + body);
     if (typeof text === 'string') el.dataset.rawText = text;
   }
   msgs.appendChild(el);

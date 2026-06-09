@@ -24,6 +24,7 @@ import type {
   TransportEvent,
 } from "./anthropic.js";
 import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
+import { randomId } from "../../util/ids.js";
 
 export function defaultAnthropicTransport(): AnthropicTransport {
   return {
@@ -83,7 +84,7 @@ export function defaultAnthropicTransport(): AnthropicTransport {
           } else if (ev.type === "tool_call") {
             yield {
               type: "tool_call",
-              id: ev.id ?? `tc-${Math.random().toString(36).slice(2, 10)}`,
+              id: ev.id ?? randomId("tc"),
               name: ev.name ?? "",
               arguments: ev.arguments ?? "",
             };

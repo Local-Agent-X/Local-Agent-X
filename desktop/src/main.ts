@@ -32,13 +32,24 @@ import { registerAutostart } from "./autostart";
 import { runReconcile } from "./reconcile";
 import { shutdownNativeSpeech } from "./native-speech";
 
+// Encode an arbitrary string as a JS string literal that is safe to embed in
+// code handed to executeJavaScript. JSON.stringify alone leaves U+2028/U+2029
+// (legal in JSON, but a syntax error inside a JS source string) and `<`
+// (which can form `</script>` / `<!--`) unescaped.
+function jsLiteral(s: string): string {
+  return JSON.stringify(s)
+    .replace(/ /g, "\\u2028")
+    .replace(/ /g, "\\u2029")
+    .replace(/</g, "\\u003C");
+}
+
 // Push status text into the splash. Splash markup lives in splash.ts —
 // targets .status (main line) and #h (sub-hint). Failures are swallowed:
 // the splash may have already navigated away to the real app.
 function setSplashStatus(text: string): void {
   const w = getMainWindow();
   if (!w || w.isDestroyed()) return;
-  const safe = JSON.stringify(text);
+  const safe = jsLiteral(text);
   w.webContents.executeJavaScript(
     `(()=>{const e=document.querySelector('.status');if(e)e.textContent=${safe};})()`
   ).catch(() => {});
@@ -46,7 +57,7 @@ function setSplashStatus(text: string): void {
 function setSplashHint(text: string): void {
   const w = getMainWindow();
   if (!w || w.isDestroyed()) return;
-  const safe = JSON.stringify(text);
+  const safe = jsLiteral(text);
   // Also clearInterval the splash's 1s ticker — otherwise its s===15 /
   // s===45 branches overwrite our hint with the default "Warming up…" /
   // "Still loading…" text a few seconds later. (splash.ts captures the

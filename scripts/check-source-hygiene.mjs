@@ -31,8 +31,6 @@ const PARA_SEP = String.fromCharCode(0x2029);
 // Oversized files that predate the LOC gate. Do not add to this list to
 // silence the gate — split the file instead.
 const GRANDFATHERED = new Set([
-  "src/security/layer-core.ts",
-  "src/threat/threat-engine.ts",
   "desktop/src/main.ts",
   "public/js/chat-dictate.js",
   "public/js/apps-ide.js",

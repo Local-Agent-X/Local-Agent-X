@@ -7,7 +7,7 @@
 
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, shell, systemPreferences } from "electron";
 import { join } from "path";
-import { getProjectRoot, reloadLAXConfig, getLAXConfig } from "./config";
+import { getProjectRoot, reloadLAXConfig, getLAXConfig, LAX_DIR } from "./config";
 import { type DesktopSettings, getSetting, setSetting } from "./settings";
 import { bgForTheme, overlayForTheme, applyNativeTheme } from "./theme";
 import {
@@ -184,6 +184,11 @@ export function setupIPC(): void {
     const cfg = getLAXConfig();
     return shell.openExternal(`http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`);
   });
+
+  // Reveal the uploads folder so the user can browse/prune the raw files.
+  // The dir is created by the server at boot, which has run by the time the
+  // renderer (where this is triggered) exists.
+  ipcMain.handle("open-uploads-folder", () => shell.openPath(join(LAX_DIR, "uploads")));
 
   ipcMain.handle("copy-app-url", () => {
     const cfg = getLAXConfig();

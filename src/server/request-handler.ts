@@ -1,6 +1,6 @@
-import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, unlinkSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
-import { timingSafeEqual, randomBytes } from "node:crypto";
+import { timingSafeEqual, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
 import { getPageBundle } from "./static-bundle.js";
@@ -127,11 +127,36 @@ export function createRequestHandler(deps: {
         const ext = (part.filename?.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
         if (BLOCKED.has(ext)) { json(400, { error: `File type .${ext} not allowed` }); return; }
         const sigs = MAGIC[ext]; if (sigs && !sigs.some(s => part.data.length >= s.length && part.data.subarray(0, s.length).equals(s))) { json(400, { error: `File ${part.filename} doesn't match type .${ext}` }); return; }
-        const safeName = `${randomBytes(8).toString("hex")}.${ext}`;
-        writeFileSync(join(uploadsDir, safeName), part.data);
+        // Content-addressed name: identical bytes dedupe to one file on disk,
+        // so pasting the same screenshot repeatedly never re-stores it.
+        const safeName = `${createHash("sha256").update(part.data).digest("hex")}.${ext}`;
+        const destPath = join(uploadsDir, safeName);
+        if (!existsSync(destPath)) writeFileSync(destPath, part.data);
         uploaded.push({ name: part.filename || safeName, url: `/uploads/${safeName}`, size: part.data.length, isImage: /^(png|jpg|jpeg|gif|webp|svg|bmp)$/.test(ext) });
       }
       json(200, { files: uploaded }); return;
+    }
+    if (url.pathname === "/api/uploads/stats" && method === "GET") {
+      const uploadsDir = join(dataDir, "uploads");
+      let count = 0, bytes = 0;
+      if (existsSync(uploadsDir)) {
+        for (const fn of readdirSync(uploadsDir)) {
+          const st = statSync(join(uploadsDir, fn));
+          if (st.isFile()) { count++; bytes += st.size; }
+        }
+      }
+      json(200, { count, bytes }); return;
+    }
+    if (url.pathname === "/api/uploads" && method === "DELETE") {
+      const uploadsDir = join(dataDir, "uploads");
+      let removed = 0;
+      if (existsSync(uploadsDir)) {
+        for (const fn of readdirSync(uploadsDir)) {
+          const fp = join(uploadsDir, fn);
+          if (statSync(fp).isFile()) { unlinkSync(fp); removed++; }
+        }
+      }
+      json(200, { removed }); return;
     }
     if (method === "GET" && ["/uploads/", "/videos/", "/images/", "/files/"].some(r => url.pathname.startsWith(r))) {
       const provided = ((req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "") || url.searchParams.get("token") || "";

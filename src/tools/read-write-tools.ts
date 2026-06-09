@@ -1,7 +1,7 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, statSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, unlinkSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { resolveAgentPath } from "../workspace/paths.js";
-import { readValidatedFile } from "../security/file-access.js";
+import { readValidatedFile, writeValidatedFile } from "../security/file-access.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
@@ -153,7 +153,11 @@ export const writeTool: ToolDefinition = {
           }
         } catch { /* read failed — fall back to writing as-is */ }
       }
-      writeFileSync(filePath, toWrite, "utf-8");
+      // O_NOFOLLOW write: a symlink pre-planted at filePath is rejected (ELOOP)
+      // instead of redirecting the write to overwrite a file outside the
+      // workspace (R4-19 write leg). The pre-dispatch gate already realpath-
+      // confined this path; this closes the leaf-swap TOCTOU at the open.
+      writeValidatedFile(filePath, toWrite);
       const syntaxIssue = validateSyntax(filePath, toWrite);
       return ok(
         `Wrote ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,

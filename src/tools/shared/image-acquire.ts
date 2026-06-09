@@ -15,9 +15,10 @@
  * immutable content for a session; no eviction (TODO: bounded cache).
  */
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { readValidatedFile } from "../../security/file-access.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { workspacePath } from "../../config.js";
 import { canonicalFetch, EgressRedirectBlocked } from "../web-egress.js";
@@ -46,7 +47,7 @@ export interface AcquireOptions {
 
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 const DEFAULT_MAX_DIM = 4096;
-const ALLOWED_MIME = new Set<AcquiredImage["mimeType"]>([
+export const ALLOWED_MIME = new Set<AcquiredImage["mimeType"]>([
   "image/png",
   "image/jpeg",
   "image/gif",
@@ -82,8 +83,14 @@ async function writeCached(url: string, buf: Buffer): Promise<void> {
   }
 }
 
-/** Sniff MIME type from buffer magic bytes. SVG is text — detected from leading content. */
-function detectMime(buf: Buffer): AcquiredImage["mimeType"] | null {
+/**
+ * Sniff MIME type from buffer magic bytes. SVG is text — detected from leading content.
+ *
+ * Exported so the SAME magic-byte gate guards every image egress sink (view_image,
+ * the content-creation tools here): a non-image file renamed `.png` fails the sniff
+ * regardless of extension, so it can't base64-ship to the vision provider.
+ */
+export function detectMime(buf: Buffer): AcquiredImage["mimeType"] | null {
   if (buf.length < 4) return null;
   // PNG: 89 50 4E 47
   if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
@@ -248,13 +255,51 @@ function resolveLocalPath(source: string, workspaceRoot: string): string {
   // document's own path. This helper's contract is "local image, relative to
   // workspaceRoot"; confine both forms to honor it. (External images stay
   // reachable via http(s):// URLs, which route through the egress gate.)
-  const base = resolve(workspaceRoot);
-  const baseWithSep = base.endsWith(sep) ? base : base + sep;
-  const resolved = isAbsolute(source) ? resolve(source) : resolve(base, source);
-  if (resolved !== base && !resolved.startsWith(baseWithSep)) {
-    throw new Error(`Path traversal blocked for "${source}" — image must resolve under the workspace (${base})`);
+  // realpath BOTH the workspace root and the resolved target before the
+  // containment check. The lexical resolve()+startsWith left a symlink hole: a
+  // workspace file `logo.png → /private/tmp/secret.txt` passes a lexical check
+  // (its NAME is under the workspace) but reads OUTSIDE it. realpathSync follows
+  // every symlink/junction segment, so the containment test compares the real
+  // on-disk inode against the real workspace root — a link that escapes the
+  // workspace fails. This is a READ path, so the target must already exist; if
+  // realpath throws (ENOENT/ELOOP/…) the read can't succeed anyway, so reject.
+  // Lexical containment FIRST, against the LEXICAL workspace root: a `..`-escape
+  // or out-of-tree absolute path is rejected before we ever touch the
+  // filesystem, with the explicit traversal message (and without leaking "no
+  // such file" for a path that was never allowed to be probed).
+  const lexicalBase = resolve(workspaceRoot);
+  const lexicalBaseWithSep = lexicalBase.endsWith(sep) ? lexicalBase : lexicalBase + sep;
+  const lexical = isAbsolute(source) ? resolve(source) : resolve(lexicalBase, source);
+  if (lexical !== lexicalBase && !lexical.startsWith(lexicalBaseWithSep)) {
+    throw new Error(`Path traversal blocked for "${source}" — image must resolve under the workspace (${lexicalBase})`);
   }
-  return resolved;
+
+  // THEN realpath + re-assert containment against the REALPATH'd root: a path
+  // whose NAME is under the workspace but whose REALPATH escapes it (logo.png →
+  // /private/tmp/secret) is caught here. realpathSync follows every symlink/
+  // junction segment, so the containment test compares the real on-disk inode
+  // against the real workspace root — and realpath'ing BOTH sides keeps them
+  // comparable when the workspace root itself sits under a symlink (macOS temp
+  // dirs are /var → /private/var). This is a READ path — the target must exist;
+  // if realpath throws (ENOENT for a missing file, ELOOP for a symlink cycle)
+  // the read can't succeed anyway, so surface it as a read error.
+  let realBase: string;
+  try {
+    realBase = realpathSync(lexicalBase);
+  } catch (e) {
+    throw new Error(`Could not resolve workspace root for "${source}": ${(e as Error).message}`);
+  }
+  const realBaseWithSep = realBase.endsWith(sep) ? realBase : realBase + sep;
+  let real: string;
+  try {
+    real = realpathSync(lexical);
+  } catch (e) {
+    throw new Error(`Could not read image "${describeSource(source)}": ${(e as Error).message}`);
+  }
+  if (real !== realBase && !real.startsWith(realBaseWithSep)) {
+    throw new Error(`Path traversal blocked for "${source}" — image must resolve under the workspace (${realBase})`);
+  }
+  return real;
 }
 
 async function acquireOne(spec: ImageSpec, workspaceRoot: string, maxBytes: number, maxDim: number): Promise<AcquiredImage> {
@@ -267,7 +312,11 @@ async function acquireOne(spec: ImageSpec, workspaceRoot: string, maxBytes: numb
   } else {
     const localPath = resolveLocalPath(src, workspaceRoot);
     try {
-      buf = await readFile(localPath);
+      // Read the realpath'd, contained inode with O_NOFOLLOW on the leaf
+      // (readValidatedFile) so a symlink swapped in at the leaf between the
+      // realpath containment check above and this read is rejected, not
+      // followed — closing the read-leg TOCTOU on the same inode we validated.
+      buf = readValidatedFile(localPath);
     } catch (e) {
       throw new Error(`Could not read image "${describeSource(src)}": ${(e as Error).message}`);
     }

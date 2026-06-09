@@ -47,6 +47,13 @@ describe("capability-class membership (single source of truth)", () => {
     expect(hasCapability("read", "egress")).toBe(false);
   });
 
+  it("view_image is egress — its base64 image bytes ship off-box to the vision API (R4-20)", () => {
+    // Out of EGRESS_TOOLS, egressGuardGate/dataLineageGate/canaryEgressGate all
+    // early-return CONTINUE, so the image bytes never hit the secret/canary scan
+    // or the sensitive-attachment (path) check. Membership enrolls them.
+    expect(hasCapability("view_image", "egress")).toBe(true);
+  });
+
   it("sensitive-read class covers canonical AND synonyms", () => {
     for (const t of ["read", "bash", "sql_query", "ari_file", "email_read", "memory_search", "grep", "glob", "ari_retrieval", "ari_database", "ari_sqlite"]) {
       expect(hasCapability(t, "sensitive-read")).toBe(true);

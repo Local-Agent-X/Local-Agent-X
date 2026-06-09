@@ -4,7 +4,8 @@ import { createLogger } from "../logger.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath } from "../workspace/paths.js";
-import { openValidatedRead } from "../security/file-access.js";
+import { openValidatedRead, readValidatedFile } from "../security/file-access.js";
+import { detectMime, ALLOWED_MIME } from "./shared/image-acquire.js";
 
 const logger = createLogger("tools.vision");
 
@@ -23,7 +24,7 @@ export const viewImageTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
-    const { readFileSync, existsSync } = await import("node:fs");
+    const { existsSync } = await import("node:fs");
 
     const filePath = resolveAgentPath(String(args.path));
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
@@ -33,8 +34,21 @@ export const viewImageTool: ToolDefinition = {
     if (!imageExts.has(ext)) return { content: `Not an image file: .${ext}`, isError: true };
 
     try {
-      const data = readFileSync(filePath);
-      const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+      // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) — closes
+      // this sink's R4-19 leg, so a symlink swapped in after the gate is rejected
+      // here instead of base64-shipped off-box to the vision provider.
+      const data = readValidatedFile(filePath);
+
+      // Magic-byte content gate (R4-20): the extension is attacker-controlled —
+      // a renamed secret/sqlite/json `foo.png` passes the .png check but is NOT
+      // an image. Sniff the bytes with the SAME detector the content tools use
+      // and reject anything that isn't a real, allowed image type, so non-image
+      // bytes never base64-ship to the vision API.
+      const mime = detectMime(data);
+      if (!mime || !ALLOWED_MIME.has(mime)) {
+        return { content: `Not an image: ${filePath} (extension .${ext} but bytes are ${mime ?? "unrecognized"}). Refusing to send to the vision model.`, isError: true };
+      }
+
       const b64 = data.toString("base64");
       const question = String(args.question || "Describe this image in detail.");
 

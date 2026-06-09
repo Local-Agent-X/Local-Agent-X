@@ -125,6 +125,26 @@ describe("name-drift guard — every capability-set member resolves to a real to
     expect(registered.has("extract_site_assets")).toBe(true);
     expect(registered.has("youtube_analyze")).toBe(true);
   });
+
+  it("every off-box-fetch tool (policy.offBoxFetch) is enrolled in EGRESS_TOOLS (regression: C3-4/C3-11/C3-22)", () => {
+    // The egress capability class is hand-maintained; an off-box network sink
+    // left OUT of it skips the taint floor, secret scan, AND the canary
+    // tripwire (the three gates early-return CONTINUE for non-members). This
+    // invariant ties the class to the per-tool `offBoxFetch` mark so marking a
+    // tool off-box but forgetting to enroll it FAILS the build instead of
+    // silently re-opening the exfil channel.
+    const egress = new Set(CAPABILITY_CLASS_MEMBERS.egress);
+    const offBox = Object.entries(TOOL_POLICIES)
+      .filter(([, entry]) => entry.offBoxFetch === true)
+      .map(([name]) => name);
+    // Sanity: the four R3 sinks are actually marked (guards against a silent
+    // empty filter that would make the assertion vacuously pass).
+    for (const t of ["web_search", "generate_image", "generate_video", "send_video"]) {
+      expect(offBox, `${t} must carry offBoxFetch:true in the policy table`).toContain(t);
+    }
+    const unenrolled = offBox.filter(name => !egress.has(name));
+    expect(unenrolled, `offBoxFetch tools missing from EGRESS_TOOLS: ${unenrolled.join(", ")}`).toEqual([]);
+  });
 });
 
 describe("dataLineageGate keys on egress class (not just http_request)", () => {

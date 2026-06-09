@@ -83,6 +83,14 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "browser",                   // browser navigation/fetch actions (browser_* below)
   "extract_site_assets",       // model-controlled url → off-box GET (was DNS-pin only)
   "youtube_analyze",           // model-derived url → off-box GET + yt-dlp spawn
+  // Off-box sinks whose payload rides a non-url arg (query/queries/prompt) or
+  // ships local file bytes off-box — were missing the taint floor + secret scan
+  // + canary tripwire (R3 C3-4/C3-11/C3-22). Membership is build-time-enforced
+  // against policy `offBoxFetch: true` (capability-class-gates.test.ts).
+  "web_search",                // query/queries[] → off-box GET to DDG/Brave
+  "generate_image",            // model `prompt` → POST api.x.ai / api.openai.com
+  "generate_video",            // model `prompt` + base64 reference_image → api.x.ai
+  "send_video",                // ships a local file path off-box over a messaging bridge
 ]);
 
 // Sensitive-read = can surface file/secret/PII content into the model context.

@@ -12,6 +12,11 @@ const BLOCKED_COMMANDS = [
   /\bformat\b.*[/\\]/i,
   // Language-wrapper escapes (allow python -c and node -e for data transforms)
   /\beval\b/i,
+  // Bare interpreter-escape forms. These catch `perl -e`, `ruby -e`, `php -r`
+  // with the flag IMMEDIATELY after the binary. Intervening flags (`perl -w
+  // -e`, `ruby -rsocket -e`) slip past these word-boundary patterns, so the
+  // argv-aware detectInterpreterEscape() below is the real wall (C3-13). These
+  // remain as cheap, regex-level backstops.
   /\bperl\s+-e\b/i,
   /\bruby\s+-e\b/i,
   /\bphp\s+-r\b/i,
@@ -27,10 +32,13 @@ const BLOCKED_COMMANDS = [
   /\bcurl\b.*\|/i,
   /\bwget\b.*\|/i,
   /\|.*\b(bash|sh|cmd|powershell)\b/i,
-  // ── Shell-as-exfiltration: block network clients entirely ──
+  // ── Shell-as-exfiltration: best-effort denylist of network clients ──
   // These can send data to arbitrary hosts, bypassing all HTTP/SSRF controls.
   // The agent should use http_request (which has SSRF checks, DNS pinning,
   // content wrapping, and audit logging) instead of raw shell network tools.
+  // This is a BEST-EFFORT denylist, not an exhaustive wall — the structural
+  // answer is the argv[0] allowlist; this chunk hardens the denylist with the
+  // common clients. New/renamed binaries can still slip a denylist.
   /\bcurl\s/i,                              // curl (any use)
   /\bwget\s/i,                              // wget (any use)
   /\bnc\s/i,                                // netcat
@@ -42,6 +50,13 @@ const BLOCKED_COMMANDS = [
   /\bsftp\s/i,                              // sftp
   /\brsync\s/i,                             // rsync
   /\bftp\s/i,                               // ftp
+  /\baria2c\s/i,                            // aria2c download utility
+  /\btftp\s/i,                              // trivial FTP client
+  // `fetch`, `http`, `https`, `xh`, `httpie`, `curlie` are deliberately NOT
+  // listed here as `\bword\s` patterns: that would false-positive on
+  // legitimate non-network commands (`git fetch`, `npm fetch`). They are
+  // network clients ONLY as the leading argv[0], so detectNetworkClientArgv0()
+  // below blocks them by command-leading basename instead (C3-12/C3-14, (e)).
   // ── DNS / automation / opener clients (egress that bypasses HTTP/SSRF) ──
   // These reach the network or hand a URL to another app (DNS-tunnel exfil,
   // browser-launch-as-exfil, AppleScript-wrapped shell). `\bword\s` requires
@@ -56,6 +71,15 @@ const BLOCKED_COMMANDS = [
   /\bosascript\s/i,                         // macOS AppleScript (wraps `do shell script`)
   /\bopen\s/i,                              // macOS opener (launches browser/app w/ URL)
   /\bxdg-open\s/i,                          // Linux opener (launches browser/app w/ URL)
+  // ── macOS persistence / automation primitives (C3-12/C3-14) ──
+  // These install background jobs or run script-as-shell, an RCE/persistence
+  // path that needs no metacharacters. `launchctl submit -l x -- /bin/sh -c
+  // '…'` is metachar-free argv-RCE, so block on the `launchctl` binary name.
+  /\blaunchctl\b/i,                         // launchd control (submit/load → persistence + argv-RCE)
+  /\bautomator\b/i,                         // macOS Automator (runs workflows)
+  /\bshortcuts\s/i,                         // macOS Shortcuts CLI (runs shortcuts)
+  /\bosacompile\b/i,                        // compiles AppleScript (wraps shell)
+  /\bdefaults\s+write\b.*Launch(Agents|Daemons)/i, // persistence via LaunchAgents/Daemons plist
   /Invoke-WebRequest\b/i,                   // PowerShell web
   /Invoke-RestMethod\b/i,                   // PowerShell REST
   /\bIwr\b/i,                               // PowerShell alias
@@ -233,6 +257,123 @@ function stripQuotedSpans(command: string): string {
   return out;
 }
 
+// Split a command segment into whitespace-delimited tokens, treating a
+// single- or double-quoted span as one opaque token (so the inline script body
+// in `perl -e 'use Socket; ...'` is a single token, not the chain-breaking
+// words inside it). Quote characters are stripped from the emitted token. Good
+// enough for argv[0]/flag inspection — full shell word-splitting is not needed.
+function tokenizeCommand(segment: string): string[] {
+  const tokens: string[] = [];
+  let cur = "";
+  let quote: string | null = null;
+  let inToken = false;
+  for (const c of segment) {
+    if (quote) {
+      if (c === quote) quote = null;
+      else cur += c;
+      inToken = true;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+      inToken = true;
+    } else if (/\s/.test(c)) {
+      if (inToken) { tokens.push(cur); cur = ""; inToken = false; }
+    } else {
+      cur += c;
+      inToken = true;
+    }
+  }
+  if (inToken) tokens.push(cur);
+  return tokens;
+}
+
+// The basename of an executable token, lowercased, with any path prefix and a
+// trailing Windows .exe removed. `/usr/bin/perl` → "perl", `Ruby.EXE` → "ruby".
+function execBasename(token: string): string {
+  const base = token.replace(/^.*[\\/]/, "").toLowerCase();
+  return base.replace(/\.exe$/, "");
+}
+
+// ── C3-13: argv-aware interpreter-escape detection ──
+// The bare-form denylist (`\bperl\s+-e\b`, …) only catches the flag IMMEDIATELY
+// after the binary, so `perl -w -e`, `perl -Mstrict -e`, `ruby -rsocket -e`,
+// `ruby -w -e` slip through. Tokenize each pipe segment; if argv[0]'s basename
+// is an inline-eval interpreter and ANY later token is an eval/require flag —
+// `-e`/`-E`/`-r`, or a clustered short-flag containing e/E/r (e.g. `-we`,
+// `-rsocket`) — block it, regardless of intervening flags.
+const INTERP_ESCAPE_BINS = new Set(["perl", "ruby", "php"]);
+
+function detectInterpreterEscape(command: string): string | null {
+  for (const segment of command.split("|")) {
+    const tokens = tokenizeCommand(segment);
+    if (tokens.length === 0) continue;
+    const bin = execBasename(tokens[0]);
+    if (!INTERP_ESCAPE_BINS.has(bin)) continue;
+    for (let i = 1; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (t === "--") break; // end-of-flags; remaining tokens are operands
+      if (!t.startsWith("-") || t.startsWith("--")) continue; // operand or long-flag
+      // Short-flag (cluster). Flag chars come before any glued value: in
+      // `-rsocket` the flag is `r`, "socket" is its argument. The eval/require
+      // flags are the LEADING cluster chars up to the first that takes a value.
+      // Simplest sound rule: if any of e/E/r appears in the short-flag token's
+      // letters, treat it as an inline-eval/require escape.
+      const flagBody = t.slice(1);
+      if (/[eEr]/.test(flagBody)) {
+        return `Blocked: ${bin} inline-eval/require flag (interpreter escape).`;
+      }
+    }
+  }
+  return null;
+}
+
+// ── C3-12/C3-14: network-client argv[0] denylist ──
+// `fetch`/`http`/`https`/`xh`/`httpie`/`curlie` are network clients ONLY when
+// they LEAD the command — `git fetch`/`npm fetch` are not. So gate them by the
+// argv[0] basename of each pipe segment, never as a substring (spec (e)).
+const NETWORK_CLIENT_BINS = new Set([
+  "fetch", "http", "https", "xh", "httpie", "curlie",
+]);
+
+function detectNetworkClientArgv0(command: string): string | null {
+  for (const segment of command.split("|")) {
+    const tokens = tokenizeCommand(segment);
+    if (tokens.length === 0) continue;
+    if (NETWORK_CLIENT_BINS.has(execBasename(tokens[0]))) {
+      return "Blocked: raw shell network client — use http_request (SSRF-checked) instead.";
+    }
+  }
+  return null;
+}
+
+// ── C3-17: raw-socket / network module use in node -e / python -c bodies ──
+// The denylist above flags some HTTP *libraries* (requests/urllib/httpx) but
+// misses RAW SOCKETS and the low-level node/python network modules, which give
+// the same arbitrary-egress capability inside an inline script body. Broaden
+// the inline-interpreter scan to also flag net/socket/https/http(module)/dgram/
+// fetch/tls/connect. Only fires when an inline-script flag (node -e / python -c
+// / perl -e / ruby -e) AND a network-module reference both appear, matching the
+// existing detectScriptWrite style.
+function detectInlineNetwork(command: string): string | null {
+  const hasInlineScript =
+    /\b(python[23]?|node|perl|ruby)\b\s+-[a-zA-Z]*[ce]\b/i.test(command);
+  if (!hasInlineScript) return null;
+  const networkPatterns = [
+    /\bimport\s+socket\b/i,                 // python: import socket
+    /\bsocket\.socket\s*\(/i,               // python: socket.socket(...)
+    /\brequire\s*\(\s*['"](net|https?|dgram|tls)['"]\s*\)/i, // node: require("net"/"http"/"https"/"dgram"/"tls")
+    /\bimport\s+.*\bfrom\s+['"](net|https?|dgram|tls)['"]/i, // node ESM: import x from "net"
+    /\bIO::Socket\b/i,                      // perl: IO::Socket
+    /\buse\s+Socket\b/i,                    // perl: use Socket
+    /\bTCPSocket\b/i,                       // ruby: TCPSocket
+    /\bfetch\s*\(/i,                        // node 18+/deno global fetch()
+    /\.connect\s*\(/i,                      // socket/Socket .connect(...)
+  ];
+  if (networkPatterns.some((p) => p.test(command))) {
+    return "Blocked: raw socket / network module in inline script — use http_request (SSRF-checked) instead.";
+  }
+  return null;
+}
+
 export function evaluateShellCommand(command: string): SecurityDecision {
   // Obfuscation detection
   try {
@@ -260,6 +401,27 @@ export function evaluateShellCommand(command: string): SecurityDecision {
   const scriptWriteResult = detectScriptWrite(command);
   if (scriptWriteResult) {
     return { allowed: false, reason: scriptWriteResult, userHint: USER_HINTS.commandShell };
+  }
+
+  // C3-13: argv-aware interpreter-escape (perl/ruby/php inline eval with
+  // intervening flags — `perl -w -e`, `ruby -rsocket -e`).
+  const interpEscape = detectInterpreterEscape(command);
+  if (interpEscape) {
+    return { allowed: false, reason: interpEscape, userHint: USER_HINTS.commandShell };
+  }
+
+  // C3-12/C3-14: network clients gated by argv[0] basename (fetch/http/xh/…),
+  // so `git fetch` is unaffected but a leading `http example.com` is blocked.
+  const netClient = detectNetworkClientArgv0(command);
+  if (netClient) {
+    return { allowed: false, reason: netClient, userHint: USER_HINTS.commandShell };
+  }
+
+  // C3-17: raw socket / low-level network module use inside node -e / python -c
+  // (and perl/ruby) inline bodies — the same arbitrary egress as a network CLI.
+  const inlineNet = detectInlineNetwork(command);
+  if (inlineNet) {
+    return { allowed: false, reason: inlineNet, userHint: USER_HINTS.commandShell };
   }
 
   // Block dangerous shell metacharacters (command chaining, subshells, command substitution)

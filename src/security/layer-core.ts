@@ -10,8 +10,7 @@ import {
   type ToolCallContext,
 } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
-import { evaluateShellCommand } from "./shell-policy.js";
-import { evaluateShellPaths } from "./shell-path-guard.js";
+import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
 import { TOOL_CLASS_MAP } from "../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../tool-registry.js";
@@ -276,16 +275,15 @@ export class SecurityLayer {
       // 2) confine bash to the file-access mode — the same boundary the file
       //    tools obey — so "workspace only" means bash too. Best-effort on
       //    Windows (parses the command); the planned POSIX path adds a kernel
-      //    hard-wall. See shell-path-guard.ts.
-      decision = evaluateShellCommand(command);
-      if (decision.allowed) {
-        decision = evaluateShellPaths(command, {
-          workspace: this.workspace,
-          fileAccessMode: this.fileAccessMode,
-          allowedPathCheck: (rp, sid) => this.isInAllowedPaths(rp, sid),
-          sessionId: ctx.sessionId,
-        });
-      }
+      //    hard-wall. Both steps live in the shared evaluateShellCommandAndPaths
+      //    helper so the shell-class path (process_start) gets the identical
+      //    confinement. See shell-path-guard.ts.
+      decision = evaluateShellCommandAndPaths(command, {
+        workspace: this.workspace,
+        fileAccessMode: this.fileAccessMode,
+        allowedPathCheck: (rp, sid) => this.isInAllowedPaths(rp, sid),
+        sessionId: ctx.sessionId,
+      });
     } else if (toolName === "web_fetch" || toolName === "http_request") {
       decision = evaluateWebFetch(
         this.egressAllowlist,

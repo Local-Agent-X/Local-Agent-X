@@ -15,6 +15,7 @@ import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network
 import { TOOL_CLASS_MAP } from "../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../tool-registry.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
+import { loadEgressMode, loadLocalServicePorts, loadFileAccessMode } from "./security-config.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("security.layer-core");
@@ -108,9 +109,9 @@ export class SecurityLayer {
 
   constructor(workspace: string, fileAccessMode?: FileAccessMode) {
     this.workspace = resolve(workspace);
-    this.fileAccessMode = fileAccessMode || this.loadFileAccessMode();
-    this.egressMode = this.loadEgressMode();
-    this.localServicePorts = this.loadLocalServicePorts();
+    this.fileAccessMode = fileAccessMode || loadFileAccessMode();
+    this.egressMode = loadEgressMode();
+    this.localServicePorts = loadLocalServicePorts();
     // Load egress allowlist from ~/.lax/egress-allowlist.json.
     //
     // In permissive mode (default): allowlist is the "trusted destinations"
@@ -141,52 +142,6 @@ export class SecurityLayer {
       logger.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
     }
     logger.info(`[security] File access mode: ${this.fileAccessMode}`);
-  }
-
-  private loadEgressMode(): EgressMode {
-    try {
-      const cfgPath = join(getLaxDir(), "security.json");
-      if (existsSync(cfgPath)) {
-        const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-        if (cfg.egressMode === "strict" || cfg.egressMode === "permissive") {
-          return cfg.egressMode;
-        }
-      }
-    } catch {}
-    return "permissive";
-  }
-
-  private loadLocalServicePorts(): Set<string> {
-    const ports = new Set<string>();
-    try {
-      const cfgPath = join(getLaxDir(), "security.json");
-      if (existsSync(cfgPath)) {
-        const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-        if (Array.isArray(cfg.localServicePorts)) {
-          for (const p of cfg.localServicePorts) {
-            const n = Number(p);
-            if (Number.isInteger(n) && n > 0 && n <= 65535) ports.add(String(n));
-          }
-        }
-      }
-    } catch {}
-    if (ports.size > 0) {
-      logger.info(`[security] Local service ports loaded: ${ports.size} ports`);
-    }
-    return ports;
-  }
-
-  private loadFileAccessMode(): FileAccessMode {
-    try {
-      const cfgPath = join(getLaxDir(), "security.json");
-      if (existsSync(cfgPath)) {
-        const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-        if (["workspace", "common", "unrestricted"].includes(cfg.fileAccessMode)) {
-          return cfg.fileAccessMode;
-        }
-      }
-    } catch {}
-    return "common"; // Default
   }
 
   setFileAccessMode(mode: FileAccessMode): void {

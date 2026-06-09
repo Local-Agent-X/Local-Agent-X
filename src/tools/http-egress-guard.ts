@@ -16,11 +16,13 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { scanForSecrets } from "../security/secret-scanner.js";
 import { matchEgressList } from "../security/network-policy.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { isSensitiveAttachmentPath } from "../data-lineage.js";
+import { realpathDeep } from "../security/file-access.js";
 
 let trustedDestinationsCache: { fingerprint: number; set: Set<string> } | null = null;
 
@@ -128,18 +130,78 @@ export function checkOutboundPayload(sink: string, text: string): GuardBlock | n
   };
 }
 
+// Max attachment bytes scanned for secret-shaped content. Mirrors the scanner's
+// 256KB budget (security/secret-scanner.ts MAX_DECODED_BUDGET, data-lineage's
+// SECRET_SCAN_CAP): a secret in the head of a file is caught; a buried key past
+// 256KB of a huge attachment is the accepted edge and keeps the regex pass cheap.
+const ATTACHMENT_SCAN_CAP = 256 * 1024;
+
+/**
+ * Canonicalize an attachment path the SAME way the email tool's resolvePath
+ * does (tilde-expand → resolve), then follow every symlink segment via
+ * realpathDeep. Used by BOTH the guard (check) and the email tool (read) so the
+ * checked inode IS the read inode — no check-path/read-path divergence.
+ *
+ * Throws on ELOOP (a symlink cycle is an attack) so callers fail closed.
+ */
+export function canonicalizeAttachmentPath(p: string): string {
+  let abs: string;
+  if (p === "~") abs = homedir();
+  else if (p.startsWith("~/") || p.startsWith("~\\")) abs = resolve(homedir(), p.slice(2));
+  else abs = resolve(p);
+  return realpathDeep(abs);
+}
+
 /**
  * Reject an egress attachment that points at a sensitive file (e.g. ~/.lax
  * secrets, an SSH key, a .env). `paths` is the list of file paths the sink
  * would read+attach (e.g. email_send attachments). Returns null if clean.
+ *
+ * TOCTOU close (C3-9): the sensitivity predicate runs on the REALPATH, not the
+ * supplied string — so a symlink `/tmp/notes.txt → ~/.ssh/id_rsa` is caught
+ * because the predicate now sees the real `.ssh` target. A symlink CYCLE
+ * (ELOOP) is treated as an attack and blocked. Beyond the path check, the
+ * attachment BYTES are streamed through scanForSecrets (C3-9 second leg): a
+ * file whose path looks innocent but whose contents are a key is still blocked.
+ * Residual window: a swap between this check's realpath and the tool's later
+ * read is not closed by realpath alone (would need O_NOFOLLOW+fstat); the email
+ * tool re-canonicalizes via the SAME canonicalizeAttachmentPath, so both sides
+ * resolve to one inode and the window is the narrow check→read gap only.
  */
 export function checkAttachmentPaths(sink: string, paths: readonly string[]): GuardBlock | null {
-  const offending = paths.filter(p => isSensitiveAttachmentPath(p));
+  const offending: string[] = [];
+  for (const p of paths) {
+    let real: string;
+    try {
+      real = canonicalizeAttachmentPath(p);
+    } catch (e) {
+      // ELOOP (symlink cycle) — realpathDeep only rethrows this. Treat as an
+      // attack and refuse the attachment rather than letting the read follow it.
+      if ((e as NodeJS.ErrnoException).code === "ELOOP") { offending.push(p); continue; }
+      // Any other resolution failure: fall back to the lexical string so a
+      // genuinely sensitive literal path is still caught.
+      real = p;
+    }
+    // Check BOTH the realpath (catches a symlink to a sensitive target) and the
+    // supplied string (catches a sensitive literal even if it doesn't exist yet).
+    if (isSensitiveAttachmentPath(real) || isSensitiveAttachmentPath(p)) { offending.push(p); continue; }
+
+    // Byte scan: the path may be innocent while the CONTENTS are a secret.
+    try {
+      const buf = readFileSync(real, { flag: "r" });
+      const slice = buf.length > ATTACHMENT_SCAN_CAP ? buf.subarray(0, ATTACHMENT_SCAN_CAP) : buf;
+      if (!scanForSecrets(slice.toString("utf-8")).clean) { offending.push(p); continue; }
+    } catch {
+      // Unreadable / not-a-file: the email tool's own readFile will surface the
+      // error. We don't block solely on a read failure here.
+    }
+  }
   if (offending.length === 0) return null;
   return {
     message:
       `Refusing ${sink}: cannot attach sensitive file(s) (${offending.join(", ")}). ` +
-      `Credential / secret files (.env, SSH keys, ~/.lax secrets, keychains) may not be sent off-box as attachments.`,
+      `Credential / secret files (.env, SSH keys, ~/.lax secrets, keychains), symlinks to them, ` +
+      `or files whose contents are secret-shaped may not be sent off-box as attachments.`,
     meta: { sink, blocked_by: "sensitive-attachment", paths: offending },
   };
 }

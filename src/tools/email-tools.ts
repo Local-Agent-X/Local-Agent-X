@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { resolve, basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { getLaxDir } from "../lax-data-dir.js";
+import { canonicalizeAttachmentPath } from "./http-egress-guard.js";
 import { recentlyDone, markDone, fingerprintOf, describeAge } from "./idempotency.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
@@ -213,8 +214,12 @@ const emailSend: ToolDefinition = {
         const paths: string[] = JSON.parse(attachmentsRaw);
         mailOpts.attachments = await Promise.all(
           paths.map(async (p) => {
-            const abs = resolvePath(p);
-            return { filename: basename(abs), content: await readFile(abs) };
+            // Read the SAME canonicalized inode the egress guard checked
+            // (canonicalizeAttachmentPath: tilde-expand → resolve → realpathDeep),
+            // so a symlink can't be checked-as-innocent then read-as-secret. The
+            // filename keeps the user-facing basename of the supplied path.
+            const abs = canonicalizeAttachmentPath(p);
+            return { filename: basename(resolvePath(p)), content: await readFile(abs) };
           }),
         );
       }

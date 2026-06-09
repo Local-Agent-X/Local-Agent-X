@@ -4,7 +4,7 @@ import { createLogger } from "../logger.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath } from "../workspace/paths.js";
-import { openValidatedRead, readValidatedFile } from "../security/file-access.js";
+import { openValidatedRead, readValidatedFile } from "../security/validated-io.js";
 import { detectMime, ALLOWED_MIME } from "./shared/image-acquire.js";
 
 const logger = createLogger("tools.vision");

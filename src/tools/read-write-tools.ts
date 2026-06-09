@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, mkdirSync, unlinkSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { resolveAgentPath } from "../workspace/paths.js";
-import { readValidatedFile, writeValidatedFile } from "../security/file-access.js";
+import { readValidatedFile, writeValidatedFile } from "../security/validated-io.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";

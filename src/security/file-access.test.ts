@@ -11,7 +11,8 @@ import {
   closeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { evaluateFileAccess, openValidatedRead, readValidatedFile } from "./file-access.js";
+import { evaluateFileAccess } from "./file-access.js";
+import { openValidatedRead, readValidatedFile } from "./validated-io.js";
 
 // Hermetic temp root, realpath-resolved so the test's lexical paths and the
 // gate's realpath'd paths agree (collapses the macOS /var → /private/var

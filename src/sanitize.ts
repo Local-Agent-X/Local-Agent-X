@@ -13,6 +13,21 @@ import {
 export { isSecretShaped, registerRedactedSecretValue, unregisterRedactedSecretValue };
 
 /**
+ * Strip HTML comments from memory/profile text before it is shown or folded
+ * into a system prompt. Loops to a fixpoint so nested or split comment markers
+ * (`<!-- <!-- --> -->`) can't leave a live tail behind.
+ */
+export function stripHtmlComments(s: string): string {
+  let out = s;
+  let prev: string;
+  do {
+    prev = out;
+    out = out.replace(/<!--[\s\S]*?-->/g, "");
+  } while (out !== prev);
+  return out;
+}
+
+/**
  * External Content Sanitizer
  *
  * Wraps untrusted content (web pages, API responses, browser extracts)

@@ -1,4 +1,5 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { htmlToText } from "../app-renderer/sanitize.js";
 
 interface SearchResult { title: string; url: string; snippet: string }
 
@@ -16,8 +17,7 @@ async function searchDDG(query: string, max: number, signal?: AbortSignal): Prom
   let m: RegExpExecArray | null;
   while ((m = blockRe.exec(html)) && results.length < max) {
     const url = decodeURIComponent(m[1].replace(/.*uddg=/, "").replace(/&.*/, ""));
-    const strip = (s: string) => s.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").trim();
-    results.push({ title: strip(m[2]), url, snippet: strip(m[3]) });
+    results.push({ title: htmlToText(m[2]), url, snippet: htmlToText(m[3]) });
   }
   return results;
 }

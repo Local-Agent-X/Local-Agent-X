@@ -9,6 +9,7 @@ import { readFileSync, unlinkSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { htmlToText } from "../app-renderer/sanitize.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -28,17 +29,9 @@ function extractVideoId(input: string): string | null {
   return null;
 }
 
-/** Decode HTML entities in caption text */
+/** Decode HTML entities and strip tags in caption text */
 function decodeEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/<[^>]+>/g, "")
-    .trim();
+  return htmlToText(text);
 }
 
 /** Format seconds as mm:ss or h:mm:ss */

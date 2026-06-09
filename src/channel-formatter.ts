@@ -142,7 +142,9 @@ function convertToTelegramMarkdown(text: string): string {
   });
 
   // Escape Telegram special chars: _ * [ ] ( ) ~ ` > # + - = | { } . !
-  result = result.replace(/([_*\[\]()~>#+\-=|{}.!])/g, "\\$1");
+  // Backslash MUST be escaped first, otherwise the escapes added below could be
+  // neutralised/combined by a literal `\` already present in the text.
+  result = result.replace(/\\/g, "\\\\").replace(/([_*\[\]()~>#+\-=|{}.!])/g, "\\$1");
 
   // Restore (unescaped — code spans pass through MarkdownV2 raw).
   for (let i = 0; i < codeBlocks.length; i++) {

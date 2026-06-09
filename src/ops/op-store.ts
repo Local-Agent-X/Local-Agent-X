@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { opDir } from "./event-log.js";
 import type { Op, OpStatus } from "./types.js";
+import { randomId } from "../util/ids.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.op-store");
@@ -70,7 +71,7 @@ export function setOpStatus(opId: string, status: OpStatus, extras: Partial<Op> 
 }
 
 export function newOpId(prefix = "op"): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return randomId(prefix);
 }
 
 const TERMINAL_STATUSES: OpStatus[] = ["completed", "failed", "cancelled"];

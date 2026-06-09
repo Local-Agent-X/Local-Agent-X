@@ -9,7 +9,8 @@ function esc(s) {
 // URL sanitizer — strips javascript: URIs, data: URIs, and event handler injections
 function sanitizeUrl(url) {
   // Decode HTML entities that esc() produced, validate, re-encode
-  const decoded = url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#x27;/g, "'");
+  // Decode `&amp;` LAST so `&amp;lt;` doesn't double-decode into `<`.
+  const decoded = url.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&amp;/g, '&');
   // Only allow http/https
   if (!/^https?:\/\//i.test(decoded)) return '#';
   // Block dangerous protocols even if they appear after whitespace/encoding tricks
@@ -48,8 +49,9 @@ function sanitizeHtml(html) {
 
   function isSafeUrl(value) {
     const decoded = String(value)
-      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&')
       .trim();
     const schemeMatch = decoded.match(/^([a-z][a-z0-9+.-]*):/i);
     if (schemeMatch) {

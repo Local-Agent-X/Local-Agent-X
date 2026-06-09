@@ -69,7 +69,11 @@ async function* walkDir(dir: string, typeFilter?: string, globFilter?: string): 
     } else if (e.isFile()) {
       if (typeFilter && extname(e.name).slice(1) !== typeFilter) continue;
       if (globFilter) {
-        const re = new RegExp("^" + globFilter.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
+        // Escape every regex metacharacter first (so `+`, `(`, `[`… in a glob
+        // are literal), THEN turn the surviving `*` into `.*`. The old version
+        // only escaped `.`, so other metachars leaked into the pattern.
+        const escaped = globFilter.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+        const re = new RegExp("^" + escaped + "$");
         if (!re.test(e.name)) continue;
       }
       yield full;

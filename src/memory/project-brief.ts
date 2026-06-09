@@ -24,6 +24,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { safeReadTextFile } from "./utils.js";
 import { writeMemorySafely } from "./write-safely.js";
 import { dedupeProfileMarkdown } from "./personality.js";
+import { stripHtmlComments } from "../sanitize.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("memory.project-brief");
@@ -65,7 +66,7 @@ export async function readProjectBrief(
   const content = safeReadTextFile(path);
   if (!content || !content.trim()) return null;
 
-  const cleaned = content.replace(/<!--[\s\S]*?-->/g, "").trim() || null;
+  const cleaned = stripHtmlComments(content).trim() || null;
   if (!cleaned) return null;
 
   try {

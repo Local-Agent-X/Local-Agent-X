@@ -29,8 +29,13 @@ function showRetryError(el, originalMessage, errorMsg) {
   el.innerHTML = `<div class="error-retry">
     <div style="color:var(--danger);font-size:.82rem;margin-bottom:6px">Something went wrong</div>
     <div style="color:var(--muted);font-size:.75rem;margin-bottom:12px">${esc(hint)}</div>
-    <button class="action-btn primary" style="font-size:.75rem;padding:6px 16px" onclick="retryMessage('${esc(originalMessage.replace(/'/g, "\\'"))}')">Retry</button>
+    <button class="action-btn primary" style="font-size:.75rem;padding:6px 16px">Retry</button>
   </div>`;
+  // Wire retry via a listener, not an inline onclick: originalMessage stays a
+  // closure variable and is never interpolated into HTML, so there is no
+  // string-in-attribute injection vector (the old onclick was XSS-prone).
+  const retryBtn = el.querySelector('.error-retry button');
+  if (retryBtn) retryBtn.addEventListener('click', () => retryMessage(originalMessage));
 }
 
 function retryMessage(text) {

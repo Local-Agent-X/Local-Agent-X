@@ -1,18 +1,8 @@
-import { createHash } from "node:crypto";
 import { mkdir, writeFile, readFile, rm, copyFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
 import { getLaxDir } from "./lax-data-dir.js";
-
-export interface UpdateInfo {
-  version: string;
-  tag: string;
-  tarballUrl: string;
-  sha256: string;
-  releaseNotes: string;
-  publishedAt: string;
-}
 
 interface UpdateHistoryEntry {
   version: string;
@@ -88,16 +78,35 @@ export class OTAManager {
     return { commit: data.sha, subject: (data.commit?.message || "").split("\n")[0] };
   }
 
-  // Download the latest `main` source tarball. Unlike downloadUpdate (release
-  // assets, checksum-verified), main publishes no SHA256SUMS — integrity rests
-  // on HTTPS plus the extract. Returns the local tarball path for applyUpdate.
-  async downloadMainTarball(): Promise<string> {
+  // Download the `main` source tarball for a SPECIFIC, already-resolved commit.
+  //
+  // We deliberately fetch the IMMUTABLE per-commit archive
+  // (`archive/<sha>.tar.gz`) rather than the mutable branch ref
+  // (`archive/refs/heads/main.tar.gz`): the branch ref can change bytes between
+  // the commit-resolution call and the download, so the bytes we execute would
+  // not be bound to any commit we recorded. Pinning the URL to the resolved sha
+  // is the integrity binding for the rolling channel — the executed bytes ARE
+  // the named commit. A non-empty commit is required; without it there is no
+  // binding and we refuse to download (mirrors downloadUpdate's
+  // reject-on-missing-checksum posture).
+  //
+  // TODO(rolling-checksum): once installer-rolling.yml publishes a SHA256SUMS
+  // for the per-commit archive, also fetch + verify that here so a poisoned CDN
+  // response for a valid sha URL is rejected too. The commit-pin already
+  // removes the mutable-ref swap; the published checksum would add bytes-level
+  // verification on top.
+  async downloadMainTarball(commit: string): Promise<string> {
+    if (!commit) {
+      throw new Error(
+        "Update rejected: no resolved commit. The rolling update must pin an immutable commit archive before downloading."
+      );
+    }
     await this.init();
-    const url = `https://github.com/${this.repoOwner}/${this.repoName}/archive/refs/heads/main.tar.gz`;
+    const url = `https://github.com/${this.repoOwner}/${this.repoName}/archive/${commit}.tar.gz`;
     const r = await fetch(url, { redirect: "follow" });
     if (!r.ok) throw new Error(`Download failed: ${r.status}`);
     const buffer = Buffer.from(await r.arrayBuffer());
-    const tarPath = join(this.updatesDir, `main-${Date.now()}.tar.gz`);
+    const tarPath = join(this.updatesDir, `main-${commit}-${Date.now()}.tar.gz`);
     await writeFile(tarPath, buffer);
     return tarPath;
   }
@@ -113,91 +122,25 @@ export class OTAManager {
     }
   }
 
-  async checkForUpdates(currentVersion: string): Promise<UpdateInfo | null> {
-    const url = `https://api.github.com/repos/${this.repoOwner}/${this.repoName}/releases/latest`;
-    const response = await fetch(url, {
-      headers: { Accept: "application/vnd.github+json" },
-    });
-
-    if (!response.ok) {
-      throw new Error(`GitHub API error: ${response.status}`);
-    }
-
-    const release = (await response.json()) as {
-      tag_name: string;
-      body: string;
-      published_at: string;
-      assets: Array<{
-        name: string;
-        browser_download_url: string;
-      }>;
-      tarball_url: string;
-    };
-
-    const releaseVersion = release.tag_name.replace(/^v/, "");
-    if (!this.isNewer(releaseVersion, currentVersion)) {
-      return null;
-    }
-
-    const checksumAsset = release.assets.find(
-      (a) => a.name === "SHA256SUMS" || a.name === "checksums.txt"
-    );
-    let sha256 = "";
-    if (checksumAsset) {
-      const csResp = await fetch(checksumAsset.browser_download_url);
-      if (csResp.ok) {
-        const text = await csResp.text();
-        const match = text.match(/^([a-f0-9]{64})/m);
-        if (match) sha256 = match[1];
-      }
-    }
-
-    return {
-      version: releaseVersion,
-      tag: release.tag_name,
-      tarballUrl: release.tarball_url,
-      sha256,
-      releaseNotes: release.body ?? "",
-      publishedAt: release.published_at,
-    };
-  }
-
-  async downloadUpdate(info: UpdateInfo): Promise<string> {
-    await this.init();
-
-    const response = await fetch(info.tarballUrl, {
-      headers: { Accept: "application/vnd.github+json" },
-      redirect: "follow",
-    });
-
-    if (!response.ok) {
-      throw new Error(`Download failed: ${response.status}`);
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-
-    if (!info.sha256) {
-      throw new Error(
-        "Update rejected: no SHA256 checksum available. The release must include a SHA256SUMS asset."
-      );
-    }
-    const hash = createHash("sha256").update(buffer).digest("hex");
-    if (hash !== info.sha256) {
-      throw new Error(
-        `Checksum mismatch: expected ${info.sha256}, got ${hash}`
-      );
-    }
-
-    const tarPath = join(this.updatesDir, `${info.version}.tar.gz`);
-    await writeFile(tarPath, buffer);
-    return tarPath;
-  }
-
   async applyUpdate(
     tarPath: string,
     installDir: string,
-    currentVersion: string
+    currentVersion: string,
+    expectedCommit: string
   ): Promise<void> {
+    // Integrity gate: never extract bytes over the live install dir unless they
+    // are bound to a resolved commit. The rolling path resolves main → sha,
+    // downloads the immutable archive/<sha>.tar.gz, and passes that sha here;
+    // an empty/missing commit means the bytes have no integrity binding, so we
+    // REFUSE rather than `tar xzf` + copy them (mirrors the deleted
+    // downloadUpdate's reject-on-missing-checksum posture). This is the single
+    // chokepoint guarding the extract — see ota-update.test.ts.
+    if (!expectedCommit) {
+      throw new Error(
+        "Update rejected: no resolved commit bound to the downloaded bytes. Refusing to extract unverified source over the install."
+      );
+    }
+
     // Extract first so we can back up exactly what this update will overwrite.
     const extractDir = join(this.updatesDir, `extract-${Date.now()}`);
     await mkdir(extractDir, { recursive: true });
@@ -262,20 +205,6 @@ export class OTAManager {
 
   async getHistory(): Promise<UpdateHistoryEntry[]> {
     return this.readHistory();
-  }
-
-  private isNewer(candidate: string, current: string): boolean {
-    const parseParts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
-    const a = parseParts(candidate);
-    const b = parseParts(current);
-    const len = Math.max(a.length, b.length);
-    for (let i = 0; i < len; i++) {
-      const av = a[i] ?? 0;
-      const bv = b[i] ?? 0;
-      if (av > bv) return true;
-      if (av < bv) return false;
-    }
-    return false;
   }
 
   private async readHistory(): Promise<UpdateHistoryEntry[]> {

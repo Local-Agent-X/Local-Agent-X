@@ -21,6 +21,18 @@ name: Rolling Installer (tracks main)
 #
 # For reproducible, pinned releases use installer-release.yml instead (push a
 # v* tag); that path bakes in the tag and never tracks main.
+#
+# Integrity of the in-app rolling update (R4-06): the app does NOT fetch the
+# mutable refs/heads/main.tar.gz. It resolves main → an immutable commit sha and
+# downloads archive/<sha>.tar.gz, binding the executed bytes to that sha
+# (src/ota-update.ts downloadMainTarball/applyUpdate refuse to extract without a
+# resolved commit). This workflow can't pre-publish a SHA256SUMS for that
+# archive: it builds the installer .exe/.dmg, not the per-commit source asset,
+# and the update commit isn't known until update time (GitHub generates the
+# git-archive on demand). TODO(rolling-checksum): if we ever switch the rolling
+# update to a frozen, workflow-published source tarball asset, generate a
+# SHA256SUMS over THAT asset here and have downloadMainTarball verify it — same
+# bytes hashed and fetched — instead of the on-demand git-archive.
 
 on:
   workflow_dispatch:

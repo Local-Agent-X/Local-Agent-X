@@ -160,8 +160,9 @@ export function decodedPayloadViews(text: string): string[] {
     scheme.re.lastIndex = 0;
     for (const m of text.matchAll(scheme.re)) {
       if (budget.remaining <= 0) break;
-      // Iteratively peel up to MAX_DECODE_DEPTH layers, surfacing every decoded
-      // text view (latin1 + both-endian utf16le for base64/hex; percent text) —
+      // Iteratively peel every encoding layer (budget-bounded), surfacing every
+      // decoded text view (latin1 + both-endian utf16le for base64/hex; percent
+      // text) —
       // the SAME helper scanEncodedViews/scanKnownValues use, so the taint-overlap
       // check can't drift from the scanner on multi-layer encodings.
       for (const v of iterativeRunViews(scheme, m[0], budget)) views.push(v);

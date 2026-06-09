@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import { scanForSecrets, redactSecrets } from "./secret-scanner.js";
+import { buildNormalizedView } from "./secret-normalize.js";
 import {
   registerRedactedSecretValue,
   unregisterRedactedSecretValue,
@@ -205,7 +206,7 @@ describe("scanForSecrets — round-3 encoding/normalization evasions (C3-6..19)"
   });
 
   // C3-18: three encoding layers. The old fixed one-extra-layer peel stopped at 2
-  // layers; the iterative peel (up to MAX_DECODE_DEPTH) recovers the inner key.
+  // layers; the iterative peel (budget-bounded, no depth cap) recovers the key.
   it("C3-18: catches base64(base64(hex(key))) — 3-layer iterative decode", () => {
     const l1 = Buffer.from(ANT_KEY, "utf8").toString("hex");
     const l2 = Buffer.from(l1, "utf8").toString("base64");
@@ -241,7 +242,8 @@ describe("scanForSecrets — round-3 encoding/normalization evasions (C3-6..19)"
   });
 
   // Performance / decompression-bomb bound: a large, deeply-nested base64 input
-  // must terminate quickly (depth cap + shared MAX_DECODED_BUDGET), not hang.
+  // must terminate quickly. The shared MAX_DECODED_BUDGET byte counter is the
+  // SOLE bound now (no fixed depth cap), and is sufficient for DoS safety.
   it("bounds work on a large nested encoded input (no hang)", () => {
     // ~200KB of nested base64 wrapping. Build by repeatedly re-encoding a chunk.
     let payload = "A".repeat(50_000);
@@ -258,6 +260,136 @@ describe("scanForSecrets — round-3 encoding/normalization evasions (C3-6..19)"
     // point is "bounded, not unbounded," not a tight latency SLA.
     expect(typeof r.clean).toBe("boolean");
     expect(ms).toBeLessThan(10000);
+  });
+});
+
+// ── R4-14: category-Cf format-char interleaving (bidi + zero-width) ───────────
+// The scanner view folds NFKC/NFKD + strips Mn/Me + controls, but the bidi format
+// controls (U+202A–202E, U+2066–2069) are NFKC-stable and were NOT stripped, so a
+// secret interleaved with U+202E stayed non-contiguous and EVERY pass (catalog,
+// normalized-view, known-value) missed it — http-egress-guard then allowed
+// egress, and a receiver that strips \p{Cf} recovers the live key. buildNormalized
+// View now strips ALL \p{Cf} from the scanner view, folding the run to contiguous.
+describe("scanForSecrets — R4-14 category-Cf format-char interleaving", () => {
+  const registered: string[] = [];
+  afterEach(() => {
+    while (registered.length) unregisterRedactedSecretValue(registered.pop()!);
+  });
+
+  // Interleave a format char between EVERY character of the key.
+  function interleave(s: string, fmt: string): string {
+    return [...s].map((c) => c + fmt).join("");
+  }
+
+  it("R4-14: catches an sk-ant key interleaved with U+202E (RLO) — was clean", () => {
+    const obf = interleave(ANT_KEY, "‮");
+    const text = `key: ${obf}`;
+    const r = scanForSecrets(text);
+    expect(r.clean).toBe(false);
+    expect(redactSecrets(text)).not.toContain(obf);
+  });
+
+  it("R4-14: catches an sk-ant key interleaved with U+2066 (LRI)", () => {
+    const r = scanForSecrets(`key: ${interleave(ANT_KEY, "⁦")}`);
+    expect(r.clean).toBe(false);
+  });
+
+  it("R4-14: catches a REGISTERED known value interleaved with U+202E (known-value pass)", () => {
+    const KNOWN = "correct-horse-battery-staple-passphrase";
+    registerRedactedSecretValue(KNOWN);
+    registered.push(KNOWN);
+    const r = scanForSecrets(`body=${interleave(KNOWN, "‮")}`);
+    expect(r.clean).toBe(false);
+    expect(r.matches.some((m) => m.type === "known-secret-value")).toBe(true);
+  });
+
+  it("R4-14: catches a REGISTERED known value interleaved with U+2066 (known-value pass)", () => {
+    const KNOWN = "correct-horse-battery-staple-passphrase";
+    registerRedactedSecretValue(KNOWN);
+    registered.push(KNOWN);
+    const r = scanForSecrets(`body=${interleave(KNOWN, "⁦")}`);
+    expect(r.clean).toBe(false);
+    expect(r.matches.some((m) => m.type === "known-secret-value")).toBe(true);
+  });
+
+  // Build-time-style invariant over the fold itself: a representative set of every
+  // category-Cf sub-kind (bidi controls, zero-width, soft hyphen, BOM, joiners),
+  // interleaved into a known secret, must ALL fold to a contiguous run in
+  // buildNormalizedView — proving no Cf char re-opens the gap. Asserts BOTH the
+  // fold (the normalized view contains the bare secret) AND end-to-end detection.
+  const CF_CODEPOINTS: ReadonlyArray<[string, number]> = [
+    ["U+202A LRE", 0x202a],
+    ["U+202B RLE", 0x202b],
+    ["U+202C PDF", 0x202c],
+    ["U+202D LRO", 0x202d],
+    ["U+202E RLO", 0x202e],
+    ["U+2066 LRI", 0x2066],
+    ["U+2067 RLI", 0x2067],
+    ["U+2068 FSI", 0x2068],
+    ["U+2069 PDI", 0x2069],
+    ["U+200B ZWSP", 0x200b],
+    ["U+200C ZWNJ", 0x200c],
+    ["U+200D ZWJ", 0x200d],
+    ["U+00AD SHY", 0x00ad],
+    ["U+FEFF BOM", 0xfeff],
+    ["U+2060 WJ", 0x2060],
+    ["U+061C ALM", 0x061c],
+  ];
+
+  for (const [name, cp] of CF_CODEPOINTS) {
+    it(`R4-14 invariant: buildNormalizedView strips ${name} so the secret folds contiguous`, () => {
+      const fmt = String.fromCodePoint(cp);
+      const obf = [...ANT_KEY].map((c) => c + fmt).join("");
+      const { normalized } = buildNormalizedView(`key: ${obf}`);
+      expect(normalized).not.toContain(fmt); // the Cf char is gone from the view
+      expect(normalized).toContain(ANT_KEY); // and the bare secret is contiguous
+      expect(scanForSecrets(`key: ${obf}`).clean).toBe(false); // and detected
+    });
+  }
+
+  // No new false positive: a normal ZWJ emoji sequence (U+200D joins) and ordinary
+  // accented prose must still scan CLEAN — stripping \p{Cf} in the SCANNER view is
+  // detection-only and trips no credential/known-value pattern.
+  it("R4-14 negative: a ZWJ emoji sequence in ordinary text stays clean", () => {
+    // 👨‍👩‍👧‍👦 family emoji = person glyphs joined by U+200D ZWJ.
+    const text = "the family 👨‍👩‍👧‍👦 went to the park";
+    expect(scanForSecrets(text).clean).toBe(true);
+  });
+
+  it("R4-14 negative: bidi-marked accented prose stays clean", () => {
+    const text = "résumé ‫مرحبا‬ café naïve";
+    expect(scanForSecrets(text).clean).toBe(true);
+  });
+});
+
+// ── decode-depth: deeper-than-5 encoding nesting is now scanned ───────────────
+// The decode peel was bounded by BOTH a fixed MAX_DECODE_DEPTH (=5) AND the shared
+// byte budget. A secret wrapped in >5 layers stopped at depth 5 even with budget
+// left. The fixed cap was removed (budget is the sole, DoS-safe bound), so deeper
+// nesting is now peeled and caught.
+describe("scanForSecrets — decode-depth: budget-only bound (no fixed depth cap)", () => {
+  it("catches a 6-layer base64-wrapped key (was clean: stopped at depth 5)", () => {
+    let payload = ANT_KEY;
+    for (let i = 0; i < 6; i++) {
+      payload = Buffer.from(payload, "utf8").toString("base64");
+    }
+    expect(scanForSecrets(`v=${payload}`).clean).toBe(false);
+  });
+
+  it("catches a 7-layer base64-wrapped key (budget permitting)", () => {
+    let payload = ANT_KEY;
+    for (let i = 0; i < 7; i++) {
+      payload = Buffer.from(payload, "utf8").toString("base64");
+    }
+    expect(scanForSecrets(`v=${payload}`).clean).toBe(false);
+  });
+
+  it("negative: a deep base64 wrap of ordinary prose stays clean", () => {
+    let payload = "the quarterly planning meeting is scheduled for next week";
+    for (let i = 0; i < 7; i++) {
+      payload = Buffer.from(payload, "utf8").toString("base64");
+    }
+    expect(scanForSecrets(`note=${payload}`).clean).toBe(true);
   });
 });
 

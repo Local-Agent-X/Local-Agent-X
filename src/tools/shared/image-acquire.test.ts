@@ -110,7 +110,8 @@ describe("acquireImages", () => {
   });
 
   it("throws on private-IP URL via SSRF gate", async () => {
-    // dnsPinCheck allows localhost intentionally, but blocks RFC1918 ranges.
+    // canonicalFetch's per-hop literal-IP gate blocks RFC1918 ranges (loopback
+    // self-calls stay allowed via the configured-port self-call recognition).
     await expect(
       acquireImages([{ source: "http://10.0.0.1/img.png" }]),
     ).rejects.toThrow(/blocked|Blocked/);

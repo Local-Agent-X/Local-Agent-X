@@ -1,4 +1,5 @@
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
+import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { getInternalAgentToken } from "../rbac.js";
 import { resolveAndPinHost, evaluateEgressForUrl } from "../security/network-policy.js";
 
@@ -132,4 +133,83 @@ export function createPinningDispatcher(): Agent {
       },
     },
   });
+}
+
+export interface CanonicalFetchOptions {
+  /** Request headers (merged as-is; no secret resolution here). */
+  headers?: Record<string, string>;
+  /** Per-request timeout in ms (default 30s). */
+  timeoutMs?: number;
+  /** Max redirect hops to follow before failing (default 5). */
+  maxRedirects?: number;
+}
+
+/** Schemes a canonicalFetch is allowed to dial. A redirect that bounces to
+ *  file:/data:/gopher:/etc. must fail closed — only http(s) goes through the
+ *  pinning dispatcher's SSRF gate, so anything else is an egress bypass. */
+function assertHttpScheme(url: string): void {
+  let scheme: string;
+  try {
+    scheme = new URL(url).protocol;
+  } catch {
+    throw new EgressRedirectBlocked(url, "Blocked: invalid URL (SSRF protection)");
+  }
+  if (scheme !== "http:" && scheme !== "https:") {
+    throw new EgressRedirectBlocked(url, `Blocked: scheme ${scheme} not allowed (SSRF protection)`);
+  }
+}
+
+/** The ONE hardened, SSRF-pinned fetch used wherever an internal-kernel tool
+ *  reaches the network without the dispatch-time evaluateWebFetch gate (e.g.
+ *  content-tool image acquisition). Ties together the SAME exported primitives
+ *  web_fetch / http_request use inline — createPinningDispatcher (DNS-pin +
+ *  private-IP block at connect, no TOCTOU), assertLiteralIpEgressAllowed
+ *  (synchronous literal-IP SSRF the dispatcher can't see) and
+ *  assertRedirectEgressAllowed (cross-host allowlist re-check) — driven through
+ *  a MANUAL per-hop redirect loop that re-validates EVERY hop (scheme +
+ *  literal-IP + DNS-pin) before connecting. Fails CLOSED (throws
+ *  EgressRedirectBlocked, or the dispatcher's connect error) on any disallowed
+ *  host, bad scheme, or DNS failure for a non-loopback host.
+ *
+ *  Returns the final undici Response. The caller owns size/MIME/timeout-of-body
+ *  concerns; this is purely the network + SSRF layer. */
+export async function canonicalFetch(
+  url: string,
+  opts: CanonicalFetchOptions = {},
+): Promise<UndiciResponse> {
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const maxRedirects = opts.maxRedirects ?? 5;
+  const dispatcher = createPinningDispatcher();
+  try {
+    let currentUrl = url;
+    const fetchOpts: UndiciRequestInit = {
+      headers: opts.headers ?? {},
+      signal: AbortSignal.timeout(timeoutMs),
+      redirect: "manual",
+      dispatcher,
+    };
+
+    // Pre-connect scheme + literal-IP SSRF check on the INITIAL url (the pinning
+    // dispatcher's connect.lookup never fires for a literal IP).
+    assertHttpScheme(currentUrl);
+    await assertLiteralIpEgressAllowed(currentUrl);
+    let r = await undiciFetch(currentUrl, fetchOpts);
+
+    let redirects = 0;
+    while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirects < maxRedirects) {
+      const location = new URL(r.headers.get("location")!, currentUrl).toString();
+      // Validate the redirect target BEFORE following: scheme, cross-host egress
+      // allowlist, and literal-IP SSRF on every hop (same-host included — a 302
+      // to a literal private/metadata/NAT64/6to4 IP bypasses the dispatcher).
+      assertHttpScheme(location);
+      assertRedirectEgressAllowed(currentUrl, location);
+      await assertLiteralIpEgressAllowed(location);
+      currentUrl = location;
+      r = await undiciFetch(currentUrl, fetchOpts);
+      redirects++;
+    }
+    return r;
+  } finally {
+    await dispatcher.close().catch(() => {});
+  }
 }

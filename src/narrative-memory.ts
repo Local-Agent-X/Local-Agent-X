@@ -5,142 +5,25 @@
  * timeline context, and ongoing chapters. Stories grow over time as new
  * details emerge, creating a rich tapestry of shared history.
  *
- * Persists to ~/.lax/narratives.json.
+ * Persistence and pure scoring helpers live in ./narrative-memory-store.js.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
-import { randomBytes } from "node:crypto";
-import { getLaxDir } from "./lax-data-dir.js";
 import type { ModuleSignal } from "./orchestrator/types.js";
+import {
+  loadStore,
+  saveStore,
+  generateId,
+  now,
+  dateStamp,
+  textContains,
+  scoreMatch,
+  LIFE_EVENT_KEYWORDS,
+  PROJECT_KEYWORDS,
+  STORY_PATTERNS,
+} from "./narrative-memory-store.js";
+import type { Narrative, NarrativeContext } from "./narrative-memory-store.js";
 
-// ── Types ────────────────────────────────────────────────────
-
-export interface NarrativeChapter {
-  text: string;
-  timestamp: number;
-  emotions: string[];
-}
-
-export interface Narrative {
-  id: string;
-  title: string;
-  summary: string;
-  chapters: NarrativeChapter[];
-  characters: string[];
-  emotions: string[];
-  tags: string[];
-  startDate: string;
-  endDate?: string;
-  ongoing: boolean;
-}
-
-export interface NarrativeContext {
-  emotions?: string[];
-  characters?: string[];
-  tags?: string[];
-  relatedTo?: string;
-}
-
-interface NarrativeStore {
-  narratives: Narrative[];
-}
-
-// ── Persistence ─────────────────────────────────────────────
-
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "narratives.json");
-const MAX_NARRATIVES = 2000;
-
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
-
-function loadStore(): NarrativeStore {
-  if (!existsSync(STORE_FILE)) return { narratives: [] };
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return { narratives: Array.isArray(parsed.narratives) ? parsed.narratives : [] };
-  } catch {
-    return { narratives: [] };
-  }
-}
-
-function saveStore(store: NarrativeStore): void {
-  ensureDir();
-  if (store.narratives.length > MAX_NARRATIVES) {
-    store.narratives = store.narratives.slice(-MAX_NARRATIVES);
-  }
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
-}
-
-function generateId(): string {
-  return randomBytes(8).toString("hex");
-}
-
-function now(): number {
-  return Date.now();
-}
-
-function dateStamp(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-// ── Keyword helpers ─────────────────────────────────────────
-
-const LIFE_EVENT_KEYWORDS = [
-  "moved", "moving", "new job", "quit", "fired", "hired", "promoted",
-  "married", "engaged", "broke up", "divorced", "pregnant", "baby",
-  "graduated", "started school", "retired", "lost", "died", "passed away",
-  "bought a house", "sold", "launched", "shipped", "released",
-  "trip", "vacation", "traveling", "flew to", "driving to",
-];
-
-const PROJECT_KEYWORDS = [
-  "building", "working on", "developing", "creating", "launching",
-  "deployed", "shipped", "released", "finished", "completed", "started",
-];
-
-// Surface markers that the user is telling a story — the cheap pre-gate before
-// autoDetectNarrative() does the real life-event / project matching.
-const STORY_PATTERNS = [
-  /\bso (basically|what happened|the thing is|long story)\b/i,
-  /\byesterday|last (week|month|night|year)\b/i,
-  /\bremember when\b/i,
-  /\bback when\b/i,
-  /\bthe other day\b/i,
-];
-
-function tokenize(text: string): string[] {
-  return text.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(Boolean);
-}
-
-function textContains(text: string, phrase: string): boolean {
-  return text.toLowerCase().includes(phrase.toLowerCase());
-}
-
-function scoreMatch(text: string, query: string): number {
-  const tokens = tokenize(query);
-  if (tokens.length === 0) return 0;
-  const lowerText = text.toLowerCase();
-  let hits = 0;
-  for (const tok of tokens) {
-    if (lowerText.includes(tok)) hits++;
-  }
-  return hits / tokens.length;
-}
+export type { Narrative, NarrativeChapter, NarrativeContext } from "./narrative-memory-store.js";
 
 // ── NarrativeMemory ─────────────────────────────────────────
 

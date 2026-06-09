@@ -104,7 +104,7 @@ export const BLOCKED_COMMANDS = [
   /\bzsh\s+-i\b/i,                          // interactive zsh
   /\bpython[23]?\s+-i\b/i,                  // interactive Python
   /\bnode\s+--inspect/i,                     // Node debugger (can execute arbitrary code)
-  /\b\/dev\/tcp\//i,                         // bash /dev/tcp reverse shell
+  /(^|[\s<>&|=])\/dev\/(tcp|udp)\//i,        // bash /dev/tcp|/dev/udp socket (reverse shell / exfil); boundary-char guard hits spaced AND glued redirects without false-firing on path/dev/tcpdump
   /\bmkfifo\b/i,                             // named pipe (reverse shell building block)
   /\bexec\s+\d+<>/i,                        // fd exec redirect (reverse shell)
   /\bnohup\b.*&$/i,                          // background persistent process

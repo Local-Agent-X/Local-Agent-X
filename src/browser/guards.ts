@@ -4,6 +4,99 @@
  * stays under the file-size cap.
  */
 import { promises as dns } from "node:dns";
+import type { BrowserContext } from "playwright";
+import { loadEgressConfig, validateUrlWithDns } from "../security/network-policy.js";
+
+/** Schemes that must never be reached via a top-level document navigation —
+ *  click-induced, redirect, or JS. Sub-resources (a page's own data: image,
+ *  etc.) are NOT globally killed; only the main-frame document load is. */
+const BLOCKED_NAV_SCHEMES = new Set(["file:", "chrome:", "view-source:", "data:"]);
+
+/** Contexts that already have the request guard installed. Shared mode reuses
+ *  one default context across every getPage() call, so without this the route
+ *  handler would stack (and double-handle each request). */
+const guardedContexts = new WeakSet<BrowserContext>();
+
+/**
+ * Install a single context-level request guard so EVERY navigation a page in
+ * this context makes — click/act/fill-induced, form-submit, JS-redirect,
+ * meta-refresh, and every HTTP-redirect hop — is SSRF/scheme-checked by
+ * construction at the request layer, before the request leaves. This is the
+ * invariant that closes the gap where per-call dnsPinCheck only gated the
+ * INITIAL url of navigate/new_tab (R4-01 click-to-internal, R4-02 redirect).
+ *
+ * Playwright fires the route handler for the original request AND for each
+ * redirected request, so per-hop coverage is automatic once installed.
+ *
+ * The guard is scoped to the agent's own context (the manager only ever calls
+ * this on contexts it acquires from the dedicated agent Chrome — never the
+ * user's real browser, which the agent can't drive at all; see launcher.ts).
+ * Installed at most once per context.
+ */
+export async function installRequestGuard(context: BrowserContext): Promise<void> {
+  if (guardedContexts.has(context)) return;
+  guardedContexts.add(context);
+
+  const selfPort = process.env.LAX_PORT ?? "7007";
+
+  await context.route("**/*", async (route, request) => {
+    let url: string;
+    try {
+      url = request.url();
+    } catch {
+      await route.continue();
+      return;
+    }
+
+    let scheme: string;
+    try {
+      scheme = new URL(url).protocol;
+    } catch {
+      // Unparseable URL on a navigation request → fail closed; otherwise let
+      // the browser deal with it as a normal (sub-resource) request.
+      if (request.isNavigationRequest()) { await route.abort("blockedbyclient"); return; }
+      await route.continue();
+      return;
+    }
+
+    // Non-http(s) requests: only block top-level DOCUMENT navigations to the
+    // dangerous schemes. A page's own data: image / blob: etc. passes through.
+    if (scheme !== "http:" && scheme !== "https:") {
+      const isTopDoc = request.resourceType() === "document" && request.isNavigationRequest();
+      if (isTopDoc && BLOCKED_NAV_SCHEMES.has(scheme)) {
+        await route.abort("blockedbyclient");
+        return;
+      }
+      await route.continue();
+      return;
+    }
+
+    // http(s): run the canonical async SSRF gate (scheme + literal-IP + DNS
+    // resolve to private/loopback/link-local/metadata). Self-server calls to
+    // 127.0.0.1:<selfPort> are allowed by the canonical gate. Fail closed on a
+    // navigation request if the check throws; let sub-resources continue so a
+    // transient DNS hiccup on an analytics beacon doesn't kill the page.
+    try {
+      const cfg = loadEgressConfig();
+      const decision = await validateUrlWithDns(
+        cfg.allowlist,
+        cfg.configured,
+        selfPort,
+        url,
+        cfg.mode,
+        cfg.localServicePorts,
+      );
+      if (!decision.allowed) {
+        await route.abort("blockedbyclient");
+        return;
+      }
+      await route.continue();
+    } catch {
+      if (request.isNavigationRequest()) { await route.abort("blockedbyclient"); return; }
+      await route.continue();
+    }
+  });
+}
 
 /**
  * Prevents DNS rebinding to private IPs. Allows localhost/127.0.0.1.

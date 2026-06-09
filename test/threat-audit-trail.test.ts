@@ -5,16 +5,49 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { CryptoAuditTrail, getSharedAuditTrail } from "../src/threat/audit-trail.js";
+import { _resetAuditKeyCacheForTests } from "../src/app-runtime/audit-signing.js";
 
 let dataDir: string;
+let prevDataDir: string | undefined;
+let prevAuditKey: string | undefined;
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "lax-audit-"));
+  prevDataDir = process.env.LAX_DATA_DIR;
+  prevAuditKey = process.env.LAX_AUDIT_KEY;
 });
 
 afterEach(() => {
   rmSync(dataDir, { recursive: true, force: true });
+  if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDataDir;
+  if (prevAuditKey === undefined) delete process.env.LAX_AUDIT_KEY; else process.env.LAX_AUDIT_KEY = prevAuditKey;
+  _resetAuditKeyCacheForTests();
 });
+
+/**
+ * Force a genuine NO-KEY environment for the pre-key back-compat cases: point
+ * audit-key resolution at the key-less per-test tempdir and unset the env
+ * override, then drop the cached seed. The C3 era ratchet keys off
+ * hasPersistedAuditKey(), so without this a dev machine's real ~/.lax seed would
+ * make the era active and (correctly) reject these legacy chains — but these
+ * tests exist to prove the genuine pre-key window still verifies.
+ */
+function isolateNoKeyEnv(): void {
+  process.env.LAX_DATA_DIR = dataDir;
+  delete process.env.LAX_AUDIT_KEY;
+  _resetAuditKeyCacheForTests();
+}
+
+/**
+ * Force a genuine KEYED environment: point audit-key resolution at the per-test
+ * tempdir and pin an env seed so hasPersistedAuditKey() is true and a stable key
+ * is used for both record() and verify() regardless of the dev machine's ~/.lax.
+ */
+function isolateKeyedEnv(): void {
+  process.env.LAX_DATA_DIR = dataDir;
+  process.env.LAX_AUDIT_KEY = "test-fixed-audit-seed";
+  _resetAuditKeyCacheForTests();
+}
 
 function dailyAuditPath(): string {
   // CryptoAuditTrail writes to <dataDir>/audit/<YYYY-MM-DD>.jsonl plus a
@@ -245,9 +278,11 @@ describe("CryptoAuditTrail — HMAC keyed chain + full-field coverage", () => {
 
   it("verifies a GENUINE pre-anchoring log (legacy-only, no marker, no anchor) with anchorChecked: false", () => {
     // The genuine back-compat case the anchor cross-check may still skip: an
-    // old dev file with NO hmac-v1 rows, NO era marker, and NO anchor file.
-    // (A chain written by record() is hmac-v1 and lays down the marker, so its
-    // missing anchor now fails CLOSED — see the C2 regression test below.)
+    // old dev file with NO resolvable seed, NO hmac-v1 rows, NO era marker, and
+    // NO anchor file. (A chain written by record() is hmac-v1 and lays down the
+    // marker, so its missing anchor now fails CLOSED — see the C2 regression
+    // test below.)
+    isolateNoKeyEnv();
     const legacy = {
       seq: 0, timestamp: new Date().toISOString(), sessionId: "s", event: "x",
       decision: "allow", reason: "legacy", prevHash: "GENESIS",
@@ -269,7 +304,9 @@ describe("CryptoAuditTrail — HMAC keyed chain + full-field coverage", () => {
   });
 
   it("legacy plain-SHA-256 entries (no hashScheme tag) still verify — boot compat", () => {
-    // Simulate a pre-upgrade audit file written under the old narrow scheme.
+    // Simulate a pre-upgrade audit file written under the old narrow scheme,
+    // on a genuine pre-key install (no resolvable seed → era inactive).
+    isolateNoKeyEnv();
     const legacy = {
       seq: 0, timestamp: new Date().toISOString(), sessionId: "s", event: "x",
       decision: "allow", reason: "legacy", prevHash: "GENESIS",
@@ -399,6 +436,63 @@ describe("CryptoAuditTrail.verify — fail CLOSED against filesystem-only forger
     const lines = readFileSync(path, "utf-8").trim().split("\n");
     expect(lines).toHaveLength(3);
     writeFileSync(path, lines.slice(0, 2).join("\n") + "\n");
+
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(false);
+    expect(r.anchorChecked).toBe(true);
+  });
+
+  it("C3-1: with a key resolvable, deleting the marker AND rewriting ALL rows as legacy plain-SHA-256 still FAILS", () => {
+    // The residual hole: pre-fix, eraActive keyed only off the marker + row
+    // tags, BOTH attacker-deletable. An attacker with FS write deletes the
+    // marker + anchor and rewrites the whole log as a self-consistent plain-
+    // SHA-256 chain with NO hashScheme tags, flipping block→allow. eraActive
+    // went false, the legacy branch recomputed an unkeyed hash over attacker-
+    // known bytes, and verify() returned valid:true. Now hasPersistedAuditKey()
+    // keeps the era active regardless, so the legacy branch is unreachable.
+    isolateKeyedEnv();
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "block", reason: "incriminating", threatScore: 99 });
+    a.record({ sessionId: "s", event: "x", decision: "block", reason: "also bad", threatScore: 88 });
+    const path = dailyAuditPath();
+
+    // Attacker deletes BOTH the sealed era marker AND the anchor, then rewrites
+    // every row as a plain-SHA-256 legacy chain (no hashScheme), decision
+    // flipped to allow. No hmac-v1 tag and no marker survive — only the key.
+    rmSync(join(dataDir, "audit", ".hmac-v1.marker"), { force: true });
+    rmSync(path.replace(/\.jsonl$/, ".anchors.jsonl"), { force: true });
+    let prev = "GENESIS";
+    const forged: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const e: Record<string, unknown> = {
+        seq: i, timestamp: new Date().toISOString(), sessionId: "s",
+        event: "x", decision: "allow", reason: "innocuous", prevHash: prev,
+      };
+      e.hash = legacyHash(e);
+      prev = e.hash as string;
+      forged.push(JSON.stringify(e));
+    }
+    writeFileSync(path, forged.join("\n") + "\n");
+
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(false);
+    expect(r.brokenAt).toBe(0);
+  });
+
+  it("C3-2: with a key resolvable, deleting the anchor beside a non-empty keyed audit file FAILS as truncation", () => {
+    // The anchor cross-check is now bound to key-presence, not just marker/row
+    // tags. Even with the marker also deleted, a resolvable seed keeps anchoring
+    // "in use", so an ABSENT anchor file alongside a non-empty audit file is
+    // truncation evidence rather than a benign checked:false downgrade.
+    isolateKeyedEnv();
+    const a = new CryptoAuditTrail(dataDir);
+    a.record({ sessionId: "s", event: "x", decision: "allow", reason: "1" });
+    a.record({ sessionId: "s", event: "x", decision: "block", reason: "2-incriminating" });
+    const path = dailyAuditPath();
+
+    // Delete the marker AND the anchor, leaving a valid hmac-v1 chain on disk.
+    rmSync(join(dataDir, "audit", ".hmac-v1.marker"), { force: true });
+    rmSync(path.replace(/\.jsonl$/, ".anchors.jsonl"), { force: true });
 
     const r = CryptoAuditTrail.verify(path);
     expect(r.valid).toBe(false);

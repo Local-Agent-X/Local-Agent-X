@@ -136,6 +136,26 @@ export function _resetAuditKeyCacheForTests(): void {
   cachedKey = null;
 }
 
+/**
+ * Is a REAL persisted/env audit seed resolvable right now, WITHOUT minting one?
+ * True iff the ops env override is set, or a sealed/legacy seed file already
+ * exists on disk. This deliberately does NOT call getAuditHmacKey() (which would
+ * MINT and persist a fresh seed on first run) and deliberately ignores any
+ * in-process random fallback in `cachedKey` (that fallback is not a persisted
+ * seed — it can't survive a restart, so it must not be treated as one).
+ *
+ * Why it exists: the threat audit trail's "hmac-v1 era" ratchet keys off seed
+ * PRESENCE, not just the on-disk era marker/row tags. A keyed install signs
+ * 100% hmac-v1, so if a seed exists the unkeyed legacy verify path must be
+ * unreachable — otherwise a filesystem-only attacker who deletes the marker and
+ * rewrites every row as plain SHA-256 downgrades back onto it. Presence here is
+ * the upstream signal that closes that downgrade.
+ */
+export function hasPersistedAuditKey(): boolean {
+  if (process.env.LAX_AUDIT_KEY) return true;
+  return existsSync(encPath()) || existsSync(plaintextPath());
+}
+
 // Keyed MAC over a fixed marker string, used by the threat audit trail to seal
 // its "hmac-v1 era has begun" marker file under the SAME audit key. Computing or
 // validating the marker requires the key, so a filesystem-only attacker can

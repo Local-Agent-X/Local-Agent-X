@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { computeAuditMarkerMac, getAuditHmacKey } from "../app-runtime/audit-signing.js";
+import { computeAuditMarkerMac, getAuditHmacKey, hasPersistedAuditKey } from "../app-runtime/audit-signing.js";
 import { createLogger } from "../logger.js";
 import type { DataLabel } from "./classification.js";
 import type { ThreatLevel } from "./scoring.js";
@@ -170,27 +170,43 @@ function writeEraMarker(markerPath: string): void {
 /**
  * Is the hmac-v1 era marker present for this audit dir? A present marker — even
  * one that's forged/corrupt — keeps the era active and the legacy fallback
- * off-limits: presence alone is the fail-closed signal, and a present-but-
- * invalid marker is itself tamper evidence. (The MAC is what stops an attacker
- * RECREATING a convincing marker after deletion; it can't validate without the
- * key.) An attacker who deletes the marker still can't downgrade a chain that
- * retains any hmac-v1 row — verify() reads the row tags as the second era
- * signal.
+ * off-limits: presence is the fail-closed signal, and a present-but-MAC-invalid
+ * marker is itself tamper evidence (we validate the sealed MAC here, but a bad
+ * MAC keeps the era ACTIVE — it does not re-open the legacy path). A *deleted*
+ * marker no longer downgrades anything: key-presence (hasPersistedAuditKey) and
+ * surviving hmac-v1 row tags drive the era decision in verify(), so this is now
+ * just one of three independent era signals, not the load-bearing one.
  */
 function eraMarkerPresent(markerPath: string): boolean {
-  return existsSync(markerPath);
+  if (existsSync(markerPath) === false) return false;
+  // Validate the sealed MAC for tamper-evidence. A forged or corrupt marker
+  // still returns true (present == era-active, fail-closed) — the MAC is what
+  // stops an attacker RECREATING a *convincing* marker without the key, not a
+  // switch that lets a present marker turn the era off. A MAC mismatch is real
+  // tamper evidence, so surface it loudly rather than swallowing it.
+  try {
+    const body = JSON.parse(readFileSync(markerPath, "utf-8")) as { mac?: unknown };
+    if (body.mac !== computeAuditMarkerMac(MARKER_PAYLOAD)) {
+      logger.warn(`[audit] hmac-v1 era marker present but MAC invalid (forged/corrupt) — era stays active: ${markerPath}`);
+    }
+  } catch {
+    logger.warn(`[audit] hmac-v1 era marker present but unreadable/corrupt — era stays active: ${markerPath}`);
+  }
+  return true;
 }
 
 /**
  * Verify the anchor chain and reconcile it with the main chain heads.
  *
- * A missing anchor file is only benign for a genuinely PRE-ANCHORING log (no
- * hmac-v1 rows, no era marker) — `anchoringInUse: false` → `checked: false`,
- * verified on the main chain alone with no regression. Once anchoring is in use
- * (`anchoringInUse: true`, i.e. hmac-v1 data or the marker is present) an absent
- * anchor file is TRUNCATION EVIDENCE — the attacker who drops trailing main-chain
- * lines also deletes the anchor that would pin the true count — so it fails
- * CLOSED rather than degrading to a main-chain-only pass.
+ * A missing anchor file is only benign for a genuinely PRE-KEY / PRE-ANCHORING
+ * log (no resolvable seed, no hmac-v1 rows, no era marker) — `anchoringInUse:
+ * false` → `checked: false`, verified on the main chain alone with no
+ * regression. Once anchoring is in use (`anchoringInUse: true` — caller passes
+ * the key-presence-driven `eraActive`, so a resolvable seed alone is enough) an
+ * absent anchor file alongside a non-empty audit file is TRUNCATION EVIDENCE —
+ * the attacker who drops trailing main-chain lines also deletes the anchor that
+ * would pin the true count — so it fails CLOSED rather than degrading to a
+ * main-chain-only pass.
  *
  * When an anchor file IS present, every anchor must (a) carry a valid keyed MAC,
  * (b) link to its predecessor, and (c) match the main chain head at its seq —
@@ -362,17 +378,24 @@ export class CryptoAuditTrail {
   /**
    * Verify the integrity of the audit chain.
    *
-   * Fail-closed era gate: once the audit dir has entered the "hmac-v1 era"
-   * (the sealed `.hmac-v1.marker` is present, OR the chain itself contains any
-   * hmac-v1 row), EVERY entry must be `hashScheme: "hmac-v1"` and is recomputed
-   * with the keyed HMAC. The unkeyed legacy SHA-256 branch is then UNREACHABLE,
-   * so an attacker can't rewrite the file as self-consistent plain-SHA-256 rows
-   * (no key needed) and have it pass — that downgrade now returns `valid:false`.
+   * Fail-closed era gate, driven by KEY PRESENCE (the C3 ratchet): the audit dir
+   * is in the "hmac-v1 era" if a real persisted/env audit seed is resolvable
+   * (hasPersistedAuditKey), OR the sealed `.hmac-v1.marker` is present, OR the
+   * chain itself still contains any hmac-v1 row. In the era, EVERY entry must be
+   * `hashScheme: "hmac-v1"` and is recomputed with the keyed HMAC, so the unkeyed
+   * legacy SHA-256 branch is UNREACHABLE.
    *
-   * The legacy branch survives ONLY for the genuine pre-marker back-compat
-   * window: an old dev file with NO marker and NO hmac-v1 rows. There it still
-   * verifies under plain SHA-256 so an existing pre-upgrade audit file validates
-   * and boot never crashes. A fresh install is 100% hmac-v1.
+   * Key-presence is the load-bearing signal: a keyed install signs 100% hmac-v1,
+   * so even if a filesystem-only attacker DELETES the marker AND the anchor and
+   * rewrites every row as a self-consistent plain-SHA-256 chain (no key needed),
+   * the seed still resolves → era still active → that downgrade returns
+   * `valid:false`. The marker and row-tag signals are now belt-and-suspenders;
+   * deleting them can't re-open the legacy path.
+   *
+   * The legacy branch survives ONLY for the genuine pre-key back-compat window:
+   * NO seed resolvable, NO marker, NO hmac-v1 rows. There an old pre-upgrade dev
+   * file still verifies under plain SHA-256 so boot never crashes. A keyed
+   * install is 100% hmac-v1.
    */
   static verify(filePath: string): { valid: boolean; brokenAt?: number; total: number; anchorChecked?: boolean } {
     if (existsSync(filePath) === false) return { valid: true, total: 0 };
@@ -380,15 +403,19 @@ export class CryptoAuditTrail {
     let prevHash = GENESIS_PREV_HASH;
     const heads: { seq: number; hash: string }[] = [];
 
-    // hmac-v1 era is active if the sealed marker exists OR any row is tagged
-    // hmac-v1. Either makes the legacy fallback off-limits for the whole chain
-    // (deleting the marker doesn't downgrade a chain that still has hmac-v1
-    // rows; rewriting every row as legacy is exactly the C1 attack we reject).
+    // hmac-v1 era is active if a real persisted/env audit seed is resolvable,
+    // OR the sealed marker exists, OR any row is still tagged hmac-v1. Key
+    // presence is the primary ratchet (C3): a keyed install is 100% hmac-v1, so
+    // deleting the marker + anchor and rewriting every row as self-consistent
+    // plain-SHA-256 (no key needed) can't downgrade past it — the seed still
+    // resolves and the legacy fallback stays off-limits. The marker and row-tag
+    // checks are the back-compat catch for files predating the key.
     const markerPath = markerPathFor(filePath);
     const parsed: (AuditEntry | null)[] = lines.map(l => {
       try { return JSON.parse(l) as AuditEntry; } catch { return null; }
     });
     const eraActive =
+      hasPersistedAuditKey() ||
       eraMarkerPresent(markerPath) ||
       parsed.some(e => e !== null && e.hashScheme === "hmac-v1");
 
@@ -432,9 +459,10 @@ export class CryptoAuditTrail {
     // Cross-check against the external anchor chain. The linear chain above
     // can't detect tail-truncation (a valid prefix is still a valid chain);
     // the anchor file pins (seq, head, count) so a dropped tail no longer
-    // matches. Once anchoring is in use (hmac-v1 era), an ABSENT anchor file is
-    // itself truncation evidence and fails closed — the attacker who drops the
-    // tail also deletes the anchor. Only a genuine pre-anchoring log (no era,
+    // matches. `eraActive` here is key-presence-driven, so in the keyed era an
+    // ABSENT anchor file beside a non-empty audit file is itself truncation
+    // evidence and fails closed — the attacker who drops the tail also deletes
+    // the anchor. Only a genuine pre-key/pre-anchoring log (no seed, no era,
     // no anchor) skips the cross-check.
     const anchorResult = verifyAnchors(anchorPathFor(filePath), heads, eraActive);
     if (anchorResult.broken) {

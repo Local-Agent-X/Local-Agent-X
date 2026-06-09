@@ -224,21 +224,28 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       rmSync(backupDir, { recursive: true, force: true });
       cpSync(distDir, backupDir, { recursive: true });
     }
-    await runStep("npm", ["run", "build"], join(projectRoot, "desktop"));
-    const bad = firstUnparseableJs(distDir);
-    if (bad) {
+    // tsc emits output even when it errors (noEmitOnError is off), so a
+    // failed build leaves a half-written / unparseable dist on disk. Treat
+    // BOTH a non-zero build exit AND unparseable emitted JS as failure, and
+    // in either case roll dist/ back to the last good build rather than
+    // relaunch into it. This is the path that bricked the app.
+    try {
+      await runStep("npm", ["run", "build"], join(projectRoot, "desktop"));
+      const bad = firstUnparseableJs(distDir);
+      if (bad) throw new Error(`${relative(projectRoot, bad.file)} — ${bad.error}`);
+    } catch (e) {
       if (haveBackup) {
         rmSync(distDir, { recursive: true, force: true });
         cpSync(backupDir, distDir, { recursive: true });
       }
       rmSync(backupDir, { recursive: true, force: true });
       throw new Error(
-        `Build produced unloadable output: ${relative(projectRoot, bad.file)} — ${bad.error}. ` +
+        `Desktop build failed: ${(e as Error).message}. ` +
         `Reverted dist/ to the previous build so the app isn't bricked — the splash and Repair stay usable. ` +
         `Fix the source (or update again) and relaunch.`,
       );
     }
-    if (haveBackup) rmSync(backupDir, { recursive: true, force: true });
+    rmSync(backupDir, { recursive: true, force: true });
     ranSteps.push("desktop tsc build");
   }
 

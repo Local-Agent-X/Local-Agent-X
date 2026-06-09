@@ -12,6 +12,17 @@ import { getLaxDir } from "./lax-data-dir.js";
 import { getUniversalIndex } from "./memory/universal-index.js";
 import type { ModuleSignal } from "./orchestrator/types.js";
 import {
+  FACT_PATTERNS,
+  FIELD_PATTERNS,
+  getEntity,
+  keywordOverlap,
+} from "./contradiction-patterns.js";
+import type {
+  Contradiction,
+  ContradictionRecord,
+  Resolution,
+} from "./contradiction-patterns.js";
+import {
   existsSync,
   mkdirSync,
   readFileSync,
@@ -19,30 +30,11 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-// ══════════════════════════════════════════════════════════
-//  Types
-// ══════════════════════════════════════════════════════════
-
-export interface Contradiction {
-  oldFact: string;
-  newFact: string;
-  entity?: string;
-  field?: string;
-  confidence: number;
-  detectedAt: number;
-}
-
-export interface Resolution {
-  action: string;
-  updatedFact: string;
-  archivedFact?: string;
-}
-
-export interface ContradictionRecord {
-  contradiction: Contradiction;
-  resolution: Resolution;
-  timestamp: number;
-}
+export type {
+  Contradiction,
+  ContradictionRecord,
+  Resolution,
+} from "./contradiction-patterns.js";
 
 // ══════════════════════════════════════════════════════════
 //  Constants
@@ -50,152 +42,6 @@ export interface ContradictionRecord {
 
 const LAX_DIR = getLaxDir();
 const HISTORY_FILE = join(LAX_DIR, "contradiction-history.json");
-
-// Cheap surface markers that a message asserts a fact about the user worth
-// checking against their accumulated record. The precise comparison lives in
-// checkContradiction() against FIELD_PATTERNS.
-const FACT_PATTERNS = [
-  /\bi (am|work|live|use|prefer|like|hate|love|have|need|want)\b/i,
-  /\bmy (name|job|project|favorite|preference|dog|cat|wife|husband|kid)\b/i,
-  /\bi('m| am) (a |an )?[a-z]+ (developer|engineer|designer|manager|student)/i,
-  /\bi (moved|switched|changed|started|quit|joined)\b/i,
-];
-
-// ── Keyword patterns for contradiction categories ────────
-
-interface FieldPattern {
-  field: string;
-  patterns: RegExp[];
-  /** Extract the value portion from a matching fact */
-  extractValue: (text: string) => string | null;
-}
-
-const FIELD_PATTERNS: FieldPattern[] = [
-  {
-    field: "location",
-    patterns: [
-      /\b(lives?\s+in)\s+(.+?)(?:\.|,|$)/i,
-      /\b(moved?\s+to)\s+(.+?)(?:\.|,|$)/i,
-      /\b(based\s+in)\s+(.+?)(?:\.|,|$)/i,
-      /\b(from)\s+(.+?)(?:\.|,|$)/i,
-      /\b(relocated\s+to)\s+(.+?)(?:\.|,|$)/i,
-    ],
-    extractValue(text: string): string | null {
-      for (const p of this.patterns) {
-        const m = text.match(p);
-        if (m) return m[2].trim();
-      }
-      return null;
-    },
-  },
-  {
-    field: "employment",
-    patterns: [
-      /\b(works?\s+at)\s+(.+?)(?:\.|,|$)/i,
-      /\b(works?\s+for)\s+(.+?)(?:\.|,|$)/i,
-      /\b(job\s+is)\s+(.+?)(?:\.|,|$)/i,
-      /\b(hired\s+at)\s+(.+?)(?:\.|,|$)/i,
-      /\b(left)\s+(.+?)(?:\.|,|$)/i,
-      /\b(joined)\s+(.+?)(?:\.|,|$)/i,
-    ],
-    extractValue(text: string): string | null {
-      for (const p of this.patterns) {
-        const m = text.match(p);
-        if (m) return m[2].trim();
-      }
-      return null;
-    },
-  },
-  {
-    field: "preference",
-    patterns: [
-      /\b(likes?)\s+(.+?)(?:\.|,|$)/i,
-      /\b(loves?)\s+(.+?)(?:\.|,|$)/i,
-      /\b(hates?)\s+(.+?)(?:\.|,|$)/i,
-      /\b(prefers?)\s+(.+?)(?:\.|,|$)/i,
-      /\b(favorite\s+\w+\s+is)\s+(.+?)(?:\.|,|$)/i,
-      /\b(dislikes?)\s+(.+?)(?:\.|,|$)/i,
-    ],
-    extractValue(text: string): string | null {
-      for (const p of this.patterns) {
-        const m = text.match(p);
-        if (m) return m[2].trim();
-      }
-      return null;
-    },
-  },
-  {
-    field: "status",
-    patterns: [
-      /\b(is\s+married)/i,
-      /\b(is\s+single)/i,
-      /\b(is\s+dating)/i,
-      /\b(has\s+\d+\s+kids?)/i,
-      /\b(has\s+\d+\s+children)/i,
-      /\b(divorced)/i,
-      /\b(engaged)/i,
-    ],
-    extractValue(text: string): string | null {
-      for (const p of this.patterns) {
-        const m = text.match(p);
-        if (m) return m[1].trim();
-      }
-      return null;
-    },
-  },
-  {
-    field: "numeric",
-    patterns: [
-      /\b(\d+(?:\.\d+)?)\s*(years?\s+old|kg|lbs?|miles?|dollars?|employees?|people|members?)/i,
-    ],
-    extractValue(text: string): string | null {
-      const m = text.match(
-        /\b(\d+(?:\.\d+)?)\s*(years?\s+old|kg|lbs?|miles?|dollars?|employees?|people|members?)/i
-      );
-      return m ? `${m[1]} ${m[2]}` : null;
-    },
-  },
-];
-
-// ══════════════════════════════════════════════════════════
-//  Helpers
-// ══════════════════════════════════════════════════════════
-
-function extractEntity(text: string): string | null {
-  const m = text.match(/@([\w-]+)/);
-  return m ? m[1].toLowerCase() : null;
-}
-
-function entityFromContext(text: string): string | null {
-  // Try to find a capitalized proper noun as entity
-  const m = text.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/);
-  return m ? m[1].toLowerCase() : null;
-}
-
-function getEntity(text: string): string | null {
-  return extractEntity(text) || entityFromContext(text);
-}
-
-function tokenize(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^\w\s]/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length > 2)
-  );
-}
-
-function keywordOverlap(a: string, b: string): number {
-  const setA = tokenize(a);
-  const setB = tokenize(b);
-  if (setA.size === 0 || setB.size === 0) return 0;
-  let shared = 0;
-  for (const w of setA) {
-    if (setB.has(w)) shared++;
-  }
-  return shared / Math.min(setA.size, setB.size);
-}
 
 // ══════════════════════════════════════════════════════════
 //  ContradictionDetector (singleton)

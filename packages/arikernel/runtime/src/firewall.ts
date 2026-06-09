@@ -13,13 +13,12 @@ import type {
 	ToolCallRequest,
 	ToolResult,
 } from "@arikernel/core";
-import { generateId, now } from "@arikernel/core";
-import { applyBehavioralRule, evaluateBehavioralRules } from "./behavioral-rules.js";
 import { PolicyEngine } from "@arikernel/policy-engine";
 import { TaintTracker } from "@arikernel/taint-tracker";
 import type { ToolExecutor } from "@arikernel/tool-executors";
 import { ExecutorRegistry } from "@arikernel/tool-executors";
 import type { EnforcementMode, FirewallOptions } from "./config.js";
+import { type AuditOptions, audit as auditCall } from "./firewall/audit.js";
 import { constructFirewall } from "./firewall/construct.js";
 import {
 	delegateToChild,
@@ -234,64 +233,17 @@ export class Firewall {
 	 * onAudit hook absence; the caller must not depend on audit success
 	 * for tool execution.
 	 */
-	audit(opts: {
-		toolClass: import("@arikernel/core").ToolClass;
-		action: string;
-		parameters: Record<string, unknown>;
-		taintLabels?: TaintLabel[];
-		parentCallId?: string;
-	}): QuarantineInfo | null {
-		const timestamp = now();
-		const toolCall = {
-			id: generateId(),
-			runId: this.runId,
-			sequence: 0, // overwritten by AuditStore.append
-			timestamp,
-			principalId: this.principal.id,
-			toolClass: opts.toolClass,
-			action: opts.action,
-			parameters: opts.parameters,
-			taintLabels: opts.taintLabels ?? [],
-			parentCallId: opts.parentCallId,
-		};
-		const decision = {
-			verdict: "allow" as const,
-			matchedRule: null,
-			reason: "audit-only (internal class — no I/O sink to gate)",
-			taintLabels: opts.taintLabels ?? [],
-			timestamp,
-		};
-
-		// Hash-chained append. Wrapped because a DB failure here must not
-		// cascade into a thrown tool call — audit best-effort, execution
-		// authoritative.
-		try {
-			const event = this.auditStore.append(toolCall, decision);
-			this._hooks.onAudit?.(event);
-			this._hooks.onDecision?.(toolCall, decision);
-		} catch {
-			// Swallow — see method doc.
-		}
-
-		// Feed behavioral rules. Audit-only calls count toward rate/anomaly
-		// thresholds even though they aren't I/O — that's the whole point of
-		// the change: kernel sees the full call shape, not just the I/O half.
-		this._runState.pushEvent({
-			timestamp,
-			type: "tool_call_allowed",
-			toolClass: opts.toolClass,
-			action: opts.action,
-			verdict: "allow",
-			metadata: { auditOnly: true },
-		});
-		if (this._runState.behavioralRulesEnabled) {
-			const match = evaluateBehavioralRules(this._runState);
-			if (match) {
-				const qi = applyBehavioralRule(this._runState, match);
-				if (qi) return qi;
-			}
-		}
-		return null;
+	audit(opts: AuditOptions): QuarantineInfo | null {
+		return auditCall(
+			{
+				principal: this.principal,
+				runId: this.runId,
+				runState: this._runState,
+				auditStore: this.auditStore,
+				hooks: this._hooks,
+			},
+			opts,
+		);
 	}
 
 	/**

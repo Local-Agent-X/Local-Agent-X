@@ -3,6 +3,7 @@ import { ObservationRegistry, type BrowserObservation } from "./observation.js";
 import { clickRef, fillRef, clickByText as clickByTextAction } from "./actions.js";
 import { waitForStability } from "./stability.js";
 import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
+import { installRequestGuard } from "./guards.js";
 import { ACTION_TIMEOUT, NAV_TIMEOUT, type BrowserEngine } from "./launcher.js";
 import { acquireSessionContext } from "./runtime.js";
 import { installDownloadHandler } from "./downloads.js";
@@ -100,6 +101,11 @@ export class BrowserManager {
     }
 
     this.context = await acquireSessionContext(this.currentEngine, this.isolated);
+    // Install the context-level SSRF/scheme request guard so EVERY navigation
+    // this context makes (click/act/fill-induced, redirect hop, JS-redirect) is
+    // egress-checked at the request layer — not just the initial navigate URL.
+    // Idempotent: guards each context at most once (shared mode reuses one).
+    await installRequestGuard(this.context);
     this.page = await this.acquirePage();
     this.armIdle();
     return this.page;

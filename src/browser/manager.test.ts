@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { BrowserManager } from "./manager.js";
+import { installRequestGuard } from "./guards.js";
 
 // Post-fill readback policy contract (per Chunk C / fill-mask refactor):
 //   1. value matches    → returns "Filled ... with value (N chars)"
@@ -108,5 +109,89 @@ describe("BrowserManager.fill — readback policy", () => {
     const mgr = makeManager(page);
 
     await expect(mgr.fill("#user", "hello")).rejects.toThrow(/Fill did not land/);
+  });
+});
+
+// ── Context-level request guard (R4-01 / R4-02) ──
+// The guard must abort any navigation a driven page makes — click/act/fill/
+// redirect — that targets a private/loopback/metadata host or a blocked
+// scheme, while letting public hosts through. We don't launch Playwright:
+// installRequestGuard registers a handler via context.route(), so we capture
+// that handler and drive it with fake route/request objects.
+
+interface FakeRoute {
+  abort: ReturnType<typeof vi.fn>;
+  continue: ReturnType<typeof vi.fn>;
+}
+
+function fakeRoute(): FakeRoute {
+  return { abort: vi.fn().mockResolvedValue(undefined), continue: vi.fn().mockResolvedValue(undefined) };
+}
+
+function fakeRequest(url: string, opts: { resourceType?: string; navigation?: boolean } = {}) {
+  return {
+    url: () => url,
+    resourceType: () => opts.resourceType ?? "document",
+    isNavigationRequest: () => opts.navigation ?? true,
+  };
+}
+
+type RouteHandler = (route: FakeRoute, request: ReturnType<typeof fakeRequest>) => Promise<void>;
+
+async function captureGuard(): Promise<RouteHandler> {
+  let handler: RouteHandler | undefined;
+  const fakeContext = {
+    route: vi.fn(async (_pattern: string, h: RouteHandler) => { handler = h; }),
+  };
+  // Each call passes a brand-new fakeContext object, so the install-once
+  // WeakSet never short-circuits between tests.
+  await installRequestGuard(fakeContext as unknown as Parameters<typeof installRequestGuard>[0]);
+  if (!handler) throw new Error("guard did not register a route handler");
+  return handler;
+}
+
+describe("installRequestGuard — context-level SSRF/scheme guard", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it("aborts a navigation to loopback (127.0.0.1) on a non-self port", async () => {
+    const handler = await captureGuard();
+    const route = fakeRoute();
+    await handler(route, fakeRequest("http://127.0.0.1:8088/admin"));
+    expect(route.abort).toHaveBeenCalledWith("blockedbyclient");
+    expect(route.continue).not.toHaveBeenCalled();
+  });
+
+  it("aborts a navigation to the cloud metadata endpoint", async () => {
+    const handler = await captureGuard();
+    const route = fakeRoute();
+    await handler(route, fakeRequest("http://169.254.169.254/latest/meta-data/"));
+    expect(route.abort).toHaveBeenCalledWith("blockedbyclient");
+    expect(route.continue).not.toHaveBeenCalled();
+  });
+
+  it("aborts a top-level document navigation to file:", async () => {
+    const handler = await captureGuard();
+    const route = fakeRoute();
+    await handler(route, fakeRequest("file:///etc/passwd"));
+    expect(route.abort).toHaveBeenCalledWith("blockedbyclient");
+    expect(route.continue).not.toHaveBeenCalled();
+  });
+
+  it("lets a non-document data: sub-resource through (only top-level docs are killed)", async () => {
+    const handler = await captureGuard();
+    const route = fakeRoute();
+    await handler(route, fakeRequest("data:image/png;base64,AAAA", { resourceType: "image", navigation: false }));
+    expect(route.continue).toHaveBeenCalled();
+    expect(route.abort).not.toHaveBeenCalled();
+  });
+
+  it("continues a navigation to a public host (literal public IP, no DNS)", async () => {
+    // Literal public IP is validated synchronously by the canonical gate, so
+    // this stays deterministic offline (no live DNS for a hostname).
+    const handler = await captureGuard();
+    const route = fakeRoute();
+    await handler(route, fakeRequest("http://93.184.216.34/"));
+    expect(route.continue).toHaveBeenCalled();
+    expect(route.abort).not.toHaveBeenCalled();
   });
 });

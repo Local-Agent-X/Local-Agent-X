@@ -4,6 +4,7 @@ import { createLogger } from "../logger.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath } from "../workspace/paths.js";
+import { openValidatedRead } from "../security/file-access.js";
 
 const logger = createLogger("tools.vision");
 
@@ -68,7 +69,7 @@ export const sendVideoTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
-    const { existsSync, statSync } = await import("node:fs");
+    const { existsSync, fstatSync, closeSync } = await import("node:fs");
 
     const filePath = resolveAgentPath(String(args.path || ""));
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
@@ -76,13 +77,31 @@ export const sendVideoTool: ToolDefinition = {
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
     if (!VIDEO_EXTS.has(ext)) return { content: `Not a video file: .${ext}. Supported: ${[...VIDEO_EXTS].join(", ")}.`, isError: true };
 
-    const sizeMb = statSync(filePath).size / 1048576;
+    // Bind to the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) so the
+    // size check and the path forwarded to the bridge reference the inode the
+    // gate approved — a symlink swapped in after the gate (R4-19) is rejected
+    // here, not silently forwarded off-box. fstat the open fd (not the name) so
+    // the size is read from the exact inode; emit the canonical path so the
+    // bridge opens the same realpath we validated.
+    let canonicalPath: string;
+    let sizeMb: number;
+    try {
+      const opened = openValidatedRead(filePath);
+      try {
+        sizeMb = fstatSync(opened.fd).size / 1048576;
+      } finally {
+        closeSync(opened.fd);
+      }
+      canonicalPath = opened.canonicalPath;
+    } catch (e) {
+      return { content: `Failed to send ${filePath}: ${(e as Error).message}`, isError: true };
+    }
     if (sizeMb > 50) return { content: `Video is ${sizeMb.toFixed(1)}MB — over the 50MB messaging limit, can't send.`, isError: true };
 
-    logger.info(`[send_video] ${filePath} (${sizeMb.toFixed(1)}MB)`);
+    logger.info(`[send_video] ${canonicalPath} (${sizeMb.toFixed(1)}MB)`);
     return {
-      content: `Sending video to the user: ${filePath} (${sizeMb.toFixed(1)}MB).`,
-      _media: { kind: "video", path: filePath, mime: VIDEO_MIME[ext] || "video/mp4" },
+      content: `Sending video to the user: ${canonicalPath} (${sizeMb.toFixed(1)}MB).`,
+      _media: { kind: "video", path: canonicalPath, mime: VIDEO_MIME[ext] || "video/mp4" },
     };
   },
 };
@@ -256,12 +275,18 @@ export const ocrTool: ToolDefinition = {
     try {
       const filePath = resolveAgentPath(String(args.path));
       if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
+      // Bind to the validated canonical inode (realpath + O_NOFOLLOW leaf) and
+      // hand the OCR engine that canonical path, so a symlink swapped in after
+      // the gate (R4-19) is rejected here instead of OCR'd off the swapped file.
+      const { fd, canonicalPath } = openValidatedRead(filePath);
+      const { closeSync } = await import("node:fs");
+      closeSync(fd);
       const { recognizeTextNative, recognizeText } = await import("./ocr-tool.js");
       let result;
       try {
-        result = recognizeTextNative(filePath, { language: args.language ? String(args.language) : undefined });
+        result = recognizeTextNative(canonicalPath, { language: args.language ? String(args.language) : undefined });
       } catch {
-        result = await recognizeText(filePath, { language: args.language ? String(args.language) : undefined });
+        result = await recognizeText(canonicalPath, { language: args.language ? String(args.language) : undefined });
       }
       if (!result.text) return { content: "No text detected in image.", isError: false };
       return { content: `OCR Result (${result.processingMs}ms, lang=${result.language}):\n\n${result.text}` };

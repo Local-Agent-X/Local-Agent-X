@@ -19,6 +19,7 @@ import { isRetryable, isRetryableTool } from "../resilience-policy.js";
 import { getToolTimeout, withTimeout, ToolTimeoutError } from "../tool-timeout.js";
 import { timeout, blocked } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
+import { realpathDeep } from "../security/file-access.js";
 import { checkFreshness, recordFileSeen } from "../tools/read-state.js";
 
 const logger = createLogger("tool-execution");
@@ -104,13 +105,31 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // Path-carrying sensitive-read sinks (read, ari_file, glob, grep, …): a read
     // of a sensitive path taints + redacts. Was keyed to "read" only; now every
     // sensitive-read synonym that takes a `path` arg is covered the same way.
-    if (isSensitiveRead && tc.name !== "bash" && args.path && isSensitivePath(String(args.path))) {
-      // Pass the read content so the taint entry carries fingerprints — lets a
-      // later egress block name which tainted bytes are in the payload. Content
-      // is fingerprinted (hashed), never stored as plaintext.
-      const fileContent = typeof ctx.result?.content === "string" ? ctx.result.content : undefined;
-      recordSensitiveRead(sessionId || "default", "sensitive_file", String(args.path), fileContent);
-      redactReason = `${tc.name} of sensitive path ${String(args.path)}`;
+    if (isSensitiveRead && tc.name !== "bash" && args.path) {
+      // Key the sensitivity check on the REALPATH of the arg, not the raw
+      // innocent name (R4-19): a symlink `notes.txt → ~/.ssh/id_rsa` whose
+      // lexical name is benign must still taint, because the bytes that reached
+      // the model are the sensitive target's. realpathDeep follows every symlink
+      // segment; ENOENT (path gone / never existed) falls back to the lexical
+      // string so a non-existent sensitive literal still gets its check.
+      const rawArgPath = String(args.path);
+      // Resolve the arg the SAME way the file sinks do (project-root anchored)
+      // BEFORE realpath, so a relative arg canonicalizes to the inode the tool
+      // actually opened — not a cwd-relative miss.
+      let taintPath: string;
+      try {
+        taintPath = realpathDeep(resolveAgentPath(rawArgPath));
+      } catch {
+        taintPath = rawArgPath;
+      }
+      if (isSensitivePath(taintPath)) {
+        // Pass the read content so the taint entry carries fingerprints — lets a
+        // later egress block name which tainted bytes are in the payload. Content
+        // is fingerprinted (hashed), never stored as plaintext.
+        const fileContent = typeof ctx.result?.content === "string" ? ctx.result.content : undefined;
+        recordSensitiveRead(sessionId || "default", "sensitive_file", taintPath, fileContent);
+        redactReason = `${tc.name} of sensitive path ${taintPath}`;
+      }
     }
     if (tc.name === "bash") {
       const cmd = String(args.command || "");

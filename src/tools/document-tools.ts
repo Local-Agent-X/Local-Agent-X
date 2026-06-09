@@ -9,6 +9,7 @@ import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { readValidatedFile } from "../security/file-access.js";
 
 const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } = docx;
 
@@ -171,7 +172,10 @@ const documentRead: ToolDefinition = {
   async execute(args) {
     try {
       const filePath = resolvePath(String(args.file_path));
-      const result = await mammoth.extractRawText({ path: filePath });
+      // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) and feed
+      // mammoth the bytes, so a symlink swapped in after the gate (R4-19) is
+      // rejected rather than extracted.
+      const result = await mammoth.extractRawText({ buffer: readValidatedFile(filePath) });
       const text = result.value.trim();
       if (!text) return ok("(document is empty)");
       return ok(text, { characters: text.length, words: text.split(/\s+/).length });
@@ -200,7 +204,9 @@ const documentEdit: ToolDefinition = {
       const find = String(args.find);
       const replace = String(args.replace);
 
-      const result = await mammoth.extractRawText({ path: filePath });
+      // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) so a
+      // symlink swap after the gate (R4-19) is rejected rather than read.
+      const result = await mammoth.extractRawText({ buffer: readValidatedFile(filePath) });
       const original = result.value;
 
       const escaped = find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -258,7 +264,9 @@ const documentTemplate: ToolDefinition = {
       }
 
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
-      const result = await mammoth.extractRawText({ path: templatePath });
+      // Read the VALIDATED canonical inode of the template (realpath +
+      // O_NOFOLLOW leaf) so a symlink swap after the gate (R4-19) is rejected.
+      const result = await mammoth.extractRawText({ buffer: readValidatedFile(templatePath) });
       let text = result.value;
       let totalReplacements = 0;
 

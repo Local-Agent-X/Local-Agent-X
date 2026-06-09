@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { resolveAgentPath } from "../workspace/paths.js";
+import { readValidatedFile } from "../security/file-access.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
@@ -27,16 +28,26 @@ export const readTool: ToolDefinition = {
     const filePath = resolveAgentPath(String(args.path));
     if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
 
+    // Open the VALIDATED canonical inode (realpath + O_NOFOLLOW on the leaf) so
+    // the bytes read are the inode the pre-dispatch gate approved — a symlink
+    // swapped in between the gate and here (R4-19) is rejected, not followed.
+    // One read serves both the binary probe and the utf-8 decode below.
+    let probe: Buffer;
+    try {
+      probe = readValidatedFile(filePath);
+    } catch (e) {
+      return err(`Failed to read ${filePath}: ${(e as Error).message}`, { path: filePath });
+    }
+
     // Binary-file guard. Without this, reading a .png/.pdf/.zip/etc with
     // utf-8 decoded the bytes into U+FFFD replacement chars + raw control
     // sequences, flooding the agent's context with garbage and (when the
     // result was rendered in a terminal) actually corrupting the user's
-    // terminal display via escape codes. Cheap check: read first 8KB as
-    // a Buffer; binary files almost always contain a null byte in their
-    // header, text files almost never do. Surface a clear actionable
-    // error pointing at the right tool for binary content.
-    try {
-      const probe = readFileSync(filePath);
+    // terminal display via escape codes. Cheap check: scan the first 8KB;
+    // binary files almost always contain a null byte in their header, text
+    // files almost never do. Surface a clear actionable error pointing at the
+    // right tool for binary content.
+    {
       const sample = probe.subarray(0, Math.min(8192, probe.length));
       let hasNull = false;
       for (let i = 0; i < sample.length; i++) {
@@ -49,12 +60,10 @@ export const readTool: ToolDefinition = {
           { path: filePath, bytes: probe.length, binary: true },
         );
       }
-    } catch (e) {
-      return err(`Failed to probe ${filePath}: ${(e as Error).message}`, { path: filePath });
     }
 
     try {
-      const content = readFileSync(filePath, "utf-8");
+      const content = probe.toString("utf-8");
       const lines = content.split("\n");
       const forceFullRead = lines.length < 1000;
       const offset = forceFullRead ? 0 : Math.max(0, ((args.offset as number) || 1) - 1);

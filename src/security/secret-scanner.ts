@@ -71,6 +71,39 @@ function firstMatchName(text: string): string | undefined {
   return undefined;
 }
 
+// ── Anchor-relaxed catalog for DERIVED (decoded/normalized-byte) views ─────────
+//
+// C3-19: many catalog regexes start with `\b` (word boundary). On the RAW text
+// that anchor is essential to keep false positives near zero on normal prose.
+// But on a DERIVED view we reconstruct — a decoded buffer, a swapped-endian
+// utf16le interpretation — the surrounding bytes are attacker-chosen noise, so
+// an attacker can prepend one word char before `sk-ant` (`base64(utf16le("x"+KEY))`):
+// the leading `x` re-breaks the `\b` that precedes `sk-ant`, and the derived view
+// is `xsk-ant-…` which the `\b`-anchored regex misses. For derived views ONLY we
+// strip a leading `\b` from each pattern so the prefix byte can't mask the key.
+// This DOESN'T explode FPs because (a) it runs only on reconstructed bytes already
+// gated by decode round-trips / normalization, never raw prose, and (b) the
+// pattern body itself (`sk-ant-…{20,}`, `AKIA…{16}`, an `eyJ…` JWT triple) is the
+// discriminating signal — the `\b` was a cheap pre-filter, not the security.
+const DERIVED_VIEW_PATTERNS: ReadonlyArray<{ name: string; regex: RegExp }> =
+  CREDENTIAL_PATTERNS.map((p) => ({
+    name: p.name,
+    regex: new RegExp(p.regex.source.replace(/^\\b/, ""), p.regex.flags),
+  }));
+
+// firstMatchName for a DERIVED view: uses the anchor-relaxed catalog so a synthetic
+// prefix byte can't hide a key behind a broken `\b`.
+function firstMatchNameDerived(text: string): string | undefined {
+  for (const pattern of DERIVED_VIEW_PATTERNS) {
+    pattern.regex.lastIndex = 0;
+    if (pattern.regex.test(text)) {
+      pattern.regex.lastIndex = 0;
+      return pattern.name;
+    }
+  }
+  return undefined;
+}
+
 // Total decoded bytes we're willing to feed back through the regex pass, across
 // all candidate runs in one scan. A genuine payload that buries a key in a few
 // encoded blobs stays well under this; a multi-megabyte blob that would blow up
@@ -113,16 +146,16 @@ function decodeBase64(run: string): string | null {
   return buf === null ? null : buf.toString("latin1");
 }
 
-// Text interpretations of a base64 run's bytes for the catalog + known-value
-// passes. A receiver can recover a secret from base64 of UTF-16LE bytes
-// (`Buffer.from(key,'utf16le').toString('base64')`), which the latin1 view above
+// Text interpretations of a decoded buffer's bytes for the catalog + known-value
+// passes. A receiver can recover a secret from base64/hex of UTF-16LE bytes
+// (`Buffer.from(key,'utf16le').toString('base64'|'hex')`), which the latin1 view
 // renders as a NUL-interleaved string — so `decoded.includes(value)` and the
 // catalog regexes (which need contiguous chars) both miss it. We additionally
 // surface the utf16le view for BOTH byte orders so the recovered key is a
 // contiguous run again. swap16 mutates the buffer in place, so decode a fresh
-// copy for the second order.
-function base64TextViews(run: string): string[] {
-  const buf = decodeBase64Buffer(run);
+// copy for the second order. Shared by base64 AND hex so the two byte-bearing
+// schemes can't drift on "which text interpretations we inspect."
+function bufferTextViews(buf: Buffer | null): string[] {
   if (buf === null) return [];
   const views = [buf.toString("latin1"), buf.toString("utf16le")];
   // swap16() requires an even byte length; an odd-length buffer can't be a clean
@@ -135,15 +168,32 @@ function base64TextViews(run: string): string[] {
   return views;
 }
 
-function decodeHex(run: string): string | null {
+function base64TextViews(run: string): string[] {
+  return bufferTextViews(decodeBase64Buffer(run));
+}
+
+// Decode a hex run to its raw bytes. Returns the Buffer so callers can take
+// MULTIPLE text interpretations (latin1 + both-endian utf16le) — `hex(utf16le(
+// key))` is NUL-interleaved in the latin1 view and only contiguous in a utf16le
+// view, exactly the base64 case. Returns null when the run isn't clean hex.
+function decodeHexBuffer(run: string): Buffer | null {
   if (run.length < MIN_HEX_RUN || run.length % 2 !== 0) return null;
   try {
     const buf = Buffer.from(run, "hex");
     if (buf.length === 0 || buf.length * 2 !== run.length) return null;
-    return buf.toString("latin1");
+    return buf;
   } catch {
     return null;
   }
+}
+
+function hexTextViews(run: string): string[] {
+  return bufferTextViews(decodeHexBuffer(run));
+}
+
+function decodeHex(run: string): string | null {
+  const buf = decodeHexBuffer(run);
+  return buf === null ? null : buf.toString("latin1");
 }
 
 function decodePercent(run: string): string | null {
@@ -162,11 +212,13 @@ interface EncodedScheme {
   label: string;
 }
 
-// All decoded text interpretations of a run for one scheme. base64 yields the
-// latin1 + utf16le (both byte orders) views (see base64TextViews); hex/percent
-// have a single decoding.
+// All decoded text interpretations of a run for one scheme. base64 AND hex are
+// byte-bearing, so each yields latin1 + both-endian utf16le views (a key carried
+// as base64/hex of UTF-16LE is contiguous only in a utf16le view); percent has a
+// single textual decoding.
 function runDecodeViews(scheme: EncodedScheme, run: string): string[] {
   if (scheme.label === "base64") return base64TextViews(run);
+  if (scheme.label === "hex") return hexTextViews(run);
   const decoded = scheme.decode(run);
   return decoded === null ? [] : [decoded];
 }
@@ -177,50 +229,104 @@ const ENCODED_SCHEMES: EncodedScheme[] = [
   { re: PERCENT_RUN_RE, decode: decodePercent, label: "percent" },
 ];
 
+// Max decode layers we'll peel for ONE outer run, counting the outer layer.
+// C3-18: a fixed one-extra-layer peel let `base64(base64(hex(secret)))` (3
+// layers) sail through clean — defeating the scanner AND the canary gate. We
+// iterate to this small bound instead. The shared MAX_DECODED_BUDGET byte
+// counter (threaded through every layer/view below) still bounds total work, so
+// a nested decompression-bomb input can't blow memory/CPU — depth is capped AND
+// bytes are capped, whichever hits first.
+const MAX_DECODE_DEPTH = 5;
+
+// Mutable byte-budget cell so one counter is shared across every layer and view
+// of every run in a single scan (not per-run), matching the original
+// MAX_DECODED_BUDGET intent.
+interface Budget {
+  remaining: number;
+}
+
+/**
+ * Iteratively peel an outer encoded run into EVERY decoded text view across up
+ * to MAX_DECODE_DEPTH layers, sharing one byte budget. A worklist/queue loop: at
+ * each layer, take a view string, re-detect any inner encoded run inside it, and
+ * enqueue that run's decode views for the next layer. Every view we produce
+ * (latin1, both-endian utf16le, percent text, at every layer) is yielded for the
+ * caller to scan. The SINGLE source of "what bytes can be recovered from this
+ * run" — scanEncodedViews, scanKnownValues, and decodedPayloadViews all consume
+ * it so the catalog pass, the known-value pass, and the taint-overlap check can
+ * never drift on encoding handling. Bounded by `budget`.
+ */
+function iterativeRunViews(
+  outerScheme: EncodedScheme,
+  outerRun: string,
+  budget: Budget
+): string[] {
+  const collected: string[] = [];
+  // Queue of (runString, scheme) to decode. Seed with the outer run.
+  const queue: Array<{ run: string; scheme: EncodedScheme }> = [
+    { run: outerRun, scheme: outerScheme },
+  ];
+  let depth = 0;
+  while (queue.length > 0 && depth < MAX_DECODE_DEPTH && budget.remaining > 0) {
+    const nextLayer: Array<{ run: string; scheme: EncodedScheme }> = [];
+    for (const item of queue) {
+      if (budget.remaining <= 0) break;
+      const views = runDecodeViews(item.scheme, item.run);
+      if (views.length === 0) continue;
+      for (const v of views) {
+        if (budget.remaining <= 0) break;
+        // Charge the budget for EVERY materialized view across ALL layers (not
+        // just the primary view of each decode) so multi-view × multi-layer
+        // amplification is fully counted — this is what bounds a nested
+        // decompression-bomb input: each ~N-byte view we produce (and will scan)
+        // draws down the shared MAX_DECODED_BUDGET, so total bytes produced AND
+        // scanned across the whole peel can't exceed it.
+        budget.remaining -= v.length;
+        collected.push(v);
+        // Look for an inner encoded run in this view to peel on the next layer.
+        // Fresh regex per scheme so no shared lastIndex state leaks.
+        for (const inner of ENCODED_SCHEMES) {
+          const fresh = new RegExp(inner.re.source, inner.re.flags);
+          const im = fresh.exec(v);
+          if (im) nextLayer.push({ run: im[0], scheme: inner });
+        }
+      }
+    }
+    queue.length = 0;
+    queue.push(...nextLayer);
+    depth++;
+  }
+  return collected;
+}
+
 /**
  * Find encoded runs whose DECODED view trips a credential pattern, and return a
  * SecretMatch per offending run that spans the ORIGINAL encoded blob (so
- * redaction removes the whole thing). Decodes at most one extra layer to catch
- * a single round of double-encoding. Bounded by MAX_DECODED_BUDGET.
+ * redaction removes the whole thing). Iteratively peels up to MAX_DECODE_DEPTH
+ * layers (so multi-round encodings like base64(base64(hex(secret))) are caught),
+ * bounded by a shared MAX_DECODED_BUDGET. Derived views are matched with the
+ * anchor-relaxed catalog (firstMatchNameDerived) so a synthetic prefix byte
+ * can't hide a key behind a broken `\b`.
  */
 function scanEncodedViews(text: string): SecretMatch[] {
   const out: SecretMatch[] = [];
-  let budget = MAX_DECODED_BUDGET;
+  const budget: Budget = { remaining: MAX_DECODED_BUDGET };
 
   for (const scheme of ENCODED_SCHEMES) {
-    // Collect all runs up front (via matchAll) so the inner double-decode pass
-    // — which reuses scheme regexes — can't clobber this loop's lastIndex.
+    // Collect all runs up front (via matchAll) so the inner decode pass — which
+    // reuses scheme regexes — can't clobber this loop's lastIndex.
     scheme.re.lastIndex = 0;
     const runs = [...text.matchAll(scheme.re)];
     for (const m of runs) {
-      if (budget <= 0) break;
+      if (budget.remaining <= 0) break;
       const run = m[0];
       const index = m.index ?? 0;
-      // For base64, scan every byte interpretation (latin1 + both-endian
-      // utf16le) so a key carried as base64-of-UTF-16LE is recovered as a
-      // contiguous run; other schemes have a single decoding.
-      const decodedViews =
-        scheme.label === "base64" ? base64TextViews(run) : runDecodeViews(scheme, run);
+      const decodedViews = iterativeRunViews(scheme, run, budget);
       if (decodedViews.length === 0) continue;
-      budget -= decodedViews[0].length;
 
       let name: string | undefined;
       for (const decoded of decodedViews) {
-        name = firstMatchName(decoded);
-        // One extra layer: a base64-of-base64 (or base64-of-hex) wrapper. Use a
-        // fresh regex per scheme so no shared lastIndex state leaks.
-        if (!name) {
-          for (const inner of ENCODED_SCHEMES) {
-            const fresh = new RegExp(inner.re.source, inner.re.flags);
-            const im = fresh.exec(decoded);
-            if (!im) continue;
-            const innerDecoded = inner.decode(im[0]);
-            if (innerDecoded === null) continue;
-            budget -= innerDecoded.length;
-            name = firstMatchName(innerDecoded);
-            if (name) break;
-          }
-        }
+        name = firstMatchNameDerived(decoded);
         if (name) break;
       }
       if (!name) continue;
@@ -234,7 +340,7 @@ function scanEncodedViews(text: string): SecretMatch[] {
         endIndex: index + run.length,
       });
     }
-    if (budget <= 0) break;
+    if (budget.remaining <= 0) break;
   }
   return out;
 }
@@ -248,13 +354,20 @@ function scanEncodedViews(text: string): SecretMatch[] {
 // lets callers emit a span over the real offending run. Shared by the
 // credential-pattern normalized pass and the known-value normalized pass so the
 // (potentially expensive) fold + index map is built once per scan.
-// Combining diacritical marks (U+0300–U+036F). An attacker can interleave one
-// after every secret character ("s" + U+0301 + "k" + U+0301 + …); NFKC only
-// composes base+mark where a precomposed form exists, so the bare ASCII run
-// never re-forms and every pass misses it. We NFKD-decompose then strip this
-// block so `letter+mark` collapses to the bare letter. SCOPED TO THE SCANNER
-// VIEW — user-facing text rendering (sanitize.ts) is unchanged.
-const COMBINING_MARKS_RE = /[̀-ͯ]/g;
+// Combining marks of EVERY Unicode block, not just the basic Combining
+// Diacritical block (U+0300–U+036F). An attacker can interleave a mark after
+// every secret character ("s" + U+0301 + "k" + U+0301 + …); NFKC only composes
+// base+mark where a precomposed form exists, so the bare ASCII run never
+// re-forms and every pass misses it. Narrowing the strip to one block let a
+// mark from any OTHER Mn block survive (U+0951 Devanagari, U+1DC0 Combining
+// Diacritical Supplement, U+20D0 Combining Diacritical for Symbols, U+FE20
+// Combining Half Marks, U+05B0 Hebrew, U+064B Arabic, …). `\p{Mn}` (nonspacing)
+// plus `\p{Me}` (enclosing) covers every combining-mark block. We NFKD-decompose
+// first so a precomposed `é` splits into `e`+U+0301 and the mark is stripped —
+// legit accented prose (café, naïve, Zürich) folds to its bare ASCII form, which
+// is detection-only and trips no credential/known-value pattern (verified no FP).
+// SCOPED TO THE SCANNER VIEW — user-facing rendering (sanitize.ts) is unchanged.
+const COMBINING_MARKS_RE = /[\p{Mn}\p{Me}]/gu;
 
 function buildNormalizedView(text: string): { normalized: string; outToOrig: number[] } {
   let normalized = "";
@@ -373,15 +486,19 @@ function scanKnownValues(
 
   // 2) Encoded views: a value hidden inside a base64/hex/percent run. Attribute
   //    to the ORIGINAL encoded blob so redaction removes the whole thing.
+  //    C3-8: uses the SAME iterativeRunViews helper as scanEncodedViews (multi-
+  //    layer peel, shared byte budget) — previously this pass did a single decode
+  //    while the catalog pass decoded an inner layer, so base64(base64(known))
+  //    leaked. Sharing the helper means the two passes can't drift on depth.
+  const budget: Budget = { remaining: MAX_DECODED_BUDGET };
   for (const scheme of ENCODED_SCHEMES) {
+    if (budget.remaining <= 0) break;
     scheme.re.lastIndex = 0;
     for (const m of text.matchAll(scheme.re)) {
+      if (budget.remaining <= 0) break;
       const run = m[0];
       const index = m.index ?? 0;
-      // Check every byte interpretation of the run (latin1 + both-endian
-      // utf16le for base64) so a value carried as base64-of-UTF-16LE — which the
-      // latin1 view renders NUL-interleaved — is still recovered contiguously.
-      const decodedViews = runDecodeViews(scheme, run);
+      const decodedViews = iterativeRunViews(scheme, run, budget);
       if (decodedViews.some((d) => values.some((v) => d.includes(v)))) {
         out.push(knownValueMatch(index, index + run.length));
       }
@@ -519,30 +636,17 @@ export function decodedPayloadViews(text: string): string[] {
   const norm = buildNormalizedView(text).normalized;
   if (norm !== text) views.push(norm);
 
-  let budget = MAX_DECODED_BUDGET;
+  const budget: Budget = { remaining: MAX_DECODED_BUDGET };
   for (const scheme of ENCODED_SCHEMES) {
-    if (budget <= 0) break;
+    if (budget.remaining <= 0) break;
     scheme.re.lastIndex = 0;
     for (const m of text.matchAll(scheme.re)) {
-      if (budget <= 0) break;
-      // base64 surfaces latin1 + both-endian utf16le views (a key carried as
-      // base64-of-UTF-16LE is contiguous only in the utf16le view); other
-      // schemes have a single decoding.
-      const runViews = runDecodeViews(scheme, m[0]);
-      if (runViews.length === 0) continue;
-      const decoded = runViews[0];
-      budget -= decoded.length;
-      for (const v of runViews) views.push(v);
-      // One extra layer (base64-of-base64 / base64-of-hex), as scanEncodedViews.
-      for (const inner of ENCODED_SCHEMES) {
-        const fresh = new RegExp(inner.re.source, inner.re.flags);
-        const im = fresh.exec(decoded);
-        if (!im) continue;
-        const innerDecoded = inner.decode(im[0]);
-        if (innerDecoded === null) continue;
-        budget -= innerDecoded.length;
-        views.push(innerDecoded);
-      }
+      if (budget.remaining <= 0) break;
+      // Iteratively peel up to MAX_DECODE_DEPTH layers, surfacing every decoded
+      // text view (latin1 + both-endian utf16le for base64/hex; percent text) —
+      // the SAME helper scanEncodedViews/scanKnownValues use, so the taint-overlap
+      // check can't drift from the scanner on multi-layer encodings.
+      for (const v of iterativeRunViews(scheme, m[0], budget)) views.push(v);
     }
   }
   return views;

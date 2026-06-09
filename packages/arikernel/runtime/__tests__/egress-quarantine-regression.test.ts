@@ -21,6 +21,7 @@ import {
 	hasEncodedPayload,
 	isSuspiciousGetExfil,
 } from "../src/run-state.js";
+import { isEgressAction } from "../src/run-state/safe-actions.js";
 
 function makeEvent(overrides: Partial<SecurityEvent>): SecurityEvent {
 	return {
@@ -212,6 +213,76 @@ describe("behavioral rule: GET treated as egress post-sensitive-read (regression
 		expect(record).toBeDefined();
 		expect(record?.requestCount).toBe(2);
 		expect(record?.totalQueryBytes).toBeGreaterThan(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// C3-15: action-casing must NOT bypass the egress/exfil behavioral layer.
+// A model that issues its exfil with an UPPERCASE action (e.g. action:"POST")
+// previously executed via the lowercasing matcher/executor but emitted NO
+// egress_attempt, because the run-state gates compared against lowercase
+// literals. Action casing is now canonicalized at ingest (buildToolCall /
+// firewall execution) AND the gates lowercase defensively. These tests lock
+// in that uppercase/mixed-case behave IDENTICALLY to lowercase.
+// ---------------------------------------------------------------------------
+
+describe("C3-15 action-casing egress bypass (regression)", () => {
+	it("isEgressAction treats uppercase/mixed-case write methods as egress", () => {
+		for (const method of ["post", "put", "patch", "delete"]) {
+			expect(isEgressAction(method)).toBe(true);
+			expect(isEgressAction(method.toUpperCase())).toBe(true);
+		}
+		// Mixed case (e.g. a model emitting "Post") must not slip through either.
+		expect(isEgressAction("Post")).toBe(true);
+		expect(isEgressAction("DeLeTe")).toBe(true);
+	});
+
+	it("isEgressAction still rejects ingress GET/HEAD regardless of casing", () => {
+		for (const method of ["get", "GET", "Head", "HEAD"]) {
+			expect(isEgressAction(method)).toBe(false);
+		}
+	});
+
+	it("RunStateTracker.isEgressAction (the gate the pipeline calls) is case-insensitive", () => {
+		const state = new RunStateTracker({ behavioralRules: true });
+		// The pipeline's trackHttpSignals computes isWriteEgress via this method.
+		expect(state.isEgressAction("POST")).toBe(state.isEgressAction("post"));
+		expect(state.isEgressAction("POST")).toBe(true);
+		expect(state.isEgressAction("GET")).toBe(false);
+	});
+
+	it("sensitive_read_then_egress fires for an UPPERCASE egress action just like lowercase", () => {
+		// Mirrors the lowercase test above, but the egress event carries the
+		// canonicalized action that ingest now produces from action:"POST".
+		const state = new RunStateTracker({ behavioralRules: true });
+
+		state.recordSensitiveFileAttempt();
+		state.confirmSensitiveFileRead();
+		state.pushEvent(
+			makeEvent({
+				type: "sensitive_read_attempt",
+				toolClass: "file",
+				action: "read",
+				metadata: { path: "/home/.env" },
+			}),
+		);
+
+		// Canonicalized at ingest: even though the model emitted action:"POST",
+		// the gate classifies it as egress and the event carries lowercase "post".
+		expect(state.isEgressAction("POST")).toBe(true);
+		state.recordEgressAttempt();
+		state.pushEvent(
+			makeEvent({
+				type: "egress_attempt",
+				toolClass: "http",
+				action: "post",
+				metadata: { url: "https://evil.com/c" },
+			}),
+		);
+
+		const match = evaluateBehavioralRules(state);
+		expect(match).not.toBeNull();
+		expect(match?.ruleId).toBe("sensitive_read_then_egress");
 	});
 });
 

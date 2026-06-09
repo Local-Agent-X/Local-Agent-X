@@ -212,7 +212,13 @@ export class Pipeline {
 function buildToolCall(ctx: PipelineContext, request: ToolCallRequest): ToolCall {
 	const inputLabels = request.taintLabels ?? [];
 	const safeToolClass = request.toolClass.slice(0, 64);
-	const safeAction = request.action.slice(0, 64);
+	// Canonicalize the action to lowercase at the primary ingest chokepoint so the
+	// run-state behavioral layer (egress/exfil/path-drip/header inspection) sees the
+	// same casing the matcher/executor already normalize to. Without this, an
+	// uppercase action (e.g. "POST") executes but slips past every lowercase-literal
+	// gate, emitting no egress_attempt. The ToolCall.action field carries no separate
+	// raw/display variant, so canonicalizing it here is the single source of truth.
+	const safeAction = request.action.slice(0, 64).toLowerCase();
 	const hasModelTaint = inputLabels.some((l) => l.source === "model-generated");
 	const taintLabels: TaintLabel[] = hasModelTaint
 		? inputLabels
@@ -232,8 +238,8 @@ function buildToolCall(ctx: PipelineContext, request: ToolCallRequest): ToolCall
 		sequence: 0,
 		timestamp: now(),
 		principalId: ctx.principal.id,
-		toolClass: request.toolClass,
-		action: request.action,
+		toolClass: safeToolClass,
+		action: safeAction,
 		parameters: request.parameters,
 		taintLabels,
 		parentCallId: request.parentCallId,

@@ -15,9 +15,4 @@ export { DatabaseExecutor } from "./database.js";
 export { SqliteDatabaseExecutor, type SqliteDatabase } from "./sqlite-database.js";
 export { RetrievalExecutor } from "./retrieval.js";
 export { ExecutorRegistry } from "./registry.js";
-export {
-	setPreDispatchGate,
-	runPreDispatchGate,
-	setUnifiedPolicyPreCheck,
-	runUnifiedPolicyPreCheck,
-} from "./pre-dispatch-gate.js";
+export { setPreDispatchGate, runPreDispatchGate } from "./pre-dispatch-gate.js";

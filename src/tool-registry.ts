@@ -91,6 +91,7 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "generate_image",            // model `prompt` → POST api.x.ai / api.openai.com
   "generate_video",            // model `prompt` + base64 reference_image → api.x.ai
   "send_video",                // ships a local file path off-box over a messaging bridge
+  "view_image",                // base64-ships local image bytes off-box to the vision API
 ]);
 
 // Sensitive-read = can surface file/secret/PII content into the model context.

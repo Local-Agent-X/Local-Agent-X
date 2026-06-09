@@ -74,7 +74,7 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyEntry> = {
   delete_file: { kernel: "file", risk: "destructive", pathArgs: [{ arg: "path", action: "delete_file" }], rules: [{ id: "allow-delete-file", decision: "allow", reason: "Single-file delete (path-checked by SecurityLayer, directories refused)", priority: 50 }] },
   glob:        { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-glob", decision: "allow", reason: "File pattern search (read-only)", priority: 50 }] },
   grep:        { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-grep", decision: "allow", reason: "Content search (read-only)", priority: 50 }] },
-  view_image:  { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-view-image", decision: "allow", reason: "Image viewing (path-checked)", priority: 50 }] },
+  view_image:  { kernel: "file", risk: "safe", offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-view-image", decision: "allow", reason: "Image viewing (path-checked); base64-ships the image off-box to the vision API", priority: 50 }] },
   send_video:  { kernel: "file", risk: "safe", offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-send-video", decision: "allow", reason: "Sends a local video to the user over their own bridge (path-checked read)", priority: 50 }] },
   ari_file:    { kernel: "internal", risk: "workspace-write" },
 

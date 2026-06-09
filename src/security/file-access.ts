@@ -1,5 +1,5 @@
 import { resolve, relative, dirname, basename, join, isAbsolute } from "node:path";
-import { realpathSync, openSync, closeSync, readFileSync, constants } from "node:fs";
+import { realpathSync, openSync, closeSync, readFileSync, writeFileSync, constants } from "node:fs";
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
@@ -338,6 +338,35 @@ export function readValidatedFile(absPath: string): Buffer {
   const { fd } = openValidatedRead(absPath);
   try {
     return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// O_WRONLY | O_CREAT | O_TRUNC, plus O_NOFOLLOW where the platform supports it
+// (POSIX-only; undefined on Windows → 0, same fallback as the read flags). The
+// NOFOLLOW makes the kernel REJECT the open (ELOOP) if the final path component
+// is a symlink, so a pre-planted symlink at the write target can't redirect the
+// write to overwrite a file OUTSIDE the workspace (R4-19 write leg). NOFOLLOW
+// only guards the LEAF; the parent chain is resolved normally, which is fine —
+// the pre-dispatch gate already realpath-confined the whole path.
+const WRITE_NOFOLLOW_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0);
+
+/**
+ * Write `data` to `absPath` with O_NOFOLLOW on the leaf, atomically closing the
+ * symlink-redirect leg of R4-19 for write sinks. Mirrors {@link openValidatedRead}:
+ * the caller has already path-confined `absPath` through the pre-dispatch gate;
+ * this opens the target itself (not via the high-level writeFileSync(path)) so a
+ * symlink swapped in at the leaf is rejected (ELOOP) rather than followed off-box.
+ *
+ * The parent directory is expected to exist (callers mkdir -p first). A genuine
+ * open/write error (ELOOP for a symlinked target, EACCES, …) is surfaced, never
+ * swallowed. The caller-supplied `mode` is the create mode for a new file.
+ */
+export function writeValidatedFile(absPath: string, data: string | Buffer, mode = 0o644): void {
+  const fd = openSync(absPath, WRITE_NOFOLLOW_FLAGS, mode);
+  try {
+    writeFileSync(fd, data);
   } finally {
     closeSync(fd);
   }

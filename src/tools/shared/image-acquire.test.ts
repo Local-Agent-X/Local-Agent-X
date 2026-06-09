@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -75,6 +75,27 @@ describe("acquireImages", () => {
       ).rejects.toThrow(/under the workspace|traversal blocked/i);
     } finally {
       try { rmSync(outside, { force: true }); } catch {}
+    }
+  });
+
+  // R4-21: a workspace file whose NAME is under the workspace but whose REALPATH
+  // escapes it (logo.png → /outside/img.png) must be blocked. The lexical
+  // resolve()+startsWith left this hole open; realpath containment closes it —
+  // even though the target IS a valid image (so the mime gate alone wouldn't
+  // catch it), it lives outside the workspace and must not round-trip.
+  it("blocks a workspace symlink that escapes to an outside image (realpath containment)", async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), "img-acq-escape-"));
+    const outside = join(outsideDir, "real.png");
+    writeFileSync(outside, PNG_1x1);
+    const link = join(workspaceRoot, "logo.png");
+    symlinkSync(outside, link);
+    try {
+      await expect(
+        acquireImages([{ source: "logo.png" }], { workspaceRoot }),
+      ).rejects.toThrow(/under the workspace|traversal blocked/i);
+    } finally {
+      try { rmSync(link, { force: true }); } catch {}
+      try { rmSync(outsideDir, { recursive: true, force: true }); } catch {}
     }
   });
 

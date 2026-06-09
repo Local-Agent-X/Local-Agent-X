@@ -5,7 +5,7 @@
 // bash/sleep/port-binding) and reaps it in afterEach.
 
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, symlinkSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeTool, editTool, editLinesTool, multiEditTool } from "./file-tools.js";
@@ -69,6 +69,38 @@ describe("file-tools served-file note", () => {
 // old_string had the right content but the wrong leading indentation, so the
 // exact-match matcher rejected it. The fallback rebases onto the file's real
 // indentation and preserves relative structure.
+// R4-19 write leg: writeTool opens the target with O_NOFOLLOW, so a symlink
+// pre-planted at the write path can't redirect the write to overwrite a file
+// OUTSIDE the workspace. The write must FAIL and the outside target must be
+// left untouched.
+describe("file-tools write O_NOFOLLOW (symlink-target redirect blocked)", () => {
+  it("refuses to write through a symlinked target (does not overwrite the link's destination)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-nofollow-"));
+    dirs.add(dir);
+    // The off-target file the symlink points at. Pre-seed it; it must survive.
+    const outside = join(dir, "outside-secret.txt");
+    writeFileSync(outside, "ORIGINAL\n", "utf-8");
+    // The model-facing path is a symlink that resolves to `outside`.
+    const link = join(dir, "innocent.txt");
+    symlinkSync(outside, link);
+
+    const res = await writeTool.execute({ path: link, content: "HIJACKED\n" });
+    expect(res.isError).toBe(true);
+    // The symlink's destination must be unchanged — the write was rejected at open.
+    expect(readFileSync(outside, "utf-8")).toBe("ORIGINAL\n");
+  });
+
+  it("still writes a normal (non-symlink) file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-nofollow-ok-"));
+    dirs.add(dir);
+    const file = join(dir, "plain.txt");
+    const res = await writeTool.execute({ path: file, content: "hello\n" });
+    expect(res.isError).toBeFalsy();
+    expect(existsSync(file)).toBe(true);
+    expect(readFileSync(file, "utf-8")).toBe("hello\n");
+  });
+});
+
 describe("file-tools whitespace-tolerant edit", () => {
   it("lands an edit when old_string indentation is wrong but content matches", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-ws-"));

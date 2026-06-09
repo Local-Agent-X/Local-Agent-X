@@ -3,6 +3,15 @@ import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } fro
 import { getInternalAgentToken } from "../rbac.js";
 import { resolveAndPinHost, evaluateEgressForUrl } from "../security/network-policy.js";
 
+/** Browser-like identity for agent web fetches. Many commerce/price sites
+ *  (PriceCharting, TCGplayer, eBay) reject a non-browser User-Agent with an
+ *  immediate HTTP 400/403, so a fetch that presents as a real browser reaches
+ *  far more sources. Single source of truth — point tool fetchers here instead
+ *  of re-hardcoding a UA string inline. */
+export const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+export const BROWSER_ACCEPT_LANGUAGE = "en-US,en;q=0.9";
+
 /** Thrown inside a redirect loop when a cross-host redirect target fails the
  *  egress policy re-check (strict-mode allowlist bypass via 302). Carries the
  *  policy reason so the tool can fail closed with an actionable message rather

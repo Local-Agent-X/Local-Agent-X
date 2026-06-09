@@ -56,11 +56,12 @@ describe("newOpId", () => {
     expect(ids.size).toBe(50);
   });
 
-  it("ids contain a date36 segment + random suffix", () => {
+  it("ids are the prefix + a CSPRNG hex body (unguessable)", () => {
     const id = newOpId("op");
     const parts = id.split("_");
-    expect(parts).toHaveLength(3);
-    expect(parts[2].length).toBeGreaterThanOrEqual(4);
+    expect(parts).toHaveLength(2);
+    expect(parts[0]).toBe("op");
+    expect(parts[1]).toMatch(/^[0-9a-f]{16}$/);
   });
 });
 

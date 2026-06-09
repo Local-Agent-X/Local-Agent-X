@@ -172,6 +172,11 @@ const SPINE_RULES: readonly SpineRule[] = [
       "src/agents/invoke.ts",
       "src/server/handler-events.ts",
       "src/server/lifecycle.ts",
+      // voice-ws.ts is the real-time voice transport — a conversational-turn
+      // spine entry (custom system prompt / voiceTools / streaming, not a
+      // catalog invokeAgent spawn), the voice analogue of run-chat-turn. It
+      // was split out of lifecycle.ts (already allowlisted above).
+      "src/server/voice-ws.ts",
       "src/server/background-jobs.ts",
       // background-jobs.ts is now a barrel re-exporting from the directory;
       // the actual cron / dream / worker runners live under it and are the

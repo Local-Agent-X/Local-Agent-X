@@ -31,12 +31,18 @@ const logger = createLogger("audit.signing");
 
 let cachedKey: Buffer | string | null = null;
 
+// Basenames this module persists under getLaxDir(). Exported so the build-time
+// enrollment assertion (audit-signing.test.ts) can pin them to the canonical
+// APP_AT_REST_SECRET_BASENAMES set without re-typing the strings — adding a new
+// key/seed file here without enrolling it there fails CI.
+export const AUDIT_SEED_BASENAMES = ["audit-key", "audit-key.enc"] as const;
+
 function encPath(): string {
-  return join(getLaxDir(), "audit-key.enc");
+  return join(getLaxDir(), AUDIT_SEED_BASENAMES[1]);
 }
 
 function plaintextPath(): string {
-  return join(getLaxDir(), "audit-key");
+  return join(getLaxDir(), AUDIT_SEED_BASENAMES[0]);
 }
 
 /** AES-256-GCM seal: output hex = iv(12) || authTag(16) || ciphertext. */
@@ -65,14 +71,32 @@ function writeAtomic(path: string, contents: string | Buffer): void {
   renameSync(tmp, path);
 }
 
-/** Best-effort wipe of a plaintext seed file: overwrite then unlink. */
+/**
+ * Wipe a plaintext seed file: overwrite then unlink. The plaintext seed is the
+ * at-rest forge vector the sealed store exists to eliminate, so a FAILED removal
+ * is fatal, not best-effort: if the readable plaintext can't be removed we must
+ * NOT proceed (the caller surfaces the throw to the in-process-fallback path and
+ * logs loudly), rather than silently leaving a forgeable seed on disk. Throwing
+ * mirrors how the rest of init surfaces unresolved-seed failures.
+ *
+ * (The OVERWRITE is still best-effort hardening — forensic erasure on modern
+ * filesystems isn't guaranteed — but the UNLINK is load-bearing and must
+ * succeed: namespace removal is the security property we depend on.)
+ */
 function shredPlaintext(path: string): void {
+  if (!existsSync(path)) return;
   try {
-    if (!existsSync(path)) return;
     const size = statSync(path).size;
     if (size > 0) writeFileSync(path, randomBytes(size), { mode: 0o600 });
-    unlinkSync(path);
-  } catch { /* best-effort — namespace removal is the point, not forensic erasure */ }
+  } catch (err) {
+    // Overwrite failed (e.g. EACCES on the content) — log, but still attempt the
+    // unlink below; removing the name is the property we actually need.
+    logger.warn(`[audit] could not overwrite plaintext seed before unlink: ${String(err)}`);
+  }
+  // Unlink is NOT swallowed: a still-readable plaintext seed defeats the sealed
+  // store, so a failed removal aborts (caller falls back to an in-process key and
+  // logs) instead of running auditing with a forgeable seed on disk.
+  unlinkSync(path);
 }
 
 function loadOrCreateProtectedKey(): Buffer {

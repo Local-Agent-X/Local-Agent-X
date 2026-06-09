@@ -9,6 +9,7 @@
 
 import { homedir } from "node:os";
 import { scanForSecrets } from "./security/secret-scanner.js";
+import { isAppAtRestSecretBasename } from "./security/known-secrets.js";
 import { getLaxDir } from "./lax-data-dir.js";
 
 // Basenames that are credential files regardless of where they live on disk.
@@ -92,6 +93,12 @@ export function isSensitivePath(filePath: string): boolean {
   const base = segsLower[segsLower.length - 1];
 
   if (SENSITIVE_BASENAMES.has(base)) return true;
+  // The app's OWN at-rest key/seed/vault files (audit-key, audit-key.enc,
+  // secrets.salt, secrets.enc, master.*, auth.json). Derived from the ONE
+  // canonical set in security/known-secrets.ts so the read-taint classifier
+  // can't drift from the write-block / attachment-denylist. These basenames are
+  // specific enough that matching them anywhere is not a taint-storm risk.
+  if (isAppAtRestSecretBasename(base)) return true;
   // `.env.local`, `.env.production`, etc. Open-ended, so not in the basename set.
   if (base.startsWith(".env.")) return true;
   for (const ext of SENSITIVE_EXTENSIONS) {

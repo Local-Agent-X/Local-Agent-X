@@ -93,3 +93,58 @@ describe("openValidatedRead / readValidatedFile — R4-19 symlink-swap TOCTOU", 
     closeSync(fd);
   });
 });
+
+describe("app's OWN at-rest secret files under .lax (R4-04/R4-05)", () => {
+  // The app's key/seed files (audit-key, audit-key.enc, secrets.salt) must be
+  // both read-blocked AND write-blocked, derived from the canonical
+  // APP_AT_REST_SECRET_BASENAMES set — they were hand-omitted before.
+  const laxDir = join(ROOT, ".lax");
+  const auditKey = join(laxDir, "audit-key");
+  const auditKeyEnc = join(laxDir, "audit-key.enc");
+  const salt = join(laxDir, "secrets.salt");
+
+  beforeAll(() => {
+    mkdirSync(laxDir, { recursive: true });
+    writeFileSync(auditKey, "SEED BYTES\n");
+    writeFileSync(auditKeyEnc, "deadbeef\n");
+    writeFileSync(salt, "SALT\n");
+  });
+
+  it("read-blocks ~/.lax/audit-key (unrestricted mode)", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", auditKey);
+    expect(d.allowed).toBe(false);
+  });
+
+  it("read-blocks ~/.lax/audit-key.enc", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", auditKeyEnc);
+    expect(d.allowed).toBe(false);
+  });
+
+  it("read-blocks ~/.lax/secrets.salt", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", salt);
+    expect(d.allowed).toBe(false);
+  });
+
+  it("write-blocks ~/.lax/audit-key (coreProtectedFiles)", () => {
+    // allowedPathCheck → true so we exercise the core-protected leg, not the
+    // workspace-containment leg.
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "write", auditKey);
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/protected platform file/i);
+  });
+
+  it("write-blocks ~/.lax/audit-key.enc", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "write", auditKeyEnc);
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/protected platform file/i);
+  });
+
+  it("readValidatedFile refuses the audit seed at the read sink", () => {
+    let threw = false;
+    try { readValidatedFile(auditKey); } catch (e) {
+      threw = true;
+      expect((e as Error).message).toMatch(/sensitive path pattern/i);
+    }
+    expect(threw).toBe(true);
+  });
+});

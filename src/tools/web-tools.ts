@@ -20,15 +20,57 @@ class EgressRedirectBlocked extends Error {
 }
 
 /** Re-run the egress policy on a redirect target when it crosses to a new host.
- *  Same-host redirects are not re-checked (the allowlist is host-scoped and the
- *  origin was already gated pre-dispatch). Throws EgressRedirectBlocked if the
- *  new host is denied. SSRF/private-IP is handled separately by the pinning
- *  dispatcher on every hop. */
+ *  Same-host redirects are not re-checked HERE for the egress allowlist (it is
+ *  host-scoped and the origin was already gated pre-dispatch). Throws
+ *  EgressRedirectBlocked if the new host is denied. Note: literal-IP SSRF is NOT
+ *  covered by this cross-host short-circuit — it is enforced separately by
+ *  assertLiteralIpEgressAllowed on EVERY hop (see below). */
 function assertRedirectEgressAllowed(fromUrl: string, toUrl: string): void {
   if (new URL(fromUrl).host === new URL(toUrl).host) return;
   const decision = evaluateEgressForUrl(toUrl);
   if (!decision.allowed) {
     throw new EgressRedirectBlocked(toUrl, decision.reason);
+  }
+}
+
+/** Detect a literal IP host (IPv4 dotted-quad, or anything bracketed/colon-ish
+ *  that the URL parser surfaced as an IPv6 literal). Hostnames go through the
+ *  pinning dispatcher's connect.lookup; literals do NOT (undici skips the DNS
+ *  lookup for an address), so they need a synchronous pre-connect SSRF check. */
+function isLiteralIpHost(host: string): boolean {
+  return /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":");
+}
+
+/** Synchronous pre-connect SSRF check for LITERAL-IP destinations, run before
+ *  the initial fetch AND before following every redirect (same-host included).
+ *
+ *  This closes a real gap: the pinning dispatcher validates SSRF inside
+ *  connect.lookup, but undici never calls connect.lookup for a literal IP — it
+ *  dials the address directly — so resolveAndPinHost's literal branch is dead
+ *  for the dispatcher path. Without this guard a literal private/metadata/NAT64
+ *  /6to4 destination (initial URL or a 302 Location, even to the same host)
+ *  would connect unchecked. Reuses the canonical evaluateEgressForUrl path so
+ *  the same isPrivate* rules apply on every hop. Throws EgressRedirectBlocked
+ *  (fail-closed) so callers surface an actionable reason. */
+async function assertLiteralIpEgressAllowed(url: string): Promise<void> {
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  } catch {
+    throw new EgressRedirectBlocked(url, "Blocked: invalid URL (SSRF protection)");
+  }
+  if (!isLiteralIpHost(host)) return; // hostname → covered by the pinning dispatcher
+  // Use the real runtime port so a legitimate loopback self-call (which targets
+  // 127.0.0.1:<configured-port>) is still recognised as a self-call and allowed;
+  // fall back to evaluateEgressForUrl's 7007 default if config isn't loaded.
+  let selfPort = "7007";
+  try {
+    const { getRuntimeConfig } = await import("../config.js");
+    selfPort = String(getRuntimeConfig().port);
+  } catch {}
+  const decision = evaluateEgressForUrl(url, selfPort);
+  if (!decision.allowed) {
+    throw new EgressRedirectBlocked(url, decision.reason);
   }
 }
 
@@ -71,7 +113,15 @@ type PinLookupCallback = (
 /** A dispatcher whose DNS lookup resolves, validates against SSRF/private-IP
  *  rules, and pins the socket to the validated IP — at connect time, so the
  *  IP that is checked is the IP that is dialed (no rebinding TOCTOU). Blocks
- *  the connection if resolveAndPinHost rejects. Literal IPs pass through. */
+ *  the connection if resolveAndPinHost rejects.
+ *
+ *  IMPORTANT: this validates HOSTNAMES only. undici does not invoke
+ *  connect.lookup for a literal IP destination — it dials the address
+ *  directly — so the literal-IP branch here never runs for the dispatcher
+ *  path. Literal-IP SSRF is therefore enforced synchronously before connect by
+ *  assertLiteralIpEgressAllowed, called on the initial URL and every redirect
+ *  hop. (The literal pass-through below remains for the rare case undici does
+ *  hand us a literal, and to keep this dispatcher self-consistent.) */
 export function createPinningDispatcher(): Agent {
   return new Agent({
     connect: {
@@ -111,6 +161,9 @@ export const webFetchTool: ToolDefinition = {
       // cross-origin redirect so the token never leaves this server.
       let selfAuth = await selfCallAuthHeader(url);
       const doFetch = async () => {
+        // Pre-connect literal-IP SSRF check (undici's connect.lookup, where the
+        // pinning dispatcher validates, never fires for a literal IP).
+        await assertLiteralIpEgressAllowed(currentUrl);
         let r = await undiciFetch(currentUrl, {
           headers: {
             "User-Agent": "LocalAgentX/0.1",
@@ -128,6 +181,9 @@ export const webFetchTool: ToolDefinition = {
           // gate only validated the initial URL, so an allowlisted host could
           // 302 to a non-allowlisted host in strict mode. Fail closed.
           assertRedirectEgressAllowed(currentUrl, location);
+          // Literal-IP SSRF on every hop, same-host included (a 302 to a literal
+          // private/metadata/NAT64/6to4 IP bypasses the pinning dispatcher).
+          await assertLiteralIpEgressAllowed(location);
           if (selfAuth && new URL(currentUrl).origin !== new URL(location).origin) selfAuth = null;
           currentUrl = location;
           r = await undiciFetch(currentUrl, {
@@ -301,6 +357,9 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         let currentUrl = url;
 
         const doFetch = async () => {
+          // Pre-connect literal-IP SSRF check (the pinning dispatcher's
+          // connect.lookup never fires for a literal IP).
+          await assertLiteralIpEgressAllowed(currentUrl);
           let r = await undiciFetch(currentUrl, fetchOpts);
           let redirectCount = 0;
 
@@ -309,6 +368,9 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
             // Re-check the egress policy on a cross-host redirect (strict-mode
             // allowlist bypass via 302). Fail closed before following.
             assertRedirectEgressAllowed(currentUrl, location);
+            // Literal-IP SSRF on every hop, same-host included (a 302 to a
+            // literal private/metadata/NAT64/6to4 IP bypasses the dispatcher).
+            await assertLiteralIpEgressAllowed(location);
             const origOrigin = new URL(currentUrl).origin;
             const newOrigin = new URL(location).origin;
 

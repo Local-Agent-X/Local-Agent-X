@@ -6,7 +6,8 @@
  * canonical safety stack fires in the same sequence the three legacy loops
  * use:
  *
- *   beforeTurn:           mid-turn-stale, force-tool-use (codex)
+ *   beforeTurn:           mid-turn-stale, force-tool-use (codex), open-steps
+ *                         (turn-0 plan seed on agent/background lanes)
  *   afterModelCall:       loop-detection, hallucination-check, action-claim,
  *                         premature-completion (worker ops only — forces one
  *                         more turn when a non-chat op ends tool-lessly with

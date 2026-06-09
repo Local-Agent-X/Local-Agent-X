@@ -30,6 +30,8 @@ import {
 import { isSilentToolCall } from "./silent-tool-check.js";
 import { runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
+import { openStepsTerminationWarning } from "../middlewares/open-steps.js";
+import { randomUUID } from "node:crypto";
 
 export interface DecideOutcomeInput {
   op: Op;
@@ -186,6 +188,24 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     // gate.capReached → leave terminalReason="done" but the errors are
     // already drained; the user sees the broken preview + the model's
     // "done", same as today. Future: emit a one-line warning event.
+  }
+
+  // Loud-partial guarantee: when the op truly ends here (every continuation
+  // gate above declined to extend it) but this op's own task list still has
+  // open steps, append a visible warning to the live bubble AND the committed
+  // transcript. We can't force a stuck model to finish — the open-steps
+  // middleware already spent its nudge — but a partial must never LOOK like a
+  // finished answer, in chat or in a mission report.
+  if (terminalReason === "done") {
+    const warning = openStepsTerminationWarning(op.id);
+    if (warning) {
+      publishStreamChunk(op.id, { text: `\n\n${warning}` });
+      allMessages.push({
+        messageId: `open-steps-warn-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
+        role: "assistant",
+        content: { text: warning },
+      });
+    }
   }
 
   return { terminalReason, allMessages };

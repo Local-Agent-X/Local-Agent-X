@@ -220,14 +220,15 @@ export const ENCODED_SCHEMES: EncodedScheme[] = [
   { re: PERCENT_RUN_RE, decode: decodePercent, label: "percent" },
 ];
 
-// Max decode layers we'll peel for ONE outer run, counting the outer layer.
 // C3-18: a fixed one-extra-layer peel let `base64(base64(hex(secret)))` (3
-// layers) sail through clean — defeating the scanner AND the canary gate. We
-// iterate to this small bound instead. The shared MAX_DECODED_BUDGET byte
-// counter (threaded through every layer/view below) still bounds total work, so
-// a nested decompression-bomb input can't blow memory/CPU — depth is capped AND
-// bytes are capped, whichever hits first.
-const MAX_DECODE_DEPTH = 5;
+// layers) sail through clean — defeating the scanner AND the canary gate. The
+// peel below iterates layer-by-layer with NO fixed depth cap: a secret wrapped
+// in an arbitrary number of encoding layers is still reached. Total work is
+// bounded SOLELY by the shared MAX_DECODED_BUDGET byte counter (threaded through
+// every layer/view), which is sufficient for DoS safety — a nested
+// decompression-bomb input draws the budget to zero and the loop terminates. A
+// redundant fixed depth cap was removed because it was only an evasion gap (a
+// >5-layer wrap stopped early even with budget left), never the DoS bound.
 
 // Mutable byte-budget cell so one counter is shared across every layer and view
 // of every run in a single scan (not per-run), matching the original
@@ -237,8 +238,8 @@ export interface Budget {
 }
 
 /**
- * Iteratively peel an outer encoded run into EVERY decoded text view across up
- * to MAX_DECODE_DEPTH layers, sharing one byte budget. A worklist/queue loop: at
+ * Iteratively peel an outer encoded run into EVERY decoded text view across any
+ * number of layers, sharing one byte budget. A worklist/queue loop: at
  * each layer, take a view string, re-detect any inner encoded run inside it, and
  * enqueue that run's decode views for the next layer. Every view we produce
  * (latin1, both-endian utf16le, percent text, at every layer) is yielded for the
@@ -257,8 +258,10 @@ export function iterativeRunViews(
   const queue: Array<{ run: string; scheme: EncodedScheme }> = [
     { run: outerRun, scheme: outerScheme },
   ];
-  let depth = 0;
-  while (queue.length > 0 && depth < MAX_DECODE_DEPTH && budget.remaining > 0) {
+  // No fixed depth cap: peel until the queue drains or the shared byte budget is
+  // spent. budget.remaining > 0 is the SOLE bound — DoS-safe, and a deeper wrap
+  // can no longer evade the scan by exceeding a layer count.
+  while (queue.length > 0 && budget.remaining > 0) {
     const nextLayer: Array<{ run: string; scheme: EncodedScheme }> = [];
     for (const item of queue) {
       if (budget.remaining <= 0) break;
@@ -285,7 +288,6 @@ export function iterativeRunViews(
     }
     queue.length = 0;
     queue.push(...nextLayer);
-    depth++;
   }
   return collected;
 }
@@ -293,9 +295,9 @@ export function iterativeRunViews(
 /**
  * Find encoded runs whose DECODED view trips a credential pattern, and return a
  * SecretMatch per offending run that spans the ORIGINAL encoded blob (so
- * redaction removes the whole thing). Iteratively peels up to MAX_DECODE_DEPTH
- * layers (so multi-round encodings like base64(base64(hex(secret))) are caught),
- * bounded by a shared MAX_DECODED_BUDGET. Derived views are matched with the
+ * redaction removes the whole thing). Iteratively peels every encoding layer (so
+ * multi-round encodings like base64(base64(hex(secret))) are caught), bounded
+ * solely by the shared MAX_DECODED_BUDGET byte budget. Derived views are matched with the
  * anchor-relaxed catalog (firstMatchNameDerived) so a synthetic prefix byte
  * can't hide a key behind a broken `\b`.
  */

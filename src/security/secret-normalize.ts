@@ -2,7 +2,8 @@
  * Secret scanner — unicode-normalization view + known-secret-value detection.
  *
  * The char-by-char normalized-view builder (homoglyph fold + control/zero-width
- * strip + NFKC/NFKD + combining-mark strip, with an output→source index map) and
+ * strip + NFKC/NFKD + combining-mark strip + category-Cf format-char strip, with
+ * an output→source index map) and
  * the two passes that consume it: the normalized-view credential pass and the
  * known-secret-value pass. The known-value pass reuses the decode engine's
  * bounded peel (iterativeRunViews / ENCODED_SCHEMES / MAX_DECODED_BUDGET) so it
@@ -44,6 +45,20 @@ import {
 // is detection-only and trips no credential/known-value pattern (verified no FP).
 // SCOPED TO THE SCANNER VIEW — user-facing rendering (sanitize.ts) is unchanged.
 const COMBINING_MARKS_RE = /[\p{Mn}\p{Me}]/gu;
+// EVERY Unicode category-Cf (format) char, stripped from the SCANNER view only.
+// stripControlChars (sanitize.ts) drops a fixed INVISIBLE_CHARS list, but the
+// bidi format controls (U+202A–202E, U+2066–2069) are NFKC-stable and were NOT
+// in that list — an attacker could interleave U+202E between every secret char
+// and the bare run never re-forms contiguous, so the catalog, normalized-view,
+// AND known-value passes all missed it (and http-egress-guard then allowed
+// egress; a receiver that strips \p{Cf} recovers the live key). \p{Cf} covers
+// the bidi controls, every zero-width char, soft hyphen, BOM, etc. in one rule,
+// so no future Cf char can re-open this gap. Over-stripping is CORRECT here:
+// this is the detection-only scanner view, and a folded Cf char trips no
+// credential/known-value pattern (legit ZWJ-emoji / Arabic format chars only
+// matter for DISPLAY, which sanitize.ts owns and we don't touch). Additive over
+// the Mn/Me strip and the NFKC/NFKD fold.
+const FORMAT_CHARS_RE = /\p{Cf}/gu;
 
 export function buildNormalizedView(text: string): { normalized: string; outToOrig: number[] } {
   let normalized = "";
@@ -52,13 +67,16 @@ export function buildNormalizedView(text: string): { normalized: string; outToOr
     const ch = text[i];
     if (stripControlChars(ch) === "") continue; // control / zero-width → dropped
     // NFKC folds fullwidth/compatibility homoglyphs; NFKD then re-splits any
-    // base+mark and we drop the marks, so an interleaved-diacritic secret
-    // collapses to the detectable bare run. A char that IS only a combining
-    // mark folds to "" and is dropped (no output index → not in the map).
+    // base+mark and we drop the marks, then we drop every category-Cf format
+    // char (bidi controls, zero-width, soft hyphen, BOM), so an interleaved-
+    // diacritic OR bidi-interleaved secret collapses to the detectable bare run.
+    // A char that IS only a combining mark or a format char folds to "" and is
+    // dropped (no output index → not in the map).
     const folded = normalizeHomoglyphs(ch)
       .normalize("NFKC")
       .normalize("NFKD")
-      .replace(COMBINING_MARKS_RE, "");
+      .replace(COMBINING_MARKS_RE, "")
+      .replace(FORMAT_CHARS_RE, "");
     for (let k = 0; k < folded.length; k++) outToOrig.push(i);
     normalized += folded;
   }

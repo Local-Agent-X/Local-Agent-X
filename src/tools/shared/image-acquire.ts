@@ -21,7 +21,7 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 import { readValidatedFile } from "../../security/validated-io.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { workspacePath } from "../../config.js";
-import { canonicalFetch, EgressRedirectBlocked } from "../web-egress.js";
+import { canonicalFetch, EgressRedirectBlocked, BROWSER_USER_AGENT, BROWSER_ACCEPT_LANGUAGE } from "../web-egress.js";
 
 export interface ImageSpec {
   /** URL (http(s)://...) or local path (absolute, or relative to workspaceRoot). Auto-detected. */
@@ -225,8 +225,9 @@ async function fetchFromUrl(url: string): Promise<Buffer> {
   try {
     res = await canonicalFetch(url, {
       headers: {
-        "User-Agent": "LocalAgentX/0.1",
+        "User-Agent": BROWSER_USER_AGENT,
         Accept: "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/*",
+        "Accept-Language": BROWSER_ACCEPT_LANGUAGE,
       },
       timeoutMs: 30_000,
     });

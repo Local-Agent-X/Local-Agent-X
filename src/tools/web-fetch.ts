@@ -8,7 +8,31 @@ import {
   assertLiteralIpEgressAllowed,
   selfCallAuthHeader,
   createPinningDispatcher,
+  BROWSER_USER_AGENT,
+  BROWSER_ACCEPT_LANGUAGE,
 } from "./web-egress.js";
+
+// Full top-level-navigation fingerprint. WAFs (Cloudflare, Akamai, PerimeterX
+// on TCGplayer/eBay) score header completeness: a request that carries the
+// Sec-Fetch-* metadata and Client Hints a real Chrome sends on a typed-URL
+// navigation clears far more of them than a bare UA. The sec-ch-ua version
+// MUST track the Chrome major in BROWSER_USER_AGENT (125) or the cross-check
+// fails. Accept-Encoding is intentionally omitted — undici only auto-decodes
+// the response when it owns that header, so setting it ourselves yields a
+// gzip/br body that .text() returns as garbage.
+const FETCH_HEADERS = {
+  "User-Agent": BROWSER_USER_AGENT,
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": BROWSER_ACCEPT_LANGUAGE,
+  "Upgrade-Insecure-Requests": "1",
+  "sec-ch-ua": '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+} as const;
 
 export const webFetchTool: ToolDefinition = {
   name: "web_fetch",
@@ -35,11 +59,7 @@ export const webFetchTool: ToolDefinition = {
         // pinning dispatcher validates, never fires for a literal IP).
         await assertLiteralIpEgressAllowed(currentUrl);
         let r = await undiciFetch(currentUrl, {
-          headers: {
-            "User-Agent": "LocalAgentX/0.1",
-            Accept: "text/html,application/json,text/plain",
-            ...selfAuth,
-          },
+          headers: { ...FETCH_HEADERS, ...selfAuth },
           signal: AbortSignal.timeout(30_000),
           redirect: "manual",
           dispatcher,
@@ -57,7 +77,7 @@ export const webFetchTool: ToolDefinition = {
           if (selfAuth && new URL(currentUrl).origin !== new URL(location).origin) selfAuth = null;
           currentUrl = location;
           r = await undiciFetch(currentUrl, {
-            headers: { "User-Agent": "LocalAgentX/0.1", Accept: "text/html,application/json,text/plain", ...selfAuth },
+            headers: { ...FETCH_HEADERS, ...selfAuth },
             signal: AbortSignal.timeout(30_000),
             redirect: "manual",
             dispatcher,

@@ -11,6 +11,7 @@ import {
   assertLiteralIpEgressAllowed,
   selfCallAuthHeader,
   createPinningDispatcher,
+  BROWSER_USER_AGENT,
 } from "./web-egress.js";
 
 export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
@@ -63,7 +64,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       if (guard) return err(guard.message, guard.meta);
 
       const headers: Record<string, string> = {
-        "User-Agent": "LocalAgentX/0.1",
+        "User-Agent": BROWSER_USER_AGENT,
       };
       // Loopback self-calls authenticate with the least-privilege internal agent
       // token (null for any external host, so it never leaks off-box). The

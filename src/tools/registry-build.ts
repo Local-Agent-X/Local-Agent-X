@@ -4,7 +4,7 @@ import { type UnifiedToolRegistry, unifiedRegistry } from "./registry.js";
 import { buildToolPromptSection } from "../tool-prompt-builder.js";
 import { applyPrompts } from "./result-helpers.js";
 import { applyAudiences } from "./audience-map.js";
-import { readTool, writeTool, editTool, deleteFileTool } from "./file-tools.js";
+import { readTool, writeTool, editTool, editLinesTool, multiEditTool, deleteFileTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
 import { processTools } from "./process-tools.js";
 import { webFetchTool } from "./web-tools.js";
@@ -38,7 +38,7 @@ import { opTools } from "../ops/tools.js";
 const _toolSearchTool = createToolSearchTool(unifiedRegistry);
 
 export const allTools: ToolDefinition[] = applyPrompts([
-  readTool, writeTool, editTool, deleteFileTool, bashTool, webFetchTool,
+  readTool, writeTool, editTool, editLinesTool, multiEditTool, deleteFileTool, bashTool, webFetchTool,
   globTool, grepTool, webSearchTool, _toolSearchTool,
   selfEditTool, primalRunBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   primalBuildStatusTool, primalBuildResumeTool,

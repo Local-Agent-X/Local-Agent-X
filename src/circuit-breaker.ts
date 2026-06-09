@@ -103,10 +103,14 @@ export function recordCircuitFailure(
   logger.warn(`[circuit-breaker] FAIL ${toolName} (session=${sessionId || "default"}) #${entry.consecutiveFailures}: ${preview}`);
 
   if (entry.state === "half_open") {
-    // Half-open failure → re-open immediately
+    // Half-open failure → re-open immediately. Logged so the failure ramp is
+    // visible: without this, a cooldown-expired retry that fails again shows up
+    // as a bare "FAIL #N" with no matching OPEN line, making it look like the
+    // breaker waved the call through (the Grok #5 edit, 2026-06-09).
     entry.state = "open";
     entry.openedAt = Date.now();
     entry.totalTrips += 1;
+    logger.warn(`[circuit-breaker] RE-OPEN ${toolName} (session=${sessionId || "default"}) after half-open retry failed (#${entry.consecutiveFailures})`);
     return;
   }
 

@@ -17,9 +17,18 @@ import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
 import { isRetryable, isRetryableTool } from "../resilience-policy.js";
 import { getToolTimeout, withTimeout, ToolTimeoutError } from "../tool-timeout.js";
-import { timeout } from "../tools/result-helpers.js";
+import { timeout, blocked } from "../tools/result-helpers.js";
+import { resolveAgentPath } from "../workspace/paths.js";
+import { checkFreshness, recordFileSeen } from "../tools/read-state.js";
 
 const logger = createLogger("tool-execution");
+
+// Edit-family tools that must not touch a file the session hasn't seen the
+// current bytes of (stale-read guard). Read-before-edit, enforced at the layer
+// that actually knows the session — not inside the tool, which doesn't.
+const FRESHNESS_GUARDED: ReadonlySet<string> = new Set(["edit", "edit_lines", "multi_edit"]);
+// Tools that leave the session knowing a file's current on-disk bytes.
+const RECORDS_SEEN: ReadonlySet<string> = new Set(["read", "write", "edit", "edit_lines", "multi_edit"]);
 
 // Sensitive-read tools whose taint is gated on the READ PATH (not on scanning
 // returned content): a file read / pattern list. Their content scan is
@@ -34,6 +43,27 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   args._onProgress = (message: string) => {
     onEvent?.({ type: "tool_progress", toolName: tc.name, toolCallId: tc.id, message } as ServerEvent);
   };
+
+  // Stale-read guard: refuse an edit against a file this session hasn't seen
+  // the current bytes of. Runs before execute (and before circuit-breaker
+  // accounting) so a "re-read first" never trips the breaker — it's guidance,
+  // not a tool failure.
+  if (typeof args.path === "string" && args.path && FRESHNESS_GUARDED.has(tc.name)) {
+    // Path resolution / freshness is best-effort: a malformed path is the
+    // tool's job to report, not ours to crash on, so swallow and fall through.
+    let resolved: string | null = null;
+    try { resolved = resolveAgentPath(args.path); } catch { /* let the tool handle it */ }
+    const fresh = resolved ? checkFreshness(sessionId, resolved) : "ok";
+    if (resolved && fresh !== "ok") {
+      ctx.result = blocked(
+        fresh === "unseen"
+          ? `Refusing to edit ${resolved}: this session hasn't read it. Read the file first so your edit targets its current contents.`
+          : `Refusing to edit ${resolved}: it changed on disk since this session last read it. Re-read it — your old_string or line numbers may be stale.`,
+        { recovery: `Call read with path="${args.path}", then retry this edit.`, layer: "stale-read-guard" },
+      );
+      return CONTINUE;
+    }
+  }
 
   const startedAt = Date.now();
   ctx.startedAt = startedAt;
@@ -182,6 +212,9 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   const result = ctx.result!;
   const durationMs = Date.now() - startedAt;
   const succeeded = !result.isError;
+  if (succeeded && typeof args.path === "string" && args.path && RECORDS_SEEN.has(tc.name)) {
+    try { recordFileSeen(sessionId, resolveAgentPath(args.path)); } catch { /* freshness is best-effort */ }
+  }
   try { recordToolStat(tc.name, sessionId || "default", succeeded, durationMs, result.isError ? result.content?.slice(0, 200) : undefined); } catch { /* tracker should never break the call */ }
   try { recordRateLimit(tc.name, sessionId); } catch { /* same */ }
   if (succeeded) {

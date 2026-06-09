@@ -113,6 +113,28 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
       { id: "allow-edit", decision: "allow", reason: "File edit (path-checked by SecurityLayer)", priority: 50 },
     ],
   },
+  // edit_lines / multi_edit are edit synonyms (line-range edit; batched atomic
+  // edits). They MUST carry the same pathArgs action:"edit" so SecurityLayer
+  // applies workspace-confinement — without it they'd be denied by default-deny,
+  // and any naive "just allow them" rule lacking pathArgs would write unbounded.
+  edit_lines: {
+    kernel: "file", risk: "workspace-write",
+    pathArgs: [{ arg: "path", action: "edit" }],
+    rules: [
+      { id: "deny-edit-lines-system", decision: "deny", reason: "Blocked: cannot edit system files", priority: 90, argMatch: { path: "C:\\Windows*" } },
+      { id: "deny-edit-lines-node-modules", decision: "deny", reason: "Blocked: do not edit directly in node_modules", priority: 80, argMatch: { path: "*node_modules*" } },
+      { id: "allow-edit-lines", decision: "allow", reason: "Line-number file edit (path-checked by SecurityLayer)", priority: 50 },
+    ],
+  },
+  multi_edit: {
+    kernel: "file", risk: "workspace-write",
+    pathArgs: [{ arg: "path", action: "edit" }],
+    rules: [
+      { id: "deny-multi-edit-system", decision: "deny", reason: "Blocked: cannot edit system files", priority: 90, argMatch: { path: "C:\\Windows*" } },
+      { id: "deny-multi-edit-node-modules", decision: "deny", reason: "Blocked: do not edit directly in node_modules", priority: 80, argMatch: { path: "*node_modules*" } },
+      { id: "allow-multi-edit", decision: "allow", reason: "Batched file edit (path-checked by SecurityLayer)", priority: 50 },
+    ],
+  },
   // delete_file is the path-bounded alternative to `bash rm` — single file
   // per call, directories refused, workspace-bounded by SecurityLayer.
   delete_file: { kernel: "file", risk: "destructive", pathArgs: [{ arg: "path", action: "delete_file" }], rules: [{ id: "allow-delete-file", decision: "allow", reason: "Single-file delete (path-checked by SecurityLayer, directories refused)", priority: 50 }] },

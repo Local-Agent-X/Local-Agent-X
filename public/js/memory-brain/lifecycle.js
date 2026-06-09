@@ -38,6 +38,9 @@ export async function ensure() {
   wireDrillUi();
   window.addEventListener('resize', resize);
   resize();
+  // Clear the buffer once before the (possibly multi-second) atlas fetch so the
+  // compositor never grabs an unrendered canvas and paints it white.
+  state.renderer.render(state.scene, state.camera);
 
   const hud = document.getElementById('mb-hud');
   const hint = document.getElementById('mb-hint');

@@ -8,7 +8,7 @@
  */
 
 import { type TaintLabel, type TaintState } from "@arikernel/core";
-import { pathDripEncodedBytes } from "./exfil-detection.js";
+import * as egress from "./egress-accounting.js";
 import { isSafeReadOnlyAction, isEgressAction, MAX_EVENT_WINDOW, TOOL_CLASS_RISK_MAP } from "./safe-actions.js";
 import { isSensitivePath } from "./sensitive-paths.js";
 import type {
@@ -216,89 +216,25 @@ export class RunStateTracker {
 		return this._quarantineGetCount > RunStateTracker.MAX_QUARANTINE_GETS_WITH_PARAMS;
 	}
 
-	/**
-	 * Per-request budget of encoded-looking URL-path bytes to a non-allowlisted
-	 * host (H11). A single GET whose path carries more than this many hex/base64
-	 * bytes is the request equivalent of an oversized query string.
-	 */
-	static readonly MAX_ENCODED_PATH_BYTES_PER_REQUEST = 48;
-
-	/**
-	 * Per-run budget of cumulative encoded-looking URL-path bytes to a single
-	 * non-allowlisted host (H11). This is the slow-drip backstop: many small hex
-	 * path segments spread across several GETs accumulate against this ceiling
-	 * even when each individual request stays under the per-request budget.
-	 */
-	static readonly MAX_ENCODED_PATH_BYTES_PER_HOST = 96;
+	static readonly MAX_ENCODED_PATH_BYTES_PER_REQUEST = egress.MAX_ENCODED_PATH_BYTES_PER_REQUEST;
+	static readonly MAX_ENCODED_PATH_BYTES_PER_HOST = egress.MAX_ENCODED_PATH_BYTES_PER_HOST;
 
 	/** Record cumulative HTTP GET egress bytes for a hostname. */
 	recordHttpGetEgress(url: string): void {
-		const record = this.egressRecordFor(url);
-		if (!record) return;
-		try {
-			record.totalQueryBytes += new URL(url).search.length;
-		} catch {
-			/* ignore invalid URLs */
-		}
+		egress.recordHttpGetEgress(this._egressByHostname, url);
 	}
 
 	/**
 	 * Record encoded-looking URL-path bytes for a GET/HEAD to a non-allowlisted
 	 * host and decide whether the request must be blocked as path-drip exfil.
-	 *
-	 * Returns true when ANY of:
-	 *   - `strict` is set and the request carries ANY encoded path bytes, OR
-	 *   - this single request's encoded path bytes exceed the per-request budget, OR
-	 *   - the cumulative encoded path bytes to this host exceed the per-run budget.
-	 *
-	 * `strict` mirrors the query-GET budget=0 rule: once a sensitive read has been
-	 * confirmed, the tolerance for encoded path bytes to a non-allowlisted host
-	 * drops to zero, so even a single tiny hex segment is blocked (used by the
-	 * restricted-mode gate after quarantine).
-	 *
-	 * Allowlisted hosts are exempt (record nothing, return false) so legitimate
-	 * GETs to trusted analytics/CDN hosts are never throttled. This is the gate
-	 * that finally READS the per-host cumulative accounting the tracker records.
 	 */
 	recordEncodedPathEgress(url: string, strict = false): boolean {
-		let hostname: string;
-		try {
-			hostname = new URL(url).hostname;
-		} catch {
-			return false;
-		}
-		if (this.isAllowlistedHost(hostname)) return false;
-
-		const encodedBytes = pathDripEncodedBytes(url);
-		const record = this.egressRecordFor(url);
-		if (!record) return false;
-		record.totalPathPayloadBytes += encodedBytes;
-
-		if (strict && encodedBytes > 0) return true;
-		if (encodedBytes > RunStateTracker.MAX_ENCODED_PATH_BYTES_PER_REQUEST) return true;
-		if (record.totalPathPayloadBytes > RunStateTracker.MAX_ENCODED_PATH_BYTES_PER_HOST) return true;
-		return false;
-	}
-
-	/**
-	 * Fetch-or-create the cumulative egress record for a URL's hostname and bump
-	 * its request count. Returns undefined for unparseable URLs.
-	 */
-	private egressRecordFor(url: string): HostnameEgressRecord | undefined {
-		let hostname: string;
-		try {
-			hostname = new URL(url).hostname;
-		} catch {
-			return undefined;
-		}
-		const record = this._egressByHostname.get(hostname) ?? {
-			totalQueryBytes: 0,
-			totalPathPayloadBytes: 0,
-			requestCount: 0,
-		};
-		record.requestCount++;
-		this._egressByHostname.set(hostname, record);
-		return record;
+		return egress.recordEncodedPathEgress(
+			this._egressByHostname,
+			url,
+			(h) => this.isAllowlistedHost(h),
+			strict,
+		);
 	}
 
 	/** Get cumulative egress record for a hostname. */
@@ -313,11 +249,7 @@ export class RunStateTracker {
 
 	/** Total cumulative query-string bytes across all hostnames. */
 	get totalEgressQueryBytes(): number {
-		let total = 0;
-		for (const record of this._egressByHostname.values()) {
-			total += record.totalQueryBytes;
-		}
-		return total;
+		return egress.totalEgressQueryBytes(this._egressByHostname);
 	}
 
 	/** Check if an action is allowed in restricted mode. */

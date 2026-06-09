@@ -4,13 +4,41 @@
 // restart.
 
 import { app } from "electron";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
 
 export const LAX_DIR = join(homedir(), ".lax");
 export const CONFIG_PATH = join(LAX_DIR, "config.json");
 export const DESKTOP_SETTINGS_PATH = join(LAX_DIR, "desktop-settings.json");
+
+// R4-08 hardening: the projectRoot in ~/.lax/config.json decides the server
+// child's spawn cwd and which src/index.ts we execute. A foreign-owned or
+// world/group-writable config (or a projectRoot owned by someone else) means
+// an attacker who already has local code-exec could redirect the next launch
+// to attacker-controlled code. Before trusting either path, confirm the
+// current user owns it and (for the config file) that it isn't group/world
+// writable. POSIX-only: Windows statSync doesn't report meaningful uid/mode
+// and process.getuid is undefined there, so we skip the check rather than
+// risk refusing a legitimate Windows launch. On failure we DON'T crash: the
+// resolver returns path:null + an explanatory error, which main.ts routes to
+// the same self-heal/splash path as a missing config (it can prompt the user
+// to pick a folder) — never spawning the server with an untrusted cwd.
+function isUserOwnedSecure(path: string, requireNotGroupWorldWritable: boolean): boolean {
+  if (process.platform === "win32") return true; // not enforceable on Windows
+  const getuid = process.getuid;
+  if (typeof getuid !== "function") return true; // non-POSIX runtime — can't check
+  try {
+    const st = statSync(path);
+    if (st.uid !== getuid.call(process)) return false;
+    // Mode bits 0o022 = group-write | other-write. A config file an
+    // attacker can rewrite without owning is as good as owned.
+    if (requireNotGroupWorldWritable && (st.mode & 0o022) !== 0) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // In packaged mode __dirname is inside app.asar — use config to find the
 // live repo. Sentinel is src/index.ts (not dist/index.js) — we run the
@@ -26,6 +54,20 @@ export const DESKTOP_SETTINGS_PATH = join(LAX_DIR, "desktop-settings.json");
 const _projectRoot: { path: string | null; error: string | null } = (() => {
   const devRoot = resolve(__dirname, "..", "..");
   if (!app.isPackaged) return { path: devRoot, error: null };
+
+  // R4-08: refuse a config we can't trust to source the spawn cwd. A
+  // foreign-owned or group/world-writable config.json could have been
+  // rewritten by an attacker (who already has local code-exec as some
+  // user) to point projectRoot at attacker code. We'd rather abort to the
+  // splash (same UX as a missing config) than spawn with an untrusted cwd.
+  // A legitimate user's own ~/.lax/config.json passes this check, so it
+  // doesn't break normal launches.
+  if (!isUserOwnedSecure(CONFIG_PATH, true)) {
+    return {
+      path: null,
+      error: `~/.lax/config.json is not owned by you or is group/world-writable, so it can't be trusted to locate the app. Run: chown "$(whoami)" ~/.lax/config.json && chmod 600 ~/.lax/config.json`,
+    };
+  }
 
   let cfgProjectRoot: string | undefined;
   try {
@@ -50,7 +92,19 @@ const _projectRoot: { path: string | null; error: string | null } = (() => {
       error: `projectRoot "${cfgProjectRoot}" does not contain src/index.ts. Edit ~/.lax/config.json so projectRoot points at your Local-Agent-X repo.`,
     };
   }
-  return { path: resolve(cfgProjectRoot), error: null };
+  // R4-08: the resolved repo must be owned by the current user too — a repo
+  // dir owned by someone else means its src/index.ts (what we spawn) is
+  // attacker-controllable. Don't require non-group-writable here: a repo
+  // checkout's group bits vary legitimately across dev setups; ownership is
+  // the load-bearing check for "who can replace the code we run".
+  const resolvedRoot = resolve(cfgProjectRoot);
+  if (!isUserOwnedSecure(resolvedRoot, false)) {
+    return {
+      path: null,
+      error: `projectRoot "${cfgProjectRoot}" is not owned by you, so the code it points at can't be trusted to run. Point projectRoot at a repo you own, or re-run the LAX installer.`,
+    };
+  }
+  return { path: resolvedRoot, error: null };
 })();
 
 // PROJECT_ROOT may be mutated post-launch by project-root-resolver.ts when

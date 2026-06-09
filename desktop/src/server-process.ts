@@ -209,6 +209,14 @@ export function startServer(handlers?: ServerEventHandlers): void {
   const electron = require("electron") as typeof import("electron");
   const bundledModelsDir = electron.app.isPackaged ? process.resourcesPath : "";
 
+  // We spawn a real `node` (PATH-resolved) rather than the bundled Electron
+  // binary via ELECTRON_RUN_AS_NODE: the server loads native addons
+  // (better-sqlite3, sqlite-vec, sherpa-onnx) built against the system Node
+  // ABI by the repo's own `npm install`. Electron's embedded Node has a
+  // different NODE_MODULE_VERSION, so running the server under it would crash
+  // on the first native require. Pinning to process.execPath is therefore
+  // unsafe here; the PATH augment above stays. (R4-08: config-sourced spawn
+  // cwd is now validated for ownership in config.ts.)
   serverProcess = spawn("node", nodeArgs, {
     cwd: projectRoot,
     stdio: ["ignore", "pipe", "pipe"],

@@ -148,6 +148,42 @@ export const BROWSER_OPEN_CMDS =
 // argv[0] basenames that run an inline-eval body via `-e`/`-E`/`-r` flags.
 export const INTERP_ESCAPE_BINS = new Set(["perl", "ruby", "php"]);
 
+// ── R4-11/R4-13: inline-eval interpreter-escape refusal (non-unrestricted) ──
+// A regex denylist over a Turing-complete interpreter body cannot soundly
+// classify what `node -e`/`python -c` will do (R4-11), and keying the existing
+// escape detectors on a basename SPELLING set lets a renamed interpreter
+// (`./myperl -e`, `cp /usr/bin/perl ./py && ./py -e`) slip past (R4-13). The
+// sound class-level fix is to REFUSE the inline-eval interpreter FORM in
+// common/workspace modes (unrestricted stays permissive) and make the agent
+// write a path-guard-visible script file instead. No capability is removed.
+//
+// Per-interpreter eval flags: argv[0] basename → the flag tokens that make it
+// evaluate an inline body. CRITICAL: `-c` is an eval flag ONLY for python — for
+// sh/bash/zsh/dash, `-c '...'` is the NORMAL shell form (the shell tool itself
+// spawns `bash -c`), so those shells are deliberately absent here and stay
+// ALLOWED.
+export const INTERP_EVAL_FLAGS: Record<string, Set<string>> = {
+  python: new Set(["-c"]),
+  python3: new Set(["-c"]),
+  // perl: -e/-E eval; -n/-p wrap an implicit loop but still require an -e body,
+  // and the argv-aware short-flag scan in detectInterpreterEscape already walks
+  // clustered forms (`-ne`), so the eval signal here is -e/-E.
+  perl: new Set(["-e", "-E"]),
+  ruby: new Set(["-e"]),
+  php: new Set(["-r"]),
+  node: new Set(["-e", "-p", "--eval", "--print"]),
+  deno: new Set(["-e", "--eval"]),
+  bun: new Set(["-e", "-p", "--eval", "--print"]),
+};
+
+// The rename-escape (part b) flag set: any eval-style flag that, paired with a
+// model-writable-path argv[0], marks a renamed interpreter. Legit workspace
+// executables (`./node_modules/.bin/tsc`, `./build/app`) are not invoked with
+// `-e '<code>'`, so this targets the rename-escape without breaking dev flows.
+export const RENAME_ESCAPE_EVAL_FLAGS = new Set([
+  "-e", "-E", "-r", "-c", "-p", "--eval", "--print",
+]);
+
 // ── C3-12/C3-14: network-client argv[0] denylist ──
 // `fetch`/`http`/`https`/`xh`/`httpie`/`curlie` are network clients ONLY when
 // they LEAD the command — `git fetch`/`npm fetch` are not. So gate them by the

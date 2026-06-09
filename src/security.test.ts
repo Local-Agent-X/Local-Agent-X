@@ -153,10 +153,19 @@ describe("SecurityLayer", () => {
       expect(d.allowed).toBe(false);
     });
 
-    // python -c and node -e are deliberately allowed for data transforms
-    // (shell-policy.ts:12-13). perl -e / ruby -e / php -r stay blocked.
-    it("allows python -c (data transform)", () => {
+    // R4-11/R4-13: the inline-eval interpreter FORM (`python -c` / `node -e`)
+    // is now REFUSED in non-unrestricted modes — a regex can't soundly vet a
+    // Turing-complete body, so the agent writes a script file instead. This
+    // `sec` defaults to `common` mode, so the form is refused.
+    it("refuses python -c in common mode (R4-11 — write a script file instead)", () => {
       const d = sec.evaluate({ toolName: "bash", args: { command: 'python -c "import os"' }, sessionId: "t" });
+      expect(d.allowed).toBe(false);
+    });
+
+    // ...but it stays permissive in unrestricted mode (the form is allowed).
+    it("allows python -c in unrestricted mode (data transform)", () => {
+      const unrestricted = new SecurityLayer(suiteWorkspaceRoot, "unrestricted");
+      const d = unrestricted.evaluate({ toolName: "bash", args: { command: 'python -c "import os"' }, sessionId: "t" });
       expect(d.allowed).toBe(true);
     });
 

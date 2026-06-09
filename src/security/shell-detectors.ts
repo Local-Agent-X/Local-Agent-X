@@ -4,7 +4,16 @@
 // match against live in shell-rules.ts; the engine that sequences them lives in
 // shell-policy.ts.
 
-import { INTERP_ESCAPE_BINS, NETWORK_CLIENT_BINS } from "./shell-rules.js";
+import { isAbsolute, relative, resolve, join } from "node:path";
+import { homedir } from "node:os";
+import {
+  INTERP_ESCAPE_BINS,
+  NETWORK_CLIENT_BINS,
+  INTERP_EVAL_FLAGS,
+  RENAME_ESCAPE_EVAL_FLAGS,
+} from "./shell-rules.js";
+import { realpathDeep } from "./file-access.js";
+import type { FileAccessMode } from "./types.js";
 
 export function detectObfuscation(command: string): string | null {
   // Hex-encoded sequences (e.g., \x72\x6d = "rm")
@@ -125,7 +134,7 @@ export function stripQuotedSpans(command: string): string {
 // in `perl -e 'use Socket; ...'` is a single token, not the chain-breaking
 // words inside it). Quote characters are stripped from the emitted token. Good
 // enough for argv[0]/flag inspection — full shell word-splitting is not needed.
-function tokenizeCommand(segment: string): string[] {
+export function tokenizeCommand(segment: string): string[] {
   const tokens: string[] = [];
   let cur = "";
   let quote: string | null = null;
@@ -227,6 +236,115 @@ export function detectInlineNetwork(command: string): string | null {
   ];
   if (networkPatterns.some((p) => p.test(command))) {
     return "Blocked: raw socket / network module in inline script — use http_request (SSRF-checked) instead.";
+  }
+  return null;
+}
+
+// Is this argv[0] token written as a PATH (vs. a bare command name resolved via
+// $PATH)? `./myperl`, `../bin/x`, `/tmp/py`, `~/py`, `build/app` all are; a bare
+// `node` / `perl` is not. Mirrors the path-shape intent of shell-path-guard's
+// looksLikePath but for argv[0] (which that guard deliberately skips).
+function isPathForm(token: string): boolean {
+  return (
+    token.startsWith("./") ||
+    token.startsWith("../") ||
+    token.startsWith("/") ||
+    token.startsWith("~") ||
+    token.includes("/") ||
+    token.includes("\\")
+  );
+}
+
+// Does a path-form argv[0] resolve into a model-writable tree? A renamed
+// interpreter the model dropped to escape the basename denylist lives in
+// exactly these trees — the workspace, the surrounding project root, or the
+// user's home; a real system binary invoked by absolute path (e.g.
+// /usr/bin/perl — already caught by the basename set) does not. A relative
+// `./myperl` is anchored at the WORKSPACE (the agent's effective cwd when it
+// runs a shell command), `~` expands to home, and both the target and the roots
+// are realpath'd so a symlinked workspace/home still compares. The project root
+// (workspace parent) is included because a relocated workspace bridges back
+// there and the agent's checkout-relative tools can also write it. Best-effort:
+// on a resolution failure, fall back to the lexical path.
+function resolvesIntoWritableTree(token: string, workspace: string): boolean {
+  let raw = token;
+  if (raw === "~") raw = homedir();
+  else if (raw.startsWith("~/") || raw.startsWith("~\\")) raw = join(homedir(), raw.slice(2));
+
+  const rawWorkspace = resolve(workspace);
+  const resolved = isAbsolute(raw) ? resolve(raw) : resolve(rawWorkspace, raw);
+
+  let realWorkspace: string;
+  let realProjectRoot: string;
+  let realHome: string;
+  let realTarget: string;
+  try {
+    realWorkspace = realpathDeep(rawWorkspace);
+    realProjectRoot = realpathDeep(resolve(rawWorkspace, ".."));
+    realHome = realpathDeep(resolve(homedir()));
+    realTarget = realpathDeep(resolved);
+  } catch {
+    realWorkspace = rawWorkspace;
+    realProjectRoot = resolve(rawWorkspace, "..");
+    realHome = resolve(homedir());
+    realTarget = resolved;
+  }
+  const inWorkspace = !relative(realWorkspace, realTarget).startsWith("..");
+  const inProjectRoot = !relative(realProjectRoot, realTarget).startsWith("..");
+  const inHome = !relative(realHome, realTarget).startsWith("..");
+  return inWorkspace || inProjectRoot || inHome;
+}
+
+// ── R4-11/R4-13: refuse the inline-eval interpreter FORM (non-unrestricted) ──
+// A regex over a Turing-complete `node -e`/`python -c` body cannot soundly say
+// whether it touches the network (R4-11), and keying the escape detectors on a
+// basename SPELLING set lets a renamed interpreter bypass them (R4-13). The
+// sound fix is to refuse the FORM in common/workspace modes (unrestricted stays
+// permissive) — the agent writes a path-guard-visible script file instead.
+//   (a) a known interpreter basename invoked with its eval flag, OR
+//   (b) the rename-escape: a model-writable-path argv[0] invoked with an
+//       eval-style flag (legit workspace executables aren't run with `-e`).
+// This complements (does not replace) detectInterpreterEscape/detectInlineNetwork,
+// which stay as defense-in-depth. It does NOT blanket-deny workspace execution —
+// only the eval-flag interpreter-escape shape. `sh -c`/`bash -c` are ALLOWED
+// because no shell basename carries an eval-flag table (and `-c` is not a
+// rename-escape flag for them: a bare `sh`/`bash` argv[0] is not a path form,
+// and a path-form `./myshell -c` IS the rename-escape this targets).
+export function detectInlineInterpreterEval(
+  tokens: string[],
+  mode: FileAccessMode,
+  workspace: string,
+): string | null {
+  if (mode === "unrestricted") return null; // permissive in unrestricted
+  if (tokens.length === 0) return null;
+  const argv0 = tokens[0];
+  const bin = execBasename(argv0);
+
+  // (a) Known interpreter basename + its eval flag anywhere in the argv.
+  const evalFlags = INTERP_EVAL_FLAGS[bin];
+  if (evalFlags) {
+    for (let i = 1; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (t === "--") break; // end-of-flags; the rest are operands
+      if (evalFlags.has(t)) {
+        return `Blocked: ${bin} inline-eval flag (${t}) — write a script file (write/edit) and run that instead. A regex can't soundly vet an inline interpreter body, so this form is refused outside unrestricted mode.`;
+      }
+    }
+    return null;
+  }
+
+  // (b) Rename-escape: a model-writable-path argv[0] (the model could drop a
+  // renamed interpreter there) invoked with an eval-style flag. A real dev
+  // executable (`./node_modules/.bin/tsc`, `./build/app`) is never run with
+  // `-e '<code>'`, so this targets the rename-escape without breaking workflows.
+  if (isPathForm(argv0) && resolvesIntoWritableTree(argv0, workspace)) {
+    for (let i = 1; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (t === "--") break;
+      if (RENAME_ESCAPE_EVAL_FLAGS.has(t)) {
+        return `Blocked: workspace executable invoked with an inline-eval flag (${t}) — looks like a renamed interpreter escaping the interpreter denylist. Write a script file and run that instead.`;
+      }
+    }
   }
   return null;
 }

@@ -87,7 +87,12 @@ export function evaluateShellPaths(command: string, ctx: ShellPathGuardCtx): Sec
  * first failing decision; allows only if both steps pass.
  */
 export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuardCtx): SecurityDecision {
-  const cmdDecision = evaluateShellCommand(command);
+  // Thread the file-access mode + workspace into the command scan so the
+  // R4-11/R4-13 inline-eval interpreter-escape refusal can gate on mode
+  // (unrestricted stays permissive) and resolve the rename-escape path against
+  // the workspace tree. This is the canonical mode-aware bash/process_start
+  // seam; the redundant secondary scan in process-session runs AFTER it.
+  const cmdDecision = evaluateShellCommand(command, ctx.fileAccessMode, ctx.workspace);
   if (!cmdDecision.allowed) return cmdDecision;
   return evaluateShellPaths(command, ctx);
 }

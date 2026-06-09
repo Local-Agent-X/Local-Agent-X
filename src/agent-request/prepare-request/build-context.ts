@@ -33,6 +33,7 @@ export interface BuildContextResult {
   smartContext: string;
   memoryContext: string;
   notifications: Awaited<ReturnType<typeof buildTurnContextCached>>["notifications"];
+  knownProjectsFound: boolean;
 }
 
 export async function buildContext(input: BuildContextInput): Promise<BuildContextResult> {
@@ -70,6 +71,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
   let relevantMemories = turnCtx.relevantMemories;
   let smartContext = turnCtx.smartContext;
   let memoryContext = turnCtx.memoryContext;
+  let knownProjectsFound = turnCtx.knownProjectsFound;
   const notifications = turnCtx.notifications;
   if (input.isTrivialToolRequest && !input.skipMemory) logger.info(`[chat] Trivial tool request — skipping memory injection`);
   else if (input.isCodexProvider && !input.skipMemory) logger.info(`[chat] Codex provider — daily log skipped`);
@@ -100,10 +102,11 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     relevantMemories = "";
     smartContext = "";
     memoryContext = "";
+    knownProjectsFound = false;
     logger.info(`[chat] weak tier ${input.resolvedModel} — stripped memory/profile context to prevent roleplay drift`);
   }
 
-  return { contextBlock, relevantMemories, smartContext, memoryContext, notifications };
+  return { contextBlock, relevantMemories, smartContext, memoryContext, notifications, knownProjectsFound };
 }
 
 export function isTrivialToolRequest(message: string): boolean {

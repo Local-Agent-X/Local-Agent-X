@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { sanitizeHistory, truncateHistory } from "../providers/sanitize.js";
 import type { AgentRequestInput, ForcedToolChoice, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";
+import { providerUndercallsTools } from "../providers/provider-ids.js";
 import { createLogger } from "../logger.js";
 
 import { buildContext, isTrivialToolRequest } from "./prepare-request/build-context.js";
@@ -20,6 +21,30 @@ import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
 import { buildSystemPrompt } from "./prepare-request/build-system-prompt.js";
 
 const logger = createLogger("agent-request.prepare-request");
+
+const RECALL_TOOL = "search_past_sessions";
+
+/**
+ * Whether to force the cross-session recall tool on turn 0. Pure so the
+ * decision (4 gates + intent-force precedence) is testable without the
+ * prepare-request pipeline. Forces only when: nothing stronger already pinned
+ * a tool, the known-projects scanner found prior content, the provider
+ * under-calls tools (Grok et al), and the recall tool is actually available
+ * this turn.
+ */
+export function shouldForceRecallSearch(opts: {
+  toolAlreadyForced: boolean;
+  knownProjectsFound: boolean;
+  provider: string;
+  toolNames: readonly string[];
+}): boolean {
+  return (
+    !opts.toolAlreadyForced &&
+    opts.knownProjectsFound &&
+    providerUndercallsTools(opts.provider) &&
+    opts.toolNames.includes(RECALL_TOOL)
+  );
+}
 
 export async function prepareAgentRequest(input: AgentRequestInput): Promise<PreparedAgentRequest> {
   // Per-step timing logs. Added 2026-05-27 after IDE-mode chat turns wedged
@@ -195,6 +220,22 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     } else {
       logger.warn(`[intent] classifier picked ${forcedName} but it's not in this turn's tool list — skipping force`);
     }
+  }
+
+  // Tool-shy recall force. Grok (and any provider that under-calls tools)
+  // ignores the known-projects recall NUDGE and answers thin instead of
+  // fetching the prior content. When the scanner DID find prior content and
+  // nothing stronger already pinned a tool, force one search_past_sessions on
+  // turn 0 so the recall actually happens. Strong providers self-call and are
+  // left alone. The adapter releases the pin after turn 0.
+  if (shouldForceRecallSearch({
+    toolAlreadyForced: !!toolChoice,
+    knownProjectsFound: ctx.knownProjectsFound,
+    provider: resolved.provider,
+    toolNames: toolSel.tools.map(t => t.name),
+  })) {
+    toolChoice = { type: "tool", name: RECALL_TOOL };
+    logger.info(`[recall-force] ${resolved.provider} under-calls tools + known project in message — forcing ${RECALL_TOOL}`);
   }
 
   return {

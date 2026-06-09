@@ -51,7 +51,9 @@ async function executeViaSidecar(
 				timestamp: now(),
 				principalId: ctx.principal.id,
 				toolClass: request.toolClass,
-				action: request.action,
+				// Canonicalize action casing to match the primary ingest chokepoint
+				// (buildToolCall) so onExecute hooks and run-state see lowercase.
+				action: request.action.toLowerCase(),
 				parameters: request.parameters,
 				taintLabels: request.taintLabels ?? [],
 				grantId: request.grantId,

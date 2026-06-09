@@ -319,12 +319,12 @@ function checkSecretAccessThenAnyEgress(
 ): BehavioralRuleMatch | null {
 	// Look for database queries or HTTP GETs that touched secrets-like resources
 	const secretAccess = findRecent(events, (e) => {
-		if (e.toolClass === "database" && e.action === "query") {
+		if (e.toolClass === "database" && e.action?.toLowerCase() === "query") {
 			const table = (e.metadata?.table as string) ?? "";
 			const query = (e.metadata?.query as string) ?? "";
 			return SECRETS_DB_PATTERNS.test(table) || SECRETS_DB_PATTERNS.test(query);
 		}
-		if (e.toolClass === "http" && (e.action === "get" || e.action === "head")) {
+		if (e.toolClass === "http" && (e.action?.toLowerCase() === "get" || e.action?.toLowerCase() === "head")) {
 			const url = (e.metadata?.url as string) ?? "";
 			return SECRETS_URL_PATTERNS.test(url);
 		}

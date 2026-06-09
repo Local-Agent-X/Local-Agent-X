@@ -36,5 +36,8 @@ export function isSafeReadOnlyAction(toolClass: string, action: string): boolean
  * Suspicious GET-based exfil is detected separately by isSuspiciousGetExfil().
  */
 export function isEgressAction(action: string): boolean {
-	return ["post", "put", "patch", "delete"].includes(action);
+	// Lowercase defensively so an un-canonicalized action (e.g. "POST") can't slip
+	// past the lowercase-literal comparison. Ingest already canonicalizes, but this
+	// keeps the gate correct independent of caller casing.
+	return ["post", "put", "patch", "delete"].includes(action.toLowerCase());
 }

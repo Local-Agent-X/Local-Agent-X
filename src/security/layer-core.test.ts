@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { SecurityLayer } from "./layer-core.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
+import { detectInlineInterpreterEval } from "./shell-detectors.js";
 import { evaluateShellCommandAndPaths, evaluateShellPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch } from "./network-policy.js";
 import { TOOL_PATH_ARGS } from "../tool-registry.js";
@@ -382,6 +383,119 @@ describe("SecurityLayer kernel-class dispatch", () => {
       const inWs = join(WORKSPACE, "out.txt");
       const d = evaluateShellPaths(`echo hi > ${inWs}`, guardCtx);
       expect(d.allowed).toBe(true);
+    });
+  });
+
+  // ── R4-11/R4-13: inline-eval interpreter-escape refusal (non-unrestricted) ──
+
+  describe("R4-11/R4-13: inline-eval interpreter FORM is refused in common/workspace", () => {
+    const commonCtx = {
+      workspace: WORKSPACE,
+      fileAccessMode: "common" as const,
+      allowedPathCheck: () => false,
+    };
+    const unrestrictedCtx = {
+      workspace: WORKSPACE,
+      fileAccessMode: "unrestricted" as const,
+      allowedPathCheck: () => false,
+    };
+
+    // (a) Known interpreter basename + its eval flag → REFUSE. A regex can't
+    // soundly vet a Turing-complete `node -e`/`python -c` body (R4-11), so the
+    // FORM is refused outside unrestricted mode.
+    it("refuses node -e '<code>' (even a network body the regex can't classify)", () => {
+      const d = evaluateShellCommandAndPaths(`node -e 'require("node:dns")'`, commonCtx);
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/script file/i);
+    });
+
+    it("refuses python -c 'import socket'", () => {
+      expect(evaluateShellCommandAndPaths("python -c 'import socket'", commonCtx).allowed).toBe(false);
+    });
+
+    it("refuses python3 -c '...'", () => {
+      expect(evaluateShellCommandAndPaths("python3 -c 'print(1)'", commonCtx).allowed).toBe(false);
+    });
+
+    it("refuses deno -e '...' and bun -e '...'", () => {
+      expect(evaluateShellCommandAndPaths(`deno -e 'console.log(1)'`, commonCtx).allowed).toBe(false);
+      expect(evaluateShellCommandAndPaths(`bun -e 'console.log(1)'`, commonCtx).allowed).toBe(false);
+    });
+
+    it("refuses node --eval and node -p", () => {
+      expect(evaluateShellCommandAndPaths(`node --eval 'x'`, commonCtx).allowed).toBe(false);
+      expect(evaluateShellCommandAndPaths(`node -p 'x'`, commonCtx).allowed).toBe(false);
+    });
+
+    // perl -e was ALREADY refused by detectInterpreterEscape; make sure that
+    // posture still holds (no regression) and is also covered here.
+    it("still refuses perl -e (detectInterpreterEscape, not regressed)", () => {
+      expect(evaluateShellCommandAndPaths(`perl -e 'use Socket'`, commonCtx).allowed).toBe(false);
+      expect(evaluateShellCommand(`perl -e 'use Socket'`).allowed).toBe(false);
+    });
+
+    // (b) Rename-escape: a model-writable-path argv[0] invoked with an
+    // eval-style flag → REFUSE, even though the basename isn't a known
+    // interpreter (R4-13). `./myperl` resolves under the project root.
+    it("refuses ./myperl -e 'use Socket' (renamed interpreter in workspace)", () => {
+      const d = evaluateShellCommandAndPaths(`./myperl -e 'use Socket'`, commonCtx);
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/renamed interpreter|script file/i);
+    });
+
+    it("refuses ./py -c 'x' (renamed interpreter in workspace)", () => {
+      expect(evaluateShellCommandAndPaths(`./py -c 'x'`, commonCtx).allowed).toBe(false);
+    });
+
+    it("refuses an absolute in-workspace renamed interpreter with -e", () => {
+      const renamed = join(WORKSPACE, "py");
+      expect(evaluateShellCommandAndPaths(`${renamed} -e 'x'`, commonCtx).allowed).toBe(false);
+    });
+
+    // ── allow-set: normal shell + dev forms must stay ALLOWED ──
+    it("ALLOWS bash -c / sh -c / zsh -c (the normal shell form, -c is not an eval flag for shells)", () => {
+      expect(evaluateShellCommandAndPaths(`bash -c 'ls'`, commonCtx).allowed).toBe(true);
+      expect(evaluateShellCommandAndPaths(`sh -c 'echo hi'`, commonCtx).allowed).toBe(true);
+      expect(evaluateShellCommandAndPaths(`zsh -c 'echo hi'`, commonCtx).allowed).toBe(true);
+    });
+
+    it("ALLOWS node ./script.js and python ./run.py (no eval flag)", () => {
+      expect(evaluateShellCommandAndPaths(`node ./script.js`, commonCtx).allowed).toBe(true);
+      expect(evaluateShellCommandAndPaths(`python ./run.py`, commonCtx).allowed).toBe(true);
+    });
+
+    it("ALLOWS grep -e foo file, sort -c, git commit -e", () => {
+      expect(evaluateShellCommandAndPaths(`grep -e foo file`, commonCtx).allowed).toBe(true);
+      expect(evaluateShellCommandAndPaths(`sort -c file`, commonCtx).allowed).toBe(true);
+      expect(evaluateShellCommandAndPaths(`git commit -e`, commonCtx).allowed).toBe(true);
+    });
+
+    it("ALLOWS a legit workspace dev executable without an eval flag (./node_modules/.bin/tsc)", () => {
+      expect(evaluateShellCommandAndPaths(`./node_modules/.bin/tsc --noEmit`, commonCtx).allowed).toBe(true);
+    });
+
+    // ── unrestricted bypass: the FORM is permissive there ──
+    it("ALLOWS node -e '...' in unrestricted mode", () => {
+      expect(evaluateShellCommandAndPaths(`node -e 'console.log(1)'`, unrestrictedCtx).allowed).toBe(true);
+    });
+
+    it("ALLOWS python -c '...' in unrestricted mode", () => {
+      expect(evaluateShellCommandAndPaths(`python -c 'print(1)'`, unrestrictedCtx).allowed).toBe(true);
+    });
+
+    // ── direct detector unit tests (mode gate + -c/shell collision) ──
+    it("detectInlineInterpreterEval returns null in unrestricted mode", () => {
+      expect(detectInlineInterpreterEval(["node", "-e", "x"], "unrestricted", WORKSPACE)).toBeNull();
+    });
+
+    it("detectInlineInterpreterEval does NOT treat bash/sh -c as eval", () => {
+      expect(detectInlineInterpreterEval(["bash", "-c", "ls"], "common", WORKSPACE)).toBeNull();
+      expect(detectInlineInterpreterEval(["sh", "-c", "ls"], "common", WORKSPACE)).toBeNull();
+    });
+
+    it("detectInlineInterpreterEval refuses python -c but allows python script.py", () => {
+      expect(detectInlineInterpreterEval(["python", "-c", "x"], "common", WORKSPACE)).not.toBeNull();
+      expect(detectInlineInterpreterEval(["python", "run.py"], "common", WORKSPACE)).toBeNull();
     });
   });
 

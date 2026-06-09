@@ -1,5 +1,6 @@
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
+import type { FileAccessMode } from "./types.js";
 import { countTopLevelPipes } from "../tools/shell-translate.js";
 import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS } from "./shell-rules.js";
 import {
@@ -9,13 +10,26 @@ import {
   detectInterpreterEscape,
   detectNetworkClientArgv0,
   detectInlineNetwork,
+  detectInlineInterpreterEval,
+  tokenizeCommand,
 } from "./shell-detectors.js";
 
 // Re-exported for the existing public surface (importers reference it from
 // "./shell-policy.js"); the implementation now lives in shell-detectors.ts.
 export { detectObfuscation };
 
-export function evaluateShellCommand(command: string): SecurityDecision {
+// `mode`/`workspace` gate the R4-11/R4-13 inline-eval interpreter-escape
+// refusal: it only fires in non-unrestricted modes and needs the workspace tree
+// to decide the rename-escape (part b). They are optional so the redundant
+// secondary scan in process-session (which runs AFTER the mode-aware
+// evaluateShellCommandAndPaths gate) and the regex-level unit tests keep
+// calling with just the command — the canonical bash/process_start path threads
+// both through evaluateShellCommandAndPaths.
+export function evaluateShellCommand(
+  command: string,
+  mode?: FileAccessMode,
+  workspace?: string,
+): SecurityDecision {
   // Obfuscation detection
   try {
     const obfuscationResult = detectObfuscation(command);
@@ -56,6 +70,21 @@ export function evaluateShellCommand(command: string): SecurityDecision {
   const netClient = detectNetworkClientArgv0(command);
   if (netClient) {
     return { allowed: false, reason: netClient, userHint: USER_HINTS.commandShell };
+  }
+
+  // R4-11/R4-13: refuse the inline-eval interpreter FORM in non-unrestricted
+  // modes (a regex can't soundly vet a Turing-complete `node -e`/`python -c`
+  // body, and a renamed interpreter bypasses the basename denylist). Checked
+  // BEFORE the body-regex detectInlineNetwork so the specific "write a script
+  // file" reason wins. No-op when mode/workspace weren't threaded through, or
+  // in unrestricted mode. Per pipe segment so each argv[0] is inspected.
+  if (mode !== undefined && workspace !== undefined) {
+    for (const segment of command.split("|")) {
+      const inlineEval = detectInlineInterpreterEval(tokenizeCommand(segment), mode, workspace);
+      if (inlineEval) {
+        return { allowed: false, reason: inlineEval, userHint: USER_HINTS.commandShell };
+      }
+    }
   }
 
   // C3-17: raw socket / low-level network module use inside node -e / python -c

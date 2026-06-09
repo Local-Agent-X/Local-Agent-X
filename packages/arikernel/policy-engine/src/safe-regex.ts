@@ -19,8 +19,9 @@
  * letting a kernel-freezing pattern load. See FIRST-CHAR DISJOINTNESS LIMITS below.
  *
  * It also rejects two cheaper shapes: a pattern longer than 500 chars (too
- * complex to analyze/run safely) and adjacent quantified wildcards (.*.* /
- * .+.+, quadratic backtracking).
+ * complex to analyze/run safely) and adjacent unbounded quantifiers over
+ * overlapping character sets (.*.* / a*a*…b / \d*\d*…x — polynomial
+ * backtracking; the sequential-sibling cousin of the nested-quantifier shape).
  *
  * Combined with the runtime MAX_REGEX_INPUT_LENGTH bound in matcher.ts,
  * this provides defense-in-depth against regex-based DoS.
@@ -55,9 +56,15 @@ export function checkRegexSafety(pattern: string): string | null {
 		return `Regex pattern exceeds 500 characters — too complex for safe execution (potential ReDoS).`;
 	}
 
-	// Adjacent quantified wildcards (.*.* / .+.+) cause quadratic backtracking.
-	if (/\.\*\.\*/.test(pattern) || /\.+\.+/.test(pattern)) {
-		return `Regex pattern '${pattern}' contains adjacent wildcards (e.g. .*.*) — quadratic backtracking risk.`;
+	// Adjacent unbounded quantifiers over overlapping characters — the
+	// sequential-sibling catastrophic family (`a*a*…b`, `.+.+`, `\d*\d*…x`,
+	// `[0-9]*[0-9]*…X`). With k such siblings a priming run backtracks in
+	// O(n^k); even two are quadratic, enough to freeze the synchronous,
+	// uninterruptible kernel matcher. Subsumes the old `.*.*`/`.+.+` literal
+	// guard — which was itself a no-op: `/\.+\.+/` matched runs of dots, not the
+	// string `.+.+`.
+	if (hasAdjacentUnboundedQuantifiers(pattern)) {
+		return `Regex pattern '${pattern}' contains adjacent unbounded quantifiers over overlapping characters (e.g. 'a*a*…b', '.+.+', '\\d*\\d*…') — polynomial backtracking risk. Rewrite so adjacent repeats cover disjoint characters, or collapse them into a single quantifier.`;
 	}
 
 	// Detect nested quantifiers by tracking group depth and quantifier presence.
@@ -318,6 +325,128 @@ function setsOverlap(a: Set<string> | null, b: Set<string> | null): boolean {
 	if (a === null || b === null) return true;
 	for (const c of a) {
 		if (b.has(c)) return true;
+	}
+	return false;
+}
+
+/**
+ * Find the index of the `]` that closes a character class opened at `start`
+ * (`pattern[start] === '['`), or -1 if unterminated. A leading `^` and a `]`
+ * appearing as the first class member are literals, not the terminator.
+ */
+function findCharClassEnd(pattern: string, start: number): number {
+	let i = start + 1;
+	if (pattern[i] === "^") i++;
+	if (pattern[i] === "]") i++; // `]` as the first member is a literal
+	for (; i < pattern.length; i++) {
+		if (pattern[i] === "\\") {
+			i++;
+			continue;
+		}
+		if (pattern[i] === "]") return i;
+	}
+	return -1;
+}
+
+/**
+ * Classify the quantifier (if any) at `idx` and report where it ends. Only
+ * `*`, `+`, and the open-ended `{n,}` can repeat UNBOUNDEDLY and so drive
+ * polynomial/exponential backtracking; `?`, `{n}`, and `{n,m}` are bounded and
+ * cannot, so they don't count toward the adjacency check. A trailing lazy `?`
+ * (e.g. `a*?`) is consumed but doesn't change the class.
+ */
+function quantifierAt(pattern: string, idx: number): { end: number; unbounded: boolean } {
+	const ch = pattern[idx];
+	if (ch === "*" || ch === "+") {
+		const end = pattern[idx + 1] === "?" ? idx + 2 : idx + 1;
+		return { end, unbounded: true };
+	}
+	if (ch === "?") {
+		const end = pattern[idx + 1] === "?" ? idx + 2 : idx + 1;
+		return { end, unbounded: false };
+	}
+	if (ch === "{") {
+		const m = /^\{\d*(,\d*)?\}/.exec(pattern.slice(idx));
+		if (m) {
+			const unbounded = /,\}$/.test(m[0]); // `{n,}` — no upper bound
+			const after = idx + m[0].length;
+			const end = pattern[after] === "?" ? after + 1 : after;
+			return { end, unbounded };
+		}
+	}
+	return { end: idx, unbounded: false };
+}
+
+/**
+ * Detect two (or more) ADJACENT unbounded-quantified atoms whose first-character
+ * sets overlap — the sequential-sibling catastrophic-backtracking family
+ * (`a*a*…b`, `.+.+`, `\d*\d*…x`, `[0-9]*[0-9]*…X`). With k adjacent repeats over
+ * the same character, a priming run of n chars followed by one non-matching char
+ * backtracks in O(n^k); even two siblings are quadratic, which is enough to
+ * freeze the synchronous, uninterruptible kernel matcher.
+ *
+ * Adjacency is broken by any unquantified (or bounded-quantified) atom, `|`,
+ * group parens, or an anchor — so the extremely common `.*foo.*` shape is
+ * correctly NOT flagged (the literal `foo` separates the two `.*`). Quantified
+ * GROUPS are deliberately left to the nested / overlapping-alternation detectors;
+ * this pass reasons only about atom-level siblings.
+ *
+ * Reuses firstCharSet/setsOverlap and inherits their fail-closed posture: an
+ * un-enumerable atom (`.`, `\d`, negated class, …) overlaps with everything, so
+ * `\d*\d*` and `.+.+` reject. Over-rejecting an operator-authored policy pattern
+ * is the accepted trade (see the file header).
+ */
+function hasAdjacentUnboundedQuantifiers(pattern: string): boolean {
+	// First-char set of the previous token IFF it was an unbounded-quantified
+	// atom ending exactly at `prevEnd`; `undefined` means the adjacency chain is
+	// broken (no immediately-preceding repeating atom).
+	let prevSet: Set<string> | null | undefined = undefined;
+	let prevEnd = -1;
+
+	let i = 0;
+	while (i < pattern.length) {
+		const ch = pattern[i];
+
+		// Anchors, alternation, and group boundaries break adjacency. (Quantified
+		// groups are handled elsewhere; we don't reason through them here.)
+		if (ch === "|" || ch === "(" || ch === ")" || ch === "^" || ch === "$") {
+			prevSet = undefined;
+			i++;
+			continue;
+		}
+
+		// Identify the atom at `i` and where its body ends.
+		let atom: string;
+		let atomEnd: number;
+		if (ch === "\\") {
+			atom = pattern.slice(i, i + 2);
+			atomEnd = i + 2;
+		} else if (ch === "[") {
+			const close = findCharClassEnd(pattern, i);
+			if (close === -1) return false; // unterminated class → bail conservatively
+			atom = pattern.slice(i, close + 1);
+			atomEnd = close + 1;
+		} else {
+			atom = ch;
+			atomEnd = i + 1;
+		}
+
+		const q = quantifierAt(pattern, atomEnd);
+		if (!q.unbounded) {
+			// Unquantified or bounded-quantified atom → can't drive unbounded
+			// backtracking and breaks the adjacency chain.
+			prevSet = undefined;
+			i = q.end;
+			continue;
+		}
+
+		const firstSet = firstCharSet(atom);
+		if (prevSet !== undefined && i === prevEnd && setsOverlap(prevSet, firstSet)) {
+			return true;
+		}
+		prevSet = firstSet;
+		prevEnd = q.end;
+		i = q.end;
 	}
 	return false;
 }

@@ -62,7 +62,11 @@ function trackHttpSignals(ctx: PipelineContext, toolCall: ToolCall): void {
 	const runState = ctx.runState;
 	if (!runState) return;
 	const isWriteEgress = runState.isEgressAction(toolCall.action);
-	const httpUrl = String(toolCall.parameters.url ?? "");
+	// Query-borne exfil (web_search and other query/prompt sinks) carries its
+	// payload in `query`, not `url`. When url is absent, fall back to the
+	// stringified query so the GET-exfil / path-drip / "?" signal paths still
+	// fire — url-based callers are unaffected (they keep their non-empty url).
+	const httpUrl = String(toolCall.parameters.url ?? "") || String(toolCall.parameters.query ?? "");
 	const isGet = toolCall.action === "get" || toolCall.action === "head";
 	const isGetExfil = !isWriteEgress && isGet && isSuspiciousGetExfil(httpUrl);
 

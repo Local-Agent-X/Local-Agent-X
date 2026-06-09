@@ -61,6 +61,15 @@ export interface ToolPolicyEntry {
   /** Caller-supplied file path arg(s) this tool opens — gated through the file-
    *  access mode by SecurityLayer. See PathArgSpec. */
   pathArgs?: PathArgSpec[];
+  /** This tool's implementation performs a NON-loopback fetch/upload with
+   *  model-controlled content (a query/prompt/body/path that rides off-box to a
+   *  remote API or messaging bridge) — i.e. it is a data-exfil egress sink.
+   *  EVERY tool marked here MUST also be enrolled in EGRESS_TOOLS so the egress
+   *  gates (taint floor, secret scan, canary tripwire) cover it; a build-time
+   *  invariant (capability-class-gates.test.ts) fails the build if it drifts.
+   *  A tool that only hits loopback (localhost Stable Diffusion / 127.0.0.1) is
+   *  NOT off-box and must NOT be marked. */
+  offBoxFetch?: boolean;
 }
 
 export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
@@ -110,7 +119,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   glob:        { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-glob", decision: "allow", reason: "File pattern search (read-only)", priority: 50 }] },
   grep:        { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-grep", decision: "allow", reason: "Content search (read-only)", priority: 50 }] },
   view_image:  { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-view-image", decision: "allow", reason: "Image viewing (path-checked)", priority: 50 }] },
-  send_video:  { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-send-video", decision: "allow", reason: "Sends a local video to the user over their own bridge (path-checked read)", priority: 50 }] },
+  send_video:  { kernel: "file", risk: "safe", offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-send-video", decision: "allow", reason: "Sends a local video to the user over their own bridge (path-checked read)", priority: 50 }] },
   ari_file:    { kernel: "internal", risk: "workspace-write" },
 
   // ── Network ──
@@ -135,7 +144,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-webfetch-limited", decision: "allow", reason: "Web fetch allowed (rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
-  web_search:          { kernel: "http", risk: "safe", rules: [{ id: "allow-web-search", decision: "allow", reason: "Web search", priority: 50 }] },
+  web_search:          { kernel: "http", risk: "safe", offBoxFetch: true, rules: [{ id: "allow-web-search", decision: "allow", reason: "Web search", priority: 50 }] },
   youtube_analyze:     { kernel: "http", risk: "network-read" },
   extract_site_assets: { kernel: "http", risk: "network-read", rules: [{ id: "allow-extract-site-assets", decision: "allow", reason: "Web asset extraction (read-only)", priority: 50 }] },
 
@@ -285,8 +294,8 @@ export const TOOL_POLICIES: Record<string, ToolPolicyEntry> = {
   protocol_var_interpolate:   { kernel: "internal", risk: "safe" },
 
   // ── Media generation / capture ──
-  generate_image: { kernel: "internal", risk: "workspace-write", rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-image", decision: "allow", reason: "Image generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
-  generate_video: { kernel: "internal", risk: "workspace-write", rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
+  generate_image: { kernel: "internal", risk: "workspace-write", offBoxFetch: true, rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-image", decision: "allow", reason: "Image generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
+  generate_video: { kernel: "internal", risk: "workspace-write", offBoxFetch: true, rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
   camera_capture: { kernel: "internal", risk: "workspace-write" },
   screen_capture: { kernel: "internal", risk: "workspace-write" },
   ocr:            { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction", priority: 50 }] },

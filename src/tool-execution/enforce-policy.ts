@@ -174,6 +174,14 @@ function egressPayload(name: string, args: Record<string, unknown>): { text: str
   const parts: string[] = [];
   const attachmentPaths: string[] = [];
   const push = (v: unknown) => { if (v != null && v !== "") parts.push(String(v)); };
+  // A model-supplied reference-image / video path that names a LOCAL file is a
+  // candidate sensitive attachment (its bytes get shipped off-box). Remote
+  // http(s)/data: refs aren't local-file reads, so skip them here.
+  const pushLocalFile = (v: unknown, into: string[]) => {
+    if (typeof v !== "string" || v === "") return;
+    if (/^(https?:|data:)/i.test(v)) return;
+    into.push(v);
+  };
   switch (name) {
     case "http_request":
     case "ari_http":
@@ -200,8 +208,17 @@ function egressPayload(name: string, args: Record<string, unknown>): { text: str
       break;
     default:
       // browser navigation/fetch + other egress synonyms: scan url + any
-      // model-supplied data payload generically.
+      // model-supplied data payload generically. Off-box sinks that ride their
+      // payload in a non-url arg (web_search query/queries[], generate_image/
+      // generate_video prompt) are scanned the same way, and local files that
+      // get shipped off-box (generate_video reference_image, send_video path)
+      // are routed through the sensitive-attachment check.
       push(args.url); push(args.body); push(args.data); push(args.value); push(args.text);
+      push(args.query); push(args.prompt);
+      if (Array.isArray(args.queries)) for (const q of args.queries) push(q);
+      pushLocalFile(args.reference_image, attachmentPaths);
+      if (Array.isArray(args.reference_images)) for (const r of args.reference_images) pushLocalFile(r, attachmentPaths);
+      pushLocalFile(args.path, attachmentPaths);
       break;
   }
   return { text: parts.join("\n"), attachmentPaths };

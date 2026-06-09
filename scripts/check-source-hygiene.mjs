@@ -33,8 +33,6 @@ const PARA_SEP = String.fromCharCode(0x2029);
 const GRANDFATHERED = new Set([
   "src/security/layer-core.ts",
   "src/threat/threat-engine.ts",
-  "src/self-edit-sandbox.ts",
-  "src/sanitize.ts",
   "desktop/src/main.ts",
   "public/js/chat-dictate.js",
   "public/js/apps-ide.js",

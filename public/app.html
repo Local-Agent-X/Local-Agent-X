@@ -1166,14 +1166,17 @@
      control-button HTML references on*Agent handlers. -->
 <script src="/js/chat-agent-feeds-render.js?v=v1"></script>
 <script src="/js/chat-agent-feeds-actions.js?v=v1"></script>
-<script src="/js/chat-agent-feeds.js?v=v3"></script>
-<script src="/js/chat-status-bar.js?v=v3"></script>
+<script src="/js/chat-agent-feeds-autoopen.js?v=v1"></script>
+<script src="/js/chat-agent-feeds.js?v=v4"></script>
+<script src="/js/chat-status-bar-indicators.js?v=v1"></script>
+<script src="/js/chat-status-bar.js?v=v4"></script>
 <script src="/js/chat-voice-modal-train.js?v=v1"></script>
 <script src="/js/chat-voice-modal-chatterbox.js?v=v1"></script>
 <script src="/js/chat-voice-modal-manage.js?v=v1"></script>
 <script src="/js/chat-voice-modals.js?v=v2"></script>
 <script src="/js/chat-voice.js?v=v3"></script>
-<script src="/js/chat-dictate.js?v=v1"></script>
+<script src="/js/chat-dictate-startpaths.js?v=v1"></script>
+<script src="/js/chat-dictate.js?v=v2"></script>
 <script src="/js/chat-slash-popup.js?v=v4"></script>
 <script src="/js/chat-voice-mic.js?v=v3"></script>
 <script src="/js/chat-voice-ws-handler.js?v=v2"></script>
@@ -1191,7 +1194,8 @@
 <script src="/js/chat-ws-handler-chat-events.js?v=v1"></script>
 <script src="/js/chat-ws-handler.js?v=v3"></script>
 <script src="/js/chat-ws.js?v=v2"></script>
-<script src="/js/chat-render.js?v=v2"></script>
+<script src="/js/chat-render-artifacts.js?v=v1"></script>
+<script src="/js/chat-render.js?v=v3"></script>
 <!-- chat-send split: dispatch modules must load before chat-send.js so
      sendMessage()'s wsHealthy check can reach _sendMessageWs/_sendMessageHttp. -->
 <script src="/js/chat-send-ws.js?v=v3"></script>
@@ -1203,7 +1207,8 @@
 <!-- settings.js modules — load BEFORE settings.js for the same reason. -->
 <script src="/js/settings-whatsapp.js?v=v1"></script>
 <script src="/js/settings-telegram.js?v=v1"></script>
-<script src="/js/settings-onboarding.js?v=v1"></script>
+<script src="/js/settings-onboarding-oauth.js?v=v1"></script>
+<script src="/js/settings-onboarding.js?v=v2"></script>
 <script src="/js/settings-anthropic.js?v=v1"></script>
 <script src="/js/settings-xai.js?v=v2"></script>
 <script src="/js/settings-providers.js?v=v1"></script>
@@ -1244,7 +1249,8 @@
 <!-- apps-ide split: core (state + lifecycle) loads first, then the WS
      handler and the tool/file rendering helpers, then the agent panel
      that already lived in its own file. -->
-<script src="/js/apps-ide.js?v=v4"></script>
+<script src="/js/apps-ide-messaging.js?v=v1"></script>
+<script src="/js/apps-ide.js?v=v5"></script>
 <script src="/js/apps-ide-ws.js?v=v1"></script>
 <script src="/js/apps-ide-tools-files.js?v=v1"></script>
 <script src="/js/apps-ide-picker.js?v=v1"></script>

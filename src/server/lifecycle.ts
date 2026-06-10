@@ -137,13 +137,29 @@ export async function startSecurityKernel(deps: { config: LAXConfig; dataDir: st
   logger.warn(`  [ari] Kernel inactive (LAX_ARI_REQUIRED=false) — gated tools fall back to the other defense layers.`);
 }
 
+/**
+ * Build the clickable "Open" line for stdout. BOTH the OSC-8 hyperlink target
+ * and the visible text are token-less — the live token never enters stdout, so
+ * it can't leak into terminal scrollback, a `tee`/CI capture, a process
+ * supervisor's log, or a pasted bug report. The full one-click URL lives only
+ * in the 0600 `.startup-url` file, whose path we point the user at. Closes the
+ * R6-A4 trap where the line looked masked (`?token=****`) but the hyperlink
+ * underneath carried the live token. (Desktop users are unaffected — the app
+ * builds its own authenticated URL from config and never reads stdout.)
+ */
+export function buildOpenLine(port: number, startupUrlPath: string): string {
+  const baseUrl = `http://127.0.0.1:${port}/`;
+  return `  ► Open: \x1b]8;;${baseUrl}\x1b\\${baseUrl}\x1b]8;;\x1b\\  (one-click sign-in URL saved to ${startupUrlPath})`;
+}
+
 export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {
   const { config, dataDir } = deps;
   const masked = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
   logger.info(`\n  Local Agent X running at http://127.0.0.1:${config.port}\n  Auth token: ${masked}`);
   const realUrl = `http://127.0.0.1:${config.port}/?token=${config.authToken}`;
-  writeFileSync(join(dataDir, ".startup-url"), realUrl, { mode: 0o600 });
-  logger.info(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\http://127.0.0.1:${config.port}/?token=${masked}\x1b]8;;\x1b\\\n  Memory: ${dataDir}/memory/\n  Sessions: ${dataDir}/sessions/`);
+  const startupUrlPath = join(dataDir, ".startup-url");
+  writeFileSync(startupUrlPath, realUrl, { mode: 0o600 });
+  logger.info(`\n${buildOpenLine(config.port, startupUrlPath)}\n  Memory: ${dataDir}/memory/\n  Sessions: ${dataDir}/sessions/`);
   printAuditReport(runSecurityAudit({ authToken: config.authToken, workspace: config.workspace }));
   try { import("../auth/refresh.js").then(({ startAuthRefreshTimer }) => startAuthRefreshTimer()).catch(() => {}); } catch {}
 

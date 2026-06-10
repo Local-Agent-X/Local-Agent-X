@@ -18,6 +18,7 @@ import { join } from "path";
 import { homedir } from "os";
 import { getProjectRoot, reloadLAXConfig, type LAXConfig } from "./config";
 import { PID_FILE, readServerPidFile, waitForServer } from "./server-probe";
+import { checkNodeFloor, type NodeFloorStatus } from "./node-floor";
 
 export { reclaimOrphanServer, isServerRunning, waitForServer } from "./server-probe";
 
@@ -38,6 +39,12 @@ export interface ServerEventHandlers {
    *  default 3s-restart loop would hit the same refusal forever. The
    *  splash should ask the user to kill the stale server. */
   onAlreadyRunning?: (info: { competingPid?: number; pidfilePath: string }) => void;
+  /** Fired when the PATH-resolved `node` is below the project's
+   *  engines.node floor (or missing). The spawn is refused — updated app
+   *  code on an outdated runtime fails confusingly mid-boot. Caller offers
+   *  the one-click upgrade (node-floor.ts promptAndUpgradeNode) and retries
+   *  startServer() on success. */
+  onNodeTooOld?: (status: NodeFloorStatus) => void;
 }
 
 let serverProcess: ChildProcess | null = null;
@@ -46,6 +53,7 @@ let isRestarting = false;
 let crashHandler: ServerEventHandlers["onCrash"] | undefined;
 let alreadyRunningHandler: ServerEventHandlers["onAlreadyRunning"] | undefined;
 let startupFailureHandler: ServerEventHandlers["onStartupFailure"] | undefined;
+let nodeTooOldHandler: ServerEventHandlers["onNodeTooOld"] | undefined;
 // Rapid-crash-loop tracking: when the spawn happened, and how many
 // consecutive spawns died within seconds. See the exit handler below.
 let lastSpawnAt = 0;
@@ -55,6 +63,21 @@ export function setQuitting(v: boolean): void { isQuitting = v; }
 export function setRestarting(v: boolean): void { isRestarting = v; }
 export function isQuittingFlag(): boolean { return isQuitting; }
 export function getServerPid(): number | null { return serverProcess?.pid ?? null; }
+
+// GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
+// PATH that excludes Homebrew, nvm, and asdf. Augment so `node` resolves
+// whether the user installed it via brew (arm64 or intel), nvm, or system
+// pkg. Exported so the node-floor check and upgrade resolve the SAME node
+// this module will spawn.
+export function buildAugmentedPath(): string {
+  const PATH_AUGMENTS = [
+    "/opt/homebrew/bin", "/opt/homebrew/sbin",
+    "/usr/local/bin", "/usr/local/sbin",
+    join(homedir(), ".nvm/versions/node/current/bin"),
+  ];
+  const existingPath = (process.env.PATH || "").split(":");
+  return [...PATH_AUGMENTS, ...existingPath].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
+}
 
 // True when dist/index.js exists and no source file is newer than it — i.e.
 // the compiled build reflects current source and is safe to run instead of
@@ -86,6 +109,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
   if (handlers?.onCrash) crashHandler = handlers.onCrash;
   if (handlers?.onAlreadyRunning) alreadyRunningHandler = handlers.onAlreadyRunning;
   if (handlers?.onStartupFailure) startupFailureHandler = handlers.onStartupFailure;
+  if (handlers?.onNodeTooOld) nodeTooOldHandler = handlers.onNodeTooOld;
 
   // Read PROJECT_ROOT live — project-root-resolver.ts can mutate it at
   // app.ready via setProjectRoot() when auto-discovery or the user picker
@@ -116,17 +140,18 @@ export function startServer(handlers?: ServerEventHandlers): void {
     ? ["--max-old-space-size=4096", join(projectRoot, "dist", "index.js")]
     : ["--max-old-space-size=4096", "--import=tsx", srcIndex];
 
-  // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
-  // PATH that excludes Homebrew, nvm, and asdf. Augment so `node` resolves
-  // whether the user installed it via brew (arm64 or intel), nvm, or
-  // system pkg.
-  const PATH_AUGMENTS = [
-    "/opt/homebrew/bin", "/opt/homebrew/sbin",
-    "/usr/local/bin", "/usr/local/sbin",
-    join(homedir(), ".nvm/versions/node/current/bin"),
-  ];
-  const existingPath = (process.env.PATH || "").split(":");
-  const augmentedPath = [...PATH_AUGMENTS, ...existingPath].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
+  const augmentedPath = buildAugmentedPath();
+
+  // Node floor: refuse to spawn updated app code on a runtime below the
+  // project's engines.node — it would die confusingly mid-boot (or on the
+  // first newer-syntax module). The handler offers a one-click in-app
+  // upgrade and calls startServer() again on success.
+  const nodeFloor = checkNodeFloor(projectRoot, augmentedPath);
+  if (!nodeFloor.ok) {
+    console.error(`[desktop] node on PATH is ${nodeFloor.foundMajor === -1 ? "missing" : `v${nodeFloor.foundMajor}`}, engines floor is ${nodeFloor.requiredMajor} — refusing to spawn`);
+    try { nodeTooOldHandler?.(nodeFloor); } catch {}
+    return;
+  }
 
   console.log(`[desktop] Starting LAX server (${useDist ? "compiled dist" : "tsx"})...`);
   // LAX_BUNDLED_MODELS_DIR points the server at electron-builder's

@@ -24,7 +24,22 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const NODE_MAJOR_MIN = 22;
+// The Node floor comes from package.json engines.node — ONE source of truth
+// that ships with every OTA update. (The C# installer's NodeBootstrap.cs and
+// the CLI wrappers keep a synced literal for the before-node-exists
+// bootstrap, where no JS can run yet.)
+const NODE_MAJOR_MIN = (() => {
+  try {
+    const engines = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")).engines?.node;
+    const m = String(engines || "").match(/(\d+)/);
+    if (m) return Number(m[1]);
+  } catch { /* package.json unreadable — fall through to the known floor */ }
+  return 22;
+})();
+// The LTS line installs/upgrades put on when Node is missing or below the
+// floor. Distinct from the floor: floor = oldest we accept, this = what we
+// install. Keep in sync with NodeBootstrap.cs / install.sh / install.ps1.
+const NODE_LTS_INSTALL = 24;
 const EMBED_MODEL = "mxbai-embed-large";
 const IPC = process.argv.includes("--ipc");
 
@@ -301,6 +316,47 @@ function killOllamaServe() {
   } else {
     spawnSync("pkill", ["-f", "ollama serve"], { stdio: "ignore" });
   }
+}
+
+// ── In-app Node upgrade (desktop one-click path) ───────────────────────
+// `--upgrade-node` performs ONLY the platform Node install and exits — no
+// plan, no other steps. The desktop boot gate (desktop/src/node-floor.ts)
+// spawns this under Electron-as-node (ELECTRON_RUN_AS_NODE) when the system
+// node is below the engines floor or missing entirely — so users upgrade
+// with one click instead of having to re-download an installer. Running
+// under the OLD node is fine: this only shells out to brew/winget/apt.
+if (process.argv.includes("--upgrade-node")) {
+  console.log(`[upgrade-node] installing Node ${NODE_LTS_INSTALL} (LTS)…`);
+  let r;
+  if (process.platform === "darwin") {
+    if (!has("brew")) {
+      console.error(`[upgrade-node] Homebrew not found — install Node ${NODE_LTS_INSTALL} manually from https://nodejs.org`);
+      process.exit(1);
+    }
+    r = spawnSync("brew", ["install", `node@${NODE_LTS_INSTALL}`], { stdio: "inherit" });
+    if (r.status === 0) {
+      r = spawnSync("brew", ["link", "--overwrite", "--force", `node@${NODE_LTS_INSTALL}`], { stdio: "inherit" });
+    }
+  } else if (process.platform === "win32") {
+    r = spawnSync("winget", [
+      "install", "OpenJS.NodeJS.LTS",
+      "--accept-package-agreements", "--accept-source-agreements",
+      "--silent", "--disable-interactivity",
+    ], { stdio: "inherit", shell: true });
+    // 0x8A150011 = winget "no applicable upgrade found" — already at latest
+    // LTS counts as success (same tolerance as the vsbuildtools step below).
+    if (r.status === -1978335215) r.status = 0;
+  } else {
+    r = spawnSync("/bin/bash", ["-c",
+      `curl -fsSL https://deb.nodesource.com/setup_${NODE_LTS_INSTALL}.x | sudo -E bash - && sudo apt-get install -y nodejs`,
+    ], { stdio: "inherit" });
+  }
+  if (!r || r.status !== 0) {
+    console.error(`[upgrade-node] install failed (exit ${r ? r.status : "spawn-error"}) — install Node ${NODE_LTS_INSTALL} manually from https://nodejs.org`);
+    process.exit(1);
+  }
+  console.log("[upgrade-node] done.");
+  process.exit(0);
 }
 
 // Emit the plan once, before any step starts.

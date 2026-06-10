@@ -279,6 +279,15 @@ app.on("ready", async () => {
         // can click Repair instead of staring at a frozen progress UI.
         showSplashRecovery("Server failed to start", reason);
       },
+      onNodeTooOld: async (status) => {
+        // System node is below the project's engines floor (or missing).
+        // Offer the one-click in-app upgrade; on success startServer()
+        // re-runs with the handlers already registered above.
+        const { promptAndUpgradeNode } = await import("./node-floor");
+        const result = await promptAndUpgradeNode(status);
+        if (result.ok) startServer();
+        else showSplashRecovery("Node.js upgrade required", result.detail);
+      },
       onAlreadyRunning: ({ competingPid, pidfilePath }) => {
         // src/lifecycle.ts exited 75: another LAX server still owns
         // ~/.lax/server.pid. Auto-restart is intentionally suppressed

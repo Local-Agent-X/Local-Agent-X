@@ -355,6 +355,17 @@ if (process.argv.includes("--upgrade-node")) {
     console.error(`[upgrade-node] install failed (exit ${r ? r.status : "spawn-error"}) — install Node ${NODE_LTS_INSTALL} manually from https://nodejs.org`);
     process.exit(1);
   }
+  // The new node has a different ABI (NODE_MODULE_VERSION) than the one
+  // better-sqlite3 was compiled against; without a rebuild the server
+  // crashes on its first import and the desktop boot gate loops forever.
+  // Same scoped rebuild as the npm step below — `npm` resolves to the
+  // NEW node's npm via PATH, so the binary is built against the new ABI.
+  console.log("[upgrade-node] rebuilding native modules…");
+  const rb = run("npm", ["rebuild", "better-sqlite3", "--no-audit", "--no-fund", "--loglevel=error"]);
+  if (rb.status !== 0) {
+    console.error("[upgrade-node] native rebuild failed — if the app fails to start, run `npm rebuild better-sqlite3` in the install directory.");
+    process.exit(1);
+  }
   console.log("[upgrade-node] done.");
   process.exit(0);
 }

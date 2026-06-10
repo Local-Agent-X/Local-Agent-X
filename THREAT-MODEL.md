@@ -91,7 +91,7 @@ Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny), per-too
 Layer 5:  ThreatEngine       — Canary tokens, chain analysis (exfil patterns: read-sensitive → send-external), loop detection (generic repeat, ping-pong, circuit breaker), data classification (auto-tags credentials / PII / secrets / financial), encoding detection, adaptive scoring
 Layer 6:  Content Sanitizer  — 35 injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
 Layer 7:  Memory Taint       — Blocks untrusted content from persisting to memory
-Layer 8:  Container Sandbox  — Host by default; Docker opt-in (LAX_SANDBOX=docker or Settings)
+Layer 8:  Shell/Server Sandbox — Host by default. Opt-in OS-native shell confinement: macOS `seatbelt` (sandbox-exec) and Linux `bwrap` (bubblewrap namespaces) — targeted-deny (no external network, sensitive home dirs/persistence shadowed) while keeping the dev shell usable; Docker mode for hermetic isolation. Whole-server confinement via boot re-exec on macOS/Linux. Windows has no native equivalent — Docker is the confinement answer there (see "Windows shell confinement" below)
 Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB, per-session threat scoring, daily JSONL files at `~/.lax/audit/`
 Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ```
@@ -99,11 +99,52 @@ Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ## Known Limitations
 
 1. **Single-user model** — RBAC adds roles (operator / user / readonly) but not full enterprise IAM (OIDC/SAML planned). Don't share a single instance between mutually untrusted users.
-2. **Docker sandbox is opt-in** — Bash runs on the host by default. Enable container isolation with `LAX_SANDBOX=docker` or the Sandbox toggle in Settings; if Docker is requested but unavailable it falls back to host.
+2. **Shell sandbox is opt-in, and native coverage is platform-dependent** — Bash runs on the host by default. OS-native shell confinement is available on macOS (`LAX_SANDBOX=seatbelt`) and Linux (`LAX_SANDBOX=bwrap`); Docker mode (`LAX_SANDBOX=docker`) works on all platforms. **Windows has no native mode — use Docker** (see "Windows shell confinement"). Any mode requested but unavailable on the host fails closed back to `host` with a warning.
 3. **Secrets encryption** — Uses OS keychain (DPAPI/Keychain) when available, falls back to scrypt N=131072 (~500ms/attempt).
 4. **Memory taint is heuristic** — Pattern-based detection + Unicode normalization can be evaded by sufficiently creative injection. ARI Kernel taint tracking adds formal enforcement.
 5. **No formal verification** — Security properties are tested empirically, not formally proven.
 6. **Egress allowlist has two modes** — Default is `permissive`: all public hosts are reachable (SSRF / private-IP / cloud-metadata blocks still apply), and `~/.lax/egress-allowlist.json` gates only secret-bearing request bodies at the tool layer. Opt into `strict` mode via `~/.lax/security.json` (`egressMode: "strict"`) for true deny-by-default egress, where only allowlisted domains pass (wildcards like `*.example.com` supported) and a missing or non-array file denies all egress with a setup hint. Explicit empty `[]` is honored as "deny everything."
+
+## Windows shell confinement
+
+The agent shell runs under OS-native kernel confinement on macOS (`seatbelt`) and
+Linux (`bwrap`): a targeted-deny posture that blocks external network and shadows
+the sensitive home dirs/persistence vectors while leaving the dev shell usable
+(`npm install`, `git`, workspace I/O all work). **Windows has no equivalent native
+mode** — there, `LAX_SANDBOX` exposes only `host` and `docker`, and **Docker is the
+documented Windows confinement answer.** The in-process guards (shell-policy
+denylist, path/symlink guard, egress/lineage layers) still apply on Windows in
+host mode, but they are best-effort, not a kernel boundary.
+
+### Why not a native Windows mode (AppContainer evaluated, rejected)
+
+A native arm was prototyped against **AppContainer** (the userspace analog to
+seatbelt/bwrap: per-process, kernel-enforced, no admin). The **cage itself holds** —
+a no-capability AppContainer empirically denied external network (socket blocked),
+denied a planted secret in `~/.ssh`, denied user-profile enumeration, and allowed
+writes only to explicitly granted dirs. But it fails the **usability contract** that
+makes seatbelt/bwrap shippable, on two independent counts:
+
+1. **Native dev tools won't execute inside the container.** Files in granted dirs
+   are fully readable (probed: `node.exe` stat + full 87 MB read succeed), but
+   *launching* the toolchain fails across every entry path tried — PowerShell's
+   call operator (`& exe` → FileSystem-provider error in the locked token), .NET
+   `Process.Start` (hangs), and a `cmd.exe` batch (exits without running). A shell
+   that can't spawn `node`/`git`/`npm` is not a usable dev shell.
+2. **Inverted posture.** AppContainer is *default-deny over the entire user
+   profile*, the opposite of the seatbelt/bwrap "bind the host, shadow the few
+   sensitive dirs" model. Because the LAX repo and common toolchains (nvm's node,
+   user-installed CLIs) live under the profile, every one would need an open-ended,
+   per-path grant that changes per command — effectively docker's hermetic posture
+   without docker's clean isolation.
+
+The restricted-local-user alternative (separate `lax-shell` account + `icacls`
+denies + firewall `-LocalUser` block) was not pursued: it requires admin, hits the
+same wall (a second principal cannot read the main user's workspace/toolchain), and
+adds spawn-as-user credential plumbing. Per the project's security stance, an honest
+"no native mode, use Docker" beats shipping a confinement wrapper whose self-check
+had to be weakened to pass. Revisit if Windows ships a bind-mount-style namespace
+primitive (targeted-deny over a bound host), which is the piece AppContainer lacks.
 
 ## Incident Response
 

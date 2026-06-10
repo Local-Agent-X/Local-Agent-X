@@ -28,11 +28,12 @@ import { cacheKey, exactKey, DECLINE_SUPPRESS_MS } from "./approval-decision.js"
 
 export {
   getToolDecision,
+  getRiskDecision,
   decisionRequiresPrompt,
   decisionDenies,
   computeArgsFingerprint,
   isDestructiveCommand,
-  requiresIrreversibleConfirm,
+  destructiveOperationReason,
 } from "./approval-decision.js";
 
 export {
@@ -51,6 +52,7 @@ interface PendingApproval {
   toolName: string;
   args: Record<string, unknown>;
   alwaysAsk: boolean;
+  emit: (event: ServerEvent) => void;
 }
 
 class ApprovalManager {
@@ -127,7 +129,7 @@ class ApprovalManager {
         }
       }, APPROVAL_TIMEOUT_MS);
 
-      this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName, args: opts.args, alwaysAsk: !!opts.alwaysAsk });
+      this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName, args: opts.args, alwaysAsk: !!opts.alwaysAsk, emit: opts.emit });
 
       opts.emit({
         type: "approval_requested",
@@ -171,6 +173,13 @@ class ApprovalManager {
       if (!auto) { auto = new Set(); this.sessionAutoApprove.set(p.sessionId, auto); }
       auto.add(cacheKey(p.toolName, p.args));
     }
+
+    // Tell every renderer the card is settled. Without this the stream store
+    // only ever knew pending/timeout, so any re-render during the turn
+    // resurrected an already-clicked card as a fresh actionable prompt.
+    try {
+      p.emit({ type: "approval_resolved", approvalId: id, toolName: p.toolName, approved });
+    } catch { /* a dead emitter must not block the resolution */ }
 
     p.resolve(approved);
     return true;

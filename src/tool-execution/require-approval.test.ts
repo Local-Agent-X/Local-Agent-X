@@ -128,3 +128,79 @@ describe("requireApprovalPhase — unattended runs", () => {
     expect(outcome.kind).toBe("continue");
   });
 });
+
+describe("requireApprovalPhase — destructive reclassification", () => {
+  // The profile table is the single source of truth: a destructive operation
+  // is decided by the profile's destructive tier, with no confirm floor above
+  // it. Power promises "autonomous for everything except money and secrets" —
+  // delete_file under Power prompting was a broken promise (2026-06-10).
+  it("Power runs delete_file with NO prompt (destructive=allow)", async () => {
+    const s = pinned("Power");
+    const events: ServerEvent[] = [];
+    const ctx = makeCtx({
+      name: "delete_file", sessionId: s, callContext: "local",
+      args: { path: "C:/tmp/x.pptx" }, onEvent: (e) => events.push(e),
+    });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
+    expect(events.some((e) => e.type === "approval_requested")).toBe(false);
+  });
+
+  it("Normal still prompts for delete_file (destructive=ask)", async () => {
+    const s = pinned("Normal");
+    const events: ServerEvent[] = [];
+    const ctx = makeCtx({
+      name: "delete_file", sessionId: s, callContext: "local",
+      args: { path: "C:/tmp/x.pptx" },
+      onEvent: (e) => {
+        events.push(e);
+        if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, true);
+      },
+    });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(events.some((e) => e.type === "approval_requested")).toBe(true);
+    expect(outcome.kind).toBe("continue");
+  });
+
+  it("bash rm -rf is decided by the destructive tier, not the coarse shell grant", async () => {
+    // Normal: shell=allow but destructive=ask — the reclassification is what
+    // makes rm -rf prompt while git status runs silently.
+    const s = pinned("Normal");
+    const events: ServerEvent[] = [];
+    const ctx = makeCtx({
+      name: "bash", sessionId: s, callContext: "local",
+      args: { command: "rm -rf /tmp/x" },
+      onEvent: (e) => {
+        events.push(e);
+        if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, false);
+      },
+    });
+    const outcome = await requireApprovalPhase(ctx);
+    expect(events.some((e) => e.type === "approval_requested")).toBe(true);
+    expect(outcome.kind).toBe("halt");
+
+    // Power: destructive=allow — same command runs without a prompt.
+    const s2 = pinned("Power");
+    const events2: ServerEvent[] = [];
+    const ctx2 = makeCtx({
+      name: "bash", sessionId: s2, callContext: "local",
+      args: { command: "rm -rf /tmp/x" }, onEvent: (e) => events2.push(e),
+    });
+    const outcome2 = await requireApprovalPhase(ctx2);
+    expect(outcome2.kind).toBe("continue");
+    expect(events2.some((e) => e.type === "approval_requested")).toBe(false);
+  });
+
+  it("Safe denies a destructive operation outright (destructive=deny)", async () => {
+    const s = pinned("Safe");
+    const ctx = makeCtx({
+      name: "bash", sessionId: s, callContext: "local",
+      args: { command: "rm -rf /tmp/x" },
+    });
+    const outcome = await requireApprovalPhase(ctx);
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.result?.status).toBe("blocked");
+  });
+});

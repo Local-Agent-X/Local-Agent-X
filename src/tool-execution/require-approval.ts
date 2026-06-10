@@ -9,15 +9,26 @@ import { USER_HINTS, type ToolResult } from "../types.js";
 import {
   getApprovalManager,
   getToolDecision,
+  getRiskDecision,
   decisionRequiresPrompt,
   decisionDenies,
-  requiresIrreversibleConfirm,
+  destructiveOperationReason,
 } from "../approval-manager.js";
 import type { Phase } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
-  const decision = getToolDecision(ctx.tc.name, ctx.sessionId);
+  // An irreversible operation is RECLASSIFIED to the profile's destructive
+  // tier and re-decided there — so `bash rm -rf` is decided by the
+  // destructive rule (not the coarse shell grant), while a profile that
+  // explicitly allows destructive (Power/Autonomous — "autonomous for
+  // everything except money and secrets") runs it without a prompt. The
+  // profile table is the single source of truth; there is no confirm floor
+  // above it.
+  const destructive = destructiveOperationReason(ctx.tc.name, ctx.args);
+  const decision = destructive
+    ? getRiskDecision("destructive", ctx.sessionId)
+    : getToolDecision(ctx.tc.name, ctx.sessionId);
 
   if (decisionDenies(decision)) {
     const result: ToolResult = {
@@ -29,18 +40,12 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
 
-  // Irreversible operations always confirm, even under a relaxed profile that
-  // would otherwise auto-allow them.
-  const destructive = requiresIrreversibleConfirm(ctx.tc.name, ctx.args);
-  if (!decisionRequiresPrompt(decision) && !destructive) return CONTINUE;
+  if (!decisionRequiresPrompt(decision)) return CONTINUE;
 
-  // Unattended run: no human to prompt. If the profile granted this action
-  // (allow / allow-with-rollback) the irreversible-confirm floor can't run a
-  // prompt, but the chosen profile already opted in — let it proceed. If the
-  // profile itself says "ask", nothing authorized it, so block rather than
-  // silently run (this is the load-bearing guarantee for cron/delegated runs).
+  // Unattended run: no human to prompt. The profile says "ask" and nothing
+  // authorized it, so block rather than silently run (this is the
+  // load-bearing guarantee for cron/delegated runs).
   if (ctx.callContext !== "local") {
-    if (!decisionRequiresPrompt(decision)) return CONTINUE;
     const result: ToolResult = {
       content:
         `BLOCKED (unattended): ${ctx.tc.name} needs approval the active autonomy ` +

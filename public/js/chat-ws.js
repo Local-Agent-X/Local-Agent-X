@@ -289,6 +289,9 @@ window.sendApprovalResponse = function(approvalId, approved, rememberForSession)
       chatWs.send(JSON.stringify({ type: 'approval_response', approvalId, approved, rememberForSession: !!rememberForSession }));
     }
   } catch {}
+  // Flip the store immediately so a re-render before the server's
+  // approval_resolved echo can't resurrect the card as actionable.
+  try { ChatStreamStore.resolveApprovalLocal(approvalId, approved); } catch {}
 };
 
 Object.defineProperty(window, 'chatWs', {

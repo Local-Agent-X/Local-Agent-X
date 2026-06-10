@@ -17,9 +17,10 @@ import type { RBACManager, Role } from "../rbac.js";
 import {
   getApprovalManager,
   getToolDecision,
+  getRiskDecision,
   decisionRequiresPrompt,
   decisionDenies,
-  isDestructiveCommand,
+  destructiveOperationReason,
 } from "../approval-manager.js";
 import { getRuntimeConfig } from "../config.js";
 import { isProtectedSetting } from "../settings-schema.js";
@@ -184,7 +185,13 @@ export async function assertToolCallAllowed(
   // active autonomy profile). The four-valued Decision branches into:
   // run silently, prompt the user, or block outright.
   if (ctx.approval && ctx.callContext === "local") {
-    const decision = getToolDecision(call.name, ctx.sessionId);
+    // Same reclassification as tool-execution/require-approval.ts: an
+    // irreversible operation is decided by the profile's destructive tier —
+    // no confirm floor above the profile table.
+    const destructive = destructiveOperationReason(call.name, call.args);
+    const decision = destructive
+      ? getRiskDecision("destructive", ctx.sessionId)
+      : getToolDecision(call.name, ctx.sessionId);
 
     if (decisionDenies(decision)) {
       throw new ToolBlocked({
@@ -194,8 +201,7 @@ export async function assertToolCallAllowed(
       });
     }
 
-    const destructive = isDestructiveCommand(call.name, call.args);
-    if (decisionRequiresPrompt(decision) || destructive) {
+    if (decisionRequiresPrompt(decision)) {
       const approved = await getApprovalManager().requestApproval({
         toolName: call.name,
         toolCallId: call.id,

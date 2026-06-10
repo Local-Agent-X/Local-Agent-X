@@ -44,6 +44,13 @@ export function getToolDecision(toolName: string, sessionId?: string): Decision 
   return decide(profile, classifyToolRisk(toolName));
 }
 
+/** What does the active profile say about a specific risk tier? Used to
+ *  re-decide a call that got RECLASSIFIED (a shell command carrying rm -rf
+ *  is decided by the destructive rule, not the shell rule). */
+export function getRiskDecision(risk: Parameters<typeof decide>[1], sessionId?: string): Decision {
+  return decide(getProfile(currentProfileName(sessionId)), risk);
+}
+
 /** Does this decision require an interactive user prompt before running? */
 export function decisionRequiresPrompt(d: Decision): boolean {
   return d === "ask";
@@ -251,24 +258,25 @@ export function isDestructiveCommand(
 }
 
 /**
- * The irreversibility floor: force an interactive confirm for any operation
- * that can destroy work or data with no recovery, regardless of how relaxed
- * the autonomy profile is. Returns a short human reason, or null.
+ * Detect an irreversible/destructive operation and return a short human
+ * reason, or null. The caller RECLASSIFIES a hit to the profile's
+ * "destructive" tier and re-decides — the profile table stays the single
+ * source of truth (the Security page promises "Power — autonomous for
+ * everything except money and secrets"; an unconditional confirm floor here
+ * broke that promise and prompted for delete_file under Power).
  *
- * Two sources feed the floor:
+ * Two sources feed detection:
  *   1. Shell-text patterns (isDestructiveCommand) — `rm -rf`, `git push
- *      --force`, etc. inside a bash/shell command string.
+ *      --force`, etc. inside a bash/shell command string. Without this, a
+ *      coarse shell=allow grant (meant for ls/git status) silently covered
+ *      irreversible commands too.
  *   2. The "destructive" ToolRisk class — non-shell tools whose whole purpose
  *      is an irreversible side effect (delete_file, process_kill,
- *      memory_forget, marketplace_install). Without this, a destructive
- *      non-shell tool auto-allowed under Power/Autonomous with no prompt.
+ *      memory_forget, marketplace_install).
  *
- * Scoped to "destructive" ONLY. money/secrets are deliberately NOT forced:
- * they already resolve to "ask" under every profile except Autonomous, and
- * Autonomous is the user explicitly opting into unattended money/secrets
- * moves — forcing a confirm there would override that deliberate choice.
+ * Scoped to "destructive" ONLY. money/secrets already have their own tiers.
  */
-export function requiresIrreversibleConfirm(
+export function destructiveOperationReason(
   toolName: string,
   args: Record<string, unknown>,
 ): string | null {

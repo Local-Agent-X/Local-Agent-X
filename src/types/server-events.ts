@@ -66,6 +66,7 @@ export type ServerEvent =
   | { type: "secrets_request"; secrets: Array<{ name: string; service?: string; reason: string }> }
   | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string; preview?: ActionPreview }
   | { type: "approval_timeout"; approvalId: string; toolName: string; toolCallId?: string }
+  | { type: "approval_resolved"; approvalId: string; toolName: string; approved: boolean }
   | { type: "context_status"; percentage: number; level: string; usedTokens: number; maxTokens: number; compacted: boolean }
   | { type: "visual"; kind: "emoji" | "text" | "shape" | "mood"; value: string; durationMs: number }
   | { type: "bg_op_queued"; opId: string; task: string; provider: string; lane: string; queuePosition: number }

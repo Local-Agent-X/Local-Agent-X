@@ -169,10 +169,15 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
   for (const ap of approvals) {
     try {
       const card = makeApprovalCard(ap.id, ap.toolName, ap.context, ap.argsPreview);
-      if (ap.status === 'timeout') {
-        card.classList.add('timeout');
+      if (ap.status && ap.status !== 'pending') {
         const statusEl = card.querySelector('.approval-status');
-        if (statusEl) statusEl.textContent = 'Timed out — denied.';
+        if (ap.status === 'timeout') {
+          card.classList.add('timeout');
+          if (statusEl) statusEl.textContent = 'Timed out — denied.';
+        } else {
+          card.classList.add(ap.status === 'approved' ? 'approved' : 'denied');
+          if (statusEl) statusEl.textContent = ap.status === 'approved' ? 'Approved' : 'Denied';
+        }
         card.querySelectorAll('button').forEach(b => b.disabled = true);
       }
       bodyEl.appendChild(card);

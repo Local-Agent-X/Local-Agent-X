@@ -256,6 +256,17 @@
         e.lastActivityMs = now;
         break;
       }
+      case 'approval_resolved': {
+        // Without this the store only ever knew pending/timeout, so any
+        // re-render during the turn resurrected a clicked card as a fresh
+        // actionable prompt.
+        if (event.approvalId) {
+          const ap = e.approvals.find(a => a.id === event.approvalId);
+          if (ap) { ap.status = event.approved ? 'approved' : 'denied'; ap.resolvedAt = now; }
+        }
+        e.lastActivityMs = now;
+        break;
+      }
       case 'stopped':
         e.stopNote = {
           reason: event.reason || 'Stopped.',
@@ -396,10 +407,26 @@
     return function unsubscribe() { globalSubs.delete(cb); };
   }
 
+  // Optimistic local flip when the user clicks Approve/Deny — the server's
+  // approval_resolved event confirms it, but a re-render in the gap between
+  // click and server echo must not resurrect an actionable card. Scans all
+  // entries because the card click only knows the approvalId.
+  function resolveApprovalLocal(approvalId, approved) {
+    for (const [sessionId, e] of entries) {
+      const ap = e.approvals.find(a => a.id === approvalId);
+      if (ap) {
+        ap.status = approved ? 'approved' : 'denied';
+        ap.resolvedAt = Date.now();
+        notify(sessionId, null);
+        return;
+      }
+    }
+  }
+
   window.ChatStreamStore = {
     get, ensure,
     startTurn, applyEvent, bumpActivity, bumpAnchor, endTurn, promoteLiveToMessages,
-    setSidebarActive, setActiveSidebarSet,
+    setSidebarActive, setActiveSidebarSet, resolveApprovalLocal,
     isStreaming, isActive, inflightOps,
     subscribe, subscribeAll,
   };

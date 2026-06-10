@@ -21,6 +21,9 @@ import * as Atlas from "./index-atlas.js";
 import { getLayout } from "./atlas-layout.js";
 import { MemoryFactsBase } from "./index-core/facts-base.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.index-core");
+
 export class MemoryIndex extends MemoryFactsBase {
   protected db: InstanceType<typeof Database>;
   private dataDir: string;
@@ -115,9 +118,34 @@ export class MemoryIndex extends MemoryFactsBase {
 
   setEmbeddingProvider(provider: EmbeddingProvider): void {
     this.embeddingProvider = provider;
+    const verdict = Embedding.reconcileEmbeddingSignature(this.db, provider);
     if (Embedding.initVectorTable(this.db, provider.dimensions).hasVec) {
       this.hasVec = true;
     }
+    // Backfill vectors for anything missing one — a provider switch just
+    // wiped them, or an earlier embed failed/crashed partway. Skipped in the
+    // degraded local-fallback state: re-embedding a real provider's corpus
+    // with TF-IDF would trade good vectors for junk.
+    if (verdict !== "degraded") this.kickBackgroundReembed(verdict);
+  }
+
+  private reembedInProgress = false;
+
+  private kickBackgroundReembed(reason: string): void {
+    if (this.reembedInProgress || !this.embeddingProvider) return;
+    const missing = Embedding.countChunksMissingEmbedding(this.db);
+    if (missing === 0) return;
+    this.reembedInProgress = true;
+    logger.info(`[memory] Background re-embed of ${missing} chunks started (${reason})`);
+    Embedding.reembedMissingChunks(this.db, this.embeddingProvider, this.config, this.hasVec)
+      .then((r) => {
+        logger.info(
+          `[memory] Background re-embed done: ${r.embedded} embedded` +
+          (r.missing > 0 ? `, ${r.missing} still missing (resumes next boot)` : "")
+        );
+      })
+      .catch((e) => logger.warn(`[memory] Background re-embed failed: ${(e as Error).message}`))
+      .finally(() => { this.reembedInProgress = false; });
   }
 
   // ── Sync ──
@@ -173,6 +201,7 @@ export class MemoryIndex extends MemoryFactsBase {
 
   getMemoryDir(): string { return this.memoryDir; }
   getDataDir(): string { return this.dataDir; }
+  getConfig(): Readonly<MemoryConfig> { return this.config; }
   getChunkConfig(): { maxChunkChars: number; overlapChars: number } {
     return {
       maxChunkChars: this.config.chunkTokens * this.config.charsPerToken,

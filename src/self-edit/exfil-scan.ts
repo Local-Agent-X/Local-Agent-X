@@ -103,19 +103,33 @@ function parseAddedLines(diff: string): Map<string, string> {
 }
 
 /**
- * Collect added content from a worktree: additions to tracked files (vs
- * HEAD) plus the full content of new untracked files.
+ * Collect added content from a worktree: additions this worktree introduced
+ * plus the full content of new untracked files.
+ *
+ * When `baseSha` is given, the committed delta (`baseSha...HEAD`) is scanned
+ * too — without it the scan sees only the diff-vs-HEAD (uncommitted) changes,
+ * so a prompt-injected surgeon that COMMITS the staged secret and leaves the
+ * tree clean would evade the tripwire while the commit still merges to main.
  */
-export function collectAddedContent(worktreePath: string): AddedContent[] {
-  const items: AddedContent[] = [];
-
-  // Tracked modifications — added (+) lines from the diff against HEAD.
-  const diff = git(worktreePath, ["diff", "--no-color", "HEAD"]);
-  if (diff) {
+export function collectAddedContent(worktreePath: string, baseSha?: string): AddedContent[] {
+  const byFile = new Map<string, string[]>();
+  const addDiff = (diff: string): void => {
+    if (!diff) return;
     for (const [file, text] of parseAddedLines(diff)) {
-      if (text) items.push({ file, text });
+      if (!text) continue;
+      const acc = byFile.get(file);
+      if (acc) acc.push(text);
+      else byFile.set(file, [text]);
     }
-  }
+  };
+
+  // Committed additions this worktree introduced (fork point → HEAD).
+  if (baseSha) addDiff(git(worktreePath, ["diff", "--no-color", `${baseSha}...HEAD`]));
+  // Uncommitted tracked modifications (vs HEAD).
+  addDiff(git(worktreePath, ["diff", "--no-color", "HEAD"]));
+
+  const items: AddedContent[] = [];
+  for (const [file, texts] of byFile) items.push({ file, text: texts.join("\n") });
 
   // Untracked new files — full content (capped).
   const untracked = git(worktreePath, ["ls-files", "--others", "--exclude-standard"])
@@ -135,7 +149,9 @@ export function collectAddedContent(worktreePath: string): AddedContent[] {
   return items;
 }
 
-/** Scan everything the subprocess added to the worktree for staged secrets. */
-export function scanWorktreeForStagedSecrets(worktreePath: string): ExfilScanResult {
-  return findSecretsInAddedContent(collectAddedContent(worktreePath));
+/** Scan everything the subprocess added to the worktree for staged secrets.
+ *  Pass `baseSha` (the merge base) to include committed additions, not just
+ *  the uncommitted working-tree diff. */
+export function scanWorktreeForStagedSecrets(worktreePath: string, baseSha?: string): ExfilScanResult {
+  return findSecretsInAddedContent(collectAddedContent(worktreePath, baseSha));
 }

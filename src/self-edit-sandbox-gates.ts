@@ -10,7 +10,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCommandInWorktree, getWorktreePath, getWorktreeChangedFiles, isolateNodeModules, changedFilesTouchDeps } from "./agency/worktree.js";
+import { runCommandInWorktree, getWorktreePath, getMergeDeltaFiles, isolateNodeModules, changedFilesTouchDeps } from "./agency/worktree.js";
 import { killProcessTree } from "./process-tree-kill.js";
 import { runSmokeAssertions } from "./self-edit-smoke-suite.js";
 import { buildSelfEditChildEnv } from "./self-edit/child-env.js";
@@ -53,7 +53,11 @@ export const SKIPPED_GATE: GateResult = { ok: false, skipped: true, durationMs: 
 // install blocks the merge.
 
 export function gateDeps(name: string): GateResult {
-  const changed = getWorktreeChangedFiles(name);
+  // Merge delta (committed + uncommitted), not just the working tree: a
+  // committed package.json change must still trigger the isolated install,
+  // or a self_edit could commit a malicious dependency that the working-tree
+  // check never sees but the merge ships to main.
+  const changed = getMergeDeltaFiles(name);
   if (!changedFilesTouchDeps(changed)) {
     return { ok: true, skipped: true, durationMs: 0, detail: "no dependency changes" };
   }

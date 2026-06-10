@@ -26,7 +26,7 @@
 
 import { rmSync } from "node:fs";
 import { type ChildProcess } from "node:child_process";
-import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getWorktreeChangedFiles, securitySensitiveChangedFiles } from "./agency/worktree.js";
+import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getMergeDeltaFiles, securitySensitiveChangedFiles } from "./agency/worktree.js";
 import { recordMerge } from "./self-edit-rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
 import { runSurgeon, formatSurgeonOutput } from "./self-edit/surgeon.js";
@@ -196,11 +196,14 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     const mergeInfo = getMergeBaseInfo(name);
 
     // Security diff-scope gate (#10): the subprocess runs with
-    // bypassPermissions and can rewrite the security / tool-policy / auth layer
-    // (or the protected-files manifest). A weakened layer still builds, boots,
-    // and chats, so no gate above catches it. Hold such merges for explicit
-    // human review — branch preserved on disk, main untouched.
-    const securityTouched = securitySensitiveChangedFiles(getWorktreeChangedFiles(name));
+    // bypassPermissions and can rewrite the security / tool-policy / auth layer,
+    // the self-edit/worktree gate machinery itself, or the protected-files
+    // manifest. A weakened layer still builds, boots, and chats, so no gate
+    // above catches it. Hold such merges for explicit human review — branch
+    // preserved on disk, main untouched. Measured against the MERGE DELTA
+    // (committed + uncommitted), not the working tree, so a surgeon can't hide
+    // the change in a commit and slip a trivial uncommitted crumb past the gate.
+    const securityTouched = securitySensitiveChangedFiles(getMergeDeltaFiles(name));
     if (securityTouched.length > 0) {
       logger.warn(`[self-edit.sandbox] security-sensitive paths touched — holding merge for human review: ${securityTouched.join(", ")}`);
       const base = mergeInfo?.baseBranch ?? "main";
@@ -224,7 +227,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // posture as the security diff-scope gate, branch preserved for review.
     // This catches staged secrets, NOT live network egress (the irreducible
     // residual — see docs/self-edit-hardening.md, M3).
-    const exfil = scanWorktreeForStagedSecrets(wt.path);
+    const exfil = scanWorktreeForStagedSecrets(wt.path, mergeInfo?.sha);
     if (!exfil.clean) {
       logger.warn(`[self-edit.sandbox] secret-shaped content staged in diff — holding merge for human review: ${exfil.hits.map(h => h.file).join(", ")}`);
       const base = mergeInfo?.baseBranch ?? "main";

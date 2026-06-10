@@ -28,6 +28,7 @@ export {
   getWorktreeBranch,
   getWorktreeStatus,
   getWorktreeChangedFiles,
+  getMergeDeltaFiles,
   getMergeBaseInfo,
   getBranchHead,
   resetWorktree,

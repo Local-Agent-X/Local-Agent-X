@@ -8,6 +8,17 @@ import { execSync } from "node:child_process";
 
 import { activeWorktrees, git, logger } from "./worktree-core.js";
 import { unlinkSharedJunctions } from "./worktree-junctions.js";
+import { loadProtectedFiles } from "../config-loader.js";
+
+/**
+ * True when `file` (a repo-relative path) is covered by a protected-files.json
+ * entry. A trailing-slash entry matches the whole subtree; a plain entry is an
+ * exact file match. Backslashes are normalized so Windows `git` paths match.
+ */
+function isProtectedPath(file: string, protectedEntries: string[]): boolean {
+  const p = file.replace(/\\/g, "/");
+  return protectedEntries.some(e => e.endsWith("/") ? p.startsWith(e) : p === e);
+}
 
 /** Get worktree path for an agent */
 export function getWorktreePath(agentId: string): string | undefined {
@@ -48,22 +59,20 @@ export function changedFilesTouchDeps(files: string[]): boolean {
 }
 
 /**
- * Of the given changed files, return those touching security-sensitive paths:
- * src/security/**, src/tool-policy/**, src/auth/**, and config/protected-files.json.
- * A self_edit that rewrites these can silently weaken the layer that authorizes
- * every tool call — and a weakened layer still builds, boots, and chats, so the
- * sandbox gates can't catch it. The sandbox holds these for explicit human
- * review instead of auto-merging. Backslashes are normalized so Windows paths
- * from `git status` match.
+ * Of the given changed files, return those a self_edit merge must HOLD for
+ * explicit human review — the engine-core + safety-layer set, derived from the
+ * single source `config/protected-files.json` (the same manifest the edit/write
+ * tools refuse). A self_edit that rewrites these can silently weaken the layer
+ * that authorizes every tool call — OR the gate that's supposed to catch that —
+ * and a weakened layer still builds, boots, and chats, so the build/bind/smoke
+ * gates can't catch it. Deriving from the manifest (instead of a hardcoded
+ * subset) means the held set can't drift below the protected set, and it now
+ * covers the self-edit/worktree pipeline itself so the gate can't rewrite its
+ * own gate and walk through.
  */
 export function securitySensitiveChangedFiles(files: string[]): string[] {
-  return files.filter(f => {
-    const p = f.replace(/\\/g, "/");
-    return p.startsWith("src/security/")
-      || p.startsWith("src/tool-policy/")
-      || p.startsWith("src/auth/")
-      || p === "config/protected-files.json";
-  });
+  const protectedEntries = loadProtectedFiles();
+  return files.filter(f => isProtectedPath(f, protectedEntries));
 }
 
 /**
@@ -93,6 +102,37 @@ export function getWorktreeChangedFiles(name: string): string[] {
     .filter(Boolean)
     .map(line => line.slice(3).trim()) // strip 2-char status + space
     .filter(Boolean);
+}
+
+/**
+ * The files that will actually land on the base branch if this worktree merges
+ * NOW — the full merge delta, committed history included, plus any still-
+ * uncommitted changes the merge step will auto-commit.
+ *
+ * This is the security boundary the gates must measure. getWorktreeChangedFiles
+ * sees only `git status --porcelain` (uncommitted), so a surgeon that commits
+ * its malicious diff and leaves a trivial uncommitted crumb passes a porcelain-
+ * scoped gate while `mergeWorktree` still carries the committed change to main.
+ * Measuring `baseSha...branchHead` (committed delta) ∪ uncommitted closes that
+ * gap: nothing reaches the base branch without a gate having seen it.
+ */
+export function getMergeDeltaFiles(name: string): string[] {
+  const wt = activeWorktrees.get(name);
+  if (!wt) throw new Error(`No worktree found for ${name}`);
+  const files = new Set<string>();
+  // Committed delta: base branch tip → this worktree's branch head. The
+  // three-dot range diffs against the merge base, so commits that landed on
+  // the base since worktree creation don't show up as spurious changes.
+  const base = git(["rev-parse", wt.baseBranch], wt.repoRoot);
+  const head = git(["rev-parse", "HEAD"], wt.path);
+  if (base !== head) {
+    for (const f of git(["diff", "--name-only", `${base}...${head}`], wt.path).split("\n")) {
+      if (f.trim()) files.add(f.trim());
+    }
+  }
+  // Uncommitted changes the merge step will `git add -A` and commit.
+  for (const f of getWorktreeChangedFiles(name)) files.add(f);
+  return [...files];
 }
 
 /** Hard reset uncommitted changes in worktree. */

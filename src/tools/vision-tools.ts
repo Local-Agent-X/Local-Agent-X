@@ -5,7 +5,8 @@ import { createLogger } from "../logger.js";
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath } from "../workspace/paths.js";
 import { openValidatedRead, readValidatedFile } from "../security/validated-io.js";
-import { detectMime, ALLOWED_MIME } from "./shared/image-acquire.js";
+import { ALLOWED_MIME } from "./shared/image-acquire.js";
+import { detectMime } from "./shared/image-binary-meta.js";
 
 const logger = createLogger("tools.vision");
 

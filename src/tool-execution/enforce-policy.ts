@@ -26,10 +26,15 @@ export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gat
 // HOST_CAPABILITY_MANIFEST action names — see ari-kernel.ts. A non-shell
 // tool that falls through to "exec" → lookupHostGrantId returns undefined
 // → firewall.execute throws → ariRequired turns it into a block. Every
-// gated tool must map to a manifest-valid action.
-const ARI_ACTION_MAP: Record<string, string> = {
-  read: "read", write: "write", edit: "write",
+// gated tool must map to a manifest-valid action. Exported for the
+// coverage test (ari-action-map.test.ts) that fails when a kernel-gated
+// tool ships without a mapping — image_search did exactly that
+// (2026-06-10): action fell through to "exec", the http schema rejected
+// it, and every call blocked as "ARI error (ariRequired mode)".
+export const ARI_ACTION_MAP: Record<string, string> = {
+  read: "read", write: "write", edit: "write", edit_lines: "write", multi_edit: "write",
   web_search: "get", web_fetch: "get", http_request: "get", browser: "get",
+  image_search: "get",
   bash: "exec",
   memory_search: "search",
   // ARI database toolClass declares actions [query, exec, mutate] — "write"

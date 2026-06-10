@@ -14,6 +14,7 @@ import {
   isServerRunning,
   restartServer,
   setQuitting,
+  stopServer,
   getServerPid,
 } from "./server-process";
 import { showNotification, registerHotkey } from "./hotkey-notifications";
@@ -133,19 +134,25 @@ export function setupIPC(): void {
     console.log(`[desktop] Opening file: ${filePath}`);
     return shell.openPath(filePath);
   });
-  ipcMain.handle("quit-app", () => {
+  ipcMain.handle("quit-app", async () => {
     setQuitting(true);
-    app.quit();
+    await stopServer();
+    app.exit(0);
   });
 
   // Full quit + Electron relaunch. Used after `git pull` so the next boot
-  // re-runs reconcile (root/desktop npm install + desktop tsc build) against
-  // the freshly pulled lockfiles/sources. A plain "restart-server" only
-  // respawns the server child and would silently leave deps stale.
-  ipcMain.handle("relaunch-app", () => {
+  // re-runs reconcile (root build + desktop build + npm installs) against
+  // the freshly pulled lockfiles/sources. The server tree is killed and
+  // AWAITED before relaunch — app.quit() alone let the old server survive,
+  // and the relaunched Electron silently reattached to it, serving
+  // hours-old in-memory code while the user believed they'd updated
+  // (2026-06-09, all day). app.exit() then guarantees this instance dies
+  // regardless of quit-event handlers.
+  ipcMain.handle("relaunch-app", async () => {
     setQuitting(true);
+    await stopServer();
     app.relaunch();
-    app.quit();
+    app.exit(0);
   });
 
   // Native folder picker for the Settings → Server workspace location. Returns

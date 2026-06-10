@@ -337,12 +337,22 @@ export function stopServer(): Promise<void> {
     console.log("[desktop] Stopping LAX server (pid: " + serverProcess.pid + ")...");
     const proc = serverProcess;
     const pid = proc.pid;
-    const forceKill = setTimeout(() => {
-      if (pid && process.platform === "win32") {
+    // Windows: SIGTERM emulation is TerminateProcess on the DIRECT child
+    // only — no JS handler runs, and the node server's own children (tsx
+    // transpiler, esbuild service) survive as orphans. There is no graceful
+    // value to preserve, so tree-kill immediately. This orphan tree is how
+    // a quit-and-relaunched app kept reattaching to a server running
+    // hours-old code (2026-06-09: five process generations in one day).
+    if (process.platform === "win32") {
+      if (pid) {
         try { execSync(`taskkill /PID ${pid} /T /F`, { windowsHide: true, stdio: "ignore" }); } catch {}
-      } else {
-        try { proc.kill("SIGKILL"); } catch {}
       }
+      serverProcess = null;
+      resolve();
+      return;
+    }
+    const forceKill = setTimeout(() => {
+      try { proc.kill("SIGKILL"); } catch {}
       serverProcess = null;
       resolve();
     }, 2000);
@@ -353,4 +363,23 @@ export function stopServer(): Promise<void> {
     });
     try { proc.kill("SIGTERM"); } catch {}
   });
+}
+
+/** Synchronous, unconditional server-tree kill for app-exit paths.
+ *  Electron does NOT await async listeners on `will-quit` — the main
+ *  process exits before a Promise-based stop runs its force-kill timer,
+ *  which is exactly how servers survived every tray quit and kept serving
+ *  stale in-memory code. Windows tree-kills synchronously; POSIX sends
+ *  SIGTERM and lets the LAX_PARENT_PID heartbeat reap anything that
+ *  lingers after we're gone. */
+export function stopServerSync(): void {
+  const proc = serverProcess;
+  if (!proc?.pid) return;
+  console.log(`[desktop] Sync-stopping LAX server (pid: ${proc.pid})...`);
+  if (process.platform === "win32") {
+    try { execSync(`taskkill /PID ${proc.pid} /T /F`, { windowsHide: true, stdio: "ignore" }); } catch {}
+  } else {
+    try { proc.kill("SIGTERM"); } catch {}
+  }
+  serverProcess = null;
 }

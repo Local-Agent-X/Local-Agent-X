@@ -19,6 +19,7 @@ import {
   isServerRunning,
   startServer,
   stopServer,
+  stopServerSync,
   waitForServer,
   setQuitting,
   setRestarting,
@@ -229,6 +230,10 @@ app.on("ready", async () => {
     if (result.ranSteps.length > 0) {
       console.log(`[desktop] reconcile ran: ${result.ranSteps.join(", ")}`);
     }
+    for (const w of result.warnings) {
+      console.warn(`[desktop] reconcile warning: ${w}`);
+      showNotification("Local Agent X — update warning", w);
+    }
   } catch (e) {
     const msg = (e as Error).message;
     const code = (e as NodeJS.ErrnoException).code;
@@ -299,9 +304,14 @@ app.on("ready", async () => {
     iconPath: ICON_PATH,
     onShow: showWindow,
     onToggle: toggleWindow,
-    onQuit: () => {
+    onQuit: async () => {
       setQuitting(true);
-      app.quit();
+      // Kill the server tree BEFORE exiting so quit can never orphan it,
+      // then app.exit — quit-event roulette (a hung native handler, a
+      // prevented close) must not be able to keep a "quit" app alive.
+      await stopServer();
+      destroyTray();
+      app.exit(0);
     },
     onNewSession: () => {
       showWindow();
@@ -346,7 +356,10 @@ app.on("before-quit", () => {
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   shutdownNativeSpeech();
-  stopServer();
+  // MUST be the sync variant: Electron exits before async listeners finish,
+  // so a Promise-based stop here never reaches its force-kill — the server
+  // survived every quit and relaunches silently reattached to it.
+  stopServerSync();
   destroyTray();
 });
 

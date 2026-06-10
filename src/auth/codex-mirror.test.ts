@@ -1,23 +1,26 @@
 /**
- * Tests for the LAX_MIRROR_CODEX_AUTH gate.
+ * Tests for the Codex CLI credential bridge gating (R6-A2).
  *
- * Covers env-var parsing, the once-per-process warning, and the
- * gate integration in saveTokens (mirror runs only when env=truthy).
+ * The mirror no longer writes ~/.codex/auth.json on every login/refresh by
+ * default. Instead:
+ *   - LAX_MIRROR_CODEX_AUTH=1 → eager persistent mirror (saveTokens writes it)
+ *   - LAX_MIRROR_CODEX_AUTH=0 → never mirror, not even for a build
+ *   - default                → build_app writes it just-in-time via
+ *                              prepareCodexAuthForBuild and removes it after
  *
- * Env redirect: saveTokens writes to getAuthPath(), which resolves
- * under HOME/USERPROFILE + ".lax". beforeEach swaps both to an
- * ephemeral tempdir so tests never touch the developer's real auth.json
- * or ~/.codex/.
+ * Env redirect: saveTokens writes to getAuthPath() (HOME/USERPROFILE + ".lax")
+ * and the mirror writes ~/.codex/. beforeEach swaps HOME + USERPROFILE to an
+ * ephemeral tempdir so tests never touch the developer's real files.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  isCodexMirrorEnabled,
+  isCodexEagerMirrorEnabled,
+  isCodexMirrorDisabled,
   isCodexAutoInstallEnabled,
-  warnMirrorDisabledOnce,
-  _resetMirrorOnceFlagForTests,
+  prepareCodexAuthForBuild,
   mirrorImpl,
 } from "./codex-mirror.js";
 import { saveTokens, loadTokens } from "./index.js";
@@ -51,23 +54,16 @@ function makeTokens(overrides: Partial<OAuthTokens> = {}): OAuthTokens {
 
 let envSnap: Record<string, string | undefined>;
 let tempHome: string;
+let codexPath: string;
 
 beforeEach(() => {
   envSnap = snapshotEnv();
   delete process.env.LAX_MIRROR_CODEX_AUTH;
   delete process.env.LAX_INSTALL_CODEX_CLI;
-  // Redirect getAuthPath() (and ~/.codex/ if anything ever writes there
-  // in this file) into a tempdir. Both names matter: getConfigDir reads
-  // HOME first, USERPROFILE second; homedir() (used by the mirror's
-  // ~/.codex/ path) reads platform-specific vars but USERPROFILE is the
-  // Windows source. Setting both keeps the test cross-platform.
   tempHome = mkdtempSync(join(tmpdir(), "lax-auth-test-"));
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
-  _resetMirrorOnceFlagForTests();
-  // Each test starts with a fresh tempdir; the keychain master key
-  // cached in auth-storage.ts would otherwise point at the previous
-  // test's now-deleted ~/.lax/, leading to wrong-key decrypt errors.
+  codexPath = join(tempHome, ".codex", "auth.json");
   _resetMasterKeyCacheForTests();
 });
 
@@ -79,20 +75,37 @@ afterEach(() => {
   } catch { /* tempdir cleanup is best-effort */ }
 });
 
-describe("isCodexMirrorEnabled", () => {
-  it("returns true when LAX_MIRROR_CODEX_AUTH is unset (default on)", () => {
+describe("isCodexEagerMirrorEnabled", () => {
+  it("is false by default (no eager mirror on every saveTokens)", () => {
     delete process.env.LAX_MIRROR_CODEX_AUTH;
-    expect(isCodexMirrorEnabled()).toBe(true);
+    expect(isCodexEagerMirrorEnabled()).toBe(false);
   });
 
-  it.each(["0", "false", "FALSE", "off", "no"])("returns false for opt-out value %s", (val) => {
+  it.each(["1", "true", "TRUE"])("is true for opt-in value %s", (val) => {
     process.env.LAX_MIRROR_CODEX_AUTH = val;
-    expect(isCodexMirrorEnabled()).toBe(false);
+    expect(isCodexEagerMirrorEnabled()).toBe(true);
   });
 
-  it.each(["1", "true", "TRUE", "", "random_garbage"])("returns true for any non-opt-out value %j", (val) => {
+  it.each(["0", "false", "off", "no", "", "garbage"])("is false for non-opt-in value %j", (val) => {
     process.env.LAX_MIRROR_CODEX_AUTH = val;
-    expect(isCodexMirrorEnabled()).toBe(true);
+    expect(isCodexEagerMirrorEnabled()).toBe(false);
+  });
+});
+
+describe("isCodexMirrorDisabled", () => {
+  it("is false by default", () => {
+    delete process.env.LAX_MIRROR_CODEX_AUTH;
+    expect(isCodexMirrorDisabled()).toBe(false);
+  });
+
+  it.each(["0", "false", "FALSE", "off", "no"])("is true for hard opt-out value %s", (val) => {
+    process.env.LAX_MIRROR_CODEX_AUTH = val;
+    expect(isCodexMirrorDisabled()).toBe(true);
+  });
+
+  it("is false when eager-enabled (=1)", () => {
+    process.env.LAX_MIRROR_CODEX_AUTH = "1";
+    expect(isCodexMirrorDisabled()).toBe(false);
   });
 });
 
@@ -107,87 +120,104 @@ describe("isCodexAutoInstallEnabled", () => {
     expect(isCodexAutoInstallEnabled()).toBe(true);
   });
 
-  it.each(["0", "false", "no", "", "random_garbage"])("returns false for non-truthy value %j", (val) => {
-    process.env.LAX_INSTALL_CODEX_CLI = val;
-    expect(isCodexAutoInstallEnabled()).toBe(false);
-  });
-
   it("is independent of LAX_MIRROR_CODEX_AUTH — install gate is its own consent decision", () => {
     process.env.LAX_MIRROR_CODEX_AUTH = "1";
     delete process.env.LAX_INSTALL_CODEX_CLI;
-    expect(isCodexMirrorEnabled()).toBe(true);
+    expect(isCodexEagerMirrorEnabled()).toBe(true);
     expect(isCodexAutoInstallEnabled()).toBe(false);
   });
 });
 
-describe("warnMirrorDisabledOnce", () => {
-  it("logs once per process and is silent on subsequent calls", () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    warnMirrorDisabledOnce();
-    warnMirrorDisabledOnce();
-    warnMirrorDisabledOnce();
-
-    const hits = logSpy.mock.calls.filter(
-      (args) => typeof args[0] === "string" && args[0].includes("LAX_MIRROR_CODEX_AUTH"),
-    );
-    expect(hits.length).toBe(1);
-  });
-
-  it("re-arms after _resetMirrorOnceFlagForTests", () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    warnMirrorDisabledOnce();
-    _resetMirrorOnceFlagForTests();
-    warnMirrorDisabledOnce();
-
-    const hits = logSpy.mock.calls.filter(
-      (args) => typeof args[0] === "string" && args[0].includes("LAX_MIRROR_CODEX_AUTH"),
-    );
-    expect(hits.length).toBe(2);
-  });
-});
-
-describe("saveTokens gate", () => {
-  it("does NOT call the Codex mirror when LAX_MIRROR_CODEX_AUTH=0, and fires the disabled-once notice", () => {
-    process.env.LAX_MIRROR_CODEX_AUTH = "0";
+describe("saveTokens eager-mirror gate", () => {
+  it("does NOT mirror by default (the plaintext copy stays off disk until a build)", () => {
+    delete process.env.LAX_MIRROR_CODEX_AUTH;
     const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {});
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     saveTokens(makeTokens());
 
     expect(mirrorSpy).not.toHaveBeenCalled();
-    // LAX-side auth.json was still written (gate only controls the mirror).
-    // Disk format is the encrypted-at-rest envelope, not raw JSON.
+    // LAX-side auth.json is still written, encrypted-at-rest.
     const laxAuth = join(tempHome, ".lax", "auth.json");
     expect(existsSync(laxAuth)).toBe(true);
     const onDisk = readFileSync(laxAuth, "utf-8");
     expect(onDisk).toContain('"format":"lax-auth-v1"');
     expect(onDisk).not.toContain("access-test");
-    // Roundtrip via the real load path.
-    const loaded = loadTokens();
-    expect(loaded?.accessToken).toBe("access-test");
-    // Disabled-once notice surfaced.
-    const noticeHits = logSpy.mock.calls.filter(
-      (args) => typeof args[0] === "string" && args[0].includes("LAX_MIRROR_CODEX_AUTH"),
-    );
-    expect(noticeHits.length).toBe(1);
+    expect(loadTokens()?.accessToken).toBe("access-test");
   });
 
-  it("DOES call the Codex mirror by default (LAX_MIRROR_CODEX_AUTH unset)", () => {
-    delete process.env.LAX_MIRROR_CODEX_AUTH;
+  it("DOES mirror eagerly when LAX_MIRROR_CODEX_AUTH=1", () => {
+    process.env.LAX_MIRROR_CODEX_AUTH = "1";
     const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {});
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const tokens = makeTokens();
     saveTokens(tokens);
 
     expect(mirrorSpy).toHaveBeenCalledTimes(1);
     expect(mirrorSpy).toHaveBeenCalledWith(tokens);
-    // Disabled-once notice must NOT fire when the mirror is on.
-    const noticeHits = logSpy.mock.calls.filter(
-      (args) => typeof args[0] === "string" && args[0].includes("Codex CLI credential mirror is OFF"),
-    );
-    expect(noticeHits.length).toBe(0);
+  });
+});
+
+describe("prepareCodexAuthForBuild", () => {
+  it("default: writes the mirror just-in-time and the cleanup removes it again", async () => {
+    delete process.env.LAX_MIRROR_CODEX_AUTH;
+    saveTokens(makeTokens());
+    const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {
+      mkdirSync(join(tempHome, ".codex"), { recursive: true });
+      writeFileSync(codexPath, "{}");
+    });
+
+    const cleanup = await prepareCodexAuthForBuild();
+    expect(mirrorSpy).toHaveBeenCalledTimes(1);
+    expect(existsSync(codexPath)).toBe(true);
+
+    cleanup();
+    expect(existsSync(codexPath)).toBe(false);
+  });
+
+  it("leaves a pre-existing ~/.codex/auth.json in place on cleanup (didn't create it)", async () => {
+    delete process.env.LAX_MIRROR_CODEX_AUTH;
+    saveTokens(makeTokens());
+    mkdirSync(join(tempHome, ".codex"), { recursive: true });
+    writeFileSync(codexPath, '{"pre":true}');
+    const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {
+      writeFileSync(codexPath, "{}");
+    });
+
+    const cleanup = await prepareCodexAuthForBuild();
+    expect(mirrorSpy).toHaveBeenCalledTimes(1);
+
+    cleanup();
+    expect(existsSync(codexPath)).toBe(true);
+  });
+
+  it("is a no-op when hard-disabled (=0)", async () => {
+    process.env.LAX_MIRROR_CODEX_AUTH = "0";
+    saveTokens(makeTokens());
+    const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {});
+
+    const cleanup = await prepareCodexAuthForBuild();
+    expect(mirrorSpy).not.toHaveBeenCalled();
+    cleanup(); // must not throw
+    expect(existsSync(codexPath)).toBe(false);
+  });
+
+  it("is a no-op under the persistent mirror (=1) — saveTokens already maintains the file", async () => {
+    process.env.LAX_MIRROR_CODEX_AUTH = "1";
+    saveTokens(makeTokens());
+    const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {});
+
+    const cleanup = await prepareCodexAuthForBuild();
+    expect(mirrorSpy).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("is a no-op when the stored tokens carry no id_token", async () => {
+    delete process.env.LAX_MIRROR_CODEX_AUTH;
+    saveTokens(makeTokens({ idToken: undefined }));
+    const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {});
+
+    const cleanup = await prepareCodexAuthForBuild();
+    expect(mirrorSpy).not.toHaveBeenCalled();
+    cleanup();
   });
 });

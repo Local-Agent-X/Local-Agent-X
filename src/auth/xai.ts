@@ -1,8 +1,9 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { join, dirname } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { writeSecretFileAtomic } from "./secret-file.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("auth-xai");
@@ -99,15 +100,8 @@ export function loadXaiTokens(): XaiTokens | null {
 
 function saveXaiTokens(tokens: XaiTokens): void {
   const authPath = getAuthPath();
-  const tmp = `${authPath}.tmp`;
-  try {
-    mkdirSync(dirname(authPath), { recursive: true });
-    writeFileSync(tmp, JSON.stringify(tokens, null, 2), { mode: 0o600 });
-    renameSync(tmp, authPath);
-  } catch (e) {
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
-    throw e;
-  }
+  mkdirSync(dirname(authPath), { recursive: true });
+  writeSecretFileAtomic(authPath, JSON.stringify(tokens, null, 2));
 }
 
 export function isXaiTokenExpired(tokens: XaiTokens | null): boolean {

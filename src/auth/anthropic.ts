@@ -1,8 +1,9 @@
 import { randomBytes, createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { writeSecretFileAtomic } from "./secret-file.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("auth-anthropic");
@@ -75,14 +76,7 @@ function saveAnthropicTokens(tokens: AnthropicTokens): void {
   // crash used to leave anthropic-auth.json half-written; next load
   // logged corruption (since this commit) but the user lost their auth.
   const authPath = getAuthPath();
-  const tmp = `${authPath}.tmp`;
-  try {
-    writeFileSync(tmp, JSON.stringify(tokens, null, 2), { mode: 0o600 });
-    renameSync(tmp, authPath);
-  } catch (e) {
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
-    throw e;
-  }
+  writeSecretFileAtomic(authPath, JSON.stringify(tokens, null, 2));
 }
 
 // ── Token Refresh ──
@@ -302,14 +296,7 @@ export async function completeAnthropicCliOAuth(rawCode: string): Promise<void> 
     },
   };
   mkdirSync(join(homedir(), ".claude"), { recursive: true });
-  const tmp = `${credPath}.tmp`;
-  try {
-    writeFileSync(tmp, JSON.stringify(credPayload, null, 2), { mode: 0o600 });
-    renameSync(tmp, credPath);
-  } catch (e) {
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
-    throw e;
-  }
+  writeSecretFileAtomic(credPath, JSON.stringify(credPayload, null, 2));
   pendingOAuth = null;
   logger.info("[anthropic-auth] CLI credentials written via paste-the-code OAuth");
 }

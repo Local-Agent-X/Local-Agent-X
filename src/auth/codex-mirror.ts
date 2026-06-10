@@ -2,44 +2,56 @@
  * Codex CLI credential bridge.
  *
  * The Codex CLI subprocess used by build_app reads tokens from
- * ~/.codex/auth.json. When LAX_MIRROR_CODEX_AUTH is set, this module
- * writes a copy of LAX's OAuth tokens there on every saveTokens (login
- * + refresh) so the CLI can authenticate without a separate flow.
+ * ~/.codex/auth.json. This module writes LAX's OAuth tokens there in the
+ * shape the CLI expects so it can authenticate without a separate flow.
  *
- * The mirror is ON by default: a user who connected Codex needs the CLI for
- * build_app, and a silent "build_app can't authenticate" failure is a worse
- * outcome than the doubled on-disk credential surface (both files are mode
- * 0600, same machine, same tokens). Security-conscious setups opt out.
+ * The mirror is a plaintext copy of live OAuth tokens (0600, but the CLI's
+ * format can't carry our AES-GCM envelope). To keep that plaintext copy off
+ * disk except when it's actually needed, the default is NOT to mirror on
+ * every login/refresh. Instead build_app calls prepareCodexAuthForBuild()
+ * to write it just-in-time before spawning Codex and remove it afterwards
+ * (when we created it) — so a Codex-connected user who never builds never
+ * has a second on-disk credential, and the file isn't rewritten on every
+ * token refresh.
  *
- * Two independent env-var gates:
- *   - LAX_MIRROR_CODEX_AUTH=0  → DISABLE the ~/.codex/auth.json mirror
- *   - LAX_INSTALL_CODEX_CLI=1  → if codex is not on PATH, run
- *                                `npm install -g @openai/codex` in the
- *                                background
+ * Env-var gates:
+ *   - LAX_MIRROR_CODEX_AUTH=1   → ALSO eager-mirror on every saveTokens and
+ *                                 keep the file persistent (for running the
+ *                                 Codex CLI directly, outside build_app)
+ *   - LAX_MIRROR_CODEX_AUTH=0   → never mirror, not even for a build (run
+ *                                 `codex login` yourself)
+ *   - LAX_INSTALL_CODEX_CLI=1   → if codex is not on PATH, run
+ *                                 `npm install -g @openai/codex` in the
+ *                                 background
  *
  * The install gate is separate so token-save doesn't silently trigger a
  * network call + global package install on a fresh laptop just because
- * the user opted into the file mirror. With the install gate OFF and
- * codex missing, the mirror logs an actionable manual-install hint and
- * carries on (the auth.json mirror is still written for the next time
- * codex shows up on PATH).
+ * the user opted into the file mirror.
  */
-import { writeFileSync, existsSync, renameSync, unlinkSync, mkdirSync } from "node:fs";
+import { existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { createLogger } from "../logger.js";
+import { writeSecretFileAtomic } from "./secret-file.js";
 import type { OAuthTokens } from "../types.js";
 
 const logger = createLogger("auth");
 
-/** Exported for tests. Reads LAX_MIRROR_CODEX_AUTH; default ON, opt out with
- *  LAX_MIRROR_CODEX_AUTH=0 (or false/off/no). */
-export function isCodexMirrorEnabled(): boolean {
-  const raw = process.env.LAX_MIRROR_CODEX_AUTH;
-  if (typeof raw !== "string") return true;
-  const v = raw.toLowerCase();
-  return !(v === "0" || v === "false" || v === "off" || v === "no");
+/** True only when LAX_MIRROR_CODEX_AUTH=1/true — the opt-in persistent mirror
+ *  that writes ~/.codex/auth.json on every saveTokens. Default OFF; build_app
+ *  handles the common case lazily via prepareCodexAuthForBuild. */
+export function isCodexEagerMirrorEnabled(): boolean {
+  const v = (process.env.LAX_MIRROR_CODEX_AUTH ?? "").toLowerCase();
+  return v === "1" || v === "true";
+}
+
+/** True when LAX_MIRROR_CODEX_AUTH=0/false/off/no — a hard opt-out that
+ *  suppresses even the just-in-time build write (the user runs `codex login`
+ *  themselves). */
+export function isCodexMirrorDisabled(): boolean {
+  const v = (process.env.LAX_MIRROR_CODEX_AUTH ?? "").toLowerCase();
+  return v === "0" || v === "false" || v === "off" || v === "no";
 }
 
 /**
@@ -53,21 +65,6 @@ export function isCodexAutoInstallEnabled(): boolean {
   if (typeof raw !== "string") return false;
   const v = raw.toLowerCase();
   return v === "1" || v === "true";
-}
-
-// Once-per-process notice when saveTokens runs with the mirror off.
-// Surfaces the env var name so users hitting "build_app can't auth"
-// have a single string to grep their own logs for.
-let _mirrorDisabledNoticeFired = false;
-export function warnMirrorDisabledOnce(): void {
-  if (_mirrorDisabledNoticeFired) return;
-  _mirrorDisabledNoticeFired = true;
-  logger.info("[auth] Codex CLI credential mirror is OFF (LAX_MIRROR_CODEX_AUTH=0). build_app's Codex subprocess will not auto-authenticate from LAX tokens — remove the opt-out, or run `codex login` directly.");
-}
-
-/** Test seam: reset the once-fired flag so cases can observe their own log. */
-export function _resetMirrorOnceFlagForTests(): void {
-  _mirrorDisabledNoticeFired = false;
 }
 
 // One install per process via the in-flight promise gate so we don't race.
@@ -188,17 +185,48 @@ export function mirrorToCodexCli(tokens: OAuthTokens): void {
     },
     last_refresh: new Date().toISOString(),
   };
-  const tmp = `${codexPath}.tmp`;
   try {
     mkdirSync(dirname(codexPath), { recursive: true });
-    writeFileSync(tmp, JSON.stringify(codexAuth, null, 2), { mode: 0o600 });
-    renameSync(tmp, codexPath);
+    writeSecretFileAtomic(codexPath, JSON.stringify(codexAuth, null, 2));
     logger.info(`[auth] mirrored tokens to ${codexPath} (Codex CLI bridge)`);
     ensureCodexCliInstalled();
   } catch (e) {
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
     logger.warn(`[auth] Codex CLI bridge write failed: ${(e as Error).message}`);
   }
+}
+
+/**
+ * Just-in-time Codex auth for a build_app run. Called immediately before
+ * build_app spawns the Codex CLI; returns a cleanup function to call after
+ * the subprocess exits.
+ *
+ *   - LAX_MIRROR_CODEX_AUTH=0  → no-op (user manages ~/.codex/auth.json).
+ *   - LAX_MIRROR_CODEX_AUTH=1  → persistent mirror already maintained by
+ *                                saveTokens; write nothing, delete nothing.
+ *   - default                  → write the mirror now from the current LAX
+ *                                tokens; the cleanup removes it again, but
+ *                                only if we created it (a pre-existing file —
+ *                                e.g. the user's own `codex login` — is left
+ *                                untouched on cleanup).
+ *
+ * Keeping the plaintext mirror on disk only for the duration of a build is
+ * the at-rest-minimization the always-on mirror couldn't give us.
+ */
+export async function prepareCodexAuthForBuild(): Promise<() => void> {
+  const noop = (): void => { /* nothing to undo */ };
+  if (isCodexMirrorDisabled() || isCodexEagerMirrorEnabled()) return noop;
+
+  const { loadTokens } = await import("./index.js");
+  const tokens = loadTokens();
+  if (!tokens?.idToken) return noop; // nothing to mirror; Codex falls back to its own login
+
+  const codexPath = join(homedir(), ".codex", "auth.json");
+  const preexisting = existsSync(codexPath);
+  mirrorImpl.fn(tokens);
+  if (preexisting) return noop; // don't delete a file we didn't create
+  return (): void => {
+    try { if (existsSync(codexPath)) unlinkSync(codexPath); } catch { /* best-effort */ }
+  };
 }
 
 /**

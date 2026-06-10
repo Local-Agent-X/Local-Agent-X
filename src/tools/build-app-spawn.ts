@@ -94,6 +94,11 @@ function artifactLooksComplete(indexPath: string, cliOutput: string): boolean {
 async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
   const { prompt, appDir, appUrl, signal, onEvent, model } = input;
   const indexPath = resolve(appDir, "index.html");
+  // Write the Codex CLI's ~/.codex/auth.json just-in-time (and remove it after)
+  // unless the user opted into the persistent mirror. Keeps the plaintext token
+  // copy off disk except for the duration of this build.
+  const { prepareCodexAuthForBuild } = await import("../auth/codex-mirror.js");
+  const cleanupCodexAuth = await prepareCodexAuthForBuild();
   try {
     const stdout = await runSpawn({
       cmd: "codex",
@@ -137,6 +142,8 @@ async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
       return { content: `App built (with warnings)!\n\nOpen: ${appUrl}\n\n${errMsg.slice(0, 300)}` };
     }
     return { content: `Codex CLI build failed: ${errMsg.slice(0, 500)}`, isError: true };
+  } finally {
+    cleanupCodexAuth();
   }
 }
 

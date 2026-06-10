@@ -1,11 +1,12 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname } from "node:path";
 import { getAuthPath } from "../config.js";
 import type { OAuthTokens } from "../types.js";
-import { isCodexMirrorEnabled, warnMirrorDisabledOnce, mirrorImpl } from "./codex-mirror.js";
+import { isCodexEagerMirrorEnabled, mirrorImpl } from "./codex-mirror.js";
 import { encryptAuthBlob, decryptAuthBlob } from "./storage.js";
+import { writeSecretFileAtomic } from "./secret-file.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("auth");
@@ -117,26 +118,18 @@ export function saveTokens(tokens: OAuthTokens): void {
     payload = jsonString;
   }
 
-  // Atomic write. Without this, a crash or kill-9 mid-write leaves
-  // auth.json half-written; next loadTokens parses partial JSON and
+  // Atomic + symlink-safe write. Without this, a crash or kill-9 mid-write
+  // leaves auth.json half-written; next loadTokens parses partial JSON and
   // logs corruption — user thinks their saved auth vanished.
-  const tmp = `${authPath}.tmp`;
-  try {
-    writeFileSync(tmp, payload, { mode: 0o600 });
-    renameSync(tmp, authPath);
-  } catch (e) {
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
-    throw e;
-  }
-  // Bridge to the Codex CLI's own credential store. Every saveTokens
-  // (initial login AND refresh) writes ~/.codex/auth.json so the CLI
-  // subprocess used by build_app authenticates from the same login — no
-  // separate `codex login`. Default ON; opt out with LAX_MIRROR_CODEX_AUTH=0
-  // (which also skips the @openai/codex auto-install).
-  if (isCodexMirrorEnabled()) {
+  writeSecretFileAtomic(authPath, payload);
+  // Bridge to the Codex CLI's own credential store. By default we do NOT
+  // eagerly mirror tokens to ~/.codex/auth.json on every login/refresh —
+  // build_app writes it just-in-time before it spawns Codex and removes it
+  // after (see prepareCodexAuthForBuild). Opt into the always-on persistent
+  // mirror (for running the Codex CLI directly outside build_app) with
+  // LAX_MIRROR_CODEX_AUTH=1.
+  if (isCodexEagerMirrorEnabled()) {
     mirrorImpl.fn(tokens);
-  } else {
-    warnMirrorDisabledOnce();
   }
 }
 

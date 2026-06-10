@@ -93,9 +93,15 @@ function autoInvalidateContradicting(
   const candidates = findCandidatesForContradictionCheck(db, newFact);
   if (candidates.length === 0) return;
 
+  // findContradictions wants oldest → newest (exclusive-slot pairs keep the
+  // newer side): candidates come back last_updated DESC, so reverse them and
+  // append the just-inserted fact last. subjectHint resolves implicit
+  // subjects ("works at Google" with the entity held out of content).
   const items = [
-    { text: newFact.content, payload: newId },
-    ...candidates.map(c => ({ text: c.content, payload: c.id! })),
+    ...candidates.slice().reverse().map(c => ({
+      text: c.content, payload: c.id!, subjectHint: c.entities[0],
+    })),
+    { text: newFact.content, payload: newId, subjectHint: newFact.entities[0] },
   ];
   const pairs = findContradictions(items);
   for (const p of pairs) {

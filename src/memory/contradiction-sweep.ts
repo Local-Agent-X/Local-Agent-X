@@ -7,7 +7,9 @@
  *   - index-facts-mutate.ts rememberFact (auto-invalidates contradicting
  *     facts before inserting the new one)
  *
- * Algorithm (one rule, applied uniformly):
+ * Two rules, checked per pair:
+ *
+ * Polarity rule:
  *   1. Tokenize each candidate strict (alphanumeric, length ≥ 3, stopwords
  *      removed — see text-utils.ts).
  *   2. Compute asymmetric overlap = shared / min(|A|, |B|). Asymmetric
@@ -19,8 +21,18 @@
  *      a negation/retraction marker, the other doesn't) → contradiction.
  *   4. Resolution: prefer the negation. Corrections to durable rules are
  *      overwhelmingly phrased as "stop X" / "don't X" / "no longer X",
- *      so the negation is almost always the more recent state. When both
- *      sides have or lack negation, fall back to file-order recency.
+ *      so the negation is almost always the more recent state.
+ *
+ * Exclusive-slot rule (same polarity):
+ *   "X works at Google" then "X works at Microsoft" — no negation anywhere,
+ *   but the slot holds one value. Both statements are parsed into relation
+ *   triples (relation-patterns.ts, the canonical S-P-O extractor); when two
+ *   items yield the same subject + same EXCLUSIVE predicate with different
+ *   objects, the newer one supersedes. Predicates are a deliberately narrow
+ *   present-tense set — "likes coffee" then "likes tea" is accumulation,
+ *   not contradiction, and past tense ("worked at Google") is history that
+ *   coexists with the present. Resolution: ITEMS MUST BE ORDERED OLDEST →
+ *   NEWEST; the higher index wins.
  *
  * The 0.4 threshold + strict-tokenization combination was chosen to fire
  * on the Spanish-greeting test case ("Use English by default, no Spanish
@@ -30,6 +42,8 @@
  */
 
 import { tokenizeStrict } from "./text-utils.js";
+import { extractRelationTriples } from "./relation-patterns.js";
+import { slugify } from "./utils.js";
 
 export const OVERLAP_THRESHOLD = 0.4;
 
@@ -68,26 +82,56 @@ export interface ContradictionPair<T> {
   overlap: number;
 }
 
+// Predicates whose object is a single-occupancy slot: a person has one
+// current employer, one current home, one current manager. Present tense
+// only — extractRelationTriples emits the literal verb, so "worked"/"lived"
+// (history, compatible with a new value) never match. Expanding this set
+// trades recall for false supersedes that silently delete true facts;
+// every addition needs the same exclusivity argument.
+const EXCLUSIVE_PREDICATES = new Set(["works", "lives", "reports"]);
+
+// `${subjectSlug}|${predicate}` → object slug for each exclusive triple in
+// the text. subjectHint names the implicit subject (a fact's primary
+// entity); profile bullets ("Lives in Ventura") fall back to "self".
+function exclusiveSlots(text: string, subjectHint?: string): Map<string, string> {
+  const slots = new Map<string, string>();
+  for (const t of extractRelationTriples(text, [subjectHint || "self"])) {
+    if (!EXCLUSIVE_PREDICATES.has(t.predicate)) continue;
+    slots.set(`${slugify(t.subject)}|${t.predicate}`, slugify(t.object));
+  }
+  return slots;
+}
+
+function slotsConflict(a: Map<string, string>, b: Map<string, string>): boolean {
+  if (a.size === 0 || b.size === 0) return false;
+  for (const [key, objA] of a) {
+    const objB = b.get(key);
+    if (objB !== undefined && objB !== objA) return true;
+  }
+  return false;
+}
+
 /**
  * Scan a list of items for contradicting pairs. Each item is paired with
- * an opaque payload — the function only inspects `text` for similarity
- * and polarity, but returns the original payload for the caller to act on
+ * an opaque payload — the function only inspects `text` (and the optional
+ * `subjectHint`) but returns the original payload for the caller to act on
  * (drop a markdown line, invalidate a fact id, etc).
  *
- * Returns pairs where polarity differs and overlap is significant. The
- * `keep` side is the negation when polarities differ. Each item appears
- * in at most one returned pair (greedy: first contradiction wins, then
- * the dropped side is removed from further consideration so it can't
- * cascade).
+ * ITEMS MUST BE ORDERED OLDEST → NEWEST: polarity pairs keep the negation
+ * side regardless of order, but exclusive-slot pairs keep the higher index
+ * (the newer statement). Each item appears in at most one returned pair
+ * (greedy: first contradiction wins, then the dropped side is removed from
+ * further consideration so it can't cascade).
  */
 export function findContradictions<T>(
-  items: ReadonlyArray<{ text: string; payload: T }>,
+  items: ReadonlyArray<{ text: string; payload: T; subjectHint?: string }>,
 ): ContradictionPair<T>[] {
   const tokenized = items.map(it => ({
     text: it.text,
     payload: it.payload,
     tokens: tokenizeStrict(it.text),
     negation: hasNegation(it.text),
+    slots: exclusiveSlots(it.text, it.subjectHint),
   }));
 
   const dropped = new Set<number>();
@@ -99,7 +143,20 @@ export function findContradictions<T>(
       if (dropped.has(j)) continue;
       const a = tokenized[i];
       const b = tokenized[j];
-      if (a.negation === b.negation) continue;
+
+      if (a.negation === b.negation) {
+        // Same polarity — only an exclusive-slot value change contradicts.
+        // The newer statement (j; items are oldest → newest) wins.
+        if (!slotsConflict(a.slots, b.slots)) continue;
+        pairs.push({
+          keep: b.payload,
+          drop: a.payload,
+          overlap: asymmetricOverlap(a.tokens, b.tokens),
+        });
+        dropped.add(i);
+        break; // outer item dropped; advance i
+      }
+
       const overlap = asymmetricOverlap(a.tokens, b.tokens);
       if (overlap < OVERLAP_THRESHOLD) continue;
       // Polarity differs and content overlaps — contradiction. Prefer

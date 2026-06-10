@@ -197,3 +197,41 @@ describe("recallRecentFacts candidate-window sizing", () => {
     expect(result.length).toBeLessThanOrEqual(10);
   });
 });
+
+describe("rememberFact exclusive-slot supersede", () => {
+  function validTo(factId: number): number | null {
+    const db = memory["db"];
+    const row = db.prepare("SELECT valid_to FROM facts WHERE id = ?").get(factId) as { valid_to: number | null };
+    return row.valid_to;
+  }
+
+  it("invalidates the old value when an exclusive slot changes", () => {
+    const rOld = memory.rememberFact("works at Google @peter", { kind: "world" });
+    expect(rOld.ok).toBe(true);
+    const rNew = memory.rememberFact("works at Microsoft @peter", { kind: "world" });
+    expect(rNew.ok).toBe(true);
+
+    expect(validTo(rOld.fact!.id!)).not.toBeNull();
+    expect(validTo(rNew.fact!.id!)).toBeNull();
+  });
+
+  it("leaves accumulative facts alone — both survive", () => {
+    const rA = memory.rememberFact("likes morning coffee @alice", { kind: "opinion" });
+    expect(rA.ok).toBe(true);
+    const rB = memory.rememberFact("likes evening tea @alice", { kind: "opinion" });
+    expect(rB.ok).toBe(true);
+
+    expect(validTo(rA.fact!.id!)).toBeNull();
+    expect(validTo(rB.fact!.id!)).toBeNull();
+  });
+
+  it("negation corrections still supersede (polarity rule unchanged)", () => {
+    const rDo = memory.rememberFact("always greet in Spanish @peter", { kind: "opinion" });
+    expect(rDo.ok).toBe(true);
+    const rStop = memory.rememberFact("no Spanish greetings @peter", { kind: "opinion" });
+    expect(rStop.ok).toBe(true);
+
+    expect(validTo(rDo.fact!.id!)).not.toBeNull();
+    expect(validTo(rStop.fact!.id!)).toBeNull();
+  });
+});

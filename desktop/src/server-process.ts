@@ -13,19 +13,13 @@
 // we never silently attach to stale pre-update code.
 
 import { ChildProcess, spawn, execSync } from "child_process";
-import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "fs";
+import { existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { getProjectRoot, getLAXConfig, reloadLAXConfig, type LAXConfig } from "./config";
-import { isPidAlive, isOurServerProcess } from "./pid-probe";
+import { getProjectRoot, reloadLAXConfig, type LAXConfig } from "./config";
+import { PID_FILE, readServerPidFile, waitForServer } from "./server-probe";
 
-const PID_FILE = join(homedir(), ".lax", "server.pid");
-
-interface ServerPidFile {
-  pid: number;
-  parentPid?: number;
-  startedAt: string;
-}
+export { reclaimOrphanServer, isServerRunning, waitForServer } from "./server-probe";
 
 export interface ServerEventHandlers {
   /** Fired when the server process exits uncleanly (non-zero code or
@@ -51,17 +45,16 @@ let isQuitting = false;
 let isRestarting = false;
 let crashHandler: ServerEventHandlers["onCrash"] | undefined;
 let alreadyRunningHandler: ServerEventHandlers["onAlreadyRunning"] | undefined;
+let startupFailureHandler: ServerEventHandlers["onStartupFailure"] | undefined;
+// Rapid-crash-loop tracking: when the spawn happened, and how many
+// consecutive spawns died within seconds. See the exit handler below.
+let lastSpawnAt = 0;
+let rapidCrashes = 0;
 
 export function setQuitting(v: boolean): void { isQuitting = v; }
 export function setRestarting(v: boolean): void { isRestarting = v; }
 export function isQuittingFlag(): boolean { return isQuitting; }
 export function getServerPid(): number | null { return serverProcess?.pid ?? null; }
-
-function readServerPidFile(): ServerPidFile | null {
-  if (!existsSync(PID_FILE)) return null;
-  try { return JSON.parse(readFileSync(PID_FILE, "utf-8")) as ServerPidFile; }
-  catch { return null; }
-}
 
 // True when dist/index.js exists and no source file is newer than it — i.e.
 // the compiled build reflects current source and is safe to run instead of
@@ -88,76 +81,11 @@ function distIsFresh(projectRoot: string): boolean {
   return true;
 }
 
-function killPidTree(pid: number): void {
-  if (process.platform === "win32") {
-    try { execSync(`taskkill /PID ${pid} /T /F`, { windowsHide: true, stdio: "ignore" }); } catch {}
-  } else {
-    try { process.kill(pid, "SIGTERM"); } catch {}
-    setTimeout(() => { try { process.kill(pid, "SIGKILL"); } catch {} }, 1000);
-  }
-}
-
-// Detect and kill orphan server processes left over from a previous
-// Electron that died abnormally (force-kill, crash, power-off). Without
-// this, Electron would silently attach to whatever was already on the
-// port — including a stale server running pre-update code.
-//
-// A pidfile pointing at a dead-or-recycled PID (typical case after a
-// reboot — Windows reassigns the number to an unrelated process) is
-// stale: delete it and return so the next stage spawns cleanly. Without
-// the delete, the server child reads the same stale file and exits with
-// "refusing to start", looping the launcher forever.
-export async function reclaimOrphanServer(): Promise<boolean> {
-  const file = readServerPidFile();
-  if (!file) return false;
-  if (file.parentPid === process.pid) return false; // somehow ours
-  if (!isOurServerProcess(file.pid)) {
-    try { unlinkSync(PID_FILE); } catch {}
-    return false;
-  }
-  console.warn(`[desktop] Killing orphan server pid=${file.pid} (parentPid=${file.parentPid ?? "n/a"}, current Electron=${process.pid}).`);
-  killPidTree(file.pid);
-  for (let i = 0; i < 20; i++) {
-    await new Promise(r => setTimeout(r, 100));
-    if (!isPidAlive(file.pid)) break;
-  }
-  try { unlinkSync(PID_FILE); } catch {}
-  return true;
-}
-
-export async function isServerRunning(): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2000);
-    const res = await fetch(`http://127.0.0.1:${getLAXConfig().port}/api/health`, {
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-// 60s ceiling. Cold server boot on a fresh Mac install legitimately takes
-// 15-30s (tsx cold start + ari kernel + sqlite migrations + ollama daemon
-// check + mxbai-embed-large pull on first run + MCP filesystem connect).
-// Renderer-side retry (did-fail-load handler in createWindow) is the
-// actual fix for the chrome-error race; this bump removes the noisy
-// "server didn't start" notification when the server is just slow.
-export async function waitForServer(maxWaitMs = 60000): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < maxWaitMs) {
-    if (await isServerRunning()) return true;
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  return false;
-}
-
 export function startServer(handlers?: ServerEventHandlers): void {
   if (serverProcess) return;
   if (handlers?.onCrash) crashHandler = handlers.onCrash;
   if (handlers?.onAlreadyRunning) alreadyRunningHandler = handlers.onAlreadyRunning;
+  if (handlers?.onStartupFailure) startupFailureHandler = handlers.onStartupFailure;
 
   // Read PROJECT_ROOT live — project-root-resolver.ts can mutate it at
   // app.ready via setProjectRoot() when auto-discovery or the user picker
@@ -168,7 +96,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
     const reason =
       "PROJECT_ROOT could not be resolved. Edit ~/.lax/config.json so projectRoot points at your Local-Agent-X repo, then relaunch.";
     console.error(`[desktop] ${reason}`);
-    try { handlers?.onStartupFailure?.({ reason }); } catch {}
+    try { startupFailureHandler?.({ reason }); } catch {}
     return;
   }
 
@@ -180,7 +108,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
     const reason =
       `src/index.ts not found at ${srcIndex}. Either projectRoot in ~/.lax/config.json points at the wrong place, or this repo is incomplete.`;
     console.error(`[desktop] ${reason}`);
-    try { handlers?.onStartupFailure?.({ reason }); } catch {}
+    try { startupFailureHandler?.({ reason }); } catch {}
     return;
   }
   const useDist = distIsFresh(projectRoot);
@@ -208,6 +136,8 @@ export function startServer(handlers?: ServerEventHandlers): void {
   // to ~/.lax/models normally.
   const electron = require("electron") as typeof import("electron");
   const bundledModelsDir = electron.app.isPackaged ? process.resourcesPath : "";
+
+  lastSpawnAt = Date.now();
 
   // We spawn a real `node` (PATH-resolved) rather than the bundled Electron
   // binary via ELECTRON_RUN_AS_NODE: the server loads native addons
@@ -296,6 +226,24 @@ export function startServer(handlers?: ServerEventHandlers): void {
     if (wasUnclean && !isQuitting && !isRestarting && crashHandler) {
       try { crashHandler({ code, signal }); } catch { /* renderer may already be gone */ }
     }
+
+    // Rapid-crash-loop breaker. A server that dies within seconds of every
+    // spawn (broken dist, missing dep, bad migration) used to restart every
+    // 3s forever while the splash polled /api/health until the end of time —
+    // the 2026-06-09 stale-dist import crash hung the splash exactly this
+    // way. Three consecutive sub-20s unclean exits ⇒ stop restarting and
+    // surface the recovery screen instead.
+    rapidCrashes = wasUnclean && Date.now() - lastSpawnAt < 20_000 ? rapidCrashes + 1 : 0;
+    if (rapidCrashes >= 3 && !isQuitting && !isRestarting) {
+      const reason =
+        `Server crashed ${rapidCrashes} times in a row right after starting ` +
+        `(last exit: code=${code} signal=${signal ?? "none"}). This usually means a broken ` +
+        `build — check ~/.lax/logs/server.log, then Repair or update again.`;
+      console.error(`[desktop] ${reason}`);
+      try { startupFailureHandler?.({ reason }); } catch {}
+      return; // Do NOT auto-restart — the next spawn would crash the same way.
+    }
+
     if (!isQuitting && !isRestarting) {
       setTimeout(() => {
         if (!isQuitting && !isRestarting && !serverProcess) startServer();

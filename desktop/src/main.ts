@@ -30,7 +30,7 @@ import { registerHotkey, showNotification } from "./hotkey-notifications";
 import { setupIPC } from "./ipc";
 import { createTray, destroyTray } from "./tray";
 import { registerAutostart } from "./autostart";
-import { runReconcile } from "./reconcile";
+import { runReconcile, killReconcileStepsSync } from "./reconcile";
 import { shutdownNativeSpeech } from "./native-speech";
 import {
   setSplashStatus,
@@ -306,9 +306,14 @@ app.on("ready", async () => {
     onToggle: toggleWindow,
     onQuit: async () => {
       setQuitting(true);
-      // Kill the server tree BEFORE exiting so quit can never orphan it,
-      // then app.exit — quit-event roulette (a hung native handler, a
-      // prevented close) must not be able to keep a "quit" app alive.
+      // Kill the server tree AND any in-flight reconcile build BEFORE
+      // exiting so quit can never orphan either (an orphaned `npm run
+      // build` keeps rewriting dist/ after we're gone — the next launch
+      // then races it), then app.exit — quit-event roulette (a hung
+      // native handler, a prevented close) must not be able to keep a
+      // "quit" app alive. app.exit skips will-quit, so this path kills
+      // reconcile steps itself.
+      killReconcileStepsSync();
       await stopServer();
       destroyTray();
       app.exit(0);
@@ -358,7 +363,10 @@ app.on("will-quit", () => {
   shutdownNativeSpeech();
   // MUST be the sync variant: Electron exits before async listeners finish,
   // so a Promise-based stop here never reaches its force-kill — the server
-  // survived every quit and relaunches silently reattached to it.
+  // survived every quit and relaunches silently reattached to it. Same
+  // story for an in-flight reconcile build: orphaned, it keeps writing
+  // dist/ after we exit and the next launch races a half-rebuilt server.
+  killReconcileStepsSync();
   stopServerSync();
   destroyTray();
 });

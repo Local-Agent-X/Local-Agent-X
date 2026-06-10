@@ -69,6 +69,42 @@ describe("themed Office generation — smoke (real files)", () => {
     expect(isZip(readFileSync(fp))).toBe(true);
   });
 
+  it("PowerPoint embeds a NATIVE chart when a slide carries chart data", async () => {
+    const fp = join(dir, "deck-chart.pptx");
+    const r = await tool(presentationTools, "presentation_create").execute({
+      file_path: fp, title: "Revenue",
+      slides: JSON.stringify([
+        {
+          title: "Q3 Revenue by Region",
+          bullets: ["West led growth", "North rebounded"],
+          chart: {
+            type: "bar",
+            categories: ["West", "East", "South", "North"],
+            series: [{ name: "Revenue", values: [124, 98, 76, 61] }],
+            title: "Q3 Revenue ($k)",
+          },
+        },
+      ]),
+    });
+    expect(r.isError).toBeFalsy();
+    expect(r.metadata?.chart_count).toBe(1);
+    const buf = readFileSync(fp);
+    expect(isZip(buf)).toBe(true);
+    // ZIP entry names are stored uncompressed → a real chart part is present.
+    expect(buf.includes(Buffer.from("ppt/charts/"))).toBe(true);
+  });
+
+  it("an invalid chart spec degrades gracefully (no chart part, still valid)", async () => {
+    const fp = join(dir, "deck-badchart.pptx");
+    const r = await tool(presentationTools, "presentation_create").execute({
+      file_path: fp,
+      slides: JSON.stringify([{ title: "Oops", bullets: ["x"], chart: { type: "bar", series: [] } }]),
+    });
+    expect(r.isError).toBeFalsy();
+    expect(r.metadata?.chart_count).toBe(1); // counted in spec...
+    expect(isZip(readFileSync(fp))).toBe(true); // ...but render skipped the empty chart without throwing
+  });
+
   it("PDF renders with the themed renderer", async () => {
     const fp = join(dir, "report.pdf");
     const r = await tool(pdfTools, "pdf_create").execute({

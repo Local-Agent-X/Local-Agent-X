@@ -83,9 +83,14 @@ function resolveMainChat(req: ResolveRequest, all: ToolDefinition[]): ToolDefini
 
   // Build-intent strip-down. If the user message is "build me X" AND they
   // didn't paste a literal tool call, narrow to build-intent audience.
-  // Literal calls always win — even on build-intent matches.
+  // Literal calls always win — even on build-intent matches. Keyword-routed
+  // tools survive the strip-down too: a message that names an office
+  // artifact ("power point", "spreadsheet") must keep those tools in the
+  // schema even when the build classifier (mis)fires, or the model's only
+  // visible "make something" tool is build_app (2026-06-10 misroute).
   if (req.buildIntentTest && req.buildIntentTest(msg) && literalCalls.size === 0) {
-    return all.filter(t => t.audiences?.includes("build-intent"));
+    const keyworded = req.keywordRouter ? req.keywordRouter(msg, all) : new Set<string>();
+    return all.filter(t => t.audiences?.includes("build-intent") || keyworded.has(t.name));
   }
 
   const included = new Set<string>();

@@ -14,7 +14,10 @@ import { resolveToolsForRequest } from "../tool-search.js";
 const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /spreadsheet|excel|xlsx|csv|sheet/i, toolPrefixes: ["spreadsheet_"] },
   { keywords: /\bdocs?\b|document|docx|\bword\b/i, toolPrefixes: ["document_"] },
-  { keywords: /presentation|slide|pptx|powerpoint/i, toolPrefixes: ["presentation_"] },
+  // "power point" (spaced), "ppt", and "slide deck"/"deck" are how users
+  // actually type it — the unspaced-only match left presentation_* out of
+  // the schema for "make a power point ..." (2026-06-10 misroute).
+  { keywords: /presentation|slide|pptx?\b|power\s*point|\bdeck\b|keynote/i, toolPrefixes: ["presentation_"] },
   { keywords: /pdf/i, toolPrefixes: ["pdf_"] },
   { keywords: /email|mail|inbox|send.*email/i, toolPrefixes: ["email_"] },
   { keywords: /calendar|event|meeting|schedule.*event/i, toolPrefixes: ["calendar_"] },

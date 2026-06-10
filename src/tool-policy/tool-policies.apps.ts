@@ -103,4 +103,6 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   pdf_read:                  { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
   pdf_extract_tables:        { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
   pdf_merge:                 { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "files", action: "read", json: true }, { arg: "output_path", action: "write" }] },
+  create_chart:              { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }], rules: [{ id: "allow-create-chart", decision: "allow", reason: "Chart PNG generation (workspace-confined)", priority: 50 }] },
+  preview_document:          { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }],  rules: [{ id: "allow-preview-document", decision: "allow", reason: "Generated-file self-check (read-only)", priority: 50 }] },
 };

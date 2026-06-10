@@ -88,6 +88,7 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   // + canary tripwire (R3 C3-4/C3-11/C3-22). Membership is build-time-enforced
   // against policy `offBoxFetch: true` (capability-class-gates.test.ts).
   "web_search",                // query/queries[] → off-box GET to DDG/Brave
+  "image_search",              // query → off-box GET to image providers (same class as web_search)
   "generate_image",            // model `prompt` → POST api.x.ai / api.openai.com
   "generate_video",            // model `prompt` + base64 reference_image → api.x.ai
   "send_video",                // ships a local file path off-box over a messaging bridge

@@ -30,6 +30,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
     rules: [{ id: "allow-webfetch-limited", decision: "allow", reason: "Web fetch allowed (rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
   web_search:          { kernel: "http", risk: "safe", offBoxFetch: true, rules: [{ id: "allow-web-search", decision: "allow", reason: "Web search", priority: 50 }] },
+  image_search:        { kernel: "http", risk: "safe", offBoxFetch: true, rules: [{ id: "allow-image-search", decision: "allow", reason: "Web image search (read-only)", priority: 50 }] },
   youtube_analyze:     { kernel: "http", risk: "network-read" },
   extract_site_assets: { kernel: "http", risk: "network-read", rules: [{ id: "allow-extract-site-assets", decision: "allow", reason: "Web asset extraction (read-only)", priority: 50 }] },
 

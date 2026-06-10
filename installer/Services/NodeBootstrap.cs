@@ -16,23 +16,40 @@ public class NodeBootstrap
     public event Action<string>? OnStatus;   // human-readable status line
     public event Action<string>? OnLogLine;  // raw winget/brew output
 
+    // The app's Node floor — keep in sync with NODE_MAJOR_MIN in
+    // scripts/install-common.mjs (and the version checks in install.sh /
+    // install.ps1). Version-aware so a user BELOW the floor gets an upgrade
+    // here instead of a hard "Node 22+ required" failure from
+    // install-common.mjs later — and so a future floor raise auto-upgrades
+    // existing users the next time they run an installer.
+    private const int NODE_MAJOR_MIN = 22;
+
     public bool NodeAvailable()
+    {
+        return NodeMajorVersion() >= NODE_MAJOR_MIN;
+    }
+
+    // Major version of the `node` on PATH, or -1 if absent/unparseable.
+    // Running `node -v` proves presence AND gets the version in one call.
+    static int NodeMajorVersion()
     {
         try
         {
             var p = Process.Start(new ProcessStartInfo
             {
-                FileName = OperatingSystem.IsWindows() ? "where" : "command",
-                Arguments = OperatingSystem.IsWindows() ? "node" : "-v node",
+                FileName = "node",
+                Arguments = "-v",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             });
-            p!.WaitForExit(3000);
-            return p.ExitCode == 0;
+            var output = p!.StandardOutput.ReadToEnd().Trim(); // e.g. "v22.12.0"
+            p.WaitForExit(3000);
+            if (p.ExitCode != 0) return -1;
+            return int.TryParse(output.TrimStart('v').Split('.')[0], out var major) ? major : -1;
         }
-        catch { return false; }
+        catch { return -1; }
     }
 
     // Returns true on success, false if install failed.

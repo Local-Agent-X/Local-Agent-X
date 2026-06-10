@@ -14,7 +14,7 @@ public class InstallProcess
 
     private Process? _proc;
 
-    public void Start(string repoRoot)
+    public void Start(string repoRoot, string? installedCommit = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -33,6 +33,14 @@ public class InstallProcess
         };
         psi.ArgumentList.Add(Path.Combine(repoRoot, "scripts", "install-common.mjs"));
         psi.ArgumentList.Add("--ipc");
+
+        // Standalone installs: SourceDownloader resolved the source ref to an
+        // immutable commit sha and downloaded that exact archive. Forward it
+        // so install-common.mjs can seed ~/.lax/installed-source.json (the
+        // rolling-update baseline) with the commit actually installed.
+        // Developer-clone installs pass null — git is their source of truth.
+        if (!string.IsNullOrEmpty(installedCommit))
+            psi.Environment["LAX_INSTALLED_COMMIT"] = installedCommit;
 
         _proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
         _proc.OutputDataReceived += (_, e) =>

@@ -138,7 +138,7 @@ public partial class MainWindowViewModel : ObservableObject
             if (step != null) step.State = "done";
         }
 
-        _process.Start(_repoRoot);
+        _process.Start(_repoRoot, _source.ResolvedCommit);
     }
 
     [RelayCommand]

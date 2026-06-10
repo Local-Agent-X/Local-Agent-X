@@ -43,7 +43,9 @@ function mockOkResponse(): PinnedResponse {
 
 describe("HTTP method enforcement", () => {
 	afterEach(() => {
-		vi.restoreAllMocks();
+		// vitest 4: restoreAllMocks only affects vi.spyOn spies — it no longer
+		// resets vi.fn() module mocks, so call history would leak across tests.
+		vi.resetAllMocks();
 	});
 
 	it("rejects action=get with params.method=POST (policy bypass attempt)", async () => {

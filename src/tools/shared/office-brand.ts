@@ -12,7 +12,7 @@ export async function acquireBrandLogo(t: OfficeTheme): Promise<AcquiredImage | 
   const src = t.brand.logo?.trim();
   if (!src) return null;
   try {
-    const [img] = await acquireImages([{ source: src }]);
+    const [img] = (await acquireImages([{ source: src }])).images;
     if (!img) return null;
     // Only raster types embed cleanly across docx/pdf/pptx.
     if (img.mimeType === "image/png" || img.mimeType === "image/jpeg" || img.mimeType === "image/gif") return img;

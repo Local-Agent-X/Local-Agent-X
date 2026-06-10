@@ -8,7 +8,7 @@
  * Charts are NATIVE, editable PowerPoint charts (pptxgenjs addChart), themed
  * with the house chart palette.
  */
-import { acquireImages, imageAltText, type AcquiredImage, type ImageSpec } from "./image-acquire.js";
+import { acquireImages, imageAltText, AllImagesFailedError, type AcquiredImage, type ImageSpec } from "./image-acquire.js";
 import type { OfficeTheme } from "./office-theme.js";
 import { cleanText, toPlainText } from "./office-md.js";
 import { isValidChart, type ChartSpec } from "./office-chart.js";
@@ -78,8 +78,16 @@ function placeLogo(slide: any, img: AcquiredImage, x: number, y: number, hIn: nu
   slide.addImage({ data, x, y, w: hIn * ratio, h: hIn, altText: "Logo" });
 }
 
+export interface SlideRenderReport {
+  /** True when the spec asked for an image AND it made it onto the slide. */
+  imagePlaced: boolean;
+  /** Loud image degradations (fallback used / image dropped) — the calling
+   *  tool must surface these in its result text. */
+  notes: string[];
+}
+
 /** Render one slide. Async because an inline image may need fetching. */
-export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme, brand: SlideBrand = {}): Promise<void> {
+export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme, brand: SlideBrand = {}): Promise<SlideRenderReport> {
   const slide = pptx.addSlide();
   const layout = spec.layout ?? "content";
   // Brand footer (user's company) on every slide — opt-in, empty by default.
@@ -97,18 +105,31 @@ export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme, bra
     accentBar(slide, t, 0.72, 4.2, 2.4);
     if (body) slide.addText(body, { x: 0.7, y: 4.45, w: SLIDE_W - 1.4, h: 1, fontSize: t.ppt.subtitleSize, fontFace: t.fonts.body, color: t.colors.muted });
     if (notes) slide.addNotes(notes);
-    return;
+    return { imagePlaced: false, notes: [] };
   }
   if (layout === "section") {
     slide.addText(title, { x: 0.7, y: 3.0, w: SLIDE_W - 1.4, h: 1.5, fontSize: t.ppt.sectionSize, fontFace: t.fonts.heading, color: t.colors.accent, bold: true, align: "center" });
     accentBar(slide, t, SLIDE_W / 2 - 1.1, 4.55, 2.2);
     if (notes) slide.addNotes(notes);
-    return;
+    return { imagePlaced: false, notes: [] };
   }
 
   // content / blank — may carry a chart and/or image alongside text.
   const chart = isValidChart(spec.chart) ? spec.chart : undefined;
-  const img = spec.image ? (await acquireImages([spec.image]))[0] : undefined;
+  const imageNotes: string[] = [];
+  let img: AcquiredImage | undefined;
+  if (spec.image) {
+    try {
+      const r = await acquireImages([spec.image]);
+      img = r.images[0];
+      imageNotes.push(...r.notes);
+    } catch (e) {
+      // A dead URL degrades to a text-only slide with a loud note; real
+      // caller errors (traversal, missing local file) still fail the deck.
+      if (!(e instanceof AllImagesFailedError)) throw e;
+      imageNotes.push(...e.failures.map((f) => `slide ${title ? `"${title}"` : "(untitled)"}: ${f}`));
+    }
+  }
   const hasVisual = !!chart || !!img;
   const hasText = !!body || bullets.length > 0;
 
@@ -137,6 +158,9 @@ export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme, bra
   }
 
   if (notes) slide.addNotes(notes);
+  // chart wins the visual box, so an acquired image only counts as placed
+  // when no chart shares the slide.
+  return { imagePlaced: !!img && !chart, notes: imageNotes };
 }
 
 /** Append each top-level acquired image on its own centered slide w/ caption. */

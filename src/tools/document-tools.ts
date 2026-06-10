@@ -183,13 +183,14 @@ const documentCreate: ToolDefinition = {
       const logo = await acquireBrandLogo(theme);
 
       await mkdir(dirname(filePath), { recursive: true });
-      const doc = buildDocument(content, title, acquired, theme, logo);
+      const doc = buildDocument(content, title, acquired.images, theme, logo);
       const buffer = await Packer.toBuffer(doc);
       await writeFile(filePath, buffer);
 
       const lineCount = content.split("\n").filter((l) => l.trim()).length;
-      const imgSuffix = acquired.length ? `, ${acquired.length} image(s)` : "";
-      return ok(`Created ${filePath} (${lineCount} content lines${imgSuffix}, ${buffer.length} bytes)`);
+      const imgSuffix = acquired.images.length ? `, ${acquired.images.length} image(s)` : "";
+      const notes = acquired.notes.length ? `\nImage notes:\n${acquired.notes.join("\n")}` : "";
+      return ok(`Created ${filePath} (${lineCount} content lines${imgSuffix}, ${buffer.length} bytes)${notes}`);
     } catch (e: unknown) {
       return err(`Failed to create document: ${(e as Error).message}`);
     }
@@ -300,7 +301,7 @@ const documentTemplate: ToolDefinition = {
         return err("variables must be a valid JSON object string");
       }
 
-      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      const { images: acquired, notes: imageNotes } = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       // Read the VALIDATED canonical inode of the template (realpath +
       // O_NOFOLLOW leaf) so a symlink swap after the gate (R4-19) is rejected.
       const result = await mammoth.extractRawText({ buffer: readValidatedFile(templatePath) });
@@ -323,9 +324,10 @@ const documentTemplate: ToolDefinition = {
 
       const keys = Object.keys(vars).join(", ");
       const imgSuffix = acquired.length ? ` Embedded ${acquired.length} image(s).` : "";
+      const notes = imageNotes.length ? `\nImage notes:\n${imageNotes.join("\n")}` : "";
       return ok(
         `Created ${outputPath} from template ${templatePath}. ` +
-          `Replaced ${totalReplacements} placeholder(s) for keys: ${keys}.${imgSuffix}`,
+          `Replaced ${totalReplacements} placeholder(s) for keys: ${keys}.${imgSuffix}${notes}`,
       );
     } catch (e: unknown) {
       return err(`Failed to apply template: ${(e as Error).message}`);

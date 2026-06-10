@@ -1,16 +1,34 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { acquireImages } from "./image-acquire.js";
 
-// 1×1 PNG (transparent)
-const PNG_1x1 = Buffer.from(
-  "89504E470D0A1A0A0000000D4948445200000001000000010806000000" +
-  "1F15C4890000000A49444154789C63000100000500010D0A2DB40000000049454E44AE426082",
-  "hex",
-);
+// 1×1 PNG (transparent) — hoisted so the web-egress mock factory (which runs
+// during import resolution, before this module's body) can serve it.
+const hoisted = vi.hoisted(() => ({
+  png: Buffer.from(
+    "89504E470D0A1A0A0000000D4948445200000001000000010806000000" +
+    "1F15C4890000000A49444154789C63000100000500010D0A2DB40000000049454E44AE426082",
+    "hex",
+  ),
+}));
+const PNG_1x1 = hoisted.png;
+
+// Deterministic network for the fallback-ladder tests; every other URL keeps
+// the REAL canonicalFetch so the SSRF-gate test still exercises the gate.
+vi.mock("../web-egress.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../web-egress.js")>();
+  return {
+    ...real,
+    canonicalFetch: async (url: string, opts: never) => {
+      if (url.includes("mock-origin-dead")) throw new Error("HTTP 522: origin stalled");
+      if (url.includes("mock-fallback-ok")) return new Response(new Uint8Array(hoisted.png));
+      return real.canonicalFetch(url, opts);
+    },
+  };
+});
 
 // Minimal JPEG with SOF0 → 2×3 dims
 const JPEG_2x3 = Buffer.from([
@@ -38,15 +56,15 @@ afterAll(() => {
 });
 
 describe("acquireImages", () => {
-  it("returns [] for empty input", async () => {
+  it("returns an empty outcome for empty input", async () => {
     const out = await acquireImages([]);
-    expect(out).toEqual([]);
+    expect(out).toEqual({ images: [], notes: [] });
   });
 
   it("reads a local PNG by absolute path (under the workspace)", async () => {
     const p = join(workspaceRoot, "tiny.png");
     writeFileSync(p, PNG_1x1);
-    const [img] = await acquireImages([{ source: p }], { workspaceRoot });
+    const [img] = (await acquireImages([{ source: p }], { workspaceRoot })).images;
     expect(img.mimeType).toBe("image/png");
     expect(img.width).toBe(1);
     expect(img.height).toBe(1);
@@ -56,7 +74,7 @@ describe("acquireImages", () => {
   it("reads a local JPEG and parses dimensions", async () => {
     const p = join(workspaceRoot, "tiny.jpg");
     writeFileSync(p, JPEG_2x3);
-    const [img] = await acquireImages([{ source: p }], { workspaceRoot });
+    const [img] = (await acquireImages([{ source: p }], { workspaceRoot })).images;
     expect(img.mimeType).toBe("image/jpeg");
     expect(img.width).toBe(2);
     expect(img.height).toBe(3);
@@ -103,10 +121,10 @@ describe("acquireImages", () => {
     const dir = join(workspaceRoot, "subdir");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "rel.png"), PNG_1x1);
-    const [img] = await acquireImages(
+    const [img] = (await acquireImages(
       [{ source: "subdir/rel.png" }],
       { workspaceRoot },
-    );
+    )).images;
     expect(img.mimeType).toBe("image/png");
   });
 
@@ -141,8 +159,47 @@ describe("acquireImages", () => {
   it("forwards source and caption fields", async () => {
     const p = join(workspaceRoot, "tiny3.png");
     writeFileSync(p, PNG_1x1);
-    const [img] = await acquireImages([{ source: p, caption: "hello" }], { workspaceRoot });
+    const [img] = (await acquireImages([{ source: p, caption: "hello" }], { workspaceRoot })).images;
     expect(img.source).toBe(p);
     expect(img.caption).toBe("hello");
+  });
+
+  // ── Reliability ladder ──
+
+  it("rung 1: falls back to fallback_source when the origin fails, with a loud note", async () => {
+    const r = await acquireImages([{
+      source: "https://example.com/mock-origin-dead.png",
+      fallback_source: "https://example.com/mock-fallback-ok.png",
+    }]);
+    expect(r.images).toHaveLength(1);
+    expect(r.images[0].source).toBe("https://example.com/mock-fallback-ok.png");
+    expect(r.notes[0]).toMatch(/used fallback URL for .*mock-origin-dead/);
+  });
+
+  it("rung 2: drops a dead URL with a note while other images still embed", async () => {
+    const p = join(workspaceRoot, "ok-beside-dead.png");
+    writeFileSync(p, PNG_1x1);
+    const r = await acquireImages(
+      [{ source: p }, { source: "https://example.com/mock-origin-dead.png" }],
+      { workspaceRoot },
+    );
+    expect(r.images).toHaveLength(1);
+    expect(r.images[0].source).toBe(p);
+    expect(r.notes[0]).toMatch(/dropped image .*mock-origin-dead/);
+  });
+
+  it("rung 3: throws AllImagesFailedError when every source fails", async () => {
+    await expect(acquireImages([
+      { source: "https://example.com/mock-origin-dead-1.png" },
+      { source: "https://example.com/mock-origin-dead-2.png", fallback_source: "https://example.com/mock-origin-dead-3.png" },
+    ])).rejects.toThrow(/All 2 image source\(s\) failed/);
+  });
+
+  it("local-path failures still throw immediately (deterministic caller error, not a flaky host)", async () => {
+    const p = join(workspaceRoot, "good-local.png");
+    writeFileSync(p, PNG_1x1);
+    await expect(
+      acquireImages([{ source: p }, { source: "no-such-file.png" }], { workspaceRoot }),
+    ).rejects.toThrow(/Could not read image/);
   });
 });

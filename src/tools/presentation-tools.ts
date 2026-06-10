@@ -9,6 +9,18 @@ import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA } from
 import { acquireBrandLogo } from "./shared/office-brand.js";
 import { applySlide, appendImageSlides, type SlideSpec, type SlideBrand } from "./shared/pptx-render.js";
 
+// Rung-3 guard text + note block shared by the create tools: a deck that
+// requested images but embedded none is a FAILURE the model must act on,
+// and any partial degradation is reported, never silent.
+function allImagesFailedMsg(requested: number, notes: string[]): string {
+  return `Deck not written — all ${requested} requested image(s) failed to embed:\n${notes.join("\n")}\n` +
+    "Run image_search for replacement URLs (pass each result's fallback URL as fallback_source), " +
+    "or omit images to explicitly create without them.";
+}
+function noteBlock(notes: string[]): string {
+  return notes.length ? `\nImage notes:\n${notes.join("\n")}` : "";
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function makePptx(): Promise<any> {
   const mod = await import("pptxgenjs");
@@ -27,7 +39,7 @@ function ensureDir(p: string): void { mkdirSync(dirname(p), { recursive: true })
 // VISUAL slides by default instead of walls of text.
 const SLIDE_SPEC_DOC =
   "Each slide spec: {title?, layout?: 'title'|'section'|'content'|'blank', " +
-  "body?, bullets?: string[], notes?, image?: {source, caption?}, " +
+  "body?, bullets?: string[], notes?, image?: {source, fallback_source?, caption?}, " +
   "chart?: {type:'bar'|'line'|'pie'|'doughnut'|'area', categories?: string[], " +
   "series: [{name, values: number[]}], title?}}. " +
   "VISUAL BY DEFAULT: when a slide presents numbers, comparisons, or trends, add a `chart` " +
@@ -58,19 +70,29 @@ const presentationCreate: ToolDefinition = {
       const slides = JSON.parse(args.slides as string) as SlideSpec[];
       if (!slides.length) return err("slides array is empty");
       const theme = resolveOfficeTheme(args.theme);
-      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      const specs = (args.images as ImageSpec[] | undefined) ?? [];
+      const acquired = await acquireImages(specs);
       const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
       ensureDir(fp);
       const pptx = await makePptx();
       if (args.title) pptx.title = args.title as string;
       pptx.author = (args.author as string) || brandAuthor(theme) || "";
       pptx.layout = "LAYOUT_WIDE";
-      for (const s of slides) await applySlide(pptx, s, theme, brand);
-      appendImageSlides(pptx, acquired, theme);
+      const imageNotes = [...acquired.notes];
+      let slideImagesPlaced = 0;
+      for (const s of slides) {
+        const r = await applySlide(pptx, s, theme, brand);
+        if (r.imagePlaced) slideImagesPlaced++;
+        imageNotes.push(...r.notes);
+      }
+      appendImageSlides(pptx, acquired.images, theme);
+      const requested = slides.filter((s) => s.image).length + specs.length;
+      const embedded = slideImagesPlaced + acquired.images.length;
+      if (requested > 0 && embedded === 0) return err(allImagesFailedMsg(requested, imageNotes));
       await pptx.writeFile({ fileName: fp });
       const chartCount = slides.filter((s) => s.chart).length;
-      return ok(`Created presentation with ${slides.length + acquired.length} slide(s)${chartCount ? `, ${chartCount} chart(s)` : ""}: ${fp}`, {
-        file_path: fp, slide_count: slides.length + acquired.length, image_count: acquired.length, chart_count: chartCount,
+      return ok(`Created presentation with ${slides.length + acquired.images.length} slide(s)${chartCount ? `, ${chartCount} chart(s)` : ""}: ${fp}${noteBlock(imageNotes)}`, {
+        file_path: fp, slide_count: slides.length + acquired.images.length, image_count: embedded, chart_count: chartCount,
       });
     } catch (e) { return err(`Failed to create presentation: ${(e as Error).message}`); }
   },
@@ -97,17 +119,22 @@ const presentationAddSlide: ToolDefinition = {
       const spec = JSON.parse(args.slide as string) as SlideSpec;
       const pos = (args.position as number) ?? 2;
       const theme = resolveOfficeTheme(args.theme);
-      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      const specs = (args.images as ImageSpec[] | undefined) ?? [];
+      const acquired = await acquireImages(specs);
       const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
       const outPath = resolvePath(args.file_path as string).replace(/\.pptx$/i, `_slide_${pos}.pptx`);
       ensureDir(outPath);
       const pptx = await makePptx();
       pptx.author = brandAuthor(theme) || "";
       pptx.layout = "LAYOUT_WIDE";
-      await applySlide(pptx, spec, theme, brand);
-      appendImageSlides(pptx, acquired, theme);
+      const r = await applySlide(pptx, spec, theme, brand);
+      appendImageSlides(pptx, acquired.images, theme);
+      const imageNotes = [...acquired.notes, ...r.notes];
+      const requested = (spec.image ? 1 : 0) + specs.length;
+      const embedded = (r.imagePlaced ? 1 : 0) + acquired.images.length;
+      if (requested > 0 && embedded === 0) return err(allImagesFailedMsg(requested, imageNotes));
       await pptx.writeFile({ fileName: outPath });
-      return ok(`Created new slide file: ${outPath}`, { file_path: outPath, position: pos, image_count: acquired.length });
+      return ok(`Created new slide file: ${outPath}${noteBlock(imageNotes)}`, { file_path: outPath, position: pos, image_count: embedded });
     } catch (e) { return err(`Failed to add slide: ${(e as Error).message}`); }
   },
 };
@@ -181,11 +208,14 @@ const presentationFromOutline: ToolDefinition = {
       if (args.title) pptx.title = args.title as string;
       pptx.author = brandAuthor(theme) || "";
       pptx.layout = "LAYOUT_WIDE";
+      // Outline slides are text-only (no spec.image), so the images param is
+      // the only image path — acquireImages' all-failed throw is the rung-3
+      // guard here.
       for (const s of slides) await applySlide(pptx, s, theme, brand);
-      appendImageSlides(pptx, acquired, theme);
+      appendImageSlides(pptx, acquired.images, theme);
       await pptx.writeFile({ fileName: fp });
-      return ok(`Created presentation from outline with ${slides.length + acquired.length} slide(s): ${fp}`, {
-        file_path: fp, slide_count: slides.length + acquired.length, image_count: acquired.length,
+      return ok(`Created presentation from outline with ${slides.length + acquired.images.length} slide(s): ${fp}${noteBlock(acquired.notes)}`, {
+        file_path: fp, slide_count: slides.length + acquired.images.length, image_count: acquired.images.length,
       });
     } catch (e) { return err(`Failed from outline: ${(e as Error).message}`); }
   },

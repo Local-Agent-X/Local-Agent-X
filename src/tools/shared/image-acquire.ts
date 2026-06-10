@@ -7,9 +7,14 @@
  *
  * Network fetches go through the same hardened SSRF gate as `web_fetch`
  * and `http_request` (`canonicalFetch` in src/tools/web-egress.ts:
- * per-hop literal-IP + DNS-pin + scheme check, fail-closed). Blocked
- * fetches throw — callers surface the error to the user; we never
- * fall back to a placeholder.
+ * per-hop literal-IP + DNS-pin + scheme check, fail-closed).
+ *
+ * URL failures climb a reliability ladder instead of all-or-nothing:
+ * try the spec's `fallback_source` automatically, else drop that one
+ * image with a note, and only when EVERY spec fails throw — so a single
+ * walled host can't zero out a document, and a document that requested
+ * images is never quietly created without any. Every degradation is
+ * named in the returned notes; nothing is silent, no placeholders.
  *
  * Cache: by sha256(url) under ~/.lax/image-cache/. URL is treated as
  * immutable content for a session; no eviction (TODO: bounded cache).
@@ -27,6 +32,11 @@ import { detectMime, parseDimensions, type ImageMimeType } from "./image-binary-
 export interface ImageSpec {
   /** URL (http(s)://...) or local path (absolute, or relative to workspaceRoot). Auto-detected. */
   source: string;
+  /** Alternate URL tried automatically when `source` fails — image_search
+   *  returns one per hit (the search engine's own CDN thumbnail, which stays
+   *  fetchable when the origin site walls off non-browser clients). The
+   *  switch is reported in the outcome notes, never silent. */
+  fallback_source?: string;
   /** Optional caption text; tools that support captions use it, tools that don't ignore. */
   caption?: string;
   /** Accessibility alt text (screen readers). Falls back to caption, then a
@@ -208,26 +218,7 @@ function resolveLocalPath(source: string, workspaceRoot: string): string {
   return real;
 }
 
-async function acquireOne(spec: ImageSpec, workspaceRoot: string, maxBytes: number, maxDim: number): Promise<AcquiredImage> {
-  const src = spec.source;
-  if (!src || typeof src !== "string") throw new Error("ImageSpec.source must be a non-empty string");
-
-  let buf: Buffer;
-  if (/^https?:\/\//i.test(src)) {
-    buf = await fetchFromUrl(src);
-  } else {
-    const localPath = resolveLocalPath(src, workspaceRoot);
-    try {
-      // Read the realpath'd, contained inode with O_NOFOLLOW on the leaf
-      // (readValidatedFile) so a symlink swapped in at the leaf between the
-      // realpath containment check above and this read is rejected, not
-      // followed — closing the read-leg TOCTOU on the same inode we validated.
-      buf = readValidatedFile(localPath);
-    } catch (e) {
-      throw new Error(`Could not read image "${describeSource(src)}": ${(e as Error).message}`);
-    }
-  }
-
+function validateImage(buf: Buffer, src: string, spec: ImageSpec, maxBytes: number, maxDim: number): AcquiredImage {
   if (buf.length > maxBytes) {
     throw new Error(`Image "${describeSource(src)}" exceeds size cap (${buf.length} > ${maxBytes} bytes)`);
   }
@@ -256,24 +247,106 @@ async function acquireOne(spec: ImageSpec, workspaceRoot: string, maxBytes: numb
   };
 }
 
+async function acquireLocal(spec: ImageSpec, workspaceRoot: string, maxBytes: number, maxDim: number): Promise<AcquiredImage> {
+  const localPath = resolveLocalPath(spec.source, workspaceRoot);
+  let buf: Buffer;
+  try {
+    // Read the realpath'd, contained inode with O_NOFOLLOW on the leaf
+    // (readValidatedFile) so a symlink swapped in at the leaf between the
+    // realpath containment check above and this read is rejected, not
+    // followed — closing the read-leg TOCTOU on the same inode we validated.
+    buf = readValidatedFile(localPath);
+  } catch (e) {
+    throw new Error(`Could not read image "${describeSource(spec.source)}": ${(e as Error).message}`);
+  }
+  return validateImage(buf, spec.source, spec, maxBytes, maxDim);
+}
+
+/** Fetch+validate a URL spec, automatically falling back to `fallback_source`
+ *  when the origin fails either step (a fallback can also rescue an origin
+ *  that fetched but failed validation — e.g. an original past the size cap
+ *  whose CDN thumbnail fits). The switch is reported via the returned note. */
+async function acquireFromUrl(spec: ImageSpec, maxBytes: number, maxDim: number): Promise<{ img: AcquiredImage; note?: string }> {
+  try {
+    return { img: validateImage(await fetchFromUrl(spec.source), spec.source, spec, maxBytes, maxDim) };
+  } catch (originErr) {
+    const fb = spec.fallback_source;
+    if (!fb || !/^https?:\/\//i.test(fb) || fb === spec.source) throw originErr;
+    let img: AcquiredImage;
+    try {
+      img = validateImage(await fetchFromUrl(fb), fb, spec, maxBytes, maxDim);
+    } catch (fbErr) {
+      throw new Error(`origin: ${(originErr as Error).message}; fallback: ${(fbErr as Error).message}`);
+    }
+    return { img, note: `used fallback URL for ${describeSource(spec.source)} — origin failed: ${(originErr as Error).message}` };
+  }
+}
+
+/** Every requested image failed — thrown so a tool can never report success
+ *  on a document the caller asked to illustrate. Distinct class so per-slide
+ *  callers can degrade THIS case to a note while real caller errors
+ *  (traversal, missing local file) still propagate. */
+export class AllImagesFailedError extends Error {
+  constructor(public readonly failures: string[], specCount: number) {
+    super(
+      `All ${specCount} image source(s) failed:\n${failures.join("\n")}\n` +
+      "Run image_search for replacement URLs (each result includes a fallback URL — pass it as fallback_source), " +
+      "or omit images to create the file without them.",
+    );
+    this.name = "AllImagesFailedError";
+  }
+}
+
+export interface AcquireOutcome {
+  /** Successfully acquired images, in input order (dropped URL specs omitted). */
+  images: AcquiredImage[];
+  /** Loud per-image reports — fallbacks used, sources dropped. Callers MUST
+   *  surface these in the tool result text. */
+  notes: string[];
+}
+
 /**
- * Acquire a list of images. Throws on the first failure (does NOT
- * silently skip — partial success hides bugs). Returns results in
- * the same order as the input specs.
+ * Acquire a list of images with a reliability ladder instead of
+ * all-or-nothing:
+ *   1. a URL spec whose origin fails is retried on its `fallback_source`
+ *      automatically (noted);
+ *   2. a URL spec that fails both ways is dropped with a note naming the
+ *      cause — one dead host can't zero out a whole document;
+ *   3. if EVERY spec fails, throws AllImagesFailedError.
+ * Local-path failures throw immediately: they're deterministic caller errors
+ * (or traversal attempts), not flaky hosts.
  */
 export async function acquireImages(
   specs: ImageSpec[],
   opts: AcquireOptions = {},
-): Promise<AcquiredImage[]> {
-  if (!Array.isArray(specs) || specs.length === 0) return [];
+): Promise<AcquireOutcome> {
+  if (!Array.isArray(specs) || specs.length === 0) return { images: [], notes: [] };
   const workspaceRoot = opts.workspaceRoot ?? workspacePath();
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
   const maxDim = opts.maxDim ?? DEFAULT_MAX_DIM;
-  const out: AcquiredImage[] = [];
+  const images: AcquiredImage[] = [];
+  const notes: string[] = [];
+  const failures: string[] = [];
   for (const spec of specs) {
-    out.push(await acquireOne(spec, workspaceRoot, maxBytes, maxDim));
+    if (!spec?.source || typeof spec.source !== "string") throw new Error("ImageSpec.source must be a non-empty string");
+    if (/^https?:\/\//i.test(spec.source)) {
+      try {
+        const { img, note } = await acquireFromUrl(spec, maxBytes, maxDim);
+        images.push(img);
+        if (note) notes.push(note);
+      } catch (e) {
+        const msg = `dropped image ${describeSource(spec.source)}: ${(e as Error).message}`;
+        notes.push(msg);
+        failures.push(msg);
+      }
+    } else {
+      images.push(await acquireLocal(spec, workspaceRoot, maxBytes, maxDim));
+    }
   }
-  return out;
+  if (images.length === 0 && failures.length > 0) {
+    throw new AllImagesFailedError(failures, specs.length);
+  }
+  return { images, notes };
 }
 
 /** Schema fragment for the `images` field. Identical across all content tools. */
@@ -283,11 +356,13 @@ export const IMAGES_PARAM_SCHEMA = {
     type: "object",
     properties: {
       source: { type: "string", description: "URL or local path (absolute or relative to workspace/)" },
+      fallback_source: { type: "string", description: "Alternate URL tried automatically if source fails (image_search results include one — always pass it)" },
       caption: { type: "string", description: "Optional caption" },
       alt: { type: "string", description: "Accessibility alt text (screen readers); defaults to the caption" },
     },
     required: ["source"],
   },
   description: "Optional images to embed. Source can be a URL (http(s)://) or a local file path. " +
-    "Don't have a URL? Call image_search to find a photo, or create_chart to render a data chart, then pass the path/URL here.",
+    "Don't have a URL? Call image_search to find a photo, or create_chart to render a data chart, then pass the path/URL here. " +
+    "Pass each image_search result's fallback URL as fallback_source — a blocked origin then auto-falls back to the search CDN copy (reported in the result).",
 } as const;

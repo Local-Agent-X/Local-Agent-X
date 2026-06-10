@@ -194,7 +194,7 @@ const pdfCreate: ToolDefinition = {
         ? { ...baseTheme, doc: { ...baseTheme.doc, bodySize: args.font_size as number } }
         : baseTheme;
       const title = (args.title as string) ?? "";
-      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      const { images: acquired, notes: imageNotes } = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       const logo = await acquireBrandLogo(theme);
       // bufferPages lets us stamp a footer on every page after layout.
       const doc = new PDFDocument({ info: { Title: title, Author: brandAuthor(theme) }, bufferPages: true, lang: "en-US", displayTitle: true });
@@ -256,7 +256,8 @@ const pdfCreate: ToolDefinition = {
       const verified = verifyWriteLanded(filePath, { minBytes: 100, mustContain: "%PDF-" });
       if (!verified.ok) return fail(`Failed to create PDF: ${verified.reason}`);
       const imgSuffix = acquired.length ? `, ${acquired.length} image(s)` : "";
-      return ok(`PDF created at ${filePath} (${buf.length} bytes${imgSuffix})`);
+      const notes = imageNotes.length ? `\nImage notes:\n${imageNotes.join("\n")}` : "";
+      return ok(`PDF created at ${filePath} (${buf.length} bytes${imgSuffix})${notes}`);
     } catch (e: unknown) {
       return fail(`Failed to create PDF: ${(e as Error).message}`);
     }

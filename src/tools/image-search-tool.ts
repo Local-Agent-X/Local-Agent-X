@@ -10,7 +10,17 @@ import type { ToolDefinition, ToolResult } from "../types.js";
  * Commons (keyless, license-clean — the always-available safety net).
  */
 
-interface ImageHit { url: string; title: string; width: number; height: number; source: string }
+interface ImageHit {
+  url: string;
+  title: string;
+  width: number;
+  height: number;
+  source: string;
+  /** Search-engine CDN copy (thumbnail/proxy). Origin news/commerce CDNs
+   *  routinely tarpit non-browser TLS fingerprints; the engine's own CDN
+   *  serves everyone — this is the auto-fallback the acquirer uses. */
+  fallback?: string;
+}
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36";
 const enc = encodeURIComponent;
@@ -22,7 +32,8 @@ async function braveImages(query: string, max: number, apiKey: string, signal: A
   const json = (await res.json()) as { results?: { title?: string; url?: string; thumbnail?: { src?: string }; properties?: { url?: string } }[] };
   return (json.results ?? []).slice(0, max).flatMap((r) => {
     const url = r.properties?.url ?? r.thumbnail?.src;
-    return url ? [{ url, title: r.title ?? "", width: 0, height: 0, source: r.url ?? "brave" }] : [];
+    const thumb = r.thumbnail?.src;
+    return url ? [{ url, title: r.title ?? "", width: 0, height: 0, source: r.url ?? "brave", fallback: thumb && thumb !== url ? thumb : undefined }] : [];
   });
 }
 
@@ -36,24 +47,30 @@ async function ddgImages(query: string, max: number, signal: AbortSignal): Promi
   const res = await fetch(`https://duckduckgo.com/i.js?l=us-en&o=json&q=${enc(query)}&vqd=${vqd}&f=,,,&p=1`, {
     headers: { "User-Agent": UA, Accept: "application/json", Referer: "https://duckduckgo.com/" }, signal,
   });
-  const json = (await res.json()) as { results?: { image: string; title?: string; width?: number; height?: number; source?: string }[] };
+  const json = (await res.json()) as { results?: { image: string; thumbnail?: string; title?: string; width?: number; height?: number; source?: string }[] };
   return (json.results ?? []).slice(0, max).map((r) => ({
     url: r.image, title: r.title ?? "", width: r.width ?? 0, height: r.height ?? 0, source: r.source ?? "duckduckgo",
+    fallback: r.thumbnail && r.thumbnail !== r.image ? r.thumbnail : undefined,
   }));
 }
 
 async function wikimediaImages(query: string, max: number, signal: AbortSignal): Promise<ImageHit[]> {
+  // iiurlwidth mints a server-side scaled thumb — the fallback that also
+  // rescues originals past the acquirer's 10MB/4096px caps.
   const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6` +
-    `&gsrsearch=${enc(query)}&gsrlimit=${max}&prop=imageinfo&iiprop=url|size|mime&format=json&origin=*`;
+    `&gsrsearch=${enc(query)}&gsrlimit=${max}&prop=imageinfo&iiprop=url|size|mime&iiurlwidth=1600&format=json&origin=*`;
   const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, signal });
-  const json = (await res.json()) as { query?: { pages?: Record<string, { title: string; imageinfo?: { url: string; width: number; height: number; mime: string }[] }> } };
+  const json = (await res.json()) as { query?: { pages?: Record<string, { title: string; imageinfo?: { url: string; thumburl?: string; width: number; height: number; mime: string }[] }> } };
   const pages = json.query?.pages ? Object.values(json.query.pages) : [];
   const out: ImageHit[] = [];
   for (const p of pages) {
     const info = p.imageinfo?.[0];
     // Only embeddable raster types — svg/tiff/pdf can't be embedded directly.
     if (!info || !/image\/(png|jpeg|gif|webp)/.test(info.mime)) continue;
-    out.push({ url: info.url, title: p.title.replace(/^File:/, ""), width: info.width, height: info.height, source: "Wikimedia Commons" });
+    out.push({
+      url: info.url, title: p.title.replace(/^File:/, ""), width: info.width, height: info.height, source: "Wikimedia Commons",
+      fallback: info.thumburl && info.thumburl !== info.url ? info.thumburl : undefined,
+    });
   }
   return out.slice(0, max);
 }
@@ -75,10 +92,14 @@ function format(hits: ImageHit[]): string {
   if (!hits.length) return "No images found.";
   const lines = hits.map((h, i) => {
     const dims = h.width && h.height ? ` (${h.width}×${h.height})` : "";
-    return `${i + 1}. ${h.url}${dims}${h.title ? ` — ${h.title}` : ""} [${h.source}]`;
+    const fb = h.fallback ? `\n   fallback_source: ${h.fallback}` : "";
+    return `${i + 1}. ${h.url}${dims}${h.title ? ` — ${h.title}` : ""} [${h.source}]${fb}`;
   });
   return "Direct image URLs — to embed, pass one as the `source` of an `image` " +
-    "(presentation slide) or `images` entry (document/pdf/spreadsheet):\n\n" + lines.join("\n");
+    "(presentation slide) or `images` entry (document/pdf/spreadsheet). " +
+    "ALWAYS pass the listed fallback_source too: if the origin site blocks or stalls the fetch, " +
+    "the fallback (the search engine's own CDN copy) is embedded automatically and the switch is reported.\n\n" +
+    lines.join("\n");
 }
 
 export const imageSearchTool: ToolDefinition = {
@@ -87,7 +108,8 @@ export const imageSearchTool: ToolDefinition = {
     "Search the web for IMAGES and get back direct image URLs. Use this when a document, " +
     "slide deck, or PDF would benefit from a relevant photo/diagram — find an image here, then " +
     "embed it by passing its URL as an image `source` to document_create / presentation_create / " +
-    "pdf_create / spreadsheet_write. Prefer landscape, high-resolution results. Returns URLs with dimensions.",
+    "pdf_create / spreadsheet_write, plus the listed fallback URL as `fallback_source` (auto-used " +
+    "if the origin blocks the fetch). Prefer landscape, high-resolution results. Returns URLs with dimensions.",
   parameters: {
     type: "object",
     properties: {

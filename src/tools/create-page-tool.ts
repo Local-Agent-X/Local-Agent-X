@@ -31,7 +31,7 @@ export const createPageTool: ToolDefinition = {
   async execute(args) {
     const name = String(args.name || "page").replace(/[^a-zA-Z0-9_-]/g, "-");
     const title = String(args.title || name);
-    const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+    const { images: acquired, notes: imageNotes } = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
     const imgBlock = acquired.length
       ? "\n<div class=\"acquired-images\">\n" + acquired.map(img => {
           const b64 = img.buffer.toString("base64");
@@ -92,7 +92,8 @@ ${content}
       writeFileSync(registryPath, JSON.stringify(registry, null, 2), "utf-8");
 
       const port = process.env.LAX_PORT ?? "7007";
-      return { content: `Page created: http://127.0.0.1:${port}/${name}.html\nTitle: ${title}\nRegistered in sidebar.` };
+      const notes = imageNotes.length ? `\nImage notes:\n${imageNotes.join("\n")}` : "";
+      return { content: `Page created: http://127.0.0.1:${port}/${name}.html\nTitle: ${title}\nRegistered in sidebar.${notes}` };
     } catch (e) {
       return { content: `Failed to create page: ${(e as Error).message}`, isError: true };
     }

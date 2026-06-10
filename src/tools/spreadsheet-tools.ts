@@ -199,7 +199,7 @@ const spreadsheetWrite: ToolDefinition = {
       const sheetName = (args.sheet as string) || "Sheet1";
       const parsed: Record<string, unknown>[] = JSON.parse(args.data as string);
       if (!Array.isArray(parsed)) return fail("data must be a JSON array");
-      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      const { images: acquired, notes: imageNotes } = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
 
       const theme = resolveOfficeTheme(args.theme);
       const wb = new ExcelJS.Workbook();
@@ -255,7 +255,8 @@ const spreadsheetWrite: ToolDefinition = {
       const verified = verifyWriteLanded(filePath, { minBytes: 500 });
       if (!verified.ok) return fail(`Failed to write spreadsheet: ${verified.reason}`);
       const imgSuffix = acquired.length ? ` and ${acquired.length} image(s)` : "";
-      return ok(`Wrote ${parsed.length} rows${imgSuffix} to "${sheetName}" in ${filePath}`);
+      const notes = imageNotes.length ? `\nImage notes:\n${imageNotes.join("\n")}` : "";
+      return ok(`Wrote ${parsed.length} rows${imgSuffix} to "${sheetName}" in ${filePath}${notes}`);
     } catch (e: unknown) {
       return fail(String((e as Error).message ?? e));
     }

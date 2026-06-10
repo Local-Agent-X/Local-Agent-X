@@ -283,7 +283,11 @@ describe("ShellExecutor", () => {
 		expect(result.error).toContain("Executable not allowed");
 	});
 
-	it("accepts an allowlisted executable (echo)", async () => {
+	// POSIX-only: echo (like most of the allowlist) is a shell builtin on
+	// Windows, not a binary on PATH, so the exec leg can't run there. The
+	// allowlist ACCEPTANCE logic is covered cross-platform by the
+	// validateCommand tests above.
+	it.skipIf(process.platform === "win32")("accepts an allowlisted executable (echo)", async () => {
 		const result = await executor.execute({
 			id: "tc-allow-3",
 			toolClass: "shell",

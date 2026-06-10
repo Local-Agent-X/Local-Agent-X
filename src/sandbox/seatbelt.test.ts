@@ -9,6 +9,10 @@ import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES } from "./validate.js
 
 const onDarwin = process.platform === "darwin";
 
+// Mirror seatbelt.ts sb() escaping: on Windows join() yields backslash paths,
+// which the profile generator escapes for the SBPL string literal.
+const sb = (p: string) => p.replace(/\\/g, "\\\\");
+
 describe("seatbelt profile generation", () => {
   const home = "/Users/test-home";
 
@@ -21,18 +25,18 @@ describe("seatbelt profile generation", () => {
     // Every entry in the single-source list must appear as a deny subpath/literal,
     // so adding a dir to validate.ts can't silently miss the kernel sandbox.
     for (const dir of HOME_RELATIVE_DENY_DIRS) {
-      expect(profile).toContain(`(subpath "${join(home, dir)}")`);
+      expect(profile).toContain(`(subpath "${sb(join(home, dir))}")`);
     }
     for (const file of HOME_RELATIVE_DENY_FILES) {
-      expect(profile).toContain(`(literal "${join(home, file)}")`);
+      expect(profile).toContain(`(literal "${sb(join(home, file))}")`);
     }
   });
 
   it("denies writes to the launch-agent persistence vectors", () => {
     const profile = generateSeatbeltProfile(home);
-    expect(profile).toContain(`(subpath "${join(home, "Library/LaunchAgents")}")`);
+    expect(profile).toContain(`(subpath "${sb(join(home, "Library/LaunchAgents"))}")`);
     expect(profile).toContain(`(subpath "/Library/LaunchAgents")`);
-    expect(profile).toContain(`(literal "${join(home, ".zshrc")}")`);
+    expect(profile).toContain(`(literal "${sb(join(home, ".zshrc"))}")`);
   });
 
   it("allows the host shell by default (targeted deny, not hermetic)", () => {

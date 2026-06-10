@@ -12,15 +12,33 @@
  * rejected (ELOOP) rather than followed. Depends only on file-access.ts's
  * classification primitives — one-way, no cycle.
  */
-import { openSync, closeSync, readFileSync, writeFileSync, constants } from "node:fs";
+import { openSync, closeSync, lstatSync, readFileSync, writeFileSync, constants } from "node:fs";
 import { realpathDeep, matchesSensitivePath } from "./file-access.js";
 
-// fs.constants.O_NOFOLLOW is POSIX-only; on Windows it is undefined. Falling
-// back to 0 leaves the open flags unchanged there — the realpath-then-revalidate
-// leg still applies, and Windows symlink creation requires elevation, so the
-// residual risk is lower. (O_RDONLY is 0 on every platform, so this OR is the
+// fs.constants.O_NOFOLLOW is POSIX-only; on Windows it is undefined and falls
+// back to 0 in the flag sets below. There the leaf check is emulated with an
+// lstat before open (assertLeafNotSymlink): not atomic like the kernel flag,
+// but Windows symlinks (and junctions — lstat reports both as symlinks) are
+// still rejected rather than followed. Elevation is NOT required to create
+// symlinks on Windows with Developer Mode on, so the emulation is load-bearing,
+// not belt-and-suspenders. (O_RDONLY is 0 on every platform, so this OR is the
 // read-only flag set with NOFOLLOW added where the platform supports it.)
 const READ_NOFOLLOW_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+
+// Windows fallback for the missing O_NOFOLLOW: reject a symlinked leaf before
+// open. ENOENT is fine (O_CREAT write of a new file); only an existing
+// symlink/junction at the leaf is refused.
+function assertLeafNotSymlink(absPath: string): void {
+	if (constants.O_NOFOLLOW !== undefined) return; // kernel flag handles it
+	try {
+		if (lstatSync(absPath).isSymbolicLink()) {
+			throw new Error(`Blocked: refusing to open symlinked leaf ${absPath} (no O_NOFOLLOW on this platform)`);
+		}
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw e;
+	}
+}
 
 /**
  * Open the VALIDATED canonical inode for a READ sink, atomically closing the
@@ -68,6 +86,7 @@ export function openValidatedRead(absPath: string): { fd: number; canonicalPath:
 
 	// O_NOFOLLOW on the leaf: a symlink swapped in at canonicalPath between the
 	// realpath above and this open is rejected (ELOOP) rather than followed.
+	assertLeafNotSymlink(canonicalPath);
 	const fd = openSync(canonicalPath, READ_NOFOLLOW_FLAGS);
 	return { fd, canonicalPath };
 }
@@ -108,6 +127,7 @@ const WRITE_NOFOLLOW_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.
  * swallowed. The caller-supplied `mode` is the create mode for a new file.
  */
 export function writeValidatedFile(absPath: string, data: string | Buffer, mode = 0o644): void {
+	assertLeafNotSymlink(absPath);
 	const fd = openSync(absPath, WRITE_NOFOLLOW_FLAGS, mode);
 	try {
 		writeFileSync(fd, data);

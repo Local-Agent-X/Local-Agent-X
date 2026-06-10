@@ -239,11 +239,18 @@ function renderMessages() {
   const anchor = (streaming && store && store.liveAnchorIndex >= 0)
                  ? store.liveAnchorIndex : -1;
 
+  // Window the rebuild: entry renders paint only the tail (scrollToBottom
+  // doubles as the entry signal — see chat-render-window.js); in-place
+  // rebuilds keep whatever history the reader already expanded.
+  const windowStart = (typeof _resolveWindowStart === 'function')
+    ? _resolveWindowStart(activeChat, scrollToBottom, anchor) : 0;
+
   // The Map points at DOM nodes we're about to wipe; clear and let the loop
   // re-populate it when it renders the synth row.
   _liveMessageNodes.clear();
   el.innerHTML = '';
-  for (let i = 0; i < activeChat.messages.length; i++) {
+  if (typeof _appendEarlierSentinel === 'function') _appendEarlierSentinel(el, activeChat);
+  for (let i = windowStart; i < activeChat.messages.length; i++) {
     if (i === anchor) {
       const liveNode = renderMessage(null, { parent: el, isLiveSynth: true, store });
       if (liveNode) _liveMessageNodes.set(activeChat.id, liveNode);

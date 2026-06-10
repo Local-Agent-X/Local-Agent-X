@@ -22,8 +22,9 @@ export interface ResolveRequest {
   /** User message text. Only used when audience === "main-chat". */
   message?: string;
   /** Optional per-template tool restriction. Intersected as final pass for
-   *  spawned-agent audience. Identity helpers (issue_*, agent_whoami,
-   *  agent_team_list, agent_wakeup) are always preserved. */
+   *  spawned-agent audience. Always-on helpers (issue_*, agent_whoami,
+   *  agent_team_list, agent_wakeup, task_* planning tools) are preserved
+   *  regardless of the allow-list — see ALWAYS_ON_TOOLS. */
   templateAllowedTools?: string[];
   /** Optional keyword router. Lets the caller (tool-filter.ts) inject the
    *  TOOL_KEYWORD_MAP without forcing the resolver to import it. Only used
@@ -36,12 +37,17 @@ export interface ResolveRequest {
   buildIntentTest?: (message: string) => boolean;
 }
 
-const IDENTITY_TOOLS: ReadonlySet<string> = new Set([
+const ALWAYS_ON_TOOLS: ReadonlySet<string> = new Set([
   "issue_create", "issue_list", "issue_update", "issue_search",
   "issue_checkout", "issue_release", "issue_request_approval",
   "agent_whoami", "agent_team_list", "agent_wakeup",
   // Every agent on a project can read and update the shared project brief.
   "project_brief_read", "project_brief_update",
+  // Planning/bookkeeping: the open-steps completion gate (canonical-loop)
+  // seeds and enforces a step plan on every worker run, so the task tools
+  // ride along regardless of how narrow the template's allow-list is. They
+  // mutate nothing but ~/.lax/tasks.json — not a capability escalation.
+  "task_create", "task_update", "task_list", "task_get",
 ]);
 
 export function resolveToolsForRequest(
@@ -63,7 +69,7 @@ export function resolveToolsForRequest(
   // subset would drop them and the agent would get neither.
   if (req.audience === "spawned-agent" && req.templateAllowedTools && req.templateAllowedTools.length > 0) {
     const allowed = new Set(req.templateAllowedTools);
-    result = all.filter(t => allowed.has(t.name) || IDENTITY_TOOLS.has(t.name));
+    result = all.filter(t => allowed.has(t.name) || ALWAYS_ON_TOOLS.has(t.name));
   }
 
   return result;

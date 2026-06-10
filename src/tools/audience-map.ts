@@ -78,10 +78,12 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Planning & tasks
   enter_plan_mode: ["main-chat"],
   exit_plan_mode:  ["main-chat"],
-  task_create:     ["main-chat"],
-  task_update:     ["main-chat"],
-  task_list:       ["main-chat"],
-  task_get:        ["main-chat"],
+  // task tools reach spawned workers too: the open-steps completion gate
+  // (canonical-loop) seeds and enforces a step plan on every worker run.
+  task_create:     ["main-chat", "spawned-agent"],
+  task_update:     ["main-chat", "spawned-agent"],
+  task_list:       ["main-chat", "spawned-agent"],
+  task_get:        ["main-chat", "spawned-agent"],
 
   // Protocols
   protocol_list:           ["main-chat"],

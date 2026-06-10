@@ -832,6 +832,29 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
 }
 stepDone("desktop");
 
+// Standalone installs: the GUI installer resolved the source ref to an
+// immutable commit sha, downloaded that exact archive, and forwarded the sha
+// here (InstallProcess.cs). Record it as the rolling-update baseline —
+// ~/.lax/installed-source.json, the marker OTAManager reads — so the first
+// in-app update check compares against the commit actually installed instead
+// of optimistically reporting an update. Dev clones never set this env var;
+// git rev-parse is their source of truth.
+const installedCommit = process.env.LAX_INSTALLED_COMMIT || "";
+if (/^[0-9a-f]{40}$/.test(installedCommit)) {
+  try {
+    const laxDir = join(homedir(), ".lax");
+    mkdirSync(laxDir, { recursive: true });
+    writeFileSync(
+      join(laxDir, "installed-source.json"),
+      JSON.stringify({ commit: installedCommit, updatedAt: new Date().toISOString() }, null, 2),
+      "utf-8",
+    );
+    ok(`Recorded installed source commit ${installedCommit.slice(0, 7)}`);
+  } catch (e) {
+    warn(`Couldn't record installed source commit: ${e.message}`);
+  }
+}
+
 ipc({ type: "complete" });
 if (!IPC) console.log("");
 log("Install complete.");

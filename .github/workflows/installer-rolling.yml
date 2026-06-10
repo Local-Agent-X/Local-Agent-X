@@ -17,7 +17,10 @@ name: Rolling Installer (tracks main)
 # The macOS path is the SAME signing + notarization flow as installer-release.yml
 # (same secrets), so the rolling .dmg is still a one-click, no-Gatekeeper install.
 # The only difference vs the tagged release: no -p:InstallerSourceTag is passed,
-# so the csproj defaults to ref "main" / kind "heads" (refs/heads/main.tar.gz).
+# so the csproj defaults to ref "main" / kind "heads". At install time the
+# installer resolves that ref to an immutable commit sha and downloads
+# archive/<sha>.tar.gz (SourceDownloader.ResolveCommitAsync) — it never fetches
+# the mutable refs/heads/main.tar.gz.
 #
 # For reproducible, pinned releases use installer-release.yml instead (push a
 # v* tag); that path bakes in the tag and never tracks main.
@@ -54,7 +57,8 @@ jobs:
 
       - name: Publish main-tracking installer
         # No -p:InstallerSourceTag → the csproj defaults to ref "main" / kind
-        # "heads", so the built .exe fetches refs/heads/main.tar.gz at runtime.
+        # "heads", so the built .exe resolves main → sha and fetches that
+        # commit's archive at runtime.
         # The build commit doesn't matter — a stale build still serves latest
         # main — but checkout@v4 gives us current installer code regardless.
         shell: pwsh

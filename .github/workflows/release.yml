@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - 'v*' # Triggered by version tags: v0.2.0, v0.3.0, etc.
+  # Re-release an EXISTING tag whose original run failed (e.g. a gate fixed
+  # after tagging) without moving the tag — version tags are immutable here.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to (re)release"
+        required: true
+        type: string
 
 permissions:
   contents: write # Needed to create GitHub releases
@@ -12,8 +20,13 @@ jobs:
   release:
     name: Build & Release
     runs-on: ubuntu-latest
+    env:
+      # Tag-push runs take the pushed tag; dispatch runs take the input.
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -27,14 +40,17 @@ jobs:
         run: npm audit --production --audit-level=high
 
       - name: Run tests
-        run: npm test
+        # test:unit is the CI-runnable vitest suite (the same one Security & CI
+        # gates on). `npm test` is the LIVE integration suite — it needs a
+        # running server and ~/.lax/config.json, which a clean runner never has.
+        run: npm run test:unit
 
       - name: Build
         run: npm run build
 
       - name: Package release
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${RELEASE_TAG#v}
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           tar -czf local-agent-x-${VERSION}.tar.gz dist/ public/ package.json package-lock.json SECURITY.md THREAT-MODEL.md LICENSE
 
@@ -52,6 +68,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             local-agent-x-*.tar.gz
             checksums-sha256.txt

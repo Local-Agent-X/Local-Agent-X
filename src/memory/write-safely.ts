@@ -11,8 +11,11 @@
  * under logs/memory-write-audit.log so we can eyeball would-have-blocks
  * before flipping enforcement on by default.
  */
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync,
+  unlinkSync, writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 import {
   checkMemoryTaint,
   normalizeHomoglyphs,
@@ -81,7 +84,41 @@ export function writeMemorySafely(params: MemoryWriteParams): void {
   if (mode === "append") {
     appendFileSync(params.target, sanitized, "utf-8");
   } else {
+    snapshotBeforeOverwrite(params.target, sanitized);
     atomicWriteFileSync(params.target, sanitized);
+  }
+}
+
+// ── Overwrite history ──
+//
+// atomicWriteFileSync protects against crash-corruption, not bad content:
+// a bungled profile rewrite or dedupe pass used to be unrecoverable because
+// ~/.lax/memory is deliberately untracked. Every overwrite through this gate
+// first copies the old version into a sibling `.history/` dir (dot-dirs are
+// skipped by listMemoryFiles, so snapshots never index). Restore = copy the
+// snapshot back. Local-only; nothing syncs or pushes.
+
+const HISTORY_DIR = ".history";
+const HISTORY_KEEP = 20;
+
+function snapshotBeforeOverwrite(target: string, incoming: string): void {
+  try {
+    if (!existsSync(target)) return;
+    const prev = readFileSync(target, "utf-8");
+    if (!prev.trim() || prev === incoming) return;
+    const dir = join(dirname(target), HISTORY_DIR);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const name = basename(target);
+    // ISO stamp with ms — lexicographic order == chronological order.
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    writeFileSync(join(dir, `${name}.${stamp}`), prev, "utf-8");
+    const snapshots = readdirSync(dir).filter((f) => f.startsWith(`${name}.`)).sort();
+    for (const f of snapshots.slice(0, Math.max(0, snapshots.length - HISTORY_KEEP))) {
+      try { unlinkSync(join(dir, f)); } catch {}
+    }
+  } catch (e) {
+    // History is a safety net, never a write blocker.
+    logger.warn(`history snapshot failed for ${target}: ${(e as Error).message}`);
   }
 }
 

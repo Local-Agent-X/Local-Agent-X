@@ -163,6 +163,7 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // surface via keyword router for main-chat, eagerly for operator)
   document_create: ["main-chat", "spawned-agent", "operator"],
   document_edit:   ["main-chat", "spawned-agent", "operator"],
+  presentation_edit: ["main-chat", "spawned-agent", "operator"],
   document_read:   ["main-chat"],
 
   // Operator-only specialty tools

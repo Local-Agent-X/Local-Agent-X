@@ -81,7 +81,12 @@ export function parseStatusHeader(rendered: string): ToolResultStatus {
  */
 export function renderToolResultForModel(r: ToolResult): string {
   // Legacy path: tools that don't opt into the envelope. Verbatim content.
-  if (!r.status && !r.session_id && !r.metadata) {
+  // isError MUST opt in: a bare {content, isError} rendered verbatim carries
+  // no [error] header, and the canonical dispatcher recovers status by
+  // parsing that header — so failures recorded resultStatus="ok" and every
+  // status-keyed failure middleware went blind ("Failed to create document"
+  // turns logged as ok, 2026-06-10).
+  if (!r.status && !r.session_id && !r.metadata && !r.isError) {
     return r.content;
   }
 

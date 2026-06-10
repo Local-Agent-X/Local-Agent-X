@@ -74,13 +74,15 @@ export async function extractStructure(filePath: string, kind: DocKind): Promise
   }
   if (kind === "pptx") {
     const JSZip = (await import("jszip")).default;
+    // One pptx parser in the repo: pptx-edit.ts owns slide enumeration +
+    // run extraction (entity-decoded); this preview is just a consumer.
+    const { slideFileNames, slideText } = await import("./pptx-edit.js");
     const zip = await JSZip.loadAsync(buf);
-    const slideFiles = Object.keys(zip.files).filter((f) => /^ppt\/slides\/slide\d+\.xml$/.test(f)).sort();
+    const slideFiles = slideFileNames(zip);
     const texts: string[] = [];
     for (const f of slideFiles) {
-      const xml = await zip.file(f)!.async("string");
-      const runs = [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]);
-      if (runs.length) texts.push(runs.join(" "));
+      const t = slideText(await zip.file(f)!.async("string"));
+      if (t) texts.push(t);
     }
     const text = texts.join("\n");
     return { kind, summary: `${slideFiles.length} slide(s)`, textPreview: clip(text), flags: flagsFor(text) };

@@ -105,6 +105,13 @@ function describeSource(s: string): string {
   return s.length > 120 ? s.slice(0, 117) + "..." : s;
 }
 
+// Per-image fetch budget. 8s, not the 30s general-fetch default: one dead
+// image URL used to stall a whole document_create for 30s and then fail it
+// (2026-06-10, six timeouts in one session). A photo host that hasn't
+// responded in 8s isn't going to; failing fast lets the model swap that one
+// source instead of burning half a minute per retry.
+const IMAGE_FETCH_TIMEOUT_MS = 8_000;
+
 async function fetchFromUrl(url: string): Promise<Buffer> {
   const cached = await readCached(url);
   if (cached) return cached;
@@ -113,28 +120,34 @@ async function fetchFromUrl(url: string): Promise<Buffer> {
   // scheme check, fail-closed) — same SSRF coverage web_fetch gets. This
   // supersedes the old final-only dnsPinCheck: every redirect hop is validated
   // BEFORE connecting, so a 302 to a private/metadata host can't slip through.
-  let res;
+  //
+  // The body read stays INSIDE the wrapping try: the abort timer covers it
+  // too, and an unwrapped arrayBuffer() rejection surfaced as a bare
+  // "operation was aborted due to timeout" with no URL — the model couldn't
+  // tell WHICH image to swap and re-rolled the whole document blind.
+  let buf: Buffer;
   try {
-    res = await canonicalFetch(url, {
+    const res = await canonicalFetch(url, {
       headers: {
         "User-Agent": BROWSER_USER_AGENT,
         Accept: "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/*",
         "Accept-Language": BROWSER_ACCEPT_LANGUAGE,
       },
-      timeoutMs: 30_000,
+      timeoutMs: IMAGE_FETCH_TIMEOUT_MS,
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    }
+    buf = Buffer.from(await res.arrayBuffer());
   } catch (e) {
     if (e instanceof EgressRedirectBlocked) {
       throw new Error(`Image fetch blocked for ${describeSource(url)}: ${e.message}`);
     }
-    throw new Error(`Image fetch failed for ${describeSource(url)}: ${(e as Error).message}`);
+    const msg = (e as Error).name === "TimeoutError" || /aborted due to timeout/i.test((e as Error).message)
+      ? `timed out after ${IMAGE_FETCH_TIMEOUT_MS / 1000}s — drop or replace this image source`
+      : (e as Error).message;
+    throw new Error(`Image fetch failed for ${describeSource(url)}: ${msg}`);
   }
-  if (!res.ok) {
-    throw new Error(`Image fetch failed for ${describeSource(url)}: HTTP ${res.status} ${res.statusText}`);
-  }
-
-  const ab = await res.arrayBuffer();
-  const buf = Buffer.from(ab);
   await writeCached(url, buf);
   return buf;
 }

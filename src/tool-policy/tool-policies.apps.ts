@@ -99,6 +99,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   presentation_create:       { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
   presentation_add_slide:    { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
   presentation_from_outline: { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
+  presentation_edit:         { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
   pdf_create:                { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
   pdf_read:                  { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
   pdf_extract_tables:        { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },

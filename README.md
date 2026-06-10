@@ -1,6 +1,8 @@
 # Local Agent X
 
-A self-hosted personal agent platform. Runs entirely on your machine — your files, your keys, your conversations. Speaks multiple LLM providers (Anthropic, OpenAI, Codex CLI, xAI Grok, Google Gemini, Cerebras, Ollama), so you're not locked into one vendor's pricing or availability.
+A self-hosted personal agent platform. It runs on your machine — your files, your keys, and your conversations stay local, stored encrypted at rest, and the server binds to `127.0.0.1` only. The one thing that leaves your machine is what you'd expect: the prompts, and any files/context you attach, go to whichever LLM provider you pick for a turn (Anthropic, OpenAI, Codex CLI, xAI Grok, Google Gemini, Cerebras) — or to nothing off-box at all if you run a local Ollama model. Multi-provider means you're not locked into one vendor's pricing or availability.
+
+The shell tools run on the **host** by default (the tool-policy default-deny and the ARI security kernel still gate every call); enable an OS sandbox — `LAX_SANDBOX=seatbelt`/`bwrap`/`docker` — for kernel-enforced isolation. See [SECURITY.md](SECURITY.md) for the full deployment checklist and threat model.
 
 Beyond chat, it ships voice (push-to-talk and full-duplex), scheduled missions on cron, a tool-executor with a default-deny policy, and a workspace where the agent builds and serves its own small apps. The runtime UI is a single HTTP server you open in any browser. Self-modification routes through a `config/` directory that hot-reloads; deeper changes go through a `self_edit` tool wired into the runtime.
 

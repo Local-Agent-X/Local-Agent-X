@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
+import { confineToDir } from "../security/file-access.js";
 import { renderApp } from "../app-renderer/index.js";
 import type { AppDefinition } from "../app-runtime/index.js";
 
@@ -338,9 +339,10 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     const id = fileMatch[1];
     const filename = decodeURIComponent(fileMatch[2]);
     const appDir = resolve(ctx.config.workspace, "apps", id);
-    const filePath = resolve(appDir, filename);
-    // Path traversal check
-    if (!filePath.startsWith(appDir)) { json(403, { error: "Path traversal blocked" }); return true; }
+    // Symlink-safe containment + sensitive-path refusal (a bare startsWith()
+    // admitted sibling-prefix dirs and followed planted symlinks on read).
+    const filePath = confineToDir(appDir, filename);
+    if (!filePath) { json(403, { error: "Path traversal blocked" }); return true; }
     if (!existsSync(filePath)) { json(404, { error: "File not found" }); return true; }
     try {
       const content = readFileSync(filePath, "utf-8");

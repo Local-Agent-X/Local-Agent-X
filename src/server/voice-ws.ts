@@ -42,7 +42,7 @@ export async function setupVoiceWs(deps: {
     const { setupVoiceWebSocket, setVoiceSessionFactory } = await import("../voice/audio-ws.js");
     const { createVoiceSessionFactory } = await import("../voice/voice-session/index.js");
     const { prepareAgentRequest } = await import("../agent-request/index.js");
-    setupVoiceWebSocket(server, config.authToken);
+    setupVoiceWebSocket(server, config.authToken, config.maxUploadBytes);
 
     const voiceTurnRunner: import("../voice/voice-session/index.js").VoiceTurnRunner = async ({ text, history, signal, onDelta, onVisual, sessionId: voiceSessionId }) => {
       // Per-connection voice session id. The previous hardcoded "voice" caused

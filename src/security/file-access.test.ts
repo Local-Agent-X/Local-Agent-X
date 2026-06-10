@@ -11,7 +11,7 @@ import {
   closeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { evaluateFileAccess } from "./file-access.js";
+import { evaluateFileAccess, confineToDir } from "./file-access.js";
 import { openValidatedRead, readValidatedFile } from "./validated-io.js";
 
 // Hermetic temp root, realpath-resolved so the test's lexical paths and the
@@ -147,5 +147,45 @@ describe("app's OWN at-rest secret files under .lax (R4-04/R4-05)", () => {
       expect((e as Error).message).toMatch(/sensitive path pattern/i);
     }
     expect(threw).toBe(true);
+  });
+});
+
+describe("confineToDir — symlink-safe HTTP file-route containment (round-7)", () => {
+  it("returns the canonical path for an in-root file", () => {
+    expect(confineToDir(WORKSPACE, "plain.txt")).toBe(realpathSync(join(WORKSPACE, "plain.txt")));
+  });
+
+  it("rejects a lexical ../ traversal out of the root", () => {
+    expect(confineToDir(WORKSPACE, "../id_rsa")).toBeNull();
+  });
+
+  it("rejects a symlink whose target escapes the root (symlink-follow containment)", () => {
+    const link = join(WORKSPACE, "escape.txt");
+    try { unlinkSync(link); } catch { /* not present */ }
+    symlinkSync(SAFE, link); // SAFE lives in ROOT, outside WORKSPACE
+    expect(confineToDir(WORKSPACE, "escape.txt")).toBeNull();
+  });
+
+  it("rejects a symlink pointing at a sensitive file (the planted-symlink exfil)", () => {
+    const link = join(WORKSPACE, "leak.txt");
+    try { unlinkSync(link); } catch { /* not present */ }
+    symlinkSync(SENSITIVE, link); // → id_rsa
+    expect(confineToDir(WORKSPACE, "leak.txt")).toBeNull();
+  });
+
+  it("allows an in-root symlink that stays inside the root (resolved to its target)", () => {
+    const link = join(WORKSPACE, "alias.txt");
+    try { unlinkSync(link); } catch { /* not present */ }
+    symlinkSync(join(WORKSPACE, "plain.txt"), link);
+    expect(confineToDir(WORKSPACE, "alias.txt")).toBe(realpathSync(join(WORKSPACE, "plain.txt")));
+  });
+
+  it("rejects an in-root file whose name matches a sensitive pattern", () => {
+    writeFileSync(join(WORKSPACE, "id_rsa"), "not really a key\n");
+    expect(confineToDir(WORKSPACE, "id_rsa")).toBeNull();
+  });
+
+  it("rejects a null byte in the requested path", () => {
+    expect(confineToDir(WORKSPACE, "plain.txt\x00.png")).toBeNull();
   });
 });

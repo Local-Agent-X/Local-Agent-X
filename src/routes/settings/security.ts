@@ -9,11 +9,18 @@ import { createLogger } from "../../logger.js";
 
 const logger = createLogger("routes.settings.security");
 
-export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
+export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   // Token rotation
   if (method === "POST" && url.pathname === "/api/auth/rotate") {
+    // Rotating mints a fresh OPERATOR token — require operator role. The
+    // handler previously ignored the role, so a future lower-tier (user/
+    // readonly) token could rotate (and thereby seize) the operator token.
+    // Not reachable in the default single-user config (operator is the only
+    // token), but enforced structurally so introducing scoped tokens can't
+    // silently open it.
+    if (role !== "operator") { json(403, { error: "Operator role required to rotate the auth token" }); return true; }
     const newToken = randomBytes(32).toString("hex");
     const configPath = join(ctx.dataDir, "config.json");
     try {

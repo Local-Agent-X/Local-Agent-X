@@ -1,4 +1,4 @@
-import { resolve, relative, dirname, basename, join, isAbsolute } from "node:path";
+import { resolve, relative, dirname, basename, join, isAbsolute, sep } from "node:path";
 import { realpathSync } from "node:fs";
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
@@ -96,6 +96,39 @@ export function realpathDeep(target: string): string {
     }
   }
   return target;
+}
+
+/**
+ * Confine a caller-supplied path to `root`, symlink-safe. For HTTP file-serving
+ * routes that read a user-supplied path under a fixed root (app files, the
+ * static /uploads//videos//images//files//apps/ sinks). Returns the canonical
+ * on-disk path to use, or `null` if the request escapes `root` lexically OR
+ * through a symlink/junction, or resolves to a sensitive file.
+ *
+ * The per-route `startsWith(root)` / `relative(root,p).startsWith("..")` guards
+ * were string-only: they collapse `..` but do NOT resolve symlinks, so a symlink
+ * planted inside the root (a prompt-injected agent can `ln -s ~/.lax/auth.json
+ * workspace/apps/foo/x.txt`) is followed on read, and a bare `startsWith` also
+ * admits a sibling dir that shares the name as a string prefix. Canonicalizing
+ * BOTH sides with realpathDeep (resolves every segment) and comparing with
+ * relative() closes both, and matchesSensitivePath() reproduces the file-tool
+ * sensitivity gate these raw routes skipped.
+ */
+export function confineToDir(root: string, requestedPath: string): string | null {
+  if (root.includes("\x00") || requestedPath.includes("\x00")) return null;
+  let realRoot: string;
+  let realPath: string;
+  try {
+    realRoot = realpathDeep(resolve(root));
+    realPath = realpathDeep(resolve(realRoot, requestedPath));
+  } catch {
+    return null; // ELOOP (symlink cycle) → treat as an attack
+  }
+  const rel = relative(realRoot, realPath);
+  if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) return null;
+  const normalized = process.platform === "win32" ? realPath.toLowerCase() : realPath;
+  if (matchesSensitivePath(normalized)) return null;
+  return realPath;
 }
 
 // Folder names common mode treats as the user's own content.

@@ -22,6 +22,7 @@ import type { IncomingMessage, Server } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 
 import { createLogger } from "../logger.js";
+import { isLoopbackOrigin } from "../server-utils.js";
 const logger = createLogger("voice.audio-ws");
 
 export interface VoiceSession {
@@ -73,21 +74,26 @@ export function setVoiceSessionFactory(factory: VoiceSessionFactory): void {
   sessionFactory = factory;
 }
 
-export function setupVoiceWebSocket(server: Server, authToken: string): void {
+export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloadBytes: number): void {
   // Use noServer so we can route by path manually. When multiple
   // WebSocketServers attach via {server, path}, each one's upgrade handler
   // aborts requests whose path doesn't match ITS configured path with a
   // 400 response — not "leave the socket for the other WSS." So two
   // path-attached WSS on one server fight each other and the second one
   // never sees its requests. Standard ws-library workaround: noServer +
-  // manual upgrade routing by path.
-  const wss = new WebSocketServer({ noServer: true });
+  // manual upgrade routing by path. maxPayload caps a single frame at the
+  // configured upload limit (ws defaults to an unbounded-feeling 100 MiB).
+  const wss = new WebSocketServer({ noServer: true, maxPayload: maxPayloadBytes });
   const authBuf = Buffer.from(authToken);
 
   server.on("upgrade", (req, socket, head) => {
     try {
       const u = new URL(req.url || "/", "http://localhost");
       if (u.pathname !== "/ws/voice") return; // not our path — leave socket alone
+      // Reject cross-origin WS handshakes (cross-site WebSocket hijacking) —
+      // browsers always send Origin; a non-loopback Origin is a cross-site page.
+      const origin = req.headers.origin;
+      if (origin && !isLoopbackOrigin(origin)) { try { socket.destroy(); } catch {} return; }
       const hasToken = u.searchParams.get("token") ? "yes" : "no";
       logger.info(`[voice-ws] upgrade hit: url=${req.url} hasToken=${hasToken}`);
       wss.handleUpgrade(req, socket as import("node:net").Socket, head, (ws) => {

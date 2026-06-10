@@ -1,6 +1,7 @@
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { IntegrationRegistry } from "../../integrations/index.js";
+import { canonicalFetch } from "../../tools/web-egress.js";
 
 export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -71,10 +72,11 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
         testUrl = config.baseUrl + (testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "");
         headers["Authorization"] = `Bearer ${token}`;
       }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
-      const r = await fetch(testUrl, { headers, signal: controller.signal });
-      clearTimeout(timeout);
+      // Route through the SSRF-pinned egress chokepoint (DNS-pin + private-IP
+      // block + per-hop redirect re-validation) instead of a raw fetch — this
+      // HTTP route was sending a stored credential to an attacker-influenced
+      // baseUrl past the egress controls the agent's own fetch tools honor.
+      const r = await canonicalFetch(testUrl, { headers, timeoutMs: 10000 });
       json(200, { ok: r.ok, status: r.status, statusText: r.statusText });
     } catch (e) { json(200, { ok: false, error: (e as Error).message }); }
     return true;

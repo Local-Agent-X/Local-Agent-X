@@ -3,6 +3,7 @@ import { join, resolve, relative } from "node:path";
 import { timingSafeEqual, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
+import { confineToDir } from "../security/file-access.js";
 import { getPageBundle } from "./static-bundle.js";
 import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes, handleFastmailProxyRoutes, handleHealthRoutes } from "../routes/index.js";
 import type { ServerContext } from "../server-context.js";
@@ -76,7 +77,13 @@ export function createRequestHandler(deps: {
     }
     if (url.pathname.startsWith("/api/") && !checkRateLimit(getRateLimitKey(req))) { json(429, { error: "Rate limit exceeded." }); return; }
     let requestRole: Role = "operator";
-    const authExempt = new Set(["/api/auth/login", "/api/auth/logout", "/api/auth/status", "/api/auth/anthropic/logout", "/api/auth/anthropic/status", "/api/auth/xai/login", "/api/auth/xai/logout", "/api/auth/xai/status", "/api/auth/xai/exchange-code", "/api/health"]);
+    // Only genuine PRE-auth reads are token-exempt. The mutating provider-auth
+    // routes (login/logout/exchange-code) were exempt too, so any token-less
+    // local process could de-authenticate the user or kick off OAuth flows — the
+    // UI always holds the token (apiFetch attaches it), so they need no
+    // exemption. Browser OAuth *redirects* land on dedicated callback servers
+    // (ports 1455 / 56121), not these /api routes, so gating them is safe.
+    const authExempt = new Set(["/api/auth/status", "/api/auth/anthropic/status", "/api/auth/xai/status", "/api/health"]);
     const authExemptPrefixes = ["/api/health/"];
     if (url.pathname.startsWith("/api/") && !authExempt.has(url.pathname) && !authExemptPrefixes.some(p => url.pathname.startsWith(p))) {
       const clientIp = req.socket.remoteAddress || "unknown";
@@ -164,7 +171,8 @@ export function createRequestHandler(deps: {
     }
     if (method === "GET" && url.pathname.startsWith("/uploads/")) {
       const fn = url.pathname.replace("/uploads/", ""); if (/[^a-zA-Z0-9._-]/.test(fn)) { json(400, { error: "Invalid filename" }); return; }
-      const fp = join(dataDir, "uploads", fn); if (!existsSync(fp)) { json(404, { error: "File not found" }); return; }
+      const fp = confineToDir(join(dataDir, "uploads"), fn); if (!fp) { json(403, { error: "Path traversal blocked" }); return; }
+      if (!existsSync(fp)) { json(404, { error: "File not found" }); return; }
       const ext = fn.split(".").pop() || "", ct: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv" };
       const h: Record<string, string> = { ...corsHeaders(req), "Content-Type": ct[ext] || "application/octet-stream", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" };
       if (ext === "svg") h["Content-Security-Policy"] = "script-src 'none'";
@@ -172,8 +180,8 @@ export function createRequestHandler(deps: {
     }
     for (const [prefix, subdir] of [["/videos/", "videos"], ["/images/", "images"]] as const) {
       if (method === "GET" && url.pathname.startsWith(prefix)) {
-        const dir = resolve(config.workspace, subdir), file = resolve(dir, url.pathname.replace(prefix, "")), rel = relative(dir, file);
-        if (rel.startsWith("..") || url.pathname.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return; }
+        const dir = resolve(config.workspace, subdir), file = confineToDir(dir, url.pathname.replace(prefix, ""));
+        if (!file || url.pathname.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return; }
         if (existsSync(file)) { const ext = file.split(".").pop() || ""; const ct: Record<string, string> = { mp4: "video/mp4", webm: "video/webm", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" }; res.writeHead(200, { "Content-Type": ct[ext] || "application/octet-stream" }); res.end(readFileSync(file)); return; }
         // File not at the resolved path — return 404 here with the actual
         // checked path so the next access shows what went wrong instead of
@@ -185,8 +193,8 @@ export function createRequestHandler(deps: {
     if (method === "GET" && url.pathname.startsWith("/files/")) {
       const filePath = decodeURIComponent(url.pathname.slice(7));
       const wsDir = resolve(config.workspace);
-      const file = resolve(wsDir, filePath), rel = relative(wsDir, file);
-      if (rel.startsWith("..") || filePath.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return; }
+      const file = confineToDir(wsDir, filePath);
+      if (!file || filePath.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return; }
       if (!existsSync(file)) { json(404, { error: "File not found" }); return; }
       const ext = (file.split(".").pop() || "").toLowerCase();
       const ct: Record<string, string> = { docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", html: "text/html", css: "text/css", js: "application/javascript" };
@@ -199,15 +207,14 @@ export function createRequestHandler(deps: {
     }
     if (method === "GET" && url.pathname.startsWith("/apps/")) {
       const appsDir = resolve(config.workspace);
-      let appFile = resolve(appsDir, "." + url.pathname);
+      let appFile = confineToDir(appsDir, "." + url.pathname);
+      if (!appFile) { json(403, { error: "Path traversal blocked" }); return; }
       try {
         if (existsSync(appFile) && statSync(appFile).isDirectory()) {
-          const idx = resolve(appFile, "index.html");
-          if (existsSync(idx)) appFile = idx;
+          const idx = confineToDir(appsDir, join(appFile, "index.html"));
+          if (idx && existsSync(idx)) appFile = idx;
         }
       } catch {}
-      const rel = relative(appsDir, appFile);
-      if (rel.startsWith("..")) { json(403, { error: "Path traversal blocked" }); return; }
       if (existsSync(appFile)) {
         const ext = appFile.split(".").pop() || "", ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml" };
         const h: Record<string, string> = { "Content-Type": ct[ext] || "application/octet-stream" };

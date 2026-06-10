@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { IntegrationConfig } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
+import { evaluateEgressForUrl } from "../security/network-policy.js";
 
 export class IntegrationRegistry {
   private filePath: string;
@@ -68,17 +69,13 @@ export class IntegrationRegistry {
   addIntegration(config: IntegrationConfig): void {
     config.builtin = false;
     if (config.baseUrl) {
-      try {
-        const u = new URL(config.baseUrl);
-        // Block file://, gopher://, data:, etc. — only http(s) over the public internet
-        if (u.protocol !== "http:" && u.protocol !== "https:") {
-          throw new Error("Only http and https URLs are allowed as integration base URL");
-        }
-        if (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "0.0.0.0" || u.hostname === "[::1]" || u.hostname.endsWith(".local") || /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(u.hostname) || u.hostname === "169.254.169.254" || u.hostname.endsWith(".internal")) {
-          throw new Error("Internal URLs not allowed as integration base URL");
-        }
-      } catch (e) {
-        if ((e as Error).message.includes("not allowed") || (e as Error).message.includes("Only http")) throw e;
+      // Delegate to the ONE canonical egress policy (private/loopback/metadata
+      // IPs incl. decimal/octal/hex/IPv6 encodings + scheme check), failing
+      // CLOSED. The previous bespoke string denylist missed those encodings and
+      // silently swallowed a malformed-URL throw, so it failed OPEN.
+      const decision = evaluateEgressForUrl(config.baseUrl);
+      if (!decision.allowed) {
+        throw new Error(`Integration base URL rejected (SSRF protection): ${decision.reason}`);
       }
     }
     this.integrations.set(config.id, config);

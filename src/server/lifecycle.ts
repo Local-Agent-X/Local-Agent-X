@@ -35,8 +35,26 @@ export function createHttpServer(requestHandler: RequestHandler, deps: {
   const { config, dataDir } = deps;
   const server = createServer(requestHandler);
   runMigrations(dataDir).catch(e => logger.warn("[migrations]", e.message));
-  const chatWs = setupChatWebSocket(server, config.authToken);
+  const chatWs = setupChatWebSocket(server, config.authToken, config.maxUploadBytes);
+  installUpgradeReaper(server);
   return { server, chatWs };
+}
+
+// Known WS endpoints. Each owning handler claims its own path via handleUpgrade;
+// this terminal listener destroys upgrade sockets for any OTHER path so an
+// unmatched upgrade can't sit half-open. Every `server.on("upgrade")` listener
+// fires for every upgrade, so this only acts on paths no real handler owns —
+// without it, chat-ws and voice-ws each silently `return` on a foreign path and
+// the socket leaks (unauthenticated connection-exhaustion DoS).
+const KNOWN_WS_PATHS = new Set(["/ws/chat", "/ws/voice"]);
+function installUpgradeReaper(server: Server): void {
+  server.on("upgrade", (req, socket) => {
+    try {
+      const u = new URL(req.url || "/", "http://localhost");
+      if (KNOWN_WS_PATHS.has(u.pathname)) return; // owned by a real handler
+    } catch { /* fall through to destroy a malformed upgrade */ }
+    try { socket.destroy(); } catch { /* already gone */ }
+  });
 }
 
 export function wireWsChat(deps: {

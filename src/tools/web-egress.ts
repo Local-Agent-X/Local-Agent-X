@@ -182,43 +182,52 @@ function assertHttpScheme(url: string): void {
  *
  *  Returns the final undici Response. The caller owns size/MIME/timeout-of-body
  *  concerns; this is purely the network + SSRF layer. */
+// One long-lived dispatcher for every canonicalFetch. It must NOT be closed
+// per-request: canonicalFetch returns the Response BEFORE the caller reads
+// the body, and Agent.close() waits for in-flight streams — with an unread
+// body stalled on flow-control backpressure, close() hung until the abort
+// timer fired. Every image fetch over ~one buffer window "timed out after
+// 8s" (2026-06-10: ytimg, Bing thumbnails, news CDNs — initially
+// misdiagnosed as WAF tarpitting). The SSRF pin is per-CONNECT, so a shared
+// pool revalidates DNS for every new connection; reuse is also faster.
+let sharedDispatcher: Agent | null = null;
+function pinnedDispatcher(): Agent {
+  if (!sharedDispatcher) sharedDispatcher = createPinningDispatcher();
+  return sharedDispatcher;
+}
+
 export async function canonicalFetch(
   url: string,
   opts: CanonicalFetchOptions = {},
 ): Promise<UndiciResponse> {
   const timeoutMs = opts.timeoutMs ?? 30_000;
   const maxRedirects = opts.maxRedirects ?? 5;
-  const dispatcher = createPinningDispatcher();
-  try {
-    let currentUrl = url;
-    const fetchOpts: UndiciRequestInit = {
-      headers: opts.headers ?? {},
-      signal: AbortSignal.timeout(timeoutMs),
-      redirect: "manual",
-      dispatcher,
-    };
+  let currentUrl = url;
+  const fetchOpts: UndiciRequestInit = {
+    headers: opts.headers ?? {},
+    signal: AbortSignal.timeout(timeoutMs),
+    redirect: "manual",
+    dispatcher: pinnedDispatcher(),
+  };
 
-    // Pre-connect scheme + literal-IP SSRF check on the INITIAL url (the pinning
-    // dispatcher's connect.lookup never fires for a literal IP).
-    assertHttpScheme(currentUrl);
-    await assertLiteralIpEgressAllowed(currentUrl);
-    let r = await undiciFetch(currentUrl, fetchOpts);
+  // Pre-connect scheme + literal-IP SSRF check on the INITIAL url (the pinning
+  // dispatcher's connect.lookup never fires for a literal IP).
+  assertHttpScheme(currentUrl);
+  await assertLiteralIpEgressAllowed(currentUrl);
+  let r = await undiciFetch(currentUrl, fetchOpts);
 
-    let redirects = 0;
-    while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirects < maxRedirects) {
-      const location = new URL(r.headers.get("location")!, currentUrl).toString();
-      // Validate the redirect target BEFORE following: scheme, cross-host egress
-      // allowlist, and literal-IP SSRF on every hop (same-host included — a 302
-      // to a literal private/metadata/NAT64/6to4 IP bypasses the dispatcher).
-      assertHttpScheme(location);
-      assertRedirectEgressAllowed(currentUrl, location);
-      await assertLiteralIpEgressAllowed(location);
-      currentUrl = location;
-      r = await undiciFetch(currentUrl, fetchOpts);
-      redirects++;
-    }
-    return r;
-  } finally {
-    await dispatcher.close().catch(() => {});
+  let redirects = 0;
+  while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirects < maxRedirects) {
+    const location = new URL(r.headers.get("location")!, currentUrl).toString();
+    // Validate the redirect target BEFORE following: scheme, cross-host egress
+    // allowlist, and literal-IP SSRF on every hop (same-host included — a 302
+    // to a literal private/metadata/NAT64/6to4 IP bypasses the dispatcher).
+    assertHttpScheme(location);
+    assertRedirectEgressAllowed(currentUrl, location);
+    await assertLiteralIpEgressAllowed(location);
+    currentUrl = location;
+    r = await undiciFetch(currentUrl, fetchOpts);
+    redirects++;
   }
+  return r;
 }

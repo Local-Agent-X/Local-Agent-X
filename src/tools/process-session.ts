@@ -120,9 +120,9 @@ export function startSession(
   const shellArgs = isWin ? ["-NoProfile", "-Command", command] : ["-c", command];
 
   // Unlike docker (refused above — it can't keep a live child handle),
-  // seatbelt is transparent: sandbox-exec execs the shell in place, so the
-  // tracked ChildProcess, the process group (detached), and the kill path are
-  // unchanged. Host/docker modes pass through unwrapped.
+  // seatbelt and bwrap are transparent: sandbox-exec/bwrap exec the shell in
+  // place, so the tracked ChildProcess, the process group (detached), and the
+  // kill path are unchanged. Host/docker modes pass through unwrapped.
   const spawned = wrapSpawnForSandbox(shell, shellArgs);
 
   let child: ChildProcess;

@@ -2,7 +2,7 @@
 // sandbox-validate.ts can import SandboxConfig without pulling in
 // sandbox.ts (which would create a cycle).
 
-export type SandboxMode = "host" | "docker" | "seatbelt";
+export type SandboxMode = "host" | "docker" | "seatbelt" | "bwrap";
 
 export interface SandboxConfig {
   mode: SandboxMode;

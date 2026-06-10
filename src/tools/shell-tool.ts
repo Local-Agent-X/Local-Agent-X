@@ -105,8 +105,8 @@ export const bashTool: ToolDefinition = {
         const shell = isWin ? getWindowsShell() : "/bin/bash";
         const shellArgs = isWin ? ["-NoProfile", "-Command", cmd] : ["-c", cmd];
 
-        // In seatbelt mode this rewrites (shell, args) to run under
-        // sandbox-exec; host/docker modes pass through unchanged. The wrapper
+        // In seatbelt/bwrap mode this rewrites (shell, args) to run under
+        // sandbox-exec/bwrap; host/docker modes pass through unchanged. The wrapper
         // is transparent — child.pid, stdio pipes, and the kill path below all
         // operate on the wrapped process exactly as before.
         const spawned = wrapSpawnForSandbox(shell, shellArgs);

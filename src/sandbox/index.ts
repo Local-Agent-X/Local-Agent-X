@@ -8,6 +8,7 @@ import { getRuntimeConfig, saveConfig } from "../config.js";
 import type { SandboxConfig, SandboxMode } from "./types.js";
 import { validateSandboxConfig } from "./validate.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
+import { isBwrapAvailable, bwrapEnforces, wrapForBwrap } from "./bwrap.js";
 const logger = createLogger("sandbox");
 
 export type { SandboxMode } from "./types.js";
@@ -22,6 +23,17 @@ function isSeatbeltUsable(): boolean {
     seatbeltUsable = isSeatbeltAvailable() && seatbeltProfileLoads();
   }
   return seatbeltUsable;
+}
+
+// Memoized: whether bwrap is usable on THIS host (Linux + bwrap on PATH +
+// the cage empirically holds — bwrapEnforces() runs a real confined probe,
+// so probe once).
+let bwrapUsable: boolean | null = null;
+function isBwrapUsable(): boolean {
+  if (bwrapUsable === null) {
+    bwrapUsable = isBwrapAvailable() && bwrapEnforces();
+  }
+  return bwrapUsable;
 }
 
 /**
@@ -183,6 +195,13 @@ export function getSandboxMode(): SandboxMode {
     }
     return "seatbelt";
   }
+  if (envMode === "bwrap") {
+    if (!isBwrapUsable()) {
+      logger.warn("[sandbox] LAX_SANDBOX=bwrap but bwrap unusable on this host (non-Linux, not installed, or user namespaces disabled). Falling back to host.");
+      return "host";
+    }
+    return "bwrap";
+  }
   // Persisted user setting from settings UI (~/.lax/config.json).
   try {
     const cfgMode = getRuntimeConfig().sandboxMode;
@@ -200,6 +219,13 @@ export function getSandboxMode(): SandboxMode {
       }
       return "seatbelt";
     }
+    if (cfgMode === "bwrap") {
+      if (!isBwrapUsable()) {
+        logger.warn("[sandbox] config.sandboxMode=bwrap but bwrap unusable on this host. Falling back to host.");
+        return "host";
+      }
+      return "bwrap";
+    }
     if (cfgMode === "host") return "host";
   } catch { /* config not initialized yet (early boot) — fall through */ }
   // Default is host. Docker is opt-in via LAX_SANDBOX=docker or the settings UI.
@@ -216,8 +242,12 @@ export function getSandboxMode(): SandboxMode {
  * unconditionally and spawn the result — the host/docker paths are untouched.
  */
 export function wrapSpawnForSandbox(shell: string, shellArgs: string[]): { cmd: string; args: string[] } {
-  if (getSandboxMode() === "seatbelt") {
+  const mode = getSandboxMode();
+  if (mode === "seatbelt") {
     return wrapForSeatbelt(shell, shellArgs);
+  }
+  if (mode === "bwrap") {
+    return wrapForBwrap(shell, shellArgs);
   }
   return { cmd: shell, args: shellArgs };
 }
@@ -229,6 +259,9 @@ export function setSandboxMode(mode: SandboxMode): { ok: boolean; actual: Sandbo
   }
   if (mode === "seatbelt" && !isSeatbeltUsable()) {
     return { ok: false, actual: "host", error: "Kernel sandbox (sandbox-exec) is not available on this machine — it requires macOS." };
+  }
+  if (mode === "bwrap" && !isBwrapUsable()) {
+    return { ok: false, actual: "host", error: "Namespace sandbox (bwrap) is not usable on this machine — it requires Linux with bubblewrap installed and unprivileged user namespaces enabled." };
   }
   runtimeMode = mode;
   try {

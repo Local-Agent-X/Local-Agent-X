@@ -81,8 +81,10 @@ const configSchema = z.object({
    *  and network access. "seatbelt" (macOS only) runs commands under a kernel
    *  sandbox-exec profile — no Docker needed; denies network and reads/writes
    *  of sensitive home dirs while leaving the rest of the host shell usable.
-   *  Toggleable from Settings → Security. */
-  sandboxMode: z.enum(["host", "docker", "seatbelt"]).default("host"),
+   *  "bwrap" (Linux only) is the same posture via bubblewrap namespaces —
+   *  no Docker needed; external network unshared, sensitive home dirs
+   *  shadowed with tmpfs. Toggleable from Settings → Security. */
+  sandboxMode: z.enum(["host", "docker", "seatbelt", "bwrap"]).default("host"),
 
   // AriKernel kill-switch posture. true = if the kernel fails to start
   // or evaluate, BLOCK the tool call (and refuse to boot the server on

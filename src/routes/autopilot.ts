@@ -109,10 +109,13 @@ export const handleAutopilotRoutes: RouteHandler = async (method, url, req, res,
     }
     // Not active — try the persisted operation.json + summary.md
     try {
-      const opDir = join(ctx.dataDir, "operations", opId);
+      const { confineToDir } = await import("../security/file-access.js");
+      // Symlink-safe: a symlink planted at ~/.lax/operations/<opId> must not
+      // redirect these reads outside the operations root.
+      const opDir = confineToDir(join(ctx.dataDir, "operations"), opId);
       const { existsSync, readFileSync } = await import("node:fs");
-      const opJson = join(opDir, "operation.json");
-      if (!existsSync(opJson)) {
+      const opJson = opDir ? join(opDir, "operation.json") : "";
+      if (!opDir || !existsSync(opJson)) {
         json(404, { error: `op ${opId} not found` });
         return true;
       }

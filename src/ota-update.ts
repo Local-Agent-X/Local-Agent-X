@@ -2,7 +2,24 @@ import { mkdir, writeFile, readFile, rm, copyFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+
+/**
+ * Throw unless `buf` hashes to `expectedHex` (SHA-256). Tolerates the
+ * `<hash>  <filename>` shape a `sha256sum` file uses by taking the first token.
+ * Pure + exported so the verify gate is unit-testable without a network fetch.
+ */
+export function assertSha256(buf: Buffer, expectedHex: string): void {
+  const want = expectedHex.trim().toLowerCase().split(/\s+/)[0] || "";
+  if (!/^[0-9a-f]{64}$/.test(want)) {
+    throw new Error("Update rejected: published checksum is malformed.");
+  }
+  const got = createHash("sha256").update(buf).digest("hex");
+  if (got !== want) {
+    throw new Error(`Update rejected: source checksum mismatch (expected ${want.slice(0, 12)}…, got ${got.slice(0, 12)}…).`);
+  }
+}
 
 interface UpdateHistoryEntry {
   version: string;
@@ -102,6 +119,33 @@ export class OTAManager {
       );
     }
     await this.init();
+
+    // Bytes-level integrity: if the `rolling` release publishes a stored source
+    // asset + SHA256 for THIS commit, fetch the stored asset and verify the
+    // bytes before extract — GitHub's on-demand `archive/<sha>.tar.gz` is not
+    // byte-stable, so it can't be checksum-verified, but an uploaded release
+    // asset is an immutable blob that can. A published checksum that MISMATCHES
+    // is a hard failure (no silent fallback). If no checksum is published yet
+    // (today / older commits), fall back to the commit-pinned archive — strictly
+    // today's behavior, never worse. See installer-rolling.yml TODO(rolling-checksum).
+    const assetBase = `https://github.com/${this.repoOwner}/${this.repoName}/releases/download/rolling/lax-source-${commit}.tar.gz`;
+    try {
+      const sumRes = await fetch(`${assetBase}.sha256`, { redirect: "follow" });
+      if (sumRes.ok) {
+        const assetRes = await fetch(assetBase, { redirect: "follow" });
+        if (!assetRes.ok) throw new Error(`verified source asset fetch failed: ${assetRes.status}`);
+        const buf = Buffer.from(await assetRes.arrayBuffer());
+        assertSha256(buf, await sumRes.text()); // throws on mismatch/malformed
+        const verifiedPath = join(this.updatesDir, `main-${commit}-verified.tar.gz`);
+        await writeFile(verifiedPath, buf);
+        return verifiedPath;
+      }
+    } catch (e) {
+      // A checksum mismatch must NOT be swallowed — re-throw it.
+      if (/checksum mismatch|checksum is malformed/.test((e as Error).message)) throw e;
+      // Transient asset/network error → fall through to the commit-pinned archive.
+    }
+
     const url = `https://github.com/${this.repoOwner}/${this.repoName}/archive/${commit}.tar.gz`;
     const r = await fetch(url, { redirect: "follow" });
     if (!r.ok) throw new Error(`Download failed: ${r.status}`);

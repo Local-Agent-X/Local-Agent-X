@@ -6,7 +6,7 @@
 // background, autostart registration).
 
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, shell, systemPreferences } from "electron";
-import { join } from "path";
+import { join, resolve, relative, isAbsolute, sep } from "path";
 import { getProjectRoot, reloadLAXConfig, getLAXConfig, LAX_DIR } from "./config";
 import { type DesktopSettings, getSetting, setSetting } from "./settings";
 import { bgForTheme, overlayForTheme, applyNativeTheme } from "./theme";
@@ -55,6 +55,20 @@ export function setupIPC(): void {
   });
 
   ipcMain.handle("set-setting", (_e, key: string, value: unknown) => {
+    // Allowlist the renderer-settable keys + validate the value shape. Without
+    // this, a compromised renderer could persist any arbitrary key/value into
+    // desktop-settings.json (and type-confuse the handlers below). windowBounds
+    // is intentionally excluded — it's set internally by the resize handler.
+    const SETTABLE: Record<string, (v: unknown) => boolean> = {
+      autostart: (v) => typeof v === "boolean",
+      closeToTray: (v) => typeof v === "boolean",
+      globalHotkey: (v) => typeof v === "string",
+      theme: (v) => v === "dark" || v === "light" || v === "system",
+    };
+    if (!Object.prototype.hasOwnProperty.call(SETTABLE, key) || !SETTABLE[key](value)) {
+      console.warn(`[desktop] set-setting rejected: ${key}`);
+      return;
+    }
     setSetting(key as keyof DesktopSettings, value as never);
     if (key === "autostart") {
       if (value) registerAutostart();
@@ -130,7 +144,16 @@ export function setupIPC(): void {
       console.warn(`[desktop] open-file IPC ignored — PROJECT_ROOT unresolved`);
       return Promise.resolve("PROJECT_ROOT unresolved");
     }
-    const filePath = join(root, relativePath);
+    // Contain to PROJECT_ROOT — `relativePath` is renderer-supplied, so a
+    // `../../` (or absolute) value would otherwise open ANY file on disk via
+    // the OS handler. resolve() collapses traversal; relative() confirms the
+    // result stays under root.
+    const filePath = resolve(root, relativePath);
+    const rel = relative(root, filePath);
+    if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
+      console.warn(`[desktop] open-file rejected (outside project root): ${relativePath}`);
+      return Promise.resolve("rejected: path outside project root");
+    }
     console.log(`[desktop] Opening file: ${filePath}`);
     return shell.openPath(filePath);
   });

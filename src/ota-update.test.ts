@@ -12,7 +12,30 @@ import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OTAManager } from "./ota-update.js";
+import { OTAManager, assertSha256 } from "./ota-update.js";
+import { createHash } from "node:crypto";
+
+describe("assertSha256 — rolling-channel bytes-level verify (round-8)", () => {
+  const bytes = Buffer.from("synthetic source tarball bytes");
+  const good = createHash("sha256").update(bytes).digest("hex");
+
+  it("passes when the digest matches", () => {
+    expect(() => assertSha256(bytes, good)).not.toThrow();
+  });
+
+  it("tolerates the `<hash>  filename` sha256sum shape", () => {
+    expect(() => assertSha256(bytes, `${good}  lax-source-abc.tar.gz`)).not.toThrow();
+  });
+
+  it("throws on a mismatched digest (tampered bytes)", () => {
+    expect(() => assertSha256(Buffer.from("tampered"), good)).toThrow(/checksum mismatch/);
+  });
+
+  it("throws on a malformed/empty published checksum (fails closed)", () => {
+    expect(() => assertSha256(bytes, "not-a-hash")).toThrow(/malformed/);
+    expect(() => assertSha256(bytes, "")).toThrow(/malformed/);
+  });
+});
 
 let laxDir: string;
 let ota: OTAManager;

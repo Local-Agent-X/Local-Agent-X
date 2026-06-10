@@ -514,11 +514,16 @@ stepDone("ollama");
 // level regardless of --loglevel). If a user needs the full output for
 // debugging, they can rerun with LAX_NPM_LOGLEVEL=warn.
 const npmLogLevel = process.env.LAX_NPM_LOGLEVEL || "error";
-step("npm", "npm install (5-10 min on first install)");
-log("Installing npm dependencies…");
-let res = await runStreaming("npm", ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`]);
+step("npm", "npm ci (5-10 min on first install)");
+log("Installing npm dependencies (npm ci — enforces the committed lockfile)…");
+// `npm ci` installs the EXACT locked tree and fails on a lockfile that doesn't
+// match package.json — so a yanked-and-republished transitive can't be silently
+// resolved in place of the locked version. Fall back to `npm install` only if
+// ci fails (lockfile drift / peer conflict) so a drift never bricks the install;
+// the common, clean case gets lockfile enforcement.
+let res = await runStreaming("npm", ["ci", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`]);
 if (res.status !== 0) {
-  warn("First attempt failed. Retrying with --legacy-peer-deps…");
+  warn("npm ci failed (lockfile drift or peer conflict). Falling back to npm install --legacy-peer-deps…");
   res = await runStreaming("npm", [
     "install",
     "--no-audit",
@@ -721,10 +726,14 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
 
   let r = await runStreaming(
     "npm",
-    ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`],
+    ["ci", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`],
     { cwd: "desktop" },
   );
-  if (r.status !== 0) fail("desktop npm install failed.");
+  if (r.status !== 0) {
+    warn("desktop npm ci failed (lockfile drift?) — falling back to npm install.");
+    r = await runStreaming("npm", ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`], { cwd: "desktop" });
+    if (r.status !== 0) fail("desktop npm install failed.");
+  }
 
   r = await runStreaming("npm", ["run", "build"], { cwd: "desktop" });
   if (r.status !== 0) fail("desktop tsc build failed.");
@@ -779,10 +788,14 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   log("Building Electron desktop bundle…");
   let dr = await runStreaming(
     "npm",
-    ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`],
+    ["ci", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`],
     { cwd: "desktop" },
   );
-  if (dr.status !== 0) fail("desktop npm install failed.");
+  if (dr.status !== 0) {
+    warn("desktop npm ci failed (lockfile drift?) — falling back to npm install.");
+    dr = await runStreaming("npm", ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`], { cwd: "desktop" });
+    if (dr.status !== 0) fail("desktop npm install failed.");
+  }
   dr = await runStreaming("npm", ["run", "build"], { cwd: "desktop" });
   if (dr.status !== 0) fail("desktop tsc build failed.");
   ok("Desktop bundle built");

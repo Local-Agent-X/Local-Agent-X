@@ -111,8 +111,12 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
   if (method === "GET" && url.pathname.match(/^\/api\/cron\/[^/]+\/reports$/)) {
     const id = url.pathname.split("/")[3];
     const { existsSync: exists, readdirSync } = await import("node:fs");
-    const reportDir = (await import("node:path")).join(ctx.dataDir, "cron", "reports", id);
-    if (!exists(reportDir)) { json(200, { reports: [] }); return true; }
+    const { join: pjoin } = await import("node:path");
+    const { confineToDir } = await import("../../security/file-access.js");
+    // Symlink-safe containment: an agent that plants a symlink at
+    // ~/.lax/cron/reports/<id> must not redirect this read outside the root.
+    const reportDir = confineToDir(pjoin(ctx.dataDir, "cron", "reports"), id);
+    if (!reportDir || !exists(reportDir)) { json(200, { reports: [] }); return true; }
     const files = readdirSync(reportDir).filter(f => f.endsWith(".md")).sort().reverse();
     json(200, { reports: files.map(f => ({ name: f, path: `/api/cron/${id}/reports/${f}` })) }); return true;
   }
@@ -121,8 +125,10 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     const id = parts[3], file = parts[5];
     if (!/^[\w-]+\.md$/.test(file)) { json(400, { error: "Invalid file name" }); return true; }
     const { existsSync: exists, readFileSync: readF } = await import("node:fs");
-    const reportPath = (await import("node:path")).join(ctx.dataDir, "cron", "reports", id, file);
-    if (!exists(reportPath)) { json(404, { error: "Report not found" }); return true; }
+    const { join: pjoin } = await import("node:path");
+    const { confineToDir } = await import("../../security/file-access.js");
+    const reportPath = confineToDir(pjoin(ctx.dataDir, "cron", "reports"), pjoin(id, file));
+    if (!reportPath || !exists(reportPath)) { json(404, { error: "Report not found" }); return true; }
     json(200, { content: readF(reportPath, "utf-8") }); return true;
   }
   // Stable "latest report" alias — used by the AGENTS sidebar to link a

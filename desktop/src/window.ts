@@ -16,6 +16,7 @@ import { getSetting, setSetting } from "./settings";
 import { buildSplashDataUrl } from "./splash";
 import { isServerRunning, isQuittingFlag } from "./server-process";
 import { buildAppDragStripJs } from "./window-injections";
+import { lockAppWindowNavigation } from "./app-window-guards";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -271,7 +272,7 @@ function handleWindowOpen(openUrl: string): Electron.WindowOpenHandlerResponse {
 }
 
 function buildAppWindow(hidden: boolean): BrowserWindow {
-  return new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1000,
     height: 700,
     icon: ICON_PATH,
@@ -287,6 +288,10 @@ function buildAppWindow(hidden: boolean): BrowserWindow {
       sandbox: true,
     },
   });
+  // Lock child app windows to the loopback origin + route popups externally
+  // (they run arbitrary user HTML with the preload bridge). See app-window-guards.
+  lockAppWindowNavigation(win, handleWindowOpen);
+  return win;
 }
 
 // Inject the draggable strip on every page load. App pages are arbitrary

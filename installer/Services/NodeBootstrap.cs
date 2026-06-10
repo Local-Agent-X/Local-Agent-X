@@ -38,7 +38,7 @@ public class NodeBootstrap
     // Returns true on success, false if install failed.
     public bool InstallNode()
     {
-        OnStatus?.Invoke("Installing Node.js 22…");
+        OnStatus?.Invoke("Installing Node.js 24 (LTS)…");
         if (OperatingSystem.IsWindows())
         {
             var ok = RunStreaming("winget", new[] {
@@ -60,7 +60,10 @@ public class NodeBootstrap
         }
         if (OperatingSystem.IsMacOS())
         {
-            // brew first (install if missing), then node@22.
+            // brew first (install if missing), then node@24 — the current LTS,
+            // matching what Windows' OpenJS.NodeJS.LTS alias installs. The app
+            // floor stays Node 22 (install-common.mjs NODE_MAJOR_MIN), so
+            // existing installs on 22 keep working.
             if (!HasOnPath("brew"))
             {
                 OnStatus?.Invoke("Installing Homebrew…");
@@ -75,14 +78,14 @@ public class NodeBootstrap
                 SplicePath("/opt/homebrew/bin");
                 SplicePath("/usr/local/bin");
             }
-            var nodeOk = RunStreaming("brew", new[] { "install", "node@22" });
+            var nodeOk = RunStreaming("brew", new[] { "install", "node@24" });
             if (!nodeOk) return false;
-            RunStreaming("brew", new[] { "link", "--overwrite", "--force", "node@22" });
+            RunStreaming("brew", new[] { "link", "--overwrite", "--force", "node@24" });
             return true;
         }
         // Linux
-        OnStatus?.Invoke("Installing Node 22 via apt…");
-        RunStreaming("/bin/bash", new[] { "-c", "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -" });
+        OnStatus?.Invoke("Installing Node 24 via apt…");
+        RunStreaming("/bin/bash", new[] { "-c", "curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -" });
         return RunStreaming("sudo", new[] { "apt-get", "install", "-y", "nodejs" });
     }
 

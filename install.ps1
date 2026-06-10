@@ -15,12 +15,12 @@ function Has($cmd) { [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
 # Node 22+ (OS-specific bootstrap — must run BEFORE install-common.mjs).
 $nodeOk = (Has node) -and ([int]((& node -v).TrimStart('v').Split('.')[0]) -ge 22)
 if (-not $nodeOk) {
-  Write-Host "[install] Installing Node 22…"
+  Write-Host "[install] Installing Node 24 (LTS)…"
   if (Has winget) {
     winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements -h
   } else {
     $msi = "$env:TEMP\node-installer.msi"
-    Invoke-WebRequest -Uri "https://nodejs.org/dist/v22.12.0/node-v22.12.0-x64.msi" -OutFile $msi -UseBasicParsing
+    Invoke-WebRequest -Uri "https://nodejs.org/dist/v24.16.0/node-v24.16.0-x64.msi" -OutFile $msi -UseBasicParsing
     Start-Process msiexec -ArgumentList "/i `"$msi`" /qn" -Wait
     Remove-Item $msi -ErrorAction SilentlyContinue
   }

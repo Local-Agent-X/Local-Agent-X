@@ -14,12 +14,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | sed 's/v//;s/\..*//')" -lt 22 ]]; then
-  echo "[install] Installing Node 22…"
+  echo "[install] Installing Node 24 (LTS)…"
   if [[ "$(uname -s)" == "Darwin" ]]; then
     command -v brew >/dev/null 2>&1 || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    brew install node@22 && brew link --overwrite --force node@22
+    brew install node@24 && brew link --overwrite --force node@24
   else
-    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
     sudo apt-get install -y nodejs
   fi
 fi

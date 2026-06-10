@@ -37,6 +37,9 @@ export interface CanonicalToolResultView {
   toolCallId: string;
   /** Best-effort string projection of the tool result for regex inspection. */
   content: string;
+  /** Dispatch outcome from toolCallSummary — lets middlewares key on real
+   *  failures instead of sniffing error-shaped text. */
+  status?: "ok" | "error" | "cancelled";
 }
 
 /**

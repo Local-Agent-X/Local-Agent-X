@@ -20,7 +20,9 @@
  *                         (anthropic, runs AFTER post-turn-detector so the
  *                         detector sees the original empty-toolCalls state
  *                         before auto-build mutates it)
- *   afterToolExecution:   post-commit, dead-end
+ *   afterToolExecution:   post-commit, dead-end, repeat-failure (ALL lanes —
+ *                         same-tool same-error spiral breaker; nudge at 3,
+ *                         abort at 5)
  *
  * Each middleware's `when` predicate gates per-provider extras at registration
  * walk time — `when:false` middlewares are skipped on every hook.
@@ -29,6 +31,7 @@ import type { CanonicalMiddleware } from "./types.js";
 import { loopDetectionMiddleware } from "./loop-detection.js";
 import { deadEndMiddleware } from "./dead-end.js";
 import { postCommitMiddleware } from "./post-commit.js";
+import { repeatFailureMiddleware } from "./repeat-failure.js";
 import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
@@ -53,5 +56,7 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     autoBuildAppMiddleware,
     postCommitMiddleware,
     deadEndMiddleware,
+    // All lanes (incl. interactive) — same-tool same-error spiral breaker.
+    repeatFailureMiddleware,
   ];
 }

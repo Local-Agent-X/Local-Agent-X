@@ -225,6 +225,7 @@ export async function driveTurn(
       toolName: toolSummary[i]?.tool ?? "unknown",
       toolCallId: (tm.content as { toolCallId?: string })?.toolCallId ?? "",
       content: extractToolResultText(tm.content),
+      status: toolSummary[i]?.resultStatus,
     }));
     const afterToolCtx = buildCanonicalLoopContext({
       op, turnIdx,

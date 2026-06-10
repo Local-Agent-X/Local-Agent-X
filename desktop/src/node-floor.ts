@@ -29,7 +29,12 @@ export interface NodeFloorStatus {
 // engines.node (">=22") is the single source of truth for the floor — read
 // from the PROJECT'S package.json (which OTA updates rewrite), not anything
 // baked into the desktop shell at build time.
+// LAX_NODE_FLOOR_OVERRIDE simulates a floor raise without editing the repo —
+// e.g. `LAX_NODE_FLOOR_OVERRIDE=99 npm run start` to drive the upgrade
+// dialog on a machine whose node actually satisfies engines.
 function readNodeFloor(projectRoot: string): number {
+  const override = Number(process.env.LAX_NODE_FLOOR_OVERRIDE || "");
+  if (Number.isFinite(override) && override > 0) return override;
   try {
     const pkg = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf-8")) as { engines?: { node?: string } };
     const m = String(pkg.engines?.node ?? "").match(/(\d+)/);

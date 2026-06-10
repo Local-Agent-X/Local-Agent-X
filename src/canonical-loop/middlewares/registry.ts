@@ -32,6 +32,7 @@ import { loopDetectionMiddleware } from "./loop-detection.js";
 import { deadEndMiddleware } from "./dead-end.js";
 import { postCommitMiddleware } from "./post-commit.js";
 import { repeatFailureMiddleware } from "./repeat-failure.js";
+import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
 import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
@@ -46,6 +47,9 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
   return [
     midTurnStaleMiddleware,
     forceToolUseMiddleware,
+    // Strips an uninvited per-call `theme` from office tools before dispatch
+    // (house style is the default unless the user asked for a look).
+    officeThemeGuardMiddleware,
     loopDetectionMiddleware,
     hallucinationCheckMiddleware,
     actionClaimMiddleware,

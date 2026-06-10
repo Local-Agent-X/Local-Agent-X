@@ -46,6 +46,13 @@ export interface MemoryConfig {
   // Fact retention
   factRetentionDays: number;
   lowConfidenceThreshold: number;
+
+  // Per-turn context injection ceilings (buildContextBlock). These bound
+  // prompt cost on every turn — raise only with a measured before/after on
+  // per-turn token size, not because more recall "seems better".
+  dailyLogTailChars: number;
+  coreFactsLimit: number;
+  coreFactsMaxBytes: number;
 }
 
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
@@ -78,6 +85,10 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
 
   factRetentionDays: 365,
   lowConfidenceThreshold: 0.1,
+
+  dailyLogTailChars: 1500,
+  coreFactsLimit: 60,
+  coreFactsMaxBytes: 3000,
 };
 
 // ── Search / chunk types ──

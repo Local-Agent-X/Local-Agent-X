@@ -58,6 +58,7 @@ export async function buildContextBlock(
 ): Promise<string> {
   const sections: string[] = [];
   const memDir = memory["memoryDir"];
+  const cfg = memory.getConfig();
 
   // Current date+time. Without this, the model has no fresh clock signal —
   // it would otherwise infer "now" from timestamps in the daily-log slice,
@@ -118,14 +119,14 @@ export async function buildContextBlock(
       const content = safeReadTextFile(todayLog);
       if (content && content.trim()) {
         // Cross-session bleed fix (May 2026): filter today's log to lines
-        // tagged with the current session id BEFORE the 1500-char tail.
+        // tagged with the current session id BEFORE the tail slice.
         // Pre-tagging legacy lines (no [sid] prefix) still pass through
         // because they predate the fix. Without a sessionId we keep the
         // legacy behavior (whole-day) as a fallback.
         const filtered = opts.sessionId
           ? filterDailyLogToSession(content, opts.sessionId)
           : content;
-        const recent = filtered.trim().slice(-1500);
+        const recent = filtered.trim().slice(-cfg.dailyLogTailChars);
         if (recent) {
           const displayed = opts.sanitizeDailyLog ? sanitizeDailyLogForModeration(recent) : recent;
           sections.push(`<today_context>\n${displayed}\n</today_context>`);
@@ -176,10 +177,10 @@ export async function buildContextBlock(
   //
   // Ordering: facts come pre-sorted by hot-score (confidence × time-decay)
   // from recallRecentFacts. Entities reinforced above sort to the top.
-  // Cap at ~3 KB of body to bound context cost.
+  // Body byte cap below bounds context cost.
   const coreFacts = memory.recallRecentFacts({
     kinds: ["world", "experience", "opinion", "observation"],
-    limit: 60,
+    limit: cfg.coreFactsLimit,
     minConfidence: 0.4,
   });
   if (coreFacts.length > 0) {
@@ -190,7 +191,7 @@ export async function buildContextBlock(
       observation: [],
     };
     let bodyBytes = 0;
-    const MAX_BYTES = 3000;
+    const MAX_BYTES = cfg.coreFactsMaxBytes;
     // Biographical events within this window are flagged as "still fresh" —
     // gives the model an explicit salience signal so a recent loss / move /
     // milestone gets acknowledged with care instead of buried in a flat list.

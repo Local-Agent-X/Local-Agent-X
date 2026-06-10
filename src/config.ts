@@ -78,8 +78,11 @@ const configSchema = z.object({
   /** Bash sandbox mode. "host" runs commands directly on the host OS (default,
    *  full functionality). "docker" runs commands inside a network-isolated
    *  Alpine container — opt-in for paranoid setups; breaks host-OS commands
-   *  and network access. Toggleable from Settings → Security. */
-  sandboxMode: z.enum(["host", "docker"]).default("host"),
+   *  and network access. "seatbelt" (macOS only) runs commands under a kernel
+   *  sandbox-exec profile — no Docker needed; denies network and reads/writes
+   *  of sensitive home dirs while leaving the rest of the host shell usable.
+   *  Toggleable from Settings → Security. */
+  sandboxMode: z.enum(["host", "docker", "seatbelt"]).default("host"),
 
   // AriKernel kill-switch posture. true = if the kernel fails to start
   // or evaluate, BLOCK the tool call (and refuse to boot the server on

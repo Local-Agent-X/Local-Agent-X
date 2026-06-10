@@ -1,4 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import type { SandboxMode } from "./sandbox/types.js";
 
 // ── Agent Types ──
 
@@ -274,7 +275,7 @@ export interface OAuthTokens {
 export type DeploymentProfile = "home" | "dev" | "enterprise";
 
 export interface ProfileDefaults {
-  sandboxMode: "host" | "docker";
+  sandboxMode: SandboxMode;
   toolApproval: "auto" | "confirm-risky" | "confirm-all";
   retentionDays: number;
   autoUpdate: boolean;
@@ -298,7 +299,7 @@ export interface LAXConfig {
   retentionDays: number;
   autoUpdate: boolean;
   logLevel: "basic" | "detailed" | "full-audit";
-  sandboxMode: "host" | "docker";
+  sandboxMode: SandboxMode;
   ariRequired?: boolean;
 
   // ── Externalized service URLs ──

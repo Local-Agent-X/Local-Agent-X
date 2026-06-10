@@ -15,7 +15,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, basename, resolve, sep } from "node:path";
 import { buildSanitizedEnv } from "./shell-tools.js";
 import { evaluateShellCommand } from "../security/shell-policy.js";
-import { getSandboxMode } from "../sandbox/index.js";
+import { getSandboxMode, wrapSpawnForSandbox } from "../sandbox/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("tools.process");
@@ -119,13 +119,19 @@ export function startSession(
   const shell = isWin ? "powershell.exe" : "/bin/bash";
   const shellArgs = isWin ? ["-NoProfile", "-Command", command] : ["-c", command];
 
+  // Unlike docker (refused above — it can't keep a live child handle),
+  // seatbelt is transparent: sandbox-exec execs the shell in place, so the
+  // tracked ChildProcess, the process group (detached), and the kill path are
+  // unchanged. Host/docker modes pass through unwrapped.
+  const spawned = wrapSpawnForSandbox(shell, shellArgs);
+
   let child: ChildProcess;
   try {
     // detached:true on non-Windows makes the child a process-group leader so
     // process_kill's `process.kill(-pid, "SIGKILL")` reaches grandchildren
     // (e.g. a node server holding a port). On Windows taskkill /T handles the
     // tree, and detached would risk a stray console. Pipes are unaffected.
-    child = spawn(shell, shellArgs, {
+    child = spawn(spawned.cmd, spawned.args, {
       env: sanitizeEnv(env),
       cwd,
       windowsHide: true,

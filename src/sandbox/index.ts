@@ -7,10 +7,22 @@ import { createLogger } from "../logger.js";
 import { getRuntimeConfig, saveConfig } from "../config.js";
 import type { SandboxConfig, SandboxMode } from "./types.js";
 import { validateSandboxConfig } from "./validate.js";
+import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
 const logger = createLogger("sandbox");
 
 export type { SandboxMode } from "./types.js";
 export { validateSandboxConfig } from "./validate.js";
+
+// Memoized: whether seatbelt is usable on THIS host (macOS + sandbox-exec
+// present + our generated profile actually loads). Deterministic per process,
+// and seatbeltProfileLoads() spawns sandbox-exec, so probe once.
+let seatbeltUsable: boolean | null = null;
+function isSeatbeltUsable(): boolean {
+  if (seatbeltUsable === null) {
+    seatbeltUsable = isSeatbeltAvailable() && seatbeltProfileLoads();
+  }
+  return seatbeltUsable;
+}
 
 /**
  * Container Sandbox for Shell Execution
@@ -164,6 +176,13 @@ export function getSandboxMode(): SandboxMode {
     }
     return "docker";
   }
+  if (envMode === "seatbelt") {
+    if (!isSeatbeltUsable()) {
+      logger.warn("[sandbox] LAX_SANDBOX=seatbelt but sandbox-exec unusable on this host (non-macOS or profile failed to load). Falling back to host.");
+      return "host";
+    }
+    return "seatbelt";
+  }
   // Persisted user setting from settings UI (~/.lax/config.json).
   try {
     const cfgMode = getRuntimeConfig().sandboxMode;
@@ -174,6 +193,13 @@ export function getSandboxMode(): SandboxMode {
       }
       return "docker";
     }
+    if (cfgMode === "seatbelt") {
+      if (!isSeatbeltUsable()) {
+        logger.warn("[sandbox] config.sandboxMode=seatbelt but sandbox-exec unusable on this host. Falling back to host.");
+        return "host";
+      }
+      return "seatbelt";
+    }
     if (cfgMode === "host") return "host";
   } catch { /* config not initialized yet (early boot) — fall through */ }
   // Default is host. Docker is opt-in via LAX_SANDBOX=docker or the settings UI.
@@ -183,10 +209,26 @@ export function getSandboxMode(): SandboxMode {
   return "host";
 }
 
+/**
+ * Wrap an intended `(shell, shellArgs)` spawn for the active sandbox mode.
+ * In "seatbelt" mode it returns the sandbox-exec invocation; in every other
+ * mode it returns the pair unchanged. Callers (bash, process_start) wrap
+ * unconditionally and spawn the result — the host/docker paths are untouched.
+ */
+export function wrapSpawnForSandbox(shell: string, shellArgs: string[]): { cmd: string; args: string[] } {
+  if (getSandboxMode() === "seatbelt") {
+    return wrapForSeatbelt(shell, shellArgs);
+  }
+  return { cmd: shell, args: shellArgs };
+}
+
 /** Set sandbox mode at runtime (from settings API). Persists to ~/.lax/config.json. */
 export function setSandboxMode(mode: SandboxMode): { ok: boolean; actual: SandboxMode; error?: string } {
   if (mode === "docker" && !isDockerAvailable()) {
     return { ok: false, actual: "host", error: "Docker is not installed or not running. Install Docker Desktop first." };
+  }
+  if (mode === "seatbelt" && !isSeatbeltUsable()) {
+    return { ok: false, actual: "host", error: "Kernel sandbox (sandbox-exec) is not available on this machine — it requires macOS." };
   }
   runtimeMode = mode;
   try {

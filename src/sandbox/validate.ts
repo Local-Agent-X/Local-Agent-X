@@ -15,7 +15,10 @@ import type { SandboxConfig } from "./types.js";
 
 // Home-relative directory prefixes that must not be mounted into the sandbox.
 // Each entry is a path relative to homedir() — match is "equal or inside".
-const HOME_RELATIVE_DENY_DIRS = [
+// Also the single source the seatbelt profile generator derives its
+// file-read*/file-write* denies from (sandbox/seatbelt.ts) — one list, so the
+// Docker mount-deny and the kernel sandbox-exec deny can never drift apart.
+export const HOME_RELATIVE_DENY_DIRS = [
   ".ssh",
   ".aws",
   ".gnupg",
@@ -27,7 +30,7 @@ const HOME_RELATIVE_DENY_DIRS = [
 ];
 
 // Home-relative files that must not be mounted (exact match against resolved path).
-const HOME_RELATIVE_DENY_FILES = [
+export const HOME_RELATIVE_DENY_FILES = [
   ".npmrc",
   ".pypirc",
   ".netrc",

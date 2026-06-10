@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ServerEvent, ToolDefinition } from "../types.js";
-import { getSandboxMode, execInSandbox } from "../sandbox/index.js";
+import { getSandboxMode, execInSandbox, wrapSpawnForSandbox } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell } from "./shell-translate.js";
 import { getWindowsShell, recordAvSuspectKill, buildSanitizedEnv } from "./shell-env.js";
@@ -105,7 +105,12 @@ export const bashTool: ToolDefinition = {
         const shell = isWin ? getWindowsShell() : "/bin/bash";
         const shellArgs = isWin ? ["-NoProfile", "-Command", cmd] : ["-c", cmd];
 
-        const child = spawn(shell, shellArgs, {
+        // In seatbelt mode this rewrites (shell, args) to run under
+        // sandbox-exec; host/docker modes pass through unchanged. The wrapper
+        // is transparent — child.pid, stdio pipes, and the kill path below all
+        // operate on the wrapped process exactly as before.
+        const spawned = wrapSpawnForSandbox(shell, shellArgs);
+        const child = spawn(spawned.cmd, spawned.args, {
           env: sanitizedEnv,
           cwd: (args._cwd as string) || undefined,
           windowsHide: true,

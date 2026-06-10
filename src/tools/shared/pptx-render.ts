@@ -8,7 +8,7 @@
  * Charts are NATIVE, editable PowerPoint charts (pptxgenjs addChart), themed
  * with the house chart palette.
  */
-import { acquireImages, type AcquiredImage, type ImageSpec } from "./image-acquire.js";
+import { acquireImages, imageAltText, type AcquiredImage, type ImageSpec } from "./image-acquire.js";
 import type { OfficeTheme } from "./office-theme.js";
 import { cleanText, toPlainText } from "./office-md.js";
 import { isValidChart, type ChartSpec } from "./office-chart.js";
@@ -67,7 +67,7 @@ function placeImage(slide: any, img: AcquiredImage, box: { x: number; y: number;
   const ratio = img.width > 0 && img.height > 0 ? img.width / img.height : 4 / 3;
   let w = box.w, h = box.w / ratio;
   if (h > box.h) { h = box.h; w = box.h * ratio; }
-  slide.addImage({ data, x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h });
+  slide.addImage({ data, x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h, altText: imageAltText(img) });
 }
 
 export interface SlideBrand { logo?: AcquiredImage; footer?: string }
@@ -75,7 +75,7 @@ export interface SlideBrand { logo?: AcquiredImage; footer?: string }
 function placeLogo(slide: any, img: AcquiredImage, x: number, y: number, hIn: number): void {
   const data = `data:${img.mimeType};base64,${img.buffer.toString("base64")}`;
   const ratio = img.width > 0 && img.height > 0 ? img.width / img.height : 3;
-  slide.addImage({ data, x, y, w: hIn * ratio, h: hIn });
+  slide.addImage({ data, x, y, w: hIn * ratio, h: hIn, altText: "Logo" });
 }
 
 /** Render one slide. Async because an inline image may need fetching. */

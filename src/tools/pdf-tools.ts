@@ -197,7 +197,7 @@ const pdfCreate: ToolDefinition = {
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       const logo = await acquireBrandLogo(theme);
       // bufferPages lets us stamp a footer on every page after layout.
-      const doc = new PDFDocument({ info: { Title: title, Author: brandAuthor(theme) }, bufferPages: true });
+      const doc = new PDFDocument({ info: { Title: title, Author: brandAuthor(theme) }, bufferPages: true, lang: "en-US", displayTitle: true });
       const chunks: Buffer[] = [];
 
       const done = new Promise<Buffer>((resolve, reject) => {

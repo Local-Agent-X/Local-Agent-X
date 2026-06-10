@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import * as docx from "docx";
 import mammoth from "mammoth";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { acquireImages, IMAGES_PARAM_SCHEMA, type AcquiredImage, type ImageSpec } from "./shared/image-acquire.js";
+import { acquireImages, imageAltText, IMAGES_PARAM_SCHEMA, type AcquiredImage, type ImageSpec } from "./shared/image-acquire.js";
 import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
@@ -19,7 +19,8 @@ const { Document, Packer, Paragraph, TextRun, ImageRun, BorderStyle, Header, Foo
 function logoImageRun(img: AcquiredImage, heightPx: number): docx.ImageRun {
   const { w, h } = logoSize(img, heightPx);
   const type: "png" | "jpg" | "gif" = img.mimeType === "image/jpeg" ? "jpg" : img.mimeType === "image/gif" ? "gif" : "png";
-  return new ImageRun({ type, data: img.buffer, transformation: { width: w, height: h } } as docx.IImageOptions);
+  const alt = "Logo";
+  return new ImageRun({ type, data: img.buffer, transformation: { width: w, height: h }, altText: { title: alt, description: alt, name: alt } } as docx.IImageOptions);
 }
 
 /** Section header (logo, right-aligned) + footer (company + page number),
@@ -93,10 +94,12 @@ function imageRunFor(img: AcquiredImage): docx.ImageRun {
     img.mimeType === "image/jpeg" ? "jpg" :
     img.mimeType === "image/gif" ? "gif" :
     "png";
+  const alt = imageAltText(img);
   return new ImageRun({
     type,
     data: img.buffer,
     transformation: { width: w, height: h },
+    altText: { title: alt, description: alt, name: alt },
   } as docx.IImageOptions);
 }
 

@@ -28,6 +28,9 @@ export interface ImageSpec {
   source: string;
   /** Optional caption text; tools that support captions use it, tools that don't ignore. */
   caption?: string;
+  /** Accessibility alt text (screen readers). Falls back to caption, then a
+   *  label derived from the source. */
+  alt?: string;
 }
 
 export interface AcquiredImage {
@@ -36,7 +39,21 @@ export interface AcquiredImage {
   width: number;
   height: number;
   caption?: string;
+  alt?: string;
   source: string;
+}
+
+/** Accessibility alt text for an embedded image: explicit alt → caption → a
+ *  label derived from the source (filename or host). Never empty. */
+export function imageAltText(img: { alt?: string; caption?: string; source: string }): string {
+  if (img.alt?.trim()) return img.alt.trim();
+  if (img.caption?.trim()) return img.caption.trim();
+  const s = img.source;
+  if (/^https?:\/\//i.test(s)) {
+    try { return `Image from ${new URL(s).hostname}`; } catch { /* fall through */ }
+  }
+  const base = s.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim();
+  return base ? `Image: ${base}` : "Image";
 }
 
 export interface AcquireOptions {
@@ -346,6 +363,7 @@ async function acquireOne(spec: ImageSpec, workspaceRoot: string, maxBytes: numb
     width: dims.width,
     height: dims.height,
     caption: spec.caption,
+    alt: spec.alt,
     source: src,
   };
 }
@@ -378,6 +396,7 @@ export const IMAGES_PARAM_SCHEMA = {
     properties: {
       source: { type: "string", description: "URL or local path (absolute or relative to workspace/)" },
       caption: { type: "string", description: "Optional caption" },
+      alt: { type: "string", description: "Accessibility alt text (screen readers); defaults to the caption" },
     },
     required: ["source"],
   },

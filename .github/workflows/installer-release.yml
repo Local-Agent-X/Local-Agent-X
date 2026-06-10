@@ -43,10 +43,10 @@ jobs:
     name: Windows installer (.exe)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
 
@@ -73,7 +73,7 @@ jobs:
           Copy-Item -LiteralPath $src -Destination $dst -Force
           Write-Host ("Size: {0:N1} MB" -f ((Get-Item -LiteralPath $dst).Length / 1MB))
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-installer
           path: "Install Local Agent X Windows Installer.exe"
@@ -88,10 +88,10 @@ jobs:
       DMG_PATH: installer/dist-mac/Install Local Agent X Mac Installer.dmg
       APP_PATH: installer/dist-mac/Install Local Agent X Mac Installer.app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
 
@@ -290,7 +290,7 @@ jobs:
         run: |
           security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-installer
           path: "installer/dist-mac/Install Local Agent X Mac Installer.dmg"
@@ -302,7 +302,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
 
@@ -311,7 +311,7 @@ jobs:
           find dist -type f | sort
 
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # The companion release.yml workflow already creates the release
           # with the source tarball and generated release notes; this run

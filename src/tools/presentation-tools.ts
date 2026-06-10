@@ -42,10 +42,11 @@ const SLIDE_SPEC_DOC =
   "body?, bullets?: string[], notes?, image?: {source, fallback_source?, caption?}, " +
   "chart?: {type:'bar'|'line'|'pie'|'doughnut'|'area', categories?: string[], " +
   "series: [{name, values: number[]}], title?}}. " +
-  "VISUAL BY DEFAULT: when a slide presents numbers, comparisons, or trends, add a `chart` " +
-  "with the actual data — do NOT make a slide that is just 3-4 bullets of figures. " +
-  "Add an `image` (a web URL or a workspace file path) when a picture would strengthen the point — " +
-  "use the image_search tool to find a relevant image URL if you don't have one. " +
+  "VISUAL BY DEFAULT: EVERY content slide should carry an `image` or a `chart` — a slide that is " +
+  "only text is the exception (title/section dividers), not the norm. When a slide presents numbers, " +
+  "comparisons, or trends, use a `chart` with the actual data; otherwise give it an `image` " +
+  "(a web URL or workspace file path — use image_search to find URLs, and pass each result's " +
+  "fallback URL as fallback_source). Run enough image searches to cover all slides. " +
   "Keep bullets short (≤5 per slide, one line each). image+text or chart+text auto-lay side by side.";
 
 // ── presentation_create ──

@@ -49,13 +49,21 @@ async function sendMessage() {
     // streaming and after finalize.
     const entry = ChatStreamStore.get(activeChat.id);
     const anchor = entry && typeof entry.liveAnchorIndex === 'number' ? entry.liveAnchorIndex : -1;
+    // Paint the inject bubble in place — a full renderMessages() per
+    // interject rebuilt the entire thread mid-stream and froze the window
+    // on long chats.
+    let painted = false;
     if (anchor >= 0 && anchor <= activeChat.messages.length) {
       activeChat.messages.splice(anchor, 0, injectMsg);
       ChatStreamStore.bumpAnchor(activeChat.id, 1);
+      painted = typeof insertInjectBubbleInPlace === 'function'
+        && insertInjectBubbleInPlace(activeChat.id, injectMsg);
     } else {
       activeChat.messages.push(injectMsg);
+      painted = typeof appendMessagesInPlace === 'function'
+        && appendMessagesInPlace(activeChat.messages.length - 1);
     }
-    if (typeof renderMessages === 'function') renderMessages();
+    if (!painted && typeof renderMessages === 'function') renderMessages();
     input.value = ''; input.style.height = 'auto';
     saveChats();
     return;

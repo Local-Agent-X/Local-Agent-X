@@ -143,7 +143,11 @@ function handleBgOpNudge(msg) {
     if (activeChat && activeChat.id === msg.sessionId) {
       activeChat.messages = activeChat.messages || [];
       activeChat.messages.push({ role: 'assistant', content: msg.event.text });
-      if (typeof renderMessages === 'function') renderMessages();
+      // Append the one new row in place — a full renderMessages() here
+      // rebuilt the entire thread and froze the window on long chats.
+      const appended = typeof appendMessagesInPlace === 'function'
+        && appendMessagesInPlace(activeChat.messages.length - 1);
+      if (!appended && typeof renderMessages === 'function') renderMessages();
     } else {
       ChatStreamStore.setSidebarActive(msg.sessionId, true);
       if (typeof renderSidebar === 'function') renderSidebar();

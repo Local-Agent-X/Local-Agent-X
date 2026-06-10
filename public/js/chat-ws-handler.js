@@ -94,8 +94,14 @@ function handleInjectConsumed(msg) {
     const m = chat.messages.find(x => x && x._injectId === msg.event.injectId && x._queueState === 'queued');
     if (!m) return;
     delete m._queueState;
-    if (typeof activeChat !== 'undefined' && activeChat && activeChat.id === sid && typeof renderMessages === 'function') {
-      renderMessages();
+    if (typeof activeChat !== 'undefined' && activeChat && activeChat.id === sid) {
+      // Un-dim the one queued bubble in place (renderMessage stamps
+      // data-inject-id) — a full renderMessages() to drop one CSS class
+      // rebuilt the entire thread and froze the window on long chats.
+      const safeId = (window.CSS && CSS.escape) ? CSS.escape(msg.event.injectId) : msg.event.injectId;
+      const node = document.querySelector(`#messages .msg.user[data-inject-id="${safeId}"]`);
+      if (node) node.classList.remove('queued');
+      else if (typeof renderMessages === 'function') renderMessages();
     }
     try { if (typeof saveChats === 'function') saveChats(); } catch {}
   } catch (e) { console.warn('[inject_consumed] failed to clear queue state', e); }

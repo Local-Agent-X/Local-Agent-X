@@ -74,7 +74,10 @@ function renderMessage(msg, ctx) {
     const userEl = addMessageEl('user', displayText, msg.attachments, msg.timestamp);
     // Pending mid-turn inject: dim the bubble until the server's
     // inject_consumed event drops _queueState. See chat-send.js inject
-    // path + chat-ws-handler.js inject_consumed branch.
+    // path + chat-ws-handler.js inject_consumed branch. The injectId stamp
+    // lets inject_consumed un-dim this exact node in place instead of
+    // rebuilding the whole thread.
+    if (userEl && msg._injectId) userEl.dataset.injectId = msg._injectId;
     if (userEl && msg._queueState === 'queued') userEl.classList.add('queued');
     return userEl;
   }
@@ -252,28 +255,7 @@ function renderMessages() {
     const liveNode = renderMessage(null, { parent: el, isLiveSynth: true, store });
     if (liveNode) _liveMessageNodes.set(activeChat.id, liveNode);
   }
-  // Pin the latest assistant message so it carries the reserved viewport-
-  // height of room below it (ChatGPT-style). When navigating to an existing
-  // chat, this gives the most recent reply that breathing room without any
-  // active stream. Strip the pin from every other assistant first — without
-  // this, a sequence of renderMessages() calls (e.g. bg_op_nudge after a
-  // worker finishes) would leave pin-bottom on every prior assistant and
-  // stack ~100vh of reserved space between every pair of replies.
-  const allAssistant = el.querySelectorAll('.msg.assistant');
-  allAssistant.forEach(m => m.classList.remove('pin-bottom'));
-  const lastAssistant = allAssistant[allAssistant.length - 1];
-  if (lastAssistant) {
-    // Only reserve viewport-height under the last assistant when it's
-    // also the last message overall. If a user message follows it (e.g.
-    // mid-stream inject — Step 4 interject path), the reserved space
-    // pads an empty assistant body and pushes the inject to the bottom
-    // of the viewport with a gap above. With this guard the inject
-    // appears flush under the assistant's existing content.
-    const allMsgs = el.querySelectorAll('.msg');
-    if (allMsgs[allMsgs.length - 1] === lastAssistant) {
-      lastAssistant.classList.add('pin-bottom');
-    }
-  }
+  _applyPinBottom(el);
   if (scrollToBottom) {
     // Entry: defer one frame so the browser applies pin-bottom's min-height
     // before we read scrollHeight — otherwise scrollHeight reflects the
@@ -286,5 +268,68 @@ function renderMessages() {
     // finalize — no lurch when the turn completes.
     el.scrollTop = prevScrollTop;
   }
+}
+
+// Pin the latest assistant message so it carries the reserved viewport-
+// height of room below it (ChatGPT-style). Strip the pin from every other
+// assistant first — without this, a sequence of thread updates would leave
+// pin-bottom on every prior assistant and stack ~100vh of reserved space
+// between every pair of replies. Only reserve the room when the last
+// assistant is also the last message overall: if a user message follows it
+// (e.g. mid-stream inject), the reserved space would pad an empty assistant
+// body and push the inject to the bottom of the viewport with a gap above.
+function _applyPinBottom(el) {
+  const allAssistant = el.querySelectorAll('.msg.assistant');
+  allAssistant.forEach(m => m.classList.remove('pin-bottom'));
+  const lastAssistant = allAssistant[allAssistant.length - 1];
+  if (!lastAssistant) return;
+  const allMsgs = el.querySelectorAll('.msg');
+  if (allMsgs[allMsgs.length - 1] === lastAssistant) {
+    lastAssistant.classList.add('pin-bottom');
+  }
+}
+
+// ── Incremental thread updates ──
+// renderMessages() wipes #messages and re-parses markdown + re-highlights
+// code for EVERY row, which on long threads blocks the renderer main thread
+// for seconds — the intermittent whole-window freeze. The recurring triggers
+// (bg-op nudge, sync hydrate, mid-stream inject, inject_consumed) only ever
+// add or restyle a row, so they go through these in-place paths and fall
+// back to a full render only when the DOM isn't in a known-good state.
+
+// Append rows for activeChat.messages[fromIndex..] to the existing thread.
+// Returns false when an append can't be trusted (container missing,
+// empty-state hero showing, index out of range) so the caller falls back
+// to renderMessages().
+function appendMessagesInPlace(fromIndex) {
+  const el = document.getElementById('messages');
+  if (!el || !activeChat || !Array.isArray(activeChat.messages)) return false;
+  if (document.getElementById('empty')) return false;
+  if (fromIndex < 0 || fromIndex >= activeChat.messages.length) return false;
+  for (let i = fromIndex; i < activeChat.messages.length; i++) {
+    renderMessage(activeChat.messages[i], {});
+  }
+  _applyPinBottom(el);
+  return true;
+}
+
+// Insert a mid-stream inject bubble directly before the live streaming
+// assistant row — the DOM mirror of the splice-at-anchor sendMessage applied
+// to activeChat.messages. Returns false (caller does a full render) when the
+// live node can't be located.
+function insertInjectBubbleInPlace(sessionId, injectMsg) {
+  const el = document.getElementById('messages');
+  if (!el || document.getElementById('empty')) return false;
+  let liveNode = _liveMessageNodes.get(sessionId);
+  if (!liveNode || !document.contains(liveNode)) {
+    const all = el.querySelectorAll('.msg.assistant');
+    liveNode = all[all.length - 1] || null;
+  }
+  if (!liveNode) return false;
+  // renderMessage appends to #messages; relocate the bubble to the anchor slot.
+  const userEl = renderMessage(injectMsg, {});
+  if (!userEl) return false;
+  el.insertBefore(userEl, liveNode);
+  return true;
 }
 

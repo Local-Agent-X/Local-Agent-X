@@ -163,7 +163,8 @@ async function hydrateChat(chat) {
     // messages and the newer timestamp.
     const localMsgs = Array.isArray(chat.messages) ? chat.messages : [];
     const serverMsgs = Array.isArray(session.messages) ? session.messages : [];
-    if ((chat.updatedAt || 0) > (session.updatedAt || 0) || localMsgs.length > serverMsgs.length) {
+    const keptLocal = (chat.updatedAt || 0) > (session.updatedAt || 0) || localMsgs.length > serverMsgs.length;
+    if (keptLocal) {
       delete session.messages;
       session.updatedAt = Math.max(chat.updatedAt || 0, session.updatedAt || 0);
     }
@@ -172,9 +173,35 @@ async function hydrateChat(chat) {
     Object.assign(chat, session);
     delete chat._needsHydrate;
     saveChats();
-    if (activeChat && activeChat.id === chat.id && window.renderMessages) renderMessages();
+    if (activeChat && activeChat.id === chat.id && window.renderMessages) {
+      const streaming = typeof ChatStreamStore !== 'undefined' && ChatStreamStore.isStreaming(chat.id);
+      const mode = _hydrateRepaintMode(keptLocal, localMsgs, serverMsgs, streaming);
+      if (mode === 'append') {
+        if (!(typeof appendMessagesInPlace === 'function' && appendMessagesInPlace(localMsgs.length))) renderMessages();
+      } else if (mode === 'full') {
+        renderMessages();
+      }
+    }
   } catch (e) {
     delete chat._needsHydrate;
     throw e;
   }
+}
+
+// Cheapest correct repaint after a hydrate. The full renderMessages()
+// rebuild re-parses every row — on long threads that froze the whole window
+// for tens of seconds every time a periodic hydrate landed. Most hydrates
+// change nothing ('skip') or only append server-persisted turns ('append');
+// anything the DOM can't be trusted to already show falls back to 'full'.
+function _hydrateRepaintMode(keptLocal, localMsgs, serverMsgs, streaming) {
+  if (keptLocal) return 'skip'; // messages array untouched — DOM already correct
+  // A streaming thread has a live synth row at the anchor; appending around
+  // it risks mis-ordering, so take the rebuild (it knows about the anchor).
+  if (streaming) return 'full';
+  const sameRow = (a, b) => !!a && !!b && a.role === b.role && a.content === b.content
+    && ((a._tools && a._tools.length) || 0) === ((b._tools && b._tools.length) || 0);
+  const isExtension = serverMsgs.length >= localMsgs.length
+    && localMsgs.every((m, i) => sameRow(m, serverMsgs[i]));
+  if (!isExtension) return 'full';
+  return serverMsgs.length === localMsgs.length ? 'skip' : 'append';
 }

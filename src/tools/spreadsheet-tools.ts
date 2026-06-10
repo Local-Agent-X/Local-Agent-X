@@ -18,6 +18,7 @@ import { verifyWriteLanded } from "./verify.js";
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/validated-io.js";
 import { resolveOfficeTheme, argb, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { cleanText } from "./shared/office-md.js";
 
 // ── Helpers ──
 
@@ -207,12 +208,16 @@ const spreadsheetWrite: ToolDefinition = {
       const ws = wb.addWorksheet(sheetName);
 
       const hdrs = (args.headers as string[] | undefined) ?? Object.keys(parsed[0] ?? {});
-      ws.addRow(hdrs);
+      ws.addRow(hdrs.map((h) => cleanText(h)));
       // Coerce clean numeric strings to numbers so number formats render and
       // Excel sorts/sums them — but only when the value round-trips exactly, so
-      // "02134" (zip) or "1e3" stay text rather than mutating.
+      // "02134" (zip) or "1e3" stay text rather than mutating. Strings get
+      // sanitized (no HTML/entities leak into cells).
       const coerce = (v: unknown): unknown => {
-        if (typeof v === "string" && v.trim() !== "" && String(Number(v)) === v.trim()) return Number(v);
+        if (typeof v === "string") {
+          if (v.trim() !== "" && String(Number(v)) === v.trim()) return Number(v);
+          return cleanText(v);
+        }
         return v ?? "";
       };
       for (const obj of parsed) ws.addRow(hdrs.map((h) => coerce(obj[h])));

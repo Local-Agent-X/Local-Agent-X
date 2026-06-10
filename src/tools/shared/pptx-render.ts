@@ -10,6 +10,7 @@
  */
 import { acquireImages, type AcquiredImage, type ImageSpec } from "./image-acquire.js";
 import type { OfficeTheme } from "./office-theme.js";
+import { cleanText, toPlainText } from "./office-md.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -64,7 +65,7 @@ function renderChart(slide: any, t: OfficeTheme, chart: ChartSpec, box: { x: num
     legendPos: "b",
     legendColor: t.colors.muted,
     showTitle: !!chart.title,
-    title: chart.title,
+    title: chart.title ? cleanText(chart.title) : undefined,
     titleColor: t.colors.heading,
     titleFontFace: t.fonts.heading,
     titleFontSize: 14,
@@ -89,18 +90,24 @@ function placeImage(slide: any, img: AcquiredImage, box: { x: number; y: number;
 export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme): Promise<void> {
   const slide = pptx.addSlide();
   const layout = spec.layout ?? "content";
+  // Sanitize all text sinks — no HTML tags / entities / leftover markdown
+  // markers leak onto a slide.
+  const title = spec.title != null ? toPlainText(spec.title) : "";
+  const body = spec.body != null ? toPlainText(spec.body) : "";
+  const bullets = (spec.bullets ?? []).map(toPlainText).filter(Boolean);
+  const notes = spec.notes != null ? cleanText(spec.notes) : "";
 
   if (layout === "title") {
-    slide.addText(spec.title ?? "", { x: 0.7, y: 2.7, w: SLIDE_W - 1.4, h: 1.5, fontSize: t.ppt.titleSlideSize, fontFace: t.fonts.heading, color: t.colors.heading, bold: true });
+    slide.addText(title, { x: 0.7, y: 2.7, w: SLIDE_W - 1.4, h: 1.5, fontSize: t.ppt.titleSlideSize, fontFace: t.fonts.heading, color: t.colors.heading, bold: true });
     accentBar(slide, t, 0.72, 4.2, 2.4);
-    if (spec.body) slide.addText(spec.body, { x: 0.7, y: 4.45, w: SLIDE_W - 1.4, h: 1, fontSize: t.ppt.subtitleSize, fontFace: t.fonts.body, color: t.colors.muted });
-    if (spec.notes) slide.addNotes(spec.notes);
+    if (body) slide.addText(body, { x: 0.7, y: 4.45, w: SLIDE_W - 1.4, h: 1, fontSize: t.ppt.subtitleSize, fontFace: t.fonts.body, color: t.colors.muted });
+    if (notes) slide.addNotes(notes);
     return;
   }
   if (layout === "section") {
-    slide.addText(spec.title ?? "", { x: 0.7, y: 3.0, w: SLIDE_W - 1.4, h: 1.5, fontSize: t.ppt.sectionSize, fontFace: t.fonts.heading, color: t.colors.accent, bold: true, align: "center" });
+    slide.addText(title, { x: 0.7, y: 3.0, w: SLIDE_W - 1.4, h: 1.5, fontSize: t.ppt.sectionSize, fontFace: t.fonts.heading, color: t.colors.accent, bold: true, align: "center" });
     accentBar(slide, t, SLIDE_W / 2 - 1.1, 4.55, 2.2);
-    if (spec.notes) slide.addNotes(spec.notes);
+    if (notes) slide.addNotes(notes);
     return;
   }
 
@@ -108,11 +115,11 @@ export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme): Pr
   const chart = isValidChart(spec.chart) ? spec.chart : undefined;
   const img = spec.image ? (await acquireImages([spec.image]))[0] : undefined;
   const hasVisual = !!chart || !!img;
-  const hasText = !!spec.body || !!(spec.bullets && spec.bullets.length);
+  const hasText = !!body || bullets.length > 0;
 
   let top = 0.6;
-  if (layout !== "blank" && spec.title) {
-    slide.addText(spec.title, { x: 0.6, y: 0.4, w: SLIDE_W - 1.2, h: 0.8, fontSize: t.ppt.titleSize, fontFace: t.fonts.heading, color: t.colors.heading, bold: true });
+  if (layout !== "blank" && title) {
+    slide.addText(title, { x: 0.6, y: 0.4, w: SLIDE_W - 1.2, h: 0.8, fontSize: t.ppt.titleSize, fontFace: t.fonts.heading, color: t.colors.heading, bold: true });
     accentBar(slide, t, 0.62, 1.18, 1.6);
     top = 1.5;
   }
@@ -120,10 +127,10 @@ export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme): Pr
   // Split the body: text on the left half when a visual shares the slide,
   // full width otherwise.
   const textW = hasVisual && hasText ? 5.9 : SLIDE_W - 1.2;
-  if (spec.body) slide.addText(spec.body, { x: 0.6, y: top, w: textW, h: 1.4, fontSize: t.ppt.bodySize, fontFace: t.fonts.body, color: t.colors.body });
-  if (spec.bullets?.length) {
-    const items = spec.bullets.map((b) => ({ text: b, options: { fontSize: t.ppt.bulletSize, fontFace: t.fonts.body, color: t.colors.body, bullet: { indent: 18 } } }));
-    slide.addText(items, { x: 0.7, y: spec.body ? top + 1.6 : top, w: textW, h: 4, lineSpacingMultiple: 1.3 });
+  if (body) slide.addText(body, { x: 0.6, y: top, w: textW, h: 1.4, fontSize: t.ppt.bodySize, fontFace: t.fonts.body, color: t.colors.body });
+  if (bullets.length) {
+    const items = bullets.map((b) => ({ text: b, options: { fontSize: t.ppt.bulletSize, fontFace: t.fonts.body, color: t.colors.body, bullet: { indent: 18 } } }));
+    slide.addText(items, { x: 0.7, y: body ? top + 1.6 : top, w: textW, h: 4, lineSpacingMultiple: 1.3 });
   }
 
   if (hasVisual) {
@@ -134,7 +141,7 @@ export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme): Pr
     else if (img) placeImage(slide, img, box);
   }
 
-  if (spec.notes) slide.addNotes(spec.notes);
+  if (notes) slide.addNotes(notes);
 }
 
 /** Append each top-level acquired image on its own centered slide w/ caption. */
@@ -143,7 +150,7 @@ export function appendImageSlides(pptx: any, images: AcquiredImage[], t: OfficeT
     const slide = pptx.addSlide();
     placeImage(slide, img, { x: 0.5, y: 0.5, w: SLIDE_W - 1, h: SLIDE_H - 1.4 });
     if (img.caption) {
-      slide.addText(img.caption, { x: 0.5, y: SLIDE_H - 0.8, w: SLIDE_W - 1, h: 0.6, fontSize: t.ppt.subtitleSize, fontFace: t.fonts.body, color: t.colors.muted, align: "center", italic: true });
+      slide.addText(cleanText(img.caption), { x: 0.5, y: SLIDE_H - 0.8, w: SLIDE_W - 1, h: 0.6, fontSize: t.ppt.subtitleSize, fontFace: t.fonts.body, color: t.colors.muted, align: "center", italic: true });
     }
   }
 }

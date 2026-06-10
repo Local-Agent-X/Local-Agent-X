@@ -11,8 +11,9 @@ import { verifyWriteLanded } from "./verify.js";
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/validated-io.js";
 import { resolveOfficeTheme, half, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { markdownToDocx } from "./shared/md-to-docx.js";
 
-const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun, BorderStyle } = docx;
+const { Document, Packer, Paragraph, TextRun, ImageRun, BorderStyle } = docx;
 
 /** Document-level style sheet derived from the theme: body font/size/color +
  *  spacing, and the three heading levels (H1 carries the accent underline). */
@@ -104,52 +105,7 @@ function err(content: string): ToolResult {
   return { content, isError: true };
 }
 
-// ── Markdown-ish parser ──
-
-function parseLine(line: string): docx.Paragraph {
-  // Headings
-  const h3 = line.match(/^###\s+(.*)/);
-  if (h3) return new Paragraph({ heading: HeadingLevel.HEADING_3, children: parseInline(h3[1]) });
-  const h2 = line.match(/^##\s+(.*)/);
-  if (h2) return new Paragraph({ heading: HeadingLevel.HEADING_2, children: parseInline(h2[1]) });
-  const h1 = line.match(/^#\s+(.*)/);
-  if (h1) return new Paragraph({ heading: HeadingLevel.HEADING_1, children: parseInline(h1[1]) });
-
-  // Bullet list
-  const bullet = line.match(/^[-*]\s+(.*)/);
-  if (bullet) {
-    return new Paragraph({
-      bullet: { level: 0 },
-      children: parseInline(bullet[1]),
-    });
-  }
-
-  // Empty line → empty paragraph (spacing)
-  if (line.trim() === "") {
-    return new Paragraph({ children: [] });
-  }
-
-  // Normal paragraph
-  return new Paragraph({ children: parseInline(line) });
-}
-
-function parseInline(text: string): docx.TextRun[] {
-  const runs: docx.TextRun[] = [];
-  const re = /\*\*(.+?)\*\*/g;
-  let last = 0;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
-    if (match.index > last) {
-      runs.push(new TextRun(text.slice(last, match.index)));
-    }
-    runs.push(new TextRun({ text: match[1], bold: true }));
-    last = re.lastIndex;
-  }
-  if (last < text.length) {
-    runs.push(new TextRun(text.slice(last)));
-  }
-  return runs;
-}
+// ── Document assembly ──
 
 function buildDocument(
   text: string,
@@ -157,11 +113,9 @@ function buildDocument(
   images: AcquiredImage[] = [],
   theme: OfficeTheme = resolveOfficeTheme(),
 ): docx.Document {
-  const lines = text.split("\n");
-  const paragraphs = lines.map(parseLine);
   const children = [
     ...(title ? [titleParagraph(theme, title)] : []),
-    ...paragraphs,
+    ...markdownToDocx(text, theme),
     ...imageParagraphs(images),
   ];
 

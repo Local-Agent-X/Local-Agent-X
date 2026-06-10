@@ -126,3 +126,42 @@ describe("themed Office generation — smoke (real files)", () => {
     expect(isZip(readFileSync(fp))).toBe(true);
   });
 });
+
+// The hard requirement: generated files must NEVER contain model-output tells.
+describe("no markup leaks — read generated files back", () => {
+  const DIRTY = "# Report\n\nThis is **bold** text with a <div>leaked</div> tag and a &nbsp; entity.\n\n| Name | Rev |\n|---|---|\n| Acme | 5 |";
+
+  it("Word strips HTML/entities but keeps real content + table cells", async () => {
+    const fp = join(dir, "clean.docx");
+    await tool(documentTools, "document_create").execute({ file_path: fp, content: DIRTY });
+    const read = await tool(documentTools, "document_read").execute({ file_path: fp });
+    const text = String(read.content);
+    expect(text).toContain("Report");
+    expect(text).toContain("bold");
+    expect(text).toContain("leaked"); // inner text survives, tag does not
+    expect(text).toContain("Acme");   // table rendered
+    expect(text).not.toContain("<div>");
+    expect(text).not.toContain("</div>");
+    expect(text).not.toContain("&nbsp;");
+  });
+
+  it("PDF strips HTML tags", async () => {
+    const fp = join(dir, "clean.pdf");
+    await tool(pdfTools, "pdf_create").execute({ file_path: fp, content: "# Title\n\nText with <div>leak</div> and &amp; sign." });
+    const read = await tool(pdfTools, "pdf_read").execute({ file_path: fp });
+    const text = String(read.content);
+    expect(text).toContain("Title");
+    expect(text).not.toContain("<div>");
+  });
+
+  it("Excel strips HTML from cell values", async () => {
+    const fp = join(dir, "clean2.xlsx");
+    await tool(spreadsheetTools, "spreadsheet_write").execute({
+      file_path: fp, data: JSON.stringify([{ Note: "<b>x</b>Clean", Val: 5 }]),
+    });
+    const read = await tool(spreadsheetTools, "spreadsheet_read").execute({ file_path: fp });
+    const text = String(read.content);
+    expect(text).toContain("Clean");
+    expect(text).not.toContain("<b>");
+  });
+});

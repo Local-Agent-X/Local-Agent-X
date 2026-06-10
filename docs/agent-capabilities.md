@@ -27,6 +27,8 @@ demand via tool search and aren't all listed here.)
 - `read` — Read a file's contents.
 - `write` — Create or overwrite a file.
 - `edit` — Make a targeted edit to a file. _e.g._ "edit index.html and change the title"
+- `edit_lines`
+- `multi_edit`
 - `delete_file` — Delete a file.
 - `bash` — Run a shell command. _e.g._ "run `npm test` in the project"
 - `glob` — Find files by name pattern.
@@ -135,6 +137,8 @@ demand via tool search and aren't all listed here.)
 - `project_create` — Create a project container. _e.g._ "make a project for the dashboard work"
 - `project_list` — List projects.
 - `project_add_agent` — Add an agent to a project.
+- `project_brief_read`
+- `project_brief_update`
 - `agent_status` — Check a spawned agent's status.
 - `agent_cancel` — Cancel a spawned agent.
 - `agent_output` — Get a spawned agent's output.
@@ -176,4 +180,4 @@ demand via tool search and aren't all listed here.)
 - `document_read` — Read a document.
 
 ---
-_90 capabilities · 77 with a description · 13 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_94 capabilities · 77 with a description · 17 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._

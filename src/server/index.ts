@@ -288,6 +288,11 @@ export async function startServer(config: LAXConfig) {
     void import("../self-edit-rollback.js")
       .then(m => m.confirmMergeBoot())
       .catch(e => bootLogger.warn(`[self-edit] confirmMergeBoot failed: ${(e as Error).message}`));
+    // …and reset the server-sandbox escape-hatch counter: a confined boot
+    // that reached listening is proven non-bricking (no-op when unconfined).
+    void import("../sandbox/server-confine.js")
+      .then(m => m.markServerSandboxHealthy())
+      .catch(e => bootLogger.warn(`[server-sandbox] healthy mark failed: ${(e as Error).message}`));
     const handle = startBackgroundJobs({
       config, dataDir, sessionStore, memoryIndex, memoryManager, secretsStore, security, toolPolicy,
       cronService, integrations, agentSync, allAgentTools, bridgeTools,

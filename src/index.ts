@@ -116,11 +116,24 @@ process.on("unhandledRejection", (reason) => {
   }
 });
 
-import { loadConfig, setRuntimeConfig } from "./config.js";
-import { startServer } from "./server/index.js";
-import { loadTokens } from "./auth/index.js";
-import { enforceStartupIntegrity } from "./startup-integrity.js";
-import { initLifecycle } from "./lifecycle.js";
+// ── Whole-server kernel confinement (round-5 phase B) ──
+// When enabled, re-exec the entire server under seatbelt/bwrap and turn this
+// process into an inert launcher that proxies the child's stdio/signals/exit.
+// Must run before any subsystem import executes — config.ts starts file
+// watchers at import time, which is why every boot import below is dynamic
+// (static imports hoist and would run in the launcher too). The unresolved
+// await suspends this module forever in the launcher; the child-exit handler
+// inside maybeReexecServerConfined() calls process.exit.
+const { maybeReexecServerConfined } = await import("./sandbox/server-confine.js");
+if (maybeReexecServerConfined()) {
+  await new Promise<never>(() => { /* launcher parks here until the confined child exits */ });
+}
+
+const { loadConfig, setRuntimeConfig } = await import("./config.js");
+const { startServer } = await import("./server/index.js");
+const { loadTokens } = await import("./auth/index.js");
+const { enforceStartupIntegrity } = await import("./startup-integrity.js");
+const { initLifecycle } = await import("./lifecycle.js");
 
 // Fast-fail at boot if AV quarantine (or anything else) wiped tracked
 // files. Prevents silent mid-conversation crashes when packages/arikernel

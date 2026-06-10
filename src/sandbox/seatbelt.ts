@@ -30,9 +30,10 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES } from "./validate.js";
+import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import type { SandboxScope } from "./types.js";
 
-const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
 /** macOS with sandbox-exec present. Seatbelt mode is a no-op everywhere else. */
 export function isSeatbeltAvailable(): boolean {
@@ -67,14 +68,24 @@ const HOME_PERSISTENCE_DIRS = ["Library/LaunchAgents", "Library/LaunchDaemons"];
 const ABSOLUTE_PERSISTENCE_DIRS = ["/Library/LaunchAgents", "/Library/LaunchDaemons"];
 
 /**
- * Build the sandbox-exec profile for the agent shell. `home` is injectable for
- * tests; defaults to the real home. The realHome is canonicalized once and used
- * as the base for relative entries.
+ * Build the sandbox-exec profile. `home` is injectable for tests; defaults to
+ * the real home. The realHome is canonicalized once and used as the base for
+ * relative entries.
+ *
+ * "shell" scope (phase A) confines agent shell children: network denied, all
+ * sensitive home dirs denied. "server" scope (phase B) confines the whole Node
+ * server: network stays allowed (the server's API egress goes through the
+ * in-process canonicalFetch chokepoint, which governs destinations — SBPL can
+ * only filter by IP, not hostname) and the dirs the server itself owns
+ * (~/.lax, ~/.codex) are exempted. Persistence write-denies apply to both.
  */
-export function generateSeatbeltProfile(home: string = homedir()): string {
+export function generateSeatbeltProfile(home: string = homedir(), scope: SandboxScope = "shell"): string {
   const realHome = canonical(home);
 
-  const sensitiveSubpaths = HOME_RELATIVE_DENY_DIRS.map((d) => canonical(join(realHome, d)));
+  const denyDirs = scope === "server"
+    ? HOME_RELATIVE_DENY_DIRS.filter((d) => !SERVER_SCOPE_EXEMPT_DIRS.has(d))
+    : HOME_RELATIVE_DENY_DIRS;
+  const sensitiveSubpaths = denyDirs.map((d) => canonical(join(realHome, d)));
   const sensitiveFiles = HOME_RELATIVE_DENY_FILES.map((f) => canonical(join(realHome, f)));
 
   const persistenceFiles = HOME_PERSISTENCE_FILES.map((f) => canonical(join(realHome, f)));
@@ -86,7 +97,7 @@ export function generateSeatbeltProfile(home: string = homedir()): string {
   const lines = [
     "(version 1)",
     "(allow default)",
-    "(deny network*)",
+    ...(scope === "shell" ? ["(deny network*)"] : []),
     // Crown jewels: deny every file op (read, write, exec, …) on the sensitive
     // home dirs. file* is the umbrella operation.
     `(deny file* ${sensitiveSubpaths.map((p) => `(subpath ${sb(p)})`).join(" ")})`,
@@ -118,10 +129,10 @@ export function wrapForSeatbelt(
 /** One-shot self-check that the generated profile actually loads. Used by the
  *  mode resolver to fail closed: if sandbox-exec rejects our own profile on
  *  this OS version, we must not silently treat the shell as confined. */
-export function seatbeltProfileLoads(home?: string): boolean {
+export function seatbeltProfileLoads(home?: string, scope: SandboxScope = "shell"): boolean {
   if (!isSeatbeltAvailable()) return false;
   try {
-    execFileSync(SANDBOX_EXEC, ["-p", generateSeatbeltProfile(home), "/usr/bin/true"], {
+    execFileSync(SANDBOX_EXEC, ["-p", generateSeatbeltProfile(home, scope), "/usr/bin/true"], {
       stdio: "ignore",
       timeout: 5000,
     });

@@ -300,6 +300,9 @@ export interface LAXConfig {
   autoUpdate: boolean;
   logLevel: "basic" | "detailed" | "full-audit";
   sandboxMode: SandboxMode;
+  /** Whole-server kernel confinement (seatbelt/bwrap re-exec at boot).
+   *  Off by default; see sandbox/server-confine.ts. */
+  serverSandbox: boolean;
   ariRequired?: boolean;
 
   // ── Externalized service URLs ──

@@ -4,8 +4,8 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { generateBwrapArgs, isBwrapAvailable, wrapForBwrap, bwrapEnforces } from "./bwrap.js";
-import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES } from "./validate.js";
+import { generateBwrapArgs, isBwrapAvailable, wrapForBwrap, bwrapEnforces, bwrapServerCageRuns } from "./bwrap.js";
+import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS } from "./validate.js";
 
 const bwrapHere = isBwrapAvailable();
 
@@ -54,6 +54,27 @@ describe("bwrap arg generation", () => {
     try {
       const args = generateBwrapArgs(home).join(" ");
       expect(args).toContain(`--ro-bind /dev/null ${join(home, ".bashrc")}`);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("server scope keeps the host network namespace and exempts the server-owned dirs", () => {
+    const home = makeHome();
+    try {
+      const args = generateBwrapArgs(home, "server");
+      const joined = args.join(" ");
+      expect(args).not.toContain("--unshare-net");
+      expect(args).toContain("--die-with-parent");
+      for (const dir of HOME_RELATIVE_DENY_DIRS) {
+        if (SERVER_SCOPE_EXEMPT_DIRS.has(dir)) {
+          expect(joined).not.toContain(`--tmpfs ${join(home, dir)}`);
+        } else {
+          expect(joined).toContain(`--tmpfs ${join(home, dir)}`);
+        }
+      }
+      // Deny files still shadowed for the server too.
+      for (const file of HOME_RELATIVE_DENY_FILES) {
+        expect(joined).toContain(`--ro-bind /dev/null ${join(home, file)}`);
+      }
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
@@ -138,6 +159,28 @@ describe.skipIf(!bwrapHere)("bwrap enforcement (live)", () => {
     const home = makeHome();
     try {
       expect(bwrapEnforces(home)).toBe(true);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("bwrapServerCageRuns() self-check passes (server scope builds and execs)", () => {
+    const home = makeHome();
+    try {
+      expect(bwrapServerCageRuns(home)).toBe(true);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("server scope still hides sensitive dirs but allows external network", () => {
+    const home = makeHome();
+    try {
+      writeFileSync(join(home, ".ssh", "id_rsa"), "PRIVATE-KEY");
+      const args = generateBwrapArgs(home, "server");
+      const out = execFileSync(
+        "bwrap",
+        [...args, "/bin/bash", "-c", `cat "${join(home, ".ssh", "id_rsa")}" 2>&1; echo RAN`],
+        { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      expect(out).toContain("RAN");
+      expect(out).not.toContain("PRIVATE-KEY");
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });

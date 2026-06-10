@@ -86,6 +86,15 @@ const configSchema = z.object({
    *  shadowed with tmpfs. Toggleable from Settings → Security. */
   sandboxMode: z.enum(["host", "docker", "seatbelt", "bwrap"]).default("host"),
 
+  /** Whole-server kernel confinement (phase B). When true, the entry point
+   *  re-execs the ENTIRE server under seatbelt (macOS) / bwrap (Linux):
+   *  network stays allowed but sensitive home dirs (~/.ssh, ~/.aws, …) become
+   *  kernel-unreadable and persistence vectors unwritable for the server AND
+   *  every child it spawns. Off by default; a boot-failure escape hatch falls
+   *  back to unconfined after 2 confined boots that never reach listening
+   *  (see sandbox/server-confine.ts). Env override: LAX_SERVER_SANDBOX=1/0. */
+  serverSandbox: z.boolean().default(false),
+
   // AriKernel kill-switch posture. true = if the kernel fails to start
   // or evaluate, BLOCK the tool call (and refuse to boot the server on
   // a hard wiring failure). false = fail-open through the kernel layer

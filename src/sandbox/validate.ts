@@ -36,6 +36,14 @@ export const HOME_RELATIVE_DENY_FILES = [
   ".netrc",
 ];
 
+// Deny-list entries the SERVER-scope kernel profile must exempt (phase B,
+// whole-server confinement). The server process legitimately owns these:
+// ~/.lax is its data dir (config, sqlite, logs, audit) and ~/.codex is the
+// auth mirror IT writes (auth/codex-mirror.ts) for the Codex CLI subprocess.
+// Shell-scope profiles still deny both — a confined shell child must not
+// touch the app's own state or its mirrored tokens.
+export const SERVER_SCOPE_EXEMPT_DIRS = new Set([".lax", ".codex"]);
+
 // Absolute path prefixes that must not be mounted. "Equal or inside" semantics.
 const ABSOLUTE_DENY_DIRS = [
   "/etc/sudoers.d",

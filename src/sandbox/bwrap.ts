@@ -30,7 +30,8 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES } from "./validate.js";
+import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import type { SandboxScope } from "./types.js";
 
 // Shell rc files a confined shell must not be able to persist into. The
 // launch-agent analog on Linux (~/.config/systemd/user, ~/.config/autostart)
@@ -67,23 +68,32 @@ function canonical(path: string): string {
 }
 
 /**
- * Build the bwrap argv that precedes the shell + its args. `home` is
+ * Build the bwrap argv that precedes the target + its args. `home` is
  * injectable for tests; defaults to the real home. Only emits --tmpfs /
  * --ro-bind entries for targets that exist — bwrap errors out on missing
- * targets, which would break every shell command.
+ * targets, which would break every confined command.
+ *
+ * "shell" scope (phase A) confines agent shell children: --unshare-net, all
+ * sensitive home dirs shadowed. "server" scope (phase B) confines the whole
+ * Node server: network stays in the host namespace (the server's API egress
+ * goes through the in-process canonicalFetch chokepoint) and the dirs the
+ * server itself owns (~/.lax, ~/.codex) are not shadowed.
  */
-export function generateBwrapArgs(home: string = homedir()): string[] {
+export function generateBwrapArgs(home: string = homedir(), scope: SandboxScope = "shell"): string[] {
   const realHome = canonical(home);
 
   const args = [
     "--bind", "/", "/",        // full host RW so the dev shell stays usable
     "--dev", "/dev",
     "--proc", "/proc",
-    "--unshare-net",           // loopback-only network namespace
+    ...(scope === "shell" ? ["--unshare-net"] : []), // loopback-only namespace (shell only)
     "--die-with-parent",       // caller's kill/timeout reaches the confined child
   ];
 
-  for (const dir of HOME_RELATIVE_DENY_DIRS) {
+  const denyDirs = scope === "server"
+    ? HOME_RELATIVE_DENY_DIRS.filter((d) => !SERVER_SCOPE_EXEMPT_DIRS.has(d))
+    : HOME_RELATIVE_DENY_DIRS;
+  for (const dir of denyDirs) {
     const p = canonical(join(realHome, dir));
     if (existsSync(p)) args.push("--tmpfs", p);
   }
@@ -133,6 +143,28 @@ export function bwrapEnforces(home?: string): boolean {
       { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] },
     );
     return out.includes("RAN") && out.includes("NET-BLOCKED");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Self-check for the SERVER-scope cage: can bwrap build these namespaces and
+ * exec a target at all on this kernel? No network assertion — server scope
+ * keeps the host network namespace by design; the tmpfs/ro-bind shadowing is
+ * structural once the cage builds. Used by server-confine to fail open into
+ * an unconfined boot (with a loud warning) instead of bricking startup on
+ * hosts where unprivileged userns is disabled.
+ */
+export function bwrapServerCageRuns(home?: string): boolean {
+  if (!isBwrapAvailable()) return false;
+  try {
+    const out = execFileSync(
+      "bwrap",
+      [...generateBwrapArgs(home, "server"), "/bin/sh", "-c", "echo RAN"],
+      { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    return out.includes("RAN");
   } catch {
     return false;
   }

@@ -4,6 +4,13 @@
 
 export type SandboxMode = "host" | "docker" | "seatbelt" | "bwrap";
 
+// Which process a kernel-sandbox profile confines. "shell" is the phase-A
+// posture (agent shell children: network denied, all sensitive dirs denied).
+// "server" is the phase-B posture (the whole Node server: network allowed —
+// the in-process egress chokepoint governs destinations — and the dirs the
+// server itself owns are exempted; see SERVER_SCOPE_EXEMPT_DIRS).
+export type SandboxScope = "shell" | "server";
+
 export interface SandboxConfig {
   mode: SandboxMode;
   image: string;                    // Docker image to use

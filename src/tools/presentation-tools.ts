@@ -5,8 +5,9 @@ import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/ima
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
-import { resolveOfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
-import { applySlide, appendImageSlides, type SlideSpec } from "./shared/pptx-render.js";
+import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { acquireBrandLogo } from "./shared/office-brand.js";
+import { applySlide, appendImageSlides, type SlideSpec, type SlideBrand } from "./shared/pptx-render.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function makePptx(): Promise<any> {
@@ -58,12 +59,13 @@ const presentationCreate: ToolDefinition = {
       if (!slides.length) return err("slides array is empty");
       const theme = resolveOfficeTheme(args.theme);
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
       ensureDir(fp);
       const pptx = await makePptx();
       if (args.title) pptx.title = args.title as string;
-      if (args.author) pptx.author = args.author as string;
+      pptx.author = (args.author as string) || brandAuthor(theme) || "";
       pptx.layout = "LAYOUT_WIDE";
-      for (const s of slides) await applySlide(pptx, s, theme);
+      for (const s of slides) await applySlide(pptx, s, theme, brand);
       appendImageSlides(pptx, acquired, theme);
       await pptx.writeFile({ fileName: fp });
       const chartCount = slides.filter((s) => s.chart).length;
@@ -96,11 +98,13 @@ const presentationAddSlide: ToolDefinition = {
       const pos = (args.position as number) ?? 2;
       const theme = resolveOfficeTheme(args.theme);
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
       const outPath = resolvePath(args.file_path as string).replace(/\.pptx$/i, `_slide_${pos}.pptx`);
       ensureDir(outPath);
       const pptx = await makePptx();
+      pptx.author = brandAuthor(theme) || "";
       pptx.layout = "LAYOUT_WIDE";
-      await applySlide(pptx, spec, theme);
+      await applySlide(pptx, spec, theme, brand);
       appendImageSlides(pptx, acquired, theme);
       await pptx.writeFile({ fileName: outPath });
       return ok(`Created new slide file: ${outPath}`, { file_path: outPath, position: pos, image_count: acquired.length });
@@ -171,11 +175,13 @@ const presentationFromOutline: ToolDefinition = {
       if (!slides.length) return err("Outline produced no slides");
       const theme = resolveOfficeTheme(args.theme);
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
       ensureDir(fp);
       const pptx = await makePptx();
       if (args.title) pptx.title = args.title as string;
+      pptx.author = brandAuthor(theme) || "";
       pptx.layout = "LAYOUT_WIDE";
-      for (const s of slides) await applySlide(pptx, s, theme);
+      for (const s of slides) await applySlide(pptx, s, theme, brand);
       appendImageSlides(pptx, acquired, theme);
       await pptx.writeFile({ fileName: fp });
       return ok(`Created presentation from outline with ${slides.length + acquired.length} slide(s): ${fp}`, {

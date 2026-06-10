@@ -11,7 +11,8 @@ import { verifyWriteLanded } from "./verify.js";
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/validated-io.js";
-import { resolveOfficeTheme, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { resolveOfficeTheme, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { acquireBrandLogo, logoSize } from "./shared/office-brand.js";
 import { parseMarkdown, spansToPlain, type Block, type Span } from "./shared/office-md.js";
 
 // ── Helpers ──
@@ -194,7 +195,9 @@ const pdfCreate: ToolDefinition = {
         : baseTheme;
       const title = (args.title as string) ?? "";
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
-      const doc = new PDFDocument({ info: { Title: title } });
+      const logo = await acquireBrandLogo(theme);
+      // bufferPages lets us stamp a footer on every page after layout.
+      const doc = new PDFDocument({ info: { Title: title, Author: brandAuthor(theme) }, bufferPages: true });
       const chunks: Buffer[] = [];
 
       const done = new Promise<Buffer>((resolve, reject) => {
@@ -202,6 +205,13 @@ const pdfCreate: ToolDefinition = {
         doc.on("end", () => resolve(Buffer.concat(chunks)));
         doc.on("error", reject);
       });
+
+      // Brand masthead logo (png/jpeg only — pdfkit can't embed gif).
+      if (logo && (logo.mimeType === "image/png" || logo.mimeType === "image/jpeg")) {
+        const { w, h } = logoSize(logo, 34);
+        doc.image(logo.buffer, doc.page.margins.left, doc.y, { width: w, height: h });
+        doc.y += h + 8;
+      }
 
       if (title) {
         doc.font("Helvetica-Bold").fontSize(theme.doc.titleSize).fillColor(hx(theme.colors.heading)).text(title);
@@ -225,6 +235,17 @@ const pdfCreate: ToolDefinition = {
           doc.moveDown();
           doc.fontSize(theme.doc.bodySize).font("Helvetica-Oblique").fillColor(hx(theme.colors.muted)).text(img.caption, { align: "center" });
         }
+      }
+
+      // Stamp a footer (company + page numbers) on every page.
+      const company = brandFooter(theme);
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        const label = `${company ? company + "    " : ""}Page ${i - range.start + 1} of ${range.count}`;
+        const fy = doc.page.height - 34;
+        doc.font("Helvetica").fontSize(8).fillColor(hx(theme.colors.muted))
+          .text(label, doc.page.margins.left, fy, { width: doc.page.width - doc.page.margins.left - doc.page.margins.right, align: "center", lineBreak: false });
       }
       doc.end();
 

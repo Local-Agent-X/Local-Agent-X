@@ -5,6 +5,8 @@ import {
   normalizeHex,
   half,
   argb,
+  brandAuthor,
+  brandFooter,
 } from "./office-theme.js";
 
 describe("office-theme defaults", () => {
@@ -43,6 +45,25 @@ describe("office-theme overrides (explicit agent instructions)", () => {
   it("falls back to the default on malformed override JSON", () => {
     const t = resolveOfficeTheme("{not valid json");
     expect(t.colors.accent).toBe("1F3A5F");
+  });
+});
+
+describe("brand kit — opt-in user branding, never the app", () => {
+  it("is unbranded by default (no app name, empty author/footer)", () => {
+    const t = resolveOfficeTheme();
+    expect(t.brand).toEqual({});
+    expect(brandAuthor(t)).toBe("");
+    expect(brandFooter(t)).toBe("");
+  });
+  it("uses the user's company for author + footer when set", () => {
+    const t = resolveOfficeTheme({ brand: { company: "Acme Corp" } });
+    expect(brandAuthor(t)).toBe("Acme Corp");
+    expect(brandFooter(t)).toBe("Acme Corp");
+  });
+  it("lets author + footer override company independently", () => {
+    const t = resolveOfficeTheme({ brand: { company: "Acme", author: "Jane Doe", footer: "Acme — Confidential" } });
+    expect(brandAuthor(t)).toBe("Jane Doe");
+    expect(brandFooter(t)).toBe("Acme — Confidential");
   });
 });
 

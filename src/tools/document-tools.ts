@@ -10,10 +10,30 @@ import { verifyWriteLanded } from "./verify.js";
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/validated-io.js";
-import { resolveOfficeTheme, half, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { resolveOfficeTheme, half, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { acquireBrandLogo, logoSize } from "./shared/office-brand.js";
 import { markdownToDocx } from "./shared/md-to-docx.js";
 
-const { Document, Packer, Paragraph, TextRun, ImageRun, BorderStyle } = docx;
+const { Document, Packer, Paragraph, TextRun, ImageRun, BorderStyle, Header, Footer, PageNumber, AlignmentType } = docx;
+
+function logoImageRun(img: AcquiredImage, heightPx: number): docx.ImageRun {
+  const { w, h } = logoSize(img, heightPx);
+  const type: "png" | "jpg" | "gif" = img.mimeType === "image/jpeg" ? "jpg" : img.mimeType === "image/gif" ? "gif" : "png";
+  return new ImageRun({ type, data: img.buffer, transformation: { width: w, height: h } } as docx.IImageOptions);
+}
+
+/** Section header (logo, right-aligned) + footer (company + page number),
+ *  built only as the brand/page-numbering needs them. */
+function sectionExtras(theme: OfficeTheme, logo: AcquiredImage | null): { headers?: { default: docx.Header }; footers: { default: docx.Footer } } {
+  const footerText = brandFooter(theme);
+  const footerRuns: docx.TextRun[] = [];
+  if (footerText) footerRuns.push(new TextRun({ text: `${footerText}    `, size: half(9), color: theme.colors.muted }));
+  footerRuns.push(new TextRun({ children: [PageNumber.CURRENT], size: half(9), color: theme.colors.muted }));
+  const footer = new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: footerRuns })] });
+  if (!logo) return { footers: { default: footer } };
+  const header = new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [logoImageRun(logo, 34)] })] });
+  return { headers: { default: header }, footers: { default: footer } };
+}
 
 /** Document-level style sheet derived from the theme: body font/size/color +
  *  spacing, and the three heading levels (H1 carries the accent underline). */
@@ -112,6 +132,7 @@ function buildDocument(
   title?: string,
   images: AcquiredImage[] = [],
   theme: OfficeTheme = resolveOfficeTheme(),
+  logo: AcquiredImage | null = null,
 ): docx.Document {
   const children = [
     ...(title ? [titleParagraph(theme, title)] : []),
@@ -120,10 +141,11 @@ function buildDocument(
   ];
 
   return new Document({
-    creator: "Local Agent X",
+    // The USER's brand (or empty) — never the app name.
+    creator: brandAuthor(theme),
     title: title ?? "Document",
     styles: docStyles(theme),
-    sections: [{ properties: {}, children }],
+    sections: [{ properties: {}, ...sectionExtras(theme, logo), children }],
   });
 }
 
@@ -153,10 +175,12 @@ const documentCreate: ToolDefinition = {
       const filePath = resolvePath(String(args.file_path));
       const content = String(args.content);
       const title = args.title ? String(args.title) : undefined;
+      const theme = resolveOfficeTheme(args.theme);
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      const logo = await acquireBrandLogo(theme);
 
       await mkdir(dirname(filePath), { recursive: true });
-      const doc = buildDocument(content, title, acquired, resolveOfficeTheme(args.theme));
+      const doc = buildDocument(content, title, acquired, theme, logo);
       const buffer = await Packer.toBuffer(doc);
       await writeFile(filePath, buffer);
 

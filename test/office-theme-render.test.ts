@@ -6,6 +6,7 @@ import { documentTools } from "../src/tools/document-tools.js";
 import { spreadsheetTools } from "../src/tools/spreadsheet-tools.js";
 import { presentationTools } from "../src/tools/presentation-tools.js";
 import { pdfTools } from "../src/tools/pdf-tools.js";
+import JSZip from "jszip";
 import type { ToolDefinition } from "../src/types.js";
 
 // resolveAgentPath passes ABSOLUTE paths through untouched, so writing to an
@@ -163,5 +164,43 @@ describe("no markup leaks — read generated files back", () => {
     const text = String(read.content);
     expect(text).toContain("Clean");
     expect(text).not.toContain("<b>");
+  });
+});
+
+// No app branding in file metadata — and the user's brand when they set one.
+describe("brand kit — metadata", () => {
+  async function docxCore(fp: string): Promise<string> {
+    const zip = await JSZip.loadAsync(readFileSync(fp));
+    return zip.file("docProps/core.xml")!.async("string");
+  }
+
+  it("Word: creator is NOT the app name by default", async () => {
+    const fp = join(dir, "meta.docx");
+    await tool(documentTools, "document_create").execute({ file_path: fp, content: "# X\nbody" });
+    const core = await docxCore(fp);
+    expect(core).not.toContain("Local Agent X");
+    expect(core).not.toContain("Secret Agent");
+  });
+
+  it("Word: creator uses the user's brand company when set, and writes a footer part", async () => {
+    const fp = join(dir, "meta-brand.docx");
+    await tool(documentTools, "document_create").execute({
+      file_path: fp, content: "# X\nbody", theme: '{"brand":{"company":"Acme Corp"}}',
+    });
+    const zip = await JSZip.loadAsync(readFileSync(fp));
+    expect(await zip.file("docProps/core.xml")!.async("string")).toContain("Acme Corp");
+    expect(Object.keys(zip.files).some((f) => /word\/footer\d*\.xml/.test(f))).toBe(true);
+  });
+
+  it("Excel: creator is the brand (not the app name)", async () => {
+    const fp = join(dir, "meta.xlsx");
+    await tool(spreadsheetTools, "spreadsheet_write").execute({
+      file_path: fp, data: JSON.stringify([{ A: 1 }]), theme: '{"brand":{"company":"Acme Corp"}}',
+    });
+    const { default: ExcelJS } = await import("exceljs");
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fp);
+    expect(wb.creator).toBe("Acme Corp");
+    expect(wb.creator).not.toContain("Local Agent X");
   });
 });

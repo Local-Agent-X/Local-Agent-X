@@ -17,7 +17,7 @@ import { verifyWriteLanded } from "./verify.js";
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/validated-io.js";
-import { resolveOfficeTheme, argb, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { resolveOfficeTheme, argb, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { cleanText } from "./shared/office-md.js";
 
 // ── Helpers ──
@@ -201,11 +201,17 @@ const spreadsheetWrite: ToolDefinition = {
       if (!Array.isArray(parsed)) return fail("data must be a JSON array");
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
 
+      const theme = resolveOfficeTheme(args.theme);
       const wb = new ExcelJS.Workbook();
       try { await wb.xlsx.readFile(filePath); } catch { /* new file */ }
+      // File metadata: the USER's brand (or empty) — never the app name.
+      wb.creator = brandAuthor(theme);
+      wb.lastModifiedBy = brandAuthor(theme);
       const existing = wb.getWorksheet(sheetName);
       if (existing) wb.removeWorksheet(existing.id);
       const ws = wb.addWorksheet(sheetName);
+      const footerCompany = brandFooter(theme);
+      ws.headerFooter = { oddFooter: `${footerCompany ? `&L${footerCompany}` : ""}&RPage &P of &N` };
 
       const hdrs = (args.headers as string[] | undefined) ?? Object.keys(parsed[0] ?? {});
       ws.addRow(hdrs.map((h) => cleanText(h)));
@@ -221,7 +227,7 @@ const spreadsheetWrite: ToolDefinition = {
         return v ?? "";
       };
       for (const obj of parsed) ws.addRow(hdrs.map((h) => coerce(obj[h])));
-      styleSheet(ws, hdrs, parsed, resolveOfficeTheme(args.theme));
+      styleSheet(ws, hdrs, parsed, theme);
 
       // Place each image to the right of the data, stacked vertically.
       // exceljs accepts png/jpeg/gif only — gif/webp/svg fall through.

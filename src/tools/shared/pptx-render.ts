@@ -70,10 +70,20 @@ function placeImage(slide: any, img: AcquiredImage, box: { x: number; y: number;
   slide.addImage({ data, x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h });
 }
 
+export interface SlideBrand { logo?: AcquiredImage; footer?: string }
+
+function placeLogo(slide: any, img: AcquiredImage, x: number, y: number, hIn: number): void {
+  const data = `data:${img.mimeType};base64,${img.buffer.toString("base64")}`;
+  const ratio = img.width > 0 && img.height > 0 ? img.width / img.height : 3;
+  slide.addImage({ data, x, y, w: hIn * ratio, h: hIn });
+}
+
 /** Render one slide. Async because an inline image may need fetching. */
-export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme): Promise<void> {
+export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme, brand: SlideBrand = {}): Promise<void> {
   const slide = pptx.addSlide();
   const layout = spec.layout ?? "content";
+  // Brand footer (user's company) on every slide — opt-in, empty by default.
+  if (brand.footer) slide.addText(brand.footer, { x: 0.4, y: SLIDE_H - 0.44, w: SLIDE_W - 2, h: 0.3, fontSize: 9, fontFace: t.fonts.body, color: t.colors.muted });
   // Sanitize all text sinks — no HTML tags / entities / leftover markdown
   // markers leak onto a slide.
   const title = spec.title != null ? toPlainText(spec.title) : "";
@@ -82,6 +92,7 @@ export async function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme): Pr
   const notes = spec.notes != null ? cleanText(spec.notes) : "";
 
   if (layout === "title") {
+    if (brand.logo) placeLogo(slide, brand.logo, 0.7, 0.6, 0.6);
     slide.addText(title, { x: 0.7, y: 2.7, w: SLIDE_W - 1.4, h: 1.5, fontSize: t.ppt.titleSlideSize, fontFace: t.fonts.heading, color: t.colors.heading, bold: true });
     accentBar(slide, t, 0.72, 4.2, 2.4);
     if (body) slide.addText(body, { x: 0.7, y: 4.45, w: SLIDE_W - 1.4, h: 1, fontSize: t.ppt.subtitleSize, fontFace: t.fonts.body, color: t.colors.muted });

@@ -42,6 +42,21 @@ export interface OfficeTheme {
   };
   /** Series colors for native charts, accent-led. */
   chartPalette: string[];
+  /** OPT-IN, the USER's own brand — never the app's. Empty by default, so
+   *  documents are unbranded unless a user fills this in. */
+  brand: OfficeBrand;
+}
+
+export interface OfficeBrand {
+  /** Company or person name — used for the footer + file author metadata. */
+  company?: string;
+  /** File author/creator metadata. Defaults to `company`. Never the app name. */
+  author?: string;
+  /** Logo image — URL or workspace path (png/jpeg). Placed on the doc header /
+   *  title slide / PDF masthead. */
+  logo?: string;
+  /** Footer tagline. Defaults to `company`. */
+  footer?: string;
 }
 
 export type OfficeThemeOverride = {
@@ -50,6 +65,7 @@ export type OfficeThemeOverride = {
   doc?: Partial<OfficeTheme["doc"]>;
   ppt?: Partial<OfficeTheme["ppt"]>;
   chartPalette?: string[];
+  brand?: Partial<OfficeBrand>;
 };
 
 // ── Baked-in house style: "Modern Slate" + Navy accent ──────────────────────
@@ -70,6 +86,7 @@ export const DEFAULT_OFFICE_THEME: OfficeTheme = {
   doc: { titleSize: 26, h1Size: 16, h2Size: 13, h3Size: 11.5, bodySize: 11, lineSpacing: 1.15 },
   ppt: { titleSlideSize: 36, sectionSize: 30, titleSize: 24, bodySize: 16, bulletSize: 16, subtitleSize: 14 },
   chartPalette: ["1F3A5F", "3E5C76", "6B8CAE", "A8C0D6", "C9A227", "7A2E3A"],
+  brand: {}, // unbranded by default — no app branding, no user branding
 };
 
 const USER_THEME_PATH = join(getLaxDir(), "office-theme.json");
@@ -91,7 +108,19 @@ function mergeTheme(base: OfficeTheme, ov?: OfficeThemeOverride | null): OfficeT
     chartPalette: Array.isArray(ov.chartPalette) && ov.chartPalette.length
       ? ov.chartPalette.map(normalizeHex)
       : base.chartPalette,
+    brand: { ...base.brand, ...(isObject(ov.brand) ? ov.brand : {}) },
   };
+}
+
+/** File author/creator metadata — the user's brand, NEVER the app name. Empty
+ *  when the user hasn't set a brand (so documents carry no app branding). */
+export function brandAuthor(t: OfficeTheme): string {
+  return (t.brand.author || t.brand.company || "").trim();
+}
+
+/** Footer line text, or "" when unbranded. */
+export function brandFooter(t: OfficeTheme): string {
+  return (t.brand.footer || t.brand.company || "").trim();
 }
 
 /** Strip a leading '#' and uppercase so docx/pptx get bare 6-digit hex. */

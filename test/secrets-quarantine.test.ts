@@ -56,6 +56,15 @@ function readSecretsFile(): RawSecretsFile {
   return JSON.parse(readFileSync(join(tmpDir, "secrets.enc"), "utf-8")) as RawSecretsFile;
 }
 
+// hex char index 56 is the first ciphertext byte past iv(12)+authTag(16).
+// XOR-style flip, never a constant overwrite: writing a fixed "ff" was a
+// silent no-op whenever the random ciphertext byte already WAS 0xff
+// (1-in-256 per test) — the entry then decrypted fine and the quarantine
+// assertions flaked.
+function corruptCiphertext(hex: string): string {
+  return hex.slice(0, 56) + (hex[56] === "0" ? "f" : "0") + hex.slice(57);
+}
+
 describe("SecretsStore quarantine", () => {
   it("one corrupt entry no longer hides every entry that comes after it", () => {
     // Seed a real store with three secrets so their ciphertext is valid.
@@ -70,10 +79,7 @@ describe("SecretsStore quarantine", () => {
     // fails on decrypt.
     const raw = readSecretsFile();
     const second = raw.secrets.find(s => s.name === "SECOND")!;
-    const hex = second.encrypted;
-    // hex char index 56 is the first byte of ciphertext past iv+tag.
-    const flipped = hex.slice(0, 56) + (hex[56] === "0" ? "f" : "0") + hex.slice(57);
-    second.encrypted = flipped;
+    second.encrypted = corruptCiphertext(second.encrypted);
     writeFileSync(join(tmpDir, "secrets.enc"), JSON.stringify(raw, null, 2));
 
     // Reload — SECOND must quarantine; FIRST and THIRD must still be
@@ -94,7 +100,7 @@ describe("SecretsStore quarantine", () => {
     const raw = readSecretsFile();
     const betaOriginalCipher = raw.secrets.find(s => s.name === "BETA")!.encrypted;
     const beta = raw.secrets.find(s => s.name === "BETA")!;
-    beta.encrypted = beta.encrypted.slice(0, 56) + "ff" + beta.encrypted.slice(58);
+    beta.encrypted = corruptCiphertext(beta.encrypted);
     const betaCorruptCipher = beta.encrypted;
     writeFileSync(join(tmpDir, "secrets.enc"), JSON.stringify(raw, null, 2));
 
@@ -126,7 +132,7 @@ describe("SecretsStore quarantine", () => {
     seed.set("REUSED", "old-value");
     const raw = readSecretsFile();
     const e = raw.secrets[0];
-    e.encrypted = e.encrypted.slice(0, 56) + "ff" + e.encrypted.slice(58);
+    e.encrypted = corruptCiphertext(e.encrypted);
     writeFileSync(join(tmpDir, "secrets.enc"), JSON.stringify(raw, null, 2));
 
     const store = new SecretsStore(tmpDir);
@@ -150,7 +156,7 @@ describe("SecretsStore quarantine", () => {
     seed.set("DEAD", "no-one-can-read-me");
     const raw = readSecretsFile();
     const e = raw.secrets[0];
-    e.encrypted = e.encrypted.slice(0, 56) + "ff" + e.encrypted.slice(58);
+    e.encrypted = corruptCiphertext(e.encrypted);
     writeFileSync(join(tmpDir, "secrets.enc"), JSON.stringify(raw, null, 2));
 
     const store = new SecretsStore(tmpDir);
@@ -173,7 +179,7 @@ describe("SecretsStore quarantine", () => {
     seed.set("DEAD", "v");
     const raw = readSecretsFile();
     const dead = raw.secrets.find(s => s.name === "DEAD")!;
-    dead.encrypted = dead.encrypted.slice(0, 56) + "ff" + dead.encrypted.slice(58);
+    dead.encrypted = corruptCiphertext(dead.encrypted);
     writeFileSync(join(tmpDir, "secrets.enc"), JSON.stringify(raw, null, 2));
 
     const store = new SecretsStore(tmpDir);

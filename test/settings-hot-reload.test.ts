@@ -21,7 +21,7 @@
  *     We also pass `<tmp>/.lax` as the dataDir to startConfigWatcher so its
  *     `join(dataDir, "config.json")` matches getConfigPath().
  *   - Real fs.watch (no mocks). The watcher debounces at 500ms — we poll up
- *     to 4000ms (NOT a fixed sleep) for the change to land.
+ *     to 10s (NOT a fixed sleep) for the change to land.
  *   - Test 2 (the regression-pin) uses vi.doMock + vi.resetModules + a fresh
  *     re-import of lifecycle.ts so the watcher's static import of
  *     setRuntimeConfig binds to the spy. We then trigger the same fs change
@@ -175,10 +175,11 @@ describe("settings hot-reload chain", () => {
 
     // (d) Poll for the new value. ConfigWatcher debounces at 500ms; on Windows
     //     fs.watch can fire a single rename event for the atomic write (.tmp
-    //     rename) so 4000ms gives ample headroom.
+    //     rename) so 10s gives ample headroom even when the suite
+    //     saturates every core (poll returns as soon as the reload fires).
     const reloaded = await waitUntil(
       () => getRuntimeConfig().enableShell === false,
-      4000,
+      10_000,
     );
 
     // (e) The wire-up assertion. If this fails, hot-reload is broken — the
@@ -247,7 +248,7 @@ describe("settings hot-reload chain", () => {
 
       // Poll for spy invocation. 4000ms covers the 500ms debounce + Windows
       // fs.watch quirks.
-      const fired = await waitUntil(() => spy.mock.calls.length > 0, 4000);
+      const fired = await waitUntil(() => spy.mock.calls.length > 0, 10_000);
       expect(fired).toBe(true);
 
       // The most recent spy call MUST carry a config whose enableShell is the

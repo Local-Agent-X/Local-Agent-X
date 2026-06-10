@@ -5,6 +5,7 @@ import { acquireImages, IMAGES_PARAM_SCHEMA, type AcquiredImage, type ImageSpec 
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { resolveOfficeTheme, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function makePptx(): Promise<any> {
@@ -23,41 +24,52 @@ interface SlideSpec {
   notes?: string; layout?: "title" | "content" | "section" | "blank";
 }
 
-const C = { dark: "222222", accent: "444444" };
-const F = { title: 24, body: 14, bullet: 12 };
+// LAYOUT_WIDE canvas is 13.333 × 7.5 inches.
+const SLIDE_W = 13.333;
 
-function applySlide(pptx: any, spec: SlideSpec): void {
+/** A short accent rule (navy bar) used under titles to anchor the layout. */
+function accentBar(slide: any, t: OfficeTheme, x: number, y: number, w = 2.0): void {
+  slide.addShape("rect", { x, y, w, h: 0.07, fill: { color: t.colors.accent }, line: { type: "none" } });
+}
+
+function applySlide(pptx: any, spec: SlideSpec, t: OfficeTheme): void {
   const slide = pptx.addSlide();
   const layout = spec.layout ?? "content";
   if (layout === "title") {
     slide.addText(spec.title ?? "", {
-      x: 0.5, y: 1.5, w: 9, h: 1.5,
-      fontSize: 36, color: C.dark, align: "center", bold: true,
+      x: 0.7, y: 2.7, w: SLIDE_W - 1.4, h: 1.5,
+      fontSize: t.ppt.titleSlideSize, fontFace: t.fonts.heading, color: t.colors.heading, bold: true,
     });
+    accentBar(slide, t, 0.72, 4.2, 2.4);
     if (spec.body) slide.addText(spec.body, {
-      x: 1, y: 3.2, w: 8, h: 1, fontSize: F.body, color: C.accent, align: "center",
+      x: 0.7, y: 4.45, w: SLIDE_W - 1.4, h: 1, fontSize: t.ppt.subtitleSize, fontFace: t.fonts.body, color: t.colors.muted,
     });
   } else if (layout === "section") {
     slide.addText(spec.title ?? "", {
-      x: 0.5, y: 2, w: 9, h: 1.5,
-      fontSize: 30, color: C.dark, align: "center", bold: true,
+      x: 0.7, y: 3.0, w: SLIDE_W - 1.4, h: 1.5,
+      fontSize: t.ppt.sectionSize, fontFace: t.fonts.heading, color: t.colors.accent, bold: true, align: "center",
     });
+    accentBar(slide, t, SLIDE_W / 2 - 1.1, 4.55, 2.2);
   } else if (layout === "blank") {
     if (spec.body) slide.addText(spec.body, {
-      x: 0.5, y: 0.5, w: 9, h: 5, fontSize: F.body, color: C.dark,
+      x: 0.7, y: 0.6, w: SLIDE_W - 1.4, h: 6, fontSize: t.ppt.bodySize, fontFace: t.fonts.body, color: t.colors.body,
     });
   } else {
-    if (spec.title) slide.addText(spec.title, {
-      x: 0.5, y: 0.3, w: 9, h: 0.8, fontSize: F.title, color: C.dark, bold: true,
-    });
+    if (spec.title) {
+      slide.addText(spec.title, {
+        x: 0.6, y: 0.4, w: SLIDE_W - 1.2, h: 0.8, fontSize: t.ppt.titleSize, fontFace: t.fonts.heading, color: t.colors.heading, bold: true,
+      });
+      accentBar(slide, t, 0.62, 1.18, 1.6);
+    }
+    const top = spec.title ? 1.5 : 0.6;
     if (spec.body) slide.addText(spec.body, {
-      x: 0.5, y: 1.3, w: 9, h: 2, fontSize: F.body, color: C.dark,
+      x: 0.6, y: top, w: SLIDE_W - 1.2, h: 1.5, fontSize: t.ppt.bodySize, fontFace: t.fonts.body, color: t.colors.body,
     });
     if (spec.bullets?.length) {
       const items = spec.bullets.map((b) => ({
-        text: b, options: { fontSize: F.bullet, color: C.dark, bullet: true as const },
+        text: b, options: { fontSize: t.ppt.bulletSize, fontFace: t.fonts.body, color: t.colors.body, bullet: { indent: 18 } },
       }));
-      slide.addText(items, { x: 0.7, y: spec.body ? 3.5 : 1.3, w: 8.5, h: 3 });
+      slide.addText(items, { x: 0.7, y: spec.body ? top + 1.6 : top, w: SLIDE_W - 1.4, h: 4, lineSpacingMultiple: 1.3 });
     }
   }
   if (spec.notes) slide.addNotes(spec.notes);
@@ -66,22 +78,22 @@ function applySlide(pptx: any, spec: SlideSpec): void {
 function ensureDir(p: string): void { mkdirSync(dirname(p), { recursive: true }); }
 
 /** Add each acquired image to the deck on its own slide, centered with caption. */
-function appendImageSlides(pptx: any, images: AcquiredImage[]): void {
+function appendImageSlides(pptx: any, images: AcquiredImage[], t: OfficeTheme): void {
   for (const img of images) {
     const slide = pptx.addSlide();
     const data = `data:${img.mimeType};base64,${img.buffer.toString("base64")}`;
-    const slideW = 13.333, slideH = 7.5; // LAYOUT_WIDE in inches
+    const slideH = 7.5; // LAYOUT_WIDE in inches
     const ratio = img.width > 0 && img.height > 0 ? img.width / img.height : 4 / 3;
-    const maxW = slideW - 1, maxH = slideH - 2;
+    const maxW = SLIDE_W - 1, maxH = slideH - 2;
     let w = maxW, h = maxW / ratio;
     if (h > maxH) { h = maxH; w = maxH * ratio; }
-    const x = (slideW - w) / 2;
+    const x = (SLIDE_W - w) / 2;
     const y = (slideH - h) / 2 - 0.3;
     slide.addImage({ data, x, y, w, h });
     if (img.caption) {
       slide.addText(img.caption, {
-        x: 0.5, y: y + h + 0.2, w: slideW - 1, h: 0.6,
-        fontSize: F.body, color: C.dark, align: "center", italic: true,
+        x: 0.5, y: y + h + 0.2, w: SLIDE_W - 1, h: 0.6,
+        fontSize: t.ppt.subtitleSize, fontFace: t.fonts.body, color: t.colors.muted, align: "center", italic: true,
       });
     }
   }
@@ -99,6 +111,7 @@ const presentationCreate: ToolDefinition = {
       author: { type: "string", description: "Author metadata" },
       slides: { type: "string", description: "JSON array of slide specs" },
       images: IMAGES_PARAM_SCHEMA,
+      theme: THEME_PARAM_SCHEMA,
     },
   },
   async execute(args) {
@@ -106,14 +119,15 @@ const presentationCreate: ToolDefinition = {
       const fp = resolvePath(args.file_path as string);
       const slides = JSON.parse(args.slides as string) as SlideSpec[];
       if (!slides.length) return err("slides array is empty");
+      const theme = resolveOfficeTheme(args.theme);
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       ensureDir(fp);
       const pptx = await makePptx();
       if (args.title) pptx.title = args.title as string;
       if (args.author) pptx.author = args.author as string;
       pptx.layout = "LAYOUT_WIDE";
-      for (const s of slides) applySlide(pptx, s);
-      appendImageSlides(pptx, acquired);
+      for (const s of slides) applySlide(pptx, s, theme);
+      appendImageSlides(pptx, acquired, theme);
       await pptx.writeFile({ fileName: fp });
       return ok(`Created presentation with ${slides.length + acquired.length} slide(s): ${fp}`, {
         file_path: fp, slide_count: slides.length + acquired.length, image_count: acquired.length,
@@ -135,19 +149,21 @@ const presentationAddSlide: ToolDefinition = {
       slide: { type: "string", description: "JSON slide spec" },
       position: { type: "number", description: "Slide position number for filename suffix" },
       images: IMAGES_PARAM_SCHEMA,
+      theme: THEME_PARAM_SCHEMA,
     },
   },
   async execute(args) {
     try {
       const spec = JSON.parse(args.slide as string) as SlideSpec;
       const pos = (args.position as number) ?? 2;
+      const theme = resolveOfficeTheme(args.theme);
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       const outPath = resolvePath(args.file_path as string).replace(/\.pptx$/i, `_slide_${pos}.pptx`);
       ensureDir(outPath);
       const pptx = await makePptx();
       pptx.layout = "LAYOUT_WIDE";
-      applySlide(pptx, spec);
-      appendImageSlides(pptx, acquired);
+      applySlide(pptx, spec, theme);
+      appendImageSlides(pptx, acquired, theme);
       await pptx.writeFile({ fileName: outPath });
       return ok(`Created new slide file: ${outPath}`, { file_path: outPath, position: pos, image_count: acquired.length });
     } catch (e) { return err(`Failed to add slide: ${(e as Error).message}`); }
@@ -206,6 +222,7 @@ const presentationFromOutline: ToolDefinition = {
       outline: { type: "string", description: "Markdown outline with # for slide titles and - for bullets. Each # starts a new slide. Use \\n for line breaks." },
       title: { type: "string", description: "Presentation title metadata" },
       images: IMAGES_PARAM_SCHEMA,
+      theme: THEME_PARAM_SCHEMA,
     },
   },
   async execute(args) {
@@ -213,13 +230,14 @@ const presentationFromOutline: ToolDefinition = {
       const fp = resolvePath(args.file_path as string);
       const slides = outlineToSlides(args.outline as string);
       if (!slides.length) return err("Outline produced no slides");
+      const theme = resolveOfficeTheme(args.theme);
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       ensureDir(fp);
       const pptx = await makePptx();
       if (args.title) pptx.title = args.title as string;
       pptx.layout = "LAYOUT_WIDE";
-      for (const s of slides) applySlide(pptx, s);
-      appendImageSlides(pptx, acquired);
+      for (const s of slides) applySlide(pptx, s, theme);
+      appendImageSlides(pptx, acquired, theme);
       await pptx.writeFile({ fileName: fp });
       return ok(`Created presentation from outline with ${slides.length + acquired.length} slide(s): ${fp}`, {
         file_path: fp, slide_count: slides.length + acquired.length, image_count: acquired.length,

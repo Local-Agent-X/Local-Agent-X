@@ -1,0 +1,92 @@
+import { describe, it, expect, afterAll } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { documentTools } from "../src/tools/document-tools.js";
+import { spreadsheetTools } from "../src/tools/spreadsheet-tools.js";
+import { presentationTools } from "../src/tools/presentation-tools.js";
+import { pdfTools } from "../src/tools/pdf-tools.js";
+import type { ToolDefinition } from "../src/types.js";
+
+// resolveAgentPath passes ABSOLUTE paths through untouched, so writing to an
+// absolute temp path exercises the real generators without a workspace setup.
+const dir = mkdtempSync(join(tmpdir(), "office-theme-"));
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+const tool = (tools: ToolDefinition[], name: string): ToolDefinition => {
+  const t = tools.find((x) => x.name === name);
+  if (!t) throw new Error(`tool ${name} not found`);
+  return t;
+};
+const isZip = (b: Buffer) => b[0] === 0x50 && b[1] === 0x4b; // "PK" (docx/xlsx/pptx)
+const isPdf = (b: Buffer) => b.slice(0, 5).toString() === "%PDF-";
+
+describe("themed Office generation — smoke (real files)", () => {
+  it("Word .docx is a valid, non-trivial file", async () => {
+    const fp = join(dir, "report.docx");
+    const r = await tool(documentTools, "document_create").execute({
+      file_path: fp, title: "Q3 Report",
+      content: "# Summary\nRevenue grew.\n\n## Detail\n- One\n- Two",
+    });
+    expect(r.isError).toBeFalsy();
+    expect(existsSync(fp)).toBe(true);
+    const buf = readFileSync(fp);
+    expect(isZip(buf)).toBe(true);
+    expect(buf.length).toBeGreaterThan(2000);
+  });
+
+  it("Excel .xlsx applies the navy header fill + frozen pane (re-read with exceljs)", async () => {
+    const fp = join(dir, "data.xlsx");
+    const r = await tool(spreadsheetTools, "spreadsheet_write").execute({
+      file_path: fp,
+      data: JSON.stringify([{ Name: "Acme", Revenue: 124000 }, { Name: "Globex", Revenue: 98200 }]),
+    });
+    expect(r.isError).toBeFalsy();
+    expect(isZip(readFileSync(fp))).toBe(true);
+
+    // Re-open and assert the theme actually landed, not just that bytes exist.
+    const { default: ExcelJS } = await import("exceljs");
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fp);
+    const ws = wb.worksheets[0];
+    const headerFill = ws.getRow(1).getCell(1).fill as { fgColor?: { argb?: string } };
+    expect(headerFill.fgColor?.argb).toBe("FF1F3A5F"); // navy accent
+    expect(ws.views?.[0]?.state).toBe("frozen");
+    // numeric column got a thousands/currency format
+    expect(ws.getColumn(2).numFmt).toBeTruthy();
+  });
+
+  it("PowerPoint .pptx renders themed layouts (incl. accent shape)", async () => {
+    const fp = join(dir, "deck.pptx");
+    const r = await tool(presentationTools, "presentation_create").execute({
+      file_path: fp, title: "Deck",
+      slides: JSON.stringify([
+        { title: "Cover", layout: "title", body: "Subtitle" },
+        { title: "Agenda", bullets: ["A", "B", "C"] },
+      ]),
+    });
+    expect(r.isError).toBeFalsy();
+    expect(isZip(readFileSync(fp))).toBe(true);
+  });
+
+  it("PDF renders with the themed renderer", async () => {
+    const fp = join(dir, "report.pdf");
+    const r = await tool(pdfTools, "pdf_create").execute({
+      file_path: fp, title: "Q3 Report",
+      content: "# Summary\nRevenue grew.\n\n## Detail\n- One\n- Two",
+    });
+    expect(r.isError).toBeFalsy();
+    expect(isPdf(readFileSync(fp))).toBe(true);
+  });
+
+  it("an explicit theme override does not break generation", async () => {
+    const fp = join(dir, "custom.docx");
+    const r = await tool(documentTools, "document_create").execute({
+      file_path: fp,
+      content: "# Heading\nBody",
+      theme: '{"colors":{"accent":"#7A2E3A","heading":"000000"},"fonts":{"heading":"Times New Roman"}}',
+    });
+    expect(r.isError).toBeFalsy();
+    expect(isZip(readFileSync(fp))).toBe(true);
+  });
+});

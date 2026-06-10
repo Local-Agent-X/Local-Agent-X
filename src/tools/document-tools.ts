@@ -10,8 +10,53 @@ import { verifyWriteLanded } from "./verify.js";
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/validated-io.js";
+import { resolveOfficeTheme, half, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 
-const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } = docx;
+const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun, BorderStyle } = docx;
+
+/** Document-level style sheet derived from the theme: body font/size/color +
+ *  spacing, and the three heading levels (H1 carries the accent underline). */
+function docStyles(t: OfficeTheme): NonNullable<docx.IPropertiesOptions["styles"]> {
+  const headingRun = (size: number, color: string) =>
+    ({ font: t.fonts.heading, size: half(size), bold: true, color });
+  return {
+    default: {
+      document: {
+        run: { font: t.fonts.body, size: half(t.doc.bodySize), color: t.colors.body },
+        paragraph: { spacing: { line: Math.round(t.doc.lineSpacing * 240), lineRule: "auto", after: 120 } },
+      },
+    },
+    paragraphStyles: [
+      {
+        id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: headingRun(t.doc.h1Size, t.colors.heading),
+        paragraph: {
+          spacing: { before: 280, after: 80 },
+          border: { bottom: { color: t.colors.accent, size: 12, space: 4, style: BorderStyle.SINGLE } },
+        },
+      },
+      {
+        id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: headingRun(t.doc.h2Size, t.colors.subheading),
+        paragraph: { spacing: { before: 220, after: 60 } },
+      },
+      {
+        id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { font: t.fonts.heading, size: half(t.doc.h3Size), bold: true, color: t.colors.accent },
+        paragraph: { spacing: { before: 160, after: 40 } },
+      },
+    ],
+  };
+}
+
+/** Styled document title (uses the `title` arg) — larger than H1, accent rule. */
+function titleParagraph(t: OfficeTheme, title: string): docx.Paragraph {
+  return new Paragraph({
+    spacing: { after: 160 },
+    border: { bottom: { color: t.colors.accent, size: 18, space: 6, style: BorderStyle.SINGLE } },
+    children: [new TextRun({ text: title, bold: true, font: t.fonts.heading, size: half(t.doc.titleSize), color: t.colors.heading })],
+  });
+}
 
 /**
  * Scale an image to fit a default-ish max width (~600 px) while
@@ -106,14 +151,24 @@ function parseInline(text: string): docx.TextRun[] {
   return runs;
 }
 
-function buildDocument(text: string, title?: string, images: AcquiredImage[] = []): docx.Document {
+function buildDocument(
+  text: string,
+  title?: string,
+  images: AcquiredImage[] = [],
+  theme: OfficeTheme = resolveOfficeTheme(),
+): docx.Document {
   const lines = text.split("\n");
   const paragraphs = lines.map(parseLine);
-  const children = [...paragraphs, ...imageParagraphs(images)];
+  const children = [
+    ...(title ? [titleParagraph(theme, title)] : []),
+    ...paragraphs,
+    ...imageParagraphs(images),
+  ];
 
   return new Document({
-    creator: "Secret Agent X",
+    creator: "Local Agent X",
     title: title ?? "Document",
+    styles: docStyles(theme),
     sections: [{ properties: {}, children }],
   });
 }
@@ -135,6 +190,7 @@ const documentCreate: ToolDefinition = {
       title: { type: "string", description: "Document title metadata (optional)" },
       content: { type: "string", description: "Formatted text with \\n newlines. Use # for headings, - for bullets, **bold** for emphasis. Separate sections with blank lines (\\n\\n)." },
       images: IMAGES_PARAM_SCHEMA,
+      theme: THEME_PARAM_SCHEMA,
     },
     required: ["file_path", "content"],
   },
@@ -146,7 +202,7 @@ const documentCreate: ToolDefinition = {
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
 
       await mkdir(dirname(filePath), { recursive: true });
-      const doc = buildDocument(content, title, acquired);
+      const doc = buildDocument(content, title, acquired, resolveOfficeTheme(args.theme));
       const buffer = await Packer.toBuffer(doc);
       await writeFile(filePath, buffer);
 

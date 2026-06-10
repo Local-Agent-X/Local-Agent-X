@@ -11,6 +11,7 @@ import { verifyWriteLanded } from "./verify.js";
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/validated-io.js";
+import { resolveOfficeTheme, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 
 // ── Helpers ──
 
@@ -37,6 +38,40 @@ function ok(content: string, metadata?: Record<string, unknown>): ToolResult {
 
 function fail(message: string): ToolResult {
   return { content: message, isError: true };
+}
+
+const hx = (c: string): string => "#" + c.replace(/^#/, "");
+
+/** Render markdown-ish text into a pdfkit doc using the house theme. pdfkit's
+ *  base-14 Helvetica is the PDF-standard sans (closest match to the Calibri
+ *  used elsewhere); it embeds identically on every viewer/OS. */
+function renderThemedContent(doc: any, content: string, t: OfficeTheme): void {
+  const body = () => doc.font("Helvetica").fontSize(t.doc.bodySize).fillColor(hx(t.colors.body));
+  const accentRule = (w: number) => {
+    const y = doc.y + 1;
+    doc.save().rect(doc.x, y, w, 1.5).fill(hx(t.colors.accent)).restore();
+    doc.y = y + 6;
+  };
+  for (const line of content.split("\n")) {
+    if (line.startsWith("### ")) {
+      doc.font("Helvetica-Bold").fontSize(t.doc.h3Size).fillColor(hx(t.colors.accent)).text(line.slice(4));
+      doc.moveDown(0.2); body();
+    } else if (line.startsWith("## ")) {
+      doc.moveDown(0.3);
+      doc.font("Helvetica-Bold").fontSize(t.doc.h2Size).fillColor(hx(t.colors.subheading)).text(line.slice(3));
+      doc.moveDown(0.2); body();
+    } else if (line.startsWith("# ")) {
+      doc.moveDown(0.3);
+      doc.font("Helvetica-Bold").fontSize(t.doc.h1Size).fillColor(hx(t.colors.heading)).text(line.slice(2));
+      accentRule(120); body();
+    } else if (/^[-*]\s+/.test(line)) {
+      body().text("•  " + line.replace(/^[-*]\s+/, ""), { indent: 16 });
+    } else if (line.trim() === "") {
+      doc.moveDown();
+    } else {
+      body().text(line);
+    }
+  }
 }
 
 // ── pdf_read ──
@@ -93,16 +128,22 @@ const pdfCreate: ToolDefinition = {
       file_path: { type: "string", description: "Output PDF path" },
       content: { type: "string", description: "Formatted text with \\n newlines. Use # for headings, ## for subheadings. Separate paragraphs with \\n\\n." },
       title: { type: "string", description: "PDF title metadata" },
-      font_size: { type: "number", description: "Base font size (default 12)" },
+      font_size: { type: "number", description: "Base body font size override (default: theme body size)" },
       images: IMAGES_PARAM_SCHEMA,
+      theme: THEME_PARAM_SCHEMA,
     },
     required: ["file_path", "content"],
   },
   async execute(args) {
     try {
-      const fontSize = (args.font_size as number) ?? 12;
+      const baseTheme = resolveOfficeTheme(args.theme);
+      // Honor an explicit base font size by scaling the theme's doc sizes.
+      const theme: OfficeTheme = args.font_size
+        ? { ...baseTheme, doc: { ...baseTheme.doc, bodySize: args.font_size as number } }
+        : baseTheme;
+      const title = (args.title as string) ?? "";
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
-      const doc = new PDFDocument({ info: { Title: (args.title as string) ?? "" } });
+      const doc = new PDFDocument({ info: { Title: title } });
       const chunks: Buffer[] = [];
 
       const done = new Promise<Buffer>((resolve, reject) => {
@@ -111,20 +152,15 @@ const pdfCreate: ToolDefinition = {
         doc.on("error", reject);
       });
 
-      const lines = (args.content as string).split("\n");
-      for (const line of lines) {
-        if (line.startsWith("## ")) {
-          doc.fontSize(fontSize * 1.3).font("Helvetica-Bold").text(line.slice(3));
-          doc.fontSize(fontSize).font("Helvetica");
-        } else if (line.startsWith("# ")) {
-          doc.fontSize(fontSize * 1.6).font("Helvetica-Bold").text(line.slice(2));
-          doc.fontSize(fontSize).font("Helvetica");
-        } else if (line.trim() === "") {
-          doc.moveDown();
-        } else {
-          doc.fontSize(fontSize).font("Helvetica").text(line);
-        }
+      if (title) {
+        doc.font("Helvetica-Bold").fontSize(theme.doc.titleSize).fillColor(hx(theme.colors.heading)).text(title);
+        const y = doc.y + 2;
+        doc.save().rect(doc.x, y, 160, 2).fill(hx(theme.colors.accent)).restore();
+        doc.y = y + 10;
       }
+
+      renderThemedContent(doc, args.content as string, theme);
+
       // Embed each image on its own page; pdfkit only supports png/jpeg natively.
       for (const img of acquired) {
         doc.addPage();
@@ -132,11 +168,11 @@ const pdfCreate: ToolDefinition = {
           doc.image(img.buffer, { fit: [500, 600], align: "center", valign: "center" });
         } else {
           // Best-effort marker — gif/webp/svg aren't accepted by pdfkit.image().
-          doc.fontSize(fontSize).font("Helvetica-Oblique").text(`[Image: ${img.source}]`);
+          doc.fontSize(theme.doc.bodySize).font("Helvetica-Oblique").fillColor(hx(theme.colors.muted)).text(`[Image: ${img.source}]`);
         }
         if (img.caption) {
           doc.moveDown();
-          doc.fontSize(fontSize).font("Helvetica-Oblique").text(img.caption, { align: "center" });
+          doc.fontSize(theme.doc.bodySize).font("Helvetica-Oblique").fillColor(hx(theme.colors.muted)).text(img.caption, { align: "center" });
         }
       }
       doc.end();

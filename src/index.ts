@@ -225,7 +225,19 @@ if (args.includes("--login")) {
   }
 }
 
-startServer(config);
+// A rejected startServer means a boot phase failed: there is no listening
+// socket and never will be. Without this catch the rejection fell into the
+// crash guard above, which logs and keeps the process alive — a zombie that
+// holds server.pid while the desktop splash polls /api/health forever
+// (2026-06-09: a stale-dist import error produced exactly that hang). Exit
+// loudly instead so the desktop shell's exit handler can restart or surface
+// recovery. logStream.end flushes the log first; the timer is the backstop
+// in case the stream callback never fires.
+startServer(config).catch((e: Error) => {
+  logger.error(`[boot] startServer failed — exiting: ${e.message}`);
+  logStream.end(() => process.exit(1));
+  setTimeout(() => process.exit(1), 2000);
+});
 
 // Deferred orphan-worktree sweep — runs AFTER the server is up so its
 // filesystem walk + EBUSY-retry deletes never block port-listening. Best-effort

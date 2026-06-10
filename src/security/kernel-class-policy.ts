@@ -46,7 +46,7 @@ export function evaluateByKernelClass(
     return {
       allowed: false,
       reason: `Blocked: tool "${toolName}" not in registry — register in src/tool-registry.ts`,
-      userHint: USER_HINTS.policy,
+      userHint: USER_HINTS.kernel,
     };
   }
 
@@ -172,6 +172,6 @@ export function evaluateByKernelClass(
   return {
     allowed: false,
     reason: `Blocked: tool "${toolName}" has unrecognized kernel class "${String(kernelClass)}"`,
-    userHint: USER_HINTS.policy,
+    userHint: USER_HINTS.kernel,
   };
 }

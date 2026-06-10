@@ -192,6 +192,13 @@ export const USER_HINTS = {
   /** Tool-policy default-deny, rate cap by policy, blocked args, host allowlist, hook, RBAC, declined approval, context-restricted tool. */
   policy:
     "That action isn't permitted by the current policy — tell me what you'd like instead, or relax the rule in ~/.lax/tool-policy.json.",
+  /** Security-kernel (ARI) block: missing tool mapping/grant, kernel inactive in
+   *  ariRequired mode, kernel evaluation error. NOT fixable in user settings —
+   *  pointing the agent at tool-policy.json here sent it diagnosing the wrong
+   *  layer (2026-06-10, image_search). The reason line names the engine-level
+   *  cause; the right move is report-the-bug, not edit-your-config. */
+  kernel:
+    "The security kernel blocked this tool call — this is an engine-level gate, not your settings. The reason below names the cause; if it mentions a missing mapping or grant, that's an app bug to report (or update the app), not something to fix in ~/.lax.",
   /** Shell metacharacters, heredoc + script writes, dangerous patterns, obfuscation. */
   commandShell:
     "I can't run that shell command — tell me what you're trying to do and I'll find a safer way (often a dedicated tool exists).",

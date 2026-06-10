@@ -27,7 +27,7 @@ export async function ariEvaluate(
   const firewall = getFirewall();
   if (!firewall) {
     if (isAriRequired()) {
-      return { allowed: false, reason: "AriKernel required but not active — tool call blocked", userHint: USER_HINTS.policy };
+      return { allowed: false, reason: "[ARI kernel] required but not active — tool call blocked", userHint: USER_HINTS.kernel };
     }
     return { allowed: true, reason: "AriKernel not active" };
   }
@@ -39,8 +39,8 @@ export async function ariEvaluate(
   if (TOOL_CLASS_MAP[toolName] === undefined) {
     return {
       allowed: false,
-      reason: `[ARI] ${toolName} not in TOOL_CLASS_MAP — fail-closed. Classify it (file/http/shell/database/retrieval/secret-vault/internal) in src/ari-kernel/tool-class-map.ts.`,
-      userHint: USER_HINTS.policy,
+      reason: `[ARI kernel] ${toolName} not in TOOL_CLASS_MAP — fail-closed. Classify it (file/http/shell/database/retrieval/secret-vault/internal) in src/ari-kernel/tool-class-map.ts.`,
+      userHint: USER_HINTS.kernel,
     };
   }
 
@@ -68,8 +68,8 @@ export async function ariEvaluate(
     if (!result.success) {
       return {
         allowed: false,
-        reason: `[ARI] ${result.error || "Denied by kernel policy"}`,
-        userHint: USER_HINTS.policy,
+        reason: `[ARI kernel] ${result.error || "Denied by kernel policy"}`,
+        userHint: USER_HINTS.kernel,
       };
     }
 
@@ -77,7 +77,17 @@ export async function ariEvaluate(
   } catch (e) {
     if (isAriRequired()) {
       logger.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${(e as Error).message}`);
-      return { allowed: false, reason: "ARI error — tool call blocked (ariRequired mode)", userHint: USER_HINTS.policy };
+      // Surface the underlying error IN the result the model sees. The
+      // generic "ARI error" alone sent the agent diagnosing tool-policy.json
+      // while the actual cause ("Unknown action 'exec' for tool class
+      // 'http'" — a missing ARI_ACTION_MAP entry) sat only in this log.
+      // Single-line + capped: zod errors arrive as multi-line JSON arrays.
+      const detail = ((e as Error).message || String(e)).replace(/\s+/g, " ").slice(0, 300);
+      return {
+        allowed: false,
+        reason: `[ARI kernel] evaluation error, blocked in ariRequired mode: ${detail}`,
+        userHint: USER_HINTS.kernel,
+      };
     }
     return { allowed: true, reason: "ARI error (fail-open, built-in security active)" };
   }

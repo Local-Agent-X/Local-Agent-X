@@ -21,6 +21,7 @@ import { spreadsheetTools } from "./spreadsheet-tools.js";
 import { documentTools } from "./document-tools.js";
 import { presentationTools } from "./presentation-tools.js";
 import { pdfTools } from "./pdf-tools.js";
+import { chartTools } from "./chart-tools.js";
 import { emailTools } from "./email-tools.js";
 import { calendarTools } from "./calendar-tools.js";
 import { clipboardTools } from "./clipboard-tools.js";
@@ -47,7 +48,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   buildAppTool,
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool,
   ...processTools,
-  ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools,
+  ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools, ...chartTools,
   ...emailTools, ...calendarTools, ...clipboardTools, ...sqlTools,
   ...taskTools, ...planTools, ...autopilotTools, ...opTools,
   {

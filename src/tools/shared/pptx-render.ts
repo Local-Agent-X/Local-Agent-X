@@ -11,20 +11,9 @@
 import { acquireImages, type AcquiredImage, type ImageSpec } from "./image-acquire.js";
 import type { OfficeTheme } from "./office-theme.js";
 import { cleanText, toPlainText } from "./office-md.js";
+import { isValidChart, type ChartSpec } from "./office-chart.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
-const CHART_TYPES = ["bar", "line", "pie", "doughnut", "area", "radar", "scatter"] as const;
-export type ChartType = (typeof CHART_TYPES)[number];
-
-export interface ChartSpec {
-  type: ChartType;
-  /** Category axis labels (x-axis / pie slice labels). */
-  categories?: string[];
-  /** One entry per data series. Pie/doughnut use the first series only. */
-  series: { name: string; values: number[] }[];
-  title?: string;
-}
 
 export interface SlideSpec {
   title?: string;
@@ -45,11 +34,6 @@ const SLIDE_H = 7.5;
 /** A short accent rule (navy bar) used under titles to anchor the layout. */
 function accentBar(slide: any, t: OfficeTheme, x: number, y: number, w = 2.0): void {
   slide.addShape("rect", { x, y, w, h: 0.07, fill: { color: t.colors.accent }, line: { type: "none" } });
-}
-
-function isValidChart(c: ChartSpec | undefined): c is ChartSpec {
-  return !!c && CHART_TYPES.includes(c.type) && Array.isArray(c.series) && c.series.length > 0
-    && c.series.every((s) => Array.isArray(s.values) && s.values.length > 0);
 }
 
 function renderChart(slide: any, t: OfficeTheme, chart: ChartSpec, box: { x: number; y: number; w: number; h: number }): void {

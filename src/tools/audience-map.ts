@@ -28,6 +28,7 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Web & search
   web_fetch:   ["main-chat", "spawned-agent", "operator", "build-intent"],
   web_search:  ["main-chat", "spawned-agent", "operator", "build-intent"],
+  image_search: ["main-chat", "spawned-agent", "operator", "build-intent"],
   http_request: ["main-chat", "spawned-agent", "operator"],
 
   // App self-control

@@ -381,5 +381,6 @@ export const IMAGES_PARAM_SCHEMA = {
     },
     required: ["source"],
   },
-  description: "Optional images to embed. Source can be a URL (http(s)://) or a local file path.",
+  description: "Optional images to embed. Source can be a URL (http(s)://) or a local file path. " +
+    "Don't have a URL? Call image_search first to find a relevant image, then pass its URL here.",
 } as const;

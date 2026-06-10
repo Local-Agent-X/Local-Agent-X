@@ -31,7 +31,8 @@ const SLIDE_SPEC_DOC =
   "series: [{name, values: number[]}], title?}}. " +
   "VISUAL BY DEFAULT: when a slide presents numbers, comparisons, or trends, add a `chart` " +
   "with the actual data — do NOT make a slide that is just 3-4 bullets of figures. " +
-  "Add an `image` (a web URL or a workspace file path) when a picture would strengthen the point. " +
+  "Add an `image` (a web URL or a workspace file path) when a picture would strengthen the point — " +
+  "use the image_search tool to find a relevant image URL if you don't have one. " +
   "Keep bullets short (≤5 per slide, one line each). image+text or chart+text auto-lay side by side.";
 
 // ── presentation_create ──

@@ -47,6 +47,13 @@ interface ReconcileState {
   rootLock: string;
   desktopLock: string;
   desktopSrc: string;
+  /** Hash of the server's src/ tree. Optional because pre-existing state
+   *  files don't have it — absence reads as "changed", which forces one
+   *  root build on first launch after this field shipped. That's the heal
+   *  for installs whose dist froze while updates only touched src/ (the
+   *  2026-06-09 failure: dist stuck at Jun 7 while the user pulled updates
+   *  all day, every boot falling back to slow tsx). */
+  rootSrc?: string;
   lastReconciledAt: string;
 }
 
@@ -57,6 +64,11 @@ export interface ReconcileResult {
   /** Human-readable list of steps that ran, for logging. Empty on a
    *  clean-launch hit (no changes detected). */
   ranSteps: string[];
+  /** Non-fatal degradations the caller MUST surface to the user (e.g. the
+   *  server build failed and the app is running source via tsx). Reconcile
+   *  deliberately does not throw for these — but silence is not an option
+   *  either. */
+  warnings: string[];
 }
 
 export interface ReconcileOpts {
@@ -167,10 +179,13 @@ const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b78
 export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult> {
   const { projectRoot, onStatus } = opts;
   const ranSteps: string[] = [];
+  const warnings: string[] = [];
+  let rootBuildSucceeded = false;
 
   const currentRootLock = sha256File(join(projectRoot, "package-lock.json"));
   const currentDesktopLock = sha256File(join(projectRoot, "desktop", "package-lock.json"));
   const currentDesktopSrc = sha256SrcTree(join(projectRoot, "desktop", "src"), projectRoot);
+  const currentRootSrc = sha256SrcTree(join(projectRoot, "src"), projectRoot);
 
   // Misconfigured projectRoot guard. If we found zero .ts files under
   // desktop/src AND the root package-lock.json is missing, the path
@@ -196,19 +211,64 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       rootLock: currentRootLock,
       desktopLock: currentDesktopLock,
       desktopSrc: currentDesktopSrc,
+      rootSrc: currentRootSrc,
       lastReconciledAt: new Date().toISOString(),
     });
-    return { needsRelaunch: false, ranSteps: ["first-launch (recorded baseline)"] };
+    return { needsRelaunch: false, ranSteps: ["first-launch (recorded baseline)"], warnings: [] };
   }
 
   const rootChanged    = stored.rootLock    !== currentRootLock;
   const desktopChanged = stored.desktopLock !== currentDesktopLock;
   const srcChanged     = stored.desktopSrc  !== currentDesktopSrc;
+  // Missing on pre-field state files → reads as changed → one healing build.
+  const rootSrcChanged = stored.rootSrc     !== currentRootSrc;
 
   if (rootChanged) {
     onStatus?.("Updating components…");
     await runStep("npm", ["install", "--no-audit", "--no-fund"], projectRoot);
     ranSteps.push("root npm install");
+  }
+  // Server build. An OTA/git update that only touches src/ used to leave
+  // dist/ frozen forever (reconcile only watched lockfiles + desktop/src) —
+  // the server then booted via the tsx-staleness fallback every launch:
+  // correct code, but the slow path, and one fallback away from serving
+  // stale builds. Runs `npm run build` (the canonical pipeline — build:ari
+  // first, so workspace package .d.ts can't strand tsc) with the same
+  // backup → validate → rollback contract as the desktop build below.
+  if (rootChanged || rootSrcChanged) {
+    onStatus?.("Building server updates…");
+    const rootDist = join(projectRoot, "dist");
+    const rootBackup = `${rootDist}.prev`;
+    const haveRootBackup = existsSync(rootDist);
+    if (haveRootBackup) {
+      rmSync(rootBackup, { recursive: true, force: true });
+      cpSync(rootDist, rootBackup, { recursive: true });
+    }
+    try {
+      await runStep("npm", ["run", "build"], projectRoot);
+      const bad = firstUnparseableJs(rootDist);
+      if (bad) throw new Error(`${relative(projectRoot, bad.file)} — ${bad.error}`);
+      ranSteps.push("server build");
+      rootBuildSucceeded = true;
+    } catch (e) {
+      if (haveRootBackup) {
+        rmSync(rootDist, { recursive: true, force: true });
+        cpSync(rootBackup, rootDist, { recursive: true });
+      }
+      // NON-fatal, unlike the desktop build below: the server's boot-time
+      // staleness check (server-process.ts distIsFresh) sees src newer than
+      // the reverted dist and runs current source via tsx — correct code,
+      // slow path. Blocking launch over a build failure whose runtime cost
+      // is only speed would strand the user worse than the bug being fixed.
+      // Loud, not silent: surfaced as a warning the caller must show, and
+      // rootSrc is NOT recorded so every boot retries until a build greens.
+      warnings.push(
+        `Server build failed: ${(e as Error).message}. Running from source instead ` +
+        `(slower start). Will retry on next launch — if this persists, update again or report it.`,
+      );
+    } finally {
+      rmSync(rootBackup, { recursive: true, force: true });
+    }
   }
   if (desktopChanged) {
     onStatus?.("Updating desktop components…");
@@ -254,8 +314,12 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
     rootLock: currentRootLock,
     desktopLock: currentDesktopLock,
     desktopSrc: currentDesktopSrc,
+    // Only advance the server-src marker when its build actually landed —
+    // recording it after a failed build would mark the stale dist as
+    // reconciled and never retry.
+    rootSrc: rootBuildSucceeded || !rootSrcChanged ? currentRootSrc : stored.rootSrc,
     lastReconciledAt: new Date().toISOString(),
   });
 
-  return { needsRelaunch: srcChanged, ranSteps };
+  return { needsRelaunch: srcChanged, ranSteps, warnings };
 }

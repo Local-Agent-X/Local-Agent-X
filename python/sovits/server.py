@@ -31,6 +31,7 @@ import io
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -59,12 +60,30 @@ SAMPLE_RATE = 32000
 _state = {"sovits_pth": None, "gpt_ckpt": None}
 
 
+# clone_id is interpolated into a filesystem path under VOICES_DIR. Every path
+# build goes through _clone_dir(), which rejects anything but an unambiguous
+# slug — so a request can't escape the directory with "../" segments,
+# separators, or a NUL (path traversal → arbitrary read/delete), and a future
+# endpoint can't reintroduce the hole by skipping a boundary check.
+_CLONE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _is_safe_clone_id(clone_id: object) -> bool:
+    return isinstance(clone_id, str) and bool(_CLONE_ID_RE.match(clone_id))
+
+
+def _clone_dir(clone_id: str) -> Path:
+    if not _is_safe_clone_id(clone_id):
+        raise HTTPException(400, f"invalid clone id: {clone_id!r}")
+    return VOICES_DIR / clone_id
+
+
 def _meta_path(clone_id: str) -> Path:
-    return VOICES_DIR / clone_id / "meta.json"
+    return _clone_dir(clone_id) / "meta.json"
 
 
 def _ref_path(clone_id: str) -> Path:
-    return VOICES_DIR / clone_id / "ref.wav"
+    return _clone_dir(clone_id) / "ref.wav"
 
 
 def _read_meta(clone_id: str) -> dict | None:
@@ -80,7 +99,7 @@ def _read_meta(clone_id: str) -> dict | None:
 def _list_clones() -> list[dict]:
     out = []
     for d in sorted(VOICES_DIR.iterdir()):
-        if not d.is_dir():
+        if not d.is_dir() or not _is_safe_clone_id(d.name):
             continue
         meta = _read_meta(d.name)
         if not meta or not _ref_path(d.name).exists():
@@ -242,7 +261,7 @@ async def create_clone(req: Request):
         raise HTTPException(400, "prompt_text required (transcript of ref clip)")
 
     clone_id = uuid.uuid4().hex[:12]
-    cdir = VOICES_DIR / clone_id
+    cdir = _clone_dir(clone_id)
     cdir.mkdir(parents=True, exist_ok=True)
     try:
         wav_bytes = base64.b64decode(ref_b64)
@@ -289,7 +308,7 @@ async def patch_clone(clone_id: str, req: Request):
 
 @app.delete("/clones/{clone_id}")
 async def delete_clone(clone_id: str):
-    cdir = VOICES_DIR / clone_id
+    cdir = _clone_dir(clone_id)
     if not cdir.exists():
         raise HTTPException(404, "clone not found")
     for p in cdir.iterdir():

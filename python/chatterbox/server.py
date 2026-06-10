@@ -32,6 +32,7 @@ import io
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -146,7 +147,21 @@ app = FastAPI(lifespan=lifespan)
 
 # ── Reference-clip storage ────────────────────────────────────────────────
 
+# voice_id is interpolated into a filesystem path under VOICES_DIR. Every path
+# build goes through _voice_dir(), which rejects anything but an unambiguous
+# slug — so a request can't escape the directory with "../" segments,
+# separators, or a NUL (path traversal → arbitrary read/delete), and a future
+# endpoint can't reintroduce the hole by skipping a boundary check.
+_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _is_safe_voice_id(voice_id: object) -> bool:
+    return isinstance(voice_id, str) and bool(_VOICE_ID_RE.match(voice_id))
+
+
 def _voice_dir(voice_id: str) -> Path:
+    if not _is_safe_voice_id(voice_id):
+        raise HTTPException(400, f"invalid voice id: {voice_id!r}")
     return Path(VOICES_DIR) / voice_id
 
 
@@ -163,6 +178,8 @@ def _list_clones() -> list:
     if not os.path.isdir(VOICES_DIR):
         return out
     for entry in sorted(os.listdir(VOICES_DIR)):
+        if not _is_safe_voice_id(entry):
+            continue
         meta = _meta_path(entry)
         ref = _ref_path(entry)
         if not meta.is_file() or not ref.is_file():
@@ -211,7 +228,7 @@ async def upload_clone(payload: dict = Body(...)):
     audio_b64 = payload.get("audio_b64") or ""
     if not audio_b64:
         raise HTTPException(400, "audio_b64 required")
-    voice_id = payload.get("id") or uuid.uuid4().hex[:12]
+    voice_id = (payload.get("id") or "").strip() or uuid.uuid4().hex[:12]
 
     try:
         wav_bytes = base64.b64decode(audio_b64)

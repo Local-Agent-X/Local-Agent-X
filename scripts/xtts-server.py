@@ -9,7 +9,7 @@ Endpoints:
   GET  /health       — health check
 """
 
-import os, sys, json, io, wave, hashlib, time, glob
+import os, sys, json, io, wave, hashlib, time, glob, re
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote as _url_unquote
@@ -18,6 +18,22 @@ from urllib.parse import urlparse, parse_qs, unquote as _url_unquote
 PORT = int(os.environ.get("XTTS_PORT", "7862"))
 VOICES_DIR = Path(os.environ.get("XTTS_VOICES_DIR", os.path.expanduser("~/.lax/voices")))
 VOICES_DIR.mkdir(parents=True, exist_ok=True)
+
+# voice_id is interpolated into a filesystem path under VOICES_DIR; restrict it
+# to an unambiguous slug so a request can't escape the directory with "../"
+# segments, separators, or a NUL (path traversal → arbitrary read/delete).
+_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+def _valid_voice_id(voice_id):
+    return isinstance(voice_id, str) and bool(_VOICE_ID_RE.match(voice_id))
+
+def _voice_path(voice_id, ext):
+    """Single chokepoint for every VOICES_DIR path built from a user-supplied
+    voice_id. Raises ValueError on a non-slug id so a forgotten caller fails
+    closed (no traversal) instead of escaping the directory."""
+    if not _valid_voice_id(voice_id):
+        raise ValueError(f"invalid voice_id: {voice_id!r}")
+    return VOICES_DIR / f"{voice_id}{ext}"
 
 # Lazy-load model (heavy, only load on first request)
 _tts = None
@@ -67,7 +83,7 @@ def generate_speech(text, voice_id=None, language="en"):
     speaker_wav = None
     if voice_id:
         for ext in [".wav", ".mp3"]:
-            p = VOICES_DIR / f"{voice_id}{ext}"
+            p = _voice_path(voice_id, ext)
             if p.exists():
                 speaker_wav = str(p)
                 break
@@ -144,19 +160,20 @@ class XTTSHandler(BaseHTTPRequestHandler):
         # Serve voice audio files for preview
         if path.startswith("/voices/") and path.endswith("/preview"):
             voice_id = _url_unquote(path.split("/")[2])
-            # Prevent path traversal
-            if ".." in voice_id or "/" in voice_id or "\\" in voice_id or "\x00" in voice_id:
+            # Prevent path traversal: build every candidate via the chokepoint.
+            try:
+                candidates = [_voice_path(voice_id, ext) for ext in (".wav", ".mp3")]
+            except ValueError:
                 self.send_response(400)
                 self._cors()
                 self.end_headers()
                 self.wfile.write(b'{"error":"Invalid voice ID"}')
                 return
-            for ext in [".wav", ".mp3"]:
-                p = VOICES_DIR / f"{voice_id}{ext}"
+            for p in candidates:
                 if p.exists():
                     self.send_response(200)
                     self._cors()
-                    ct = "audio/wav" if ext == ".wav" else "audio/mpeg"
+                    ct = "audio/wav" if p.suffix == ".wav" else "audio/mpeg"
                     self.send_header("Content-Type", ct)
                     self.send_header("Content-Length", str(p.stat().st_size))
                     self.end_headers()
@@ -295,10 +312,18 @@ class XTTSHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
 
         if path.startswith("/voices/"):
-            voice_id = path.split("/")[2]
+            voice_id = _url_unquote(path.split("/")[2])
+            try:
+                targets = [_voice_path(voice_id, ext) for ext in (".wav", ".mp3")]
+            except ValueError:
+                self.send_response(400)
+                self._cors()
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Invalid voice ID"}).encode())
+                return
             deleted = False
-            for ext in [".wav", ".mp3"]:
-                p = VOICES_DIR / f"{voice_id}{ext}"
+            for p in targets:
                 if p.exists():
                     p.unlink()
                     deleted = True

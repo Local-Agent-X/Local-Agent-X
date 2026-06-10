@@ -1,5 +1,6 @@
+import { sep } from "node:path";
 import type { RouteHandler } from "../server-context.js";
-import { jsonResponse, readBody } from "../server-utils.js";
+import { jsonResponse, readBody, safeErrorMessage } from "../server-utils.js";
 import type { FactKind } from "../memory/index.js";
 import { readIdentityProfile, humanizeSlug } from "../memory/identity-profile.js";
 
@@ -207,9 +208,17 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
       const { mkdirSync, writeFileSync, unlinkSync } = await import("fs");
       const { join } = await import("path");
       const { tmpdir } = await import("os");
-      // Read multipart body
+      // Read multipart body — capped so a single large POST can't pin the
+      // whole upload in RSS and OOM the process (the binary string-split parser
+      // below already doubles the footprint).
+      const maxBytes = ctx.config.maxUploadBytes;
       const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(chunk as Buffer);
+      let total = 0;
+      for await (const chunk of req) {
+        total += (chunk as Buffer).length;
+        if (total > maxBytes) { json(413, { error: "Upload too large" }); return true; }
+        chunks.push(chunk as Buffer);
+      }
       const body = Buffer.concat(chunks);
       const boundary = contentType.match(/boundary=(?:"([^"]+)"|([^\s;]+))/)?.[1] || contentType.match(/boundary=(?:"([^"]+)"|([^\s;]+))/)?.[2];
       if (!boundary) { json(400, { error: "No boundary in content-type" }); return true; }
@@ -259,7 +268,7 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
       const stats = ctx.memoryIndex.getStats();
       json(200, { ok: true, chunksCreated: chunks.length, totalChunks: stats.totalChunks });
     } catch (e) {
-      json(500, { error: (e as Error).message, stack: (e as Error).stack?.slice(0, 500) });
+      json(500, { error: safeErrorMessage(e) });
     }
     return true;
   }
@@ -270,12 +279,30 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON body" }); return true; }
     const path = body.path as string;
     if (!path) { json(400, { error: "path required" }); return true; }
+    // Confine the ingest root: an adversarial caller could point ingest at
+    // ~/.ssh, ~/.aws, or the app's own data dir to pull secrets into searchable
+    // memory. Canonicalize first (so a symlink can't alias a sensitive target
+    // past the check), then refuse sensitive or app-internal roots. We deny
+    // sensitive locations rather than allowlist the workspace because importing
+    // a chat export legitimately reads a user-chosen dir (~/Downloads, a USB
+    // drive) outside it. The dir is scanned non-recursively (ingest.ts), so the
+    // root is the only path that gets read.
+    const { realpathDeep, matchesSensitivePath } = await import("../security/file-access.js");
+    const { getLaxDir } = await import("../lax-data-dir.js");
+    let realRoot: string;
+    try { realRoot = realpathDeep(path); } catch { json(400, { error: "path not accessible" }); return true; }
+    const probe = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
+    const laxDir = realpathDeep(getLaxDir());
+    if (matchesSensitivePath(probe) || probe.startsWith(laxDir + sep) || realRoot === laxDir) {
+      json(403, { error: "Refusing to ingest a sensitive or app-internal directory" });
+      return true;
+    }
     try {
       const { ingestConversations } = await import("../conversation/ingest.js");
-      const result = await ingestConversations(ctx.memoryIndex, path);
+      const result = await ingestConversations(ctx.memoryIndex, realRoot);
       json(200, result);
     } catch (e) {
-      json(500, { error: "Ingest failed: " + (e as Error).message });
+      json(500, { error: "Ingest failed: " + safeErrorMessage(e) });
     }
     return true;
   }

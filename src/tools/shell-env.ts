@@ -94,11 +94,24 @@ const SAFE_ENV_KEYS = new Set([
 const CREDENTIAL_ENV_PATTERNS = [
   /api[_-]?key/i, /secret/i, /token/i, /password/i, /passwd/i,
   /private[_-]?key/i, /access[_-]?key/i, /auth/i, /credential/i,
+  // Generic credential-name stems the per-vendor list above misses: any var
+  // ending in _KEY / _PASS / _PWD / _DSN carries a key, password, or
+  // connection string regardless of vendor (SUPABASE_KEY, SMTP_PASS,
+  // MYSQL_PWD, SENTRY_DSN). Anchored on a `_` boundary so it doesn't catch
+  // innocuous names like BYPASS or MONKEY.
+  /_key$/i, /_pass$/i, /_pwd$/i, /_dsn$/i, /passphrase/i, /connection[_-]?string/i,
   /^AWS_/i, /^AZURE_/i, /^GCP_/i, /^GOOGLE_/i,
   /^OPENAI/i, /^XAI/i, /^LAX_AUTH/i, /^LAX_.*KEY/i,
   /^GITHUB_/i, /^SLACK_/i, /^STRIPE_/i, /^LINEAR_/i,
   /^NPM_TOKEN/i, /^DOCKER_/i, /^CI_/i,
 ];
+
+// Value-shape detector for credentials embedded in a connection string —
+// `scheme://user:pass@host`. This is naming-convention-independent: it catches
+// the password in DATABASE_URL / MONGODB_URI / REDIS_URL / AMQP_URL no matter
+// what the var is called, closing the class the name-denylist can't (their
+// URL punctuation `://@:` also slips the high-entropy value gate below).
+const CONNECTION_STRING_CREDENTIAL = /[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s:@]+@/i;
 
 /**
  * Build a credential-scrubbed environment for a spawned subprocess. Starts
@@ -118,6 +131,7 @@ export function buildSanitizedEnv(extra?: Record<string, string>): Record<string
     if (CREDENTIAL_ENV_PATTERNS.some((p) => p.test(key))) continue;
     if (value.includes("\0")) continue;
     if (value.length >= 32 && /^[A-Za-z0-9+/=_-]+$/.test(value)) continue;
+    if (CONNECTION_STRING_CREDENTIAL.test(value)) continue;
     sanitizedEnv[key] = value;
   }
   if (extra) {

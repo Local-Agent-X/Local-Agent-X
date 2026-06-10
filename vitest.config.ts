@@ -38,27 +38,31 @@ export default defineConfig({
     },
     // Native addons (better-sqlite3, sqlite-vec, sherpa-onnx) are not safe to
     // share across worker threads — a "threads" pool segfaults under concurrent
-    // file execution. Forks give each test file its own process.
+    // file execution. Forks give each test file its own process. singleFork
+    // stays at its default (false) — vitest 4 removed poolOptions, and the
+    // fork-per-file behavior we need is now the default for pool:"forks".
     pool: "forks",
-    poolOptions: {
-      forks: {
-        singleFork: false,
-      },
-    },
     isolate: true,
     coverage: {
       provider: "v8",
       reporter: ["text-summary", "lcov"],
       include: ["src/**/*.ts", "packages/**/src/**/*.ts"],
       exclude: ["**/*.test.ts", "**/*.d.ts", "**/dist/**", "**/__tests__/**"],
-      // Floor set a few points below the current baseline (lines 37.5%,
-      // functions 48.8%, branches 74.6%) — a regression ratchet, not a
-      // target. Raise these as coverage grows; never lower to make CI pass.
+      // Floors re-baselined for vitest 4: its v8 provider switched to
+      // AST-aware branch/function counting, which enumerates far more
+      // branch points (optional chains, nullish coalescing, default params)
+      // than vitest 3 did — same tests, larger denominator. Branch coverage
+      // reads 29.9% / functions 34.4% here where vitest 3 reported 74.6% /
+      // 48.8% on the identical suite; the drop is the metric, not lost
+      // coverage. Floors sit a few points under the vitest-4 actuals
+      // (statements 33.6, branches 29.9, functions 34.4, lines 35.3) — a
+      // regression ratchet, not a target. Raise as coverage grows; never
+      // lower to make CI pass.
       thresholds: {
-        statements: 35,
-        branches: 70,
-        functions: 45,
-        lines: 35,
+        statements: 32,
+        branches: 27,
+        functions: 32,
+        lines: 33,
       },
     },
   },

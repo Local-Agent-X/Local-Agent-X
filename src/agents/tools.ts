@@ -21,6 +21,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import type { InvokeScope } from "./types.js";
 import { AgentCatalog } from "./catalog.js";
 import { invokeAgent, awaitAgentRunning, AgentNotFoundError } from "./invoke.js";
+import { taskNeedsArtifactEdit, canEditArtifacts, spawnMismatchMessage } from "./spawn-guard.js";
 import { Handler } from "../agency/handler.js";
 import { AgentTemplateStore } from "../agent-store/index.js";
 
@@ -104,12 +105,26 @@ export function createAgentTools(): ToolDefinition[] {
       async execute(args) {
         try {
           const sessionFromArgs = args._sessionId ? String(args._sessionId) : undefined;
+          const scope = parseScope(args);
+          const task = String(args.task);
+          // Router-correctness guard: a task that needs an existing artifact
+          // edited must go to a worker that can locate + edit one. The error
+          // names capable agents so the caller re-routes — it never
+          // discourages delegating itself (always-delegate modes depend on
+          // this distinction). See spawn-guard.ts.
+          const def = AgentCatalog.getInstance().get(String(args.agent), scope);
+          if (def && taskNeedsArtifactEdit(task) && !canEditArtifacts(def.allowedTools)) {
+            const capable = AgentCatalog.getInstance()
+              .list(scope)
+              .filter((d) => canEditArtifacts(d.allowedTools));
+            return err(spawnMismatchMessage(def.role, def.allowedTools, capable));
+          }
           const ref = invokeAgent(
             String(args.agent),
-            String(args.task),
+            task,
             {
               parentSessionId: sessionFromArgs,
-              scope: parseScope(args),
+              scope,
               nameOverride: args.name_override ? String(args.name_override) : undefined,
             },
           );

@@ -38,6 +38,11 @@ export const state = {
   items: [],
   // Topic clusters (id, label, color, centroid) for coloring + labels.
   clusters: [],
+  // Region-graph edges from the atlas: [clusterIdA, clusterIdB, weight 0..1].
+  edges: [],
+  // Eased visibility of the region graph (1 = regions own the view, 0 = dots).
+  // Written by regions.js each frame; read by picking to gate region clicks.
+  regionFactor: 0,
   // Two position mappings for the same projection: 'map' = raw PCA islands,
   // 'brain' = same data warped into a brain silhouette. Toggled live.
   layoutMode: 'brain',

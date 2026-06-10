@@ -11,9 +11,10 @@ export async function loadAtlas() {
       total: typeof r.total === 'number' ? r.total : 0,
       items: Array.isArray(r.items) ? r.items : [],
       clusters: Array.isArray(r.clusters) ? r.clusters : [],
+      edges: Array.isArray(r.edges) ? r.edges : [],
     };
   } catch {
-    return { total: 0, items: [], clusters: [] };
+    return { total: 0, items: [], clusters: [], edges: [] };
   }
 }
 

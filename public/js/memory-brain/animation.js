@@ -4,7 +4,7 @@
 
 import { state } from './state.js';
 import { updateClusterLabels } from './labels.js';
-import { updateLod } from './lod.js';
+import { updateRegions } from './regions.js';
 import { updateFocus, updateDrillUi } from './focus.js';
 
 export function tick() {
@@ -25,7 +25,7 @@ export function tick() {
   }
   updateFocus();
   updateDrillUi();
-  updateLod();
+  updateRegions();
   state.renderer.render(state.scene, state.camera);
   updateClusterLabels();
 }

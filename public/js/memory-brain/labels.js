@@ -46,7 +46,9 @@ export function updateClusterLabels() {
   const z = state.camera.position.z;
   // Zoomed in close — individual dots own the view, labels would just clutter.
   if (z < 2.4) { for (const e of els) e.el.style.display = 'none'; return; }
-  const maxLabels = z > 3.6 ? 6 : z > 2.8 ? 10 : 14;
+  // The region graph is the top-level view: every circle wants its name.
+  // Collision avoidance still prunes overlaps when regions bunch up.
+  const maxLabels = z > 2.8 ? 16 : 12;
   const rect = state.canvas.getBoundingClientRect();
   const placed = [];
   let shown = 0;

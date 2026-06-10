@@ -51,7 +51,7 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     if (!layout) {
       // No layout yet (e.g. no embeddings) — return flat records; the brain
       // falls back to scatter positioning.
-      json(200, { total: recs.total, clusters: [], items: recs.items });
+      json(200, { total: recs.total, clusters: [], items: recs.items, edges: [] });
       return true;
     }
     const byId = new Map(recs.items.map((it) => [it.id, it]));
@@ -67,7 +67,7 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
         cluster: layout.cluster[i],
       });
     }
-    json(200, { total: recs.total, clusters: layout.clusters, items });
+    json(200, { total: recs.total, clusters: layout.clusters, items, edges: layout.edges ?? [] });
     return true;
   }
 

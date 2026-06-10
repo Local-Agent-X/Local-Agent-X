@@ -48,12 +48,13 @@ export async function ensure() {
   const loading = document.getElementById('mb-loading');
 
   if (loading) loading.style.display = '';
-  const { total, items, clusters } = await loadAtlas();
+  const { total, items, clusters, edges } = await loadAtlas();
   if (loading) loading.style.display = 'none';
 
   state.count = total;
   state.items = items;
   state.clusters = clusters;
+  state.edges = edges;
 
   const toggle = document.getElementById('mb-toggle');
 

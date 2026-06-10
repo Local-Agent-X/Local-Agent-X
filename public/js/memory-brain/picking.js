@@ -5,7 +5,8 @@
 
 import * as THREE from 'three';
 import { state } from './state.js';
-import { clearFocus } from './focus.js';
+import { clearFocus, flyToCluster } from './focus.js';
+import { pickRegion } from './regions.js';
 
 // Only raycast individual dots once zoomed in past this distance — from the
 // overview every dot overlaps its neighbours, so a click would hit a random
@@ -38,12 +39,21 @@ export function wirePicking() {
     const hit = pick(e);
     if (hit) showTip(e, hit);
     else hideTip();
+    // Region circles are click targets at the overview — show the hand.
+    el.style.cursor = hit || pickRegion(e) ? 'pointer' : '';
   });
 
   el.addEventListener('click', (e) => {
     const hit = pick(e);
-    if (hit) { pinned = true; showTip(e, hit); }
-    else { pinned = false; hideTip(); clearFocus(); }
+    if (hit) { pinned = true; showTip(e, hit); return; }
+    pinned = false;
+    hideTip();
+    // At the overview a click on a region circle dives into it, same as
+    // clicking its label.
+    const region = pickRegion(e);
+    const cl = region && state.clusters.find((c) => c.id === region.id);
+    if (cl) flyToCluster(cl);
+    else clearFocus();
   });
 }
 

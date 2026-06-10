@@ -17,7 +17,7 @@ const logger = createLogger("memory.atlas-layout");
 const DOUT = 48; // JL working dimension
 const LIMIT = 40000;
 // Bump when the layout/label algorithm changes so stale disk caches recompute.
-const VERSION = "v3";
+const VERSION = "v4";
 const yieldTick = () => new Promise<void>((r) => setImmediate(r));
 
 export interface AtlasCluster {
@@ -36,6 +36,9 @@ export interface AtlasLayout {
   xyz: number[]; // length n*3, normalized to roughly [-1.3, 1.3]
   cluster: number[];
   clusters: AtlasCluster[];
+  // Region graph: [clusterIdA, clusterIdB, weight 0..1] per edge. Each cluster
+  // links to its nearest neighbors in embedding space; weight = closeness.
+  edges: Array<[number, number, number]>;
 }
 
 let cache: AtlasLayout | null = null;
@@ -108,8 +111,9 @@ async function compute(dataDir: string, signature: string): Promise<AtlasLayout 
 
     const xyz = await projectTo3D(proj, n);
     const k = Math.max(8, Math.min(28, Math.round(n / 1500)));
-    const { assign } = await kmeans(proj, n, DOUT, k);
+    const { assign, centroids } = await kmeans(proj, n, DOUT, k);
     const clusters = buildClusters(k, assign, snips, xyz, n);
+    const edges = buildEdges(centroids, clusters);
 
     const layout: AtlasLayout = {
       signature,
@@ -117,6 +121,7 @@ async function compute(dataDir: string, signature: string): Promise<AtlasLayout 
       xyz: Array.from(xyz),
       cluster: Array.from(assign),
       clusters,
+      edges,
     };
     try { writeFileSync(cachePath(dataDir), JSON.stringify(layout)); } catch (e) {
       logger.warn(`[atlas] disk cache write failed: ${(e as Error).message}`);
@@ -219,4 +224,42 @@ function buildClusters(
     });
   }
   return out;
+}
+
+// Region graph edges: connect each cluster to its 2 nearest neighbors in the
+// 48-dim centroid space (semantic relatedness, not screen proximity). Pairs are
+// deduped; weight maps closeness to 0.25..1 so the farthest kept edge still
+// draws visibly. k is at most 28, so the O(k²) scan is trivial.
+function buildEdges(centroids: Float32Array, clusters: AtlasCluster[]): Array<[number, number, number]> {
+  const ids = clusters.map((c) => c.id);
+  if (ids.length < 2) return [];
+  const dist = (a: number, b: number): number => {
+    let s = 0;
+    for (let j = 0; j < DOUT; j++) {
+      const v = centroids[a * DOUT + j] - centroids[b * DOUT + j];
+      s += v * v;
+    }
+    return Math.sqrt(s);
+  };
+  const pairs = new Map<string, number>();
+  for (const a of ids) {
+    const near = ids
+      .filter((b) => b !== a)
+      .map((b): [number, number] => [b, dist(a, b)])
+      .sort((x, y) => x[1] - y[1])
+      .slice(0, 2);
+    for (const [b, dd] of near) {
+      const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+      const prev = pairs.get(key);
+      if (prev === undefined || dd < prev) pairs.set(key, dd);
+    }
+  }
+  const ds = [...pairs.values()];
+  const dmin = Math.min(...ds);
+  const span = Math.max(...ds) - dmin || 1;
+  return [...pairs.entries()].map(([key, dd]) => {
+    const [a, b] = key.split(":").map(Number);
+    const w = 0.25 + 0.75 * (1 - (dd - dmin) / span);
+    return [a, b, Math.round(w * 1000) / 1000];
+  });
 }

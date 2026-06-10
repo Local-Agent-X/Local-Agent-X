@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
@@ -223,27 +223,30 @@ const presentationFromOutline: ToolDefinition = {
 
 // ── presentation_edit ──
 interface EditOp {
-  op: "replace_text" | "set_title" | "delete_slide";
+  op: "replace_text" | "set_title" | "delete_slide" | "add_image_slide";
   find?: string;
   replace?: string;
   slide?: number;
   title?: string;
+  image?: ImageSpec;
 }
 
 const presentationEdit: ToolDefinition = {
   name: "presentation_edit",
   description:
-    "Edit an EXISTING .pptx in place — text edits only, everything else on the deck " +
-    "(images, charts, theme, layout) is preserved. Operations: " +
+    "Edit an EXISTING .pptx in place — everything not touched (images, charts, theme, layout) " +
+    "is preserved. Operations: " +
     '{op:"replace_text", find, replace, slide?} (slide omitted = whole deck; matches within ' +
     "single text runs, so prefer short exact fragments), " +
-    '{op:"set_title", slide, title}, {op:"delete_slide", slide}. Slides are 1-based. ' +
-    "For layout/image/chart changes, regenerate with presentation_create instead.",
+    '{op:"set_title", slide, title}, {op:"delete_slide", slide}, ' +
+    '{op:"add_image_slide", image:{source, fallback_source?, caption?}, title?} — appends a new ' +
+    "slide with a photo (find URLs via image_search; pass its fallback URL as fallback_source). " +
+    "Slides are 1-based. For other layout/chart changes, regenerate with presentation_create.",
   parameters: {
     type: "object", required: ["file_path", "operations"],
     properties: {
       file_path: { type: "string", description: "Existing .pptx file path" },
-      operations: { type: "string", description: 'JSON array of operations, e.g. [{"op":"replace_text","find":"Q3","replace":"Q4"},{"op":"delete_slide","slide":5}]' },
+      operations: { type: "string", description: 'JSON array of operations, e.g. [{"op":"replace_text","find":"Q3","replace":"Q4"},{"op":"add_image_slide","image":{"source":"https://...","fallback_source":"https://..."},"title":"Team offsite"}]' },
     },
   },
   async execute(args) {
@@ -252,8 +255,12 @@ const presentationEdit: ToolDefinition = {
       const ops = JSON.parse(args.operations as string) as EditOp[];
       if (!Array.isArray(ops) || ops.length === 0) return err("operations array is empty");
 
+      if (!existsSync(fp)) {
+        return err(`${fp} does not exist — presentation_edit only edits existing decks. ` +
+          "Use presentation_create to make a new one.");
+      }
       const { default: JSZip } = await import("jszip");
-      const { replaceTextInDeck, setSlideTitle, deleteSlide, slideFileNames } = await import("./shared/pptx-edit.js");
+      const { replaceTextInDeck, setSlideTitle, deleteSlide, addImageSlide, slideFileNames } = await import("./shared/pptx-edit.js");
       // O_NOFOLLOW validated read — same TOCTOU posture as every other
       // caller-supplied-path reader (the path itself is pathArgs-gated).
       const { readValidatedFile } = await import("../security/validated-io.js");
@@ -276,8 +283,21 @@ const presentationEdit: ToolDefinition = {
           if (!o.slide) return err('delete_slide needs "slide"');
           await deleteSlide(zip, o.slide);
           report.push(`delete_slide ${o.slide}: removed`);
+        } else if (o.op === "add_image_slide") {
+          if (!o.image?.source) return err('add_image_slide needs "image" with a "source" (use image_search to find URLs)');
+          const acquired = await acquireImages([o.image]);
+          const img = acquired.images[0];
+          if (img.mimeType !== "image/png" && img.mimeType !== "image/jpeg" && img.mimeType !== "image/gif") {
+            return err(`add_image_slide: ${img.mimeType} can't be embedded in PowerPoint — find a png/jpeg image instead`);
+          }
+          const pos = await addImageSlide(zip, {
+            buffer: img.buffer, mimeType: img.mimeType, width: img.width, height: img.height,
+            title: o.title, caption: img.caption, alt: img.alt,
+          });
+          report.push(`add_image_slide: new slide ${pos} with ${img.source}`);
+          report.push(...acquired.notes);
         } else {
-          return err(`Unknown op "${(o as { op?: string }).op}" — use replace_text | set_title | delete_slide`);
+          return err(`Unknown op "${(o as { op?: string }).op}" — use replace_text | set_title | delete_slide | add_image_slide`);
         }
       }
 

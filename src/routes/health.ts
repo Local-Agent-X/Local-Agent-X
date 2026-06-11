@@ -10,10 +10,16 @@
  * to 127.0.0.1 anyway).
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse } from "../server-utils.js";
 
 const PROCESS_STARTED_AT = Date.now();
+const APP_VERSION = (() => {
+  try { return (JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf-8")) as { version?: string }).version || "0.0.0"; }
+  catch { return "0.0.0"; }
+})();
 
 export const handleHealthRoutes: RouteHandler = async (method, url, req, res) => {
   if (method !== "GET") return false;
@@ -25,6 +31,7 @@ export const handleHealthRoutes: RouteHandler = async (method, url, req, res) =>
 
     jsonResponse(res, 200, {
       ok: true,
+      version: APP_VERSION,
       uptimeS: Math.floor((Date.now() - PROCESS_STARTED_AT) / 1000),
       heap: {
         usedMb: Math.round(mem.heapUsed / 1024 / 1024),

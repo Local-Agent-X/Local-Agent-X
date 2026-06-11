@@ -13,16 +13,8 @@ let _updateCache: { data: UpdateCheckResult; time: number } | null = null;
 export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
-  // Health
-  if (method === "GET" && url.pathname === "/api/health") {
-    const uptime = process.uptime();
-    const mem = process.memoryUsage();
-    json(200, {
-      status: "ok", uptime: Math.round(uptime), version: "0.1.0",
-      memory: { heapUsedMB: Math.round(mem.heapUsed / 1048576), heapTotalMB: Math.round(mem.heapTotal / 1048576), rssMB: Math.round(mem.rss / 1048576) },
-      toolStats: getToolStats(),
-    }); return true;
-  }
+  // /api/health lives in routes/health.ts (first in the dispatch chain) —
+  // it owns the route and reports the app version.
 
   // System status
   if (method === "GET" && url.pathname === "/api/system-status") {

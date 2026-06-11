@@ -70,8 +70,17 @@ function _updateActivityOutcome(bodyEl, toolEvents) {
     if (failed > 0) txt += ` · ${failed} failed`;
     label.textContent = txt;
   }
+  // Badge color tracks the LATEST outcome, not failures-ever: red while the
+  // most recent call failed, accent once a later call succeeds again — sticky
+  // red over a recovered chain read as "still broken". The label above keeps
+  // the cumulative "· N failed" history.
   const countEl = group.querySelector('.activity-count');
-  if (countEl) countEl.style.color = failed > 0 ? 'var(--danger, #e5484d)' : '';
+  if (countEl) {
+    const last = ends[ends.length - 1];
+    const lastFailed = !!last && (last.status === 'error' || last.status === 'timeout');
+    countEl.style.color = lastFailed ? 'var(--danger, #e5484d)'
+      : (failed > 0 ? 'var(--accent, #4cc38a)' : '');
+  }
 }
 
 // Shared render for assistant tool artifacts (cards, chips, progress, approvals,

@@ -126,6 +126,34 @@ function preserveOpenState(oldNode, fresh) {
   }
 }
 
+// The swap also rebuilds .activity-group-body (its own overflow-y scroller),
+// which resets scrollTop to 0 — mid-stream that yanked the reader back to the
+// first tool call on every WS event. Capture each visible body's position
+// before the swap; restore AFTER the fresh node is in the document (scrollTop
+// doesn't stick on detached/display:none elements). A reader parked at the
+// bottom keeps following new entries as they append.
+function captureActivityScroll(oldNode) {
+  const saved = [];
+  oldNode.querySelectorAll('.activity-group-body').forEach((body, i) => {
+    if (!body.clientHeight) return;
+    saved.push({
+      i,
+      top: body.scrollTop,
+      atBottom: body.scrollTop + body.clientHeight >= body.scrollHeight - 8,
+    });
+  });
+  return saved;
+}
+
+function restoreActivityScroll(fresh, saved) {
+  if (!saved.length) return;
+  const bodies = fresh.querySelectorAll('.activity-group-body');
+  for (const s of saved) {
+    const body = bodies[s.i];
+    if (body) body.scrollTop = s.atBottom ? body.scrollHeight : s.top;
+  }
+}
+
 function rerenderLiveMessage(sessionId) {
   if (!sessionId) return;
   if (!activeChat || activeChat.id !== sessionId) return;
@@ -157,7 +185,9 @@ function rerenderLiveMessage(sessionId) {
     // Carry the reserved-space class across the swap so the answer keeps
     // streaming into a full viewport of room and the prompt stays pinned.
     if (oldNode.classList.contains('pin-bottom')) fresh.classList.add('pin-bottom');
+    const activityScroll = captureActivityScroll(oldNode);
     oldNode.replaceWith(fresh);
+    restoreActivityScroll(fresh, activityScroll);
     _liveMessageNodes.set(sessionId, fresh);
     autoScroll();
   });
@@ -196,6 +226,7 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   const fresh = _buildLiveAssistantInto(tmp, store);
   if (!fresh) return false;
   preserveOpenState(oldNode, fresh);
+  const activityScroll = captureActivityScroll(oldNode);
   if (oldNode.classList.contains('pin-bottom')) fresh.classList.add('pin-bottom');
   // Drop the streaming affordance — this is the terminal paint.
   fresh.querySelectorAll('.msg-body.streaming').forEach(b => b.classList.remove('streaming'));
@@ -208,6 +239,7 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
     footer.innerHTML = `<span class="msg-time">${formatMsgTime(finalizedMsg.timestamp)}</span>`;
   }
   oldNode.replaceWith(fresh);
+  restoreActivityScroll(fresh, activityScroll);
   _liveMessageNodes.delete(sessionId);
   return true;
 }

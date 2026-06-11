@@ -1,6 +1,6 @@
-// Public surface for the voice pipeline. Legacy `src/voice.ts` re-exports
-// from here so existing callers (audio-agent, telegram-bridge,
-// whatsapp-bridge) don't need to update import paths.
+// Public surface for the voice pipeline's stateless utilities. The session
+// factory is exported from voice-session/index.ts; callers import it from
+// there directly.
 
 export { applyEQPreset, listEQPresets } from "./eq-presets.js";
 export type { EQPreset } from "./eq-presets.js";

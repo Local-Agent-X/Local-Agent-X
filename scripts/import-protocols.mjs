@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Bulk SKILL.md → protocols/bundled/ importer.
+ * Bulk SKILL.md → src/protocols/bundled/ importer.
  *
  * Reads scripts/protocol-sources.json, shallow-clones each source repo into
  * .protocol-import-cache/, walks for SKILL.md files, validates frontmatter +
- * license, dedupes by name (priority order), copies into protocols/bundled/<name>/,
- * and writes protocols/bundled/INDEX.json with provenance.
+ * license, dedupes by name (priority order), copies into src/protocols/bundled/<name>/,
+ * and writes src/protocols/bundled/INDEX.json with provenance.
  *
  * Usage:
  *   node scripts/import-protocols.mjs                 # full import
@@ -26,7 +26,7 @@ import { execSync } from "node:child_process";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = join(__dirname, "..");
 const CACHE_DIR = join(REPO_ROOT, ".protocol-import-cache");
-const TARGET_DIR = join(REPO_ROOT, "protocols", "bundled");
+const TARGET_DIR = join(REPO_ROOT, "src", "protocols", "bundled");
 const SOURCES_PATH = join(REPO_ROOT, "scripts", "protocol-sources.json");
 
 const argv = new Set(process.argv.slice(2));
@@ -215,8 +215,14 @@ function main() {
 
   mkdirSync(TARGET_DIR, { recursive: true });
 
-  // Preserve hand-bundled entries we don't want to clobber.
-  const PRESERVED = new Set(["credentialed-integration-setup", "git-status", "summarize"]);
+  // Preserve hand-bundled entries we don't want to clobber. The methodology
+  // bodies (app-build, senior-engineer, vibe-code, brownfield, refactor-godfiles)
+  // are load-bearing: primal-auto-build inlines them into worker prompts via
+  // loadSkillBody, so an upstream import must never wipe them.
+  const PRESERVED = new Set([
+    "credentialed-integration-setup", "git-status", "summarize",
+    "app-build", "brownfield", "refactor-godfiles", "senior-engineer", "vibe-code",
+  ]);
 
   // Wipe stale entries from prior imports (anything with a bundle_meta in INDEX.json
   // that's no longer in the new candidates). Cheap approach: nuke every dir not

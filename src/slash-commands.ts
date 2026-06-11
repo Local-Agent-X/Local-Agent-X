@@ -62,7 +62,7 @@ export function expandSlashCommand(rawMessage: string): SlashExpansion | null {
   const command = match[1].toLowerCase();
   const argText = (match[2] || "").trim();
 
-  // Path 1: SKILL.md body lives in protocols/bundled/<name>/. If present,
+  // Path 1: SKILL.md body lives in src/protocols/bundled/<name>/. If present,
   // inline the body so the agent gets the full methodology in-context.
   try {
     const body = loadSkillBody(command);

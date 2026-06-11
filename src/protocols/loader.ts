@@ -3,12 +3,14 @@
  *
  *   1. Built-in packs   — typed Protocol records in src/protocols/packs/*.ts.
  *                          Stamped with source.type = "builtin" if missing.
- *   2. Bundled imports  — SKILL.md files vendored at protocols/bundled/<name>/.
+ *   2. Bundled imports  — SKILL.md files vendored at src/protocols/bundled/<name>/.
  *                          Parsed via parseSkillMd(); source.type = "bundled".
- *                          The default install ships with this directory empty
- *                          (or absent) — bundled is an optional layer that
- *                          users can populate by running scripts/import-protocols.mjs
- *                          or by dropping in a curated pack repo.
+ *                          Ships with the app (e.g. the app-build / senior-engineer
+ *                          methodology bodies) and can be extended by running
+ *                          scripts/import-protocols.mjs or dropping in a curated
+ *                          pack repo. Copied into dist/ at build time by
+ *                          scripts/copy-bundled-protocols.mjs so the compiled
+ *                          server finds it at the same path-relative location.
  *   3. User overlay     — SKILL.md files at ~/.lax/protocols/imported/<name>/
  *                          plus typed records from ~/.lax/custom-protocols.json.
  *                          source.type = "imported" or "custom".
@@ -19,7 +21,8 @@
  */
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Protocol, ProtocolSource } from "../protocols/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { parseSkillMd } from "./skill-md-parser.js";
@@ -32,8 +35,16 @@ const logger = createLogger("protocols.loader");
 
 // ── Paths ──────────────────────────────────────────────────────────────────
 
-function bundledDir(): string {
-  return join(process.cwd(), "protocols", "bundled");
+// Resolve relative to this module, not process.cwd(), so bundled protocols load
+// regardless of the launch directory. Lands at src/protocols/bundled in dev and
+// dist/protocols/bundled in prod — copy-bundled-protocols.mjs mirrors it into dist.
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+/** The one canonical resolver for the vendored bundled-protocol directory.
+ *  Every consumer (the tier-2 loader below AND primal-auto-build's
+ *  loadSkillBody) imports this — do not recompute the path elsewhere. */
+export function bundledProtocolsDir(): string {
+  return join(HERE, "bundled");
 }
 
 /** Synced user protocol dir — lives in workspace/protocols/imported/.
@@ -146,7 +157,7 @@ let _bundledCache: Protocol[] | null = null;
 
 export function loadBundledProtocols(): Protocol[] {
   if (_bundledCache) return _bundledCache;
-  _bundledCache = scanSkillMdDir(bundledDir(), "bundled");
+  _bundledCache = scanSkillMdDir(bundledProtocolsDir(), "bundled");
   return _bundledCache;
 }
 

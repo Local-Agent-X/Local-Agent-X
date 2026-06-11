@@ -13,12 +13,14 @@
  * negligible against the cost of a worker run.
  *
  * Bundled bodies live at:
- *   protocols/bundled/senior-engineer/SKILL.md
- *   protocols/bundled/vibe-code/SKILL.md
- *   protocols/bundled/app-build/SKILL.md
+ *   src/protocols/bundled/senior-engineer/SKILL.md
+ *   src/protocols/bundled/vibe-code/SKILL.md
+ *   src/protocols/bundled/app-build/SKILL.md
  *
- * Same directory the Protocols browser scans (see src/protocols/loader.ts)
- * — one source of truth for SKILL.md content, two consumers.
+ * Same directory the Protocols browser scans — one source of truth for the
+ * SKILL.md content AND for the directory path: we import bundledProtocolsDir()
+ * from src/protocols rather than recomputing it here, so the two consumers can
+ * never drift if the location moves again.
  *
  * If the file is missing OR the frontmatter says `user-invocable: true`
  * but we need it as worker-only, we still return the body — the loader
@@ -28,13 +30,12 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { bundledProtocolsDir } from "../protocols/loader.js";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-// HERE is src/primal-auto-build/ (or dist/primal-auto-build/ after tsc).
-// Both resolve to <repo>/protocols/bundled via two levels up.
-const SKILLS_DIR = join(HERE, "..", "..", "protocols", "bundled");
+// Single source of truth for the directory — resolved by src/protocols, the
+// owner of the "bundled" concept. Works in both src (dev) and dist (prod).
+const SKILLS_DIR = bundledProtocolsDir();
 
 const cache = new Map<string, string>();
 
@@ -50,7 +51,7 @@ export function loadSkillBody(name: string): string {
 
   const path = join(SKILLS_DIR, name, "SKILL.md");
   if (!existsSync(path)) {
-    throw new Error(`protocol body missing at ${path} — expected protocols/bundled/${name}/SKILL.md to be present in the repo`);
+    throw new Error(`protocol body missing at ${path} — expected src/protocols/bundled/${name}/SKILL.md in the repo (and copied into dist/ by scripts/copy-bundled-protocols.mjs at build time)`);
   }
 
   const raw = readFileSync(path, "utf-8");

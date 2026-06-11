@@ -30,7 +30,7 @@ export interface ProtocolStep {
 export interface ProtocolSource {
   /**
    * "builtin": ships in src/protocols/packs/*.ts (typed, code-defined)
-   * "bundled": shipped via protocols/bundled/ (vendored SKILL.md from upstream)
+   * "bundled": shipped via src/protocols/bundled/ (vendored SKILL.md from upstream)
    * "imported": user-imported SKILL.md in ~/.lax/protocols/imported/<name>/
    * "custom": user-authored typed protocol in ~/.lax/custom-protocols.json
    */

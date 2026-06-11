@@ -14,7 +14,7 @@
  *   - "scenario-fix"       — /senior-engineer + scenario-fix constraints
  *
  * The systemPrompt is computed at first invocation per role and cached.
- * Skill body comes from `protocols/bundled/<name>/SKILL.md` (the same
+ * Skill body comes from `src/protocols/bundled/<name>/SKILL.md` (the same
  * source the Protocols browser scans).
  *
  * Returns a {stdout, exitCode, durationMs, error?} envelope matching the

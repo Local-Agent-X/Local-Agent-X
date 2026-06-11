@@ -25,6 +25,7 @@ import {
   loadBundledProtocols, loadImportedProtocols,
   stampBuiltinSource, stampCustomSource, mergeByName,
 } from "./loader.js";
+export { bundledProtocolsDir } from "./loader.js";
 import { loadPrefs, savePrefs } from "./preferences.js";
 import { createMarketplaceTools } from "./marketplace.js";
 import { createTemplateTools } from "./templates.js";
@@ -57,7 +58,6 @@ export { loadVariables, saveVariables, getVariable, setVariable, deleteVariable,
 // Protocol packs
 export { socialProtocols } from "./packs/social.js";
 export { developerProtocols } from "./packs/developer.js";
-export { smarthomeProtocols } from "./packs/smarthome.js";
 export { researchProtocols } from "./packs/research.js";
 export { communicationProtocols } from "./packs/communication.js";
 

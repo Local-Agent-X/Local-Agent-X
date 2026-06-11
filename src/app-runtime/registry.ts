@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { join, resolve } from "node:path";
 
 import { getLaxDir } from "../lax-data-dir.js";
+import { moveToTrash } from "../safe-delete.js";
 import { tombstoneAppEagerly } from "../sync/tombstones.js";
 import { readAuditLog, readGlobalAuditLog, writeAuditEntry } from "./audit.js";
 import { consumeEvents, getUnconsumedEvents, pushEvent, readEvents } from "./events-store.js";
@@ -199,7 +200,9 @@ export class AppRegistry {
     let workspaceDeleted = false;
     if (wsAppExists && wsAppDir) {
       try {
-        rmSync(wsAppDir, { recursive: true, force: true });
+        // Recycle bin, not perma-delete: the workspace dir holds the user's app
+        // files (index.html etc.). Recoverable from ~/.lax/trash.
+        moveToTrash(wsAppDir, `app_delete:${id}`);
         workspaceDeleted = true;
       } catch (e) {
         logger.warn(`failed to remove workspace dir for ${id}: ${(e as Error).message}`);

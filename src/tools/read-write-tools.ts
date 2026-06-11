@@ -1,6 +1,7 @@
-import { readFileSync, existsSync, mkdirSync, unlinkSync, statSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { resolveAgentPath } from "../workspace/paths.js";
+import { moveToTrash } from "../safe-delete.js";
 import { readValidatedFile, writeValidatedFile } from "../security/validated-io.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
@@ -214,8 +215,8 @@ export const deleteFileTool: ToolDefinition = {
           { path: filePath, isDirectory: true },
         );
       }
-      unlinkSync(filePath);
-      return ok(`Deleted ${filePath}`);
+      const trashed = moveToTrash(filePath, "delete_file");
+      return ok(`Deleted ${filePath}${trashed ? " (moved to the recycle bin — recoverable from ~/.lax/trash)" : ""}`);
     } catch (e) {
       return err(`Failed to delete ${filePath}: ${(e as Error).message}`, { path: filePath });
     }

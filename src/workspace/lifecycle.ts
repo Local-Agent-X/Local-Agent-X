@@ -12,8 +12,8 @@ import {
   renameSync,
   cpSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { join, resolve, sep } from "node:path";
+import { homedir, tmpdir } from "node:os";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
 
@@ -96,6 +96,26 @@ export function localOnlyWorkspace(): string {
   return join(getLaxDir(), "workspace");
 }
 
+// Is `p` under a system temp root (/tmp, /private/tmp, /var/tmp, os.tmpdir())?
+// Used to refuse migrating a real workspace into a throwaway location. Resolves
+// symlinks so /tmp (→ /private/tmp on macOS) is caught. Exported for tests.
+export function isEphemeralPath(p: string): boolean {
+  // Collect BOTH the literal and symlink-resolved form of each temp root: a
+  // non-existent target keeps its "/tmp/…" spelling (resolve), while an existing
+  // one resolves to "/private/tmp/…" (realpath) on macOS — match either.
+  const roots = new Set<string>();
+  for (const r of [tmpdir(), "/tmp", "/private/tmp", "/var/tmp"]) {
+    roots.add(resolve(r));
+    try { roots.add(realpathSync(r)); } catch { /* root may not exist on this OS */ }
+  }
+  let rp: string;
+  try { rp = realpathSync(p); } catch { rp = resolve(p); }
+  for (const root of roots) {
+    if (rp === root || rp.startsWith(root + sep)) return true;
+  }
+  return false;
+}
+
 // Ensure <cwd>/workspace and config.workspace are the SAME physical directory.
 // They're only naturally equal in dev (workspace = "./workspace"); once the
 // workspace is relocated (Documents), cwd-relative file tools and the
@@ -114,6 +134,19 @@ export function ensureWorkspaceLink(workspace: string, linkOverride?: string): v
   try {
     if (existsSync(link) && existsSync(target) && realpathSync(link) === realpathSync(target)) return;
   } catch { /* not resolvable yet — fall through to link creation */ }
+  // Guard: never migrate or relink a real, populated workspace into an
+  // EPHEMERAL (temp) target. A smoke/test run that points config.workspace at
+  // /tmp would otherwise make the lifecycle treat the user's real workspace as a
+  // disposable "previous workspace" and move-delete it (2026-06-10 incident: all
+  // user apps lost to /tmp/lax-smoke, recovered only from ~/.lax snapshots).
+  if (isEphemeralPath(target) && existsSync(link)) {
+    const linkStat = lstatSync(link);
+    const src = linkStat.isSymbolicLink() ? resolve(readlinkSync(link)) : link;
+    if (existsSync(src) && !isEphemeralPath(src) && readdirSync(src).length > 0) {
+      logger.warn(`[config] refusing to point workspace at ephemeral ${target}: would move-delete the real workspace ${src}. Smoke/test runs must use an isolated workspace, not the live one — leaving the workspace untouched.`);
+      return;
+    }
+  }
   try {
     mkdirSync(target, { recursive: true });
     const st = existsSync(link) ? lstatSync(link) : null;

@@ -66,11 +66,16 @@ way to find what shipped recently.
 ```bash
 git revert <sha>          # may need --no-edit on a chain
 npm run build
-npm test
+npx vitest run test/canonical-loop-*.test.ts
 ```
 
+(`npm test` is the live integration suite — it needs a running server, so
+it is the wrong verification step mid-rollback; the scoped vitest run above
+covers the canonical-loop invariants.)
+
 The revert may conflict with unrelated edits to the same files; resolve
-to the pre-revert behavior and re-run the smoke suite.
+to the pre-revert behavior and re-run the Issue 09 adapter conformance
+suite (`test/canonical-loop-09-anthropic-conformance.test.ts`).
 
 ### 3. Drain in-flight canonical ops before deploy
 

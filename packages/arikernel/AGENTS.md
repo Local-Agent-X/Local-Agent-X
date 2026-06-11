@@ -2,9 +2,9 @@
 
 This is the **vendored Ari Kernel** security layer — formerly a standalone
 project, now absorbed into Local Agent X as `file:` dependencies. (Each
-package.json declares `SEE LICENSE IN LICENSE.md`, but no `LICENSE.md` ships in
-`packages/arikernel/`; the only license on disk is the repo-root Commons Clause
-`LICENSE` — worth reconciling.)
+package.json declares `SEE LICENSE IN ../../../LICENSE`, pointing at the
+repo-root Commons Clause `LICENSE`; no separate license file ships in
+`packages/arikernel/`.)
 
 ## Rules
 

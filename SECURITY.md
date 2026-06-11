@@ -35,7 +35,7 @@ Local Agent X is a single-user personal agent designed for a local workstation. 
 - [ ] Enable full-disk encryption on the host
 - [ ] Keep `~/.lax/` directory permissions at `0700`
 - [ ] Enable an OS sandbox for shell tools — `LAX_SANDBOX=seatbelt` (macOS), `LAX_SANDBOX=bwrap` (Linux), or `LAX_SANDBOX=docker` (any), or Settings → Security. **The default is `host` — shell commands run directly on your machine with no OS-level isolation; the tool-policy default-deny and ARI kernel still apply, but enabling a sandbox adds kernel-enforced confinement.** Optionally also confine the whole server with `LAX_SERVER_SANDBOX=1`.
-- [ ] Create `~/.lax/egress-allowlist.json` with approved domains
+- [ ] Create `~/.lax/egress-allowlist.json` with approved domains — a JSON array, e.g. `["api.anthropic.com", "*.example.com"]`
 - [ ] Review `~/.lax/tool-policy.json` for your use case
 - [ ] Monitor `~/.lax/audit/` logs for anomalies
 - [ ] Export logs to SIEM via `GET /api/logs/export` (NDJSON format)

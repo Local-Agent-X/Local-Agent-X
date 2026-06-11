@@ -40,7 +40,7 @@ LAX is a local-first agent — most of it runs fine on CPU. A few subsystems lea
 - **CPU**: 7B models are 2–10 tokens/sec — unusably slow for agent use. Don't bother; use a cloud chat provider.
 
 ### Voice cloning — Studio tiers (Chatterbox / GPT-SoVITS)
-- **GPU only.** These are Python sidecars that won't start without CUDA. Switch to a non-Studio voice tier on GPU-less machines.
+- **GPU required in practice.** Chatterbox has CPU-fallback code, but the bundled installs pull GPU-only wheels, and SoVITS depends on upstream GPU packages — on a CPU-only machine these sidecars fail to import their CUDA deps. Switch to a non-Studio voice tier on GPU-less machines.
 
 ### Image / video generation
 - **GPU only.** Falls back to error if no compatible device.

@@ -533,6 +533,11 @@
           <div class="toggle-row"><div><div class="toggle-label">Browser</div><div class="toggle-desc">Playwright browser control (operator only)</div></div><div id="tp-toggle-browser" class="toggle on" onclick="toolPolicyToggle('enableBrowser', this)"></div></div>
         </div>
         <div class="section-card">
+          <div class="section-title">Developer Mode</div>
+          <div class="section-desc">Lets the agent's self_edit tool modify this install's own source code. Off, customizations go through connectors, workspace apps, and settings — all of which survive updates. On, your install carries local source edits that future platform updates must merge with.</div>
+          <div class="toggle-row"><div><div class="toggle-label">Allow source self-edits (self_edit)</div><div class="toggle-desc">User-owned control — the agent can never flip this itself</div></div><div id="tp-toggle-developer-mode" class="toggle" onclick="toolPolicyToggle('developer_mode', this)"></div></div>
+        </div>
+        <div class="section-card">
           <div class="section-title">File Access</div>
           <div class="section-desc">Controls what files the agent can read from your computer.</div>
           <div class="field">

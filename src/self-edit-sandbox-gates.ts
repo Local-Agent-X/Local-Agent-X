@@ -6,7 +6,7 @@
  * All exports here are called only from self-edit-sandbox.ts.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,6 +89,24 @@ export function gateBuild(name: string): GateResult {
   };
 }
 
+/**
+ * Path-based build gate for candidate trees that aren't registered worktrees —
+ * the update pipeline's extracted-tarball dir. Same command, same scrubbed env.
+ */
+export function gateBuildAt(dir: string): GateResult {
+  const start = Date.now();
+  try {
+    execSync("npm run build", {
+      cwd: dir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS,
+      windowsHide: true, maxBuffer: 10 * 1024 * 1024, env: buildSelfEditChildEnv(),
+    });
+    return { ok: true, skipped: false, durationMs: Date.now() - start, detail: "build passed" };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message: string };
+    return { ok: false, skipped: false, durationMs: Date.now() - start, detail: (err.stderr || err.stdout || err.message).slice(-1500) };
+  }
+}
+
 // The OAuth/subscription token file each provider's LAX loop reads from the
 // data dir. Plaintext for anthropic/xai; auth.json (openai/codex) is encrypted
 // under the machine-level OS-keychain master key, so a copy still decrypts in
@@ -134,11 +152,16 @@ export function seedProbeProvider(dataDir: string, provider: string): void {
 // it alive for the smoke gate (and kill it in the finally).
 
 export async function gateBind(name: string, port: number, authToken: string, signal?: AbortSignal): Promise<{ result: GateResult; proc: ChildProcess | null; dataDir: string | null }> {
-  const start = Date.now();
   const wt = getWorktreePath(name);
   if (!wt) {
     return { result: { ok: false, skipped: false, durationMs: 0, detail: "worktree path not found" }, proc: null, dataDir: null };
   }
+  return gateBindAt(wt, port, authToken, signal);
+}
+
+/** Path-based bind gate — boots the candidate tree at `wt` directly. */
+export async function gateBindAt(wt: string, port: number, authToken: string, signal?: AbortSignal): Promise<{ result: GateResult; proc: ChildProcess | null; dataDir: string | null }> {
+  const start = Date.now();
   // Disposable data dir — the probe boots a real server, so without this it
   // would point LAX_DATA_DIR at the user's REAL state (live SQLite, memory,
   // secrets) and a smoke test could mutate it. A fresh temp dir isolates the

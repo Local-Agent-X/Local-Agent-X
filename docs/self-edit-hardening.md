@@ -15,15 +15,31 @@ tracked below as two passes.
 > verified green. Full write-up in the **"RESOLVED: bind gate"** section at the
 > bottom.
 
-## Gate order (current, after Pass 2)
+## Gate order (current, after Pass 2 + tiering)
 
 ```
-fingerprint-parent-deps → spawnClaude[scrubbed env] → verify-parent-deps(restore+abort if mutated)
+tier-gate(developer_mode required; _unsafe rescue exempt)
+  → fingerprint-parent-deps → spawnClaude[scrubbed env] → verify-parent-deps(restore+abort if mutated)
   → deps → build → bind → smoke → security-scope(HOLD if security/auth/policy touched)
   → exfil-scan(HOLD if secret-shaped content staged in diff)
   → merge → re-gate(rebuild merged main) → record(boot-pending)
   → [next boot] confirmMergeBoot on bind / revertPendingMergeIfCrashed on crash
 ```
+
+**Tier gate (2026-06-11):** `self_edit` is developer-mode-only. Default
+installs route customization to extension surfaces — connector manifests in
+`<data dir>/connectors/` (served by `src/routes/connector-proxy.ts`),
+workspace apps, settings — which survive platform updates untouched. The
+`developer_mode` setting is `protected` (user-owned; the agent can't flip it),
+and turning it on means the install carries local commits that platform
+updates must merge with.
+
+**Updates ride the same gates (2026-06-11):** `src/update-pipeline.ts` runs
+platform updates (git fetch+merge in a worktree, or the OTA extracted tarball)
+through the same deps/build/bind/smoke gates and the same `recordMerge`
+boot-crash auto-revert before anything lands on the live install. One
+validation contract for every mutation of the source tree; the old raw
+`git pull --ff-only` and blind tarball copy are gone.
 
 The subprocess is spawned with a **scrubbed env** (Pass 4) so it can't inherit
 the user's credentials — and the gates that later EXECUTE its output (`gateBuild`,
@@ -41,7 +57,8 @@ Key files:
 - `src/self-edit-rollback.ts` — merge record + revertLastMerge + boot notice + unsafe-edit snapshot
 - `src/self-edit/global-lock.ts` — machine-wide PID-file lock shared by sandbox + bypass (#9)
 - `src/agency/worktree.ts` — junctions, isolateNodeModules, security-scope matcher, orphan sweep, git/build primitives
-- `src/self-edit/tool.ts` — entrypoint; sandbox vs bypass (_cwd / _unsafe) routing; bypass lock + unsafe snapshot
+- `src/self-edit/tool.ts` — entrypoint; tier gate (developer_mode); sandbox vs bypass (_cwd / _unsafe) routing; bypass lock + unsafe snapshot
+- `src/update-pipeline.ts` — platform updates through the same gates (git worktree merge + OTA extract validation)
 - `src/self-edit/bypass-runner.ts` — bypass path (no gates)
 - `src/self-edit/child-env.ts` — confidentiality scrub of the `claude -p` child env (Pass 4, M1)
 - `src/self-edit/exfil-scan.ts` — staged-secret tripwire on the produced diff (Pass 4, M4)

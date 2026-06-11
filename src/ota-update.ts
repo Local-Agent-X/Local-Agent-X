@@ -170,8 +170,12 @@ export class OTAManager {
     tarPath: string,
     installDir: string,
     currentVersion: string,
-    expectedCommit: string
-  ): Promise<void> {
+    expectedCommit: string,
+    /** Gate the extracted tree before it overwrites the install (see
+     *  update-pipeline.ts validateExtractedUpdate). A failed validation
+     *  removes the extract and throws — the install is never touched. */
+    validate?: (extractDir: string) => Promise<{ ok: boolean; detail: string; depsChanged: boolean }>
+  ): Promise<{ depsChanged: boolean }> {
     // Integrity gate: never extract bytes over the live install dir unless they
     // are bound to a resolved commit. The rolling path resolves main → sha,
     // downloads the immutable archive/<sha>.tar.gz, and passes that sha here;
@@ -199,6 +203,19 @@ export class OTAManager {
       ]);
     }
 
+    // Validation gate: run the same build/bind/smoke gates a self_edit gets,
+    // against the extracted tree, BEFORE anything overwrites the install. A
+    // failing candidate never lands — this replaces the old blind copy.
+    let depsChanged = false;
+    if (validate) {
+      const verdict = await validate(extractDir);
+      depsChanged = verdict.depsChanged;
+      if (!verdict.ok) {
+        await rm(extractDir, { recursive: true, force: true });
+        throw new Error(`Update rejected — extracted source failed validation: ${verdict.detail}`);
+      }
+    }
+
     // Back up ONLY the install files this update overwrites — never the whole
     // install dir. For desktop builds the install dir IS the Electron userData
     // dir, so a whole-dir copy hits Singleton sockets/lock files (copyfile
@@ -222,6 +239,7 @@ export class OTAManager {
 
     // clean up extract dir
     await rm(extractDir, { recursive: true, force: true });
+    return { depsChanged };
   }
 
   async rollbackUpdate(): Promise<void> {

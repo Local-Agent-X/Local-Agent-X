@@ -37,15 +37,26 @@ export function mergeWorktree(agentId: string): { merged: boolean; files: number
 
   try {
     const status = git("status --porcelain", wt.path);
-    if (!status) {
+    if (status) {
+      git("add -A", wt.path);
+      git(["commit", "-m", `Agent ${agentId}: automated changes`], wt.path);
+    }
+
+    // Merge delta = base tip vs branch head, NOT the working-tree status. A
+    // worktree whose changes are already committed (an update merge, a surgeon
+    // that commits its own work) has a clean status but still carries commits
+    // the base branch needs — short-circuiting on clean status would delete
+    // the branch and silently drop them.
+    const baseSha = git(["rev-parse", wt.baseBranch], wt.repoRoot);
+    const headSha = git(["rev-parse", "HEAD"], wt.path);
+    const fileCount = baseSha === headSha
+      ? 0
+      : git(["diff", "--name-only", `${baseSha}...${headSha}`], wt.path).split("\n").filter(Boolean).length;
+    if (fileCount === 0) {
       wt.mergedSuccessfully = true;
       cleanupWorktree(agentId);
       return { merged: true, files: 0 };
     }
-
-    git("add -A", wt.path);
-    const fileCount = git("diff --cached --numstat", wt.path).split("\n").filter(Boolean).length;
-    git(["commit", "-m", `Agent ${agentId}: automated changes`], wt.path);
 
     // Merge into the base branch that was current when the worktree was created
     try {

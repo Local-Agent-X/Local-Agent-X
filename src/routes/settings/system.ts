@@ -165,7 +165,12 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
         try {
           releaseNotes = execSync("git log -1 --format=%s origin/main", { cwd: repoRoot, encoding: "utf-8" }).trim();
         } catch { /* non-fatal */ }
-        updateAvailable = !!(remoteCommit && localCommit && remoteCommit !== localCommit) || remoteVersion !== localVersion;
+        // "Behind", not "different": a developer_mode install carries local
+        // commits (and update merge commits), so HEAD != origin/main is the
+        // steady state there. An update exists only when origin/main has
+        // commits this install doesn't.
+        const behind = parseInt(execSync("git rev-list --count HEAD..origin/main", { cwd: repoRoot, encoding: "utf-8" }).trim(), 10) || 0;
+        updateAvailable = behind > 0;
       } catch (e) {
         // Surface the failure instead of pretending everything's fine.
         // Common cases: offline, git auth revoked, remote not reachable.
@@ -181,70 +186,68 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
     return true;
   }
 
-  // Apply update — git pull on the live repo, then let the caller trigger
-  // a server restart (the desktop wrapper has IPC for that; browser users
-  // restart manually). Server runs from src/ via tsx now (commit 260fd54),
-  // so there's no compile step in this flow — pull + respawn is enough.
+  // Apply update — both install types land through the self_edit validation
+  // pipeline (update-pipeline.ts): candidate tree → deps/build/bind/smoke
+  // gates → swap → boot-rollback record. Nothing overwrites the live install
+  // until the gates pass, and a held/failed update reports why instead of
+  // silently clobbering (tarball) or permanently wedging on divergence (the
+  // old `git pull --ff-only`). The caller restarts to finish (desktop has
+  // IPC for that; browser users restart manually).
   if (method === "POST" && url.pathname === "/api/updates/apply") {
     try {
       const { execSync } = await import("node:child_process");
+      const { getRuntimeConfig } = await import("../../config.js");
       // cwd is the repo root for both Electron-spawned and npm-run-dev paths
       // (per desktop/src/main.ts startServer which sets cwd: PROJECT_ROOT,
       // and standard npm script execution). Avoids brittle ../../../ math.
       const repoRoot = process.cwd();
-      // Pre-flight: make sure this looks like the repo and that the working
-      // tree is clean. Pulling onto uncommitted changes is the #1 way users
-      // brick their install — refuse it loudly instead of failing mid-pull.
-      let fromCommit = "";
-      try { fromCommit = execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }).trim(); }
-      catch {
-        // Not a git checkout — rolling/tarball install. Re-download main and
-        // apply via OTAManager (backup → extract over the install dir →
-        // record the new commit). The desktop relaunches to finish.
+      const authToken = getRuntimeConfig().authToken;
+      let isGitCheckout = true;
+      try { execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }); }
+      catch { isGitCheckout = false; }
+
+      if (!isGitCheckout) {
+        // Rolling/tarball install. Resolve main → an immutable commit sha
+        // FIRST, then download and extract that exact commit's archive —
+        // binding download + recorded marker to one resolved sha is the
+        // integrity guarantee. The extracted tree is gated before it lands.
         try {
           const { OTAManager } = await import("../../ota-update.js");
+          const { validateExtractedUpdate } = await import("../../update-pipeline.js");
           const ota = new OTAManager();
           const installed = (await ota.readInstalledCommit()) || "";
-          // Resolve main → an immutable commit sha FIRST, then download and
-          // extract that exact commit's archive. Binding the download + the
-          // recorded marker to this one resolved sha (instead of a mutable
-          // refs/heads/main.tar.gz fetched separately) is the integrity
-          // guarantee: the bytes we extract ARE `commit`, and applyUpdate
-          // refuses to extract anything not bound to a resolved commit.
           const { commit } = await ota.checkMainCommit();
           if (installed && installed === commit) {
             json(200, { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), output: "Already up to date." });
             return true;
           }
           const tarPath = await ota.downloadMainTarball(commit);
-          await ota.applyUpdate(tarPath, repoRoot, installed || "rolling", commit);
+          const { depsChanged } = await ota.applyUpdate(
+            tarPath, repoRoot, installed || "rolling", commit,
+            (extractDir) => validateExtractedUpdate(extractDir, repoRoot, authToken),
+          );
+          if (depsChanged) {
+            // The gated tree validated against fresh deps; sync the live
+            // install's node_modules to the new lockfile it just received.
+            execSync("npm ci", { cwd: repoRoot, encoding: "utf-8", timeout: 5 * 60_000, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+          }
           await ota.writeInstalledCommit(commit);
           _updateCache = null;
-          json(200, { ok: true, fromCommit: installed ? installed.slice(0, 7) : "", toCommit: commit.slice(0, 7), output: "Updated from main — relaunch to finish.", rolling: true });
+          json(200, { ok: true, fromCommit: installed ? installed.slice(0, 7) : "", toCommit: commit.slice(0, 7), output: "Updated from main (validated) — relaunch to finish.", rolling: true });
         } catch (e) {
           json(500, { ok: false, error: safeErrorMessage(e) });
         }
         return true;
       }
-      const dirty = execSync("git status --porcelain", { cwd: repoRoot, encoding: "utf-8" }).trim();
-      if (dirty) {
-        json(409, { ok: false, error: "Local changes detected. Commit or stash before updating.", dirty: dirty.split("\n").slice(0, 10) });
-        return true;
-      }
-      // Pull. Use --ff-only so we never auto-merge — if remote diverges
-      // from local (impossible in normal usage, but guards against a
-      // user with a custom branch), bail with a clear message.
-      let pullOutput = "";
-      try { pullOutput = execSync("git pull --ff-only", { cwd: repoRoot, encoding: "utf-8" }); }
-      catch (e) {
-        const err = e as { stderr?: Buffer | string; message: string };
-        const stderr = typeof err.stderr === "string" ? err.stderr : err.stderr?.toString() || "";
-        json(500, { ok: false, error: `git pull failed: ${stderr || err.message}` });
-        return true;
-      }
-      const toCommit = execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }).trim();
+
+      const { applyGitUpdate } = await import("../../update-pipeline.js");
+      const result = await applyGitUpdate(repoRoot, authToken);
       _updateCache = null; // bust the check cache so next probe shows fresh state
-      json(200, { ok: true, fromCommit, toCommit, output: pullOutput.trim() });
+      if (result.ok) {
+        json(200, { ok: true, fromCommit: result.fromCommit, toCommit: result.toCommit, output: result.detail });
+      } else {
+        json(result.held ? 409 : 500, { ok: false, held: !!result.held, fromCommit: result.fromCommit, toCommit: result.toCommit, error: result.detail });
+      }
     } catch (e) { json(500, { ok: false, error: safeErrorMessage(e) }); }
     return true;
   }

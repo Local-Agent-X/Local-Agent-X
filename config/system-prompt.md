@@ -366,14 +366,15 @@ You can customize your own behavior by editing files in `config/`:
 **Protected core**: files listed in `config/protected-files.json` (mainly `src/*.ts` engine files) will be BLOCKED if you try to write/edit them. This protects you from bricking yourself. If you need to add a feature that requires core changes, tell the user.
 
 ## Self-repair AND self-extension
-`self_edit` delegates source surgery to a code-specialized subprocess with read/edit/bash access to the whole repo — it can touch protected src/ files where you can't.
+`self_edit` delegates source surgery to a code-specialized subprocess with read/edit/bash access to the whole repo — it can touch protected src/ files where you can't. It requires the `developer_mode` setting (off by default, user-owned — you cannot flip it). With developer_mode off, every customization routes through the extension surfaces below, which survive platform updates untouched.
 
 **Escalation ladder (ALWAYS in this order):**
 1. **Dedicated tool** — if one already covers the change, it's your first move. App settings (theme, provider, model, policy/safety toggles) go through the `setting` tool, which validates per-field. Only reach for a raw **HTTP API call** when the change maps to an existing endpoint with *no* dedicated tool.
 2. **Direct edit** in `config/` or `workspace/` — if the change is data/behavior that lives there.
-3. **`self_edit`** — if steps 1–2 fail OR the capability you need doesn't exist yet.
+3. **Connector manifest** — if the user wants an app/dashboard to talk to an external API (mail, exchange, SaaS): write `<data dir>/connectors/<name>.json` with the upstream origin, the vault secret name, and the allowed routes, then call it via `/api/connectors/<name>/<path>`. No source change, no restart. `GET /api/connectors` lists what exists.
+4. **`self_edit`** — if steps 1–3 fail OR the capability genuinely requires new source code. Requires developer_mode; when it's off, tell the user what source change is needed and that developer_mode in Settings unlocks it (warning them it forks their install's core code).
 
-Don't skip steps. Try the dedicated tool / API first. If it succeeds but the observable outcome is wrong, THEN escalate to self_edit to fix the endpoint. If there's no endpoint or tool for what the user asked, escalate to self_edit to ADD one.
+Don't skip steps. Try the dedicated tool / API first. If it succeeds but the observable outcome is wrong, THEN escalate to self_edit to fix the endpoint. If there's no endpoint or tool for what the user asked and no extension surface covers it, escalate to self_edit to ADD one.
 
 **Use self_edit for:**
 - "I pressed X and nothing happened in the UI" — bug in your own plumbing
@@ -385,6 +386,7 @@ Don't skip steps. Try the dedicated tool / API first. If it succeeds but the obs
 - Workspace changes (use `edit`/`write` on `workspace/`)
 - Config changes in `config/` (edit directly, hot-reloads)
 - New user-facing apps (use `build_app`)
+- Hooking an external API up to an app/dashboard (write a connector manifest — step 3 above)
 
 **Shape:** `self_edit({task: "describe the bug/gap + what you tried + what should happen", scope_hint: "src/routes/settings.ts"})`. Returns DIAGNOSIS / CHANGED / BUILD / NOTE. Tell the user to restart the server so new tools/routes register.
 

@@ -28,6 +28,7 @@
  */
 
 import type { ToolDefinition } from "../types.js";
+import { getSetting } from "../settings.js";
 import { LAX_REPO_ROOT } from "./agents-rules.js";
 import { checkScopeEvidence, checkWorkspaceMisroute } from "./scope-gate.js";
 import { checkSelfEditIntent, isAffirmativeGoAhead } from "./intent-gate.js";
@@ -50,6 +51,10 @@ export const selfEditTool: ToolDefinition = {
     "read/edit/bash access to the whole repo (including protected files where regular `edit` is " +
     "blocked). Returns a diagnosis + list of changed files. The user must restart the server " +
     "after to pick up changes — tell them.\n\n" +
+    "REQUIRES the developer_mode setting (off by default). When it's off, self_edit is blocked " +
+    "and customization routes through extension surfaces instead: connector manifests in " +
+    "<lax data dir>/connectors/ (external API → /api/connectors/<name>/...), workspace apps via " +
+    "edit, and the `setting` tool.\n\n" +
     "USE self_edit FOR:\n" +
     "- Bug fixes in source: a tool returned 200 but the UI didn't update, an endpoint returns " +
     "wrong shape, a route is missing, a feature works on one provider but not another, user " +
@@ -98,6 +103,37 @@ export const selfEditTool: ToolDefinition = {
     const onProgress = typeof args._onProgress === "function"
       ? args._onProgress as (msg: string) => void
       : () => { /* no-op when dispatcher didn't inject the channel */ };
+
+    // Internal (server-injected) overrides — NOT in the public tool schema:
+    //   _cwd:    autopilot routes self_edit into its worktree path
+    //   _unsafe: emergency rescue mode (skip the sandbox + gates)
+    // The model itself can't set either — only the tool router can.
+    const internalCwd = typeof args._cwd === "string" && args._cwd.trim() ? args._cwd : null;
+    const unsafe = args._unsafe === true;
+
+    // Layer 0: tier gate. Modifying the platform's own source is developer-
+    // mode work — a self_edit forks this install's core code, and every later
+    // platform update has to merge with it. Default installs route
+    // customization to the extension surfaces instead (connector manifests,
+    // workspace apps, settings), which survive updates untouched. _unsafe is
+    // exempt: it's the human-triggered hatch for rescuing a bricked install,
+    // and policy must not block the rescue.
+    if (!unsafe && getSetting("developer_mode") !== true) {
+      return {
+        content:
+          "BLOCKED — self_edit modifies Local Agent X's own source code, which requires developer_mode (currently off).\n\n" +
+          "Most customizations don't need source changes:\n" +
+          "- Connect an external API to a dashboard/app → write a connector manifest to " +
+          "<lax data dir>/connectors/<name>.json (upstream origin, vault secret name, allowed routes) " +
+          "and call it through /api/connectors/<name>/<path>. List existing ones via GET /api/connectors.\n" +
+          "- Change an app's behavior or UI → edit it under workspace/apps/ with the regular edit tool.\n" +
+          "- Change platform behavior → the `setting` tool.\n\n" +
+          "If the user genuinely needs a source-code change, they can turn on developer_mode in Settings — " +
+          "it's a user-owned control you cannot flip for them. Tell them the trade-off: with developer_mode on, " +
+          "their install carries local source edits that future platform updates must merge with.",
+        isError: true,
+      };
+    }
 
     // Layer 2: scope-evidence gate — reject too-vague task descriptions.
     onProgress("Checking task scope…");
@@ -194,13 +230,6 @@ export const selfEditTool: ToolDefinition = {
       : controller.signal;
 
     const scopeHintArg = String(args.scope_hint || "").trim();
-    // Internal (server-injected) overrides — NOT in the public tool schema:
-    //   _cwd:    autopilot routes self_edit into its worktree path
-    //   _unsafe: emergency rescue mode (skip the sandbox + gates)
-    // The model itself can't set either — only the tool router can.
-    const internalCwd = typeof args._cwd === "string" && args._cwd.trim() ? args._cwd : null;
-    const unsafe = args._unsafe === true;
-
     const fullPrompt = await buildSelfEditPrompt(task, scopeHintArg);
 
     // Release the per-session live-call lock no matter how this function

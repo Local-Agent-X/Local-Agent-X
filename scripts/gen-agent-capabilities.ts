@@ -99,7 +99,7 @@ const BLURB: Record<string, { say?: string; does: string }> = {
   autopilot_stop:   { does: "Stop autopilot." },
   autopilot_status: { does: "Check autopilot status." },
 
-  self_edit: { say: "fix a bug in your own code", does: "Modify Agent X's own source via a coding agent." },
+  self_edit: { say: "fix a bug in your own code", does: "Modify Agent X's own source via a coding agent. Requires the developer_mode setting; with it off, customization goes through connector manifests, workspace apps, and settings." },
 
   enter_plan_mode: { say: "let's plan this first", does: "Enter plan mode (propose before acting)." },
   exit_plan_mode:  { does: "Leave plan mode and execute." },

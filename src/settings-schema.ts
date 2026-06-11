@@ -128,6 +128,13 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Model name within the chosen provider (gpt-5.5, claude-opus-4-7, grok-4, etc)",
   },
   {
+    field: "developer_mode",
+    validate: z.boolean(),
+    runtime: false,
+    protected: true,
+    description: "Unlocks self_edit on the platform's own source code. Off by default — customizations go through connectors (~/.lax/connectors), workspace apps, and settings, which all survive updates. Turning this on forks this install's core code: platform updates must then merge with the local edits.",
+  },
+  {
     field: "preferGrokForMedia",
     validate: z.boolean(),
     runtime: false,

@@ -96,14 +96,15 @@ export class ProjectStore {
 
   delete(id: string): boolean {
     const removed = this.projects.find(p => p.id === id);
-    const len = this.projects.length;
+    if (!removed) return false;
     this.projects = this.projects.filter(p => p.id !== id);
-    if (this.projects.length < len) {
-      if (removed) trashRecord(`project-${id}`, removed); // recoverable setup wiring
-      this.persist();
-      return true;
-    }
-    return false;
+    // Membership rows live in ProjectRosterStore, not on the Project. Pull them
+    // out too: snapshot the whole project (container + roster) as one record so
+    // a restore is complete, and don't leave the rows pointing at a dead project.
+    const rosters = ProjectRosterStore.getInstance().removeProject(id);
+    trashRecord(`project-${id}`, { project: removed, rosters });
+    this.persist();
+    return true;
   }
 
   /** Add an agent to a project */

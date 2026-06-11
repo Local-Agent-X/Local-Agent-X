@@ -301,4 +301,15 @@ export class ProjectRosterStore {
     this.persist();
     return true;
   }
+
+  /** Remove every roster entry for a project — used when the project itself
+   *  is deleted, so its membership rows aren't left orphaned. Returns the
+   *  removed rows so the caller can snapshot them for restore. */
+  removeProject(projectId: string): ProjectRoster[] {
+    const removed = this.listByProject(projectId);
+    if (removed.length === 0) return [];
+    for (const r of removed) delete this.rosters[rosterKey(r.projectId, r.agentId)];
+    this.persist();
+    return removed;
+  }
 }

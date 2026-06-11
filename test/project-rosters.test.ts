@@ -134,6 +134,18 @@ describe("ProjectRosterStore", () => {
     expect(store.listByProject("proj-A")).toEqual([]);
   });
 
+  it("removeProject deletes all of a project's rows and returns them, leaving others", () => {
+    const store = ProjectRosterStore.getInstance();
+    store.upsert("proj-A", "agent-X", { reportsTo: "CEO" });
+    store.upsert("proj-A", "agent-Y");
+    store.upsert("proj-B", "agent-X");
+    const removed = store.removeProject("proj-A");
+    expect(removed.map((r) => r.agentId).sort()).toEqual(["agent-X", "agent-Y"]);
+    expect(store.listByProject("proj-A")).toEqual([]);
+    expect(store.listByProject("proj-B")).toHaveLength(1); // unrelated project untouched
+    expect(store.removeProject("proj-A")).toEqual([]);     // idempotent
+  });
+
   it("persists across instances — write, reset singleton, read back", () => {
     ProjectRosterStore.getInstance().upsert("proj-A", "agent-X", { reportsTo: "CEO" });
     ProjectRosterStore._resetForTest();

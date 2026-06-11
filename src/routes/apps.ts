@@ -87,7 +87,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
   if (method === "DELETE" && appPath.startsWith("/api/apps/") && appPath.split("/").length === 4) {
     const id = appPath.split("/")[3];
     if (!/^[a-zA-Z0-9_-]+$/.test(id)) { json(400, { error: "Invalid app id" }); return true; }
-    const result = appReg.delete(id, "user", { workspaceDir: ctx.config.workspace });
+    const result = await appReg.delete(id, "user", { workspaceDir: ctx.config.workspace });
     if (!result.deleted) { json(404, { error: result.error || "Not found" }); return true; }
     try { ctx.agentSync.notifyChange(`app-delete:${id}`); } catch {}
     json(200, { ok: true, registry: result.registry, workspace: result.workspace });

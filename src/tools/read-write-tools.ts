@@ -215,7 +215,7 @@ export const deleteFileTool: ToolDefinition = {
           { path: filePath, isDirectory: true },
         );
       }
-      const trashed = moveToTrash(filePath, "delete_file");
+      const trashed = await moveToTrash(filePath, "delete_file");
       return ok(`Deleted ${filePath}${trashed ? ` (moved to ${trashed} — recoverable)` : ""}`);
     } catch (e) {
       return err(`Failed to delete ${filePath}: ${(e as Error).message}`, { path: filePath });

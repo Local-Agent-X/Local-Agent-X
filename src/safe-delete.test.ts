@@ -24,27 +24,27 @@ afterEach(() => {
 });
 
 describe("safe-delete recycle bin", () => {
-  it("moves a file into ~/.lax/trash and removes it from the source", () => {
+  it("moves a file into ~/.lax/trash and removes it from the source", async () => {
     const f = join(workDir, "note.txt");
     writeFileSync(f, "important", "utf-8");
-    const dest = moveToTrash(f, "test");
+    const dest = await moveToTrash(f, "test");
     expect(dest).toBeTruthy();
     expect(existsSync(f)).toBe(false);                          // gone from source
     expect(existsSync(dest!)).toBe(true);                       // recoverable in trash
     expect(dest!.startsWith(join(laxDir, "trash"))).toBe(true); // under the recycle bin
   });
 
-  it("moves a directory (an app) recursively", () => {
+  it("moves a directory (an app) recursively", async () => {
     const app = join(workDir, "my-app");
     mkdirSync(app);
     writeFileSync(join(app, "index.html"), "<h1>hi</h1>", "utf-8");
-    const dest = moveToTrash(app, "app_delete");
+    const dest = await moveToTrash(app, "app_delete");
     expect(existsSync(app)).toBe(false);
     expect(existsSync(join(dest!, "index.html"))).toBe(true);
   });
 
-  it("returns null for a path that doesn't exist", () => {
-    expect(moveToTrash(join(workDir, "missing"))).toBeNull();
+  it("returns null for a path that doesn't exist", async () => {
+    expect(await moveToTrash(join(workDir, "missing"))).toBeNull();
   });
 
   it("snapshots a deleted config record (project/agent) as recoverable JSON", () => {

@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { getLaxDir } from "./lax-data-dir.js";
+import { desktopTrashItem } from "./desktop-bridge.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("safe-delete");
@@ -14,10 +15,13 @@ const RETENTION_DAYS = 30;
 // dirs still hard-delete; only user data routes through here.
 //
 // Two tiers:
-//   1. The real OS Trash / Recycle Bin (macOS Finder, Windows Recycle Bin,
-//      Linux gio trash) — discoverable: the user browses, restores ("Put
-//      Back") and empties it the normal way, no hidden folder.
-//   2. Fallback to ~/.lax/trash/<YYYY-MM-DD>/ when the OS trash isn't reachable
+//   1. The real OS Trash / Recycle Bin — discoverable: the user browses,
+//      restores and empties it the normal way, no hidden folder. Preferred
+//      route is the Electron-main bridge (shell.trashItem), which records the
+//      original location so macOS "Put Back" / Windows-Linux "Restore" work.
+//      Standalone (no desktop) falls back to a direct move into the OS trash
+//      dir — recoverable, but without Put Back metadata on macOS.
+//   2. Fallback to ~/.lax/trash/<YYYY-MM-DD>/ when no OS trash is reachable
 //      (headless server, no GUI session, missing `gio`) — the data is still
 //      recoverable, just from a dotfolder.
 //
@@ -31,11 +35,11 @@ function trashRoot(): string {
 
 /** Move a file or directory to the recycle bin. Returns a human-readable
  *  location (for surfacing to the user) or null if the source didn't exist. */
-export function moveToTrash(path: string, reason?: string): string | null {
+export async function moveToTrash(path: string, reason?: string): Promise<string | null> {
   if (!existsSync(path)) return null;
   const tag = reason ? ` (${reason})` : "";
 
-  if (nativeTrash(path)) {
+  if (await nativeTrash(path)) {
     logger.info(`[trash] ${path} -> OS recycle bin${tag}`);
     return "the system Trash";
   }
@@ -59,8 +63,12 @@ export function moveToTrash(path: string, reason?: string): string | null {
 // Move to the OS Trash / Recycle Bin via the platform's native facility. Best
 // effort: returns true only when the item actually left `path`. Disabled under
 // the test harness so suites never touch the developer's real Trash.
-function nativeTrash(path: string): boolean {
+async function nativeTrash(path: string): Promise<boolean> {
   if (process.env.LAX_NO_NATIVE_TRASH) return false;
+  // Preferred: ask Electron main to use shell.trashItem (real Put Back /
+  // Restore). Absent outside the desktop app — then fall through to the
+  // platform's own facility below.
+  if (await desktopTrashItem(path)) return true;
   try {
     if (process.platform === "darwin") {
       // Direct move into ~/.Trash. macOS TCC blocks driving Finder via

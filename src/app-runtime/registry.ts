@@ -164,12 +164,12 @@ export class AppRegistry {
   }
 
   // Removes the registry dir AND (with opts.workspaceDir) the workspace dir + eager tombstone.
-  delete(id: string, actor = "user", opts?: { workspaceDir?: string }): {
+  async delete(id: string, actor = "user", opts?: { workspaceDir?: string }): Promise<{
     deleted: boolean;
     registry: boolean;
     workspace: boolean;
     error?: string;
-  } {
+  }> {
     const def = this.get(id);
     const wsAppDir = opts?.workspaceDir
       ? resolve(opts.workspaceDir, "apps", id)
@@ -202,7 +202,7 @@ export class AppRegistry {
       try {
         // Recycle bin, not perma-delete: the workspace dir holds the user's app
         // files (index.html etc.). Recoverable from ~/.lax/trash.
-        moveToTrash(wsAppDir, `app_delete:${id}`);
+        await moveToTrash(wsAppDir, `app_delete:${id}`);
         workspaceDeleted = true;
       } catch (e) {
         logger.warn(`failed to remove workspace dir for ${id}: ${(e as Error).message}`);

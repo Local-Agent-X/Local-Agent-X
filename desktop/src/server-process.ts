@@ -13,6 +13,7 @@
 // we never silently attach to stale pre-update code.
 
 import { ChildProcess, spawn, execSync } from "child_process";
+import { attachServerBridge } from "./server-bridge";
 import { existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -174,7 +175,10 @@ export function startServer(handlers?: ServerEventHandlers): void {
   // cwd is now validated for ownership in config.ts.)
   serverProcess = spawn("node", nodeArgs, {
     cwd: projectRoot,
-    stdio: ["ignore", "pipe", "pipe"],
+    // fd 3 = 'ipc': lets the server child request native OS actions (trashItem,
+    // so deletes get real Put Back / Restore) that only Electron main can do.
+    // See attachServerBridge below.
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
     // LAX_PARENT_PID lets the server self-terminate via heartbeat if we
     // die abnormally; server.pid handshake catches the cases that slip
     // through libuv's Job Object cleanup on Windows.
@@ -182,6 +186,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
       ...process.env,
       PATH: augmentedPath,
       LAX_PARENT_PID: String(process.pid),
+      LAX_DESKTOP_BRIDGE: "1",
       // OS Documents path. May be OneDrive-redirected on Windows (Known Folder
       // Move); the server sanitizes that to the real on-disk ~/Documents — a
       // high-write agent workspace must not live under OneDrive. See config.ts.
@@ -190,6 +195,8 @@ export function startServer(handlers?: ServerEventHandlers): void {
     },
     windowsHide: true,
   });
+
+  attachServerBridge(serverProcess);
 
   // Tee server stdout/stderr to a real file. Electron's GUI-launched
   // main-process console is /dev/null, so any crash-loop output is invisible

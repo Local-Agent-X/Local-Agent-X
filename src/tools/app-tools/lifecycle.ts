@@ -186,7 +186,7 @@ export const appDelete: ToolDefinition = {
   async execute(args) {
     const actor = getActor(args);
     const id = String(args.id || "");
-    const result = registry.delete(id, actor);
+    const result = await registry.delete(id, actor);
     if (!result.deleted) return err(result.error || `App "${id}" not found`);
     EventBus.emit("app:delete", { id });
     return ok(`App "${id}" deleted.`);

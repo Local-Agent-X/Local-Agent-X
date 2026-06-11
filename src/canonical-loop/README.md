@@ -574,7 +574,7 @@ PRD §22 Definition of Done — current state of the canonical loop:
 | Old-path compatibility test #11 | green (Issue 10) |
 | No diff against PRD §19 untouchables | green |
 | Public API signatures unchanged | green (Issue 10 compat fixtures verify) |
-| Feature flag defaults OFF | green |
+| Feature flag hardwired ON (retired 2026-05-15) | green |
 | Rollback procedure documented | green (this issue) |
 | Adapter sandbox audit clean | green (Issue 11 boundary audit) |
 | Loop has no `child_process` imports | green (Issue 11 boundary audit) |

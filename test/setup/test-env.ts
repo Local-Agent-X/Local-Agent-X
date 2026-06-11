@@ -18,3 +18,6 @@ mkdirSync(laxDir, { recursive: true });
 writeFileSync(join(laxDir, "settings.json"), JSON.stringify({ model: "claude-sonnet-4-6" }), "utf-8");
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+// Never route a test's safe-delete into the developer's real OS Trash — force
+// the ~/.lax fallback so trash assertions are deterministic and self-contained.
+process.env.LAX_NO_NATIVE_TRASH = "1";

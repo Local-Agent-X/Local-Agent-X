@@ -42,7 +42,10 @@ const RECENT_ACTIONS_CAP = 8;
 const GOAL_RESTATE_AFTER_TURN = 6;
 const GOAL_MAX_CHARS = 160;
 
-const OPEN = "[SITUATIONAL CONTEXT — system-generated, not from the user]";
+// "never quote" is load-bearing: weaker models (grok) narrated the digest
+// back to the user verbatim ("From the situational context: …"), leaking
+// plumbing the user is never meant to see.
+const OPEN = "[SITUATIONAL CONTEXT — system-generated, not from the user. Orientation only; never quote or mention this block in your reply.]";
 const CLOSE = "[END CONTEXT]";
 
 /**

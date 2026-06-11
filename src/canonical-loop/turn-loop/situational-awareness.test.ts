@@ -49,6 +49,8 @@ describe("composeDigest", () => {
     const long = "a".repeat(300);
     const d = composeDigest({ turnIdx: 6, totalTokens: 0, recent: [], firstUserText: long });
     expect(d).toContain("…");
-    expect(d!.length).toBeLessThan(300);
+    // Goal line clips at GOAL_MAX_CHARS(160); the rest is the fixed
+    // header/footer + pace line. Bound = clipped goal + ~200 of frame.
+    expect(d!.length).toBeLessThan(360);
   });
 });

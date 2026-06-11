@@ -16,8 +16,8 @@ How it works:
 - GitHub Actions ([build-voice-artifacts.yml](../.github/workflows/build-voice-artifacts.yml))
   builds each sidecar venv on a clean Windows runner, packs it as a zip,
   uploads to the matching release
-- User-side `install.ps1` reads `LAX_*_VENV_ARTIFACT_URL` env var (or
-  `~/.lax/voice-bundles.json`); when set, install becomes:
+- User-side `python/sovits/install.ps1` reads the `LAX_SOVITS_VENV_ARTIFACT_URL`
+  env var (or `~/.lax/voice-bundles.json`); when set, install becomes:
   1. Download the zip (single ~3-5 GB file)
   2. Verify SHA-256
   3. Extract to the sidecar's venv dir (`~/.lax/python-voice/venv` for Lite,
@@ -72,9 +72,9 @@ Lock-update workflow:
 How it works:
 - No lockfile, no artifact URL — install.ps1 falls back to:
   1. `pip install torch==2.6.0 torchaudio==2.6.0` from PyTorch CDN with the
-     right CUDA index (pinned — see the installer comment on the
-     torchcodec/FFmpeg issue; note `install.sh` currently pins 2.5.1, a
-     divergence that should be reconciled)
+     right CUDA index (pinned in both `install.ps1` and `install.sh` — see the
+     installer comments on the torchcodec/FFmpeg issue and why 2.6.0 was
+     chosen over 2.5.1)
   2. `pip install -r requirements.txt` from the upstream model repo
   3. `pip install -r server-requirements.txt` for our wrapper deps
   4. Pin `numpy<2.0` (GPT-SoVITS specific)

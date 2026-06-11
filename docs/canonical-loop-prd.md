@@ -673,20 +673,24 @@ interface TurnResult {
 
 **Status:** COMPLETE — strangler-fig retired 2026-05-15. The legacy fork-based
 execution path is deleted; canonical-loop is the only path. The per-lane
-`LAX_CANONICAL_LOOP_*` flags and `decideSubmitRouting` branching are gone.
+`LAX_CANONICAL_LOOP_*` flag readers and `decideSubmitRouting()` survive as
+compatibility shims for callers that capture the routing decision, but they
+are hardwired to canonical — no branching remains (see
+`src/canonical-loop/feature-flag.ts` and `router.ts`).
 
-One invariant from the migration era is still load-bearing: ops submitted
-while the flag existed may carry `ops.canonical_flag_value` in their stored
-row (kept for audit on historical rows). New ops do not populate it;
-`op_submit_async` reads no flag and always routes canonical. Rollback by
-flag flip is not possible — reverting the retirement commits is the only
-path back (see the rollback runbook).
+Every op stamps `canonical.flagValue=true` at submission, immutable for the
+op's lifetime; rows from the migration era may carry other captured values,
+kept for audit. `op_submit_async` reads no flag and always routes canonical.
+Rollback by flag flip is not possible — reverting the retirement commits is
+the only path back (see the rollback runbook).
 
 ---
 
 ## 18. Test Plan
 
-Two suites, locked at v1.
+Two suites, locked at v1. This section is the v1.0 ship gate, completed
+2026-05-15, and is kept verbatim as the record of what v1 shipped against;
+§17 records the post-ship retirement of the feature flag.
 
 ### v1 acceptance tests (11)
 

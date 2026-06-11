@@ -226,10 +226,14 @@ Move org metadata (`hired`, `reportsTo`, `heartbeatSchedule`, `budget`) off
 `(projectId, agentId)`. `AgentTemplate` loses those fields. The agents page
 hire/fire flow reads/writes the new store via Project APIs.
 
-### L4 — Unified Run type
+### L4 — Unified Run type (types & docs shipped; consumer wiring pending)
 
 Wrap `FieldAgent` (in-flight) + `AgentRun` (persisted) under a single canonical
-`Run` interface. Document the state machine. Unblocks the UI run viewer.
+`Run` interface. Document the state machine. The interface lives in
+`src/agents/run.ts` with `ActiveRun` / `PersistedRun` views; both legacy types
+structurally conform. Consumers have not migrated yet — the history route still
+adapts `FieldAgent` to the `AgentRun` shape at serve time. Consumer wiring is
+what unblocks the UI run viewer (L6).
 
 ### L5 — Consumer migration sweep
 
@@ -252,6 +256,11 @@ permissions for approvals (Q5).
 Remove `BUILT_IN_ROLES` / `customRoles` once `agency_list_roles` migrates.
 Remove `_seedBuiltinRoles` once nothing reads it. Remove legacy
 ad-hoc-spawn paths once `agent_spawn` is canonical-only.
+
+**Status:** preconditions met — `agency_list_roles` is gone (L5) and the
+ad-hoc spawn shape is gone (L2) — but the deletion itself has not run:
+`BUILT_IN_ROLES` and `_seedBuiltinRoles()` are still live in
+`src/agency/agent-roles.ts` and seeded into the catalog on every `list()`.
 
 ---
 

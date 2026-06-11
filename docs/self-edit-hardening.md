@@ -302,6 +302,9 @@ timeout.
   setupVoiceWs → startConfigWatcher → bootstrapCanonicalLoop; the sweep (run
   BEFORE startServer) was the real culprit.
 
-**Follow-up:** see the backlog item "Boot sweep can nuke an ACTIVE self_edit
-worktree on a mid-self_edit restart" — the probe case is fixed, the real-server
-mid-self_edit-restart edge case is not.
+**Follow-up:** the boot sweep could originally unlink a live self_edit's
+worktree during a restart overlap. Pass 5 closed that case — the sweep
+early-returns when `isSelfEditLockHeldByLiveProcess()` reports a live holder
+(see `sweepOrphanWorktreeJunctions`). What remains open is the separate
+autopilot case under "Known limitation" above: the end-of-shift boot proof
+does not hold the lock for the whole shift.

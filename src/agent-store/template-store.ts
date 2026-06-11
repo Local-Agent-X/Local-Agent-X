@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import { TEMPLATES_FILE } from "./paths.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { builtInTemplateDefaults } from "./template-defaults.js";
+import { trashRecord } from "../safe-delete.js";
 import { createLogger } from "../logger.js";
 import type { AgentModelPin } from "../agents/types.js";
 
@@ -200,9 +201,14 @@ export class AgentTemplateStore {
   }
 
   delete(id: string): boolean {
+    const removed = this.templates.find(t => t.id === id);
     const len = this.templates.length;
     this.templates = this.templates.filter(t => t.id !== id);
-    if (this.templates.length < len) { this.persist(); return true; }
+    if (this.templates.length < len) {
+      if (removed) trashRecord(`agent-${id}`, removed); // recoverable agent definition
+      this.persist();
+      return true;
+    }
     return false;
   }
 

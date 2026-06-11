@@ -6,6 +6,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { PROJECTS_FILE } from "./paths.js";
 import { ProjectRosterStore } from "../project-rosters.js";
+import { trashRecord } from "../safe-delete.js";
 
 export interface Project {
   id: string;
@@ -94,9 +95,14 @@ export class ProjectStore {
   }
 
   delete(id: string): boolean {
+    const removed = this.projects.find(p => p.id === id);
     const len = this.projects.length;
     this.projects = this.projects.filter(p => p.id !== id);
-    if (this.projects.length < len) { this.persist(); return true; }
+    if (this.projects.length < len) {
+      if (removed) trashRecord(`project-${id}`, removed); // recoverable setup wiring
+      this.persist();
+      return true;
+    }
     return false;
   }
 

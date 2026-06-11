@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, renameSync, cpSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, cpSync, rmSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
@@ -87,6 +87,25 @@ function nativeTrash(path: string): boolean {
     return !existsSync(path);
   } catch {
     return false; // no GUI session / tool missing / permission — caller falls back to ~/.lax/trash
+  }
+}
+
+/** Snapshot a deleted CONFIG record (a project container, an agent definition)
+ *  as JSON so the deletion is recoverable. Metadata goes to ~/.lax/trash, not
+ *  the OS Trash — a cryptic `project-….json` in Finder isn't something a user
+ *  can "Put Back". Best-effort: never throws into the caller's delete path. */
+export function trashRecord(name: string, data: unknown): void {
+  try {
+    const now = new Date();
+    const dir = join(trashRoot(), now.toISOString().slice(0, 10));
+    mkdirSync(dir, { recursive: true });
+    const safe = name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const dest = join(dir, `${safe}.${now.getTime()}.json`);
+    writeFileSync(dest, JSON.stringify(data, null, 2), "utf-8");
+    logger.info(`[trash] snapshot ${name} -> ${dest}`);
+    sweepOldTrash();
+  } catch (e) {
+    logger.warn(`[trash] failed to snapshot ${name}: ${(e as Error).message}`);
   }
 }
 

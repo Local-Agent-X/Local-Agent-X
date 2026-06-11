@@ -2,10 +2,10 @@
 // (recoverable) instead of perma-deleting it.
 
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { moveToTrash } from "./safe-delete.js";
+import { moveToTrash, trashRecord } from "./safe-delete.js";
 
 let laxDir: string;
 let workDir: string;
@@ -45,5 +45,16 @@ describe("safe-delete recycle bin", () => {
 
   it("returns null for a path that doesn't exist", () => {
     expect(moveToTrash(join(workDir, "missing"))).toBeNull();
+  });
+
+  it("snapshots a deleted config record (project/agent) as recoverable JSON", () => {
+    const proj = { id: "proj-abc", name: "My Project", agentIds: ["a1", "a2"] };
+    trashRecord(`project-${proj.id}`, proj);
+    const trashDir = join(laxDir, "trash");
+    const snaps = readdirSync(trashDir)
+      .flatMap((d) => readdirSync(join(trashDir, d)).map((f) => join(trashDir, d, f)))
+      .filter((f) => f.includes("project-proj-abc") && f.endsWith(".json"));
+    expect(snaps.length).toBe(1);
+    expect(JSON.parse(readFileSync(snaps[0], "utf-8"))).toEqual(proj);
   });
 });

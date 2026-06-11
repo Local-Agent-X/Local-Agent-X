@@ -107,11 +107,13 @@ export const sidebarUnpin: ToolDefinition = {
       return ok(`Removed all pins from the sidebar: ${removed}`);
     }
 
-    // Case-insensitive match
+    // Case-insensitive match. Already-gone is success, not an error — the
+    // desired end state holds, and an err() here reads as "try again" to
+    // weaker models, which looped them re-unpinning a finished removal.
     const pins = currentPins.filter(p => p.name.toLowerCase() !== name.toLowerCase());
     if (pins.length === currentPins.length) {
       const available = currentPins.map(p => p.name).join(", ");
-      return err(`"${name}" is not pinned. Current pins: ${available || "none"}`);
+      return ok(`${name} is already not pinned — nothing to do. Current pins: ${available || "none"}`);
     }
 
     settings.sidebarPins = pins;
@@ -119,7 +121,9 @@ export const sidebarUnpin: ToolDefinition = {
 
     try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
 
-    return ok(`Removed ${name} from the sidebar.`);
+    // Remaining pins in the result so the model has the post-state inline —
+    // no reason left to "verify" with a follow-up GET /api/sidebar/pins.
+    return ok(`Removed ${name} from the sidebar. Remaining pins: ${pins.map(p => p.name).join(", ") || "none"}`);
   },
 };
 

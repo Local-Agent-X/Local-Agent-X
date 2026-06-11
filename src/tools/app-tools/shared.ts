@@ -6,7 +6,10 @@
 
 import type { ToolResult } from "../../types.js";
 
-export function ok(content: string): ToolResult { return { content }; }
+// status:"ok" opts successes into the explicit [ok] header
+// (renderToolResultForModel) — bare-prose successes left weaker models
+// unsure the action landed, so they re-verified finished work in a loop.
+export function ok(content: string): ToolResult { return { content, status: "ok" }; }
 export function err(content: string): ToolResult { return { content, isError: true }; }
 
 export function getActor(args: Record<string, unknown>): string {

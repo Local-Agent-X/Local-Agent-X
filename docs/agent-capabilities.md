@@ -38,6 +38,9 @@ demand via tool search and aren't all listed here.)
 
 - `web_fetch` — Fetch and read a web page. _e.g._ "summarize https://example.com"
 - `web_search` — Search the web. _e.g._ "search the web for the latest on X"
+- `image_search`
+- `create_chart`
+- `preview_document`
 - `http_request` — Make a raw HTTP request to an API.
 
 ### App self-control
@@ -177,7 +180,8 @@ demand via tool search and aren't all listed here.)
 
 - `document_create` — Create a document. _e.g._ "write me a one-pager on X"
 - `document_edit` — Edit a document.
+- `presentation_edit`
 - `document_read` — Read a document.
 
 ---
-_94 capabilities · 77 with a description · 17 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_98 capabilities · 77 with a description · 21 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._

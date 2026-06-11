@@ -274,9 +274,14 @@ describe("userHint on blocked-tool responses", () => {
       expect(rendered).toContain("Blocked: legacy reason with no userHint");
     });
 
-    it("backward-compat: pure-legacy ToolResult (no status, no metadata) returns verbatim content", () => {
-      const r: ToolResult = { content: "raw content", isError: true };
+    it("backward-compat: pure-legacy ToolResult (no status/metadata/isError) returns verbatim content", () => {
+      const r: ToolResult = { content: "raw content" };
       expect(renderToolResultForModel(r)).toBe("raw content");
+    });
+
+    it("legacy isError opts into the [error] header (header-less errors were recorded as ok)", () => {
+      const r: ToolResult = { content: "raw content", isError: true };
+      expect(renderToolResultForModel(r)).toBe("[error]\nraw content");
     });
   });
 

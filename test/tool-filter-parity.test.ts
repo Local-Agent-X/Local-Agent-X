@@ -107,7 +107,20 @@ function replicaFilter(allTools: ToolDefinition[], message: string): ToolDefinit
 
   const BUILD_RE = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script)/i;
   if (BUILD_RE.test(message) && literalCalls.size === 0) {
-    return allTools.filter(t => BUILD_INTENT_NAMES.has(t.name));
+    // 2026-06-10: keyword-routed tools survive the build-intent strip-down —
+    // a message that names an artifact ("power point", "spreadsheet") keeps
+    // those tools in the schema even when the build classifier fires.
+    const keyworded = new Set<string>();
+    for (const { re: kw, prefixes } of PREFIXES_BY_KEYWORD) {
+      if (kw.test(message)) {
+        for (const tool of allTools) {
+          for (const p of prefixes) {
+            if (tool.name.startsWith(p) || tool.name === p) keyworded.add(tool.name);
+          }
+        }
+      }
+    }
+    return allTools.filter(t => BUILD_INTENT_NAMES.has(t.name) || keyworded.has(t.name));
   }
 
   const included = new Set<string>();

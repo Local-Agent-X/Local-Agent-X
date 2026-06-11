@@ -95,3 +95,6 @@ ari-redteam-*.md
 *-redteam-*.md
 *-security-report.md
 *-threat-report.md
+
+# Personal Claude Code config/skills - never ship in the repo
+.claude/

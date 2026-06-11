@@ -1,0 +1,229 @@
+/**
+ * Connector proxy — one authenticated route that forwards dashboard/app
+ * requests to external APIs, driven by declarative manifests in
+ * `<lax data dir>/connectors/<name>.json`.
+ *
+ * Replaces the old pattern of one hand-written proxy route per service
+ * (fastmail-proxy.ts, kraken-proxy.ts): each new integration meant editing
+ * core route files, and the per-service routes drifted (one even shipped an
+ * auth exemption). A connector is user DATA, not code — adding one never
+ * touches the repo, survives platform updates, and always sits behind the
+ * normal auth gate.
+ *
+ * Manifest shape:
+ *   {
+ *     "upstream": "https://api.fastmail.com",
+ *     "auth": { "type": "bearer", "secret": "FASTMAIL" },
+ *     "allow": ["GET /jmap/session", "POST /jmap/api"],
+ *     "forwardHeaders": ["API-Key", "API-Sign"],
+ *     "timeoutMs": 20000
+ *   }
+ *
+ * auth.type: "bearer" (Authorization: Bearer <vault secret>),
+ *            "header" ({header, secret} — secret sent in a named header),
+ *            "none"   (client supplies everything via forwardHeaders).
+ * allow:     "METHOD /path" entries; a trailing "/*" matches the subtree.
+ * Secrets resolve from the vault by name and never leave the server.
+ */
+
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import type { IncomingMessage } from "node:http";
+import type { RouteHandler } from "../server-context.js";
+import { jsonResponse, safeErrorMessage } from "../server-utils.js";
+import { getSecretsStoreSingleton } from "../secrets.js";
+import { getLaxDir } from "../lax-data-dir.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("routes.connector-proxy");
+const DEFAULT_TIMEOUT_MS = 20_000;
+const MAX_TIMEOUT_MS = 120_000;
+const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
+// Client headers a manifest may never forward: they carry LAX's own session
+// auth, which must not leak upstream.
+const FORBIDDEN_FORWARD = new Set(["authorization", "cookie"]);
+
+export interface ConnectorManifest {
+  upstream: string;
+  auth:
+    | { type: "bearer"; secret: string }
+    | { type: "header"; header: string; secret: string }
+    | { type: "none" };
+  allow: string[];
+  forwardHeaders?: string[];
+  timeoutMs?: number;
+}
+
+export function connectorsDir(): string {
+  return join(getLaxDir(), "connectors");
+}
+
+export function parseManifest(raw: string): { ok: true; manifest: ConnectorManifest } | { ok: false; error: string } {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return { ok: false, error: "manifest is not valid JSON" }; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, error: "manifest must be a JSON object" };
+  }
+  const m = parsed as Record<string, unknown>;
+
+  const upstream = typeof m.upstream === "string" ? m.upstream.replace(/\/+$/, "") : "";
+  const isLocal = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(upstream);
+  if (!/^https:\/\/[^\s/]+$/.test(upstream) && !isLocal) {
+    return { ok: false, error: "upstream must be an https:// origin (or http://localhost for local services), no path" };
+  }
+
+  const auth = m.auth as Record<string, unknown> | undefined;
+  const authType = auth?.type;
+  if (authType === "bearer" || authType === "header") {
+    if (typeof auth?.secret !== "string" || !auth.secret) return { ok: false, error: `auth.type "${authType}" requires auth.secret (a vault secret name)` };
+    if (authType === "header" && (typeof auth?.header !== "string" || !auth.header)) return { ok: false, error: `auth.type "header" requires auth.header` };
+  } else if (authType !== "none") {
+    return { ok: false, error: `auth.type must be "bearer", "header", or "none"` };
+  }
+
+  if (!Array.isArray(m.allow) || m.allow.length === 0) {
+    return { ok: false, error: "allow must be a non-empty array of \"METHOD /path\" entries" };
+  }
+  for (const entry of m.allow) {
+    if (typeof entry !== "string" || !/^(GET|POST|PUT|PATCH|DELETE|HEAD) \/\S*$/.test(entry)) {
+      return { ok: false, error: `invalid allow entry ${JSON.stringify(entry)} — expected "METHOD /path" (optionally ending in /*)` };
+    }
+  }
+
+  if (m.forwardHeaders !== undefined) {
+    if (!Array.isArray(m.forwardHeaders) || m.forwardHeaders.some(h => typeof h !== "string")) {
+      return { ok: false, error: "forwardHeaders must be an array of header names" };
+    }
+    const banned = (m.forwardHeaders as string[]).filter(h => FORBIDDEN_FORWARD.has(h.toLowerCase()));
+    if (banned.length) return { ok: false, error: `forwardHeaders may not include ${banned.join(", ")} — those carry LAX's own session auth` };
+  }
+
+  const timeoutMs = m.timeoutMs === undefined ? undefined
+    : Math.min(Math.max(Number(m.timeoutMs) || DEFAULT_TIMEOUT_MS, 1000), MAX_TIMEOUT_MS);
+
+  return {
+    ok: true,
+    manifest: {
+      upstream,
+      auth: (authType === "none" ? { type: "none" } : auth) as ConnectorManifest["auth"],
+      allow: m.allow as string[],
+      forwardHeaders: m.forwardHeaders as string[] | undefined,
+      timeoutMs,
+    },
+  };
+}
+
+/** True when `method` + `path` matches an allow entry ("METHOD /p" exact, "METHOD /p/*" subtree). */
+export function matchAllow(allow: string[], method: string, path: string): boolean {
+  for (const entry of allow) {
+    const sp = entry.indexOf(" ");
+    if (entry.slice(0, sp) !== method) continue;
+    const pattern = entry.slice(sp + 1);
+    if (pattern.endsWith("/*")) {
+      if (path.startsWith(pattern.slice(0, -1)) || path === pattern.slice(0, -2)) return true;
+    } else if (path === pattern) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function loadManifest(name: string): { ok: true; manifest: ConnectorManifest } | { ok: false; status: number; error: string } {
+  const file = join(connectorsDir(), `${name}.json`);
+  if (!existsSync(file)) {
+    return { ok: false, status: 404, error: `No connector "${name}". Create ${file} to define one.` };
+  }
+  const parsed = parseManifest(readFileSync(file, "utf-8"));
+  if (!parsed.ok) return { ok: false, status: 500, error: `Connector "${name}" manifest invalid: ${parsed.error}` };
+  return parsed;
+}
+
+async function readRawBody(req: IncomingMessage): Promise<Buffer | null> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    total += (chunk as Buffer).length;
+    if (total > MAX_BODY_BYTES) return null;
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function forwardWithTimeout(u: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try { return await fetch(u, { ...init, signal: ctrl.signal }); }
+  finally { clearTimeout(timer); }
+}
+
+export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req, res) => {
+  const json = (s: number, d: unknown) => jsonResponse(res, s, d, req);
+
+  // Listing — lets the UI/agent discover configured connectors (no secrets).
+  if (method === "GET" && url.pathname === "/api/connectors") {
+    const dir = connectorsDir();
+    const names = existsSync(dir) ? readdirSync(dir).filter(f => f.endsWith(".json")).map(f => f.slice(0, -5)) : [];
+    const connectors = names.filter(n => NAME_RE.test(n)).map(name => {
+      const loaded = loadManifest(name);
+      return loaded.ok
+        ? { name, upstream: loaded.manifest.upstream, allow: loaded.manifest.allow }
+        : { name, error: loaded.error };
+    });
+    json(200, { connectors, dir });
+    return true;
+  }
+
+  if (!url.pathname.startsWith("/api/connectors/")) return false;
+
+  const rest = url.pathname.slice("/api/connectors/".length);
+  const slash = rest.indexOf("/");
+  const name = slash === -1 ? rest : rest.slice(0, slash);
+  const upstreamPath = slash === -1 ? "/" : rest.slice(slash);
+  if (!NAME_RE.test(name)) { json(400, { error: "Connector name must be a lowercase slug." }); return true; }
+
+  const loaded = loadManifest(name);
+  if (!loaded.ok) { json(loaded.status, { error: loaded.error }); return true; }
+  const manifest = loaded.manifest;
+
+  if (!matchAllow(manifest.allow, method, upstreamPath)) {
+    json(403, { error: `${method} ${upstreamPath} is not in connector "${name}"'s allow list.`, allow: manifest.allow });
+    return true;
+  }
+
+  const headers: Record<string, string> = { "Accept": "application/json" };
+  if (manifest.auth.type !== "none") {
+    const secret = getSecretsStoreSingleton()?.get(manifest.auth.secret);
+    if (!secret) { json(401, { error: `Vault secret "${manifest.auth.secret}" is not configured — add it before using connector "${name}".` }); return true; }
+    if (manifest.auth.type === "bearer") headers["Authorization"] = `Bearer ${secret}`;
+    else headers[manifest.auth.header] = secret;
+  }
+  const clientContentType = req.headers["content-type"];
+  if (typeof clientContentType === "string") headers["Content-Type"] = clientContentType;
+  for (const h of manifest.forwardHeaders ?? []) {
+    const v = req.headers[h.toLowerCase()];
+    if (typeof v === "string") headers[h] = v;
+  }
+
+  let body: Buffer | undefined;
+  if (method !== "GET" && method !== "HEAD") {
+    const raw = await readRawBody(req);
+    if (raw === null) { json(413, { error: `Request body exceeds ${MAX_BODY_BYTES / 1024 / 1024}MB limit.` }); return true; }
+    body = raw;
+  }
+
+  try {
+    const up = await forwardWithTimeout(
+      manifest.upstream + upstreamPath + (url.search || ""),
+      { method, headers, ...(body !== undefined ? { body: new Uint8Array(body) } : {}) },
+      manifest.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    );
+    const responseBody = Buffer.from(await up.arrayBuffer());
+    res.writeHead(up.status, { "Content-Type": up.headers.get("content-type") || "application/json" });
+    res.end(responseBody);
+  } catch (e) {
+    logger.warn(`[connector.${name}] ${method} ${upstreamPath} failed: ${safeErrorMessage(e)}`);
+    json(502, { error: { upstream: safeErrorMessage(e) } });
+  }
+  return true;
+};

@@ -122,10 +122,10 @@ describe("F1: auth gate over a real HTTP round-trip", () => {
     expect(res.status).toBe(401);
   });
 
-  it("NO token on the fastmail proxy is 401 (prefix exemption removed)", async () => {
+  it("NO token on the connector proxy is 401 (no proxy prefix exemptions)", async () => {
     // POST is allowed for same-origin loopback (no Origin header → no CSRF
     // block), so the auth gate is what produces the 401 here.
-    const res = await fetch(`${base()}/api/fastmail/jmap`, {
+    const res = await fetch(`${base()}/api/connectors/fastmail/jmap/api`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
@@ -133,8 +133,8 @@ describe("F1: auth gate over a real HTTP round-trip", () => {
     expect(res.status).toBe(401);
   });
 
-  it("NO token on the kraken proxy is 401 (prefix exemption removed)", async () => {
-    const res = await fetch(`${base()}/api/kraken/public/Time`);
+  it("NO token on the connector listing is 401 (prefix exemption removed)", async () => {
+    const res = await fetch(`${base()}/api/connectors`);
     expect(res.status).toBe(401);
   });
 

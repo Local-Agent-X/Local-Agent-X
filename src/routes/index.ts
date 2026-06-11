@@ -10,6 +10,5 @@ export { handleBridgeRoutes } from "./bridges.js";
 export { handleChatRoutes } from "./chat.js";
 export { handleMcpRoutes } from "./mcp.js";
 export { handleAutopilotRoutes } from "./autopilot.js";
-export { handleKrakenProxyRoutes } from "./kraken-proxy.js";
-export { handleFastmailProxyRoutes } from "./fastmail-proxy.js";
+export { handleConnectorProxyRoutes } from "./connector-proxy.js";
 export { handleHealthRoutes } from "./health.js";

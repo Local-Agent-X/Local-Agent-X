@@ -257,7 +257,7 @@ Tests: `test/self-edit-global-lock.test.ts` (+4 for the live-lock guard, 10
 green). Verified: `npm run build` clean; the 6 self-edit/worktree suites green
 (38 tests); `pickProbePort` runtime-checked to skip an occupied in-range port.
 
-### Honest residual
+### Known limitation
 - The autopilot end-of-shift boot proof boots an existing autopilot worktree but
   does NOT hold the global self_edit lock for the whole shift, so the live-lock
   guard does not protect an autopilot worktree from a mid-shift restart sweep the

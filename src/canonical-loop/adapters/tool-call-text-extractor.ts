@@ -250,7 +250,7 @@ function parseNarratedArgs(
 /**
  * Prose-narration fallback (Pattern 3).
  *
- * Live failure 2026-06-04 (Nutrishop demo, xAI Grok): weaker OpenAI-compat
+ * Live failure 2026-06-04 (xAI Grok): weaker OpenAI-compat
  * models DESCRIBE tool calls in English instead of emitting structured
  * tool_calls — or even the JSON the extractor above catches — e.g.
  * `run tool write with path is f.txt content is …`, often several in one

@@ -37,16 +37,16 @@ describe("detectRefusalOrError", () => {
 
 describe("extractTopicKeywords", () => {
   it("strips stopwords and short tokens", () => {
-    const kw = extractTopicKeywords("Research what is happening with autism therapy");
-    expect(kw).toContain("autism");
-    expect(kw).toContain("therapy");
+    const kw = extractTopicKeywords("Research what is happening with fusion energy");
+    expect(kw).toContain("fusion");
+    expect(kw).toContain("energy");
     expect(kw).not.toContain("what");
     expect(kw).not.toContain("is");
   });
 
   it("dedupes repeated keywords", () => {
-    const kw = extractTopicKeywords("autism autism autism research");
-    expect(kw.filter(k => k === "autism")).toHaveLength(1);
+    const kw = extractTopicKeywords("fusion fusion fusion research");
+    expect(kw.filter(k => k === "fusion")).toHaveLength(1);
   });
 
   it("caps at 25 keywords", () => {
@@ -61,12 +61,12 @@ describe("scoreTopicMatch", () => {
   });
 
   it("scores full match at 1.0", () => {
-    const r = scoreTopicMatch("autism therapy research", "autism therapy research findings");
+    const r = scoreTopicMatch("fusion energy research", "fusion energy research findings");
     expect(r.score).toBe(1);
   });
 
   it("scores partial match proportionally", () => {
-    const r = scoreTopicMatch("autism therapy cannabis sleep", "autism content here only");
+    const r = scoreTopicMatch("fusion energy storage plasma", "fusion content here only");
     expect(r.matched).toBe(1);
     expect(r.total).toBe(4);
     expect(r.score).toBeCloseTo(0.25);
@@ -122,7 +122,7 @@ describe("validateMissionOutput", () => {
     "# Report\n\n" + "Substantive paragraph about the topic. ".repeat(20) + extra;
 
   it("accepts a substantive end_turn report", () => {
-    const r = validateMissionOutput("autism research update", longBody("All good."), "end_turn");
+    const r = validateMissionOutput("fusion research update", longBody("All good."), "end_turn");
     expect(r.valid).toBe(true);
     expect(r.contentValid).toBe(true);
   });
@@ -135,29 +135,29 @@ describe("validateMissionOutput", () => {
   });
 
   it("fails refusal with contentValid=false", () => {
-    const r = validateMissionOutput("autism research", "I cannot help with this request.", "end_turn");
+    const r = validateMissionOutput("fusion research", "I cannot help with this request.", "end_turn");
     expect(r.valid).toBe(false);
     expect(r.contentValid).toBe(false);
     expect(r.reason).toMatch(/refusal/);
   });
 
   it("fails too-short output with contentValid=false", () => {
-    const r = validateMissionOutput("autism research", "Brief reply.", "end_turn");
+    const r = validateMissionOutput("fusion research", "Brief reply.", "end_turn");
     expect(r.valid).toBe(false);
     expect(r.contentValid).toBe(false);
     expect(r.reason).toMatch(/too short/);
   });
 
   it("accepts 200+ char output (lowered MIN_OUTPUT_LENGTH)", () => {
-    const body = "Autism research findings. ".repeat(10);
+    const body = "Fusion research findings. ".repeat(10);
     expect(body.length).toBeGreaterThanOrEqual(200);
     expect(body.length).toBeLessThan(400);
-    const r = validateMissionOutput("autism research findings", body, "end_turn");
+    const r = validateMissionOutput("fusion research findings", body, "end_turn");
     expect(r.valid).toBe(true);
   });
 
   it("fails off-topic content with contentValid=false", () => {
-    const prompt = "autism therapy cannabis sleep nutrition behavior communication sensory cannabinoid";
+    const prompt = "fusion reactor plasma magnet cooling materials diagnostics tokamak";
     const offTopic = "Today's weather forecast suggests rain in the afternoon. ".repeat(20);
     const r = validateMissionOutput(prompt, offTopic, "end_turn");
     expect(r.valid).toBe(false);
@@ -172,20 +172,20 @@ describe("validateMissionOutput", () => {
   });
 
   it("SALVAGE: substantive content with stopReason=error returns valid=false, contentValid=true", () => {
-    const r = validateMissionOutput("autism research", longBody("Done."), "error");
+    const r = validateMissionOutput("fusion research", longBody("Done."), "error");
     expect(r.valid).toBe(false);
     expect(r.contentValid).toBe(true);
     expect(r.reason).toMatch(/bad stopReason: error/);
   });
 
   it("SALVAGE: substantive content with stopReason=max_iterations also salvageable", () => {
-    const r = validateMissionOutput("autism research", longBody("Done."), "max_iterations");
+    const r = validateMissionOutput("fusion research", longBody("Done."), "max_iterations");
     expect(r.valid).toBe(false);
     expect(r.contentValid).toBe(true);
   });
 
   it("does not salvage when stopReason=error AND content is bad", () => {
-    const r = validateMissionOutput("autism research", "I cannot help with this.", "error");
+    const r = validateMissionOutput("fusion research", "I cannot help with this.", "error");
     expect(r.valid).toBe(false);
     expect(r.contentValid).toBe(false);
     expect(r.reason).toMatch(/refusal/);
@@ -201,7 +201,7 @@ describe("validateMissionOutput", () => {
 
   it("cron preamble in prompt does not throw", () => {
     expect(() =>
-      validateMissionOutput("every day at 8 am, research autism", longBody(), "end_turn"),
+      validateMissionOutput("every day at 8 am, research fusion", longBody(), "end_turn"),
     ).not.toThrow();
   });
 });

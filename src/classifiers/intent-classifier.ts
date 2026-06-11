@@ -67,8 +67,8 @@ KINDS:
 
 - agent_spawn — user is asking to DELEGATE a long-running task to a named role/specialist for execution NOW: research, multi-step writing, code review, market scans, browsing-and-summarizing, anything that benefits from a focused worker run RIGHT NOW. Examples:
     "research current AI voice toolkits and write a summary"
-    "have a coder review the kraken bot for bugs"
-    "spawn a researcher to find the top 5 GLP-1 supplements"
+    "have a coder review the scraper bot for bugs"
+    "spawn a researcher to find the top 5 note-taking apps"
     "delegate this competitor analysis to a market-research worker"
 
   NOT agent_spawn (these are SCHEDULING, not immediate delegation — let the model pick mission_schedule_create directly):

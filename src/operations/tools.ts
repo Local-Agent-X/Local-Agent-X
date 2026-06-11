@@ -35,13 +35,13 @@ export function createOperationTools(): ToolDefinition[] {
       name: "operation_start",
       description:
         "Start a new long-horizon Operation. Use when the user asks for a multi-step goal that can't be finished in one chat turn " +
-        "(e.g., 'build me a WooCommerce store', 'set up pmajlabs.com email + DNS', 'deploy this app end-to-end'). " +
+        "(e.g., 'build me a WooCommerce store', 'set up example.com email + DNS', 'deploy this app end-to-end'). " +
         "The goal is decomposed into phases by an LLM planner; you then call operation_next to get each phase's scoped prompt " +
         "and execute it before calling operation_advance. For one-shot actions (single tool call, <5 min), do NOT use operations.",
       parameters: {
         type: "object",
         properties: {
-          goal: { type: "string", description: "The user's goal verbatim. Be specific — 'build a WooCommerce store for pmajlabs.com with Stripe checkout' beats 'build an ecommerce site'." },
+          goal: { type: "string", description: "The user's goal verbatim. Be specific — 'build a WooCommerce store for example.com with Stripe checkout' beats 'build an ecommerce site'." },
           provider: { type: "string", enum: ["ollama", "anthropic", "openai", "auto"], description: "LLM for decomposition (default auto)" },
           model: { type: "string", description: "Override model for the decomposer" },
           pre_blessed_secrets: {

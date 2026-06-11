@@ -38,7 +38,7 @@ Output JSON with these fields (omit or set to null when not stated):
   "preference_rule": <string | null>,     // durable instruction about how to respond / behave: "never greet me in Spanish", "always use light mode", "I prefer concise answers", "stop using emojis"
   "personal_affinity": <Array<string> | null>,  // durable LIKES/DISLIKES about things in the user's life (foods, places, brands, hobbies, music, shows, sports, drinks, restaurants): "I love pizza" → ["User's favorite food is pizza"], "@AcmePizza is my favorite spot" → ["@AcmePizza is the user's favorite pizza place"], "I hate olives" → ["User dislikes olives"], "I love pizza and tacos" → ["User loves pizza", "User loves tacos"]. Phrase each as a third-person statement about the user, ≤180 chars. Use @-prefix on named entities (places, brands).
   "ongoing_state": <Array<string> | null>,  // any DURABLE PRESENT-TENSE fact about the user — something that should still be true tomorrow. The catch-all for "I'm currently X" / "I'm doing X" / "I have X" / "I own X" / "I live in a Y" patterns that aren't already captured by location/employer/role/family/relationships/preferences/affinities/events. Examples across categories: medications/health ("I'm taking <med>" → ["User is currently taking <med>"], "I have asthma" → ["User has asthma"]); diet/fitness ("I'm on keto" → ["User is on a keto diet"], "I work out 3x a week" → ["User works out 3x a week"]); work/projects ("I'm building a CRM" → ["User is currently building a CRM"], "I'm studying for the bar exam" → ["User is studying for the bar exam"]); learning ("I'm learning Spanish" → ["User is learning Spanish"]); possessions ("I drive a pickup" → ["User drives a pickup truck"], "I have two cats" → ["User has two cats"]); habits/lifestyle ("I'm a night owl" → ["User is a night owl"], "I'm vegetarian" → ["User is vegetarian"]); current situation ("I'm staying with my parents" → ["User is currently staying with their parents"]). NOT category-specific — if a statement is durable + present-tense + about the user and doesn't fit another field, it goes here. Phrase third-person, ≤180 chars. Each statement in its own array entry. EACH new addition is a separate entry — "I'm also taking <med2>" after a prior <med1> is a SECOND entry, not an update.
-  "biographical_event": <string | null>   // durable POINT-IN-TIME life event: "my dog gigi passed away last Thursday", "I got married yesterday", "we just moved to Austin", "my mom is in the hospital". For ONGOING states (medications / diets / routines), use ongoing_state above instead.
+  "biographical_event": <string | null>   // durable POINT-IN-TIME life event: "my dog rex passed away last Thursday", "I got married yesterday", "we just moved to Austin", "my mom is in the hospital". For ONGOING states (medications / diets / routines), use ongoing_state above instead.
 }
 
 Critical rejections (return all-null):
@@ -50,7 +50,7 @@ Critical rejections (return all-null):
 
 Rewriting for preference_rule and biographical_event:
 - Phrase as a third-person statement about the user, transferable across sessions. Bad: "stop using emojis". Good: "User prefers responses without emojis."
-- Include any concrete entity names with @-prefix where natural ("@gigi", "@nutrishop").
+- Include any concrete entity names with @-prefix where natural ("@rex", "@acmegym").
 - Keep to ONE sentence, ≤180 characters.
 
 Reply with exactly the JSON object on a single line. No fences, no prose.`;
@@ -77,7 +77,7 @@ export async function extractIdentityFactsWithLLM(
   // Cheap pre-skip: extremely long messages almost certainly aren't a single-
   // shot identity statement. The cap was 600 chars when this only handled
   // names/roles; biographical_event commonly arrives inside a longer story
-  // ("we had a tough day, the vet called this morning and gigi passed away
+  // ("we had a tough day, the vet called this morning and rex passed away
   // last Thursday after a long fight…"), so the cap is bumped to 1200 to
   // let those through. Beyond 1200 it's almost certainly a multi-fact story
   // that belongs to the dream/consolidation path, not single-shot extract.

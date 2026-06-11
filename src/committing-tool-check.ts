@@ -13,7 +13,7 @@
 // drifted: agency_create, task_create, issue_create, agent_team_*, and
 // most protocol/mission/spreadsheet writers were missing, so the safety
 // brake didn't credit them as progress and aborted turns mid-work
-// (Nutrishop demo, 2026-05-27). Deriving from the registry kills that
+// (live demo, 2026-05-27). Deriving from the registry kills that
 // drift class — adding a tool to tool-registry.ts is the one and only
 // step needed for every downstream consumer.
 

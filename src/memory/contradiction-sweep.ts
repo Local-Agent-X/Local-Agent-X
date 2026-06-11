@@ -92,7 +92,7 @@ const EXCLUSIVE_PREDICATES = new Set(["works", "lives", "reports"]);
 
 // `${subjectSlug}|${predicate}` → object slug for each exclusive triple in
 // the text. subjectHint names the implicit subject (a fact's primary
-// entity); profile bullets ("Lives in Ventura") fall back to "self".
+// entity); profile bullets ("Lives in Portland") fall back to "self".
 function exclusiveSlots(text: string, subjectHint?: string): Map<string, string> {
   const slots = new Map<string, string>();
   for (const t of extractRelationTriples(text, [subjectHint || "self"])) {

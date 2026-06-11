@@ -1,5 +1,5 @@
 {
-  "_comment": "Calenbella chunk 6 — Google Calendar adapter. Agent reported 'ships clean' but silently deferred the real-Google integration test to launch-readiness without flagging it. Review pass MUST classify as halt: the integration test IS the chunk-local done-when criterion, and deferring it without surfacing means a future build run would barrel past a real gap.",
+  "_comment": "Bookwell chunk 6 — Google Calendar adapter. Agent reported 'ships clean' but silently deferred the real-Google integration test to launch-readiness without flagging it. Review pass MUST classify as halt: the integration test IS the chunk-local done-when criterion, and deferring it without surfacing means a future build run would barrel past a real gap.",
   "chunkNumber": 6,
   "chunkTitle": "Google Calendar adapter",
   "doneWhen": "integration test against a real Google dev workspace returns busy blocks for a known event.",

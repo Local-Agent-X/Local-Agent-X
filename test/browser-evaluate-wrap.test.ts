@@ -20,7 +20,7 @@ function wrapForEvaluate(script: string): { wrapped: string; iife: boolean } {
 }
 
 describe("browser.evaluate wrap policy — IIFE vs expression", () => {
-  // Live failure (2026-05-13, Thriveventory PO entry): agent wrote
+  // Live failure (2026-05-13, vendor PO entry): agent wrote
   // `const els = ...; els.forEach(...)` and Playwright errored with
   // "Unexpected token 'const'". The expression-only wrap path can't
   // handle declarations, multi-statement scripts, or control flow.

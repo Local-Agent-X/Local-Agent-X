@@ -183,25 +183,25 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
   });
 
   it("user_name → replaces existing Name bullet in USER.md and appends daily-log entry", async () => {
-    __nextReturn = { user_name: "Peter" };
+    __nextReturn = { user_name: "Alex" };
     writeFileSync(join(memoryDir(), "USER.md"), "# User\n- Name: Stranger\n", "utf-8");
 
-    await autoExtractAndSave(memory, "I'm Peter", "nice to meet you Peter");
+    await autoExtractAndSave(memory, "I'm Alex", "nice to meet you Alex");
 
     const user = readFileSync(join(memoryDir(), "USER.md"), "utf-8");
-    expect(user).toContain("- Name: Peter");
+    expect(user).toContain("- Name: Alex");
     expect(user).not.toContain("- Name: Stranger");
-    expect(readDailyLogOrEmpty()).toContain('User introduced themselves as "Peter"');
+    expect(readDailyLogOrEmpty()).toContain('User introduced themselves as "Alex"');
   });
 
   it("user_name → appends Name bullet to USER.md when missing", async () => {
-    __nextReturn = { user_name: "Peter" };
+    __nextReturn = { user_name: "Alex" };
     writeFileSync(join(memoryDir(), "USER.md"), "# User\n- Role: developer\n", "utf-8");
 
-    await autoExtractAndSave(memory, "I'm Peter", "hey Peter");
+    await autoExtractAndSave(memory, "I'm Alex", "hey Alex");
 
     const user = readFileSync(join(memoryDir(), "USER.md"), "utf-8");
-    expect(user).toContain("- Name: Peter");
+    expect(user).toContain("- Name: Alex");
     expect(user).toContain("- Role: developer"); // existing content preserved
   });
 
@@ -219,31 +219,31 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
 
   it("biographical_event → experience fact with confidence 0.9 + entity mention", async () => {
     __nextReturn = {
-      biographical_event: "User's dog @gigi passed away on 2026-05-20",
+      biographical_event: "User's dog @fido passed away on 2026-05-20",
     };
 
-    await autoExtractAndSave(memory, "my dog gigi passed away", "i'm so sorry");
+    await autoExtractAndSave(memory, "my dog fido passed away", "i'm so sorry");
 
     const rows = liveFactsWhere("kind = ?", "experience");
     expect(rows).toHaveLength(1);
     // parseFactLine strips @-entities from content and routes them to
-    // entity_mentions. So the persisted content has @gigi removed and the
+    // entity_mentions. So the persisted content has @fido removed and the
     // mention shows up in the join table.
     expect(rows[0].content).toBe("User's dog passed away on 2026-05-20");
     expect(rows[0].confidence).toBeCloseTo(0.9);
-    expect(entityMentionsForFact(rows[0].id)).toContain("gigi");
+    expect(entityMentionsForFact(rows[0].id)).toContain("fido");
     expect(readDailyLogOrEmpty()).toContain("Captured event:");
   });
 
   it("relationships → one world fact per entry, each tagged with the name as @-entity", async () => {
     __nextReturn = {
       relationships: [
-        { relation: "wife", name: "Jenny" },
-        { relation: "son", name: "Mark" },
+        { relation: "wife", name: "Dana" },
+        { relation: "son", name: "Liam" },
       ],
     };
 
-    await autoExtractAndSave(memory, "my wife Jenny and my son Mark", "noted");
+    await autoExtractAndSave(memory, "my wife Dana and my son Liam", "noted");
 
     const rows = liveFactsWhere("kind = ?", "world");
     expect(rows).toHaveLength(2);
@@ -259,8 +259,8 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     // The names live in entity_mentions, one per fact.
     const wifeRow = rows.find((r) => r.content.endsWith("wife"))!;
     const sonRow = rows.find((r) => r.content.endsWith("son"))!;
-    expect(entityMentionsForFact(wifeRow.id)).toContain("jenny");
-    expect(entityMentionsForFact(sonRow.id)).toContain("mark");
+    expect(entityMentionsForFact(wifeRow.id)).toContain("dana");
+    expect(entityMentionsForFact(sonRow.id)).toContain("liam");
   });
 
   it("personal_affinity → one opinion fact per entry with confidence 0.85", async () => {
@@ -306,17 +306,17 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
 
   it("combined return → user_name + preference_rule + biographical_event all write in one call", async () => {
     __nextReturn = {
-      user_name: "Peter",
+      user_name: "Alex",
       preference_rule: "User prefers no emojis",
-      biographical_event: "User shipped Calenbella v1 last Thursday",
+      biographical_event: "User shipped Bookwell v1 last Thursday",
     };
     writeFileSync(join(memoryDir(), "USER.md"), "- Name: Stranger\n", "utf-8");
 
     await autoExtractAndSave(memory, "lots of facts at once", "ok");
 
-    expect(readFileSync(join(memoryDir(), "USER.md"), "utf-8")).toContain("- Name: Peter");
+    expect(readFileSync(join(memoryDir(), "USER.md"), "utf-8")).toContain("- Name: Alex");
     expect(liveFactsWhere("content = ?", "User prefers no emojis")).toHaveLength(1);
-    expect(liveFactsWhere("content = ?", "User shipped Calenbella v1 last Thursday")).toHaveLength(1);
+    expect(liveFactsWhere("content = ?", "User shipped Bookwell v1 last Thursday")).toHaveLength(1);
     // No early return between handlers — all three fields landed.
     expect(liveFactsCount()).toBe(2);
   });

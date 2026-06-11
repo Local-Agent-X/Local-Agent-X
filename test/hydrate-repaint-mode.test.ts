@@ -31,7 +31,7 @@ const row = (role: string, content: string, tools?: unknown[]): Msg =>
 
 const thread: Msg[] = [
   row("user", "hey"),
-  row("assistant", "hi Peter", [{ name: "web_search" }]),
+  row("assistant", "hi Alex", [{ name: "web_search" }]),
   row("user", "do the thing"),
   row("assistant", "done"),
 ];

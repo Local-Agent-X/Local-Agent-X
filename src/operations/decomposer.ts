@@ -1,9 +1,9 @@
 /**
  * Goal decomposer — LLM call that turns a user goal into an ordered phase plan.
  *
- * Input:  "build me a WooCommerce store for pmajlabs.com"
+ * Input:  "build me a WooCommerce store for example.com"
  * Output: [
- *   { name: "Domain setup", goal: "point pmajlabs.com DNS to hosting", ... },
+ *   { name: "Domain setup", goal: "point example.com DNS to hosting", ... },
  *   { name: "Provision hosting", goal: "WordPress instance running on WP Engine", ... },
  *   { name: "Install WooCommerce", ... },
  *   ...

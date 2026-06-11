@@ -259,9 +259,7 @@ ad-hoc-spawn paths once `agent_spawn` is canonical-only.
 
 - The two pre-existing vitest flakes (`canonical-loop-08-lease-and-crash-recovery`
   and `primal-loop`) fail under heavy parallel load but pass in isolation.
-  Not blocking; flag for the test infra owner.
-- The `~/.lax/mcp.json` filesystem path was fixed locally (Manri legacy);
-  not a code change because new installs already get `${HOME}` defaults.
+  Not blocking.
 
 ---
 

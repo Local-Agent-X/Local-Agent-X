@@ -67,7 +67,7 @@ export function memorySearchTool(memory: MemoryIndex) {
       }
 
       // Strip the long absolute prefix when possible so the model sees
-      // `bank/entities/peter.md` instead of `/home/.../bank/entities/peter.md`.
+      // `bank/entities/alex.md` instead of `/home/.../bank/entities/alex.md`.
       const memDir = resolve(memory["memoryDir"]);
       const formatted = results
         .map((r, i) => {

@@ -10,13 +10,13 @@ import { stripOneDriveDocuments, isCloudStoragePath, migrateWorkspace, ensureWor
 // The workspace must map back to the real on-disk Documents.
 describe("stripOneDriveDocuments", () => {
   it("drops the OneDrive segment before Documents (backslash paths)", () => {
-    expect(stripOneDriveDocuments("C:\\Users\\manri\\OneDrive\\Documents\\Local Agent X"))
-      .toBe("C:\\Users\\manri\\Documents\\Local Agent X");
+    expect(stripOneDriveDocuments("C:\\Users\\alice\\OneDrive\\Documents\\Local Agent X"))
+      .toBe("C:\\Users\\alice\\Documents\\Local Agent X");
   });
 
   it("handles forward-slash and trailing Documents", () => {
-    expect(stripOneDriveDocuments("C:/Users/manri/OneDrive/Documents"))
-      .toBe("C:/Users/manri/Documents");
+    expect(stripOneDriveDocuments("C:/Users/alice/OneDrive/Documents"))
+      .toBe("C:/Users/alice/Documents");
   });
 
   it("is case-insensitive on the OneDrive segment", () => {
@@ -25,12 +25,12 @@ describe("stripOneDriveDocuments", () => {
   });
 
   it("leaves a non-OneDrive Documents path untouched", () => {
-    const p = "C:\\Users\\manri\\Documents\\Local Agent X";
+    const p = "C:\\Users\\alice\\Documents\\Local Agent X";
     expect(stripOneDriveDocuments(p)).toBe(p);
   });
 
   it("does NOT strip OneDrive when it isn't the Documents redirect (e.g. OneDrive\\Pictures)", () => {
-    const p = "C:\\Users\\manri\\OneDrive\\Pictures\\foo";
+    const p = "C:\\Users\\alice\\OneDrive\\Pictures\\foo";
     expect(stripOneDriveDocuments(p)).toBe(p);
   });
 });
@@ -43,21 +43,21 @@ describe("stripOneDriveDocuments", () => {
 // caught separately by an inode-identity check.
 describe("isCloudStoragePath", () => {
   it("matches a third-party File Provider path (~/Library/CloudStorage)", () => {
-    expect(isCloudStoragePath("/Users/dad/Library/CloudStorage/OneDrive-Personal/Documents/Local Agent X"))
+    expect(isCloudStoragePath("/Users/dev/Library/CloudStorage/OneDrive-Personal/Documents/Local Agent X"))
       .toBe(true);
   });
 
   it("matches a resolved iCloud CloudDocs path", () => {
-    expect(isCloudStoragePath("/Users/dad/Library/Mobile Documents/com~apple~CloudDocs/Documents/Local Agent X"))
+    expect(isCloudStoragePath("/Users/dev/Library/Mobile Documents/com~apple~CloudDocs/Documents/Local Agent X"))
       .toBe(true);
   });
 
   it("leaves a plain local Documents path untouched", () => {
-    expect(isCloudStoragePath("/Users/dad/Documents/Local Agent X")).toBe(false);
+    expect(isCloudStoragePath("/Users/dev/Documents/Local Agent X")).toBe(false);
   });
 
   it("leaves the local-only ~/.lax workspace untouched", () => {
-    expect(isCloudStoragePath("/Users/dad/.lax/workspace")).toBe(false);
+    expect(isCloudStoragePath("/Users/dev/.lax/workspace")).toBe(false);
   });
 });
 

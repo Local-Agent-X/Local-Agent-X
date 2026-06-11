@@ -4,7 +4,7 @@
  * Runs the gate logic against the four fixture chunks in
  * test/fixtures/primal-chunk-review/. Each fixture has an expectedAction
  * that the review pass MUST produce. These were lifted from the
- * Calenbella build's real review-pass turns where my manual review
+ * Bookwell build's real review-pass turns where manual review
  * caught the issue — they encode the discipline the skill is supposed
  * to enforce.
  *
@@ -104,7 +104,7 @@ describe("report parser", () => {
   });
 });
 
-describe("Calenbella fixture: chunk-clean-proceed → proceed", () => {
+describe("Bookwell fixture: chunk-clean-proceed → proceed", () => {
   it("returns proceed when all gates pass", () => {
     const f = loadFixture("chunk-clean-proceed.json");
     const chunk = chunkFromFixture(f);
@@ -119,7 +119,7 @@ describe("Calenbella fixture: chunk-clean-proceed → proceed", () => {
   });
 });
 
-describe("Calenbella fixture: chunk-6 silent deferral → halt", () => {
+describe("Bookwell fixture: chunk-6 silent deferral → halt", () => {
   it("halts when DONE_WHEN: met but NOTE says 'launch-readiness deferred'", () => {
     const f = loadFixture("chunk-06-silent-deferral.json");
     const chunk = chunkFromFixture(f);
@@ -136,7 +136,7 @@ describe("Calenbella fixture: chunk-6 silent deferral → halt", () => {
   });
 });
 
-describe("Calenbella fixture: chunk-10 constitution gray area → halt", () => {
+describe("Bookwell fixture: chunk-10 constitution gray area → halt", () => {
   it("halts when NOTE surfaces a 'two options' fork", () => {
     const f = loadFixture("chunk-10-silent-fallback.json");
     const chunk = chunkFromFixture(f);
@@ -153,7 +153,7 @@ describe("Calenbella fixture: chunk-10 constitution gray area → halt", () => {
   });
 });
 
-describe("Calenbella fixture: chunk-12 stale-data gap → mechanical proceed, amend_spec with LLM hook", () => {
+describe("Bookwell fixture: chunk-12 stale-data gap → mechanical proceed, amend_spec with LLM hook", () => {
   it("mechanical-only verdict is proceed (no fork phrase, no Constitution ref in NOTE)", () => {
     const f = loadFixture("chunk-12-stale-data-gap.json");
     const chunk = chunkFromFixture(f);

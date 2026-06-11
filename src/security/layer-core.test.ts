@@ -1193,7 +1193,7 @@ describe("bash obeys the file-access mode (shell path guard)", () => {
 
   it("workspace mode: reading a Windows path outside the project is blocked", () => {
     const sec = new SecurityLayer(WORKSPACE, "workspace");
-    expect(bash(sec, 'type "C:\\Users\\peter\\Documents\\2024 May order.xlsx"').allowed).toBe(false);
+    expect(bash(sec, 'type "C:\\Users\\alice\\Documents\\2024 May order.xlsx"').allowed).toBe(false);
   });
 
   it("workspace mode: a redirect (write) target outside the workspace is blocked", () => {

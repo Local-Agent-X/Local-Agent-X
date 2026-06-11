@@ -3,15 +3,15 @@
  * primal_build_status, finalize_app_build.
  *
  * Three input shapes are accepted:
- *   1. Absolute path  → use as-is (e.g. "C:/Users/manri/some-project")
+ *   1. Absolute path  → use as-is (e.g. "C:/Users/alice/some-project")
  *   2. Bare name      → resolve to <LAX_REPO_ROOT>/workspace/apps/<name>
- *                       (e.g. "mygroomtime")
+ *                       (e.g. "petbook")
  *   3. Relative path  → resolved against process.cwd() (legacy behavior)
  *
  * Why bare names default to workspace/apps/: that's LAX's convention for
  * project directories — per-machine, gitignored by LAX, the same place
  * `build_app` outputs into. Users can say "primal_run_build_plan({
- * project_dir: 'mygroomtime' })" and the tool resolves it correctly
+ * project_dir: 'petbook' })" and the tool resolves it correctly
  * without typing out the full path.
  *
  * An absolute path still wins — power users with projects outside

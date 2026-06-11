@@ -27,7 +27,7 @@ describe("mightNeedToolForcing — pre-gate for the LLM intent classifier", () =
   });
 
   it("runs on delegation requests", () => {
-    expect(mightNeedToolForcing("research the top GLP-1 supplements")).toBe(true);
+    expect(mightNeedToolForcing("research the top note-taking apps")).toBe(true);
     expect(mightNeedToolForcing("spawn a worker to review the kraken bot")).toBe(true);
     expect(mightNeedToolForcing("have an agent scan competitor pricing")).toBe(true);
   });

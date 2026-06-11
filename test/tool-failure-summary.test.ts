@@ -68,14 +68,14 @@ describe("shouldNudgeForFailures — gaslighting heuristic", () => {
     expect(shouldNudgeForFailures(r)).toBe(true);
   });
 
-  it("does NOT nudge when failures coexist with a successful write (Super Alex Bros case)", () => {
+  it("does NOT nudge when failures coexist with a successful write (pixel-platformer case)", () => {
     const r = collectToolFailures(
       [
         tm("[error] old_string not found", "call-1"),
         tm("[error] old_string not found", "call-2"),
         tm("[error] old_string not found", "call-3"),
         tm("[error] old_string not found", "call-4"),
-        tm("[ok] Wrote /workspace/apps/super-peter-bros/js/game.js", "call-5"),
+        tm("[ok] Wrote /workspace/apps/pixel-platformer/js/game.js", "call-5"),
       ],
       [{ tool: "edit" }, { tool: "edit" }, { tool: "edit" }, { tool: "edit" }, { tool: "write" }],
     );

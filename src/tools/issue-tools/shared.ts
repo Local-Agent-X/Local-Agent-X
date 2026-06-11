@@ -38,7 +38,7 @@ export function getAgentProjectId(agentId: string): string | undefined {
 /** Resolve a user-supplied `project` argument to a canonical project ID.
  *
  *  Agents (and the model driving them) refer to projects by their
- *  human-readable NAME — e.g. "Nutrishop McKinney" — not the internal
+ *  human-readable NAME — e.g. "Acme Fitness Dallas" — not the internal
  *  `proj-...` id. Issue scoping (`projectId`) and the cross-project
  *  assignment guard both compare against the canonical id returned by
  *  ProjectStore, so a raw name leaks straight through as a bogus

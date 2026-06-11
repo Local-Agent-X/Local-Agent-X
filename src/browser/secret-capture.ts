@@ -52,7 +52,7 @@ export function createBrowserSecretCaptureTool(
         },
         account: {
           type: "string",
-          description: "Username/email paired with this password (e.g. 'peter@pmajlabs.com'). Recommended when creating new accounts — lets the user manually log in later.",
+          description: "Username/email paired with this password (e.g. 'jane@example.com'). Recommended when creating new accounts — lets the user manually log in later.",
         },
         url: {
           type: "string",

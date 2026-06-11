@@ -7,7 +7,7 @@
 // as evidence. The prior hand-maintained allowlist drifted — it included
 // `read`/`bash`/`grep`/`browser`/etc. but NOT `tool_search`, agent_list,
 // agency_create, issue_*, task_*, or any orchestration primitive. So the
-// safety brake mis-fired during normal tool discovery (Nutrishop demo,
+// safety brake mis-fired during normal tool discovery (live demo,
 // 2026-05-27): the agent searched for the right tool across 4 turns, the
 // counter never moved, the first-strike nudge fired prematurely.
 //

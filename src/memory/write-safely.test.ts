@@ -28,13 +28,13 @@ function historyFiles(): string[] {
 describe("writeMemorySafely overwrite history", () => {
   it("snapshots the previous version before overwriting", () => {
     const target = join(tempDir, "USER.md");
-    writeFileSync(target, "# About Me\nName: Peter\n", "utf-8");
+    writeFileSync(target, "# About Me\nName: Alex\n", "utf-8");
 
-    writeMemorySafely({ content: "# About Me\nName: Peter\nRole: builder\n", source: "tool", target });
+    writeMemorySafely({ content: "# About Me\nName: Alex\nRole: builder\n", source: "tool", target });
 
     const snaps = historyFiles();
     expect(snaps).toHaveLength(1);
-    expect(readFileSync(join(tempDir, ".history", snaps[0]), "utf-8")).toBe("# About Me\nName: Peter\n");
+    expect(readFileSync(join(tempDir, ".history", snaps[0]), "utf-8")).toBe("# About Me\nName: Alex\n");
     expect(readFileSync(target, "utf-8")).toContain("Role: builder");
   });
 

@@ -281,7 +281,7 @@
           // Mirror the error into the visible bubble text. Dedup guards
           // against duplicate WS deliveries (server's emitErrorOnce dedups
           // per-op, but accumulated subscribers can still re-deliver — see
-          // 2026-05-27 Nutrishop trace: 4 identical error bubbles from one
+          // 2026-05-27 live trace: 4 identical error bubbles from one
           // server event).
           const errText = '\n\nError: ' + event.message;
           if (!e.content.endsWith(errText)) e.content += errText;

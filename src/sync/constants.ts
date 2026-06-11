@@ -140,10 +140,10 @@ void NEVER_SYNC_DOC; // anchored for grep, not used at runtime
 // Rewrite this machine's home-dir literal into the ${HOME} placeholder
 // that mcp-client.ts expands at load time on the destination machine.
 // Without this, an MCP server entry like
-//   ["@modelcontextprotocol/server-filesystem", "C:/Users/manri/Documents"]
+//   ["@modelcontextprotocol/server-filesystem", "C:/Users/alice/Documents"]
 // pushed from this box would ENOENT on every other machine that doesn't
-// have a "manri" user. Matches both forward-slash form (C:/Users/manri)
-// and JSON-escaped backslash form (C:\\Users\\manri); case-insensitive
+// have a "alice" user. Matches both forward-slash form (C:/Users/alice)
+// and JSON-escaped backslash form (C:\\Users\\alice); case-insensitive
 // for Windows. Belt-and-suspenders to mcp-client's runtime expansion —
 // the bytes on the wire stay portable even if expansion regresses.
 export function canonicalizeHomePaths(jsonText: string): string {

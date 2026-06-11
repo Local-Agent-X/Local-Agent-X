@@ -651,7 +651,7 @@ describe("Environment variable secret filtering", () => {
   });
 
   it("does NOT filter paths with spaces/special chars", () => {
-    expect(isSecretValue("C:\\Users\\peter\\my documents\\file.txt")).toBe(false);
+    expect(isSecretValue("C:\\Users\\alice\\my documents\\file.txt")).toBe(false);
     expect(isSecretValue("/home/user/some path with spaces")).toBe(false);
   });
 });

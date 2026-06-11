@@ -104,15 +104,15 @@ describe("unionMergeBy — generic key + collision predicate", () => {
 
   it("name-keyed without timestamp: local-only entry survives stale-remote pull", () => {
     const local: Named[] = [
-      { name: "🚀 Naughty Toys", payload: "local-pin" },
+      { name: "🚀 Rocket Shop", payload: "local-pin" },
     ];
     const remote: Named[] = [
-      { name: "Mygroomtime", payload: "from-other-machine" },
+      { name: "Petbook", payload: "from-other-machine" },
     ];
     const merged = unionMergeBy(local, remote, (x) => x.name, () => true);
     expect(merged).toHaveLength(2);
-    expect(merged.find(n => n.name === "🚀 Naughty Toys")).toBeDefined();
-    expect(merged.find(n => n.name === "Mygroomtime")).toBeDefined();
+    expect(merged.find(n => n.name === "🚀 Rocket Shop")).toBeDefined();
+    expect(merged.find(n => n.name === "Petbook")).toBeDefined();
   });
 
   it("name-keyed: local-wins-on-collision (local edit beats stale-remote)", () => {

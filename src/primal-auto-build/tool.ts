@@ -5,8 +5,6 @@
  * subprocess per chunk with the right skill, runs a /chunk-review gate
  * after each, halts at phase-gates and launch-readiness blockers.
  *
- * Design: ~/.claude/projects/c--Users-manri-local-agent-x/memory/project_primal_auto_build_tool_design.md
- *
  * Gated behind the PRIMAL_AUTO_BUILD_ENABLED env flag — default off.
  * Until graduation criteria met, the tool refuses to run unless explicitly
  * enabled. Graduation criteria live in the design doc.
@@ -85,7 +83,7 @@ export const primalRunBuildPlanTool: ToolDefinition = {
 
     const projectDir = resolveProjectDir(args.project_dir);
     if (!projectDir) {
-      return { content: "primal_run_build_plan requires 'project_dir' (bare project name like 'mygroomtime', or an absolute path).", isError: true };
+      return { content: "primal_run_build_plan requires 'project_dir' (bare project name like 'petbook', or an absolute path).", isError: true };
     }
     if (!existsSync(projectDir)) {
       return { content: `project_dir does not exist: ${projectDir}`, isError: true };

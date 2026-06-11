@@ -80,14 +80,14 @@ describe("extractToolCallsFromText — browser shorthand", () => {
 });
 
 describe("extractToolCallsFromText — write/read prose narration", () => {
-  // Live failure 2026-06-05 (Nutrishop demo, xAI Grok): the CEO agent narrated
+  // Live failure 2026-06-05 (xAI Grok): the CEO agent narrated
   // FIVE write calls as prose in one turn, then "Committed" tripped the guard.
   const GROK_FIVE_WRITES = [
-    'run tool write with path is /Users/dad/Projects/Local-Agent-X/workspace/subtask1-project-setup.txt content is Committed Subtask 1: Nutrishop McKinney Demo Project Setup. Status: Complete.',
-    'run tool write with path is /Users/dad/Projects/Local-Agent-X/workspace/subtask2-hire-agents.txt content is Committed Subtask 2: Hire 4 agents. Status: Complete.',
-    'run tool write with path is /Users/dad/Projects/Local-Agent-X/workspace/subtask3-product-catalog.txt content is Committed Subtask 3: Product Catalog Setup. Status: Complete.',
-    'run tool write with path is /Users/dad/Projects/Local-Agent-X/workspace/subtask4-marketing-strategy.txt content is Committed Subtask 4: Marketing Strategy. Status: Complete.',
-    'run tool write with path is /Users/dad/Projects/Local-Agent-X/workspace/subtask5-operations.txt content is Committed Subtask 5: Operations and Reporting. Status: Complete.',
+    'run tool write with path is /Users/dev/Projects/Local-Agent-X/workspace/subtask1-project-setup.txt content is Committed Subtask 1: Initech Dallas Demo Project Setup. Status: Complete.',
+    'run tool write with path is /Users/dev/Projects/Local-Agent-X/workspace/subtask2-hire-agents.txt content is Committed Subtask 2: Hire 4 agents. Status: Complete.',
+    'run tool write with path is /Users/dev/Projects/Local-Agent-X/workspace/subtask3-product-catalog.txt content is Committed Subtask 3: Product Catalog Setup. Status: Complete.',
+    'run tool write with path is /Users/dev/Projects/Local-Agent-X/workspace/subtask4-marketing-strategy.txt content is Committed Subtask 4: Marketing Strategy. Status: Complete.',
+    'run tool write with path is /Users/dev/Projects/Local-Agent-X/workspace/subtask5-operations.txt content is Committed Subtask 5: Operations and Reporting. Status: Complete.',
   ].join("\n");
 
   it("reconstructs ALL five narrated write calls from one turn", () => {
@@ -95,10 +95,10 @@ describe("extractToolCallsFromText — write/read prose narration", () => {
     expect(toolCalls).toHaveLength(5);
     expect(toolCalls.every((t) => t.name === "write")).toBe(true);
     const first = JSON.parse(toolCalls[0].arguments);
-    expect(first.path).toBe("/Users/dad/Projects/Local-Agent-X/workspace/subtask1-project-setup.txt");
-    expect(first.content).toBe("Committed Subtask 1: Nutrishop McKinney Demo Project Setup. Status: Complete.");
+    expect(first.path).toBe("/Users/dev/Projects/Local-Agent-X/workspace/subtask1-project-setup.txt");
+    expect(first.content).toBe("Committed Subtask 1: Initech Dallas Demo Project Setup. Status: Complete.");
     const last = JSON.parse(toolCalls[4].arguments);
-    expect(last.path).toBe("/Users/dad/Projects/Local-Agent-X/workspace/subtask5-operations.txt");
+    expect(last.path).toBe("/Users/dev/Projects/Local-Agent-X/workspace/subtask5-operations.txt");
     expect(last.content).toBe("Committed Subtask 5: Operations and Reporting. Status: Complete.");
   });
 
@@ -139,17 +139,17 @@ describe("extractToolCallsFromText — write/read prose narration", () => {
 });
 
 describe("extractToolCallsFromText — shell prose narration", () => {
-  // Live failure 2026-06-04 (Nutrishop demo, xAI Grok): instead of a
+  // Live failure 2026-06-04 (xAI Grok): instead of a
   // structured tool_call OR a JSON leak, Grok narrated the bash call in
   // plain English. The JSON extractor can't see it; the call never fires
   // and the trailing "File committed." trips the false-completion guard.
   const GROK_PROSE = [
-    "run tool bash with command is cat > /Users/dad/Projects/Local-Agent-X/workspace/nutrishop_execution_start.md << 'EOL'",
+    "run tool bash with command is cat > /Users/dev/Projects/Local-Agent-X/workspace/initech_execution_start.md << 'EOL'",
     "Project execution started by CEO.",
     "Agents: 4 hired.",
     "Subtasks ready for assignment.",
     "EOL",
-    'ls /Users/dad/Projects/Local-Agent-X/workspace/ && echo "File committed."',
+    'ls /Users/dev/Projects/Local-Agent-X/workspace/ && echo "File committed."',
   ].join("\n");
 
   it("reconstructs a bash call from the exact Grok narration (with heredoc)", () => {
@@ -157,7 +157,7 @@ describe("extractToolCallsFromText — shell prose narration", () => {
     expect(toolCalls).toHaveLength(1);
     expect(toolCalls[0].name).toBe("bash");
     const cmd = JSON.parse(toolCalls[0].arguments).command as string;
-    expect(cmd).toContain("cat > /Users/dad/Projects/Local-Agent-X/workspace/nutrishop_execution_start.md");
+    expect(cmd).toContain("cat > /Users/dev/Projects/Local-Agent-X/workspace/initech_execution_start.md");
     expect(cmd).toContain("EOL"); // heredoc body captured, not truncated at newline
     expect(cmd).toContain('echo "File committed."');
   });

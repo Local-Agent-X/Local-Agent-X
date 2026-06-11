@@ -10,14 +10,14 @@ describe("resolveProjectDir", () => {
   });
 
   it("resolves a bare project name to workspace/apps/<name>", () => {
-    const resolved = resolveProjectDir("mygroomtime");
+    const resolved = resolveProjectDir("petbook");
     expect(resolved).not.toBeNull();
-    expect(resolved!.replace(/\\/g, "/")).toMatch(/workspace\/apps\/mygroomtime$/);
-    expect(resolved!).toBe(`${PROJECTS_DIR.replace(/\//g, "\\").replace(/\\/g, require("node:path").sep)}${require("node:path").sep}mygroomtime`);
+    expect(resolved!.replace(/\\/g, "/")).toMatch(/workspace\/apps\/petbook$/);
+    expect(resolved!).toBe(`${PROJECTS_DIR.replace(/\//g, "\\").replace(/\\/g, require("node:path").sep)}${require("node:path").sep}petbook`);
   });
 
   it("returns absolute paths unchanged (windows)", () => {
-    const win = "C:\\Users\\manri\\some-project";
+    const win = "C:\\Users\\alice\\some-project";
     expect(resolveProjectDir(win)).toBe(win);
   });
 

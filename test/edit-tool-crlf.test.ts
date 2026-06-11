@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 describe("edit tool — line-ending tolerance", () => {
-  it("matches LF old_string against a CRLF file (the Mario todo failure case)", async () => {
+  it("matches LF old_string against a CRLF file (the todo-app failure case)", async () => {
     const path = join(dir, "f.html");
     writeFileSync(path, "first line\r\nsecond line\r\nthird line\r\n", "utf-8");
 

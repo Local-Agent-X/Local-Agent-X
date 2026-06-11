@@ -206,9 +206,9 @@ describe("rememberFact exclusive-slot supersede", () => {
   }
 
   it("invalidates the old value when an exclusive slot changes", () => {
-    const rOld = memory.rememberFact("works at Google @peter", { kind: "world" });
+    const rOld = memory.rememberFact("works at Google @alex", { kind: "world" });
     expect(rOld.ok).toBe(true);
-    const rNew = memory.rememberFact("works at Microsoft @peter", { kind: "world" });
+    const rNew = memory.rememberFact("works at Microsoft @alex", { kind: "world" });
     expect(rNew.ok).toBe(true);
 
     expect(validTo(rOld.fact!.id!)).not.toBeNull();
@@ -226,9 +226,9 @@ describe("rememberFact exclusive-slot supersede", () => {
   });
 
   it("negation corrections still supersede (polarity rule unchanged)", () => {
-    const rDo = memory.rememberFact("always greet in Spanish @peter", { kind: "opinion" });
+    const rDo = memory.rememberFact("always greet in Spanish @alex", { kind: "opinion" });
     expect(rDo.ok).toBe(true);
-    const rStop = memory.rememberFact("no Spanish greetings @peter", { kind: "opinion" });
+    const rStop = memory.rememberFact("no Spanish greetings @alex", { kind: "opinion" });
     expect(rStop.ok).toBe(true);
 
     expect(validTo(rDo.fact!.id!)).not.toBeNull();

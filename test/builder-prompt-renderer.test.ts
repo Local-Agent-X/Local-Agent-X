@@ -83,10 +83,10 @@ const SAMPLE_UPDATE: BuilderPromptInput = {
 };
 
 const SAMPLE_WEBSITE_WITH_ASSETS: BuilderPromptInput = {
-  appName: "nutrishop",
+  appName: "initech",
   prompt: "Build the Acme Springfield landing page — modern, photo-driven.",
-  appDir: "/abs/workspace/apps/nutrishop",
-  appUrl: "http://127.0.0.1:7007/apps/nutrishop/index.html",
+  appDir: "/abs/workspace/apps/initech",
+  appUrl: "http://127.0.0.1:7007/apps/initech/index.html",
   isUpdate: false,
   contextFiles: [],
   assetFiles: ["assets/hero.jpg", "assets/storefront.png", "assets/team.webp"],

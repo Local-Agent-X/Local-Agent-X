@@ -87,15 +87,13 @@ Invoke the `/senior-engineer` skill first and follow that methodology
 throughout.
 
 Context — what's already established in this repo:
-- 400 LOC cap is a hard rule (memory: feedback_commit_style.md).
-- Recent precedent commits to match the splitting style:
-    f9da94dd refactor(image-tools): split per tool into 3 modules
-    75c82c28 refactor(telegram-bridge): split into 4 modules
-    d922efde refactor(firewall): split into orchestrator + 5 modules
-  Each extracted cohesive responsibilities and kept the original filename
-  as a re-export barrel so callers don't break.
+- 400 LOC cap is a hard rule in this repo.
+- Match the splitting style of prior `refactor(<module>): split into N
+  modules` commits: extract cohesive responsibilities and keep the
+  original filename as a re-export barrel so callers don't break.
 - No AI fingerprints in commit messages (no "Claude", no "AI", no
-  co-author trailers). Multi-user app — fixes must ship in the repo.
+  co-author trailers). Fixes must ship in the repo, never as per-machine
+  configuration.
 
 Process:
 1. Read the file end-to-end before splitting. Identify natural seams.

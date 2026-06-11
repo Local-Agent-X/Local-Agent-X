@@ -1,4 +1,4 @@
-PS C:\Users\manri\local-agent-x> npx tsx src/benchmark-longmemeval.ts --k 5 --emb-model all-MiniLM-L6-v2 --emb-url http://127.0.0.1:11435 --verbose
+> npx tsx src/benchmark-longmemeval.ts --k 5 --emb-model all-MiniLM-L6-v2 --emb-url http://127.0.0.1:11435 --verbose
 >> 
 [manifest-generator] [manifest] Generated app-manifest.json (2 pages, 222 routes, 5 tools, 106 apps)
 [config-loader] [config-loader] Watching config/ for changes

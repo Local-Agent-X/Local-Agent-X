@@ -64,7 +64,7 @@ describe("sanitizeAssistantTextForRebuild", () => {
   });
 
   it("strips tree-style `Bash(...)` notation on its own line", () => {
-    const text = 'Checking assets.\nBash(ls "C:/Users/manri/workspace")\nLet me try.';
+    const text = 'Checking assets.\nBash(ls "C:/Users/alice/workspace")\nLet me try.';
     const { cleaned, leaks } = sanitizeAssistantTextForRebuild(text, TOOLS);
     expect(leaks).toHaveLength(1);
     expect(leaks[0].shape).toBe("tree-style-call");

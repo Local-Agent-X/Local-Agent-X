@@ -73,7 +73,7 @@ describe("checkMemoryTaint — unicode evasion is normalized before matching", (
 
 describe("checkMemoryTaint — benign content passes", () => {
   it("allows an ordinary user preference fact", () => {
-    const r = checkMemoryTaint("Peter prefers concise answers and lives in Austin.");
+    const r = checkMemoryTaint("Alex prefers concise answers and lives in Austin.");
     expect(r.safe).toBe(true);
     expect(r.injectionScore).toBe(0);
     expect(r.reason).toBeUndefined();

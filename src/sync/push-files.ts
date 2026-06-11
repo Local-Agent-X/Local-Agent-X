@@ -127,7 +127,7 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
   // Brain backup — flat JSON files. Last-push-wins. Skip if file
   // doesn't exist locally (means the user never created that surface).
   // mcp.json gets path canonicalization on push so per-machine literal
-  // paths (C:/Users/manri/Documents) become portable ${HOME} placeholders
+  // paths (C:/Users/alice/Documents) become portable ${HOME} placeholders
   // for every other machine that pulls.
   for (const file of BRAIN_JSON_FILES) {
     if (!config.syncMissions && MISSION_FILES.has(file)) continue;

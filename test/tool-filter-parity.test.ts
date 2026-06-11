@@ -143,7 +143,7 @@ const MESSAGES = [
   "what's 2+2",
   "build me an app",
   "send an email to the team",
-  'primal_run_build_plan({"project_dir":"mygroomtime"})',
+  'primal_run_build_plan({"project_dir":"petbook"})',
   "open my spreadsheet",
   "pin this to sidebar",
   "check my calendar",

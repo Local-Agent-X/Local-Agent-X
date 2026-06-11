@@ -1,6 +1,6 @@
 /**
  * LLM judgment hook — fires when the mechanical gates return "proceed"
- * but a Calenbella chunk-12-style implicit-spec violation might still
+ * but a Bookwell chunk-12-style implicit-spec violation might still
  * be present. The hook reads the project's constitution (if any), the
  * chunk's CHANGED file contents, and the agent's NOTE, then asks the
  * model: "does this implementation likely violate any rule? If yes,

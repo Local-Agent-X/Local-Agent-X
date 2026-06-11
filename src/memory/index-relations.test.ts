@@ -23,12 +23,12 @@ afterEach(() => {
 
 describe("wikilink edges", () => {
   it("promotes [[name]] links into traversable links-to edges", () => {
-    memory.extractRelations("Peter ships [[ScanProgress]] and [[Kraken]]", ["Peter"]);
+    memory.extractRelations("Alex ships [[ScanProgress]] and [[Kraken]]", ["Alex"]);
 
     const rels = memory.getRelationsFor("ScanProgress");
     expect(rels.some((r) => r.predicate === "links-to")).toBe(true);
 
-    const reach = memory.traverseFrom("Peter", 2);
+    const reach = memory.traverseFrom("Alex", 2);
     expect(reach.has("scanprogress")).toBe(true);
     expect(reach.has("kraken")).toBe(true);
   });
@@ -42,7 +42,7 @@ describe("wikilink edges", () => {
 
 describe("graph boost", () => {
   it("lifts results whose entity is graph-connected to a query term", () => {
-    memory.extractRelations("Peter ships [[Kraken]]", ["Peter"]);
+    memory.extractRelations("Alex ships [[Kraken]]", ["Alex"]);
 
     const base = { startLine: 0, endLine: 0, snippet: "", source: "entity" as const, metadata: {} };
     const results: MemorySearchResult[] = [
@@ -53,7 +53,7 @@ describe("graph boost", () => {
     const boosted = applyGraphBoost(
       (e, h) => memory.traverseFrom(e, h),
       results,
-      "Peter Kraken",
+      "Alex Kraken",
     );
 
     const kraken = boosted.find((r) => r.path === "a.md")!;

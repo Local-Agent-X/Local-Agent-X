@@ -35,23 +35,23 @@ describe("project brief — read/update", () => {
   });
 
   it("creates the brief on first update and reads it back", async () => {
-    await updateProjectBrief(PID, "# Nutrishop\n\n- Goal: $1M revenue", { memDir, title: "Nutrishop" });
+    await updateProjectBrief(PID, "# Initech\n\n- Goal: $1M revenue", { memDir, title: "Initech" });
     const brief = await readProjectBrief(PID, memDir);
-    expect(brief).toContain("Nutrishop");
+    expect(brief).toContain("Initech");
     expect(brief).toContain("Goal: $1M revenue");
   });
 
   it("merges a net-new section while keeping the old one", async () => {
-    await updateProjectBrief(PID, "# Nutrishop\n\n- Goal: $1M revenue", { memDir, title: "Nutrishop" });
-    await updateProjectBrief(PID, "## Competitors\n- GNC opened nearby", { memDir, title: "Nutrishop" });
+    await updateProjectBrief(PID, "# Initech\n\n- Goal: $1M revenue", { memDir, title: "Initech" });
+    await updateProjectBrief(PID, "## Competitors\n- GNC opened nearby", { memDir, title: "Initech" });
     const brief = await readProjectBrief(PID, memDir);
     expect(brief).toContain("Goal: $1M revenue");
     expect(brief).toContain("GNC opened nearby");
   });
 
   it("a repeated heading replaces its prior version (current state wins)", async () => {
-    await updateProjectBrief(PID, "## Status\n- revenue is $200k", { memDir, title: "Nutrishop" });
-    await updateProjectBrief(PID, "## Status\n- revenue is $350k", { memDir, title: "Nutrishop" });
+    await updateProjectBrief(PID, "## Status\n- revenue is $200k", { memDir, title: "Initech" });
+    await updateProjectBrief(PID, "## Status\n- revenue is $350k", { memDir, title: "Initech" });
     const brief = await readProjectBrief(PID, memDir);
     expect(brief).toContain("$350k");
     expect(brief).not.toContain("$200k");
@@ -73,9 +73,9 @@ describe("project brief — concurrent multi-writer", () => {
     // lock these read-modify-write each other and one section is lost; with it
     // they serialize and both survive the merge.
     await Promise.all([
-      updateProjectBrief(PID, "## Marketing\n- launched email campaign", { memDir, title: "Nutrishop" }),
-      updateProjectBrief(PID, "## Social\n- posted 3x this week", { memDir, title: "Nutrishop" }),
-      updateProjectBrief(PID, "## Inventory\n- restocked protein", { memDir, title: "Nutrishop" }),
+      updateProjectBrief(PID, "## Marketing\n- launched email campaign", { memDir, title: "Initech" }),
+      updateProjectBrief(PID, "## Social\n- posted 3x this week", { memDir, title: "Initech" }),
+      updateProjectBrief(PID, "## Inventory\n- restocked protein", { memDir, title: "Initech" }),
     ]);
 
     const brief = await readProjectBrief(PID, memDir);

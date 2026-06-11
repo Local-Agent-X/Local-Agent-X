@@ -3,7 +3,7 @@
  * on issue_create.
  *
  * Root cause (observed in run trace field-agent-1-mq10l2n5): the CEO
- * called issue_create with `project: "Nutrishop McKinney"` (the human
+ * called issue_create with `project: "Initech Dallas"` (the human
  * readable NAME) and an `assignee` rostered to that very project. The
  * old code stuffed the raw name into `projectId`, then the cross-project
  * guard compared that name against the assignee's canonical project id
@@ -84,7 +84,7 @@ describe("resolveProjectId", () => {
 
 describe("issue_create cross-project guard", () => {
   it("does NOT reject same-project assignment when project is given by NAME", async () => {
-    const { project, agentId } = makeProjectWithAgent(uniqueName("Nutrishop"));
+    const { project, agentId } = makeProjectWithAgent(uniqueName("Initech"));
 
     const result = await issueCreateTool.execute({
       title: "Develop Marketing Strategy",

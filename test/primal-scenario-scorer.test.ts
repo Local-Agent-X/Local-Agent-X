@@ -26,7 +26,7 @@ describe("parseScenarioText", () => {
 **Persona:** Jamie, mobile groomer in Austin.
 
 **Steps:**
-1. Lands on mygroomtime.com, clicks Start Free Trial.
+1. Lands on petbook.com, clicks Start Free Trial.
 2. Signs up with email + password.
 3. Onboarding wizard, enters business name.
 4. Adds first client.

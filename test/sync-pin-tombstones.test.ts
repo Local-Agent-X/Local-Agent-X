@@ -31,12 +31,12 @@ afterEach(() => {
 describe("tombstonePin", () => {
   it("writes to BOTH local and synced stores", () => {
     const paths = pinTombstonePaths(dataDir, syncRepoDir);
-    tombstonePin(paths, "Mario To Do");
+    tombstonePin(paths, "Pixel To Do");
     expect(existsSync(paths.localFile)).toBe(true);
     const local = JSON.parse(readFileSync(paths.localFile, "utf-8"));
     expect(local).toHaveLength(1);
-    expect(local[0].name).toBe("Mario To Do");
-    expect(existsSync(join(paths.syncDir, "Mario_To_Do.json"))).toBe(true);
+    expect(local[0].name).toBe("Pixel To Do");
+    expect(existsSync(join(paths.syncDir, "Pixel_To_Do.json"))).toBe(true);
   });
 
   it("is idempotent — second call doesn't duplicate", () => {
@@ -94,11 +94,11 @@ describe("listTombstonedPinNames", () => {
 describe("applyPinTombstones (the filter)", () => {
   it("drops pins whose name is in the tombstone set", () => {
     const remote = [
-      { name: "Mario To Do", icon: "🍄", url: "/apps/mario/" },
+      { name: "Pixel To Do", icon: "🕹️", url: "/apps/pixel/" },
       { name: "Dino", icon: "🦖", url: "/apps/dino/" },
       { name: "Funding Scanner", icon: "💰", url: "/apps/funding/" },
     ];
-    const filtered = applyPinTombstones(remote, new Set(["Mario To Do", "Dino"]));
+    const filtered = applyPinTombstones(remote, new Set(["Pixel To Do", "Dino"]));
     expect(filtered).toHaveLength(1);
     expect(filtered[0].name).toBe("Funding Scanner");
   });
@@ -112,26 +112,26 @@ describe("applyPinTombstones (the filter)", () => {
 describe("end-to-end roaming scenario", () => {
   it("user unpins on this machine → next pull from remote (still has pin) drops it", () => {
     const paths = pinTombstonePaths(dataDir, syncRepoDir);
-    // Step 1: user unpins "Mario" here.
-    tombstonePin(paths, "Mario");
+    // Step 1: user unpins "Pixel" here.
+    tombstonePin(paths, "Pixel");
     // Step 2: remote pull-files reads the remote's sidebar-pins.json (other
-    // machine still has Mario pinned) and filters through local tombstones.
-    const remotePins = [{ name: "Mario", icon: "🍄", url: "/apps/mario/" }];
+    // machine still has Pixel pinned) and filters through local tombstones.
+    const remotePins = [{ name: "Pixel", icon: "🕹️", url: "/apps/pixel/" }];
     const tombstoned = listTombstonedPinNames(paths);
     const result = applyPinTombstones(remotePins, tombstoned);
-    expect(result).toHaveLength(0); // Mario stays unpinned, even though remote has it.
+    expect(result).toHaveLength(0); // Pixel stays unpinned, even though remote has it.
   });
 
   it("user re-pins after tombstoning → filter no longer drops it", () => {
     const paths = pinTombstonePaths(dataDir, syncRepoDir);
-    tombstonePin(paths, "Mario");
+    tombstonePin(paths, "Pixel");
     // User changes their mind — re-pin.
-    clearPinTombstone(paths, "Mario");
+    clearPinTombstone(paths, "Pixel");
 
-    const remotePins = [{ name: "Mario", icon: "🍄", url: "/apps/mario/" }];
+    const remotePins = [{ name: "Pixel", icon: "🕹️", url: "/apps/pixel/" }];
     const tombstoned = listTombstonedPinNames(paths);
     const result = applyPinTombstones(remotePins, tombstoned);
     expect(result).toHaveLength(1);
-    expect(result[0].name).toBe("Mario");
+    expect(result[0].name).toBe("Pixel");
   });
 });

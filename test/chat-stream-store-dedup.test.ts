@@ -48,13 +48,13 @@ describe("ChatStreamStore.promoteLiveToMessages — double-done dedup", () => {
 
     // Turn one: stream a reply, finalize on the first `done`.
     ChatStreamStore.startTurn(sessionId, 0);
-    ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: "Hi Peter. Bob here." });
+    ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: "Hi Alex. Bob here." });
     ChatStreamStore.applyEvent(sessionId, { type: "done" });
     const first = ChatStreamStore.promoteLiveToMessages(sessionId, chat);
 
     expect(first).not.toBeNull();
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0]).toMatchObject({ role: "assistant", content: "Hi Peter. Bob here." });
+    expect(chat.messages[0]).toMatchObject({ role: "assistant", content: "Hi Alex. Bob here." });
 
     // The stuck-stream watchdog fires reconnect_op; the server replays a SECOND
     // `done` for the same (already-finalized) op, re-running finalize.
@@ -65,7 +65,7 @@ describe("ChatStreamStore.promoteLiveToMessages — double-done dedup", () => {
     // spliced — in particular nothing lands at index 0.
     expect(second).toBeNull();
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0]).toMatchObject({ role: "assistant", content: "Hi Peter. Bob here." });
+    expect(chat.messages[0]).toMatchObject({ role: "assistant", content: "Hi Alex. Bob here." });
   });
 
   it("stays at one message across MANY replayed dones (the 6-10x field report)", () => {

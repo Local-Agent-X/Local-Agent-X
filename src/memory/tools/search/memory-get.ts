@@ -13,7 +13,7 @@ export function memoryGetTool(memory: MemoryIndex) {
         path: {
           type: "string",
           description:
-            "File path within memory dir (e.g. USER.md, 2026-03-22.md, bank/entities/peter.md)",
+            "File path within memory dir (e.g. USER.md, 2026-03-22.md, bank/entities/alex.md)",
         },
       },
       required: ["path"],

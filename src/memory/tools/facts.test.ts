@@ -41,7 +41,7 @@ describe("remember multi-fact-blob guard", () => {
     const tool = rememberTool();
     const res = await tool.execute({
       content:
-        "User owns NutriShop McKinney.\n" +
+        "User owns Initech Dallas.\n" +
         "User runs the Kraken trading bot.\n" +
         "User prefers terse responses.\n" +
         "User's wife is @Sam.",
@@ -80,7 +80,7 @@ describe("remember multi-fact-blob guard", () => {
     const spy = vi.spyOn(memory, "rememberFact");
     const tool = rememberTool();
     const res = await tool.execute({
-      content: "User owns NutriShop McKinney. He runs it as a SaaS, not a white-label product.",
+      content: "User owns Initech Dallas. He runs it as a SaaS, not a white-label product.",
     });
 
     expect(res.isError).toBeUndefined();

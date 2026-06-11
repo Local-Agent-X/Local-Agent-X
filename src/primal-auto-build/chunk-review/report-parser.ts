@@ -30,7 +30,7 @@ export interface ChunkReport {
   specGaps: string;
   /** Free-form text after `LAUNCH_READINESS:`. "none" → empty string. */
   launchReadiness: string;
-  /** Free-form NOTE body. The Calenbella incident transcripts showed
+  /** Free-form NOTE body. The Bookwell incident transcripts showed
    *  that critical context (Constitution-violation gray areas, silent
    *  fallbacks, integration-test deferrals) often only appears in NOTE
    *  prose — gates must read it too, not just the structured fields. */

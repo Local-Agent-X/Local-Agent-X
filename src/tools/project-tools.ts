@@ -78,7 +78,7 @@ export function createProjectTools(): ToolDefinition[] {
       parameters: {
         type: "object",
         properties: {
-          name: { type: "string", description: "Project display name (e.g. 'Nutrishop McKinney')" },
+          name: { type: "string", description: "Project display name (e.g. 'Acme Fitness Dallas')" },
           description: { type: "string", description: "One-line description" },
           summary: {
             type: "string",
@@ -126,7 +126,7 @@ export function createProjectTools(): ToolDefinition[] {
             return ok(
               `Project '${existing.name}' already exists (id: ${existing.id}). ` +
               `Nothing was created. To add agents, call project_add_agent with project_id=${existing.id}. ` +
-              `If you intended a separate project, retry with a distinct name (e.g. '${name} 2' or '${name} McKinney').`,
+              `If you intended a separate project, retry with a distinct name (e.g. '${name} 2' or '${name} Dallas').`,
             );
           }
 

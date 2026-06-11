@@ -2,7 +2,7 @@
  * Plan parser — reads an /app-build plan.md and extracts ordered chunks
  * with class (trunk/leaf/mixed) and done-when text.
  *
- * Expected shape (matches /app-build output, validated against Calenbella):
+ * Expected shape (matches /app-build output, validated against Bookwell):
  *
  *   # <title>
  *   ## Phase A — Foundation

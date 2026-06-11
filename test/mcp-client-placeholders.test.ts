@@ -6,7 +6,7 @@
  *   1. `${HOME}` / `${USERPROFILE}` / `~/` resolve to the real home dir at
  *      LOAD time. A single synced ~/.lax/mcp.json works on every machine
  *      without per-host forks (the original failure: a hardcoded
- *      C:\Users\manri\Documents path that worked on the home machine and
+ *      C:\Users\alice\Documents path that worked on the home machine and
  *      ENOENT'd on every other one).
  *
  *   2. `${secret:NAME}` resolves from the encrypted vault. Missing secrets

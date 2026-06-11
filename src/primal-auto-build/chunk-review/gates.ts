@@ -12,7 +12,7 @@
  * runReview (in index.ts) combines findings per the priority order:
  *   halt > push_back > amend_spec > proceed
  *
- * Detection is mechanical where possible — the Calenbella fixtures show
+ * Detection is mechanical where possible — the Bookwell fixtures show
  * that the high-signal failure shapes leave clear textual fingerprints:
  *   - "silently" / "silent fallback" → Constitution-violation gray area
  *   - "deferred to launch-readiness" in NOTE with DONE_WHEN: met for a
@@ -110,7 +110,7 @@ export function gateDoneWhen(chunk: ParsedChunk, report: ChunkReport): GateFindi
     }
   }
 
-  // (d) NOTE contradicts the structured field. Common Calenbella shape:
+  // (d) NOTE contradicts the structured field. Common Bookwell shape:
   // "DONE_WHEN: met" but NOTE says "the integration test is launch-readiness
   // deferred." That's the chunk-6 incident in a single check.
   if (report.doneWhen === "met") {

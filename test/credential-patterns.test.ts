@@ -90,7 +90,7 @@ describe("credential-patterns — inline value redaction", () => {
     ["Database URL (also covers password-in-URL)", `postgres://user:pass@db.example.com:5432/mydb`],
     [
       "PEM private key",
-      `-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBARileyBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Q\n-----END RSA PRIVATE KEY-----`,
+      `-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAKCAQEAvJ34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1PtQQ\n-----END RSA PRIVATE KEY-----`,
     ],
   ];
 

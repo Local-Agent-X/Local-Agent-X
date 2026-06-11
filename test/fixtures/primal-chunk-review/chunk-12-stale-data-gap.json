@@ -1,5 +1,5 @@
 {
-  "_comment": "Calenbella chunk 12 — Public booking page UI. Agent shipped the page correctly per the chunk's done-when, but the reviewer noticed a missing constraint: when any of the host's calendar connections is in 'degraded' state, the page must show a stale-data warning. This is a Constitution #8 surface (no silent failures affecting the user) that the spec hadn't explicitly named. Verdict: amend_spec (additive — adds a constraint, doesn't relax one).",
+  "_comment": "Bookwell chunk 12 — Public booking page UI. Agent shipped the page correctly per the chunk's done-when, but the reviewer noticed a missing constraint: when any of the host's calendar connections is in 'degraded' state, the page must show a stale-data warning. This is a Constitution #8 surface (no silent failures affecting the user) that the spec hadn't explicitly named. Verdict: amend_spec (additive — adds a constraint, doesn't relax one).",
   "chunkNumber": 12,
   "chunkTitle": "Public booking page UI",
   "doneWhen": "booking page renders correctly with slots in invitee TZ, hides slots that conflict with host's busy time, submits to a server action.",

@@ -22,11 +22,11 @@ afterEach(() => {
 
 describe("tombstoneAppEagerly", () => {
   it("writes a synced tombstone file with the expected shape", () => {
-    tombstoneAppEagerly(syncDir, "mygroomtime");
-    const file = join(syncDir, ".tombstones", "mygroomtime.json");
+    tombstoneAppEagerly(syncDir, "petbook");
+    const file = join(syncDir, ".tombstones", "petbook.json");
     expect(existsSync(file)).toBe(true);
     const parsed = JSON.parse(readFileSync(file, "utf-8"));
-    expect(parsed.name).toBe("mygroomtime");
+    expect(parsed.name).toBe("petbook");
     expect(typeof parsed.deletedAt).toBe("string");
     expect(typeof parsed.deletedBy).toBe("string");
   });

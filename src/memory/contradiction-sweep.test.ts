@@ -11,8 +11,8 @@ import { findContradictions } from "./contradiction-sweep.js";
 describe("findContradictions — exclusive-slot value changes", () => {
   it("supersedes the older value of an exclusive slot (newer wins)", () => {
     const pairs = findContradictions([
-      { text: "works at Google", payload: "old", subjectHint: "peter" },
-      { text: "works at Microsoft", payload: "new", subjectHint: "peter" },
+      { text: "works at Google", payload: "old", subjectHint: "alex" },
+      { text: "works at Microsoft", payload: "new", subjectHint: "alex" },
     ]);
     expect(pairs).toHaveLength(1);
     expect(pairs[0].keep).toBe("new");
@@ -21,8 +21,8 @@ describe("findContradictions — exclusive-slot value changes", () => {
 
   it("uses the explicit subject in the text when present", () => {
     const pairs = findContradictions([
-      { text: "Peter lives in Ventura", payload: "old" },
-      { text: "Peter lives in Austin", payload: "new" },
+      { text: "Alex lives in Portland", payload: "old" },
+      { text: "Alex lives in Austin", payload: "new" },
     ]);
     expect(pairs).toHaveLength(1);
     expect(pairs[0].keep).toBe("new");
@@ -30,7 +30,7 @@ describe("findContradictions — exclusive-slot value changes", () => {
 
   it("does not fire across different subjects", () => {
     const pairs = findContradictions([
-      { text: "works at NutriShop", payload: "a", subjectHint: "peter" },
+      { text: "works at Initech", payload: "a", subjectHint: "alex" },
       { text: "works at Microsoft", payload: "b", subjectHint: "ben" },
     ]);
     expect(pairs).toHaveLength(0);
@@ -38,24 +38,24 @@ describe("findContradictions — exclusive-slot value changes", () => {
 
   it("does not fire on accumulative predicates (likes coffee / likes tea)", () => {
     const pairs = findContradictions([
-      { text: "likes morning coffee", payload: "a", subjectHint: "peter" },
-      { text: "likes evening tea", payload: "b", subjectHint: "peter" },
+      { text: "likes morning coffee", payload: "a", subjectHint: "alex" },
+      { text: "likes evening tea", payload: "b", subjectHint: "alex" },
     ]);
     expect(pairs).toHaveLength(0);
   });
 
   it("does not fire across tense — past employment coexists with present", () => {
     const pairs = findContradictions([
-      { text: "worked at Google", payload: "a", subjectHint: "peter" },
-      { text: "works at Microsoft", payload: "b", subjectHint: "peter" },
+      { text: "worked at Google", payload: "a", subjectHint: "alex" },
+      { text: "works at Microsoft", payload: "b", subjectHint: "alex" },
     ]);
     expect(pairs).toHaveLength(0);
   });
 
   it("does not fire when the slot value is unchanged", () => {
     const pairs = findContradictions([
-      { text: "works at Google", payload: "a", subjectHint: "peter" },
-      { text: "currently works at Google", payload: "b", subjectHint: "peter" },
+      { text: "works at Google", payload: "a", subjectHint: "alex" },
+      { text: "currently works at Google", payload: "b", subjectHint: "alex" },
     ]);
     expect(pairs).toHaveLength(0);
   });

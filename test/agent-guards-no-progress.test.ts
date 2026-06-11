@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { checkToolLoops, createLoopState, NO_PROGRESS_LIMIT_WEAK } from "../src/agent-guards/index.js";
 
 // The no-progress guard used to fire on browser-driven tasks because
-// MUTATION_TOOLS was file-only. Live failure 2026-05-13 (Thriveventory PO
+// MUTATION_TOOLS was file-only. Live failure 2026-05-13 (vendor PO
 // entry on codex): "No-progress abort: 6+ iterations of tool calls with
 // zero file mutations." The agent was actually doing the task (filling
 // the PO form via `browser`), but the guard's narrow definition of
@@ -90,7 +90,7 @@ describe("no-progress abort — fires on genuine read-only loops", () => {
 
 describe("no-progress abort — mixed sequences typical of real tasks", () => {
   it("PO-entry-shaped sequence (browser × 8, no files) does NOT abort", () => {
-    // Reproduces the Thriveventory failure shape: agent makes many browser
+    // Reproduces the vendor-PO failure shape: agent makes many browser
     // calls without writing any files. Pre-fix this aborted at iteration 6.
     const state = createLoopState();
     let aborted = false;

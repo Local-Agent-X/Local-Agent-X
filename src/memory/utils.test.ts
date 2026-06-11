@@ -33,12 +33,12 @@ describe("parseFactLine — schema-aligned prefix letters", () => {
   });
 
   it("W with no (c=...) defaults to confidence 1.0", () => {
-    const r = parseFactLine("W @user owns NutriShop McKinney");
+    const r = parseFactLine("W @user owns Initech Dallas");
     expect(r).not.toBeNull();
     expect(r!.kind).toBe("world");
     expect(r!.confidence).toBe(1.0);
     expect(r!.entities).toEqual(["user"]);
-    expect(r!.content).toBe("owns NutriShop McKinney");
+    expect(r!.content).toBe("owns Initech Dallas");
   });
 
   it("O maps to opinion", () => {
@@ -77,12 +77,12 @@ describe("displayContent — re-attaches stripped entities for display", () => {
   });
 
   it("single entity → ` (@name)` appended", () => {
-    expect(displayContent({ content: "is the user's wife", entities: ["jenny"] }))
-      .toBe("is the user's wife (@jenny)");
+    expect(displayContent({ content: "is the user's wife", entities: ["dana"] }))
+      .toBe("is the user's wife (@dana)");
   });
 
   it("multiple entities → comma-separated `(@a, @b)`", () => {
-    expect(displayContent({ content: "adopted puppies", entities: ["gigi", "rex"] }))
-      .toBe("adopted puppies (@gigi, @rex)");
+    expect(displayContent({ content: "adopted puppies", entities: ["fido", "rex"] }))
+      .toBe("adopted puppies (@fido, @rex)");
   });
 });

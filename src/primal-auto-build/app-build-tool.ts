@@ -143,14 +143,14 @@ export const finalizeAppBuildTool: ToolDefinition = {
     properties: {
       project_dir: {
         type: "string",
-        description: "Either a bare project name (e.g. 'mygroomtime') — resolved to " +
+        description: "Either a bare project name (e.g. 'petbook') — resolved to " +
           "`<lax-root>/workspace/apps/<name>` automatically — OR an absolute path to a NEW " +
           "project directory. Must not already exist. **Default convention: bare name.** " +
           "Absolute paths only when the project lives outside LAX's workspace.",
       },
       project_name: {
         type: "string",
-        description: "Human-readable project name (e.g. 'Calenbella'). Used in headers.",
+        description: "Human-readable project name (e.g. 'Bookwell'). Used in headers.",
       },
       product_md: {
         type: "string",

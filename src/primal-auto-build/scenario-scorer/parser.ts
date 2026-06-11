@@ -1,8 +1,8 @@
 /**
  * Parse a scenario .md file into {persona, steps, passCriteria}.
  *
- * Format (matches what /app-build emits, validated against Calenbella +
- * mygroomtime scenarios):
+ * Format (matches what /app-build emits, validated against the Bookwell +
+ * Petbook reference scenarios):
  *
  *   # Scenario NN — Title
  *

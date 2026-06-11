@@ -30,8 +30,8 @@ describe("scoreFact", () => {
 
   it("ranks a high-confidence, emotional, entity-rich fact above a sparse low-confidence one", () => {
     const strong = scoreFact(mkFact({
-      content: "Peter is grateful and proud of his daughter @maya — a deeply important relationship",
-      entities: ["maya", "peter"],
+      content: "Alex is grateful and proud of his daughter @nora — a deeply important relationship",
+      entities: ["nora", "alex"],
       confidence: 1.0,
       timestamp: now,
     }), now);
@@ -44,7 +44,7 @@ describe("scoreFact", () => {
   });
 
   it("gives a reinforcement bonus when the fact was re-mentioned after creation", () => {
-    const base = mkFact({ content: "Peter's birthday is in June", confidence: 0.9, timestamp: now - 10 * DAY_MS });
+    const base = mkFact({ content: "Alex's birthday is in June", confidence: 0.9, timestamp: now - 10 * DAY_MS });
     const neverReinforced = scoreFact({ ...base, lastUpdated: base.timestamp }, now);
     const reinforced = scoreFact({ ...base, lastUpdated: now }, now);
     expect(reinforced.score).toBeGreaterThan(neverReinforced.score);
@@ -84,9 +84,9 @@ describe("MemoryIndex.topImportantFacts", () => {
   });
 
   it("returns facts ranked by importance, highest first, across all kinds", () => {
-    const high = memory.rememberFact("Peter loves his daughter Maya more than anything", { kind: "observation", confidence: 1.0 });
+    const high = memory.rememberFact("Alex loves his daughter Nora more than anything", { kind: "observation", confidence: 1.0 });
     const low = memory.rememberFact("the sky was grey", { kind: "observation", confidence: 0.5 });
-    const opinion = memory.rememberFact("Peter thinks TypeScript is fine", { kind: "opinion", confidence: 0.8 });
+    const opinion = memory.rememberFact("Alex thinks TypeScript is fine", { kind: "opinion", confidence: 0.8 });
     expect(high.ok && low.ok && opinion.ok).toBe(true);
 
     const ranked = memory.topImportantFacts(10);
@@ -96,7 +96,7 @@ describe("MemoryIndex.topImportantFacts", () => {
       expect(ranked[i - 1].importance.score).toBeGreaterThanOrEqual(ranked[i].importance.score);
     }
     // The emotional, max-confidence fact outranks the sparse low-confidence one.
-    const highRank = ranked.findIndex(r => r.fact.content.includes("Maya"));
+    const highRank = ranked.findIndex(r => r.fact.content.includes("Nora"));
     const lowRank = ranked.findIndex(r => r.fact.content.includes("grey"));
     expect(highRank).toBeLessThan(lowRank);
     // Opinion kind is included (recallRecentFacts would have excluded it).

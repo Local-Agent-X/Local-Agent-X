@@ -4,11 +4,11 @@ import { extractRelationTriples } from "./relation-patterns.js";
 describe("extractRelationTriples", () => {
   it("pulls clean objects, trimming run-on trailing clauses", () => {
     const triples = extractRelationTriples(
-      "Peter works at NutriShop and lives in McKinney.",
-      ["Peter"]
+      "Alex works at Initech and lives in Dallas.",
+      ["Alex"]
     );
     const works = triples.find((t) => t.predicate === "works");
-    expect(works?.object).toBe("NutriShop");
+    expect(works?.object).toBe("Initech");
     // no triple should carry a run-on object glued by "and"
     expect(triples.every((t) => !/\band\b/.test(t.object))).toBe(true);
   });
@@ -23,7 +23,7 @@ describe("extractRelationTriples", () => {
   });
 
   it("falls back to the first known entity for filler subjects", () => {
-    const triples = extractRelationTriples("It uses Node.", ["Peter"]);
-    expect(triples[0]).toMatchObject({ subject: "Peter", predicate: "uses", object: "Node" });
+    const triples = extractRelationTriples("It uses Node.", ["Alex"]);
+    expect(triples[0]).toMatchObject({ subject: "Alex", predicate: "uses", object: "Node" });
   });
 });

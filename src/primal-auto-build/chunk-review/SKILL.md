@@ -15,7 +15,7 @@ Internal skill invoked by `primal_run_build_plan` after each chunk subprocess re
 
 ## The five gate checks
 
-The discipline this skill encodes was distilled from the Calenbella manual build (May 2026), where I (the reviewer) repeatedly caught silent deferrals, Constitution gray areas, and missing implicit constraints. The gates are mechanical because mechanical is auditable; LLM judgment can layer on top for fuzzy cases.
+The discipline this skill encodes was distilled from the Bookwell manual reference build (May 2026), where review repeatedly caught silent deferrals, Constitution gray areas, and missing implicit constraints. The gates are mechanical because mechanical is auditable; LLM judgment can layer on top for fuzzy cases.
 
 ### 1. Report-shape gate
 
@@ -76,7 +76,7 @@ When multiple gates fire, the strongest action wins: **halt > push_back > amend_
 
 ## Fixtures the gate logic is tested against
 
-From the Calenbella build (`~/.claude/projects/c--Users-manri-Calenbella/*.jsonl`):
+From a recorded reference build:
 
 - **chunk-6** — silent Google-integration deferral → expects `halt`
 - **chunk-10** — Constitution #8 gray area surfaced as "two options" → expects `halt`

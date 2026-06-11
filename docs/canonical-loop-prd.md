@@ -1,8 +1,7 @@
 # LAX Canonical Operation Loop — v1 PRD
 
 **Status:** Shipped 2026-05-15 (v1 — worker-pool retired, build_app migrated, every op type rides canonical-loop). Doc remains as the architectural spec; section numbers (§5, §6, §9, §15, §17) are cited throughout src/canonical-loop/README.md.
-**Owner:** Alex
-**Last updated:** 2026-05-04 (status updated 2026-05-22)
+**Last updated:** 2026-05-22
 
 ---
 
@@ -674,55 +673,14 @@ interface TurnResult {
 
 **Status:** COMPLETE — strangler-fig retired 2026-05-15. The legacy fork-based
 execution path is deleted; canonical-loop is the only path. The per-lane
-`LAX_CANONICAL_LOOP_*` flags and `decideSubmitRouting` branching are gone. See
-[docs/migration/worker-pool-retirement.md](migration/worker-pool-retirement.md)
-for retirement record and commits.
+`LAX_CANONICAL_LOOP_*` flags and `decideSubmitRouting` branching are gone.
 
-The remaining content below is preserved as historical context — it describes
-the parallel-run strategy that was in force while canonical-loop was being
-brought up alongside the legacy fork path. The per-op flag-stamping rule is
-the only invariant still load-bearing: ops submitted before 2026-05-12 may
-carry `ops.canonical_flag_value` in their stored row, which explains why
-some commits look the way they do.
-
-### Flag mechanics (retired)
-
-- Flag name was `LAX_CANONICAL_LOOP_{lane}` per env, plus the catch-all
-  `LAX_CANONICAL_LOOP_ALL`.
-- Granularity was per lane + per provider. Allowed enabling Anthropic
-  interactive without touching build/IDE.
-- Captured value lives on `ops.canonical_flag_value` for audit on historical
-  rows. New ops do not populate it.
-- `op_submit_async` no longer reads any flag — it always routes canonical.
-
-### In-flight semantics (retired)
-
-- An op started under flag=ON finished under flag=ON.
-- An op started under flag=OFF finished under flag=OFF.
-- **No mid-flight reroute.** Flag flips affected only ops submitted after the
-  flip. This rule is moot now that the flag is gone.
-
-### Defaults timeline
-
-- v1.0 ship: flag default OFF; selected callers/lanes opt in via config.
-- 2026-05-12 (Phase 1, commit f14a44b): default flipped ON for all lanes.
-- 2026-05-13 (Phase 2, commit d1703ea): fork lifecycle deleted; flag reads
-  removed from `decideSubmitRouting`.
-- 2026-05-15 (Phase 3, this commit): `src/workers/` renamed to `src/ops/`;
-  no remaining flag reads or legacy references in code.
-
-### Rollback (retired)
-
-Rollback by flag flip is no longer possible — the fork code path is deleted.
-Rollback now requires reverting the deletion commits in
-`docs/migration/worker-pool-retirement.md` and a release.
-
-### Hard rules (retired)
-
-- `op_submit_async` return shape is byte-for-byte identical to the legacy
-  contract — verified at the time of cutover and still preserved.
-- No caller can detect which path served them by inspecting the response —
-  trivially true now that only one path exists.
+One invariant from the migration era is still load-bearing: ops submitted
+while the flag existed may carry `ops.canonical_flag_value` in their stored
+row (kept for audit on historical rows). New ops do not populate it;
+`op_submit_async` reads no flag and always routes canonical. Rollback by
+flag flip is not possible — reverting the retirement commits is the only
+path back (see the rollback runbook).
 
 ---
 

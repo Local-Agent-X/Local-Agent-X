@@ -35,8 +35,8 @@ describe("project_create — onboarding", () => {
 
     const create = createProjectTools().find((t) => t.name === "project_create")!;
     const res = await create.execute({
-      name: "Nutrishop McKinney",
-      summary: "Supplement retail store. Goal: $1M revenue this year.",
+      name: "Initech Dallas",
+      summary: "Retail software business. Goal: $1M revenue this year.",
     });
 
     expect(res.isError).toBeFalsy();
@@ -44,13 +44,13 @@ describe("project_create — onboarding", () => {
     expect(String(res.content)).toContain("project_brief_update");
     expect(String(res.content)).toContain("Brief started from your summary");
 
-    const project = ProjectStore.getInstance().findByName("Nutrishop McKinney")!;
+    const project = ProjectStore.getInstance().findByName("Initech Dallas")!;
     expect(project).toBeTruthy();
     const brief = await readProjectBrief(project.id, join(dataDir, "memory"));
     expect(brief).toContain("Overview");
     expect(brief).toContain("$1M revenue");
     // The seeded root heading is the project name, so later ## sections merge.
-    expect(brief).toContain("# Nutrishop McKinney");
+    expect(brief).toContain("# Initech Dallas");
   });
 
   it("still nudges the interview when no summary is given (no brief seeded)", async () => {

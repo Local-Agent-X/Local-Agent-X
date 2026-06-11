@@ -31,12 +31,12 @@ afterEach(() => {
 describe("tombstoneProject", () => {
   it("writes to BOTH local and synced stores", () => {
     const paths = projectTombstonePaths(dataDir, syncRepoDir);
-    tombstoneProject(paths, "proj-abc123", "Mygroomtime");
+    tombstoneProject(paths, "proj-abc123", "Petbook");
     expect(existsSync(paths.localFile)).toBe(true);
     const local = JSON.parse(readFileSync(paths.localFile, "utf-8"));
     expect(local).toHaveLength(1);
     expect(local[0].id).toBe("proj-abc123");
-    expect(local[0].name).toBe("Mygroomtime");
+    expect(local[0].name).toBe("Petbook");
     expect(existsSync(join(paths.syncDir, "proj-abc123.json"))).toBe(true);
   });
 
@@ -70,8 +70,8 @@ describe("clearProjectTombstone", () => {
 describe("applyProjectTombstones", () => {
   it("drops projects whose id is in the tombstone set", () => {
     const remote = [
-      { id: "proj-a", name: "Mygroomtime" },
-      { id: "proj-b", name: "Mario" },
+      { id: "proj-a", name: "Petbook" },
+      { id: "proj-b", name: "Arcade" },
       { id: "proj-c", name: "Funding" },
     ];
     const filtered = applyProjectTombstones(remote, new Set(["proj-a", "proj-b"]));
@@ -88,8 +88,8 @@ describe("applyProjectTombstones", () => {
 describe("end-to-end roaming scenario", () => {
   it("user deletes proj on this machine → next pull from remote (still has it) drops it", () => {
     const paths = projectTombstonePaths(dataDir, syncRepoDir);
-    tombstoneProject(paths, "proj-mario", "Mario");
-    const remoteProjects = [{ id: "proj-mario", name: "Mario", agentIds: [] }];
+    tombstoneProject(paths, "proj-pixel", "Pixel");
+    const remoteProjects = [{ id: "proj-pixel", name: "Pixel", agentIds: [] }];
     const tombstoned = listTombstonedProjectIds(paths);
     const result = applyProjectTombstones(remoteProjects, tombstoned);
     expect(result).toHaveLength(0);

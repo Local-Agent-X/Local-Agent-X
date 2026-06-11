@@ -70,7 +70,7 @@ describe("<core_memory> 'still fresh' salience", () => {
     const now = Date.now();
     const threeDaysAgo = now - 3 * DAY_MS;
 
-    const r = memory.rememberFact("Started Calenbella build", { kind: "experience", confidence: 1.0 });
+    const r = memory.rememberFact("Started Bookwell build", { kind: "experience", confidence: 1.0 });
     expect(r.ok).toBe(true);
     setFactClock(r.fact!.id!, threeDaysAgo, threeDaysAgo);
 
@@ -78,7 +78,7 @@ describe("<core_memory> 'still fresh' salience", () => {
     const core = extractCoreMemory(block);
 
     const expectedDate = new Date(threeDaysAgo).toISOString().slice(0, 10);
-    expect(core).toContain(`${expectedDate}: Started Calenbella build`);
+    expect(core).toContain(`${expectedDate}: Started Bookwell build`);
     expect(core).toContain("still fresh");
   });
 
@@ -171,9 +171,9 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
   it("renders headings in fixed order: world → opinion → experience → observation", async () => {
     const now = Date.now();
     const inserts: Array<["world" | "opinion" | "experience" | "observation", string]> = [
-      ["world", "owns NutriShop McKinney"],
+      ["world", "owns Initech Dallas"],
       ["opinion", "prefers responses without filler"],
-      ["experience", "shipped Calenbella last week"],
+      ["experience", "shipped Bookwell last week"],
       ["observation", "writes commits in past tense"],
     ];
     for (const [kind, content] of inserts) {
@@ -204,10 +204,10 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
 
   it("skips empty buckets entirely — no orphan headings", async () => {
     const now = Date.now();
-    const r1 = memory.rememberFact("owns NutriShop McKinney", { kind: "world", confidence: 0.9 });
+    const r1 = memory.rememberFact("owns Initech Dallas", { kind: "world", confidence: 0.9 });
     expect(r1.ok).toBe(true);
     setFactClock(r1.fact!.id!, now, now);
-    const r2 = memory.rememberFact("shipped Calenbella last week", { kind: "experience", confidence: 0.9 });
+    const r2 = memory.rememberFact("shipped Bookwell last week", { kind: "experience", confidence: 0.9 });
     expect(r2.ok).toBe(true);
     setFactClock(r2.fact!.id!, now, now);
 
@@ -224,10 +224,10 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
     const now = Date.now();
     const sixtyDaysAgo = now - 60 * DAY_MS;
 
-    // Buried target: 60d old, high confidence, tagged @peter. Hot-score
+    // Buried target: 60d old, high confidence, tagged @alex. Hot-score
     // without reinforcement ≈ 0.9 * exp(-60/30) ≈ 0.122 — loses to the 0.6
     // hot-score of every fresh filler.
-    const rA = memory.rememberFact("loves hiking @peter", {
+    const rA = memory.rememberFact("loves hiking @alex", {
       kind: "observation",
       confidence: 0.9,
     });
@@ -248,16 +248,16 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
       setFactClock(r.fact!.id!, ts, ts);
     }
 
-    // Sanity: confirm @peter is in entity_mentions so the substring filter
+    // Sanity: confirm @alex is in entity_mentions so the substring filter
     // (slug length ≥ 3, present in user message) will match.
     const slugRow = memory["db"]
       .prepare("SELECT entity_slug FROM entity_mentions WHERE fact_id = ?")
       .get(factAId) as { entity_slug: string } | undefined;
-    expect(slugRow?.entity_slug).toBe("peter");
+    expect(slugRow?.entity_slug).toBe("alex");
 
     const block = await buildContextBlock(memory, {
       skipDailyLog: true,
-      userMessage: "let's talk about peter",
+      userMessage: "let's talk about alex",
     });
     const core = extractCoreMemory(block);
 
@@ -276,7 +276,7 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
   it("entity reinforcement does NOT fire when user message mentions no known entity", async () => {
     const now = Date.now();
     const sixtyDaysAgo = now - 60 * DAY_MS;
-    const rA = memory.rememberFact("loves hiking @peter", {
+    const rA = memory.rememberFact("loves hiking @alex", {
       kind: "observation",
       confidence: 0.9,
     });
@@ -320,10 +320,10 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
   it("separates populated buckets with exactly one blank line — no orphan whitespace", async () => {
     const now = Date.now();
     // Populate 2 of 4 buckets so the join contract is observable.
-    const r1 = memory.rememberFact("owns NutriShop McKinney", { kind: "world", confidence: 0.9 });
+    const r1 = memory.rememberFact("owns Initech Dallas", { kind: "world", confidence: 0.9 });
     expect(r1.ok).toBe(true);
     setFactClock(r1.fact!.id!, now, now);
-    const r2 = memory.rememberFact("shipped Calenbella last week", { kind: "experience", confidence: 0.9 });
+    const r2 = memory.rememberFact("shipped Bookwell last week", { kind: "experience", confidence: 0.9 });
     expect(r2.ok).toBe(true);
     setFactClock(r2.fact!.id!, now, now);
 
@@ -333,33 +333,33 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
     // Pin the inter-bucket separator: last bullet of "world" → blank line →
     // next "## " heading. Catches a regression that flattens to `\n## ` or
     // expands to `\n\n\n## `.
-    expect(core).toMatch(/^- owns NutriShop McKinney\n\n## Recent in their life$/m);
+    expect(core).toMatch(/^- owns Initech Dallas\n\n## Recent in their life$/m);
     expect(core).not.toMatch(/\n\n\n/);
   });
 
   it("renders multiple entities with ', @' separator", async () => {
     const now = Date.now();
     // Single-entity baseline.
-    const rOne = memory.rememberFact("loves hiking @peter", { kind: "observation", confidence: 0.9 });
+    const rOne = memory.rememberFact("loves hiking @alex", { kind: "observation", confidence: 0.9 });
     expect(rOne.ok).toBe(true);
     setFactClock(rOne.fact!.id!, now, now);
     // Two-entity case. parseFactLine extracts every @-mention into entities[].
-    const rTwo = memory.rememberFact("adopted puppies @gigi @rex", { kind: "experience", confidence: 0.9 });
+    const rTwo = memory.rememberFact("adopted puppies @fido @rex", { kind: "experience", confidence: 0.9 });
     expect(rTwo.ok).toBe(true);
     setFactClock(rTwo.fact!.id!, now, now);
 
     const block = await buildContextBlock(memory, { skipDailyLog: true });
     const core = extractCoreMemory(block);
 
-    expect(core).toMatch(/loves hiking \(@peter\)/);
-    expect(core).toMatch(/adopted puppies \(@gigi, @rex\)/);
+    expect(core).toMatch(/loves hiking \(@alex\)/);
+    expect(core).toMatch(/adopted puppies \(@fido, @rex\)/);
   });
 });
 
 describe("<project_brief> injection", () => {
   it("injects the active project's brief when projectId is set", async () => {
     const pid = "proj-ctx-test1";
-    await updateProjectBrief(pid, "# Nutrishop\n\n- Goal: $1M revenue", { memDir: memory.getMemoryDir() });
+    await updateProjectBrief(pid, "# Initech\n\n- Goal: $1M revenue", { memDir: memory.getMemoryDir() });
 
     const block = await buildContextBlock(memory, { skipDailyLog: true, projectId: pid });
     expect(block).toContain("<project_brief>");

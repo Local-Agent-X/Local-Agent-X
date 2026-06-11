@@ -13,7 +13,7 @@ Internal skill invoked by `primal_run_build_plan` after each chunk subprocess re
 - **push_back** — chunk's done-when isn't met but the gap is mechanical; respawn the same chunk subprocess once with the reviewer's reasoning appended
 - **halt** — surface to the user; auto-recovery is unsafe
 
-## The five gate checks
+## The seven gate checks
 
 The discipline this skill encodes was distilled from the Bookwell manual reference build (May 2026), where review repeatedly caught silent deferrals, Constitution gray areas, and missing implicit constraints. The gates are mechanical because mechanical is auditable; LLM judgment can layer on top for fuzzy cases.
 

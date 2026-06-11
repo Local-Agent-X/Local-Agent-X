@@ -20,9 +20,11 @@ Parallel-run safety requires that:
 
 Each fixture in `legacy/*.json` records both the expected response
 envelope and the expected post-submit disk artifacts under each flag
-value. The driver test (`test/canonical-loop-10-old-path-compat.test.ts`)
-runs every scenario against both flag values and asserts the actual
-behavior matches the fixture exactly.
+value. The driver test that ran every scenario against both flag values
+was retired together with the legacy path (the flag is hardwired
+canonical since 2026-05-15); the fixtures and
+`op-submit-fixtures-harness.ts` remain as the recorded ship-time
+response contract that `op_submit_async` still honors.
 
 ## File layout
 
@@ -90,15 +92,14 @@ changes (response template, persisted-op fields, etc.):
 1. Make the legacy-path change on a separate, focused commit. Do **not**
    bundle a fixture refresh with substantive code changes — drift is
    easier to audit when the refresh commit is structural-only.
-2. Re-run the driver test once to see what mismatches:
-   ```
-   npx vitest run test/canonical-loop-10-old-path-compat.test.ts
-   ```
+2. Compare the new behavior against the fixture envelopes (the retired
+   driver test's harness, `op-submit-fixtures-harness.ts`, shows how the
+   fixtures map onto a submit call).
 3. Update the affected fixture file(s) by hand. Each fixture is a
    small, human-readable JSON; explicit edits are preferred over a
    record-and-overwrite tool because they force the author to confirm
    each change is intentional.
-4. Re-run the driver test until green.
+4. Re-check the comparison until clean.
 5. Commit fixtures with a message like:
    `canonical-loop: refresh old-path compat fixtures — <reason>`.
 

@@ -89,7 +89,7 @@ Layer 2:  Data Lineage       — Tracks sensitive reads → blocks egress when t
 Layer 3:  RBAC               — Role-based tool permissions enforced at execution time
 Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny), per-tool rate limits, host allowlists/denylists, configured via `~/.lax/tool-policy.json`
 Layer 5:  ThreatEngine       — Canary tokens, chain analysis (exfil patterns: read-sensitive → send-external), loop detection (generic repeat, ping-pong, circuit breaker), data classification (auto-tags credentials / PII / secrets / financial), encoding detection, adaptive scoring
-Layer 6:  Content Sanitizer  — 35 injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
+Layer 6:  Content Sanitizer  — 36 injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
 Layer 7:  Memory Taint       — Blocks untrusted content from persisting to memory
 Layer 8:  Shell/Server Sandbox — Host by default. Opt-in OS-native shell confinement: macOS `seatbelt` (sandbox-exec) and Linux `bwrap` (bubblewrap namespaces) — targeted-deny (no external network, sensitive home dirs/persistence shadowed) while keeping the dev shell usable; Docker mode for hermetic isolation. Whole-server confinement via boot re-exec on macOS/Linux. Windows has no native equivalent — Docker is the confinement answer there (see "Windows shell confinement" below)
 Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB, per-session threat scoring, daily JSONL files at `~/.lax/audit/`

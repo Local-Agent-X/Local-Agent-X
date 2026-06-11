@@ -187,7 +187,7 @@
       "id": "minilm-r5", "date": "2026-05-29", "k": 5,
       "embedding": "all-MiniLM-L6-v2", "dimensions": 384, "provider": "sentence-transformers (Python server port 11435)",
       "score": 0.966, "correct": 483, "runtime_seconds": 845, "status": "complete",
-      "notes": "Apples-to-apples vs MemPalace — exact same embedder (all-MiniLM-L6-v2, ChromaDB default) and metric (recall_any@5 session-level). TIED MemPalace's 96.6% headline (483/500) on the identical model, proving the pipeline matches their verbatim approach at the same embedder. Upside remains via larger free embedders (gte-large 97.4%).",
+      "notes": "Apples-to-apples vs MemPalace — exact same embedder (all-MiniLM-L6-v2, ChromaDB default) and metric (recall_any@5 session-level). TIED MemPalace's 96.6% headline (483/500) on the identical model, proving the pipeline matches their verbatim approach at the same embedder. Upside remains via larger free embedders (gte-large 97.2%).",
       "categories": {
         "knowledge-update": {"score": 1.0, "correct": 78, "total": 78},
         "multi-session": {"score": 0.97, "correct": 129, "total": 133},
@@ -201,7 +201,7 @@
       "id": "gte-large-r5-confirm", "date": "2026-05-29", "k": 5,
       "embedding": "thenlper/gte-large", "dimensions": 1024, "provider": "sentence-transformers (Python server port 11435)",
       "score": 0.97, "correct": 485, "runtime_seconds": 2604, "status": "complete",
-      "notes": "Re-confirm of the gte-large record on the removeFile-fixed code. 97.0% (485/500) — within 2 questions of the 97.4% April record (run-to-run variance), proving the fix holds and gte-large stays top-tier. temporal-reasoning 97.0% here vs 89.5% on nomic confirms the temporal dip is embedder-specific, not the date-filter.",
+      "notes": "Re-confirm of the gte-large record on the removeFile-fixed code. 97.0% (485/500) — within 1 question of the 97.2% April record (run-to-run variance), proving the fix holds and gte-large stays top-tier. temporal-reasoning 97.0% here vs 89.5% on nomic confirms the temporal dip is embedder-specific, not the date-filter.",
       "categories": {
         "knowledge-update": {"score": 1.0, "correct": 78, "total": 78},
         "multi-session": {"score": 0.97, "correct": 129, "total": 133},

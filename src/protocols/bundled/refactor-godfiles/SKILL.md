@@ -100,10 +100,10 @@ Process:
 2. Propose the split structure in your head — don't write a plan doc.
 3. Make the split. Preserve the public API at the original path via a
    re-export barrel.
-4. Run `tsc --noEmit` and `npm test` from the repo root. Confirm no
-   regressions vs baseline (86/87 — the `delegate` tool registration
-   failure pre-existed and was removed in commit d0f60a4b, so current
-   baseline may be 86/86).
+4. Run `tsc --noEmit` and `npm test` from the repo root. Capture the
+   pass/fail counts on `main` BEFORE splitting and confirm the post-split
+   run matches that baseline exactly — don't trust a remembered number;
+   the suite grows constantly.
 5. Commit on the worktree branch with a message in the precedent style:
    `refactor(<short-name>): split into <N> modules by <axis>`.
 

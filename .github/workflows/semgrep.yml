@@ -27,9 +27,9 @@ jobs:
 
       # Findings print to the job log. Informational for now — without
       # `--error` Semgrep exits 0 on findings, so this won't red-wall main on
-      # a first-run backlog. SARIF upload to the Security tab needs GitHub
-      # Advanced Security, which this private repo doesn't have; flip to
-      # `--error` (and add SARIF upload if GHAS is enabled) once triaged.
+      # a first-run backlog. SARIF upload to the Security tab requires code
+      # scanning to be enabled in repository settings; flip to `--error` and
+      # add SARIF upload once findings are triaged and code scanning is on.
       - name: Scan
         run: >
           semgrep scan

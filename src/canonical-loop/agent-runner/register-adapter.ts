@@ -22,6 +22,28 @@ export async function registerProviderAdapter(
     );
     return;
   }
+  // Gemini → native generateContent adapter (the compat shim empties on
+  // tool-laden requests; see gemini-native.ts). Same key resolution, native wire.
+  if (provider === "gemini") {
+    const { resolveOpenAICompatTarget } = await import("../adapters/openai-compat.js");
+    const target = await resolveOpenAICompatTarget("gemini", { apiKey, customBaseURL: options.baseURL });
+    if (!target) {
+      throw new Error("gemini has no usable target — check API key config");
+    }
+    const { createGeminiNativeAdapter } = await import("../adapters/gemini-native.js");
+    registerAdapterForOp(opId, () =>
+      createGeminiNativeAdapter({
+        model,
+        apiKey: target.apiKey,
+        systemPrompt,
+        temperature,
+        thinking: /gemini-(2\.5|3)/i.test(model),
+        sessionId,
+      }),
+    );
+    return;
+  }
+
   const { createOpenAICompatAdapter, resolveOpenAICompatTarget } = await import("../adapters/openai-compat.js");
   let target = await resolveOpenAICompatTarget(provider, { apiKey, customBaseURL: options.baseURL });
   if (provider === "local") {

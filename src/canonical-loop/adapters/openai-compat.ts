@@ -2,11 +2,12 @@
  * OpenAI-compatible canonical adapter.
  *
  * Covers every provider whose wire protocol is OpenAI Chat Completions:
- * Ollama (local + Turbo cloud), xAI Grok, OpenAI direct, Gemini's
- * OpenAI-compat layer, Together / OpenRouter / any custom OpenAI-shape
- * endpoint. The differences between them are baseURL + apiKey + model
- * name. That's it. So one adapter handles all of them — caller passes
- * the resolved `baseURL` + `apiKey` and we stream, accumulate, finalize.
+ * Ollama (local + Turbo cloud), xAI Grok, OpenAI direct, Together /
+ * OpenRouter / any custom OpenAI-shape endpoint. The differences between
+ * them are baseURL + apiKey + model name. That's it. So one adapter handles
+ * all of them — caller passes the resolved `baseURL` + `apiKey` and we
+ * stream, accumulate, finalize. (Gemini does NOT ride this adapter — its
+ * compat endpoint empties on tool-laden requests; it uses gemini-native.ts.)
  *
  * Mirrors `codex.ts` shape: convert canonical messages →
  * ChatCompletionMessageParam[], hand off to `OpenAIHttpAdapter` (the
@@ -18,11 +19,12 @@
  * and usage.
  *
  * Empty-response retry: if a turn produces zero text + zero tool calls
- * after sending tools, we retry once without tools and call
- * markNoToolSupport so subsequent turns skip the dead first leg.
- * Catches qwen2's silent-fail pattern (cf. the explicit-error fallback
- * already inside OpenAIHttpAdapter). For models that don't have this
- * failure mode (gpt-5, grok, etc.), the condition just never fires.
+ * after sending tools, we retry once without tools so the turn isn't blank.
+ * The PERMANENT no-tool latch (markNoToolSupport) only applies to loopback
+ * endpoints — a local model that empties on tools genuinely can't do them
+ * (qwen2's silent-fail pattern). A cloud frontier model (Gemini compat, grok,
+ * gpt-5) that empties is transient and must NOT be latched, or it narrates
+ * every later turn with no tools. See shouldLatchNoToolSupport.
  *
  * Helpers split into ./openai-compat/* — this file is the adapter class.
  */
@@ -49,6 +51,34 @@ export type { OpenAICompatAdapterOptions, OpenAICompatTarget } from "./openai-co
 export { resolveOpenAICompatTarget } from "./openai-compat/resolve-target.js";
 
 const logger = createLogger("canonical-loop.adapters.openai-compat");
+
+/**
+ * Whether an empty-with-tools turn should PERMANENTLY latch the model to
+ * no-tool mode (via markNoToolSupport) vs just retry-without-tools for this
+ * one turn.
+ *
+ * Latch ONLY for loopback/local endpoints. The latch exists for genuinely
+ * tool-incapable local models (qwen2:7b on local Ollama): there, an empty
+ * response really does mean "this model can't do tools," and latching saves a
+ * dead first leg on every later turn. For CLOUD frontier providers (Gemini's
+ * compat endpoint, xAI, OpenAI, Ollama Turbo) an empty completion is a
+ * transient/payload issue, NOT proof of no tool support — Gemini returned
+ * empty with 98 tools attached, the latch flipped it to chat-only for the
+ * whole process, and it then narrated every later turn without ever calling a
+ * tool. So cloud endpoints get the per-turn retry but never the permanent kill.
+ */
+export function shouldLatchNoToolSupport(baseURL: string | undefined): boolean {
+  if (!baseURL) return false;
+  let host: string;
+  try {
+    host = new URL(baseURL).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  // Strip IPv6 brackets if URL parsing left them.
+  host = host.replace(/^\[|\]$/g, "");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
+}
 
 export class OpenAICompatAdapter implements Adapter {
   readonly name = OPENAI_COMPAT_ADAPTER_NAME;
@@ -147,25 +177,24 @@ export class OpenAICompatAdapter implements Adapter {
       applyToolCallTextFallback(result, report, model, toolNameSet);
     }
 
-    // Empty-response retry. Some models (qwen2:7b is the canonical
-    // offender) accept the `tools` field, run for several seconds, then
-    // return ZERO text and ZERO tool calls — silent failure. The
-    // existing string-match fallback in OpenAIHttpAdapter only catches
-    // the explicit "does not support tools" error string, not the
-    // silent case. Without this retry the user sees a blank turn.
-    // Mirrors the post-turn empty-response detector + retry from the
-    // legacy runStandardAgent loop. No-op for healthy providers (gpt-5,
-    // grok, sonnet) — they don't silent-fail on tools.
+    // Empty-response retry. Some models (qwen2:7b is the canonical offender)
+    // accept the `tools` field, run for several seconds, then return ZERO text
+    // and ZERO tool calls — a silent failure. Retry once without tools so the
+    // turn isn't blank. The PERMANENT no-tool latch only applies to loopback
+    // endpoints, where an empty really does mean the local model can't do
+    // tools; a cloud frontier model (xAI, OpenAI) that empties once is
+    // transient and must not be latched off for the whole process. No-op for
+    // healthy providers (gpt-5, grok, sonnet) — they don't silent-fail.
     const noOutput =
       !this.aborted &&
       !result.interruptedByInject &&
       !result.firstError &&
       result.assembledText.length === 0 &&
       result.pendingToolCalls.length === 0;
-    const hadTools = req.tools.length > 0;
-    if (noOutput && hadTools) {
-      logger.info(`${model} returned empty with tools — retrying without tools`);
-      markNoToolSupport(baseURL, model);
+    if (noOutput && req.tools.length > 0) {
+      const latch = shouldLatchNoToolSupport(baseURL);
+      logger.info(`${model} returned empty with tools — retrying without tools${latch ? " (latched: local endpoint)" : " (this turn only: cloud endpoint)"}`);
+      if (latch) markNoToolSupport(baseURL, model);
       const retryReq: ProviderRequest = { ...req, tools: [] as unknown as ProviderRequest["tools"] };
       this.inflight = this.runStreamOnce(retryReq, report);
       result = await this.inflight;

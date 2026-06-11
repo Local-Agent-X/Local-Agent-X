@@ -43,9 +43,33 @@ export async function registerAdapterForChat(
     return;
   }
 
-  // OpenAI-compat providers: local, ollama-cloud, xai, openai, gemini,
-  // custom. One adapter, one wire shape — only the baseURL + apiKey
-  // swap per provider.
+  // Gemini uses its NATIVE generateContent API, not the OpenAI-compat shim:
+  // the compat endpoint returns empty STOP completions nondeterministically on
+  // tool-laden requests (an unfixable Google bug). resolveOpenAICompatTarget
+  // still resolves the key/base; the native adapter takes the key.
+  if (prepared.provider === "gemini") {
+    const { resolveOpenAICompatTarget } = await import("../adapters/openai-compat.js");
+    const target = await resolveOpenAICompatTarget("gemini", prepared);
+    if (!target) {
+      throw new Error("gemini has no usable target — check API key config");
+    }
+    const { createGeminiNativeAdapter } = await import("../adapters/gemini-native.js");
+    registerAdapterForOp(opId, () =>
+      createGeminiNativeAdapter({
+        model: prepared.model,
+        apiKey: target.apiKey,
+        systemPrompt: prepared.systemPrompt,
+        temperature: prepared.temperature,
+        thinking: /gemini-(2\.5|3)/i.test(prepared.model),
+        sessionId,
+        forcedToolChoice,
+      }),
+    );
+    return;
+  }
+
+  // OpenAI-compat providers: local, ollama-cloud, xai, openai, custom.
+  // One adapter, one wire shape — only the baseURL + apiKey swap per provider.
   const { createOpenAICompatAdapter, resolveOpenAICompatTarget } = await import("../adapters/openai-compat.js");
   let target = await resolveOpenAICompatTarget(prepared.provider, prepared);
   if (prepared.provider === "local") {

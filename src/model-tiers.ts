@@ -84,6 +84,24 @@ export function maxToolsForTier(tier: ModelTier): number {
 }
 
 /**
+ * Effective tool-cap tier for a (provider, model). Tool CAPACITY is a property
+ * of the endpoint, not just model quality. Anthropic/OpenAI strong tiers take
+ * the full inventory (prompt caching amortizes the schema tokens), but Gemini's
+ * OpenAI-compat endpoint degrades hard past Google's documented 10-20 active
+ * tools — with the full ~98-tool catalogue it returns empty STOP completions
+ * every turn (live 2026-06-11: "narrates but never calls a tool"). Google's
+ * guidance: "keep the active set to a maximum of 10-20" + "consider dynamic
+ * tool selection". So Gemini caps at the medium count even though 2.5/3.x are
+ * strong models — never ABOVE its own tier (a weak Gemini still caps weak).
+ * Every other provider keeps its model-tier cap unchanged.
+ */
+export function toolCapTierForProvider(provider: string, model: string): ModelTier {
+  const tier = classifyModel(model);
+  if (provider === "gemini" && tier === "strong") return "medium";
+  return tier;
+}
+
+/**
  * Priority-ordered list of tools that MUST stay in the shrunken set
  * when we cap. Covers the 80% of agent operations.
  */

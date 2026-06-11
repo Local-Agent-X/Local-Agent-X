@@ -117,10 +117,9 @@ const PROVIDER_MODELS = {
     { value: 'o4-mini', label: 'o4-mini' },
   ],
   gemini: [
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (default)' },
-    { value: 'gemini-2.5-pro-preview-05-06', label: 'Gemini 2.5 Pro' },
-    { value: 'gemini-2.5-flash-preview-05-20', label: 'Gemini 2.5 Flash' },
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (default)' },
+    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)' },
+    { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro (preview)' },
   ],
   cerebras: [
     { value: 'gpt-oss-120b', label: 'OpenAI GPT-OSS 120B (default, production)' },

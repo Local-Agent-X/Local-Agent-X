@@ -130,5 +130,27 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     }
   }
 
+  // Provider-aware tool cap — LAST, after RAG re-inflation. Tool capacity is a
+  // function of (provider, tier): this only fires when the provider stricter-
+  // caps than the model's own tier, i.e. Gemini-strong (its compat endpoint
+  // can't take the full inventory — see toolCapTierForProvider). For every
+  // other provider capTier === tier, so this is a no-op and behavior is
+  // unchanged. The filter+RAG above already picked the message-relevant tools;
+  // shrink preserves essentials, and we keep tool_search so the model can still
+  // reach the rest (Google's "dynamic tool selection").
+  const { toolCapTierForProvider } = await import("../../model-tiers.js");
+  const capTier = toolCapTierForProvider(input.resolvedProvider, input.resolvedModel);
+  if (!isBridge && capTier !== tier) {
+    const before = tools.length;
+    tools = shrinkToolsForTier(tools, capTier, input.allAgentTools);
+    if (!tools.some(t => t.name === "tool_search")) {
+      const ts = input.allAgentTools.find(t => t.name === "tool_search");
+      if (ts) tools = [ts, ...tools];
+    }
+    if (tools.length !== before) {
+      logger.info(`[tools] ${input.resolvedProvider} cap ${before}→${tools.length} (tier=${tier}→${capTier}; endpoint tool limit)`);
+    }
+  }
+
   return { tools, tier, intentVerdict, forceBuildIntent, isBridge };
 }

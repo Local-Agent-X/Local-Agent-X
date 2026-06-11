@@ -21,10 +21,10 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "claude-opus-4-6[1m]": 1_000_000,
   "claude-opus-4-7[1m]": 1_000_000,
   "claude-opus-4-8[1m]": 1_000_000,
-  // Gemini 2.x family
+  // Gemini 2.x family (GA aliases)
   "gemini-2.0-flash": 1_000_000,
-  "gemini-2.5-pro-preview-05-06": 1_000_000,
-  "gemini-2.5-flash-preview-05-20": 1_000_000,
+  "gemini-2.5-pro": 1_000_000,
+  "gemini-2.5-flash": 1_000_000,
 };
 
 // Ollama models typically have smaller context; use conservative default

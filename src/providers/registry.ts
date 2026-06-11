@@ -173,12 +173,19 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "gemini",
     label: "Google Gemini",
+    // GA aliases, not dated -preview-MM-DD snapshots (those get retired → 404).
+    // PRO-class only for interactive use: the *flash* models empty out (return
+    // an empty STOP) when sent LAX's full ~55KB system prompt + tools via the
+    // native generateContent API — verified 2026-06-11 (flash works on a tiny
+    // prompt, empties on the real one; pro handles it reliably). So flash is not
+    // offered for chat. backgroundModel stays 2.0-flash — background agents use
+    // compact prompts, not the big chat prompt.
     models: [
-      "gemini-2.0-flash",
-      "gemini-2.5-pro-preview-05-06",
-      "gemini-2.5-flash-preview-05-20",
+      "gemini-2.5-pro",
+      "gemini-3.1-pro-preview",
+      "gemini-3-pro-preview",
     ],
-    defaultModel: "gemini-2.5-pro-preview-05-06",
+    defaultModel: "gemini-2.5-pro",
     backgroundModel: "gemini-2.0-flash",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     envKey: "GEMINI_API_KEY",

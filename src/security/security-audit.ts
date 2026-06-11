@@ -12,6 +12,7 @@
 import { existsSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { loadProtectedFiles } from "../config-loader.js";
 
 import { createLogger } from "../logger.js";
 import { createRequire } from "node:module";
@@ -123,14 +124,10 @@ function checkWorkspaceExists(workspace: string): AuditFinding | null {
 }
 
 function checkProtectedFiles(): AuditFinding | null {
-  const criticalFiles = [
-    "src/security.ts",
-    "src/auth.ts",
-    "src/sanitize.ts",
-    "src/keychain.ts",
-    "src/threat-engine.ts",
-  ];
-  const missing = criticalFiles.filter(f => !existsSync(f));
+  // Derived from config/protected-files.json — the one list of files the
+  // engine can't run without. A second hardcoded list here went stale after
+  // the subsystem consolidation and reported phantom criticals every boot.
+  const missing = loadProtectedFiles().filter(f => !existsSync(f));
   if (missing.length > 0) {
     return {
       id: "missing-security-files",

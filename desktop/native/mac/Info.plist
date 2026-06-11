@@ -14,7 +14,7 @@
        falls back to treating the inner binary as a naked Mach-O and
        ignores our usage descriptions. -->
   <key>CFBundleIdentifier</key>
-  <string>com.openagentx.desktop.speech-helper</string>
+  <string>com.localagentx.desktop.speech-helper</string>
   <key>CFBundleName</key>
   <string>lax-speech-mac</string>
   <key>CFBundleExecutable</key>

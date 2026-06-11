@@ -65,7 +65,7 @@ export const handleKrakenProxyRoutes: RouteHandler = async (method, url, req, re
           "API-Key": apiKey,
           "API-Sign": apiSign,
           "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "OpenAgentX-KrakenProxy/1.0",
+          "User-Agent": "LocalAgentX-KrakenProxy/1.0",
         },
         body: postBody,
       });

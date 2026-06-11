@@ -20,7 +20,7 @@
     "typescript": "^5.8.0"
   },
   "build": {
-    "appId": "com.openagentx.desktop",
+    "appId": "com.localagentx.desktop",
     "productName": "Local Agent X",
     "directories": {
       "output": "release"

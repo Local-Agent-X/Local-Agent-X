@@ -5,7 +5,7 @@ import { fetchMessages } from "./email-imap.js";
 
 export const emailRead: ToolDefinition = {
   name: "email_read",
-  description: "Read emails from a mailbox folder. Returns sender, subject, date, and body snippet for each message.",
+  description: "Read emails from the user's configured IMAP mailbox (email_setup). Returns sender, subject, date, and body snippet for each message. For a Gmail account connected via the claude.ai Google integration, use the Gmail MCP tool instead.",
   parameters: {
     type: "object",
     properties: {
@@ -51,7 +51,7 @@ export const emailRead: ToolDefinition = {
 
 export const emailSearch: ToolDefinition = {
   name: "email_search",
-  description: "Search emails by query. Searches subject and sender fields.",
+  description: "Search the user's configured IMAP mailbox by query (subject and sender fields). For a Gmail account connected via the claude.ai Google integration, use the Gmail MCP tool instead.",
   parameters: {
     type: "object",
     properties: {

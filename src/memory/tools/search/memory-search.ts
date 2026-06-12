@@ -5,7 +5,9 @@ export function memorySearchTool(memory: MemoryIndex) {
   return {
     name: "memory_search",
     description:
-      "Search long-term memory for retained facts, knowledge files, and entity pages. Defaults to same-session + profile-level content only — past sessions are NOT included by default. To explicitly pull from prior conversations, use `search_past_sessions` instead. Use this for: what did the user write down about X, what's stored in USER.md or an entity page, what facts have been retained about an entity.",
+      "Free-text/keyword search across long-term memory — retained facts, knowledge files, and entity pages. Defaults to same-session + profile-level content only; past sessions are NOT included by default. " +
+      "Use this when you DON'T know the exact entity name or file path and need a semantic/keyword lookup. " +
+      "Siblings — pick the sharper tool when it fits: `memory_recall` for a known entity / date-range / fact-kind (structured Facts DB query), `search_past_sessions` to pull from PRIOR conversations, `memory_get` to read a file whose path you already know, `read_my_logs` for what YOU did this session.",
     parameters: {
       type: "object",
       properties: {

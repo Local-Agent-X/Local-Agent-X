@@ -200,5 +200,7 @@ export const plugins: ToolPlugin[] = [
 
 /** Plugin ids whose tools belong in bridgeTools[] (chat-runner subset). */
 export const BRIDGE_PLUGIN_IDS: ReadonlySet<string> = new Set([
-  "memory", "browserSecretCapture", "sessionStatus", "browser", "images", "protocols", "issues",
+  // readMyLogs: bridge channels (Telegram/WhatsApp) were missing the action-
+  // history tool, so "what did we do?" over the bridge had no way to answer.
+  "memory", "readMyLogs", "browserSecretCapture", "sessionStatus", "browser", "images", "protocols", "issues",
 ]);

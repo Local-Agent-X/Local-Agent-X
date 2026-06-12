@@ -21,7 +21,8 @@ export function createReadMyLogsTool(getSessionId?: () => string): ToolDefinitio
     description:
       "Review what YOU have actually done earlier in this conversation — the tools you ran and whether each succeeded or failed. " +
       "Use this before retrying something to check if you already tried it (and what happened), or when the user asks 'what have you done so far?'. " +
-      "Returns recent actions newest-last with outcome marks. Scoped to your own session; read-only.",
+      "Returns recent actions newest-last with outcome marks. Scoped to your own session; read-only. " +
+      "This is YOUR action history (tools you ran), NOT the user's stored facts — for those use `memory_search`/`memory_recall`, and for prior conversations use `search_past_sessions`.",
     readOnly: true,
     parameters: {
       type: "object",

@@ -83,9 +83,11 @@ export function createForgetTool(memory: MemoryIndex) {
   return {
     name: "memory_forget",
     description:
-      "Delete specific memories. Use when the user asks to forget something, remove incorrect info, or delete test data. " +
+      "Bulk/destructive memory deletion. Use when the user asks to forget something, remove incorrect info, or delete test data. " +
       "Can delete by: search query (finds and removes matching chunks), fact content (removes specific retained facts), " +
-      "conversation ID (removes all chunks from a specific imported conversation), or path pattern.",
+      "conversation ID (removes all chunks from a specific imported conversation), or path pattern. " +
+      "Heavier than `forget`: this HARD-deletes chunks/conversations and deep-scrubs the term from profile files + daily logs. " +
+      "To simply invalidate ONE retained fact (reversible soft-delete), use `forget` instead.",
     parameters: {
       type: "object",
       properties: {

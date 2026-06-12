@@ -6,7 +6,8 @@ export function memoryGetTool(memory: MemoryIndex) {
   return {
     name: "memory_get",
     description:
-      "Read a specific memory file by path. Use to retrieve USER.md, a daily log, or an entity page.",
+      "Read a specific memory file by path. Use to retrieve USER.md, a daily log, or an entity page. " +
+      "You must already know the path — to FIND which file holds something, run `memory_search` first, then `memory_get` the path it returns.",
     parameters: {
       type: "object",
       properties: {

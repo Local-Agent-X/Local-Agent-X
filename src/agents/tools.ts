@@ -91,7 +91,8 @@ export function createAgentTools(): ToolDefinition[] {
         "'researcher'). Use agent_list first if you don't know what's " +
         "available. If no fitting agent exists, use agent_create to " +
         "add one, then spawn it. Inline ad-hoc spawns are not " +
-        "supported — the catalog is the source of truth.",
+        "supported — the catalog is the source of truth. " +
+        "Siblings: for a one-off background task with no specific agent, use `op_submit_async`; for a multi-phase goal that needs decomposition, use `operation_start`.",
       parameters: {
         type: "object",
         properties: {

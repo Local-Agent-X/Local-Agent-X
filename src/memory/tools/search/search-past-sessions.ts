@@ -5,7 +5,8 @@ export function searchPastSessionsTool(memory: MemoryIndex) {
   return {
     name: "search_past_sessions",
     description:
-      "Search prior conversations AND built apps for context. Use whenever the user references something you don't recognize from THIS chat — a project name, a website, a person, a past decision. Returns: (a) session-summary snippets from past chats, (b) names/locations of apps you previously built that match the query (workspace/apps/<name>/). Past sessions are NOT auto-injected — calling this tool is the explicit opt-in. Default chat behavior is same-session-only retrieval; this tool is the deliberate cross-session pull.",
+      "Search prior conversations AND built apps for context. Use whenever the user references something you don't recognize from THIS chat — a project name, a website, a person, a past decision. Returns: (a) session-summary snippets from past chats, (b) names/locations of apps you previously built that match the query (workspace/apps/<name>/). Past sessions are NOT auto-injected — calling this tool is the explicit opt-in. Default chat behavior is same-session-only retrieval; this tool is the deliberate cross-session pull. " +
+      "Siblings: for facts/files in the CURRENT profile (not prior chats) use `memory_search`; for a date-scoped fact lookup use `memory_recall` with since/until; for what YOU did THIS session use `read_my_logs`.",
     parameters: {
       type: "object",
       properties: {

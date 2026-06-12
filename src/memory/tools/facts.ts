@@ -172,7 +172,9 @@ export function createFactsTools(memory: MemoryIndex) {
         "and invalidates it (soft delete; preserves history for audit). " +
         "\n\n" +
         "Use when the user says a fact is wrong, outdated, or shouldn't be remembered. " +
-        "If 0 or multiple facts match, the call refuses — pick a more specific substring.",
+        "If 0 or multiple facts match, the call refuses — pick a more specific substring. " +
+        "\n\n" +
+        "Scope: ONE retained fact, reversibly. To delete imported chunks, an entire conversation, or to bulk-scrub a term from profile files + daily logs, use `memory_forget` instead (heavier, hard-delete).",
       parameters: {
         type: "object",
         properties: {

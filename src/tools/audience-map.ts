@@ -47,6 +47,12 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
 
   // Memory
   memory_search:         ["main-chat", "spawned-agent", "operator"],
+  // Cross-session recall + date-scoped lookup must be EAGER, not deferred —
+  // otherwise the model (esp. non-Anthropic providers on the bridge) can't
+  // answer "what did we do on <date>" because the only tool that pulls prior
+  // sessions never reaches its schema. This is the date-recall surfacing fix.
+  search_past_sessions:  ["main-chat", "spawned-agent", "operator"],
+  read_my_logs:          ["main-chat", "spawned-agent"],
   memory_save:           ["main-chat", "spawned-agent", "operator"],
   memory_recall:         ["main-chat", "spawned-agent", "operator"],
   memory_get:            ["main-chat"],

@@ -37,7 +37,8 @@ export function createOperationTools(): ToolDefinition[] {
         "Start a new long-horizon Operation. Use when the user asks for a multi-step goal that can't be finished in one chat turn " +
         "(e.g., 'build me a WooCommerce store', 'set up example.com email + DNS', 'deploy this app end-to-end'). " +
         "The goal is decomposed into phases by an LLM planner; you then call operation_next to get each phase's scoped prompt " +
-        "and execute it before calling operation_advance. For one-shot actions (single tool call, <5 min), do NOT use operations.",
+        "and execute it before calling operation_advance. For one-shot actions (single tool call, <5 min), do NOT use operations. " +
+        "Siblings: for a SINGLE background task (not a decomposed multi-phase goal) use `op_submit_async`; to delegate to a named catalog agent/role use `agent_spawn`.",
       parameters: {
         type: "object",
         properties: {

@@ -5,7 +5,9 @@ export function memoryRecallTool(memory: MemoryIndex) {
   return {
     name: "memory_recall",
     description:
-      "Recall structured facts about an entity, by time period, or by fact kind. Use for entity-centric queries ('tell me about X'), temporal queries ('what happened last week'), or opinion queries ('what does X prefer').",
+      "Recall structured facts from the Facts DB by entity, time period, or fact kind. Use when you have a concrete filter — an entity name ('tell me about X'), a date window ('what happened last week' → pass since/until), or a fact kind/opinion ('what does X prefer'). " +
+      "This is the tool for CALENDAR-DATE recall ('what did we do on April 7') — pass since/until. " +
+      "Siblings: `memory_search` for free-text/keyword lookup when you don't have a clean filter; `search_past_sessions` to recall from PRIOR conversations rather than the structured Facts DB.",
     parameters: {
       type: "object",
       properties: {

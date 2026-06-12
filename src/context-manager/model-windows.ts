@@ -8,6 +8,8 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "gpt-4o-mini": 128_000,
   "grok-3-mini": 131_072,
   "grok-3": 131_072,
+  // Fable 5 — 1M context (native; the maximum is also the default)
+  "claude-fable-5": 1_000_000,
   // Anthropic Claude 4.x family — 200k base window
   "claude-sonnet-4-5": 200_000,
   "claude-sonnet-4-6": 200_000,

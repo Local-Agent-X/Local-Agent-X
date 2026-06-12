@@ -44,7 +44,7 @@ export function classifyModel(model: string): ModelTier {
 
   // Strong: flagship tool-use models proven to reason over 100+ tool catalogs.
   if (/gpt-5(\.\d+)?($|-(?!mini))/.test(m)) return "strong";     // gpt-5.x, not -mini
-  if (/claude-opus-4|claude-sonnet-4-[6-9]|claude-sonnet-4-1[0-9]|claude-haiku-4-5/.test(m)) return "strong";
+  if (/claude-fable-5|claude-mythos-5|claude-opus-4|claude-sonnet-4-[6-9]|claude-sonnet-4-1[0-9]|claude-haiku-4-5/.test(m)) return "strong";
   if (/^o[34]($|-|\.)/.test(m)) return "strong";                 // o3/o4 family
   if (/gemini-(2\.5|3)/.test(m)) return "strong";
   // grok-4 / grok-4-fast — xAI's frontier tier. Earlier comment downgraded

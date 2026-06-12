@@ -43,23 +43,24 @@ export function memoryRecallTool(memory: MemoryIndex) {
       let facts: RetainedFact[] = [];
       let dailyLogs: ReturnType<typeof readDailyLogsInRange> = [];
       // A date is present → this is a "what did we do on <date>" query, FULL
-      // STOP. It must dominate `kind`: Grok/Gemini reflexively tack on
-      // kind:"observation" alongside since/until, which used to route the call
-      // into recallByKind (kind-filtered facts, date ignored, daily log never
-      // read). Entity-scoped recall ("about @Sam") still wins over a date.
-      const isDateWindow = !!since && !entity;
+      // STOP. It dominates BOTH entity and kind. Live from Grok: the model
+      // tacks on entity:"Peter" (for "what did WE do") AND kind:"experience"
+      // alongside since/until — which used to route into recallByEntity /
+      // recallByKind (date ignored, daily log never read), so it answered
+      // "nothing recorded". The date is the most-specific filter; it wins.
+      const isDateWindow = !!since;
 
-      if (entity && kind === "opinion") {
-        facts = memory.recallOpinions(entity);
-      } else if (entity) {
-        facts = memory.recallByEntity(entity);
-      } else if (isDateWindow) {
+      if (isDateWindow) {
         facts = memory.recallByTime(since!, until || undefined);
         // recallByTime only sees the extracted Facts DB; the day's actual
         // record lives in the daily-log file (2026-04-16.md). Pull those for
         // the range too, so a date that has a log but no date-stamped facts
         // still answers "what did we do on <date>" instead of "no memory".
         dailyLogs = readDailyLogsInRange(memDir, since!, until || undefined);
+      } else if (entity && kind === "opinion") {
+        facts = memory.recallOpinions(entity);
+      } else if (entity) {
+        facts = memory.recallByEntity(entity);
       } else if (kind) {
         facts = memory.recallByKind(kind);
       } else {

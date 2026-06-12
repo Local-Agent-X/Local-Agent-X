@@ -41,6 +41,20 @@ describe("memory_recall date-window precedence", () => {
     expect(res.content).toContain("Shipped the recall fix.");
   });
 
+  it("reads the daily log even when entity AND kind are passed (live Grok shape)", async () => {
+    // Grok actually sent {entity:"Peter", kind:"experience", since, until} for
+    // "what did we do on april 16" — entity used to win and route to
+    // recallByEntity (date ignored). Date must dominate entity AND kind.
+    const tool = memoryRecallTool(stubMemory(dir));
+    const res = await tool.execute({
+      entity: "Peter",
+      kind: "experience",
+      since: "2026-04-16",
+      until: "2026-04-17",
+    });
+    expect(res.content).toContain("Shipped the recall fix.");
+  });
+
   it("reads the daily log for a date-only query (no kind)", async () => {
     const tool = memoryRecallTool(stubMemory(dir));
     const res = await tool.execute({ since: "2026-05-07", until: "2026-05-08" });

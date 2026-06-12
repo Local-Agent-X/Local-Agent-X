@@ -1,10 +1,11 @@
-import { buildAnthropicRateLimitHint, normalizeAnthropicModel } from "../anthropic-models.js";
+import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking } from "../anthropic-models.js";
 import { API_BASE, convertMessages } from "./request.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, maxTokens = 8192, toolChoice, forcedToolName, signal } = options;
   const resolvedModel = normalizeAnthropicModel(model, "api");
+  const adaptive = anthropicUsesAdaptiveThinking(resolvedModel);
 
   // Fail fast if the caller already cancelled before we started.
   if (signal?.aborted) {
@@ -16,7 +17,9 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     "Content-Type": "application/json",
     "x-api-key": token,
     "anthropic-version": "2023-06-01",
-    "anthropic-beta": "interleaved-thinking-2025-05-14",
+    // interleaved-thinking is GA (auto-enabled) under adaptive thinking; the
+    // beta header is only meaningful for the legacy enabled-thinking models.
+    ...(adaptive ? {} : { "anthropic-beta": "interleaved-thinking-2025-05-14" }),
   };
 
   const body: Record<string, unknown> = {
@@ -25,12 +28,14 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     system: systemPrompt,
     messages: convertMessages(messages),
     stream: true,
-    // Extended thinking: lets the model reason about blockers before acting.
-    // Turns "browser failed, retry?" into "the account picker popup is blocking
-    // me — ask the user to click it manually, then I'll resume." Anthropic
-    // requires temperature: 1 when thinking is enabled.
-    thinking: { type: "enabled", budget_tokens: 3000 },
-    temperature: 1,
+    // Thinking lets the model reason about blockers before acting. Adaptive
+    // family (Fable 5, Opus 4.6/4.7/4.8, Sonnet 4.6): send only `adaptive` —
+    // Fable 5 and Opus 4.7/4.8 reject `temperature`/`budget_tokens` with a
+    // 400. Legacy models keep the enabled+budget+temperature shape (the API
+    // requires temperature: 1 when enabled thinking is on).
+    ...(adaptive
+      ? { thinking: { type: "adaptive" } }
+      : { thinking: { type: "enabled", budget_tokens: 3000 }, temperature: 1 }),
   };
 
   const anthropicTools = tools?.map(t => ({

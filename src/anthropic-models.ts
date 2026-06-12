@@ -49,6 +49,20 @@ export function normalizeAnthropicModel(model: string, mode: AnthropicAuthMode =
   return trimmed;
 }
 
+/**
+ * True for model families that use ADAPTIVE thinking on the Messages API:
+ * Fable 5, Mythos 5, Opus 4.6/4.7/4.8, Sonnet 4.6. For these the request must
+ * send `thinking: {type: "adaptive"}` and must NOT send `temperature`,
+ * `top_p`, `top_k`, or `budget_tokens` — Fable 5 and Opus 4.7/4.8 return a 400
+ * on any of them (4.6/Sonnet 4.6 accept them but adaptive is the supported
+ * path). Older models (Opus 4.5, Sonnet 4.5, Opus 4.0, Sonnet 4) keep the
+ * legacy `{type: "enabled", budget_tokens}` + `temperature: 1` shape.
+ */
+export function anthropicUsesAdaptiveThinking(model: string): boolean {
+  const m = normalizeAnthropicModel(model).toLowerCase();
+  return /^claude-(fable-5|mythos-5|opus-4-[678]|sonnet-4-6)/.test(m);
+}
+
 export function usesAnthropicSubscriptionAuth(token: string): boolean {
   return token === "cli" || token.startsWith("oauth:") || token.includes("sk-ant-oat");
 }

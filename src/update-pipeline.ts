@@ -27,9 +27,10 @@ import {
   createNamedWorktree, mergeWorktree, cleanupWorktree, getMergeBaseInfo,
   getBranchHead, revertBranchTo, runRepoBuild,
 } from "./agency/worktree.js";
+import { OTAManager } from "./ota-update.js";
 import { linkDirectoryInto, unlinkSharedJunctions } from "./agency/worktree-junctions.js";
 import { gateDeps, gateBuild, gateBuildAt, gateBind, gateBindAt, gateSmoke, killProbe, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit-sandbox-gates.js";
-import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./self-edit/global-lock.js";
+import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
 import { recordMerge } from "./self-edit-rollback.js";
 import { nowSlug, pickProbePort } from "./self-edit-sandbox-naming.js";
 import { getSetting } from "./settings.js";
@@ -37,6 +38,28 @@ import { createLogger } from "./logger.js";
 
 const logger = createLogger("update-pipeline");
 const GIT_TIMEOUT_MS = 60_000;
+const UPDATE_BUSY =
+  "Another update or self_edit is currently running on this machine. " +
+  "Updates are applied one at a time — wait for it to finish, then try again.";
+
+/**
+ * Best-effort recursive delete with backoff. On Windows a just-killed probe's
+ * file handles linger for a second or two, so an immediate rm throws EBUSY —
+ * and a cleanup failure must never decide the update's outcome. Retries, then
+ * logs and gives up; leftover dirs under the updates dir are inert.
+ */
+async function rmRetry(path: string, label: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { rmSync(path, { recursive: true, force: true }); return; }
+    catch (e) {
+      if (attempt >= 5) {
+        logger.warn(`[update] could not remove ${label} at ${path}: ${(e as Error).message}`);
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 600));
+    }
+  }
+}
 
 export interface UpdateGates { deps: GateResult; build: GateResult; bind: GateResult; smoke: GateResult }
 
@@ -60,7 +83,8 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
   // shared node_modules and mutate main, so they must never run concurrently.
   const lock = acquireGlobalSelfEditLock({ task: "platform update" });
   if (!lock.acquired) {
-    return { ok: false, held: true, fromCommit: "", toCommit: "", detail: formatGlobalLockBusy(lock.holder, "platform update") };
+    logger.info(`[update] refused — lock held by ${JSON.stringify(lock.holder ?? "unknown")}`);
+    return { ok: false, held: true, fromCommit: "", toCommit: "", detail: UPDATE_BUSY };
   }
 
   const name = `update-${nowSlug()}`;
@@ -185,7 +209,45 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     return { ok: false, fromCommit: "", toCommit: "", detail: `Update pipeline crashed: ${(e as Error).message}` };
   } finally {
     killProbe(probeProc);
-    if (probeDataDir) { try { rmSync(probeDataDir, { recursive: true, force: true }); } catch { /* best-effort */ } }
+    if (probeDataDir) await rmRetry(probeDataDir, "probe data dir");
+    releaseGlobalSelfEditLock();
+  }
+}
+
+/**
+ * Tarball (rolling-channel) update behind the same machine-wide lock as the
+ * git path and self_edit. Concurrent Update clicks were racing each other's
+ * extract dirs and probes into EBUSY before this existed.
+ */
+export async function applyRollingUpdate(installDir: string, authToken: string): Promise<GitUpdateResult> {
+  const lock = acquireGlobalSelfEditLock({ task: "platform update (rolling)" });
+  if (!lock.acquired) {
+    logger.info(`[update] rolling refused — lock held by ${JSON.stringify(lock.holder ?? "unknown")}`);
+    return { ok: false, held: true, fromCommit: "", toCommit: "", detail: UPDATE_BUSY };
+  }
+  try {
+    const ota = new OTAManager();
+    const installed = (await ota.readInstalledCommit()) || "";
+    const { commit } = await ota.checkMainCommit();
+    if (installed && installed === commit) {
+      return { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), detail: "Already up to date." };
+    }
+    const tarPath = await ota.downloadMainTarball(commit);
+    const { depsChanged } = await ota.applyUpdate(
+      tarPath, installDir, installed || "rolling", commit,
+      (extractDir) => validateExtractedUpdate(extractDir, installDir, authToken),
+    );
+    if (depsChanged) {
+      // The gated tree validated against fresh deps; sync the live install's
+      // node_modules to the new lockfile it just received.
+      execSync("npm ci", { cwd: installDir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+    }
+    await ota.writeInstalledCommit(commit);
+    logger.info(`[update] rolling applied ${installed.slice(0, 7) || "(fresh)"} → ${commit.slice(0, 7)}`);
+    return { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), detail: "Updated from main (validated) — relaunch to finish." };
+  } catch (e) {
+    return { ok: false, fromCommit: "", toCommit: "", detail: (e as Error).message };
+  } finally {
     releaseGlobalSelfEditLock();
   }
 }
@@ -258,7 +320,7 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
     return { ok: true, depsChanged, detail: "all gates passed", gates: { deps, build, bind: bindOutcome.result, smoke } };
   } finally {
     killProbe(probeProc);
-    if (probeDataDir) { try { rmSync(probeDataDir, { recursive: true, force: true }); } catch { /* best-effort */ } }
+    if (probeDataDir) await rmRetry(probeDataDir, "probe data dir");
     // Junction must go BEFORE any caller rm/copy walks extractDir — a walked
     // junction reaches the live install's real node_modules. A real isolated
     // install is removed too: the install dir gets its deps via `npm ci`
@@ -266,7 +328,7 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
     const stuck = unlinkSharedJunctions(extractDir);
     if (stuck.length === 0) {
       const nm = join(extractDir, "node_modules");
-      if (existsSync(nm)) { try { rmSync(nm, { recursive: true, force: true }); } catch (e) { logger.warn(`[update] could not remove extracted node_modules: ${(e as Error).message}`); } }
+      if (existsSync(nm)) await rmRetry(nm, "extracted node_modules");
     } else {
       logger.error(`[update] junction(s) still live in extract dir — leaving node_modules untouched: ${stuck.join(", ")}`);
     }

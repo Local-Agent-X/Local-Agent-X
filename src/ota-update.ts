@@ -4,6 +4,25 @@ import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import { createLogger } from "./logger.js";
+
+const logger = createLogger("ota-update");
+
+// Cleanup must never decide an update's outcome: a probe process's handles
+// can linger for a couple of seconds after kill on Windows, making an
+// immediate rm throw EBUSY — which previously masked the real result.
+async function rmBestEffort(path: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { await rm(path, { recursive: true, force: true }); return; }
+    catch (e) {
+      if (attempt >= 5) {
+        logger.warn(`[ota] could not remove ${path}: ${(e as Error).message} — leaving it for the next sweep`);
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 600));
+    }
+  }
+}
 
 /**
  * Throw unless `buf` hashes to `expectedHex` (SHA-256). Tolerates the
@@ -211,7 +230,7 @@ export class OTAManager {
       const verdict = await validate(extractDir);
       depsChanged = verdict.depsChanged;
       if (!verdict.ok) {
-        await rm(extractDir, { recursive: true, force: true });
+        await rmBestEffort(extractDir);
         throw new Error(`Update rejected — extracted source failed validation: ${verdict.detail}`);
       }
     }
@@ -238,7 +257,7 @@ export class OTAManager {
     });
 
     // clean up extract dir
-    await rm(extractDir, { recursive: true, force: true });
+    await rmBestEffort(extractDir);
     return { depsChanged };
   }
 

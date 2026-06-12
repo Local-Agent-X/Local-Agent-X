@@ -199,35 +199,16 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
       catch { isGitCheckout = false; }
 
       if (!isGitCheckout) {
-        // Rolling/tarball install. Resolve main → an immutable commit sha
-        // FIRST, then download and extract that exact commit's archive —
-        // binding download + recorded marker to one resolved sha is the
-        // integrity guarantee. The extracted tree is gated before it lands.
-        try {
-          const { OTAManager } = await import("../../ota-update.js");
-          const { validateExtractedUpdate } = await import("../../update-pipeline.js");
-          const ota = new OTAManager();
-          const installed = (await ota.readInstalledCommit()) || "";
-          const { commit } = await ota.checkMainCommit();
-          if (installed && installed === commit) {
-            json(200, { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), output: "Already up to date." });
-            return true;
-          }
-          const tarPath = await ota.downloadMainTarball(commit);
-          const { depsChanged } = await ota.applyUpdate(
-            tarPath, repoRoot, installed || "rolling", commit,
-            (extractDir) => validateExtractedUpdate(extractDir, repoRoot, authToken),
-          );
-          if (depsChanged) {
-            // The gated tree validated against fresh deps; sync the live
-            // install's node_modules to the new lockfile it just received.
-            execSync("npm ci", { cwd: repoRoot, encoding: "utf-8", timeout: 5 * 60_000, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
-          }
-          await ota.writeInstalledCommit(commit);
-          _updateCache = null;
-          json(200, { ok: true, fromCommit: installed ? installed.slice(0, 7) : "", toCommit: commit.slice(0, 7), output: "Updated from main (validated) — relaunch to finish.", rolling: true });
-        } catch (e) {
-          json(500, { ok: false, error: safeErrorMessage(e) });
+        // Rolling/tarball install — download is commit-pinned and the
+        // extracted tree is gated before it lands; serialization, retries,
+        // and the validator all live in update-pipeline.applyRollingUpdate.
+        const { applyRollingUpdate } = await import("../../update-pipeline.js");
+        const result = await applyRollingUpdate(repoRoot, authToken);
+        _updateCache = null;
+        if (result.ok) {
+          json(200, { ok: true, fromCommit: result.fromCommit, toCommit: result.toCommit, output: result.detail, rolling: true });
+        } else {
+          json(result.held ? 409 : 500, { ok: false, held: !!result.held, error: result.detail, rolling: true });
         }
         return true;
       }

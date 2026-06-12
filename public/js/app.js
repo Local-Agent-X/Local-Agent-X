@@ -187,8 +187,13 @@ function dismissUpdate() {
 async function bannerApplyUpdate() {
   const banner = document.getElementById('update-banner');
   if (!banner) return;
+  // One apply per UI at a time. The server also refuses overlapping applies
+  // machine-wide — this just avoids sending the doomed second request when
+  // an impatient click lands during the multi-minute validation.
+  if (window._laxUpdateInFlight) return;
   if (!confirm('Pull the latest version from GitHub? You will be asked to relaunch the app afterward to finish installing.')) return;
-  banner.innerHTML = `<span class="update-msg">Pulling latest from GitHub…</span>`;
+  window._laxUpdateInFlight = true;
+  banner.innerHTML = `<span class="update-msg">Updating — downloading and validating in a sandbox. This can take several minutes (longer when dependencies changed). Leave the app open…</span>`;
   try {
     const res = await apiFetch('/api/updates/apply', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
@@ -208,5 +213,7 @@ async function bannerApplyUpdate() {
     }
   } catch (e) {
     banner.innerHTML = `<span class="update-msg" style="color:var(--error,#f88)">Update failed: ${esc(e && e.message ? e.message : String(e))}</span> <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>`;
+  } finally {
+    window._laxUpdateInFlight = false;
   }
 }

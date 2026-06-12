@@ -7,6 +7,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { USER_HINTS, type ToolResult, type ToolChip } from "../types.js";
 import { renderToolResultForModel, statusOf } from "../tools/result-helpers.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
+import { logToolUsage } from "../tool-usage-telemetry.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -135,10 +136,22 @@ function shapeMsg(ctx: ToolCallContext): void {
   }
 }
 
+function recordUsage(ctx: ToolCallContext): void {
+  logToolUsage({
+    tool: ctx.tc.name,
+    action: typeof ctx.args.action === "string" ? ctx.args.action : undefined,
+    status: statusOf(ctx.result!),
+    durationMs: ctx.startedAt ? Date.now() - ctx.startedAt : undefined,
+    sessionId: ctx.sessionId,
+    callContext: ctx.callContext,
+  });
+}
+
 export const auditPhase: Phase = async (ctx) => {
   evaluateThreat(ctx);
   applyBudget(ctx);
   firePostHook(ctx);
+  recordUsage(ctx);
   ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed, status: statusOf(ctx.result!) });
   harvestChip(ctx);
   shapeMsg(ctx);

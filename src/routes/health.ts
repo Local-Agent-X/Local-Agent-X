@@ -26,7 +26,6 @@ export const handleHealthRoutes: RouteHandler = async (method, url, req, res) =>
 
   if (url.pathname === "/api/health") {
     const mem = process.memoryUsage();
-    const heapLimitBytes = (process as unknown as { resourceLimits?: () => { maxOldGenerationSizeMb?: number } }).resourceLimits?.()?.maxOldGenerationSizeMb;
     const limitMb = parseInt(process.env.LAX_HEAP_LIMIT_MB || "4096", 10);
 
     jsonResponse(res, 200, {
@@ -40,7 +39,7 @@ export const handleHealthRoutes: RouteHandler = async (method, url, req, res) =>
         externalMb: Math.round(mem.external / 1024 / 1024),
         // Best-available limit. v8 doesn't always surface this cleanly; we read
         // LAX_HEAP_LIMIT_MB which the supervisor sets when spawning.
-        limitMb: heapLimitBytes ?? limitMb,
+        limitMb,
       },
       pid: process.pid,
       nodeVersion: process.version,

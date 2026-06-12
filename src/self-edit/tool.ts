@@ -29,7 +29,7 @@
 
 import type { ToolDefinition } from "../types.js";
 import { getSetting } from "../settings.js";
-import { LAX_REPO_ROOT } from "./agents-rules.js";
+import { LAX_REPO_ROOT, isGitCheckout } from "./agents-rules.js";
 import { checkScopeEvidence, checkWorkspaceMisroute } from "./scope-gate.js";
 import { checkSelfEditIntent, isAffirmativeGoAhead } from "./intent-gate.js";
 import {
@@ -110,6 +110,24 @@ export const selfEditTool: ToolDefinition = {
     // The model itself can't set either — only the tool router can.
     const internalCwd = typeof args._cwd === "string" && args._cwd.trim() ? args._cwd : null;
     const unsafe = args._unsafe === true;
+
+    // Install-type gate: the sandbox is built on git worktrees, so a packaged
+    // (non-git) install can't run self_edit at all. Say that plainly instead
+    // of failing later with "could not create worktree". _unsafe stays exempt:
+    // the gateless rescue path writes directly and doesn't need git.
+    if (!unsafe && !isGitCheckout()) {
+      return {
+        content:
+          "BLOCKED — this install is a packaged copy without a git repository, so self_edit " +
+          "(which sandboxes every change in a git worktree) cannot run here.\n\n" +
+          "Customizations on this install go through the extension surfaces instead:\n" +
+          "- External API → connector manifest in <lax data dir>/connectors/<name>.json, served at /api/connectors/<name>/...\n" +
+          "- App behavior/UI → edit the app under workspace/apps/ with the regular edit tool.\n" +
+          "- Platform behavior → the `setting` tool.\n\n" +
+          "Source-level changes require the developer (git clone) install.",
+        isError: true,
+      };
+    }
 
     // Layer 0: tier gate. Modifying the platform's own source is developer-
     // mode work — a self_edit forks this install's core code, and every later

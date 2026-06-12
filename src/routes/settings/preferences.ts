@@ -159,6 +159,13 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
         if (cfg.workspace !== undefined) merged.workspace = cfg.workspace;
       }
     } catch {}
+    // Capability, not a setting: tells the UI whether self_edit can exist on
+    // this install (git checkout) so the Developer Mode card only renders
+    // where flipping it could ever do anything. Packaged installs hide it.
+    try {
+      const { isGitCheckout } = await import("../../self-edit/agents-rules.js");
+      merged.selfEditAvailable = isGitCheckout();
+    } catch { merged.selfEditAvailable = false; }
     json(200, merged);
     return true;
   }

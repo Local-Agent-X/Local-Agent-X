@@ -48,11 +48,11 @@ export function createCuratorTools(): ToolDefinition[] {
     },
     {
       name: "protocol_curator_status",
-      description: "Show when the curator last ran and where its most recent report lives. Use before running protocol_curate to check if a fresh pass is needed.",
+      description: "Show when the curator last ran and where its most recent report lives. Use before running protocol(action:'curate') to check if a fresh pass is needed.",
       parameters: { type: "object", properties: {} },
       async execute(): Promise<ToolResult> {
         const s = loadCuratorState();
-        if (s.runs === 0) return { content: "Curator has never run on this workspace. Call protocol_curate to do a first pass." };
+        if (s.runs === 0) return { content: "Curator has never run on this workspace. Call protocol(action:'curate') to do a first pass." };
         const daysAgo = Math.floor((Date.now() - s.lastRunTs) / 86_400_000);
         const hoursAgo = Math.floor((Date.now() - s.lastRunTs) / 3_600_000);
         const age = daysAgo > 0 ? `${daysAgo}d ago` : `${hoursAgo}h ago`;

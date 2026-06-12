@@ -1031,44 +1031,54 @@ describe("structured-document file-access confinement (TOOL_PATH_ARGS)", () => {
   const OUTSIDE = resolve(OUTDIR, "2024 May order.xlsx");
   const INSIDE = resolve(ws, "data.xlsx");
 
-  it("workspace mode: spreadsheet_read OUTSIDE the project is blocked (the breach)", () => {
+  it("workspace mode: spreadsheet read OUTSIDE the project is blocked (the breach)", () => {
     const sec = new SecurityLayer(WORKSPACE, "workspace");
-    const d = sec.evaluate({ toolName: "spreadsheet_read", args: { file_path: OUTSIDE }, sessionId: "t" });
+    const d = sec.evaluate({ toolName: "spreadsheet", args: { action: "read", file_path: OUTSIDE }, sessionId: "t" });
     expect(d.allowed).toBe(false);
   });
 
-  it("workspace mode: spreadsheet_read INSIDE the workspace is still allowed", () => {
+  it("workspace mode: spreadsheet read INSIDE the workspace is still allowed", () => {
     const sec = new SecurityLayer(WORKSPACE, "workspace");
-    const d = sec.evaluate({ toolName: "spreadsheet_read", args: { file_path: INSIDE }, sessionId: "t" });
+    const d = sec.evaluate({ toolName: "spreadsheet", args: { action: "read", file_path: INSIDE }, sessionId: "t" });
     expect(d.allowed).toBe(true);
   });
 
-  it("spreadsheet_read verdict == evaluateFileAccess(read) — same gate, not a parallel one", () => {
+  it("spreadsheet read verdict == evaluateFileAccess(read) — same gate, not a parallel one", () => {
     const sec = new SecurityLayer(WORKSPACE, "workspace");
     const expected = evaluateFileAccess(ws, "workspace", () => false, "read", OUTSIDE);
-    const d = sec.evaluate({ toolName: "spreadsheet_read", args: { file_path: OUTSIDE }, sessionId: "t" });
+    const d = sec.evaluate({ toolName: "spreadsheet", args: { action: "read", file_path: OUTSIDE }, sessionId: "t" });
     expect(d.allowed).toBe(expected.allowed);
     expect(d.reason).toBe(expected.reason);
   });
 
-  it("workspace mode: document_create WRITE outside the workspace is blocked", () => {
+  it("workspace mode: document create WRITE outside the workspace is blocked", () => {
     const sec = new SecurityLayer(WORKSPACE, "workspace");
     const d = sec.evaluate({
-      toolName: "document_create",
-      args: { file_path: resolve(OUTDIR, "out.docx"), content: "x" },
+      toolName: "document",
+      args: { action: "create", file_path: resolve(OUTDIR, "out.docx"), content: "x" },
       sessionId: "t",
     });
     expect(d.allowed).toBe(false);
   });
 
-  it("pdf_merge: an out-of-bounds member of the files[] JSON array blocks the call", () => {
+  it("pdf merge: an out-of-bounds member of the files[] JSON array blocks the call", () => {
     const sec = new SecurityLayer(WORKSPACE, "workspace");
     const d = sec.evaluate({
-      toolName: "pdf_merge",
-      args: { files: JSON.stringify([resolve(ws, "a.pdf"), OUTSIDE]), output_path: resolve(ws, "merged.pdf") },
+      toolName: "pdf",
+      args: { action: "merge", files: JSON.stringify([resolve(ws, "a.pdf"), OUTSIDE]), output_path: resolve(ws, "merged.pdf") },
       sessionId: "t",
     });
     expect(d.allowed).toBe(false);
+  });
+
+  it("collapsed family tools FAIL CLOSED on an action with no declared path gating", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    // Even an in-workspace path is denied when the action isn't declared in
+    // any forActions list — adding a tool action without updating the policy
+    // table must block, never bypass.
+    const d = sec.evaluate({ toolName: "spreadsheet", args: { action: "explode", file_path: INSIDE }, sessionId: "t" });
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toContain("no declared path gating");
   });
 
   it("ocr / view_image (path arg) are confined outside the workspace", () => {
@@ -1088,7 +1098,11 @@ describe("structured-document file-access confinement (TOOL_PATH_ARGS)", () => {
     for (const [toolName, specs] of Object.entries(TOOL_PATH_ARGS)) {
       for (const spec of specs) {
         const val = spec.json ? JSON.stringify([OUTSIDE]) : OUTSIDE;
-        const d = sec.evaluate({ toolName, args: { [spec.arg]: val }, sessionId: "t" });
+        // Conditional specs (collapsed family tools) need the declaring action
+        // present, or the fail-closed undeclared-action deny fires instead of
+        // the file gate this test exercises.
+        const action = spec.forActions?.[0];
+        const d = sec.evaluate({ toolName, args: { ...(action ? { action } : {}), [spec.arg]: val }, sessionId: "t" });
         expect(d.allowed, `${toolName}.${spec.arg} must be confined`).toBe(false);
       }
     }
@@ -1097,14 +1111,24 @@ describe("structured-document file-access confinement (TOOL_PATH_ARGS)", () => {
   // Guard against silent regression: the known office/vision sinks must stay
   // declared. Removing a declaration (re-opening the bypass) fails here.
   it("known office/vision file sinks are declared in TOOL_PATH_ARGS", () => {
-    for (const t of [
-      "spreadsheet_read", "spreadsheet_write", "spreadsheet_edit", "spreadsheet_query",
-      "document_create", "document_read", "document_edit", "document_template",
-      "presentation_create", "presentation_add_slide", "presentation_from_outline",
-      "pdf_read", "pdf_create", "pdf_merge", "pdf_extract_tables",
-      "ocr", "view_image", "send_video",
-    ]) {
+    for (const t of ["spreadsheet", "document", "presentation", "pdf", "ocr", "view_image", "send_video"]) {
       expect(TOOL_PATH_ARGS[t], `${t} must declare pathArgs`).toBeTruthy();
+    }
+    // Every office action must appear in some forActions list (or the family
+    // must declare an unconditional spec) — the fail-closed deny covers the
+    // rest, but a missing WRITE action would over-block, so pin the table.
+    const expectedActions: Record<string, string[]> = {
+      spreadsheet: ["read", "write", "edit", "query"],
+      document: ["create", "read", "edit", "template"],
+      presentation: ["create", "add_slide", "from_outline", "edit"],
+      pdf: ["read", "create", "merge", "extract_tables"],
+    };
+    for (const [tool, actions] of Object.entries(expectedActions)) {
+      const specs = TOOL_PATH_ARGS[tool] ?? [];
+      for (const a of actions) {
+        const covered = specs.some((s) => !s.forActions || s.forActions.includes(a));
+        expect(covered, `${tool}.${a} must be covered by a pathArgs spec`).toBe(true);
+      }
     }
   });
 });

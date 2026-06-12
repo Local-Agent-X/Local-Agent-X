@@ -265,7 +265,7 @@ export function isDestructiveCommand(
  * everything except money and secrets"; an unconditional confirm floor here
  * broke that promise and prompted for delete_file under Power).
  *
- * Two sources feed detection:
+ * Three sources feed detection:
  *   1. Shell-text patterns (isDestructiveCommand) — `rm -rf`, `git push
  *      --force`, etc. inside a bash/shell command string. Without this, a
  *      coarse shell=allow grant (meant for ls/git status) silently covered
@@ -273,9 +273,23 @@ export function isDestructiveCommand(
  *   2. The "destructive" ToolRisk class — non-shell tools whose whole purpose
  *      is an irreversible side effect (delete_file, process_kill,
  *      memory_forget, marketplace_install).
+ *   3. DESTRUCTIVE_TOOL_ACTIONS — collapsed one-tool-many-actions families
+ *      whose risk varies per args.action. The tool's static ToolRisk is its
+ *      worst NON-destructive tier; the destructive actions are reclassified
+ *      here so collapsing a family never weakens its approval gate.
  *
  * Scoped to "destructive" ONLY. money/secrets already have their own tiers.
  */
+const DESTRUCTIVE_TOOL_ACTIONS: Record<string, Record<string, string>> = {
+  protocol: {
+    delete: "deletes a saved protocol",
+    prune: "bulk-archives unused protocols",
+    archive_bulk: "bulk-archives protocols",
+    rollback_undo: "rolls workspace state back to a snapshot",
+    var_delete: "deletes a stored protocol variable",
+  },
+};
+
 export function destructiveOperationReason(
   toolName: string,
   args: Record<string, unknown>,
@@ -284,6 +298,10 @@ export function destructiveOperationReason(
   if (shellReason !== null) return shellReason;
   if (classifyToolRisk(toolName) === "destructive") {
     return `destructive tool (${toolName}) — irreversible, confirm before running`;
+  }
+  const actionReason = DESTRUCTIVE_TOOL_ACTIONS[toolName]?.[String(args.action ?? "")];
+  if (actionReason) {
+    return `destructive action (${toolName}.${args.action}) — ${actionReason}, confirm before running`;
   }
   return null;
 }

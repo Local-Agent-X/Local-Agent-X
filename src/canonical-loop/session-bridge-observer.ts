@@ -114,7 +114,7 @@ function extractAppReadyUrl(opId: string): string | undefined {
 
 /** Scan an op's persisted tool_result messages for "Created <path>" /
  *  "Wrote ... to <path>" markers from the artifact-creating tools
- *  (document_create, presentation_create, pdf_create, spreadsheet_create,
+ *  (the document, presentation, pdf, and spreadsheet tools,
  *  write, create_page, etc.). Returns the MOST RECENT openable artifact's
  *  workspace-relative path, or undefined if none found. Strict
  *  workspace-only filter — host paths outside the workspace are skipped
@@ -130,7 +130,7 @@ function extractArtifactUrl(opId: string, workspaceDir: string): string | undefi
   try {
     const messages = readOpMessages(opId);
     // Walk newest-first; first hit wins. Tool outputs we recognize:
-    //   "Created /abs/path/foo.docx (...)"           → document_*, presentation_*, pdf_*, spreadsheet_*
+    //   "Created /abs/path/foo.docx (...)"           → document, presentation, pdf, spreadsheet
     //   "Wrote N bytes to /abs/path/foo.html"        → write
     //   "Edited /abs/path/foo.css"                   → edit
     //   "App built ... Open: http://127.0.0.1:.../" → build_app (separate APP_READY path also works)
@@ -266,8 +266,8 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
           //   3. Generic artifact scan — any tool_result with a
           //      "Created /workspace/foo.docx" / "Wrote N bytes to ..."
           //      / "App built ... Open: ..." line. Covers
-          //      document_create / presentation_create / pdf_create /
-          //      spreadsheet_create / write / create_page / etc.
+          //      document / presentation / pdf /
+          //      spreadsheet / write / create_page / etc.
           //
           // The generic scan is gated to `status === "completed"` so a
           // failed run doesn't surface a half-written artifact as a link.

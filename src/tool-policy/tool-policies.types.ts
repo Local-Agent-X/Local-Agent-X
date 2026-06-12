@@ -27,9 +27,15 @@ export interface PathArgSpec {
   /** Action token handed to evaluateFileAccess. "write"/"edit" trigger write-
    *  confinement + core-file protection; "read"/"delete_file" gate as a read. */
   action: "read" | "write" | "edit" | "delete_file";
-  /** Arg value is a JSON-array string of paths (pdf_merge.files). Each element
+  /** Arg value is a JSON-array string of paths (pdf merge.files). Each element
    *  is gated independently. */
   json?: boolean;
+  /** For collapsed one-tool-many-actions families: this spec applies only when
+   *  the call's `args.action` is in the list. A tool that declares ANY
+   *  forActions spec is fail-closed — a call whose args.action matches no
+   *  declared spec is denied, so an undeclared action can never open a path
+   *  ungated. Omit for tools whose path gating is action-independent. */
+  forActions?: string[];
 }
 
 export interface ToolPolicyEntry {

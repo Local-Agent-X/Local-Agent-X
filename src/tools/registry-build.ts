@@ -35,7 +35,7 @@ import { startAppBuildTool, finalizeAppBuildTool } from "../primal-auto-build/ap
 import { primalBuildStatusTool, primalBuildResumeTool } from "../primal-auto-build/orchestrator/tools.js";
 import { autopilotTools } from "../autopilot/tools.js";
 import { opTools } from "../ops/tools.js";
-// Legacy skill_list/skill_run tools removed — protocol_list / protocol_get cover the same surface.
+// Legacy skill_list/skill_run tools removed — protocol(action:'list'/'get') covers the same surface.
 // SKILL.md files are still recognized as an import format via src/protocols/skill-md-parser.ts.
 
 const _toolSearchTool = createToolSearchTool(unifiedRegistry);

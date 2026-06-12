@@ -14,6 +14,7 @@ import { readValidatedFile } from "../security/validated-io.js";
 import { resolveOfficeTheme, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { acquireBrandLogo, logoSize } from "./shared/office-brand.js";
 import { parseMarkdown, spansToPlain, type Block, type Span } from "./shared/office-md.js";
+import { collapseFamily } from "./shared/collapse-family.js";
 
 // ── Helpers ──
 
@@ -358,7 +359,34 @@ const pdfExtractTables: ToolDefinition = {
 
 // ── Exports ──
 
-export const pdfTools: ToolDefinition[] = [pdfRead, pdfCreate, pdfMerge, pdfExtractTables];
+// One collapsed tool (action param) — the four defs above stay as the
+// per-action implementations. pathArgs gating is action-conditional
+// (forActions in tool-policies.apps.ts); keep both in sync when adding
+// an action.
+export const pdfTools: ToolDefinition[] = [
+  collapseFamily({
+    name: "pdf",
+    intro: "Read, create, and merge PDF files, and extract table-like structures from them.",
+    actions: {
+      read: pdfRead,
+      create: pdfCreate,
+      merge: pdfMerge,
+      extract_tables: pdfExtractTables,
+    },
+    fullActionDocs: true,
+    properties: {
+      file_path: { type: "string", description: "(read/create/extract_tables) Path to the PDF file" },
+      pages: { type: "string", description: "(read) Page range, e.g. '1-5', '3', '1,3,5'" },
+      content: { type: "string", description: "(create) Formatted text with \\n newlines. # for headings, ## for subheadings, \\n\\n between paragraphs." },
+      title: { type: "string", description: "(create) PDF title metadata" },
+      font_size: { type: "number", description: "(create) Base body font size override" },
+      images: IMAGES_PARAM_SCHEMA,
+      theme: THEME_PARAM_SCHEMA,
+      files: { type: "string", description: "(merge) JSON array of input PDF paths" },
+      output_path: { type: "string", description: "(merge) Output merged PDF path" },
+    },
+  }),
+];
 
 export function createPdfTools(): ToolDefinition[] {
   return pdfTools;

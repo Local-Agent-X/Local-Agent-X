@@ -1,5 +1,5 @@
 /**
- * protocol_stats / protocol_prune — surface the telemetry recorded by
+ * protocol(action:'stats') / protocol(action:'prune') — surface the telemetry recorded by
  * src/protocols/usage.ts and act on it.
  *
  * The pair closes the loop: telemetry collects, stats reports, prune transitions.
@@ -11,7 +11,7 @@
  *   stale    — never invoked, OR last invoked > 30d ago
  *   archived — in workspace/protocols/archived.json (soft-deleted, recoverable)
  *
- * protocol_prune now does the staged transition:
+ * protocol(action:'prune') now does the staged transition:
  *   active/stale → archived (after archiveAfter days)
  *   archived     → hard-deleted (after purgeArchivedAfter days in archive)
  */
@@ -31,7 +31,7 @@ export function createProtocolStatsTools(): ToolDefinition[] {
         "Show protocol usage telemetry: lifecycle states, most-invoked protocols, never-used protocols, " +
         "archived count, and recent search queries that returned no hits (signals for new protocols to build). " +
         "Pass `verbose: true` to include per-protocol invocation timestamps. " +
-        "Call this before protocol_prune to see what's safe to archive.",
+        "Call this before protocol(action:'prune') to see what's safe to archive.",
       parameters: {
         type: "object",
         properties: {
@@ -97,7 +97,7 @@ export function createProtocolStatsTools(): ToolDefinition[] {
           lines.push(`## Never invoked (${unused.length})`);
           lines.push(unused.map((u) => `- ${u.name}`).join("\n"));
           lines.push(``);
-          lines.push(`Run \`protocol_prune({olderThanDays: 30})\` to archive stale custom protocols.`);
+          lines.push(`Run \`protocol({action: "prune", params: {olderThanDays: 30}})\` to archive stale custom protocols.`);
           lines.push(``);
         }
 

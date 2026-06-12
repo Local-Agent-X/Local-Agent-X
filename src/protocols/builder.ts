@@ -145,7 +145,7 @@ export function createBuilderTools(): ToolDefinition[] {
                 content:
                   `Refused: protocol "${name}" is too similar to existing "${dup.name}" ` +
                   `(cosine similarity ${dup.similarity.toFixed(2)}). ` +
-                  `Either use \`protocol_edit\` to update "${dup.name}", or re-call with ` +
+                  `Either use \`protocol(action:'edit')\` to update "${dup.name}", or re-call with ` +
                   `\`supersedes: "${dup.name}"\` to replace it.`,
                 isError: true,
                 metadata: { recovery: "Edit the existing protocol or pass supersedes to replace it." },
@@ -213,9 +213,9 @@ export function createBuilderTools(): ToolDefinition[] {
     {
       name: "protocol_delete",
       description:
-        "Soft-delete a custom protocol — moves it to the archive (recoverable via protocol_unarchive). " +
+        "Soft-delete a custom protocol — moves it to the archive (recoverable via protocol(action:'unarchive')). " +
         "Pass `permanent: true` to hard-delete immediately (irrecoverable; drops the embedding cache entry). " +
-        "Archived protocols don't appear in protocol_search or protocol_list. " +
+        "Archived protocols don't appear in protocol(action:'search') or protocol(action:'list'). " +
         "Archive purge is automatic after 30 days unless restored.",
       parameters: {
         type: "object",
@@ -238,11 +238,11 @@ export function createBuilderTools(): ToolDefinition[] {
         const rec = archiveProtocol(name, reason);
         if (!rec) {
           return {
-            content: `Protocol "${name}" not found in active catalog. (Already archived? Use protocol_unarchive to restore.)`,
+            content: `Protocol "${name}" not found in active catalog. (Already archived? Use protocol(action:'unarchive') to restore.)`,
             isError: true,
           };
         }
-        return { content: `Archived protocol "${name}". Use protocol_unarchive to restore within 30 days.` };
+        return { content: `Archived protocol "${name}". Use protocol(action:'unarchive') to restore within 30 days.` };
       },
     },
     {
@@ -304,7 +304,7 @@ export function createBuilderTools(): ToolDefinition[] {
             const why = r.reason ? ` — ${r.reason}` : "";
             return `- ${r.protocol.name} (archived ${daysAgo}d ago)${why}`;
           });
-        return { content: `Archived protocols (${archived.length}):\n${lines.join("\n")}\n\nRestore with \`protocol_unarchive { name }\`.` };
+        return { content: `Archived protocols (${archived.length}):\n${lines.join("\n")}\n\nRestore with \`protocol({action: "unarchive", params: {name}})\`.` };
       },
     },
   ];

@@ -162,7 +162,7 @@ async function testToolRegistration(): Promise<void> {
   const expected = [
     "agent_spawn",
     "agent_status",
-    "protocol_list",
+    "protocol",
     "bash",
     "read",
     "write",
@@ -175,7 +175,7 @@ async function testToolRegistration(): Promise<void> {
     "base tools": async () => { const m = await import("./tools.js"); const t = typeof (m.allTools as any) === "function" ? (m.allTools as any)() : m.allTools; return Array.isArray(t) ? t.map((x: any) => x.name || "") : []; },
     "handler tools": async () => { const m = await import("./agency/handler.js"); return m.createHandlerTools().map((t: any) => t.name); },
     "agent tools": async () => { const m = await import("./agents/tools.js"); return m.createAgentTools().map((t: any) => t.name); },
-    "mission tools": async () => { const m = await import("./protocols/index.js"); return m.createCoreProtocolTools().map((t: any) => t.name); },
+    "mission tools": async () => { const m = await import("./protocols/protocol-tool.js"); return m.createProtocolFamilyTools().map((t: any) => t.name); },
     "browser tools": async () => { const m = await import("./tools/browser-tools/index.js"); return m.createBrowserTools(() => "default").map((t: any) => t.name); },
   };
   const allToolNames: string[] = [];

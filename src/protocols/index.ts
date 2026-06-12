@@ -157,10 +157,10 @@ export function createCoreProtocolTools(): ToolDefinition[] {
       async execute(args) {
         const pb = findProtocol(String(args.name || ""));
         if (!pb) {
-          return { content: `No protocol found for "${args.name}". Use protocol_list to see all available protocols.` };
+          return { content: `No protocol found for "${args.name}". Use protocol(action:'list') to see all available protocols.` };
         }
         // Record the invocation — strongest signal of actual use. Drives the
-        // never-used / least-used reports that protocol_prune consumes.
+        // never-used / least-used reports that protocol(action:'prune') consumes.
         try {
           const { recordUsage } = await import("./usage.js");
           recordUsage({

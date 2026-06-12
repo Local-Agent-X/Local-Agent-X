@@ -13,6 +13,7 @@ import { readValidatedFile } from "../security/validated-io.js";
 import { resolveOfficeTheme, half, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { acquireBrandLogo, logoSize } from "./shared/office-brand.js";
 import { markdownToDocx } from "./shared/md-to-docx.js";
+import { collapseFamily } from "./shared/collapse-family.js";
 
 const { Document, Packer, Paragraph, TextRun, ImageRun, BorderStyle, Header, Footer, PageNumber, AlignmentType } = docx;
 
@@ -335,9 +336,32 @@ const documentTemplate: ToolDefinition = {
   },
 };
 
+// One collapsed tool (action param) — the four defs above stay as the
+// per-action implementations. pathArgs gating is action-conditional
+// (forActions in tool-policies.apps.ts); keep both in sync when adding
+// an action.
 export const documentTools: ToolDefinition[] = [
-  documentCreate,
-  documentRead,
-  documentEdit,
-  documentTemplate,
+  collapseFamily({
+    name: "document",
+    intro: "Create, read, edit, and template-fill Word .docx documents.",
+    actions: {
+      create: documentCreate,
+      read: documentRead,
+      edit: documentEdit,
+      template: documentTemplate,
+    },
+    fullActionDocs: true,
+    properties: {
+      file_path: { type: "string", description: "(create/read/edit) Path to the .docx file" },
+      title: { type: "string", description: "(create) Document title metadata" },
+      content: { type: "string", description: "(create) Formatted text with \\n newlines. Use # for headings, - for bullets, **bold** for emphasis. Separate sections with blank lines (\\n\\n)." },
+      images: IMAGES_PARAM_SCHEMA,
+      theme: THEME_PARAM_SCHEMA,
+      find: { type: "string", description: "(edit) Text to find" },
+      replace: { type: "string", description: "(edit) Replacement text" },
+      template_path: { type: "string", description: "(template) Path to template .docx containing {{placeholder}} markers" },
+      output_path: { type: "string", description: "(template) Output .docx path for the filled document" },
+      variables: { type: "string", description: '(template) JSON string of key:value pairs matching {{placeholders}}. Example: \'{"name":"Alice","date":"2026-01-01"}\'' },
+    },
+  }),
 ];

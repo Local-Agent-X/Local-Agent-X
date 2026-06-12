@@ -88,22 +88,32 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   // confinement is enforced by SecurityLayer via the pathArgs declarations
   // below (these tools open CALLER-supplied paths — without a declaration they
   // bypassed the workspace boundary entirely, the office-doc breach).
-  spreadsheet_read:          { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
-  spreadsheet_write:         { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
-  spreadsheet_edit:          { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
-  spreadsheet_query:         { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
-  document_create:           { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
-  document_edit:             { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
-  document_read:             { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
-  document_template:         { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "template_path", action: "read" }, { arg: "output_path", action: "write" }] },
-  presentation_create:       { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
-  presentation_add_slide:    { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
-  presentation_from_outline: { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
-  presentation_edit:         { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
-  pdf_create:                { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }] },
-  pdf_read:                  { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
-  pdf_extract_tables:        { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }] },
-  pdf_merge:                 { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "files", action: "read", json: true }, { arg: "output_path", action: "write" }] },
-  create_chart:              { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }], rules: [{ id: "allow-create-chart", decision: "allow", reason: "Chart PNG generation (workspace-confined)", priority: 50 }] },
-  preview_document:          { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }],  rules: [{ id: "allow-preview-document", decision: "allow", reason: "Generated-file self-check (read-only)", priority: 50 }] },
+  //
+  // Each family is ONE collapsed tool with an action param; pathArgs are
+  // action-conditional (forActions) and FAIL CLOSED — an action missing from
+  // every forActions list is denied by SecurityLayer.evaluatePathArgs, so
+  // adding a tool action without updating this table blocks rather than
+  // bypasses. Risk is the worst tier across actions (reads now share the
+  // family's workspace-write tier — over-asks, never under-asks).
+  spreadsheet: { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-spreadsheet", decision: "allow", reason: "Spreadsheet read/write", priority: 50 }], pathArgs: [
+    { arg: "file_path", action: "read",  forActions: ["read", "query"] },
+    { arg: "file_path", action: "write", forActions: ["write", "edit"] },
+  ] },
+  document: { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-document", decision: "allow", reason: "Word document create/read/edit", priority: 50 }], pathArgs: [
+    { arg: "file_path", action: "write",     forActions: ["create", "edit"] },
+    { arg: "file_path", action: "read",      forActions: ["read"] },
+    { arg: "template_path", action: "read",  forActions: ["template"] },
+    { arg: "output_path", action: "write",   forActions: ["template"] },
+  ] },
+  presentation: { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-presentation", decision: "allow", reason: "PowerPoint create/edit", priority: 50 }], pathArgs: [
+    { arg: "file_path", action: "write", forActions: ["create", "add_slide", "from_outline", "edit"] },
+  ] },
+  pdf: { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-pdf", decision: "allow", reason: "PDF read/generate/merge", priority: 50 }], pathArgs: [
+    { arg: "file_path", action: "write", forActions: ["create"] },
+    { arg: "file_path", action: "read",  forActions: ["read", "extract_tables"] },
+    { arg: "files", action: "read", json: true, forActions: ["merge"] },
+    { arg: "output_path", action: "write",      forActions: ["merge"] },
+  ] },
+  create_chart:     { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }], rules: [{ id: "allow-create-chart", decision: "allow", reason: "Chart PNG generation (workspace-confined)", priority: 50 }] },
+  preview_document: { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }],  rules: [{ id: "allow-preview-document", decision: "allow", reason: "Generated-file self-check (read-only)", priority: 50 }] },
 };

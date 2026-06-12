@@ -269,7 +269,23 @@ export class SecurityLayer {
     args: Record<string, unknown>,
     ctx: ToolCallContext,
   ): SecurityDecision {
-    for (const spec of specs) {
+    // Collapsed family tools declare action-conditional specs (forActions).
+    // Fail closed: when any conditional spec exists, the call's args.action
+    // must appear in some spec's forActions — otherwise an action added to
+    // the tool but not to the policy table would open paths ungated.
+    let applicable: readonly PathArgSpec[] = specs;
+    if (specs.some((s) => s.forActions)) {
+      const action = String(args.action ?? "");
+      if (!specs.some((s) => s.forActions?.includes(action))) {
+        return {
+          allowed: false,
+          reason: `Blocked: action "${action}" has no declared path gating for this tool — add it to pathArgs in the policy table`,
+          userHint: USER_HINTS.policy,
+        };
+      }
+      applicable = specs.filter((s) => !s.forActions || s.forActions.includes(action));
+    }
+    for (const spec of applicable) {
       const raw = args[spec.arg];
       const paths = spec.json
         ? parseJsonPathArray(raw)

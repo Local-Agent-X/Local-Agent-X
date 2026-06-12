@@ -7,7 +7,7 @@ import { agentEscalate } from "../agents/escalate-tool.js";
 import { imageTools } from "./image-tools/index.js";
 import { createSecretTools } from "./secret-tools.js";
 import { createBrowserTools } from "./browser-tools/index.js";
-import { createCoreProtocolTools } from "../protocols/index.js";
+import { createProtocolFamilyTools } from "../protocols/protocol-tool.js";
 import { createCronTools } from "../cron/cron-service.js";
 import { createHandlerTools } from "../agency/handler.js";
 import { createAgentTools } from "../agents/tools.js";
@@ -115,7 +115,7 @@ export const plugins: ToolPlugin[] = [
   },
   {
     id: "protocols",
-    register() { return createCoreProtocolTools(); },
+    register() { return createProtocolFamilyTools(); },
   },
   {
     id: "cron",

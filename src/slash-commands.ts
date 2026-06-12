@@ -6,7 +6,7 @@
  *
  *   - A system note indicating which slash command fired
  *   - Either the SKILL.md methodology body (for bundled prompt-style
- *     protocols like app-build) OR a directive pointing at protocol_get
+ *     protocols like app-build) OR a directive pointing at protocol(action:'get')
  *     (for typed protocols like instagram_post whose steps live in code)
  *   - The user's actual request (the text following the slash command)
  *
@@ -76,7 +76,7 @@ export function expandSlashCommand(rawMessage: string): SlashExpansion | null {
 
   // Path 2: typed protocol (no SKILL.md body — steps live in code packs
   // like src/protocols/packs/social.ts). Emit a directive that points the
-  // agent at protocol_get so it loads the full record then executes.
+  // agent at protocol(action:"get") so it loads the full record then executes.
   const typed = findProtocolByName(command);
   if (typed) {
     return {
@@ -130,7 +130,7 @@ function formatTypedExpansion(command: string, argText: string, protocol: Protoc
 
   return (
     `**SLASH COMMAND** — The user invoked \`/${command}\` (typed protocol). ` +
-    `Call \`protocol_get("${protocol.name}")\` to load the full steps and rules, ` +
+    `Call \`protocol({action: "get", params: {name: "${protocol.name}"}})\` to load the full steps and rules, ` +
     `then follow them for the duration of this task.\n\n` +
     `Protocol description: ${protocol.description}\n\n` +
     argLine +

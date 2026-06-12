@@ -1,5 +1,5 @@
 /**
- * protocol_search — keyword-based ranked discovery over the protocol catalog.
+ * protocol(action:'search') — keyword-based ranked discovery over the protocol catalog.
  *
  * The default install ships a small curated set of typed built-in protocols.
  * Users can grow the catalog by importing optional SKILL.md packs (bundled
@@ -141,7 +141,7 @@ export function createProtocolSearchTool(): ToolDefinition {
     description:
       "Find protocols by keyword. Returns the top-N matches ranked by relevance to your query. " +
       "Use this whenever you suspect a protocol exists for the current task — saves you from guessing names. " +
-      "Once you pick a hit, call `protocol_get` on its `name` to load the full record. " +
+      "Once you pick a hit, call `protocol(action:'get')` on its `name` to load the full record. " +
       "Tip: include domain words from the user's request (e.g. \"stripe checkout\", \"ig caption\", \"git rebase\").",
     parameters: {
       type: "object",
@@ -171,14 +171,14 @@ export function createProtocolSearchTool(): ToolDefinition {
         sessionId: typeof (args as { _sessionId?: string })._sessionId === "string" ? (args as { _sessionId: string })._sessionId : undefined,
       });
       if (hits.length === 0) {
-        return { content: `No protocols matched "${query}". Try different keywords, or call protocol_list to browse the full catalog.` };
+        return { content: `No protocols matched "${query}". Try different keywords, or call protocol(action:'list') to browse the full catalog.` };
       }
       const lines = hits.map((h, i) => {
         const cat = h.category ? `[${h.category}] ` : "";
         const desc = h.description.length > 120 ? h.description.slice(0, 117) + "..." : h.description;
         return `${i + 1}. ${cat}${h.name} — ${desc}`;
       });
-      lines.push("", `Call \`protocol_get { name: "<name from above>" }\` to load the full record.`);
+      lines.push("", `Call \`protocol(action:'get') { name: "<name from above>" }\` to load the full record.`);
       return { content: lines.join("\n") };
     },
   };

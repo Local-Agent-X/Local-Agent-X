@@ -62,40 +62,10 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyEntry> = {
   playbook_list:            { kernel: "internal", risk: "safe" },
   playbook_get:             { kernel: "internal", risk: "safe" },
 
-  // ── Protocols (protocol_* glob) ──
-  protocol_list:              { kernel: "internal", risk: "safe" },
-  protocol_get:               { kernel: "internal", risk: "safe" },
-  protocol_search:            { kernel: "internal", risk: "safe" },
-  protocol_save_preference:   { kernel: "internal", risk: "workspace-write" },
-  protocol_format_caption:    { kernel: "internal", risk: "safe" },
-  protocol_dry_run:           { kernel: "internal", risk: "safe" },
-  protocol_create:            { kernel: "internal", risk: "workspace-write" },
-  protocol_edit:              { kernel: "internal", risk: "workspace-write" },
-  protocol_delete:            { kernel: "internal", risk: "destructive" },
-  protocol_unarchive:         { kernel: "internal", risk: "workspace-write" },
-  protocol_pin:               { kernel: "internal", risk: "workspace-write" },
-  protocol_list_archived:     { kernel: "internal", risk: "safe" },
-  protocol_stats:             { kernel: "internal", risk: "safe" },
-  protocol_prune:             { kernel: "internal", risk: "destructive" },
-  protocol_archive_bulk:      { kernel: "internal", risk: "destructive" },
-  protocol_curate:            { kernel: "internal", risk: "workspace-write" },
-  protocol_curator_status:    { kernel: "internal", risk: "safe" },
-  protocol_chain_create:      { kernel: "internal", risk: "workspace-write" },
-  protocol_chain_start:       { kernel: "internal", risk: "workspace-write" },
-  protocol_chain_advance:     { kernel: "internal", risk: "workspace-write" },
-  protocol_rollback_init:     { kernel: "internal", risk: "workspace-write" },
-  protocol_rollback_snapshot: { kernel: "internal", risk: "workspace-write" },
-  protocol_rollback_undo:     { kernel: "internal", risk: "destructive" },
-  protocol_rollback_history:  { kernel: "internal", risk: "safe" },
-  protocol_progress_start:    { kernel: "internal", risk: "workspace-write" },
-  protocol_progress_update:   { kernel: "internal", risk: "workspace-write" },
-  protocol_progress_get:      { kernel: "internal", risk: "safe" },
-  protocol_templates_list:    { kernel: "internal", risk: "safe" },
-  protocol_from_template:     { kernel: "internal", risk: "workspace-write" },
-  protocol_var_set:           { kernel: "internal", risk: "workspace-write" },
-  protocol_var_get:           { kernel: "internal", risk: "safe" },
-  protocol_var_delete:        { kernel: "internal", risk: "destructive" },
-  protocol_var_list:          { kernel: "internal", risk: "safe" },
-  protocol_var_interpolate:   { kernel: "internal", risk: "safe" },
-
+  // ── Protocols ──
+  // One collapsed tool (action param) — see src/protocols/protocol-tool.ts.
+  // Risk is the worst non-destructive tier across actions; the destructive
+  // actions (delete, prune, archive_bulk, rollback_undo, var_delete) are
+  // reclassified per-call by the action-aware table in approval-decision.ts.
+  protocol: { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-protocols", decision: "allow", reason: "Protocol browsing, workflows, and execution", priority: 50 }] },
 };

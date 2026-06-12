@@ -94,21 +94,8 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   task_list:       ["main-chat", "spawned-agent"],
   task_get:        ["main-chat", "spawned-agent"],
 
-  // Protocols
-  protocol_list:           ["main-chat"],
-  protocol_get:            ["main-chat"],
-  protocol_search:         ["main-chat"],
-  protocol_create:         ["main-chat"],
-  protocol_edit:           ["main-chat"],
-  protocol_delete:         ["main-chat"],
-  protocol_unarchive:      ["main-chat"],
-  protocol_pin:            ["main-chat"],
-  protocol_list_archived:  ["main-chat"],
-  protocol_stats:          ["main-chat"],
-  protocol_prune:          ["main-chat"],
-  protocol_archive_bulk:   ["main-chat"],
-  protocol_curate:         ["main-chat"],
-  protocol_curator_status: ["main-chat"],
+  // Protocols — one collapsed tool (action param), see src/protocols/protocol-tool.ts
+  protocol: ["main-chat"],
 
   // Mission scheduling
   mission_schedule_create: ["main-chat"],
@@ -165,18 +152,16 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   request_secrets: ["main-chat"],
   list_secrets:    ["main-chat"],
 
-  // Document creation (only document_* is main-chat eager; spreadsheet/pdf
-  // surface via keyword router for main-chat, eagerly for operator)
-  document_create: ["main-chat", "spawned-agent", "operator"],
-  document_edit:   ["main-chat", "spawned-agent", "operator"],
-  presentation_edit: ["main-chat", "spawned-agent", "operator"],
-  document_read:   ["main-chat"],
+  // Office documents — one collapsed tool per family (action param).
+  // document/presentation are main-chat eager; spreadsheet/pdf surface via
+  // the keyword router for main-chat, eagerly for workers.
+  document:     ["main-chat", "spawned-agent", "operator"],
+  presentation: ["main-chat", "spawned-agent", "operator"],
+  spreadsheet:  ["spawned-agent", "operator"],
+  pdf:          ["spawned-agent", "operator"],
 
   // Operator-only specialty tools
-  spreadsheet_read:  ["spawned-agent", "operator"],
-  spreadsheet_write: ["spawned-agent", "operator"],
-  pdf_create:        ["spawned-agent", "operator"],
-  email_send:        ["spawned-agent", "operator"],
+  email_send: ["spawned-agent", "operator"],
 };
 
 /**

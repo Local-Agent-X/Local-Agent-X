@@ -35,7 +35,7 @@ describe("shouldGateInKernel", () => {
 
   it("returns false for explicitly classified internal tools", () => {
     expect(shouldGateInKernel("agent_spawn")).toBe(false);
-    expect(shouldGateInKernel("protocol_create")).toBe(false);
+    expect(shouldGateInKernel("protocol")).toBe(false);
     expect(shouldGateInKernel("mission_schedule_create")).toBe(false);
     expect(shouldGateInKernel("ari_file")).toBe(false);
   });
@@ -59,12 +59,12 @@ describe("auditKernelCoverage", () => {
     const report = auditKernelCoverage([
       "read",                       // covered (file)
       "agent_spawn",                // covered (internal)
-      "protocol_curate",            // covered (internal — added 2026-05-20)
+      "protocol",                   // covered (internal — collapsed family tool)
       "definitely_not_a_real_tool", // uncovered
       "another_ghost_tool",         // uncovered
     ]);
     expect(report.totalTools).toBe(5);
-    expect(report.covered.sort()).toEqual(["agent_spawn", "protocol_curate", "read"]);
+    expect(report.covered.sort()).toEqual(["agent_spawn", "protocol", "read"]);
     expect(report.uncovered.sort()).toEqual(["another_ghost_tool", "definitely_not_a_real_tool"]);
   });
 
@@ -88,7 +88,7 @@ describe("auditKernelCoverage", () => {
 describe("shouldObserveInKernel", () => {
   it("returns true for explicitly classified internal tools", () => {
     expect(shouldObserveInKernel("agent_spawn")).toBe(true);
-    expect(shouldObserveInKernel("protocol_create")).toBe(true);
+    expect(shouldObserveInKernel("protocol")).toBe(true);
     expect(shouldObserveInKernel("memory_recall")).toBe(true);
     expect(shouldObserveInKernel("task_create")).toBe(true);
   });

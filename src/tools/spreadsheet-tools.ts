@@ -19,6 +19,7 @@ import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/validated-io.js";
 import { resolveOfficeTheme, argb, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { cleanText } from "./shared/office-md.js";
+import { collapseFamily } from "./shared/collapse-family.js";
 
 // ── Helpers ──
 
@@ -348,11 +349,39 @@ const spreadsheetQuery: ToolDefinition = {
   },
 };
 
+// One collapsed tool (action param) — the four defs above stay as the
+// per-action implementations. pathArgs gating for file_path is action-
+// conditional (forActions in tool-policies.apps.ts); keep both in sync
+// when adding an action.
 export const spreadsheetTools: ToolDefinition[] = [
-  spreadsheetRead,
-  spreadsheetWrite,
-  spreadsheetEdit,
-  spreadsheetQuery,
+  collapseFamily({
+    name: "spreadsheet",
+    intro:
+      "Read, create, edit, and query Excel (.xlsx) / CSV spreadsheets. " +
+      "Use for spreadsheet files — never write Python pandas scripts for this.",
+    actions: {
+      read: spreadsheetRead,
+      write: spreadsheetWrite,
+      edit: spreadsheetEdit,
+      query: spreadsheetQuery,
+    },
+    fullActionDocs: true,
+    properties: {
+      file_path: { type: "string", description: "Path to the spreadsheet file" },
+      sheet: { type: "string", description: "Sheet name (default: first sheet / Sheet1)" },
+      range: { type: "string", description: '(read) Cell range e.g. "A1:D10"' },
+      data: { type: "string", description: "(write) JSON array of row objects — keys become column headers" },
+      headers: { type: "array", items: { type: "string" }, description: "(write) Column headers (auto-derived from data keys if omitted)" },
+      images: IMAGES_PARAM_SCHEMA,
+      theme: THEME_PARAM_SCHEMA,
+      cell: { type: "string", description: '(edit) Cell reference e.g. "B5"' },
+      value: { type: "string", description: "(edit) Value to set | (query) value to compare against" },
+      formula: { type: "boolean", description: "(edit) Treat value as an Excel formula" },
+      column: { type: "string", description: "(query) Column header to filter on" },
+      operator: { type: "string", enum: ["equals", "contains", "gt", "lt"], description: "(query) Comparison operator" },
+    },
+    required: ["file_path"],
+  }),
 ];
 
 export function createSpreadsheetTools(..._args: unknown[]): ToolDefinition[] {

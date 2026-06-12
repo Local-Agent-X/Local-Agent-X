@@ -10,11 +10,9 @@
  */
 import type { CanonicalMiddleware } from "./types.js";
 
-const OFFICE_TOOLS = new Set([
-  "document_create", "document_template",
-  "presentation_create", "presentation_from_outline", "presentation_add_slide",
-  "pdf_create", "spreadsheet_write",
-]);
+// The collapsed family tools (action param). Stripping `theme` is safe for
+// every action: only the writing actions consume it, the rest ignore it.
+const OFFICE_TOOLS = new Set(["document", "presentation", "pdf", "spreadsheet"]);
 
 /** Does the user's message ask for any specific look? Generous on purpose —
  *  a false keep just honors the model's theme; a false strip loses a real

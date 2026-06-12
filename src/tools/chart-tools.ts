@@ -22,7 +22,7 @@ const chartCreate: ToolDefinition = {
   description:
     "Render a themed chart to a PNG you can embed in a Word doc, Excel sheet, or PDF — those formats " +
     "can't draw native charts, so generate the image here, then pass the RETURNED path as an image " +
-    "`source` to document_create / spreadsheet_write / pdf_create. (PowerPoint has native charts — use " +
+    "`source` to the document / spreadsheet / pdf tools. (PowerPoint has native charts — use " +
     "the slide `chart` field there instead.) Types: bar, line, area, pie, doughnut.",
   parameters: {
     type: "object",

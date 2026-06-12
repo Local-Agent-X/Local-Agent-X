@@ -8,6 +8,7 @@ import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { acquireBrandLogo } from "./shared/office-brand.js";
 import { applySlide, appendImageSlides, type SlideSpec, type SlideBrand } from "./shared/pptx-render.js";
+import { collapseFamily } from "./shared/collapse-family.js";
 
 // Rung-3 guard text + note block shared by the create tools: a deck that
 // requested images but embedded none is a FAILURE the model must act on,
@@ -309,6 +310,32 @@ const presentationEdit: ToolDefinition = {
   },
 };
 
+// One collapsed tool (action param) — the four defs above stay as the
+// per-action implementations. All actions write file_path (see
+// tool-policies.apps.ts pathArgs); keep both in sync when adding an action.
 export const presentationTools: ToolDefinition[] = [
-  presentationCreate, presentationAddSlide, presentationFromOutline, presentationEdit,
+  collapseFamily({
+    name: "presentation",
+    intro: "Create and edit PowerPoint (.pptx) presentations.",
+    actions: {
+      create: presentationCreate,
+      add_slide: presentationAddSlide,
+      from_outline: presentationFromOutline,
+      edit: presentationEdit,
+    },
+    fullActionDocs: true,
+    properties: {
+      file_path: { type: "string", description: "Path to the .pptx file (output for create/from_outline, existing for edit/add_slide)" },
+      title: { type: "string", description: "(create/from_outline/add_slide) Presentation title metadata" },
+      author: { type: "string", description: "(create) Author metadata" },
+      slides: { type: "string", description: "(create) JSON array of slide specs (see action docs — prefer charts/images over bullet walls)" },
+      slide: { type: "string", description: "(add_slide) JSON slide spec" },
+      position: { type: "number", description: "(add_slide) Slide position number for filename suffix" },
+      outline: { type: "string", description: "(from_outline) Markdown outline — # starts a new slide, - for bullets, \\n line breaks" },
+      operations: { type: "string", description: "(edit) JSON array of operations (replace_text | set_title | delete_slide | add_image_slide)" },
+      images: IMAGES_PARAM_SCHEMA,
+      theme: THEME_PARAM_SCHEMA,
+    },
+    required: ["file_path"],
+  }),
 ];

@@ -120,13 +120,13 @@ describe("listAvailableSlashCommands", () => {
 });
 
 describe("expandSlashCommand — typed protocols (no SKILL.md body)", () => {
-  it("expands /instagram_post to a directive pointing at protocol_get", () => {
+  it("expands /instagram_post to a directive pointing at protocol(action:'get')", () => {
     const r = expandSlashCommand("/instagram_post photo of my coffee");
     expect(r).not.toBeNull();
     expect(r!.command).toBe("instagram_post");
     expect(r!.argText).toBe("photo of my coffee");
     expect(r!.agentMessage).toContain("SLASH COMMAND");
-    expect(r!.agentMessage).toContain('protocol_get("instagram_post")');
+    expect(r!.agentMessage).toContain('protocol({action: "get", params: {name: "instagram_post"}})');
     expect(r!.agentMessage).toContain("photo of my coffee");
   });
 

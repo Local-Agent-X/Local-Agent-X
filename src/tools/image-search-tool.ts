@@ -107,8 +107,8 @@ export const imageSearchTool: ToolDefinition = {
   description:
     "Search the web for IMAGES and get back direct image URLs. Use this when a document, " +
     "slide deck, or PDF would benefit from a relevant photo/diagram — find an image here, then " +
-    "embed it by passing its URL as an image `source` to document_create / presentation_create / " +
-    "pdf_create / spreadsheet_write, plus the listed fallback URL as `fallback_source` (auto-used " +
+    "embed it by passing its URL as an image `source` to the document / presentation / " +
+    "pdf / spreadsheet tools, plus the listed fallback URL as `fallback_source` (auto-used " +
     "if the origin blocks the fetch). Prefer landscape, high-resolution results. Returns URLs with dimensions.",
   parameters: {
     type: "object",

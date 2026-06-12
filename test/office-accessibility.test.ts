@@ -35,7 +35,7 @@ describe("alt text lands in generated files", () => {
 
   it("Word: image alt text is written into document.xml", async () => {
     const fp = join(dir, "doc.docx");
-    const r = await find(documentTools, "document_create").execute({
+    const r = await find(documentTools, "document").execute({ action: "create",
       file_path: fp, content: "# Report\nBody",
       images: [{ source: "logo.png", alt: "Quarterly revenue chart" }],
     });
@@ -47,7 +47,7 @@ describe("alt text lands in generated files", () => {
 
   it("PowerPoint: slide image alt text is written into the slide XML", async () => {
     const fp = join(dir, "deck.pptx");
-    const r = await find(presentationTools, "presentation_create").execute({
+    const r = await find(presentationTools, "presentation").execute({ action: "create",
       file_path: fp,
       slides: JSON.stringify([{ title: "Map", image: { source: "logo.png", alt: "Regional sales map" } }]),
     });

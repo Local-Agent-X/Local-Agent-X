@@ -10,11 +10,24 @@ export function isPlanMode(sessionId?: string): boolean {
 
 export const READ_ONLY_TOOLS = new Set([
   'read', 'grep', 'glob', 'web_search', 'web_fetch', 'view_image',
-  'sql_query', 'sql_schema', 'sql_explain', 'spreadsheet_read', 'spreadsheet_query',
-  'document_read', 'pdf_read', 'pdf_extract_tables', 'clipboard_read',
+  'sql_query', 'sql_schema', 'sql_explain', 'clipboard_read',
   'calendar_list_events', 'calendar_check_availability', 'email_read', 'email_search',
   'enter_plan_mode', 'exit_plan_mode', 'task_list', 'task_get', 'tool_search',
 ]);
+
+/** Read-only ACTIONS of the collapsed one-tool-many-actions office families —
+ *  the name alone can't prove read-only, so plan mode checks (name, action). */
+const READ_ONLY_TOOL_ACTIONS: Record<string, ReadonlySet<string>> = {
+  spreadsheet: new Set(['read', 'query']),
+  document: new Set(['read']),
+  pdf: new Set(['read', 'extract_tables']),
+};
+
+export function isReadOnlyCall(name: string, args: Record<string, unknown>): boolean {
+  if (READ_ONLY_TOOLS.has(name)) return true;
+  const actions = READ_ONLY_TOOL_ACTIONS[name];
+  return actions !== undefined && actions.has(String(args.action ?? ''));
+}
 
 const enterPlanMode: ToolDefinition = {
   name: 'enter_plan_mode',
@@ -24,7 +37,7 @@ const enterPlanMode: ToolDefinition = {
     // Session ID is injected via metadata by the executor
     const sid = (_args._sessionId as string) || 'default';
     planModeSessions.add(sid);
-    return { content: 'Plan mode activated. You can only use read-only tools (read, grep, glob, web_search, web_fetch, sql_query, spreadsheet_read, document_read, pdf_read). Use exit_plan_mode when ready to make changes.' };
+    return { content: 'Plan mode activated. You can only use read-only tools (read, grep, glob, web_search, web_fetch, sql_query, and the read actions of spreadsheet/document/pdf). Use exit_plan_mode when ready to make changes.' };
   },
 };
 

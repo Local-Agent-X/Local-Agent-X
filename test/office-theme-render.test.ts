@@ -25,7 +25,7 @@ const isPdf = (b: Buffer) => b.slice(0, 5).toString() === "%PDF-";
 describe("themed Office generation — smoke (real files)", () => {
   it("Word .docx is a valid, non-trivial file", async () => {
     const fp = join(dir, "report.docx");
-    const r = await tool(documentTools, "document_create").execute({
+    const r = await tool(documentTools, "document").execute({ action: "create",
       file_path: fp, title: "Q3 Report",
       content: "# Summary\nRevenue grew.\n\n## Detail\n- One\n- Two",
     });
@@ -38,7 +38,7 @@ describe("themed Office generation — smoke (real files)", () => {
 
   it("Excel .xlsx applies the navy header fill + frozen pane (re-read with exceljs)", async () => {
     const fp = join(dir, "data.xlsx");
-    const r = await tool(spreadsheetTools, "spreadsheet_write").execute({
+    const r = await tool(spreadsheetTools, "spreadsheet").execute({ action: "write",
       file_path: fp,
       data: JSON.stringify([{ Name: "Acme", Revenue: 124000 }, { Name: "Globex", Revenue: 98200 }]),
     });
@@ -59,7 +59,7 @@ describe("themed Office generation — smoke (real files)", () => {
 
   it("PowerPoint .pptx renders themed layouts (incl. accent shape)", async () => {
     const fp = join(dir, "deck.pptx");
-    const r = await tool(presentationTools, "presentation_create").execute({
+    const r = await tool(presentationTools, "presentation").execute({ action: "create",
       file_path: fp, title: "Deck",
       slides: JSON.stringify([
         { title: "Cover", layout: "title", body: "Subtitle" },
@@ -72,7 +72,7 @@ describe("themed Office generation — smoke (real files)", () => {
 
   it("PowerPoint embeds a NATIVE chart when a slide carries chart data", async () => {
     const fp = join(dir, "deck-chart.pptx");
-    const r = await tool(presentationTools, "presentation_create").execute({
+    const r = await tool(presentationTools, "presentation").execute({ action: "create",
       file_path: fp, title: "Revenue",
       slides: JSON.stringify([
         {
@@ -97,7 +97,7 @@ describe("themed Office generation — smoke (real files)", () => {
 
   it("an invalid chart spec degrades gracefully (no chart part, still valid)", async () => {
     const fp = join(dir, "deck-badchart.pptx");
-    const r = await tool(presentationTools, "presentation_create").execute({
+    const r = await tool(presentationTools, "presentation").execute({ action: "create",
       file_path: fp,
       slides: JSON.stringify([{ title: "Oops", bullets: ["x"], chart: { type: "bar", series: [] } }]),
     });
@@ -108,7 +108,7 @@ describe("themed Office generation — smoke (real files)", () => {
 
   it("PDF renders with the themed renderer", async () => {
     const fp = join(dir, "report.pdf");
-    const r = await tool(pdfTools, "pdf_create").execute({
+    const r = await tool(pdfTools, "pdf").execute({ action: "create",
       file_path: fp, title: "Q3 Report",
       content: "# Summary\nRevenue grew.\n\n## Detail\n- One\n- Two",
     });
@@ -118,7 +118,7 @@ describe("themed Office generation — smoke (real files)", () => {
 
   it("an explicit theme override does not break generation", async () => {
     const fp = join(dir, "custom.docx");
-    const r = await tool(documentTools, "document_create").execute({
+    const r = await tool(documentTools, "document").execute({ action: "create",
       file_path: fp,
       content: "# Heading\nBody",
       theme: '{"colors":{"accent":"#7A2E3A","heading":"000000"},"fonts":{"heading":"Times New Roman"}}',
@@ -134,8 +134,8 @@ describe("no markup leaks — read generated files back", () => {
 
   it("Word strips HTML/entities but keeps real content + table cells", async () => {
     const fp = join(dir, "clean.docx");
-    await tool(documentTools, "document_create").execute({ file_path: fp, content: DIRTY });
-    const read = await tool(documentTools, "document_read").execute({ file_path: fp });
+    await tool(documentTools, "document").execute({ action: "create", file_path: fp, content: DIRTY });
+    const read = await tool(documentTools, "document").execute({ action: "read", file_path: fp });
     const text = String(read.content);
     expect(text).toContain("Report");
     expect(text).toContain("bold");
@@ -148,8 +148,8 @@ describe("no markup leaks — read generated files back", () => {
 
   it("PDF strips HTML tags", async () => {
     const fp = join(dir, "clean.pdf");
-    await tool(pdfTools, "pdf_create").execute({ file_path: fp, content: "# Title\n\nText with <div>leak</div> and &amp; sign." });
-    const read = await tool(pdfTools, "pdf_read").execute({ file_path: fp });
+    await tool(pdfTools, "pdf").execute({ action: "create", file_path: fp, content: "# Title\n\nText with <div>leak</div> and &amp; sign." });
+    const read = await tool(pdfTools, "pdf").execute({ action: "read", file_path: fp });
     const text = String(read.content);
     expect(text).toContain("Title");
     expect(text).not.toContain("<div>");
@@ -157,10 +157,10 @@ describe("no markup leaks — read generated files back", () => {
 
   it("Excel strips HTML from cell values", async () => {
     const fp = join(dir, "clean2.xlsx");
-    await tool(spreadsheetTools, "spreadsheet_write").execute({
+    await tool(spreadsheetTools, "spreadsheet").execute({ action: "write",
       file_path: fp, data: JSON.stringify([{ Note: "<b>x</b>Clean", Val: 5 }]),
     });
-    const read = await tool(spreadsheetTools, "spreadsheet_read").execute({ file_path: fp });
+    const read = await tool(spreadsheetTools, "spreadsheet").execute({ action: "read", file_path: fp });
     const text = String(read.content);
     expect(text).toContain("Clean");
     expect(text).not.toContain("<b>");
@@ -176,7 +176,7 @@ describe("brand kit — metadata", () => {
 
   it("Word: creator is NOT the app name by default", async () => {
     const fp = join(dir, "meta.docx");
-    await tool(documentTools, "document_create").execute({ file_path: fp, content: "# X\nbody" });
+    await tool(documentTools, "document").execute({ action: "create", file_path: fp, content: "# X\nbody" });
     const core = await docxCore(fp);
     expect(core).not.toContain("Local Agent X");
     expect(core).not.toContain("Secret Agent");
@@ -184,7 +184,7 @@ describe("brand kit — metadata", () => {
 
   it("Word: creator uses the user's brand company when set, and writes a footer part", async () => {
     const fp = join(dir, "meta-brand.docx");
-    await tool(documentTools, "document_create").execute({
+    await tool(documentTools, "document").execute({ action: "create",
       file_path: fp, content: "# X\nbody", theme: '{"brand":{"company":"Acme Corp"}}',
     });
     const zip = await JSZip.loadAsync(readFileSync(fp));
@@ -194,7 +194,7 @@ describe("brand kit — metadata", () => {
 
   it("Excel: creator is the brand (not the app name)", async () => {
     const fp = join(dir, "meta.xlsx");
-    await tool(spreadsheetTools, "spreadsheet_write").execute({
+    await tool(spreadsheetTools, "spreadsheet").execute({ action: "write",
       file_path: fp, data: JSON.stringify([{ A: 1 }]), theme: '{"brand":{"company":"Acme Corp"}}',
     });
     const { default: ExcelJS } = await import("exceljs");

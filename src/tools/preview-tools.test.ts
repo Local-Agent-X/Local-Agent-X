@@ -16,7 +16,7 @@ const isPng = (b: Buffer) => b[0] === 0x89 && b.slice(1, 4).toString() === "PNG"
 describe("preview_document", () => {
   it("PDF: structural check + a REAL page-1 PNG thumbnail (pdfjs+canvas)", async () => {
     const fp = join(dir, "r.pdf");
-    await find(pdfTools, "pdf_create").execute({ file_path: fp, title: "Q3", content: "# Summary\nRevenue grew.\n\n## Detail\n- a\n- b" });
+    await find(pdfTools, "pdf").execute({ action: "create", file_path: fp, title: "Q3", content: "# Summary\nRevenue grew.\n\n## Detail\n- a\n- b" });
     const r = await preview.execute({ file_path: fp });
     expect(r.isError).toBeFalsy();
     expect(r.metadata?.kind).toBe("pdf");
@@ -30,7 +30,7 @@ describe("preview_document", () => {
 
   it("DOCX: structural check; thumbnail degrades gracefully without LibreOffice", async () => {
     const fp = join(dir, "r.docx");
-    await find(documentTools, "document_create").execute({ file_path: fp, content: "# Report\nBody **bold** text" });
+    await find(documentTools, "document").execute({ action: "create", file_path: fp, content: "# Report\nBody **bold** text" });
     const r = await preview.execute({ file_path: fp });
     expect(r.isError).toBeFalsy();
     expect(r.metadata?.kind).toBe("docx");

@@ -160,7 +160,7 @@ export function createChainTools(): ToolDefinition[] {
         const id = startChain(chain);
         const firstLink = chain.links[0];
         return {
-          content: `Chain started. ID: ${id}\nFirst protocol: ${firstLink.protocolName}\nExecute it and call protocol_chain_advance with the output.`,
+          content: `Chain started. ID: ${id}\nFirst protocol: ${firstLink.protocolName}\nExecute it and call protocol(action:'chain_advance') with the output.`,
         };
       },
     },

@@ -12,13 +12,13 @@ import { resolveToolsForRequest } from "../tool-search.js";
 
 // Keywords that trigger including specific tool groups
 const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
-  { keywords: /spreadsheet|excel|xlsx|csv|sheet/i, toolPrefixes: ["spreadsheet_"] },
-  { keywords: /\bdocs?\b|document|docx|\bword\b/i, toolPrefixes: ["document_"] },
+  { keywords: /spreadsheet|excel|xlsx|csv|sheet/i, toolPrefixes: ["spreadsheet"] },
+  { keywords: /\bdocs?\b|document|docx|\bword\b/i, toolPrefixes: ["document"] },
   // "power point" (spaced), "ppt", and "slide deck"/"deck" are how users
-  // actually type it — the unspaced-only match left presentation_* out of
-  // the schema for "make a power point ..." (2026-06-10 misroute).
-  { keywords: /presentation|slide|pptx?\b|power\s*point|\bdeck\b|keynote/i, toolPrefixes: ["presentation_"] },
-  { keywords: /pdf/i, toolPrefixes: ["pdf_"] },
+  // actually type it — the unspaced-only match left the presentation tool out
+  // of the schema for "make a power point ..." (2026-06-10 misroute).
+  { keywords: /presentation|slide|pptx?\b|power\s*point|\bdeck\b|keynote/i, toolPrefixes: ["presentation"] },
+  { keywords: /pdf/i, toolPrefixes: ["pdf"] },
   { keywords: /email|mail|inbox|send.*email/i, toolPrefixes: ["email_"] },
   { keywords: /calendar|event|meeting|schedule.*event/i, toolPrefixes: ["calendar_"] },
   { keywords: /clipboard|copy|paste/i, toolPrefixes: ["clipboard_"] },

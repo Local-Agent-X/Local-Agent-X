@@ -1,5 +1,6 @@
 import type { MemoryIndex } from "../../../memory/index.js";
 import type { FactKind, RetainedFact } from "../../types.js";
+import { readDailyLogsInRange } from "../../daily-log-range.js";
 
 export function memoryRecallTool(memory: MemoryIndex) {
   return {
@@ -37,6 +38,8 @@ export function memoryRecallTool(memory: MemoryIndex) {
       const until = args.until ? new Date(String(args.until)) : undefined;
 
       let facts: RetainedFact[] = [];
+      let dailyLogs: ReturnType<typeof readDailyLogsInRange> = [];
+      const isDateWindow = !entity && !kind && !!since;
 
       if (entity && kind === "opinion") {
         facts = memory.recallOpinions(entity);
@@ -46,12 +49,22 @@ export function memoryRecallTool(memory: MemoryIndex) {
         facts = memory.recallByKind(kind);
       } else if (since) {
         facts = memory.recallByTime(since, until || undefined);
+        // recallByTime only sees the extracted Facts DB; the day's actual
+        // record lives in the daily-log file (2026-04-16.md). Pull those for
+        // the range too, so a date that has a log but no date-stamped facts
+        // still answers "what did we do on <date>" instead of "no memory".
+        const memDir = (memory as unknown as { memoryDir: string }).memoryDir;
+        dailyLogs = readDailyLogsInRange(memDir, since, until || undefined);
       } else {
         return { content: "Provide at least one filter: entity, kind, or since." };
       }
 
-      if (facts.length === 0) {
-        return { content: "No facts found matching the query." };
+      if (facts.length === 0 && dailyLogs.length === 0) {
+        return {
+          content: isDateWindow
+            ? "No facts or daily log found for that date range — nothing was recorded then, or it's outside stored history."
+            : "No facts found matching the query.",
+        };
       }
 
       // Agent-initiated recall counts as "this fact mattered enough to look
@@ -60,16 +73,33 @@ export function memoryRecallTool(memory: MemoryIndex) {
       const ids = facts.map(f => f.id).filter((n): n is number => typeof n === "number");
       if (ids.length > 0) memory.reinforceFacts(ids);
 
-      const formatted = facts
-        .map((f, i) => {
-          const date = new Date(f.timestamp).toISOString().split("T")[0];
-          const conf = f.kind === "opinion" ? ` (c=${f.confidence.toFixed(2)})` : "";
-          const ents = f.entities.length > 0 ? ` @${f.entities.join(" @")}` : "";
-          return `[${i + 1}] [${f.kind}]${conf}${ents} ${f.content} — ${date} (${f.sourceFile}#L${f.sourceLine})`;
-        })
-        .join("\n");
+      const sections: string[] = [];
 
-      return { content: formatted };
+      if (facts.length > 0) {
+        const formatted = facts
+          .map((f, i) => {
+            const date = new Date(f.timestamp).toISOString().split("T")[0];
+            const conf = f.kind === "opinion" ? ` (c=${f.confidence.toFixed(2)})` : "";
+            const ents = f.entities.length > 0 ? ` @${f.entities.join(" @")}` : "";
+            return `[${i + 1}] [${f.kind}]${conf}${ents} ${f.content} — ${date} (${f.sourceFile}#L${f.sourceLine})`;
+          })
+          .join("\n");
+        sections.push(`Retained facts (${facts.length}):\n${formatted}`);
+      }
+
+      if (dailyLogs.length > 0) {
+        const blocks = dailyLogs
+          .map((l) => {
+            const more = l.truncated ? ` — truncated, full file via memory_get("${l.date}.md")` : "";
+            return `### ${l.date}${more}\n${l.content}`;
+          })
+          .join("\n\n");
+        sections.push(
+          `Daily log${dailyLogs.length > 1 ? "s" : ""} for the requested date range:\n${blocks}`,
+        );
+      }
+
+      return { content: sections.join("\n\n") };
     },
   };
 }

@@ -57,12 +57,10 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   memory_recall:         ["main-chat", "spawned-agent", "operator"],
   memory_get:            ["main-chat"],
   memory_forget:         ["main-chat"],
-  memory_reflect:        ["main-chat"],
-  memory_update_profile: ["main-chat"],
-  memory_stats:          ["main-chat"],
-  memory_consolidate:    ["main-chat"],
-  memory_dream:          ["main-chat"],
-  memory_ingest:         ["main-chat"],
+  // memory maintenance ops (reflect/update_profile/stats/consolidate/dream/
+  // ingest) are deferred — rare, admin-shaped, reachable via tool_search or a
+  // pasted literal call. 2026-06 usage telemetry should confirm before any
+  // come back.
 
   // Operations — long-horizon goal orchestration
   operation_start:   ["main-chat"],
@@ -71,15 +69,14 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   operation_next:    ["main-chat"],
   operation_advance: ["main-chat"],
 
-  // Worker-pool observation (submit lives in canonical, not exposed)
+  // Worker-pool observation (submit lives in canonical, not exposed).
+  // op_kill/op_redirect stay EAGER: the supervisor must be able to watch and
+  // cancel autopilot/scheduled ops without tool_search friction (contract
+  // pinned by test/tool-filter-supervisor-surface.test.ts). autopilot_*
+  // start/stop/status are deferred — tool_search or literal call.
   op_status:   ["main-chat"],
   op_kill:     ["main-chat"],
   op_redirect: ["main-chat"],
-
-  // Autopilot
-  autopilot_start:  ["main-chat"],
-  autopilot_stop:   ["main-chat"],
-  autopilot_status: ["main-chat"],
 
   // Self-edit
   self_edit: ["main-chat", "build-intent"],
@@ -97,12 +94,8 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Protocols — one collapsed tool (action param), see src/protocols/protocol-tool.ts
   protocol: ["main-chat"],
 
-  // Mission scheduling
-  mission_schedule_create: ["main-chat"],
-  mission_schedule_list:   ["main-chat"],
-  mission_schedule_update: ["main-chat"],
-  mission_schedule_delete: ["main-chat"],
-  mission_schedule_toggle: ["main-chat"],
+  // Mission scheduling: deferred — the keyword router's mission_ prefix rule
+  // (social keywords) resurfaces the family; tool_search covers the rest.
 
   // Agents — canonical delegation surface
   agent_list:   ["main-chat", "build-intent"],
@@ -119,6 +112,7 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   project_brief_read:   ["main-chat", "build-intent"],
   project_brief_update: ["main-chat"],
   agent_status: ["main-chat", "build-intent"],
+  // agent_cancel stays eager — same watch-and-cancel contract as op_kill.
   agent_cancel: ["main-chat"],
   agent_output: ["main-chat"],
   agent_kill:   ["build-intent"],
@@ -126,10 +120,10 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Browser
   browser: ["main-chat", "spawned-agent", "operator"],
 
-  // Apps
+  // Apps. app_create/app_list are deferred — the keyword router's
+  // /\bapp\b|dashboard|tracker/ rule surfaces app_* on the messages that
+  // need them (same path as email_*/calendar_*).
   build_app: ["main-chat", "build-intent"],
-  app_create: ["main-chat"],
-  app_list:   ["main-chat"],
 
   // Sidebar — eager main-chat visibility. The keyword router
   // (tool-filter.ts) used to be the only path that surfaced these, but

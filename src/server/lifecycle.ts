@@ -196,6 +196,20 @@ export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {
   } catch (e) {
     logger.warn(`[browser-cleanup] init failed: ${(e as Error).message}`);
   }
+
+  // Kill mcp-bridge subprocesses orphaned by a previous server lifetime. The
+  // Claude CLI spawns them via our --mcp-config; on Windows a wrapper-only
+  // teardown leaves them reparented and alive, and they accumulate across
+  // launches until they wedge the next boot. Scoped to this install's bridge
+  // path and to processes older than this server, so the warm pool's own
+  // fresh bridges are spared. Fire-and-forget, non-fatal.
+  try {
+    void import("../reap-stale-procs.js").then(({ cleanupStaleMcpBridges }) =>
+      cleanupStaleMcpBridges(),
+    ).catch((e) => logger.warn(`[mcp-cleanup] failed: ${(e as Error).message}`));
+  } catch (e) {
+    logger.warn(`[mcp-cleanup] init failed: ${(e as Error).message}`);
+  }
 }
 
 export function registerShutdown(deps: {

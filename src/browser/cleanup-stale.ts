@@ -1,11 +1,9 @@
-import { execFile } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { join, normalize } from "node:path";
-import { promisify } from "node:util";
 
 import { createLogger } from "../logger.js";
+import { findAndKillProcesses } from "../reap-stale-procs.js";
 
-const execFileAsync = promisify(execFile);
 const logger = createLogger("browser.cleanup-stale");
 
 /**
@@ -60,64 +58,16 @@ export async function cleanupStaleAgentChrome(userDataDir: string): Promise<void
 }
 
 /**
- * Find and kill every Chrome/Edge process whose CommandLine contains
- * `--user-data-dir=<targetDir>`. Returns the killed PIDs.
- *
- * Windows: WMIC is deprecated on newer Windows; we use PowerShell's
- * Get-CimInstance instead, which is the supported replacement and
- * doesn't trip the "WMIC is not recognized" failure on stripped images.
- *
- * Unix: ps + grep + kill.
+ * Find and kill every Chrome/Edge process whose CommandLine contains the
+ * agent's `--user-data-dir`. Delegates to the shared command-line process
+ * reaper (reap-stale-procs.ts). No age filter: agent Chrome is spawned
+ * on-demand by browser tools, never at boot, so any match is from a prior
+ * lifetime.
  */
 async function killProcessesUsingProfile(targetDir: string): Promise<number[]> {
-  const killed: number[] = [];
-
-  if (process.platform === "win32") {
-    // PowerShell one-liner: list chrome.exe processes, filter by CommandLine
-    // containing the target user-data-dir (case-insensitive), emit PIDs.
-    // -ErrorAction SilentlyContinue swallows the empty case cleanly.
-    const escaped = targetDir.replace(/\\/g, "\\\\").replace(/'/g, "''");
-    const script =
-      `Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" ` +
-      `-ErrorAction SilentlyContinue | ` +
-      `Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains('${escaped.toLowerCase()}') } | ` +
-      `Select-Object -ExpandProperty ProcessId`;
-    const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", script],
-      { timeout: 10_000, windowsHide: true },
-    );
-    const pids = stdout
-      .split(/\r?\n/)
-      .map(s => s.trim())
-      .filter(s => /^\d+$/.test(s))
-      .map(s => parseInt(s, 10));
-
-    for (const pid of pids) {
-      try {
-        process.kill(pid);
-        killed.push(pid);
-      } catch {
-        // Process may have exited between detection and kill — fine.
-      }
-    }
-    return killed;
-  }
-
-  // Unix path. `pgrep -f` matches CommandLine substring. -d to print
-  // PIDs newline-separated.
-  try {
-    const { stdout } = await execFileAsync(
-      "pgrep",
-      ["-f", `--user-data-dir=${targetDir}`],
-      { timeout: 5_000 },
-    );
-    const pids = stdout.split(/\s+/).filter(s => /^\d+$/.test(s)).map(s => parseInt(s, 10));
-    for (const pid of pids) {
-      try { process.kill(pid); killed.push(pid); } catch { /* gone */ }
-    }
-  } catch {
-    // pgrep exits non-zero on no-match — that's the common case.
-  }
-  return killed;
+  return findAndKillProcesses({
+    processNames: ["chrome.exe", "msedge.exe"],
+    cmdlineContains: targetDir,
+    label: "browser.cleanup-stale",
+  });
 }

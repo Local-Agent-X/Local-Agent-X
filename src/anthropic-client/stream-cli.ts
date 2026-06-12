@@ -12,6 +12,7 @@
 // Helpers split into ./stream-cli/* — this file is the orchestrator.
 
 import { spawn } from "child_process";
+import { killProcessTree } from "../process-tree-kill.js";
 import { isWarmPoolEnabled, streamViaWarmPool } from "./warm-pool.js";
 import { npmAugmentedEnv } from "./cli-path.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
@@ -169,9 +170,12 @@ async function* streamViaColdSpawn(options: StreamOptions): AsyncGenerator<Strea
     // a follow-up SIGKILL after 1.5s handles any subprocess that ignores it.
     let abortKillTimer: ReturnType<typeof setTimeout> | null = null;
     const onAbort = () => {
-      try { proc.kill("SIGTERM"); } catch { /* already dead */ }
+      // killProcessTree, not proc.kill: on Windows `claude` runs under a
+      // cmd.exe shell wrapper, and signalling only the wrapper orphans the
+      // claude.exe → node mcp-bridge.ts subtree (taskkill /F /T reaps it).
+      killProcessTree(proc, "SIGTERM");
       abortKillTimer = setTimeout(() => {
-        try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+        killProcessTree(proc, "SIGKILL");
       }, 1500);
     };
     if (options.signal) {

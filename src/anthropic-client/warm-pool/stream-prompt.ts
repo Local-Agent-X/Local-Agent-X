@@ -10,6 +10,7 @@
 
 import type { StreamEvent } from "../types.js";
 import { createLogger } from "../../logger.js";
+import { killProcessTree } from "../../process-tree-kill.js";
 import { acquire, release } from "./pool.js";
 import { NATIVE_CLI_TOOL_SET } from "../stream-cli/cli-args.js";
 import type { WarmPoolKey } from "./types.js";
@@ -42,7 +43,7 @@ export async function* streamViaWarmPool(
       reason instanceof Error ? reason.message :
       typeof reason === "string" ? reason : "";
     if (/idle|stalled|stop/i.test(reasonText)) {
-      try { wp.proc.kill("SIGKILL"); } catch { /* dead */ }
+      killProcessTree(wp.proc, "SIGKILL"); // reap the claude → mcp-bridge subtree
       wp.state = "dead";
     }
   };

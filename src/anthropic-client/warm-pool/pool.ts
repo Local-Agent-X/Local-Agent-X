@@ -5,6 +5,7 @@
 // (via the idle loop or shutdown).
 
 import { createLogger } from "../../logger.js";
+import { killProcessTree } from "../../process-tree-kill.js";
 import { spawnWarmProcess } from "./spawn.js";
 import { keyStr, type WarmPoolKey, type WarmProcess } from "./types.js";
 
@@ -38,7 +39,7 @@ function startEvictLoop(): void {
         if (p.state === "dead") return false;
         if (p.state === "idle" && now - p.lastUsedAt > IDLE_EVICT_MS) {
           logger.info(`[warm-pool] evicting idle process key=${key} age=${Math.round((now - p.spawnedAt) / 1000)}s`);
-          try { p.proc.kill("SIGTERM"); } catch { /* already dead */ }
+          killProcessTree(p.proc, "SIGTERM"); // reap the claude → mcp-bridge subtree, not just the wrapper
           p.state = "dead";
           return false;
         }
@@ -97,7 +98,7 @@ export function release(wp: WarmProcess): void {
 export function shutdownWarmPool(): void {
   for (const [, procs] of pool) {
     for (const p of procs) {
-      try { p.proc.kill("SIGTERM"); } catch { /* dead */ }
+      killProcessTree(p.proc, "SIGTERM"); // reap the claude → mcp-bridge subtree
       p.state = "dead";
     }
   }

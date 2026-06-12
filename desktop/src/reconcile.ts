@@ -22,6 +22,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, cpSync,
 import { join, relative } from "path";
 import { homedir } from "os";
 import { Script } from "vm";
+import { serverDistIsFresh } from "./dist-freshness";
 
 // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
 // PATH that excludes Homebrew, nvm, and asdf. Without this augment, our
@@ -270,7 +271,17 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   // stale builds. Runs `npm run build` (the canonical pipeline — build:ari
   // first, so workspace package .d.ts can't strand tsc) with the same
   // backup → validate → rollback contract as the desktop build below.
-  if (rootChanged || rootSrcChanged) {
+  //
+  // Freshness short-circuit: a gated update already SHIPS a validated, freshly
+  // built dist/ (the build+smoke gates compiled it in the sandbox). If dist is
+  // already current for this src, rebuilding it is pure waste — the redundant
+  // 1-2min "Building server updates…" on every post-update boot. Trust the same
+  // signal the runtime uses to pick dist over tsx; only rebuild when dist is
+  // genuinely behind (a dev editing src/ in a git checkout, or a half-applied
+  // update). serverDistFresh is captured ONCE here, before any step below can
+  // touch dist, so it reflects the state reconcile was handed.
+  const serverDistFresh = serverDistIsFresh(projectRoot);
+  if ((rootChanged || rootSrcChanged) && !serverDistFresh) {
     onStatus?.("Building server updates…");
     const rootDist = join(projectRoot, "dist");
     const rootBackup = `${rootDist}.prev`;
@@ -344,15 +355,17 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
     ranSteps.push("desktop tsc build");
   }
 
+  // Record currentRootSrc as the reconciled baseline when dist is known-good
+  // for this src: a build landed, OR src didn't change, OR a gated update
+  // already shipped a fresh dist (serverDistFresh). Withholding it on a FAILED
+  // build is the only case we keep the stale marker, so the next boot retries.
+  const rootSrcReconciled = rootBuildSucceeded || !rootSrcChanged || serverDistFresh;
   saveState({
     version: 1,
     rootLock: currentRootLock,
     desktopLock: currentDesktopLock,
     desktopSrc: currentDesktopSrc,
-    // Only advance the server-src marker when its build actually landed —
-    // recording it after a failed build would mark the stale dist as
-    // reconciled and never retry.
-    rootSrc: rootBuildSucceeded || !rootSrcChanged ? currentRootSrc : stored.rootSrc,
+    rootSrc: rootSrcReconciled ? currentRootSrc : stored.rootSrc,
     lastReconciledAt: new Date().toISOString(),
   });
 

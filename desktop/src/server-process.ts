@@ -14,12 +14,13 @@
 
 import { ChildProcess, spawn, execSync } from "child_process";
 import { attachServerBridge } from "./server-bridge";
-import { existsSync, readdirSync, statSync } from "fs";
+import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { getProjectRoot, reloadLAXConfig, type LAXConfig } from "./config";
 import { PID_FILE, readServerPidFile, waitForServer } from "./server-probe";
 import { checkNodeFloor, type NodeFloorStatus } from "./node-floor";
+import { serverDistIsFresh } from "./dist-freshness";
 
 export { reclaimOrphanServer, isServerRunning, waitForServer } from "./server-probe";
 
@@ -80,31 +81,6 @@ export function buildAugmentedPath(): string {
   return [...PATH_AUGMENTS, ...existingPath].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
 }
 
-// True when dist/index.js exists and no source file is newer than it — i.e.
-// the compiled build reflects current source and is safe to run instead of
-// tsx. `npm run build` runs a full (non-incremental) tsc, so dist/index.js's
-// mtime reliably marks the last build. Walks src for the first .ts newer than
-// that and short-circuits, so the common fresh-build case is a cheap stat
-// sweep (metadata only — not the content reads Defender scans).
-function distIsFresh(projectRoot: string): boolean {
-  const distIndex = join(projectRoot, "dist", "index.js");
-  if (!existsSync(distIndex)) return false;
-  const distMtime = statSync(distIndex).mtimeMs;
-  const stack = [join(projectRoot, "src")];
-  while (stack.length) {
-    const dir = stack.pop()!;
-    let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
-    for (const e of entries) {
-      const p = join(dir, e.name);
-      if (e.isDirectory()) { stack.push(p); continue; }
-      if (!e.name.endsWith(".ts")) continue;
-      if (statSync(p).mtimeMs > distMtime) return false;
-    }
-  }
-  return true;
-}
-
 export function startServer(handlers?: ServerEventHandlers): void {
   if (serverProcess) return;
   if (handlers?.onCrash) crashHandler = handlers.onCrash;
@@ -126,8 +102,8 @@ export function startServer(handlers?: ServerEventHandlers): void {
   }
 
   // Run the compiled dist when the build is current (fast: no tsx transpile),
-  // else tsx-from-source. distIsFresh guarantees we never run a dist that's
-  // behind source, so the speedup costs us nothing in correctness.
+  // else tsx-from-source. serverDistIsFresh guarantees we never run a dist
+  // that's behind source, so the speedup costs us nothing in correctness.
   const srcIndex = join(projectRoot, "src", "index.ts");
   if (!existsSync(srcIndex)) {
     const reason =
@@ -136,7 +112,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
     try { startupFailureHandler?.({ reason }); } catch {}
     return;
   }
-  const useDist = distIsFresh(projectRoot);
+  const useDist = serverDistIsFresh(projectRoot);
   const nodeArgs = useDist
     ? ["--max-old-space-size=4096", join(projectRoot, "dist", "index.js")]
     : ["--max-old-space-size=4096", "--import=tsx", srcIndex];

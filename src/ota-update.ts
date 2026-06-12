@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readFile, rm, copyFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile, rm, copyFile, utimes } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
@@ -246,6 +246,24 @@ export class OTAManager {
 
     // apply extracted files over install dir
     await this.copyDirectory(extractDir, installDir);
+
+    // Preserve the build-freshness signal. The extract carries a validated,
+    // freshly-built dist/, but copyFile stamps copy-time mtimes and `dist`
+    // sorts before `src`, so post-copy src/ ends up newer than dist/ —
+    // fooling serverDistIsFresh into "stale" and triggering a redundant
+    // rebuild on the next boot (the post-update "Building server updates…"
+    // loop). Touch dist/index.js after the copy so the shipped build reads
+    // as current for this src. Best-effort: a touch failure only costs the
+    // one redundant rebuild, never correctness.
+    try {
+      const distIndex = join(installDir, "dist", "index.js");
+      if (existsSync(distIndex)) {
+        const now = new Date();
+        await utimes(distIndex, now, now);
+      }
+    } catch (e) {
+      logger.warn(`[ota] could not refresh dist mtime: ${(e as Error).message}`);
+    }
 
     // record in history
     const newVersion = tarPath.match(/([^/\\]+)\.tar\.gz$/)?.[1] ?? "unknown";

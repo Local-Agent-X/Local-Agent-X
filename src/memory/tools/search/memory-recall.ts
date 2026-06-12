@@ -1,6 +1,8 @@
 import type { MemoryIndex } from "../../../memory/index.js";
 import type { FactKind, RetainedFact } from "../../types.js";
-import { readDailyLogsInRange } from "../../daily-log-range.js";
+import { readDailyLogsInRange, listNearbyDailyLogDates } from "../../daily-log-range.js";
+
+const isoOf = (d: Date): string => d.toISOString().slice(0, 10);
 
 export function memoryRecallTool(memory: MemoryIndex) {
   return {
@@ -37,34 +39,54 @@ export function memoryRecallTool(memory: MemoryIndex) {
       const since = args.since ? new Date(String(args.since)) : undefined;
       const until = args.until ? new Date(String(args.until)) : undefined;
 
+      const memDir = (memory as unknown as { memoryDir: string }).memoryDir;
       let facts: RetainedFact[] = [];
       let dailyLogs: ReturnType<typeof readDailyLogsInRange> = [];
-      const isDateWindow = !entity && !kind && !!since;
+      // A date is present → this is a "what did we do on <date>" query, FULL
+      // STOP. It must dominate `kind`: Grok/Gemini reflexively tack on
+      // kind:"observation" alongside since/until, which used to route the call
+      // into recallByKind (kind-filtered facts, date ignored, daily log never
+      // read). Entity-scoped recall ("about @Sam") still wins over a date.
+      const isDateWindow = !!since && !entity;
 
       if (entity && kind === "opinion") {
         facts = memory.recallOpinions(entity);
       } else if (entity) {
         facts = memory.recallByEntity(entity);
-      } else if (kind) {
-        facts = memory.recallByKind(kind);
-      } else if (since) {
-        facts = memory.recallByTime(since, until || undefined);
+      } else if (isDateWindow) {
+        facts = memory.recallByTime(since!, until || undefined);
         // recallByTime only sees the extracted Facts DB; the day's actual
         // record lives in the daily-log file (2026-04-16.md). Pull those for
         // the range too, so a date that has a log but no date-stamped facts
         // still answers "what did we do on <date>" instead of "no memory".
-        const memDir = (memory as unknown as { memoryDir: string }).memoryDir;
-        dailyLogs = readDailyLogsInRange(memDir, since, until || undefined);
+        dailyLogs = readDailyLogsInRange(memDir, since!, until || undefined);
+      } else if (kind) {
+        facts = memory.recallByKind(kind);
       } else {
         return { content: "Provide at least one filter: entity, kind, or since." };
       }
 
       if (facts.length === 0 && dailyLogs.length === 0) {
-        return {
-          content: isDateWindow
-            ? "No facts or daily log found for that date range — nothing was recorded then, or it's outside stored history."
-            : "No facts found matching the query.",
-        };
+        if (isDateWindow) {
+          // Honest empty answer — the asked day genuinely has no record.
+          // Name the nearest days that DO, and forbid confabulation (the
+          // failure where a model invents activity for a blank date).
+          const label = until
+            ? `${isoOf(since!)} – ${isoOf(until)}`
+            : isoOf(since!);
+          const nearby = listNearbyDailyLogDates(memDir, since!, 12);
+          const nearbyMsg = nearby.length
+            ? ` Nearby days that DO have records: ${nearby.join(", ")}.`
+            : ` No nearby days have records either.`;
+          return {
+            content:
+              `No activity was logged for ${label}.${nearbyMsg} ` +
+              `Tell the user plainly that nothing was recorded that day` +
+              `${nearby.length ? ", and offer the nearest logged date(s) above" : ""}. ` +
+              `Do NOT invent or infer activity for that date.`,
+          };
+        }
+        return { content: "No facts found matching the query." };
       }
 
       // Agent-initiated recall counts as "this fact mattered enough to look

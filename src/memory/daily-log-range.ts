@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // Reads the daily-log files (YYYY-MM-DD.md) that back "what did we do on
@@ -83,4 +83,30 @@ export function readDailyLogsInRange(
   }
 
   return entries;
+}
+
+/**
+ * List existing daily-log dates within `windowDays` of `target` (inclusive),
+ * sorted oldest→newest. Used to give an HONEST answer when the asked date has
+ * no log — "nothing logged May 9; nearest records: May 7, May 11" — instead of
+ * silence (which reads as broken) or a confabulated day.
+ */
+export function listNearbyDailyLogDates(
+  memoryDir: string,
+  target: Date,
+  windowDays = 10,
+): string[] {
+  const targetMs = utcDayStart(target).getTime();
+  const span = windowDays * 86_400_000;
+  let files: string[];
+  try {
+    files = readdirSync(memoryDir);
+  } catch {
+    return [];
+  }
+  return files
+    .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+    .map((f) => f.slice(0, 10))
+    .filter((d) => Math.abs(Date.parse(`${d}T00:00:00Z`) - targetMs) <= span)
+    .sort();
 }

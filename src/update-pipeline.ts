@@ -75,9 +75,14 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     if (fromCommit === remote) {
       return { ok: true, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), detail: "Already up to date." };
     }
-    const dirty = sh("git status --porcelain", repoRoot);
+    // Tracked changes only (-uno): untracked files can't corrupt a merge of
+    // tracked content, and a rare add/untracked filename collision makes the
+    // landing merge itself fail loudly. Counting untracked here left installs
+    // permanently un-updatable over stray files (live case: a workspace
+    // symlink the old .gitignore pattern didn't cover).
+    const dirty = sh("git status --porcelain --untracked-files=no", repoRoot);
     if (dirty) {
-      return { ok: false, held: true, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), detail: "Local uncommitted changes detected. Commit or stash before updating." };
+      return { ok: false, held: true, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), detail: "Local uncommitted changes to tracked files detected. Commit or stash before updating." };
     }
     const localAhead = sh("git rev-list --count origin/main..HEAD", repoRoot) !== "0";
     if (localAhead && getSetting("developer_mode") !== true) {

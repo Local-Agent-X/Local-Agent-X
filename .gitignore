@@ -21,9 +21,12 @@ Thumbs.db
 .claude/worktrees/
 
 # Workspace — personal files, agent-built apps, generated content
-# These sync via the brain/memory repo, not the code repo
-workspace/*
-!workspace/.gitkeep
+# These sync via the brain/memory repo, not the code repo.
+# Bare `workspace` (no slash) on purpose: on machines where the lifecycle
+# links the workspace to an external dir via a real symlink, git sees a
+# FILE named workspace — `workspace/*` didn't match it, and the untracked
+# link made `git status` permanently dirty (blocking in-app updates).
+workspace
 index.html
 desktop/release/
 

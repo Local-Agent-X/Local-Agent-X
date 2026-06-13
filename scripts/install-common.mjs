@@ -410,7 +410,12 @@ if (process.platform === "win32") {
     ok("Visual Studio Build Tools already present");
   } else {
     log("Installing Visual Studio Build Tools (silent winget)…");
-    const r = run("winget", [
+    // runStreaming (async spawn), NOT run (blocking spawnSync): this is the
+    // ~3 GB / 10-30 min step, and a blocking spawnSync freezes the whole Node
+    // event loop for its entire duration — so the GUI emits zero IPC events
+    // and looks dead-hung on "C++ build tools" (reported as a 2-hr "hang").
+    // Streaming forwards winget's download progress live and drives the bar.
+    const r = await runStreaming("winget", [
       "install", "--id", "Microsoft.VisualStudio.2022.BuildTools",
       "--accept-package-agreements", "--accept-source-agreements",
       "--silent", "--disable-interactivity",
@@ -466,7 +471,7 @@ if (pyOk) {
 } else {
   log("Installing Python 3.12…");
   if (process.platform === "win32") {
-    const r = run("winget", ["install", "Python.Python.3.12", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
+    const r = await runStreaming("winget", ["install", "Python.Python.3.12", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
     if (r.status !== 0) warn(`Python install failed (exit ${r.status}) — continuing without (voice servers won't work)`);
     else ok("Python 3.12 installed");
   } else if (process.platform === "darwin") {
@@ -489,7 +494,7 @@ if (has("ollama")) {
 } else {
   log("Installing Ollama…");
   if (process.platform === "win32") {
-    const r = run("winget", ["install", "Ollama.Ollama", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
+    const r = await runStreaming("winget", ["install", "Ollama.Ollama", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
     if (r.status !== 0) fail(`Ollama install failed (exit ${r.status}). Install manually from https://ollama.com/download`);
     ensureOllamaOnPath(); // make the just-installed ollama visible to this run
     ok("Ollama installed");

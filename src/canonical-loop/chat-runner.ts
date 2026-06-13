@@ -60,6 +60,20 @@ export { opMessageRowToChatParam } from "./chat-runner/message-convert.js";
 
 const logger = createLogger("canonical-loop.chat-runner");
 
+// Absolute wall-clock backstop for a chat turn — NOT the stuck-detector. A
+// genuinely stuck/hung agent is caught by the idle watchdog (turn-loop, 600s
+// no-progress, resets on every adapter report) and a looping one by the
+// repeat-failure / loop-detection / dead-end middlewares + MAX_TURNS. Those let
+// work that keeps streaming run as long as it needs (legit agentic builds run
+// tens of minutes). This ceiling only bounds a pathological turn that somehow
+// emits forever without idling or looping. Generous by design: 2h default,
+// override via LAX_CHAT_WALLCLOCK_MS, set 0 to disable (worker arms the timer
+// only when > 0). Was a hard 5 min, which guillotined healthy long turns.
+function readChatWallClockMs(): number {
+  const raw = parseInt(process.env.LAX_CHAT_WALLCLOCK_MS ?? "7200000", 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 7_200_000;
+}
+
 export interface CanonicalChatContext {
   message: string;
   sessionId: string;
@@ -95,6 +109,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   // 1. Build the op skeleton. Tools list is recorded on the contextPack so
   //    the adapter sees them via TurnInput.tools (passed by turn-loop from
   //    op state). lane=interactive so soak telemetry classifies it correctly.
+  const chatWallClockMs = readChatWallClockMs();
   const contextPack = await buildContextPack({
     description: ctx.message,
     successCriteria: [],
@@ -105,7 +120,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     // and Codex turns surfaced as `provider:"anthropic" adapter:"codex"`,
     // breaking apples-to-apples filtering.
     preferredProvider: ctx.prepared.provider,
-    budget: { maxIterations: ctx.prepared.maxIterations || 30, maxWallTimeMs: 5 * 60 * 1000 },
+    budget: { maxIterations: ctx.prepared.maxIterations || 30, maxWallTimeMs: chatWallClockMs },
   });
 
   const op: Op = {
@@ -195,7 +210,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   // 6. Submit — synchronous bookkeeping; loop runs on the scheduler.
   try {
     canonicalLoopEntry(op, { sessionId: ctx.sessionId });
-    logger.info(`[chat-runner] submitted op ${op.id} sess=${ctx.sessionId.slice(0, 16)} model=${ctx.prepared.model} tools=${ctx.tools.length}`);
+    logger.info(`[chat-runner] submitted op ${op.id} sess=${ctx.sessionId.slice(0, 16)} model=${ctx.prepared.model} tools=${ctx.tools.length} wallClock=${chatWallClockMs}ms`);
     // Tell the UI the opId immediately so it can track for reconnect /
     // cancel — independent of any HTTP/SSE connection that may drop.
     pump.push({ type: "chat_op_started", opId: op.id });

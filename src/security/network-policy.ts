@@ -13,6 +13,7 @@ import {
   isPrivateIPv6,
   BLOCKED_HOSTNAMES,
 } from "./ip-classification.js";
+import { ollamaLoopbackPort } from "./security-config.js";
 
 const logger = createLogger("security.network-policy");
 
@@ -209,6 +210,12 @@ export function loadEgressConfig(): EgressConfig {
       }
     }
   } catch {}
+
+  // Fold in the configured ollama loopback port so a redirect re-check (this
+  // path) agrees with the pre-dispatch gate's localServicePorts. Same
+  // validate-as-loopback guarantee — see ollamaLoopbackPort.
+  const ollama = ollamaLoopbackPort();
+  if (ollama) localServicePorts.add(ollama);
 
   return { allowlist, configured, mode, localServicePorts };
 }

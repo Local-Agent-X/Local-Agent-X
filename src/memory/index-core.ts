@@ -126,7 +126,22 @@ export class MemoryIndex extends MemoryFactsBase {
     // wiped them, or an earlier embed failed/crashed partway. Skipped in the
     // degraded local-fallback state: re-embedding a real provider's corpus
     // with TF-IDF would trade good vectors for junk.
-    if (verdict !== "degraded") this.kickBackgroundReembed(verdict);
+    if (verdict !== "degraded") {
+      // Self-heal: the signature wipe handles the clean provider-change case,
+      // but chunks falsely adopted from a pre-signature corpus (or survivors of
+      // a partial wipe) keep a stale-DIMENSION vector that search silently
+      // scores 0 → unfindable. NULL those so the backfill below rebuilds them
+      // under the current provider. Runs every boot, so a model change can
+      // never permanently orphan content. (Skipped in degraded/local fallback.)
+      const healed = Embedding.nullDimensionMismatchedEmbeddings(this.db, provider);
+      if (healed > 0) {
+        logger.warn(
+          `[memory] Self-heal: ${healed} chunk(s) had stale-dimension embeddings ` +
+          `(orphaned by an embedding-model change) — re-embedding under ${provider.name}/${provider.model}`,
+        );
+      }
+      this.kickBackgroundReembed(verdict);
+    }
   }
 
   private reembedInProgress = false;

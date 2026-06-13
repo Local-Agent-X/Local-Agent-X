@@ -233,6 +233,40 @@ export function countChunksMissingEmbedding(db: InstanceType<typeof Database>): 
 }
 
 /**
+ * Self-heal orphaned embeddings: NULL out any chunk whose stored vector has a
+ * DIFFERENT dimension than the current provider. Those vectors are invisible to
+ * search — cosineSimilarity scores mismatched-length vectors 0 (see utils.ts),
+ * so the chunk silently never comes back from memory_search even though its
+ * text is right there on disk. The signature wipe in reconcileEmbeddingSignature
+ * catches the clean provider-change case, but chunks falsely "adopted" from a
+ * pre-signature corpus, or survivors of a partial wipe, keep a stale-dimension
+ * vector. NULLing them here makes reembedMissingChunks rebuild them under the
+ * current provider — so a model change can never leave content unsearchable.
+ *
+ * Uses json_array_length to read the stored JSON vector's length in SQL without
+ * parsing every embedding in JS. Returns how many were healed. Live 2026-06-12:
+ * an instruction in 2026-04-07.md was unfindable for exactly this reason.
+ */
+export function nullDimensionMismatchedEmbeddings(
+  db: InstanceType<typeof Database>,
+  provider: EmbeddingProvider
+): number {
+  try {
+    const res = db
+      .prepare(
+        "UPDATE chunks SET embedding = NULL " +
+        "WHERE embedding IS NOT NULL AND json_array_length(embedding) != ?"
+      )
+      .run(provider.dimensions);
+    return res.changes;
+  } catch {
+    // json_array_length unavailable, or a non-JSON embedding — leave it for the
+    // signature wipe path rather than risk nulling a valid vector.
+    return 0;
+  }
+}
+
+/**
  * Embed every chunk whose vector is missing — after a provider wipe, a
  * crash mid-embed, or an exhausted-retries failure during normal indexing.
  * Single id-ordered pass, small batches, resumable: anything still NULL

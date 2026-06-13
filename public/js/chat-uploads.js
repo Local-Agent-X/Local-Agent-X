@@ -264,6 +264,13 @@ function updateStreamUI() {
         : 'Send message';
       sendBtn.innerHTML = isStreamingHere ? '&#8629;' : '&#9650;';
     }
+    // Stop button visibility must derive from the SAME source of truth as the
+    // indicator/send button. It used to be shown/hidden only imperatively
+    // (shown on send, hidden in the finalize paths), so any missed finalize or
+    // re-render left it desynced — intermittently stuck visible OR missing.
+    // Binding it here re-asserts the correct state on every store mutation.
+    const stopBtn = document.getElementById('stop-btn');
+    if (stopBtn) stopBtn.style.display = isStreamingHere ? 'flex' : 'none';
   } catch {}
 }
 window.updateStreamUI = updateStreamUI;

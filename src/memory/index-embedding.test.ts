@@ -15,6 +15,7 @@ import {
   reconcileEmbeddingSignature,
   reembedMissingChunks,
   countChunksMissingEmbedding,
+  nullDimensionMismatchedEmbeddings,
 } from "./index-embedding.js";
 import { DEFAULT_MEMORY_CONFIG, type EmbeddingProvider } from "./types.js";
 
@@ -110,6 +111,46 @@ describe("reconcileEmbeddingSignature", () => {
     // The real provider coming back is a plain match — still no wipe.
     expect(reconcileEmbeddingSignature(db, real)).toBe("match");
     expect(embeddingOf(id)).toEqual([0.1, 0.2, 0.3, 0.4]);
+  });
+});
+
+// Regression (live 2026-06-12): a saved instruction in 2026-04-07.md was
+// unfindable by memory_search because its chunk kept a stale-DIMENSION vector
+// from an earlier embedding model — vector search silently scores mismatched
+// dimensions 0, so the content was on disk but invisible. The app must SELF-HEAL
+// this without a human running memory_reindex.
+describe("nullDimensionMismatchedEmbeddings (self-heal)", () => {
+  it("nulls stale-dimension vectors and leaves correct-dimension ones intact", () => {
+    const db = memory["db"];
+    const prov = fakeProvider("fake", "m1", 4);
+    reconcileEmbeddingSignature(db, prov);
+    const right = insertChunk("right dims", [1, 2, 3, 4]);                 // dim 4 — matches provider
+    const stale = insertChunk("orphaned by a model change", [1, 2, 3, 4, 5, 6, 7, 8]); // dim 8 — mismatch
+
+    expect(nullDimensionMismatchedEmbeddings(db, prov)).toBe(1);
+    expect(embeddingOf(right)).toEqual([1, 2, 3, 4]);
+    expect(embeddingOf(stale)).toBeNull(); // healed → will be re-embedded
+  });
+
+  it("PROVES the heal: an orphaned chunk is re-embedded under the current provider and becomes searchable", async () => {
+    const db = memory["db"];
+    const current = fakeProvider("ollama", "mxbai", 8);
+    reconcileEmbeddingSignature(db, current); // current vector space is 8-dim
+
+    // A chunk left behind with an OLD provider's 4-dim vector (the orphan bug):
+    // its text is on disk + indexed, but at dim 4 it's invisible to 8-dim search.
+    const orphan = insertChunk("peter would never kill himself", [0.1, 0.2, 0.3, 0.4]);
+    expect(embeddingOf(orphan)).toHaveLength(4);
+
+    // Self-heal: NULL the dimension-mismatched vector, then the standard backfill
+    // rebuilds it under the current provider.
+    expect(nullDimensionMismatchedEmbeddings(db, current)).toBe(1);
+    expect(embeddingOf(orphan)).toBeNull();
+    await reembedMissingChunks(db, current, DEFAULT_MEMORY_CONFIG, false);
+
+    // Now embedded at the correct dimension — findable again. No human reindex.
+    expect(embeddingOf(orphan)).toHaveLength(8);
+    expect(countChunksMissingEmbedding(db)).toBe(0);
   });
 });
 

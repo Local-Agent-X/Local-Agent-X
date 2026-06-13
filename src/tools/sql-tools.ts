@@ -14,6 +14,22 @@ export function resolvePath(p: string): string {
   return resolve(p);
 }
 
+// Load the sqlite-vec (vec0) extension into a fresh connection so the SQL
+// tools can read databases that use vector virtual tables — chiefly the
+// memory store (~/.lax/memory.db), which the server process opens WITH vec0.
+// Without this, any query/schema touching the vec0 tables fails with
+// "no such module: vec0", breaking the agent's ability to inspect its own
+// memory. Memoized + best-effort: if sqlite-vec isn't installed, plain SQL
+// still works (only vec0 tables become unreadable, same as before).
+let _vecLoad: ((db: unknown) => void) | null | undefined;
+async function loadVecExtension(db: unknown): Promise<void> {
+  if (_vecLoad === undefined) {
+    try { _vecLoad = (await import("sqlite-vec")).load as (db: unknown) => void; }
+    catch { _vecLoad = null; }
+  }
+  if (_vecLoad) { try { _vecLoad(db); } catch { /* extension load failed — plain SQL still works */ } }
+}
+
 function toMarkdownTable(rows: Record<string, unknown>[]): string {
   if (rows.length === 0) return "_No rows returned._";
   const cols = Object.keys(rows[0]);
@@ -54,6 +70,7 @@ const sqlQuery: ToolDefinition = {
     let db: ReturnType<typeof Database> | undefined;
     try {
       db = new Database(dbPath, { readonly });
+      await loadVecExtension(db);
 
       if (isSelect(query)) {
         const rows = db.prepare(query).all() as Record<string, unknown>[];
@@ -99,6 +116,7 @@ const sqlSchema: ToolDefinition = {
     let db: ReturnType<typeof Database> | undefined;
     try {
       db = new Database(dbPath, { readonly: true });
+      await loadVecExtension(db);
 
       if (table) {
         const cols = db.prepare(`PRAGMA table_info(${JSON.stringify(table)})`).all() as {
@@ -162,6 +180,7 @@ const sqlExplain: ToolDefinition = {
     let db: ReturnType<typeof Database> | undefined;
     try {
       db = new Database(dbPath, { readonly: true });
+      await loadVecExtension(db);
       const plan = db.prepare(`EXPLAIN QUERY PLAN ${query}`).all() as Record<string, unknown>[];
       return {
         content: wrapExternalContent(toMarkdownTable(plan), "sql_explain", {

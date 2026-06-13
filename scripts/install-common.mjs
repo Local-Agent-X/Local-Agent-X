@@ -814,6 +814,26 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   if (dr.status !== 0) fail("desktop tsc build failed.");
   ok("Desktop bundle built");
 
+  // Electron ships its actual runtime (~100 MB electron.exe) via a postinstall
+  // download, NOT inside the npm tarball. On a flaky connection, behind a
+  // corporate proxy, or with antivirus intercepting the fetch, `npm ci` can
+  // exit 0 while that download silently fails — leaving node_modules/electron
+  // with no dist/electron.exe. The shortcut then points at a file that doesn't
+  // exist and double-clicking it (or the installer's Launch button) dies in
+  // milliseconds: the exact "Launch does nothing / no icon" symptom. Verify the
+  // binary landed; if not, re-run Electron's own install script to fetch it,
+  // then hard-fail if it still isn't there rather than reporting success over
+  // an unlaunchable install. (Live failure 2026-06-13.)
+  const electronBin = join("desktop", "node_modules", "electron", "dist", "electron.exe");
+  if (!existsSync(electronBin)) {
+    warn("Electron runtime missing after npm install — fetching it directly…");
+    const ei = await runStreaming("node", [join("node_modules", "electron", "install.js")], { cwd: "desktop" });
+    if (ei.status !== 0 || !existsSync(electronBin)) {
+      fail("Electron runtime failed to download — a network proxy or antivirus likely blocked it. Re-run the installer on a clean connection.");
+    }
+    ok("Electron runtime fetched");
+  }
+
   // Create Desktop + Start Menu shortcuts that launch electron.exe DIRECTLY,
   // not via desktop-launch.bat. The .bat works but Windows always spawns a
   // cmd console window for it that lives as long as the Electron process —
@@ -843,8 +863,9 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   const workDir = join(repoRoot, "desktop");
   const iconPath = join(repoRoot, "public", "icon.ico");
   if (!existsSync(electronExe) || !existsSync(entryJs)) {
-    warn(`Desktop build artifacts missing (${electronExe} or ${entryJs}) — skipping shortcut creation`);
-  } else {
+    fail(`Desktop launch artifacts missing — need both ${electronExe} and ${entryJs}, but the desktop build did not produce a runnable bundle.`);
+  }
+  {
     // Single-quoted PowerShell strings: backslashes literal, no var
     // interpolation. Apostrophes in usernames would break this; PS doesn't
     // support a clean escape inside single-quoted literals other than ''
@@ -884,7 +905,7 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
       ok("Shortcuts created (Desktop + Start Menu, resolved via Known Folders API)");
       appInstalled = true;
     } else {
-      warn(`Shortcut creation failed (exit ${r.status}) — launch manually: ${batPath}`);
+      fail(`Shortcut creation failed (PowerShell exit ${r.status}). Without it there's no Desktop or Start Menu entry to launch the app from.`);
     }
   }
 

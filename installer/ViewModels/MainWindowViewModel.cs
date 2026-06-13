@@ -155,24 +155,32 @@ public partial class MainWindowViewModel : ObservableObject
         {
             if (OperatingSystem.IsWindows())
             {
-                // Launch electron.exe directly with the desktop main.js — same
-                // shape install-common.mjs writes into the shortcut .lnk, but
-                // without depending on the shortcut existing yet (it's created
-                // late in the install). WorkingDirectory matches the .lnk so
+                // Launch electron.exe directly with dist/loader.js — the SAME
+                // entry install-common.mjs writes into the shortcut .lnk (loader
+                // calls app.setName before Electron resolves userData; launching
+                // main.js directly would land data under %APPDATA%\electron\).
+                // We don't depend on the shortcut existing yet — it's created
+                // late in the install. WorkingDirectory matches the .lnk so
                 // relative paths inside the Electron main process resolve.
                 var electron = Path.Combine(_repoRoot, "desktop", "node_modules", "electron", "dist", "electron.exe");
-                var mainJs   = Path.Combine(_repoRoot, "desktop", "dist", "main.js");
-                if (File.Exists(electron) && File.Exists(mainJs))
+                var loaderJs = Path.Combine(_repoRoot, "desktop", "dist", "loader.js");
+                if (!File.Exists(electron) || !File.Exists(loaderJs))
                 {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = electron,
-                        WorkingDirectory = Path.Combine(_repoRoot, "desktop"),
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        ArgumentList = { mainJs },
-                    });
+                    // Artifacts missing means the install didn't actually finish a
+                    // launchable app. Surface it instead of silently exiting —
+                    // otherwise the button looks dead and the user has no clue why.
+                    Screen = "error";
+                    ErrorMessage = "The app isn't launchable — the Electron runtime didn't finish installing. Re-run the installer (a network proxy or antivirus may have blocked the download).";
+                    return;
                 }
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = electron,
+                    WorkingDirectory = Path.Combine(_repoRoot, "desktop"),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    ArgumentList = { loaderJs },
+                });
             }
             else if (OperatingSystem.IsMacOS())
             {

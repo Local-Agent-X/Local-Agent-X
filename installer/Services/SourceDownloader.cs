@@ -77,7 +77,7 @@ public class SourceDownloader
             if (Directory.Exists(installDir))
             {
                 OnStatus?.Invoke("Removing previous install…");
-                Directory.Delete(installDir, recursive: true);
+                await ForceDeleteDirectoryAsync(installDir, ct);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(installDir)!);
             Directory.Move(rootDirs[0], installDir);
@@ -126,6 +126,41 @@ public class SourceDownloader
         if (!doc.RootElement.TryGetProperty("object", out var obj))
             throw new InvalidDataException($"Unexpected response shape from {url} (no 'object').");
         return (obj.GetProperty("sha").GetString() ?? "", obj.GetProperty("type").GetString() ?? "");
+    }
+
+    // Recursively delete a prior install, surviving the two ways Directory.Delete
+    // throws on Windows: read-only attributes (cleared up front) and a file still
+    // locked by a process that just exited or an antivirus mid-scan (retried with
+    // a short backoff — the OS releases the handle a beat after the app closes).
+    // If a file stays locked, fail with an actionable message instead of the raw
+    // "Access to the path '…' is denied" — the cause is almost always a running
+    // Local Agent X the user needs to quit from the system tray.
+    private async Task ForceDeleteDirectoryAsync(string dir, CancellationToken ct)
+    {
+        const int attempts = 5;
+        for (int i = 1; ; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                {
+                    try { File.SetAttributes(f, FileAttributes.Normal); } catch { }
+                }
+                Directory.Delete(dir, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                if (i >= attempts)
+                    throw new IOException(
+                        $"Couldn't replace the previous install — a file is locked ({ex.Message}). " +
+                        "Quit Local Agent X (check the Windows system tray for its icon → Quit), then run the installer again.",
+                        ex);
+                OnStatus?.Invoke($"Previous install is in use — retrying ({i}/{attempts})…");
+                await Task.Delay(700, ct);
+            }
+        }
     }
 
     private async Task DownloadFileAsync(string url, string destPath, CancellationToken ct)

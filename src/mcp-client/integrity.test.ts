@@ -82,6 +82,27 @@ describe("resolveCommandPath", () => {
   it("returns null when the bare name is not on PATH", () => {
     expect(resolveCommandPath("definitely_not_a_real_binary_xyz")).toBeNull();
   });
+
+  it.runIf(process.platform === "win32")(
+    "prefers the PATHEXT executable over an extensionless shim for a bare name",
+    () => {
+      // Node ships an extensionless POSIX shim (`npx`) next to `npx.cmd`. The
+      // resolver must pick the .cmd — spawning the shim via cmd.exe exits
+      // instantly. Reproduce with a synthetic tool that has both forms.
+      const savedPath = process.env.PATH;
+      const savedPathext = process.env.PATHEXT;
+      try {
+        writeFileSync(join(tempDir, "mytool"), "#!/bin/sh\necho hi\n");
+        writeFileSync(join(tempDir, "mytool.cmd"), "@echo hi\n");
+        process.env.PATH = tempDir;
+        process.env.PATHEXT = ".COM;.EXE;.BAT;.CMD";
+        expect(resolveCommandPath("mytool")!.toLowerCase().endsWith("mytool.cmd")).toBe(true);
+      } finally {
+        if (savedPath === undefined) delete process.env.PATH; else process.env.PATH = savedPath;
+        if (savedPathext === undefined) delete process.env.PATHEXT; else process.env.PATHEXT = savedPathext;
+      }
+    },
+  );
 });
 
 describe("hashCommandBinary", () => {
@@ -218,6 +239,38 @@ describe("verifyOrTrust — tampering & re-trust", () => {
     if (result.ok) {
       expect(result.sha256).toBe(newHash);
     }
+  });
+
+  it("re-trusts when the resolved path changes extension within the same dir (resolver-fix migration)", () => {
+    const shim = join(tempDir, "tool");        // extensionless (old buggy resolution)
+    const cmd = join(tempDir, "tool.cmd");     // what the fixed resolver now picks
+    writeFileSync(shim, Buffer.from("posix-shim-script"));
+    writeFileSync(cmd, Buffer.from("windows-cmd-launcher"));
+    verifyOrTrust("srv-x", shim);
+    const oldHash = loadTrustStore()["srv-x"].sha256;
+
+    const result = verifyOrTrust("srv-x", cmd);
+    expect(result.ok).toBe(true);
+    const entry = loadTrustStore()["srv-x"];
+    expect(entry.commandPath).toBe(cmd);
+    expect(entry.sha256).not.toBe(oldHash);
+    if (result.ok) expect(result.sha256).toBe(entry.sha256);
+  });
+
+  it("does NOT auto-migrate across directories — evil-twin stays fail-closed", () => {
+    const realDir = join(tempDir, "real");
+    const evilDir = join(tempDir, "evil");
+    mkdirSync(realDir, { recursive: true });
+    mkdirSync(evilDir, { recursive: true });
+    const real = join(realDir, "tool.cmd");
+    const evil = join(evilDir, "tool.cmd");    // same stem+ext, DIFFERENT dir
+    writeFileSync(real, Buffer.from("legit-launcher"));
+    writeFileSync(evil, Buffer.from("malicious-launcher"));
+    verifyOrTrust("srv-y", real);
+
+    const result = verifyOrTrust("srv-y", evil);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/hash changed/);
   });
 });
 

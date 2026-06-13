@@ -13,7 +13,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, openSync, readSync, closeSync, chmodSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, isAbsolute, sep, delimiter } from "node:path";
+import { join, isAbsolute, sep, delimiter, dirname, basename } from "node:path";
 import { createLogger } from "../logger.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
@@ -81,19 +81,34 @@ export function resolveCommandPath(command: string): string | null {
 }
 
 function buildWindowsExtensions(command: string): string[] {
-  // If the command already has an extension, try it as-is FIRST, then
-  // fall through to PATHEXT — matches how Windows resolves `node` vs
-  // `node.exe`.
   const lower = command.toLowerCase();
   const pathext = (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD")
     .split(";")
     .map(s => s.trim())
     .filter(s => s.length > 0);
   const hasExt = pathext.some(ext => lower.endsWith(ext.toLowerCase()));
-  if (hasExt) {
-    return ["", ...pathext];
-  }
-  return ["", ...pathext];
+  // If the command already carries a Windows-executable extension, try it
+  // verbatim FIRST, then fall through to PATHEXT (matches `node` vs `node.exe`).
+  //
+  // For a BARE name (e.g. "npx"), a PATHEXT match is what cmd.exe can actually
+  // execute. Node ships an extensionless POSIX shell shim (`npx`) right next to
+  // `npx.cmd`; resolving the shim and then spawning it via cmd.exe (shell:true)
+  // exits instantly because cmd can't run a shell script. So prefer PATHEXT and
+  // keep "" only as a last-resort fallback for genuinely-extensionless binaries.
+  return hasExt ? ["", ...pathext] : [...pathext, ""];
+}
+
+/**
+ * True when two paths live in the same directory and share a filename stem,
+ * differing only by extension (e.g. `…/npx` vs `…/npx.cmd`). Used to migrate a
+ * trust entry across the PATHEXT-resolution fix without re-opening the
+ * evil-twin hole — a malicious shadow binary sits in a DIFFERENT directory.
+ */
+function isExtensionMigration(oldPath: string, newPath: string): boolean {
+  if (oldPath === newPath) return false;
+  if (dirname(oldPath).toLowerCase() !== dirname(newPath).toLowerCase()) return false;
+  const stem = (p: string) => basename(p).replace(/\.[^.]+$/, "").toLowerCase();
+  return stem(oldPath) === stem(newPath);
 }
 
 function fileExists(p: string): boolean {
@@ -233,6 +248,20 @@ export function verifyOrTrust(
   }
 
   if (existing.sha256 === sha256) {
+    return { ok: true, firstTrust: false, sha256, resolvedPath };
+  }
+
+  // Resolver-fix / reinstall migration: the resolved path moved to the SAME
+  // directory + filename stem, differing only by executable extension (e.g.
+  // Windows `npx` → `npx.cmd` after the PATHEXT resolution fix, or a reinstall
+  // that swapped the extension). The stored hash is for a different file, so
+  // comparing it is meaningless — re-establish trust for the new path. A real
+  // PATH evil-twin lives in a DIFFERENT directory, and an in-place binary swap
+  // keeps the SAME path; both still fail closed below.
+  if (existing.commandPath && isExtensionMigration(existing.commandPath, resolvedPath)) {
+    logger.warn(`mcp-trust: re-trusting "${serverName}" — resolved path changed within the same location (${existing.commandPath} → ${resolvedPath}); updating stored hash.`);
+    store[serverName] = { sha256, firstSeenAt: Date.now(), commandPath: resolvedPath };
+    saveTrustStore(store);
     return { ok: true, firstTrust: false, sha256, resolvedPath };
   }
 

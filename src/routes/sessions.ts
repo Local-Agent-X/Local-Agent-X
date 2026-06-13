@@ -5,6 +5,7 @@ import type { RouteHandler } from "../server-context.js";
 import { isValidSessionId, safeErrorMessage, readBody, safeParseBody, jsonResponse } from "../server-utils.js";
 import { exportSession, importSession } from "../session/export.js";
 import { loadSessionPage } from "../progressive-loader.js";
+import { isSyntheticSessionId } from "../memory/synthetic-sessions.js";
 
 export const handleSessionRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -16,7 +17,7 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     // the UI adopt it and route a real message into a dry-run turn (silent
     // no-op reported as success).
     const all = ctx.sessionStore.list();
-    const visible = all.filter(s => !s.id.startsWith("dream-") && !s.id.startsWith("cron-") && !s.id.startsWith("ide-") && !s.id.startsWith("eval-"));
+    const visible = all.filter(s => !isSyntheticSessionId(s.id));
     json(200, visible);
     return true;
   }

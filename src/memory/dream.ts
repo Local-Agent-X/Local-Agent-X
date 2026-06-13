@@ -18,6 +18,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { isSyntheticSessionId } from "./synthetic-sessions.js";
 import { join } from "node:path";
 import { extractSessionPairs, type ConversationMessage } from "./chunking.js";
 import { getLaxDir } from "../lax-data-dir.js";
@@ -130,7 +131,10 @@ export function listRecentSessionTranscripts(n = DEFAULT_SESSION_COUNT): Session
   if (!existsSync(SESSIONS_DIR)) return [];
 
   const candidates = readdirSync(SESSIONS_DIR)
-    .filter((f) => f.endsWith(".jsonl"))
+    // Exclude generated/internal sessions — above all dream-*.jsonl. Without
+    // this, each dream re-ingested prior dreams' embedded transcripts and the
+    // file grew exponentially (one hit 150 MB). See synthetic-sessions.ts.
+    .filter((f) => f.endsWith(".jsonl") && !isSyntheticSessionId(f))
     .map((f) => {
       const fullPath = join(SESSIONS_DIR, f);
       try {

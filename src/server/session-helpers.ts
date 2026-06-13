@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { Session } from "../types.js";
 import { setSessionProject } from "../session/project.js";
+import { isSyntheticSessionId } from "../memory/synthetic-sessions.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.session-helpers");
@@ -79,7 +80,7 @@ export function createSessionHelpers(deps: {
   }
 
   async function indexSessionIncrementally(session: Session): Promise<void> {
-    if (session.id.startsWith("dream-") || session.id.startsWith("ide-")) return;
+    if (isSyntheticSessionId(session.id)) return;
     logger.info(`[memory-live] Indexing session ${session.id} (${session.messages?.length || 0} messages)`);
     const { extractSessionPairs, chunkConversationPairs } = await import("../memory/chunking.js");
     const messages = extractSessionPairs(join(dataDir, "sessions", session.id + ".jsonl"));

@@ -8,6 +8,14 @@
 import { createLogger } from "../logger.js";
 const log = createLogger("browser.mutex");
 
+// Minimum spacing between consecutive actions in the same session. This is
+// reaction-time pacing, not a throughput cap: a real action (navigate, click,
+// snapshot) already takes longer than this, so it adds zero delay in normal
+// use. It only smooths a pathological instant-burst (a tight model loop firing
+// no-op reads back-to-back) so the burst slows down instead of dead-stopping.
+const MIN_ACTION_INTERVAL_MS = 200;
+const lastActionStart = new Map<string, number>();
+
 let chain: Promise<unknown> = Promise.resolve();
 let currentOwner: string | null = null;
 
@@ -26,6 +34,11 @@ export function withBrowserLock<T>(
       log.info(`[browser-mutex] handover ${prev} -> ${sessionId}`);
     }
     currentOwner = sessionId;
+    const sinceLast = Date.now() - (lastActionStart.get(sessionId) ?? 0);
+    if (sinceLast < MIN_ACTION_INTERVAL_MS) {
+      await new Promise((r) => setTimeout(r, MIN_ACTION_INTERVAL_MS - sinceLast));
+    }
+    lastActionStart.set(sessionId, Date.now());
     try {
       return await fn();
     } finally {

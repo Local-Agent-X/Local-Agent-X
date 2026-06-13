@@ -14,9 +14,9 @@
  *   observe.ts     — observe (role-bucketed, diff-aware view)
  */
 
-import type { ToolDefinition } from "../../types.js";
+import type { ToolDefinition, ToolResult } from "../../types.js";
 import { getBrowserManager, closeBrowser, withBrowserLock } from "../../browser/index.js";
-import type { BrowserEngine } from "../../browser/index.js";
+import type { BrowserEngine, BrowserManager } from "../../browser/index.js";
 import { VALID_ENGINES, err } from "./shared.js";
 import {
   BROWSER_TOOL_NAME,
@@ -44,6 +44,40 @@ import {
 } from "./page.js";
 import { handleAct } from "./act.js";
 import { handleObserve } from "./observe.js";
+import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
+
+// Actions that establish a fresh page context — clear stall state, don't compare.
+const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close"]);
+// Advancing actions where "page never changed" means the agent is stuck.
+// Pure reads/utilities (extract, screenshot, evaluate, info, tabs, dialogs)
+// are excluded: they legitimately return varying data off an unchanged page.
+const TRACKED_ACTIONS = new Set(["click", "click_text", "fill", "select", "scroll", "observe", "snapshot", "act"]);
+
+/**
+ * After an advancing action, fingerprint the page and trip a no-progress stop
+ * if the session has spun without moving the page. The isError result feeds the
+ * circuit breaker (run-sandboxed records isError as a failure), so an agent that
+ * ignores the warning and keeps hammering gets a hard cooldown.
+ */
+async function applyProgressGuard(
+  action: string,
+  manager: BrowserManager,
+  sessionId: string,
+  result: ToolResult,
+): Promise<ToolResult> {
+  if (RESET_ACTIONS.has(action)) {
+    resetProgress(sessionId);
+    return result;
+  }
+  if (!TRACKED_ACTIONS.has(action) || result.isError) return result;
+  const { stalled, unchanged } = recordProgress(sessionId, await manager.fingerprint());
+  if (!stalled) return result;
+  return err(
+    `No page change after ${unchanged} consecutive browser actions — the page is not responding to what you're doing. ` +
+    `Stop repeating the same action. Try a different approach: a different ref/selector, scroll to reveal off-screen ` +
+    `elements, re-navigate, or stop and ask the user. Repeating will open the circuit breaker.`,
+  );
+}
 
 /**
  * Creates the browser tool for web interaction via Playwright.
@@ -71,6 +105,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
         }
 
         try {
+          const result = await (async (): Promise<ToolResult> => {
           switch (action) {
             case "navigate": return await handleNavigate(manager, args, engine);
             case "new_tab": return await handleNewTab(manager, args);
@@ -96,6 +131,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
                 `Unknown action: "${action}". Valid actions: navigate, click, fill, select, extract, screenshot, evaluate, act, observe, tabs, switch_tab, info, close`
               );
           }
+          })();
+          return await applyProgressGuard(action, manager, sessionId, result);
         } catch (e) {
           const message = (e as Error).message;
           if (message.includes("Timeout")) {

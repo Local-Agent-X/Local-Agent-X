@@ -210,6 +210,25 @@ export class BrowserManager {
   exportRegistry(): unknown { return this.registry.serialize(); }
   importRegistry(state: unknown): void { this.registry.restore(state); }
 
+  // Cheap progress fingerprint: URL + title + text length + element count.
+  // Deliberately bypasses the observation registry so reading it never
+  // disturbs the diff state the agent's own observe() calls depend on. A click
+  // that toggles a seat (changing the "selected / total" text) or loads new DOM
+  // moves at least one of these; a no-op action leaves all four identical.
+  // Returns "" if the page can't be read (mid-navigation) — the caller treats
+  // that as "unknown", not "no progress". See progress-tracker.ts.
+  async fingerprint(): Promise<string> {
+    try {
+      const page = await this.getPage();
+      const sig = await page.evaluate(
+        "[location.href, document.title, (document.body && document.body.textContent ? document.body.textContent.length : 0), document.querySelectorAll('*').length].join('|')",
+      );
+      return typeof sig === "string" ? sig : "";
+    } catch {
+      return "";
+    }
+  }
+
   async scroll(opts: { direction?: "up" | "down" | "top" | "bottom"; refId?: number; amount?: number }): Promise<string> {
     const page = await this.getPage();
     if (opts.refId !== undefined) {

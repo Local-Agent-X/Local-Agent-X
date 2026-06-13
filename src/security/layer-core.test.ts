@@ -705,6 +705,31 @@ describe("SecurityLayer kernel-class dispatch", () => {
       expect(d.allowed).toBe(true);
       expect(d.reason).toMatch(/MCP-sourced tool/);
     });
+
+    it("allowed for a dynamic mcp_* tool via http-class resolution (no url arg)", () => {
+      // MCP tools (mcp_<server>_<tool>) aren't in TOOLS, but kernelClassForTool
+      // resolves the mcp_ prefix to http so they pass the class gate instead of
+      // hitting the not-in-registry deny — even without the mcpServer signal.
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "mcp_github_create_issue",
+        args: { title: "x" },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(true);
+      expect(d.reason).not.toMatch(/not in registry/);
+    });
+
+    it("SSRF-checks a dynamic mcp_* tool that carries a url arg", () => {
+      // If an MCP tool takes a url, the http gate still validates egress.
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "mcp_fetch_get",
+        args: { url: "http://169.254.169.254/latest/meta-data/" },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+    });
   });
 });
 

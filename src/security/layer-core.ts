@@ -12,7 +12,7 @@ import {
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
-import { TOOL_CLASS_MAP } from "../ari-kernel/tool-class-map.js";
+import { kernelClassForTool } from "../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../tool-registry.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
 import { loadEgressMode, loadLocalServicePorts, loadFileAccessMode } from "./security-config.js";
@@ -249,7 +249,11 @@ export class SecurityLayer {
         this.localServicePorts,
       );
     } else {
-      decision = this.evaluateByKernelClass(toolName, TOOL_CLASS_MAP[toolName], args, ctx);
+      // kernelClassForTool (not raw TOOL_CLASS_MAP) so dynamic MCP tools resolve
+      // to the http class and flow through the http gate (SSRF-checked if they
+      // carry a url arg, allowed-internal otherwise) instead of the
+      // not-in-registry deny — matching how the ARI kernel classifies them.
+      decision = this.evaluateByKernelClass(toolName, kernelClassForTool(toolName), args, ctx);
     }
 
     this.auditLog.push({ timestamp: Date.now(), tool: toolName, decision });

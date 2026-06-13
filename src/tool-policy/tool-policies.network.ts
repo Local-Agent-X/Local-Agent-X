@@ -9,11 +9,16 @@ import type { ToolPolicyEntry } from "./tool-policies.types.js";
 export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
   // ── Network ──
   browser: {
+    // No count-based rate limit: a browser session legitimately fires many
+    // actions in a burst (an element-dense page needs dozens of clicks/reads).
+    // A hard throughput block dead-stops that. Instead the browser tool paces
+    // bursts at the mutex (src/browser/mutex.ts) and stops genuine stuck-loops
+    // via no-progress detection (src/browser/progress-tracker.ts), which feeds
+    // the circuit breaker. The per-session ceiling below stays as a backstop.
     kernel: "http", risk: "network-read",
-    rateLimit: { maxCalls: 15, windowMs: 60_000, action: "block" },
     rules: [
       { id: "flag-browser-evaluate", action: "evaluate", decision: "confirm", reason: "Browser JS evaluation — flagged for review", priority: 100 },
-      { id: "allow-browser", decision: "allow", reason: "Browser allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 100 } },
+      { id: "allow-browser", decision: "allow", reason: "Browser allowed (paced + no-progress guarded)", priority: 40, constraints: { maxCallsPerSession: 100 } },
     ],
   },
   browser_capture_to_secret: { kernel: "secret-vault", risk: "secrets", rules: [{ id: "allow-browser-capture-to-secret", decision: "allow", reason: "Capture page value into encrypted vault (value never enters model context)", priority: 50 }] },

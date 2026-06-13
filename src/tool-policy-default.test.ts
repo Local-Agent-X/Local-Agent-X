@@ -98,7 +98,9 @@ describe("rate-limit derivation", () => {
     expect(byTool.http_request).toMatchObject({ maxCalls: 20, action: "block" });
     expect(byTool.web_fetch).toMatchObject({ maxCalls: 20, action: "block" });
     expect(byTool.write).toMatchObject({ maxCalls: 50, action: "warn" });
-    expect(byTool.browser).toMatchObject({ maxCalls: 15, action: "block" });
+    // browser intentionally has no count-based limit — it is paced at the mutex
+    // and stopped by no-progress detection instead (see tool-policies.network.ts).
+    expect(byTool.browser).toBeUndefined();
     expect(byTool["*"]).toMatchObject({ maxCalls: 200, action: "warn" });
   });
 });

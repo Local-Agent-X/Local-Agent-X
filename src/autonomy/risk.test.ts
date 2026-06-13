@@ -54,7 +54,10 @@ describe("TOOL_RISK", () => {
     expect(classifyToolRisk("browser_fill_from_secret")).toBe("secrets");
     expect(classifyToolRisk("browser_capture_to_secret")).toBe("secrets");
     expect(classifyToolRisk("request_secret")).toBe("secrets");
-    expect(classifyToolRisk("list_secrets")).toBe("secrets");
+    // Read-only secret introspection (names/metadata only, no values) is "safe"
+    // — it must not trip an approval prompt the way value-touching tools do.
+    expect(classifyToolRisk("list_secrets")).toBe("safe");
+    expect(classifyToolRisk("get_secret_meta")).toBe("safe");
     expect(classifyToolRisk("sql_query")).toBe("workspace-write");
   });
 });

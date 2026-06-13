@@ -15,8 +15,11 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyEntry> = {
   clipboard_write_from_secret: { kernel: "secret-vault", risk: "secrets" },
   request_secret:              { kernel: "internal", risk: "secrets", rules: [{ id: "allow-request-secret", decision: "allow", reason: "Secret request (user confirms via UI)", priority: 50 }] },
   request_secrets:             { kernel: "internal", risk: "secrets", rules: [{ id: "allow-request-secrets", decision: "allow", reason: "Multi-secret request (user confirms via UI)", priority: 50 }] },
-  list_secrets:                { kernel: "internal", risk: "secrets", rules: [{ id: "allow-list-secrets", decision: "allow", reason: "List secret names (no values exposed)", priority: 50 }] },
-  get_secret_meta:             { kernel: "internal", risk: "secrets", rules: [{ id: "allow-get-secret-meta", decision: "allow", reason: "Secret metadata (no values exposed)", priority: 50 }] },
+  // Read-only: names / metadata only, never a secret VALUE. Risk "safe" (not
+  // "secrets") so inspecting what's stored never trips an approval prompt — the
+  // value-touching tools (request_secret, clipboard/browser *_secret) stay "secrets".
+  list_secrets:                { kernel: "internal", risk: "safe", rules: [{ id: "allow-list-secrets", decision: "allow", reason: "List secret names (no values exposed)", priority: 50 }] },
+  get_secret_meta:             { kernel: "internal", risk: "safe", rules: [{ id: "allow-get-secret-meta", decision: "allow", reason: "Secret metadata (no values exposed)", priority: 50 }] },
 
   // ── Memory ── (memory_* glob covers all; remember/update_fact/forget are no-prefix)
   memory_save:           { kernel: "database", risk: "workspace-write" },

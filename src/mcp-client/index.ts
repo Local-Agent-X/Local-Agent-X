@@ -34,6 +34,33 @@ const logger = createLogger("mcp-client");
 // the result.
 const REDUNDANT_MCP_SERVERS = new Set<string>(["filesystem"]);
 
+export interface MCPServerStatus {
+  name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  disabled: boolean;
+  redundant: boolean;
+  connected: boolean;
+  toolCount: number;
+  tools: string[];
+  missingSecrets: string[];
+}
+
+/**
+ * Mask env values for display. Placeholder references (`${secret:X}`,
+ * `${HOME}`) are safe to surface as-is — they're pointers, not secrets. A
+ * literal inlined value gets masked so a raw token someone pasted into
+ * mcp.json against advice never reaches the settings DOM.
+ */
+function maskEnv(env?: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env || {})) {
+    out[k] = /\$\{[^}]+\}/.test(v) ? v : "••••••••";
+  }
+  return out;
+}
+
 export { expandPlaceholders, setSecretLookup } from "./placeholders.js";
 
 export class MCPManager {
@@ -107,6 +134,7 @@ export class MCPManager {
   async reload(): Promise<void> {
     this.disconnectAll();
     await this.connectAll();
+    this.onToolsChanged?.();
   }
 
   private fileWatcher: FSWatcher | null = null;
@@ -168,6 +196,80 @@ export class MCPManager {
     }
     return result;
   }
+
+  /**
+   * Full view for the settings UI: every server in the config file (not just
+   * the connected ones `listServers` returns) merged with live connection
+   * state and unresolved-secret info. `env` values that are literal inlined
+   * strings are masked — only `${...}` placeholder references pass through —
+   * so a token someone inlined against advice never lands in the DOM.
+   */
+  getServers(): MCPServerStatus[] {
+    const config = this.loadConfig();
+    const out: MCPServerStatus[] = [];
+    for (const [name, raw] of Object.entries(config.servers)) {
+      const conn = this.connections.get(name);
+      const { missing } = expandPlaceholdersDeep(raw);
+      out.push({
+        name,
+        command: raw.command,
+        args: raw.args ?? [],
+        env: maskEnv(raw.env),
+        disabled: !!raw.disabled,
+        redundant: REDUNDANT_MCP_SERVERS.has(name),
+        connected: conn?.connected ?? false,
+        toolCount: conn?.getTools().length ?? 0,
+        tools: conn?.getTools().map(t => t.name) ?? [],
+        missingSecrets: missing,
+      });
+    }
+    return out;
+  }
+
+  /** Flip a server's `disabled` flag in the config file. Caller reloads to apply. */
+  setServerDisabled(name: string, disabled: boolean): boolean {
+    const config = this.loadConfig();
+    const server = config.servers[name];
+    if (!server) return false;
+    server.disabled = disabled;
+    writeFileSync(this.configPath, JSON.stringify(config, null, 2), "utf-8");
+    return true;
+  }
+
+  /**
+   * One-off connection probe for the UI's "Test" button. Spawns the server in
+   * a throwaway connection, reports the tool count, and tears it down — works
+   * even on a disabled server, so the user can verify config before enabling.
+   */
+  async testServer(name: string): Promise<{ ok: boolean; toolCount?: number; tools?: string[]; error?: string; missingSecrets?: string[] }> {
+    const config = this.loadConfig();
+    const raw = config.servers[name];
+    if (!raw) return { ok: false, error: `Server "${name}" not found` };
+    if (REDUNDANT_MCP_SERVERS.has(name)) return { ok: false, error: `"${name}" is skipped — its tools duplicate native read/write/edit` };
+    const expanded = expandPlaceholdersDeep(raw);
+    if (expanded.missing.length > 0) return { ok: false, missingSecrets: expanded.missing, error: `Missing secret(s): ${expanded.missing.join(", ")}` };
+    const probe = new MCPConnection(name, expanded.config);
+    try {
+      await probe.connect();
+      const tools = probe.getTools().map(t => t.name);
+      return { ok: true, toolCount: tools.length, tools };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    } finally {
+      probe.disconnect();
+    }
+  }
+
+  /**
+   * Register a callback fired after every `reload()`. bootstrap-tools uses it
+   * to re-sync the live `allAgentTools` array + registry from the reconnected
+   * servers, so adding/removing/toggling a server (via the UI or the config
+   * watcher) updates the agent's tool surface without a restart.
+   */
+  setOnToolsChanged(cb: () => void): void {
+    this.onToolsChanged = cb;
+  }
+  private onToolsChanged: (() => void) | null = null;
 
   /** Disconnect all servers. */
   disconnectAll(): void {

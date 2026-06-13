@@ -276,7 +276,7 @@
       <button class="tab-pill" onclick="switchTab('image')">Media</button>
       <button class="tab-pill" onclick="switchTab('security')">Security</button>
       <button class="tab-pill" onclick="switchTab('whatsapp')">Communication</button>
-      <button class="tab-pill" onclick="switchTab('integrations')">Integrations</button>
+      <button class="tab-pill" onclick="switchTab('integrations')">Tools &amp; Integrations</button>
       <button class="tab-pill" onclick="switchTab('sync')">Sync</button>
     </div>
     <div class="settings-content">
@@ -676,6 +676,21 @@
           <div class="section-title">Connected APIs</div>
           <div class="section-desc">Connect third-party APIs so your agent can interact with them directly. API keys are encrypted in your local secrets vault.</div>
           <div id="integrations-list" style="margin-top:12px">Loading...</div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">MCP Servers</div>
+          <div class="section-desc">Connect <a href="https://modelcontextprotocol.io/" target="_blank" style="color:var(--accent)">Model Context Protocol</a> servers to give your agent extra tools (GitHub, Postgres, Slack, and more). Tools appear automatically once a server connects — no restart needed. Secrets are read from your encrypted vault; never inline tokens.</div>
+          <div id="mcp-servers-list" style="margin-top:12px">Loading...</div>
+          <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+            <div style="font-size:.82rem;font-weight:600;color:var(--text);margin-bottom:6px">Add a server</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-bottom:10px">Quick-add a recommended server (then set any required secret), or fill in the fields manually.</div>
+            <div id="mcp-catalog" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px"></div>
+            <div class="field"><label class="field-label">Server Name</label><input class="field-input" id="mcp-new-name" placeholder="e.g. github"/></div>
+            <div class="field"><label class="field-label">Command</label><input class="field-input" id="mcp-new-command" placeholder="e.g. npx"/></div>
+            <div class="field"><label class="field-label">Arguments (space-separated)</label><input class="field-input" id="mcp-new-args" placeholder="e.g. -y @modelcontextprotocol/server-github"/></div>
+            <div class="field"><label class="field-label">Environment (optional — one KEY=value per line)</label><textarea class="field-input" id="mcp-new-env" rows="2" placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=&#36;{secret:GITHUB_TOKEN}" style="font-family:var(--mono);font-size:.78rem"></textarea></div>
+            <div class="btn-row"><button class="action-btn primary" onclick="addMcpServer()">Add Server</button></div>
+          </div>
         </div>
         <div class="section-card">
           <div class="section-title">Add Custom Integration</div>
@@ -1235,6 +1250,7 @@
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>
 <script src="/js/settings-integrations.js?v=v1"></script>
+<script src="/js/settings-mcp.js?v=v1"></script>
 <script src="/js/settings-import-export.js?v=v1"></script>
 <script src="/js/settings-uploads.js?v=v1"></script>
 <script src="/js/settings-voice-engines.js?v=v1"></script>

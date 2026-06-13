@@ -5,7 +5,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
 import { confineToDir } from "../security/file-access.js";
 import { getPageBundle } from "./static-bundle.js";
-import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes } from "../routes/index.js";
+import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes } from "../routes/index.js";
 import type { ServerContext } from "../server-context.js";
 import type { Role } from "../rbac.js";
 import type { LAXConfig, ServerEvent, Session, ToolDefinition } from "../types.js";
@@ -114,7 +114,7 @@ export function createRequestHandler(deps: {
         else activeRuntimeBySession.delete(sid);
       },
     };
-    for (const h of [handleHealthRoutes, handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes]) {
+    for (const h of [handleHealthRoutes, handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes]) {
       if (await h(method, url, req, res, ctx, requestRole)) return;
     }
     if (method === "POST" && url.pathname === "/api/upload") {

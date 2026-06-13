@@ -86,6 +86,7 @@ function init_settings() {
   loadUploadsStats();
   // loadSelfModify removed — platform files always protected
   loadIntegrations();
+  if (typeof loadMcpServers === 'function') loadMcpServers();
   waCheckStatus();
   tgCheckStatus();
 }

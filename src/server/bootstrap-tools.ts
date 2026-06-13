@@ -120,6 +120,31 @@ export async function bootstrapTools(deps: {
       }
       logger.info(`[mcp] Added ${mcpTools.length} tools from MCP servers`);
     }
+
+    // Re-sync the live tool surface whenever servers reconnect (UI add/remove/
+    // toggle, or the config-file watcher). Without this, reload() reconnected
+    // the subprocesses but the agent kept the boot-time tool list until a full
+    // restart. Idempotent: drop every current MCP tool, then re-add from the
+    // freshly reconnected set.
+    mcpManager.setOnToolsChanged(() => {
+      for (const stale of toolRegistry.getMcpTools()) {
+        toolRegistry.unregister(stale.name);
+        const idx = allAgentTools.findIndex(t => t.name === stale.name);
+        if (idx >= 0) allAgentTools.splice(idx, 1);
+      }
+      const fresh = mcpManager.getAllTools();
+      for (const tool of fresh) {
+        allAgentTools.push(tool);
+        const serverName = tool.name.replace(/^mcp_/, "").split("_")[0] ?? "unknown";
+        toolRegistry.register(tool, {
+          defer: true,
+          tags: ["mcp", serverName],
+          searchHint: tool.description.slice(0, 80),
+          mcpSource: serverName,
+        });
+      }
+      logger.info(`[mcp] tool surface refreshed — ${fresh.length} MCP tool(s) live`);
+    });
     process.on("SIGINT", () => { mcpManager.disconnectAll(); });
   } catch (e) {
     logger.warn(`[mcp] MCP client init failed: ${(e as Error).message}`);

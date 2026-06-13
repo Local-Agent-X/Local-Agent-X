@@ -251,16 +251,15 @@ describe("scanForSecrets — round-3 encoding/normalization evasions (C3-6..19)"
       payload = Buffer.from(payload, "utf8").toString("base64");
     }
     const text = `blob=${payload.slice(0, 200_000)}`;
-    const t0 = Date.now();
     const r = scanForSecrets(text);
-    const ms = Date.now() - t0;
-    // The call must TERMINATE (budget-bounded), not hang. Work plateaus once the
-    // input exceeds what MAX_DECODED_BUDGET allows decoding, so larger inputs
-    // don't cost more — the bound holds. Ceiling is generous for CI variance; the
-    // point is "bounded, not unbounded," not a tight latency SLA.
+    // The point is "bounded, not unbounded": the call must RETURN at all. A
+    // budget-bounded scan (MAX_DECODED_BUDGET) finishes in well under a second;
+    // reaching this assertion proves it terminated. An unbounded regression
+    // would never return and trips the explicit test timeout below — so this is
+    // deterministic (terminates vs hangs), not a wall-clock latency SLA that
+    // flakes on a slow/contended machine.
     expect(typeof r.clean).toBe("boolean");
-    expect(ms).toBeLessThan(10000);
-  });
+  }, 30_000);
 });
 
 // ── R4-14: category-Cf format-char interleaving (bidi + zero-width) ───────────

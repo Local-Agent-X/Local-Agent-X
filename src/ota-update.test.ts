@@ -97,7 +97,7 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     const m = new OTAManager("o", "r", join(root, "lax"));
     await expect(
       m.applyUpdate(tarPath, installDir, "v0", "deadbeefcafebabe0000000000000000feedface")
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ depsChanged: false });
 
     // Update applied.
     expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("NEW");

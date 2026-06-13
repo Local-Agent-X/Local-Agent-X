@@ -415,12 +415,21 @@ if (process.platform === "win32") {
     // event loop for its entire duration — so the GUI emits zero IPC events
     // and looks dead-hung on "C++ build tools" (reported as a 2-hr "hang").
     // Streaming forwards winget's download progress live and drives the bar.
-    const r = await runStreaming("winget", [
-      "install", "--id", "Microsoft.VisualStudio.2022.BuildTools",
-      "--accept-package-agreements", "--accept-source-agreements",
-      "--silent", "--disable-interactivity",
-      "--override", "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended",
-    ]);
+    //
+    // Pass the WHOLE command as one shell string (args=[]), not an argv array.
+    // runStreaming runs with shell:true on Windows, and on Node 24 `spawn` with
+    // an argv array + shell:true no longer quotes the elements (DEP0190) — so
+    // --override's multi-word value "--quiet --wait --add …" gets split and
+    // winget sees `--add` as its own arg and dies ("Argument name was not
+    // recognized: '--add'", exit 2316632066). Quoting --override in a single
+    // command string passes the whole bootstrapper directive through as one token.
+    const vcOverride = "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended";
+    const r = await runStreaming(
+      `winget install --id Microsoft.VisualStudio.2022.BuildTools `
+      + `--accept-package-agreements --accept-source-agreements `
+      + `--silent --disable-interactivity --override "${vcOverride}"`,
+      [],
+    );
     // winget returns 0x8A150011 = "no applicable upgrade found" if Build
     // Tools is already at latest; treat that as success. Anything else
     // non-zero is a real failure.

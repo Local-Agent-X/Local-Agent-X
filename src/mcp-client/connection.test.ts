@@ -155,6 +155,35 @@ describe("buildMcpChildEnv", () => {
     const env = buildMcpChildEnv({ PATH: "/custom/bin" });
     expect(env.PATH).toBe("/custom/bin");
   });
+
+  it("lets a vault-sourced credential key through when it is in the exempt set", () => {
+    // GITHUB_PERSONAL_ACCESS_TOKEN matches the _TOKEN deny substring, but a
+    // value resolved from ${secret:...} is the legitimate injection channel.
+    const env = buildMcpChildEnv(
+      { GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_from_vault" },
+      new Set(["GITHUB_PERSONAL_ACCESS_TOKEN"]),
+    );
+    expect(env.GITHUB_PERSONAL_ACCESS_TOKEN).toBe("ghp_from_vault");
+  });
+
+  it("still strips a credential key NOT in the exempt set (raw inlined token)", () => {
+    // Only the named vault-sourced key is exempt; a different credential-shaped
+    // key the operator inlined raw stays stripped.
+    const env = buildMcpChildEnv(
+      { GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_from_vault", SLACK_BOT_TOKEN: "xoxb_inlined_raw" },
+      new Set(["GITHUB_PERSONAL_ACCESS_TOKEN"]),
+    );
+    expect(env.GITHUB_PERSONAL_ACCESS_TOKEN).toBe("ghp_from_vault");
+    expect(env.SLACK_BOT_TOKEN).toBeUndefined();
+  });
+
+  it("exempt matching is case-insensitive on the canonical (uppercase) name", () => {
+    const env = buildMcpChildEnv(
+      { my_api_token: "v" },
+      new Set(["MY_API_TOKEN"]),
+    );
+    expect(env.my_api_token).toBe("v");
+  });
 });
 
 // ─── Connect-layer integrity wiring ──────────────────────────────────────

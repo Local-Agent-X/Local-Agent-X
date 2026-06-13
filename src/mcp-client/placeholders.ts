@@ -50,14 +50,18 @@ function lookupSecret(name: string): string | undefined {
  * attacker might tamper with: `command: "$(rm -rf /)"` would be passed
  * through verbatim, never evaluated.
  *
- * Returns the expanded string AND a list of placeholders that couldn't be
- * resolved (e.g. `${secret:MISSING}` when the vault has no MISSING). Callers
- * use the `missing` list to decide whether to skip starting a server with
- * unresolved required env.
+ * Returns the expanded string, a list of placeholders that couldn't be
+ * resolved (e.g. `${secret:MISSING}` when the vault has no MISSING), and the
+ * names of `${secret:...}` placeholders that DID resolve from the vault.
+ * Callers use `missing` to decide whether to skip starting a server, and
+ * `resolved` for provenance — a value that carried a vault secret is the
+ * legitimate credential-injection channel and is exempt from the env
+ * credential strip (whereas a raw inlined token is not).
  */
-export function expandPlaceholders(input: string): { value: string; missing: string[] } {
-  if (typeof input !== "string") return { value: input, missing: [] };
+export function expandPlaceholders(input: string): { value: string; missing: string[]; resolved: string[] } {
+  if (typeof input !== "string") return { value: input, missing: [], resolved: [] };
   const missing: string[] = [];
+  const resolved: string[] = [];
   let out = input;
 
   // 1. `~/` prefix → home dir (POSIX convention, also works on Windows).
@@ -75,17 +79,17 @@ export function expandPlaceholders(input: string): { value: string; missing: str
   //    instead of an empty value silently injected.
   out = out.replace(/\$\{secret:([A-Z0-9_]+)\}/g, (match, name: string) => {
     const v = lookupSecret(name);
-    if (v) return v;
+    if (v) { resolved.push(name); return v; }
     missing.push(name);
     return match;
   });
 
-  return { value: out, missing };
+  return { value: out, missing, resolved };
 }
 
 export function expandPlaceholdersDeep(
   config: MCPServerConfig,
-): { config: MCPServerConfig; missing: string[] } {
+): { config: MCPServerConfig; missing: string[]; secretEnvKeys: string[] } {
   const allMissing: string[] = [];
   const args = (config.args || []).map(a => {
     const r = expandPlaceholders(a);
@@ -93,9 +97,14 @@ export function expandPlaceholdersDeep(
     return r.value;
   });
   const env: Record<string, string> = {};
+  // Env keys whose value carried a vault `${secret:...}` — the legitimate
+  // credential-injection channel. These are exempt from the env credential
+  // strip in buildMcpChildEnv; a raw inlined token (no ${secret:}) is not.
+  const secretEnvKeys: string[] = [];
   for (const [k, v] of Object.entries(config.env || {})) {
     const r = expandPlaceholders(v);
     allMissing.push(...r.missing);
+    if (r.resolved.length > 0) secretEnvKeys.push(k);
     env[k] = r.value;
   }
   const cmd = expandPlaceholders(config.command);
@@ -103,5 +112,6 @@ export function expandPlaceholdersDeep(
   return {
     config: { ...config, command: cmd.value, args, env },
     missing: Array.from(new Set(allMissing)),
+    secretEnvKeys,
   };
 }

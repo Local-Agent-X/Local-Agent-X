@@ -118,6 +118,31 @@ describe("expandPlaceholders — secret resolution via the injected lookup", () 
       const r = expandPlaceholders("--token=${secret:PRESENT} --db=${secret:ABSENT}");
       expect(r.value).toBe("--token=yes --db=${secret:ABSENT}");
       expect(r.missing).toEqual(["ABSENT"]);
+      expect(r.resolved).toEqual(["PRESENT"]);
+    } finally {
+      setSecretLookup(null);
+    }
+  });
+});
+
+describe("expandPlaceholdersDeep — secret provenance for the env credential strip", () => {
+  it("reports env keys whose value resolved a vault secret, not raw or non-secret keys", async () => {
+    const { expandPlaceholdersDeep } = await import("../src/mcp-client/placeholders.js");
+    const { setSecretLookup } = await import("../src/mcp-client/index.js");
+    setSecretLookup((name) => (name === "GITHUB_TOKEN" ? "ghp_real" : undefined));
+    try {
+      const r = expandPlaceholdersDeep({
+        command: "npx",
+        args: ["-y", "server"],
+        env: {
+          GITHUB_PERSONAL_ACCESS_TOKEN: "${secret:GITHUB_TOKEN}",  // vault-sourced
+          RAW_TOKEN: "ghp_inlined_literal",                        // raw inline
+          REGION: "us-east-1",                                     // plain config
+        },
+      });
+      expect(r.secretEnvKeys).toEqual(["GITHUB_PERSONAL_ACCESS_TOKEN"]);
+      expect(r.config.env!.GITHUB_PERSONAL_ACCESS_TOKEN).toBe("ghp_real");
+      expect(r.missing).toEqual([]);
     } finally {
       setSecretLookup(null);
     }

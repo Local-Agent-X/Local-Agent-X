@@ -52,11 +52,20 @@ let allowlistLogged = false;
 /**
  * Build the env for an MCP child subprocess. Default-deny: only the
  * curated allowlist passes through from process.env, then per-server
- * grants from `configEnv`, then a final credential-pattern strip that
- * even overrides caller grants (credentials belong in the secret vault,
- * not env injection).
+ * grants from `configEnv`, then a final credential-pattern strip.
+ *
+ * `exemptCredentialKeys` (uppercase canonical names) are env keys the strip
+ * leaves alone — these are the per-server keys whose value came from a vault
+ * `${secret:...}` placeholder (the legitimate, documented injection channel,
+ * e.g. GITHUB_PERSONAL_ACCESS_TOKEN=${secret:GITHUB_TOKEN}). A host process.env
+ * credential never reaches the exemption (the allowlist excludes it), and a
+ * RAW inlined token (no ${secret:}) is not exempt — so it's still stripped,
+ * preserving the "use the vault, don't inline" guarantee for the synced config.
  */
-export function buildMcpChildEnv(configEnv?: Record<string, string>): Record<string, string> {
+export function buildMcpChildEnv(
+  configEnv?: Record<string, string>,
+  exemptCredentialKeys?: ReadonlySet<string>,
+): Record<string, string> {
   const out: Record<string, string> = {};
 
   // Allowlist passthrough
@@ -85,7 +94,7 @@ export function buildMcpChildEnv(configEnv?: Record<string, string>): Record<str
   // smuggle a credential through either.
   const stripped: string[] = [];
   for (const key of Object.keys(out)) {
-    if (isCredentialKey(key)) {
+    if (isCredentialKey(key, exemptCredentialKeys)) {
       delete out[key];
       stripped.push(key);
     }
@@ -111,9 +120,13 @@ export class MCPConnection {
   private buffer = "";
   private tools: MCPTool[] = [];
   readonly serverName: string;
+  // Uppercase env-key names whose value came from a vault ${secret:...} — exempt
+  // from the credential strip in buildMcpChildEnv (the legitimate injection path).
+  private readonly exemptEnvKeys: ReadonlySet<string>;
 
-  constructor(serverName: string, private config: MCPServerConfig) {
+  constructor(serverName: string, private config: MCPServerConfig, secretEnvKeys: readonly string[] = []) {
     this.serverName = serverName;
+    this.exemptEnvKeys = new Set(secretEnvKeys.map(k => k.toUpperCase()));
   }
 
   async connect(): Promise<void> {
@@ -128,7 +141,7 @@ export class MCPConnection {
       logger.info(`MCP server "${this.serverName}" trusted on first connect (sha256: ${verdict.sha256.slice(0, 12)}...).`);
     }
 
-    const env = buildMcpChildEnv(this.config.env);
+    const env = buildMcpChildEnv(this.config.env, this.exemptEnvKeys);
 
     // Spawn the resolved absolute path the integrity check hashed, NOT the
     // bare command name. If we re-pass `this.config.command`, Node (and on

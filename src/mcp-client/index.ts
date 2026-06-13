@@ -116,7 +116,7 @@ export class MCPManager {
       }
 
       try {
-        const conn = new MCPConnection(name, expanded.config);
+        const conn = new MCPConnection(name, expanded.config, expanded.secretEnvKeys);
         await conn.connect();
         this.connections.set(name, conn);
       } catch (e) {
@@ -248,7 +248,7 @@ export class MCPManager {
     if (REDUNDANT_MCP_SERVERS.has(name)) return { ok: false, error: `"${name}" is skipped — its tools duplicate native read/write/edit` };
     const expanded = expandPlaceholdersDeep(raw);
     if (expanded.missing.length > 0) return { ok: false, missingSecrets: expanded.missing, error: `Missing secret(s): ${expanded.missing.join(", ")}` };
-    const probe = new MCPConnection(name, expanded.config);
+    const probe = new MCPConnection(name, expanded.config, expanded.secretEnvKeys);
     try {
       await probe.connect();
       const tools = probe.getTools().map(t => t.name);

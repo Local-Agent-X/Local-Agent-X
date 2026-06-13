@@ -52,6 +52,8 @@ This is the fix for the cross-machine-sync problem: a single `mcp.json` lives in
 
 Add the actual token to the vault via the secrets UI or the `secret_save` tool. The MCP manager reads it from the vault at spawn time and injects it into the server process's env. The plaintext value never enters the agent's prompt history and never lands in the synced config.
 
+This is **enforced, not just advised**. The child-env builder strips credential-shaped env keys (anything matching `*_TOKEN`, `*_SECRET`, `*_KEY`, `*_PASSWORD`, …) by default, so a raw token you inline in `env` is dropped before the server ever starts — the server then fails to authenticate, which is the signal to switch to `${secret:...}`. A value that resolved from a `${secret:NAME}` placeholder is exempt from that strip (it's the legitimate, vault-sourced injection channel), so only the vault path actually reaches the server. Credentials from the host's own environment (your `ANTHROPIC_API_KEY`, etc.) are never passed to MCP children regardless.
+
 ## Missing-secret behavior — skip-with-info, not warn
 
 A server whose config references a `${secret:NAME}` that isn't in the vault is **skipped** at startup with an INFO log:

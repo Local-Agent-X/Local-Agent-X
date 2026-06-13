@@ -94,6 +94,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Protocols — one collapsed tool (action param), see src/protocols/protocol-tool.ts
   protocol: ["main-chat"],
 
+  // MCP administration — agent sets up external MCP servers on request.
+  mcp_add_server: ["main-chat"],
+
   // Mission scheduling: deferred — the keyword router's mission_ prefix rule
   // (social keywords) resurfaces the family; tool_search covers the rest.
 

@@ -12,6 +12,7 @@ import { createCronTools } from "../cron/cron-service.js";
 import { createHandlerTools } from "../agency/handler.js";
 import { createAgentTools } from "../agents/tools.js";
 import { createProjectTools } from "./project-tools.js";
+import { createMcpAdminTools } from "./mcp-admin-tools.js";
 import { createMemoryTools } from "../memory/index.js";
 import { createArikernelBridgeTools } from "./arikernel-bridge.js";
 
@@ -128,6 +129,10 @@ export const plugins: ToolPlugin[] = [
   {
     id: "projects",
     register() { return createProjectTools(); },
+  },
+  {
+    id: "mcpAdmin",
+    register() { return createMcpAdminTools(); },
   },
   {
     id: "handlers",

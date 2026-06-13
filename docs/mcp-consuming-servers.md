@@ -8,6 +8,8 @@ This doc covers the *consumption* side — LAX as MCP client. For exposing LAX's
 
 The easiest path is the UI: **Settings → Tools & Integrations → MCP Servers**. Quick-add a recommended server (GitHub, Postgres, Slack, Puppeteer), set any required secret inline, and enable/disable/test/remove servers without touching a file. Changes apply to the agent's tool surface live — no restart.
 
+You can also just **ask the agent** — "set up the GitHub MCP" — and it calls the `mcp_add_server` tool, prompting you for any required secret via `request_secret` before connecting. (Spawning a server is `shell`-risk, so it follows your autonomy profile: Safe asks first, Normal and looser run it like any `bash` call.)
+
 To edit by hand instead, open `~/.lax/mcp.json`. Each entry is one server:
 
 ```json

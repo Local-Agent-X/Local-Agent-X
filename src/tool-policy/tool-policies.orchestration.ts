@@ -62,6 +62,14 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyEntry> = {
   playbook_list:            { kernel: "internal", risk: "safe" },
   playbook_get:             { kernel: "internal", risk: "safe" },
 
+  // ── MCP administration ──
+  // Adds + connects an external MCP server: writes ~/.lax/mcp.json and spawns
+  // the integrity-gated subprocess. Risk "shell" (subprocess spawn) so the
+  // autonomy profile gates it like bash — Safe asks, Normal+ runs. kernel
+  // "internal": LAX-managed spawn (the connection layer's integrity check +
+  // ${...}-only placeholder expansion guard the command), like self_edit.
+  mcp_add_server: { kernel: "internal", risk: "shell", rules: [{ id: "allow-mcp-add-server", decision: "allow", reason: "Add + connect an external MCP server", priority: 50 }] },
+
   // ── Protocols ──
   // One collapsed tool (action param) — see src/protocols/protocol-tool.ts.
   // Risk is the worst non-destructive tier across actions; the destructive

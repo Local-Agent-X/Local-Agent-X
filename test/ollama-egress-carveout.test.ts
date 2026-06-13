@@ -46,9 +46,21 @@ describe("evaluateWebFetch — ollama carve-out keeps SSRF protections intact", 
     expect(ev("http://169.254.169.254/latest/meta-data").allowed).toBe(false); // AWS metadata
     expect(ev("http://10.0.0.1/admin").allowed).toBe(false);          // private RFC1918
     expect(ev("http://192.168.1.1").allowed).toBe(false);
-    expect(ev("http://0x7f000001:11434").allowed).toBe(false);        // hex-encoded loopback
-    expect(ev("http://2130706433:11434").allowed).toBe(false);        // decimal-encoded loopback
     expect(ev("http://metadata.google.internal").allowed).toBe(false); // GCP metadata
+  });
+
+  // The critical encoding check: an obfuscated IP normalizes to its REAL host
+  // before the carve-out/host checks run. So the ollama port cannot be a tunnel
+  // to a non-loopback target — only to the actual loopback ollama service.
+  it("encoded IPs resolve to their true host: ollama-port to METADATA stays blocked", () => {
+    // hex/decimal-encoded loopback IS the real ollama endpoint → allowed (same service).
+    expect(ev("http://0x7f000001:11434").allowed).toBe(true);   // 0x7f000001 = 127.0.0.1
+    expect(ev("http://2130706433:11434").allowed).toBe(true);   // 2130706433 = 127.0.0.1
+    // encoded loopback on a NON-ollama port → blocked.
+    expect(ev("http://0x7f000001:6379").allowed).toBe(false);
+    // encoded cloud-metadata, even ON the ollama port → blocked (host is 169.254.169.254).
+    expect(ev("http://0xa9fea9fe:11434").allowed).toBe(false);  // hex 169.254.169.254
+    expect(ev("http://2852039166:11434").allowed).toBe(false);  // decimal 169.254.169.254
   });
 
   it("a 302 redirect from the ollama port to cloud metadata stays BLOCKED", () => {

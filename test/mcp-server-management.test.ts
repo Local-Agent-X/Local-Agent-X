@@ -31,16 +31,18 @@ describe("MCPManager.getServers — full config view for the settings UI", () =>
   it("lists every configured server from the default template", async () => {
     const mgr = await freshManager();
     const names = mgr.getServers().map(s => s.name).sort();
-    expect(names).toEqual(["filesystem", "github", "postgres"]);
+    expect(names).toEqual(["github", "postgres"]);
   });
 
-  it("flags the redundant filesystem server and reports disconnected state", async () => {
+  it("flags a manually-added filesystem server as redundant", async () => {
+    // filesystem is no longer seeded in the default template, but the skip
+    // guard still applies if a user adds one by hand.
     const mgr = await freshManager();
+    mgr.addServer("filesystem", { command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem"], disabled: true });
     const fs = mgr.getServers().find(s => s.name === "filesystem")!;
     expect(fs.redundant).toBe(true);
     expect(fs.connected).toBe(false);
     expect(fs.toolCount).toBe(0);
-    expect(fs.disabled).toBe(true);
   });
 
   it("surfaces unresolved ${secret:...} references in missingSecrets", async () => {

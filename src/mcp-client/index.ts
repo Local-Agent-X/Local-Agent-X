@@ -301,13 +301,13 @@ export class MCPManager {
     // make sure the referenced secret exists in the vault to enable.
     // Placeholders `${HOME}` and `${secret:NAME}` resolve at load time so
     // a single config syncs across machines without per-machine forks.
+    //
+    // No `filesystem` entry: it's in REDUNDANT_MCP_SERVERS (never spawned —
+    // native read/write/edit cover it), so seeding it would only show a
+    // permanently-inert server in the settings UI. The skip guard still
+    // catches it if a user adds one manually.
     const defaultConfig: MCPConfig = {
       servers: {
-        "filesystem": {
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-filesystem", "${HOME}/Documents"],
-          disabled: true,
-        },
         "github": {
           command: "npx",
           args: ["-y", "@modelcontextprotocol/server-github"],

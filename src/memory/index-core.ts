@@ -18,6 +18,7 @@ import type { SearchOptions } from "./index-search.js";
 import { startWatcher, type WatcherHandle } from "./index-watcher.js";
 import { getStats, topEntities } from "./index-stats.js";
 import * as Atlas from "./index-atlas.js";
+import * as ImportRecall from "./import-recall.js";
 import { getLayout } from "./atlas-layout.js";
 import { MemoryFactsBase } from "./index-core/facts-base.js";
 
@@ -285,6 +286,17 @@ export class MemoryIndex extends MemoryFactsBase {
 
   atlasChunk(id: number) {
     return Atlas.getChunk(this.db, id);
+  }
+
+  // Date-scoped recall of imported conversation history (chunks tagged
+  // metadata.source_type='import'). recallByTime/daily-logs don't cover imports,
+  // so memory_recall's date branch pulls these too — see import-recall.ts.
+  recallImportsByDate(since: Date, until?: Date) {
+    return ImportRecall.recallImportsByDate(this.db, since, until);
+  }
+
+  listNearbyImportDates(target: Date, windowDays = 12): string[] {
+    return ImportRecall.listNearbyImportDates(this.db, target, windowDays);
   }
 
   // ── Search ──

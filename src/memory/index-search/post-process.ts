@@ -19,9 +19,18 @@ export function postProcess(
   // caller hasn't explicitly opted into cross-session, drop chunks tagged
   // with a different session_id. Profile-level chunks (no session_id) are
   // always allowed through — they're the stable per-user knowledge.
+  //
+  // Imports are profile-level too: history the user explicitly brought in
+  // (ChatGPT/Claude) to be remembered. They're stored with source='session'
+  // (same column as native sessions) but metadata.source_type='import' — and
+  // they carry the ORIGINAL conversation's session_id, never the current one.
+  // Without this carve-out the default gate silently drops 100% of imported
+  // history. Key on source_type so imports pass while native foreign sessions
+  // (source_type='agent-x-session') are still correctly dropped.
   if (options?.sessionId && !options?.crossSession) {
     const sid = options.sessionId;
     results = results.filter((r) => {
+      if (r.metadata?.source_type?.includes("import")) return true;
       const chunkSid = r.metadata?.session_id;
       return !chunkSid || chunkSid === sid;
     });

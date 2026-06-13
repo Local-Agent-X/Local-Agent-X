@@ -14,6 +14,8 @@ function stubMemory(memoryDir: string) {
     recallByEntity: () => [],
     recallByKind: () => [],
     recallByTime: () => [],
+    recallImportsByDate: () => [],
+    listNearbyImportDates: () => [],
     reinforceFacts: () => {},
   } as never;
 }
@@ -70,8 +72,10 @@ describe("memory_recall date-window precedence", () => {
       since: "2026-05-09",
       until: "2026-05-10",
     });
-    expect(res.content).toContain("No activity was logged for 2026-05-09");
+    expect(res.content).toContain("No record found for 2026-05-09");
     expect(res.content).toContain("2026-05-07");
     expect(res.content).toMatch(/do NOT invent/i);
+    // The actual bug: a single empty date must NOT license "predates history".
+    expect(res.content).toMatch(/predates/i);
   });
 });

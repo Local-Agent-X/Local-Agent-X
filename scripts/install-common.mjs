@@ -826,10 +826,27 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   // an unlaunchable install. (Live failure 2026-06-13.)
   const electronBin = join("desktop", "node_modules", "electron", "dist", "electron.exe");
   if (!existsSync(electronBin)) {
-    warn("Electron runtime missing after npm install — fetching it directly…");
-    const ei = await runStreaming("node", [join("node_modules", "electron", "install.js")], { cwd: "desktop" });
-    if (ei.status !== 0 || !existsSync(electronBin)) {
-      fail("Electron runtime failed to download — a network proxy or antivirus likely blocked it. Re-run the installer on a clean connection.");
+    const fetchElectron = (mirror, label) => {
+      log(`Fetching Electron runtime${label}…`);
+      const env = mirror ? { ...process.env, ELECTRON_MIRROR: mirror } : process.env;
+      return runStreaming("node", [join("node_modules", "electron", "install.js")], { cwd: "desktop", env });
+    };
+    warn("Electron runtime missing after npm install — its ~100 MB binary download was blocked or interrupted.");
+    // Attempt 1: retry the default source (GitHub releases). Catches a flaky
+    // connection / transient 5xx that the npm postinstall hit once.
+    let got = await fetchElectron(null, " (GitHub)");
+    // Attempt 2: if GitHub's release CDN is region/ISP/proxy-blocked rather than
+    // flaky, pull the IDENTICAL binary from the npmmirror CDN — a different host
+    // reachable where GitHub isn't. Logged, never silent: the install log shows
+    // the runtime came from the mirror, and we still hard-fail below if both
+    // sources are unreachable. (Validated against a real blocked machine
+    // 2026-06-13: GitHub failed, npmmirror succeeded.)
+    if (got.status !== 0 || !existsSync(electronBin)) {
+      warn("Default Electron download failed — retrying via the npmmirror CDN…");
+      got = await fetchElectron("https://npmmirror.com/mirrors/electron/", " (npmmirror)");
+    }
+    if (got.status !== 0 || !existsSync(electronBin)) {
+      fail("Electron runtime failed to download from both GitHub and the npmmirror CDN. An antivirus or firewall is most likely quarantining the ~100 MB electron.exe — allowlist the install folder (or pause real-time protection) and re-run the installer.");
     }
     ok("Electron runtime fetched");
   }

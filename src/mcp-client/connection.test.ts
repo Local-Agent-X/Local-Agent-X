@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildMcpChildEnv, __resetMcpEnvLogState, MCPConnection } from "./connection.js";
+import { buildMcpChildEnv, __resetMcpEnvLogState, MCPConnection, cmdQuote } from "./connection.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", async (importOriginal) => {
@@ -186,6 +186,21 @@ describe("buildMcpChildEnv", () => {
   });
 });
 
+describe("cmdQuote — Windows shell arg quoting", () => {
+  it("wraps a spaced path so cmd.exe treats it as one token", () => {
+    expect(cmdQuote("C:\\Program Files\\nodejs\\npx.CMD")).toBe('"C:\\Program Files\\nodejs\\npx.CMD"');
+  });
+
+  it("doubles embedded quotes so a value can't break out", () => {
+    expect(cmdQuote('a"b')).toBe('"a""b"');
+  });
+
+  it("leaves shell metacharacters inside the quotes (literal, not interpreted)", () => {
+    // & | < > ^ are literal inside cmd double quotes — quoting is enough.
+    expect(cmdQuote("postgres://u:p@ss&x@h/db")).toBe('"postgres://u:p@ss&x@h/db"');
+  });
+});
+
 // ─── Connect-layer integrity wiring ──────────────────────────────────────
 //
 // integrity.test.ts covers verifyOrTrust() in isolation. This block covers
@@ -252,7 +267,11 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
 
     expect(spawnMock).toHaveBeenCalledTimes(1);
     const firstArg = spawnMock.mock.calls[0][0];
-    expect(firstArg).toBe(binPath);
+    // Windows quotes the command for the cmd.exe shell (spaces in the path);
+    // POSIX passes it raw. Either way it must be the integrity-resolved path,
+    // never the bare name.
+    const expectedCmd = process.platform === "win32" ? cmdQuote(binPath) : binPath;
+    expect(firstArg).toBe(expectedCmd);
     expect(firstArg).not.toBe(bareName);
   });
 });

@@ -113,6 +113,16 @@ export function __resetMcpEnvLogState(): void {
   allowlistLogged = false;
 }
 
+/**
+ * Quote a single token for a Windows `cmd.exe` command line (used when spawning
+ * a .cmd shim via shell:true). Wraps in double quotes — which neutralizes
+ * spaces and the `& | < > ^ ( )` metacharacters — and doubles any embedded
+ * quote (cmd's `""` = literal `"`), so a value can't break out of its quoting.
+ */
+export function cmdQuote(token: string): string {
+  return `"${token.replace(/"/g, '""')}"`;
+}
+
 export class MCPConnection {
   private proc: ChildProcess | null = null;
   private messageId = 0;
@@ -150,10 +160,23 @@ export class MCPConnection {
     // evil-twin binaries appearing between hash and spawn). The trust store
     // advertises "this binary matches the hash you trusted" — that property
     // only holds if we execute the exact resolved path.
-    this.proc = spawn(verdict.resolvedPath, this.config.args || [], {
+    //
+    // Windows: the resolved binary is usually a .cmd shim (npx.cmd) that can
+    // only run via the shell, and its path routinely contains spaces
+    // (C:\Program Files\nodejs\...). Under shell:true Node does NOT quote the
+    // command or args, so cmd.exe splits the path on the space and the spawn
+    // dies ("'C:\Program' is not recognized" → exit 1). Quote the command path
+    // AND each arg for cmd.exe: this fixes the spaces and stops a secret-bearing
+    // arg (e.g. a postgres URL) from being reinterpreted by the shell (inside
+    // double quotes cmd treats & | < > ^ ( ) as literal). POSIX uses no shell,
+    // so the raw argv is correct as-is.
+    const isWin = process.platform === "win32";
+    const command = isWin ? cmdQuote(verdict.resolvedPath) : verdict.resolvedPath;
+    const spawnArgs = isWin ? (this.config.args || []).map(cmdQuote) : (this.config.args || []);
+    this.proc = spawn(command, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       env,
-      shell: process.platform === "win32",
+      shell: isWin,
       windowsHide: true,
     });
 

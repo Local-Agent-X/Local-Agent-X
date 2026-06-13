@@ -78,5 +78,17 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
         } catch (e) { logger.warn("[memory-bg] Summary reindex:", (e as Error).message); }
       }
     } catch (e) { logger.warn("[memory-bg] Summarization:", (e as Error).message); }
+    try {
+      // Warm the atlas layout so the Memory tab's brain graph renders instantly
+      // on first view instead of making the visitor wait 3-20s for the JL→PCA→
+      // k-means compute. This runs at boot+30s (first scheduler tick) and after
+      // each 6h consolidation — the consolidation above can change chunks, which
+      // changes the atlas signature, so we recompute here off the request path.
+      // No-op cost when the signature is unchanged: atlasLayout() returns the
+      // already-cached layout without recomputing.
+      const t = Date.now();
+      const layout = await memoryIndex.atlasLayout();
+      if (layout) logger.info(`[memory-bg] Atlas warm: ${layout.ids.length} pts, ${layout.clusters.length} clusters (${Date.now() - t}ms)`);
+    } catch (e) { logger.warn("[memory-bg] Atlas warm:", (e as Error).message); }
   };
 }

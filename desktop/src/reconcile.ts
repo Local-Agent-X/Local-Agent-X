@@ -17,13 +17,12 @@
 // we're trying to prevent.
 
 import { ChildProcess, execSync, spawn } from "child_process";
-import { createHash } from "crypto";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, cpSync, rmSync } from "fs";
-import { readFile } from "fs/promises";
 import { join, relative } from "path";
 import { homedir } from "os";
 import { Script } from "vm";
 import { serverDistIsFresh } from "./dist-freshness";
+import { EMPTY_SHA256, STATE_PATH, sha256File, sha256SrcTree } from "./reconcile-hash";
 
 // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
 // PATH that excludes Homebrew, nvm, and asdf. Without this augment, our
@@ -41,8 +40,6 @@ function buildAugmentedPath(): string {
   const existing = (process.env.PATH || "").split(":");
   return [...augments, ...existing].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
 }
-
-const STATE_PATH = join(homedir(), ".lax", "reconcile-state.json");
 
 interface ReconcileState {
   version: 1;
@@ -78,45 +75,6 @@ export interface ReconcileOpts {
   /** Called with short status strings ("Updating components…",
    *  "Building app…") so the caller can update the splash. */
   onStatus?: (text: string) => void;
-}
-
-function sha256File(path: string): string {
-  if (!existsSync(path)) return "";
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
-}
-
-async function sha256SrcTree(dirPath: string, projectRoot: string): Promise<string> {
-  const hash = createHash("sha256");
-  const files: string[] = [];
-  const walk = (p: string): void => {
-    if (!existsSync(p)) return;
-    for (const name of readdirSync(p)) {
-      const full = join(p, name);
-      const st = statSync(full);
-      if (st.isDirectory()) {
-        if (name === "node_modules" || name === "dist") continue;
-        walk(full);
-      } else if (st.isFile() && name.endsWith(".ts")) {
-        files.push(full);
-      }
-    }
-  };
-  walk(dirPath);
-  files.sort();
-  for (const f of files) {
-    hash.update(relative(projectRoot, f).replace(/\\/g, "/"));
-    hash.update("\0");
-    // await an ASYNC read so this yields the event loop between files. Hashing
-    // the whole src tree (~1200 .ts files) with readFileSync blocked the main
-    // thread for tens of seconds on a cold disk (Defender scanning each read),
-    // and because runReconcile runs before the first await in the boot path,
-    // the splash window's ready-to-show couldn't fire — so the app showed
-    // NOTHING and never auto-displayed (only a manual tray click, which calls
-    // show() directly, surfaced it). Same hash bytes, just non-blocking.
-    hash.update(await readFile(f));
-    hash.update("\0");
-  }
-  return hash.digest("hex");
 }
 
 function loadState(): ReconcileState | null {
@@ -240,12 +198,6 @@ function firstUnparseableJs(distDir: string): { file: string; error: string } | 
   }
   return null;
 }
-
-// sha256 of an empty buffer — sha256SrcTree returns this when the walk
-// finds zero .ts files (typically: projectRoot points at a directory that
-// doesn't contain desktop/src). Hardcoded so the comparison is obvious at
-// the call site below.
-const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult> {
   const { projectRoot, onStatus } = opts;

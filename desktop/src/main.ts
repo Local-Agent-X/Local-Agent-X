@@ -8,7 +8,6 @@
  */
 
 import { app, globalShortcut } from "electron";
-import { join } from "path";
 
 import { loadLAXConfig, reloadLAXConfig, getLAXConfig, ICON_PATH, PROJECT_ROOT, PROJECT_ROOT_ERROR, getProjectRoot } from "./config";
 import { resolveAndPersistProjectRoot } from "./project-root-resolver";
@@ -32,6 +31,7 @@ import { createTray, destroyTray } from "./tray";
 import { registerAutostart } from "./autostart";
 import { runReconcile, killReconcileStepsSync } from "./reconcile";
 import { shutdownNativeSpeech } from "./native-speech";
+import { setupSessionPermissions } from "./session-permissions";
 import {
   setSplashStatus,
   setSplashHint,
@@ -76,47 +76,7 @@ app.on("ready", async () => {
 
   setupApplicationMenu(getMainWindow);
 
-  // Grant only the permissions the app actually needs — not a blanket allow.
-  const { session } = require("electron");
-  const ALLOWED_PERMISSIONS = new Set([
-    "media",
-    "mediaKeySystem",
-    "notifications",
-    "clipboard-read",
-    "clipboard-sanitized-write",
-  ]);
-  const APP_ORIGIN = `http://127.0.0.1:${getLAXConfig().port}`;
-
-  // Auto-open downloaded document files instead of just saving them.
-  session.defaultSession.on("will-download", (_event: unknown, item: Electron.DownloadItem) => {
-    const filename = item.getFilename();
-    const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
-    if (!DOC_EXTENSIONS.test(filename)) return;
-    const savePath = join(require("os").tmpdir(), filename);
-    item.setSavePath(savePath);
-    item.once("done", (_e: unknown, state: string) => {
-      if (state === "completed") {
-        console.log(`[desktop] Opening downloaded file: ${savePath}`);
-        require("electron").shell.openPath(savePath);
-      }
-    });
-  });
-
-  session.defaultSession.setPermissionRequestHandler(
-    (webContents: Electron.WebContents, permission: string, callback: (granted: boolean) => void) => {
-      const requestOrigin = webContents?.getURL?.() || "";
-      if (requestOrigin.startsWith(APP_ORIGIN) && ALLOWED_PERMISSIONS.has(permission)) {
-        callback(true);
-      } else {
-        console.warn(`[desktop] Denied permission "${permission}" for ${requestOrigin}`);
-        callback(false);
-      }
-    },
-  );
-  session.defaultSession.setPermissionCheckHandler(
-    (_wc: unknown, permission: string, requestingOrigin: string) =>
-      requestingOrigin.startsWith(APP_ORIGIN) && ALLOWED_PERMISSIONS.has(permission),
-  );
+  setupSessionPermissions();
 
   // Single-instance lock with stuck-holder displacement. The baseline
   // Electron pattern (lock-fails → app.quit) assumes the existing holder

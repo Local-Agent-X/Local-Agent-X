@@ -2,7 +2,9 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace LocalAgentX.Installer.Services;
 
@@ -23,6 +25,10 @@ public class NodeBootstrap
     // install-common.mjs later — and so a future floor raise auto-upgrades
     // existing users the next time they run an installer.
     private const int NODE_MAJOR_MIN = 22;
+
+    // Direct-MSI fallback version when winget can't deliver Node. Keep in sync
+    // with the pinned URL in install.ps1.
+    private const string NODE_MSI_VERSION = "24.16.0";
 
     public bool NodeAvailable()
     {
@@ -58,22 +64,26 @@ public class NodeBootstrap
         OnStatus?.Invoke("Installing Node.js 24 (LTS)…");
         if (OperatingSystem.IsWindows())
         {
-            var ok = RunStreaming("winget", new[] {
+            // winget's exit code is unreliable — it returns benign non-zero
+            // codes (e.g. 0x8A150011 "no applicable upgrade found") and can
+            // report failure even when the package installed. Don't gate on it.
+            // Run winget, splice the install dir into THIS process's PATH (it
+            // won't auto-refresh), then verify the actual goal: a node >= floor
+            // on PATH. Only if that's still missing do we fall back to the
+            // official MSI (parity with install.ps1) and re-verify. The final
+            // NodeAvailable() check is the single source of truth.
+            RunStreaming("winget", new[] {
                 "install", "OpenJS.NodeJS.LTS",
                 "--accept-package-agreements", "--accept-source-agreements",
                 "--silent", "--disable-interactivity",
             });
-            if (!ok) return false;
-            // winget installs to Program Files\nodejs but our PATH won't auto-
-            // refresh inside this process. Splice it in for the upcoming
-            // spawn of node install-common.mjs --ipc.
-            var nodeDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs");
-            if (Directory.Exists(nodeDir))
-            {
-                var path = Environment.GetEnvironmentVariable("PATH") ?? "";
-                Environment.SetEnvironmentVariable("PATH", $"{nodeDir};{path}");
-            }
-            return true;
+            SpliceNodeDir();
+            if (NodeAvailable()) return true;
+
+            OnStatus?.Invoke("winget didn't deliver Node — downloading the official installer…");
+            InstallNodeFromMsi();
+            SpliceNodeDir();
+            return NodeAvailable();
         }
         if (OperatingSystem.IsMacOS())
         {
@@ -106,6 +116,44 @@ public class NodeBootstrap
         return RunStreaming("sudo", new[] { "apt-get", "install", "-y", "nodejs" });
     }
 
+    // winget/MSI both install to Program Files\nodejs; splice it into this
+    // process's PATH so the upcoming `node -v` verify and the install-common.mjs
+    // spawn can find it without a relaunch.
+    static void SpliceNodeDir()
+    {
+        SplicePath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs"));
+    }
+
+    // Fallback when winget can't deliver Node: download the official Windows
+    // MSI and install it silently (msiexec /qn). Best-effort — the caller
+    // verifies success via NodeAvailable() afterward, so msiexec's exit code
+    // (0 success, 3010 success-needs-reboot, etc.) doesn't need interpreting.
+    bool InstallNodeFromMsi()
+    {
+        var msi = Path.Combine(Path.GetTempPath(), $"node-v{NODE_MSI_VERSION}-x64.msi");
+        try
+        {
+            var url = $"https://nodejs.org/dist/v{NODE_MSI_VERSION}/node-v{NODE_MSI_VERSION}-x64.msi";
+            OnLogLine?.Invoke($"Downloading {url}");
+            using (var http = new HttpClient())
+            {
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("LocalAgentXInstaller/1.0");
+                File.WriteAllBytes(msi, http.GetByteArrayAsync(url).GetAwaiter().GetResult());
+            }
+            OnStatus?.Invoke("Running the Node.js installer…");
+            return RunStreaming("msiexec", new[] { "/i", msi, "/qn", "/norestart" });
+        }
+        catch (Exception ex)
+        {
+            OnLogLine?.Invoke($"[error] Node MSI fallback failed: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            try { File.Delete(msi); } catch { }
+        }
+    }
+
     // Prepend a dir to this process's PATH if it exists and isn't already
     // there. Child processes spawned afterward inherit the updated PATH.
     static void SplicePath(string dir)
@@ -136,6 +184,17 @@ public class NodeBootstrap
         catch { return false; }
     }
 
+    // winget/msiexec animate progress by redrawing one line with bare carriage
+    // returns (\r, no newline). When that whole burst arrives as a single
+    // OutputDataReceived "line", keep only the final frame (text after the last
+    // \r) so the log shows the last rendered state — not dozens of concatenated
+    // redraw frames piled into one wall.
+    static string LastFrame(string s)
+    {
+        var i = s.LastIndexOf('\r');
+        return i >= 0 ? s.Substring(i + 1) : s;
+    }
+
     bool RunStreaming(string cmd, string[] args)
     {
         var psi = new ProcessStartInfo
@@ -143,6 +202,14 @@ public class NodeBootstrap
             FileName = cmd,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // winget emits its progress bar with UTF-8 block glyphs (█ ▒ ░).
+            // Without forcing UTF-8 here, .NET decodes the stream with the
+            // console's ANSI codepage (CP1252 on Windows), turning every glyph
+            // into mojibake (█ → "â–ˆ") — which is what buried the real Node
+            // install error in an unreadable wall of symbols. Matches the
+            // encoding InstallProcess.cs already sets on the IPC stream.
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
@@ -150,8 +217,8 @@ public class NodeBootstrap
         try
         {
             using var p = Process.Start(psi)!;
-            p.OutputDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) OnLogLine?.Invoke(e.Data!); };
-            p.ErrorDataReceived  += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) OnLogLine?.Invoke(e.Data!); };
+            p.OutputDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) OnLogLine?.Invoke(LastFrame(e.Data!)); };
+            p.ErrorDataReceived  += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) OnLogLine?.Invoke(LastFrame(e.Data!)); };
             p.BeginOutputReadLine();
             p.BeginErrorReadLine();
             p.WaitForExit();

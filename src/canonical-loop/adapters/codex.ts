@@ -24,6 +24,21 @@ export const CODEX_ADAPTER_NAME = "codex";
 export const CODEX_ADAPTER_VERSION = "1.0.0";
 export const CODEX_PROVIDER_STATE_MAX_BYTES = 256 * 1024;
 
+// How many guided retries to attempt after a truncated/empty turn before giving
+// up. A model may need more than one nudge to switch from a one-shot oversized
+// call to incremental calls; capped so a model that can't adapt still
+// terminates (open-steps then surfaces the partial) instead of looping.
+const MAX_TRUNCATION_RETRIES = 2;
+
+// Artifact-agnostic recovery guidance fed to the model after its tool call was
+// truncated at the subscription endpoint's output cap. The earlier version named
+// `write`/`edit` specifically, which is useless for a binary artifact like a
+// .pptx — the model ignored it and re-emitted the same oversized presentation
+// call. This names the right incremental path per artifact type, including
+// add_slide for presentations.
+const TRUNCATION_RECOVERY_GUIDANCE =
+  "Your previous response was cut off before it finished — that single tool call's output exceeded this provider's size limit. Do not repeat it as one large call. Build the artifact incrementally with several smaller calls: create it first with minimal content, then add each part in its own follow-up call. For a PowerPoint, use the presentation tool's `add_slide` action one slide at a time instead of putting every slide in a single `create`; for a document or spreadsheet, add sections or rows in separate edits; for a text file, `write` a small version then extend it with `edit`. Keep every individual tool call's payload modest (a few KB).";
+
 export interface CodexAdapterOptions {
   transport?: CodexTransport;
   model?: string;
@@ -156,42 +171,33 @@ export class CodexAdapter implements Adapter {
     this.inflight = consume();
     try { await this.inflight; } finally { this.inflight = null; }
 
-    // Empty-response retry. Codex/ChatGPT subscription occasionally returns
-    // zero text + zero tool calls + zero error after a 1-2 minute wait —
-    // typically a dropped stream from the subscription endpoint or a
-    // truncated response that arrived with no usable content. Without a
-    // retry the user sees a 2-minute blank turn followed by a no-progress
-    // nudge. One in-place retry recovers cleanly in the common case.
-    // Fires ONLY on the silent-fail signature; healthy turns are untouched.
-    // Mirror of the post-stream retry in openai-compat.ts (added there for
-    // qwen2:7b's silent-fail-on-tools pattern). Live failure 2026-05-14:
-    // chat-mp5psjdd-ersqf on gpt-5.5 — 120s turn, 0 output, 0 tools, no error.
-    const noOutput =
+    // Truncation recovery. The Codex/ChatGPT subscription endpoint caps a single
+    // response's output and rejects max_output_tokens, so when the model tries
+    // to emit a whole artifact in one oversized tool call it hits the cap, the
+    // stream closes mid-emit, and the partial (invalid-JSON) call is dropped
+    // (see flushOnAbnormalClose) — leaving a zero-text, zero-tool, zero-error
+    // turn. A bare re-run repeats the identical oversized call, so we feed the
+    // model artifact-agnostic guidance to build incrementally and retry a
+    // bounded number of times. Fires ONLY on the silent-fail signature; healthy
+    // turns are untouched. Mirror of the post-stream retry in openai-compat.ts.
+    // Live failure 2026-05-14: chat-mp5psjdd-ersqf on gpt-5.5 — 120s turn, 0
+    // output, 0 tools, no error. Live 2026-06-13: 20-slide deck truncated twice
+    // because the old single retry steered to write/edit (useless for .pptx).
+    const isTruncatedEmpty = () =>
       !this.aborted &&
       !interruptedByInject &&
       !firstError &&
       assembledText.length === 0 &&
       pendingToolCalls.length === 0;
-    if (noOutput) {
-      logger.info(`${req.model} returned empty turn — retrying once`);
-      // An empty turn on the subscription endpoint is almost always a truncated
-      // tool call: the model tried to emit a whole file in one oversized
-      // write/edit, hit the endpoint's unraisable output cap, and the partial
-      // call was dropped (see flushOnAbnormalClose). A bare retry re-runs the
-      // identical request, so the model repeats the same oversized call and
-      // burns turns. Guide the retry to write incrementally so it adapts.
-      req.messages = [
-        ...req.messages,
-        {
-          role: "user",
-          content:
-            "Your previous response was cut off before it finished. If you were creating or editing a large file, the output exceeded the size limit — build it up in smaller steps: create the file with `write`, then add or change sections with separate `edit` calls. Keep each individual tool call's content modest.",
-        },
-      ];
-      this.aborter = new AbortController();
-      req.signal = this.aborter.signal;
-      this.inflight = consume();
-      try { await this.inflight; } finally { this.inflight = null; }
+    if (isTruncatedEmpty()) {
+      req.messages = [...req.messages, { role: "user", content: TRUNCATION_RECOVERY_GUIDANCE }];
+      for (let attempt = 1; attempt <= MAX_TRUNCATION_RETRIES && isTruncatedEmpty(); attempt++) {
+        logger.info(`${req.model} returned a truncated/empty turn — retry ${attempt}/${MAX_TRUNCATION_RETRIES} with incremental-build guidance`);
+        this.aborter = new AbortController();
+        req.signal = this.aborter.signal;
+        this.inflight = consume();
+        try { await this.inflight; } finally { this.inflight = null; }
+      }
     }
 
     // Tool-call-in-text fallback. Mirror of the rescue path in

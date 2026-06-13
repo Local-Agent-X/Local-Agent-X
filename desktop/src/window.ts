@@ -82,12 +82,18 @@ export function createWindow(): void {
 
   navigatedToApp = false;
   bootStartedAt = Date.now();
-  const HEALTH_POLL_DEADLINE_MS = 120_000;
   const HEALTH_POLL_DELAY_MS = 500;
-  const navStartedAt = bootStartedAt;
 
+  // Poll until the server answers, however long that takes. Reconcile runs
+  // BEFORE startServer (main.ts), so a slow/large build legitimately delays
+  // the server by minutes; the previous fixed 120s deadline abandoned the
+  // poll and froze the splash forever when the server came up after it. The
+  // build is now bounded (reconcile.ts runStep timeout) so the server always
+  // starts eventually, and main.ts arms a recovery watchdog so a genuinely
+  // dead boot still surfaces a Repair button — this just keeps watching so a
+  // late-but-healthy server always loads.
   const pollAndNavigate = async (): Promise<void> => {
-    while (!navigatedToApp && Date.now() - navStartedAt < HEALTH_POLL_DEADLINE_MS) {
+    while (!navigatedToApp) {
       if (mainWindow == null || mainWindow.isDestroyed()) return;
       if (await isServerRunning()) {
         navigatedToApp = true;
@@ -95,9 +101,6 @@ export function createWindow(): void {
         return;
       }
       await new Promise((r) => setTimeout(r, HEALTH_POLL_DELAY_MS));
-    }
-    if (!navigatedToApp) {
-      console.error(`[desktop] Server didn't respond within ${HEALTH_POLL_DEADLINE_MS}ms — splash stays.`);
     }
   };
   pollAndNavigate();

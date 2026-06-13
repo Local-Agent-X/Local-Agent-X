@@ -151,7 +151,7 @@ export function killReconcileStepsSync(): void {
   liveSteps.clear();
 }
 
-function runStep(cmd: string, args: string[], cwd: string): Promise<void> {
+function runStep(cmd: string, args: string[], cwd: string, timeoutMs?: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, args, {
       cwd,
@@ -164,6 +164,31 @@ function runStep(cmd: string, args: string[], cwd: string): Promise<void> {
     });
     liveSteps.add(proc);
     let stderrTail = "";
+
+    // Hard timeout. proc.on("exit") only fires on a REAL exit; a deadlocked
+    // child (esbuild service stall, a fork-bombed tsx helper) never fires it,
+    // so without this the `await runStep(...)` never settles, runReconcile
+    // never returns, startServer is never reached, and the splash sits on
+    // "Building server updates…" forever — the exact wedge. On timeout we
+    // tree-kill (same mechanism as killReconcileStepsSync) and reject so the
+    // caller's existing degrade-to-tsx fallback runs.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const clearTimer = () => { if (timer) { clearTimeout(timer); timer = undefined; } };
+    if (timeoutMs && timeoutMs > 0) {
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (proc.pid) {
+          if (process.platform === "win32") {
+            try { execSync(`taskkill /PID ${proc.pid} /T /F`, { windowsHide: true, stdio: "ignore" }); } catch {}
+          } else {
+            try { process.kill(-proc.pid, "SIGKILL"); } catch {}
+          }
+        }
+        liveSteps.delete(proc);
+        reject(new Error(`${cmd} ${args.join(" ")} (cwd=${cwd}) timed out after ${timeoutMs}ms — killed.`));
+      }, timeoutMs);
+    }
+
     proc.stdout?.on("data", (b: Buffer) => process.stdout.write(b));
     proc.stderr?.on("data", (b: Buffer) => {
       stderrTail += b.toString();
@@ -171,10 +196,12 @@ function runStep(cmd: string, args: string[], cwd: string): Promise<void> {
       process.stderr.write(b);
     });
     proc.on("error", (err) => {
+      clearTimer();
       liveSteps.delete(proc);
       reject(err);
     });
     proc.on("exit", (code) => {
+      clearTimer();
       liveSteps.delete(proc);
       if (code === 0) resolve();
       else reject(new Error(`${cmd} ${args.join(" ")} (cwd=${cwd}) exited ${code}. Last stderr:\n${stderrTail.slice(-1500)}`));
@@ -261,7 +288,7 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
 
   if (rootChanged) {
     onStatus?.("Updating components…");
-    await runStep("npm", ["install", "--no-audit", "--no-fund"], projectRoot);
+    await runStep("npm", ["install", "--no-audit", "--no-fund"], projectRoot, 300_000);
     ranSteps.push("root npm install");
   }
   // Server build. An OTA/git update that only touches src/ used to leave
@@ -291,7 +318,7 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       cpSync(rootDist, rootBackup, { recursive: true });
     }
     try {
-      await runStep("npm", ["run", "build"], projectRoot);
+      await runStep("npm", ["run", "build"], projectRoot, 480_000);
       const bad = firstUnparseableJs(rootDist);
       if (bad) throw new Error(`${relative(projectRoot, bad.file)} — ${bad.error}`);
       ranSteps.push("server build");
@@ -318,7 +345,7 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   }
   if (desktopChanged) {
     onStatus?.("Updating desktop components…");
-    await runStep("npm", ["install", "--no-audit", "--no-fund"], join(projectRoot, "desktop"));
+    await runStep("npm", ["install", "--no-audit", "--no-fund"], join(projectRoot, "desktop"), 300_000);
     ranSteps.push("desktop npm install");
   }
   if (srcChanged) {
@@ -336,7 +363,7 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
     // in either case roll dist/ back to the last good build rather than
     // relaunch into it. This is the path that bricked the app.
     try {
-      await runStep("npm", ["run", "build"], join(projectRoot, "desktop"));
+      await runStep("npm", ["run", "build"], join(projectRoot, "desktop"), 300_000);
       const bad = firstUnparseableJs(distDir);
       if (bad) throw new Error(`${relative(projectRoot, bad.file)} — ${bad.error}`);
     } catch (e) {

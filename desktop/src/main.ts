@@ -179,6 +179,23 @@ app.on("ready", async () => {
   createWindow();
   setupSplashRecoveryIntercept();
 
+  // Self-recovery watchdog. pollAndNavigate now waits indefinitely for the
+  // server (so a slow build never freezes us out), but a genuinely wedged
+  // boot — server failed to bind, hung mid-init — must still give the user a
+  // way out instead of an eternal spinner. After a grace well past a normal
+  // boot, surface the canonical Repair/Logs/Quit affordance. The health poll
+  // keeps running underneath, so a server that simply took a long time still
+  // auto-navigates straight past this.
+  const SPLASH_RECOVERY_GRACE_MS = 5 * 60_000;
+  setTimeout(() => {
+    if (isStuckOnSplash(SPLASH_RECOVERY_GRACE_MS)) {
+      showSplashRecovery(
+        "Still starting…",
+        "This is taking longer than usual. It will continue automatically when the server responds — or click Repair to reset and relaunch.",
+      );
+    }
+  }, SPLASH_RECOVERY_GRACE_MS);
+
   // PROJECT_ROOT is null when packaged + ~/.lax/config.json's projectRoot
   // field is unset or points somewhere without src/index.ts. Self-heal:
   // (1) auto-discover common install paths (~/Projects/Local-Agent-X etc.)

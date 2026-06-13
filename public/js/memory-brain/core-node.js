@@ -5,18 +5,22 @@
 // with textContent throughout — identity/profile fields are user/agent-authored
 // and rendered as text, never HTML.
 
-let built = false;
 let overlayEl = null;
 
 export async function ensureCoreNode() {
   const slot = document.getElementById('mem-core-card');
-  if (!slot || built) return;
-  built = true;
+  if (!slot) return;
 
+  // Rebuild from the current on-disk state on every call so naming the agent or
+  // editing IDENTITY/HEART/USER mid-session is reflected the next time the
+  // Memory tab is opened. replaceChildren + removing the prior overlay keep this
+  // idempotent — re-invocation swaps the card in place instead of stacking
+  // duplicate cards and orphaned overlays on <body>.
   const p = (await loadProfile()) || defaultProfile();
-  slot.append(buildCard(p));
+  slot.replaceChildren(buildCard(p));
 
   const important = await loadImportant();
+  if (overlayEl) overlayEl.remove();
   overlayEl = buildDossier(p, important);
   document.body.append(overlayEl);
 

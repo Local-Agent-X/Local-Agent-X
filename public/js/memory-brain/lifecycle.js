@@ -25,6 +25,7 @@ export async function ensure() {
   if (inited) {
     resume();
     resize();
+    ensureCoreNode(); // re-read identity/facts so the dossier reflects mid-session edits
     return;
   }
   inited = true;

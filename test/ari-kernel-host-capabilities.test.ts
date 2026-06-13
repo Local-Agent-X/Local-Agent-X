@@ -133,6 +133,22 @@ describe("AriKernel host capability manifest", () => {
     expect(result.reason).toMatch(/blocked|denied|fail-closed|not in TOOL_CLASS_MAP/i);
   });
 
+  it("allows a dynamic MCP tool on a clean session (classified http, not fail-closed)", async () => {
+    // External MCP-server tools (mcp_<server>_<tool>) are registered at runtime
+    // and never appear in the static map. They must NOT hit the unmapped
+    // fail-closed block; they resolve to the http class + post action and pass
+    // the capability gate, allowed when the session carries no taint.
+    stopAriKernel();
+    await startAriKernel(join(tmp, "audit-mcp.db"), "workspace-assistant", true);
+    const result = await ariEvaluate("mcp_github_create_issue", "exec", { title: "x" });
+    expect(result.reason).not.toMatch(/not in TOOL_CLASS_MAP/i);
+    expect(result.reason).not.toMatch(CAPABILITY_GATE_REGEX);
+    expect(result.allowed, `expected allow on clean session, got: ${result.reason}`).toBe(true);
+    // Same treatment as the agent's existing read-class http tools (web_fetch).
+    const webFetch = await ariEvaluate("web_fetch", "get", { url: "https://example.com" });
+    expect(webFetch.allowed).toBe(result.allowed);
+  });
+
   it("ariObserve writes internal-class calls into the hash-chained audit DB", async () => {
     // Internal-class tools used to bypass the kernel entirely. Now they
     // route through Firewall.audit() which appends to the same SQLite

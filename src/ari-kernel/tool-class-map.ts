@@ -29,6 +29,28 @@ export const TOOL_CLASS_MAP: Record<string, KernelClass> = Object.fromEntries(
 
 export const GATED_CLASSES: ReadonlySet<string> = GATED_KERNEL_CLASSES;
 
+// External MCP-server tools register dynamically (names like
+// mcp_github_create_issue), so they can NEVER appear in the static TOOLS
+// table. Recognize them by the canonical `mcp_` prefix that getAllTools()
+// stamps on every server tool (src/mcp-client/index.ts).
+const MCP_TOOL_PREFIX = "mcp_";
+export function isMcpToolName(toolName: string): boolean {
+  return toolName.startsWith(MCP_TOOL_PREFIX);
+}
+
+// Resolve a tool's kernel class, including dynamic MCP tools. An MCP server is
+// external untrusted I/O reached over a subprocess, so its tools are classified
+// "http": the kernel then taint-checks + audits the call (a prompt-injected arg
+// reaching a real GitHub/Slack/DB API is exactly the http exfiltration threat)
+// and ALLOWS it when clean — instead of fail-closed blocking every MCP call
+// because its name isn't in the static map.
+export function kernelClassForTool(toolName: string): KernelClass | undefined {
+  const cls = TOOL_CLASS_MAP[toolName];
+  if (cls !== undefined) return cls;
+  if (isMcpToolName(toolName)) return "http";
+  return undefined;
+}
+
 const _seenUnmappedTools = new Set<string>();
 
 // Returns true for:
@@ -42,7 +64,7 @@ const _seenUnmappedTools = new Set<string>();
 // I/O sink with the deepest defense layer disabled. Forcing-function for
 // coverage.
 export function shouldGateInKernel(toolName: string): boolean {
-  const cls = TOOL_CLASS_MAP[toolName];
+  const cls = kernelClassForTool(toolName);
   if (cls === undefined) {
     if (!_seenUnmappedTools.has(toolName)) {
       _seenUnmappedTools.add(toolName);

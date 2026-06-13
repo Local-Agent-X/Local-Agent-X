@@ -4,7 +4,7 @@
 // runtime blocks.
 
 import { createLogger } from "../logger.js";
-import { TOOL_CLASS_MAP } from "./tool-class-map.js";
+import { kernelClassForTool } from "./tool-class-map.js";
 
 const logger = createLogger("ari-kernel");
 
@@ -18,7 +18,7 @@ export function auditKernelCoverage(toolNames: string[]): KernelCoverageReport {
   const covered: string[] = [];
   const uncovered: string[] = [];
   for (const name of toolNames) {
-    if (TOOL_CLASS_MAP[name] !== undefined) covered.push(name);
+    if (kernelClassForTool(name) !== undefined) covered.push(name);
     else uncovered.push(name);
   }
   return { totalTools: toolNames.length, covered, uncovered };

@@ -4,7 +4,7 @@
 import { createLogger } from "../logger.js";
 import { USER_HINTS } from "../types.js";
 import { getFirewall, isAriRequired } from "./state.js";
-import { TOOL_CLASS_MAP } from "./tool-class-map.js";
+import { kernelClassForTool, isMcpToolName } from "./tool-class-map.js";
 import { lookupHostGrantId } from "./grants.js";
 
 const logger = createLogger("ari-kernel");
@@ -36,7 +36,8 @@ export async function ariEvaluate(
   // "shell" routing that occasionally allowed if a shell grant happened to be
   // in scope — the actual injection-bypass risk. Now: unmapped → explicit
   // block with a "classify me" hint.
-  if (TOOL_CLASS_MAP[toolName] === undefined) {
+  const toolClass = kernelClassForTool(toolName);
+  if (toolClass === undefined) {
     return {
       allowed: false,
       reason: `[ARI kernel] ${toolName} not in TOOL_CLASS_MAP — fail-closed. Classify it (file/http/shell/database/retrieval/secret-vault/internal) in src/ari-kernel/tool-class-map.ts.`,
@@ -44,8 +45,17 @@ export async function ariEvaluate(
     };
   }
 
-  const toolClass = TOOL_CLASS_MAP[toolName];
-  const effectiveAction = SECRET_VAULT_ACTION_MAP[toolName] ?? action;
+  // MCP tools resolve to the "http" class but arrive with the dispatcher's
+  // default "exec" action, which is invalid for http. Map them to "get" so they
+  // get the SAME kernel treatment as the agent's existing read-class http tools
+  // (web_fetch / web_search): the default workspace-assistant preset allows them
+  // (allow-http-get) and any taint rules a stricter preset adds apply uniformly.
+  // (A blanket "post" would trip deny-http-write and block every MCP call —
+  // exactly the same limitation the agent's own http_request POST has under that
+  // preset. Whether to permit outbound MCP/http writes is a preset/profile
+  // decision, not something this mapping should silently force.)
+  const effectiveAction =
+    SECRET_VAULT_ACTION_MAP[toolName] ?? (isMcpToolName(toolName) ? "get" : action);
 
   try {
     const execRequest: Record<string, unknown> = {

@@ -109,7 +109,14 @@ export class AgentSync {
       await this.git("add", "-A");
       let porcelain = "";
       try { porcelain = await this.git("status", "--porcelain"); } catch {}
-      if (!porcelain) { this.isSyncing = false; return { success: true, message: "Nothing to sync" }; }
+      // Commits from a prior cycle whose push failed (offline / rejected) stay
+      // local — HEAD ahead of origin with a clean working tree. A clean tree
+      // alone is NOT "nothing to sync": those commits must still be flushed, or
+      // they strand forever (every later cycle sees a clean tree and bails,
+      // while the heartbeat's pull keeps the "last synced" clock looking fresh).
+      let ahead = false;
+      try { ahead = (await this.git("rev-list", "--count", "origin/main..HEAD")) !== "0"; } catch {}
+      if (!porcelain && !ahead) { this.lastSyncTime = Date.now(); this.isSyncing = false; return { success: true, message: "Nothing to sync" }; }
 
       // Mass-deletion circuit breaker. Live failure (2026-05-05): a sync
       // push from this machine deleted 21 workspace apps belonging to other
@@ -150,8 +157,12 @@ export class AgentSync {
         return { success: false, message: msg };
       }
 
-      const hostname = (await execFileAsync("hostname", [], { windowsHide: true })).stdout.trim();
-      await this.git("commit", "-m", `sync from ${hostname} at ${new Date().toISOString()}`);
+      // Only commit when the working tree actually changed; a clean tree that
+      // reached here is the ahead-of-origin flush path (commits already exist).
+      if (porcelain) {
+        const hostname = (await execFileAsync("hostname", [], { windowsHide: true })).stdout.trim();
+        await this.git("commit", "-m", `sync from ${hostname} at ${new Date().toISOString()}`);
+      }
 
       // When another machine has pushed since our last sync, our local
       // commit is on a divergent branch and the final push will reject
@@ -208,7 +219,11 @@ export class AgentSync {
       try { if (!await this.git("diff", "HEAD", "origin/main", "--stat")) hasChanges = false; } catch {}
       if (hasChanges) { try { await this.git("pull", "--no-rebase", "origin", "main"); } catch { await resolveConflicts(this.syncDir, this.git); } }
       await copyFromSync(this.dataDir, this.syncDir, this.config);
-      this.lastSyncTime = Date.now();
+      // Deliberately NOT stamping lastSyncTime here. "Last synced" must mean
+      // "local state reached the remote" — only push() (success or genuinely
+      // up-to-date) sets it. Stamping on every pull made the heartbeat's
+      // inbound half keep the clock fresh while pushes silently failed,
+      // showing "synced 14m ago" with no commit on the remote for a week.
       return { success: true, message: hasChanges ? "Downloaded latest" : "Synced local files" };
     } catch (e) {
       return { success: false, message: (e as Error).message };

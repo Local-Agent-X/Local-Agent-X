@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
@@ -16,6 +16,11 @@ import { exportFactsForSync } from "./facts-sync.js";
 import { tombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
 
 const logger = createLogger("sync.push-files");
+
+// A session log this big is a runaway, not real history (a memory_dream
+// session hit 150 MB). Syncing it blows the push pack past git's timeout and
+// jams the whole sync, so it's excluded rather than allowed to wedge backups.
+const MAX_SESSION_SYNC_BYTES = 10 * 1024 * 1024;
 
 // ── Push direction: local → sync repo (with deletion propagation) ──
 
@@ -84,7 +89,17 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
       for (const f of readdirSync(sessDir)) {
         // Sync both .jsonl (current) and .json (legacy/pre-migration) so
         // round-tripping a sync from an older machine still works.
-        if (f.endsWith(".jsonl") || f.endsWith(".json")) writeFileSync(join(syncSessDir, f), readFileSync(join(sessDir, f), "utf-8"));
+        if (!f.endsWith(".jsonl") && !f.endsWith(".json")) continue;
+        const src = join(sessDir, f);
+        // Hard size cap. A single runaway log (a 150 MB memory_dream session
+        // was the real one) bloats the push pack past the git timeout, so
+        // every push fails, commits strand, and the whole sync wedges. One
+        // pathological file must never be able to brick all of sync — skip it.
+        if (statSync(src).size > MAX_SESSION_SYNC_BYTES) {
+          logger.warn(`[sync] skipping oversized session ${f} (${(statSync(src).size / 1048576).toFixed(0)} MB > ${MAX_SESSION_SYNC_BYTES / 1048576} MB cap)`);
+          continue;
+        }
+        writeFileSync(join(syncSessDir, f), readFileSync(src, "utf-8"));
       }
     }
   }

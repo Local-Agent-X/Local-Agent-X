@@ -19,6 +19,7 @@
 import { ChildProcess, execSync, spawn } from "child_process";
 import { createHash } from "crypto";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, cpSync, rmSync } from "fs";
+import { readFile } from "fs/promises";
 import { join, relative } from "path";
 import { homedir } from "os";
 import { Script } from "vm";
@@ -84,7 +85,7 @@ function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-function sha256SrcTree(dirPath: string, projectRoot: string): string {
+async function sha256SrcTree(dirPath: string, projectRoot: string): Promise<string> {
   const hash = createHash("sha256");
   const files: string[] = [];
   const walk = (p: string): void => {
@@ -105,7 +106,14 @@ function sha256SrcTree(dirPath: string, projectRoot: string): string {
   for (const f of files) {
     hash.update(relative(projectRoot, f).replace(/\\/g, "/"));
     hash.update("\0");
-    hash.update(readFileSync(f));
+    // await an ASYNC read so this yields the event loop between files. Hashing
+    // the whole src tree (~1200 .ts files) with readFileSync blocked the main
+    // thread for tens of seconds on a cold disk (Defender scanning each read),
+    // and because runReconcile runs before the first await in the boot path,
+    // the splash window's ready-to-show couldn't fire — so the app showed
+    // NOTHING and never auto-displayed (only a manual tray click, which calls
+    // show() directly, surfaced it). Same hash bytes, just non-blocking.
+    hash.update(await readFile(f));
     hash.update("\0");
   }
   return hash.digest("hex");
@@ -247,8 +255,8 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
 
   const currentRootLock = sha256File(join(projectRoot, "package-lock.json"));
   const currentDesktopLock = sha256File(join(projectRoot, "desktop", "package-lock.json"));
-  const currentDesktopSrc = sha256SrcTree(join(projectRoot, "desktop", "src"), projectRoot);
-  const currentRootSrc = sha256SrcTree(join(projectRoot, "src"), projectRoot);
+  const currentDesktopSrc = await sha256SrcTree(join(projectRoot, "desktop", "src"), projectRoot);
+  const currentRootSrc = await sha256SrcTree(join(projectRoot, "src"), projectRoot);
 
   // Misconfigured projectRoot guard. If we found zero .ts files under
   // desktop/src AND the root package-lock.json is missing, the path

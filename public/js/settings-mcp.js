@@ -47,6 +47,17 @@ async function loadMcpServers() {
       const tools = (s.connected && s.tools && s.tools.length)
         ? `<div style="font-size:.66rem;color:var(--muted);margin-top:6px;font-family:var(--mono);word-break:break-word">${esc(s.tools.join(', '))}</div>`
         : '';
+      // Redundant servers (filesystem) are never spawned — their tools
+      // duplicate native read/write/edit. Offering Test/Enable on them makes a
+      // by-design skip look like a failure, so show an explanation instead.
+      const actions = s.redundant
+        ? `<button class="btn" onclick="removeMcpServer('${esc(s.name)}')" title="Remove" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">🗑</button>`
+        : `${secretBtns}${toggleBtn}
+           <button class="btn" onclick="testMcpServer('${esc(s.name)}')" style="padding:4px 8px;font-size:.7rem">Test</button>
+           <button class="btn" onclick="removeMcpServer('${esc(s.name)}')" title="Remove" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">🗑</button>`;
+      const note = s.redundant
+        ? `<div style="font-size:.68rem;color:var(--muted);margin-top:6px">Not started — native <span style="font-family:var(--mono)">read</span>/<span style="font-family:var(--mono)">write</span>/<span style="font-family:var(--mono)">edit</span> already cover this with full security checks.</div>`
+        : '';
       return `
       <div style="padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);margin-bottom:8px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
@@ -56,13 +67,8 @@ async function loadMcpServers() {
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">${mcpStatusBadge(s)}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">
-          ${secretBtns}
-          ${toggleBtn}
-          <button class="btn" onclick="testMcpServer('${esc(s.name)}')" style="padding:4px 8px;font-size:.7rem">Test</button>
-          <button class="btn" onclick="removeMcpServer('${esc(s.name)}')" title="Remove" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">🗑</button>
-        </div>
-        ${tools}
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">${actions}</div>
+        ${note}${tools}
       </div>`;
     }).join('');
   } catch (e) {

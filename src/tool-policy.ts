@@ -251,19 +251,45 @@ export class LiveToolPolicy extends ToolPolicy {
   }
 }
 
-/** Merge user policy with defaults — user rules take priority, but missing default rules are added */
-function mergeWithDefaults(user: ToolPolicyConfig, policyPath?: string): ToolPolicyConfig {
+/** Merge user policy with defaults — user rules take priority, but missing
+ *  default rules are added AND the matching pattern of an existing default rule
+ *  is refreshed from code. */
+export function mergeWithDefaults(user: ToolPolicyConfig, policyPath?: string): ToolPolicyConfig {
+  const defaultsById = new Map(DEFAULT_POLICY.rules.map(r => [r.id, r]));
   const userIds = new Set(user.rules.map(r => r.id));
+
+  // The on-disk file is a snapshot of the defaults at first run, plus any
+  // decision toggles the user has made (the Settings UI edits a rule's
+  // allow/deny by id; it never edits the `tool` matching pattern). So when a
+  // default rule's matching key changes in code under a stable id — e.g. the
+  // office-tool collapse repointed allow-presentation from the glob
+  // "presentation_*" (old presentation_create/_add_slide tools) to the single
+  // "presentation" tool — the stale snapshot would pin the old pattern forever
+  // and the tool silently hits deny-by-default. Refresh the code-owned matching
+  // key (`tool`, `action`) from the default for any shared id; keep everything
+  // the user owns (decision, constraints, priority). Ids with no default are
+  // genuinely user-authored rules and pass through untouched.
+  let refreshed = 0;
+  const reconciled = user.rules.map(u => {
+    const def = defaultsById.get(u.id);
+    if (!def || (def.tool === u.tool && def.action === u.action)) return u;
+    refreshed++;
+    return { ...u, tool: def.tool, action: def.action };
+  });
+
   const missing = DEFAULT_POLICY.rules.filter(r => !userIds.has(r.id));
   if (missing.length > 0) {
     logger.info(`[policy] Merging ${missing.length} default rules not in user policy`);
   }
+  if (refreshed > 0) {
+    logger.info(`[policy] Refreshed ${refreshed} default rule(s) whose matching pattern changed in code`);
+  }
   const merged = {
     defaultDecision: user.defaultDecision,
-    rules: [...user.rules, ...missing],
+    rules: [...reconciled, ...missing],
   };
-  // Persist merged policy so new rules survive restarts
-  if (missing.length > 0 && policyPath) {
+  // Persist so new/refreshed rules survive restarts and self-heal the snapshot.
+  if ((missing.length > 0 || refreshed > 0) && policyPath) {
     try {
       writeFileSync(policyPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
       logger.info(`[policy] Saved merged policy (${merged.rules.length} rules) to ${policyPath}`);

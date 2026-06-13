@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { ToolPolicy, auditPolicyCoverage, type ToolPolicyConfig } from "./tool-policy.js";
+import { ToolPolicy, auditPolicyCoverage, mergeWithDefaults, type ToolPolicyConfig } from "./tool-policy.js";
 import { DEFAULT_POLICY } from "./tool-policy/default-rules.js";
 import { deriveRateLimits } from "./tool-policy/tool-policies.js";
 import { TOOLS } from "./tool-registry.js";
@@ -112,5 +112,42 @@ describe("user rules still override table rules", () => {
     const r = new ToolPolicy(config).evaluate("read", { path: "x" }, "test");
     expect(r.allowed).toBe(false);
     expect(r.ruleId).toBe("user-deny-read");
+  });
+});
+
+// Regression: a pre-collapse on-disk snapshot pins a default rule's matching
+// pattern to the stale glob (allow-presentation → "presentation_*"), so the new
+// single "presentation" tool hits deny-by-default. mergeWithDefaults must
+// refresh the code-owned matching key from the table while preserving the
+// user's decision.
+describe("mergeWithDefaults — refresh a stale matching pattern under a stable id", () => {
+  const presDefault = DEFAULT_POLICY.rules.find((r) => r.id === "allow-presentation")!;
+
+  it("repoints the stale pattern so the collapsed tool is allowed again", () => {
+    const stale: ToolPolicyConfig = {
+      defaultDecision: "deny",
+      rules: [{ ...presDefault, tool: "presentation_*", decision: "allow" }],
+    };
+    const merged = mergeWithDefaults(stale);
+    expect(merged.rules.find((r) => r.id === "allow-presentation")!.tool).toBe("presentation");
+    expect(new ToolPolicy(merged).evaluate("presentation", { action: "create" }, "t").allowed).toBe(true);
+  });
+
+  it("preserves the user's decision while refreshing the pattern", () => {
+    const stale: ToolPolicyConfig = {
+      defaultDecision: "deny",
+      rules: [{ ...presDefault, tool: "presentation_*", decision: "deny" }],
+    };
+    const refreshed = mergeWithDefaults(stale).rules.find((r) => r.id === "allow-presentation")!;
+    expect(refreshed.tool).toBe("presentation");
+    expect(refreshed.decision).toBe("deny");
+  });
+
+  it("leaves a genuinely user-authored rule (id absent from defaults) untouched", () => {
+    const cfg: ToolPolicyConfig = {
+      defaultDecision: "deny",
+      rules: [{ id: "user-custom", tool: "my_custom_tool", decision: "allow", reason: "x" }],
+    };
+    expect(mergeWithDefaults(cfg).rules.find((r) => r.id === "user-custom")!.tool).toBe("my_custom_tool");
   });
 });

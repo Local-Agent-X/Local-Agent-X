@@ -71,6 +71,7 @@ describe("behavior parity — representative decisions match the old table", () 
     { tool: "list_secrets", args: {}, allowed: true, note: "allow-list-secrets" },
     { tool: "email_send", args: {}, allowed: true, note: "via email_* glob (external-comms but allowed today)" },
     { tool: "marketplace_install", args: {}, allowed: true, note: "via marketplace_* glob (destructive but allowed today)" },
+    { tool: "mcp_github_create_issue", args: {}, allowed: true, note: "via mcp_* glob (dynamic external MCP tool, kernel+taint still gate)" },
     { tool: "browser", args: { action: "evaluate" }, allowed: true, confirm: true, note: "flag-browser-evaluate → confirm" },
     // The 15 formerly synthetic-only / uncovered tools, now explicit:
     { tool: "swarm_create", args: {}, allowed: true, note: "was synthetic allow" },

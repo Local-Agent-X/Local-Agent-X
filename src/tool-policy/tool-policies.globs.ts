@@ -44,6 +44,11 @@ export const TOOL_POLICIES_GLOBS: Record<string, ToolPolicyEntry> = {
   "sidebar_*":           { rules: [{ id: "allow-sidebar", decision: "allow", reason: "Sidebar pin/unpin (user's left rail)", priority: 50 }] },
   "primal_*":            { rules: [{ id: "allow-primal", decision: "allow", reason: "Primal auto-build pipeline (run_build_plan, build_status, build_resume)", priority: 50 }] },
   "marketplace_*":       { rules: [{ id: "allow-marketplace", decision: "allow", reason: "Protocol marketplace (search/install/list)", priority: 50 }] },
+  // External MCP-server tools (mcp_<server>_<tool>) register at runtime, so they
+  // never get a concrete entry above and would hit deny-by-default. They ARE a
+  // user-authorized integration surface; allow them here while the ARI kernel
+  // (http class + taint rules) and the autonomy profile still gate every call.
+  "mcp_*":               { rules: [{ id: "allow-mcp", decision: "allow", reason: "External MCP server tools (user-configured; kernel + taint gate each call)", priority: 40, constraints: { maxCallsPerSession: 100 } }] },
   "config_*":            { rules: [{ id: "allow-config", decision: "allow", reason: "Agent configuration read/write", priority: 50 }] },
   "skill_*":             { rules: [{ id: "allow-skills", decision: "allow", reason: "User-defined skill workflows", priority: 50 }] },
   "playbook_*":          { rules: [{ id: "allow-playbook", decision: "allow", reason: "Legacy playbook tools", priority: 50 }] },

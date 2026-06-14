@@ -216,7 +216,22 @@
 					"reason": "Memory search (memory_search) — read-only retrieval over local index"
 				},
 				"deny-tainted-shell",
-				"deny-http-write"
+				{
+					"id": "deny-tainted-http-write",
+					"name": "Deny tainted outbound HTTP writes",
+					"priority": 40,
+					"match": { "toolClass": "http", "action": ["post", "put", "patch", "delete"], "taintSources": ["web", "rag", "email"] },
+					"decision": "deny",
+					"reason": "Outbound HTTP writes blocked while the session is tainted by web/rag/email content"
+				},
+				{
+					"id": "allow-http-write-clean",
+					"name": "Allow clean outbound HTTP writes (email/calendar/API)",
+					"priority": 100,
+					"match": { "toolClass": "http", "action": ["post", "put", "patch", "delete"] },
+					"decision": "allow",
+					"reason": "Outbound HTTP writes allowed when clean; the egress secret-scan, data-lineage taint floor, and canary gates enforce exfil protection on these sinks"
+				}
 			]
 		},
 		"automation-agent": {

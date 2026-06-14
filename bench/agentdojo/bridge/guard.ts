@@ -15,6 +15,7 @@
 //                  kernel's behavioral rules + lineage egress gate fire on sinks.
 //                  Max security / min utility ceiling.
 
+import { checkOutboundRequest, checkOutboundPayload } from "../../../src/tools/http-egress-guard.js";
 import { wrapExternalContent } from "../../../src/sanitize.js";
 import { recordSensitiveRead, detectSecretsInOutput } from "../../../src/data-lineage.js";
 import { getKernelTaintSources, checkEgressTaintWithPayload, clearSessionTaint } from "../../../src/data-lineage-taint.js";
@@ -125,4 +126,20 @@ export function guardToolOutput(runId: string, toolName: string, args: Record<st
 
 function safeJson(v: unknown): string {
   try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+// Stateless egress DLP scan for the SHADE-Arena control layer: scan a tool call's
+// outbound args for secret-shaped (credentials/keys) and — when the financial
+// guard is enabled — financial-account data. Content-based, so it's tool-agnostic
+// and needs no per-run state. This is LAX's egress-guard layer as a control.
+export function egressScan(tool: string, args: Record<string, unknown>): CallVerdict {
+  const text = Object.values(args)
+    .map((v) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : ""))
+    .filter(Boolean).join("\n") || safeJson(args);
+  const url = typeof args.url === "string" ? args.url : "";
+  const block = url
+    ? checkOutboundRequest({ url, method: "POST", body: text })
+    : checkOutboundPayload(`shade:${tool}`, text);
+  if (block) return { allowed: false, stage: String(block.meta?.blocked_by ?? "egress-guard"), reason: block.message };
+  return { allowed: true };
 }

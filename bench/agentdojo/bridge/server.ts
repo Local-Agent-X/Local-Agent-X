@@ -8,7 +8,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleChatCompletion } from "./llm-shim.js";
-import { setThreatDataDir, beginRun, endRun, guardToolCall, guardToolOutput, type ConfigName } from "./guard.js";
+import { setThreatDataDir, beginRun, endRun, guardToolCall, guardToolOutput, egressScan, type ConfigName } from "./guard.js";
 import { recordEpisode, recordBlock, renderHtml, snapshot } from "./scoreboard.js";
 
 const PORT = Number(process.env.PORT || 8900);
@@ -69,6 +69,10 @@ const server = createServer(async (req, res) => {
         recordBlock(config, suite, verdict.stage);
       }
       return send(200, verdict);
+    }
+    if (req.method === "POST" && url === "/guard/egress-scan") {
+      const b = (await readBody(req)) as { tool: string; args: Record<string, unknown> };
+      return send(200, egressScan(b.tool, b.args || {}));
     }
     if (req.method === "POST" && url === "/guard/tool-output") {
       const b = (await readBody(req)) as { runId: string; tool: string; args: Record<string, unknown>; output: string };

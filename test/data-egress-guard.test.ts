@@ -30,6 +30,17 @@ describe("financial-data egress guard", () => {
     expect(block?.meta.blocked_by).toBe("data-egress-guard");
   });
 
+  it("blocks an SSN when enabled (broad-PII coverage)", () => {
+    process.env.LAX_DATA_EGRESS_GUARD = "1";
+    expect(checkOutboundPayload("clipboard_write", "SSN: 123-45-6789")?.meta.blocked_by).toBe("data-egress-guard");
+  });
+
+  it("FP control: an email recipient is NOT blocked even with the guard on", () => {
+    process.env.LAX_DATA_EGRESS_GUARD = "1";
+    // every email_send carries a recipient address — gating those would break comms
+    expect(checkOutboundPayload("email_send", "Hi — sending the notes to alice@example.com")).toBeNull();
+  });
+
   it("does not change credential behavior — a secret is blocked even with the guard off", () => {
     const block = checkOutboundPayload("clipboard_write", "AKIAIOSFODNN7EXAMPLE");
     expect(block?.meta.blocked_by).toBe("outbound-secret-scan");

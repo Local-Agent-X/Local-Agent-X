@@ -103,13 +103,13 @@ export function checkOutboundRequest(args: GuardArgs): GuardBlock | null {
 
   // Opt-in financial-data egress guard: clean of credentials, but the payload
   // carries financial-account data (IBAN / card) — block to non-allowlisted hosts.
-  if (loadDataEgressGuard() && hasFinancialData(preScanText) && !isTrustedDestination(url)) {
+  if (loadDataEgressGuard() && hasSensitiveEgressData(preScanText) && !isTrustedDestination(url)) {
     return {
       message:
-        `Refusing ${method} to ${hostOf(url) || url}: payload contains financial-account data (IBAN/card) ` +
-        `and the destination is not in the trusted-destinations list. ` +
-        `Add it to ~/.lax/egress-allowlist.json if it should receive financial data.`,
-      meta: { url, method, blocked_by: "data-egress-guard", data_labels: ["financial"] },
+        `Refusing ${method} to ${hostOf(url) || url}: payload contains sensitive personal data ` +
+        `(financial account or SSN) and the destination is not in the trusted-destinations list. ` +
+        `Add it to ~/.lax/egress-allowlist.json if it should receive this data.`,
+      meta: { url, method, blocked_by: "data-egress-guard", data_labels: ["financial", "ssn"] },
     };
   }
   return null;
@@ -151,21 +151,28 @@ export function checkOutboundPayload(sink: string, text: string): GuardBlock | n
 
   // Opt-in financial-data egress guard. No destination allowlist on these
   // channels, so financial-account data may not leave through them at all.
-  if (loadDataEgressGuard() && hasFinancialData(text)) {
+  if (loadDataEgressGuard() && hasSensitiveEgressData(text)) {
     return {
       message:
-        `Refusing ${sink}: outbound payload contains financial-account data (IBAN/card). ` +
-        `This off-box channel has no destination allowlist, so financial data may not leave through it.`,
-      meta: { sink, blocked_by: "data-egress-guard", data_labels: ["financial"] },
+        `Refusing ${sink}: outbound payload contains sensitive personal data (financial account or SSN). ` +
+        `This off-box channel has no destination allowlist, so this data may not leave through it.`,
+      meta: { sink, blocked_by: "data-egress-guard", data_labels: ["financial", "ssn"] },
     };
   }
   return null;
 }
 
-// Financial-data detection across the SAME decoded views the secret scanner uses
-// (raw + base64/hex/normalized), so an encoded IBAN/card can't slip past.
-function hasFinancialData(text: string): boolean {
-  return decodedPayloadViews(text).some((v) => classifyData(v).labels.includes("financial"));
+// US SSN (with separators — bare 9-digit runs are too false-positive-prone).
+const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/;
+
+// High-confidence sensitive-identifier detection for the egress guard, across the
+// SAME decoded views the secret scanner uses (raw + base64/hex/normalized) so an
+// encoded value can't slip past. Scope is deliberately narrow to control false
+// positives: financial-account data (IBAN/card) + SSN. It does NOT gate email
+// addresses or phone numbers — those appear in legitimate outbound comms (every
+// email_send has a recipient), so blocking them would break normal use.
+function hasSensitiveEgressData(text: string): boolean {
+  return decodedPayloadViews(text).some((v) => classifyData(v).labels.includes("financial") || SSN_RE.test(v));
 }
 
 // Max attachment bytes scanned for secret-shaped content. Mirrors the scanner's

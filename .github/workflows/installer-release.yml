@@ -42,6 +42,10 @@ jobs:
   build-windows:
     name: Windows installer (.exe)
     runs-on: windows-latest
+    # Mirrored to a job-level env so the sign step can gate on its presence —
+    # `secrets.*` can't be referenced directly in a step `if:`, only `env.*`.
+    env:
+      AZURE_SIGN_CLIENT_ID: ${{ secrets.AZURE_SIGN_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v6
 
@@ -72,6 +76,26 @@ jobs:
           $dst = "Install Local Agent X Windows Installer.exe"
           Copy-Item -LiteralPath $src -Destination $dst -Force
           Write-Host ("Size: {0:N1} MB" -f ((Get-Item -LiteralPath $dst).Length / 1MB))
+
+      - name: Sign the installer (Azure Trusted Signing)
+        # Skips automatically until the AZURE_SIGN_* secrets exist, so unsigned
+        # builds keep shipping until signing is set up. Once the secrets are in
+        # place the published .exe is Authenticode-signed via Azure Trusted
+        # Signing: no SmartScreen "unknown publisher" prompt, and Defender stops
+        # block-at-first-sight quarantining the Electron runtime the installer
+        # downloads on low-trust (Mark-of-the-Web) machines.
+        # NOTE: action was rebranded Azure/artifact-signing-action; bump the ref
+        # + switch `trusted-signing-account-name`→`signing-account-name` if needed.
+        if: ${{ env.AZURE_SIGN_CLIENT_ID != '' }}
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_SIGN_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_SIGN_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_SIGN_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGN_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGN_CERT_PROFILE }}
+          files: ${{ github.workspace }}\Install Local Agent X Windows Installer.exe
 
       - uses: actions/upload-artifact@v7
         with:

@@ -84,6 +84,22 @@ export function loadLocalServicePorts(): Set<string> {
   return ports;
 }
 
+// Opt-in financial-data egress guard. OFF by default so it never regresses the
+// utility of normal sends; security-conscious deployments enable it to block
+// financial-account data (IBAN / card numbers) leaving to non-allowlisted hosts.
+// Honors the LAX_DATA_EGRESS_GUARD=1 env override for ops/testing.
+export function loadDataEgressGuard(): boolean {
+  if (process.env.LAX_DATA_EGRESS_GUARD === "1") return true;
+  try {
+    const cfgPath = join(getLaxDir(), "security.json");
+    if (existsSync(cfgPath)) {
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+      return cfg.dataEgressGuard === true;
+    }
+  } catch {}
+  return false;
+}
+
 export function loadFileAccessMode(): FileAccessMode {
   try {
     const cfgPath = join(getLaxDir(), "security.json");

@@ -35,6 +35,7 @@ const CLASSIFICATION_PATTERNS: Array<{ label: DataLabel; pattern: RegExp; confid
   // Financial — with basic Luhn pre-filter (length check)
   { label: "financial", pattern: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/, confidence: 0.85 },
   { label: "financial", pattern: /\b\d{4}[\s-]\d{4}[\s-]\d{4}[\s-]\d{4}\b/, confidence: 0.8 },  // Spaced card numbers
+  { label: "financial", pattern: /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/, confidence: 0.85 },         // IBAN (uppercase: CC + check digits + BBAN)
   // Internal paths
   { label: "internal_path", pattern: /[/\\]\.ssh[/\\]|[/\\]\.aws[/\\]|[/\\]\.env\b/i, confidence: 0.9 },
   { label: "internal_path", pattern: /[/\\]etc[/\\](passwd|shadow|hosts)\b/i, confidence: 0.9 },

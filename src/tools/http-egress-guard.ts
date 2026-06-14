@@ -18,8 +18,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { scanForSecrets } from "../security/secret-scanner.js";
+import { scanForSecrets, decodedPayloadViews } from "../security/secret-scanner.js";
 import { matchEgressList } from "../security/network-policy.js";
+import { classifyData } from "../threat/classification.js";
+import { loadDataEgressGuard } from "../security/security-config.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { isSensitiveAttachmentPath } from "../data-lineage.js";
 import { realpathDeep } from "../security/file-access.js";
@@ -86,23 +88,40 @@ export function checkOutboundRequest(args: GuardArgs): GuardBlock | null {
   if (!preScanText) return null;
 
   const scan = scanForSecrets(preScanText);
-  if (scan.clean) return null;
+  if (!scan.clean) {
+    if (isTrustedDestination(url)) return null;
+    const kinds = [...new Set(scan.matches.map(m => m.pattern))].join(", ");
+    return {
+      message:
+        `Refusing ${method} to ${hostOf(url) || url}: request contains secret-shaped content (${kinds}) ` +
+        `and the destination is not in the trusted-destinations list. ` +
+        `If this destination should receive credentials, add it to ~/.lax/egress-allowlist.json. ` +
+        `For stored secrets prefer {{SECRET_NAME}} placeholders over hardcoded values.`,
+      meta: { url, method, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
+    };
+  }
 
-  let targetHost = "";
-  try { targetHost = new URL(url).hostname.toLowerCase(); } catch { /* invalid URL handled upstream */ }
+  // Opt-in financial-data egress guard: clean of credentials, but the payload
+  // carries financial-account data (IBAN / card) — block to non-allowlisted hosts.
+  if (loadDataEgressGuard() && hasFinancialData(preScanText) && !isTrustedDestination(url)) {
+    return {
+      message:
+        `Refusing ${method} to ${hostOf(url) || url}: payload contains financial-account data (IBAN/card) ` +
+        `and the destination is not in the trusted-destinations list. ` +
+        `Add it to ~/.lax/egress-allowlist.json if it should receive financial data.`,
+      meta: { url, method, blocked_by: "data-egress-guard", data_labels: ["financial"] },
+    };
+  }
+  return null;
+}
 
-  const trusted = loadTrustedDestinations();
-  if (targetHost && matchEgressList(targetHost, trusted)) return null;
+function hostOf(url: string): string {
+  try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
+}
 
-  const kinds = [...new Set(scan.matches.map(m => m.pattern))].join(", ");
-  return {
-    message:
-      `Refusing ${method} to ${targetHost || url}: request contains secret-shaped content (${kinds}) ` +
-      `and the destination is not in the trusted-destinations list. ` +
-      `If this destination should receive credentials, add it to ~/.lax/egress-allowlist.json. ` +
-      `For stored secrets prefer {{SECRET_NAME}} placeholders over hardcoded values.`,
-    meta: { url, method, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
-  };
+function isTrustedDestination(url: string): boolean {
+  const host = hostOf(url);
+  return !!host && matchEgressList(host, loadTrustedDestinations());
 }
 
 /**
@@ -119,15 +138,34 @@ export function checkOutboundRequest(args: GuardArgs): GuardBlock | null {
 export function checkOutboundPayload(sink: string, text: string): GuardBlock | null {
   if (!text) return null;
   const scan = scanForSecrets(text);
-  if (scan.clean) return null;
-  const kinds = [...new Set(scan.matches.map(m => m.pattern))].join(", ");
-  return {
-    message:
-      `Refusing ${sink}: outbound payload contains secret-shaped content (${kinds}). ` +
-      `This channel can carry data off-box and has no destination allowlist, so credentials may not leave through it. ` +
-      `Prefer {{SECRET_NAME}} placeholders over hardcoded values, or remove the credential from the payload.`,
-    meta: { sink, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
-  };
+  if (!scan.clean) {
+    const kinds = [...new Set(scan.matches.map(m => m.pattern))].join(", ");
+    return {
+      message:
+        `Refusing ${sink}: outbound payload contains secret-shaped content (${kinds}). ` +
+        `This channel can carry data off-box and has no destination allowlist, so credentials may not leave through it. ` +
+        `Prefer {{SECRET_NAME}} placeholders over hardcoded values, or remove the credential from the payload.`,
+      meta: { sink, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
+    };
+  }
+
+  // Opt-in financial-data egress guard. No destination allowlist on these
+  // channels, so financial-account data may not leave through them at all.
+  if (loadDataEgressGuard() && hasFinancialData(text)) {
+    return {
+      message:
+        `Refusing ${sink}: outbound payload contains financial-account data (IBAN/card). ` +
+        `This off-box channel has no destination allowlist, so financial data may not leave through it.`,
+      meta: { sink, blocked_by: "data-egress-guard", data_labels: ["financial"] },
+    };
+  }
+  return null;
+}
+
+// Financial-data detection across the SAME decoded views the secret scanner uses
+// (raw + base64/hex/normalized), so an encoded IBAN/card can't slip past.
+function hasFinancialData(text: string): boolean {
+  return decodedPayloadViews(text).some((v) => classifyData(v).labels.includes("financial"));
 }
 
 // Max attachment bytes scanned for secret-shaped content. Mirrors the scanner's

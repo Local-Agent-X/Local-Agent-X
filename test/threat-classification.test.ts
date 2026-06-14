@@ -72,6 +72,11 @@ describe("classifyData — financial", () => {
     const r = classifyData("Card: 4111 1111 1111 1111");
     expect(r.labels).toContain("financial");
   });
+
+  it("flags an IBAN", () => {
+    const r = classifyData("Wire to GB29NWBK60161331926819 please");
+    expect(r.labels).toContain("financial");
+  });
 });
 
 describe("classifyData — internal_path", () => {

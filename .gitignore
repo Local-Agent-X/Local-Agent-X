@@ -100,5 +100,10 @@ ari-redteam-*.md
 *-security-report.md
 *-threat-report.md
 
+# Benchmark harness scratch — Python venv + run artifacts (the harness code itself ships)
+.agentdojo-venv/
+bench/**/__pycache__/
+bench/**/runs/
+
 # Personal Claude Code config/skills - never ship in the repo
 .claude/

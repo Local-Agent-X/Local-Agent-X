@@ -12,6 +12,10 @@
 
 let _onboardStep = 0;
 let _onboardProvider = '';
+// First cloud model returned by a successful Ollama Cloud connect, so
+// finishOnboarding can pre-select a working model (cloud catalog is dynamic,
+// so there's no static default to fall back on).
+let _onboardCloudModel = '';
 const ONBOARD_TOTAL = 5;
 
 async function shouldShowOnboarding() {
@@ -89,6 +93,7 @@ function showOnboarding() {
             <button class="onboarding-option" onclick="selectOnboardProvider('codex')"><strong>OpenAI Codex</strong><br><span style="color:var(--muted);font-size:.72rem">Free with ChatGPT</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('anthropic')"><strong>Anthropic Claude</strong><br><span style="color:var(--muted);font-size:.72rem">Subscription auth</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('local')"><strong>Local (Ollama)</strong><br><span style="color:var(--muted);font-size:.72rem">Runs on your GPU</span></button>
+            <button class="onboarding-option" onclick="selectOnboardProvider('ollama-cloud')"><strong>Ollama Cloud</strong><br><span style="color:var(--muted);font-size:.72rem">Hosted models — just an API key</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('custom')" style="opacity:.7"><strong>Custom Provider</strong><br><span style="color:var(--muted);font-size:.72rem">Any OpenAI-compatible API</span></button>
           </div>
         </div>
@@ -223,6 +228,13 @@ function populateConnectStep() {
       <span style="color:var(--muted);font-size:.85rem">Ollama should be running at localhost:11434</span>
       <button class="action-btn secondary" onclick="onboardCheckOllama()" style="padding:8px 24px">Check Connection</button>
     `;
+  } else if (_onboardProvider === 'ollama-cloud') {
+    desc.textContent = 'Paste your Ollama Cloud (Turbo) API key to run hosted models — no local GPU needed.';
+    container.innerHTML = `
+      <input type="password" id="ob-api-key" placeholder="Paste your Ollama API key..." style="width:100%;max-width:360px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.9rem">
+      <button class="action-btn primary" onclick="onboardConnectOllamaCloud()" style="padding:8px 24px">Connect</button>
+      <span style="color:var(--muted);font-size:.72rem">Get a key at ollama.com/settings/keys</span>
+    `;
   } else {
     desc.textContent = 'Go back and select a provider first.';
     container.innerHTML = '';
@@ -296,6 +308,33 @@ async function onboardCheckOllama() {
   }
 }
 
+async function onboardConnectOllamaCloud() {
+  const input = document.getElementById('ob-api-key');
+  const status = document.getElementById('ob-connect-status');
+  if (!input || !input.value.trim()) {
+    if (status) { status.style.color = 'var(--err, #c66)'; status.textContent = 'Please enter your API key.'; }
+    return;
+  }
+  if (status) { status.style.color = 'var(--muted)'; status.textContent = 'Connecting...'; }
+  try {
+    // Same contract as the settings panel's connectOllamaCloud(): save the
+    // secret, then test-cloud validates it and returns the live model list.
+    await apiPost('/api/secrets', { name: 'OLLAMA_CLOUD_API_KEY', value: input.value.trim() });
+    const j = await apiPost('/api/ollama/test-cloud', {});
+    if (j && j.ok) {
+      _onboardProvider = 'ollama-cloud';
+      _onboardCloudModel = (j.models && j.models[0]) || '';
+      if (status) { status.style.color = 'var(--accent)'; status.textContent = `Connected · ${j.modelCount} model${j.modelCount === 1 ? '' : 's'}. Click Next to continue.`; }
+      input.value = '';
+      input.placeholder = '••••••••  (saved)';
+    } else {
+      if (status) { status.style.color = 'var(--err, #c66)'; status.textContent = `Failed: ${(j && j.error) || 'unreachable'}`; }
+    }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--err, #c66)'; status.textContent = 'Failed to connect. Try again.'; }
+  }
+}
+
 function selectOnboardProvider(provider) {
   _onboardProvider = provider;
   // Picking a provider jumps straight to its connect step — no separate
@@ -313,10 +352,12 @@ function finishOnboarding() {
   // Also save server-side so it survives port changes.
   apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
   if (_onboardProvider) {
-    const defaults = { codex: 'gpt-5.5', anthropic: 'claude-opus-4-8', xai: 'grok-3-mini', gemini: 'gemini-2.0-flash', local: '', custom: '' };
+    const defaults = { codex: 'gpt-5.5', anthropic: 'claude-opus-4-8', xai: 'grok-3-mini', gemini: 'gemini-2.0-flash', local: '', custom: '', 'ollama-cloud': '' };
     const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     s.provider = _onboardProvider;
     if (defaults[_onboardProvider]) s.model = defaults[_onboardProvider];
+    // Cloud catalog is dynamic — use the first model the connect step found.
+    if (_onboardProvider === 'ollama-cloud' && _onboardCloudModel) s.model = _onboardCloudModel;
     localStorage.setItem('lax_settings', JSON.stringify(s));
     apiPost('/api/settings', { provider: s.provider, model: s.model }).catch(() => {});
   }

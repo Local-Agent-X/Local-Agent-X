@@ -154,6 +154,42 @@ function restoreActivityScroll(fresh, saved) {
   }
 }
 
+// Synchronous swap of the live bubble from current store state. Returns true
+// if it painted. Shared by the rAF-coalesced rerender (foreground) and the
+// visibility-flush path (catch-up on refocus). Re-checks conditions itself so
+// both callers stay honest — a chat switch / done can land between queue and
+// flush.
+function _swapLiveMessage(sessionId) {
+  if (!activeChat || activeChat.id !== sessionId) return false;
+  if (!ChatStreamStore.isStreaming(sessionId)) return false;
+  const store = ChatStreamStore.get(sessionId);
+  if (!store) return false;
+  let oldNode = _liveMessageNodes.get(sessionId);
+  if (!oldNode || !document.contains(oldNode)) {
+    // Fallback: the manual bubble sendMessage created (before any
+    // renderMessages run captured it into _liveMessageNodes).
+    const messagesEl = document.getElementById('messages');
+    if (messagesEl) {
+      const all = messagesEl.querySelectorAll('.msg.assistant');
+      oldNode = all[all.length - 1] || null;
+    }
+  }
+  if (!oldNode) return false;
+  const tmp = document.createElement('div');
+  const fresh = renderMessage(null, { parent: tmp, isLiveSynth: true, store });
+  if (!fresh) return false;
+  preserveOpenState(oldNode, fresh);
+  // Carry the reserved-space class across the swap so the answer keeps
+  // streaming into a full viewport of room and the prompt stays pinned.
+  if (oldNode.classList.contains('pin-bottom')) fresh.classList.add('pin-bottom');
+  const activityScroll = captureActivityScroll(oldNode);
+  oldNode.replaceWith(fresh);
+  restoreActivityScroll(fresh, activityScroll);
+  _liveMessageNodes.set(sessionId, fresh);
+  autoScroll();
+  return true;
+}
+
 function rerenderLiveMessage(sessionId) {
   if (!sessionId) return;
   if (!activeChat || activeChat.id !== sessionId) return;
@@ -161,37 +197,38 @@ function rerenderLiveMessage(sessionId) {
   if (_rerenderRafs.has(sessionId)) return;
   const token = requestAnimationFrame(() => {
     _rerenderRafs.delete(sessionId);
-    // Re-check conditions at flush time — chat switch / done can have
-    // landed between queue and flush.
-    if (!activeChat || activeChat.id !== sessionId) return;
-    if (!ChatStreamStore.isStreaming(sessionId)) return;
-    const store = ChatStreamStore.get(sessionId);
-    if (!store) return;
-    let oldNode = _liveMessageNodes.get(sessionId);
-    if (!oldNode || !document.contains(oldNode)) {
-      // Fallback: the manual bubble sendMessage created (before any
-      // renderMessages run captured it into _liveMessageNodes).
-      const messagesEl = document.getElementById('messages');
-      if (messagesEl) {
-        const all = messagesEl.querySelectorAll('.msg.assistant');
-        oldNode = all[all.length - 1] || null;
-      }
-    }
-    if (!oldNode) return;
-    const tmp = document.createElement('div');
-    const fresh = renderMessage(null, { parent: tmp, isLiveSynth: true, store });
-    if (!fresh) return;
-    preserveOpenState(oldNode, fresh);
-    // Carry the reserved-space class across the swap so the answer keeps
-    // streaming into a full viewport of room and the prompt stays pinned.
-    if (oldNode.classList.contains('pin-bottom')) fresh.classList.add('pin-bottom');
-    const activityScroll = captureActivityScroll(oldNode);
-    oldNode.replaceWith(fresh);
-    restoreActivityScroll(fresh, activityScroll);
-    _liveMessageNodes.set(sessionId, fresh);
-    autoScroll();
+    _swapLiveMessage(sessionId);
   });
   _rerenderRafs.set(sessionId, token);
+}
+
+// requestAnimationFrame is paused by the browser/Electron while the window is
+// backgrounded, minimized, or occluded. Stream deltas still accumulate in
+// ChatStreamStore (applyEvent is synchronous), but the live bubble is only
+// swapped inside the rAF above — so a backgrounded window shows a frozen "..."
+// spinner even though the answer is flowing in. The queued frame eventually
+// flushes on refocus, but in the gap it reads as "the agent gave up." Force an
+// immediate catch-up paint of the streaming session the moment we're visible
+// again, and drop any stale rAF tokens left queued while hidden.
+function flushLiveRenders() {
+  if (typeof document !== 'undefined' && document.hidden) return;
+  for (const sessionId of Array.from(_rerenderRafs.keys())) {
+    cancelAnimationFrame(_rerenderRafs.get(sessionId));
+    _rerenderRafs.delete(sessionId);
+  }
+  if (activeChat && ChatStreamStore.isStreaming(activeChat.id)) {
+    _swapLiveMessage(activeChat.id);
+  }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) flushLiveRenders();
+  });
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('focus', flushLiveRenders);
+  window.addEventListener('pageshow', flushLiveRenders);
 }
 
 // Finalize the live streaming bubble IN PLACE — no #messages wipe. Replaces

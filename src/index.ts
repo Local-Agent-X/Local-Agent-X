@@ -163,7 +163,7 @@ try {
 
 // Single-instance enforcement + pidfile + parent-pid heartbeat. Must run
 // BEFORE startServer so we never bind ports while a sibling server is up.
-initLifecycle();
+await initLifecycle();
 
 logger.info(`
   ╔═══════════════════════════════════╗

@@ -23,6 +23,7 @@ import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 import { isPidAlive, isOurServerProcess } from "./pid-probe.js";
+import { acquireDataDirLock } from "./datadir-lock.js";
 
 const logger = createLogger("lifecycle");
 
@@ -64,12 +65,23 @@ function removePidFile(): void {
   } catch {}
 }
 
-export function initLifecycle(): void {
-  // Single-instance check. A stale pidfile (PID dead OR recycled to a
-  // non-node process — happens routinely on Windows after a reboot) is
+export async function initLifecycle(): Promise<void> {
+  // Primary, self-cleaning single-instance guard: a loopback lock keyed to
+  // the data-dir. The OS reclaims it the instant the holder dies (clean exit,
+  // crash, OR taskkill /F), so unlike the pidfile below it can never go
+  // stale. This closes the hole where a force-killed server left a dead-pid
+  // pidfile and a second instance (e.g. an LAX_PORT launch on the same
+  // ~/.lax) read it as "stale, proceed" and booted anyway — N servers then
+  // shared one data-dir, each pegging a core. Refuses (exit 75) only when the
+  // port's holder confirms it's a LAX server; fails open otherwise.
+  await acquireDataDirLock(LAX_DIR);
+
+  // Secondary check + launcher identity. A stale pidfile (PID dead OR recycled
+  // to a non-node process — happens routinely on Windows after a reboot) is
   // harmless: we delete it and overwrite below. A live foreign node
   // process means a previous server is still running; refuse to start so
-  // we don't double-bind ports or fight over the audit DB.
+  // we don't double-bind ports or fight over the audit DB. (The desktop
+  // launcher also reads this file to identify/reclaim an orphan server.)
   const existing = readPidFile();
   if (existing && existing.pid !== process.pid) {
     if (isOurServerProcess(existing.pid)) {

@@ -85,6 +85,25 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   let onEventInstalled = false;
   let runtimeInstalled = false;
   let retryCtxAttached = false;
+
+  const ZERO_USAGE = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  // Deliver a terminal failure to the client on whatever transport is live.
+  // The WS chat UI runs with sseSink=null and only gets its per-turn onEvent
+  // channel once installEventWiring runs — so a failure BEFORE that (missing
+  // credential, routing, a prepare crash) has no live channel: emitSse is a
+  // no-op and failChat can't terminate a chat startChat never registered. The
+  // browser shows a spinner optimistically on send, so without a direct push it
+  // spins forever. chatWs.emit → broadcastToSession reaches the session room
+  // regardless of active-chat state, so route error+done there on the WS path.
+  const emitTurnError = (msg: string) => {
+    emitSse({ type: "error", message: msg });
+    emitSse({ type: "done", usage: ZERO_USAGE } as ServerEvent);
+    if (!sseSink) {
+      ctx.chatWs.emit(sessionId, { type: "error", message: msg });
+      ctx.chatWs.emit(sessionId, { type: "done", usage: ZERO_USAGE } as ServerEvent);
+    }
+    doneEmitted = true;
+  };
   // One RetryContext per chat turn. Today only L1 (tool-executor's withRetry
   // for transient-network tools) reads it; the correlationId stitches its
   // log lines for this turn. See src/retry-context.ts for history.
@@ -101,7 +120,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     await emitContextStatus(prepared, ctx, sessionId, emitSse);
 
     if (!prepared.apiKey) {
-      emitSse({ type: "error", message: `No API key configured for ${prepared.provider}.` });
+      const label = prepared.provider === "xai" ? "Grok (xAI)" : prepared.provider;
+      emitTurnError(`${label} isn't authenticated — the sign-in has expired or been revoked. Reconnect it in Settings → Providers, then resend.`);
       return;
     }
 
@@ -161,7 +181,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     if (result.doneEmitted) doneEmitted = true;
     return;
   } catch (e) {
-    emitSse({ type: "error", message: safeErrorMessage(e) });
+    emitTurnError(safeErrorMessage(e));
   } finally {
     if (lockHeld) releaseTurnLock(sessionId);
     if (onEventInstalled) ctx.setActiveOnEvent(sessionId, undefined);

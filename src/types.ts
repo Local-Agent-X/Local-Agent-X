@@ -300,6 +300,12 @@ export interface LAXConfig {
   model: string;
   maxIterations: number;
   temperature: number;
+  /** Interactive lane concurrency cap — how many chat turns run at once
+   *  across all sessions. See scheduler.ts laneCap(). */
+  maxInteractiveSessions: number;
+  /** Agent lane concurrency cap — how many sub-agents (agent_spawn) run at
+   *  once. See scheduler.ts laneCap(). */
+  maxSubAgents: number;
   systemPrompt: string;
   profile: DeploymentProfile;
   toolApproval: "auto" | "confirm-risky" | "confirm-all";

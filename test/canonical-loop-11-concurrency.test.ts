@@ -3,10 +3,9 @@
  * docs/issues/canonical-loop/11-v1-hardening-and-invariants.md
  *
  * Coverage:
- *   - 5 concurrent ops mixed across lanes (interactive=1, build=2, ide=1,
- *     background=1) — submitted in one synchronous burst. Some run truly
- *     concurrently (build cap=2 admits two; the other lanes admit one
- *     each), the rest queue. All five reach `succeeded`.
+ *   - 5 concurrent ops mixed across lanes (interactive, build=2, ide=1,
+ *     background=1) — submitted in one synchronous burst. All five reach
+ *     `succeeded` with no cross-op contamination.
  *   - Per-op `seq` monotonic 0..K_i with no gaps. No event has the
  *     wrong `op_id`.
  *   - No cross-op contamination of:
@@ -14,12 +13,11 @@
  *       - op_messages
  *       - op_turns provider_state
  *       - lease lifecycle (each op's worker_id is unique to that op).
- *   - 5 concurrent ops on a SINGLE lane (interactive cap=1) all reach
- *     terminal in submission order. Lane cap was respected — no two
- *     workers ran the same op concurrently.
- *   - Concurrent ops on DIFFERENT lanes do not block each other:
- *     `build` lane (cap=2) admits two concurrent leases while
- *     `interactive` (cap=1) admits one independently.
+ *   - 5 concurrent ops on a SINGLE lane all reach terminal, each leased
+ *     exactly once (no re-leasing, no two workers on the same op).
+ *   - Two interactive ops in different sessions run concurrently — the
+ *     regression guard for the multi-session-chat cap bug.
+ *   - Concurrent ops on DIFFERENT lanes do not block each other.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, rmSync } from "node:fs";
@@ -42,7 +40,7 @@ import {
 import { readOp, newOpId } from "../src/ops/op-store.js";
 import type { Op, OpLane } from "../src/ops/types.js";
 
-import { FakeAdapter, scriptTurn, scriptMultiTurn } from "./canonical-loop/fake-adapter.js";
+import { FakeAdapter, scriptTurn, scriptMultiTurn, scriptLongStreamingTurn } from "./canonical-loop/fake-adapter.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 const tracked: string[] = [];
@@ -195,8 +193,8 @@ describe("Issue 11 — PRD test #10 concurrent ops isolation (mixed lanes)", () 
 
 // ── Single-lane cap-respected concurrency ───────────────────────────────
 
-describe("Issue 11 — same-lane lane cap respected under concurrent submit", () => {
-  it("5 ops on `interactive` (cap=1) all complete; per-op seq monotonic; no two simultaneous lease_acquired without a paired lease_lost", async () => {
+describe("Issue 11 — same-lane concurrent submit: each op leased exactly once", () => {
+  it("5 ops on `interactive` all complete; per-op seq monotonic; each leased exactly once", async () => {
     const ops: Op[] = Array.from({ length: 5 }, (_, i) => mkOp(`solo${i}`, "interactive"));
     for (const op of ops) {
       const adapter = new FakeAdapter({
@@ -217,6 +215,46 @@ describe("Issue 11 — same-lane lane cap respected under concurrent submit", ()
       expect(events.filter(e => e.type === "lease_acquired")).toHaveLength(1);
       expect(events.filter(e => e.type === "lease_lost")).toHaveLength(1);
     }
+  });
+});
+
+// ── Regression: multi-session chat concurrency (interactive cap > 1) ─────
+
+describe("interactive lane runs multiple sessions concurrently", () => {
+  it("two interactive ops in different sessions both reach `running` at once", async () => {
+    // Repro for the single-user "can't chat in two sessions at once" bug:
+    // the interactive lane was globally capped at 1, so a second session's
+    // turn sat `queued` behind the first until it finished. Each adapter
+    // holds a long stream so both ops stay mid-run while we observe them —
+    // under the old cap=1 the second never leaves `queued` and this times out.
+    const a = mkOp("sessA", "interactive");
+    const b = mkOp("sessB", "interactive");
+    for (const op of [a, b]) {
+      const adapter = new FakeAdapter({
+        script: [scriptLongStreamingTurn({ chunkIntervalMs: 25, maxChunks: 200 })],
+      });
+      registerAdapterForOp(op.id, () => adapter);
+    }
+
+    canonicalLoopEntry(a, { sessionId: "chat-session-A" });
+    canonicalLoopEntry(b, { sessionId: "chat-session-B" });
+
+    const bothRunning = async (timeoutMs = 2_000): Promise<void> => {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const sa = readOp(a.id)?.canonical?.state;
+        const sb = readOp(b.id)?.canonical?.state;
+        if (sa === "running" && sb === "running") return;
+        if (Date.now() > deadline) {
+          throw new Error(`both ops not running — A=${sa} B=${sb}`);
+        }
+        await new Promise(r => setTimeout(r, 5));
+      }
+    };
+
+    await bothRunning();
+    expect(readOp(a.id)?.canonical?.state).toBe("running");
+    expect(readOp(b.id)?.canonical?.state).toBe("running");
   });
 });
 

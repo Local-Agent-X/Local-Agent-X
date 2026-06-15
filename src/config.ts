@@ -69,6 +69,14 @@ const configSchema = z.object({
   model: z.string().default("grok-4"),
   maxIterations: z.number().int().min(1).max(300).default(160),
   temperature: z.number().min(0).max(2).default(0.7),
+  /** Max chat turns the canonical-loop runs at once across all sessions
+   *  (interactive lane cap). Each session still serializes its own turns via
+   *  the inject queue; this only governs cross-session parallelism. */
+  maxInteractiveSessions: z.number().int().min(1).max(20).default(10),
+  /** Max sub-agents (agent_spawn) running concurrently — the `agent` lane
+   *  cap. Each is a full agent loop + provider stream + tool subprocesses, so
+   *  the heavy local cost scales with this. User-tunable from Settings. */
+  maxSubAgents: z.number().int().min(1).max(20).default(5),
   systemPrompt: z.string().default(DEFAULT_SYSTEM_PROMPT),
   profile: z.enum(["home", "dev", "enterprise"]).default("home"),
   toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("auto"),

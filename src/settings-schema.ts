@@ -75,6 +75,12 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Max tool calls per chat turn (1-300)",
   },
   {
+    field: "maxSubAgents",
+    validate: z.number().int().min(1).max(20),
+    runtime: true,
+    description: "Max sub-agents (agent_spawn) running at once (1-20). Each runs a full agent loop + provider stream + tool subprocesses, so local compute scales with this",
+  },
+  {
     field: "temperature",
     validate: z.number().min(0).max(2),
     runtime: true,

@@ -9,8 +9,10 @@ import {
   setDefaultAdapterForLane,
   createAnthropicAdapter,
   sweepStaleCanonicalOps,
+  setLaneCapConfigReader,
 } from "../canonical-loop/index.js";
 import type { CanonicalLane } from "../canonical-loop/types.js";
+import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("server.canonical-loop-bootstrap");
@@ -29,11 +31,16 @@ const ALL_LANES: CanonicalLane[] = ["interactive", "build", "ide", "background"]
  * canonical-loop's `recoverStaleOp` primitive so it transitions to a
  * clean terminal/queued state instead of sitting orphaned forever.
  */
-export function bootstrapCanonicalLoop(): void {
+export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
   for (const lane of ALL_LANES) {
     setDefaultAdapterForLane(lane, () => createAnthropicAdapter());
   }
   logger.info(`[canonical-loop] AnthropicAdapter registered for lanes: ${ALL_LANES.join(", ")}`);
+
+  // Wire the live runtime-config reader so config-driven lane caps
+  // (maxInteractiveSessions) take effect and follow hot-reload. Passing the
+  // reader in keeps this module free of config.ts's import-time side effects.
+  if (configReader) setLaneCapConfigReader(configReader);
 
   // Stale-op recovery sweep is a fire-and-forget — no caller waits for the
   // result. Used to run synchronously inside this function and added 9-18s

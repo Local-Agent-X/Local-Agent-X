@@ -12,6 +12,7 @@ import { createHttpServer, setupVoiceWs, wireWsChat, startConfigWatcher, logStar
 import { registerHandlerEvents } from "./handler-events.js";
 import { startBackgroundJobs } from "./background-jobs.js";
 import { createLogger } from "../logger.js";
+import { getRuntimeConfig } from "../config.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 
 const bootLogger = createLogger("server.index");
@@ -272,7 +273,7 @@ export async function startServer(config: LAXConfig) {
   });
 
   phaseSync("startConfigWatcher", () => startConfigWatcher(dataDir));
-  phaseSync("bootstrapCanonicalLoop", () => bootstrapCanonicalLoop());
+  phaseSync("bootstrapCanonicalLoop", () => bootstrapCanonicalLoop(getRuntimeConfig));
 
   // Security guardian is a boot precondition — must be up before we accept
   // a single request. When ariRequired, a failure here exits the process.

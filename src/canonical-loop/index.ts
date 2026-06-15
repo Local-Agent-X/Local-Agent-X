@@ -88,6 +88,7 @@ export {
   awaitIdle,
   resetScheduler,
   schedulerSnapshot,
+  setLaneCapConfigReader,
 } from "./scheduler.js";
 
 export {

@@ -42,9 +42,10 @@ async function saveSettings() {
   // Save provider + model to server (no API key in settings.json)
   const currentPort = location.port || '7007';
   const maxIter = parseInt(document.getElementById('cfg-maxiter')?.value || '25', 10);
+  const maxSub = parseInt(document.getElementById('cfg-maxsubagents')?.value || '5', 10);
   const embProvider = document.getElementById('cfg-emb-provider')?.value || 'ollama';
   const embModel = document.getElementById('cfg-emb-model')?.value || '';
-  const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature, maxIterations: maxIter, embeddingProvider: embProvider === 'none' ? undefined : embProvider, embeddingModel: embModel || undefined };
+  const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature, maxIterations: maxIter, maxSubAgents: maxSub, embeddingProvider: embProvider === 'none' ? undefined : embProvider, embeddingModel: embModel || undefined };
   if (s.port) settingsPayload.port = s.port;
   // Workspace save location. Like port, it persists to config.json and takes
   // effect on restart — the migration of existing files runs at next boot,
@@ -94,6 +95,7 @@ async function loadSettings() {
     const browseBtn = document.getElementById('cfg-workspace-browse');
     if (browseBtn && !window.desktop?.isDesktop) browseBtn.style.display = 'none';
     set('cfg-provider', s.provider); set('cfg-model', s.model); set('cfg-temperature', s.temperature);
+    set('cfg-maxiter', s.maxIterations); set('cfg-maxsubagents', s.maxSubAgents);
     // Store saved model and trigger provider change to populate dropdown
     const modelInput = document.getElementById('cfg-model');
     if (modelInput && s.model) modelInput.dataset.saved = s.model;

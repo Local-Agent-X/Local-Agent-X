@@ -5,9 +5,9 @@
  * `enqueueOp` adds an op for scheduling; `pumpScheduler` drains as much
  * as the current caps allow, spawning an in-process worker per slot.
  *
- * Issue 03 only exercises the `interactive` lane (cap = 1). Build / IDE
- * caps land in v1.2 / v1.3 but are listed here so the cap table matches
- * PRD §14.
+ * The `interactive` cap is config-driven (maxInteractiveSessions) so chat
+ * sessions run concurrently; other lanes use STATIC_LANE_CAPS. Per-session
+ * turn ordering is handled upstream by the inject queue, not by this cap.
  *
  * The scheduler holds no DB-level row lease — for Issue 03 the in-process
  * `active` map is the single source of who is driving an op. Issue 08
@@ -16,17 +16,39 @@
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 import type { CanonicalLane } from "./types.js";
+import type { LAXConfig } from "../types.js";
 import { readOp } from "../ops/op-store.js";
 import { resolveAdapterFactory } from "./runtime.js";
 import { runWorker, type WorkerHandle } from "./worker.js";
 
-const LANE_CAPS: Record<CanonicalLane, number> = {
-  interactive: 1,
+// Static fallback caps. The `interactive` lane's cap is config-driven
+// (maxInteractiveSessions) when a config reader is wired at boot; these are
+// the defaults used in tests and before wiring. Importing config.ts directly
+// here would drag its boot-time watchers into this hot module — instead boot
+// injects a live reader via setLaneCapConfigReader (mirrors how the rest of
+// canonical-loop stays config.ts-free, taking values via env/options).
+const STATIC_LANE_CAPS: Record<CanonicalLane, number> = {
+  interactive: 10,
   build: 2,
   ide: 1,
   background: 1,
-  agent: 3,
+  agent: 5,
 };
+
+let capConfigReader: (() => LAXConfig) | null = null;
+
+/** Boot wires the live runtime-config reader so config-driven lane caps
+ *  (maxInteractiveSessions) take effect — and track hot-reload. */
+export function setLaneCapConfigReader(fn: (() => LAXConfig) | null): void {
+  capConfigReader = fn;
+}
+
+function laneCap(lane: CanonicalLane): number {
+  const cfg = capConfigReader?.();
+  if (lane === "interactive") return cfg?.maxInteractiveSessions ?? STATIC_LANE_CAPS.interactive;
+  if (lane === "agent") return cfg?.maxSubAgents ?? STATIC_LANE_CAPS.agent;
+  return STATIC_LANE_CAPS[lane] ?? 1;
+}
 
 interface QueuedOp {
   opId: string;
@@ -51,7 +73,7 @@ export function pumpScheduler(): void {
     let i = 0;
     while (i < queue.length) {
       const q = queue[i];
-      const cap = LANE_CAPS[q.lane] ?? 1;
+      const cap = laneCap(q.lane);
       const inUse = activeByLane.get(q.lane) ?? 0;
       if (inUse >= cap) { i++; continue; }
       const op = readOp(q.opId);
@@ -141,6 +163,7 @@ export function resetScheduler(): void {
   active.clear();
   activeByLane.clear();
   pumping = false;
+  capConfigReader = null;
 }
 
 export function schedulerSnapshot(): { queueDepth: number; activeCount: number } {

@@ -26,6 +26,7 @@ import { previewTools } from "./preview-tools.js";
 import { emailTools } from "./email-tools.js";
 import { calendarTools } from "./calendar-tools.js";
 import { telegramTools } from "./telegram-tools.js";
+import { whatsappTools } from "./whatsapp-tools.js";
 import { clipboardTools } from "./clipboard-tools.js";
 import { sqlTools } from "./sql-tools.js";
 import { taskTools } from "./task-tools.js";
@@ -51,7 +52,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool,
   ...processTools,
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools, ...chartTools, ...previewTools,
-  ...emailTools, ...calendarTools, ...telegramTools, ...clipboardTools, ...sqlTools,
+  ...emailTools, ...calendarTools, ...telegramTools, ...whatsappTools, ...clipboardTools, ...sqlTools,
   ...taskTools, ...planTools, ...autopilotTools, ...opTools,
   {
     name: "memory_dream",

@@ -53,7 +53,7 @@ export const ARI_ACTION_MAP: Record<string, string> = {
   calendar_check_availability: "get", calendar_list_events: "get",
   calendar_create_event: "post",
   email_read: "get", email_search: "get", email_draft: "post",
-  email_send: "post", email_setup: "post", telegram_send: "post",
+  email_send: "post", email_setup: "post", telegram_send: "post", whatsapp_send: "post",
   marketplace_search: "get", marketplace_list: "get", marketplace_install: "get",
   extract_site_assets: "get",
   youtube_analyze: "get",

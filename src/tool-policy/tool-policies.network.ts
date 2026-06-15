@@ -46,6 +46,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
   email_setup:                 { kernel: "http", risk: "workspace-write" },
   email_send:                  { kernel: "http", risk: "external-comms" },
   telegram_send:               { kernel: "http", risk: "external-comms", offBoxFetch: true, rules: [{ id: "allow-telegram-send", decision: "allow", reason: "Proactive owner DM over the Telegram bridge (egress-gated, confined to authorized chats)", priority: 50 }] },
+  whatsapp_send:               { kernel: "http", risk: "external-comms", offBoxFetch: true, rules: [{ id: "allow-whatsapp-send", decision: "allow", reason: "Proactive owner DM over the WhatsApp bridge (egress-gated, confined to authorized numbers)", priority: 50 }] },
   calendar_check_availability: { kernel: "http", risk: "network-read" },
   calendar_list_events:        { kernel: "http", risk: "network-read" },
   calendar_create_event:       { kernel: "http", risk: "external-comms" },

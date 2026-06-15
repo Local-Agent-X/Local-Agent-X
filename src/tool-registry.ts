@@ -79,6 +79,7 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "ari_http",                  // kernel HTTP bridge — same off-box sink
   "email_send",                // sends a message a third party receives
   "telegram_send",             // proactively DMs the owner over the Telegram bridge
+  "whatsapp_send",             // proactively DMs the owner over the WhatsApp bridge
   "clipboard_write",           // crosses into another app's read surface
   "process_start",             // spawns a subprocess that can carry data off-box
   "browser",                   // browser navigation/fetch actions (browser_* below)

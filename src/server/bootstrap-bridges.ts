@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { stripEphemeralMessages } from "../providers/sanitize.js";
-import { WhatsAppBridge } from "../whatsapp-bridge/index.js";
+import { WhatsAppBridge, setWhatsAppBridgeInstance } from "../whatsapp-bridge/index.js";
 import { TelegramBridge, setTelegramBridgeInstance } from "../telegram-bridge/index.js";
 import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
 import { resolveSession, buildChannelContext, type ChannelType } from "../session/router.js";
@@ -367,6 +367,7 @@ export function bootstrapBridges(deps: {
 }): BridgeBundle {
   const { dataDir, secretsStore, bridgeHandler } = deps;
   const whatsappBridge = new WhatsAppBridge({ dataDir, onMessage: (p) => bridgeHandler("WhatsApp", p) });
+  setWhatsAppBridgeInstance(whatsappBridge);
   const telegramBridge = new TelegramBridge({ dataDir, getToken: () => secretsStore.get("TELEGRAM_BOT_TOKEN") ?? null, onMessage: (p) => bridgeHandler("Telegram", p) });
   setTelegramBridgeInstance(telegramBridge);
   if (secretsStore.has("TELEGRAM_BOT_TOKEN")) telegramBridge.connect().then(r => { if (r.state === "connected") logger.info(`[telegram] Auto-reconnected as @${r.botUsername}`); }).catch(() => {});

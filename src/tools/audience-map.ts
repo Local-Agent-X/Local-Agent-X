@@ -45,6 +45,7 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   screen_capture: ["main-chat"],
   // Proactive owner DM — interactive ("ping me…") AND autonomous/scheduled runs.
   telegram_send:  ["main-chat", "operator", "spawned-agent"],
+  whatsapp_send:  ["main-chat", "operator", "spawned-agent"],
   ocr:            ["spawned-agent", "operator"],
 
   // Memory

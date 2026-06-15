@@ -360,3 +360,11 @@ export class WhatsAppBridge {
     });
   }
 }
+
+// Module-singleton handle to the live bridge so tools (whatsapp_send) and
+// scheduled missions can push PROACTIVE messages. The inbound reply path rides
+// onMessage, but a cron ping has no inbound turn to ride — it needs the bridge
+// object directly. Set once at bootstrap (bootstrap-bridges.ts).
+let _instance: WhatsAppBridge | null = null;
+export function setWhatsAppBridgeInstance(b: WhatsAppBridge | null): void { _instance = b; }
+export function getWhatsAppBridgeInstance(): WhatsAppBridge | null { return _instance; }

@@ -200,6 +200,24 @@ export class CodexAdapter implements Adapter {
       }
     }
 
+    // Still empty after the truncation-recovery retries — zero text, zero
+    // tool calls, zero error, not aborted, not interrupted. Surface it as a
+    // turn failure instead of finishing as a silent, contentless `done`.
+    // The dominant real-world trigger is an expired/rotated ChatGPT OAuth
+    // session (the user signed in on another device): the request comes
+    // back as an empty stream rather than a 401, so there's no transport
+    // error to catch and the bubble would otherwise spin and then finish
+    // blank. Bug: chat hung at "0 tokens" forever after a phone ChatGPT
+    // login rotated the session (2026-06-15). Setting firstError flips
+    // terminalReason to "error"; reporting it renders the message in the
+    // bubble so the user knows to reconnect.
+    if (isTruncatedEmpty()) {
+      const message =
+        "The model returned an empty response (no text or tool calls). This usually means your ChatGPT/OpenAI session expired or you signed in on another device — reconnect OpenAI to continue, or switch providers.";
+      firstError = { code: "empty_response", message };
+      report({ kind: "error", code: "empty_response", message, retryable: false });
+    }
+
     // Tool-call-in-text fallback. Mirror of the rescue path in
     // openai-compat.ts and anthropic.ts. After a few rounds Codex models
     // (gpt-5 / o-series) sometimes drift to emitting the next tool call

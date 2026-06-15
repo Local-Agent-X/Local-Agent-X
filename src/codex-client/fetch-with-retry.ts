@@ -45,6 +45,21 @@ export async function fetchCodexWithRetry(input: FetchWithRetryInput): Promise<R
 
       const errText = await res.text();
 
+      // Auth failures (401/403) are terminal — never retry them, and don't
+      // dress them up as a generic "Codex API error". The common trigger is
+      // the ChatGPT subscription session being rotated when the user signs
+      // in on another device (e.g. phone): the stored OAuth token is still
+      // structurally valid locally, so it slips past getApiKey's expiry
+      // check and only fails here, server-side. Surface an actionable
+      // "reconnect" message. The status code stays in the string so
+      // resilience-policy.classify() still tags it `auth`.
+      if (res.status === 401 || res.status === 403) {
+        logger.error(`[codex] auth ${res.status}:`, errText.slice(0, 300));
+        throw new Error(
+          `Codex auth failed (HTTP ${res.status}): your ChatGPT/OpenAI session has expired or you signed in on another device. Reconnect OpenAI to continue.`,
+        );
+      }
+
       if (isRetryable({ status: res.status }) && attempt < maxRetries) {
         const waitMs = backoffMs(attempt, classify({ status: res.status }));
         logger.warn(`[codex] API ${res.status}, retrying in ${Math.round(waitMs)}ms (attempt ${attempt}/${maxRetries})`);

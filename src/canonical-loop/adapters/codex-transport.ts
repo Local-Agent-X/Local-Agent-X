@@ -34,10 +34,17 @@ export function defaultCodexTransport(): CodexTransport {
       try {
         apiKey = await getApiKey();
       } catch (e) {
+        // No usable OpenAI/ChatGPT credential — either never connected, or
+        // the stored token couldn't be refreshed (refresh token revoked,
+        // e.g. after signing in on another device). Lead with the fix; keep
+        // the scrubbed underlying reason for debugging.
         yield {
           type: "error" as const,
           code: "auth_unavailable",
-          message: scrub((e as Error).message ?? "codex auth not configured"),
+          message:
+            "OpenAI/ChatGPT not connected or its session expired — reconnect OpenAI to continue. (" +
+            scrub((e as Error).message ?? "codex auth not configured") +
+            ")",
           retryable: false,
         };
         yield { type: "done" as const };

@@ -14,10 +14,7 @@ import {
   extractTextFrom, screenshotAsBase64, evaluateScript,
   listTabs as listTabsOp, resolveSwitchTab, pageInfo,
 } from "./page-ops.js";
-
-function isBlankish(url: string): boolean {
-  return url === "" || url === "about:blank" || url.startsWith("chrome://newtab") || url.startsWith("chrome://new-tab-page");
-}
+import { isBlankish } from "./blankish.js";
 
 /**
  * Per-session browser surface. Each session owns its own tabs + observation

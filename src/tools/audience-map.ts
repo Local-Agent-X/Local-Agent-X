@@ -43,6 +43,8 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   view_image:     ["main-chat", "spawned-agent", "operator", "build-intent"],
   send_video:     ["main-chat"],
   screen_capture: ["main-chat"],
+  // Proactive owner DM — interactive ("ping me…") AND autonomous/scheduled runs.
+  telegram_send:  ["main-chat", "operator", "spawned-agent"],
   ocr:            ["spawned-agent", "operator"],
 
   // Memory

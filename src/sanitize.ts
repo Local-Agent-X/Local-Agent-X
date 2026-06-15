@@ -12,6 +12,8 @@ import {
   CONTROL_CHARS,
   SYSTEM_INJECTION_TAG_RE,
   SYSTEM_INJECTION_LONE_TAG_RE,
+  PSEUDO_PIPE_TAG_RE,
+  LEET_MAP,
   HARNESS_SCAFFOLD_PATTERNS,
   EXTERNAL_MARKERS,
   MEMORY_INJECTION_EXTRA,
@@ -59,7 +61,27 @@ export function stripHtmlComments(s: string): string {
 export function stripSystemInjectionTags(text: string): string {
   let result = text.replace(SYSTEM_INJECTION_TAG_RE, "[CONTENT-STRIPPED]");
   result = result.replace(SYSTEM_INJECTION_LONE_TAG_RE, "");
+  result = result.replace(PSEUDO_PIPE_TAG_RE, "[CONTENT-STRIPPED]");
   return result;
+}
+
+/**
+ * Leetspeak-normalized view of a string for injection scanning. Substitutes
+ * digit/symbol leet chars back to letters, but ONLY inside alphanumeric tokens
+ * that already contain a letter — so standalone numbers ("5 apples", "year
+ * 2026") are left alone. This is a scan-only second view; never persist or
+ * display its output. Note: it intentionally lets a leet spelling reach the same
+ * patterns its plaintext would (e.g. "jailbr34k" → "jailbreak"), so leet-spelled
+ * flagged terms are flagged just as plaintext is. Only digit leet is handled
+ * (0 1 3 4 5 7 8 9 @ $); symbol maps like ()→o or +→t are deliberately excluded
+ * — substituting bare +, |, ! would mangle ordinary text and code.
+ */
+export function deleet(text: string): string {
+  return text.replace(/[a-z0-9@$]+/gi, (tok) => {
+    if (!/[a-z]/i.test(tok)) return tok;
+    if (!/[01345789@$]/.test(tok)) return tok;
+    return tok.replace(/[01345789@$]/g, (c) => LEET_MAP[c] ?? c);
+  });
 }
 
 // ── Harness scaffolding stripping ──
@@ -120,11 +142,21 @@ export function normalizeHomoglyphs(text: string): string {
 export function detectInjection(text: string): Array<{ label: string; score: number; match: string }> {
   const results: Array<{ label: string; score: number; match: string }> = [];
   const normalized = normalizeHomoglyphs(stripControlChars(text));
+  // Scan a leetspeak-normalized view too so digit-substituted directives match
+  // the same patterns. When no leet chars are present deleet() returns the input
+  // unchanged, so behavior on ordinary content is identical to before.
+  const deleeted = deleet(normalized);
+  const views = deleeted === normalized ? [normalized] : [normalized, deleeted];
 
-  for (const { pattern, score, label } of INJECTION_PATTERNS) {
-    const match = normalized.match(pattern);
-    if (match) {
-      results.push({ label, score, match: match[0] });
+  const seen = new Set<string>();
+  for (const view of views) {
+    for (const { pattern, score, label } of INJECTION_PATTERNS) {
+      if (seen.has(label)) continue;
+      const match = view.match(pattern);
+      if (match) {
+        results.push({ label, score, match: match[0] });
+        seen.add(label);
+      }
     }
   }
   return results;
@@ -256,6 +288,11 @@ export function checkMemoryTaint(content: string): MemoryTaintResult {
   // FIRST: normalize unicode tricks that could bypass pattern matching
   // This closes the homoglyph/invisible-char bypass the audit identified
   const normalized = normalizeHomoglyphs(stripControlChars(content)).normalize('NFKC');
+  // Leetspeak-normalized second view — same rationale as detectInjection: a
+  // poisoning directive hidden in leet ("y0ur 0wn 1n57ruc75") must not slip the
+  // memory gate. Identical to `normalized` when no leet chars are present.
+  const deleeted = deleet(normalized);
+  const views = deleeted === normalized ? [normalized] : [normalized, deleeted];
 
   // Check for external content markers (wrapped content leaking into memory)
   for (const marker of EXTERNAL_MARKERS) {
@@ -270,15 +307,19 @@ export function checkMemoryTaint(content: string): MemoryTaintResult {
 
   // Score against the canonical injection-pattern list (same one detectInjection
   // uses) so the memory gate can't drift behind it. Each pattern carries its own
-  // confidence; a single strong hit blocks, and weaker hits accumulate.
+  // confidence; a single strong hit blocks, and weaker hits accumulate. Each
+  // label is counted once even if it hits in both views.
   let cumulative = 0;
   let maxScore = 0;
   const matches: string[] = [];
+  const counted = new Set<string>();
   for (const { pattern, score, label } of [...INJECTION_PATTERNS, ...MEMORY_INJECTION_EXTRA]) {
-    if (pattern.test(normalized)) {
+    if (counted.has(label)) continue;
+    if (views.some((v) => pattern.test(v))) {
       cumulative += score;
       maxScore = Math.max(maxScore, score);
       matches.push(label);
+      counted.add(label);
     }
   }
   const injectionScore = Math.min(Math.max(cumulative, maxScore), 1.0);

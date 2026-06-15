@@ -55,6 +55,29 @@ export const INJECTION_PATTERNS: Array<{ pattern: RegExp; score: number; label: 
   { pattern: /\b(before|after)\s+responding.*\b(also|first|quietly)\b/i, score: 0.7, label: "side-channel" },
   { pattern: /\binsert\s+(into|in)\s+(the|your)\s+(response|output|reply).*\b(hidden|invisible)\b/i, score: 0.85, label: "hidden-payload" },
   { pattern: /\bencode\s+(the|this|your|all)\s+(response|output|data)\s+(in|as|to)\s+(base64|hex|rot13)/i, score: 0.9, label: "encoding-exfil" },
+  // ── Obfuscated injection (CL4R1T4S-class: leetspeak directive + glyph pseudo-tag) ──
+  // own-instructions-leak requires BOTH a leak verb AND a verbatim qualifier
+  // around a possessive reference to the model's own instructions/prompt —
+  // "<output/reveal/include…> your <own/full/system…> <instructions/prompt…>
+  // <in full/verbatim/word-for-word/in entirety>". Neither half alone separates
+  // attack from benign English: a verb-only arm fired on "send me your full
+  // instructions for the return process"; a qualifier-only arm fired on "we kept
+  // your original instructions in full". Requiring both, in sequence, is the
+  // discriminator (an attacker commanding the model to dump its prompt verbatim).
+  // "your system prompt" attacks are already covered by system-spoof; this catches
+  // the instructions/directives form it misses. inc[il]ud\w* and in\s+fu[li]{2}
+  // absorb the lossy '1'→i/l de-leet ("1nc1ud1ng…1n fu11" → "inciuding…in fuii").
+  // new-paradigm: the *!<NEW_PARADIGM>!* marker — wrapped in <>/*! so a bare
+  // snake_case identifier (new_paradigm = True) doesn't false-fire.
+  // pseudo-pipe-glyph: a <|…|> wrapper with a non-ASCII char inside and NO ASCII
+  // whitespace (the PLINIVS glyph-header class — a contiguous token, not a prose
+  // span). Pure-ASCII <|im_start|> chat-template tokens are NOT scored (quoted
+  // legitimately in ML docs); they're neutralized by stripSystemInjectionTags
+  // (PSEUDO_PIPE_TAG_RE) on the untrusted-content path instead. Inner | and > are
+  // allowed so a one-char mutation can't evade.
+  { pattern: /\b(?:inc[il]ud\w*|reveal\w*|disclos\w*|divulg\w*|regurgitat\w*|repeat|output|print|dump|spit\s+out)\b[\s\S]{0,30}\byour\s+(?:own|full|complete|entire|system|initial|original)\s+(?:instruct(?:ions?|s)?|prompts?|directives?|system\s+message)\b[\s\S]{0,25}\b(?:in\s+fu[li]{2}|verbatim|word[\s-]for[\s-]word|in\s+(?:their\s+)?entirety)\b/i, score: 0.7, label: "own-instructions-leak" },
+  { pattern: /[<*!]\s*new_paradigm\s*[>*!]/i, score: 0.6, label: "new-paradigm" },
+  { pattern: /<\|[^ \t\r\n]{0,400}?[^\x00-\x7F][^ \t\r\n]{0,400}?\|>/, score: 0.6, label: "pseudo-pipe-glyph" },
 ];
 
 // ── Unicode homoglyph detection ──
@@ -84,6 +107,26 @@ export const SYSTEM_INJECTION_LONE_TAG_RE = new RegExp(
   `<\\/?( ${SYSTEM_INJECTION_TAG_NAMES.join("|")})(\\s[^>]*)?>`,
   "gi"
 );
+
+// ── Pseudo-pipe tag (chat-template / glyph header spoofs) ──
+// Tokens like <|im_start|>, <|system|>, or glyph headers (<|…PLINIVS…|>) mimic a
+// model's chat-template delimiters. Strip the whole token before the model sees
+// it (on the untrusted-content path). Inner | and > are allowed so a one-char
+// mutation (::→|) can't evade — that was the original strict-char-class hole.
+// The key constraint is NO inner ASCII whitespace: a real delimiter/header is a
+// contiguous token, while benign prose with a stray "<|" before a later "|>"
+// (type-theory/F#/DSL docs) has spaces between them — so this no longer eats the
+// text between two unrelated operators. Bounded at 400 to keep it tight.
+export const PSEUDO_PIPE_TAG_RE = /<\|[^ \t\r\n]{1,400}?\|>/g;
+
+// ── Leetspeak normalization map ──
+// Powers a SECOND scan view (deleet() in sanitize.ts) so digit-substituted
+// directives ("1nc1ud1ng y0ur 0wn 1n57ruc75") match the same patterns plain text
+// does. Only ever an extra view — never mutates the canonical text. Excludes 2
+// and 6 (ambiguous, high false-substitution rate).
+export const LEET_MAP: Record<string, string> = {
+  "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b", "9": "g", "@": "a", "$": "s",
+};
 
 // ── Harness scaffolding stripping ──
 // The agent harness injects scaffolding INTO user messages: <system-reminder>

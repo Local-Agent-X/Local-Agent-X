@@ -10,6 +10,7 @@ import { detectInjection } from "../sanitize.js";
 import { getVoicePref, setVoicePref, type BridgePlatform } from "../bridge-voice/index.js";
 import { scanForSecrets } from "../security/secret-scanner.js";
 import { checkCanariesInPayload } from "../threat/canaries.js";
+import { imageIsTextBearing } from "../tools/shared/image-binary-meta.js";
 import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { COMPACTION_PREFIX } from "../types.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
@@ -275,14 +276,19 @@ export function createBridgeHandler(deps: {
             // Re-gate the BYTES actually about to leave the box (egress
             // output-bytes, R4-12b). The pre-dispatch egress gates scanned the
             // tool's INPUT args; the decoded result image is a new payload that
-            // never re-entered any gate. A diffusion render won't carry a 32-char
-            // canary, but a renamed TEXT file / SVG-with-token shipped as an
-            // "image" would — so scan the decoded byte view for secrets + the
-            // session's canaries and BLOCK the one offending item (skip it, log;
-            // don't crash the whole forward loop). Mirrors egressGuardGate /
-            // canaryEgressGate's decision shape.
+            // never re-entered any gate.
+            //
+            // BUT only the text secret-scan when the payload is text-bearing. A
+            // genuine compressed raster image (PNG/JPEG/GIF/WebP) is NOT text:
+            // running credential regexes + entropy detection over its bytes only
+            // false-positives on binary noise — which was silently dropping real
+            // screenshots. The actual R4-12b threat is a renamed TEXT file or an
+            // SVG-with-token shipped as an "image"; those are text (detectMime →
+            // svg/null) and stay scanned. The canary tripwire still runs on every
+            // image (a 32-char planted token won't false-positive on binary, and
+            // its presence is definitive exfil).
             const view = img.toString("utf-8");
-            if (!scanForSecrets(view).clean) {
+            if (imageIsTextBearing(img) && !scanForSecrets(view).clean) {
               logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: outbound bytes contain a secret-shaped value`);
               continue;
             }

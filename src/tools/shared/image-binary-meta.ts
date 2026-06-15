@@ -36,6 +36,21 @@ export function detectMime(buf: Buffer): ImageMimeType | null {
   return null;
 }
 
+/**
+ * Is this buffer a text-bearing "image" (SVG, or an unrecognized payload that
+ * could be a renamed text file) rather than genuine compressed raster bytes?
+ *
+ * Used to decide whether a text secret-scan is meaningful: running credential
+ * regexes / entropy detection over compressed PNG/JPEG/GIF/WebP bytes only
+ * false-positives on binary noise (it can't read rendered pixels anyway), while
+ * SVG/unknown payloads ARE text and can legitimately hide a token. Raster →
+ * false (don't text-scan); svg or unknown → true (do text-scan).
+ */
+export function imageIsTextBearing(buf: Buffer): boolean {
+  const mime = detectMime(buf);
+  return mime === null || mime === "image/svg+xml";
+}
+
 /** Parse image dimensions from buffer. Minimal inline parsers — png/jpeg/gif/webp/svg. */
 export function parseDimensions(
   buf: Buffer,

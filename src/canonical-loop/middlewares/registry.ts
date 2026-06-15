@@ -42,6 +42,7 @@ import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
 import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
 import { forceToolUseMiddleware } from "./force-tool-use.js";
 import { autoBuildAppMiddleware } from "./auto-build-app.js";
+import { verifyGateMiddleware } from "./verify-gate.js";
 
 export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
   return [
@@ -54,6 +55,10 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     hallucinationCheckMiddleware,
     actionClaimMiddleware,
     prematureCompletionMiddleware,
+    // Worker edited source but never built/typechecked/tested before wrapping
+    // up → nudge once. Runs after premature-completion (they're mutually
+    // exclusive: that fires on no-commit, this on source-edit-committed).
+    verifyGateMiddleware,
     openStepsMiddleware,
     selfCheckMiddleware,
     postTurnDetectorMiddleware,

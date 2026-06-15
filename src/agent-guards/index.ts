@@ -32,3 +32,11 @@ export {
   createDeadEndState,
   type DeadEndState,
 } from "./dead-end.js";
+export {
+  noteVerifyEvidence,
+  checkVerifyGate,
+  createVerifyGateState,
+  isSourceFile,
+  type VerifyGateState,
+  type VerifyTurnAction,
+} from "./verify-gate.js";

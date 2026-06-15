@@ -14,6 +14,7 @@ import type { IntegrationRegistry } from "../../integrations/index.js";
 import { validateMissionOutput } from "../../cron/output-validation.js";
 import { createLogger } from "../../logger.js";
 import { CRON_SYSTEM_PROMPT } from "./prompts.js";
+import { stripCronPreamble, stripSaveInstructions } from "./prompt-cleaning.js";
 import { setSessionProfile, clearSessionProfile } from "../../autonomy/profile-store.js";
 
 const logger = createLogger("server.background-jobs.cron");
@@ -31,32 +32,6 @@ const POST_SUB_AGENT_BUFFER_MS = 60_000;
 // Floor on how long we'll wait, even when budget is tight.
 const SUB_AGENT_WAIT_MIN_MS = 30_000;
 const SUB_AGENT_WAIT_HARD_CAP_MS = Number(process.env.LAX_SUB_AGENT_WAIT_MS) || 0;
-
-const stripCronPreamble = (p: string): string => {
-  const patterns = [
-    /^every day at \d{1,2}(:\d{2})?\s*(am|pm)?,?\s*/i,
-    /^every day,?\s*/i,
-    /^daily at \d{1,2}(:\d{2})?\s*(am|pm)?,?\s*/i,
-    /^daily,?\s*/i,
-    /^at \d{1,2}(:\d{2})?\s*(am|pm)?\s+(every day|daily),?\s*/i,
-    /^each (day|morning|evening|night),?\s*/i,
-  ];
-  let out = p.trim();
-  for (const re of patterns) out = out.replace(re, "");
-  return out.trim();
-};
-
-const stripSaveInstructions = (p: string): string => {
-  const patterns = [
-    /[,.\s]*\b(?:and\s+)?save\s+(?:the|this|your)?\s*(?:output|report|results?|file)?\s*(?:to|in|at|as)\s+\S*\.md\b[^.]*\.?/gi,
-    /[,.\s]*\bsave\s+(?:to|in|at)\s+workspace\/\S+/gi,
-    /[,.\s]*\bwrite\s+(?:the|this|your)?\s*(?:output|report|results?|file)?\s*(?:to|in|at)\s+\S*\.md\b[^.]*\.?/gi,
-    /[,.\s]*\boutput\s+(?:to|in|at)\s+workspace\/\S+/gi,
-  ];
-  let out = p;
-  for (const re of patterns) out = out.replace(re, "");
-  return out.trim();
-};
 
 export interface CronRunnerDeps {
   config: LAXConfig;

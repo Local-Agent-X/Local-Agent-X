@@ -94,9 +94,10 @@ export const openStepsMiddleware: CanonicalMiddleware = {
  * that never touched the list ("thanks!") must not be nagged about steps an
  * earlier op left open.
  *
- * MUST stay under 200 chars: extractAgentOutput (server-utils.ts) picks the
- * last assistant message >200 chars as a mission's report, and this warning
- * trailing the real report must never displace it.
+ * Kept terse (<200 chars) so it reads as a status line, not a wall of text.
+ * It no longer needs to dodge extractAgentOutput (server-utils.ts) — that now
+ * selects the longest assistant message of the turn, so a short trailing
+ * warning can't displace the real report regardless of length.
  */
 export function openStepsTerminationWarning(opId: string): string | null {
   const sessionId = getSessionForOp(opId);

@@ -77,9 +77,21 @@ function extractText(content: unknown): string {
 
 /** Extract all useful output from an agent's message history */
 export function extractAgentOutput(messages: Array<{ role: string; content?: unknown }>): string {
+  // Scope to the current response: everything after the last real user turn.
+  // On a single-run result that's the whole array; on a borrowed multi-turn
+  // session it isolates this turn so an earlier, longer answer can't win the
+  // "longest" pick below. Synthetic nudges never reach this array as user
+  // rows (opMessageRowToChatParam projects them out), so every role:"user"
+  // here is a genuine turn boundary.
+  let start = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") { start = i + 1; break; }
+  }
+
   const assistantParts: string[] = [];
   const toolParts: string[] = [];
-  for (const msg of messages) {
+  for (let i = start; i < messages.length; i++) {
+    const msg = messages[i];
     if (msg.role === "assistant") {
       const text = extractText(msg.content);
       if (text) assistantParts.push(text);
@@ -91,11 +103,16 @@ export function extractAgentOutput(messages: Array<{ role: string; content?: unk
       }
     }
   }
-  // Prefer the LAST substantial assistant message (final report) over early planning chatter
+  // The deliverable is the LONGEST substantial assistant message of the turn,
+  // not the last. A trailing completion-coda ("done — the report is above") is
+  // short and must never displace the real report that precedes it. Falls back
+  // to joining everything when nothing clears the bar.
   let output = "";
   if (assistantParts.length > 0) {
-    const lastSubstantial = [...assistantParts].reverse().find(p => p.length > 200);
-    output = lastSubstantial || assistantParts.join("\n\n");
+    const substantial = assistantParts.filter(p => p.length > 200);
+    output = substantial.length > 0
+      ? substantial.reduce((longest, p) => (p.length > longest.length ? p : longest))
+      : assistantParts.join("\n\n");
   }
   if (!output && toolParts.length > 0) {
     output = toolParts.join("\n\n");

@@ -316,7 +316,7 @@ const presentationEdit: ToolDefinition = {
 export const presentationTools: ToolDefinition[] = [
   collapseFamily({
     name: "presentation",
-    intro: "Create and edit PowerPoint (.pptx) presentations.",
+    intro: "Create and edit PowerPoint (.pptx) presentations. For advanced custom layouts beyond these actions, a Node build script may use pptxgenjs directly — it's bundled, so `require('pptxgenjs')` by bare name (never an absolute cwd/node_modules path).",
     actions: {
       create: presentationCreate,
       add_slide: presentationAddSlide,

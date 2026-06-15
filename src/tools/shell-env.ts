@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir, platform } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, sep } from "node:path";
 import type { ServerEvent } from "../types.js";
 
 // Prefer PowerShell 7+ (pwsh.exe) over the built-in PS 5.1 (powershell.exe)
@@ -113,6 +114,29 @@ const CREDENTIAL_ENV_PATTERNS = [
 // URL punctuation `://@:` also slips the high-entropy value gate below).
 const CONNECTION_STRING_CREDENTIAL = /[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s:@]+@/i;
 
+// LAX's bundled node_modules — so an agent-spawned `node build.js` (run with
+// the workspace as cwd, where there is no node_modules) can still resolve
+// bundled deps like pptxgenjs via a BARE `require('pptxgenjs')`. Anchored on
+// pptxgenjs, a hard dependency, so the path is correct however LAX itself was
+// installed (global npm, local, packaged). Resolved once.
+let _bundledNodeModules: string | null | undefined;
+function bundledNodeModulesDir(): string | null {
+  if (_bundledNodeModules !== undefined) return _bundledNodeModules;
+  try {
+    // Resolve the package entry (not "pptxgenjs/package.json" — its exports map
+    // blocks that deep subpath), then take the enclosing node_modules. The
+    // entry may be nested (.../node_modules/pptxgenjs/dist/pptxgen.cjs.js), so
+    // slice at the node_modules segment rather than counting dirname hops.
+    const entry = createRequire(import.meta.url).resolve("pptxgenjs");
+    const marker = `${sep}node_modules${sep}`;
+    const idx = entry.lastIndexOf(marker);
+    _bundledNodeModules = idx >= 0 ? entry.slice(0, idx + marker.length - 1) : null;
+  } catch {
+    _bundledNodeModules = null;
+  }
+  return _bundledNodeModules;
+}
+
 /**
  * Build a credential-scrubbed environment for a spawned subprocess. Starts
  * from process.env, keeps only the SAFE_ENV_KEYS allowlist plus vars that
@@ -133,6 +157,12 @@ export function buildSanitizedEnv(extra?: Record<string, string>): Record<string
     if (value.length >= 32 && /^[A-Za-z0-9+/=_-]+$/.test(value)) continue;
     if (CONNECTION_STRING_CREDENTIAL.test(value)) continue;
     sanitizedEnv[key] = value;
+  }
+  const bundled = bundledNodeModulesDir();
+  if (bundled) {
+    sanitizedEnv.NODE_PATH = sanitizedEnv.NODE_PATH
+      ? `${sanitizedEnv.NODE_PATH}${delimiter}${bundled}`
+      : bundled;
   }
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {

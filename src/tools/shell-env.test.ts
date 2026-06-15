@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { existsSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { buildSanitizedEnv } from "./shell-env.js";
 
 // buildSanitizedEnv reads process.env; each test sets a var, asserts, restores.
@@ -58,5 +60,23 @@ describe("buildSanitizedEnv credential scrubbing (R6-A1)", () => {
     const env = buildSanitizedEnv();
     expect(env.LANG).toBe("en_US.UTF-8");
     expect(env.OPENAI_API_KEY).toBeUndefined();
+  });
+});
+
+describe("buildSanitizedEnv NODE_PATH for bundled deps", () => {
+  it("points NODE_PATH at a real bundled node_modules containing pptxgenjs", () => {
+    const env = buildSanitizedEnv();
+    expect(env.NODE_PATH).toBeTruthy();
+    const dirs = env.NODE_PATH!.split(delimiter);
+    const bundled = dirs.find((d) => existsSync(join(d, "pptxgenjs")));
+    expect(bundled).toBeTruthy();
+  });
+
+  it("appends bundled node_modules after an inherited NODE_PATH instead of clobbering it", () => {
+    setEnv("NODE_PATH", "/some/inherited/path");
+    const env = buildSanitizedEnv();
+    const dirs = env.NODE_PATH!.split(delimiter);
+    expect(dirs[0]).toBe("/some/inherited/path");
+    expect(dirs.length).toBeGreaterThan(1);
   });
 });

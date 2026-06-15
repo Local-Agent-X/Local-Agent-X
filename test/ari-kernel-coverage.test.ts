@@ -82,7 +82,14 @@ describe("auditKernelCoverage", () => {
       report.uncovered,
       `${report.uncovered.length} tool(s) missing from TOOL_CLASS_MAP: ${report.uncovered.join(", ")}`,
     ).toEqual([]);
-  });
+    // 60s budget (vs the default 15s): this is the only test that cold-imports
+    // the ENTIRE tool registry graph (dozens of modules). Isolated it's ~5s, but
+    // in a full-suite run vitest transforms that graph while ~16 forks contend
+    // for CPU, intermittently pushing it past 15s. That's a timeout, not a
+    // coverage gap — the assertion is on static data (allTools vs TOOLS), which
+    // can't flake on content; only the clock can. The budget was wrong, not the
+    // test.
+  }, 60_000);
 });
 
 describe("shouldObserveInKernel", () => {

@@ -16,7 +16,7 @@ import {
 } from "./page-ops.js";
 
 function isBlankish(url: string): boolean {
-  return url === "" || url === "about:blank" || url.startsWith("chrome://newtab");
+  return url === "" || url === "about:blank" || url.startsWith("chrome://newtab") || url.startsWith("chrome://new-tab-page");
 }
 
 /**

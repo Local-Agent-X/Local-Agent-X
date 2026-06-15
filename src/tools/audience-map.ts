@@ -46,6 +46,12 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Proactive owner DM — interactive ("ping me…") AND autonomous/scheduled runs.
   telegram_send:  ["main-chat", "operator", "spawned-agent"],
   whatsapp_send:  ["main-chat", "operator", "spawned-agent"],
+  // Platform self-management — interactive ("restart" / "check for updates") and
+  // scheduled (a nightly update check). Not spawned-agent (sub-agents must not
+  // restart the host).
+  restart:           ["main-chat", "operator"],
+  check_for_updates: ["main-chat", "operator"],
+  apply_update:      ["main-chat", "operator"],
   ocr:            ["spawned-agent", "operator"],
 
   // Memory

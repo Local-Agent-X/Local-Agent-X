@@ -1,14 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody, safeErrorMessage } from "../../server-utils.js";
 import { getToolStats, getToolSuccessRate, getRecentFailures } from "../../tool-tracker.js";
 import { getProviderHealthStatus } from "../../model-fallback.js";
 import { getThreatDashboard } from "../../threat/threat-dashboard.js";
-
-/** Typed cache for update check results stored on the module scope */
-interface UpdateCheckResult { localVersion: string; localCommit: string; remoteVersion: string; remoteCommit: string; updateAvailable: boolean; releaseNotes: string; error?: string }
-let _updateCache: { data: UpdateCheckResult; time: number } | null = null;
 
 export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -98,128 +92,25 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
     json(result.ok ? 200 : 400, result); return true;
   }
 
-  // Update checker — uses local git (not GitHub HTTP API) so it works for
-  // private repos. The user's git credential helper already authenticates
-  // with the remote (proved by working push), so `git fetch` succeeds
-  // without us having to manage tokens. Unauthenticated HTTP API calls
-  // would return 404 for a private repo and the empty-catch swallow would
-  // silently report "up to date" — the foot-gun this rewrite removes.
+  // Update check + apply — the implementation lives in update-service.ts so the
+  // agent tools (check_for_updates / apply_update) share it. Apply routes
+  // through update-pipeline's validated swap (deps/build/bind/smoke gates);
+  // nothing overwrites the live install until the candidate passes. The caller
+  // restarts to finish (desktop has IPC for that; browser users restart manually).
   if (method === "GET" && url.pathname === "/api/updates/check") {
-    try {
-      const { execSync } = await import("node:child_process");
-      const repoRoot = process.cwd();
-      const pkgPath = join(repoRoot, "package.json");
-      const localPkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-      const localVersion = localPkg.version || "0.0.0";
-      let localCommit = "";
-      try { localCommit = execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }).trim(); }
-      catch {
-        // Not a git checkout (installed/tarball build) — fall back to the
-        // rolling channel: compare the last-installed commit to remote main
-        // HEAD. The very first check before any in-app update has no recorded
-        // commit, so we optimistically report an update is available.
-        try {
-          const { OTAManager } = await import("../../ota-update.js");
-          const ota = new OTAManager();
-          const installed = await ota.readInstalledCommit();
-          const { commit, subject } = await ota.checkMainCommit();
-          const updateAvailable = installed ? installed !== commit : true;
-          json(200, {
-            localVersion,
-            localCommit: installed ? installed.slice(0, 7) : "",
-            remoteVersion: localVersion,
-            remoteCommit: commit.slice(0, 7),
-            updateAvailable,
-            releaseNotes: subject,
-            rolling: true,
-          });
-        } catch (e) {
-          json(200, { localVersion, localCommit: "", remoteVersion: localVersion, remoteCommit: "", updateAvailable: false, releaseNotes: "", error: safeErrorMessage(e) });
-        }
-        return true;
-      }
-      const now = Date.now();
-      // Cache window kept short (5 min) — these calls are cheap (one local
-      // fetch) and a user clicking "Check for Updates" expects fresh data.
-      // The original 60 min was sized for the rate-limited GitHub HTTP API.
-      if (_updateCache && now - _updateCache.time < 300000) {
-        json(200, { ..._updateCache.data, localVersion, localCommit, cached: true }); return true;
-      }
-      let remoteVersion = localVersion, remoteCommit = "", updateAvailable = false, releaseNotes = "", checkError: string | undefined;
-      try {
-        // 30s timeout: covers slow networks but won't hang the UI forever.
-        execSync("git fetch origin main --quiet", { cwd: repoRoot, encoding: "utf-8", timeout: 30000 });
-        remoteCommit = execSync("git rev-parse --short origin/main", { cwd: repoRoot, encoding: "utf-8" }).trim();
-        try {
-          const remotePkgRaw = execSync("git show origin/main:package.json", { cwd: repoRoot, encoding: "utf-8" });
-          remoteVersion = (JSON.parse(remotePkgRaw) as { version?: string }).version || localVersion;
-        } catch { /* package.json may be missing on remote — fall back to localVersion */ }
-        try {
-          releaseNotes = execSync("git log -1 --format=%s origin/main", { cwd: repoRoot, encoding: "utf-8" }).trim();
-        } catch { /* non-fatal */ }
-        // "Behind", not "different": a developer_mode install carries local
-        // commits (and update merge commits), so HEAD != origin/main is the
-        // steady state there. An update exists only when origin/main has
-        // commits this install doesn't.
-        const behind = parseInt(execSync("git rev-list --count HEAD..origin/main", { cwd: repoRoot, encoding: "utf-8" }).trim(), 10) || 0;
-        updateAvailable = behind > 0;
-      } catch (e) {
-        // Surface the failure instead of pretending everything's fine.
-        // Common cases: offline, git auth revoked, remote not reachable.
-        const err = e as { stderr?: Buffer | string; message: string };
-        const stderr = typeof err.stderr === "string" ? err.stderr : err.stderr?.toString() || "";
-        checkError = (stderr || err.message).trim().split("\n")[0] || "git fetch failed";
-      }
-      const result: UpdateCheckResult = { localVersion, localCommit, remoteVersion, remoteCommit, updateAvailable, releaseNotes, ...(checkError ? { error: checkError } : {}) };
-      // Only cache successful checks — don't lock in a transient error for 5 min.
-      if (!checkError) _updateCache = { data: result, time: now };
-      json(200, result);
-    } catch (e) { json(200, { updateAvailable: false, error: safeErrorMessage(e) }); }
+    const { checkForUpdate } = await import("../../update-service.js");
+    json(200, await checkForUpdate());
     return true;
   }
 
-  // Apply update — both install types land through the self_edit validation
-  // pipeline (update-pipeline.ts): candidate tree → deps/build/bind/smoke
-  // gates → swap → boot-rollback record. Nothing overwrites the live install
-  // until the gates pass, and a held/failed update reports why instead of
-  // silently clobbering (tarball) or permanently wedging on divergence (the
-  // old `git pull --ff-only`). The caller restarts to finish (desktop has
-  // IPC for that; browser users restart manually).
   if (method === "POST" && url.pathname === "/api/updates/apply") {
     try {
-      const { execSync } = await import("node:child_process");
-      const { getRuntimeConfig } = await import("../../config.js");
-      // cwd is the repo root for both Electron-spawned and npm-run-dev paths
-      // (per desktop/src/main.ts startServer which sets cwd: PROJECT_ROOT,
-      // and standard npm script execution). Avoids brittle ../../../ math.
-      const repoRoot = process.cwd();
-      const authToken = getRuntimeConfig().authToken;
-      let isGitCheckout = true;
-      try { execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }); }
-      catch { isGitCheckout = false; }
-
-      if (!isGitCheckout) {
-        // Rolling/tarball install — download is commit-pinned and the
-        // extracted tree is gated before it lands; serialization, retries,
-        // and the validator all live in update-pipeline.applyRollingUpdate.
-        const { applyRollingUpdate } = await import("../../update-pipeline.js");
-        const result = await applyRollingUpdate(repoRoot, authToken);
-        _updateCache = null;
-        if (result.ok) {
-          json(200, { ok: true, fromCommit: result.fromCommit, toCommit: result.toCommit, output: result.detail, rolling: true });
-        } else {
-          json(result.held ? 409 : 500, { ok: false, held: !!result.held, error: result.detail, rolling: true });
-        }
-        return true;
-      }
-
-      const { applyGitUpdate } = await import("../../update-pipeline.js");
-      const result = await applyGitUpdate(repoRoot, authToken);
-      _updateCache = null; // bust the check cache so next probe shows fresh state
+      const { applyUpdateNow } = await import("../../update-service.js");
+      const result = await applyUpdateNow();
       if (result.ok) {
-        json(200, { ok: true, fromCommit: result.fromCommit, toCommit: result.toCommit, output: result.detail });
+        json(200, { ok: true, fromCommit: result.fromCommit, toCommit: result.toCommit, output: result.detail, ...(result.rolling ? { rolling: true } : {}) });
       } else {
-        json(result.held ? 409 : 500, { ok: false, held: !!result.held, fromCommit: result.fromCommit, toCommit: result.toCommit, error: result.detail });
+        json(result.held ? 409 : 500, { ok: false, held: !!result.held, fromCommit: result.fromCommit, toCommit: result.toCommit, error: result.detail, ...(result.rolling ? { rolling: true } : {}) });
       }
     } catch (e) { json(500, { ok: false, error: safeErrorMessage(e) }); }
     return true;

@@ -172,7 +172,18 @@ export function startServer(handlers?: ServerEventHandlers): void {
     windowsHide: true,
   });
 
-  attachServerBridge(serverProcess);
+  attachServerBridge(serverProcess, {
+    // Agent self-restart over messaging (restart / apply_update tools). Restart
+    // the server child for code-only changes; relaunch all of Electron after an
+    // update (it can include desktop/ main-process changes a child restart
+    // can't reload). restartServer is hoisted (declared below).
+    onRestartServer: () => { void restartServer(); },
+    onRelaunchApp: () => {
+      const e = require("electron") as typeof import("electron");
+      e.app.relaunch();
+      e.app.quit();
+    },
+  });
 
   // Tee server stdout/stderr to a real file. Electron's GUI-launched
   // main-process console is /dev/null, so any crash-loop output is invisible

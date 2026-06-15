@@ -11,6 +11,7 @@ import { getVoicePref, setVoicePref, type BridgePlatform } from "../bridge-voice
 import { scanForSecrets } from "../security/secret-scanner.js";
 import { checkCanariesInPayload } from "../threat/canaries.js";
 import { imageIsTextBearing } from "../tools/shared/image-binary-meta.js";
+import { sendRestartPingIfPending } from "../restart-notify.js";
 import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { COMPACTION_PREFIX } from "../types.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
@@ -376,7 +377,7 @@ export function bootstrapBridges(deps: {
   setWhatsAppBridgeInstance(whatsappBridge);
   const telegramBridge = new TelegramBridge({ dataDir, getToken: () => secretsStore.get("TELEGRAM_BOT_TOKEN") ?? null, onMessage: (p) => bridgeHandler("Telegram", p) });
   setTelegramBridgeInstance(telegramBridge);
-  if (secretsStore.has("TELEGRAM_BOT_TOKEN")) telegramBridge.connect().then(r => { if (r.state === "connected") logger.info(`[telegram] Auto-reconnected as @${r.botUsername}`); }).catch(() => {});
+  if (secretsStore.has("TELEGRAM_BOT_TOKEN")) telegramBridge.connect().then(r => { if (r.state === "connected") { logger.info(`[telegram] Auto-reconnected as @${r.botUsername}`); void sendRestartPingIfPending("telegram"); } }).catch(() => {});
   // WhatsApp auto-reconnect on boot. Only attempts when a saved Baileys
   // session exists (creds.json under whatsapp-auth/) — otherwise the
   // first connect generates a fresh QR that nobody is around to scan,
@@ -385,7 +386,7 @@ export function bootstrapBridges(deps: {
   const waCredsPath = join(dataDir, "whatsapp-auth", "creds.json");
   if (existsSync(waCredsPath)) {
     whatsappBridge.connect()
-      .then(r => { if (r.state === "connected") logger.info(`[whatsapp] Auto-reconnected as ${r.phone || "(phone unknown)"}`); })
+      .then(r => { if (r.state === "connected") { logger.info(`[whatsapp] Auto-reconnected as ${r.phone || "(phone unknown)"}`); void sendRestartPingIfPending("whatsapp"); } })
       .catch((e: Error) => logger.warn(`[whatsapp] Auto-reconnect failed: ${e.message}`));
   }
   return { whatsappBridge, telegramBridge, bridgeMessageHandler: bridgeHandler };

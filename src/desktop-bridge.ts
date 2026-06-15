@@ -56,3 +56,22 @@ export function desktopTrashItem(path: string): Promise<boolean> {
     }
   });
 }
+
+/** Fire-and-forget: ask Electron main to restart the SERVER CHILD (picks up new
+ *  src/dist code; serverDistIsFresh falls back to tsx when source is newer).
+ *  No reply — the server is about to be killed. Returns false when the desktop
+ *  bridge is absent (headless / npm run dev) so the caller can't self-restart. */
+export function desktopRestartServer(): boolean {
+  if (!desktopBridgeAvailable()) return false;
+  try { process.send!({ type: "lax:restart-server" }); return true; }
+  catch (e) { logger.warn(`[bridge] restart-server send failed: ${(e as Error).message}`); return false; }
+}
+
+/** Fire-and-forget: ask Electron main to relaunch the WHOLE app. Needed after a
+ *  platform update, which can include desktop/ (Electron-main) changes a server-
+ *  child restart can't reload. */
+export function desktopRelaunchApp(): boolean {
+  if (!desktopBridgeAvailable()) return false;
+  try { process.send!({ type: "lax:relaunch-app" }); return true; }
+  catch (e) { logger.warn(`[bridge] relaunch-app send failed: ${(e as Error).message}`); return false; }
+}

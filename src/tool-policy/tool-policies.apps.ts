@@ -75,6 +75,14 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   clipboard_read:  { kernel: "internal", risk: "safe" },
   clipboard_write: { kernel: "internal", risk: "workspace-write" },
 
+  // ── Platform self-management (restart + updates over messaging) ──
+  // internal: a fixed system action, no agent-controlled I/O sink for the kernel
+  // to gate. Safeguards are owner-gating (bridge), the tool cooldown, the agent's
+  // conversational confirm, and (apply_update) the sandbox build/boot/smoke gate.
+  restart:           { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-restart", decision: "allow", reason: "Restart the server to pick up new code (desktop-gated, cooldown, pings on recovery)", priority: 50 }] },
+  check_for_updates: { kernel: "internal", risk: "network-read", rules: [{ id: "allow-check-for-updates", decision: "allow", reason: "Check the main branch for a newer version (read-only)", priority: 50 }] },
+  apply_update:      { kernel: "internal", risk: "destructive", rules: [{ id: "allow-apply-update", decision: "allow", reason: "Download + sandbox-validate + apply a platform update, then relaunch (same gates as self_edit)", priority: 50 }] },
+
   // ── Diagnostics / planning ──
   doctor:          { kernel: "internal", risk: "safe", rules: [{ id: "allow-doctor", decision: "allow", reason: "System self-diagnostics (read-only)", priority: 50 }] },
   usage_report:    { kernel: "internal", risk: "safe", rules: [{ id: "allow-usage-report", decision: "allow", reason: "Token usage / cost report (read-only)", priority: 50 }] },

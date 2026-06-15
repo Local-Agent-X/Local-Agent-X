@@ -213,6 +213,15 @@ export function canonicalizeAttachmentPath(p: string): string {
  * tool re-canonicalizes via the SAME canonicalizeAttachmentPath, so both sides
  * resolve to one inode and the window is the narrow check→read gap only.
  */
+// Binary-content sniff — same heuristic the read tool uses (read-write-tools.ts):
+// a binary file almost always has a NUL byte in its head, a text file almost
+// never does. Scan a bounded head so a large attachment stays cheap.
+function isProbablyBinary(buf: Buffer): boolean {
+  const n = Math.min(buf.length, 8192);
+  for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
+  return false;
+}
+
 export function checkAttachmentPaths(sink: string, paths: readonly string[]): GuardBlock | null {
   const offending: string[] = [];
   for (const p of paths) {
@@ -235,7 +244,16 @@ export function checkAttachmentPaths(sink: string, paths: readonly string[]): Gu
     try {
       const buf = readFileSync(real, { flag: "r" });
       const slice = buf.length > ATTACHMENT_SCAN_CAP ? buf.subarray(0, ATTACHMENT_SCAN_CAP) : buf;
-      if (!scanForSecrets(slice.toString("utf-8")).clean) { offending.push(p); continue; }
+      // Only TEXT content can carry a text-shaped secret (PEM key, .env line,
+      // JSON service-account key). A BINARY file (png/jpg/mp4/pdf/zip) decoded as
+      // utf-8 is high-entropy noise that the scanner's entropy pass flags on EVERY
+      // attach — a guaranteed false positive that bricks view_image / screen_capture
+      // / send_video / email_send-of-an-image. Binary secret CONTAINERS (.enc vault,
+      // keystores) are caught by the PATH leg above (extension/dir), not by scanning
+      // their opaque bytes, so skipping the text scan here loses no real coverage.
+      if (!isProbablyBinary(slice) && !scanForSecrets(slice.toString("utf-8")).clean) {
+        offending.push(p); continue;
+      }
     } catch {
       // Unreadable / not-a-file: the email tool's own readFile will surface the
       // error. We don't block solely on a read failure here.

@@ -485,4 +485,25 @@ describe("bridge OUTPUT-byte forward scan (R4-12b: the bytes shipped off-box re-
     writeFileSync(vid, "\x00\x00\x00\x18ftypmp42 plain video bytes, no credentials\n");
     expect(checkAttachmentPaths("bridge:test video forward", [vid])).toBeNull();
   });
+
+  // Regression: a benign binary image (PNG) decoded as utf-8 is high-entropy noise
+  // that the secret scanner's entropy pass flagged as a key on EVERY attach —
+  // false-blocking view_image / screen_capture / send_video / email-of-an-image.
+  it("a binary image whose high-entropy bytes would trip the secret scanner is NOT blocked", () => {
+    const entropyBlob = "Kp7QmXz9Lr4TnBv8Wy3HdFg1Js0AcRb6Ue2Yi4Op5Zx";
+    // Sanity leg: as plain TEXT this run DOES trip the scanner — proving the binary
+    // skip (not a benign payload) is what clears the image below.
+    const asText = join(tmp, "leak.txt");
+    writeFileSync(asText, `key=${entropyBlob}`);
+    expect(checkAttachmentPaths("view_image", [asText])).not.toBeNull();
+
+    // Same bytes inside a real binary image: PNG signature + IHDR length carry NUL
+    // bytes in the head, so the file is detected as binary and the text scan skips.
+    const png = join(tmp, "shot.png");
+    writeFileSync(png, Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]),
+      Buffer.from(entropyBlob),
+    ]));
+    expect(checkAttachmentPaths("view_image", [png])).toBeNull();
+  });
 });

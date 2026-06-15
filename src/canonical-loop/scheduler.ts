@@ -57,11 +57,18 @@ interface QueuedOp {
 
 const queue: QueuedOp[] = [];
 const active = new Map<string, WorkerHandle>();
+// Ops the scheduler has reserved a lane slot for but whose worker hasn't
+// registered in `active` yet — i.e. the window across `await factory()` in
+// launch(). Without tracking this, an op is invisible to the `active.has`
+// guard during adapter construction, so a re-enqueue (mid-turn inject / a new
+// message for the same op) slips past and the op is launched twice: two lane
+// increments, one decrement, one permanently leaked slot.
+const launching = new Set<string>();
 const activeByLane = new Map<CanonicalLane, number>();
 let pumping = false;
 
 export function enqueueOp(opId: string, lane: CanonicalLane): void {
-  if (active.has(opId)) return;
+  if (active.has(opId) || launching.has(opId)) return;
   if (queue.find(q => q.opId === opId)) return;
   queue.push({ opId, lane });
 }
@@ -81,6 +88,7 @@ export function pumpScheduler(): void {
       const factory = resolveAdapterFactory(op);
       if (!factory) { i++; continue; } // No adapter — leave queued.
       activeByLane.set(q.lane, inUse + 1);
+      launching.add(q.opId);
       queue.splice(i, 1);
       void launch(op, factory);
     }
@@ -96,18 +104,31 @@ async function launch(op: Op, factory: () => Adapter | Promise<Adapter>): Promis
     const adapter = await factory();
     handle = runWorker(op, adapter);
     active.set(op.id, handle);
+    launching.delete(op.id); // now tracked via `active`
     await handle.done;
   } catch {
     // Worker.done already converts adapter / loop exceptions into canonical
-    // `error` events; nothing more to surface here.
+    // `error` events; nothing more to surface here. A throw from `factory()`
+    // (adapter construction) also lands here — the slot release below covers
+    // it so the lane never leaks.
   } finally {
-    // Identity-checked release: a worker whose lease was stolen by recovery
-    // (Issue 08) may have its `active[opId]` slot already overwritten by
-    // the replacement worker. Only decrement if THIS launch is still the
-    // registered active worker for the op. Recovery's `evictWorker` did
-    // the bookkeeping otherwise.
-    if (handle && active.get(op.id) === handle) {
-      active.delete(op.id);
+    launching.delete(op.id);
+    // Release the lane slot pumpScheduler reserved for THIS launch. Every
+    // increment must be matched by exactly one decrement, or the lane leaks a
+    // permanent slot — after `cap` leaks the lane reads "full" and every new
+    // op queues forever (interactive chat silently stops dispatching until a
+    // server restart clears the in-memory counter).
+    //
+    //   - handle registered and still ours → normal completion: release.
+    //   - handle never registered (factory threw before runWorker) → release;
+    //     recovery can't have touched an op that never entered `active`.
+    //   - handle registered but no longer ours → a replacement worker took
+    //     over via recovery's evictWorker, which already decremented; skip to
+    //     avoid a double-release.
+    const stillOurs = handle !== null && active.get(op.id) === handle;
+    const neverRegistered = handle === null;
+    if (stillOurs) active.delete(op.id);
+    if (stillOurs || neverRegistered) {
       activeByLane.set(lane, Math.max(0, (activeByLane.get(lane) ?? 1) - 1));
     }
     pumpScheduler();
@@ -161,6 +182,7 @@ export async function awaitIdle(timeoutMs = 5_000): Promise<void> {
 export function resetScheduler(): void {
   queue.length = 0;
   active.clear();
+  launching.clear();
   activeByLane.clear();
   pumping = false;
   capConfigReader = null;

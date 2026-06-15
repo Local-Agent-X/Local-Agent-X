@@ -33,12 +33,14 @@ import {
   resetBus,
   setLeaseConfig,
   resetLeaseConfig,
+  setLaneCapConfigReader,
   readCanonicalEvents,
   readLatestOpTurn,
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
 import { readOp, newOpId } from "../src/ops/op-store.js";
 import type { Op, OpLane } from "../src/ops/types.js";
+import type { LAXConfig } from "../src/types.js";
 
 import { FakeAdapter, scriptTurn, scriptMultiTurn, scriptLongStreamingTurn } from "./canonical-loop/fake-adapter.js";
 
@@ -255,6 +257,41 @@ describe("interactive lane runs multiple sessions concurrently", () => {
     await bothRunning();
     expect(readOp(a.id)?.canonical?.state).toBe("running");
     expect(readOp(b.id)?.canonical?.state).toBe("running");
+  });
+});
+
+// ── Regression: lane-slot release on launch failure ─────────────────────
+
+describe("interactive lane does not leak a slot when a launch fails", () => {
+  it("a failing adapter factory releases its reserved slot; a later op still dispatches", async () => {
+    // Repro for the multi-day "chat dies after running two chats at once,
+    // restart fixes it" wedge. pumpScheduler reserves a lane slot
+    // (activeByLane++) *before* launch() awaits the adapter factory. If the
+    // factory throws, no worker ever registers in `active`, so the old
+    // finally — which only released when a live handle was still ours —
+    // never decremented. Each failure leaked one interactive slot; after
+    // `cap` leaks the lane read "full" and every new chat op queued forever.
+    //
+    // Pin the cap to 1 so a SINGLE leak would wedge the lane — making the
+    // regression deterministic instead of needing `cap` (10) failures.
+    setLaneCapConfigReader(() => ({ maxInteractiveSessions: 1 }) as unknown as LAXConfig);
+
+    const bad = mkOp("leak-bad", "interactive");
+    registerAdapterForOp(bad.id, () => { throw new Error("adapter construction blew up"); });
+    canonicalLoopEntry(bad);
+    // Worker never starts (factory throws); scheduler drains to idle.
+    await awaitIdle(5_000);
+
+    // Under the bug, the interactive lane is now stuck at 1/1 and this op
+    // never leaves `queued`. With the slot released, it runs to completion.
+    const good = mkOp("leak-good", "interactive");
+    registerAdapterForOp(
+      good.id,
+      () => new FakeAdapter({ script: [scriptTurn({ streamChunks: ["x"], text: "ok", terminal: "done" })] }),
+    );
+    canonicalLoopEntry(good);
+    await awaitTerminal(good.id);
+    expect(readOp(good.id)?.canonical?.state).toBe("succeeded");
   });
 });
 

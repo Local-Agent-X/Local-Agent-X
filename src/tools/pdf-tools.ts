@@ -366,7 +366,7 @@ const pdfExtractTables: ToolDefinition = {
 export const pdfTools: ToolDefinition[] = [
   collapseFamily({
     name: "pdf",
-    intro: "Read, create, and merge PDF files, and extract table-like structures from them.",
+    intro: "Read, create, and merge PDF files, and extract table-like structures from them. For advanced custom layouts beyond these actions, a Node build script may use the bundled pdfkit or pdf-lib directly — `require('pdfkit')` / `require('pdf-lib')` by bare name (never an absolute cwd/node_modules path).",
     actions: {
       read: pdfRead,
       create: pdfCreate,

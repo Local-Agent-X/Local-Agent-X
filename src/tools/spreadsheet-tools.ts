@@ -358,7 +358,8 @@ export const spreadsheetTools: ToolDefinition[] = [
     name: "spreadsheet",
     intro:
       "Read, create, edit, and query Excel (.xlsx) / CSV spreadsheets. " +
-      "Use for spreadsheet files — never write Python pandas scripts for this.",
+      "Use for spreadsheet files — never write Python pandas scripts for this. " +
+      "For advanced custom workbooks beyond these actions, a Node build script may use exceljs directly — it's bundled, so `require('exceljs')` by bare name (never an absolute cwd/node_modules path).",
     actions: {
       read: spreadsheetRead,
       write: spreadsheetWrite,

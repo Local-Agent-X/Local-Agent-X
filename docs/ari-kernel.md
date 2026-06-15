@@ -30,8 +30,10 @@ runtime by [`src/ari-kernel/`](../src/ari-kernel/). No tool execution path bypas
 - **Content sanitizer.** Untrusted content from external channels — `web_fetch`,
   `http_request`, `browser` (extract/snapshot/navigate), **MCP** server output, and
   **SQL** query output — is run through `wrapExternalContent`: control-char stripping,
-  homoglyph normalization, pseudo-system-tag stripping, known-secret redaction, boundary
-  wrapping, and an injection-pattern **warning flag** — before the model sees it.
+  homoglyph + leetspeak normalization, pseudo-system-tag and `<|…|>`
+  chat-template/glyph-delimiter stripping, known-secret redaction, boundary wrapping,
+  and an injection-pattern **warning flag** (scanned over both the normalized and the
+  de-leeted view, so digit-substituted directives are caught) — before the model sees it.
 - **Memory protection.** Writes to memory are gated: secrets are redacted and durable
   prompt-injection is blocked (`writeMemorySafely`).
 - **Tamper-evident audit trail.** Every decision is logged to a SHA-256/HMAC hash chain.
@@ -62,6 +64,11 @@ secret-redaction + taint tracking instead, not the untrusted-content boundary wr
 - Email addresses / phone numbers are deliberately **not** gated by the DLP guard —
   `classifyData` lumps emails under `pii`, so gating them would block every legitimate
   `email_send` recipient. The guard covers financial accounts (IBAN/card) + SSN only.
+- Injection **flagging** is pattern-based, not intent detection. Obfuscation it does
+  not normalize away — symbol-leet (`()`→o, `+`→t), per-character spacing, inbound
+  base64, same-meaning paraphrase — can still slip the warning flag. (Live turn-spoof
+  delimiters are still *stripped* regardless of the flag; this gap is exactly why ARI's
+  load-bearing value is exfil-containment, not an injection shield.)
 
 ## Configuration
 

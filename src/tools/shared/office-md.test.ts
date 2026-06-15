@@ -1,6 +1,21 @@
 import { describe, it, expect } from "vitest";
 import { cleanText, parseInline, parseMarkdown, toPlainText, spansToPlain } from "./office-md.js";
 
+describe("parseMarkdown — never crashes on missing body (collapsed-tool create without content)", () => {
+  it("returns an array for undefined instead of throwing on .split", () => {
+    // Regression: pdf_create (via the collapsed `pdf` tool) reached parseMarkdown
+    // with undefined content → "Cannot read properties of undefined (reading 'split')".
+    expect(() => parseMarkdown(undefined as unknown as string)).not.toThrow();
+    expect(Array.isArray(parseMarkdown(undefined as unknown as string))).toBe(true);
+    // No real content blocks (no code/para/heading) — nothing to render.
+    expect(parseMarkdown(undefined as unknown as string).some(b => b.kind === "code" || b.kind === "para")).toBe(false);
+  });
+  it("does not throw on an empty string", () => {
+    expect(() => parseMarkdown("")).not.toThrow();
+    expect(Array.isArray(parseMarkdown(""))).toBe(true);
+  });
+});
+
 describe("cleanText — no markup leaks", () => {
   it("strips HTML tags", () => {
     expect(cleanText("<div>Hi</div>")).toBe("Hi");

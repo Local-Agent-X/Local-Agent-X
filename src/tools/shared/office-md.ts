@@ -80,7 +80,11 @@ const indentLevel = (raw: string): number => Math.floor((raw.match(/^\s*/)?.[0].
 
 /** Parse a markdown document into a neutral block list. */
 export function parseMarkdown(src: string): Block[] {
-  const lines = src.split("\n");
+  // Defensive: the office create tools are reached via collapsed family tools
+  // whose per-action `required` (e.g. pdf_create's `content`) isn't enforced, so
+  // a missing body can arrive here as undefined. Never throw on it — render
+  // nothing rather than crashing the whole document build.
+  const lines = (src ?? "").split("\n");
   const blocks: Block[] = [];
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];

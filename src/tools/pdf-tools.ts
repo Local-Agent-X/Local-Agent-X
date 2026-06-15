@@ -189,6 +189,13 @@ const pdfCreate: ToolDefinition = {
   },
   async execute(args) {
     try {
+      // `content` is schema-required, but the collapsed `pdf` tool doesn't
+      // enforce per-action required args — so a create call can arrive without
+      // it. Return an actionable error instead of crashing on undefined.split.
+      const content = typeof args.content === "string" ? args.content : "";
+      if (!content.trim()) {
+        return fail("pdf_create needs non-empty 'content' — the text/markdown body to render (e.g. \"# Title\\n\\nBody…\"). Pass it in the `content` field and retry.");
+      }
       const baseTheme = resolveOfficeTheme(args.theme);
       // Honor an explicit base font size by scaling the theme's doc sizes.
       const theme: OfficeTheme = args.font_size
@@ -221,7 +228,7 @@ const pdfCreate: ToolDefinition = {
         doc.y = y + 10;
       }
 
-      renderMarkdown(doc, args.content as string, theme);
+      renderMarkdown(doc, content, theme);
 
       // Embed each image on its own page; pdfkit only supports png/jpeg natively.
       for (const img of acquired) {

@@ -93,9 +93,12 @@ export const whatsappSend: ToolDefinition = {
     // formatter converts to WhatsApp markdown flavor; sendMessage chunks + JIDs it.
     const wire = formatForChannel(text, "whatsapp").join("\n\n");
 
-    const ok = await bridge.sendMessage(target, wire);
+    // Owner self-chat must go to the @lid thread (ownerSelfJid), not
+    // phone@s.whatsapp.net — otherwise it lands in a thread the owner isn't in.
+    const isOwnerTarget = normNumber(target) === normNumber(status.phone);
+    const ok = isOwnerTarget ? await bridge.sendToOwner(wire) : await bridge.sendMessage(target, wire);
     return ok
-      ? { content: `WhatsApp: sent to ${target}.` }
+      ? { content: `WhatsApp: sent to ${isOwnerTarget ? "you (self-chat)" : target}.` }
       : { content: `WhatsApp: FAILED to send to ${target} (bridge send returned false).`, isError: true };
   },
 };

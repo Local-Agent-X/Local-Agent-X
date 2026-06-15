@@ -21,6 +21,7 @@ function stubBridge(over: Partial<{ state: string; phone: string | null; allowed
   const bridge = {
     getStatus: async () => ({ state, phone, qr: null, qrDataUrl: null, qrImageUrl: null, error: null, allowedNumbers, hasSavedSession: true }),
     sendMessage: async (to: string, text: string) => { sent.push({ to, text }); return sendOk; },
+    sendToOwner: async (text: string) => { sent.push({ to: "OWNER_SELF", text }); return sendOk; },
   } as unknown as WhatsAppBridge;
   return { bridge, sent };
 }
@@ -51,13 +52,13 @@ describe("whatsapp_send — boundary + confinement", () => {
     expect(r.content).toMatch(/not connected/i);
   });
 
-  it("defaults to the owner's own number (self-chat), WhatsApp-formatted", async () => {
+  it("defaults to the owner's self-chat (via sendToOwner, @lid-correct), WhatsApp-formatted", async () => {
     const { bridge, sent } = stubBridge({ phone: "15551234567" });
     setWhatsAppBridgeInstance(bridge);
     const text = "Did you work out today? Don't slack!";
     const r = await whatsappSend.execute({ text });
     expect(r.isError).toBeFalsy();
-    expect(sent).toEqual([{ to: "15551234567", text: formatForChannel(text, "whatsapp").join("\n\n") }]);
+    expect(sent).toEqual([{ to: "OWNER_SELF", text: formatForChannel(text, "whatsapp").join("\n\n") }]);
   });
 
   it("REFUSES an unauthorized number and does not send (confinement)", async () => {

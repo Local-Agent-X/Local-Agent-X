@@ -106,7 +106,12 @@ export async function sendRestartPingIfPending(connectedChannel: NotifyChannel):
       const b = getWhatsAppBridgeInstance();
       const st = b ? await b.getStatus() : null;
       if (b && st?.state === "connected") {
-        await b.sendMessage(n.target, formatForChannel(msg, "whatsapp").join("\n\n"));
+        const wire = formatForChannel(msg, "whatsapp").join("\n\n");
+        // Restart/update pings are owner-self-chat — address the @lid thread the
+        // owner actually uses, not phone@s.whatsapp.net (which doesn't deliver).
+        const ownerPhone = (st.phone || "").replace(/\D/g, "");
+        if (ownerPhone && n.target.replace(/\D/g, "") === ownerPhone) await b.sendToOwner(wire);
+        else await b.sendMessage(n.target, wire);
       }
     }
     clearRestartNotice();

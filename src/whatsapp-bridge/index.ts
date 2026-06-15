@@ -140,6 +140,24 @@ export class WhatsAppBridge {
     return this.sendToJid(toJid(to), text);
   }
 
+  /** The JID to address PROACTIVE messages to the owner's own (self) chat. On a
+   *  LID account the self-chat is keyed by the @lid JID, not phone@s.whatsapp.net
+   *  — sending to the phone JID lands in a different/undelivered thread, which is
+   *  why proactive restart/update pings and whatsapp_send self-sends weren't
+   *  showing up. Inbound self-chat uses @lid, so we match it. */
+  ownerSelfJid(): string | null {
+    if (this.selfLid) return `${this.selfLid}@lid`;
+    if (this.phoneNumber) return `${this.phoneNumber}@s.whatsapp.net`;
+    return null;
+  }
+
+  /** Send a proactive message to the owner's self-chat (correct @lid JID). */
+  async sendToOwner(text: string): Promise<boolean> {
+    const jid = this.ownerSelfJid();
+    if (!jid || !this.sock || this.state !== "connected") return false;
+    return this.sendToJid(jid, text);
+  }
+
   /** Send an OGG/Opus buffer as a WhatsApp voice note (ptt=true so it
    *  renders as a playable voice bubble, not an attached audio file). */
   async sendVoiceToJid(jid: string, ogg: Buffer): Promise<boolean> {

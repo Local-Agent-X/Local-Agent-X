@@ -26,12 +26,15 @@ import { handleIdeRuntimeError } from "./ide-runtime-error.js";
 // race: enqueue happens in one event-loop turn, the guard sees it.
 import { listOpsForSession, hasChatHandlerPending } from "../ops/session-bridge.js";
 import { pushInject } from "../agent-loop/inject-queue.js";
+import type { ScreenAttachment } from "../screen-stream/index.js";
 
 const logger = createLogger("chat-ws");
 
 export interface RouterContext {
   ws: WebSocket;
   subscriptions: Set<string>;
+  /** Live-screen signaling session for device sockets (null for operator). */
+  screen?: ScreenAttachment | null;
 }
 
 export function attachMessageRouter(ctx: RouterContext): void {
@@ -43,6 +46,10 @@ export function attachMessageRouter(ctx: RouterContext): void {
     } catch {
       return;
     }
+
+    // WebRTC live-screen signaling (rtc_*) — consumed by the per-device session
+    // before the chat branches; returns true when it claimed the frame.
+    if (ctx.screen && ctx.screen.handleMessage(msg)) return;
 
     const type = msg.type as string;
     const sessionId = msg.sessionId as string;

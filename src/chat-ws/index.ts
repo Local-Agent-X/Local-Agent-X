@@ -27,6 +27,7 @@ import { setupConnection } from "./connection-setup.js";
 import { wireBridgeBroadcasters } from "./bridge-wiring.js";
 import { attachMessageRouter } from "./message-router.js";
 import { buildManager, type ChatWsManager } from "./manager.js";
+import { attachScreenStream, type ScreenAttachment } from "../screen-stream/index.js";
 
 const logger = createLogger("chat-ws");
 
@@ -77,7 +78,12 @@ export function setupChatWebSocket(server: Server, authToken: string, maxPayload
     // Track device sockets so revoking the device force-closes them instantly.
     if (auth.principal === "device" && auth.deviceId) trackDeviceSocket(auth.deviceId, ws);
     const { subscriptions } = setupConnection(ws);
-    attachMessageRouter({ ws, subscriptions });
+    // Live-screen (WebRTC) signaling rides this socket but only for paired
+    // DEVICES — the feature is bridge/device gated like the rest of the mobile
+    // surface (constitution §8). Operator/loopback connections get no session.
+    const screen: ScreenAttachment | null =
+      auth.principal === "device" ? attachScreenStream(ws) : null;
+    attachMessageRouter({ ws, subscriptions, screen });
   });
 
   return buildManager();

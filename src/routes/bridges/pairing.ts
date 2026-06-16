@@ -1,11 +1,12 @@
 // Bridge pairing + device-management routes (mirrors the sibling bridge routes).
 //
-//   POST /api/bridge/pair/issue   (operator) → { tailnetAddr, pairingSecret, expiresAt }
+//   POST /api/bridge/pair/issue   (operator) → { tailnetAddr, pairingSecret, expiresAt, qrPayload }
 //   POST /api/bridge/pair/claim   (no token; secret IS the credential)
 //                                  body { pairingSecret, deviceLabel }
 //                                  → { deviceToken (once), device }  | 409 on reuse/expiry
 //   GET  /api/bridge/devices      (operator) → device list (no token hashes)
 //   POST /api/bridge/devices/:id/revoke (operator) → { revoked, closedSockets }
+//   GET  /api/bridge/status       (operator; works when disabled) → { enabled }
 //
 // The auth gate (request-handler.ts) protects issue/devices with the operator
 // token and exempts /api/bridge/pair/claim — the one-shot pairing secret is the
@@ -18,10 +19,19 @@ import { resolveBridgeBindAddr } from "../../bridge/tailnet.js";
 import { loadBridgeConfig, isBridgeEnabled } from "../../bridge/config.js";
 import { getDeviceRegistry } from "../../bridge/device-registry.js";
 import { revokeDevice } from "../../bridge/index.js";
+import { encodePairQrPayload } from "../../bridge/pair-payload.js";
 
 export const handlePairingRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   if (!url.pathname.startsWith("/api/bridge/")) return false;
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
+
+  // Discoverability for the desktop "Pair a phone" panel: works whether or not
+  // the bridge is enabled so the UI can decide between the panel and the
+  // "enable the mobile bridge" hint. Operator-authed like the rest (the gate is
+  // in request-handler.ts), but must answer BEFORE the disabled short-circuit.
+  if (method === "GET" && url.pathname === "/api/bridge/status") {
+    json(200, { enabled: isBridgeEnabled(), envVar: "LAX_BRIDGE_ENABLED" }); return true;
+  }
 
   // Every bridge route is inert unless the bridge is enabled — surface that
   // clearly rather than minting tokens that can never be used.
@@ -31,7 +41,9 @@ export const handlePairingRoutes: RouteHandler = async (method, url, req, res, c
     const addr = resolveBridgeBindAddr(loadBridgeConfig().bindAddrOverride);
     if (!addr) { json(409, { error: "No Tailscale interface found. Bring Tailscale up or set LAX_BRIDGE_BIND_ADDR." }); return true; }
     const challenge = issueChallenge(`${addr}:${ctx.config.port}`);
-    json(200, challenge); return true;
+    // `qrPayload` is the EXACT string the desktop encodes into the QR and the
+    // mobile parser reads — server-authoritative so the two can't drift.
+    json(200, { ...challenge, qrPayload: encodePairQrPayload(challenge) }); return true;
   }
 
   if (method === "POST" && url.pathname === "/api/bridge/pair/claim") {

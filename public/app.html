@@ -276,6 +276,7 @@
       <button class="tab-pill" onclick="switchTab('image')">Media</button>
       <button class="tab-pill" onclick="switchTab('security')">Security</button>
       <button class="tab-pill" onclick="switchTab('whatsapp')">Communication</button>
+      <button class="tab-pill" onclick="switchTab('mobile')">Mobile</button>
       <button class="tab-pill" onclick="switchTab('integrations')">Tools &amp; Integrations</button>
       <button class="tab-pill" onclick="switchTab('sync')">Sync</button>
     </div>
@@ -668,6 +669,41 @@
             <div>4. Click <strong style="color:var(--text)">Connect</strong></div>
             <div>5. <strong style="color:var(--warn)">Immediately message your bot</strong> — the first person to message it becomes the owner. Nobody else will be able to use it after that.</div>
             <div style="margin-top:6px;color:var(--accent)">Works on multiple devices simultaneously — no conflicts.</div>
+          </div>
+        </div>
+      </div>
+      <!-- Mobile (AgentXOS pairing) -->
+      <div id="stab-mobile" class="tab-pane">
+        <!-- Shown when the bridge is OFF -->
+        <div id="mobile-disabled-box" class="section-card" style="display:none">
+          <div class="section-title">Mobile Bridge</div>
+          <div class="section-desc">Pair the AgentXOS phone app with this desktop so it can use your agent over your private Tailscale network. Your AI runs here, on your own subscription — the phone never holds provider credentials.</div>
+          <div class="status-badge warn" style="margin-top:12px"><span class="status-dot"></span> Mobile bridge is off</div>
+          <div style="font-size:.78rem;color:var(--muted);line-height:1.9;margin-top:12px">
+            <div>1. Set <code id="mobile-env-var">LAX_BRIDGE_ENABLED</code><code>=1</code> in your environment</div>
+            <div>2. Make sure <strong style="color:var(--text)">Tailscale</strong> is up on this machine</div>
+            <div>3. Restart Local Agent X, then reopen this tab</div>
+          </div>
+        </div>
+        <!-- Shown when the bridge is ON -->
+        <div id="mobile-enabled-box" style="display:none">
+          <div class="section-card">
+            <div class="section-title">Pair a phone</div>
+            <div class="section-desc">Open the AgentXOS app and scan this code to pair your phone. The code is one-time and expires in about a minute — generate a fresh one each time you pair a device.</div>
+            <div id="mobile-pair-error" style="display:none;color:var(--danger);font-size:.78rem;margin:10px 0"></div>
+            <div id="mobile-qr-box" style="display:none;text-align:center;margin:16px auto;padding:18px;background:#fff;border-radius:12px;max-width:280px">
+              <div id="mobile-qr-render" style="width:240px;height:240px;margin:0 auto"></div>
+              <div id="mobile-ttl" style="color:#333;font-size:.74rem;margin-top:10px;font-family:var(--mono)"></div>
+              <div style="color:#666;font-size:.66rem;margin-top:4px">Dial-in: <span id="mobile-tailnet-addr" style="font-family:var(--mono)"></span></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+              <button class="action-btn primary" id="mobile-gen-btn" onclick="mobileGenerateCode()">Generate new code</button>
+            </div>
+          </div>
+          <div class="section-card">
+            <div class="section-title">Paired devices</div>
+            <div class="section-desc">Phones currently paired with this desktop. Revoke any device to disconnect it instantly — it must re-pair to reconnect.</div>
+            <div id="mobile-devices-list" style="margin-top:12px">Loading…</div>
           </div>
         </div>
       </div>
@@ -1231,6 +1267,8 @@
 <script src="/js/chat.js?v=vd5"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
 <!-- settings.js modules — load BEFORE settings.js for the same reason. -->
+<script src="/vendor/qr/qrcode.js?v=v1"></script>
+<script src="/js/settings-mobile.js?v=v1"></script>
 <script src="/js/settings-whatsapp.js?v=v1"></script>
 <script src="/js/settings-telegram.js?v=v1"></script>
 <script src="/js/settings-onboarding-oauth.js?v=v1"></script>

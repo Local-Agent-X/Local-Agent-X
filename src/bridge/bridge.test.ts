@@ -7,6 +7,7 @@ import { DeviceRegistry, setDeviceRegistryForTest, getDeviceRegistry, hashBridge
 import { issueChallenge, claim, clearPendingForTest, PAIRING_TTL_MS } from "./pairing.js";
 import { authorizeUpgrade, authorizeDeviceHttp, clearLiveSocketsForTest } from "./upgrade-auth.js";
 import { isTailnetAddr, detectTailnetAddr } from "./tailnet.js";
+import { buildPairQrPayload, encodePairQrPayload, PAIR_PAYLOAD_VERSION } from "./pair-payload.js";
 
 const OP_TOKEN = "OP_" + "a".repeat(61); // any non-empty operator token
 
@@ -148,6 +149,29 @@ describe("device HTTP scope", () => {
     if (!claimed.ok) throw new Error("setup");
     delete process.env.LAX_BRIDGE_ENABLED;
     expect(authorizeDeviceHttp(claimed.deviceToken, "/api/apps")).toBeNull();
+  });
+});
+
+describe("pairing QR payload — desktop↔mobile contract", () => {
+  it("wraps the challenge in the versioned {v,tailnetAddr,pairingSecret,expiresAt} shape the phone parses", () => {
+    const challenge = issueChallenge("100.100.1.2:7007");
+    const payload = buildPairQrPayload(challenge);
+    // Exact field set the mobile chunk-3 parser expects — no more, no less.
+    expect(Object.keys(payload).sort()).toEqual(["expiresAt", "pairingSecret", "tailnetAddr", "v"]);
+    expect(payload.v).toBe(PAIR_PAYLOAD_VERSION);
+    expect(payload.v).toBe(1);
+    expect(payload.tailnetAddr).toBe(challenge.tailnetAddr);
+    expect(payload.pairingSecret).toBe(challenge.pairingSecret);
+    expect(payload.expiresAt).toBe(challenge.expiresAt);
+  });
+
+  it("encodePairQrPayload round-trips back to the same payload object (what the desktop puts in the QR)", () => {
+    const challenge = issueChallenge("100.100.1.2:7007");
+    const str = encodePairQrPayload(challenge);
+    const parsed = JSON.parse(str) as ReturnType<typeof buildPairQrPayload>;
+    expect(parsed).toEqual(buildPairQrPayload(challenge));
+    // v comes first so a phone can cheaply version-check before trusting the rest.
+    expect(str.startsWith('{"v":1')).toBe(true);
   });
 });
 

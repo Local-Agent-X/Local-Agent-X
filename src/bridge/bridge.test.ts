@@ -8,13 +8,22 @@ import { issueChallenge, claim, clearPendingForTest, PAIRING_TTL_MS } from "./pa
 import { authorizeUpgrade, authorizeDeviceHttp, clearLiveSocketsForTest } from "./upgrade-auth.js";
 import { isTailnetAddr, detectTailnetAddr } from "./tailnet.js";
 import { buildPairQrPayload, encodePairQrPayload, PAIR_PAYLOAD_VERSION } from "./pair-payload.js";
+import { resetPersistedBridgeEnabledForTest } from "./config.js";
+import { reloadSettings } from "../settings.js";
 
 const OP_TOKEN = "OP_" + "a".repeat(61); // any non-empty operator token
 
 let tmp: string;
+let prevDataDir: string | undefined;
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "bridge-test-"));
+  // Relocate ~/.lax into the tmp dir so the persisted bridge.enabled flag the
+  // upgrade gate now consults can't be polluted by the real user settings.
+  prevDataDir = process.env.LAX_DATA_DIR;
+  process.env.LAX_DATA_DIR = tmp;
+  reloadSettings();
+  resetPersistedBridgeEnabledForTest();
   // Fresh registry pointed at a throwaway data dir, shared via the singleton so
   // pairing.claim() and the upgrade gate hit the SAME registry.
   setDeviceRegistryForTest(new DeviceRegistry(tmp));
@@ -29,6 +38,10 @@ afterEach(() => {
   setDeviceRegistryForTest(null);
   delete process.env.LAX_BRIDGE_ENABLED;
   delete process.env.LAX_BRIDGE_BIND_ADDR;
+  if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR;
+  else process.env.LAX_DATA_DIR = prevDataDir;
+  reloadSettings();
+  resetPersistedBridgeEnabledForTest();
   rmSync(tmp, { recursive: true, force: true });
 });
 

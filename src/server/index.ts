@@ -275,6 +275,15 @@ export async function startServer(config: LAXConfig) {
   phaseSync("startConfigWatcher", () => startConfigWatcher(dataDir));
   phaseSync("bootstrapCanonicalLoop", () => bootstrapCanonicalLoop(getRuntimeConfig));
 
+  // Snapshot the persisted mobile-bridge flag into memory ONCE, before the bind
+  // decision below. isBridgeEnabled() is on the WS-upgrade hot path, so it reads
+  // this snapshot (not settings.json) per call. The flag only changes across
+  // restarts, so a startup snapshot is authoritative for this process.
+  await phase("loadBridgeFlag", async () => {
+    const { loadPersistedBridgeEnabled } = await import("../bridge/config.js");
+    loadPersistedBridgeEnabled();
+  });
+
   // Security guardian is a boot precondition — must be up before we accept
   // a single request. When ariRequired, a failure here exits the process.
   await phase("startSecurityKernel", () => startSecurityKernel({ config, dataDir }));
@@ -284,12 +293,15 @@ export async function startServer(config: LAXConfig) {
     bootLogger.info(`[boot-phase] TOTAL ${Date.now() - _bootT0}ms (port ${config.port} listening)`);
     logStartup({ config, dataDir });
 
-    // Opt-in mobile bridge: when LAX_BRIDGE_ENABLED is set, also bind the SAME
-    // server to the Tailscale tailnet so a paired phone can reach it. Default
-    // OFF — when unset this is a no-op and the server stays loopback-only.
-    // Fire-and-forget; a bridge that can't bind never blocks the loopback path.
+    // Opt-in mobile bridge: when enabled (UI toggle persists bridge.enabled, or
+    // the LAX_BRIDGE_ENABLED env override), bind a SECOND http.Server to the
+    // Tailscale tailnet that shares this server's request + upgrade handlers, so
+    // a paired phone can reach it. Default OFF — when disabled this is a no-op and
+    // the server stays loopback-only. A single http.Server can't .listen() twice
+    // (ERR_SERVER_ALREADY_LISTEN), hence the second server. Fire-and-forget; a
+    // bridge that can't bind never blocks the loopback path.
     void import("../bridge/index.js")
-      .then(({ maybeBindBridge }) => maybeBindBridge(server, config.port))
+      .then(({ maybeBindBridge }) => maybeBindBridge(server, requestHandler, config.port))
       .then((r) => { if (r.bound) bootLogger.info(`[bridge] tailnet bind active at ${r.addr}:${config.port}`); })
       .catch((e) => bootLogger.warn(`[bridge] bind init failed: ${(e as Error).message}`));
 

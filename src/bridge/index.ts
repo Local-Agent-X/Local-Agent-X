@@ -1,16 +1,27 @@
 // Mobile bridge — opt-in tailnet exposure of the existing LAX server.
 //
-// When LAX_BRIDGE_ENABLED is set, the SAME http.Server that listens on
-// 127.0.0.1 also binds to the Tailscale tailnet interface, so a paired phone
-// on the tailnet can reach the existing /ws/chat, /ws/voice, and /api/apps.
-// We do NOT create a second server or a parallel transport — the existing
-// upgrade handlers and request handler serve both binds. Auth on the tailnet
-// side is enforced by the shared authorizeUpgrade gate (per-device tokens).
+// When the bridge is enabled, a paired phone on the Tailscale tailnet can reach
+// the existing /ws/chat, /ws/voice, and /api/apps. Auth on the tailnet side is
+// enforced by the shared authorizeUpgrade gate (per-device tokens) — the same
+// gate the loopback server uses.
 //
-// When the flag is OFF this module does nothing and the server stays
-// loopback-only — exactly today's behavior.
+// THE BIND. A single http.Server CANNOT .listen() twice — Node throws
+// ERR_SERVER_ALREADY_LISTEN synchronously from the second .listen() call. So we
+// bind the tailnet address with a SECOND http.Server that SHARES:
+//   • the same request listener (createServer(requestHandler)), and
+//   • the same `upgrade` listeners as the loopback server (chat-ws, voice-ws,
+//     the upgrade reaper) — copied over verbatim.
+// Those upgrade handlers are bound to their own `noServer` WebSocketServer
+// instances, so they're server-agnostic and route by path identically over both
+// binds. Every connection still passes authorizeUpgrade, so tailnet traffic is
+// gated exactly like loopback.
+//
+// We bind ONLY to the resolved tailnet (100.64.0.0/10) address (or an explicit
+// LAX_BRIDGE_BIND_ADDR for a deliberate relay) — NEVER 0.0.0.0/public
+// (constitution §6). When the flag is OFF this module does nothing and the
+// server stays loopback-only — exactly today's behavior.
 
-import type { Server } from "node:http";
+import { createServer, type Server, type RequestListener } from "node:http";
 import { loadBridgeConfig } from "./config.js";
 import { resolveBridgeBindAddr } from "./tailnet.js";
 import { getDeviceRegistry } from "./device-registry.js";
@@ -23,20 +34,43 @@ export interface BridgeBindResult {
   bound: boolean;
   addr?: string;
   reason?: string;
+  /** The second server bound to the tailnet, when bound. Caller owns its close. */
+  tailnetServer?: Server;
 }
 
 /**
- * If the bridge is enabled, add a tailnet bind to the existing server. The
- * server is already (or about to be) listening on 127.0.0.1; this adds a second
- * listen on the tailnet address for the SAME server instance.
+ * Build (but do NOT listen on) the tailnet-side http.Server. It shares the SAME
+ * request listener as the loopback server and the SAME `upgrade` listeners
+ * (copied off the loopback server), so /ws/chat, /ws/voice and /api/apps behave
+ * identically over both binds. Pure + synchronous so the wiring is unit-testable
+ * without binding a real socket.
+ */
+export function createTailnetServer(loopbackServer: Server, requestHandler: RequestListener): Server {
+  const tailnetServer = createServer(requestHandler);
+  // Re-attach the loopback server's upgrade handlers. They're closures over
+  // `noServer` WebSocketServers and the upgrade reaper — server-instance
+  // agnostic — so the tailnet bind gets the exact same WS routing + auth.
+  for (const listener of loopbackServer.listeners("upgrade")) {
+    tailnetServer.on("upgrade", listener as (...args: unknown[]) => void);
+  }
+  return tailnetServer;
+}
+
+/**
+ * If the bridge is enabled, bind the tailnet address with a second http.Server
+ * that shares the loopback server's request + upgrade handlers.
  *
  * Returns a result describing what happened (bound + addr, or skipped + reason)
  * so the caller can log it on the startup banner. Never throws — a bridge that
  * can't bind must not take the loopback server down.
  */
-export function maybeBindBridge(server: Server, port: number): Promise<BridgeBindResult> {
+export function maybeBindBridge(
+  loopbackServer: Server,
+  requestHandler: RequestListener,
+  port: number,
+): Promise<BridgeBindResult> {
   const cfg = loadBridgeConfig();
-  if (!cfg.enabled) return Promise.resolve({ bound: false, reason: "disabled (LAX_BRIDGE_ENABLED not set)" });
+  if (!cfg.enabled) return Promise.resolve({ bound: false, reason: "disabled" });
 
   const addr = resolveBridgeBindAddr(cfg.bindAddrOverride);
   if (!addr) {
@@ -47,17 +81,20 @@ export function maybeBindBridge(server: Server, port: number): Promise<BridgeBin
     return Promise.resolve({ bound: false, reason: "no tailnet address" });
   }
 
+  const tailnetServer = createTailnetServer(loopbackServer, requestHandler);
+
   return new Promise<BridgeBindResult>((resolve) => {
     const onError = (err: NodeJS.ErrnoException): void => {
       logger.warn(`[bridge] tailnet bind ${addr}:${port} failed (${err.code ?? err.message}) — staying loopback-only`);
-      server.off("error", onError);
+      tailnetServer.off("error", onError);
+      try { tailnetServer.close(); } catch { /* never listened */ }
       resolve({ bound: false, reason: `bind failed: ${err.code ?? err.message}` });
     };
-    server.on("error", onError);
-    server.listen(port, addr, () => {
-      server.off("error", onError);
+    tailnetServer.on("error", onError);
+    tailnetServer.listen(port, addr, () => {
+      tailnetServer.off("error", onError);
       logger.info(`[bridge] tailnet bind active at http://${addr}:${port} (paired devices only)`);
-      resolve({ bound: true, addr });
+      resolve({ bound: true, addr, tailnetServer });
     });
   });
 }
@@ -73,7 +110,7 @@ export function revokeDevice(deviceId: string): { revoked: boolean; closedSocket
   return { revoked, closedSockets };
 }
 
-export { loadBridgeConfig, isBridgeEnabled } from "./config.js";
+export { loadBridgeConfig, isBridgeEnabled, loadPersistedBridgeEnabled, BRIDGE_ENABLED_SETTING } from "./config.js";
 export { detectTailnetAddr, resolveBridgeBindAddr } from "./tailnet.js";
 export { getDeviceRegistry } from "./device-registry.js";
 export { issueChallenge, claim } from "./pairing.js";

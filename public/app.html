@@ -674,15 +674,27 @@
       </div>
       <!-- Mobile (AgentXOS pairing) -->
       <div id="stab-mobile" class="tab-pane">
-        <!-- Shown when the bridge is OFF -->
-        <div id="mobile-disabled-box" class="section-card" style="display:none">
+        <!-- Always-visible enable toggle -->
+        <div class="section-card">
           <div class="section-title">Mobile Bridge</div>
           <div class="section-desc">Pair the AgentXOS phone app with this desktop so it can use your agent over your private Tailscale network. Your AI runs here, on your own subscription — the phone never holds provider credentials.</div>
-          <div class="status-badge warn" style="margin-top:12px"><span class="status-dot"></span> Mobile bridge is off</div>
-          <div style="font-size:.78rem;color:var(--muted);line-height:1.9;margin-top:12px">
-            <div>1. Set <code id="mobile-env-var">LAX_BRIDGE_ENABLED</code><code>=1</code> in your environment</div>
-            <div>2. Make sure <strong style="color:var(--text)">Tailscale</strong> is up on this machine</div>
-            <div>3. Restart Local Agent X, then reopen this tab</div>
+          <div class="toggle-row" style="margin-top:14px">
+            <div><div class="toggle-label">Enable mobile bridge</div><div class="toggle-desc">Expose this agent to paired phones over your Tailscale tailnet. Off by default — never reaches the public internet.</div></div>
+            <div class="toggle" id="tog-mobile-bridge" onclick="mobileToggleBridge(this)"></div>
+          </div>
+          <!-- Restart-to-apply banner (shown after a toggle changes the saved flag) -->
+          <div id="mobile-restart-banner" style="display:none;margin-top:14px;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;background:rgba(0,0,0,.04)">
+            <span id="mobile-restart-msg" style="font-size:.8rem;color:var(--text)"></span>
+            <button id="mobile-restart-btn" class="action-btn primary" style="margin-left:10px" onclick="mobileRestartToApply(this)">Restart to apply</button>
+          </div>
+          <!-- Env-override note (LAX_BRIDGE_ENABLED pins it on) -->
+          <div id="mobile-env-note" style="display:none;margin-top:12px;font-size:.74rem;color:var(--muted)">
+            Forced on by the <code id="mobile-env-var">LAX_BRIDGE_ENABLED</code> environment variable — clearing it requires editing your environment, not this toggle.
+          </div>
+          <!-- Tailscale-down note (enabled but no tailnet address) -->
+          <div id="mobile-tailscale-note" style="display:none;margin-top:12px;padding:10px 12px;border:1px solid var(--warn);border-radius:8px">
+            <div style="font-size:.8rem;color:var(--text);font-weight:600">Tailscale isn't up</div>
+            <div style="font-size:.74rem;color:var(--muted);margin-top:4px">The bridge is on but no Tailscale (100.64.0.0/10) interface was found, so it stayed loopback-only. Bring Tailscale up on this machine, then restart Local Agent X.</div>
           </div>
         </div>
         <!-- Shown when the bridge is ON -->

@@ -1,52 +1,132 @@
-// ── Settings: Mobile (Pair a phone + paired-devices) ──
+// ── Settings: Mobile (enable toggle + Pair a phone + paired-devices) ──
 //
-// Companion UI for the bridge pairing flow (constitution §4/§7). Drives the
-// chunk-1 routes:
-//   GET  /api/bridge/status              → { enabled } (works when disabled)
+// Companion UI for the bridge enable/pairing flow (constitution §4/§6/§7).
+// Drives the routes:
+//   GET  /api/bridge/status              → { enabled, persisted, envForced, hasTailnet }
+//   POST /api/bridge/enabled  { enabled } → { enabled, restartRequired }  (toggle)
 //   POST /api/bridge/pair/issue          → { tailnetAddr, pairingSecret, expiresAt, qrPayload }
 //   GET  /api/bridge/devices             → device list
 //   POST /api/bridge/devices/:id/revoke  → { revoked }
+//
+// Enabling the bridge is a persisted setting that takes effect on RESTART (the
+// tailnet bind happens at server startup). So the toggle POSTs the flag, then we
+// surface a "Restart to apply" button wired to the existing desktop relaunch
+// (window.desktop.relaunchApp). The QR/devices panel only shows once the bridge
+// is actually bound (status.enabled), i.e. after the restart.
 //
 // The QR encodes `qrPayload` VERBATIM — the exact string the server built
 // (`{v:1,tailnetAddr,pairingSecret,expiresAt}`), so the rendered QR can't drift
 // from the mobile parser. We never log the pairingSecret or device tokens.
 //
-// Rendering uses the vendored, network-free QR generator at /vendor/qr.
-//
-// External globals: apiFetch, apiJson, apiPost, esc, LaxQR.
+// External globals: apiFetch, apiJson, apiPost, esc, LaxQR, window.desktop.
 
 let _mobileTtlTimer = null;
 let _mobileBridgeEnabled = null;
+// Tracks the saved flag the server reports so we know when the toggle has
+// diverged from the running (bound) state and a restart is pending.
+let _mobileBridgePersisted = null;
 
-// Refresh whether the bridge is enabled, then show the right sub-panel.
+// Refresh bridge state, then show the right sub-panels + toggle position.
 async function mobileCheckBridge() {
   const panel = document.getElementById('stab-mobile');
   if (!panel) return;
   try {
     const d = await apiJson('/api/bridge/status');
-    _mobileBridgeEnabled = !!d.enabled;
-    mobileRenderGating(d.envVar || 'LAX_BRIDGE_ENABLED');
+    mobileRenderGating(d);
   } catch {
-    // Older server without /status, or transient error — assume disabled and
-    // surface the hint rather than a broken panel.
-    _mobileBridgeEnabled = false;
-    mobileRenderGating('LAX_BRIDGE_ENABLED');
+    // Older server without /status, or transient error — assume off and render
+    // the toggle in the off state rather than a broken panel.
+    mobileRenderGating({ enabled: false, persisted: false, envForced: false, hasTailnet: false });
   }
 }
 
-function mobileRenderGating(envVar) {
-  const enabledBox = document.getElementById('mobile-enabled-box');
-  const disabledBox = document.getElementById('mobile-disabled-box');
+function mobileRenderGating(d) {
+  _mobileBridgeEnabled = !!d.enabled;
+  _mobileBridgePersisted = !!d.persisted;
+  const envForced = !!d.envForced;
+
+  // Toggle reflects the SAVED flag (what the next restart will apply), or the
+  // env override when forced on. Disable it when env-forced (the toggle can't
+  // override an env var).
+  const tog = document.getElementById('tog-mobile-bridge');
+  if (tog) {
+    const on = _mobileBridgePersisted || envForced;
+    tog.classList.toggle('on', on);
+    tog.style.opacity = envForced ? '0.5' : '';
+    tog.style.pointerEvents = envForced ? 'none' : '';
+  }
+  const envNote = document.getElementById('mobile-env-note');
+  if (envNote) envNote.style.display = envForced ? '' : 'none';
   const envEl = document.getElementById('mobile-env-var');
-  if (envEl) envEl.textContent = envVar;
+  if (envEl) envEl.textContent = d.envVar || 'LAX_BRIDGE_ENABLED';
+
+  // Pending-restart: the saved flag differs from the running (bound) state.
+  const pending = (_mobileBridgePersisted || envForced) !== _mobileBridgeEnabled;
+  mobileShowRestartBanner(pending, _mobileBridgePersisted || envForced);
+
+  // Tailscale-down note: enabled (bound or pending) but no tailnet addr.
+  const tsNote = document.getElementById('mobile-tailscale-note');
+  if (tsNote) tsNote.style.display = (_mobileBridgeEnabled && !d.hasTailnet) ? '' : 'none';
+
+  // QR/devices panel only when the bridge is actually bound.
+  const enabledBox = document.getElementById('mobile-enabled-box');
   if (_mobileBridgeEnabled) {
     if (enabledBox) enabledBox.style.display = '';
-    if (disabledBox) disabledBox.style.display = 'none';
     mobileLoadDevices();
   } else {
     if (enabledBox) enabledBox.style.display = 'none';
-    if (disabledBox) disabledBox.style.display = '';
     mobileStopTtl();
+  }
+}
+
+function mobileShowRestartBanner(show, willBeEnabled) {
+  const banner = document.getElementById('mobile-restart-banner');
+  const msg = document.getElementById('mobile-restart-msg');
+  if (!banner) return;
+  banner.style.display = show ? '' : 'none';
+  if (show && msg) {
+    msg.textContent = willBeEnabled
+      ? 'Mobile bridge will turn ON after a restart.'
+      : 'Mobile bridge will turn OFF after a restart.';
+  }
+}
+
+// Toggle handler: persist the flag, then surface restart-to-apply. We do NOT
+// flip _mobileBridgeEnabled (the live/bound state) here — that only changes on
+// restart. We optimistically reflect the new SAVED state in the switch.
+async function mobileToggleBridge(el) {
+  if (!el || el.style.pointerEvents === 'none') return; // env-forced: locked
+  const next = !el.classList.contains('on');
+  el.classList.toggle('on', next);
+  try {
+    const res = await apiFetch('/api/bridge/enabled', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+    _mobileBridgePersisted = !!d.enabled;
+    mobileShowRestartBanner(_mobileBridgePersisted !== _mobileBridgeEnabled, _mobileBridgePersisted);
+  } catch (e) {
+    // Revert the switch and tell the user.
+    el.classList.toggle('on', !next);
+    alert('Could not change the mobile bridge: ' + ((e && e.message) ? e.message : String(e)));
+  }
+}
+
+// Restart-to-apply: reuse the existing desktop relaunch. Browser-only users
+// (no Electron) get a plain instruction instead.
+async function mobileRestartToApply(btn) {
+  if (window.desktop && window.desktop.relaunchApp) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+    try { await window.desktop.relaunchApp(); }
+    catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Restart to apply'; }
+      alert('Restart failed: ' + ((e && e.message) ? e.message : String(e)));
+    }
+  } else {
+    alert('Quit and reopen Local Agent X to apply the change.');
   }
 }
 

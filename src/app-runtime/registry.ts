@@ -275,8 +275,8 @@ export class AppRegistry {
     writeState(id, state);
   }
 
-  updateComponentValues(id: string, values: Record<string, unknown>, actor = "user"): { state?: AppState; error?: string } {
-    return updateComponentValues(id, values, actor, this.stateRateLimiter, writeAuditEntry);
+  updateComponentValues(id: string, values: Record<string, unknown>, actor = "user", actionId?: string): { state?: AppState; error?: string; duplicate?: boolean } {
+    return updateComponentValues(id, values, actor, this.stateRateLimiter, writeAuditEntry, actionId);
   }
 
   queueAction(id: string, action: string, target?: string, value?: unknown, actor = "user"): { action?: QueuedAction; error?: string } {

@@ -96,6 +96,13 @@ export interface AppDefinition {
 export interface AppState {
   componentValues: Record<string, unknown>;
   actionQueue: QueuedAction[];
+  /**
+   * Ids of state-update actions already applied, newest last. Lets a phone
+   * replay its offline queue against POST /state idempotently — a re-sent
+   * action whose id is here is a no-op instead of a duplicate merge. Bounded
+   * to MAX_APPLIED_ACTIONS; absent on legacy state (treated as empty).
+   */
+  appliedActions?: string[];
   metadata: {
     lastAgentUpdate: number;
     lastUserUpdate: number;
@@ -127,6 +134,7 @@ export interface AppEvent {
 export const MAX_COMPONENTS = 200;
 export const MAX_EVENTS_STORED = 500;
 export const MAX_ACTIONS_QUEUED = 100;
+export const MAX_APPLIED_ACTIONS = 500;
 export const MAX_STATE_SIZE_BYTES = 2 * 1024 * 1024;  // 2MB
 export const MAX_APP_NAME_LENGTH = 128;
 export const MAX_APP_DESC_LENGTH = 1024;

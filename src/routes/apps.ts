@@ -180,10 +180,17 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     const id = appPath.split("/")[3];
     const body = await safeParseBody(req);
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
-    const updated = appReg.updateComponentValues(id, (body.values || body) as Record<string, unknown>);
+    // Optional idempotency key: a phone replaying its offline action queue on
+    // reconnect tags each merge with its local actionId so a re-sent action is
+    // applied exactly once (state-store dedups via state.appliedActions). When
+    // body carries an actionId, `values` must be the merge payload (not the
+    // whole body), so the id isn't merged in as a component value.
+    const actionId = typeof body.actionId === "string" ? body.actionId : undefined;
+    const values = (body.values || (actionId ? {} : body)) as Record<string, unknown>;
+    const updated = appReg.updateComponentValues(id, values, "user", actionId);
     if (updated.error) { json(updated.state ? 429 : 404, { error: updated.error }); return true; }
-    ctx.broadcastAll({ type: "app:state", appId: id });
-    json(200, { ok: true }); return true;
+    if (!updated.duplicate) ctx.broadcastAll({ type: "app:state", appId: id });
+    json(200, { ok: true, duplicate: updated.duplicate === true }); return true;
   }
 
   // App events
@@ -204,6 +211,19 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     const id = appPath.split("/")[3];
     const since = url.searchParams.get("since") ? parseInt(url.searchParams.get("since")!, 10) : undefined;
     json(200, appReg.getEvents(id, since)); return true;
+  }
+
+  // Offline bundle — device-token scoped (the path is under /api/apps, which
+  // bridge/upgrade-auth.ts admits for paired devices). Returns the app HTML,
+  // an inlined asset manifest, and the live state snapshot so the phone can run
+  // the app with the desktop unreachable (product flow 5). Built in
+  // apps-bundle.ts to keep this file under the LOC cap.
+  if (method === "GET" && appPath.match(/^\/api\/apps\/[a-zA-Z0-9_-]+\/bundle$/)) {
+    const id = appPath.split("/")[3];
+    const { buildAppBundle } = await import("./apps-bundle.js");
+    const bundle = buildAppBundle(appReg, ctx.config.workspace, id, ctx.config.port || 7007);
+    if (!bundle) { json(404, { error: "App not found" }); return true; }
+    json(200, bundle); return true;
   }
 
   // App audit log

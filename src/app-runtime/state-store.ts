@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 
 import { appDir, statePath } from "./paths.js";
 import type { RateLimiter } from "./rate-limiter.js";
-import { type AppState, MAX_ACTIONS_QUEUED, MAX_STATE_SIZE_BYTES, type QueuedAction } from "./types.js";
+import { type AppState, MAX_ACTIONS_QUEUED, MAX_APPLIED_ACTIONS, MAX_STATE_SIZE_BYTES, type QueuedAction } from "./types.js";
 import { createLogger } from "../logger.js";
 import type { AuditEntry } from "./types.js";
 
@@ -37,13 +37,32 @@ export function updateComponentValues(
   actor: string,
   limiter: RateLimiter,
   writeAudit: AuditWriter,
-): { state?: AppState; error?: string } {
+  // Optional idempotency key. When the caller (e.g. a phone replaying its
+  // offline queue on reconnect) supplies an actionId already recorded in
+  // state.appliedActions, the merge is skipped and the current state returned
+  // unchanged — replaying a queue applies each action exactly once, never
+  // twice. Absent ⇒ today's behavior (always merge), default unchanged.
+  actionId?: string,
+): { state?: AppState; error?: string; duplicate?: boolean } {
   if (!limiter.check(`state:${id}`)) {
     return { error: "Rate limit exceeded for state updates" };
   }
 
   const state = readState(id);
   if (!state) return { error: "App not found" };
+
+  if (actionId) {
+    const applied = state.appliedActions ?? [];
+    if (applied.includes(actionId)) {
+      // Already applied — no-op, no version bump, no audit churn.
+      return { state, duplicate: true };
+    }
+    applied.push(actionId);
+    // Bound the ledger so a long-lived app's state.json can't grow without limit.
+    state.appliedActions = applied.length > MAX_APPLIED_ACTIONS
+      ? applied.slice(-MAX_APPLIED_ACTIONS)
+      : applied;
+  }
 
   state.componentValues = { ...state.componentValues, ...values };
   state.metadata.lastAgentUpdate = Date.now();
@@ -53,6 +72,7 @@ export function updateComponentValues(
   writeAudit(id, actor, "state:update", {
     components: Object.keys(values),
     version: state.metadata.version,
+    ...(actionId ? { actionId } : {}),
   });
 
   return { state };

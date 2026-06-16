@@ -23,18 +23,23 @@ if (-not $nodeOk) {
     # No winget: unpack the portable Node zip to a per-user dir. No admin and
     # no msiexec — the MSI path needed elevation this script doesn't request.
     $ver = "24.16.0"
-    $zip = "$env:TEMP\node-v$ver-win-x64.zip"
+    # Match the host CPU — win-x64 node.exe won't run natively on Windows on ARM.
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
+    $pkg = "node-v$ver-$arch"
+    $zip = "$env:TEMP\$pkg.zip"
     $root = "$env:LOCALAPPDATA\LocalAgentX"
-    $nodeDir = "$root\node-v$ver-win-x64"
-    Invoke-WebRequest -Uri "https://nodejs.org/dist/v$ver/node-v$ver-win-x64.zip" -OutFile $zip -UseBasicParsing
+    $nodeDir = "$root\$pkg"
+    Invoke-WebRequest -Uri "https://nodejs.org/dist/v$ver/$pkg.zip" -OutFile $zip -UseBasicParsing
     if (Test-Path $nodeDir) { Remove-Item $nodeDir -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $root | Out-Null
     Expand-Archive -Path $zip -DestinationPath $root -Force
     Remove-Item $zip -ErrorAction SilentlyContinue
     $env:PATH = "$nodeDir;$env:PATH"
+    # Prepend (not append) to the persisted user PATH so this node wins over any
+    # older system node at runtime — otherwise the desktop node-floor gate trips.
     $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
     if ($userPath -notlike "*$nodeDir*") {
-      [Environment]::SetEnvironmentVariable("PATH", "$userPath;$nodeDir", "User")
+      [Environment]::SetEnvironmentVariable("PATH", "$nodeDir;$userPath", "User")
     }
   }
 }

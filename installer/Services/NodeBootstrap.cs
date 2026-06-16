@@ -94,8 +94,12 @@ public class NodeBootstrap
             if (!HasOnPath("brew"))
             {
                 OnStatus?.Invoke("Installing Homebrew…");
+                // NONINTERACTIVE=1: the installer runs with no tty, so Homebrew's
+                // "Press RETURN to continue" prompt would hang it forever. (It can
+                // still fail if first-time /opt/homebrew creation needs a sudo
+                // password — that path requires the user to have brew or admin.)
                 var brewOk = RunStreaming("/bin/bash", new[] {
-                    "-c", "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"",
+                    "-c", "NONINTERACTIVE=1 /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"",
                 });
                 if (!brewOk) return false;
                 // The Homebrew installer writes to /opt/homebrew/bin (Apple
@@ -132,13 +136,17 @@ public class NodeBootstrap
     // verifies success via NodeAvailable() afterward.
     bool InstallNodeFromZip()
     {
-        var zip = Path.Combine(Path.GetTempPath(), $"node-v{NODE_FALLBACK_VERSION}-win-x64.zip");
+        // Match the host CPU — Windows on ARM (Surface Pro X, Snapdragon laptops)
+        // can't run the x64 node.exe natively. node ships a win-arm64 build.
+        var arch = RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "win-arm64" : "win-x64";
+        var pkg = $"node-v{NODE_FALLBACK_VERSION}-{arch}";
+        var zip = Path.Combine(Path.GetTempPath(), $"{pkg}.zip");
         var installRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalAgentX");
-        var nodeDir = Path.Combine(installRoot, $"node-v{NODE_FALLBACK_VERSION}-win-x64");
+        var nodeDir = Path.Combine(installRoot, pkg);
         try
         {
-            var url = $"https://nodejs.org/dist/v{NODE_FALLBACK_VERSION}/node-v{NODE_FALLBACK_VERSION}-win-x64.zip";
+            var url = $"https://nodejs.org/dist/v{NODE_FALLBACK_VERSION}/{pkg}.zip";
             OnLogLine?.Invoke($"Downloading {url}");
             using (var http = new HttpClient())
             {
@@ -167,14 +175,17 @@ public class NodeBootstrap
     }
 
     // Persist a dir to the USER PATH (HKCU) so node survives a reboot and stays
-    // visible to the desktop app. Avoids setx (it truncates PATH at 1024 chars)
-    // and needs no elevation. Windows-only — the User target is only reached
-    // from inside the IsWindows() branch above.
+    // visible to the desktop app. PREPENDED, not appended: a user with an older
+    // system Node already on PATH would otherwise shadow ours at runtime, the
+    // desktop node-floor gate would trip, and its winget-based --upgrade-node
+    // would fail on the very machines that lacked winget to begin with. Avoids
+    // setx (it truncates PATH at 1024 chars) and needs no elevation. Windows-only
+    // — the User target is only reached from inside the IsWindows() branch above.
     static void PersistUserPath(string dir)
     {
         var userPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) ?? "";
         if (userPath.Split(';').Contains(dir, StringComparer.OrdinalIgnoreCase)) return;
-        var updated = userPath.Length == 0 ? dir : $"{userPath};{dir}";
+        var updated = userPath.Length == 0 ? dir : $"{dir};{userPath}";
         Environment.SetEnvironmentVariable("PATH", updated, EnvironmentVariableTarget.User);
     }
 

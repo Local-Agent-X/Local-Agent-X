@@ -21,7 +21,7 @@
 
 import { spawnSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 // The Node floor comes from package.json engines.node — ONE source of truth
@@ -88,6 +88,8 @@ Remove-Item -LiteralPath $RegKey -Recurse -Force -ErrorAction SilentlyContinue
 const UNINSTALL_COMMAND = String.raw`#!/bin/bash
 # Local Agent X uninstaller (macOS). Removes the app + data; leaves Ollama.
 SRC_DIR='__SOURCE_DIR__'
+APP_DEST='__APP_DEST__'
+SELF='__SELF__'
 
 ANS=$(osascript <<'APPLESCRIPT'
 try
@@ -104,11 +106,11 @@ osascript -e 'tell application "Local Agent X" to quit' >/dev/null 2>&1
 pkill -f "Local Agent X.app" >/dev/null 2>&1
 sleep 1
 
-rm -rf "/Applications/Local Agent X.app"
+rm -rf "$APP_DEST"
 rm -rf "$SRC_DIR"
 rm -rf "$HOME/Library/Application Support/electron"
 if [ "$ANS" = "Delete Data" ]; then rm -rf "$HOME/.lax"; fi
-rm -f "/Applications/Uninstall Local Agent X.command"
+rm -f "$SELF"
 
 osascript -e 'display dialog "Local Agent X has been removed." & return & "(Ollama and the AI model were left installed.)" buttons {"OK"} default button "OK" with title "Uninstall complete"' >/dev/null 2>&1
 exit 0
@@ -595,7 +597,11 @@ if (res.status !== 0) {
     `--loglevel=${npmLogLevel}`,
     "--legacy-peer-deps",
   ]);
-  if (res.status !== 0) fail("npm install failed. See errors above.");
+  if (res.status !== 0) {
+    fail(process.platform === "win32"
+      ? "npm install failed. If the errors above mention node-gyp or a C++ build, a native module had no prebuilt binary and needs VS Build Tools — install it from https://visualstudio.microsoft.com/downloads/ and re-run."
+      : "npm install failed. See errors above.");
+  }
 }
 
 // Native modules (better-sqlite3 + onnxruntime-node) embed a NODE_MODULE_VERSION
@@ -813,18 +819,28 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   }
   if (!appBuildPath) fail(`Could not locate built .app under ${releaseDir}`);
 
-  const dest = "/Applications/Local Agent X.app";
-  if (existsSync(dest)) {
-    log(`Removing previous ${dest}`);
-    run("rm", ["-rf", dest]);
-  }
-  log(`Installing → ${dest}`);
-  r = run("cp", ["-R", appBuildPath, dest]);
-  if (r.status === 0) {
+  const copyApp = (target) => {
+    if (existsSync(target)) { log(`Removing previous ${target}`); run("rm", ["-rf", target]); }
+    log(`Installing → ${target}`);
+    return run("cp", ["-R", appBuildPath, target]).status === 0;
+  };
+  let dest = "/Applications/Local Agent X.app";
+  if (copyApp(dest)) {
     ok("Local Agent X.app installed to /Applications");
     appInstalled = true;
   } else {
-    warn(`Could not copy to /Applications (permission denied?). Built app is at:\n  ${appBuildPath}`);
+    // /Applications needs admin on managed (MDM) or standard-user Macs. Fall
+    // back to the per-user ~/Applications — Finder shows it and it needs no
+    // privileges — so a non-admin user still gets a launchable app.
+    const userApps = join(homedir(), "Applications");
+    mkdirSync(userApps, { recursive: true });
+    dest = join(userApps, "Local Agent X.app");
+    if (copyApp(dest)) {
+      ok(`Local Agent X.app installed to ${dest}`);
+      appInstalled = true;
+    } else {
+      warn(`Could not copy to /Applications or ~/Applications. Built app is at:\n  ${appBuildPath}`);
+    }
   }
 
   // macOS has no Add/Remove Programs — drop a discoverable uninstaller next to
@@ -833,10 +849,14 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   // source/userData dir; it asks before deleting ~/.lax and leaves Ollama.
   if (appInstalled && !existsSync(join(process.cwd(), ".git"))) {
     try {
-      const cmdPath = "/Applications/Uninstall Local Agent X.command";
-      writeFileSync(cmdPath, UNINSTALL_COMMAND.replace(/__SOURCE_DIR__/g, process.cwd().replace(/'/g, "'\\''")));
+      const esc = (s) => s.replace(/'/g, "'\\''");
+      const cmdPath = join(dirname(dest), "Uninstall Local Agent X.command");
+      writeFileSync(cmdPath, UNINSTALL_COMMAND
+        .replace(/__SOURCE_DIR__/g, esc(process.cwd()))
+        .replace(/__APP_DEST__/g, esc(dest))
+        .replace(/__SELF__/g, esc(cmdPath)));
       chmodSync(cmdPath, 0o755);
-      ok('Uninstaller added — /Applications → "Uninstall Local Agent X"');
+      ok(`Uninstaller added — ${dirname(dest)} → "Uninstall Local Agent X"`);
     } catch (e) {
       warn(`Uninstaller not added: ${e.message}`);
     }

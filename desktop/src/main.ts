@@ -265,6 +265,22 @@ app.on("ready", async () => {
         if (result.ok) startServer();
         else showSplashRecovery("Node.js upgrade required", result.detail);
       },
+      onNativeAbiMismatch: async () => {
+        // A native addon was compiled against a different Node major than the
+        // one we spawn. Rebuild it against the runtime node and retry, instead
+        // of dead-ending at the repair screen. Same fix-then-retry shape as
+        // onNodeTooOld; setSplashStatus keeps the spinner informative without
+        // swapping in the recovery buttons mid-rebuild.
+        const { setSplashStatus } = await import("./splash-recovery");
+        const { rebuildNativeModules } = await import("./native-rebuild");
+        setSplashStatus("Rebuilding native modules…");
+        const result = await rebuildNativeModules();
+        if (result.ok) startServer();
+        else showSplashRecovery(
+          "Native modules need rebuilding",
+          `${result.detail} Run \`npm rebuild better-sqlite3\` in the install directory, then relaunch.`,
+        );
+      },
       onAlreadyRunning: ({ competingPid, pidfilePath }) => {
         // src/lifecycle.ts exited 75: another LAX server still owns
         // ~/.lax/server.pid. Auto-restart is intentionally suppressed

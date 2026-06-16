@@ -202,6 +202,30 @@ function cleanLines(raw) {
 // non-empty line as a {type:"log"} event tagged with the current step.
 // Prose mode keeps stdio:"inherit" so users see real-time output (which
 // for slow steps like VS Build Tools is the only feedback they get).
+// PATH prefix that resolves `node`/`npm` to the SAME binary the desktop app
+// spawns the server with at runtime. MUST stay in lockstep with
+// desktop/src/server-process.ts:buildAugmentedPath — the test in
+// test/native-node-path-parity.test.ts asserts they match. Building native
+// addons (better-sqlite3) under a different node major than the runtime uses
+// is exactly what bricks a fresh install into the NODE_MODULE_VERSION repair
+// loop. macOS/Linux only: on Windows the runtime uses a pinned portable node
+// and install-common.mjs manages that PATH separately.
+const RUNTIME_NODE_PATH_AUGMENTS = [
+  "/opt/homebrew/bin", "/opt/homebrew/sbin",
+  "/usr/local/bin", "/usr/local/sbin",
+  join(homedir(), ".nvm/versions/node/current/bin"),
+];
+
+// Env that pins npm/node-gyp to the runtime node when building native modules.
+// Returns undefined on Windows (leave the carefully-built portable-node PATH
+// untouched) so callers can spread it conditionally.
+function runtimeNodeEnv() {
+  if (process.platform === "win32") return undefined;
+  const existing = (process.env.PATH || "").split(":");
+  const merged = [...RUNTIME_NODE_PATH_AUGMENTS, ...existing].filter((p, i, a) => p && a.indexOf(p) === i);
+  return { ...process.env, PATH: merged.join(":") };
+}
+
 function run(cmd, args, opts = {}) {
   if (!IPC) {
     return spawnSync(cmd, args, { stdio: "inherit", shell: process.platform === "win32", ...opts });
@@ -388,7 +412,9 @@ if (process.argv.includes("--upgrade-node")) {
   // Same scoped rebuild as the npm step below — `npm` resolves to the
   // NEW node's npm via PATH, so the binary is built against the new ABI.
   console.log("[upgrade-node] rebuilding native modules…");
-  const rb = run("npm", ["rebuild", "better-sqlite3", "--no-audit", "--no-fund", "--loglevel=error"]);
+  const upgradeEnv = runtimeNodeEnv();
+  const rb = run("npm", ["rebuild", "better-sqlite3", "--no-audit", "--no-fund", "--loglevel=error"],
+    upgradeEnv ? { env: upgradeEnv } : {});
   if (rb.status !== 0) {
     console.error("[upgrade-node] native rebuild failed — if the app fails to start, run `npm rebuild better-sqlite3` in the install directory.");
     process.exit(1);
@@ -587,7 +613,11 @@ log("Installing npm dependencies (npm ci — enforces the committed lockfile)…
 // resolved in place of the locked version. Fall back to `npm install` only if
 // ci fails (lockfile drift / peer conflict) so a drift never bricks the install;
 // the common, clean case gets lockfile enforcement.
-let res = await runStreaming("npm", ["ci", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`]);
+// env pins npm/node-gyp to the same node the desktop runtime spawns, so
+// native addons aren't compiled against a different ABI than they'll run on.
+const nodeEnv = runtimeNodeEnv();
+const nodeEnvOpt = nodeEnv ? { env: nodeEnv } : {};
+let res = await runStreaming("npm", ["ci", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`], nodeEnvOpt);
 if (res.status !== 0) {
   warn("npm ci failed (lockfile drift or peer conflict). Falling back to npm install --legacy-peer-deps…");
   res = await runStreaming("npm", [
@@ -596,7 +626,7 @@ if (res.status !== 0) {
     "--no-fund",
     `--loglevel=${npmLogLevel}`,
     "--legacy-peer-deps",
-  ]);
+  ], nodeEnvOpt);
   if (res.status !== 0) {
     fail(process.platform === "win32"
       ? "npm install failed. If the errors above mention node-gyp or a C++ build, a native module had no prebuilt binary and needs VS Build Tools — install it from https://visualstudio.microsoft.com/downloads/ and re-run."
@@ -622,7 +652,7 @@ const rebuildRes = run("npm", [
   "--no-audit",
   "--no-fund",
   `--loglevel=${npmLogLevel}`,
-]);
+], nodeEnvOpt);
 if (rebuildRes.status !== 0) {
   // Non-fatal: if rebuild fails we still try to continue. The server
   // import will crash with a clearer error than we'd produce from here.

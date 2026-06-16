@@ -89,6 +89,7 @@ function init_settings() {
   if (typeof loadMcpServers === 'function') loadMcpServers();
   waCheckStatus();
   tgCheckStatus();
+  if (typeof mobileInitTabVisibility === 'function') mobileInitTabVisibility();
 }
 
 function switchTab(id) {

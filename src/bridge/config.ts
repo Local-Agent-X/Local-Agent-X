@@ -77,3 +77,19 @@ export function isBridgeEnabled(): boolean {
   if (_persistedEnabled === null) return loadPersistedBridgeEnabled();
   return _persistedEnabled;
 }
+
+/** Whether the LAX_BRIDGE_UI reveal flag is set (for testing/preview). */
+export function isBridgeUiEnvFlag(): boolean {
+  return envTrue(process.env.LAX_BRIDGE_UI);
+}
+
+/**
+ * Pure gate for whether the desktop Settings → Mobile tab is shown. The mobile
+ * bridge is an UNRELEASED feature, so the tab is HIDDEN from regular users and
+ * revealed only when LAX_BRIDGE_UI is set (testing/preview) OR the bridge has
+ * already been enabled/persisted (so an enabled user can still manage it).
+ * Default — all false — keeps it hidden.
+ */
+export function resolveBridgeUiVisible(envUi: boolean, enabled: boolean, persisted: boolean): boolean {
+  return envUi || enabled || persisted;
+}

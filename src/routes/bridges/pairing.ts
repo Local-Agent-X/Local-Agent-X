@@ -17,7 +17,7 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { issueChallenge, claim } from "../../bridge/pairing.js";
 import { resolveBridgeBindAddr } from "../../bridge/tailnet.js";
-import { loadBridgeConfig, isBridgeEnabled, BRIDGE_ENABLED_SETTING } from "../../bridge/config.js";
+import { loadBridgeConfig, isBridgeEnabled, isBridgeUiEnvFlag, resolveBridgeUiVisible, BRIDGE_ENABLED_SETTING } from "../../bridge/config.js";
 import { getDeviceRegistry } from "../../bridge/device-registry.js";
 import { revokeDevice } from "../../bridge/index.js";
 import { encodePairQrPayload } from "../../bridge/pair-payload.js";
@@ -43,7 +43,11 @@ export const handlePairingRoutes: RouteHandler = async (method, url, req, res, c
     // pair attempt. Never reveal the address itself here (operator-only panel
     // gets it via pair/issue); just whether one exists.
     const hasTailnet = enabled ? resolveBridgeBindAddr(loadBridgeConfig().bindAddrOverride) !== null : false;
-    json(200, { enabled, persisted, envForced, hasTailnet, envVar: "LAX_BRIDGE_ENABLED" }); return true;
+    // Whether the desktop Mobile settings tab should be shown at all. Unreleased
+    // feature → hidden from regular users; revealed by LAX_BRIDGE_UI or once the
+    // bridge has been enabled/persisted.
+    const uiVisible = resolveBridgeUiVisible(isBridgeUiEnvFlag(), enabled, persisted);
+    json(200, { enabled, persisted, envForced, hasTailnet, uiVisible, envVar: "LAX_BRIDGE_ENABLED" }); return true;
   }
 
   // Toggle the persisted flag. The bind happens at startup, so flipping this

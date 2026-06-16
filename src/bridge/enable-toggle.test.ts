@@ -14,6 +14,8 @@ import {
   isBridgeEnabled,
   loadPersistedBridgeEnabled,
   resetPersistedBridgeEnabledForTest,
+  isBridgeUiEnvFlag,
+  resolveBridgeUiVisible,
   BRIDGE_ENABLED_SETTING,
 } from "./config.js";
 import { createTailnetServer, maybeBindBridge } from "./index.js";
@@ -163,5 +165,30 @@ describe("maybeBindBridge — only binds a second server when enabled + tailnet 
 
     r.tailnetServer?.close();
     loopback.close();
+  });
+});
+
+describe("resolveBridgeUiVisible — Mobile tab hidden from regular users by default", () => {
+  it("is HIDDEN when nothing is set (regular/dist user)", () => {
+    expect(resolveBridgeUiVisible(false, false, false)).toBe(false);
+  });
+
+  it("is revealed by the LAX_BRIDGE_UI testing/preview flag", () => {
+    expect(resolveBridgeUiVisible(true, false, false)).toBe(true);
+  });
+
+  it("is revealed once the bridge is enabled or persisted (so an enabled user can manage it)", () => {
+    expect(resolveBridgeUiVisible(false, true, false)).toBe(true);
+    expect(resolveBridgeUiVisible(false, false, true)).toBe(true);
+  });
+
+  it("isBridgeUiEnvFlag reads LAX_BRIDGE_UI (1/true), default false", () => {
+    delete process.env.LAX_BRIDGE_UI;
+    expect(isBridgeUiEnvFlag()).toBe(false);
+    process.env.LAX_BRIDGE_UI = "1";
+    expect(isBridgeUiEnvFlag()).toBe(true);
+    process.env.LAX_BRIDGE_UI = "true";
+    expect(isBridgeUiEnvFlag()).toBe(true);
+    delete process.env.LAX_BRIDGE_UI;
   });
 });

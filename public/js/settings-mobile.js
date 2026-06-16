@@ -26,6 +26,21 @@ let _mobileBridgeEnabled = null;
 // diverged from the running (bound) state and a restart is pending.
 let _mobileBridgePersisted = null;
 
+// The mobile bridge is an UNRELEASED feature, so its Settings tab is hidden by
+// default (the pill ships with display:none in app.html) and revealed only when
+// the server reports uiVisible — i.e. LAX_BRIDGE_UI is set (testing/preview) or
+// the bridge has already been enabled. Regular/dist users never see the tab.
+async function mobileInitTabVisibility() {
+  const pill = document.getElementById('tab-pill-mobile');
+  if (!pill) return;
+  try {
+    const d = await apiJson('/api/bridge/status');
+    pill.style.display = (d && d.uiVisible) ? '' : 'none';
+  } catch {
+    pill.style.display = 'none'; // default hidden on any error
+  }
+}
+
 // Refresh bridge state, then show the right sub-panels + toggle position.
 async function mobileCheckBridge() {
   const panel = document.getElementById('stab-mobile');

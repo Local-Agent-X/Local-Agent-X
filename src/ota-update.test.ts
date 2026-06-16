@@ -117,6 +117,34 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
 
     rmSync(root, { recursive: true, force: true });
   });
+
+  it("never copies node_modules over the install (loaded native modules stay put)", async () => {
+    // Reproduces the EBUSY: a tarball that still carries node_modules (the
+    // stuck-junction case) must not overwrite the install's deps — those
+    // include native .node modules the running process holds loaded, which
+    // Windows refuses to replace in place.
+    const root = mkdtempSync(join(tmpdir(), "lax-ota-nm-"));
+    const installDir = join(root, "install");
+    const pkgDir = join(root, "pkg");
+    mkdirSync(join(installDir, "node_modules", "dep"), { recursive: true });
+    mkdirSync(join(pkgDir, "node_modules", "dep"), { recursive: true });
+    mkdirSync(join(pkgDir, "src"), { recursive: true });
+
+    writeFileSync(join(installDir, "node_modules", "dep", "native.node"), "INSTALLED");
+    writeFileSync(join(pkgDir, "node_modules", "dep", "native.node"), "FROM-TARBALL");
+    writeFileSync(join(pkgDir, "src", "app.ts"), "NEW");
+    const tarPath = join(root, "rel.tar.gz");
+    execFileSync("tar", ["czf", tarPath, "-C", root, "pkg"]);
+
+    const m = new OTAManager("o", "r", join(root, "lax"));
+    await m.applyUpdate(tarPath, installDir, "v0", "deadbeefcafebabe0000000000000000feedface");
+
+    // Source applied; node_modules left exactly as installed (not overwritten).
+    expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("NEW");
+    expect(readFileSync(join(installDir, "node_modules", "dep", "native.node"), "utf-8")).toBe("INSTALLED");
+
+    rmSync(root, { recursive: true, force: true });
+  });
 });
 
 describe("OTAManager — rolling-channel integrity gate (R4-06)", () => {

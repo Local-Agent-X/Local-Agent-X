@@ -339,6 +339,15 @@ export class OTAManager {
     await mkdir(dest, { recursive: true });
     const entries = await readdir(src, { withFileTypes: true });
     for (const entry of entries) {
+      // node_modules is never copied over the install — deps are managed by a
+      // junction (deps unchanged) or a post-copy `npm ci` (deps changed), per
+      // validateExtractedUpdate. Walking it here both duplicates the tree and,
+      // worse, overwrites native .node modules the running process holds loaded
+      // → EBUSY on Windows. Junctions/symlinks are skipped for the same reason:
+      // a walked junction reaches the live install's real node_modules. The
+      // extract's node_modules is normally removed pre-copy, but survives when
+      // junction cleanup is stuck — this enforces the invariant regardless.
+      if (entry.name === "node_modules" || entry.isSymbolicLink()) continue;
       const srcPath = join(src, entry.name);
       const destPath = join(dest, entry.name);
       if (entry.isDirectory()) {
@@ -359,6 +368,9 @@ export class OTAManager {
     const walk = async (rel: string): Promise<void> => {
       const entries = await readdir(join(extractDir, rel), { withFileTypes: true });
       for (const entry of entries) {
+        // Mirror copyDirectory: node_modules / symlinks are never part of the
+        // overwrite set, so there's nothing to back up for them.
+        if (entry.name === "node_modules" || entry.isSymbolicLink()) continue;
         const childRel = rel ? join(rel, entry.name) : entry.name;
         if (entry.isDirectory()) { await walk(childRel); continue; }
         const installFile = join(installDir, childRel);

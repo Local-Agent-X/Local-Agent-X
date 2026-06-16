@@ -239,8 +239,21 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
     );
     if (depsChanged) {
       // The gated tree validated against fresh deps; sync the live install's
-      // node_modules to the new lockfile it just received.
-      execSync("npm ci", { cwd: installDir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+      // node_modules to the new lockfile it just received. This can hit EBUSY
+      // when an update bumps a NATIVE module (e.g. @napi-rs/canvas's
+      // skia.node): the running process holds it loaded and Windows refuses to
+      // replace a loaded module in place. That's not a failure — the copy
+      // already updated package-lock.json, and the next launch's pre-server
+      // reconcile (desktop/src/reconcile.ts) reinstalls deps BEFORE the server
+      // child loads any native module, where the swap is safe. Defer to it on a
+      // file lock; rethrow any other npm error (a real dependency problem).
+      try {
+        execSync("npm ci", { cwd: installDir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+      } catch (e) {
+        const msg = (e as Error).message || "";
+        if (!/EBUSY|EPERM|EACCES|resource busy or locked/i.test(msg)) throw e;
+        logger.warn(`[update] in-process npm ci hit a file lock; deferring deps to next-launch reconcile: ${msg.split("\n")[0]}`);
+      }
     }
     await ota.writeInstalledCommit(commit);
     logger.info(`[update] rolling applied ${installed.slice(0, 7) || "(fresh)"} → ${commit.slice(0, 7)}`);

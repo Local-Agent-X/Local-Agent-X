@@ -18,13 +18,25 @@ if (-not $nodeOk) {
   Write-Host "[install] Installing Node 24 (LTS)…"
   if (Has winget) {
     winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements -h
+    $env:PATH = "$env:ProgramFiles\nodejs;$env:PATH"
   } else {
-    $msi = "$env:TEMP\node-installer.msi"
-    Invoke-WebRequest -Uri "https://nodejs.org/dist/v24.16.0/node-v24.16.0-x64.msi" -OutFile $msi -UseBasicParsing
-    Start-Process msiexec -ArgumentList "/i `"$msi`" /qn" -Wait
-    Remove-Item $msi -ErrorAction SilentlyContinue
+    # No winget: unpack the portable Node zip to a per-user dir. No admin and
+    # no msiexec — the MSI path needed elevation this script doesn't request.
+    $ver = "24.16.0"
+    $zip = "$env:TEMP\node-v$ver-win-x64.zip"
+    $root = "$env:LOCALAPPDATA\LocalAgentX"
+    $nodeDir = "$root\node-v$ver-win-x64"
+    Invoke-WebRequest -Uri "https://nodejs.org/dist/v$ver/node-v$ver-win-x64.zip" -OutFile $zip -UseBasicParsing
+    if (Test-Path $nodeDir) { Remove-Item $nodeDir -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    Expand-Archive -Path $zip -DestinationPath $root -Force
+    Remove-Item $zip -ErrorAction SilentlyContinue
+    $env:PATH = "$nodeDir;$env:PATH"
+    $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($userPath -notlike "*$nodeDir*") {
+      [Environment]::SetEnvironmentVariable("PATH", "$userPath;$nodeDir", "User")
+    }
   }
-  $env:PATH = "$env:ProgramFiles\nodejs;$env:PATH"
 }
 
 & node scripts/install-common.mjs @args

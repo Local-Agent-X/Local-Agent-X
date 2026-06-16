@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
@@ -26,9 +27,9 @@ public class NodeBootstrap
     // existing users the next time they run an installer.
     private const int NODE_MAJOR_MIN = 22;
 
-    // Direct-MSI fallback version when winget can't deliver Node. Keep in sync
-    // with the pinned URL in install.ps1.
-    private const string NODE_MSI_VERSION = "24.16.0";
+    // Portable-zip fallback version when winget can't deliver Node. Keep in
+    // sync with the pinned URL in install.ps1.
+    private const string NODE_FALLBACK_VERSION = "24.16.0";
 
     public bool NodeAvailable()
     {
@@ -80,9 +81,8 @@ public class NodeBootstrap
             SpliceNodeDir();
             if (NodeAvailable()) return true;
 
-            OnStatus?.Invoke("winget didn't deliver Node — downloading the official installer…");
-            InstallNodeFromMsi();
-            SpliceNodeDir();
+            OnStatus?.Invoke("winget didn't deliver Node — downloading the portable runtime…");
+            InstallNodeFromZip();
             return NodeAvailable();
         }
         if (OperatingSystem.IsMacOS())
@@ -116,42 +116,66 @@ public class NodeBootstrap
         return RunStreaming("sudo", new[] { "apt-get", "install", "-y", "nodejs" });
     }
 
-    // winget/MSI both install to Program Files\nodejs; splice it into this
-    // process's PATH so the upcoming `node -v` verify and the install-common.mjs
-    // spawn can find it without a relaunch.
+    // winget installs to Program Files\nodejs; splice it into this process's
+    // PATH so the upcoming `node -v` verify and the install-common.mjs spawn
+    // can find it without a relaunch. (The zip fallback splices its own dir.)
     static void SpliceNodeDir()
     {
         SplicePath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs"));
     }
 
     // Fallback when winget can't deliver Node: download the official Windows
-    // MSI and install it silently (msiexec /qn). Best-effort — the caller
-    // verifies success via NodeAvailable() afterward, so msiexec's exit code
-    // (0 success, 3010 success-needs-reboot, etc.) doesn't need interpreting.
-    bool InstallNodeFromMsi()
+    // ZIP (not the MSI) and unpack it to a per-user dir. No admin and no winget
+    // required — the old MSI path ran `msiexec /qn` to install machine-wide
+    // under Program Files, which needs elevation the installer doesn't request,
+    // so it failed silently on machines without App Installer. The caller
+    // verifies success via NodeAvailable() afterward.
+    bool InstallNodeFromZip()
     {
-        var msi = Path.Combine(Path.GetTempPath(), $"node-v{NODE_MSI_VERSION}-x64.msi");
+        var zip = Path.Combine(Path.GetTempPath(), $"node-v{NODE_FALLBACK_VERSION}-win-x64.zip");
+        var installRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalAgentX");
+        var nodeDir = Path.Combine(installRoot, $"node-v{NODE_FALLBACK_VERSION}-win-x64");
         try
         {
-            var url = $"https://nodejs.org/dist/v{NODE_MSI_VERSION}/node-v{NODE_MSI_VERSION}-x64.msi";
+            var url = $"https://nodejs.org/dist/v{NODE_FALLBACK_VERSION}/node-v{NODE_FALLBACK_VERSION}-win-x64.zip";
             OnLogLine?.Invoke($"Downloading {url}");
             using (var http = new HttpClient())
             {
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("LocalAgentXInstaller/1.0");
-                File.WriteAllBytes(msi, http.GetByteArrayAsync(url).GetAwaiter().GetResult());
+                File.WriteAllBytes(zip, http.GetByteArrayAsync(url).GetAwaiter().GetResult());
             }
-            OnStatus?.Invoke("Running the Node.js installer…");
-            return RunStreaming("msiexec", new[] { "/i", msi, "/qn", "/norestart" });
+            OnStatus?.Invoke("Unpacking the Node.js runtime…");
+            Directory.CreateDirectory(installRoot);
+            if (Directory.Exists(nodeDir)) Directory.Delete(nodeDir, true);
+            ZipFile.ExtractToDirectory(zip, installRoot);
+            // Portable runtime: make it findable now (this process) and at
+            // runtime/reboot (persisted to the user PATH — no admin needed).
+            SplicePath(nodeDir);
+            PersistUserPath(nodeDir);
+            return true;
         }
         catch (Exception ex)
         {
-            OnLogLine?.Invoke($"[error] Node MSI fallback failed: {ex.Message}");
+            OnLogLine?.Invoke($"[error] Node portable runtime fallback failed: {ex.Message}");
             return false;
         }
         finally
         {
-            try { File.Delete(msi); } catch { }
+            try { File.Delete(zip); } catch { }
         }
+    }
+
+    // Persist a dir to the USER PATH (HKCU) so node survives a reboot and stays
+    // visible to the desktop app. Avoids setx (it truncates PATH at 1024 chars)
+    // and needs no elevation. Windows-only — the User target is only reached
+    // from inside the IsWindows() branch above.
+    static void PersistUserPath(string dir)
+    {
+        var userPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) ?? "";
+        if (userPath.Split(';').Contains(dir, StringComparer.OrdinalIgnoreCase)) return;
+        var updated = userPath.Length == 0 ? dir : $"{userPath};{dir}";
+        Environment.SetEnvironmentVariable("PATH", updated, EnvironmentVariableTarget.User);
     }
 
     // Prepend a dir to this process's PATH if it exists and isn't already

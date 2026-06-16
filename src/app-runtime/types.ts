@@ -78,6 +78,9 @@ export interface AppDefinition {
   id: string;
   name: string;
   description: string;
+  /** Optional emoji/glyph used as the app's launcher icon (mobile home grid).
+   *  When unset, /api/apps derives one from the sidebar pin, else a default. */
+  icon?: string;
   components: ComponentDefinition[];
   dataBindings: DataBinding[];
   actions: ActionDefinition[];

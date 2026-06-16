@@ -5,6 +5,10 @@ import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
 import { confineToDir } from "../security/file-access.js";
 import { renderApp } from "../app-renderer/index.js";
 import type { AppDefinition } from "../app-runtime/index.js";
+import { loadSettings } from "../settings.js";
+
+/** Default launcher glyph for an app with no explicit icon and no sidebar pin. */
+const DEFAULT_APP_ICON = "📦";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.apps");
@@ -16,8 +20,19 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
 
   if (method === "GET" && appPath === "/api/apps") {
     const port = ctx.config.port || 7007;
+    // Launcher icon source: a user/agent pins apps to the sidebar with an
+    // emoji; reuse that as the app's real icon (matched by slug in the pin
+    // url, else by display name). Explicit AppDefinition.icon wins; default
+    // last so every app always carries some glyph for the mobile home grid.
+    const pins = (loadSettings().sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
+    const iconFor = (id: string, name: string): string => {
+      const bySlug = pins.find(p => new RegExp(`/apps/${id}(?:[/?#]|$)`).test(p.url || ""));
+      const byName = pins.find(p => p.name.toLowerCase() === name.toLowerCase());
+      return ((bySlug?.icon || byName?.icon || "").trim()) || DEFAULT_APP_ICON;
+    };
     const registered = appReg.list().map((d: AppDefinition) => ({
       id: d.id, name: d.name, description: d.description,
+      icon: (d.icon || "").trim() || iconFor(d.id, d.name),
       components: d.components.length, layout: d.layout.type,
       url: `http://127.0.0.1:${port}/apps/${d.id}`,
       updatedAt: d.updatedAt, status: d.status, version: d.version,
@@ -33,8 +48,10 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
           const indexPath = join(wsAppsDir, d.name, "index.html");
           if (!existsSync(indexPath)) continue;
           const st = statSync(indexPath);
+          const wsName = d.name.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
           registered.push({
-            id: d.name, name: d.name.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+            id: d.name, name: wsName,
+            icon: iconFor(d.name, wsName),
             description: "HTML app", components: 1, layout: "custom",
             url: `http://127.0.0.1:${port}/apps/${d.name}/index.html`,
             updatedAt: st.mtimeMs, status: "active", version: 1, visibility: "team",

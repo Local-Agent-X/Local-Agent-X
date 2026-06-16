@@ -82,6 +82,13 @@ public class SourceDownloader
             Directory.CreateDirectory(Path.GetDirectoryName(installDir)!);
             Directory.Move(rootDirs[0], installDir);
 
+            // Drop the bundled Electron runtime (embedded in this installer) into
+            // the install tree so install-common.mjs extracts it offline instead
+            // of downloading the ~190 MB binary — the #1 install failure (region/
+            // proxy CDN block, AV quarantine). No-op on a dev build with nothing
+            // embedded: the install script then falls back to the network fetch.
+            StageBundledElectron(installDir);
+
             return installDir;
         }
         finally
@@ -185,6 +192,30 @@ public class SourceDownloader
             downloaded += read;
             OnProgress?.Invoke(downloaded, total);
         }
+    }
+
+    // Write the Electron runtime archive embedded in this installer to
+    // <installDir>/vendor/electron/. install-common.mjs (findBundledElectronZip)
+    // looks there first and extracts it without touching the network. The
+    // resource is the bare zip filename (LogicalName in Installer.csproj), so
+    // the output keeps the canonical electron-v<ver>-<plat>-<arch>.zip name the
+    // install script matches on.
+    private void StageBundledElectron(string installDir)
+    {
+        var asm = Assembly.GetExecutingAssembly();
+        var resName = asm.GetManifestResourceNames()
+            .FirstOrDefault(n => n.StartsWith("electron-v", StringComparison.Ordinal)
+                              && n.EndsWith(".zip", StringComparison.Ordinal));
+        if (resName is null) return; // nothing bundled (dev build) — fall back to the CDN fetch.
+
+        using var rs = asm.GetManifestResourceStream(resName);
+        if (rs is null) return;
+
+        var vendorDir = Path.Combine(installDir, "vendor", "electron");
+        Directory.CreateDirectory(vendorDir);
+        OnStatus?.Invoke("Staging bundled Electron runtime…");
+        using var fs = File.Create(Path.Combine(vendorDir, resName));
+        rs.CopyTo(fs);
     }
 
     private async Task ExtractTarGzAsync(string tgzPath, string destDir, CancellationToken ct)

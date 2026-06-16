@@ -54,6 +54,19 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Stage bundled Electron runtime
+        # Download the pinned Electron archive into installer/electron-bundle/ so
+        # the publish below embeds it (Installer.csproj). The installed app then
+        # extracts it offline instead of downloading the ~190 MB runtime — the #1
+        # install failure. Verified against the release SHASUMS256 by the script.
+        shell: pwsh
+        run: node scripts/fetch-electron-bundle.mjs --platform win32 --arch x64
+
       - name: Publish single-file self-contained .exe
         # -p:InstallerSourceTag pins the source version this installer
         # downloads at runtime. github.ref_name is the tag for tag-triggered
@@ -146,6 +159,16 @@ jobs:
             $(security list-keychains -d user | tr -d '"')
           rm -f "$CERT_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Stage bundled Electron runtime
+        # Embed the pinned Electron archive so the installed app extracts it
+        # offline instead of downloading. macOS runners are arm64.
+        run: node scripts/fetch-electron-bundle.mjs --platform darwin --arch arm64
 
       - name: Build + sign .app bundle
         env:

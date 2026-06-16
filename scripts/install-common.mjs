@@ -20,7 +20,7 @@
 // Prose mode behavior is unchanged when --ipc is absent.
 
 import { spawnSync, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
@@ -313,6 +313,107 @@ function runStreaming(cmd, args, opts = {}) {
 }
 function has(cmd) {
   return spawnSync(cmd, ["--version"], { stdio: "ignore", shell: true }).status === 0;
+}
+
+// ── Electron runtime staging ──────────────────────────────────────────────
+// The Electron runtime (~190 MB) is downloaded by electron's npm postinstall,
+// NOT shipped in the tarball. That CDN fetch — blocked by corp proxies, region
+// CDN blocks, or AV quarantine — was the single biggest install failure. We
+// bundle the runtime archive WITH the installer and extract it here (offline);
+// the network fetch survives only as a fallback for un-bundled dev installs.
+
+// Electron's launcher binary path relative to node_modules/electron/dist/.
+function electronBinRelPath() {
+  if (process.platform === "win32") return "electron.exe";
+  if (process.platform === "darwin") return join("Electron.app", "Contents", "MacOS", "Electron");
+  return "electron";
+}
+
+// Locate the bundled Electron archive the installer shipped. Looks at
+// LAX_ELECTRON_BUNDLE_DIR (set by the installer) then <repoRoot>/vendor/electron.
+// Matches the exact version first; accepts a same-platform/arch archive whose
+// version drifted (a desktop/package.json patch bump) rather than silently
+// falling through to a network download.
+function findBundledElectronZip(repoRoot, version) {
+  const suffix = `-${process.platform}-${process.arch}.zip`;
+  const dirs = [process.env.LAX_ELECTRON_BUNDLE_DIR, join(repoRoot, "vendor", "electron")].filter(Boolean);
+  for (const d of dirs) {
+    if (!existsSync(d)) continue;
+    const exact = join(d, `electron-v${version}${suffix}`);
+    if (version && existsSync(exact)) return exact;
+    try {
+      const alt = readdirSync(d).find(f => f.startsWith("electron-v") && f.endsWith(suffix));
+      if (alt) {
+        if (version) warn(`Bundled Electron is ${alt}, expected v${version} — using the bundled archive.`);
+        return join(d, alt);
+      }
+    } catch { /* unreadable dir — skip */ }
+  }
+  return null;
+}
+
+// Extract a zip into destDir cross-platform without adding a dependency.
+function extractZipTo(zipPath, destDir) {
+  mkdirSync(destDir, { recursive: true });
+  if (process.platform === "win32") {
+    const q = (s) => s.replace(/'/g, "''");
+    return spawnSync("powershell", [
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+      `Expand-Archive -Force -LiteralPath '${q(zipPath)}' -DestinationPath '${q(destDir)}'`,
+    ], { stdio: "inherit" });
+  }
+  if (process.platform === "darwin") {
+    // ditto preserves the .app bundle's symlinks + exec bits; plain unzip mangles them.
+    return spawnSync("ditto", ["-x", "-k", zipPath, destDir], { stdio: "inherit" });
+  }
+  return spawnSync("unzip", ["-o", "-q", zipPath, "-d", destDir], { stdio: "inherit" });
+}
+
+async function ensureElectronRuntime(repoRoot) {
+  const electronPkg = join(repoRoot, "desktop", "node_modules", "electron");
+  const distDir = join(electronPkg, "dist");
+  const binRel = electronBinRelPath();
+  const binPath = join(distDir, binRel);
+  if (existsSync(binPath)) { ok("Electron runtime present"); return; }
+
+  // Resolve the version npm just installed so the bundle name matches.
+  let version = "";
+  try { version = JSON.parse(readFileSync(join(electronPkg, "package.json"), "utf-8")).version || ""; } catch { /* fall through */ }
+
+  const bundleZip = findBundledElectronZip(repoRoot, version);
+  if (bundleZip) {
+    log(`Staging bundled Electron runtime (${bundleZip})…`);
+    const ex = extractZipTo(bundleZip, distDir);
+    if (ex.status === 0 && existsSync(binPath)) {
+      // electron's JS shim resolves the binary via path.txt (relative to the
+      // package root); write it so require("electron") works even though the
+      // launcher shortcut points straight at the binary.
+      try { writeFileSync(join(electronPkg, "path.txt"), `dist/${binRel.split("\\").join("/")}`); } catch { /* non-fatal */ }
+      if (process.platform !== "win32") { try { chmodSync(binPath, 0o755); } catch { /* best effort */ } }
+      ok("Electron runtime staged from bundle (no download)");
+      return;
+    }
+    warn("Bundled Electron archive failed to extract — falling back to network fetch.");
+  } else {
+    warn("No bundled Electron runtime found — falling back to network fetch (needs internet/CDN access).");
+  }
+
+  // Network fallback: GitHub releases, then the npmmirror CDN for region/proxy
+  // blocks. Logged, never silent; hard-fails below if both are unreachable.
+  const fetchElectron = (mirror, label) => {
+    log(`Fetching Electron runtime${label}…`);
+    const env = mirror ? { ...process.env, ELECTRON_MIRROR: mirror } : process.env;
+    return runStreaming("node", [join("node_modules", "electron", "install.js")], { cwd: "desktop", env });
+  };
+  let got = await fetchElectron(null, " (GitHub)");
+  if (got.status !== 0 || !existsSync(binPath)) {
+    warn("Default Electron download failed — retrying via the npmmirror CDN…");
+    got = await fetchElectron("https://npmmirror.com/mirrors/electron/", " (npmmirror)");
+  }
+  if (got.status !== 0 || !existsSync(binPath)) {
+    fail("Electron runtime is missing and could not be staged from the bundle or downloaded from GitHub/npmmirror. Re-run the installer (it ships the runtime), or allowlist the install folder if antivirus is quarantining electron.exe.");
+  }
+  ok("Electron runtime fetched");
 }
 
 // winget ships as the "App Installer" package and is ABSENT on fresh Windows
@@ -900,56 +1001,34 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   // completed and created shortcuts, but double-clicking either shortcut
   // exited in milliseconds because dist/main.js + electron.cmd didn't exist.
   log("Building Electron desktop bundle…");
+  // Skip Electron's postinstall CDN download (ELECTRON_SKIP_BINARY_DOWNLOAD):
+  // that ~190 MB fetch behind a corp proxy / region-blocked CDN / antivirus was
+  // the #1 install failure. We stage the runtime from the bundled archive that
+  // ships with the installer instead (see ensureElectronRuntime below), so npm
+  // only needs to install the JS shim here — no network for the binary.
+  const desktopEnv = { ...process.env, ELECTRON_SKIP_BINARY_DOWNLOAD: "1" };
   let dr = await runStreaming(
     "npm",
     ["ci", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`],
-    { cwd: "desktop" },
+    { cwd: "desktop", env: desktopEnv },
   );
   if (dr.status !== 0) {
     warn("desktop npm ci failed (lockfile drift?) — falling back to npm install.");
-    dr = await runStreaming("npm", ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`], { cwd: "desktop" });
+    dr = await runStreaming("npm", ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`], { cwd: "desktop", env: desktopEnv });
     if (dr.status !== 0) fail("desktop npm install failed.");
   }
   dr = await runStreaming("npm", ["run", "build"], { cwd: "desktop" });
   if (dr.status !== 0) fail("desktop tsc build failed.");
   ok("Desktop bundle built");
 
-  // Electron ships its actual runtime (~100 MB electron.exe) via a postinstall
-  // download, NOT inside the npm tarball. On a flaky connection, behind a
-  // corporate proxy, or with antivirus intercepting the fetch, `npm ci` can
-  // exit 0 while that download silently fails — leaving node_modules/electron
-  // with no dist/electron.exe. The shortcut then points at a file that doesn't
-  // exist and double-clicking it (or the installer's Launch button) dies in
-  // milliseconds: the exact "Launch does nothing / no icon" symptom. Verify the
-  // binary landed; if not, re-run Electron's own install script to fetch it,
-  // then hard-fail if it still isn't there rather than reporting success over
-  // an unlaunchable install. (Live failure 2026-06-13.)
-  const electronBin = join("desktop", "node_modules", "electron", "dist", "electron.exe");
-  if (!existsSync(electronBin)) {
-    const fetchElectron = (mirror, label) => {
-      log(`Fetching Electron runtime${label}…`);
-      const env = mirror ? { ...process.env, ELECTRON_MIRROR: mirror } : process.env;
-      return runStreaming("node", [join("node_modules", "electron", "install.js")], { cwd: "desktop", env });
-    };
-    warn("Electron runtime missing after npm install — its ~100 MB binary download was blocked or interrupted.");
-    // Attempt 1: retry the default source (GitHub releases). Catches a flaky
-    // connection / transient 5xx that the npm postinstall hit once.
-    let got = await fetchElectron(null, " (GitHub)");
-    // Attempt 2: if GitHub's release CDN is region/ISP/proxy-blocked rather than
-    // flaky, pull the IDENTICAL binary from the npmmirror CDN — a different host
-    // reachable where GitHub isn't. Logged, never silent: the install log shows
-    // the runtime came from the mirror, and we still hard-fail below if both
-    // sources are unreachable. (Validated against a real blocked machine
-    // 2026-06-13: GitHub failed, npmmirror succeeded.)
-    if (got.status !== 0 || !existsSync(electronBin)) {
-      warn("Default Electron download failed — retrying via the npmmirror CDN…");
-      got = await fetchElectron("https://npmmirror.com/mirrors/electron/", " (npmmirror)");
-    }
-    if (got.status !== 0 || !existsSync(electronBin)) {
-      fail("Electron runtime failed to download from both GitHub and the npmmirror CDN. An antivirus or firewall is most likely quarantining the ~100 MB electron.exe — allowlist the install folder (or pause real-time protection) and re-run the installer.");
-    }
-    ok("Electron runtime fetched");
-  }
+  // Stage Electron's actual runtime (~190 MB), which ships OUTSIDE the npm
+  // tarball. Bundle-first: extract the archive the installer carried (zero
+  // network — immune to the proxy/CDN/AV download failures that were the #1
+  // install blocker), and fall back to the CDN fetch only when no bundle is
+  // present (e.g. a developer `git clone` + manual install). The launcher
+  // shortcut points straight at this binary, so a missing/failed runtime is a
+  // hard fail rather than a success over an unlaunchable install.
+  await ensureElectronRuntime(process.cwd());
 
   // Create Desktop + Start Menu shortcuts that launch electron.exe DIRECTLY,
   // not via desktop-launch.bat. The .bat works but Windows always spawns a

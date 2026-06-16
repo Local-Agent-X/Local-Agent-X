@@ -48,6 +48,22 @@
     <AvaloniaResource Include="Assets/**" />
   </ItemGroup>
 
+  <!-- Electron runtime bundled with the installer. CI drops the platform's
+       official electron-v<ver>-<plat>-<arch>.zip into installer/electron-bundle/
+       before `dotnet publish` (scripts/fetch-electron-bundle.mjs); it's embedded
+       here and written to <installDir>/vendor/electron/ at install time
+       (SourceDownloader.StageBundledElectron), where install-common.mjs extracts
+       it offline instead of downloading the ~190 MB runtime — the #1 install
+       failure (CDN/proxy block, AV quarantine). The glob matches nothing on a
+       local dev build, so the installer just falls back to the network fetch.
+       LogicalName keeps the manifest name = the bare filename so the runtime
+       extractor can name the output deterministically. -->
+  <ItemGroup>
+    <EmbeddedResource Include="electron-bundle/*.zip">
+      <LogicalName>%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.2.0" />
     <PackageReference Include="Avalonia.Desktop" Version="11.2.0" />

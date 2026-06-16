@@ -19,10 +19,12 @@
 
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { IncomingMessage, Server } from "node:http";
-import { timingSafeEqual } from "node:crypto";
 
 import { createLogger } from "../logger.js";
 import { isLoopbackOrigin } from "../server-utils.js";
+import { authorizeUpgrade, trackDeviceSocket, WS_UNAUTHORIZED } from "../bridge/upgrade-auth.js";
+import { isBridgeEnabled } from "../bridge/config.js";
+import { isTailnetOrigin } from "../bridge/tailnet.js";
 const logger = createLogger("voice.audio-ws");
 
 export interface VoiceSession {
@@ -84,7 +86,6 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
   // manual upgrade routing by path. maxPayload caps a single frame at the
   // configured upload limit (ws defaults to an unbounded-feeling 100 MiB).
   const wss = new WebSocketServer({ noServer: true, maxPayload: maxPayloadBytes });
-  const authBuf = Buffer.from(authToken);
 
   server.on("upgrade", (req, socket, head) => {
     try {
@@ -92,8 +93,10 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
       if (u.pathname !== "/ws/voice") return; // not our path — leave socket alone
       // Reject cross-origin WS handshakes (cross-site WebSocket hijacking) —
       // browsers always send Origin; a non-loopback Origin is a cross-site page.
+      // The paired mobile app sends no Origin and faces the token gate below;
+      // tailnet-host Origins are admitted only when the bridge is enabled.
       const origin = req.headers.origin;
-      if (origin && !isLoopbackOrigin(origin)) { try { socket.destroy(); } catch {} return; }
+      if (origin && !isLoopbackOrigin(origin) && !(isBridgeEnabled() && isTailnetOrigin(origin))) { try { socket.destroy(); } catch {} return; }
       const hasToken = u.searchParams.get("token") ? "yes" : "no";
       logger.info(`[voice-ws] upgrade hit: url=${req.url} hasToken=${hasToken}`);
       wss.handleUpgrade(req, socket as import("node:net").Socket, head, (ws) => {
@@ -115,14 +118,18 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
       const idx = parts.indexOf("lax-auth");
       if (idx >= 0 && parts[idx + 1]) token = parts[idx + 1];
     }
-    const tokenBuf = Buffer.from(token);
-    if (tokenBuf.length !== authBuf.length || !timingSafeEqual(tokenBuf, authBuf)) {
+    // Shared upgrade gate: operator token (loopback, unchanged) OR a valid
+    // per-device bridge token when the bridge is enabled. Clean code + reason,
+    // never a silent hang (constitution §7).
+    const auth = authorizeUpgrade(token, authToken);
+    if (!auth.ok) {
       const remote = req.socket.remoteAddress || "unknown";
-      logger.warn(`[voice-ws] auth rejected from ${remote} — tokenLen=${tokenBuf.length} expected=${authBuf.length} match=${tokenBuf.length === authBuf.length ? "false" : "length-mismatch"}`);
-      ws.close(4001, "Unauthorized");
+      logger.warn(`[voice-ws] auth rejected from ${remote} — ${auth.reason}`);
+      ws.close(WS_UNAUTHORIZED, auth.reason || "Unauthorized");
       return;
     }
-    logger.info(`[voice-ws] connection accepted from ${req.socket.remoteAddress}`);
+    if (auth.principal === "device" && auth.deviceId) trackDeviceSocket(auth.deviceId, ws);
+    logger.info(`[voice-ws] connection accepted from ${req.socket.remoteAddress} (${auth.principal})`);
 
     let sessionId = "";
     let session: VoiceSession | null = null;

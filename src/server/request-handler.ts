@@ -3,6 +3,7 @@ import { join, resolve, relative } from "node:path";
 import { timingSafeEqual, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
+import { authorizeDeviceHttp } from "../bridge/upgrade-auth.js";
 import { confineToDir } from "../security/file-access.js";
 import { getPageBundle } from "./static-bundle.js";
 import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes } from "../routes/index.js";
@@ -83,7 +84,10 @@ export function createRequestHandler(deps: {
     // UI always holds the token (apiFetch attaches it), so they need no
     // exemption. Browser OAuth *redirects* land on dedicated callback servers
     // (ports 1455 / 56121), not these /api routes, so gating them is safe.
-    const authExempt = new Set(["/api/auth/status", "/api/auth/anthropic/status", "/api/auth/xai/status", "/api/health"]);
+    // /api/bridge/pair/claim is reachable by an UNPAIRED device: the pairing
+    // secret in the body IS the one-shot credential, so it can't require a
+    // token the phone doesn't have yet. The route validates the secret itself.
+    const authExempt = new Set(["/api/auth/status", "/api/auth/anthropic/status", "/api/auth/xai/status", "/api/health", "/api/bridge/pair/claim"]);
     const authExemptPrefixes = ["/api/health/"];
     if (url.pathname.startsWith("/api/") && !authExempt.has(url.pathname) && !authExemptPrefixes.some(p => url.pathname.startsWith(p))) {
       const clientIp = req.socket.remoteAddress || "unknown";
@@ -92,10 +96,21 @@ export function createRequestHandler(deps: {
       if (lockout && lockout.lockedUntil > Date.now()) { res.writeHead(429, { ...corsHeaders(req), "Retry-After": String(Math.ceil((lockout.lockedUntil - Date.now()) / 1000)) }); res.end(JSON.stringify({ error: "Too many failed attempts." })); return; }
       if (!token) { json(401, { error: "Unauthorized" }); return; }
       const authResult = rbac.authenticate(token);
-      if (!authResult.valid || !authResult.entry) { recordAuthFailure(clientIp); json(401, { error: "Unauthorized" }); return; }
-      getAuthFloodGuard().delete(clientIp); requestRole = authResult.entry.role;
-      const ep = rbac.checkEndpoint(requestRole, method, url.pathname);
-      if (!ep.allowed) { json(403, { error: ep.reason }); return; }
+      if (!authResult.valid || !authResult.entry) {
+        // Bridge fallback: a paired device token grants the narrow device HTTP
+        // surface (/api/apps, /apps/*) only. No-op when the bridge is off (no
+        // device tokens exist) — loopback behavior is unchanged.
+        if (authorizeDeviceHttp(token, url.pathname)) {
+          getAuthFloodGuard().delete(clientIp);
+          requestRole = "user";
+        } else {
+          recordAuthFailure(clientIp); json(401, { error: "Unauthorized" }); return;
+        }
+      } else {
+        getAuthFloodGuard().delete(clientIp); requestRole = authResult.entry.role;
+        const ep = rbac.checkEndpoint(requestRole, method, url.pathname);
+        if (!ep.allowed) { json(403, { error: ep.reason }); return; }
+      }
     }
     const ctx: ServerContext = {
       config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations,

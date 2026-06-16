@@ -56,20 +56,21 @@ demand via tool search and aren't all listed here.)
 - `view_image` — Look at an image you share. _e.g._ "what's in this screenshot?"
 - `send_video` — Send/attach a video.
 - `screen_capture` — Capture the screen. _e.g._ "take a screenshot of my screen"
+- `telegram_send`
+- `whatsapp_send`
+- `restart`
+- `check_for_updates`
+- `apply_update`
 
 ### Memory
 
 - `memory_search` — Search long-term memory. _e.g._ "what do you know about my projects?"
+- `search_past_sessions`
+- `read_my_logs`
 - `memory_save` — Save a fact to memory. _e.g._ "remember that I prefer tabs over spaces"
 - `memory_recall` — Recall stored facts.
 - `memory_get` — Fetch a specific memory entry.
 - `memory_forget` — Mark a fact as no longer true. _e.g._ "forget that I use Coinbase"
-- `memory_reflect` — Refresh entity summaries + opinion confidence. _e.g._ "update what you know about me"
-- `memory_update_profile` — Update your user profile (name, role, preferences).
-- `memory_stats` — Show memory statistics.
-- `memory_consolidate` — Extract durable facts from recent chunks. _e.g._ "consolidate recent conversations"
-- `memory_dream` — Tidy stored facts + launch the deep agentic reflection over recent transcripts. _e.g._ "dream now"
-- `memory_ingest` — Ingest external text/history into memory.
 
 ### Operations
 
@@ -84,12 +85,6 @@ demand via tool search and aren't all listed here.)
 - `op_status` — Check running background workers. _e.g._ "what are my background tasks doing?"
 - `op_kill` — Stop a running worker. _e.g._ "cancel that background task"
 - `op_redirect` — Redirect a running worker with new instructions.
-
-### Autopilot
-
-- `autopilot_start` — Start autonomous multi-step execution. _e.g._ "turn on autopilot"
-- `autopilot_stop` — Stop autopilot.
-- `autopilot_status` — Check autopilot status.
 
 ### Self-edit
 
@@ -106,28 +101,11 @@ demand via tool search and aren't all listed here.)
 
 ### Protocols
 
-- `protocol_list` — List saved protocols (reusable workflows). _e.g._ "what protocols do you have?"
-- `protocol_get` — Read a protocol.
-- `protocol_search` — Search protocols.
-- `protocol_create` — Save a reusable workflow. _e.g._ "save this as a protocol"
-- `protocol_edit` — Edit a protocol.
-- `protocol_delete`
-- `protocol_unarchive`
-- `protocol_pin`
-- `protocol_list_archived`
-- `protocol_stats`
-- `protocol_prune`
-- `protocol_archive_bulk`
-- `protocol_curate`
-- `protocol_curator_status`
+- `protocol`
 
-### Mission scheduling
+### MCP administration
 
-- `mission_schedule_create` — Schedule a recurring mission. _e.g._ "every morning at 8, summarize my unread email"
-- `mission_schedule_list` — List scheduled missions.
-- `mission_schedule_update`
-- `mission_schedule_delete`
-- `mission_schedule_toggle` — Enable/disable a scheduled mission.
+- `mcp_add_server`
 
 ### Agents
 
@@ -150,11 +128,9 @@ demand via tool search and aren't all listed here.)
 
 - `browser` — Drive a real browser. _e.g._ "open google.com and search for X"
 
-### Apps
+### Apps. app_create/app_list are deferred
 
 - `build_app` — Build a working app from a description. _e.g._ "build me a todo app"
-- `app_create` — Create a new app scaffold.
-- `app_list` — List your apps.
 
 ### Sidebar
 
@@ -176,12 +152,10 @@ demand via tool search and aren't all listed here.)
 - `request_secrets` — Request multiple secrets.
 - `list_secrets` — List stored secret names (never values).
 
-### Document creation
+### Office documents
 
-- `document_create` — Create a document. _e.g._ "write me a one-pager on X"
-- `document_edit` — Edit a document.
-- `presentation_edit`
-- `document_read` — Read a document.
+- `document`
+- `presentation`
 
 ---
-_98 capabilities · 77 with a description · 21 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_75 capabilities · 55 with a description · 20 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._

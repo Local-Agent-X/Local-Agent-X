@@ -138,7 +138,7 @@ export class ScreenSession {
 
   private async startCaptureAndOffer(rtcId: string, monitor?: number): Promise<void> {
     try {
-      const peer = new ScreenPeer({
+      const peer = await ScreenPeer.create({
         onLocalIce: (candidate) => {
           if (candidate === null) return; // end-of-candidates; nothing to trickle
           this.pendingLocalIce.push(candidate);

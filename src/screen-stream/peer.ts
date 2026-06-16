@@ -7,18 +7,30 @@
 // and nothing about signaling transport (the session manager pumps offer/answer/
 // ICE through these methods). That keeps the peer swappable + the seams clean.
 
-import {
-  RTCPeerConnection,
-  MediaStreamTrack,
-  useVP8,
-  RtpPacket,
-  type RTCIceCandidate,
+import type {
+  RTCPeerConnection as WeriftPeerConnection,
+  MediaStreamTrack as WeriftMediaStreamTrack,
+  RTCIceCandidate,
 } from "werift";
 import type { RtcIceCandidate } from "./protocol.js";
 import { VP8_PAYLOAD_TYPE, VP8_CLOCK_RATE } from "./ffmpeg-capture.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("screen-stream.peer");
+
+// werift is a heavy WebRTC stack and live-screen is an on-demand, unreleased
+// feature. Load it LAZILY (dynamic import in `create()`) so it never enters the
+// module graph at boot. peer.ts is reachable from the chat-ws import chain, so a
+// static `import … from "werift"` makes a missing/unbundled werift a fatal
+// ERR_MODULE_NOT_FOUND that takes the whole app down on startup. With the lazy
+// import, an absent dep degrades just the screen-stream feature (the call site
+// catches the rejected import and reports "couldn't start live screen").
+// Type-only imports above are erased at compile time and carry no runtime cost.
+type WeriftModule = typeof import("werift");
+let _weriftPromise: Promise<WeriftModule> | null = null;
+function loadWerift(): Promise<WeriftModule> {
+  return (_weriftPromise ??= import("werift"));
+}
 
 /** Peer connection states forwarded to the signaling machine. */
 export type PeerState = "new" | "connecting" | "connected" | "disconnected" | "failed" | "closed";
@@ -37,11 +49,25 @@ export interface PeerHandlers {
  * needs it. No TURN for the prototype (constitution §6 / protocol note).
  */
 export class ScreenPeer {
-  private readonly pc: RTCPeerConnection;
-  private readonly track: MediaStreamTrack;
+  private readonly pc: WeriftPeerConnection;
+  private readonly track: WeriftMediaStreamTrack;
   private closed = false;
 
-  constructor(private readonly handlers: PeerHandlers) {
+  /**
+   * Build a peer. Async because werift is imported lazily (see loadWerift) —
+   * the dynamic import resolves before any werift value is touched, so a
+   * missing dep rejects here and is handled by the caller rather than crashing.
+   */
+  static async create(handlers: PeerHandlers): Promise<ScreenPeer> {
+    const werift = await loadWerift();
+    return new ScreenPeer(werift, handlers);
+  }
+
+  private constructor(
+    private readonly werift: WeriftModule,
+    private readonly handlers: PeerHandlers,
+  ) {
+    const { RTCPeerConnection, MediaStreamTrack, useVP8 } = werift;
     const stun = process.env.LAX_RTC_STUN?.trim();
     this.pc = new RTCPeerConnection({
       iceServers: stun ? [{ urls: stun }] : [],
@@ -94,7 +120,7 @@ export class ScreenPeer {
   writeRtp(packet: Buffer): void {
     if (this.closed) return;
     try {
-      this.track.writeRtp(RtpPacket.deSerialize(packet));
+      this.track.writeRtp(this.werift.RtpPacket.deSerialize(packet));
     } catch {
       // Malformed/partial datagram — skip it; the stream self-heals on the next.
     }

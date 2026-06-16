@@ -289,6 +289,31 @@ function has(cmd) {
   return spawnSync(cmd, ["--version"], { stdio: "ignore", shell: true }).status === 0;
 }
 
+// winget ships as the "App Installer" package and is ABSENT on fresh Windows
+// images, LTSC/Server SKUs, and many locked-down machines. Every step that
+// shells winget must gate on this and fall back to a direct download, or the
+// install bricks where winget never existed (live failure 2026-06-15:
+// 'winget' is not recognized as an internal or external command).
+function wingetAvailable() {
+  return process.platform === "win32" && has("winget");
+}
+
+// Install Ollama on Windows WITHOUT winget: download the official Inno Setup
+// installer and run it silently. Per-user (%LOCALAPPDATA%\Programs\Ollama),
+// no admin. Returns true on success. Only used on machines that lack winget.
+async function installOllamaDirectWindows() {
+  const tmp = join(process.env.TEMP || homedir(), "OllamaSetup.exe");
+  log("Downloading Ollama installer (~700 MB, one-time)…");
+  const dl = await runStreaming(
+    `powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile '${tmp}' -UseBasicParsing"`,
+    [],
+  );
+  if (dl.status !== 0) { warn(`Ollama download failed (exit ${dl.status})`); return false; }
+  log("Running the Ollama installer (silent)…");
+  const r = await runStreaming(`"${tmp}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, []);
+  return r.status === 0;
+}
+
 // On Windows a freshly winget-installed Ollama lands in
 // %LOCALAPPDATA%\Programs\Ollama and updates the *persisted* user PATH — but
 // this already-running install process captured its PATH at launch, so a later
@@ -408,6 +433,13 @@ if (process.platform === "win32") {
   }
   if (hasVc) {
     ok("Visual Studio Build Tools already present");
+  } else if (!wingetAvailable()) {
+    // No winget to deliver the toolchain — but don't brick the install. The
+    // native modules (better-sqlite3, onnxruntime-node) ship prebuilt win-x64
+    // binaries that npm ci uses with no compiler; only a from-source build
+    // needs these tools, which is rare on x64 and surfaces a clear npm error
+    // if it ever happens. Skipping beats a fatal stop on a fresh machine.
+    warn("winget not available — skipping C++ build tools. Prebuilt native binaries will be used; if a later step needs a source build, install VS Build Tools from https://visualstudio.microsoft.com/downloads/ and re-run.");
   } else {
     log("Installing Visual Studio Build Tools (silent winget)…");
     // runStreaming (async spawn), NOT run (blocking spawnSync): this is the
@@ -480,9 +512,13 @@ if (pyOk) {
 } else {
   log("Installing Python 3.12…");
   if (process.platform === "win32") {
-    const r = await runStreaming("winget", ["install", "Python.Python.3.12", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
-    if (r.status !== 0) warn(`Python install failed (exit ${r.status}) — continuing without (voice servers won't work)`);
-    else ok("Python 3.12 installed");
+    if (!wingetAvailable()) {
+      warn("winget not available — skipping Python 3.12 (voice servers won't work until you install Python from https://python.org and re-run).");
+    } else {
+      const r = await runStreaming("winget", ["install", "Python.Python.3.12", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
+      if (r.status !== 0) warn(`Python install failed (exit ${r.status}) — continuing without (voice servers won't work)`);
+      else ok("Python 3.12 installed");
+    }
   } else if (process.platform === "darwin") {
     const r = run("brew", ["install", "python@3.12"]);
     if (r.status !== 0) warn(`Python install failed — continuing without (voice servers won't work)`);
@@ -503,10 +539,24 @@ if (has("ollama")) {
 } else {
   log("Installing Ollama…");
   if (process.platform === "win32") {
-    const r = await runStreaming("winget", ["install", "Ollama.Ollama", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
-    if (r.status !== 0) fail(`Ollama install failed (exit ${r.status}). Install manually from https://ollama.com/download`);
-    ensureOllamaOnPath(); // make the just-installed ollama visible to this run
-    ok("Ollama installed");
+    if (wingetAvailable()) {
+      const r = await runStreaming("winget", ["install", "Ollama.Ollama", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
+      if (r.status !== 0) fail(`Ollama install failed (exit ${r.status}). Install manually from https://ollama.com/download`);
+      ensureOllamaOnPath(); // make the just-installed ollama visible to this run
+      ok("Ollama installed");
+    } else {
+      // No winget: run Ollama's official per-user installer directly. Non-fatal
+      // — the embedmodel step below already degrades gracefully when Ollama is
+      // absent, so an optional runtime that won't install shouldn't brick the
+      // whole install the way the fatal winget path did.
+      log("winget not available — installing Ollama from its official installer…");
+      if (await installOllamaDirectWindows()) {
+        ensureOllamaOnPath();
+        ok("Ollama installed");
+      } else {
+        warn("Ollama install failed — semantic memory unavailable until you install it from https://ollama.com/download and re-run.");
+      }
+    }
   } else if (process.platform === "darwin") {
     const r = run("brew", ["install", "ollama"]);
     if (r.status !== 0) fail("Ollama install failed. Install manually from https://ollama.com/download");

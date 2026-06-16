@@ -47,6 +47,13 @@ export interface ServerEventHandlers {
    *  the one-click upgrade (node-floor.ts promptAndUpgradeNode) and retries
    *  startServer() on success. */
   onNodeTooOld?: (status: NodeFloorStatus) => void;
+  /** Fired when the server child exits with a native-addon ABI mismatch
+   *  (NODE_MODULE_VERSION in its stderr) — better-sqlite3 was built against a
+   *  different Node major than the one we spawn. Caller rebuilds the addon
+   *  against the runtime node (native-rebuild.ts) and retries startServer().
+   *  Fired at most once per app session so a still-broken rebuild falls
+   *  through to the normal crash-loop → repair path instead of looping. */
+  onNativeAbiMismatch?: () => void;
 }
 
 let serverProcess: ChildProcess | null = null;
@@ -56,10 +63,19 @@ let crashHandler: ServerEventHandlers["onCrash"] | undefined;
 let alreadyRunningHandler: ServerEventHandlers["onAlreadyRunning"] | undefined;
 let startupFailureHandler: ServerEventHandlers["onStartupFailure"] | undefined;
 let nodeTooOldHandler: ServerEventHandlers["onNodeTooOld"] | undefined;
+let nativeAbiMismatchHandler: ServerEventHandlers["onNativeAbiMismatch"] | undefined;
 // Rapid-crash-loop tracking: when the spawn happened, and how many
 // consecutive spawns died within seconds. See the exit handler below.
 let lastSpawnAt = 0;
 let rapidCrashes = 0;
+// Rolling tail of the current server child's stderr, so the exit handler can
+// classify WHY it died (e.g. a NODE_MODULE_VERSION ABI mismatch) — the exit
+// event only carries code/signal. Reset on each spawn.
+let recentServerStderr = "";
+const STDERR_TAIL_MAX = 8000;
+// One native-rebuild attempt per app session: a rebuild that doesn't fix the
+// crash must not loop forever. Reset only by relaunch.
+let triedNativeRebuild = false;
 
 export function setQuitting(v: boolean): void { isQuitting = v; }
 export function setRestarting(v: boolean): void { isRestarting = v; }
@@ -87,6 +103,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
   if (handlers?.onAlreadyRunning) alreadyRunningHandler = handlers.onAlreadyRunning;
   if (handlers?.onStartupFailure) startupFailureHandler = handlers.onStartupFailure;
   if (handlers?.onNodeTooOld) nodeTooOldHandler = handlers.onNodeTooOld;
+  if (handlers?.onNativeAbiMismatch) nativeAbiMismatchHandler = handlers.onNativeAbiMismatch;
 
   // Read PROJECT_ROOT live — project-root-resolver.ts can mutate it at
   // app.ready via setProjectRoot() when auto-discovery or the user picker
@@ -140,6 +157,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
   const bundledModelsDir = electron.app.isPackaged ? process.resourcesPath : "";
 
   lastSpawnAt = Date.now();
+  recentServerStderr = "";
 
   // We spawn a real `node` (PATH-resolved) rather than the bundled Electron
   // binary via ELECTRON_RUN_AS_NODE: the server loads native addons
@@ -204,6 +222,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
     serverProcess.stderr?.on("data", (data: Buffer) => {
       const text = data.toString();
       stdioStream.write(text);
+      recentServerStderr = (recentServerStderr + text).slice(-STDERR_TAIL_MAX);
       const line = text.trim();
       if (line) console.error("[server]", line);
     });
@@ -213,7 +232,9 @@ export function startServer(handlers?: ServerEventHandlers): void {
       if (line) console.log("[server]", line);
     });
     serverProcess.stderr?.on("data", (data: Buffer) => {
-      const line = data.toString().trim();
+      const text = data.toString();
+      recentServerStderr = (recentServerStderr + text).slice(-STDERR_TAIL_MAX);
+      const line = text.trim();
       if (line) console.error("[server]", line);
     });
   }
@@ -240,6 +261,23 @@ export function startServer(handlers?: ServerEventHandlers): void {
         });
       } catch {}
       return; // Do NOT auto-restart — same refusal will happen.
+    }
+
+    // Native-addon ABI mismatch: better-sqlite3 was built against a different
+    // Node major than the one we spawn, so it throws NODE_MODULE_VERSION on its
+    // first require and the server exits before serving anything. Auto-healable
+    // — rebuild the addon against the runtime node and retry — so intercept it
+    // BEFORE the rapid-crash counter burns strikes toward the repair screen.
+    // One shot per session: a rebuild that doesn't fix it falls through next
+    // exit to the normal crash-loop path.
+    if (
+      wasUnclean && !isQuitting && !isRestarting && !triedNativeRebuild &&
+      nativeAbiMismatchHandler && recentServerStderr.includes("NODE_MODULE_VERSION")
+    ) {
+      triedNativeRebuild = true;
+      console.error("[desktop] server died on a native-addon ABI mismatch — rebuilding against the runtime node");
+      try { nativeAbiMismatchHandler(); } catch {}
+      return; // handler rebuilds + retries startServer(); don't count as a crash
     }
 
     if (wasUnclean && !isQuitting && !isRestarting && crashHandler) {

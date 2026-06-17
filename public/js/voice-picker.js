@@ -124,6 +124,24 @@ async function loadVoicePicker(saved) {
   ).join('');
 
   const tier = getTierById(tierId);
+
+  // Reconcile a stale browser bundle on load. Electron strips the Web Speech
+  // API, so the browser tier is hidden above and _resolveActiveTierId remaps a
+  // saved voiceMode='browser' to the default tier for DISPLAY — but the saved
+  // settings keep the unusable browser bundle (voiceSttProvider/
+  // voiceTier4Provider='browser' → the bridge skips server STT/TTS). The
+  // dropdowns then show the resolved tier's values already-selected, so the
+  // user never fires an onChange to persist them. Persist the resolved bundle
+  // once so the saved config matches what's shown.
+  if (IS_ELECTRON && saved && saved.voiceMode === 'browser' && tier) {
+    await _persist({ ...tier.settings, voiceTier4Voice: '', voiceRealtimeVoice: '', ttsVoice: '' });
+    try {
+      const local = JSON.parse(localStorage.getItem('lax_settings') || '{}');
+      Object.assign(local, tier.settings, { voiceTier4Voice: '', voiceRealtimeVoice: '', ttsVoice: '' });
+      localStorage.setItem('lax_settings', JSON.stringify(local));
+    } catch {}
+  }
+
   _renderTierStatus(tier);
   const current = _resolveCurrentVoice(saved || {}, tierId);
   voiceSel.innerHTML = _voiceListForTier(tierId, current);

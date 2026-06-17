@@ -175,23 +175,24 @@ describe("OutboundAudio pacer (isolated)", () => {
     }
   });
 
-  it("does not emit an RTP packet for a DTX/empty Opus frame (silence)", async () => {
+  it("emits continuous RTP through silence (DTX disabled — smooth cadence)", async () => {
     const packets: FakePacket[] = [];
     const out = new OutboundAudio(fakeBuilders, (p) => {
       packets.push(p as unknown as FakePacket);
     });
     try {
-      // ~1s of pure silence at 24kHz. After resample + DTX warmup the encoder
-      // settles into "transmit nothing" frames; the pacer must skip those, so
-      // far fewer packets are emitted than the ~50 ticks the buffer could fill.
+      // ~1s of pure silence at 24kHz. With DTX disabled the encoder transmits a
+      // real low-energy frame every tick instead of "transmit nothing", so a
+      // natural micro-pause plays at its true length rather than being stretched
+      // by a jitter-buffer resync on the marker-bit resume. The pacer drains at
+      // real time (one 20ms frame per 20ms), so ~700ms of draining yields a
+      // substantial CONTINUOUS run — and every frame is a valid (>2-byte) Opus
+      // payload, never a stray empty/DTX byte.
       out.push(new Int16Array(24000), 24000);
       await wait(700);
 
-      // The DTX frames produce no RTP packets, so we never emit a full run of
-      // frames; crucially, none of the few we do emit may carry an empty/stray
-      // (<=2 byte DTX) payload — that would be a malformed Opus RTP frame.
       const ticksWorth = 700 / 20;
-      expect(packets.length).toBeLessThan(ticksWorth / 2);
+      expect(packets.length).toBeGreaterThan(ticksWorth / 2);
       for (const p of packets) {
         expect(p.payload.length).toBeGreaterThan(2);
       }

@@ -43,10 +43,10 @@ export type RtpSink = (packet: WeriftRtpPacket) => void;
  * ticking so a transient failure doesn't permanently wedge the talkspurt; per-
  * frame encode errors drop that frame only.
  *
- * The encoder runs with DTX enabled, so a silence frame may produce a "transmit
- * nothing" result; emitFrame() detects that (wasDtx / empty payload) and sends
- * no RTP packet for it — advancing the timestamp clock but not the sequence
- * number, and re-marking the next real frame as a talkspurt start.
+ * The encoder runs with DTX DISABLED (continuous transmission) for smooth
+ * cadence — see getEncoder(). emitFrame() still defensively guards against a
+ * stray empty payload (sends no RTP for it, advancing the timestamp clock but
+ * not the sequence number), keeping the stream well-formed if one ever appears.
  */
 export class OutboundAudio {
   private readonly rtp: RtpBuilders;
@@ -184,17 +184,13 @@ export class OutboundAudio {
       logger.warn(`opus encode dropped a frame: ${(e as Error).message}`);
       return;
     }
-    // DTX (discontinuous transmission): with dtx enabled the encoder decides a
-    // 20ms span is silence and signals "transmit nothing" — surfaced either as
-    // wasDtx() or as a zero/near-empty payload. Per Opus DTX-over-RTP semantics
-    // we send NOTHING this tick: emitting a 0-byte (or stray 1-byte DTX) RTP
-    // payload would be a malformed frame to the receiver. The next real frame
-    // reopens a talkspurt (marker) so the phone's jitter buffer resyncs.
-    //
-    // We do NOT advance the sequence number for an unsent packet — RTP sequence
-    // numbers count transmitted packets, so a gap here would look like loss. We
-    // DO advance the timestamp by the samples consumed (the 48kHz sampling clock
-    // keeps running through silence), keeping timestamps aligned to wall time.
+    // Defensive guard: DTX is disabled (see getEncoder), so the encoder should
+    // always return a real frame — but never emit a 0/1-byte payload as an RTP
+    // packet, which would be malformed to the receiver. If a stray empty frame
+    // ever appears, skip it: advance the timestamp by the samples consumed (the
+    // 48kHz clock stays aligned to wall time) but NOT the sequence number (it
+    // counts transmitted packets, so a gap would look like loss), and re-mark
+    // the next real frame as a talkspurt start.
     if (encoder.wasDtx() || payload.length <= 2) {
       this.timestamp = (this.timestamp + OPUS_FRAME_SAMPLES) >>> 0;
       this.talkspurtStart = true;
@@ -217,13 +213,16 @@ export class OutboundAudio {
   private getEncoder(): Promise<OpusEncoder> {
     if (this.encoder) return Promise.resolve(this.encoder);
     // Speech-tuned, loss-resilient encoder: low speech bitrate + inband FEC +
-    // DTX + an expected-loss hint. These are createOpusEncoder's defaults; we
-    // pass them explicitly so the intent of the voice transport is local here.
-    // Share one in-flight create across racing ticks.
+    // an expected-loss hint. DTX is deliberately OFF: discontinuous transmission
+    // only saves bandwidth during silence (irrelevant on the tailnet), but it
+    // stops the stream on natural micro-pauses and the marker-bit resume forces
+    // the phone's jitter buffer to resync — stretching a ~100ms breath into an
+    // audible mid-phrase gap. Continuous frames keep cadence smooth. Share one
+    // in-flight create across racing ticks.
     return (this.encoderInit ??= createOpusEncoder({
       bitrate: 24000,
       inbandFec: true,
-      dtx: true,
+      dtx: false,
       packetLossPerc: 10,
     }).then((enc) => {
       // close() may have raced in while the encoder was being created.

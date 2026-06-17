@@ -5,8 +5,9 @@ import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
 import { EventBus } from "../event-bus.js";
 import { ProjectStore, type AgentRun } from "../agent-store/index.js";
-import { looksLikeClarificationRequest, looksLikeUnsubstantiatedCompletion } from "../agents/result-guard.js";
+import { looksLikeClarificationRequest, looksLikeUnsubstantiatedCompletion, looksLikeEmptyOrErrorOnly } from "../agents/result-guard.js";
 import { registerAgentRunDriver, type AgentRunDriver } from "../agents/runtime.js";
+import { Handler } from "../agency/handler.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
@@ -73,23 +74,20 @@ export function registerHandlerEvents(deps: {
 
     let parentContext = "";
     if (parentSessionId) { const ps = sessions.get(parentSessionId); if (ps?.messages.length) { parentContext = `\n\n--- PARENT CONTEXT ---\n${ps.messages.slice(-10).filter(m => typeof m.content === "string").map(m => `${m.role === "user" ? "User" : "Agent"}: ${(m.content as string).slice(0, 200)}`).join("\n")}\n--- END ---\n`; } }
+    // Briefing assembly (USER.md + recent facts + task-relevant memory +
+    // project brief + secrets) lives in agents/briefing.ts. agentProject is
+    // resolved above and now actually fed in, and the task keys a semantic
+    // memory search — both gaps the old inline block had.
     let briefing = "";
     try {
-      const uMd = join(dataDir, "memory", "USER.md");
-      const u = existsSync(uMd) ? readFileSync(uMd, "utf-8").slice(0, 500) : "";
-      // Pull recent durable facts from the Facts DB (replaces the old MIND.md
-      // read). Confidence floor + limit caps briefing size; the briefing was
-      // historically ~500 chars of MIND.md, this lands in the same ballpark.
-      let factsBlock = "(none)";
-      try {
-        const facts = memoryIndex.recallRecentFacts({ limit: 10, minConfidence: 0.6 });
-        if (facts.length > 0) {
-          const rendered = facts.map(f => `- ${f.content}`).join("\n");
-          factsBlock = rendered.length > 500 ? rendered.slice(0, 497) + "..." : rendered;
-        }
-      } catch { /* facts DB unavailable — leave default */ }
-      briefing = `\n\n--- BRIEFING ---\nUser: ${u || "(none)"}\nFacts: ${factsBlock}\nSecrets: ${secretsStore.list().map(s => s.name).join(", ") || "(none)"}\n--- END ---\n`;
-    } catch {}
+      const { buildBriefing } = await import("../agents/briefing.js");
+      briefing = await buildBriefing({
+        dataDir, memoryIndex, secretsStore, task,
+        project: agentProject ? { id: agentProject.id, name: agentProject.name } : null,
+      });
+    } catch (e) {
+      logger.warn(`[handler] briefing assembly failed for ${agentId}: ${(e as Error).message}`);
+    }
 
     const identityBlock = template
       ? `\n\n--- YOUR IDENTITY ---\nAgent ID: ${template.id}\nName: ${template.name}\nRole: ${template.role}\n${roster?.reportsTo ? `Reports to: ${roster.reportsTo}` : "Reports to: Board (user)"}\n${agentProject ? `Project: ${agentProject.name}` : ""}\nUse agent_whoami with agentId="${template.id}" to see your full status and assigned issues.\n--- END IDENTITY ---\n`
@@ -188,6 +186,10 @@ export function registerHandlerEvents(deps: {
             eventBus.emit("handler:agent-output", { agentId, output: `[tool] ${event.toolName}...` });
             const m = pendingMeta.get(agentId);
             if (m && !m.toolsUsed.includes(event.toolName)) m.toolsUsed.push(event.toolName);
+            // Real-progress signal: bump the FieldAgent's tool-call counter so
+            // buildStatus reports live progress. output[] stays empty during a
+            // canonical run, so this is the only thing that actually moves.
+            try { Handler.getInstance().noteAgentActivity(agentId); } catch {}
             if (event.requiresApproval) event.requiresApproval = false;
           }
           if (event.type === "tool_progress") {
@@ -213,6 +215,18 @@ export function registerHandlerEvents(deps: {
 
       const agentOutput = extractAgentOutput(agentSession.messages);
       if (mergeSuccess) {
+        // Empty-output guard: a run that committed no work AND produced no
+        // usable text (or only a runner status marker) finished with nothing
+        // to show. Gated on committedWork so a silent-but-effective run (wrote
+        // a file, returned no prose) is never misflagged — the mutation is its
+        // own receipt. Deterministic, no LLM reviewer.
+        if (!(agentResult.committedWork ?? true)) {
+          const empty = looksLikeEmptyOrErrorOnly(agentOutput);
+          if (empty.isEmptyOrErrorOnly) {
+            logger.warn(`[handler] Agent ${agentId} (${role}) finished with ${empty.reason} and no committed work — re-classified as error`);
+            return { result: `[Agent finished with no usable output (${empty.reason}) and committed no work]${agentOutput ? `\n\n${agentOutput}` : ""}`, success: false };
+          }
+        }
         // False-completion guard: the driver has both the output text AND the
         // AgentTurn's committedWork ledger signal. Default TRUE so any path
         // that didn't populate the signal can never false-positive.

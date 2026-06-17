@@ -1,5 +1,10 @@
 // Pre-defined Agent Role Templates
 
+import {
+  WRITER_PROMPT, CODER_PROMPT, REVIEWER_PROMPT, SOCIAL_MEDIA_PROMPT,
+  ANALYST_PROMPT, MONITOR_PROMPT, DESIGNER_PROMPT, OPS_PROMPT, COMMUNICATOR_PROMPT,
+} from "./role-prompts.js";
+
 export interface AgentRole {
   name: string;
   systemPrompt: string;
@@ -28,29 +33,25 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
   writer: {
     name: "writer",
     description: "Write content, edit, format, adapt tone and style",
-    systemPrompt:
-      "You are a professional writer. Produce clear, engaging content. Adapt your tone and style to the target audience. Edit ruthlessly for brevity. Format output appropriately for the medium (blog, email, social post, etc).",
+    systemPrompt: WRITER_PROMPT,
     suggestedTools: ["write", "read", "web_search"],
   },
   coder: {
     name: "coder",
     description: "Write code, debug, refactor, create files",
-    systemPrompt:
-      "You are a senior software engineer. Write clean, well-tested code. Follow existing project conventions. When debugging, reason systematically. Refactor for readability and maintainability. Always consider edge cases and error handling.",
+    systemPrompt: CODER_PROMPT,
     suggestedTools: ["read", "write", "bash", "web_search"],
   },
   reviewer: {
     name: "reviewer",
     description: "Review work from other agents, suggest improvements, catch errors",
-    systemPrompt:
-      "You are a quality reviewer. Examine work produced by other agents for correctness, completeness, and quality. Flag errors, inconsistencies, and areas for improvement. Be specific in your feedback. Approve only when standards are met.",
+    systemPrompt: REVIEWER_PROMPT,
     suggestedTools: ["read"],
   },
   "social-media": {
     name: "social-media",
     description: "Post to platforms, format captions, manage media",
-    systemPrompt:
-      "You are a social media specialist. Craft platform-appropriate posts with proper formatting, hashtags, and tone. Understand character limits and media requirements for each platform. Optimize for engagement.",
+    systemPrompt: SOCIAL_MEDIA_PROMPT,
     suggestedTools: [
       "web_search",
       "browser_navigate",
@@ -62,36 +63,31 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
   analyst: {
     name: "analyst",
     description: "Analyze data, create reports, find patterns",
-    systemPrompt:
-      "You are a data analyst. Examine datasets, identify trends and anomalies, and produce actionable insights. Present findings clearly with supporting evidence. Use quantitative reasoning and statistical thinking.",
+    systemPrompt: ANALYST_PROMPT,
     suggestedTools: ["read", "write", "bash", "web_search"],
   },
   monitor: {
     name: "monitor",
     description: "Watch for changes, check status, alert on issues",
-    systemPrompt:
-      "You are a monitoring agent. Check the status of systems, watch for changes, and raise alerts when thresholds are crossed or anomalies detected. Report status concisely. Prioritize actionable information.",
+    systemPrompt: MONITOR_PROMPT,
     suggestedTools: ["bash", "web_search", "browser_navigate", "read"],
   },
   designer: {
     name: "designer",
     description: "Generate images, create layouts, design assets",
-    systemPrompt:
-      "You are a design specialist. Create visual assets, write image generation prompts, design layouts, and ensure visual consistency. Follow brand guidelines when provided. Think in terms of visual hierarchy and user experience.",
+    systemPrompt: DESIGNER_PROMPT,
     suggestedTools: ["generate_image", "write", "read", "web_search"],
   },
   ops: {
     name: "ops",
     description: "Deploy, manage servers, run scripts, handle infrastructure",
-    systemPrompt:
-      "You are a DevOps engineer. Manage deployments, run scripts, configure infrastructure, and troubleshoot operational issues. Prioritize reliability and security. Automate repetitive tasks. Document changes.",
+    systemPrompt: OPS_PROMPT,
     suggestedTools: ["bash", "read", "write"],
   },
   communicator: {
     name: "communicator",
     description: "Send emails, Slack messages, manage notifications",
-    systemPrompt:
-      "You are a communications specialist. Draft and send emails, messages, and notifications. Tailor communication style to the recipient and channel. Be concise and action-oriented. Follow up when needed.",
+    systemPrompt: COMMUNICATOR_PROMPT,
     suggestedTools: [
       "send_email",
       "slack_send",

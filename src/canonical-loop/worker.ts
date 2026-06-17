@@ -37,7 +37,7 @@ import {
 } from "./lease.js";
 import { readLatestOpTurn } from "./store.js";
 import { getSessionForOp } from "../ops/session-bridge.js";
-import { hasInjects } from "../agent-loop/inject-queue.js";
+import { hasInjects, opConsumesInjects } from "../agent-loop/inject-queue.js";
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 
@@ -204,7 +204,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       // before we check.
       await new Promise<void>(resolve => setImmediate(resolve));
       const middlewareNudged = r.middlewareDirective?.kind === "nudge";
-      if (r.terminalReason !== null && op.type === "chat_turn") {
+      if (r.terminalReason !== null && opConsumesInjects(op.type)) {
         const sessionId = getSessionForOp(op.id);
         if ((sessionId && hasInjects(sessionId)) || middlewareNudged) {
           // fall through to next iteration so drainInjectsIntoTurn at

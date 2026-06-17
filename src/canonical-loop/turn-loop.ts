@@ -37,6 +37,7 @@ import { extractText, extractToolResultText } from "./turn-loop/content-extract.
 import { appendNudgeAsUserMessage, middlewareAbortResult } from "./turn-loop/nudges.js";
 import { buildTurnInput, readPendingRedirect } from "./turn-loop/build-input.js";
 import { drainInjectsIntoTurn } from "./turn-loop/inject-drain.js";
+import { opConsumesInjects } from "../agent-loop/inject-queue.js";
 import { dispatchTools } from "./turn-loop/dispatch-tools.js";
 import { createIdleWatchdog, readIdleTimeoutMs } from "./turn-loop/idle-watchdog.js";
 import { snapshotTouchedApps } from "./turn-loop/snapshot-apps.js";
@@ -63,10 +64,12 @@ export async function driveTurn(
   // Mid-turn injects: messages the user typed during a previous turn / tool
   // call, queued by chat-ws via pushInject(). Drain into op_messages BEFORE
   // buildTurnInput so the adapter sees them inline as user messages on this
-  // turn. Mirrors agent-loop's interjectDrainMiddleware. Scoped to chat_turn
-  // so background/delegated workers sharing the session don't drain the
-  // user's chat-bound injects.
-  if (op.type === "chat_turn") drainInjectsIntoTurn(op, turnIdx);
+  // turn. Mirrors agent-loop's interjectDrainMiddleware. Gated to op types
+  // that consume injects (chat_turn + agent_spawn) so background workers
+  // sharing the user's session don't drain the user's chat-bound injects;
+  // agent_spawn runs on its own private session so this only delivers
+  // inter-agent messages bridged onto it.
+  if (opConsumesInjects(op.type)) drainInjectsIntoTurn(op, turnIdx);
 
   // ── Phase 1: beforeTurn middlewares ──
   // Snapshot a fresh CanonicalLoopContext from disk + op state. A `nudge`

@@ -2,8 +2,10 @@
 // or tool call, queued by chat-ws via pushInject(). Drained into
 // op_messages BEFORE buildTurnInput so the adapter sees them inline as
 // user messages on this turn. Mirrors agent-loop's interjectDrainMiddleware.
-// Scoped to chat_turn so background/delegated workers sharing the session
-// don't drain the user's chat-bound injects.
+// The caller (turn-loop.ts) gates this on opConsumesInjects(op.type), so only
+// inject-consuming ops reach it: a background/delegated worker sharing the
+// user's session never drains the user's chat-bound injects, and agent_spawn
+// drains only its own private session.
 
 import { randomUUID } from "node:crypto";
 import type { Op } from "../../ops/types.js";

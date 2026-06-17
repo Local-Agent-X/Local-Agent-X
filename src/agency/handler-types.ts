@@ -18,6 +18,12 @@ export interface FieldAgent extends AgencyAgent {
    *  bucket so it always matches where the child's tools actually recorded —
    *  see handler-events.ts `runSessionId = req.sessionId ?? agent-<agentId>`. */
   runSessionId?: string;
+  /** Real progress signal: count of tool calls this run has started. The old
+   *  progress heuristic keyed off output.length, which stays empty for external
+   *  (canonical-loop) runs since their text streams elsewhere — so progress was
+   *  pinned at 0 the entire run. noteAgentActivity increments this on each
+   *  tool_start; buildStatus derives a live percentage from it. */
+  toolCalls?: number;
 }
 
 export interface FieldAgentStatus {

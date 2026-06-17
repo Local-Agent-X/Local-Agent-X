@@ -97,12 +97,29 @@ export class Handler {
       templateId: config.templateId,
       parentSessionId: config.parentSessionId || "",
       runSessionId: config.runSessionId,
+      toolCalls: 0,
       abortController: ac,
     };
     this.agents.set(agentId, agent);
+    // Bridge the agency message bus into the canonical loop's inject queue.
+    // The bus delivers inter-agent messages (request-info / share-context),
+    // but a canonically-driven run never reads agent.messageQueue — that field
+    // was dead. The run's continue-gate DOES drain the inject queue keyed on
+    // its session id (agent.runSessionId ?? agent-<id>, the same formula the
+    // driver uses), so push there to actually reach the running agent. We keep
+    // messageQueue updated too for any status reader that inspects it.
     this.messageBus.subscribe(agentId, (msg) => {
       if (msg.type === "request-info" || msg.type === "share-context") {
-        agent.messageQueue.push(String(msg.payload));
+        const payload = String(msg.payload);
+        agent.messageQueue.push(payload);
+        try {
+          const sessionId = agent.runSessionId ?? `agent-${agent.id}`;
+          void import("../agent-loop/inject-queue.js").then(({ pushInject }) => {
+            pushInject(sessionId, payload);
+          });
+        } catch (e) {
+          logger.warn(`[handler] inject bridge failed for ${agentId}: ${(e as Error).message}`);
+        }
       }
     });
     appendTraceEvent(agentId, {
@@ -300,24 +317,42 @@ export class Handler {
   }
 
   // -- Private --------------------------------------------------------------
-
   private buildStatus(agent: FieldAgent): FieldAgentStatus {
-    const total = agent.output.length;
     const done = agent.status === "succeeded" || agent.status === "failed";
+    // Real progress: count tool calls the run has started. The old heuristic
+    // (output.length * 5) stayed pinned at 0 for canonical-loop runs because
+    // their text streams elsewhere and output[] only fills at finalize. Each
+    // tool_start bumps toolCalls via noteAgentActivity; cap at 90 so an
+    // in-flight run never reads as complete, and a no-tool run that's still
+    // working shows a small floor instead of a dead 0.
+    const calls = agent.toolCalls ?? 0;
+    const working = Math.min(90, calls > 0 ? calls * 8 : 5);
     return {
       id: agent.id,
       name: agent.name,
       role: agent.role,
       status: agent.status,
       currentTask: agent.currentTask,
-      progress: done ? 100 : Math.min(95, total * 5),
-      outputLines: total,
+      progress: done ? 100 : working,
+      outputLines: agent.output.length,
       startedAt: agent.startedAt,
       elapsed: Date.now() - agent.startedAt,
       tokensUsed: agent.tokensUsed,
       templateId: agent.templateId,
     };
   }
+
+  /** Bump the real-progress counter for an externally-driven run. Called by
+   *  the canonical-loop driver on each tool_start (server/handler-events.ts).
+   *  buildStatus derives the live progress percentage from this — the only
+   *  signal that actually moves during an external run, since output[] only
+   *  fills at finalize. No-op if the run was already GC'd. */
+  noteAgentActivity(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    agent.toolCalls = (agent.toolCalls ?? 0) + 1;
+  }
+
 
   private notifyUpdate(
     agentId: string,

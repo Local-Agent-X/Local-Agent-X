@@ -43,6 +43,21 @@ export function hasInjects(sessionId: string): boolean {
   return !!(q && q.length > 0);
 }
 
+/**
+ * Op types whose runs drain the inject queue mid-flight.
+ *
+ * `chat_turn` is the user's interactive thread. `agent_spawn` runs on the
+ * agent's PRIVATE session (agent-<id>), which the user's chat injects never
+ * touch — so opening the gate here only delivers inter-agent messages bridged
+ * onto that private session (agency message bus → pushInject), never the
+ * user's chat-bound injects. The drain/continue/extend gates in turn-loop,
+ * worker, and decide-outcome all key off this single predicate so they can't
+ * drift apart.
+ */
+export function opConsumesInjects(opType: string): boolean {
+  return opType === "chat_turn" || opType === "agent_spawn";
+}
+
 /** Test-only / shutdown cleanup. */
 export function _resetInjectQueues(): void {
   queues.clear();

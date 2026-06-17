@@ -16,7 +16,7 @@ import type { CanonicalMessage, ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
 import type { ToolCallSummary } from "../types.js";
 import { publishStreamChunk } from "../event-emitter.js";
-import { hasInjects } from "../../agent-loop/inject-queue.js";
+import { hasInjects, opConsumesInjects } from "../../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import type { Op } from "../../ops/types.js";
 
@@ -157,15 +157,16 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // op while the worker is still planning to spin another turn.
   if (terminalReason === "done") {
     const middlewareNudged = middlewareDirective?.kind === "nudge";
-    // Only chat_turn ops drain injects into their next turn (see
-    // turn-loop.ts drainInjectsIntoTurn and inject-drain.ts:5). A freeform /
-    // delegated op sharing a session with pending chat injects must NOT
-    // extend itself waiting for them — the injects belong to the chat_turn
-    // worker. Without this gate, "non-chat_turn ops do NOT drain the queue"
-    // was accidentally upgraded to "non-chat_turn ops hang forever whenever a
-    // chat inject is queued on the same session."
+    // Only inject-consuming ops (chat_turn + agent_spawn) drain injects into
+    // their next turn (see turn-loop.ts drainInjectsIntoTurn and
+    // inject-queue.ts opConsumesInjects). A freeform / delegated op sharing a
+    // session with pending chat injects must NOT extend itself waiting for
+    // them — the injects belong to the consuming worker. Without this gate,
+    // "non-consuming ops do NOT drain the queue" was accidentally upgraded to
+    // "non-consuming ops hang forever whenever an inject is queued on the same
+    // session."
     const sessionId = getSessionForOp(op.id);
-    const injectsPending = op.type === "chat_turn" && sessionId ? hasInjects(sessionId) : false;
+    const injectsPending = opConsumesInjects(op.type) && sessionId ? hasInjects(sessionId) : false;
     if (middlewareNudged || failureNudged || injectsPending) {
       terminalReason = null;
     }

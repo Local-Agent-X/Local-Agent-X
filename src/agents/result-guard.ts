@@ -130,3 +130,31 @@ export function looksLikeUnsubstantiatedCompletion(
   }
   return { isUnsubstantiated: false };
 }
+
+export interface EmptyOutputVerdict {
+  isEmptyOrErrorOnly: boolean;
+  /** Why the output was flagged, stored on the run record. */
+  reason?: string;
+}
+
+/**
+ * Returns whether the result is empty or consists solely of a runner-prepended
+ * status marker with no substantive body — i.e. the agent finished but produced
+ * nothing a user can use.
+ *
+ * Deterministic, no LLM: strips a SINGLE leading "[bracketed status]" marker
+ * (the shapes the runner emits — "[Agent timed out]", "[Merge failed: ...]")
+ * and checks whether any body text remains. Callers gate this on
+ * `!committedWork` so a silent-but-effective run (wrote a file, returned no
+ * prose) is never misflagged — the committed mutation is its own receipt.
+ */
+export function looksLikeEmptyOrErrorOnly(result: string): EmptyOutputVerdict {
+  if (typeof result !== "string" || result.trim().length === 0) {
+    return { isEmptyOrErrorOnly: true, reason: "empty output" };
+  }
+  const stripped = result.trim().replace(/^\[[^\]]*\]\s*/, "").trim();
+  if (stripped.length === 0) {
+    return { isEmptyOrErrorOnly: true, reason: "status marker only, no body" };
+  }
+  return { isEmptyOrErrorOnly: false };
+}

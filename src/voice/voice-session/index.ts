@@ -75,6 +75,13 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
     // In-process speaker: stream text to the Tier-4 / CPU TTS worker one whole
     // sentence at a time. The worker emits a single onIdle when its queue
     // drains (ttsCallbacks.onIdle below) — that is the machine's drain signal.
+    //
+    // Opener size: a tiny first chunk ("Sure,") plays out before edge-tts / a
+    // CPU engine can synthesize the next clause, leaving an audible gap right
+    // after the first word. Require ~24 chars so the opener's audio bridges the
+    // next chunk's synthesis latency — costs a few hundred ms of first-audio for
+    // noticeably smoother cadence (the GPU clone path keeps the tiny default).
+    const OPENER_MIN_CHARS = 24;
     let sentenceBuf = "";
     let ttsQueued = false;
     let firstChunkSpoken = false;
@@ -94,7 +101,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
         // First-chunk flush: start speaking the reply's opening ASAP so the
         // voice leads the text instead of trailing it. Fires once per turn.
         if (!firstChunkSpoken) {
-          const cut = firstChunkCut(sentenceBuf);
+          const cut = firstChunkCut(sentenceBuf, OPENER_MIN_CHARS, OPENER_MIN_CHARS);
           if (cut > 0) {
             const chunk = sentenceBuf.slice(0, cut).trim();
             if (chunk) { tts.speak(chunk); ttsQueued = true; firstChunkSpoken = true; }

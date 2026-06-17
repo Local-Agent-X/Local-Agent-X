@@ -25,13 +25,15 @@ export const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 /** Earliest cut point for the OPENING TTS chunk, so the voice starts reading
  *  while the reply is still streaming instead of trailing it — the dominant
  *  felt-latency lever for slow synthesis (clone voices). Returns the slice end
- *  at the first clause break (≥4 chars in) or a word boundary (≥`minChars`),
- *  or -1 when there's not enough yet. Engine speakers call this once per turn
- *  for the first chunk, then fall back to sentence/clause flushing for the
- *  bulk (which has better prosody). */
-export function firstChunkCut(buf: string, minChars = 12): number {
+ *  at the first clause break (≥`minClauseChars` in) or a word boundary
+ *  (≥`minChars`), or -1 when there's not enough yet. Engine speakers call this
+ *  once per turn for the first chunk, then fall back to sentence/clause flushing
+ *  for the bulk (which has better prosody). `minClauseChars` lets an engine veto
+ *  a too-tiny opener ("Sure,") whose audio drains before the next chunk can
+ *  synthesize — a cadence gap on cloud/RTF~1 engines. */
+export function firstChunkCut(buf: string, minChars = 12, minClauseChars = 4): number {
   const clause = /[,;:]\s+/.exec(buf);
-  if (clause && clause.index >= 4) return clause.index + clause[0].length;
+  if (clause && clause.index >= minClauseChars) return clause.index + clause[0].length;
   if (buf.length >= minChars) {
     const space = buf.indexOf(" ", minChars);
     if (space > 0) return space + 1;

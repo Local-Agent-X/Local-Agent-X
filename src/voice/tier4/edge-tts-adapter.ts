@@ -186,9 +186,17 @@ export async function createEdgeTtsProvider(
     state.draining = true;
     try {
       while (state.queue.length > 0 && !state.closed) {
-        const text = state.queue.shift()!;
+        // Coalesce everything queued so far into ONE continuous synthesis. Each
+        // tts.speak() is otherwise a separate cloud toStream() round-trip, and
+        // the gap before the next chunk's first audio underruns the outbound
+        // buffer → audible mid-reply pauses at every clause/sentence boundary.
+        // The LLM streams text faster than the voice plays it, so by the time
+        // the opener finishes the rest is already queued; joining it makes the
+        // bulk of the reply one gapless stream. The opener still synthesizes
+        // alone (it's the only thing queued first), so first-audio is unchanged.
+        const batch = state.queue.splice(0, state.queue.length).join(" ");
         try {
-          await synthOne(text);
+          await synthOne(batch);
         } catch (e) {
           cb.onError?.(e as Error);
         }

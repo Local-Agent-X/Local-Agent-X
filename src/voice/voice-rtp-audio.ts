@@ -21,6 +21,13 @@ const logger = createLogger("voice.rtp-audio");
 
 /** 20ms cadence — one Opus frame (960 samples @ 48kHz) per tick. */
 const PACER_INTERVAL_MS = 20;
+/** Outbound jitter cushion: queue this much before draining a talkspurt so
+ *  bursty/jittery TTS delivery (edge-tts ships MP3 in uneven bursts) can't drain
+ *  the buffer to empty mid-utterance. An empty buffer re-marks a talkspurt →
+ *  the phone's jitter buffer resyncs → a dropped syllable. 100ms is inaudible as
+ *  added latency next to multi-second LLM time-to-first-token but absorbs the
+ *  bursts. */
+const PREBUFFER_SAMPLES = 5 * OPUS_FRAME_SAMPLES; // ~100ms @ 48kHz
 /** Opus payload type advertised in the offer SDP (standard dynamic PT for Opus). */
 export const OPUS_PAYLOAD_TYPE = 111;
 
@@ -68,6 +75,9 @@ export class OutboundAudio {
   private sequenceNumber: number;
   private timestamp: number;
   private talkspurtStart = true;
+  // Once a talkspurt's cushion is built we drain continuously; brief sub-cushion
+  // dips are waited out (not re-marked). Reset when the buffer truly empties.
+  private primed = false;
 
   constructor(rtp: RtpBuilders, sink: RtpSink) {
     this.rtp = rtp;
@@ -108,6 +118,7 @@ export class OutboundAudio {
     if (this.closed) return;
     this.pending = new Int16Array(0);
     this.talkspurtStart = true;
+    this.primed = false; // next reply rebuilds its prebuffer cushion
   }
 
   /** Stop the pacer and free the encoder. Idempotent. */
@@ -150,13 +161,26 @@ export class OutboundAudio {
   /** Pull one 960-sample frame if available, encode it, emit an RTP packet. */
   private async tick(): Promise<void> {
     if (this.closed || this.ticking) return;
-    // Not enough buffered for a full 20ms frame — skip; let the phone's jitter
-    // buffer cope. We do NOT pad with silence (that would inject audible gaps).
-    if (this.pending.length < OPUS_FRAME_SAMPLES) {
-      // Buffer drained mid-utterance: the next real frame opens a new talkspurt.
-      if (this.pending.length === 0) this.talkspurtStart = true;
+    // Buffer fully drained — the talkspurt's audio ended. Re-mark the next real
+    // frame as a talkspurt start (so the phone resyncs for the NEXT reply) and
+    // re-prime, so the next talkspurt rebuilds its cushion before draining.
+    if (this.pending.length === 0) {
+      if (this.primed) {
+        this.primed = false;
+        this.talkspurtStart = true;
+      }
       return;
     }
+    // Prebuffer: hold off draining a fresh talkspurt until the cushion is built,
+    // so jittery TTS bursts can't immediately underrun us. Once primed we drain
+    // continuously; a brief sub-frame dip below 960 is simply waited out WITHOUT
+    // re-marking a talkspurt — that's what turned a network hiccup into a dropped
+    // syllable. Only a true drain-to-empty (above) re-marks.
+    if (!this.primed) {
+      if (this.pending.length < PREBUFFER_SAMPLES) return; // keep buffering
+      this.primed = true;
+    }
+    if (this.pending.length < OPUS_FRAME_SAMPLES) return; // transient dip; wait
     this.ticking = true;
     try {
       const encoder = await this.getEncoder();

@@ -200,6 +200,38 @@ describe("OutboundAudio pacer (isolated)", () => {
     }
   });
 
+  it("flush() drops buffered audio: pacer goes silent until new PCM, then resumes a fresh talkspurt", async () => {
+    const packets: FakePacket[] = [];
+    const out = new OutboundAudio(fakeBuilders, (p) => {
+      packets.push(p as unknown as FakePacket);
+    });
+    try {
+      // Buffer ~1s of audible 24kHz PCM — far more than real-time, so after a
+      // few ticks the pacer has emitted some frames but seconds remain queued
+      // (exactly the faster-than-real-time barge-in scenario).
+      out.push(pcmBurst(24000, 1000), 24000);
+      await wait(120); // let the encoder warm up + emit a handful of frames
+      const beforeFlush = packets.length;
+      expect(beforeFlush).toBeGreaterThanOrEqual(1);
+
+      // Barge-in: flush drops every queued sample. The pacer + encoder stay
+      // alive, but with an empty buffer no further packets are emitted.
+      out.flush();
+      await wait(120); // several 20ms ticks pass
+      expect(packets.length).toBe(beforeFlush); // dead silence after flush
+
+      // A new reply: writing fresh PCM resumes emission, and the first packet
+      // of the new talkspurt is marked (the phone's jitter buffer resyncs).
+      out.push(pcmBurst(24000, 120), 24000);
+      await wait(250);
+      expect(packets.length).toBeGreaterThan(beforeFlush);
+      const resumed = packets[beforeFlush];
+      expect(resumed.header.marker).toBe(true);
+    } finally {
+      out.close();
+    }
+  });
+
   it("close() stops the pacer and a short buffer never blocks", async () => {
     const packets: FakePacket[] = [];
     const out = new OutboundAudio(fakeBuilders, (p) => {

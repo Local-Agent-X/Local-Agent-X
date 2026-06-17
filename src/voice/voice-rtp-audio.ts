@@ -90,6 +90,26 @@ export class OutboundAudio {
     this.ensurePacer();
   }
 
+  /**
+   * Drop all queued PCM immediately (barge-in / interrupt). The desktop
+   * synthesizes TTS faster than real-time, so on interrupt the pacer's pending
+   * buffer can hold seconds of already-encoded reply; flushing it makes the
+   * agent go silent on the phone within ~one frame instead of draining it out.
+   *
+   * Keeps the encoder + pacer alive so the next reply streams normally — this
+   * is the same state the pacer reaches when the buffer drains mid-utterance:
+   * we clear `pending` and re-arm `talkspurtStart` so the next real frame opens
+   * a fresh talkspurt (marker set), exactly like the post-silence resume in
+   * tick()/emitFrame(). Sequence number is NOT touched (it counts transmitted
+   * packets, so flushing just sends fewer); the timestamp clock is left as-is
+   * and the new talkspurt's marker tells the phone's jitter buffer to resync.
+   */
+  flush(): void {
+    if (this.closed) return;
+    this.pending = new Int16Array(0);
+    this.talkspurtStart = true;
+  }
+
   /** Stop the pacer and free the encoder. Idempotent. */
   close(): void {
     if (this.closed) return;

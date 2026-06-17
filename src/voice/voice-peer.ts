@@ -169,6 +169,17 @@ export class VoicePeer {
   }
 
   /**
+   * Barge-in: drop all outbound TTS PCM still queued in the pacer so the agent
+   * goes silent on the phone within ~one frame instead of draining seconds of
+   * already-buffered reply audio. The encoder + pacer stay alive, so the next
+   * reply streams normally. No-op after close().
+   */
+  interruptTts(): void {
+    if (this.closed) return;
+    this.outbound.flush();
+  }
+
+  /**
    * Decode one inbound Opus RTP payload -> 48kHz Int16 -> resample to 16kHz ->
    * onMicPcm. The decoder is created lazily on the first packet. Per-packet
    * decode errors drop that packet (the stream self-heals); a decoder SETUP

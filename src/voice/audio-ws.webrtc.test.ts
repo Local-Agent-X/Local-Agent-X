@@ -31,6 +31,7 @@ class FakePeer {
   readonly answers: string[] = [];
   readonly remoteIce: IceLike[] = [];
   readonly ttsWrites: { len: number; rate: number }[] = [];
+  interruptCount = 0;
   closed = false;
   constructor(
     readonly handlers: {
@@ -45,6 +46,7 @@ class FakePeer {
   writeTtsPcm(frame: Int16Array, sampleRate: number): void {
     this.ttsWrites.push({ len: frame.length, rate: sampleRate });
   }
+  interruptTts(): void { this.interruptCount++; }
   async close(): Promise<void> { this.closed = true; }
 }
 
@@ -187,6 +189,22 @@ describe("/ws/voice webrtc transport", () => {
     const ttsFrame = new Int16Array([10, 20, 30]);
     session.ctx.sendAudio(ttsFrame);
     expect(peer.ttsWrites).toEqual([{ len: 3, rate: 24000 }]);
+    ws.close();
+  });
+
+  it("tts_interrupt (barge-in) → peer.interruptTts() flushes the pacer AND the event still reaches the client", async () => {
+    const ws = await connect();
+    ws.send(JSON.stringify({ type: "hello", sessionId: "s4b", transport: "webrtc" }));
+    await nextEvent(ws, "rtc_offer");
+    const peer = await waitForPeer();
+    const session = lastSession!;
+
+    expect(peer.interruptCount).toBe(0);
+    const interruptP = nextEvent(ws, "tts_interrupt");
+    session.ctx.sendEvent({ type: "tts_interrupt" });
+    const forwarded = await interruptP; // event still forwarded to the WS client
+    expect(forwarded.type).toBe("tts_interrupt");
+    expect(peer.interruptCount).toBe(1); // and the pacer was flushed
     ws.close();
   });
 

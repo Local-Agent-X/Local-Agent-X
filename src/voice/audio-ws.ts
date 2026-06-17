@@ -108,6 +108,8 @@ interface VoicePeerLike {
   applyAnswer(sdp: string): Promise<void>;
   addRemoteIce(c: RtcIceCandidate): Promise<void>;
   writeTtsPcm(frame: Int16Array, sampleRate: number): void;
+  /** Barge-in: drop all outbound TTS PCM still queued in the RTP pacer. */
+  interruptTts(): void;
   close(): Promise<void>;
 }
 
@@ -256,6 +258,13 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
           const snoopEvent = (event: Record<string, unknown>) => {
             const r = event["ttsSampleRate"];
             if (typeof r === "number" && r > 0) ttsSampleRate = r;
+            // Barge-in: the turn machine cancels TTS synthesis here, but the
+            // desktop synthesizes faster than real-time, so the RTP pacer can
+            // still hold seconds of already-encoded reply. Flush it now so the
+            // agent goes silent on the phone within ~one frame. The control
+            // event still goes to the client below (it also flushes its own
+            // playback buffer on tts_interrupt).
+            if (event["type"] === "tts_interrupt") peer?.interruptTts();
             ctx.sendEvent(event);
           };
 

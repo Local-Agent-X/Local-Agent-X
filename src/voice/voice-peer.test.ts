@@ -175,6 +175,31 @@ describe("OutboundAudio pacer (isolated)", () => {
     }
   });
 
+  it("does not emit an RTP packet for a DTX/empty Opus frame (silence)", async () => {
+    const packets: FakePacket[] = [];
+    const out = new OutboundAudio(fakeBuilders, (p) => {
+      packets.push(p as unknown as FakePacket);
+    });
+    try {
+      // ~1s of pure silence at 24kHz. After resample + DTX warmup the encoder
+      // settles into "transmit nothing" frames; the pacer must skip those, so
+      // far fewer packets are emitted than the ~50 ticks the buffer could fill.
+      out.push(new Int16Array(24000), 24000);
+      await wait(700);
+
+      // The DTX frames produce no RTP packets, so we never emit a full run of
+      // frames; crucially, none of the few we do emit may carry an empty/stray
+      // (<=2 byte DTX) payload — that would be a malformed Opus RTP frame.
+      const ticksWorth = 700 / 20;
+      expect(packets.length).toBeLessThan(ticksWorth / 2);
+      for (const p of packets) {
+        expect(p.payload.length).toBeGreaterThan(2);
+      }
+    } finally {
+      out.close();
+    }
+  });
+
   it("close() stops the pacer and a short buffer never blocks", async () => {
     const packets: FakePacket[] = [];
     const out = new OutboundAudio(fakeBuilders, (p) => {

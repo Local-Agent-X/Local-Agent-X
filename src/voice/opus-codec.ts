@@ -76,8 +76,44 @@ export interface OpusDecoder {
 /** Encodes 960-sample (20ms) 48kHz mono Int16 frames to Opus packets. */
 export interface OpusEncoder {
   encode(pcm48kMono: Int16Array): Uint8Array;
+  /**
+   * True iff the most recent encode() produced a DTX (discontinuous
+   * transmission) frame — i.e. libopus decided this 20ms of audio is silence
+   * and the caller should transmit nothing for it. Reflects OPUS_GET_IN_DTX of
+   * the last frame; meaningful only when dtx was enabled at creation.
+   */
+  wasDtx(): boolean;
   free(): void;
 }
+
+/**
+ * Resilience controls for the outbound speech encoder. Every field is optional;
+ * omitted fields fall back to the speech-tuned defaults in
+ * {@link DEFAULT_ENCODER_OPTIONS}. All are applied via @evan/opus's typed
+ * setters (which wrap the libopus encoder CTLs); none use a raw ctl() call.
+ */
+export interface OpusEncoderOptions {
+  /** Target bitrate in bits/sec (OPUS_SET_BITRATE). Speech default 24000. */
+  bitrate?: number;
+  /** Inband forward error correction (OPUS_SET_INBAND_FEC). Default true. */
+  inbandFec?: boolean;
+  /** Discontinuous transmission during silence (OPUS_SET_DTX). Default true. */
+  dtx?: boolean;
+  /** Expected packet loss %, tunes FEC strength (OPUS_SET_PACKET_LOSS_PERC). Default 10. */
+  packetLossPerc?: number;
+  /** Encoder complexity 0–10 (OPUS_SET_COMPLEXITY). Omitted → lib default. */
+  complexity?: number;
+}
+
+/** Speech-tuned defaults applied when an option is omitted. */
+export const DEFAULT_ENCODER_OPTIONS: Required<
+  Pick<OpusEncoderOptions, "bitrate" | "inbandFec" | "dtx" | "packetLossPerc">
+> = {
+  bitrate: 24000,
+  inbandFec: true,
+  dtx: true,
+  packetLossPerc: 10,
+};
 
 /** A new 48kHz mono Opus decoder. Output PCM is 48kHz mono Int16. */
 export async function createOpusDecoder(): Promise<OpusDecoder> {
@@ -109,15 +145,46 @@ export async function createOpusDecoder(): Promise<OpusDecoder> {
  * A new 48kHz mono Opus encoder, application=voip (best for speech, low delay).
  * Expects 960-sample (20ms) frames; other lengths are still valid Opus frame
  * sizes (2.5–60ms) but the WebRTC transport always feeds 20ms.
+ *
+ * `opts` tunes the encoder for resilient real-time speech (bitrate, inband FEC,
+ * DTX, expected packet loss, complexity). Each control is applied through
+ * @evan/opus's typed setters — thin wrappers over the libopus encoder CTLs — and
+ * read back to confirm it took, so an unsupported control degrades to a logged
+ * skip rather than a throw. Omitted fields use {@link DEFAULT_ENCODER_OPTIONS}.
  */
-export async function createOpusEncoder(): Promise<OpusEncoder> {
+export async function createOpusEncoder(
+  opts: OpusEncoderOptions = {},
+): Promise<OpusEncoder> {
   const opus = await loadOpusWasm();
   const enc = new opus.Encoder({
     channels: OPUS_CHANNELS,
     sample_rate: OPUS_SAMPLE_RATE,
     application: "voip",
   }) as WasmEncoder;
-  logger.info("opus encoder ready (wasm, 48kHz mono, voip)");
+
+  const bitrate = opts.bitrate ?? DEFAULT_ENCODER_OPTIONS.bitrate;
+  const inbandFec = opts.inbandFec ?? DEFAULT_ENCODER_OPTIONS.inbandFec;
+  const dtx = opts.dtx ?? DEFAULT_ENCODER_OPTIONS.dtx;
+  const packetLossPerc = opts.packetLossPerc ?? DEFAULT_ENCODER_OPTIONS.packetLossPerc;
+
+  // Apply each control and verify via the matching getter. A control that
+  // didn't take (lib build without it, out-of-range value clamped away) is
+  // reported, never thrown — partial resilience still beats failing the encoder.
+  const applied: string[] = [];
+  const skipped: string[] = [];
+  applyControl(applied, skipped, "bitrate", bitrate, () => (enc.bitrate = bitrate), () => enc.bitrate === bitrate);
+  applyControl(applied, skipped, "inbandFec", inbandFec, () => (enc.inband_fec = inbandFec), () => enc.inband_fec === inbandFec);
+  applyControl(applied, skipped, "dtx", dtx, () => (enc.dtx = dtx), () => enc.dtx === dtx);
+  applyControl(applied, skipped, "packetLossPerc", packetLossPerc, () => (enc.packet_loss = packetLossPerc), () => enc.packet_loss === packetLossPerc);
+  if (opts.complexity !== undefined) {
+    const cx = opts.complexity;
+    applyControl(applied, skipped, "complexity", cx, () => (enc.complexity = clampComplexity(cx)), () => enc.complexity === clampComplexity(cx));
+  }
+
+  logger.info(
+    `opus encoder ready (wasm, 48kHz mono, voip); applied=[${applied.join(",")}]` +
+      (skipped.length ? ` skipped=[${skipped.join(",")}]` : ""),
+  );
 
   return {
     encode(pcm48kMono: Int16Array): Uint8Array {
@@ -132,10 +199,45 @@ export async function createOpusEncoder(): Promise<OpusEncoder> {
       );
       return enc.encode(bytes);
     },
+    wasDtx(): boolean {
+      // OPUS_GET_IN_DTX reflects whether the most recent encode emitted a DTX
+      // (no-transmission) frame. When dtx wasn't enabled this is always false.
+      return enc.in_dtx;
+    },
     free(): void {
       enc.drop();
     },
   };
+}
+
+/** Opus complexity is 0–10; clamp so an out-of-range request can't throw. */
+function clampComplexity(c: number): 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 {
+  const v = Math.max(0, Math.min(10, Math.round(c)));
+  // The rounded clamp is provably one of the literal values the lib's typed
+  // setter accepts; narrow without an `any` escape.
+  return v as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+}
+
+/**
+ * Set one encoder control and confirm it stuck via its getter. A setter that
+ * throws (control absent in this libopus build) or a value that doesn't read
+ * back is recorded as skipped — the encoder stays usable either way.
+ */
+function applyControl(
+  applied: string[],
+  skipped: string[],
+  name: string,
+  value: number | boolean,
+  set: () => void,
+  verify: () => boolean,
+): void {
+  try {
+    set();
+    if (verify()) applied.push(name);
+    else skipped.push(`${name}(unverified)`);
+  } catch (e) {
+    skipped.push(`${name}(${(e as Error).message})`);
+  }
 }
 
 // ---------------------------------------------------------------------------

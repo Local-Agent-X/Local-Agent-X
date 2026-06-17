@@ -42,6 +42,11 @@ export type RtpSink = (packet: WeriftRtpPacket) => void;
  * async tick rejection path — it is logged at error level and the pacer keeps
  * ticking so a transient failure doesn't permanently wedge the talkspurt; per-
  * frame encode errors drop that frame only.
+ *
+ * The encoder runs with DTX enabled, so a silence frame may produce a "transmit
+ * nothing" result; emitFrame() detects that (wasDtx / empty payload) and sends
+ * no RTP packet for it — advancing the timestamp clock but not the sequence
+ * number, and re-marking the next real frame as a talkspurt start.
  */
 export class OutboundAudio {
   private readonly rtp: RtpBuilders;
@@ -159,6 +164,22 @@ export class OutboundAudio {
       logger.warn(`opus encode dropped a frame: ${(e as Error).message}`);
       return;
     }
+    // DTX (discontinuous transmission): with dtx enabled the encoder decides a
+    // 20ms span is silence and signals "transmit nothing" — surfaced either as
+    // wasDtx() or as a zero/near-empty payload. Per Opus DTX-over-RTP semantics
+    // we send NOTHING this tick: emitting a 0-byte (or stray 1-byte DTX) RTP
+    // payload would be a malformed frame to the receiver. The next real frame
+    // reopens a talkspurt (marker) so the phone's jitter buffer resyncs.
+    //
+    // We do NOT advance the sequence number for an unsent packet — RTP sequence
+    // numbers count transmitted packets, so a gap here would look like loss. We
+    // DO advance the timestamp by the samples consumed (the 48kHz sampling clock
+    // keeps running through silence), keeping timestamps aligned to wall time.
+    if (encoder.wasDtx() || payload.length <= 2) {
+      this.timestamp = (this.timestamp + OPUS_FRAME_SAMPLES) >>> 0;
+      this.talkspurtStart = true;
+      return;
+    }
     const header = new this.rtp.RtpHeader({
       payloadType: OPUS_PAYLOAD_TYPE,
       sequenceNumber: this.sequenceNumber,
@@ -175,8 +196,16 @@ export class OutboundAudio {
 
   private getEncoder(): Promise<OpusEncoder> {
     if (this.encoder) return Promise.resolve(this.encoder);
+    // Speech-tuned, loss-resilient encoder: low speech bitrate + inband FEC +
+    // DTX + an expected-loss hint. These are createOpusEncoder's defaults; we
+    // pass them explicitly so the intent of the voice transport is local here.
     // Share one in-flight create across racing ticks.
-    return (this.encoderInit ??= createOpusEncoder().then((enc) => {
+    return (this.encoderInit ??= createOpusEncoder({
+      bitrate: 24000,
+      inbandFec: true,
+      dtx: true,
+      packetLossPerc: 10,
+    }).then((enc) => {
       // close() may have raced in while the encoder was being created.
       if (this.closed) {
         enc.free();

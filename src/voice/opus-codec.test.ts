@@ -31,6 +31,11 @@ function sineFrame(freqHz: number, amplitude = 8000): Int16Array {
   return frame;
 }
 
+/** One 20ms frame of pure digital silence. */
+function silenceFrame(): Int16Array {
+  return new Int16Array(OPUS_FRAME_SAMPLES);
+}
+
 describe("opus encode/decode roundtrip", () => {
   it("encodes a 960-sample 48kHz sine and decodes ~960 samples back, energy preserved", async () => {
     const encoder = await createOpusEncoder();
@@ -57,6 +62,55 @@ describe("opus encode/decode roundtrip", () => {
     } finally {
       encoder.free();
       decoder.free();
+    }
+  });
+
+  it("applies resilience options (bitrate/FEC/DTX) and still round-trips a frame", async () => {
+    const encoder = await createOpusEncoder({
+      bitrate: 24000,
+      inbandFec: true,
+      dtx: true,
+      packetLossPerc: 15,
+      complexity: 7,
+    });
+    const decoder = await createOpusDecoder();
+    try {
+      const input = sineFrame(440);
+      const packet = encoder.encode(input);
+      expect(packet).toBeInstanceOf(Uint8Array);
+      expect(packet.length).toBeGreaterThan(0);
+      // A normal speech-energy frame is not DTX.
+      expect(encoder.wasDtx()).toBe(false);
+
+      const decoded = decoder.decode(packet);
+      expect(decoded.length).toBe(OPUS_FRAME_SAMPLES);
+      const ratio = rms(decoded) / rms(input);
+      expect(ratio).toBeGreaterThanOrEqual(0.3);
+      expect(ratio).toBeLessThanOrEqual(3.0);
+    } finally {
+      encoder.free();
+      decoder.free();
+    }
+  });
+
+  it("DTX: sustained silence yields a no-output (markedly smaller) frame without throwing", async () => {
+    const encoder = await createOpusEncoder({ dtx: true });
+    try {
+      let sawDtx = false;
+      let minLen = Infinity;
+      // libopus needs a few silence frames before it settles into DTX; feed a
+      // generous run and assert at least one frame is a DTX no-output frame.
+      for (let i = 0; i < 25; i++) {
+        const pkt = encoder.encode(silenceFrame());
+        expect(pkt).toBeInstanceOf(Uint8Array);
+        minLen = Math.min(minLen, pkt.length);
+        if (encoder.wasDtx()) sawDtx = true;
+      }
+      expect(sawDtx).toBe(true);
+      // DTX/empty frames are tiny compared to a real speech packet.
+      expect(minLen).toBeLessThanOrEqual(2);
+    } finally {
+      encoder.free();
     }
   });
 });

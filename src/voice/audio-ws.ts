@@ -190,6 +190,28 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
       },
     };
 
+    // Single source of truth for tearing down the session + peer. Idempotent via
+    // the `closed` flag: whoever fires first (ws-close OR a terminal rtc state)
+    // wins, the other becomes a no-op — so ws-close-then-failed and
+    // failed-then-ws-close both tear down exactly once. The binary/JSON handlers
+    // and sendAudio/sendEvent all gate on `closed`, so flipping it here also stops
+    // routing audio. The WS itself is NOT closed here: webrtc errors leave the
+    // signaling socket open (mirrors the webrtc_setup_failed path), and the phone
+    // drives reconnect by opening a fresh socket.
+    const teardown = (): void => {
+      if (closed) return;
+      closed = true;
+      try { session?.close(); } catch (e) {
+        logger.warn(`[voice-ws] session close threw: ${(e as Error).message}`);
+      }
+      session = null;
+      void peer?.close().catch((e: unknown) => {
+        logger.warn(`[voice-ws] peer close threw: ${(e as Error).message}`);
+      });
+      peer = null;
+      logger.info(`[voice-ws] session closed: ${sessionId || "(no-hello)"}`);
+    };
+
     ws.on("message", async (data: RawData, isBinary: boolean) => {
       if (closed) return;
 
@@ -247,7 +269,26 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
                 peer = await peerFactory({
                   onMicPcm: (f) => session?.onMicFrame(f),
                   onLocalIce: (c) => ctx.sendEvent({ type: "rtc_ice", candidate: c }),
-                  onConnectionState: (s) => logger.info(`[voice-ws] rtc state: ${s}`),
+                  onConnectionState: (s) => {
+                    if (s === "failed") {
+                      // Terminal: the media path is gone. Tell the client (once,
+                      // while the WS is still open) and tear down the peer +
+                      // session so the Opus codecs + RTP pacer don't leak. Guard
+                      // on `closed` so a normal ws-close that already tore down
+                      // doesn't trigger a second error/teardown.
+                      if (closed) return;
+                      logger.warn(`[voice-ws] rtc state: failed — tearing down`);
+                      ctx.sendEvent({ type: "error", message: "webrtc_failed" });
+                      teardown();
+                    } else if (s === "disconnected") {
+                      // Transient: ICE may auto-recover. Log only, no teardown.
+                      logger.info(`[voice-ws] rtc state: disconnected (awaiting recovery)`);
+                    } else {
+                      // "closed" is normally our own teardown; the rest are
+                      // progress states. Log, don't act.
+                      logger.info(`[voice-ws] rtc state: ${s}`);
+                    }
+                  },
                 });
                 if (closed) { void peer.close().catch(() => {}); peer = null; return; }
                 const sdp = await peer.createOffer();
@@ -297,13 +338,10 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
     });
 
     ws.on("close", () => {
-      closed = true;
-      try { session?.close(); } catch {}
-      void peer?.close().catch((e: unknown) => {
-        logger.warn(`[voice-ws] peer close threw: ${(e as Error).message}`);
-      });
-      peer = null;
-      logger.info(`[voice-ws] session closed: ${sessionId || "(no-hello)"}`);
+      // Shared idempotent teardown: a no-op if a terminal rtc "failed" already
+      // cleaned up, otherwise it closes the session + peer. Either way `closed`
+      // is set so the message handlers stop routing.
+      teardown();
     });
 
     ws.on("error", (err) => {

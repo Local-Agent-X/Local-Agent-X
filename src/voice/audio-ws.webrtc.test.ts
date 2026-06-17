@@ -201,6 +201,68 @@ describe("/ws/voice webrtc transport", () => {
     expect(ready.ttsSampleRate).toBe(24000);
     ws.close();
   });
+
+  it("connection state 'failed' → closes peer+session and sends error{webrtc_failed} to the client", async () => {
+    const ws = await connect();
+    ws.send(JSON.stringify({ type: "hello", sessionId: "s6", transport: "webrtc" }));
+    await nextEvent(ws, "rtc_offer");
+    const peer = await waitForPeer();
+    const session = lastSession!;
+
+    const errP = nextEvent(ws, "error");
+    peer.handlers.onConnectionState("failed");
+    const err = await errP;
+    expect(err.message).toBe("webrtc_failed");
+    await viPoll(() => peer.closed && session.closed);
+    expect(peer.closed).toBe(true);
+    expect(session.closed).toBe(true);
+    ws.close();
+  });
+
+  it("teardown is idempotent: after a 'failed' teardown, a ws close does NOT double-close (count stays 1)", async () => {
+    const ws = await connect();
+    ws.send(JSON.stringify({ type: "hello", sessionId: "s7", transport: "webrtc" }));
+    await nextEvent(ws, "rtc_offer");
+    const peer = await waitForPeer();
+    const session = lastSession!;
+
+    // Count close() calls on both fakes.
+    let peerCloses = 0;
+    let sessionCloses = 0;
+    const realPeerClose = peer.close.bind(peer);
+    peer.close = async () => { peerCloses++; return realPeerClose(); };
+    const realSessionClose = session.close.bind(session);
+    session.close = () => { sessionCloses++; realSessionClose(); };
+
+    const errP = nextEvent(ws, "error");
+    peer.handlers.onConnectionState("failed");
+    await errP;
+    await viPoll(() => peer.closed && session.closed);
+    expect(peerCloses).toBe(1);
+    expect(sessionCloses).toBe(1);
+
+    // Now close the socket — teardown must be a no-op, not a second close/throw.
+    await new Promise<void>((res) => { ws.once("close", () => res()); ws.close(); });
+    await viPoll(() => true); // let the server-side close handler run
+    expect(peerCloses).toBe(1);
+    expect(sessionCloses).toBe(1);
+  });
+
+  it("non-terminal states ('connected' then 'disconnected') do NOT tear down", async () => {
+    const ws = await connect();
+    ws.send(JSON.stringify({ type: "hello", sessionId: "s8", transport: "webrtc" }));
+    await nextEvent(ws, "rtc_offer");
+    const peer = await waitForPeer();
+    const session = lastSession!;
+
+    peer.handlers.onConnectionState("connected");
+    peer.handlers.onConnectionState("disconnected");
+    // Give any erroneous async teardown a chance to run before asserting.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(peer.closed).toBe(false);
+    expect(session.closed).toBe(false);
+    ws.close();
+  });
 });
 
 describe("/ws/voice legacy PCM transport (unchanged)", () => {

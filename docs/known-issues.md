@@ -39,3 +39,21 @@ now honored by the sovits installers). The structural item below remains.
   as `-cpu-` artifacts and drop the dead `LAX_FORCE_CPU_TORCH` from those two
   jobs.
 - **Type:** build/CI structural gap · **Severity:** medium
+
+## WebRTC voice transport is implemented but unverified on physical hardware
+
+- **Where:** [src/voice/audio-ws.ts](../src/voice/audio-ws.ts),
+  [src/voice/voice-peer.ts](../src/voice/voice-peer.ts),
+  [src/voice/opus-codec.ts](../src/voice/opus-codec.ts) (and the
+  `WebRtcVoiceClient` in the agentxos-mobile repo); see
+  [ADR 0002](adr/0002-webrtc-voice-transport-via-werift.md).
+- **What:** The WebRTC voice path (werift peer + `@evan/opus` WASM codec,
+  signaled over `/ws/voice` via `rtc_offer`/`rtc_answer`/`rtc_ice`, desktop as
+  offerer) is fully implemented and default-on behind the phone's transport
+  flag, but it has NOT been validated on a physical device: ICE connectivity
+  over Tailscale, real `getUserMedia` AEC quality, and `react-native-webrtc`
+  native media all need an EAS rebuild + a phone to confirm. The legacy raw-PCM
+  voice path remains the verified default fallback (selected when `hello`
+  omits `transport` or sets `"pcm"`), and its removal is deferred until this
+  on-device verification passes.
+- **Type:** unverified-on-hardware · **Severity:** medium

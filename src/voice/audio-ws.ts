@@ -3,19 +3,30 @@
 // Protocol:
 //   Path: /ws/voice
 //   Auth: same token as /ws/chat (query param or sec-websocket-protocol)
-//   Control messages (JSON, one line): { type: "hello", sessionId }
-//                                       { type: "mute" | "unmute" }
-//                                       { type: "eos" }  (end of speech, client-side)
-//                                       { type: "bye" }
-//   Audio frames (binary): Int16 PCM, 16kHz mono, ~30ms per frame (480 samples, 960 bytes)
 //
-// Phase 1 behavior: loopback. Any audio frame the client sends comes straight
-// back out on the same socket so we can verify the transport end-to-end
-// without touching STT, LLM, or TTS. Talk into the mic → hear your own
-// voice back with ~20-50ms round-trip.
+// One socket carries audio over one of TWO transports, chosen by the client's
+// opening `hello`:
+//   (a) PCM (default; transport absent or "pcm") — audio rides this socket as
+//       binary frames both ways: Int16 PCM, 16kHz mono, ~30ms per frame (480
+//       samples, 960 bytes). Mic frames in, TTS frames out.
+//   (b) WebRTC (hello.transport:"webrtc") — audio rides a werift VoicePeer
+//       (mic in via Opus → 16kHz PCM → STT; TTS PCM → 48kHz Opus → paced RTP),
+//       and this socket carries only SDP/ICE signaling plus the JSON control
+//       events. Desktop is the OFFERER: on hello it sends `rtc_offer`, the
+//       client replies `rtc_answer`, and both trickle `rtc_ice`. See the
+//       "Optional WebRTC audio transport" section below.
 //
-// Later phases will attach STT/LLM/TTS consumers to the frame stream via
-// setVoiceSessionFactory() below.
+// Control messages (JSON, one line) the handler accepts:
+//   { type: "hello", sessionId, mode?, clientStt?, transport? }  open session
+//   { type: "eos" }                              end of speech (client-side)
+//   { type: "transcript", text, isFinal? }       client-side STT result
+//   { type: "voice_settings", voice?, speed? }   live voice/speed change
+//   { type: "rtc_answer", sdp }                  WebRTC only — SDP answer
+//   { type: "rtc_ice", candidate }               WebRTC only — trickle ICE
+//   { type: "bye" }                              close
+//
+// STT/LLM/TTS consumers attach to the frame stream via the factory registered
+// with setVoiceSessionFactory() below.
 
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { IncomingMessage, Server } from "node:http";

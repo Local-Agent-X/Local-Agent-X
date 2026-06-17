@@ -38,6 +38,7 @@
     "@arikernel/runtime": "file:packages/arikernel/runtime",
     "@arikernel/taint-tracker": "file:packages/arikernel/taint-tracker",
     "@arikernel/tool-executors": "file:packages/arikernel/tool-executors",
+    "@evan/opus": "^1.0.3",
     "@types/diff": "^7.0.2",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.8.0",

@@ -76,6 +76,45 @@ export function setVoiceSessionFactory(factory: VoiceSessionFactory): void {
   sessionFactory = factory;
 }
 
+// ── Optional WebRTC audio transport ──────────────────────────────────────
+// When a client's `hello` requests transport:"webrtc", audio flows over a
+// VoicePeer (mic in / TTS out) while this socket carries only SDP/ICE
+// signaling + the existing JSON control events. Absent/"pcm" → unchanged
+// binary-PCM-over-WS path. Mirrors the voice-peer.ts RtcIceCandidate shape
+// (capital L in sdpMLineIndex); defined locally so the boot graph never
+// pulls in werift via voice-peer.ts (the factory dynamic-imports it lazily).
+
+/** Trickle ICE candidate wire shape — must match voice-peer.ts. */
+interface RtcIceCandidate {
+  candidate: string;
+  sdpMid: string | null;
+  sdpMLineIndex: number | null;
+}
+
+/** The slice of VoicePeer the WS handler drives. */
+interface VoicePeerLike {
+  createOffer(): Promise<string>;
+  applyAnswer(sdp: string): Promise<void>;
+  addRemoteIce(c: RtcIceCandidate): Promise<void>;
+  writeTtsPcm(frame: Int16Array, sampleRate: number): void;
+  close(): Promise<void>;
+}
+
+type VoicePeerFactory = (handlers: {
+  onLocalIce: (c: RtcIceCandidate | null) => void;
+  onConnectionState: (s: string) => void;
+  onMicPcm: (frame: Int16Array) => void;
+}) => Promise<VoicePeerLike>;
+
+// Lazy dynamic import keeps werift/opus out of the boot graph AND lets the
+// unit test inject a fake peer via setVoicePeerFactory().
+let peerFactory: VoicePeerFactory = async (h) => (await import("./voice-peer.js")).VoicePeer.create(h);
+
+/** Register a custom peer factory (real default = lazy VoicePeer; tests inject a fake). */
+export function setVoicePeerFactory(f: VoicePeerFactory): void {
+  peerFactory = f;
+}
+
 export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloadBytes: number): void {
   // Use noServer so we can route by path manually. When multiple
   // WebSocketServers attach via {server, path}, each one's upgrade handler
@@ -134,6 +173,9 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
     let sessionId = "";
     let session: VoiceSession | null = null;
     let closed = false;
+    let peer: VoicePeerLike | null = null;
+    let ttsSampleRate = 48000;
+    let transport: "pcm" | "webrtc" = "pcm";
 
     const ctx: VoiceSessionContext = {
       get sessionId() { return sessionId; },
@@ -148,10 +190,12 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
       },
     };
 
-    ws.on("message", (data: RawData, isBinary: boolean) => {
+    ws.on("message", async (data: RawData, isBinary: boolean) => {
       if (closed) return;
 
       if (isBinary) {
+        // Audio is on WebRTC now — ignore inbound binary on the WS in that mode.
+        if (transport === "webrtc") return;
         // PCM frame from mic
         if (!session) return; // client sent audio before hello
         const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
@@ -169,15 +213,67 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
           if (!sessionId) { ws.close(4000, "hello requires sessionId"); return; }
           const mode: "chat" | "dictate" = msg.mode === "dictate" ? "dictate" : "chat";
           const clientStt = msg.clientStt === true;
+          const reqTransport = msg.transport === "webrtc" ? "webrtc" : "pcm";
+
+          // For webrtc, AUDIO leaves the WS: sendAudio routes TTS PCM to the
+          // peer, and sendEvent snoops the TTS sample rate (carried on the
+          // voice_ready event) so writeTtsPcm gets the right rate. The control
+          // plane (sendEvent) ALWAYS stays on the WS — only audio moves.
+          const webrtcSendAudio = (frame: Int16Array) => { peer?.writeTtsPcm(frame, ttsSampleRate); };
+          const snoopEvent = (event: Record<string, unknown>) => {
+            const r = event["ttsSampleRate"];
+            if (typeof r === "number" && r > 0) ttsSampleRate = r;
+            ctx.sendEvent(event);
+          };
+
           session = sessionFactory({
             sessionId,
             mode,
             clientStt,
-            sendAudio: ctx.sendAudio,
-            sendEvent: ctx.sendEvent,
+            sendAudio: reqTransport === "webrtc" ? webrtcSendAudio : ctx.sendAudio,
+            sendEvent: reqTransport === "webrtc" ? snoopEvent : ctx.sendEvent,
           });
           ctx.sendEvent({ type: "ready", sessionId, mode });
-          logger.info(`[voice-ws] session opened: ${sessionId} (mode=${mode})`);
+          logger.info(`[voice-ws] session opened: ${sessionId} (mode=${mode}, transport=${reqTransport})`);
+
+          if (reqTransport === "webrtc") {
+            transport = "webrtc";
+            // Build the peer and send the offer asynchronously. `session` is
+            // already assigned so onMicPcm can reference it; webrtcSendAudio
+            // closes over `peer` (assigned below) and the `peer?.` guard covers
+            // the window before it lands. A setup error is surfaced, never swallowed.
+            void (async () => {
+              try {
+                peer = await peerFactory({
+                  onMicPcm: (f) => session?.onMicFrame(f),
+                  onLocalIce: (c) => ctx.sendEvent({ type: "rtc_ice", candidate: c }),
+                  onConnectionState: (s) => logger.info(`[voice-ws] rtc state: ${s}`),
+                });
+                if (closed) { void peer.close().catch(() => {}); peer = null; return; }
+                const sdp = await peer.createOffer();
+                ctx.sendEvent({ type: "rtc_offer", sdp });
+              } catch (e) {
+                logger.error(`[voice-ws] webrtc setup failed: ${(e as Error).message}`);
+                ctx.sendEvent({ type: "error", message: "webrtc_setup_failed" });
+              }
+            })();
+          }
+        } else if (msg.type === "rtc_answer") {
+          try {
+            const sdp = String(msg.sdp || "");
+            if (sdp) await peer?.applyAnswer(sdp);
+          } catch (e) {
+            logger.warn(`[voice-ws] rtc_answer failed: ${(e as Error).message}`);
+          }
+        } else if (msg.type === "rtc_ice") {
+          // null candidate = end-of-candidates; safe to ignore on receive.
+          if (msg.candidate && typeof msg.candidate === "object") {
+            try {
+              await peer?.addRemoteIce(msg.candidate as RtcIceCandidate);
+            } catch (e) {
+              logger.warn(`[voice-ws] rtc_ice failed: ${(e as Error).message}`);
+            }
+          }
         } else if (msg.type === "eos") {
           session?.onEndOfSpeech?.();
         } else if (msg.type === "transcript") {
@@ -203,6 +299,10 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
     ws.on("close", () => {
       closed = true;
       try { session?.close(); } catch {}
+      void peer?.close().catch((e: unknown) => {
+        logger.warn(`[voice-ws] peer close threw: ${(e as Error).message}`);
+      });
+      peer = null;
       logger.info(`[voice-ws] session closed: ${sessionId || "(no-hello)"}`);
     });
 

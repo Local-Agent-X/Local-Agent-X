@@ -13,6 +13,7 @@ import { getSetting } from "./settings";
 import { isServerRunning } from "./server-process";
 import { buildAppDragStripJs } from "./window-injections";
 import { lockAppWindowNavigation } from "./app-window-guards";
+import { isExternalBrowserUrl } from "./url-classify";
 
 // Resolve /files/* paths against PROJECT_ROOT, not process.cwd() — a
 // Finder/Launchpad-launched .app has cwd `/`; a Windows desktop-launch.bat
@@ -36,8 +37,10 @@ export function handleWindowOpen(openUrl: string): Electron.WindowOpenHandlerRes
   const laxConfig = getLAXConfig();
   console.log(`[desktop] windowOpenHandler: ${openUrl}`);
 
-  // External links → system browser
-  if (openUrl.startsWith("http") && !openUrl.includes("127.0.0.1")) {
+  // External links → system browser. isExternalBrowserUrl classifies by hostname
+  // (not a substring) so an OAuth URL carrying a 127.0.0.1 redirect_uri in its
+  // query still opens externally — the bug that kept xAI sign-in from opening.
+  if (isExternalBrowserUrl(openUrl)) {
     shell.openExternal(openUrl);
     return { action: "deny" };
   }

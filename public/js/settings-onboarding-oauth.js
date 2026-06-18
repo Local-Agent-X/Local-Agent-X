@@ -108,11 +108,24 @@ async function onboardOAuth(type) {
         if (status) { status.style.color = ''; status.textContent = 'Browser opened — approve, then paste the code here.'; }
         return;
       }
-      // xAI's server spawns the browser itself (more reliable than
-      // window.open for long URLs in Electron) and returns `opened: true`
-      // when it did. Skip the redundant window.open in that case.
-      if (!res.opened) window.open(res.authUrl, '_blank', 'width=600,height=700');
-      if (status) status.textContent = 'Sign-in window opened — complete login in the browser…';
+      // NEVER trust res.opened: the server's rundll32 launch silently no-ops on
+      // some Windows setups while still reporting opened:true, and programmatic
+      // window.open is dropped by Chromium for these long URLs in the Electron
+      // wrapper. Always render a clickable link — a real <a> click routes through
+      // Electron's window-open handler -> shell.openExternal, the one reliable
+      // path (same fix as settings-xai.js showXaiOpenFallback).
+      try { window.open(res.authUrl, '_blank', 'width=600,height=700'); } catch {}
+      if (status) {
+        status.innerHTML = '';
+        const note = document.createElement('div');
+        note.textContent = "If the xAI sign-in page didn't open, click here:";
+        note.style.marginBottom = '6px';
+        const link = document.createElement('a');
+        link.href = res.authUrl; link.target = '_blank'; link.rel = 'noopener';
+        link.textContent = 'Open xAI sign-in page';
+        link.style.color = 'var(--accent)'; link.style.fontWeight = '600';
+        status.appendChild(note); status.appendChild(link);
+      }
       // Watch for completion and flip the step to the signed-in state.
       startOnboardAuthPoll(type);
     } else if (res.error) {

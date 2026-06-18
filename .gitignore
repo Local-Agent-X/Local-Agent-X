@@ -1,4 +1,9 @@
-node_modules/
+# No trailing slash: must also ignore a `node_modules` SYMLINK, not just a real
+# directory. The self-update creates worktrees that junction node_modules from
+# the parent; on macOS that junction is a symlink, which `node_modules/` did NOT
+# match — so the worktree's `git add -A` committed it and the merge-back failed
+# with "cannot rmdir 'node_modules': Directory not empty".
+node_modules
 dist/
 dist.prev/
 .env

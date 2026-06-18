@@ -21,7 +21,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, cpSync,
 import { join, relative } from "path";
 import { homedir } from "os";
 import { Script } from "vm";
-import { serverDistIsFresh } from "./dist-freshness";
+import { serverDistIsFresh, desktopDistIsFresh } from "./dist-freshness";
 import { EMPTY_SHA256, STATE_PATH, sha256File, sha256SrcTree } from "./reconcile-hash";
 
 // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
@@ -343,7 +343,11 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
     await runStep("npm", ["install", "--no-audit", "--no-fund"], join(projectRoot, "desktop"), 300_000);
     ranSteps.push(desktopDepsMissing ? "desktop npm install (deps were missing)" : "desktop npm install");
   }
-  if (srcChanged) {
+  // Same freshness short-circuit the server build uses above: a gated update
+  // pre-builds desktop/dist (update-pipeline.ts), so the post-update boot loads
+  // a current main process — skip the redundant tsc AND the relaunch it forces.
+  const needsDesktopBuild = srcChanged && !desktopDistIsFresh(projectRoot);
+  if (needsDesktopBuild) {
     onStatus?.("Building app updates…");
     const distDir = join(projectRoot, "desktop", "dist");
     const backupDir = `${distDir}.prev`;
@@ -391,5 +395,5 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
     lastReconciledAt: new Date().toISOString(),
   });
 
-  return { needsRelaunch: srcChanged, ranSteps, warnings };
+  return { needsRelaunch: needsDesktopBuild, ranSteps, warnings };
 }

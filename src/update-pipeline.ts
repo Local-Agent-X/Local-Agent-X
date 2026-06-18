@@ -25,7 +25,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs
 import { join } from "node:path";
 import {
   createNamedWorktree, mergeWorktree, cleanupWorktree, getMergeBaseInfo,
-  getBranchHead, revertBranchTo, runRepoBuild,
+  getBranchHead, revertBranchTo, runRepoBuild, runDesktopTscBuild,
 } from "./agency/worktree.js";
 import { OTAManager } from "./ota-update.js";
 import { linkDirectoryInto, unlinkSharedJunctions } from "./agency/worktree-junctions.js";
@@ -204,6 +204,19 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       }
       const postSha = getBranchHead(mergeInfo.repoRoot, mergeInfo.baseBranch);
       recordMerge({ preSha: mergeInfo.sha, postSha, baseBranch: mergeInfo.baseBranch, repoRoot: mergeInfo.repoRoot, files: merge.files, ts: new Date().toISOString() });
+
+      // Pre-build desktop/dist for updates that touch the Electron main, so the
+      // restart is a single clean boot — reconcile's desktopDistIsFresh skip
+      // then avoids the rebuild + relaunch (the second cold boot). Runs before
+      // this function returns "Restart to finish", so the user can't restart
+      // into a half-written dist. Non-fatal: the server update already landed;
+      // a failure leaves the prior dist intact (--noEmitOnError) and next-boot
+      // reconcile rebuilds it.
+      if (sh(`git diff --name-only ${mergeInfo.sha} ${postSha} -- desktop/src`, repoRoot)) {
+        const dt = runDesktopTscBuild(repoRoot, BUILD_TIMEOUT_MS);
+        if (dt.ok) logger.info(`[update] pre-built desktop/dist for single-boot restart`);
+        else logger.warn(`[update] desktop pre-build failed; reconcile will rebuild next boot: ${dt.detail.slice(0, 300)}`);
+      }
     }
 
     const toCommit = sh("git rev-parse HEAD", repoRoot);

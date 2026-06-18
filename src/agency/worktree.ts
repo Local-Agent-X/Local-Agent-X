@@ -36,6 +36,7 @@ export {
   isolateNodeModules,
   revertBranchTo,
   runRepoBuild,
+  runDesktopTscBuild,
   runCommandInWorktree,
   changedFilesTouchDeps,
   securitySensitiveChangedFiles,

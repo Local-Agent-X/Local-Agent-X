@@ -5,6 +5,7 @@
  */
 
 import { execSync } from "node:child_process";
+import { join } from "node:path";
 
 import { activeWorktrees, git, logger } from "./worktree-core.js";
 import { unlinkSharedJunctions } from "./worktree-junctions.js";
@@ -228,6 +229,31 @@ export function runRepoBuild(repoRoot: string, timeoutMs: number): { ok: boolean
       maxBuffer: 10 * 1024 * 1024,
     });
     return { ok: true, detail: "build passed" };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message: string };
+    return { ok: false, detail: (err.stderr || err.stdout || err.message).slice(-1500) };
+  }
+}
+
+/**
+ * Compile desktop/src → desktop/dist after a merged update, so the restart is a
+ * single clean boot instead of reconcile rebuilding + relaunching. tsc only —
+ * the native speech helper isn't a TS artifact and its sources don't change on
+ * a desktop/src edit (full `npm run build` would re-run the native toolchain).
+ * `--noEmitOnError`: a type error leaves the prior dist intact rather than a
+ * half-written one, so a failure here degrades to reconcile's next-boot rebuild
+ * instead of bricking the loaded main process.
+ */
+export function runDesktopTscBuild(repoRoot: string, timeoutMs: number): { ok: boolean; detail: string } {
+  try {
+    execSync("npx tsc --noEmitOnError", {
+      cwd: join(repoRoot, "desktop"),
+      encoding: "utf-8",
+      timeout: timeoutMs,
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return { ok: true, detail: "desktop tsc passed" };
   } catch (e) {
     const err = e as { stdout?: string; stderr?: string; message: string };
     return { ok: false, detail: (err.stderr || err.stdout || err.message).slice(-1500) };

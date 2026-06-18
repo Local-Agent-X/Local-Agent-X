@@ -1,7 +1,8 @@
-// Single source of truth for "is the server's compiled dist/ current for the
-// source tree?" — used both by server-process.ts (choose dist vs tsx at spawn)
-// and reconcile.ts (decide whether a pre-launch rebuild is needed). Keeping it
-// in one place stops those two from drifting into two different answers.
+// Single source of truth for "is a compiled dist/ current for its source
+// tree?" — server dist (server-process.ts chooses dist vs tsx at spawn,
+// reconcile.ts decides a pre-launch rebuild) and desktop dist (reconcile.ts
+// decides a rebuild + relaunch). Keeping the check in one place stops those
+// callers from drifting into different answers.
 //
 // mtime, not content hash: `npm run build` runs a full (non-incremental) tsc,
 // so after a build dist/index.js is newer than every source file. The check is
@@ -18,11 +19,10 @@
 import { existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 
-export function serverDistIsFresh(projectRoot: string): boolean {
-  const distIndex = join(projectRoot, "dist", "index.js");
-  if (!existsSync(distIndex)) return false;
-  const distMtime = statSync(distIndex).mtimeMs;
-  const stack = [join(projectRoot, "src")];
+function distNewerThanSources(distFile: string, srcDir: string): boolean {
+  if (!existsSync(distFile)) return false;
+  const distMtime = statSync(distFile).mtimeMs;
+  const stack = [srcDir];
   while (stack.length) {
     const dir = stack.pop()!;
     let entries;
@@ -35,4 +35,18 @@ export function serverDistIsFresh(projectRoot: string): boolean {
     }
   }
   return true;
+}
+
+export function serverDistIsFresh(projectRoot: string): boolean {
+  return distNewerThanSources(join(projectRoot, "dist", "index.js"), join(projectRoot, "src"));
+}
+
+// Desktop (Electron main) counterpart. A gated update pre-builds desktop/dist
+// before the restart (update-pipeline.ts), so reconcile can skip the rebuild —
+// and the relaunch it forces — when the loaded main process is already current.
+export function desktopDistIsFresh(projectRoot: string): boolean {
+  return distNewerThanSources(
+    join(projectRoot, "desktop", "dist", "main.js"),
+    join(projectRoot, "desktop", "src"),
+  );
 }

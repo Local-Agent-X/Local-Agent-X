@@ -25,7 +25,7 @@ import {
 } from "./server-process";
 import { createWindow, getMainWindow, isStuckOnSplash, showWindow, toggleWindow, prewarmAppWindow } from "./window";
 import { setupApplicationMenu } from "./app-menu";
-import { registerHotkey, showNotification } from "./hotkey-notifications";
+import { registerHotkey, registerPanicHotkey, showNotification } from "./hotkey-notifications";
 import { setupIPC } from "./ipc";
 import { createTray, destroyTray } from "./tray";
 import { registerAutostart } from "./autostart";
@@ -344,6 +344,7 @@ app.on("ready", async () => {
   });
 
   registerHotkey(toggleWindow);
+  registerPanicHotkey();
   // (createWindow was called before reconcile so the splash showed during
   //  any npm install / desktop rebuild — don't call it again here.)
 

@@ -28,11 +28,13 @@ function handleSettingsChanged(msg) {
   // (or another tab) just flipped. Without this the toggles stay green
   // even though config.json says off, and the user reasonably asks
   // "is the agent lying?" Live failure 2026-05-19.
-  if ('enableShell' in msg.settings || 'enableHttp' in msg.settings || 'enableBrowser' in msg.settings) {
+  if ('enableShell' in msg.settings || 'enableHttp' in msg.settings || 'enableBrowser' in msg.settings || 'enableComputerControl' in msg.settings) {
     if (typeof setToolPolicyToggle === 'function') {
       if ('enableShell' in msg.settings)   setToolPolicyToggle('tp-toggle-shell',   msg.settings.enableShell   !== false);
       if ('enableHttp' in msg.settings)    setToolPolicyToggle('tp-toggle-http',    msg.settings.enableHttp    !== false);
       if ('enableBrowser' in msg.settings) setToolPolicyToggle('tp-toggle-browser', msg.settings.enableBrowser !== false);
+      // Panic hotkey broadcasts enableComputerControl:false on disarm — flip the UI toggle off too.
+      if ('enableComputerControl' in msg.settings) setToolPolicyToggle('tp-toggle-computer', msg.settings.enableComputerControl === true);
     }
   }
 }

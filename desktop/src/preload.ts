@@ -57,6 +57,14 @@ contextBridge.exposeInMainWorld("desktop", {
   requestMediaAccess: (mediaType: "microphone" | "camera"): Promise<boolean> =>
     ipcRenderer.invoke("request-media-access", mediaType),
 
+  // System Permissions card (Settings → Security). openPrivacyPane deep-links to
+  // the exact OS pane; checkPermission reports current grant status so the card
+  // can show a live dot. macOS-only; checkPermission returns "unsupported" else.
+  openPrivacyPane: (pane: "accessibility" | "screen" | "microphone"): Promise<boolean> =>
+    ipcRenderer.invoke("open-privacy-pane", pane),
+  checkPermission: (kind: "accessibility" | "screen" | "microphone"): Promise<string> =>
+    ipcRenderer.invoke("check-permission", kind),
+
   // Native OS speech recognition — drop-in replacement for the broken
   // webkitSpeechRecognition path in Electron. The renderer treats this
   // like an event stream:

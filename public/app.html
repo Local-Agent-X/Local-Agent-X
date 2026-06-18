@@ -533,6 +533,14 @@
           <div class="toggle-row"><div><div class="toggle-label">Shell Access (bash)</div><div class="toggle-desc">Allow shell commands (rate limited)</div></div><div id="tp-toggle-shell" class="toggle on" onclick="toolPolicyToggle('enableShell', this)"></div></div>
           <div class="toggle-row"><div><div class="toggle-label">HTTP Requests</div><div class="toggle-desc">Outbound API calls (operator only)</div></div><div id="tp-toggle-http" class="toggle on" onclick="toolPolicyToggle('enableHttp', this)"></div></div>
           <div class="toggle-row"><div><div class="toggle-label">Browser</div><div class="toggle-desc">Playwright browser control (operator only)</div></div><div id="tp-toggle-browser" class="toggle on" onclick="toolPolicyToggle('enableBrowser', this)"></div></div>
+          <div class="toggle-row"><div><div class="toggle-label">Computer Control (mouse &amp; keyboard)</div><div class="toggle-desc">Let the agent move the mouse and type on your desktop. Off by default; macOS also needs Accessibility (see System Permissions below)</div></div><div id="tp-toggle-computer" class="toggle" onclick="toolPolicyToggle('enableComputerControl', this)"></div></div>
+        </div>
+        <div class="section-card" id="system-permissions-card">
+          <div class="section-title">System Permissions</div>
+          <div class="section-desc">Mouse/keyboard control and screen capture need macOS to grant permission. <strong>After you change one here, quit and reopen Local Agent X</strong> — macOS only applies it on restart.</div>
+          <div class="toggle-row"><div><div class="toggle-label">Accessibility</div><div class="toggle-desc">Required for mouse &amp; keyboard control</div></div><div style="display:flex;gap:8px;align-items:center"><span id="perm-status-accessibility" class="field-hint" style="margin:0">checking…</span><button class="action-btn" onclick="openPrivacyPane('accessibility')">Open</button></div></div>
+          <div class="toggle-row"><div><div class="toggle-label">Screen Recording</div><div class="toggle-desc">Required for screen capture</div></div><div style="display:flex;gap:8px;align-items:center"><span id="perm-status-screen" class="field-hint" style="margin:0">checking…</span><button class="action-btn" onclick="openPrivacyPane('screen')">Open</button></div></div>
+          <div class="toggle-row"><div><div class="toggle-label">Microphone</div><div class="toggle-desc">Required for voice mode</div></div><div style="display:flex;gap:8px;align-items:center"><span id="perm-status-microphone" class="field-hint" style="margin:0">checking…</span><button class="action-btn" onclick="openPrivacyPane('microphone')">Open</button></div></div>
         </div>
         <div class="section-card">
           <div class="section-title">File Access</div>
@@ -1302,6 +1310,7 @@
 <script src="/js/settings-audit-log.js?v=v1"></script>
 <script src="/js/settings-sandbox.js?v=v1"></script>
 <script src="/js/settings-tool-policy.js?v=v1"></script>
+<script src="/js/settings-permissions.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>
 <script src="/js/settings-integrations.js?v=v1"></script>
 <script src="/js/settings-mcp.js?v=v1"></script>

@@ -15,24 +15,44 @@ import { createLogger } from "./logger.js";
 const logger = createLogger("desktop-bridge");
 const REPLY_TIMEOUT_MS = 5_000;
 
-interface TrashResult { type: "lax:trash-item-result"; id: number; ok: boolean; }
-
 let seq = 0;
 const pending = new Map<number, (ok: boolean) => void>();
 let listenerAttached = false;
+let panicHandler: (() => void) | null = null;
 
 export function desktopBridgeAvailable(): boolean {
   return process.env.LAX_DESKTOP_BRIDGE === "1" && typeof process.send === "function";
 }
 
+// Single inbound listener for every main→server message: trashItem replies
+// (request/reply) and the panic kill-switch (fire-and-forget). Attached lazily
+// by the first consumer, so non-desktop runs never add a no-op listener.
 function ensureListener(): void {
   if (listenerAttached) return;
   listenerAttached = true;
-  process.on("message", (msg: TrashResult) => {
-    if (!msg || msg.type !== "lax:trash-item-result") return;
-    const fn = pending.get(msg.id);
-    if (fn) fn(msg.ok);
+  process.on("message", (msg: { type?: string; id?: number; ok?: boolean }) => {
+    if (!msg || typeof msg.type !== "string") return;
+    if (msg.type === "lax:trash-item-result") {
+      const fn = pending.get(msg.id!);
+      if (fn) fn(!!msg.ok);
+      return;
+    }
+    if (msg.type === "lax:panic-abort") {
+      try { panicHandler?.(); }
+      catch (e) { logger.warn(`[bridge] panic handler failed: ${(e as Error).message}`); }
+      return;
+    }
   });
+}
+
+/** Register the server-side handler for the desktop PANIC hotkey. Electron main
+ *  sends `lax:panic-abort` when the user hits the kill switch; the handler
+ *  aborts every in-flight run and disarms computer control. Wired once at boot
+ *  (server/index.ts); attaching the listener here means panic works even before
+ *  any trashItem request this session. */
+export function registerDesktopPanicHandler(handler: () => void): void {
+  panicHandler = handler;
+  ensureListener();
 }
 
 /** Ask Electron main to move `path` to the OS Trash / Recycle Bin via

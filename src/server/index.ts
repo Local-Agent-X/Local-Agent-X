@@ -228,6 +228,20 @@ export async function startServer(config: LAXConfig) {
   const { server, chatWs } = phaseSync("createHttpServer", () => createHttpServer(requestHandler, { config, dataDir }));
   chatWsHolder.value = chatWs;
 
+  // Desktop panic hotkey (main → lax:panic-abort): the one reliable way to halt
+  // an agent that's driving the mouse/keyboard — stop every in-flight run and
+  // disarm computer control so it can't resume on the next turn.
+  {
+    const { registerDesktopPanicHandler } = await import("../desktop-bridge.js");
+    const { disarmComputerControl } = await import("../computer-control.js");
+    registerDesktopPanicHandler(() => {
+      const active = chatWs.getActiveChats();
+      for (const sid of active) chatWs.stopChat(sid);
+      disarmComputerControl();
+      broadcastAll({ type: "settings_changed", settings: { enableComputerControl: false } });
+    });
+  }
+
   // Wire the message-count provider used by the WS session_snapshot event.
   // chat-ws can't import SessionStore directly (would pull memory.ts into a
   // layer that should stay transport-only), so we hand it a closure here.

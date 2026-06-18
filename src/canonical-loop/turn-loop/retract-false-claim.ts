@@ -24,6 +24,12 @@ import type { CommitTurnMessage } from "../checkpoint.js";
 const RETRACTABLE_REASONS: ReadonlySet<string> = new Set([
   "worker-hallucination",
   "creation-hallucination",
+  // The model claimed it lacks a tool/capability ("I have no tool for mouse
+  // control") and the tool-search-nudge guard is forcing it to tool_search
+  // first. Retract the premature denial so the user sees only the post-search
+  // answer — whether that's the completed action or a genuine "still can't"
+  // (the user shouldn't watch it say "I can't" and then immediately do it).
+  "tool-search-recovery",
 ]);
 
 export function isRetractableHallucination(reason: string | null | undefined): boolean {

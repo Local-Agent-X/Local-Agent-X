@@ -13,6 +13,13 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   generate_video: { kernel: "internal", risk: "workspace-write", offBoxFetch: true, rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
   camera_capture: { kernel: "internal", risk: "workspace-write", offBoxFetch: true },
   screen_capture: { kernel: "internal", risk: "workspace-write", offBoxFetch: true },
+  // Mouse/keyboard actuation. kernel:"internal" — it has no data-I/O sink the
+  // kernel taint-checks; it's an ACTUATOR. The policy rule allows it so it isn't
+  // default-denied; the REAL gates are the off-by-default enableComputerControl
+  // kill-switch (pre-dispatch, runs before this rule), the OS Accessibility
+  // grant (driver), and risk:"shell" (top autonomy tier → confirm-risky/
+  // autonomous profiles still gate the call).
+  computer:       { kernel: "internal", risk: "shell", rules: [{ id: "allow-computer", decision: "allow", reason: "Mouse/keyboard control allowed at policy layer; gated by enableComputerControl + OS permission + risk tier", priority: 40 }] },
   ocr:            { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction", priority: 50 }] },
 
   // ── Apps (app_* glob) ──

@@ -9,6 +9,8 @@
  *   beforeTurn:           mid-turn-stale, force-tool-use (codex), open-steps
  *                         (turn-0 plan seed on agent/background lanes)
  *   afterModelCall:       loop-detection, hallucination-check, action-claim,
+ *                         tool-search-nudge (all lanes — forces a tool_search
+ *                         when the model declines a capability tool-lessly),
  *                         premature-completion (worker ops only — forces one
  *                         more turn when a non-chat op ends tool-lessly with
  *                         nothing committed; runs AFTER action-claim so a
@@ -35,6 +37,7 @@ import { repeatFailureMiddleware } from "./repeat-failure.js";
 import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
 import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
+import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { openStepsMiddleware } from "./open-steps.js";
 import { selfCheckMiddleware } from "./self-check.js";
@@ -54,6 +57,11 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     loopDetectionMiddleware,
     hallucinationCheckMiddleware,
     actionClaimMiddleware,
+    // All lanes (incl. interactive chat) — forces a tool_search when the model
+    // declines a capability with zero tool calls, before the denial reaches the
+    // user. Runs before premature-completion so a "no tool" denial gets the
+    // search nudge, not the do-the-work nudge.
+    toolSearchNudgeMiddleware,
     prematureCompletionMiddleware,
     // Worker edited source but never built/typechecked/tested before wrapping
     // up → nudge once. Runs after premature-completion (they're mutually

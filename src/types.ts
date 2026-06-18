@@ -372,4 +372,8 @@ export interface LAXConfig {
   enableShell: boolean;
   enableHttp: boolean;
   enableBrowser: boolean;
+  /** Computer-control kill-switch (mouse/keyboard via the `computer` tool).
+   *  DEFAULT OFF — high-risk opt-in. When false, every `computer` call is
+   *  blocked at pre-dispatch. The panic hotkey flips this off. */
+  enableComputerControl: boolean;
 }

@@ -154,6 +154,10 @@ const configSchema = z.object({
   enableShell: z.boolean().default(true),
   enableHttp: z.boolean().default(true),
   enableBrowser: z.boolean().default(true),
+  // Computer control (mouse/keyboard via the `computer` tool) is the one
+  // category that defaults OFF — it can drive the whole machine, so it's an
+  // explicit opt-in (Settings → Security), gated further by the OS permission.
+  enableComputerControl: z.boolean().default(false),
 });
 
 function getConfigDir(): string {

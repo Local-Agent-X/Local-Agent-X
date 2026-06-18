@@ -17,7 +17,7 @@ import {
   stopServer,
   getServerPid,
 } from "./server-process";
-import { showNotification, registerHotkey } from "./hotkey-notifications";
+import { showNotification, registerHotkey, registerPanicHotkey } from "./hotkey-notifications";
 import { getMainWindow, toggleWindow, reapplyMainTitleBarOverlay, stepMainZoom } from "./window";
 import { registerAutostart, unregisterAutostart } from "./autostart";
 import {
@@ -75,8 +75,10 @@ export function setupIPC(): void {
       else unregisterAutostart();
     }
     if (key === "globalHotkey") {
+      // unregisterAll() also drops the panic hotkey — re-register both.
       globalShortcut.unregisterAll();
       registerHotkey(toggleWindow);
+      registerPanicHotkey();
     }
     if (key === "theme") {
       // Live-update the window paint colour so the top strip flips with
@@ -112,6 +114,40 @@ export function setupIPC(): void {
     } catch (err) {
       console.warn(`[desktop] askForMediaAccess(${mediaType}) failed:`, err);
       return false;
+    }
+  });
+
+  // Deep-link straight to the relevant OS privacy pane so the System Permissions
+  // card drops the user on the exact screen instead of hunting for it. macOS uses
+  // the x-apple.systempreferences scheme; Windows only gates the microphone
+  // (mouse/keyboard via SendInput + screen via gdigrab need no per-app grant).
+  ipcMain.handle("open-privacy-pane", (_e, pane: "accessibility" | "screen" | "microphone") => {
+    const MAC: Record<string, string> = {
+      accessibility: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+      screen: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+      microphone: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+    };
+    const url = process.platform === "darwin"
+      ? MAC[pane]
+      : (process.platform === "win32" && pane === "microphone") ? "ms-settings:privacy-microphone" : undefined;
+    if (url) void shell.openExternal(url);
+    return !!url;
+  });
+
+  // Current OS permission status for the System Permissions card. accessibility
+  // reflects whether THIS app (the responsible process for the node server that
+  // drives input) is trusted — isTrustedAccessibilityClient(false) is a pure,
+  // non-prompting read. screen/microphone use getMediaAccessStatus. Returns
+  // "unsupported" off macOS (Windows mouse/keyboard/screen need no grant).
+  ipcMain.handle("check-permission", (_e, kind: "accessibility" | "screen" | "microphone") => {
+    if (process.platform !== "darwin") return "unsupported";
+    if (kind === "accessibility") {
+      return systemPreferences.isTrustedAccessibilityClient(false) ? "granted" : "denied";
+    }
+    try {
+      return systemPreferences.getMediaAccessStatus(kind === "screen" ? "screen" : "microphone");
+    } catch {
+      return "unknown";
     }
   });
 

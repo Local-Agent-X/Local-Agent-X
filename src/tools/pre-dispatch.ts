@@ -125,6 +125,17 @@ export async function assertToolCallAllowed(
       userHint: USER_HINTS.policy,
     });
   }
+  // Computer control defaults OFF (high-risk opt-in). On macOS it ALSO needs
+  // the Accessibility permission — but that's enforced in the driver; here we
+  // gate on the user-facing kill-switch.
+  if (call.name === "computer" && cfg.enableComputerControl === false) {
+    throw new ToolBlocked({
+      stage: "tool-policy",
+      reason: "Computer control (mouse/keyboard) is disabled in Settings → Security → Tool Policy.",
+      recovery: "Computer control is off (off by default). Tell the user it must be enabled in Settings → Security, and that macOS also needs Accessibility permission. Don't re-enable it on your own just to get past this block.",
+      userHint: USER_HINTS.policy,
+    });
+  }
 
   // Per-role gate (not a rule pack — RBAC is a principal property).
   if (ctx.rbac) {

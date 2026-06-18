@@ -43,6 +43,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   view_image:     ["main-chat", "spawned-agent", "operator", "build-intent"],
   send_video:     ["main-chat"],
   screen_capture: ["main-chat"],
+  // computer (mouse/keyboard) is intentionally DEFERRED — found via tool_search.
+  // The tool-search-nudge middleware forces models that decline a capability
+  // tool-lessly (e.g. Grok) to search first, so it doesn't need an eager slot.
   // Proactive owner DM — interactive ("ping me…") AND autonomous/scheduled runs.
   telegram_send:  ["main-chat", "operator", "spawned-agent"],
   whatsapp_send:  ["main-chat", "operator", "spawned-agent"],

@@ -82,6 +82,14 @@ export function setRestarting(v: boolean): void { isRestarting = v; }
 export function isQuittingFlag(): boolean { return isQuitting; }
 export function getServerPid(): number | null { return serverProcess?.pid ?? null; }
 
+/** Engage the panic kill switch: tell the server child to abort every active
+ *  run and disarm computer control. Fire-and-forget over the IPC channel; a
+ *  no-op when the server isn't running. */
+export function panicAbortServer(): void {
+  try { serverProcess?.send?.({ type: "lax:panic-abort" }); }
+  catch (e) { console.warn("[desktop] panic-abort send failed:", e); }
+}
+
 // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
 // PATH that excludes Homebrew, nvm, and asdf. Augment so `node` resolves
 // whether the user installed it via brew (arm64 or intel), nvm, or system

@@ -39,6 +39,7 @@
     "@arikernel/taint-tracker": "file:packages/arikernel/taint-tracker",
     "@arikernel/tool-executors": "file:packages/arikernel/tool-executors",
     "@evan/opus": "^1.0.3",
+    "@nut-tree-fork/nut-js": "^4.2.6",
     "@types/diff": "^7.0.2",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.8.0",

@@ -32,32 +32,21 @@ export const handleXaiAuthRoutes: RouteHandler = async (method, url, req, res, c
       // with `+`-encoded scopes (Codex flow happens to work, xAI doesn't —
       // Chromium silently drops the call before setWindowOpenHandler fires).
       // Launching from Node bypasses all of that.
+      // Windows has NO reliable headless URL-opener from the server process:
+      // rundll32 url.dll silently no-ops on modern Windows, explorer.exe opens a
+      // FOLDER instead of the URL, and `cmd /c start` mangles the &-laden OAuth
+      // URL. So on Windows we do NOT auto-open — the renderer shows a clickable
+      // link that routes through Electron's shell.openExternal (reliable), and
+      // `opened:false` also lets the client try window.open (which hits the same
+      // handler). macOS `open` / Linux `xdg-open` are reliable, so keep those.
       let opened = false;
       try {
-        const { execFile } = await import("node:child_process");
-        let child;
-        if (process.platform === "win32") {
-          // explorer.exe <url> routes through ShellExecute → the default-browser
-          // association (honors Chrome's modern `--single-argument` registration),
-          // the Windows analog of macOS `open`. The old rundll32
-          // url.dll,FileProtocolHandler path silently no-ops on some Windows setups
-          // — that was the "Sign in doesn't open the browser" bug. argv (no cmd, no
-          // shell) so the `&`-laden OAuth URL isn't truncated.
-          child = execFile("explorer.exe", [authUrl]);
-        } else if (process.platform === "darwin") {
-          child = execFile("open", [authUrl]);
-        } else {
-          child = execFile("xdg-open", [authUrl]);
+        if (process.platform === "darwin" || process.platform === "linux") {
+          const { execFile } = await import("node:child_process");
+          const child = execFile(process.platform === "darwin" ? "open" : "xdg-open", [authUrl]);
+          child.on("error", (e) => logger.warn(`[auth-xai] system-browser launch failed (async): ${e.message}`));
+          opened = true;
         }
-        // execFile is fire-and-forget: a synchronous return does NOT prove the
-        // browser opened. Spawn failures (ENOENT) — and on some Windows setups
-        // rundll32 simply no-ops — surface asynchronously via the 'error'
-        // event, AFTER this response is already sent. So `opened` is only a
-        // best-effort hint; the renderer ALWAYS shows a clickable fallback
-        // link regardless (settings-xai.js showXaiOpenFallback). The listener
-        // also prevents an async 'error' from becoming an unhandled event.
-        child.on("error", (e) => logger.warn(`[auth-xai] system-browser launch failed (async): ${e.message}`));
-        opened = true;
       } catch (e) { logger.warn(`[auth-xai] system-browser launch failed: ${(e as Error).message}`); }
       json(200, { ok: true, authUrl, opened });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }

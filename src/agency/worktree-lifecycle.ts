@@ -66,12 +66,18 @@ export function mergeWorktree(agentId: string): { merged: boolean; files: number
       wt.mergedSuccessfully = true;
       cleanupWorktree(agentId);
       return { merged: true, files: fileCount };
-    } catch {
-      git("merge --abort", wt.repoRoot);
-      logger.warn(`[worktree] Merge conflict for ${agentId} — changes preserved on branch ${wt.branch}`);
+    } catch (mergeErr) {
+      // Roll back the merge. If it failed BEFORE git entered merge state (no
+      // MERGE_HEAD — e.g. the checkout was refused, or the merge was rejected
+      // pre-merge), `git merge --abort` itself errors with "no merge to abort";
+      // that's benign, so swallow it and surface the REAL reason instead of
+      // letting the abort's error mask it (the "MERGE_HEAD missing" confusion).
+      try { git("merge --abort", wt.repoRoot); } catch { /* nothing in progress to abort */ }
+      const reason = (mergeErr as Error).message;
+      logger.warn(`[worktree] Merge failed for ${agentId} — changes preserved on branch ${wt.branch}: ${reason}`);
       // Don't mark as merged — cleanupWorktree will preserve the branch
       cleanupWorktree(agentId);
-      return { merged: false, files: fileCount, error: `Merge conflict. Changes preserved on branch ${wt.branch}` };
+      return { merged: false, files: fileCount, error: `Merge failed (changes preserved on branch ${wt.branch}): ${reason}` };
     }
   } catch (e) {
     logger.warn(`[worktree] Merge failed: ${(e as Error).message}`);

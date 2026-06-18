@@ -172,10 +172,18 @@ async function onboardExchangeXaiCode() {
   const code = (input?.value || '').trim();
   if (!code) { if (status) status.textContent = 'Paste the code from xAI first.'; return; }
   try {
-    await apiPost('/api/auth/xai/exchange-code', { code });
-    if (status) { status.style.color = 'var(--accent)'; status.textContent = 'Connected to xAI! Click Next to continue.'; }
-    if (input) { input.value = ''; input.placeholder = '••••••••  (connected)'; }
+    const r = await apiPost('/api/auth/xai/exchange-code', { code });
+    if (r && r.error) throw new Error(r.error);
+    // Verify the token actually landed before claiming success — the exchange
+    // POST returning isn't proof (a revoked token would still "succeed" here).
+    const st = await apiJson('/api/auth/xai/status');
+    if (st && st.authenticated) {
+      if (status) { status.style.color = 'var(--accent)'; status.textContent = 'Connected to xAI! Click Next to continue.'; }
+      if (input) { input.value = ''; input.placeholder = '••••••••  (connected)'; }
+    } else if (status) {
+      status.textContent = 'Code accepted but not connected — the token may be revoked. Sign in again.';
+    }
   } catch (e) {
-    if (status) status.textContent = 'Code exchange failed. Make sure Sign In with xAI was clicked first, then try again.';
+    if (status) status.textContent = 'Code exchange failed: ' + (e?.message || 'unknown') + '. Make sure Sign In was clicked first.';
   }
 }

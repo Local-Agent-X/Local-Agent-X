@@ -252,25 +252,39 @@ export async function refreshXaiTokens(tokens: XaiTokens): Promise<XaiTokens> {
   return inflightRefresh;
 }
 
+// invalid_grant/revoked/expired = xAI killed the refresh token (terminal — re-login
+// needed). Network/timeout/5xx are transient; keep the token. Exported for tests.
+export function isTerminalRefreshError(message: string): boolean {
+  return /invalid_grant|invalid_token|\brevoked\b|token has expired|unauthorized_client/i.test(message);
+}
+
 export async function getXaiApiKey(): Promise<string | null> {
   let tokens = loadXaiTokens();
   if (!tokens) return null;
   if (isXaiTokenExpired(tokens) || (tokens.expiresAt && Date.now() > tokens.expiresAt - REFRESH_SKEW_MS)) {
     try { tokens = await refreshXaiTokens(tokens); }
-    catch (e) { logger.warn(`[auth-xai] refresh failed: ${(e as Error).message}`); return null; }
+    catch (e) {
+      const msg = (e as Error).message;
+      if (isTerminalRefreshError(msg)) {
+        // Quarantine the dead token so status reads "not connected" honestly and
+        // we stop hammering xAI with a revoked refresh token on every call.
+        deleteXaiTokens();
+        logger.warn(`[auth-xai] refresh token dead — cleared, re-login required: ${msg.slice(0, 160)}`);
+      } else {
+        logger.warn(`[auth-xai] refresh failed (transient — keeping token): ${msg.slice(0, 160)}`);
+      }
+      return null;
+    }
   }
   return tokens.accessToken;
 }
 
 // ── OAuth Login Flow ──
 
-// Bind the loopback callback server, preferring `preferredPort` but falling back
-// to an OS-assigned free port (listen 0) when it's unavailable. On some Windows
-// boxes the fixed port lands in a reserved/excluded range (Hyper-V/WSL/Docker
-// reserve dynamic ranges that shift after updates) and listen() throws EACCES —
-// which used to crash the whole /login route. EADDRINUSE (a stale callback) hits
-// the same path. RFC 8252 permits any 127.0.0.1 port for the loopback redirect,
-// so a dynamic port is spec-fine and xAI accepts it. Resolves the bound port.
+// Bind the loopback callback, preferring `preferredPort` but falling back to an
+// OS-assigned free port on EACCES/EADDRINUSE: on some Windows boxes the fixed port
+// lands in a reserved range (Hyper-V/WSL/Docker) and listen() throws EACCES,
+// crashing /login. RFC 8252 allows any 127.0.0.1 port, so the dynamic port is fine.
 export function listenOnFreePort(server: Server, preferredPort: number, host: string): Promise<number> {
   const portOf = (): number => (server.address() as { port: number }).port;
   return new Promise((resolve, reject) => {

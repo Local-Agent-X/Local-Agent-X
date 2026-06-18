@@ -5,7 +5,7 @@
 // exercises the same fallback branch as the EACCES this targets.
 import { describe, it, expect, afterEach } from "vitest";
 import { createServer, type Server } from "node:http";
-import { listenOnFreePort } from "../src/auth/xai";
+import { listenOnFreePort, isTerminalRefreshError } from "../src/auth/xai";
 
 const open: Server[] = [];
 const mk = (): Server => { const s = createServer(); open.push(s); return s; };
@@ -27,5 +27,21 @@ describe("listenOnFreePort (xAI OAuth callback)", () => {
     // port 0 = OS picks a guaranteed-free port; no fallback branch needed.
     const bound = await listenOnFreePort(mk(), 0, "127.0.0.1");
     expect(bound).toBeGreaterThan(0);
+  });
+});
+
+describe("isTerminalRefreshError (clear a dead token, keep through transient fails)", () => {
+  it("treats revoked/expired refresh tokens as terminal", () => {
+    expect(isTerminalRefreshError('xAI token refresh failed (400): {"error":"invalid_grant"}')).toBe(true);
+    expect(isTerminalRefreshError("Refresh token has been revoked")).toBe(true);
+    expect(isTerminalRefreshError("token has expired")).toBe(true);
+    expect(isTerminalRefreshError("unauthorized_client")).toBe(true);
+  });
+
+  it("treats network/timeout/5xx as transient (keep the token, retry)", () => {
+    expect(isTerminalRefreshError("The operation was aborted due to timeout")).toBe(false);
+    expect(isTerminalRefreshError("fetch failed")).toBe(false);
+    expect(isTerminalRefreshError("ECONNRESET")).toBe(false);
+    expect(isTerminalRefreshError("xAI token refresh failed (503): Service Unavailable")).toBe(false);
   });
 });

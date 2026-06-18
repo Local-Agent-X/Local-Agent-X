@@ -189,12 +189,20 @@ async function doXaiExchangeCode() {
   if (status) { status.style.color = ''; status.textContent = ''; }
   if (!code) { if (status) status.textContent = 'Paste the code from xAI first.'; return; }
   try {
-    await apiPost('/api/auth/xai/exchange-code', { code });
-    if (input) { input.value = ''; input.placeholder = 'connected'; }
-    if (status) { status.style.color = 'var(--accent)'; status.textContent = 'Connected to xAI.'; }
+    const r = await apiPost('/api/auth/xai/exchange-code', { code });
+    if (r && r.error) throw new Error(r.error);
+    // Don't trust the POST returning — confirm the token actually landed and is
+    // usable before claiming success (avoids a false "Connected" on a revoked token).
+    const st = await apiJson('/api/auth/xai/status');
+    if (st && st.authenticated) {
+      if (input) { input.value = ''; input.placeholder = 'connected'; }
+      if (status) { status.style.color = 'var(--accent)'; status.textContent = 'Connected to xAI.'; }
+    } else if (status) {
+      status.textContent = 'Code accepted but not connected — the token may be revoked. Click Sign in again.';
+    }
     checkXaiAuth();
   } catch (e) {
-    if (status) status.textContent = 'Code exchange failed. Make sure Sign In was clicked first, then try again.';
+    if (status) status.textContent = 'Code exchange failed: ' + (e?.message || 'unknown') + '. Make sure Sign In was clicked first.';
   }
 }
 

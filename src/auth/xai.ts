@@ -1,6 +1,6 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import { join, dirname } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
@@ -264,17 +264,101 @@ export async function getXaiApiKey(): Promise<string | null> {
 
 // ── OAuth Login Flow ──
 
+// Bind the loopback callback server, preferring `preferredPort` but falling back
+// to an OS-assigned free port (listen 0) when it's unavailable. On some Windows
+// boxes the fixed port lands in a reserved/excluded range (Hyper-V/WSL/Docker
+// reserve dynamic ranges that shift after updates) and listen() throws EACCES —
+// which used to crash the whole /login route. EADDRINUSE (a stale callback) hits
+// the same path. RFC 8252 permits any 127.0.0.1 port for the loopback redirect,
+// so a dynamic port is spec-fine and xAI accepts it. Resolves the bound port.
+export function listenOnFreePort(server: Server, preferredPort: number, host: string): Promise<number> {
+  const portOf = (): number => (server.address() as { port: number }).port;
+  return new Promise((resolve, reject) => {
+    const onError = (err: NodeJS.ErrnoException): void => {
+      server.removeListener("error", onError);
+      if (err.code === "EACCES" || err.code === "EADDRINUSE") {
+        logger.warn(`[auth-xai] callback port ${preferredPort} unavailable (${err.code}) — using an OS-assigned port`);
+        server.once("error", reject);
+        server.listen(0, host, () => resolve(portOf()));
+      } else {
+        reject(err);
+      }
+    };
+    server.once("error", onError);
+    server.listen(preferredPort, host, () => resolve(portOf()));
+  });
+}
+
 export async function initiateXaiLogin(): Promise<{ authUrl: string; promise: Promise<void> }> {
   const { verifier, challenge } = generatePkce();
   const state = randomBytes(16).toString("hex");
   const nonce = randomBytes(16).toString("hex");
-  const redirectUri = `http://${CALLBACK_HOST}:${CALLBACK_PORT}${CALLBACK_PATH}`;
 
   // Discovery first — the authorization_endpoint lives on accounts.x.ai,
   // not the auth.x.ai issuer host, so we can't guess it locally. If
-  // discovery fails (offline, DNS blocked), surface the failure to the
+  // discovery fails (offline, DNS/VPN blocked), surface the failure to the
   // caller before they ever see a "browser opening..." flash.
   const endpoints = await fetchOidcDiscovery();
+
+  // Bind the callback server BEFORE building redirect_uri — the loopback redirect
+  // must carry whatever port we actually got (the fixed port may be reserved).
+  // The handler reads `redirectUri` only when the browser hits the callback, long
+  // after it's assigned below.
+  let redirectUri = "";
+  let resolveLogin!: () => void;
+  let rejectLogin!: (e: Error) => void;
+  const promise = new Promise<void>((resolve, reject) => { resolveLogin = resolve; rejectLogin = reject; });
+
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url || "/", redirectUri || `http://${CALLBACK_HOST}`);
+    if (url.pathname !== CALLBACK_PATH) { res.writeHead(404); res.end("Not found"); return; }
+
+    const code = url.searchParams.get("code");
+    const returnedState = url.searchParams.get("state");
+    const error = url.searchParams.get("error");
+
+    if (error) {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><h2>Authentication failed</h2><p>${escapeHtml(String(error))}</p><p>You can close this window.</p></body></html>`);
+      server.close();
+      rejectLogin(new Error(`xAI OAuth error: ${error}`));
+      return;
+    }
+
+    const stateValid = returnedState && returnedState.length === state.length &&
+      timingSafeEqual(Buffer.from(returnedState), Buffer.from(state));
+    if (!code || !stateValid) {
+      res.writeHead(400, { "Content-Type": "text/html" });
+      res.end(`<html><body><h2>Invalid callback</h2><p>Missing code or state mismatch.</p></body></html>`);
+      server.close();
+      rejectLogin(new Error("xAI OAuth callback invalid (code missing or state mismatch)"));
+      return;
+    }
+
+    try {
+      const tokens = await performXaiTokenExchange({ code, endpoints, redirectUri, verifier, challenge });
+      saveXaiTokens(tokens);
+      // Clear pending state so a parallel manual paste doesn't double-exchange
+      // (xAI invalidates auth codes on first use; the second call would 400).
+      pendingXaiLogin = null;
+      logger.info("[auth-xai] OAuth tokens saved");
+
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body style="font-family:system-ui;background:#0a0a0f;color:#00ff41;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2>Connected to xAI Grok!</h2><p>You can close this window and return to Agent X.</p></div></body></html>`);
+      server.close();
+      resolveLogin();
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "text/html" });
+      res.end(`<html><body><h2>Token exchange failed</h2><p>${escapeHtml((e as Error).message)}</p></body></html>`);
+      server.close();
+      rejectLogin(e as Error);
+    }
+  });
+
+  const boundPort = await listenOnFreePort(server, CALLBACK_PORT, CALLBACK_HOST);
+  redirectUri = `http://${CALLBACK_HOST}:${boundPort}${CALLBACK_PATH}`;
+  logger.info(`[auth-xai] Waiting for callback on ${CALLBACK_HOST}:${boundPort}...`);
+
   const authUrl = endpoints.authorizationEndpoint + "?" + new URLSearchParams({
     response_type: "code",
     client_id: CLIENT_ID,
@@ -288,69 +372,14 @@ export async function initiateXaiLogin(): Promise<{ authUrl: string; promise: Pr
     referrer: "local-agent-x",
   }).toString();
 
-  // Stash the PKCE + endpoint state so a parallel manual-code paste can
-  // complete the exchange (see exchangeXaiCodeManually). Overwrites any
-  // prior in-flight login — we only support one at a time.
+  // Stash the PKCE + endpoint state (with the real port) so a parallel manual-code
+  // paste can complete the exchange. Overwrites any prior in-flight login.
   pendingXaiLogin = {
     verifier, challenge, state, endpoints, redirectUri,
     expiresAt: Date.now() + PENDING_LOGIN_TTL_MS,
   };
 
-  const promise = new Promise<void>((resolve, reject) => {
-    const server = createServer(async (req, res) => {
-      const url = new URL(req.url || "/", `http://${CALLBACK_HOST}:${CALLBACK_PORT}`);
-      if (url.pathname !== CALLBACK_PATH) { res.writeHead(404); res.end("Not found"); return; }
-
-      const code = url.searchParams.get("code");
-      const returnedState = url.searchParams.get("state");
-      const error = url.searchParams.get("error");
-
-      if (error) {
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(`<html><body><h2>Authentication failed</h2><p>${escapeHtml(String(error))}</p><p>You can close this window.</p></body></html>`);
-        server.close();
-        reject(new Error(`xAI OAuth error: ${error}`));
-        return;
-      }
-
-      const stateValid = returnedState && returnedState.length === state.length &&
-        timingSafeEqual(Buffer.from(returnedState), Buffer.from(state));
-      if (!code || !stateValid) {
-        res.writeHead(400, { "Content-Type": "text/html" });
-        res.end(`<html><body><h2>Invalid callback</h2><p>Missing code or state mismatch.</p></body></html>`);
-        server.close();
-        reject(new Error("xAI OAuth callback invalid (code missing or state mismatch)"));
-        return;
-      }
-
-      try {
-        const tokens = await performXaiTokenExchange({
-          code, endpoints, redirectUri, verifier, challenge,
-        });
-        saveXaiTokens(tokens);
-        // Clear pending state so a parallel manual paste doesn't double-exchange
-        // (xAI invalidates auth codes on first use; the second call would 400).
-        pendingXaiLogin = null;
-        logger.info("[auth-xai] OAuth tokens saved");
-
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(`<html><body style="font-family:system-ui;background:#0a0a0f;color:#00ff41;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2>Connected to xAI Grok!</h2><p>You can close this window and return to Agent X.</p></div></body></html>`);
-        server.close();
-        resolve();
-      } catch (e) {
-        res.writeHead(500, { "Content-Type": "text/html" });
-        res.end(`<html><body><h2>Token exchange failed</h2><p>${escapeHtml((e as Error).message)}</p></body></html>`);
-        server.close();
-        reject(e);
-      }
-    });
-
-    server.listen(CALLBACK_PORT, CALLBACK_HOST, () => {
-      logger.info(`[auth-xai] Waiting for callback on ${CALLBACK_HOST}:${CALLBACK_PORT}...`);
-    });
-
-    setTimeout(() => { server.close(); reject(new Error("xAI OAuth timeout")); }, 5 * 60 * 1000);
-  });
+  setTimeout(() => { server.close(); rejectLogin(new Error("xAI OAuth timeout")); }, 5 * 60 * 1000);
 
   return { authUrl, promise };
 }

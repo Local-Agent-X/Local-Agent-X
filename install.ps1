@@ -2,7 +2,7 @@
 # GUI installer is the preferred path — see Install Local Agent X Windows
 # Installer.exe at the repo root. This wrapper exists for CLI users.
 #
-# Bootstrap is minimal: ensure Node is present (chicken-and-egg, since
+# Bootstrap is minimal: ensure Node is present (chicken-and-egg — since
 # install-common.mjs needs Node to run), then hand off. All other install
 # steps (VS Build Tools, Python, Ollama, npm install, model pull, build,
 # shortcuts) now live in scripts/install-common.mjs so a single source of

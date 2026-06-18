@@ -81,6 +81,8 @@ There is no separate lint step.
 
 ## Architecture overview
 
+**Reading the code?** [ARCHITECTURE.md](ARCHITECTURE.md) is the code map — every major subsystem to its canonical file, with the superseded/dead directories flagged so you don't trace into them. Start there.
+
 Three lanes for change: **runtime state** flips through HTTP endpoints (settings, provider, theme — never edit files for live state), **self-modification** goes into the agent-editable `config/` directory which hot-reloads, and **external sites** flow through the `browser` tool rather than raw fetch. Every tool call runs through `tool-executor.ts` and the in-process Ari Kernel security layer; new tools need an explicit allow rule in the per-tool policy table (`src/tool-policy/tool-policies.data.ts`). The architectural rules are non-negotiable and live in [AGENTS.md](AGENTS.md) — read that before touching the codebase.
 
 ## Status

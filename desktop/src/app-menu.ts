@@ -108,13 +108,18 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
           click: () => triggerRenderer("document.getElementById('agents-toggle')?.click()"),
         },
         { type: "separator" },
-        { role: "resetZoom" },
-        // Bind plain Ctrl+= so zoom-in doesn't require Shift (the default
-        // zoomIn role is Ctrl+Plus = Ctrl+Shift+=). Also register the keypad
-        // variant so both rows of "+" work.
-        { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
+        // Mac's standard zoom is Cmd (⌘+ / ⌘- / ⌘0), shown on these items. We
+        // ALSO bind plain Ctrl as a hidden cross-platform alias so the same
+        // Ctrl +/-/0 that Windows/Linux use works on Mac too. Plain "=" avoids
+        // the Shift the default zoomIn role needs; the keypad "+" is covered too.
+        { role: "resetZoom" }, // ⌘0
+        { role: "resetZoom", accelerator: "Control+0", visible: false },
+        { role: "zoomIn", accelerator: "CmdOrCtrl+=" }, // ⌘+
         { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
-        { role: "zoomOut" },
+        { role: "zoomIn", accelerator: "Control+=", visible: false },
+        { role: "zoomIn", accelerator: "Control+Plus", visible: false },
+        { role: "zoomOut" }, // ⌘-
+        { role: "zoomOut", accelerator: "Control+-", visible: false },
         { type: "separator" },
         { role: "toggleDevTools" },
       ],

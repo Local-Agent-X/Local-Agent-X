@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
+import { installProbeSelfDestruct } from "./probe-self-destruct.js";
 const logger = createLogger("index");
 
 // Broken-pipe guard. Must be installed BEFORE any code writes to stdout/
@@ -293,4 +294,15 @@ if (process.env.LAX_SELF_EDIT_PROBE !== "1") {
       }
     })();
   }, 6000);
+} else {
+  // A bind probe must end itself: killProbe in the gate's finally only runs if
+  // the gate-runner survives, and a force-killed/crashed runner orphans the
+  // probe forever (Windows never reaps it), holding loaded native modules and
+  // blocking the next npm ci. No external reaper sees an isolated-data-dir
+  // probe, so it self-limits — parent-death watchdog + 10min backstop (the gate
+  // BIND/BUILD timeout is 5min, so a live-at-10min probe is provably orphaned).
+  installProbeSelfDestruct({
+    parentPid: Number(process.env.LAX_PROBE_PARENT_PID),
+    maxLifetimeMs: 10 * 60_000,
+  });
 }

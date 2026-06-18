@@ -206,7 +206,10 @@ export async function gateBindAt(wt: string, port: number, authToken: string, si
     // worktree INSIDE %TEMP%/lax-worktrees, so it must NOT run the orphan
     // worktree sweep (which would unlink the node_modules junction it's
     // currently booting on and kill itself mid-boot).
-    env: { ...buildSelfEditChildEnv(process.env, provider), LAX_PORT: String(port), LAX_DISABLE_BACKGROUND_JOBS: "1", LAX_DATA_DIR: dataDir, LAX_AUTH_TOKEN: authToken, LAX_INTEGRITY_WARN_ONLY: "1", LAX_SELF_EDIT_PROBE: "1" },
+    // LAX_PROBE_PARENT_PID lets the probe self-terminate if THIS process (the
+    // gate-runner) dies before killProbe runs — otherwise the orphan lives
+    // forever (Windows never reaps it). See src/probe-self-destruct.ts.
+    env: { ...buildSelfEditChildEnv(process.env, provider), LAX_PORT: String(port), LAX_DISABLE_BACKGROUND_JOBS: "1", LAX_DATA_DIR: dataDir, LAX_AUTH_TOKEN: authToken, LAX_INTEGRITY_WARN_ONLY: "1", LAX_SELF_EDIT_PROBE: "1", LAX_PROBE_PARENT_PID: String(process.pid) },
   });
 
   let probeStdout = "";

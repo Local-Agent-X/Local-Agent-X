@@ -20,6 +20,52 @@ import { lockAppWindowNavigation } from "./app-window-guards";
 
 let mainWindow: BrowserWindow | null = null;
 
+// ── Content zoom on the overlay-titlebar platforms (Windows/Linux) ──────────
+//
+// The native window-control overlay (titleBarOverlay) is sized in DEVICE
+// pixels and does NOT scale when the page is content-zoomed — but the CSS that
+// reserves room for it (body.platform-win { margin-top: 32px; height: calc(
+// 100vh - 32px) }) DOES scale with zoom. So zooming drifted the two apart and
+// pushed app content under the chrome with no way to scroll to it. We own zoom
+// here — stepped + clamped — and resize the overlay by the SAME factor so the
+// native controls and the CSS titlebar stay locked together at any zoom. macOS
+// uses hiddenInset (no overlay) and the native menu's zoom roles, left as-is.
+const BASE_TITLEBAR_PX = 32;
+const ZOOM_MIN = 0.7;
+const ZOOM_MAX = 1.6;
+const ZOOM_STEP = 0.1;
+const usesOverlayTitlebar = process.platform !== "darwin";
+
+/** Resize the native window-control overlay to match the zoomed CSS titlebar. */
+function syncTitleBarToZoom(win: BrowserWindow, factor: number): void {
+  if (!usesOverlayTitlebar) return;
+  try {
+    win.setTitleBarOverlay({
+      ...overlayForTheme(getSetting("theme")),
+      height: Math.max(1, Math.round(BASE_TITLEBAR_PX * factor)),
+    });
+  } catch { /* window has no overlay / is gone — nothing to sync */ }
+}
+
+/** Apply a clamped content-zoom factor and keep the overlay aligned with it. */
+function setMainZoom(win: BrowserWindow, factor: number): void {
+  const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, factor));
+  win.webContents.setZoomFactor(clamped);
+  syncTitleBarToZoom(win, clamped);
+}
+
+/**
+ * Re-apply the main window's titlebar overlay (theme colours + a height that
+ * matches the CURRENT zoom). Used by the theme-change handler so flipping theme
+ * while zoomed doesn't reset the overlay to its base height and re-open the
+ * desync this whole block exists to prevent.
+ */
+export function reapplyMainTitleBarOverlay(): void {
+  if (mainWindow && usesOverlayTitlebar) {
+    syncTitleBarToZoom(mainWindow, mainWindow.webContents.getZoomFactor());
+  }
+}
+
 // Traffic-light padding for macOS lives in public/css/app.css under the
 // `body.platform-darwin` selector (set by preload.ts). Earlier attempt
 // injected from here via webContents.insertCSS on did-finish-load, but
@@ -136,9 +182,9 @@ export function createWindow(): void {
     const currentUrl = mainWindow?.webContents.getURL() ?? "";
     if (!currentUrl.startsWith(serverOrigin)) return;
     // Electron persists zoom per-origin, so one accidental Ctrl+- otherwise
-    // sticks across every future boot. Pin each app load back to 100%; the
-    // user can still zoom within a session via the View menu.
-    mainWindow?.webContents.setZoomFactor(1);
+    // sticks across every future boot. Pin each app load back to 100% (and
+    // re-base the overlay height); the user can still zoom within a session.
+    if (mainWindow) setMainZoom(mainWindow, 1);
   });
 
   mainWindow.once("ready-to-show", () => {
@@ -158,12 +204,32 @@ export function createWindow(): void {
     } catch { /* not a valid URL — let it navigate normally */ }
   });
 
-  // Disable Ctrl+R / Ctrl+Shift+R / F5 (causes port/localStorage issues).
+  // Disable Ctrl+R / Ctrl+Shift+R / F5 (causes port/localStorage issues), and on
+  // Windows/Linux own content-zoom so the overlay stays aligned (see setMainZoom).
   mainWindow.webContents.on("before-input-event", (_e, input) => {
     if (input.key === "F5" || (input.control && input.key.toLowerCase() === "r")) {
       _e.preventDefault();
+      return;
+    }
+    if (usesOverlayTitlebar && input.type === "keyDown" && (input.control || input.meta) && mainWindow) {
+      const k = input.key;
+      const z = mainWindow.webContents.getZoomFactor();
+      if (k === "=" || k === "+") { _e.preventDefault(); setMainZoom(mainWindow, z + ZOOM_STEP); }
+      else if (k === "-" || k === "_") { _e.preventDefault(); setMainZoom(mainWindow, z - ZOOM_STEP); }
+      else if (k === "0") { _e.preventDefault(); setMainZoom(mainWindow, 1); }
     }
   });
+
+  // Ctrl+mouse-wheel zoom (Windows/Linux): clamp it and re-align the overlay.
+  if (usesOverlayTitlebar) {
+    mainWindow.webContents.on("zoom-changed", () => {
+      if (!mainWindow) return;
+      const cur = mainWindow.webContents.getZoomFactor();
+      const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, cur));
+      if (clamped !== cur) mainWindow.webContents.setZoomFactor(clamped);
+      syncTitleBarToZoom(mainWindow, clamped);
+    });
+  }
 
   // Right-click context menu. Electron's spellcheck: true gives the red
   // underline for free, but the menu (suggestions, Add to Dictionary,

@@ -9,7 +9,7 @@ import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, shell, 
 import { join, resolve, relative, isAbsolute, sep } from "path";
 import { getProjectRoot, reloadLAXConfig, getLAXConfig, LAX_DIR } from "./config";
 import { type DesktopSettings, getSetting, setSetting } from "./settings";
-import { bgForTheme, overlayForTheme, applyNativeTheme } from "./theme";
+import { bgForTheme, applyNativeTheme } from "./theme";
 import {
   isServerRunning,
   restartServer,
@@ -18,7 +18,7 @@ import {
   getServerPid,
 } from "./server-process";
 import { showNotification, registerHotkey } from "./hotkey-notifications";
-import { getMainWindow, toggleWindow } from "./window";
+import { getMainWindow, toggleWindow, reapplyMainTitleBarOverlay } from "./window";
 import { registerAutostart, unregisterAutostart } from "./autostart";
 import {
   isNativeSpeechAvailable,
@@ -86,7 +86,10 @@ export function setupIPC(): void {
       const mainWindow = getMainWindow();
       mainWindow?.setBackgroundColor(bgForTheme(t));
       if (process.platform !== "darwin") {
-        try { mainWindow?.setTitleBarOverlay(overlayForTheme(t)); } catch { /* not available pre-Electron 25 */ }
+        // Re-apply colours AND a zoom-correct overlay height (not the base 32)
+        // so changing theme while zoomed doesn't re-introduce the titlebar
+        // desync. No-op on macOS / pre-Electron-25 (helper guards internally).
+        try { reapplyMainTitleBarOverlay(); } catch { /* not available */ }
       }
     }
   });

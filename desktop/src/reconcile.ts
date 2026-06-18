@@ -199,6 +199,20 @@ function firstUnparseableJs(distDir: string): { file: string; error: string } | 
   return null;
 }
 
+/**
+ * A node_modules npm finished installing carries a `.package-lock.json` manifest.
+ * Its absence — or a missing node_modules — means the install is incomplete: a
+ * fresh tree, an interrupted install, or (the bug this guards) an update whose
+ * worktree merge deleted node_modules on macOS while package-lock.json stayed
+ * put. Reconcile keys its `npm install` on lockfile-hash CHANGES, so without this
+ * a gutted node_modules boots the server straight into "Cannot find package" and
+ * bricks the app with no self-recovery — Repair re-runs reconcile and skips the
+ * install for the same reason. Cheap (one stat); npm writes this on every install.
+ */
+function depsInstalled(dir: string): boolean {
+  return existsSync(join(dir, "node_modules", ".package-lock.json"));
+}
+
 export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult> {
   const { projectRoot, onStatus } = opts;
   const ranSteps: string[] = [];
@@ -224,11 +238,27 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
 
   const stored = loadState();
 
-  // First-ever launch (no state file): trust the installer's build is
-  // fresh, just record current hashes. Skip running install/build to
-  // avoid a 30s+ delay on first launch when everything is already
-  // correct (install-common.mjs just finished).
+  // node_modules can be gone/incomplete without the lockfile changing — a fresh
+  // checkout, an interrupted install, or (the macOS bug this guards) an update
+  // whose worktree merge deleted node_modules. Heal it regardless of the
+  // hash-based change detection, on BOTH the first-launch and steady paths.
+  const rootDepsMissing    = !depsInstalled(projectRoot);
+  const desktopDepsMissing = !depsInstalled(join(projectRoot, "desktop"));
+
+  // First-ever launch (no state file): trust the installer's build is fresh and
+  // just record current hashes, to avoid a 30s+ delay when everything is already
+  // correct. EXCEPTION: if deps are missing, heal first — the Repair button wipes
+  // reconcile-state.json to force this path, so without this Repair couldn't fix
+  // a gutted node_modules (it'd skip the install and relaunch into the same brick).
   if (!stored) {
+    if (rootDepsMissing) {
+      onStatus?.("Restoring components…");
+      await runStep("npm", ["install", "--no-audit", "--no-fund"], projectRoot, 300_000);
+    }
+    if (desktopDepsMissing) {
+      onStatus?.("Restoring desktop components…");
+      await runStep("npm", ["install", "--no-audit", "--no-fund"], join(projectRoot, "desktop"), 300_000);
+    }
     saveState({
       version: 1,
       rootLock: currentRootLock,
@@ -237,7 +267,12 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       rootSrc: currentRootSrc,
       lastReconciledAt: new Date().toISOString(),
     });
-    return { needsRelaunch: false, ranSteps: ["first-launch (recorded baseline)"], warnings: [] };
+    const healed = rootDepsMissing || desktopDepsMissing;
+    return {
+      needsRelaunch: false,
+      ranSteps: [healed ? "first-launch heal (deps were missing)" : "first-launch (recorded baseline)"],
+      warnings: [],
+    };
   }
 
   const rootChanged    = stored.rootLock    !== currentRootLock;
@@ -246,10 +281,10 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   // Missing on pre-field state files → reads as changed → one healing build.
   const rootSrcChanged = stored.rootSrc     !== currentRootSrc;
 
-  if (rootChanged) {
-    onStatus?.("Updating components…");
+  if (rootChanged || rootDepsMissing) {
+    onStatus?.(rootDepsMissing ? "Restoring components…" : "Updating components…");
     await runStep("npm", ["install", "--no-audit", "--no-fund"], projectRoot, 300_000);
-    ranSteps.push("root npm install");
+    ranSteps.push(rootDepsMissing ? "root npm install (deps were missing)" : "root npm install");
   }
   // Server build. An OTA/git update that only touches src/ used to leave
   // dist/ frozen forever (reconcile only watched lockfiles + desktop/src) —
@@ -303,10 +338,10 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       rmSync(rootBackup, { recursive: true, force: true });
     }
   }
-  if (desktopChanged) {
-    onStatus?.("Updating desktop components…");
+  if (desktopChanged || desktopDepsMissing) {
+    onStatus?.(desktopDepsMissing ? "Restoring desktop components…" : "Updating desktop components…");
     await runStep("npm", ["install", "--no-audit", "--no-fund"], join(projectRoot, "desktop"), 300_000);
-    ranSteps.push("desktop npm install");
+    ranSteps.push(desktopDepsMissing ? "desktop npm install (deps were missing)" : "desktop npm install");
   }
   if (srcChanged) {
     onStatus?.("Building app updates…");

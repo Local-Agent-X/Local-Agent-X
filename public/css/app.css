@@ -62,8 +62,9 @@ body.platform-win #agents-toggle{top:52px !important}
 #desktop-titlebar .dtb-menu.open .dtb-btn{color:var(--accent);background:var(--hover)}
 #desktop-titlebar .dtb-dd{display:none;position:absolute;top:100%;left:0;min-width:180px;background:var(--bg);border:1px solid var(--border);box-shadow:0 4px 12px rgba(0,0,0,.5);padding:4px 0}
 #desktop-titlebar .dtb-menu.open .dtb-dd{display:block}
-#desktop-titlebar .dtb-item{padding:6px 12px;color:var(--text);cursor:pointer;white-space:nowrap}
+#desktop-titlebar .dtb-item{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:6px 12px;color:var(--text);cursor:pointer;white-space:nowrap}
 #desktop-titlebar .dtb-item:hover{background:var(--hover)}
+#desktop-titlebar .dtb-key{color:var(--muted);font-size:.85em;opacity:.75}
 #desktop-titlebar .dtb-sep{height:1px;margin:4px 0;background:var(--border)}
 body.agents-panel-open #agents-toggle{display:none !important}
 body::after{content:'';position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(64,240,240,.012) 2px,rgba(64,240,240,.012) 4px);z-index:9999}

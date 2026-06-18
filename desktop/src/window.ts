@@ -59,6 +59,17 @@ function setMainZoom(win: BrowserWindow, factor: number): void {
   syncTitleBarToZoom(win, clamped);
 }
 
+/** Step the main window's content zoom through the SAME clamped, overlay-aware
+ *  path as the Ctrl +/-/0 shortcuts. The Windows in-window menu routes here (via
+ *  ipc → preload) instead of doing its own document.body.style.zoom, so the two
+ *  can't compound past ZOOM_MAX or drift the native window-control overlay. */
+export function stepMainZoom(dir: "in" | "out" | "reset"): void {
+  if (!mainWindow) return;
+  if (dir === "reset") { setMainZoom(mainWindow, 1); return; }
+  const z = mainWindow.webContents.getZoomFactor();
+  setMainZoom(mainWindow, z + (dir === "in" ? ZOOM_STEP : -ZOOM_STEP));
+}
+
 /**
  * Re-apply the main window's titlebar overlay (theme colours + a height that
  * matches the CURRENT zoom). Used by the theme-change handler so flipping theme

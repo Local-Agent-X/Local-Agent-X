@@ -18,7 +18,7 @@ import {
   getServerPid,
 } from "./server-process";
 import { showNotification, registerHotkey } from "./hotkey-notifications";
-import { getMainWindow, toggleWindow, reapplyMainTitleBarOverlay } from "./window";
+import { getMainWindow, toggleWindow, reapplyMainTitleBarOverlay, stepMainZoom } from "./window";
 import { registerAutostart, unregisterAutostart } from "./autostart";
 import {
   isNativeSpeechAvailable,
@@ -124,6 +124,7 @@ export function setupIPC(): void {
   ipcMain.handle("native-speech-stop", () => { stopNativeSpeech(); });
 
   ipcMain.handle("toggle-window", () => toggleWindow());
+  ipcMain.handle("content-zoom", (_e, dir: "in" | "out" | "reset") => { stepMainZoom(dir); });
   ipcMain.handle("toggle-devtools", () => {
     const mainWindow = getMainWindow();
     if (mainWindow) mainWindow.webContents.toggleDevTools();

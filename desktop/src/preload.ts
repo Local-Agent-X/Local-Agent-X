@@ -75,6 +75,10 @@ contextBridge.exposeInMainWorld("desktop", {
   // Window
   toggleWindow: () => ipcRenderer.invoke("toggle-window"),
   toggleDevTools: () => ipcRenderer.invoke("toggle-devtools"),
+  // Content zoom for the in-window titlebar menu — routes to window.ts's
+  // clamped, overlay-aware zoom (same path as Ctrl +/-/0) so the menu can't
+  // compound with the keyboard zoom or push content under the chrome.
+  contentZoom: (dir: "in" | "out" | "reset") => ipcRenderer.invoke("content-zoom", dir),
   quit: () => ipcRenderer.invoke("quit-app"),
   relaunchApp: () => ipcRenderer.invoke("relaunch-app"),
 

@@ -39,11 +39,6 @@
     runAction(item.getAttribute('data-action'));
   });
 
-  function setZoom(delta) {
-    var cur = parseFloat(document.body.style.zoom || '1') || 1;
-    document.body.style.zoom = String(cur + delta);
-  }
-
   function runAction(action) {
     var d = window.desktop || {};
     if (action.indexOf('edit:') === 0) { d.editCommand && d.editCommand(action.slice(5)); return; }
@@ -58,9 +53,18 @@
       case 'about':           d.showAbout && d.showAbout(); break;
       case 'reload':          location.reload(); break;
       case 'toggle-agents':   { var b = document.getElementById('agents-toggle'); if (b) b.click(); break; }
-      case 'zoom-in':         setZoom(0.1); break;
-      case 'zoom-out':        setZoom(-0.1); break;
-      case 'zoom-reset':      document.body.style.zoom = '1'; break;
+      case 'zoom-in':         d.contentZoom && d.contentZoom('in'); break;
+      case 'zoom-out':        d.contentZoom && d.contentZoom('out'); break;
+      case 'zoom-reset':      d.contentZoom && d.contentZoom('reset'); break;
     }
   }
+
+  // Keyboard accelerators for menu actions Electron doesn't already cover
+  // (zoom/devtools) and window.ts doesn't block (reload). Reuses runAction so a
+  // shortcut and its menu item always do the same thing.
+  document.addEventListener('keydown', function (e) {
+    if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return;
+    var action = { a: 'toggle-agents', b: 'open-in-browser', l: 'copy-app-url' }[e.key.toLowerCase()];
+    if (action) { e.preventDefault(); runAction(action); }
+  });
 })();

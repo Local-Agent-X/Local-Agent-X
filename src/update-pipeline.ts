@@ -78,6 +78,41 @@ function sh(cmd: string, cwd: string, timeoutMs = GIT_TIMEOUT_MS): string {
   return execSync(cmd, { cwd, encoding: "utf-8", timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024 }).trim();
 }
 
+/** A Windows file lock (a loaded native module, AV, or the file indexer), as
+ *  opposed to a real dependency error. The update can DEFER these to next-launch
+ *  reconcile; it must NOT revert over them. */
+export function isDeferrableFileLock(msg: string): boolean {
+  return /EBUSY|EPERM|EACCES|resource busy or locked/i.test(msg);
+}
+
+/**
+ * Sync the LIVE install's node_modules to the just-applied lockfile.
+ *
+ * `npm install` (incremental), NEVER `npm ci`: ci wipes node_modules and so must
+ * unlink EVERY native module — including ones the running server holds loaded
+ * (sqlite-vec's vec0.dll) — which Windows refuses with EPERM. install touches
+ * only what changed.
+ *
+ * Returns deferred=true when the ONLY failure was a Windows file lock on a
+ * loaded native module the update bumped: the lockfile on disk is already
+ * current, and the next launch's pre-server reconcile (desktop/src/reconcile.ts)
+ * reinstalls deps BEFORE the server child loads any native module, where the
+ * in-place swap is safe. Rethrows any other npm error (a real dependency
+ * problem). Shared by the git and rolling paths so both defer identically
+ * instead of one reverting where the other defers.
+ */
+function syncLiveDeps(installDir: string): { deferred: boolean } {
+  try {
+    execSync("npm install", { cwd: installDir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+    return { deferred: false };
+  } catch (e) {
+    const msg = (e as Error).message || "";
+    if (!isDeferrableFileLock(msg)) throw e;
+    logger.warn(`[update] live npm install hit a file lock; deferring deps to next-launch reconcile: ${msg.split("\n")[0]}`);
+    return { deferred: true };
+  }
+}
+
 export async function applyGitUpdate(repoRoot: string, authToken: string): Promise<GitUpdateResult> {
   // Same machine-wide lock as the self_edit sandbox: both build into the
   // shared node_modules and mutate main, so they must never run concurrently.
@@ -179,18 +214,17 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     }
 
     // The gated install ran against the worktree's ISOLATED deps; the live
-    // tree's node_modules still has the old set. Sync it before rebuilding.
-    // `npm install` (incremental), NOT `npm ci`: ci wipes node_modules and so
-    // must unlink every native module — including ones the running server holds
-    // loaded (sqlite-vec's vec0.dll), which Windows refuses with EPERM, reverting
-    // an update that only ADDED a pure-JS dep. install touches only what changed.
+    // tree's node_modules still has the old set. Sync it before rebuilding via
+    // syncLiveDeps — a Windows file lock on a loaded native module the update
+    // bumped DEFERS to next-launch reconcile (same as the rolling path) instead
+    // of reverting; only a real dependency error reverts.
     if (!deps.skipped) {
       try {
-        sh("npm install", repoRoot, BUILD_TIMEOUT_MS);
+        syncLiveDeps(repoRoot);
       } catch (e) {
         if (mergeInfo) {
           revertBranchTo(mergeInfo.repoRoot, mergeInfo.baseBranch, mergeInfo.sha);
-          try { sh("npm install", repoRoot, BUILD_TIMEOUT_MS); } catch { /* old lockfile restored, next boot retries */ }
+          try { syncLiveDeps(repoRoot); } catch { /* old lockfile restored, next boot retries */ }
         }
         return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Update reverted — dependency install on the live tree failed: ${(e as Error).message.slice(0, 600)}` };
       }
@@ -199,7 +233,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       const rebuilt = runRepoBuild(mergeInfo.repoRoot, BUILD_TIMEOUT_MS);
       if (!rebuilt.ok) {
         revertBranchTo(mergeInfo.repoRoot, mergeInfo.baseBranch, mergeInfo.sha);
-        if (!deps.skipped) { try { sh("npm install", repoRoot, BUILD_TIMEOUT_MS); } catch { /* old lockfile restored, next boot retries */ } }
+        if (!deps.skipped) { try { syncLiveDeps(repoRoot); } catch { /* old lockfile restored, next boot retries */ } }
         return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Update reverted — post-merge rebuild failed: ${rebuilt.detail.slice(0, 600)}` };
       }
       const postSha = getBranchHead(mergeInfo.repoRoot, mergeInfo.baseBranch);
@@ -256,23 +290,9 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
     );
     if (depsChanged) {
       // The gated tree validated against fresh deps; sync the live install's
-      // node_modules to the new lockfile with `npm install` (incremental, so it
-      // won't unlink unchanged native modules the running server holds loaded —
-      // unlike `npm ci`'s full wipe). It can still hit EBUSY when an update
-      // bumps a NATIVE module itself (e.g. @napi-rs/canvas's skia.node): the
-      // running process holds it loaded and Windows refuses to replace a loaded
-      // module in place. That's not a failure — the copy already updated
-      // package-lock.json, and the next launch's pre-server reconcile
-      // (desktop/src/reconcile.ts) reinstalls deps BEFORE the server child loads
-      // any native module, where the swap is safe. Defer to it on a file lock;
-      // rethrow any other npm error (a real dependency problem).
-      try {
-        execSync("npm install", { cwd: installDir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
-      } catch (e) {
-        const msg = (e as Error).message || "";
-        if (!/EBUSY|EPERM|EACCES|resource busy or locked/i.test(msg)) throw e;
-        logger.warn(`[update] in-process npm install hit a file lock; deferring deps to next-launch reconcile: ${msg.split("\n")[0]}`);
-      }
+      // node_modules to the new lockfile. A file lock on a loaded native module
+      // defers to next-launch reconcile (see syncLiveDeps).
+      syncLiveDeps(installDir);
     }
     await ota.writeInstalledCommit(commit);
     logger.info(`[update] rolling applied ${installed.slice(0, 7) || "(fresh)"} → ${commit.slice(0, 7)}`);

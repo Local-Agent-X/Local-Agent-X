@@ -9,8 +9,8 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, readdirSync, lstatSync, unlinkSync, rmSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, lstatSync, realpathSync, unlinkSync, rmSync, symlinkSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 
 import { isSelfEditLockHeldByLiveProcess } from "../self-edit/global-lock.js";
 import { git, logger, WORKTREE_BASE } from "./worktree-core.js";
@@ -72,13 +72,48 @@ function unlinkReparsePoint(link: string): boolean {
   }
 }
 
-export function unlinkSharedJunctions(wtPath: string): string[] {
-  const candidates = [join(wtPath, "node_modules")];
+/**
+ * True if `nmPath` exists and realpath-resolves OUTSIDE `sandboxRoot` — i.e. a
+ * junction/symlink is still bridging the sandbox's node_modules into the
+ * parent's real tree. A recursive delete (`rm -rf`, `git worktree remove`) or
+ * `npm ci`'s clean step over such a path traverses the link and destroys the
+ * parent — the loaded native modules of a running install (sqlite-vec's
+ * vec0.dll) — which Windows then refuses with EPERM after a partial wipe.
+ *
+ * realpath FOLLOWS the reparse point regardless of how lstat classifies it, so
+ * a junction that lstat misreads as a plain directory (the Windows quirk that
+ * let the live install get wiped) is still caught here. This is the proof that
+ * unlinkReparsePoint actually removed the link, rather than trusting its return.
+ */
+export function escapesSandbox(nmPath: string, sandboxRoot: string): boolean {
+  let target: string;
+  try { target = resolve(realpathSync(nmPath)); } catch { return false; } // absent → nothing to traverse
+  let root: string;
+  try { root = resolve(realpathSync(sandboxRoot)); } catch { root = resolve(sandboxRoot); }
+  return target !== root && !target.startsWith(root + sep);
+}
+
+/** The shallow node_modules locations a worktree junction can live at: the
+ *  worktree root and one level under packages/. Junctions are always created
+ *  shallow, so this is the full set without walking the tree. */
+function shallowNodeModules(wtPath: string): string[] {
+  const out = [join(wtPath, "node_modules")];
   const pkgsDir = join(wtPath, "packages");
   if (existsSync(pkgsDir)) {
-    for (const pkg of readdirSync(pkgsDir)) candidates.push(join(pkgsDir, pkg, "node_modules"));
+    for (const pkg of readdirSync(pkgsDir)) out.push(join(pkgsDir, pkg, "node_modules"));
   }
-  return candidates.filter(link => !unlinkReparsePoint(link));
+  return out;
+}
+
+export function unlinkSharedJunctions(wtPath: string): string[] {
+  return shallowNodeModules(wtPath).filter(link => {
+    unlinkReparsePoint(link);
+    // Trust the realpath, not unlinkReparsePoint's return: a junction that
+    // survived the unlink (a no-op rmdir, or one lstat misclassified as a real
+    // dir) still resolves into the parent tree. Report it as stuck so callers
+    // refuse the destructive delete that would traverse it.
+    return escapesSandbox(link, wtPath);
+  });
 }
 
 /**
@@ -223,9 +258,14 @@ export async function sweepOrphanWorktreeJunctions(): Promise<void> {
     // Belt-and-suspenders: re-scan. If ANY reparse point remains, refuse to
     // recursive-delete this orphan — deletion would traverse the live link.
     const remaining = scanReparsePoints(wtPath);
-    if (stuck.length || remaining.length) {
-      stuckTotal += Math.max(stuck.length, remaining.length);
-      logger.warn(`[worktree] orphan sweep: live reparse point(s) in ${wtPath} (${[...new Set([...stuck, ...remaining])].join(", ")}) — left on disk to protect the parent tree`);
+    // realpath catch-all: scanReparsePoints relies on lstat, which can miss a
+    // junction Windows misclassifies as a plain directory. Confirm no shallow
+    // node_modules still resolves into a parent tree before the recursive
+    // delete, regardless of how lstat sees it.
+    const escaped = shallowNodeModules(wtPath).filter(nm => escapesSandbox(nm, wtPath));
+    if (stuck.length || remaining.length || escaped.length) {
+      stuckTotal += Math.max(stuck.length, remaining.length, escaped.length);
+      logger.warn(`[worktree] orphan sweep: live reparse point(s) in ${wtPath} (${[...new Set([...stuck, ...remaining, ...escaped])].join(", ")}) — left on disk to protect the parent tree`);
       continue;
     }
     // Reparse-point-free now — safe to remove the orphan dir entirely. Retry

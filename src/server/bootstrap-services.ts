@@ -214,13 +214,19 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   setSecretsStoreSingleton(secretsStore);
   _t();
 
-  // Time this — Ollama pull on cold install can take 30-60s and it's
-  // the most common boot-time suspect. Surface the exact ms so we know
-  // whether it's the embedding bootstrap or something else.
+  // Background, NOT awaited — the Ollama tags-check + model pull here can take
+  // 15-60s on a cold/slow Ollama and was blocking port-listening for the whole
+  // time (the #1 boot-time cost on a loaded box). memoryIndex is null-safe on
+  // its provider (every embed path guards `if (embeddingProvider)`), so until
+  // this resolves memory retrieval degrades to FTS instead of stalling boot —
+  // the same degraded mode the Ollama-unreachable branch already produces. A
+  // sibling of the fire-and-forget warmers below; re-runnable via
+  // /api/memory/reinit. Still timed so the log shows when embeddings go live.
   {
     const t = Date.now();
-    await initOrRefreshEmbeddingProvider({ config, dataDir, secretsStore, memoryIndex });
-    logger.info(`[boot-phase] initOrRefreshEmbeddingProvider ${Date.now() - t}ms`);
+    void initOrRefreshEmbeddingProvider({ config, dataDir, secretsStore, memoryIndex })
+      .then(() => logger.info(`[boot-phase] initOrRefreshEmbeddingProvider ${Date.now() - t}ms (background)`))
+      .catch((e) => logger.warn(`[memory] embedding bootstrap failed (background): ${(e as Error).message}`));
   }
 
   import("../tools/image-tools/index.js").then(m => m.initImageTools?.(secretsStore)).catch(() => {});

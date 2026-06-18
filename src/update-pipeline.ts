@@ -180,13 +180,17 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
 
     // The gated install ran against the worktree's ISOLATED deps; the live
     // tree's node_modules still has the old set. Sync it before rebuilding.
+    // `npm install` (incremental), NOT `npm ci`: ci wipes node_modules and so
+    // must unlink every native module — including ones the running server holds
+    // loaded (sqlite-vec's vec0.dll), which Windows refuses with EPERM, reverting
+    // an update that only ADDED a pure-JS dep. install touches only what changed.
     if (!deps.skipped) {
       try {
-        sh("npm ci", repoRoot, BUILD_TIMEOUT_MS);
+        sh("npm install", repoRoot, BUILD_TIMEOUT_MS);
       } catch (e) {
         if (mergeInfo) {
           revertBranchTo(mergeInfo.repoRoot, mergeInfo.baseBranch, mergeInfo.sha);
-          try { sh("npm ci", repoRoot, BUILD_TIMEOUT_MS); } catch { /* old lockfile restored, next boot retries */ }
+          try { sh("npm install", repoRoot, BUILD_TIMEOUT_MS); } catch { /* old lockfile restored, next boot retries */ }
         }
         return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Update reverted — dependency install on the live tree failed: ${(e as Error).message.slice(0, 600)}` };
       }
@@ -195,7 +199,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       const rebuilt = runRepoBuild(mergeInfo.repoRoot, BUILD_TIMEOUT_MS);
       if (!rebuilt.ok) {
         revertBranchTo(mergeInfo.repoRoot, mergeInfo.baseBranch, mergeInfo.sha);
-        if (!deps.skipped) { try { sh("npm ci", repoRoot, BUILD_TIMEOUT_MS); } catch { /* old lockfile restored, next boot retries */ } }
+        if (!deps.skipped) { try { sh("npm install", repoRoot, BUILD_TIMEOUT_MS); } catch { /* old lockfile restored, next boot retries */ } }
         return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Update reverted — post-merge rebuild failed: ${rebuilt.detail.slice(0, 600)}` };
       }
       const postSha = getBranchHead(mergeInfo.repoRoot, mergeInfo.baseBranch);
@@ -239,20 +243,22 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
     );
     if (depsChanged) {
       // The gated tree validated against fresh deps; sync the live install's
-      // node_modules to the new lockfile it just received. This can hit EBUSY
-      // when an update bumps a NATIVE module (e.g. @napi-rs/canvas's
-      // skia.node): the running process holds it loaded and Windows refuses to
-      // replace a loaded module in place. That's not a failure — the copy
-      // already updated package-lock.json, and the next launch's pre-server
-      // reconcile (desktop/src/reconcile.ts) reinstalls deps BEFORE the server
-      // child loads any native module, where the swap is safe. Defer to it on a
-      // file lock; rethrow any other npm error (a real dependency problem).
+      // node_modules to the new lockfile with `npm install` (incremental, so it
+      // won't unlink unchanged native modules the running server holds loaded —
+      // unlike `npm ci`'s full wipe). It can still hit EBUSY when an update
+      // bumps a NATIVE module itself (e.g. @napi-rs/canvas's skia.node): the
+      // running process holds it loaded and Windows refuses to replace a loaded
+      // module in place. That's not a failure — the copy already updated
+      // package-lock.json, and the next launch's pre-server reconcile
+      // (desktop/src/reconcile.ts) reinstalls deps BEFORE the server child loads
+      // any native module, where the swap is safe. Defer to it on a file lock;
+      // rethrow any other npm error (a real dependency problem).
       try {
-        execSync("npm ci", { cwd: installDir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+        execSync("npm install", { cwd: installDir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
       } catch (e) {
         const msg = (e as Error).message || "";
         if (!/EBUSY|EPERM|EACCES|resource busy or locked/i.test(msg)) throw e;
-        logger.warn(`[update] in-process npm ci hit a file lock; deferring deps to next-launch reconcile: ${msg.split("\n")[0]}`);
+        logger.warn(`[update] in-process npm install hit a file lock; deferring deps to next-launch reconcile: ${msg.split("\n")[0]}`);
       }
     }
     await ota.writeInstalledCommit(commit);

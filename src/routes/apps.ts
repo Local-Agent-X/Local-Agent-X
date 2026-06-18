@@ -5,7 +5,7 @@ import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
 import { confineToDir } from "../security/file-access.js";
 import { renderApp } from "../app-renderer/index.js";
 import type { AppDefinition } from "../app-runtime/index.js";
-import { loadSettings } from "../settings.js";
+import { loadSettings, reloadSettings } from "../settings.js";
 
 /** Default launcher glyph for an app with no explicit icon and no sidebar pin. */
 const DEFAULT_APP_ICON = "📦";
@@ -20,19 +20,24 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
 
   if (method === "GET" && appPath === "/api/apps") {
     const port = ctx.config.port || 7007;
-    // Launcher icon source: a user/agent pins apps to the sidebar with an
-    // emoji; reuse that as the app's real icon (matched by slug in the pin
-    // url, else by display name). Explicit AppDefinition.icon wins; default
-    // last so every app always carries some glyph for the mobile home grid.
+    const wsAppsDir = resolve(ctx.config.workspace, "apps");
+    // Icon precedence (so apps carry an icon without a pin): AppDefinition.icon
+    // → a `.icon` sidecar the builder writes per app → a sidebar pin's emoji → 📦.
     const pins = (loadSettings().sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
-    const iconFor = (id: string, name: string): string => {
+    const pinIcon = (id: string, name: string): string => {
       const bySlug = pins.find(p => new RegExp(`/apps/${id}(?:[/?#]|$)`).test(p.url || ""));
       const byName = pins.find(p => p.name.toLowerCase() === name.toLowerCase());
-      return ((bySlug?.icon || byName?.icon || "").trim()) || DEFAULT_APP_ICON;
+      return (bySlug?.icon || byName?.icon || "").trim();
     };
+    const sidecarIcon = (id: string): string => {
+      const p = join(wsAppsDir, id, ".icon");
+      try { return existsSync(p) ? readFileSync(p, "utf-8").trim() : ""; } catch { return ""; }
+    };
+    const iconFor = (id: string, name: string, defIcon?: string): string =>
+      (defIcon || "").trim() || sidecarIcon(id) || pinIcon(id, name) || DEFAULT_APP_ICON;
     const registered = appReg.list().map((d: AppDefinition) => ({
       id: d.id, name: d.name, description: d.description,
-      icon: (d.icon || "").trim() || iconFor(d.id, d.name),
+      icon: iconFor(d.id, d.name, d.icon),
       components: d.components.length, layout: d.layout.type,
       url: `http://127.0.0.1:${port}/apps/${d.id}`,
       updatedAt: d.updatedAt, status: d.status, version: d.version,
@@ -40,7 +45,6 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     }));
     // Also scan workspace/apps/ for HTML apps not in the registry
     const registeredIds = new Set(registered.map(a => a.id));
-    const wsAppsDir = resolve(ctx.config.workspace, "apps");
     if (existsSync(wsAppsDir)) {
       try {
         for (const d of readdirSync(wsAppsDir, { withFileTypes: true })) {
@@ -160,6 +164,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
         if (changed) {
           s.sidebarPins = pins;
           wf(settingsPath, JSON.stringify(s, null, 2), { encoding: "utf-8", mode: 0o600 });
+          reloadSettings();  // keep the loadSettings() cache (read by /api/apps) coherent
           try { const { broadcastAll } = await import("../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
         }
       }

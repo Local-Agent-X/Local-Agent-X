@@ -82,6 +82,7 @@ RULES:
 - Write ALL files to ${appDir}/ (use absolute paths)
 - The main entry point MUST be index.html
 ${starterLine}- Create PROJECT.md with app description and status
+- Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in ${appDir}/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
 - Make it look polished — use modern CSS, good colors, responsive design
 - The app will be served at ${appUrl}
@@ -104,6 +105,7 @@ export function renderPersonaPrompt(): string {
     "Static rules that apply to every build (per-build context carries the appDir, appUrl, existing-app context, asset manifest, and the user's instructions):",
     "- The main entry point MUST be index.html",
     "- Create PROJECT.md with app description and status",
+    "- Pick ONE emoji that best represents the app and write JUST that emoji (nothing else) to a file named .icon in the app folder — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)",
     "- For single-page apps: put everything in index.html (inline CSS/JS is fine)",
     "- Make it look polished — use modern CSS, good colors, responsive design",
     "- Do NOT ask questions — just build it based on the instructions",

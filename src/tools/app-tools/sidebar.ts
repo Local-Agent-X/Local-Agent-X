@@ -10,6 +10,7 @@ import { join, resolve } from "node:path";
 import { ok, err } from "./shared.js";
 import { workspacePath } from "../../config.js";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { reloadSettings } from "../../settings.js";
 
 export const sidebarPin: ToolDefinition = {
   name: "sidebar_pin",
@@ -69,6 +70,9 @@ export const sidebarPin: ToolDefinition = {
     pins.push({ name, icon, url: pageUrl });
     settings.sidebarPins = pins;
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
+    // Refresh the in-memory settings cache so /api/apps (the mobile's icon
+    // source, which reads loadSettings()) sees the new pin without a restart.
+    reloadSettings();
 
     // Notify connected clients
     try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
@@ -103,6 +107,7 @@ export const sidebarUnpin: ToolDefinition = {
       const removed = currentPins.map(p => p.name).join(", ");
       settings.sidebarPins = [];
       writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
+      reloadSettings();
       try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins: [] }); } catch {}
       return ok(`Removed all pins from the sidebar: ${removed}`);
     }
@@ -118,6 +123,7 @@ export const sidebarUnpin: ToolDefinition = {
 
     settings.sidebarPins = pins;
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
+    reloadSettings();
 
     try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
 

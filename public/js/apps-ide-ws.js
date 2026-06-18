@@ -44,7 +44,7 @@ function ideAttachWsListener() {
             ideRefreshPreview();
             ideLoadFiles();
           }
-          ideSetStatus('working', 'Thinking...');
+          ideSetStatus('working', thinkingPhrase() + '…');
           break;
         }
         case 'agent_spawn':

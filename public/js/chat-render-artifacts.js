@@ -41,7 +41,7 @@ function _buildLiveAssistantInto(parent, store) {
   // Pre-delta render: thinking dots so the chat doesn't look frozen until
   // the first token lands. Mirrors the manual bubble sendMessage creates.
   if (bodyEl && !content) {
-    bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+    bodyEl.innerHTML = thinkingHTML();
   }
   const toolEvents = store ? (store.toolEvents || []) : [];
   _renderAssistantToolArtifacts(bodyEl || div, {

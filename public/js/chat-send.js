@@ -112,7 +112,7 @@ async function sendMessage() {
   activeChat.messages.push({ role: 'user', content: finalText, attachments: msgAttachments, timestamp: msgTime });
   const msgEl = addMessageEl('assistant', '');
   let bodyEl = msgEl.querySelector('.msg-body');
-  bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+  bodyEl.innerHTML = thinkingHTML();
   // Reserve a viewport of room under the live bubble from the FIRST frame so
   // the prompt can sit at the top and the answer streams into the space below.
   // Without this the scrollIntoView below has nothing to scroll into, and

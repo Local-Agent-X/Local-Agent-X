@@ -86,7 +86,7 @@ function handleVoiceWsMessage(e) {
       if (typeof addMessageEl === 'function') {
         voiceCurrentMsgEl = addMessageEl('assistant', '');
         voiceCurrentMsgBody = voiceCurrentMsgEl?.querySelector('.msg-body');
-        if (voiceCurrentMsgBody) voiceCurrentMsgBody.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+        if (voiceCurrentMsgBody) voiceCurrentMsgBody.innerHTML = thinkingHTML();
       }
       voiceCurrentMsgText = '';
       isSpeaking = true; updateVoiceUI();

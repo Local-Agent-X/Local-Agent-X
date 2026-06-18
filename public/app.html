@@ -14,7 +14,7 @@
 <script src="/vendor/highlightjs/highlight.min.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb11"/>
+<link rel="stylesheet" href="/css/app.css?v=vb12"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
      Import map lets `import * as THREE from 'three'` resolve cleanly in
@@ -1251,7 +1251,7 @@
 <script src="/js/chat-dictate.js?v=v2"></script>
 <script src="/js/chat-slash-popup.js?v=v4"></script>
 <script src="/js/chat-voice-mic.js?v=v3"></script>
-<script src="/js/chat-voice-ws-handler.js?v=v2"></script>
+<script src="/js/chat-voice-ws-handler.js?v=v3"></script>
 <script src="/js/chat-voice-tts.js?v=v2"></script>
 <script src="/js/chat-voice-ui.js?v=v1"></script>
 <script src="/js/chat-extras.js?v=v1"></script>
@@ -1266,15 +1266,16 @@
 <script src="/js/chat-ws-handler-chat-events.js?v=v1"></script>
 <script src="/js/chat-ws-handler.js?v=v3"></script>
 <script src="/js/chat-ws.js?v=v2"></script>
-<script src="/js/chat-render-artifacts.js?v=v1"></script>
+<script src="/js/chat-render-artifacts.js?v=v2"></script>
+<script src="/js/thinking-phrases.js?v=v1"></script>
 <script src="/js/chat-render-window.js?v=v1"></script>
 <script src="/js/chat-render.js?v=v4"></script>
 <script src="/js/chat-render-live.js?v=v1"></script>
 <!-- chat-send split: dispatch modules must load before chat-send.js so
      sendMessage()'s wsHealthy check can reach _sendMessageWs/_sendMessageHttp. -->
 <script src="/js/chat-send-ws.js?v=v3"></script>
-<script src="/js/chat-send-http.js?v=v3"></script>
-<script src="/js/chat-send.js?v=v9"></script>
+<script src="/js/chat-send-http.js?v=v4"></script>
+<script src="/js/chat-send.js?v=v10"></script>
 <script src="/js/chat-uploads.js?v=v3"></script>
 <script src="/js/chat.js?v=vd5"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
@@ -1326,9 +1327,9 @@
 <!-- apps-ide split: core (state + lifecycle) loads first, then the WS
      handler and the tool/file rendering helpers, then the agent panel
      that already lived in its own file. -->
-<script src="/js/apps-ide-messaging.js?v=v1"></script>
+<script src="/js/apps-ide-messaging.js?v=v2"></script>
 <script src="/js/apps-ide.js?v=v5"></script>
-<script src="/js/apps-ide-ws.js?v=v1"></script>
+<script src="/js/apps-ide-ws.js?v=v2"></script>
 <script src="/js/apps-ide-tools-files.js?v=v1"></script>
 <script src="/js/apps-ide-picker.js?v=v1"></script>
 <script src="/js/apps-ide-errors.js?v=v1"></script>

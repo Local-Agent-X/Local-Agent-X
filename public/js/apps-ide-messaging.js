@@ -101,7 +101,7 @@ function ideSendToAgent(message, attachments) {
   _ideContent = '';
   _ideToolCount = 0;
   ideDisableInput();
-  ideSetStatus('working', 'Thinking...');
+  ideSetStatus('working', thinkingPhrase() + '…');
   ideStartTimer();
   ideAddMessage('assistant', '', true);
 

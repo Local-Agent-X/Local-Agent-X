@@ -55,7 +55,7 @@ async function _retryHttpStream(ctx, originalErr) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const bodyEl = ctx.isViewingThis() ? _findStreamingBodyEl(streamSessionId) : null;
-      if (bodyEl) bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+      if (bodyEl) bodyEl.innerHTML = thinkingHTML();
       await new Promise(r => setTimeout(r, attempt * 2000));
       const res2 = await fetch(`${API}/api/chat`, {
         method: 'POST',

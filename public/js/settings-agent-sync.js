@@ -5,11 +5,27 @@
 
 // ── Agent Sync ──
 
+// The badge mirrors the live isSyncing flag, but the backend clears it the
+// instant a push finishes — so a one-shot fetch taken mid-sync (after_chat
+// fires one every turn) freezes on "Syncing..." until the page reloads. Poll
+// while the badge is on screen so it tracks reality; self-stop when the panel
+// closes (offsetParent null) so the interval never leaks.
+let _syncStatusTimer = null;
+function startSyncStatusPolling() {
+  if (_syncStatusTimer) return;
+  _syncStatusTimer = setInterval(() => {
+    const el = document.getElementById('sync-status');
+    if (!el || el.offsetParent === null) { clearInterval(_syncStatusTimer); _syncStatusTimer = null; return; }
+    checkSyncStatus();
+  }, 3000);
+}
+
 async function checkSyncStatus() {
   try {
     const d = await apiJson('/api/sync/status');
     const el = document.getElementById('sync-status');
     if (!el) return;
+    startSyncStatusPolling();
     if (d.enabled) {
       el.className = 'status-badge ok';
       const ago = d.lastSync ? Math.round((Date.now() - d.lastSync) / 1000) : 0;

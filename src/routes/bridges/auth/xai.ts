@@ -37,11 +37,13 @@ export const handleXaiAuthRoutes: RouteHandler = async (method, url, req, res, c
         const { execFile } = await import("node:child_process");
         let child;
         if (process.platform === "win32") {
-          // rundll32 + url.dll passes the URL via argv directly to the
-          // FileProtocolHandler API — no cmd, no shell, no `&` parsing.
-          // `cmd /c start "" <url>` truncates the URL at the first `&`
-          // because cmd reads `&` as a command separator.
-          child = execFile("rundll32.exe", ["url.dll,FileProtocolHandler", authUrl]);
+          // explorer.exe <url> routes through ShellExecute → the default-browser
+          // association (honors Chrome's modern `--single-argument` registration),
+          // the Windows analog of macOS `open`. The old rundll32
+          // url.dll,FileProtocolHandler path silently no-ops on some Windows setups
+          // — that was the "Sign in doesn't open the browser" bug. argv (no cmd, no
+          // shell) so the `&`-laden OAuth URL isn't truncated.
+          child = execFile("explorer.exe", [authUrl]);
         } else if (process.platform === "darwin") {
           child = execFile("open", [authUrl]);
         } else {

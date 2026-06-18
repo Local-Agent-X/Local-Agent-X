@@ -9,6 +9,8 @@
 // make Codex perform on long tasks. Workers + fresh context IS the fix.
 
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { sanitizeHistory, truncateHistory } from "../providers/sanitize.js";
 import type { AgentRequestInput, ForcedToolChoice, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";
@@ -180,13 +182,31 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   });
   end();
 
-  // 7. Process image attachments
+  // 7. Process image attachments. Web uploads first and sends a `/uploads/<f>`
+  // path in `url`; the mobile app has no upload step and sends the image inline
+  // as a base64 `dataUrl` (url:null) — decode that to a file so both land in the
+  // same on-disk form the rest of the pipeline reads.
   const images: Array<{ url: string; filePath?: string; name: string }> = [];
   if (input.attachments && input.uploadsDir) {
     for (const a of input.attachments) {
-      if (a.isImage && a.url) {
-        const fname = a.url.replace(/^\/uploads\//, "");
-        images.push({ name: a.name, url: a.url, filePath: join(input.uploadsDir, fname) });
+      if (!a.isImage) continue;
+      const inline = (a as { dataUrl?: string | null }).dataUrl ?? null;
+      const src = (a.url as string | null) || inline;
+      if (!src) continue;
+      const dataMatch = /^data:([^;]+);base64,(.+)$/.exec(src);
+      if (dataMatch) {
+        const ext = (dataMatch[1].split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "jpg";
+        const fname = `att-${randomBytes(6).toString("hex")}.${ext}`;
+        const filePath = join(input.uploadsDir, fname);
+        try {
+          writeFileSync(filePath, Buffer.from(dataMatch[2], "base64"));
+        } catch {
+          continue; // unwritable upload dir — skip rather than fail the turn
+        }
+        images.push({ name: a.name, url: `/uploads/${fname}`, filePath });
+      } else {
+        const fname = src.replace(/^\/uploads\//, "");
+        images.push({ name: a.name, url: src, filePath: join(input.uploadsDir, fname) });
       }
     }
   }

@@ -66,7 +66,7 @@ export function authorizeUpgrade(token: string, operatorToken: string): UpgradeA
  *  conversations (the phone shows the same chat history + list as the desktop —
  *  load history then subscribe for the live tail, like the web client). Keep
  *  this narrow — a device token is NOT an operator token. */
-const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions"];
+const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers"];
 
 export function isDeviceAllowedPath(pathname: string): boolean {
   return DEVICE_HTTP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p));

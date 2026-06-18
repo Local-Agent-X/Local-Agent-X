@@ -17,6 +17,9 @@ voice-models/
 *.db-shm
 *.db-wal
 
+# Internal reports — competitive analysis, audits, etc. Never ship publicly.
+reports/
+
 # OS
 .DS_Store
 Thumbs.db

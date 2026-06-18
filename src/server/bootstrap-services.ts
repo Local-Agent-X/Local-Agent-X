@@ -114,12 +114,16 @@ export async function initOrRefreshEmbeddingProvider(deps: {
             }
           }
         } else {
-          degraded = true;
-          logger.warn(`[memory] Ollama not reachable at ${ollamaUrl} — embedding provider will be degraded until ollama is up. Call /api/memory/reinit to retry.`);
+          // Don't wire a provider that can't reach Ollama — memoryIndex stays
+          // null → clean FTS fallback, and a degraded retry costs only the tags
+          // probe, not the one-time signature/heal scan setEmbeddingProvider
+          // runs. The caller's retry loop re-attempts until Ollama answers.
+          logger.warn(`[memory] Ollama not reachable at ${ollamaUrl} — keyword search only; will retry until it's up.`);
+          return { providerName: "ollama", model: targetModel, degraded: true };
         }
       } catch (ollamaErr) {
-        degraded = true;
-        logger.warn(`[memory] Ollama check failed: ${(ollamaErr as Error).message}`);
+        logger.warn(`[memory] Ollama check failed: ${(ollamaErr as Error).message} — keyword search only; will retry.`);
+        return { providerName: "ollama", model: targetModel, degraded: true };
       }
     }
 
@@ -143,6 +147,26 @@ export async function initOrRefreshEmbeddingProvider(deps: {
   } catch (e) {
     logger.warn(`[memory] Embedding provider not available: ${(e as Error).message} — keyword search only`);
     return { providerName: "none", model: "", degraded: true };
+  }
+}
+
+/**
+ * Re-run an embedding init until it reports non-degraded, with bounded backoff.
+ * The boot warmer uses this so an Ollama that's unreachable at boot (saturated
+ * box) self-heals instead of leaving memory stuck on keyword search until a
+ * manual /api/memory/reinit. Caller-side on purpose — the one-shot reinit route
+ * must NOT inherit the retry. `sleep` is injectable for tests.
+ */
+export async function warmEmbeddingsWithRetry(
+  initOnce: () => Promise<{ degraded: boolean }>,
+  opts: { delaysMs: number[]; sleep?: (ms: number) => Promise<void>; onGiveUp?: (attempts: number) => void },
+): Promise<{ attempts: number; degraded: boolean }> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => { const t = setTimeout(r, ms); t.unref?.(); }));
+  for (let attempt = 1; ; attempt++) {
+    const { degraded } = await initOnce();
+    if (!degraded) return { attempts: attempt, degraded: false };
+    if (attempt > opts.delaysMs.length) { opts.onGiveUp?.(attempt); return { attempts: attempt, degraded: true }; }
+    await sleep(opts.delaysMs[attempt - 1]);
   }
 }
 
@@ -218,14 +242,20 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   // 15-60s on a cold/slow Ollama and was blocking port-listening for the whole
   // time (the #1 boot-time cost on a loaded box). memoryIndex is null-safe on
   // its provider (every embed path guards `if (embeddingProvider)`), so until
-  // this resolves memory retrieval degrades to FTS instead of stalling boot —
-  // the same degraded mode the Ollama-unreachable branch already produces. A
-  // sibling of the fire-and-forget warmers below; re-runnable via
-  // /api/memory/reinit. Still timed so the log shows when embeddings go live.
+  // this resolves memory retrieval degrades to FTS instead of stalling boot. A
+  // sibling of the fire-and-forget warmers below. Retries until non-degraded so
+  // an Ollama that's unreachable at boot self-heals instead of leaving memory on
+  // keyword search until a manual /api/memory/reinit.
   {
     const t = Date.now();
-    void initOrRefreshEmbeddingProvider({ config, dataDir, secretsStore, memoryIndex })
-      .then(() => logger.info(`[boot-phase] initOrRefreshEmbeddingProvider ${Date.now() - t}ms (background)`))
+    void warmEmbeddingsWithRetry(
+      () => initOrRefreshEmbeddingProvider({ config, dataDir, secretsStore, memoryIndex }),
+      {
+        delaysMs: [10_000, 15_000, 20_000, 30_000, 30_000, 60_000, 60_000],
+        onGiveUp: (n) => logger.warn(`[memory] embeddings still degraded after ${n} attempts — keyword search only until Ollama is up or /api/memory/reinit`),
+      },
+    )
+      .then((r) => logger.info(`[boot-phase] initOrRefreshEmbeddingProvider ${Date.now() - t}ms (background, ${r.attempts} attempt(s)${r.degraded ? ", still degraded" : ""})`))
       .catch((e) => logger.warn(`[memory] embedding bootstrap failed (background): ${(e as Error).message}`));
   }
 

@@ -51,44 +51,82 @@ function resolveTarget(monitor?: number): { x: number; y: number; width: number;
     : { x: 0, y: 0, width: 1920, height: 1080 };
 }
 
-/** Build the ffmpeg arg list: gdigrab in → VP8 → RTP over UDP out. */
+// VP8 realtime encode → RTP tail, shared by every platform's capture input.
+// -deadline realtime + -cpu-used keep latency low; the even width/height filter
+// avoids encoder errors on odd-dimension screens.
+function encodeRtpArgs(rtpPort: number): string[] {
+  return [
+    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+    "-pix_fmt", "yuv420p",
+    "-c:v", "libvpx",
+    "-deadline", "realtime",
+    "-cpu-used", "5",
+    "-b:v", "2M",
+    "-payload_type", String(VP8_PAYLOAD_TYPE),
+    "-f", "rtp", `rtp://127.0.0.1:${rtpPort}`,
+  ];
+}
+
+/** Windows: gdigrab region capture → VP8/RTP. */
 export function buildFfmpegArgs(target: { x: number; y: number; width: number; height: number }, fps: number, rtpPort: number): string[] {
   return [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-f",
-    "gdigrab",
-    "-framerate",
-    String(fps),
-    "-offset_x",
-    String(Math.round(target.x)),
-    "-offset_y",
-    String(Math.round(target.y)),
-    "-video_size",
-    `${Math.round(target.width)}x${Math.round(target.height)}`,
-    "-i",
-    "desktop",
-    // VP8 realtime encode. -deadline realtime + -cpu-used keep latency low; the
-    // even width/height filter avoids encoder errors on odd-dimension monitors.
-    "-vf",
-    "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-    "-pix_fmt",
-    "yuv420p",
-    "-c:v",
-    "libvpx",
-    "-deadline",
-    "realtime",
-    "-cpu-used",
-    "5",
-    "-b:v",
-    "2M",
-    "-payload_type",
-    String(VP8_PAYLOAD_TYPE),
-    "-f",
-    "rtp",
-    `rtp://127.0.0.1:${rtpPort}`,
+    "-hide_banner", "-loglevel", "error",
+    "-f", "gdigrab",
+    "-framerate", String(fps),
+    "-offset_x", String(Math.round(target.x)),
+    "-offset_y", String(Math.round(target.y)),
+    "-video_size", `${Math.round(target.width)}x${Math.round(target.height)}`,
+    "-i", "desktop",
+    ...encodeRtpArgs(rtpPort),
   ];
+}
+
+/** macOS: avfoundation whole-screen capture → VP8/RTP. Captures the full screen
+ *  device (no region crop). Output `-r` sets the frame rate so we don't have to
+ *  match an avfoundation-supported input framerate (which it often rejects). */
+export function buildMacFfmpegArgs(screenIndex: string, fps: number, rtpPort: number): string[] {
+  return [
+    "-hide_banner", "-loglevel", "error",
+    "-f", "avfoundation",
+    "-capture_cursor", "1",
+    "-i", `${screenIndex}:none`,
+    "-r", String(fps),
+    ...encodeRtpArgs(rtpPort),
+  ];
+}
+
+const IS_MAC = process.platform === "darwin";
+
+/** Cached avfoundation "Capture screen" device index (macOS). */
+let cachedScreenIndex: string | null = null;
+
+/**
+ * Discover the avfoundation screen-capture device index (macOS). avfoundation
+ * lists devices to stderr and exits with an error in list mode — we parse the
+ * "[N] Capture screen 0" line. Cached; LAX_AVF_SCREEN_INDEX overrides; falls
+ * back to "1" (device 0 is usually the camera).
+ */
+async function avfScreenIndex(): Promise<string> {
+  const override = process.env.LAX_AVF_SCREEN_INDEX;
+  if (override) return override;
+  if (cachedScreenIndex) return cachedScreenIndex;
+  cachedScreenIndex = await new Promise<string>((resolve) => {
+    let out = "";
+    let proc: ChildProcessWithoutNullStreams;
+    try {
+      proc = spawn(FFMPEG, ["-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""]);
+    } catch {
+      resolve("1");
+      return;
+    }
+    proc.stderr.on("data", (d: Buffer) => { out += d.toString(); });
+    proc.on("error", () => resolve("1"));
+    proc.on("exit", () => {
+      const m = out.match(/\[(\d+)\]\s+Capture screen/);
+      resolve(m ? m[1] : "1");
+    });
+  });
+  return cachedScreenIndex;
 }
 
 /**
@@ -103,7 +141,6 @@ export function startCapture(
   onError: (message: string) => void,
 ): CaptureHandle {
   const fps = options.fps ?? 15;
-  const target = resolveTarget(options.monitor);
 
   const sock: Socket = createSocket("udp4");
   let proc: ChildProcessWithoutNullStreams | null = null;
@@ -139,9 +176,19 @@ export function startCapture(
     stop();
   });
 
-  sock.bind(options.rtpPort, "127.0.0.1", () => {
+  const launch = async (): Promise<void> => {
     if (stopped) return;
-    const args = buildFfmpegArgs(target, fps, options.rtpPort);
+    let args: string[];
+    try {
+      args = IS_MAC
+        ? buildMacFfmpegArgs(await avfScreenIndex(), fps, options.rtpPort)
+        : buildFfmpegArgs(resolveTarget(options.monitor), fps, options.rtpPort);
+    } catch (e) {
+      onError(`Failed to resolve the screen to capture: ${(e as Error).message}`);
+      stop();
+      return;
+    }
+    if (stopped) return;
     try {
       proc = spawn(FFMPEG, args, { windowsHide: true });
     } catch (e) {
@@ -162,10 +209,17 @@ export function startCapture(
       if (stopped) return;
       // A non-zero exit before stop() means capture died — surface it.
       if (code !== 0 && code !== null) {
-        onError(`Screen capture ended unexpectedly (ffmpeg exit ${code}).`);
+        onError(IS_MAC
+          ? `Screen capture failed (ffmpeg exit ${code}). On macOS, grant Screen Recording to Local Agent X in System Settings → Privacy & Security → Screen Recording, then retry.`
+          : `Screen capture ended unexpectedly (ffmpeg exit ${code}).`);
       }
       stop();
     });
+  };
+
+  sock.bind(options.rtpPort, "127.0.0.1", () => {
+    if (stopped) return;
+    void launch();
   });
 
   return { stop };

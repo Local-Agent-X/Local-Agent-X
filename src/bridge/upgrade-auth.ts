@@ -62,9 +62,11 @@ export function authorizeUpgrade(token: string, operatorToken: string): UpgradeA
 }
 
 /** Endpoints a paired device may reach over HTTP. The mobile app talks to the
- *  agent over WS; its only REST surface is the app viewer/state. Keep this
- *  narrow — a device token is NOT an operator token. */
-const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/"];
+ *  agent over WS; over REST it reads the app viewer/state and its OWN
+ *  conversations (the phone shows the same chat history + list as the desktop —
+ *  load history then subscribe for the live tail, like the web client). Keep
+ *  this narrow — a device token is NOT an operator token. */
+const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions"];
 
 export function isDeviceAllowedPath(pathname: string): boolean {
   return DEVICE_HTTP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p));

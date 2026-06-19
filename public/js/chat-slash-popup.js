@@ -2,8 +2,9 @@
  * Slash-command autocomplete popup for the chat input.
  *
  * Behavior matches Claude Code's affordance: typing `/` at the start of
- * the input opens a popup listing available commands. Filters as the
- * user types more characters after the slash. Arrow keys navigate;
+ * any word (first char, or after whitespace) opens a popup listing
+ * available commands. Filters as the user types more characters after the
+ * slash, and selecting replaces just that token. Arrow keys navigate;
  * Enter selects; Escape dismisses. Clicking an item also selects.
  *
  * Commands are fetched from `/api/protocols` on init (every protocol
@@ -52,6 +53,9 @@
   let highlightedIdx = 0;
   let currentMatches = [];
   let textareaEl = null;
+  // Index of the `/` being completed (start of a word at the cursor) so
+  // selectCurrent replaces just that token, not the whole input.
+  let slashStart = 0;
 
   function init() {
     textareaEl = document.getElementById("msg-input");
@@ -94,12 +98,16 @@
   }
 
   function onInput() {
-    const raw = textareaEl.value;
+    // Match a `/command` token at the START OF A WORD ending at the cursor —
+    // i.e. `/` is either the first char or follows whitespace/newline. Only the
+    // text before the cursor is considered so trailing words don't block it.
     // Underscore allowed for typed protocol names like `instagram_post`.
-    const match = raw.match(/^\/([a-zA-Z0-9_-]*)$/);
+    const beforeCursor = textareaEl.value.slice(0, textareaEl.selectionStart);
+    const match = beforeCursor.match(/(^|\s)\/([a-zA-Z0-9_-]*)$/);
     if (!match) { closePopup(); return; }
 
-    const prefix = match[1].toLowerCase();
+    slashStart = match.index + match[1].length; // index of the `/` itself
+    const prefix = match[2].toLowerCase();
     currentMatches = COMMANDS.filter(c => c.name.toLowerCase().startsWith(prefix));
     if (currentMatches.length === 0) { closePopup(); return; }
 
@@ -155,12 +163,17 @@
   function selectCurrent() {
     const choice = currentMatches[highlightedIdx];
     if (!choice) return;
-    // Insert "/<name> " — trailing space lets user start typing the arg immediately.
-    textareaEl.value = `/${choice.name} `;
+    // Replace just the `/<prefix>` token at the cursor with "/<name> " (trailing
+    // space lets the user type the arg immediately), preserving any text before
+    // the slash and after the cursor — so mid-sentence completions don't wipe input.
+    const value = textareaEl.value;
+    const before = value.slice(0, slashStart);
+    const after = value.slice(textareaEl.selectionStart);
+    const insert = `/${choice.name} `;
+    textareaEl.value = before + insert + after;
     textareaEl.focus();
-    // Position cursor at end.
-    const len = textareaEl.value.length;
-    textareaEl.setSelectionRange(len, len);
+    const pos = before.length + insert.length;
+    textareaEl.setSelectionRange(pos, pos);
     closePopup();
   }
 

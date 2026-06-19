@@ -22,6 +22,22 @@ export function messageRoleToCanonicalRole(role: ChatCompletionMessageParam["rol
   }
 }
 
+type ChatImage = { name: string; url: string };
+
+/** Normalize a stored `content.images` payload down to the {name,url} the
+ * session log + frontend need (drops filePath and any malformed entries). */
+function normalizeImages(raw: unknown): ChatImage[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ChatImage[] = [];
+  for (const im of raw) {
+    if (im && typeof im === "object") {
+      const url = String((im as { url?: unknown }).url ?? "");
+      if (url) out.push({ name: String((im as { name?: unknown }).name ?? ""), url });
+    }
+  }
+  return out;
+}
+
 export function extractTextContent(content: ChatCompletionMessageParam["content"] | undefined): string {
   if (typeof content === "string") return content;
   if (!content || !Array.isArray(content)) return "";
@@ -54,6 +70,7 @@ export function opMessageRowToChatParam(row: OpMessageRow): ChatCompletionMessag
     toolCalls?: Array<{ id: string; name: string; arguments: string }>;
     toolCallId?: string;
     kind?: string;
+    images?: unknown;
   };
   const text = typeof content.text === "string" ? content.text : "";
 
@@ -73,8 +90,15 @@ export function opMessageRowToChatParam(row: OpMessageRow): ChatCompletionMessag
     // injects with — the chat UI / future turns should see what the user
     // actually typed, not the wrapped form.
     const cleaned = text.replace(/^\[mid-turn user message\]\s*/, "");
-    if (!cleaned) return null;
-    return { role: "user", content: cleaned };
+    // Carry attachments through to session.messages so photos survive a reload.
+    // The seed stores them on the op row (seed-messages.ts); without reading
+    // them here a caption-less photo send produced an empty-text row that got
+    // dropped below — the whole user turn vanished, image and all.
+    const images = normalizeImages(content.images);
+    if (!cleaned && images.length === 0) return null;
+    const param = { role: "user", content: cleaned } as ChatCompletionMessageParam & { images?: ChatImage[] };
+    if (images.length > 0) param.images = images;
+    return param;
   }
   if (row.role === "assistant") {
     if (Array.isArray(content.toolCalls) && content.toolCalls.length > 0) {

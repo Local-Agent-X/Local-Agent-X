@@ -125,25 +125,15 @@ async function persistTurnState(input: PersistInput): Promise<void> {
     }
   }
 
-  // Defensive fallback: never silently drop the user's input.
+  // Defensive fallback: never silently drop the user's input. The normal path
+  // persists this turn's images via opMessageRowToChatParam (reads them off the
+  // op row); this fallback bypasses that, so carry them explicitly here too.
   if (newChatMessages.length === 0) {
-    newChatMessages.push({ role: "user", content: message });
+    const userMsg: ChatCompletionMessageParam & { images?: typeof images } = { role: "user", content: message };
+    if (images.length > 0) userMsg.images = images;
+    newChatMessages.push(userMsg);
     if (assistantText) {
       newChatMessages.push({ role: "assistant", content: assistantText });
-    }
-  }
-
-  // Persist this turn's images on its user message so they survive a reload. The
-  // agent already received them via prepared.images; without this the session
-  // stored text only and photos vanished on restore (on the web too, not just
-  // mobile). Attach to the latest user row — the current turn's input.
-  if (images.length > 0) {
-    for (let i = newChatMessages.length - 1; i >= 0; i -= 1) {
-      const m = newChatMessages[i];
-      if (m && m.role === "user") {
-        (m as { images?: typeof images }).images = images;
-        break;
-      }
     }
   }
 

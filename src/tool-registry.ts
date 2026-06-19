@@ -97,6 +97,11 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "view_image",                // base64-ships local image bytes off-box to the vision API
   "screen_capture",            // captured screen image bytes get forwarded off-box by the bridge
   "camera_capture",            // captured camera image bytes get forwarded off-box by the bridge
+  // `computer` types model-authored text into ANOTHER app (action:"type") — a
+  // cross-app data write, the same exfil shape as clipboard_write. Local-only,
+  // so NOT offBoxFetch. Only the typed text is a payload (egressPayload below);
+  // move/click/screen_size carry no data and pass the gates untouched.
+  "computer",
 ]);
 
 // Sensitive-read = can surface file/secret/PII content into the model context.

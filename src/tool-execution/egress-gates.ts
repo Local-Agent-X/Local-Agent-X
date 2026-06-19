@@ -48,6 +48,11 @@ function egressPayload(name: string, args: Record<string, unknown>): { text: str
     case "clipboard_write":
       push(args.text);
       break;
+    case "computer":
+      // The `computer` family's ONLY exfil channel is the text it types
+      // (action:"type"); mouse move/click/drag and key chords carry no data.
+      push(args.text);
+      break;
     case "process_start":
       push(args.command);
       if (Array.isArray(args.args)) for (const a of args.args) push(a);
@@ -125,6 +130,13 @@ export function dataLineageGate(ctx: ToolCallContext): PhaseOutcome {
   // evidence (which tainted bytes are actually in this outbound payload) — it
   // makes the same block decision as checkEgressTaint.
   const { text } = egressPayload(ctx.tc.name, ctx.args as Record<string, unknown>);
+  // `computer` is egress ONLY through typed text (action:"type"). A mouse
+  // move/click/scroll carries no data, so the sticky presence floor must not
+  // gate it — blocking a cursor move because a file was read earlier this
+  // session is a pure false positive with nothing to exfil. Scoped to
+  // `computer`: other sinks keep the strict floor regardless of payload (their
+  // destination arg, e.g. a GET url, can itself carry data the floor must stop).
+  if (ctx.tc.name === "computer" && text === "") return CONTINUE;
   const egress = checkEgressTaintWithPayload(ctx.sessionId || "default", text);
   if (!egress.blocked) return CONTINUE;
   const result: ToolResult = {

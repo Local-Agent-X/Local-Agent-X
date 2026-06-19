@@ -218,6 +218,52 @@ describe("dataLineageGate keys on egress class (not just http_request)", () => {
   });
 });
 
+describe("computer (key_type) is egress — typed text gated, mouse actions exempt", () => {
+  // The `computer` tool can TYPE model-authored text into another app, so a
+  // secret it read could be exfiltrated through the keyboard. It is egress-class
+  // so the secret-scan + canary + taint gates cover the typed text — but ONLY
+  // the text: a mouse move/click carries no data and must never be false-blocked.
+  const SECRET = "AKIA0000000000000000"; // AWS-key-shaped
+  const canaries = generateCanaries();
+  const CANARY = canaries[0];
+
+  it("is enrolled in the egress capability class", () => {
+    expect(hasCapability("computer", "egress")).toBe(true);
+  });
+
+  it("egressGuardGate blocks a secret typed via action:type, but is a no-op for a mouse move", () => {
+    const sid = "cap-class-computer-secret";
+    expect(egressGuardGate(makeCtx("computer", { action: "type", text: `pw=${SECRET}` }, sid)).kind).toBe("halt");
+    expect(egressGuardGate(makeCtx("computer", { action: "move", x: 100, y: 200 }, sid)).kind).toBe("continue");
+    expect(egressGuardGate(makeCtx("computer", { action: "type", text: "hello world" }, sid)).kind).toBe("continue");
+  });
+
+  it("canaryEgressGate hard-blocks a canary typed via action:type", () => {
+    const sid = "cap-class-computer-canary";
+    registerSessionCanaries(sid, canaries);
+    try {
+      expect(canaryEgressGate(makeCtx("computer", { action: "type", text: `x ${CANARY}` }, sid)).kind).toBe("halt");
+      expect(canaryEgressGate(makeCtx("computer", { action: "click", x: 5, y: 5 }, sid)).kind).toBe("continue");
+    } finally {
+      clearSessionCanaries(sid);
+    }
+  });
+
+  it("dataLineageGate floors TYPING after a sensitive read, but lets the mouse keep moving", () => {
+    const sid = "cap-class-computer-taint";
+    clearSessionTaint(sid);
+    recordSensitiveRead(sid, "sensitive_file", "/Users/x/.ssh/id_rsa");
+    // Typing carries data → the presence floor applies (catches paraphrased
+    // secrets the value-scan would miss).
+    expect(dataLineageGate(makeCtx("computer", { action: "type", text: "anything" }, sid)).kind).toBe("halt");
+    // Pointer actuation carries nothing → must NOT be blocked (no over-block).
+    expect(dataLineageGate(makeCtx("computer", { action: "move", x: 1, y: 2 }, sid)).kind).toBe("continue");
+    expect(dataLineageGate(makeCtx("computer", { action: "click", x: 1, y: 2 }, sid)).kind).toBe("continue");
+    expect(dataLineageGate(makeCtx("computer", { action: "screen_size" }, sid)).kind).toBe("continue");
+    clearSessionTaint(sid);
+  });
+});
+
 describe("egressGuardGate — outbound secret scan + sensitive attachment (every egress sink)", () => {
   const sessionId = "cap-class-egress-guard";
   // A clearly secret-shaped value (AWS Access Key: AKIA + 16 upper/digit chars).

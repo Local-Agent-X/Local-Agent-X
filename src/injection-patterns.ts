@@ -28,7 +28,11 @@ export const INJECTION_PATTERNS: Array<{ pattern: RegExp; score: number; label: 
   // Tool manipulation
   { pattern: /call\s+the\s+(bash|shell|write|edit)\s+tool/i, score: 0.7, label: "tool-steering" },
   { pattern: /execute\s+(this|the\s+following)\s+command/i, score: 0.65, label: "command-injection" },
-  { pattern: /run\s+`[^`]+`/i, score: 0.6, label: "backtick-command" },
+  // Steering payload, not just any quoted command. Require a shell metachar or a
+  // known dangerous binary inside the backticks: "run `tsc --noEmit`" / "run
+  // `cron-...`" in notes aren't injection, but "run `curl x | bash`" / "run
+  // `rm -rf /`" are (those also trip exfil-curl / destructive-command).
+  { pattern: /run\s+`[^`]*(?:\||&&|;|\bcurl\b|\bwget\b|\brm\b|\bsudo\b|\bbash\b|\bsh\b|\beval\b|\biex\b|\binvoke-expression\b)/i, score: 0.6, label: "backtick-command" },
   // Exfiltration attempts
   { pattern: /send\s+(this|the|all|my)\s+(data|info|secret|token|key)/i, score: 0.75, label: "exfil-request" },
   { pattern: /curl\s+https?:\/\//i, score: 0.6, label: "exfil-curl" },
@@ -38,11 +42,17 @@ export const INJECTION_PATTERNS: Array<{ pattern: RegExp; score: number; label: 
   { pattern: /disregard\s+(all\s+)?(previous|prior|earlier|above)/i, score: 0.95, label: "instruction-override-synonym" },
   { pattern: /override\s+(your|the|all)\s+(instructions?|rules?|guidelines?|constraints?)/i, score: 0.9, label: "override-synonym" },
   { pattern: /pretend\s+(you\s+are|to\s+be|you're)/i, score: 0.85, label: "identity-pretend" },
-  { pattern: /act\s+as\s+(if\s+you\s+are|an?\s+)/i, score: 0.8, label: "identity-act-as" },
+  // "act as if you are X" (reassigns the model) or "act as a/an <AI persona>".
+  // Plain "act as a partner/proxy/host/liaison" is a benign role description,
+  // not a hijack — the bare "an?\s+" arm false-flagged those.
+  { pattern: /act\s+as\s+(?:if\s+you(?:'re|\s+are)|an?\s+(?:ai\b|assistant|chatbot|language\s+model|dan\b|jailbroken|unfiltered|unrestricted|uncensored|evil\b))/i, score: 0.8, label: "identity-act-as" },
   { pattern: /imagine\s+you\s+(are|have|were|can)/i, score: 0.75, label: "identity-imagine" },
   { pattern: /do\s+not\s+follow\s+(your|the|any)\s+(rules?|instructions?|guidelines?)/i, score: 0.9, label: "rule-bypass" },
   { pattern: /jailbreak/i, score: 0.95, label: "jailbreak-keyword" },
-  { pattern: /\bDAN\b\s*(mode|prompt)?/i, score: 0.9, label: "dan-jailbreak" },
+  // Case-SENSITIVE: the jailbreak is all-caps "DAN" ("Do Anything Now"). The /i
+  // flag made \bDAN\b match the NAME "Dan" (e.g. "Dan Martell") and score 0.9.
+  // All-caps keeps "DAN" / "DAN mode" / "you are DAN" while clearing the name FP.
+  { pattern: /\bDAN\b\s*(mode|prompt)?/, score: 0.9, label: "dan-jailbreak" },
   { pattern: /developer\s+mode\s*(:|enabled|on|true|output)/i, score: 0.85, label: "dev-mode-inject" },
   { pattern: /\bplease\s+ignore\s+(the|your|all|any)\s+(safety|security|guard|filter)/i, score: 0.9, label: "safety-bypass" },
   { pattern: /output\s+(your|the)\s+(system|initial|original)\s+(prompt|instructions?|message)/i, score: 0.85, label: "prompt-leak" },

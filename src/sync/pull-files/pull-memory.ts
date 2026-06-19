@@ -30,6 +30,18 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
     // remote still has the file).
     const SYNC_SKIP_MEMORY_FILES = new Set(["MIND.md"]);
 
+    // Provenance: the sync repo is the user's OWN private repo across their own
+    // devices. A curated note here is first-party — authored on a trusted device
+    // and already cleared the strict 0.3 memory gate when memory_save first wrote
+    // it. Re-gating at 0.3 on pull is double-jeopardy and false-positives on
+    // benign prose (a name like "Dan", "run `tsc`", "act as a partner"). Pull
+    // notes through at a raised threshold so only catastrophic content (≥0.9:
+    // leaked EXTERNAL_UNTRUSTED markers, "ignore all previous instructions",
+    // "you are now a…") is still rejected. Daily archives bypass the gate
+    // entirely (below); notes keep this 0.9 backstop because they're where
+    // pasted external content could legitimately land.
+    const SYNC_TRUSTED_THRESHOLD = 0.9;
+
     for (const f of readdirSync(syncMemDir)) {
       if (!f.endsWith(".md")) continue;
       if (SYNC_SKIP_MEMORY_FILES.has(f)) continue;
@@ -51,6 +63,7 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
           content: merged,
           source: "sync",
           target: localPath,
+          threshold: SYNC_TRUSTED_THRESHOLD,
           mode: "overwrite",
         });
       } catch (e) {

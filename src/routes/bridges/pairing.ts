@@ -44,9 +44,8 @@ export const handlePairingRoutes: RouteHandler = async (method, url, req, res, c
     // gets it via pair/issue); just whether one exists.
     const hasTailnet = enabled ? resolveBridgeBindAddr(loadBridgeConfig().bindAddrOverride) !== null : false;
     // Whether the desktop Mobile settings tab should be shown at all. Unreleased
-    // feature → hidden from regular users; revealed by LAX_BRIDGE_UI or once the
-    // bridge has been enabled/persisted.
-    const uiVisible = resolveBridgeUiVisible(isBridgeUiEnvFlag(), enabled, persisted);
+    // feature → hidden for everyone; revealed ONLY by the LAX_BRIDGE_UI dev flag.
+    const uiVisible = resolveBridgeUiVisible(isBridgeUiEnvFlag());
     json(200, { enabled, persisted, envForced, hasTailnet, uiVisible, envVar: "LAX_BRIDGE_ENABLED" }); return true;
   }
 

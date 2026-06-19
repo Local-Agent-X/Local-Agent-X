@@ -168,18 +168,13 @@ describe("maybeBindBridge — only binds a second server when enabled + tailnet 
   });
 });
 
-describe("resolveBridgeUiVisible — Mobile tab hidden from regular users by default", () => {
-  it("is HIDDEN when nothing is set (regular/dist user)", () => {
-    expect(resolveBridgeUiVisible(false, false, false)).toBe(false);
+describe("resolveBridgeUiVisible — Mobile tab hidden unless the LAX_BRIDGE_UI dev flag is set", () => {
+  it("is HIDDEN by default (regular/dist user — and the dev too)", () => {
+    expect(resolveBridgeUiVisible(false)).toBe(false);
   });
 
-  it("is revealed by the LAX_BRIDGE_UI testing/preview flag", () => {
-    expect(resolveBridgeUiVisible(true, false, false)).toBe(true);
-  });
-
-  it("is revealed once the bridge is enabled or persisted (so an enabled user can manage it)", () => {
-    expect(resolveBridgeUiVisible(false, true, false)).toBe(true);
-    expect(resolveBridgeUiVisible(false, false, true)).toBe(true);
+  it("is revealed ONLY by the LAX_BRIDGE_UI testing/preview flag", () => {
+    expect(resolveBridgeUiVisible(true)).toBe(true);
   });
 
   it("isBridgeUiEnvFlag reads LAX_BRIDGE_UI (1/true), default false", () => {

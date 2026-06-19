@@ -85,11 +85,11 @@ export function isBridgeUiEnvFlag(): boolean {
 
 /**
  * Pure gate for whether the desktop Settings → Mobile tab is shown. The mobile
- * bridge is an UNRELEASED feature, so the tab is HIDDEN from regular users and
- * revealed only when LAX_BRIDGE_UI is set (testing/preview) OR the bridge has
- * already been enabled/persisted (so an enabled user can still manage it).
- * Default — all false — keeps it hidden.
+ * bridge is an UNRELEASED feature, so the tab is HIDDEN for EVERYONE — regular
+ * users and the dev alike, even on machines where the bridge is already enabled
+ * — and revealed ONLY by the explicit LAX_BRIDGE_UI testing/preview flag. One
+ * deliberate opt-in; no accidental reveal via persisted/enabled state.
  */
-export function resolveBridgeUiVisible(envUi: boolean, enabled: boolean, persisted: boolean): boolean {
-  return envUi || enabled || persisted;
+export function resolveBridgeUiVisible(envUi: boolean): boolean {
+  return envUi;
 }

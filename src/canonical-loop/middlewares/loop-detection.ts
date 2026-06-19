@@ -5,7 +5,7 @@
  * Fires in afterModelCall so it sees this turn's tool calls before dispatch.
  * State is per-op so the lastToolKey / sameToolCount carry across turns.
  */
-import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
+import { type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import {
   checkToolLoops,
@@ -23,14 +23,18 @@ function toLoopCalls(toolCalls: { tool: string; args: unknown }[]): { name: stri
 
 export const loopDetectionMiddleware: CanonicalMiddleware = {
   name: "loop-detection",
-  when: isWorkerOp,
 
   async afterModelCall(ctx) {
     if (ctx.toolCalls.length === 0) return { kind: "continue" };
     const { classifyModel } = await import("../../model-tiers.js");
     const modelTier = classifyModel(ctx.model);
     const state = getMiddlewareState<LoopState>(ctx.op.id, "loop-detection", createLoopState);
-    const r = checkToolLoops(toLoopCalls(ctx.toolCalls), state, { modelTier });
+    // Interactive chat runs nudge-only: a runaway spin (the grok `ls` loop)
+    // must be broken, but a legitimate repeated call that the user actually
+    // needs must never have its turn hard-killed. Worker/build/ide lanes keep
+    // the hard abort — there's no human watching to stop a stuck worker.
+    const nudgeOnly = ctx.op.lane === "interactive";
+    const r = checkToolLoops(toLoopCalls(ctx.toolCalls), state, { modelTier, nudgeOnly });
     if (r.abort) {
       ctx.onEvent?.({ type: "stream", delta: r.nudge || "" });
       return { kind: "abort", reason: "loop-detection", message: r.nudge || undefined };

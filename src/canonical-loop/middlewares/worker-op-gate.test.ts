@@ -4,7 +4,6 @@ import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { hallucinationCheckMiddleware } from "./hallucination-check.js";
-import { loopDetectionMiddleware } from "./loop-detection.js";
 import { selfCheckMiddleware } from "./self-check.js";
 import { deadEndMiddleware } from "./dead-end.js";
 import { postCommitMiddleware } from "./post-commit.js";
@@ -27,15 +26,17 @@ describe("isWorkerOp", () => {
 
 describe("nudge middlewares gate on isWorkerOp", () => {
   // These inject stall-nudges that leak into interactive replies / voice, so
-  // they're skipped on the interactive lane. mid-turn-stale is intentionally
-  // NOT here: its second-strike abort is the circuit-breaker that caps a
-  // spinning interactive/voice turn, so it must keep running everywhere.
+  // they're skipped on the interactive lane. Two guards are intentionally NOT
+  // here because a spin must be broken on every lane: mid-turn-stale (its
+  // second-strike abort caps a spinning interactive/voice turn) and
+  // loop-detection (runs everywhere, but nudge-only on interactive so it breaks
+  // an exact-repeat spin like the grok `ls` loop without hard-killing a turn the
+  // user wanted — see loop-detection.test.ts).
   const middlewares = [
     postTurnDetectorMiddleware,
     prematureCompletionMiddleware,
     actionClaimMiddleware,
     hallucinationCheckMiddleware,
-    loopDetectionMiddleware,
     selfCheckMiddleware,
     deadEndMiddleware,
     postCommitMiddleware,

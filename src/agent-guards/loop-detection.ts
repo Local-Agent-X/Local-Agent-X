@@ -119,11 +119,16 @@ export const MUTATION_TOOLS = new Set([
  * loop harder and faster than strong ones, so we halve the thresholds:
  * exact-repeat fires at 2x instead of 3x, discovery at 4 instead of 8.
  * Returns a nudge message if a loop is detected, or null.
+ *
+ * nudgeOnly downgrades the two abort paths (exact-repeat, no-progress) to a
+ * nudge — for the interactive lane, where killing a turn out from under the
+ * user is worse than letting a spin run one more cycle. The discovery path is
+ * already nudge-only regardless.
  */
 export function checkToolLoops(
   toolCalls: Array<{ name: string; arguments: string }>,
   state: LoopState,
-  opts?: { modelTier?: "weak" | "medium" | "strong" },
+  opts?: { modelTier?: "weak" | "medium" | "strong"; nudgeOnly?: boolean },
 ): { abort: boolean; nudge: string | null } {
   const isWeakOrMedium = opts?.modelTier === "weak" || opts?.modelTier === "medium";
   const repeatLimit = isWeakOrMedium ? 2 : 3;
@@ -140,7 +145,14 @@ export function checkToolLoops(
   if (key === state.lastToolKey) {
     state.sameToolCount++;
     if (state.identicalResultRepeats >= repeatLimit - 1) {
-      logRetry({ kind: "loop-abort", tool: toolCalls[0]?.name, detail: { repeatLimit, modelTier: opts?.modelTier } });
+      logRetry({ kind: "loop-abort", tool: toolCalls[0]?.name, detail: { repeatLimit, modelTier: opts?.modelTier, nudgeOnly: opts?.nudgeOnly ?? false } });
+      if (opts?.nudgeOnly) {
+        // Interactive chat: never kill the turn out from under the user. Break
+        // the spin with a pivot nudge, then reset so it must re-accumulate
+        // before nudging again (no per-turn spam if the model keeps spinning).
+        state.identicalResultRepeats = 0;
+        return { abort: false, nudge: `SYSTEM: ${toolCalls[0]?.name} called with identical arguments and unchanged results ${state.sameToolCount}× — you're looping. Stop repeating it: take a different action, call a different tool, or answer with what you already have.` };
+      }
       return { abort: true, nudge: "\n\n(Detected repeated tool calls with unchanging results — stopping loop)" };
     }
   } else {
@@ -201,9 +213,15 @@ export function checkToolLoops(
     state.iterationsSinceMutation++;
     const noProgLimit = isWeakOrMedium ? NO_PROGRESS_LIMIT_WEAK : NO_PROGRESS_LIMIT;
     if (state.iterationsSinceMutation >= noProgLimit) {
-      logRetry({ kind: "loop-abort", tool: "no-progress", detail: { iterations: state.iterationsSinceMutation, limit: noProgLimit, modelTier: opts?.modelTier } });
-      // Reset so the next turn starts clean if the parent loop ignores the abort.
+      logRetry({ kind: "loop-abort", tool: "no-progress", detail: { iterations: state.iterationsSinceMutation, limit: noProgLimit, modelTier: opts?.modelTier, nudgeOnly: opts?.nudgeOnly ?? false } });
+      // Reset so the next turn starts clean whether we abort or just nudge.
       state.iterationsSinceMutation = 0;
+      if (opts?.nudgeOnly) {
+        return {
+          abort: false,
+          nudge: `SYSTEM: ${noProgLimit}+ tool calls with no progress (no file/page/API changes). Step back — take a concrete next action or respond to the user now.`,
+        };
+      }
       return {
         abort: true,
         nudge: `\n\n(No-progress abort: ${noProgLimit}+ iterations of tool calls with zero file mutations. Your work is either done or stuck. End the turn now.)`,

@@ -80,6 +80,7 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
 
     await persistTurnState({
       canonicalOpId, message, assistantText, session, ctx, sessionId,
+      images: prepared.images.map((im) => ({ name: im.name, url: im.url })),
     });
 
     return { doneEmitted: true };
@@ -98,10 +99,12 @@ interface PersistInput {
   session: Session;
   ctx: ServerContext;
   sessionId: string;
+  /** This turn's images (/uploads paths) — persisted on the user message. */
+  images: Array<{ name: string; url: string }>;
 }
 
 async function persistTurnState(input: PersistInput): Promise<void> {
-  const { canonicalOpId, message, assistantText, session, ctx, sessionId } = input;
+  const { canonicalOpId, message, assistantText, session, ctx, sessionId, images } = input;
 
   const { stripEphemeralMessages: stripCanonical } = await import("../../../providers/sanitize.js");
   type MsgRecordC = Record<string, unknown>;
@@ -130,13 +133,27 @@ async function persistTurnState(input: PersistInput): Promise<void> {
     }
   }
 
+  // Persist this turn's images on its user message so they survive a reload. The
+  // agent already received them via prepared.images; without this the session
+  // stored text only and photos vanished on restore (on the web too, not just
+  // mobile). Attach to the latest user row — the current turn's input.
+  if (images.length > 0) {
+    for (let i = newChatMessages.length - 1; i >= 0; i -= 1) {
+      const m = newChatMessages[i];
+      if (m && m.role === "user") {
+        (m as { images?: typeof images }).images = images;
+        break;
+      }
+    }
+  }
+
   const { COMPACTION_PREFIX: COMPACTION_PREFIX_CHAT } = await import("../../../types.js");
   session.messages = stripCanonical([...session.messages, ...newChatMessages]).filter((m) => {
     if (m.role === "system") {
       return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX_CHAT);
     }
     if (m.role === "tool") return true;
-    return m.content || (m as unknown as MsgRecordC).tool_calls;
+    return m.content || (m as unknown as MsgRecordC).tool_calls || (m as { images?: unknown[] }).images?.length;
   });
   session.updatedAt = Date.now();
 

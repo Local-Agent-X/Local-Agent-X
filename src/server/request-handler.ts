@@ -182,7 +182,12 @@ export function createRequestHandler(deps: {
     }
     if (method === "GET" && ["/uploads/", "/videos/", "/images/", "/files/"].some(r => url.pathname.startsWith(r))) {
       const provided = ((req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "") || url.searchParams.get("token") || "";
-      if (!provided || provided.length !== config.authToken.length || !timingSafeEqual(Buffer.from(provided), Buffer.from(config.authToken))) { json(401, { error: "Authentication required" }); return; }
+      const operatorOk = !!provided && provided.length === config.authToken.length && timingSafeEqual(Buffer.from(provided), Buffer.from(config.authToken));
+      // A paired device may also read its own chat images. authorizeDeviceHttp
+      // gates by path, so it only admits the device for /uploads (in the device
+      // HTTP scope) — not /videos /images /files.
+      const deviceOk = !!provided && !!authorizeDeviceHttp(provided, url.pathname);
+      if (!operatorOk && !deviceOk) { json(401, { error: "Authentication required" }); return; }
     }
     if (method === "GET" && url.pathname.startsWith("/uploads/")) {
       const fn = url.pathname.replace("/uploads/", ""); if (/[^a-zA-Z0-9._-]/.test(fn)) { json(400, { error: "Invalid filename" }); return; }

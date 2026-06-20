@@ -138,7 +138,11 @@ export function isSensitivePath(filePath: string): boolean {
 // depth inside one of these is sensitive for the attachment sink.
 // `.lax` (the app's own secrets/vault dir) plus the canonical credential stores.
 const ATTACHMENT_SENSITIVE_DIR_NAMES: ReadonlySet<string> = new Set([
-  ".gnupg", ".ssh", ".aws", ".lax",
+  // NOTE: the LAX data dir (.lax / a relocated LAX_DATA_DIR) is intentionally
+  // NOT here — it's handled by the laxBase rule below so the uploads/ and
+  // workspace/ content-subdir carve-out applies in ONE place. Listing .lax here
+  // too would short-circuit that carve-out and re-block user photos.
+  ".gnupg", ".ssh", ".aws",
   // gcloud config dir holds ADC, legacy_credentials, db token stores — the whole
   // tree is off-limits as an attachment (stricter than read-taint, which only
   // flags the specific known stores to avoid tainting benign gcloud config).
@@ -197,9 +201,21 @@ export function isSensitiveAttachmentPath(filePath: string): boolean {
     if (ATTACHMENT_SENSITIVE_DIR_NAMES.has(seg)) return true;
   }
 
-  // Relocated LAX data dir (LAX_DATA_DIR points at a dir not named `.lax`).
+  // The LAX data dir holds the app's secrets (config.json's authToken, auth.json,
+  // keypair, memory), so files under it are sensitive by default — EXCEPT two
+  // content subdirs that exist to be USED and sent off-box: `uploads/` (photos a
+  // paired device attached) and `workspace/` (media the agent generates). The
+  // blanket rule was false-blocking those as "sensitive attachments", which
+  // bricked generate_video-from-a-photo and sending an image over WhatsApp/
+  // Telegram. Specific secret files anywhere (auth.json, *.pem, secrets.enc) are
+  // still caught by isSensitivePath above + the attachment byte-scan, so
+  // exempting these two dirs loses no real coverage.
   const laxBase = pathSegments(getLaxDir()).pop()?.toLowerCase();
-  if (laxBase && segsLower.includes(laxBase)) return true;
+  const laxIdx = laxBase ? segsLower.indexOf(laxBase) : -1;
+  if (laxIdx >= 0) {
+    const sub = segsLower[laxIdx + 1];
+    if (sub !== "uploads" && sub !== "workspace") return true;
+  }
 
   // Encrypted vault containers (e.g. secrets.enc).
   for (const ext of ATTACHMENT_SENSITIVE_EXTENSIONS) {

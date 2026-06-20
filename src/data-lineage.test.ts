@@ -128,6 +128,16 @@ describe("isSensitiveAttachmentPath — egress-attachment sink (stricter)", () =
     ["/etc/ssl/private/server.key", true, "inherited from isSensitivePath"],
     ["/project/.env", true, "inherited from isSensitivePath"],
 
+    // -- Content subdirs of the LAX data dir are USER content meant to be sent
+    //    off-box (a photo attached from a paired device, agent-generated media).
+    //    Blocking them bricked generate_video-from-a-photo + WhatsApp/Telegram
+    //    image sends. The rest of the data dir stays sensitive. --
+    [join(home, ".lax", "uploads", "att-a6b8be1adae4.jpeg"), false, "a photo the user attached from mobile"],
+    ["~/.lax/uploads/photo.png", false, "upload, leading ~"],
+    [join(home, ".lax", "workspace", "images", "generated.png"), false, "agent-generated image, sendable"],
+    [join(home, ".lax", "config.json"), true, "holds the authToken — still sensitive"],
+    [join(home, ".lax", "memory", "profile.md"), true, "personal memory — not for off-box attach"],
+
     // -- Must NOT block (benign — no taint-storm / no over-blocking) --
     ["~/projects/readme.md", false, "ordinary doc"],
     ["~/.ssh/known_hosts", false, "host fingerprints, low-risk"],

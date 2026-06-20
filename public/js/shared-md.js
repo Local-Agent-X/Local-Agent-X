@@ -93,10 +93,11 @@ function md(s) {
   // ("see https://x.com.") that the legacy post-escape autolinker swallowed
   // into the href. Doing it BEFORE escape keeps the URL intact and lets us
   // strip trailing sentence punctuation cleanly. Image URLs are wrapped as
-  // inline images, everything else as plain links. Stop at `)` and `]` so
-  // markdown-wrapped URLs that slipped past the earlier link replacer don't
-  // get half-eaten here.
-  h = h.replace(/\b(https?:\/\/[^\s<>"'`)\]]+)/g, (_, url) => {
+  // inline images, everything else as plain links. Stop at `)`, `]`, and `*`
+  // so markdown-wrapped URLs (`[..](..)`, and crucially `**http://app/**` —
+  // agents love bolding the app URL) don't get the closing emphasis markers
+  // eaten into the href, which produced a 404'ing link ending in `**`.
+  h = h.replace(/\b(https?:\/\/[^\s<>"'`)\]*]+)/g, (_, url) => {
     let trailing = '';
     const trimMatch = url.match(/[.,;:!?]+$/);
     if (trimMatch) { trailing = trimMatch[0]; url = url.slice(0, -trailing.length); }
@@ -198,7 +199,7 @@ function md(s) {
   h = h.replace(/(https?:\/\/[^\s<"']+\.(?:png|jpg|jpeg|gif|webp|svg))(\s|$)/gi, (_, url, after) => {
     return ph(`<img src="${sanitizeUrl(url)}" alt="image" class="inline-chat-img" onclick="openLightbox(this.src)" />`) + after;
   });
-  h = h.replace(/(https?:\/\/[^\s<"'\x00]+)/g, (match) => {
+  h = h.replace(/(https?:\/\/[^\s<"'\x00*]+)/g, (match) => {
     return ph(`<a href="${sanitizeUrl(match)}" target="_blank" rel="noopener noreferrer" class="md-link">${match}</a>`);
   });
 

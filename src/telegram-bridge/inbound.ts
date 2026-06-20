@@ -1,5 +1,7 @@
+import { basename } from "node:path";
 import { encodeWavToOgg, isFfmpegAvailable, transcribeOggBuffer, getVoicePref, splitForVoiceChunks } from "../bridge-voice/index.js";
 import { synthesize } from "../voice/index.js";
+import { getRuntimeConfig } from "../config.js";
 import { apiCall, downloadTelegramFile, sendMessage, sendVoice } from "./api.js";
 import { _voiceFailHintSent, _voiceMirrorForChat, logger } from "./types.js";
 
@@ -21,8 +23,14 @@ export async function describeNonTextMessage(msg: any, token: string): Promise<s
   if (!fileId) return "";
   try {
     const localPath = await downloadTelegramFile(token, fileId, kind);
+    // Present the served /uploads URL (same convention web/mobile uploads + the
+    // image/video tools use) as the reference the agent passes to tools — a raw
+    // local path can't be fetched by generate_video/generate_image (xAI side) and
+    // trips the attachment-egress gate. Keep the local path for local-only tools
+    // (transcription, OCR) that read the file directly.
+    const url = `http://127.0.0.1:${getRuntimeConfig().port}/uploads/${basename(localPath)}`;
     const caption = typeof msg.caption === "string" ? ` Caption: "${msg.caption}".` : "";
-    return `[User sent a ${kind} message via Telegram. Saved locally at ${localPath}. Metadata: ${extra}.${caption} If handling this requires a capability you don't have yet (transcription, OCR, video analysis), use self_edit to add it — then re-read this file.]`;
+    return `[User sent a ${kind} message via Telegram. Reference URL: ${url} — pass THIS to media tools (generate_video / generate_image / view_image); a local path won't work for those. Local copy: ${localPath} (for transcription / OCR that read the file directly). Metadata: ${extra}.${caption} If handling this requires a capability you don't have yet (transcription, OCR, video analysis), use self_edit to add it — then re-read this file.]`;
   } catch (e) {
     logger.error(`[telegram] Failed to download ${kind}:`, (e as Error).message);
     return `[User sent a ${kind} message via Telegram but download failed: ${(e as Error).message}. Tell the user you couldn't process it.]`;

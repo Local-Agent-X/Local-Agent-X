@@ -156,6 +156,17 @@ describe("device HTTP scope", () => {
     expect(authorizeDeviceHttp(claimed.deviceToken, "/api/chat")).toBeNull();
   });
 
+  it("a device token reaches the media its chat references (/uploads /videos /images) but NOT /files", () => {
+    const challenge = issueChallenge("100.100.1.2:7007");
+    const claimed = claim(challenge.pairingSecret, "Phone");
+    if (!claimed.ok) throw new Error("setup");
+
+    expect(authorizeDeviceHttp(claimed.deviceToken, "/uploads/att-x.jpeg")).not.toBeNull();
+    expect(authorizeDeviceHttp(claimed.deviceToken, "/videos/grok_123.mp4")).not.toBeNull();
+    expect(authorizeDeviceHttp(claimed.deviceToken, "/images/gen.png")).not.toBeNull();
+    expect(authorizeDeviceHttp(claimed.deviceToken, "/files/secret.txt")).toBeNull();
+  });
+
   it("with the bridge OFF, no HTTP path is device-authorized", () => {
     const challenge = issueChallenge("100.100.1.2:7007");
     const claimed = claim(challenge.pairingSecret, "Phone");

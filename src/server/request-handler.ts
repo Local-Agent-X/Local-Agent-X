@@ -183,9 +183,9 @@ export function createRequestHandler(deps: {
     if (method === "GET" && ["/uploads/", "/videos/", "/images/", "/files/"].some(r => url.pathname.startsWith(r))) {
       const provided = ((req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "") || url.searchParams.get("token") || "";
       const operatorOk = !!provided && provided.length === config.authToken.length && timingSafeEqual(Buffer.from(provided), Buffer.from(config.authToken));
-      // A paired device may also read its own chat images. authorizeDeviceHttp
-      // gates by path, so it only admits the device for /uploads (in the device
-      // HTTP scope) — not /videos /images /files.
+      // A paired device may also read the media its chat references.
+      // authorizeDeviceHttp gates by path: it admits the device for /uploads,
+      // /videos and /images (the device HTTP scope) — but not /files.
       const deviceOk = !!provided && !!authorizeDeviceHttp(provided, url.pathname);
       if (!operatorOk && !deviceOk) { json(401, { error: "Authentication required" }); return; }
     }

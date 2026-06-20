@@ -19,6 +19,7 @@ import { createLogger } from "../logger.js";
 
 import { buildContext, isTrivialToolRequest } from "./prepare-request/build-context.js";
 import { selectTools, type ToolSelectionResult } from "./prepare-request/tool-selection.js";
+import { isSlashCommandExpansion } from "../slash-commands.js";
 import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
 import { buildSystemPrompt } from "./prepare-request/build-system-prompt.js";
 
@@ -100,6 +101,14 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       isBridge: false,
     };
   } else {
+    // A slash-command methodology (e.g. /app-build) runs across MANY turns, but
+    // only its FIRST turn carries the marker. Without this, the intent classifier
+    // re-fires on every later reply and can force build_app mid-methodology — the
+    // "step 2 kicked off the build" regression. Treat the whole session as
+    // methodology-active once ANY prior user turn was a slash-command expansion.
+    const priorMethodology = cleanHistory.some(
+      (m) => m.role === "user" && typeof m.content === "string" && isSlashCommandExpansion(m.content),
+    );
     end = stepStart("selectTools");
     toolSel = await selectTools({
       message: input.message,
@@ -108,6 +117,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       bridgeTools: input.bridgeTools,
       resolvedProvider: resolved.provider,
       resolvedModel: resolved.model,
+      priorMethodology,
     });
     end();
   }

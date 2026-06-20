@@ -31,6 +31,19 @@ import type { Protocol } from "./protocols/index.js";
 
 const SLASH_COMMAND_RE = /^\/([a-zA-Z][a-zA-Z0-9_-]*)(?:\s+([\s\S]*))?$/;
 
+// Stable prefix every expanded slash-command message carries (both the SKILL.md
+// body and typed-protocol variants below open with it). Downstream gates key on
+// it to recognize "this turn is running an explicit user-chosen workflow" — e.g.
+// the intent-forcing pipeline must NOT hijack a slash-command turn by classifying
+// it as build_app and pinning tool_choice. Keep in sync with the two format
+// functions; both interpolate this const so they can't drift.
+export const SLASH_COMMAND_MARKER = "**SLASH COMMAND** — The user invoked";
+
+/** True when `message` is an expanded slash-command invocation (see marker). */
+export function isSlashCommandExpansion(message: string): boolean {
+  return (message || "").trimStart().startsWith(SLASH_COMMAND_MARKER);
+}
+
 export interface SlashExpansion {
   /** Lowercase command name (e.g., "app-build"). */
   command: string;
@@ -108,7 +121,7 @@ function formatBodyExpansion(command: string, argText: string, methodology: stri
     : `## Now begin\n\nAck the user briefly and ask for whatever input the methodology needs to start.`;
 
   return (
-    `**SLASH COMMAND** — The user invoked \`/${command}\`. Follow the methodology body below ` +
+    `${SLASH_COMMAND_MARKER} \`/${command}\`. Follow the methodology body below ` +
     `for the duration of this task. The body is load-bearing; it defines how you work, what ` +
     `to capture, and what tools to call.\n\n` +
     argLine +
@@ -129,7 +142,7 @@ function formatTypedExpansion(command: string, argText: string, protocol: Protoc
     : `## Now begin\n\nAck the user briefly and ask for whatever input the protocol needs to start.`;
 
   return (
-    `**SLASH COMMAND** — The user invoked \`/${command}\` (typed protocol). ` +
+    `${SLASH_COMMAND_MARKER} \`/${command}\` (typed protocol). ` +
     `Call \`protocol({action: "get", params: {name: "${protocol.name}"}})\` to load the full steps and rules, ` +
     `then follow them for the duration of this task.\n\n` +
     `Protocol description: ${protocol.description}\n\n` +

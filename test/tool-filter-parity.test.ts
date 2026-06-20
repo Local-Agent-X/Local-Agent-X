@@ -161,3 +161,25 @@ describe("filterToolsForMessage parity (P1.C3)", () => {
     });
   }
 });
+
+describe("filterToolsForMessage — slash-command turns bypass build-intent narrowing", () => {
+  // The expanded /app-build body is saturated with "build … app" prose, which
+  // trips BUILD_INTENT_REGEX and strips the toolset to the build-intent set —
+  // leaving the methodology without the conversational tools it needs. The
+  // skipBuildIntent opt (set when the message is a slash-command expansion)
+  // must keep the full toolset. memory_search is the discriminator: it's
+  // main-chat core but NOT in the build-intent set.
+  const tools = buildTestToolList();
+
+  it("a raw build request still narrows (build-intent set, drops core-only tools)", () => {
+    const narrowed = filterToolsForMessage(tools, "build me a tracker app").map(t => t.name);
+    expect(narrowed).toContain("build_app");
+    expect(narrowed).not.toContain("memory_search"); // core-only → stripped by narrowing
+  });
+
+  it("the same intent with skipBuildIntent keeps the full conversational toolset", () => {
+    const full = filterToolsForMessage(tools, "build me a tracker app", { skipBuildIntent: true }).map(t => t.name);
+    expect(full).toContain("memory_search"); // core survives — methodology has its tools
+    expect(full).toContain("build_app");      // still available, just not narrowed-TO
+  });
+});

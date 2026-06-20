@@ -106,7 +106,7 @@ function keywordRouter(message: string, allTools: ToolDefinition[]): Set<string>
 export function filterToolsForMessage(
   allTools: ToolDefinition[],
   message: string,
-  opts?: { forceBuildIntent?: boolean },
+  opts?: { forceBuildIntent?: boolean; skipBuildIntent?: boolean },
 ): ToolDefinition[] {
   return resolveToolsForRequest(
     {
@@ -118,7 +118,12 @@ export function filterToolsForMessage(
       // prepare-request.ts. Regex alone misses phrasings like
       // "build a log counting app" (modifiers between article and noun)
       // — the classifier handles those, then short-circuits the regex.
-      buildIntentTest: (m) => opts?.forceBuildIntent === true || BUILD_INTENT_REGEX.test(m),
+      // skipBuildIntent suppresses BOTH paths on slash-command turns: the
+      // injected methodology body is full of "build … app" prose that would
+      // false-trip the regex and strip the conversational toolset the
+      // workflow needs (write/edit/ask), so honor the workflow instead.
+      buildIntentTest: (m) =>
+        !opts?.skipBuildIntent && (opts?.forceBuildIntent === true || BUILD_INTENT_REGEX.test(m)),
     },
     allTools,
   );

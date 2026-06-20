@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { expandSlashCommand, listAvailableSlashCommands } from "../src/slash-commands.js";
+import { expandSlashCommand, listAvailableSlashCommands, isSlashCommandExpansion, SLASH_COMMAND_MARKER } from "../src/slash-commands.js";
 
 describe("expandSlashCommand — known commands", () => {
   it("expands /app-build with arg", () => {
@@ -116,6 +116,33 @@ describe("listAvailableSlashCommands", () => {
     const cmds = listAvailableSlashCommands();
     expect(cmds).toContain("instagram_post");
     expect(cmds.length).toBeGreaterThan(3);
+  });
+});
+
+describe("isSlashCommandExpansion — intent-forcing skip signal", () => {
+  // The intent classifier must NOT classify a slash-command turn as build_app
+  // and pin tool_choice to the one-shot builder — that overrode /app-build's
+  // ask-questions-first methodology (the "it just built the app" bug). This
+  // detector is the gate; round-trip it against a real expansion so the marker
+  // can't drift out of sync with the wrapper.
+  it("detects a real /app-build expansion (the exact bug case)", () => {
+    const r = expandSlashCommand("/app-build i want to build a pokemon card catalog sorter");
+    expect(isSlashCommandExpansion(r!.agentMessage)).toBe(true);
+  });
+
+  it("detects a typed-protocol expansion too", () => {
+    const r = expandSlashCommand("/instagram_post a photo of my coffee");
+    expect(isSlashCommandExpansion(r!.agentMessage)).toBe(true);
+  });
+
+  it("is FALSE for an ordinary build request (must still classify normally)", () => {
+    expect(isSlashCommandExpansion("build me a pokemon card catalog sorter app")).toBe(false);
+    expect(isSlashCommandExpansion("hello there")).toBe(false);
+    expect(isSlashCommandExpansion("")).toBe(false);
+  });
+
+  it("tolerates leading whitespace before the marker", () => {
+    expect(isSlashCommandExpansion(`\n  ${SLASH_COMMAND_MARKER} \`/app-build\``)).toBe(true);
   });
 });
 

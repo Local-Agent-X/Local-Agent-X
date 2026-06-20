@@ -6,6 +6,7 @@
 import type { ToolDefinition } from "../../types.js";
 import { filterToolsForMessage } from "../tool-filter.js";
 import { classifyIntent, hasLiteralToolCall, mightNeedToolForcing, NO_SPAWN_OVERRIDE_RE } from "../../classifiers/intent-classifier.js";
+import { isSlashCommandExpansion } from "../../slash-commands.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("agent-request.prepare-request.tools");
@@ -20,6 +21,10 @@ export interface ToolSelectionInput {
   bridgeTools: ToolDefinition[];
   resolvedProvider: string;
   resolvedModel: string;
+  /** True when an EARLIER turn this session was a slash-command methodology
+   *  invocation (the marker only rides the first turn). Keeps intent-forcing
+   *  suppressed for the whole methodology, not just its kickoff turn. */
+  priorMethodology?: boolean;
 }
 
 export interface ToolSelectionResult {
@@ -41,8 +46,19 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // w/o this: full 39-tool set ships, model bypasses build_app and
   // improvises with raw write/bash/http_request.
   let intentVerdict: IntentVerdict = null;
+  // A slash command (e.g. /app-build) is an EXPLICIT user-chosen workflow whose
+  // injected methodology body defines how the agent works and which tools to
+  // call. Classifying it as build_app and pinning tool_choice to the one-shot
+  // builder overrides that methodology — the exact bug where /app-build "just
+  // built the app" instead of running its spec-first, ask-questions-first intake.
+  // Treat it like a literal tool call: explicit intent, so skip the classifier.
+  // priorMethodology extends this across the WHOLE session — the methodology
+  // spans many turns but only the first carries the marker, and without it the
+  // classifier re-forces build_app on a later reply ("step 2 kicked off the build").
+  const inMethodology = isSlashCommandExpansion(input.message) || input.priorMethodology === true;
   const skipClassifier =
     isBridge ||
+    inMethodology ||
     NO_SPAWN_OVERRIDE_RE.test(input.message) ||
     hasLiteralToolCall(input.message) ||
     // Cheap regex pre-gate: skip the LLM classifier (a 3-8s CLI round-trip on
@@ -92,7 +108,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   } else if (tier === "strong" && isAnthropicProvider) {
     tools = input.allAgentTools;
   } else {
-    tools = filterToolsForMessage(input.allAgentTools, input.message, { forceBuildIntent });
+    tools = filterToolsForMessage(input.allAgentTools, input.message, { forceBuildIntent, skipBuildIntent: inMethodology });
     if (tier !== "strong") {
       const before = tools.length;
       tools = shrinkToolsForTier(tools, tier, input.allAgentTools);

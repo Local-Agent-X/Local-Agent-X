@@ -1030,12 +1030,13 @@
         <div id="apps-chat-wrapper">
           <textarea id="apps-chat-input" placeholder="Describe the app you want to build..." rows="3"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAppsChatMessage()}"></textarea>
-          <button id="apps-chat-send" onclick="sendAppsChatMessage()" aria-label="Send">&#9650;</button>
+          <button id="apps-chat-quick" onclick="sendAppsChatQuick()" title="Quick app — instant one-shot HTML app, no questions" aria-label="Quick HTML app">&#9889;</button>
+          <button id="apps-chat-send" onclick="sendAppsChatMessage()" title="Build — guided: asks a few questions, can go full-stack" aria-label="Build">&#9650;</button>
         </div>
         <div id="apps-chat-bar">
           <select id="apps-provider-select" onchange="onAppsProviderChange(this.value)"></select>
           <select id="apps-model-select" onchange="onAppsModelChange(this.value)"></select>
-          <span id="apps-chat-hint">e.g. "Build me a kanban board" or "Create a markdown editor with live preview"</span>
+          <span id="apps-chat-hint">&#9650; Build — guided, asks a few questions, can go full-stack &nbsp;·&nbsp; &#9889; Quick — instant HTML app</span>
         </div>
       </div>
       <div id="apps-empty" style="text-align:center;padding:40px 20px;color:var(--muted);display:none">

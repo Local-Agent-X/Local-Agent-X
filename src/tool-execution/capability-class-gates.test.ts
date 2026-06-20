@@ -21,6 +21,7 @@ import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/known-secrets.js";
 import { generateCanaries, registerSessionCanaries, clearSessionCanaries, checkCanariesInPayload, _setCanaryAuditTrail } from "../threat/canaries.js";
 import { CryptoAuditTrail } from "../threat/audit-trail.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolCallContext } from "./context.js";
 
 function makeCtx(name: string, args: Record<string, unknown>, sessionId: string): ToolCallContext {
@@ -307,6 +308,27 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
       attachments: JSON.stringify(["/tmp/report.pdf"]),
     }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("continue");
+  });
+
+  it("sends user-uploaded photos + generated media, but STILL blocks a data-dir secret (egress false-positive regression)", () => {
+    // The bug: ~/.lax/uploads (photos attached from a paired device) and
+    // ~/.lax/workspace (agent-generated media) were flagged "sensitive
+    // attachments", blocking generate_video-from-a-photo and WhatsApp/Telegram
+    // image sends. Driving the WHOLE gate catches a regression at ANY layer —
+    // egressPayload routing, checkAttachmentPaths, isSensitiveAttachmentPath, or
+    // the ATTACHMENT_SENSITIVE_DIR_NAMES set — not just the leaf predicate.
+    const uploadPhoto = join(getLaxDir(), "uploads", "att-regression.jpeg");
+    const generatedImg = join(getLaxDir(), "workspace", "images", "gen-regression.png");
+    const secretFile = join(getLaxDir(), "config.json"); // holds the authToken
+
+    // generate_video routes reference_images through the sensitive-attachment check.
+    expect(egressGuardGate(makeCtx("generate_video", { prompt: "make it", reference_images: [uploadPhoto] }, sessionId)).kind).toBe("continue");
+    expect(egressGuardGate(makeCtx("generate_video", { prompt: "x", reference_images: [generatedImg] }, sessionId)).kind).toBe("continue");
+    // The uploads/workspace carve-out must NOT open a hole: a real data-dir
+    // secret attached to an off-box sink is still refused.
+    const secretCtx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: "see attached", attachments: JSON.stringify([secretFile]) }, sessionId);
+    expect(egressGuardGate(secretCtx).kind).toBe("halt");
+    expect(secretCtx.result?.metadata?.blocked_by).toBe("sensitive-attachment");
   });
 
   it("is a no-op for non-egress tools", () => {

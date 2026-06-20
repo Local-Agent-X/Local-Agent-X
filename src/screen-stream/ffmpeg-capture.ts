@@ -89,6 +89,11 @@ export function buildMacFfmpegArgs(screenIndex: string, fps: number, rtpPort: nu
     "-hide_banner", "-loglevel", "error",
     "-f", "avfoundation",
     "-capture_cursor", "1",
+    // Pin the INPUT format: the avfoundation screen device offers uyvy422/yuyv422/
+    // nv12/0rgb/bgr0 but NOT yuv420p, and without this ffmpeg defaults the input to
+    // yuv420p (what the VP8 encoder wants) — the device rejects it and nothing
+    // captures (black stream). encodeRtpArgs converts uyvy422 → yuv420p for VP8.
+    "-pixel_format", "uyvy422",
     "-i", `${screenIndex}:none`,
     "-r", String(fps),
     ...encodeRtpArgs(rtpPort),

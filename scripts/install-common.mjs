@@ -592,12 +592,23 @@ if (process.platform === "win32") {
       [],
     );
     // winget returns 0x8A150011 = "no applicable upgrade found" if Build
-    // Tools is already at latest; treat that as success. Anything else
-    // non-zero is a real failure.
-    if (r.status !== 0 && r.status !== -1978335215) {
-      fail(`winget install BuildTools failed (exit ${r.status}). Re-run installer or install manually from https://visualstudio.microsoft.com/downloads/`);
+    // Tools is already at latest; treat that as success.
+    if (r.status === 0 || r.status === -1978335215) {
+      ok("Visual Studio Build Tools installed");
+    } else {
+      // Build Tools is OPTIONAL — DON'T brick the install on a winget failure.
+      // A failed install here leaves the machine in the SAME state as the
+      // !wingetAvailable() branch above (no compiler), and that branch only
+      // warns: better-sqlite3 / onnxruntime-node ship prebuilt win-x64 binaries
+      // that npm ci uses with no compiler. winget failures here are common and
+      // machine-specific — VS bootstrapper exit 1603 (pending reboot, a partial
+      // existing VS install, low disk, or needs elevation), surfaced by winget
+      // as 0x8A150006 "installer failed". If a later from-source build genuinely
+      // needs the toolchain (rare on x64), the npm step below already emits a
+      // clear "install VS Build Tools and re-run" error. So degrade to a warning,
+      // matching the no-winget path, instead of aborting for an optional step.
+      warn(`winget couldn't install VS Build Tools (exit ${r.status}) — continuing with prebuilt native binaries. If a later step fails on a node-gyp / C++ source build, install VS Build Tools from https://visualstudio.microsoft.com/downloads/ and re-run.`);
     }
-    ok("Visual Studio Build Tools installed");
   }
   stepDone("vsbuildtools");
 } else if (process.platform === "darwin") {

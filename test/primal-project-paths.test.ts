@@ -1,7 +1,18 @@
-import { describe, it, expect } from "vitest";
-import { resolveProjectDir, PROJECTS_DIR } from "../src/primal-auto-build/project-paths.js";
+import { describe, it, expect, beforeAll } from "vitest";
+import { join } from "node:path";
+import { resolveProjectDir, projectsDir } from "../src/primal-auto-build/project-paths.js";
+import { setRuntimeConfig } from "../src/config.js";
+import type { LAXConfig } from "../src/types.js";
+
+// Pin a known workspace root so the resolver is deterministic + never touches
+// the real ~/.lax config (workspaceRoot() → getRuntimeConfig().workspace).
+const TEST_WS = join("/tmp", "lax-test-projects", "workspace");
 
 describe("resolveProjectDir", () => {
+  beforeAll(() => {
+    setRuntimeConfig({ workspace: TEST_WS } as unknown as LAXConfig);
+  });
+
   it("returns null for empty input", () => {
     expect(resolveProjectDir("")).toBeNull();
     expect(resolveProjectDir(undefined)).toBeNull();
@@ -9,11 +20,18 @@ describe("resolveProjectDir", () => {
     expect(resolveProjectDir("   ")).toBeNull();
   });
 
-  it("resolves a bare project name to workspace/apps/<name>", () => {
+  it("resolves a bare project name to <workspace-root>/apps/<name>", () => {
     const resolved = resolveProjectDir("petbook");
     expect(resolved).not.toBeNull();
     expect(resolved!.replace(/\\/g, "/")).toMatch(/workspace\/apps\/petbook$/);
-    expect(resolved!).toBe(`${PROJECTS_DIR.replace(/\//g, "\\").replace(/\\/g, require("node:path").sep)}${require("node:path").sep}petbook`);
+    expect(resolved!).toBe(join(projectsDir(), "petbook"));
+  });
+
+  it("resolves into the WORKSPACE ROOT, not the source repo (regression)", () => {
+    // The bug: projectsDir() came from import.meta.url (the code location),
+    // landing builds at <repo>/workspace/apps where the sandbox blocks writes.
+    // It must track the configured workspace root instead.
+    expect(projectsDir().replace(/\\/g, "/")).toBe(`${TEST_WS.replace(/\\/g, "/")}/apps`);
   });
 
   it("returns absolute paths unchanged (windows)", () => {
@@ -33,13 +51,7 @@ describe("resolveProjectDir", () => {
     expect(r!.replace(/\\/g, "/")).not.toMatch(/workspace\/apps/);
   });
 
-  it("PROJECTS_DIR points at workspace/apps inside the LAX repo", () => {
-    // What this test actually guards: the resolver targets the repo's
-    // workspace/apps directory, not some arbitrary cwd. The previous
-    // regex pinned a specific folder name (local-agent-x), which fails for
-    // anyone whose checkout uses a different directory name — including
-    // Alex's "Local Agent X" (capitalized, with spaces) and any teammate
-    // who clones into ~/dev/lax or similar. Assert the structural fact only.
-    expect(PROJECTS_DIR.replace(/\\/g, "/")).toMatch(/\/workspace\/apps$/);
+  it("projectsDir() ends at workspace/apps", () => {
+    expect(projectsDir().replace(/\\/g, "/")).toMatch(/\/workspace\/apps$/);
   });
 });

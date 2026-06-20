@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { workspacePath } from "../config.js";
+import { workspacePath, workspaceRoot } from "../config.js";
 import type { ToolDefinition } from "../types.js";
 import { PROVIDERS } from "../providers/registry.js";
 import {
@@ -272,7 +272,13 @@ export const buildAppTool: ToolDefinition = {
         description: t.description,
         inputSchema: t.parameters,
       })));
-      const security = new SecurityLayer(appDir, "common");
+      // Anchor the sandbox at the WORKSPACE ROOT (the same value the main chat
+      // path uses), NOT appDir — evaluateFileAccess resolves relative agent
+      // paths as `resolve(workspace, "..", rawPath)`, so passing appDir made a
+      // relative `workspace/apps/<name>/index.html` write resolve to a phantom
+      // doubled path and get blocked. Writes stay confined to appDir via
+      // addAllowedPath; only the relative-path anchor is corrected.
+      const security = new SecurityLayer(workspaceRoot(), "common");
       security.addAllowedPath(appDir, sessionId || op.id);
       registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
         tools: BUILDER_AGENT_TOOLS,

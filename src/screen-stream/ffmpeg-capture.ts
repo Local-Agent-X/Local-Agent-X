@@ -89,11 +89,10 @@ export function buildMacFfmpegArgs(screenIndex: string, fps: number, rtpPort: nu
     "-hide_banner", "-loglevel", "error",
     "-f", "avfoundation",
     "-capture_cursor", "1",
-    // Pin the INPUT format: the avfoundation screen device offers uyvy422/yuyv422/
-    // nv12/0rgb/bgr0 but NOT yuv420p, and without this ffmpeg defaults the input to
-    // yuv420p (what the VP8 encoder wants) — the device rejects it and nothing
-    // captures (black stream). encodeRtpArgs converts uyvy422 → yuv420p for VP8.
-    "-pixel_format", "uyvy422",
+    // No -pixel_format: let avfoundation negotiate the device's native input
+    // format (uyvy422/nv12/0rgb/… varies by Mac + display) and encodeRtpArgs
+    // converts it to yuv420p for VP8. Pinning a specific input format fails on
+    // screens that don't offer it; negotiation is the portable choice.
     "-i", `${screenIndex}:none`,
     "-r", String(fps),
     ...encodeRtpArgs(rtpPort),
@@ -134,6 +133,13 @@ async function avfScreenIndex(): Promise<string> {
   return cachedScreenIndex;
 }
 
+// The OS screen-capture device is a single shared resource (avfoundation
+// "Capture screen 0" on macOS, gdigrab desktop on Windows). Two captures running
+// at once contend for it and starve BOTH into black/frozen frames — the actual
+// cause of the 2026-06-20 black live-screen, where stacked sessions/processes
+// fought over the one device. Hold it for a single capture at a time.
+let captureDeviceHeld = false;
+
 /**
  * Start the capture pipeline. ffmpeg streams VP8 RTP to a loopback UDP port; the
  * bound reader forwards every datagram to `onRtp` (which the peer writes to the
@@ -145,6 +151,17 @@ export function startCapture(
   onRtp: (packet: Buffer) => void,
   onError: (message: string) => void,
 ): CaptureHandle {
+  // Refuse a second concurrent capture rather than silently blacking out the
+  // active stream (e.g. a second paired device, or a reconnect race). Deferred so
+  // the caller has the (no-op) handle in hand before the error propagates.
+  if (captureDeviceHeld) {
+    queueMicrotask(() =>
+      onError("The screen is already being streamed to another device. Stop that live view first."),
+    );
+    return { stop() {} };
+  }
+  captureDeviceHeld = true;
+
   const fps = options.fps ?? 15;
 
   const sock: Socket = createSocket("udp4");
@@ -154,6 +171,7 @@ export function startCapture(
   const stop = (): void => {
     if (stopped) return;
     stopped = true;
+    captureDeviceHeld = false;
     try {
       proc?.kill("SIGKILL");
     } catch {

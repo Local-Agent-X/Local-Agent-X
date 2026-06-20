@@ -8,7 +8,9 @@ import {
   buildIce,
   buildError,
   buildClosed,
+  buildDisplays,
   parseRtcInbound,
+  parseScreenInputEvent,
   isRtcFrameType,
 } from "./protocol.js";
 
@@ -25,6 +27,48 @@ describe("outbound frame builders", () => {
   it("buildError + buildClosed carry actionable text", () => {
     expect(buildError("r1", "ffmpeg missing")).toEqual({ type: "rtc_error", rtcId: "r1", message: "ffmpeg missing" });
     expect(buildClosed("r1", "Stopped by user.")).toEqual({ type: "rtc_closed", rtcId: "r1", reason: "Stopped by user." });
+  });
+});
+
+describe("remote-control frames", () => {
+  it("buildDisplays reports monitor count, active index + live size", () => {
+    expect(buildDisplays("r1", 2, 0, 2560, 1440)).toEqual({
+      type: "rtc_displays",
+      rtcId: "r1",
+      count: 2,
+      active: 0,
+      width: 2560,
+      height: 1440,
+    });
+  });
+
+  it("parses a valid rtc_input frame, defaulting button to left", () => {
+    const frame = parseRtcInbound({ type: "rtc_input", rtcId: "r1", event: { kind: "click" } });
+    expect(frame).toEqual({ type: "rtc_input", rtcId: "r1", event: { kind: "click", button: "left", double: false } });
+  });
+
+  it("claims rtc_input as an inbound type", () => {
+    expect(isRtcFrameType("rtc_input")).toBe(true);
+  });
+
+  it("validates move/moveBy/scroll coords are finite numbers", () => {
+    expect(parseScreenInputEvent({ kind: "move", x: 0.5, y: 0.25 })).toEqual({ kind: "move", x: 0.5, y: 0.25 });
+    expect(parseScreenInputEvent({ kind: "move", x: "0.5", y: 1 })).toBeNull();
+    expect(parseScreenInputEvent({ kind: "moveBy", dx: 0.1, dy: NaN })).toBeNull();
+    expect(parseScreenInputEvent({ kind: "scroll", dx: 0, dy: 3 })).toEqual({ kind: "scroll", dx: 0, dy: 3 });
+  });
+
+  it("accepts text + key chords, rejects empties", () => {
+    expect(parseScreenInputEvent({ kind: "text", text: "hi" })).toEqual({ kind: "text", text: "hi" });
+    expect(parseScreenInputEvent({ kind: "text", text: "" })).toBeNull();
+    expect(parseScreenInputEvent({ kind: "key", keys: ["cmd", "c"] })).toEqual({ kind: "key", keys: ["cmd", "c"] });
+    expect(parseScreenInputEvent({ kind: "key", keys: [] })).toBeNull();
+    expect(parseScreenInputEvent({ kind: "bogus" })).toBeNull();
+  });
+
+  it("maps right-button + double-click flags through", () => {
+    expect(parseScreenInputEvent({ kind: "click", button: "right" })).toEqual({ kind: "click", button: "right", double: false });
+    expect(parseScreenInputEvent({ kind: "click", double: true })).toEqual({ kind: "click", button: "left", double: true });
   });
 });
 

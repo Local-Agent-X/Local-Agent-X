@@ -14,8 +14,9 @@ async function loadToolPolicyToggles() {
     setToolPolicyToggle('tp-toggle-shell',   s.enableShell   !== false);
     setToolPolicyToggle('tp-toggle-http',    s.enableHttp    !== false);
     setToolPolicyToggle('tp-toggle-browser', s.enableBrowser !== false);
-    // Computer control defaults OFF (=== true), like developer_mode below.
+    // Computer control + phone remote control both default OFF (=== true).
     setToolPolicyToggle('tp-toggle-computer', s.enableComputerControl === true);
+    setToolPolicyToggle('tp-toggle-remote', s.enableRemoteControl === true);
     setToolPolicyToggle('cfg-toggle-grok-media', s.preferGrokForMedia !== false);
     // developer_mode defaults OFF (=== true), unlike the kill-switches above
     // which default ON (!== false). The card only renders on installs where

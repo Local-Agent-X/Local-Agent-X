@@ -23,10 +23,12 @@ import {
   buildIce,
   buildError,
   buildClosed,
+  buildDisplays,
   type RtcInboundFrame,
   type RtcIceCandidate,
   type RtcOutboundFrame,
 } from "./protocol.js";
+import { ScreenInputController, describeDisplays } from "./screen-input.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("screen-stream.session");
@@ -51,6 +53,8 @@ export class ScreenSession {
   private state: SignalingMachine = initialSignaling;
   private peer: ScreenPeer | null = null;
   private capture: CaptureHandle | null = null;
+  /** Remote-control injector — exists only while a session is live. */
+  private input: ScreenInputController | null = null;
   /** Local ICE candidates produced before we're ready to flush (rare ordering). */
   private pendingLocalIce: RtcIceCandidate[] = [];
   /** Remote ICE candidates buffered until the peer exists / answer applied. */
@@ -89,6 +93,10 @@ export class ScreenSession {
         break;
       case "rtc_stop":
         this.apply({ kind: "stop", rtcId: frame.rtcId });
+        break;
+      case "rtc_input":
+        // Drop input that arrives before/after a live session — no injector, no-op.
+        this.input?.enqueue(frame.event);
         break;
       default: {
         const _exhaustive: never = frame;
@@ -157,6 +165,14 @@ export class ScreenSession {
         (message) => this.apply({ kind: "fail", rtcId, message }),
       );
 
+      // Arm remote control for this session + tell the phone how many monitors
+      // exist (so it offers swipe-between-screens only when there's more than one).
+      this.input = new ScreenInputController(monitor, (message) =>
+        this.opts.send(buildError(rtcId, message)),
+      );
+      const d = describeDisplays(monitor);
+      this.opts.send(buildDisplays(rtcId, d.count, d.active, d.width, d.height));
+
       const sdp = await peer.createOffer();
       this.apply({ kind: "offerReady", rtcId, sdp });
     } catch (e) {
@@ -200,6 +216,7 @@ export class ScreenSession {
       /* already stopped */
     }
     this.capture = null;
+    this.input = null;
     const peer = this.peer;
     this.peer = null;
     this.pendingLocalIce = [];

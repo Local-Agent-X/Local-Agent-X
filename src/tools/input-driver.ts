@@ -125,6 +125,17 @@ export async function moveMouse(x: number, y: number, signal?: AbortSignal): Pro
   await mod.mouse.move(mod.straightTo(new mod.Point(x, y)));
 }
 
+// Instant cursor placement (no glide) — the right primitive for live remote
+// control, where the cursor must track the finger 1:1. moveMouse() glides, which
+// is good for the agent but lags a high-frequency input stream.
+export async function setMousePosition(x: number, y: number, signal?: AbortSignal): Promise<void> {
+  assertSupportedOS();
+  await assertPermission();
+  checkAbort(signal);
+  const mod = await nut();
+  await mod.mouse.setPosition(new mod.Point(x, y));
+}
+
 export async function clickMouse(
   opts: { x?: number; y?: number; button?: MouseButton; double?: boolean },
   signal?: AbortSignal,
@@ -163,6 +174,40 @@ export async function dragMouse(
     // mouse button stuck down.
     await mod.mouse.releaseButton(btn);
   }
+}
+
+// Press (and hold) / release a button at the current cursor position — the
+// brackets of an interactive drag the screen-stream remote-control drives. The
+// agent's drag uses dragMouse() (a single glide); the phone needs press/move/
+// release split so a finger-drag follows the path.
+export async function pressButton(button: MouseButton, signal?: AbortSignal): Promise<void> {
+  assertSupportedOS();
+  await assertPermission();
+  checkAbort(signal);
+  const mod = await nut();
+  await mod.mouse.pressButton(toButton(mod, button));
+}
+
+export async function releaseButton(button: MouseButton, signal?: AbortSignal): Promise<void> {
+  assertSupportedOS();
+  await assertPermission();
+  checkAbort(signal);
+  const mod = await nut();
+  await mod.mouse.releaseButton(toButton(mod, button));
+}
+
+// Scroll by tick counts: +dy scrolls down, +dx scrolls right (screen-space, the
+// direction the content moves under a wheel). Zero deltas are no-ops.
+export async function scroll(dx: number, dy: number, signal?: AbortSignal): Promise<void> {
+  assertSupportedOS();
+  await assertPermission();
+  checkAbort(signal);
+  const { mouse } = await nut();
+  if (dy > 0) await mouse.scrollDown(dy);
+  else if (dy < 0) await mouse.scrollUp(-dy);
+  checkAbort(signal);
+  if (dx > 0) await mouse.scrollRight(dx);
+  else if (dx < 0) await mouse.scrollLeft(-dx);
 }
 
 export async function typeText(text: string, signal?: AbortSignal): Promise<void> {

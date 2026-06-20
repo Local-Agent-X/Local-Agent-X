@@ -118,6 +118,14 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     protected: true,
     description: "Category kill-switch — when false, blocks ALL computer (mouse/keyboard) tool calls at pre-dispatch. Off by default (high-risk opt-in; also needs OS Accessibility permission)",
   },
+  {
+    field: "enableRemoteControl",
+    validate: z.boolean(),
+    runtime: true,
+    broadcast: true,
+    protected: true,
+    description: "Kill-switch for a paired phone driving mouse/keyboard over the live screen. When false, the live-screen session drops all remote input. Off by default (high-risk opt-in; also needs OS Accessibility permission)",
+  },
 
   // ── UI-only (renderer reads settings.json directly; no runtime mirror needed) ──
   {

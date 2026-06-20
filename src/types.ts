@@ -376,4 +376,9 @@ export interface LAXConfig {
    *  DEFAULT OFF — high-risk opt-in. When false, every `computer` call is
    *  blocked at pre-dispatch. The panic hotkey flips this off. */
   enableComputerControl: boolean;
+  /** Remote-control kill-switch (phone driving mouse/keyboard over the live
+   *  screen). DEFAULT OFF — high-risk opt-in, separate from the agent's
+   *  enableComputerControl. When false, the live-screen session drops every
+   *  rtc_input. The panic hotkey flips this off too. */
+  enableRemoteControl: boolean;
 }

@@ -158,6 +158,10 @@ const configSchema = z.object({
   // category that defaults OFF — it can drive the whole machine, so it's an
   // explicit opt-in (Settings → Security), gated further by the OS permission.
   enableComputerControl: z.boolean().default(false),
+  // Remote control from a paired phone over the live screen. Separate switch from
+  // enableComputerControl (that gates the AGENT) — this gates the human operator
+  // driving from mobile. Same risk profile: DEFAULT OFF, also needs the OS grant.
+  enableRemoteControl: z.boolean().default(false),
 });
 
 function getConfigDir(): string {

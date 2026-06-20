@@ -62,6 +62,28 @@ export interface RtcStopFrame {
   rtcId: string;
 }
 
+/** One remote-control action the phone drives. Coordinates are NORMALIZED to the
+ *  captured screen (0..1) so the phone never needs the desktop's pixel size — the
+ *  desktop scales by the live monitor's dimensions. `move` is absolute (direct-
+ *  touch); `moveBy` is a relative nudge (trackpad). `down`/`up` bracket a drag. */
+export type ScreenInputEvent =
+  | { kind: "move"; x: number; y: number }
+  | { kind: "moveBy"; dx: number; dy: number }
+  | { kind: "click"; button?: "left" | "right"; double?: boolean }
+  | { kind: "down"; button?: "left" | "right" }
+  | { kind: "up"; button?: "left" | "right" }
+  | { kind: "scroll"; dx: number; dy: number }
+  | { kind: "text"; text: string }
+  | { kind: "key"; keys: string[] };
+
+/** Phone drives the desktop mouse/keyboard. Gated by enableRemoteControl AND the
+ *  OS input grant on the desktop side — never trusted blindly here. */
+export interface RtcInputFrame {
+  type: "rtc_input";
+  rtcId: string;
+  event: ScreenInputEvent;
+}
+
 // ── desktop → phone ──
 
 /** Desktop's SDP offer (it created the peer + added the screen track). */
@@ -92,15 +114,28 @@ export interface RtcClosedFrame {
   reason: string;
 }
 
+/** Desktop reports how many monitors exist, which is live, and the live monitor's
+ *  pixel size. count drives swipe-between-screens; width/height let the phone
+ *  letterbox-correct so direct-touch maps to the right desktop point. */
+export interface RtcDisplaysFrame {
+  type: "rtc_displays";
+  rtcId: string;
+  count: number;
+  active: number;
+  width: number;
+  height: number;
+}
+
 /** Every signaling frame the phone sends (desktop receives + routes). */
-export type RtcInboundFrame = RtcStartFrame | RtcAnswerFrame | RtcIceFrame | RtcStopFrame;
+export type RtcInboundFrame = RtcStartFrame | RtcAnswerFrame | RtcIceFrame | RtcStopFrame | RtcInputFrame;
 
 /** Every signaling frame the desktop sends back to the phone. */
 export type RtcOutboundFrame =
   | RtcOfferFrame
   | RtcDesktopIceFrame
   | RtcErrorFrame
-  | RtcClosedFrame;
+  | RtcClosedFrame
+  | RtcDisplaysFrame;
 
 /** All rtc_* type tags — used to claim a frame at the chat-ws router. */
 export const RTC_FRAME_TYPES = [
@@ -108,6 +143,7 @@ export const RTC_FRAME_TYPES = [
   "rtc_answer",
   "rtc_ice",
   "rtc_stop",
+  "rtc_input",
 ] as const;
 
 /** True when a parsed chat-ws message is an rtc_* signaling frame. */
@@ -133,6 +169,47 @@ export function buildClosed(rtcId: string, reason: string): RtcClosedFrame {
   return { type: "rtc_closed", rtcId, reason };
 }
 
+export function buildDisplays(
+  rtcId: string,
+  count: number,
+  active: number,
+  width: number,
+  height: number,
+): RtcDisplaysFrame {
+  return { type: "rtc_displays", rtcId, count, active, width, height };
+}
+
+/** Validate an untrusted input-event payload from the phone. Returns null for
+ *  anything malformed so the session drops it instead of injecting garbage. */
+export function parseScreenInputEvent(raw: unknown): ScreenInputEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Record<string, unknown>;
+  const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+  const button = e.button === "right" ? "right" : "left";
+  switch (e.kind) {
+    case "move":
+      return num(e.x) && num(e.y) ? { kind: "move", x: e.x, y: e.y } : null;
+    case "moveBy":
+      return num(e.dx) && num(e.dy) ? { kind: "moveBy", dx: e.dx, dy: e.dy } : null;
+    case "click":
+      return { kind: "click", button, double: e.double === true };
+    case "down":
+      return { kind: "down", button };
+    case "up":
+      return { kind: "up", button };
+    case "scroll":
+      return num(e.dx) && num(e.dy) ? { kind: "scroll", dx: e.dx, dy: e.dy } : null;
+    case "text":
+      return typeof e.text === "string" && e.text.length > 0 ? { kind: "text", text: e.text } : null;
+    case "key":
+      return Array.isArray(e.keys) && e.keys.every((k) => typeof k === "string") && e.keys.length > 0
+        ? { kind: "key", keys: e.keys as string[] }
+        : null;
+    default:
+      return null;
+  }
+}
+
 /** Parse + validate an inbound frame; returns null for anything malformed so the
  *  router drops it instead of throwing (mirrors chat parseFrame discipline). */
 export function parseRtcInbound(msg: Record<string, unknown>): RtcInboundFrame | null {
@@ -148,6 +225,10 @@ export function parseRtcInbound(msg: Record<string, unknown>): RtcInboundFrame |
     }
     case "rtc_stop":
       return { type, rtcId };
+    case "rtc_input": {
+      const event = parseScreenInputEvent(msg.event);
+      return event ? { type, rtcId, event } : null;
+    }
     case "rtc_answer":
       return typeof msg.sdp === "string" ? { type, rtcId, sdp: msg.sdp } : null;
     case "rtc_ice": {

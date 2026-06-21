@@ -1,5 +1,6 @@
 
 import { createLogger } from "../logger.js";
+import { estimateTokens } from "../context-manager/token-estimation.js";
 const logger = createLogger("context-usage");
 
 export interface ContextUsage {
@@ -12,11 +13,6 @@ export interface ContextUsage {
 interface Message {
   role: string;
   content: string | Array<{ type: string; text?: string }>;
-}
-
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-  return Math.ceil(text.length / 4);
 }
 
 function extractText(content: Message["content"]): string {

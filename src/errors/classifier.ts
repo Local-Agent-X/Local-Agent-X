@@ -195,13 +195,3 @@ export function isEmptyResultText(text: string): boolean {
 export function looksLikeAgentRefusal(text: string): boolean {
   return REFUSAL_PATTERNS.some(rx => rx.test(text));
 }
-
-/**
- * Convenience: classify an Anthropic context-overflow error specifically.
- * Anthropic's "input too long" errors come back with various message
- * shapes; the classifier handles the common ones, this is the named
- * helper that callers should use for that specific check.
- */
-export function isContextOverflowError(err: unknown): boolean {
-  return classify(err).reason === FailoverReason.ContextOverflow;
-}

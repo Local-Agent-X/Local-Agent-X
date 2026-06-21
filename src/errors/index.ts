@@ -8,7 +8,6 @@ export {
   classify,
   isEmptyResultText,
   looksLikeAgentRefusal,
-  isContextOverflowError,
 } from "./classifier.js";
 
 export type { ClassifiedError, RecoveryAction } from "./classifier.js";

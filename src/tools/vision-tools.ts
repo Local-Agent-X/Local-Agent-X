@@ -121,6 +121,61 @@ export const sendVideoTool: ToolDefinition = {
   },
 };
 
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+const IMAGE_MIME: Record<string, string> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+  gif: "image/gif", webp: "image/webp", bmp: "image/bmp",
+};
+
+export const sendImageTool: ToolDefinition = {
+  name: "send_image",
+  description:
+    "Send an image FILE from this computer to the user over the current messaging channel (WhatsApp/Telegram) — " +
+    "e.g. a screenshot you captured, or an image you generated/saved to a file. Use when the user asks you to send " +
+    "or share an image with them. Only delivers on a messaging bridge — on web chat the user is already at the " +
+    "computer with the file. Supports png, jpg, gif, webp, bmp. Capped at 10MB.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Path to the image file (absolute or relative)" },
+    },
+    required: ["path"],
+  },
+  async execute(args) {
+    const { existsSync, fstatSync, closeSync } = await import("node:fs");
+
+    const filePath = resolveAgentPath(String(args.path || ""));
+    if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
+
+    const ext = filePath.split(".").pop()?.toLowerCase() || "";
+    if (!IMAGE_EXTS.has(ext)) return { content: `Not an image file: .${ext}. Supported: ${[...IMAGE_EXTS].join(", ")}.`, isError: true };
+
+    // Same validated-inode binding as send_video: fstat the open fd (not the
+    // name) and forward the canonical realpath, so the size check + the path the
+    // bridge re-gates and reads reference the inode the gate approved.
+    let canonicalPath: string;
+    let sizeMb: number;
+    try {
+      const opened = openValidatedRead(filePath);
+      try {
+        sizeMb = fstatSync(opened.fd).size / 1048576;
+      } finally {
+        closeSync(opened.fd);
+      }
+      canonicalPath = opened.canonicalPath;
+    } catch (e) {
+      return { content: `Failed to send ${filePath}: ${(e as Error).message}`, isError: true };
+    }
+    if (sizeMb > 10) return { content: `Image is ${sizeMb.toFixed(1)}MB — over the 10MB messaging limit, can't send.`, isError: true };
+
+    logger.info(`[send_image] ${canonicalPath} (${sizeMb.toFixed(1)}MB)`);
+    return {
+      content: `Sending image to the user: ${canonicalPath} (${sizeMb.toFixed(1)}MB).`,
+      _media: { kind: "image", path: canonicalPath, mime: IMAGE_MIME[ext] || "image/png" },
+    };
+  },
+};
+
 export const screenCaptureTool: ToolDefinition = {
   name: "screen_capture",
   description:

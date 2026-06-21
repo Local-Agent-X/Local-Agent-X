@@ -254,6 +254,7 @@ export function createBridgeHandler(deps: {
       try {
         const { readOpMessages } = await import("../canonical-loop/store.js");
         const images: Buffer[] = [];
+        const imagePaths: string[] = [];
         const videoPaths: string[] = [];
         for (const row of readOpMessages(canonicalOpId)) {
           if (row.role !== "tool_result") continue;
@@ -269,7 +270,28 @@ export function createBridgeHandler(deps: {
             }
           }
           const media = (r as { media?: { kind?: string; path?: string } }).media;
-          if (media && media.kind === "video" && typeof media.path === "string") videoPaths.push(media.path);
+          if (media && typeof media.path === "string") {
+            if (media.kind === "video") videoPaths.push(media.path);
+            else if (media.kind === "image") imagePaths.push(media.path);
+          }
+        }
+        // send_image (and any _media:{kind:"image"}) rides a file PATH like
+        // video. Re-gate + read each into the SAME image buffer list the
+        // b64-envelope images use, so it flows through the identical
+        // secret-scan/canary + send path below — one image-forward, not a
+        // parallel one. 10MB cap matches the photo-API limits.
+        const sentImagePaths = new Set<string>();
+        for (const p of imagePaths) {
+          const abs = resolve(p);
+          if (sentImagePaths.has(abs)) continue;
+          sentImagePaths.add(abs);
+          const att = checkAttachmentPaths(`bridge:${platform} image forward`, [abs]);
+          if (att) { logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: ${att.message}`); continue; }
+          try {
+            const buf = readFileSync(abs);
+            if (buf.length > 10 * 1024 * 1024) { logger.warn(`[bridge:${platform}] image ${p} is ${Math.round(buf.length / 1048576)}MB, over the 10MB limit — not sending`); continue; }
+            images.push(buf);
+          } catch (e) { logger.warn(`[bridge:${platform}] image read failed for ${p}: ${(e as Error).message}`); }
         }
         if (images.length > 0) {
           logger.info(`[bridge:${platform}] sending ${images.length} image(s) to ${from}`);

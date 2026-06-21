@@ -118,9 +118,10 @@ export interface ToolResult {
    * `_image` this carries a PATH, not bytes — videos are too big to base64
    * onto every result and the model can't ingest them as image_url. The
    * WhatsApp/Telegram bridge reads the file off disk and forwards it. Set by
-   * generate_video and send_video. Not fed to the model.
+   * generate_video and send_video (video), and send_image (image). Not fed to
+   * the model.
    */
-  _media?: { kind: "video"; path: string; mime: string };
+  _media?: { kind: "image" | "video"; path: string; mime: string };
 }
 
 export interface AgentTurn {

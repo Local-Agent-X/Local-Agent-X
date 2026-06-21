@@ -42,6 +42,7 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Vision
   view_image:     ["main-chat", "spawned-agent", "operator", "build-intent"],
   send_video:     ["main-chat"],
+  send_image:     ["main-chat"],
   screen_capture: ["main-chat"],
   // computer (mouse/keyboard) is intentionally DEFERRED — found via tool_search.
   // The tool-search-nudge middleware forces models that decline a capability

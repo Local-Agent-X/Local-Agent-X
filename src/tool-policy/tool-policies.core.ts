@@ -76,6 +76,7 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyEntry> = {
   grep:        { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-grep", decision: "allow", reason: "Content search (read-only)", priority: 50 }] },
   view_image:  { kernel: "file", risk: "safe", offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-view-image", decision: "allow", reason: "Image viewing (path-checked); base64-ships the image off-box to the vision API", priority: 50 }] },
   send_video:  { kernel: "file", risk: "safe", offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-send-video", decision: "allow", reason: "Sends a local video to the user over their own bridge (path-checked read)", priority: 50 }] },
+  send_image:  { kernel: "file", risk: "safe", offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-send-image", decision: "allow", reason: "Sends a local image to the user over their own bridge (path-checked read)", priority: 50 }] },
   ari_file:    { kernel: "internal", risk: "workspace-write" },
 
 };

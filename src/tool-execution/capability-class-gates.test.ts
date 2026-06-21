@@ -181,6 +181,7 @@ describe("name-drift guard — every capability-set member resolves to a real to
       "view_image", "screen_capture", "camera_capture", // emit images[]
       "generate_image",                                  // emits images[]
       "generate_video", "send_video",                    // emit media.{kind:"video",path}
+      "send_image",                                      // emits media.{kind:"image",path}
     ];
     for (const t of MEDIA_EMITTERS) {
       expect(hasCapability(t, "egress"), `${t} forwards output bytes off-box via the bridge but is NOT egress-class — its forwarded output would skip the secret/canary/attachment scan`).toBe(true);

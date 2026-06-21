@@ -92,39 +92,7 @@ export async function compactIfNeededWithLLM(
     recentMessages = [nonSystem[lastUserIdx], ...recentMessages];
   }
 
-  const transcript = oldMessages
-    .map((m) => {
-      const role = m.role;
-      const content = typeof m.content === "string"
-        ? m.content
-        : Array.isArray(m.content)
-          ? m.content
-              .filter((p) => typeof p === "object" && "text" in p)
-              .map((p) => String((p as { text: string }).text))
-              .join(" ")
-          : "[non-text]";
-      return `[${role}]: ${content}`;
-    })
-    .join("\n\n");
-
-  let summary: string | null = null;
-  try {
-    const { classifyWithLLM } = await import("../classifiers/classify-with-llm.js");
-    summary = await classifyWithLLM<string>({
-      category: "compaction",
-      systemPrompt: COMPACTION_SYSTEM_PROMPT,
-      userPrompt: `Conversation segment to summarize (${oldMessages.length} messages):\n\n${transcript}`,
-      timeoutMs: 30_000,
-      maxResponseChars: 6000,
-      envDisableVar: "LAX_LLM_COMPACTION",
-      parse: (raw) => {
-        const trimmed = raw.trim();
-        return trimmed.length > 0 ? trimmed : null;
-      },
-    });
-  } catch (e) {
-    logger.warn(`[context] LLM compaction call failed: ${(e as Error).message}`);
-  }
+  const summary = await summarizeOldMessages(oldMessages);
 
   if (!summary) {
     // Fallback: sync truncation path so the agent loop never stalls.
@@ -152,4 +120,48 @@ export async function compactIfNeededWithLLM(
     `[context] Compacted (LLM summary): ${messages.length} msgs (${status.percentage}%) → ${keptMessages.length} msgs (${newStatus.percentage}%)`,
   );
   return { messages: keptMessages, compacted: true, status: newStatus, summarizedByLLM: true };
+}
+
+/**
+ * Summarize a segment of older messages into a structured digest via the user's
+ * configured provider (no new API key — routes through classifyWithLLM). Returns
+ * null when the call is disabled (LAX_LLM_COMPACTION), times out, or fails, so
+ * callers can fall back without ever blocking the loop. Shared by the legacy
+ * tool-execution path (above) and the canonical loop's history compaction.
+ */
+export async function summarizeOldMessages(
+  oldMessages: ChatCompletionMessageParam[],
+): Promise<string | null> {
+  const transcript = oldMessages
+    .map((m) => {
+      const content = typeof m.content === "string"
+        ? m.content
+        : Array.isArray(m.content)
+          ? m.content
+              .filter((p) => typeof p === "object" && "text" in p)
+              .map((p) => String((p as { text: string }).text))
+              .join(" ")
+          : "[non-text]";
+      return `[${m.role}]: ${content}`;
+    })
+    .join("\n\n");
+
+  try {
+    const { classifyWithLLM } = await import("../classifiers/classify-with-llm.js");
+    return await classifyWithLLM<string>({
+      category: "compaction",
+      systemPrompt: COMPACTION_SYSTEM_PROMPT,
+      userPrompt: `Conversation segment to summarize (${oldMessages.length} messages):\n\n${transcript}`,
+      timeoutMs: 30_000,
+      maxResponseChars: 6000,
+      envDisableVar: "LAX_LLM_COMPACTION",
+      parse: (raw) => {
+        const trimmed = raw.trim();
+        return trimmed.length > 0 ? trimmed : null;
+      },
+    });
+  } catch (e) {
+    logger.warn(`[context] LLM compaction call failed: ${(e as Error).message}`);
+    return null;
+  }
 }

@@ -9,15 +9,17 @@ import type { Op } from "../../ops/types.js";
 import { readLatestOpTurn, readOpMessages } from "../store.js";
 import { getToolsForOp } from "../runtime.js";
 import { readOp } from "../../ops/op-store.js";
+import { resolveOpModel } from "../op-model.js";
 import { buildSituationalAwareness } from "./situational-awareness.js";
+import { compactHistory } from "./compact-history.js";
 
-export function buildTurnInput(
+export async function buildTurnInput(
   op: Op,
   turnIdx: number,
   pendingRedirect: RedirectInstruction | null,
-): TurnInput {
+): Promise<TurnInput> {
   const history = readOpMessages(op.id);
-  const messages: CanonicalMessage[] = collapseAdjacentUserMessages(
+  let messages: CanonicalMessage[] = collapseAdjacentUserMessages(
     history.map(m => ({
       messageId: m.messageId,
       role: m.role,
@@ -27,6 +29,12 @@ export function buildTurnInput(
       createdAt: m.createdAt,
     })),
   );
+  // Compact older history when near the model's context window, before any
+  // adapter sees it. Ephemeral (never persisted to op_messages), recomputed each
+  // turn, and a no-op under threshold. Runs on every lane — long background /
+  // agent ops are exactly where the full-replay history overruns the window.
+  const model = resolveOpModel(op);
+  if (model) messages = await compactHistory(messages, model);
   const prior = readLatestOpTurn(op.id);
   // Tools come from the per-op registry (chat-runner registers them on
   // submit; legacy worker-pool ops don't register and get []). Without

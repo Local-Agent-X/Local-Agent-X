@@ -21,7 +21,7 @@ import type {
 import { getDefaultMiddlewareStack } from "./registry.js";
 import { readOpMessages, readOpTurns } from "../store.js";
 import { isCommittingTool } from "../../committing-tool-check.js";
-import { getSetting } from "../../settings.js";
+import { resolveOpModel } from "../op-model.js";
 
 export type PhaseName = "beforeTurn" | "afterModelCall" | "afterToolExecution";
 
@@ -62,21 +62,11 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
   const provider = contextPack?.preferredProvider
     ?? (opAny as { provider?: string }).provider
     ?? "unknown";
-  // Resolve the op's model in order of authority:
-  //   1. op.model explicitly set on the op (worker contexts, etc.)
-  //   2. op.canonical.model from the resolved request
-  //   3. user's configured model in ~/.lax/settings.json (same model the
-  //      chat is actually running — not a substitute, just looking it up
-  //      from a different place when it didn't propagate onto the op)
-  // If NONE of those resolve, throw — that's a real upstream plumbing bug
-  // and silently substituting a hardcoded default would mask it. Same
-  // fail-closed posture we use for the AriKernel wire elsewhere.
-  let model = (opAny.model as string | undefined)
-    ?? ((op as { canonical?: { model?: string } }).canonical?.model);
-  if (!model) {
-    const saved = getSetting<string>("model");
-    if (typeof saved === "string" && saved.length > 0) model = saved;
-  }
+  // Resolve the op's model (see op-model.ts for the authority order). If
+  // nothing resolves, throw — that's a real upstream plumbing bug and silently
+  // substituting a hardcoded default would mask it. Same fail-closed posture we
+  // use for the AriKernel wire elsewhere.
+  const model = resolveOpModel(op);
   if (!model) {
     throw new Error(
       `[canonical-loop] No model resolvable for op ${op.id}. ` +

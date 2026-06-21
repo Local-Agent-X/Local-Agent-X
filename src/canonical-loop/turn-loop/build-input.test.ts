@@ -104,8 +104,8 @@ describe("buildTurnInput — situational-awareness wiring", () => {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  it("prepends the ledger-backed digest to the last user message on interactive ops", () => {
-    const input = buildTurnInput(makeOp("interactive"), 1, null);
+  it("prepends the ledger-backed digest to the last user message on interactive ops", async () => {
+    const input = await buildTurnInput(makeOp("interactive"), 1, null);
     const last = input.messages[input.messages.length - 1];
     expect(last.role).toBe("user");
     const text = (last.content as { text: string }).text;
@@ -115,8 +115,8 @@ describe("buildTurnInput — situational-awareness wiring", () => {
     expect(text.indexOf("[SITUATIONAL CONTEXT")).toBeLessThan(text.indexOf("ship it"));
   });
 
-  it("does NOT inject on non-interactive lanes", () => {
-    const input = buildTurnInput(makeOp("background"), 1, null);
+  it("does NOT inject on non-interactive lanes", async () => {
+    const input = await buildTurnInput(makeOp("background"), 1, null);
     const last = input.messages[input.messages.length - 1];
     const text = (last.content as { text: string }).text;
     expect(text).not.toContain("[SITUATIONAL CONTEXT");

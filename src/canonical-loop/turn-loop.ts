@@ -105,7 +105,7 @@ export async function driveTurn(
     // the nudge up and ships it to the adapter on this turn.
   }
 
-  const input = buildTurnInput(op, turnIdx, pendingRedirect);
+  const input = await buildTurnInput(op, turnIdx, pendingRedirect);
 
   const finalized: CanonicalMessage[] = [];
   const toolCalls: ToolCall[] = [];

@@ -124,10 +124,12 @@ function handleAgentFeedEvent(msg) {
       // Build a concise one-liner for chat — full details on Agents page
       var statusIcon = msg.success ? '✅' : '❌';
       var fullResult = msg.result || '';
-      // Show the full agent result, not just a one-liner
+      // Render the full agent result — no cap. Normal assistant replies render
+      // full-length (addMessageEl applies no limit), so agent results shouldn't
+      // be the one path that truncates. The old 5000-char cap clipped long
+      // research/planning outputs AND persisted the clipped copy below, so a
+      // reload lost the tail permanently.
       var agentMsg = statusIcon + ' **Agent ' + (msg.name || msg.agentId || '') + ' ' + (msg.success ? 'completed' : 'failed') + ':**\n\n' + (fullResult || (msg.success ? 'Done.' : 'Agent failed.'));
-      // Cap at 5000 chars to prevent UI overflow
-      if (agentMsg.length > 5000) agentMsg = agentMsg.slice(0, 5000) + '\n\n[truncated — full result saved to session]';
       addMessageEl('assistant', agentMsg);
       if (activeChat) {
         activeChat.messages.push({ role: 'assistant', content: agentMsg });

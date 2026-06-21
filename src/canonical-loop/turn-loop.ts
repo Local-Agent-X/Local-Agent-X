@@ -324,6 +324,10 @@ export async function driveTurn(
     toolCalls,
     assistantText,
     adapterTerminalReason: result.terminalReason ?? null,
+    // The model's REAL stop signal (end_turn / stop), when the provider
+    // carried it. decide-outcome trusts this to terminate even a non-silent
+    // tool turn in one pass; absence → it falls back to shape inference.
+    modelSignaledDone: result.modelStop === "ended",
     adapterError,
   });
 

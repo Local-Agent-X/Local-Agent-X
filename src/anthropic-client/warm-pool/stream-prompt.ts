@@ -75,6 +75,7 @@ export async function* streamViaWarmPool(
 
     let fullText = "";
     let usage: WarmUsage = {};
+    let stopReason: string | undefined;
 
     while (!finished) {
       let next: { done: boolean; frame?: unknown };
@@ -93,6 +94,8 @@ export async function* streamViaWarmPool(
         getFullText: () => fullText,
         appendText: (t) => { fullText += t; },
         setUsage: (u) => { usage = u; },
+        getStopReason: () => stopReason,
+        setStopReason: (s) => { stopReason = s; },
       });
       for (const ev of events) {
         yield ev;
@@ -129,6 +132,8 @@ interface FrameContext {
   getFullText: () => string;
   appendText: (delta: string) => void;
   setUsage: (u: WarmUsage) => void;
+  getStopReason: () => string | undefined;
+  setStopReason: (s: string) => void;
 }
 
 /** Translate one CLI stdout frame into zero or more StreamEvents. Caller
@@ -147,6 +152,11 @@ function* processFrame(frame: Record<string, unknown>, ctx: FrameContext): Gener
   // stream_event with content_block_delta → text deltas
   if (t === "stream_event") {
     const inner = frame.event as Record<string, unknown> | undefined;
+    // message_delta carries the turn's stop_reason (end_turn / tool_use / …).
+    if (inner?.type === "message_delta") {
+      const d = inner.delta as Record<string, unknown> | undefined;
+      if (typeof d?.stop_reason === "string") ctx.setStopReason(d.stop_reason);
+    }
     if (inner?.type === "content_block_delta") {
       const delta = inner.delta as Record<string, unknown> | undefined;
       if (delta?.type === "text_delta" && typeof delta.text === "string" && delta.text.length > 0) {
@@ -188,6 +198,8 @@ function* processFrame(frame: Record<string, unknown>, ctx: FrameContext): Gener
     const u = frame.usage as WarmUsage | undefined;
     const usage: WarmUsage = u && typeof u === "object" ? u : {};
     ctx.setUsage(usage);
+    // result frame restates stop_reason at top level — authoritative.
+    if (typeof frame.stop_reason === "string") ctx.setStopReason(frame.stop_reason);
     // DEBUG: inspect raw usage shape so we can see whether the CLI
     // surfaces cache_read_input_tokens / cache_creation_input_tokens
     // under OAuth subscription auth. Drop once cache fields are
@@ -212,6 +224,7 @@ function* processFrame(frame: Record<string, unknown>, ctx: FrameContext): Gener
         cacheReadTokens: usage.cache_read_input_tokens,
         cacheCreateTokens: usage.cache_creation_input_tokens,
       },
+      stopReason: ctx.getStopReason(),
     };
     return;
   }

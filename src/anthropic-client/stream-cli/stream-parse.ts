@@ -26,6 +26,12 @@ export interface CliStreamState {
   /** Flipped on the first text byte from the model. Orchestrator polls
    *  this after each line to stop the progress timer. */
   firstResponseSeen: boolean;
+  /** The API stop_reason for this turn (end_turn / tool_use / max_tokens …).
+   *  The CLI carries it in the `message_delta` stream_event AND the top-level
+   *  `result` frame; we capture whichever we see and fold it into the `done`
+   *  event so the adapter can derive a signal-driven terminalReason instead of
+   *  inferring done-ness from tool shape. */
+  stopReason?: string;
 }
 
 export function createCliStreamState(): CliStreamState {
@@ -36,6 +42,7 @@ export function createCliStreamState(): CliStreamState {
     usage: {},
     emittedNativeTools: false,
     firstResponseSeen: false,
+    stopReason: undefined,
   };
 }
 
@@ -62,6 +69,12 @@ export function* processStreamLine(
   if (ev.type === "stream_event" && ev.event) {
     const inner = ev.event as Record<string, unknown>;
     const delta = inner.delta as Record<string, unknown> | undefined;
+    // The `message_delta` frame carries the turn's stop_reason (end_turn /
+    // tool_use / max_tokens). Capture it — it arrives just before the final
+    // `result` frame and is the streaming-authoritative source.
+    if (inner.type === "message_delta" && typeof delta?.stop_reason === "string") {
+      state.stopReason = delta.stop_reason;
+    }
     if (inner.type === "content_block_delta" && delta?.type === "text_delta" && typeof delta.text === "string") {
       state.firstResponseSeen = true;
       // Track prevText so the later full-block assistant event doesn't
@@ -152,6 +165,9 @@ export function* processStreamLine(
       state.prevText = result;
     }
     state.usage = (ev.usage as Record<string, number>) || {};
+    // The terminal `result` frame restates the turn's stop_reason at top
+    // level — authoritative even if the message_delta frame was missed.
+    if (typeof ev.stop_reason === "string") state.stopReason = ev.stop_reason;
     // DEBUG: inspect the raw `usage` shape so we can see whether the
     // CLI surfaces cache_read_input_tokens / cache_creation_input_tokens
     // (or similar) under OAuth subscription auth. Remove once the
@@ -198,6 +214,7 @@ export function* processLeftoverBuffer(
   if (ev.type !== "result") return;
   state.fullText = typeof ev.result === "string" ? ev.result : state.fullText;
   state.usage = (ev.usage as Record<string, number>) || {};
+  if (typeof ev.stop_reason === "string") state.stopReason = ev.stop_reason;
   const toolCalls = parseToolCalls(state.fullText, validToolNames);
   const clean = stripToolCallBlocks(state.fullText, validToolNames);
   if (clean.trim() && clean.length > state.prevText.length) yield { type: "text", delta: clean.trim() };
@@ -215,5 +232,6 @@ export function buildDoneEvent(state: CliStreamState): StreamEvent {
       cacheReadTokens: state.usage.cache_read_input_tokens,
       cacheCreateTokens: state.usage.cache_creation_input_tokens,
     },
+    stopReason: state.stopReason,
   };
 }

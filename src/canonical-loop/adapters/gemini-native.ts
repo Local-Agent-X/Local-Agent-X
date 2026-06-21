@@ -16,6 +16,7 @@ import type { GeminiNativeTransport, GeminiNativeRequest } from "./gemini-native
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
 import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
+import { classifyModelStop } from "./model-stop.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.gemini-native");
@@ -168,7 +169,9 @@ export class GeminiNativeAdapter implements Adapter {
       ...(usageOutputTokens !== undefined ? { usageOutputTokens } : {}),
     });
 
-    return { providerState, terminalReason };
+    // Real terminal signal — Gemini's finishReason, normalized. See
+    // model-stop.ts; decide-outcome trusts it over the shape inference.
+    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop) };
   }
 
   async abort(reason?: unknown): Promise<void> {

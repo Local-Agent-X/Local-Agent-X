@@ -44,3 +44,44 @@ describe("stream-parse — native CLI tools are not re-dispatched", () => {
     expect(events.some((e) => e.type === "mcp_activity")).toBe(true);
   });
 });
+
+describe("stream-parse — stop_reason is carried into the done event", () => {
+  const valid = new Set<string>();
+
+  function doneOf(events: StreamEvent[]): StreamEvent | undefined {
+    return events.find((e) => e.type === "done");
+  }
+
+  it("the top-level `result` frame's stop_reason reaches the done event", () => {
+    const line = JSON.stringify({
+      type: "result",
+      result: "4",
+      usage: { input_tokens: 3, output_tokens: 1 },
+      stop_reason: "end_turn",
+    });
+    const { events } = drain(line, valid);
+    const done = doneOf(events);
+    expect(done).toBeDefined();
+    expect(done!.stopReason).toBe("end_turn");
+  });
+
+  it("a `message_delta` stream_event captures stop_reason for a later result frame", () => {
+    const state = createCliStreamState();
+    const events: StreamEvent[] = [];
+    // message_delta carries the stop_reason but yields no event of its own.
+    for (const ev of processStreamLine(
+      JSON.stringify({ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "tool_use" } } }),
+      state,
+      valid,
+    )) events.push(ev);
+    expect(state.stopReason).toBe("tool_use");
+    // A trailing result frame WITHOUT its own stop_reason keeps the captured one.
+    for (const ev of processStreamLine(JSON.stringify({ type: "result", result: "x" }), state, valid)) events.push(ev);
+    expect(doneOf(events)!.stopReason).toBe("tool_use");
+  });
+
+  it("done event has undefined stopReason when the CLI never reported one", () => {
+    const { events } = drain(JSON.stringify({ type: "result", result: "hi" }), valid);
+    expect(doneOf(events)!.stopReason).toBeUndefined();
+  });
+});

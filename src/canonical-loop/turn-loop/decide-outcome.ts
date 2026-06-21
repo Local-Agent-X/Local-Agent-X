@@ -43,6 +43,15 @@ export interface DecideOutcomeInput {
   toolCalls: ToolCall[];
   assistantText: string;
   adapterTerminalReason: "done" | "error" | null;
+  /**
+   * The model's REAL stop signal: true when the provider reported an
+   * end-of-turn (Anthropic end_turn, OpenAI stop) for this turn. Distinct
+   * from the shape heuristics below — when true we trust it directly. False
+   * means either "model wants more" (tool_use) OR "no signal on this path",
+   * both of which fall back to shape inference. Derived from
+   * TurnResult.modelStop in turn-loop. See adapters/model-stop.ts.
+   */
+  modelSignaledDone: boolean;
   adapterError: { code: string; message: string } | null;
 }
 
@@ -59,7 +68,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const {
     op, turnIdx, middlewareDirective,
     finalized, toolMessages, toolSummary, toolCalls,
-    assistantText, adapterTerminalReason, adapterError,
+    assistantText, adapterTerminalReason, modelSignaledDone, adapterError,
   } = in_;
 
   // A confirmed-false-claim nudge (phantom worker, fake "I scheduled it")
@@ -93,37 +102,43 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // mutation tool committed this turn.
   const failureSummary = collectToolFailures(toolMessages, toolSummary);
 
-  // Silent-side-effect short-circuit. When every tool call this turn is
-  // visible-without-narration (memory writes, browser navigation/clicks)
-  // AND the model already produced user-facing text, terminate the turn
-  // so the worker doesn't drive a wrap-up "no blocker, done" pass. The
-  // activity row is the receipt. Mixed turns (silent + bash/web_fetch)
-  // still drive a wrap-up so data-returning results get surfaced. See
-  // turn-loop/silent-tool-check.ts for the predicate.
+  // Turn-completion decision. terminalReason is still null here only for a
+  // tool turn (the adapter returns terminalReason=undefined when tool calls
+  // are outstanding and lets the loop decide whether to drive a wrap-up).
   //
-  // Same reasoning extends to tool-less informational turns: if the model
-  // answered with text and made zero tool calls, there is nothing for a
-  // next turn to react to. Without this branch, when the adapter doesn't
-  // surface a stop signal (Anthropic CLI subscription path doesn't carry
-  // end_turn through), the worker loops and the model produces a
-  // "no blocker / informational / nothing to commit" paragraph that reads
-  // as internal scratchwork to the user.
+  // PRIMARY signal — `modelSignaledDone`: the model's REAL stop_reason said
+  // end_turn / stop. This is authoritative: the model declared the turn
+  // finished, so feeding the tool result back for another pass would only
+  // produce a redundant wrap-up paragraph. It's the genuine disambiguator the
+  // shape heuristics can't see — a model that paused FOR a tool result emits
+  // tool_use (→ modelSignaledDone=false), so trusting end_turn here can't drop
+  // a result the model was waiting on. The tool still dispatched and committed
+  // this turn (dispatch is independent of this decision); we just don't loop.
   //
-  // And same for mutation-committed turns: if the model wrote/edited
-  // something on disk (or otherwise committed a mutation tool) AND
-  // produced user-facing text, the turn is done. Without this, a turn
-  // that retried `edit` a few times before succeeding with `write`
-  // surfaces a second wrap-up turn whose entire payload is the model
-  // narrating "Previous edits failed on whitespace, used full write
-  // instead" — the user already saw the success summary in turn N and
-  // does not need turn N+1's recovery monologue.
+  // FALLBACK — the shape heuristics, for paths/turns that DON'T surface a stop
+  // reason (modelSignaledDone=false). Each is a proxy for "the model doesn't
+  // need a wrap-up":
+  //   - allSilent: every tool was visible-without-narration (memory writes,
+  //     browser nav/clicks) — the activity row is the receipt.
+  //   - noTools: a tool-less informational turn — nothing for a next turn to
+  //     react to.
+  //   - mutationCommitted: the model wrote/edited on disk AND narrated it — a
+  //     wrap-up would just be a recovery monologue ("edit failed on whitespace,
+  //     used write") the user already saw the result of.
+  // Mixed non-silent turns with no stop signal (e.g. bash/web_fetch that
+  // returns data) still drive a wrap-up so the data gets surfaced.
+  //
+  // All gated on non-empty assistant text: a turn that emitted only a tool
+  // call (no narration) has nothing to terminate ON, and a prompt-inject CLI
+  // turn that emits a JSON-only tool call ends with end_turn but empty text —
+  // this guard keeps that case on the wrap-up path so its result feeds back.
   const allSilent = toolCalls.length > 0 && toolCalls.every(isSilentToolCall);
   const noTools = toolCalls.length === 0;
   const mutationCommitted = failureSummary.hadSuccessfulMutation;
   if (
     terminalReason === null &&
     !middlewareAborted &&
-    (allSilent || noTools || mutationCommitted) &&
+    (modelSignaledDone || allSilent || noTools || mutationCommitted) &&
     assistantText.trim().length > 0
   ) {
     terminalReason = "done";

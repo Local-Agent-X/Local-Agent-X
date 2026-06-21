@@ -88,6 +88,24 @@ export type AdapterReport =
 export interface TurnResult {
   providerState: ProviderStateEnvelope;
   terminalReason?: "done" | "error";
+  /**
+   * The model's REAL terminal signal for this turn, normalized from the
+   * provider's stop_reason / finish_reason (see `adapters/model-stop.ts`).
+   * Distinct from `terminalReason`, which the adapter infers from turn SHAPE
+   * (no tool calls + no error → done).
+   *
+   *   - "ended"    → the model declared the turn complete. `decide-outcome`
+   *                  trusts this to terminate even a non-silent tool turn in
+   *                  ONE pass, instead of driving an inferred wrap-up.
+   *   - "continue" → the model wants more (tool_use / tool_calls) or was cut
+   *                  off (max_tokens) — not a clean completion.
+   *   - undefined  → this path/turn didn't surface a stop reason; the loop
+   *                  falls back to its shape heuristics (the backstop).
+   *
+   * Adapters set this from the provider stop they already capture; absence is
+   * always safe (the shape inference still terminates the turn).
+   */
+  modelStop?: "ended" | "continue";
 }
 
 // ── Adapter sandbox boundary (PRD §15 "Sandbox") ─────────────────────────

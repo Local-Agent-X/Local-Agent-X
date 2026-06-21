@@ -57,6 +57,7 @@ import {
 } from "./anthropic/types.js";
 import { byteLengthUtf8, convertTools } from "./anthropic/helpers.js";
 import { streamConsume, applyToolCallTextFallback } from "./anthropic/stream-consume.js";
+import { classifyModelStop } from "./model-stop.js";
 
 export {
   ANTHROPIC_ADAPTER_NAME,
@@ -220,7 +221,9 @@ export class AnthropicAdapter implements Adapter {
       terminalReason = "error";
     }
 
-    return { providerState, terminalReason };
+    // Real terminal signal — the model's stop_reason, normalized. decide-outcome
+    // trusts this over the shape inference when present. See model-stop.ts.
+    return { providerState, terminalReason, modelStop: classifyModelStop(result.providerStop) };
   }
 
   async abort(reason?: unknown): Promise<void> {

@@ -45,6 +45,7 @@ import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { proseLooksLikeToolCall } from "./tool-call-text-extractor.js";
+import { classifyModelStop } from "./model-stop.js";
 
 export { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./openai-compat/types.js";
 export type { OpenAICompatAdapterOptions, OpenAICompatTarget } from "./openai-compat/types.js";
@@ -246,7 +247,9 @@ export class OpenAICompatAdapter implements Adapter {
       terminalReason = "error";
     }
 
-    return { providerState, terminalReason };
+    // Real terminal signal — the provider's finish_reason, normalized. See
+    // model-stop.ts; decide-outcome trusts it over the shape inference.
+    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop) };
   }
 
   async abort(reason?: unknown): Promise<void> {

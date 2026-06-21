@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { stripEphemeralMessages } from "../providers/sanitize.js";
 import { WhatsAppBridge, setWhatsAppBridgeInstance } from "../whatsapp-bridge/index.js";
@@ -8,11 +8,8 @@ import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
 import { resolveSession, buildChannelContext, type ChannelType } from "../session/router.js";
 import { detectInjection } from "../sanitize.js";
 import { getVoicePref, setVoicePref, type BridgePlatform } from "../bridge-voice/index.js";
-import { scanForSecrets } from "../security/secret-scanner.js";
-import { checkCanariesInPayload } from "../threat/canaries.js";
-import { imageIsTextBearing } from "../tools/shared/image-binary-meta.js";
 import { sendRestartPingIfPending } from "../restart-notify.js";
-import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
+import { forwardBridgeMedia } from "./bridge-media-forward.js";
 import { COMPACTION_PREFIX } from "../types.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex, MemoryManager } from "../memory/index.js";
@@ -244,130 +241,15 @@ export function createBridgeHandler(deps: {
     session.updatedAt = Date.now();
     saveSession(session);
 
-    // Scan this turn's tool_result rows for vision-tool image bytes
-    // (browser screenshot, image_read, etc.) and forward them to the
-    // user via the channel's image-send API. Mirrors the legacy
-    // result.messages scan, but reads from op_messages — the
-    // chat-tool-dispatcher rides image bytes on the result envelope
-    // as { text, images: [{mime, b64}] } when a tool emits them.
+    // Forward this turn's tool-emitted media (vision images via images[].b64,
+    // plus send_image / send_video files via _media) to the user over the
+    // channel's media API. Reads op_messages — the chat-tool-dispatcher rides
+    // image bytes / media paths on the result envelope when a tool emits them.
     if (canonicalOpId) {
-      try {
-        const { readOpMessages } = await import("../canonical-loop/store.js");
-        const images: Buffer[] = [];
-        const imagePaths: string[] = [];
-        const videoPaths: string[] = [];
-        for (const row of readOpMessages(canonicalOpId)) {
-          if (row.role !== "tool_result") continue;
-          const r = (row.content as { result?: unknown })?.result;
-          if (!r || typeof r !== "object") continue;
-          const imgs = (r as { images?: unknown }).images;
-          if (Array.isArray(imgs)) {
-            for (const img of imgs) {
-              if (!img || typeof img !== "object") continue;
-              const b64 = (img as { b64?: unknown }).b64;
-              if (typeof b64 !== "string") continue;
-              try { images.push(Buffer.from(b64, "base64")); } catch { /* skip malformed */ }
-            }
-          }
-          const media = (r as { media?: { kind?: string; path?: string } }).media;
-          if (media && typeof media.path === "string") {
-            if (media.kind === "video") videoPaths.push(media.path);
-            else if (media.kind === "image") imagePaths.push(media.path);
-          }
-        }
-        // send_image (and any _media:{kind:"image"}) rides a file PATH like
-        // video. Re-gate + read each into the SAME image buffer list the
-        // b64-envelope images use, so it flows through the identical
-        // secret-scan/canary + send path below — one image-forward, not a
-        // parallel one. 10MB cap matches the photo-API limits.
-        const sentImagePaths = new Set<string>();
-        for (const p of imagePaths) {
-          const abs = resolve(p);
-          if (sentImagePaths.has(abs)) continue;
-          sentImagePaths.add(abs);
-          const att = checkAttachmentPaths(`bridge:${platform} image forward`, [abs]);
-          if (att) { logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: ${att.message}`); continue; }
-          try {
-            const buf = readFileSync(abs);
-            if (buf.length > 10 * 1024 * 1024) { logger.warn(`[bridge:${platform}] image ${p} is ${Math.round(buf.length / 1048576)}MB, over the 10MB limit — not sending`); continue; }
-            images.push(buf);
-          } catch (e) { logger.warn(`[bridge:${platform}] image read failed for ${p}: ${(e as Error).message}`); }
-        }
-        if (images.length > 0) {
-          logger.info(`[bridge:${platform}] sending ${images.length} image(s) to ${from}`);
-          for (const img of images) {
-            // Re-gate the BYTES actually about to leave the box (egress
-            // output-bytes, R4-12b). The pre-dispatch egress gates scanned the
-            // tool's INPUT args; the decoded result image is a new payload that
-            // never re-entered any gate.
-            //
-            // BUT only the text secret-scan when the payload is text-bearing. A
-            // genuine compressed raster image (PNG/JPEG/GIF/WebP) is NOT text:
-            // running credential regexes + entropy detection over its bytes only
-            // false-positives on binary noise — which was silently dropping real
-            // screenshots. The actual R4-12b threat is a renamed TEXT file or an
-            // SVG-with-token shipped as an "image"; those are text (detectMime →
-            // svg/null) and stay scanned. The canary tripwire still runs on every
-            // image (a 32-char planted token won't false-positive on binary, and
-            // its presence is definitive exfil).
-            const view = img.toString("utf-8");
-            if (imageIsTextBearing(img) && !scanForSecrets(view).clean) {
-              logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: outbound bytes contain a secret-shaped value`);
-              continue;
-            }
-            if (checkCanariesInPayload(route.sessionKey, view)) {
-              logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: a session canary token was detected in the outbound image bytes (context exfiltration)`);
-              continue;
-            }
-            if (channelType === "whatsapp") {
-              await getWhatsappBridge().sendImage(from, img).catch((e: Error) => logger.error(`[whatsapp] image send failed: ${e.message}`));
-            } else if (channelType === "telegram") {
-              await getTelegramBridge().sendPhoto(from, img).catch((e: Error) => logger.error(`[telegram] photo send failed: ${e.message}`));
-            }
-          }
-        }
-        // Videos forward by PATH — read off disk, size-guard, send. The text
-        // reply already carries the saved path, so an over-limit clip still
-        // tells the user where it landed even when we skip the send.
-        // Dedupe on the resolved path: the model commonly calls generate_video
-        // (which auto-forwards) AND send_video on the same file, and the two
-        // tools emit the path in different forms (relative vs absolute). Send
-        // each distinct file once.
-        const maxBytes = channelType === "whatsapp" ? 16 * 1024 * 1024 : 50 * 1024 * 1024;
-        const sentVideos = new Set<string>();
-        for (const path of videoPaths) {
-          const abs = resolve(path);
-          if (sentVideos.has(abs)) continue;
-          sentVideos.add(abs);
-          // Re-gate the exact path about to ship off-box (egress output-bytes,
-          // R4-12b). The pre-dispatch egress gate's checkAttachmentPaths ran on
-          // the INPUT arg; this closes the path TOCTOU by re-running the same
-          // sensitive-attachment + byte-scan predicate on the resolved path
-          // immediately before send. Block the one offending clip; don't crash.
-          const att = checkAttachmentPaths(`bridge:${platform} video forward`, [abs]);
-          if (att) {
-            logger.error(`[bridge:${platform}] BLOCKED video forward to ${from}: ${att.message}`);
-            continue;
-          }
-          try {
-            const buf = readFileSync(abs);
-            if (buf.length > maxBytes) {
-              logger.warn(`[bridge:${platform}] video ${path} is ${Math.round(buf.length / 1048576)}MB, over the ${Math.round(maxBytes / 1048576)}MB limit — not sending`);
-              continue;
-            }
-            logger.info(`[bridge:${platform}] sending video (${Math.round(buf.length / 1048576)}MB) to ${from}`);
-            if (channelType === "whatsapp") {
-              await getWhatsappBridge().sendVideo(from, buf).catch((e: Error) => logger.error(`[whatsapp] video send failed: ${e.message}`));
-            } else if (channelType === "telegram") {
-              await getTelegramBridge().sendVideo(from, buf).catch((e: Error) => logger.error(`[telegram] video send failed: ${e.message}`));
-            }
-          } catch (e) {
-            logger.warn(`[bridge:${platform}] video read/send failed for ${path}: ${(e as Error).message}`);
-          }
-        }
-      } catch (e) {
-        logger.warn(`[bridge:${platform}] media scan failed: ${(e as Error).message}`);
-      }
+      await forwardBridgeMedia({
+        canonicalOpId, channelType, platform, from,
+        sessionKey: route.sessionKey, getWhatsappBridge, getTelegramBridge,
+      });
     }
 
     // Return BOTH the channel-formatted wire text and the raw speakable

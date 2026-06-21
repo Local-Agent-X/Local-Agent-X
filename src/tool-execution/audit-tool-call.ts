@@ -120,19 +120,23 @@ function shapeMsg(ctx: ToolCallContext): void {
   const { tc } = ctx;
   const result = ctx.result!;
   const imageData = (result as ToolResultWithImage)._image;
+  const content = imageData
+    ? `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}`
+    : renderToolResultForModel(result);
+  const toolMessage = { role: "tool", tool_call_id: tc.id, content } as ChatCompletionMessageParam;
+  // _media (a file PATH the bridge delivers off-box) rides the tool message in
+  // ONE place, independent of _image — generate_image emits both, and branching
+  // the _media carry per-image-case silently dropped its delivery. Not fed to
+  // the model; just carried so the canonical dispatcher puts it on the result
+  // envelope. Look tools omit _media, so they stay vision-only.
+  if (result._media) (toolMessage as unknown as Record<string, unknown>)._media = result._media;
+  ctx.msgs.push(toolMessage);
+  // _image additionally feeds the model the bytes as a user-vision message.
   if (imageData) {
-    ctx.msgs.push({ role: "tool", tool_call_id: tc.id, content: `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}` } as ChatCompletionMessageParam);
     ctx.msgs.push({ role: "user", content: [
       { type: "text", text: `[Image from ${imageData.path}] ${imageData.question}` },
       { type: "image_url", image_url: { url: `data:${imageData.mime};base64,${imageData.b64}`, detail: "auto" } },
     ]} as ChatCompletionMessageParam);
-  } else {
-    const toolMessage = { role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam;
-    // Video/large media rides a file PATH on the tool message — not fed to
-    // the model (no image_url), just carried so the canonical dispatcher can
-    // put it on the result envelope and the bridge can forward the file.
-    if (result._media) (toolMessage as unknown as Record<string, unknown>)._media = result._media;
-    ctx.msgs.push(toolMessage);
   }
 }
 

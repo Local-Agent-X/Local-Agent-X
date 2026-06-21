@@ -22,8 +22,12 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   multi_edit:  ["main-chat", "spawned-agent", "operator", "build-intent"],
   delete_file: ["main-chat"],
   bash:        ["main-chat", "spawned-agent", "operator", "build-intent"],
-  glob:        ["main-chat", "build-intent"],
-  grep:        ["main-chat", "build-intent"],
+  // glob/grep reach spawned agents too: the enforcement layer already
+  // path-rewrites them for `agent-` sessions (enforce-policy.rewriteWorktreePaths),
+  // and a code-working sub-agent that can only shell out via bash is degraded
+  // vs main-chat. Read-only discovery (ARI action "read"), spiral-guarded.
+  glob:        ["main-chat", "spawned-agent", "build-intent"],
+  grep:        ["main-chat", "spawned-agent", "build-intent"],
 
   // Web & search
   web_fetch:   ["main-chat", "spawned-agent", "operator", "build-intent"],
@@ -36,8 +40,13 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // App self-control
   setting:     ["main-chat", "spawned-agent", "operator"],
 
-  // Tool discovery
-  tool_search: ["main-chat", "build-intent"],
+  // Tool discovery. Eager for spawned agents too — without it a sub-agent
+  // (esp. a weak non-Anthropic model that declines capabilities tool-lessly)
+  // can never reach ANY deferred tool, so it's strictly worse than main-chat.
+  // The tool-search-nudge middleware that forces weak models to search assumes
+  // this is present. Allow-listed templates stay authoritative (this only
+  // affects the no-allowlist default surface).
+  tool_search: ["main-chat", "spawned-agent", "build-intent"],
 
   // Vision
   view_image:     ["main-chat", "spawned-agent", "operator", "build-intent"],

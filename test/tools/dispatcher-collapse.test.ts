@@ -80,7 +80,7 @@ describe("Unified dispatcher — F2 final collapse", () => {
       },
       makeCtx(toolMap),
     );
-    expect(result.content).toMatch(/Unknown tool: ari_file/);
+    expect(result.content).toMatch(/Unknown tool "ari_file"/);
   });
 
   it("the shell bridge rejects metacharacters (sandbox property survives the collapse)", async () => {

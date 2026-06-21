@@ -31,16 +31,41 @@ import { readOpTurns, readOpMessages } from "../store.js";
 import type { OpTurnRow } from "../types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { recentActions, type LedgerAction } from "../../ops/action-ledger.js";
+import { resolveOpModel } from "../op-model.js";
+import { classifyModel, type ModelTier } from "../../model-tiers.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.situational-awareness");
 
 // Max recent tool actions to surface in the recent-actions line.
 const RECENT_ACTIONS_CAP = 8;
-// Below this turn index the original request is still visible just above, so a
-// goal restatement is noise. At/after it the request has scrolled away.
-const GOAL_RESTATE_AFTER_TURN = 6;
+// Default turn index at/after which the original request has scrolled away and a
+// goal restatement earns its line. Weak/medium tiers drift from the goal sooner,
+// so they re-ground earlier (goalRestateAfterTurn). Strong tiers wait — for them
+// the restatement is noise until the request is genuinely out of view.
+const GOAL_RESTATE_AFTER_TURN_DEFAULT = 6;
 const GOAL_MAX_CHARS = 160;
+
+/**
+ * Tier-aware cadence for goal/criteria re-grounding. Reuses the same tier
+ * classification loop-detection keys its weak/medium thresholds off, so the
+ * "weaker models need more scaffolding" signal stays single-sourced. Earlier
+ * re-grounding for weaker models is the cross-model drift lever: a weak
+ * non-Anthropic model loses the original goal + constraints within a few turns.
+ */
+export function goalRestateAfterTurn(tier: ModelTier | undefined): number {
+  switch (tier) {
+    case "weak": return 3;
+    case "medium": return 4;
+    default: return GOAL_RESTATE_AFTER_TURN_DEFAULT; // strong / unknown
+  }
+}
+
+function resolveOpTier(op: Op): ModelTier | undefined {
+  const model = resolveOpModel(op);
+  if (!model) return undefined;
+  try { return classifyModel(model); } catch { return undefined; }
+}
 
 // "never quote" is load-bearing: weaker models (grok) narrated the digest
 // back to the user verbatim ("From the situational context: …"), leaking
@@ -56,9 +81,20 @@ export function buildSituationalAwareness(op: Op, turnIdx: number): string | nul
   const sessionId = getSessionForOp(op.id) ?? "";
   const recent = sessionId ? recentActions(sessionId, RECENT_ACTIONS_CAP) : [];
   const totalTokens = sumTokens(readOpTurns(op.id));
-  const firstUserText =
-    turnIdx >= GOAL_RESTATE_AFTER_TURN ? firstUserMessageText(op.id) : "";
-  const digest = composeDigest({ turnIdx, totalTokens, recent, firstUserText });
+  const restateAfter = goalRestateAfterTurn(resolveOpTier(op));
+  const restating = turnIdx >= restateAfter;
+  const firstUserText = restating ? firstUserMessageText(op.id) : "";
+  // Success criteria + hard constraints come from the turn-0 contextPack — the
+  // same fields initial-prompt.ts embeds in the seed message. By the restate
+  // turn that seed has scrolled out of the model's working view; re-grounding
+  // "what done means" and "what not to violate" is the highest-signal anchor a
+  // drifting (esp. non-Anthropic) model can get.
+  const pack = restating ? (op.contextPack as Op["contextPack"] | undefined) : undefined;
+  const successCriteria = pack?.task?.successCriteria ?? [];
+  const constraints = pack?.task?.constraints ?? [];
+  const digest = composeDigest({
+    turnIdx, totalTokens, recent, firstUserText, successCriteria, constraints, restateAfter,
+  });
   // Debug seam: the digest is ephemeral (injected into the prompt, never
   // persisted), so this log is the only way to observe what the model actually
   // received. Enable debug logging to watch it live.
@@ -72,8 +108,16 @@ export function composeDigest(input: {
   totalTokens: number;
   recent: LedgerAction[];
   firstUserText: string;
+  successCriteria?: string[];
+  constraints?: string[];
+  /** Turn at/after which goal + criteria re-grounding renders. Defaults to the
+   *  strong-tier cadence so existing (tier-unaware) callers are unchanged. */
+  restateAfter?: number;
 }): string | null {
   const { turnIdx, totalTokens, recent, firstUserText } = input;
+  const successCriteria = input.successCriteria ?? [];
+  const constraints = input.constraints ?? [];
+  const restateAfter = input.restateAfter ?? GOAL_RESTATE_AFTER_TURN_DEFAULT;
   const lines: string[] = [];
 
   // Pace only earns its line once we're past the first model turn of the
@@ -83,13 +127,23 @@ export function composeDigest(input: {
   const recentLine = recentActionsLine(recent);
   if (recentLine) lines.push(recentLine);
 
-  if (turnIdx >= GOAL_RESTATE_AFTER_TURN) {
+  if (turnIdx >= restateAfter) {
     const goal = goalLine(firstUserText);
     if (goal) lines.push(goal);
+    const criteriaLine = bulletLine("Success criteria (all must hold before you finish)", successCriteria);
+    if (criteriaLine) lines.push(criteriaLine);
+    const constraintLine = bulletLine("Hard constraints (do not violate)", constraints);
+    if (constraintLine) lines.push(constraintLine);
   }
 
   if (lines.length === 0) return null;
   return [OPEN, ...lines, CLOSE].join("\n");
+}
+
+function bulletLine(label: string, items: string[]): string | null {
+  const cleaned = items.map(s => s.trim()).filter(Boolean);
+  if (cleaned.length === 0) return null;
+  return `${label}: ${cleaned.join("; ")}`;
 }
 
 function sumTokens(turns: OpTurnRow[]): number {

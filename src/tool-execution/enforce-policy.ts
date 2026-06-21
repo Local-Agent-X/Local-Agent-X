@@ -48,7 +48,7 @@ export const ARI_ACTION_MAP: Record<string, string> = {
   browser_fill_from_secret: "fill",
   clipboard_write_from_secret: "clipboard",
   // file
-  glob: "read", grep: "read", view_image: "read", send_video: "read", delete_file: "write",
+  glob: "read", grep: "read", view_image: "read", send_video: "read", send_image: "read", delete_file: "write",
   // http — get for read paths, post for mutations
   calendar_check_availability: "get", calendar_list_events: "get",
   calendar_create_event: "post",
@@ -172,20 +172,69 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
   return CONTINUE;
 }
 
+// Cap on how many tool names a corrective lists inline. The op's surface is
+// already tier-capped upstream (shrinkToolsForTier), so weak models naturally
+// get a short list and strong models a longer one; this only guards the extreme.
+const AVAILABLE_TOOLS_CAP = 50;
+
+/**
+ * Structured corrective for a hallucinated / mistyped tool name. A bare
+ * "Unknown tool: X" leaves a weak model guessing — listing the exact names it
+ * CAN call lets it self-correct in one turn instead of re-hallucinating. The
+ * available set is the op's own (already-tier-capped) surface, so the message
+ * self-scales to the model's tier. Pure + exported for unit testing.
+ */
+export function formatUnknownToolCorrection(toolName: string, available: string[]): string {
+  const names = [...available].sort();
+  const head = `Unknown tool "${toolName}" — not one of your available tools. `;
+  const tail = "If you need a capability that isn't listed, call tool_search to load it.";
+  if (names.length === 0) return head + tail;
+  const list = names.length <= AVAILABLE_TOOLS_CAP
+    ? names.join(", ")
+    : names.slice(0, AVAILABLE_TOOLS_CAP).join(", ") + `, …(+${names.length - AVAILABLE_TOOLS_CAP} more)`;
+  return head + `Use one of these exact names: ${list}. ` + tail;
+}
+
 function lookupTool(ctx: ToolCallContext): PhaseOutcome {
   const tool = ctx.toolMap.get(ctx.tc.name);
   if (!tool) {
     ctx.allowed = false;
     ctx.result = {
-      content: `Unknown tool: ${ctx.tc.name}`,
+      content: formatUnknownToolCorrection(ctx.tc.name, [...ctx.toolMap.keys()]),
       isError: true,
       status: "error",
-      metadata: { recovery: "Tool name typo or the tool isn't registered. Use tool_search to find the right name." },
+      metadata: { recovery: "Tool name typo or hallucinated name. Use one of the listed tool names exactly, or tool_search to load a capability that isn't listed." },
     };
     return BLOCK;
   }
   ctx.tool = tool;
   return CONTINUE;
+}
+
+/**
+ * Collect per-field schema violations (required[], top-level type, enum) for a
+ * tool call's args. Pure + exported so the structured-corrective contract — the
+ * specific failing field, not a bare "invalid arguments" — is unit-testable.
+ */
+export function collectArgViolations(
+  args: Record<string, unknown>,
+  schema: { properties?: Record<string, { type?: string; enum?: unknown[] }>; required?: string[] } | undefined,
+): string[] {
+  const errs: string[] = [];
+  if (!schema?.properties) return errs;
+  for (const req of schema.required || []) {
+    if (!(req in args)) errs.push(`missing required field "${req}"`);
+  }
+  for (const [key, propSchema] of Object.entries(schema.properties)) {
+    if (!(key in args)) continue;
+    const val = args[key];
+    if (propSchema.type === "string" && typeof val !== "string") errs.push(`"${key}" must be a string (got ${typeof val})`);
+    else if (propSchema.type === "number" && typeof val !== "number") errs.push(`"${key}" must be a number (got ${typeof val})`);
+    else if (propSchema.type === "boolean" && typeof val !== "boolean") errs.push(`"${key}" must be a boolean (got ${typeof val})`);
+    else if (propSchema.type === "array" && !Array.isArray(val)) errs.push(`"${key}" must be an array (got ${typeof val})`);
+    if (propSchema.enum && !propSchema.enum.includes(val)) errs.push(`"${key}" must be one of [${propSchema.enum.map(v => JSON.stringify(v)).join(", ")}] (got ${JSON.stringify(val)})`);
+  }
+  return errs;
 }
 
 // Weak models emit malformed args. Lightweight required[] + type checks on
@@ -206,20 +255,7 @@ async function validateArgs(ctx: ToolCallContext): Promise<PhaseOutcome> {
     } catch {}
   }
 
-  if (!schema?.properties) return CONTINUE;
-  const errs: string[] = [];
-  for (const req of schema.required || []) {
-    if (!(req in ctx.args)) errs.push(`missing required field "${req}"`);
-  }
-  for (const [key, propSchema] of Object.entries(schema.properties)) {
-    if (!(key in ctx.args)) continue;
-    const val = (ctx.args as Record<string, unknown>)[key];
-    if (propSchema.type === "string" && typeof val !== "string") errs.push(`"${key}" must be a string (got ${typeof val})`);
-    else if (propSchema.type === "number" && typeof val !== "number") errs.push(`"${key}" must be a number (got ${typeof val})`);
-    else if (propSchema.type === "boolean" && typeof val !== "boolean") errs.push(`"${key}" must be a boolean (got ${typeof val})`);
-    else if (propSchema.type === "array" && !Array.isArray(val)) errs.push(`"${key}" must be an array (got ${typeof val})`);
-    if (propSchema.enum && !propSchema.enum.includes(val)) errs.push(`"${key}" must be one of [${propSchema.enum.map(v => JSON.stringify(v)).join(", ")}] (got ${JSON.stringify(val)})`);
-  }
+  const errs = collectArgViolations(ctx.args as Record<string, unknown>, schema);
   if (errs.length === 0) return CONTINUE;
 
   const result: ToolResult = {

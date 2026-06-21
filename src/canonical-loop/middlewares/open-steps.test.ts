@@ -11,7 +11,14 @@ vi.mock("../store.js", () => ({
   readOpTurns: vi.fn(() => []),
 }));
 
-import { openStepsMiddleware, openStepsTerminationWarning } from "./open-steps.js";
+import {
+  openStepsMiddleware,
+  openStepsTerminationWarning,
+  earnedDoneNudge,
+  clearEarnedDoneStateForOp,
+  _resetEarnedDoneState,
+} from "./open-steps.js";
+import type { Op } from "../../ops/types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { getOpenTasksForSession } from "../../tools/task-tools.js";
 import { readOpTurns } from "../store.js";
@@ -179,5 +186,54 @@ describe("openStepsTerminationWarning", () => {
     mockOpenTasks.mockReturnValue([{ id: "1", description: "x" }]);
     mockSession.mockReturnValue(undefined);
     expect(openStepsTerminationWarning("op-w")).toBeNull();
+  });
+});
+
+describe("earnedDoneNudge — unattended earned-done gate", () => {
+  const okTaskTurn = [{ toolCallSummary: [{ tool: "task_create", resultStatus: "ok" }] }] as never;
+  const op = (id: string, lane: Op["lane"]): Op => ({ id, lane } as unknown as Op);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetEarnedDoneState();
+    mockSession.mockReturnValue("sess-earned");
+    mockOpenTasks.mockReturnValue([{ id: "1", description: "Wire the export endpoint" }]);
+    mockOpTurns.mockReturnValue(okTaskTurn);
+  });
+
+  it("forces one more turn for a worker op with an open step, then terminates", () => {
+    // First pass: open step + the model said done → nudge to finish-or-justify.
+    const first = earnedDoneNudge(op("op-worker", "agent"));
+    expect(first).not.toBeNull();
+    expect(first).toContain("Wire the export endpoint");
+    expect(first).toContain("unattended");
+    // Second pass for the SAME op: bounded to one fire → null, so the op ends.
+    expect(earnedDoneNudge(op("op-worker", "agent"))).toBeNull();
+  });
+
+  it("fires for background and build lanes (also unattended)", () => {
+    expect(earnedDoneNudge(op("op-bg", "background"))).not.toBeNull();
+    expect(earnedDoneNudge(op("op-build", "build"))).not.toBeNull();
+  });
+
+  it("never fires on the interactive chat lane", () => {
+    expect(earnedDoneNudge(op("op-chat", "interactive"))).toBeNull();
+  });
+
+  it("is null when there are no open steps", () => {
+    mockOpenTasks.mockReturnValue([]);
+    expect(earnedDoneNudge(op("op-clean", "agent"))).toBeNull();
+  });
+
+  it("is null when this op never worked the task list", () => {
+    mockOpTurns.mockReturnValue([{ toolCallSummary: [{ tool: "read", resultStatus: "ok" }] }] as never);
+    expect(earnedDoneNudge(op("op-notouch", "agent"))).toBeNull();
+  });
+
+  it("can fire again after the op's state is cleared on terminal", () => {
+    expect(earnedDoneNudge(op("op-recycle", "agent"))).not.toBeNull();
+    expect(earnedDoneNudge(op("op-recycle", "agent"))).toBeNull();
+    clearEarnedDoneStateForOp("op-recycle");
+    expect(earnedDoneNudge(op("op-recycle", "agent"))).not.toBeNull();
   });
 });

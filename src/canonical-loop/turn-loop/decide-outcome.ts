@@ -30,7 +30,7 @@ import {
 import { isSilentToolCall } from "./silent-tool-check.js";
 import { runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
-import { openStepsTerminationWarning } from "../middlewares/open-steps.js";
+import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
 import { randomUUID } from "node:crypto";
 
 export interface DecideOutcomeInput {
@@ -191,12 +191,29 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     // "done", same as today. Future: emit a one-line warning event.
   }
 
+  // Earned-"done" gate (unattended lanes only). Before accepting a worker /
+  // background / build op's "done" while its own task list still has open
+  // steps, force ONE more turn pointed at "finish or justify stopping". This is
+  // the model-agnostic equalizer for runs nobody is watching: a weak model that
+  // hands over a partial and waits for "continue" gets that push exactly once.
+  // Interactive chat is excluded (earnedDoneNudge returns null) — never loop a
+  // turn out from under the user. Bounded to one fire per op, so the second
+  // pass falls through to the loud-partial warning below.
+  if (terminalReason === "done") {
+    const nudge = earnedDoneNudge(op);
+    if (nudge) {
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, nudge);
+      terminalReason = null;
+    }
+  }
+
   // Loud-partial guarantee: when the op truly ends here (every continuation
   // gate above declined to extend it) but this op's own task list still has
   // open steps, append a visible warning to the live bubble AND the committed
   // transcript. We can't force a stuck model to finish — the open-steps
-  // middleware already spent its nudge — but a partial must never LOOK like a
-  // finished answer, in chat or in a mission report.
+  // middleware and the earned-done gate already spent their nudges — but a
+  // partial must never LOOK like a finished answer, in chat or in a mission
+  // report.
   if (terminalReason === "done") {
     const warning = openStepsTerminationWarning(op.id);
     if (warning) {

@@ -9,6 +9,7 @@ import { EventBus } from "../event-bus.js";
 import { AgencyMessageBus } from "./message-bus.js";
 import { appendTraceEvent } from "../agents/run-trace.js";
 import { pushCompletionToParent } from "./handler-completion.js";
+import { pushInject } from "../agent-loop/inject-queue.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agency.handler");
@@ -179,8 +180,20 @@ export class Handler {
     const agent = this.agents.get(agentId);
     if (!agent) throw new Error(`Agent ${agentId} not found`);
 
+    // Deliver the redirect to the RUNNING canonical worker via the inject
+    // queue — the same primitive main-chat uses for mid-turn user messages,
+    // and the same bucket the message-bus bridge (attachExternalRun) and the
+    // worker's drain (drainInjectsIntoTurn, gated on opConsumesInjects →
+    // true for agent_spawn) both key on: runSessionId when borrowed, else
+    // agent-<id>. The old agent.messageQueue.push reached nothing — a
+    // canonically-driven run never reads that field, so redirects were silently
+    // dropped and the sub-agent kept running its original task.
+    const sessionId = agent.runSessionId ?? `agent-${agent.id}`;
+    pushInject(sessionId, newInstruction);
+
+    // currentTask + output still feed the AGENTS sidebar / agent_status /
+    // history readers, so keep them in sync with the new instruction.
     agent.currentTask = newInstruction;
-    agent.messageQueue.push(newInstruction);
     agent.output.push(`[redirect] ${newInstruction}`);
 
     this.notifyUpdate(agentId, { type: "status", data: `Redirected: ${newInstruction}` });

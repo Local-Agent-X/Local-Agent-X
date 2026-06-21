@@ -15,6 +15,7 @@
  * non-trivial multi-step work so the gate has teeth on the models that need it.
  */
 import type { CanonicalMiddleware } from "./types.js";
+import type { Op } from "../../ops/types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { getOpenTasksForSession } from "../../tools/task-tools.js";
 import { readOpTurns } from "../store.js";
@@ -112,4 +113,54 @@ export function openStepsTerminationWarning(opId: string): string | null {
   const headline = `⚠️ Stopped with ${open.length} step${open.length === 1 ? "" : "s"} still open: `;
   const budget = 199 - headline.length;
   return headline + (names.length > budget ? names.slice(0, budget - 1) + "…" : names);
+}
+
+/**
+ * Earned-"done" gate for UNATTENDED lanes (worker / background / build — never
+ * interactive chat). When such an op declares it's done but its own task list
+ * still has open steps, force exactly ONE more turn pointed at "finish or
+ * justify stopping". The afterModelCall nudge above fires at most once per open
+ * SET and is shared with interactive turns; this is the stricter terminal-time
+ * gate that converts a soft "done" into a hard one-shot retry for runs nobody is
+ * watching — the cross-model lever, since weaker models hand over partials and
+ * wait to be told "continue" that never comes in an unattended run.
+ *
+ * Returns the nudge to inject (and records the fire), or null when the gate must
+ * not bite: interactive lane, already fired once for this op, no open steps, or
+ * this op never worked the task list (mirrors openStepsTerminationWarning so a
+ * later op isn't force-looped over steps an earlier one left open). Bounded to
+ * one fire per op; cleared on op terminal via clearEarnedDoneStateForOp.
+ */
+const earnedDoneFired = new Set<string>();
+
+export function earnedDoneNudge(op: Op): string | null {
+  if (op.lane === "interactive") return null;
+  if (earnedDoneFired.has(op.id)) return null;
+  const sessionId = getSessionForOp(op.id);
+  if (!sessionId) return null;
+  const open = getOpenTasksForSession(sessionId);
+  if (open.length === 0) return null;
+  const touchedTasks = readOpTurns(op.id).some((turn) =>
+    (turn.toolCallSummary ?? []).some((s) => s.resultStatus === "ok" && s.tool.startsWith("task_")),
+  );
+  if (!touchedTasks) return null;
+
+  earnedDoneFired.add(op.id);
+  const list = open.map((t, i) => `${i + 1}. ${t.description}`).join("\n");
+  return (
+    `You're ending this run with ${open.length} step${open.length === 1 ? "" : "s"} still open on ` +
+    `your task list:\n\n${list}\n\n` +
+    "This is an unattended run — no one will tell you to continue. Either finish the remaining " +
+    "step(s) now (mark each done with task_update as you go), or, if you are genuinely blocked or a " +
+    "step is no longer needed, state the specific reason before you stop. Do not stop silently."
+  );
+}
+
+export function clearEarnedDoneStateForOp(opId: string): void {
+  earnedDoneFired.delete(opId);
+}
+
+/** Test-only — drop the per-op earned-done fire record. */
+export function _resetEarnedDoneState(): void {
+  earnedDoneFired.clear();
 }

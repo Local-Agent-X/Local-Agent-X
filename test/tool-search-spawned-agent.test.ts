@@ -11,6 +11,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { resolveToolsForRequest } from "../src/tool-search.js";
+import { applyAudiences } from "../src/tools/audience-map.js";
 import type { ToolDefinition, Audience } from "../src/types.js";
 
 function tool(name: string, audiences?: Audience[]): ToolDefinition {
@@ -60,5 +61,42 @@ describe("resolveToolsForRequest — spawned-agent provisioning", () => {
 
     expect(got.has("browser_navigate")).toBe(false); // audience-tagged but not allowed/identity
     expect(got.has("generate_image")).toBe(false);   // not allowed, not identity, not audience-tagged
+  });
+});
+
+/**
+ * Parity: a spawned agent with NO template allow-list must get the same
+ * working surface main-chat has — not a degraded subset. read/write/edit/bash
+ * were already granted by the audience overhaul; glob/grep/tool_search were the
+ * residual gap. tool_search is load-bearing: without it a sub-agent (esp. a
+ * weak non-Anthropic model) can't reach any deferred tool, so it's strictly
+ * worse than the main loop. Exercises the REAL audience map via applyAudiences.
+ */
+describe("resolveToolsForRequest — no-allowlist spawned-agent parity", () => {
+  const surface = () => {
+    const all: ToolDefinition[] = [
+      "read", "write", "edit", "bash", "glob", "grep", "tool_search",
+      "web_fetch", "browser", "memory_search",
+      "delete_file", "self_edit", "restart", // deliberately main-chat-only
+    ].map((n) => tool(n));
+    applyAudiences(all);
+    return names(resolveToolsForRequest({ audience: "spawned-agent" }, all));
+  };
+
+  it("grants the core working tools (already true pre-overhaul-fix)", () => {
+    const got = surface();
+    for (const t of ["read", "write", "edit", "bash"]) expect(got.has(t)).toBe(true);
+  });
+
+  it("grants discovery + tool-expansion parity (the residual gap)", () => {
+    const got = surface();
+    expect(got.has("glob")).toBe(true);
+    expect(got.has("grep")).toBe(true);
+    expect(got.has("tool_search")).toBe(true);
+  });
+
+  it("still withholds host-control tools from sub-agents", () => {
+    const got = surface();
+    for (const t of ["delete_file", "self_edit", "restart"]) expect(got.has(t)).toBe(false);
   });
 });

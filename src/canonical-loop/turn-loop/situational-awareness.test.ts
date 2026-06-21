@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { composeDigest } from "./situational-awareness.js";
+import { composeDigest, goalRestateAfterTurn } from "./situational-awareness.js";
 import type { LedgerAction } from "../../ops/action-ledger.js";
 
 function acts(...pairs: Array<[string, "ok" | "error" | "cancelled"]>): LedgerAction[] {
@@ -52,5 +52,46 @@ describe("composeDigest", () => {
     // Goal line clips at GOAL_MAX_CHARS(160); the rest is the fixed
     // header/footer + pace line. Bound = clipped goal + ~200 of frame.
     expect(d!.length).toBeLessThan(360);
+  });
+
+  it("carries success criteria + hard constraints into the re-grounding block", () => {
+    const d = composeDigest({
+      turnIdx: 6,
+      totalTokens: 0,
+      recent: [],
+      firstUserText: "ship the export feature",
+      successCriteria: ["CSV downloads", "covered by a test"],
+      constraints: ["do not touch auth"],
+    });
+    expect(d).toContain("Success criteria (all must hold before you finish): CSV downloads; covered by a test");
+    expect(d).toContain("Hard constraints (do not violate): do not touch auth");
+  });
+
+  it("omits criteria/constraints before the restate threshold", () => {
+    const d = composeDigest({
+      turnIdx: 2,
+      totalTokens: 0,
+      recent: acts(["edit", "ok"]),
+      firstUserText: "ship it",
+      successCriteria: ["CSV downloads"],
+      constraints: ["do not touch auth"],
+      restateAfter: 6,
+    });
+    expect(d).not.toContain("Success criteria");
+    expect(d).not.toContain("Hard constraints");
+  });
+
+  it("re-grounds weaker tiers earlier than strong tiers (tier-aware cadence)", () => {
+    expect(goalRestateAfterTurn("weak")).toBe(3);
+    expect(goalRestateAfterTurn("medium")).toBe(4);
+    expect(goalRestateAfterTurn("strong")).toBe(6);
+    expect(goalRestateAfterTurn(undefined)).toBe(6);
+
+    // At turn 3 a weak model already gets its criteria; a strong model does not.
+    const common = { turnIdx: 3, totalTokens: 0, recent: [] as LedgerAction[], firstUserText: "do X", successCriteria: ["passes CI"] };
+    const weak = composeDigest({ ...common, restateAfter: goalRestateAfterTurn("weak") });
+    const strong = composeDigest({ ...common, restateAfter: goalRestateAfterTurn("strong") });
+    expect(weak).toContain("Success criteria");
+    expect(strong).not.toContain("Success criteria");
   });
 });

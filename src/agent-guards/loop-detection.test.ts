@@ -52,17 +52,28 @@ describe("checkToolLoops — exact-repeat", () => {
   });
 });
 
-describe("checkToolLoops — no-progress", () => {
-  // Changing args + changing results so ONLY the no-progress path can fire
-  // (exact-repeat resets on the key change; bash isn't a discovery tool).
-  const noProgressTurn = (state: LoopState, i: number, opts: Parameters<typeof checkToolLoops>[2]) =>
-    turn(state, [{ name: "bash", arguments: JSON.stringify({ cmd: "echo " + i }) }], "out-" + i, opts);
+describe("checkToolLoops — no-progress (result-delta, not tool-identity)", () => {
+  // Varied args so exact-repeat can't fire (key changes every turn) and bash
+  // isn't a discovery tool — so ONLY the no-progress path is under test. The
+  // RESULT is what decides progress now, not the tool's class.
+  const ROOM = NO_PROGRESS_LIMIT + 5; // absorb the detector's one-turn lag
+  const bashTurn = (state: LoopState, i: number, result: string, opts: Parameters<typeof checkToolLoops>[2]) =>
+    turn(state, [{ name: "bash", arguments: JSON.stringify({ cmd: "diag " + i }) }], result, opts);
 
-  it("interactive (nudgeOnly): a no-progress spiral is nudged, never aborted", () => {
+  it("bash-spin with UNCHANGING results hard-aborts (the git-status loop)", () => {
+    const state = createLoopState();
+    let aborted = false;
+    for (let i = 0; i < ROOM && !aborted; i++) {
+      aborted = bashTurn(state, i, "nothing to commit, working tree clean", { modelTier: "strong" }).abort;
+    }
+    expect(aborted).toBe(true);
+  });
+
+  it("interactive (nudgeOnly): the same spin is nudged, never aborted", () => {
     const state = createLoopState();
     let nudged = false, aborted = false;
-    for (let i = 0; i <= NO_PROGRESS_LIMIT; i++) {
-      const v = noProgressTurn(state, i, { modelTier: "strong", nudgeOnly: true });
+    for (let i = 0; i < ROOM; i++) {
+      const v = bashTurn(state, i, "no change", { modelTier: "strong", nudgeOnly: true });
       if (v.nudge) nudged = true;
       if (v.abort) aborted = true;
     }
@@ -70,13 +81,64 @@ describe("checkToolLoops — no-progress", () => {
     expect(nudged).toBe(true);
   });
 
-  it("worker (default): a no-progress spiral hard-aborts", () => {
+  it("research liveness: bash/fetch returning NEW results each turn never aborts", () => {
+    const state = createLoopState();
+    let flagged = false;
+    for (let i = 0; i < ROOM * 2; i++) {
+      const v = turn(state, [{ name: "web_fetch", arguments: JSON.stringify({ url: "p/" + i }) }], "page-content-" + i, { modelTier: "strong" });
+      if (v.abort || v.nudge) flagged = true;
+    }
+    expect(flagged).toBe(false);
+  });
+
+  it("same-result spin across VARIED tools aborts (no tool repeats its key)", () => {
     const state = createLoopState();
     let aborted = false;
-    for (let i = 0; i <= NO_PROGRESS_LIMIT && !aborted; i++) {
-      aborted = noProgressTurn(state, i, { modelTier: "strong" }).abort;
+    for (let i = 0; i < ROOM && !aborted; i++) {
+      // Alternate two different non-mutating, non-discovery tools; identical
+      // result every turn → no new information enters → no progress.
+      const call = i % 2 === 0
+        ? { name: "bash", arguments: JSON.stringify({ cmd: "probe " + i }) }
+        : { name: "web_fetch", arguments: JSON.stringify({ url: "u/" + i }) };
+      aborted = turn(state, [call], "same-unchanged-state", { modelTier: "strong" }).abort;
     }
     expect(aborted).toBe(true);
+  });
+
+  it("no degradation: a constant-ack mutation (email_send) is never false-aborted", () => {
+    const state = createLoopState();
+    let flagged = false;
+    for (let i = 0; i < ROOM * 2; i++) {
+      // Real fire-and-forget side effects whose ack is a constant string —
+      // the mutation floor must keep these from reading as a spin.
+      const v = turn(state, [{ name: "email_send", arguments: JSON.stringify({ to: "user-" + i }) }], "[ok] sent", { modelTier: "strong" });
+      if (v.abort || v.nudge) flagged = true;
+    }
+    expect(flagged).toBe(false);
+  });
+});
+
+describe("checkToolLoops — discovery (result-delta)", () => {
+  const ROOM = 16;
+  const searchTurn = (state: LoopState, i: number, result: string) =>
+    turn(state, [{ name: "web_search", arguments: JSON.stringify({ q: "query " + i }) }], result, { modelTier: "strong" });
+
+  it("a discovery tool returning the SAME results spirals into a nudge", () => {
+    const state = createLoopState();
+    let nudged = false;
+    for (let i = 0; i < ROOM; i++) {
+      if (searchTurn(state, i, "no results found").nudge) nudged = true;
+    }
+    expect(nudged).toBe(true);
+  });
+
+  it("a discovery tool returning NEW results each call is never nudged", () => {
+    const state = createLoopState();
+    let nudged = false;
+    for (let i = 0; i < ROOM; i++) {
+      if (searchTurn(state, i, "fresh hits " + i).nudge) nudged = true;
+    }
+    expect(nudged).toBe(false);
   });
 });
 

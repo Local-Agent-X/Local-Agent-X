@@ -1,9 +1,25 @@
 // Tool-call loop detection. Three signals:
-//   1. Exact-repeat: same {tool, args} N times in a row → abort.
+//   1. Exact-repeat: same {tool, args} N times in a row with UNCHANGED results
+//      → abort.
 //   2. Discovery loop: same READ-ONLY discovery tool (read/grep/glob/
-//      web_search/...) called 8+ times → nudge "switch tactic".
-//   3. No-progress: N iterations of any tool calls with zero mutations
-//      (write/edit/browser/http POST/...) → abort.
+//      web_search/...) called 8+ times with no new information → nudge.
+//   3. No-progress: N iterations with no PROGRESS → abort.
+//
+// Progress (signals 2 + 3) is result-delta, not tool-identity: a turn made
+// progress if it surfaced a tool result not seen before (the agent learned or
+// changed something) OR it committed a mutation (isMutationTool — the floor
+// that keeps fire-and-forget side effects like email_send from reading as a
+// spin even when their ack is a constant string). A read returning new info is
+// progress; a read/click returning the same bytes is not, regardless of the
+// tool's class. The result-delta is the same sha1 signal the exact-repeat
+// detector already uses, generalized across varied tools and across the op.
+//
+// Residual (intentional): a MUTATION-class tool that returns identical results
+// forever (a dead-button browser click, an idempotent POST) still resets via
+// the mutation floor and is NOT caught by no-progress — distinguishing it from
+// a real constant-ack mutation (email_send) by result bytes alone would
+// false-abort the latter. That spin is the exact-repeat detector's job (it's
+// already result-aware) plus the per-op turn cap.
 //
 // Weak/medium models loop harder and faster, so thresholds halve when the
 // caller passes modelTier="weak"|"medium".
@@ -29,10 +45,20 @@ export interface LoopState {
   lastResultSig: string | null;
   identicalResultRepeats: number;
   toolNameCounts: Map<string, number>;
-  // Iterations elapsed since the last MUTATING tool call (write/edit/commit).
-  // Build_app worker spun 96 bash calls + 0 file changes for 5 min before kill.
-  // No-progress detector: if this exceeds NO_PROGRESS_LIMIT iterations, abort.
-  iterationsSinceMutation: number;
+  // Result signatures (sha1) seen so far this op — the memory behind the
+  // result-delta progress signal. A turn whose results are ALL already in here
+  // surfaced nothing new. Insertion-ordered + FIFO-bounded (RESULT_SIG_MEMORY)
+  // so a long op can't grow it without limit; an evicted-then-repeated result
+  // only delays an abort, never causes a false one.
+  seenResultSigs: Set<string>;
+  // Whether the PRIOR turn surfaced a novel result. Set by noteToolResults
+  // (post-dispatch, when results are known) and read by the next checkToolLoops
+  // (pre-dispatch) — the same one-turn lag the exact-repeat detector runs on.
+  lastTurnHadNovelResult: boolean;
+  // Iterations elapsed since the last PROGRESS (a novel result OR a committed
+  // mutation). Build_app worker spun 96 bash calls + 0 progress for 5 min
+  // before kill. No-progress detector: if this exceeds NO_PROGRESS_LIMIT, abort.
+  iterationsSinceProgress: number;
   // Set to true on the iteration AFTER a successful `git commit` is observed
   // in a bash tool result. Next iteration the agent gets a nudge to wrap up.
   // The perma-fix mandate keeps agents going past their commit; this caps it.
@@ -46,10 +72,17 @@ export function createLoopState(): LoopState {
     lastResultSig: null,
     identicalResultRepeats: 0,
     toolNameCounts: new Map(),
-    iterationsSinceMutation: 0,
+    seenResultSigs: new Set(),
+    lastTurnHadNovelResult: false,
+    iterationsSinceProgress: 0,
     postCommitNudgePending: false,
   };
 }
+
+// Cap on remembered result signatures (~50 bytes each → ~13 KB at the cap).
+// Comfortably larger than NO_PROGRESS_LIMIT × a few results/turn, so a steady
+// spin's signature stays resident across the whole no-progress window.
+const RESULT_SIG_MEMORY = 256;
 
 const DISCOVERY_LOOP_THRESHOLD = 8;
 const DISCOVERY_LOOP_THRESHOLD_WEAK = 4;
@@ -137,12 +170,14 @@ export function checkToolLoops(
   // multi-step automation, not a spiral. Exact-repeat detection above catches
   // true action loops.
   //
-  // isProgressTool (local work incl. bash) RESETS the spiralable counts because
-  // it proves the agent is doing work, not spinning — the common audit-then-
-  // edit-then-verify pattern would otherwise accumulate reads across phases and
-  // falsely trip the gate. isMutationTool (narrower — excludes bash) drives the
-  // no-progress counter below; both derive from the risk taxonomy in
-  // tool-mutation-check.ts.
+  // Two progress signals reset the spiralable counts: isProgressTool (local
+  // work incl. bash — the audit-then-edit-then-verify pattern would otherwise
+  // accumulate reads across phases and falsely trip the gate) and a novel
+  // result from the PRIOR turn (the agent learned something new, so the prior
+  // reads were exploration, not a spiral). A discovery tool spun on the SAME
+  // result keeps neither signal, so its count climbs to the nudge. isProgressTool
+  // derives from the risk taxonomy (tool-mutation-check.ts); the novelty signal
+  // is the result-delta below. isMutationTool drives the no-progress counter.
   let madeProgress = false;
   let madeMutation = false;
   for (const tc of toolCalls) {
@@ -150,25 +185,29 @@ export function checkToolLoops(
     if (isMutationTool(tc.name)) madeMutation = true;
     state.toolNameCounts.set(tc.name, (state.toolNameCounts.get(tc.name) || 0) + 1);
   }
-  if (madeProgress) {
+  if (madeProgress || state.lastTurnHadNovelResult) {
     // Reset only the spiralable counters — progress was made, the prior
     // reads were useful scaffolding, not a spiral. Keep non-spiralable
     // counts intact (they don't gate anything anyway).
     for (const name of SPIRALABLE_TOOLS) state.toolNameCounts.delete(name);
   }
-  // No-progress detector: count iterations since the last mutating call.
-  // Mutations reset to 0; everything else (bash, read, grep, git status) ticks.
-  // When the counter exceeds NO_PROGRESS_LIMIT, abort the turn — the agent is
-  // either done (and stalling) or stuck (and spinning).
-  if (madeMutation) {
-    state.iterationsSinceMutation = 0;
+  // No-progress detector: count iterations since the last PROGRESS — a
+  // committed mutation (this turn) OR a novel result (the prior turn surfaced
+  // information not seen before). Anything else (re-reading the same file,
+  // git-status spin, a dead-button click whose page doesn't change) ticks.
+  // When the counter exceeds NO_PROGRESS_LIMIT, abort — the agent is either
+  // done (and stalling) or stuck (and spinning). madeMutation is this turn's
+  // tool identity; lastTurnHadNovelResult is the prior turn's result-delta
+  // (one-turn lag, same as the exact-repeat detector).
+  if (madeMutation || state.lastTurnHadNovelResult) {
+    state.iterationsSinceProgress = 0;
   } else {
-    state.iterationsSinceMutation++;
+    state.iterationsSinceProgress++;
     const noProgLimit = isWeakOrMedium ? NO_PROGRESS_LIMIT_WEAK : NO_PROGRESS_LIMIT;
-    if (state.iterationsSinceMutation >= noProgLimit) {
-      logRetry({ kind: "loop-abort", tool: "no-progress", detail: { iterations: state.iterationsSinceMutation, limit: noProgLimit, modelTier: opts?.modelTier, nudgeOnly: opts?.nudgeOnly ?? false } });
+    if (state.iterationsSinceProgress >= noProgLimit) {
+      logRetry({ kind: "loop-abort", tool: "no-progress", detail: { iterations: state.iterationsSinceProgress, limit: noProgLimit, modelTier: opts?.modelTier, nudgeOnly: opts?.nudgeOnly ?? false } });
       // Reset so the next turn starts clean whether we abort or just nudge.
-      state.iterationsSinceMutation = 0;
+      state.iterationsSinceProgress = 0;
       if (opts?.nudgeOnly) {
         return {
           abort: false,
@@ -204,17 +243,36 @@ export function checkToolLoops(
 }
 
 /**
- * Record the results of a turn's tool calls so the exact-repeat detector can
- * tell a stuck spin (same call, same result) from legitimate repetition (same
- * call, changing result). Call after dispatch with the same tool calls passed
- * to checkToolLoops. Only tracks while the repeated key holds; a key change is
- * reset by checkToolLoops on the next turn.
+ * Record a turn's tool results so the next checkToolLoops can read two
+ * result-delta signals. Call after dispatch with the same tool calls passed to
+ * checkToolLoops.
+ *   - Exact-repeat: while the SAME {tool,args} key holds, tell a stuck spin
+ *     (same call, same result) from legitimate repetition (changing result).
+ *   - Progress (no-progress + discovery): across ANY tools, whether the turn
+ *     surfaced a result not seen before this op. A novel result means the agent
+ *     learned/changed something; an all-seen turn made no progress.
  */
 export function noteToolResults(
   toolCalls: Array<{ name: string; arguments: string }>,
   state: LoopState,
   results: Array<{ content: string }>,
 ): void {
+  // Progress signal — runs every turn, independent of the exact-repeat key.
+  let novel = false;
+  for (const r of results) {
+    const rsig = createHash("sha1").update(r.content).digest("hex");
+    if (!state.seenResultSigs.has(rsig)) {
+      novel = true;
+      state.seenResultSigs.add(rsig);
+      if (state.seenResultSigs.size > RESULT_SIG_MEMORY) {
+        // Set preserves insertion order — the first key is the oldest.
+        state.seenResultSigs.delete(state.seenResultSigs.values().next().value!);
+      }
+    }
+  }
+  state.lastTurnHadNovelResult = novel;
+
+  // Exact-repeat signal — only while the repeated {tool,args} key holds.
   const key = toolCalls.map(tc => `${tc.name}:${tc.arguments}`).join("|");
   if (key !== state.lastToolKey) return;
   const sig = createHash("sha1")

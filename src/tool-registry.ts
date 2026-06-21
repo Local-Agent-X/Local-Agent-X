@@ -96,8 +96,8 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "send_video",                // ships a local file path off-box over a messaging bridge
   "send_image",                // ships a local image file off-box over a messaging bridge
   "view_image",                // base64-ships local image bytes off-box to the vision API
-  "screen_capture",            // captured screen image bytes get forwarded off-box by the bridge
-  "camera_capture",            // captured camera image bytes get forwarded off-box by the bridge
+  "screen_capture",            // captured screen bytes base64-ship off-box to the model/vision API
+  "camera_capture",            // captured camera bytes base64-ship off-box to the model/vision API
   // `computer` types model-authored text into ANOTHER app (action:"type") — a
   // cross-app data write, the same exfil shape as clipboard_write. Local-only,
   // so NOT offBoxFetch. Only the typed text is a payload (egressPayload below);

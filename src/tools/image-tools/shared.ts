@@ -27,10 +27,13 @@ export function workspaceDir(subdir: string): string {
   return resolve(getRuntimeConfig().workspace, subdir);
 }
 
-/** Like ok(), but rides the generated image bytes on `_image` so the chat
- *  tool dispatcher harvests them — feeds the model the image AND lets the
- *  WhatsApp/Telegram bridge auto-forward it as a photo. Without this,
- *  generate_image returns only a localhost URL the phone can't open. */
+/** Like ok(), but feeds the model the generated image (bytes on `_image`) AND
+ *  delivers it to the user. Delivery rides `_media:{kind:"image",path}` — the
+ *  same file-PATH channel send_image/send_video use — so the bridge forwards
+ *  the saved file as a photo. `_image` is vision-only (look tools use it too and
+ *  are NOT auto-delivered); only `_media` is forwarded. Callers must have
+ *  written `image.path` to disk first. Without this, generate_image returns only
+ *  a localhost URL the phone can't open. */
 export function okWithImage(
   content: string,
   image: { b64: string; path: string; question: string; mime?: string },
@@ -38,6 +41,7 @@ export function okWithImage(
   return {
     content,
     _image: { mime: image.mime || "image/png", b64: image.b64, path: image.path, question: image.question },
+    _media: { kind: "image", path: image.path, mime: image.mime || "image/png" },
   };
 }
 

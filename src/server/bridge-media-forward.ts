@@ -14,12 +14,14 @@ const logger = createLogger("server.bridge-media-forward");
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
 /**
- * Forward a turn's tool-emitted media to the bridge user. Images arrive two
- * ways and merge into one buffer list: inline bytes on the result envelope
- * (images[].b64, from vision tools) and a file PATH (_media:{kind:"image"},
- * from send_image). Both go through the same secret-scan/canary/send. Videos
- * forward by path with a per-channel size guard. Extracted from
- * bootstrap-bridges to keep that file under the size limit.
+ * Forward a turn's EXPLICITLY-delivered media to the bridge user. Delivery is
+ * envelope-gated: only `_media:{kind,path}` is forwarded (send_image,
+ * send_video, generate_image, generate_video). The `_image` bytes that vision/
+ * "look" tools emit (screen_capture, view_image, camera_capture) feed the model
+ * but are NOT delivered — otherwise every internal screen-peek would be pushed
+ * to the user. Images forward by reading the file (secret-scan/canary/send);
+ * videos by path with a per-channel size guard. Extracted from bootstrap-bridges
+ * to keep that file under the size limit.
  */
 export async function forwardBridgeMedia(opts: {
   canonicalOpId: string;
@@ -40,25 +42,15 @@ export async function forwardBridgeMedia(opts: {
       if (row.role !== "tool_result") continue;
       const r = (row.content as { result?: unknown })?.result;
       if (!r || typeof r !== "object") continue;
-      const imgs = (r as { images?: unknown }).images;
-      if (Array.isArray(imgs)) {
-        for (const img of imgs) {
-          if (!img || typeof img !== "object") continue;
-          const b64 = (img as { b64?: unknown }).b64;
-          if (typeof b64 !== "string") continue;
-          try { images.push(Buffer.from(b64, "base64")); } catch { /* skip malformed */ }
-        }
-      }
       const media = (r as { media?: { kind?: string; path?: string } }).media;
       if (media && typeof media.path === "string") {
         if (media.kind === "video") videoPaths.push(media.path);
         else if (media.kind === "image") imagePaths.push(media.path);
       }
     }
-    // send_image (and any _media:{kind:"image"}) rides a file PATH like video.
-    // Re-gate + read each into the SAME image buffer list the b64-envelope
-    // images use, so it flows through the identical secret-scan/canary + send
-    // path below — one image-forward, not a parallel one.
+    // _media:{kind:"image"} rides a file PATH (like video). Re-gate + read each
+    // into the image buffer list so it flows through the secret-scan/canary +
+    // send path below.
     const sentImagePaths = new Set<string>();
     for (const p of imagePaths) {
       const abs = resolve(p);

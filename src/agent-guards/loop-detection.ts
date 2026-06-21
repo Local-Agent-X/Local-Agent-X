@@ -14,6 +14,7 @@
 
 import { createHash } from "node:crypto";
 import { logRetry } from "../retry-telemetry.js";
+import { isMutationTool, isProgressTool } from "../tool-mutation-check.js";
 
 export interface LoopState {
   lastToolKey: string;
@@ -62,56 +63,23 @@ const DISCOVERY_LOOP_THRESHOLD_WEAK = 4;
 // for an agent that's genuinely stuck across many different tools.
 export const NO_PROGRESS_LIMIT = 25;
 export const NO_PROGRESS_LIMIT_WEAK = 15;
-// A mutation is a tool that committed *real-world* work — disk write, page
-// click, HTTP POST, message sent. Note `bash` is NOT here despite being in
-// PROGRESS_TOOLS for the spiralable-reset logic — bash can spin without
-// producing changes (git status loops, grep loops). The other read-only
-// tools (`read`, `grep`, `glob`, `web_search`, `snapshot`-style ops) are
-// also excluded — those genuinely don't change anything.
+// Read-only discovery / lookup tools an agent spins on when it can't find
+// something. No risk-taxonomy tier models "discovery spin", so this stays a
+// curated list — but every member MUST be read-only (a fence test in
+// loop-detection.test.ts asserts risk ∈ {safe, network-read}), so a mutating
+// tool can never be mistaken for a harmless lookup. Worker-pool status checks
+// (op_status / op_wait / agent_status) loop just like the legacy operation_status
+// — a chat agent polled op_status 16x in one turn — so they're spiralable too.
 //
-// Live failure (2026-05-13, the customer PO-entry workflow on codex): agent drove
-// the browser through 6 form-fill / click iterations without writing a
-// single file. Each `browser` call was real progress (PO number set,
-// vendor field populated, line items being added) but the no-progress
-// guard saw "zero file mutations" and aborted the turn with
-// "No-progress abort: 6+ iterations of tool calls with zero file
-// mutations." That's a false positive — browser-driven tasks don't
-// mutate files, they mutate external systems.
-//
-// Fix shape: anything that produces a side effect outside the agent's
-// process counts. `browser` covers UI automation (clicks, fills,
-// navigations). `http_request` covers API calls. The communication tools
-// cover messaging. Membership here means "this tool just did something
-// observable; the counter resets."
-export const MUTATION_TOOLS = new Set([
-  // File changes
-  "write", "edit", "self_edit", "build_app",
-  "mcp_filesystem_write_file", "mcp_filesystem_edit_file",
-  // Browser-driven UI work (every browser action is potentially side-
-  // effecting; reading args to filter would over-fit, just count all)
-  "browser",
-  // HTTP — non-GET methods are committing per committing-tool-check.ts.
-  // We don't have args here to filter by method; counting all http_request
-  // calls is the right tradeoff (GETs are also progress in the sense that
-  // they ARE happening — model isn't spinning if it's hitting endpoints).
-  "http_request",
-  // Communication / external sends
-  "email_send", "whatsapp_send", "telegram_send", "sms_send",
-  // Calendar / contacts mutations
-  "calendar_create", "calendar_update", "calendar_delete",
-  "contacts_create", "contacts_update", "contacts_delete",
-  // Vault / secrets writes
-  "secret_save", "secret_delete",
-  "browser_capture_to_secret", "browser_fill_from_secret",
-  // Sidebar / UI state
-  "sidebar_pin", "sidebar_unpin", "sidebar_clear",
-  // Memory writes
-  "memory_save", "memory_update_profile",
-  // Cron / scheduling mutations
-  "cron_create", "cron_delete", "cron_update",
-  // Delegation (spawning a worker IS the action)
-  "agent_spawn", "delegate", "op_submit", "op_submit_async",
-  "operation_start",
+// Mutation / progress classification (which tools reset the no-progress and
+// discovery counters) lives in tool-mutation-check.ts, derived from the risk
+// taxonomy. Only this discovery set is curated.
+export const SPIRALABLE_TOOLS = new Set([
+  "glob", "web_search", "read", "grep",
+  "agent_whoami", "agent_team_list", "issue_list", "issue_search",
+  "memory_search", "memory_recall", "memory_get",
+  "task_list", "operation_status", "operation_list",
+  "op_status", "op_wait", "agent_status", "agent_output",
 ]);
 
 /**
@@ -162,39 +130,24 @@ export function checkToolLoops(
     state.lastResultSig = null;
   }
 
-  // Discovery-style loop detection: same READ-ONLY discovery tool called 8+
-  // times suggests the agent is spinning trying to find something. Action
-  // tools (browser, http_request) are intentionally NOT in this list — they
-  // do progressive work and 8+ sequential calls is normal multi-step
-  // automation, not a spiral. Exact-repeat detection above (3x same call
-  // with identical args) catches true browser loops.
+  // Discovery-style loop detection: same READ-ONLY discovery tool (SPIRALABLE_
+  // TOOLS, module scope) called 8+ times suggests the agent is spinning trying
+  // to find something. Action tools (browser, http_request) are intentionally
+  // NOT spiralable — they do progressive work and 8+ sequential calls is normal
+  // multi-step automation, not a spiral. Exact-repeat detection above catches
+  // true action loops.
   //
-  // Progress tools (write/edit/bash/build_app/self_edit) RESET the spiralable
-  // counts because they prove the agent is doing work, not spinning. The
-  // common audit-then-edit-then-verify-then-edit pattern would otherwise
-  // accumulate reads across all phases and falsely trip the gate during
-  // legitimate multi-step work on a large file.
-  const PROGRESS_TOOLS = new Set([
-    "write", "edit", "bash", "build_app", "self_edit",
-    "task_create", "task_update",
-    "op_submit", "op_submit_async",
-    "memory_save", "memory_update_profile",
-  ]);
-  const SPIRALABLE_TOOLS = new Set([
-    "glob", "web_search", "read", "grep",
-    "agent_whoami", "agent_team_list", "issue_list", "issue_search",
-    "memory_search", "memory_recall", "memory_get",
-    "task_list", "operation_status", "operation_list",
-    // Worker-pool status checks loop just like the legacy operation_status —
-    // chat agent kept polling op_status 16x in one turn waiting for a long
-    // op to finish. Treat as spiralable so the discovery-limit guard fires.
-    "op_status", "op_wait", "agent_status", "agent_output",
-  ]);
+  // isProgressTool (local work incl. bash) RESETS the spiralable counts because
+  // it proves the agent is doing work, not spinning — the common audit-then-
+  // edit-then-verify pattern would otherwise accumulate reads across phases and
+  // falsely trip the gate. isMutationTool (narrower — excludes bash) drives the
+  // no-progress counter below; both derive from the risk taxonomy in
+  // tool-mutation-check.ts.
   let madeProgress = false;
   let madeMutation = false;
   for (const tc of toolCalls) {
-    if (PROGRESS_TOOLS.has(tc.name)) madeProgress = true;
-    if (MUTATION_TOOLS.has(tc.name)) madeMutation = true;
+    if (isProgressTool(tc.name)) madeProgress = true;
+    if (isMutationTool(tc.name)) madeMutation = true;
     state.toolNameCounts.set(tc.name, (state.toolNameCounts.get(tc.name) || 0) + 1);
   }
   if (madeProgress) {

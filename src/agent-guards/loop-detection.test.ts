@@ -5,7 +5,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { checkToolLoops, noteToolResults, createLoopState, NO_PROGRESS_LIMIT, type LoopState } from "./loop-detection.js";
+import { checkToolLoops, noteToolResults, createLoopState, NO_PROGRESS_LIMIT, SPIRALABLE_TOOLS, type LoopState } from "./loop-detection.js";
+import { TOOLS } from "../tool-registry.js";
 
 type Call = { name: string; arguments: string };
 const lsCall: Call = { name: "bash", arguments: JSON.stringify({ cmd: "ls workspace/apps/" }) };
@@ -76,5 +77,23 @@ describe("checkToolLoops — no-progress", () => {
       aborted = noProgressTurn(state, i, { modelTier: "strong" }).abort;
     }
     expect(aborted).toBe(true);
+  });
+});
+
+describe("SPIRALABLE_TOOLS fence — every discovery tool is read-only", () => {
+  // The discovery set is the one curated list left (no risk tier models
+  // "discovery spin"). Fence it with the taxonomy so a mutating tool can never
+  // be mistaken for a harmless lookup — that would let a real loop reset the
+  // wrong counter.
+  it("no spiralable tool is mutating (risk ∈ {safe, network-read})", () => {
+    for (const name of SPIRALABLE_TOOLS) {
+      const risk = TOOLS[name]?.risk;
+      expect(risk, `${name} must be in the policy table`).toBeDefined();
+      expect(["safe", "network-read"], `${name} is risk=${risk}, not read-only`).toContain(risk);
+    }
+  });
+
+  it("the fence is not vacuous — a write-class tool would fail it", () => {
+    expect(["safe", "network-read"]).not.toContain(TOOLS["write"]?.risk);
   });
 });

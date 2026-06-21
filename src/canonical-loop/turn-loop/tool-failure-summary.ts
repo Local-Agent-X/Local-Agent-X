@@ -19,7 +19,7 @@
 import type { CommitTurnMessage } from "../checkpoint.js";
 import { parseStatusHeader } from "../../tools/result-helpers.js";
 import { extractToolResultText } from "./content-extract.js";
-import { MUTATION_TOOLS } from "../../agent-guards/loop-detection.js";
+import { isMutationTool } from "../../tool-mutation-check.js";
 
 type ToolSummaryEntry = { tool: string; toolCallId?: string };
 
@@ -27,7 +27,7 @@ export interface ToolFailureSummary {
   failures: { tool: string; reason: string }[];
   /**
    * True when at least one mutation tool (write / edit / build_app / browser
-   * action / http_request / etc — see MUTATION_TOOLS) succeeded in this
+   * action / http_request / etc — see isMutationTool) succeeded in this
    * turn. Means the model actually changed something on disk or in the
    * outside world. Used to suppress the gaslighting nudge in the mixed
    * case where the model had failures earlier but ultimately landed a real
@@ -51,7 +51,7 @@ export function collectToolFailures(
     const status = parseStatusHeader(text);
     const toolName = toolSummary[i]?.tool ?? "unknown";
     if (status === "ok") {
-      if (MUTATION_TOOLS.has(toolName)) hadSuccessfulMutation = true;
+      if (isMutationTool(toolName)) hadSuccessfulMutation = true;
       continue;
     }
     if (status === "running") continue;
@@ -68,8 +68,8 @@ export function shouldNudgeForFailures(summary: ToolFailureSummary): boolean {
   // model retried and eventually succeeded with a real change, accept its
   // "done" — that's progress, not gaslighting. Read-only successes (read,
   // grep, glob) don't count: a model can spam reads after edit failures
-  // and then claim done; nudge still fires there because read isn't in
-  // MUTATION_TOOLS.
+  // and then claim done; nudge still fires there because read isn't a
+  // mutation tool.
   return summary.failures.length > 0 && !summary.hadSuccessfulMutation;
 }
 

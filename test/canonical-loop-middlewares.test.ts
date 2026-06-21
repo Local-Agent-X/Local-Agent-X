@@ -132,7 +132,9 @@ describe("loop-detection middleware", () => {
   });
 
   it("aborts repeated identical calls that keep producing the SAME result", async () => {
-    const op = mkOp("loop-abort");
+    // Non-interactive lane: the hard-abort path only runs when no human is
+    // watching (interactive lanes are nudge-only). This exercises that branch.
+    const op = mkOp("loop-abort", "chat_turn", "background");
     const tc = mkToolCall("read", { path: "x" });
     const sameResult: CanonicalToolResultView[] = [{ toolName: "read", toolCallId: tc.toolCallId, content: "unchanged output" }];
     const turn = async () => {

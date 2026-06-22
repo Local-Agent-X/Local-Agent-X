@@ -24,6 +24,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { executeToolCalls } from "../tool-executor.js";
 import { registerToolsForOp } from "./runtime.js";
 import { unifiedRegistry } from "../tools/registry.js";
+import { enqueueBridgeMedia } from "../bridge-media-queue.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.chat-tool-dispatcher");
@@ -143,6 +144,19 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
         const result: unknown = harvestedImages.length > 0 || media
           ? { text: content, ...(harvestedImages.length > 0 ? { images: harvestedImages } : {}), ...(media ? { media } : {}) }
           : content;
+
+        // Hand outbound media to the bridge here, at dispatch — bridge turns
+        // don't persist fresh tool results with their media envelope to
+        // op_messages, so the bridge can't re-read it. Keyed by op id; the
+        // bridge drains it after the turn. No-op (just bounded memory) for web
+        // chat, which renders media inline from this same result envelope.
+        if (opts.opId && (harvestedImages.length > 0 || media)) {
+          enqueueBridgeMedia(opts.opId, {
+            imageB64: harvestedImages.map(i => i.b64),
+            imagePath: media?.kind === "image" ? media.path : undefined,
+            videoPath: media?.kind === "video" ? media.path : undefined,
+          });
+        }
 
         // Deferred-tool augmentation. tool_search returns schemas as text;
         // without re-registering them on the op the provider's next request

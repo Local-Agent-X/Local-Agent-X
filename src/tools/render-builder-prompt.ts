@@ -108,6 +108,9 @@ export function renderPersonaPrompt(): string {
     "- Pick ONE emoji that best represents the app and write JUST that emoji (nothing else) to a file named .icon in the app folder — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)",
     "- For single-page apps: put everything in index.html (inline CSS/JS is fine)",
     "- Make it look polished — use modern CSS, good colors, responsive design",
+    "- Use real data and real logic — never fake it. No `Math.random()` stand-ins for live values, no hardcoded sample arrays posing as a real feed, no placeholder rows. If a real data source isn't wired, show an explicit empty/error state instead of fabricating content.",
+    "- Every control must work — buttons, forms, inputs, and links you add must do what they say, with no handlers wired to nothing.",
+    "- The app must run on first load — include every script, style, and handler it references; no functions called but never defined, no half-wired features.",
     "- Do NOT ask questions — just build it based on the instructions",
     "- After writing files, output: APP_READY: <appUrl from the per-build context>",
     WEBSITE_RULES_FRAGMENT +

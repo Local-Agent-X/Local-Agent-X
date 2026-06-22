@@ -51,6 +51,7 @@ RULES:
 - Write ALL files to ${appDir}/ (use absolute paths)
 - The main entry point MUST be index.html
 ${starterLine}- Create PROJECT.md with app description and status
+- Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in ${appDir}/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
 - Make it look polished — use modern CSS, good colors, responsive design
 - The app will be served at ${appUrl}
@@ -213,8 +214,12 @@ describe("renderPersonaPrompt — stable persona for AgentTemplate.systemPrompt"
       Static rules that apply to every build (per-build context carries the appDir, appUrl, existing-app context, asset manifest, and the user's instructions):
       - The main entry point MUST be index.html
       - Create PROJECT.md with app description and status
+      - Pick ONE emoji that best represents the app and write JUST that emoji (nothing else) to a file named .icon in the app folder — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
       - For single-page apps: put everything in index.html (inline CSS/JS is fine)
       - Make it look polished — use modern CSS, good colors, responsive design
+      - Use real data and real logic — never fake it. No \`Math.random()\` stand-ins for live values, no hardcoded sample arrays posing as a real feed, no placeholder rows. If a real data source isn't wired, show an explicit empty/error state instead of fabricating content.
+      - Every control must work — buttons, forms, inputs, and links you add must do what they say, with no handlers wired to nothing.
+      - The app must run on first load — include every script, style, and handler it references; no functions called but never defined, no half-wired features.
       - Do NOT ask questions — just build it based on the instructions
       - After writing files, output: APP_READY: <appUrl from the per-build context>
 

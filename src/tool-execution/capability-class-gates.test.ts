@@ -167,21 +167,24 @@ describe("name-drift guard — every capability-set member resolves to a real to
     expect(unenrolled, `offBoxFetch tools missing from EGRESS_TOOLS: ${unenrolled.join(", ")}`).toEqual([]);
   });
 
-  it("every tool whose OUTPUT the bridge DELIVERS off-box (_media) is egress-class (regression: R4-12b)", () => {
-    // The bridge forward loop (server/bridge-media-forward.ts) ships a tool's
-    // RESULT bytes off-box, but ONLY for explicit-delivery tools: it reads
-    // result.media.{kind,path} (a `_media` emitter) and forwards the file via
-    // sendPhoto/sendVideo. The `_image` bytes that vision/"look" tools emit feed
-    // the model but are NOT delivered. Forwarded bytes are re-scanned in the
-    // loop, but the scan only fires for EGRESS-class tools — so EVERY _media
-    // emitter must be egress-class, or its delivered output forwards UNSCANNED.
-    // Enumerated so dropping one (or adding an unenrolled emitter) fails CI.
+  it("every tool whose OUTPUT the bridge forwards off-box (_image/_media) is egress-class (regression: R4-12b)", () => {
+    // The bridge forward loop (server/bootstrap-bridges.ts) ships a tool's
+    // RESULT bytes off-box: it forwards any tool result carrying images[] (an
+    // `_image` emitter) via sendImage/sendPhoto, and any result.media.kind ===
+    // "video" (a `_media` emitter) via sendVideo. Those forwarded bytes are
+    // re-scanned in the loop, but the scan only fires for EGRESS-class tools
+    // (the loop reuses the egress secret/canary/attachment helpers). So EVERY
+    // media-emitting tool must be egress-class — a NEW image/video emitter that
+    // isn't enrolled would have its output forwarded UNSCANNED. Enumerated here
+    // so dropping one (or adding an unenrolled emitter) fails CI.
     const MEDIA_EMITTERS = [
-      "generate_image", "send_image",   // emit _media:{kind:"image",path}
-      "generate_video", "send_video",   // emit _media:{kind:"video",path}
+      "view_image", "screen_capture", "camera_capture", // emit images[]
+      "generate_image",                                  // emits images[]
+      "generate_video", "send_video",                    // emit media.{kind:"video",path}
+      "send_image",                                      // emits media.{kind:"image",path}
     ];
     for (const t of MEDIA_EMITTERS) {
-      expect(hasCapability(t, "egress"), `${t} delivers output bytes off-box via the bridge but is NOT egress-class — its delivered output would skip the secret/canary/attachment scan`).toBe(true);
+      expect(hasCapability(t, "egress"), `${t} forwards output bytes off-box via the bridge but is NOT egress-class — its forwarded output would skip the secret/canary/attachment scan`).toBe(true);
     }
   });
 });

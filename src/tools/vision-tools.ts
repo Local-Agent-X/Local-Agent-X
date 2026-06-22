@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 import type { ToolDefinition } from "../types.js";
 import { createLogger } from "../logger.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
@@ -8,22 +7,8 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import { openValidatedRead, readValidatedFile } from "../security/validated-io.js";
 import { ALLOWED_MIME } from "./shared/image-acquire.js";
 import { detectMime } from "./shared/image-binary-meta.js";
-import { getLaxDir } from "../lax-data-dir.js";
 
 const logger = createLogger("tools.vision");
-
-// Persist a capture to ~/.lax/uploads and return the absolute path. A capture
-// tool is "look" only — the model sees the bytes via _image — but the agent
-// often then needs to DELIVER the shot (send_image). Without a real file there
-// is nothing to deliver; the old `path: "screen-capture"` placeholder was the
-// gap. Saved here so send_image can reference it.
-function saveCaptureFile(buf: Buffer, prefix: string): string {
-  const dir = join(getLaxDir(), "uploads");
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, `${prefix}-${Date.now()}.jpg`);
-  writeFileSync(path, buf);
-  return path;
-}
 
 export const viewImageTool: ToolDefinition = {
   name: "view_image",
@@ -265,11 +250,10 @@ export const screenCaptureTool: ToolDefinition = {
         }
       } catch { /* metadata is best-effort — never break the capture */ }
       const b64 = result.image.toString("base64");
-      const savedPath = saveCaptureFile(result.image, "screen");
       const question = String(args.question || "Describe what's on the screen.");
       return {
-        content: `[IMAGE:image/jpeg:${b64.slice(0, 100)}...${b64.length} bytes]\n${captureMeta}\nScreen capture: ${result.width}x${result.height}\nSaved: ${savedPath} — to send this screenshot to the user over a messaging channel, call send_image with this path.\nQuestion: ${question}\n\nPlease analyze this screenshot.`,
-        _image: { mime: "image/jpeg", b64, path: savedPath, question },
+        content: `[IMAGE:image/jpeg:${b64.slice(0, 100)}...${b64.length} bytes]\n${captureMeta}\nScreen capture: ${result.width}x${result.height}\nQuestion: ${question}\n\nPlease analyze this screenshot.`,
+        _image: { mime: "image/jpeg", b64, path: "screen-capture", question },
       } as any;
     } catch (e) {
       return { content: `Screen capture failed: ${(e as Error).message}`, isError: true };
@@ -333,11 +317,10 @@ export const cameraCaptureTool: ToolDefinition = {
         quality: 85,
       });
       const b64 = result.image.toString("base64");
-      const savedPath = saveCaptureFile(result.image, "camera");
       const question = String(args.question || "Describe what you see.");
       return {
-        content: `[IMAGE:image/jpeg:${b64.slice(0, 100)}...${b64.length} bytes]\nCamera: ${result.deviceName} (${result.width}x${result.height})\nSaved: ${savedPath} — to send this photo to the user over a messaging channel, call send_image with this path.\nQuestion: ${question}\n\nPlease analyze this image.`,
-        _image: { mime: "image/jpeg", b64, path: savedPath, question },
+        content: `[IMAGE:image/jpeg:${b64.slice(0, 100)}...${b64.length} bytes]\nCamera: ${result.deviceName} (${result.width}x${result.height})\nQuestion: ${question}\n\nPlease analyze this image.`,
+        _image: { mime: "image/jpeg", b64, path: "camera-capture", question },
       } as any;
     } catch (e) {
       return { content: `Camera capture failed: ${(e as Error).message}`, isError: true };

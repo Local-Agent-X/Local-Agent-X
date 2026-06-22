@@ -3,11 +3,12 @@
 // previously sailed past the extension-only check and base64-shipped to the
 // vision provider. The magic-byte detectMime gate now rejects it before egress.
 
-import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { describe, it, expect, afterEach, afterAll } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { viewImageTool } from "./vision-tools.js";
+import { getLaxDir } from "../lax-data-dir.js";
+import { viewImageTool, resolveMediaPath } from "./vision-tools.js";
 
 // 1×1 transparent PNG — real image bytes.
 const PNG_1x1 = Buffer.from(
@@ -50,5 +51,30 @@ describe("view_image magic-byte content gate", () => {
     expect(res._image).toBeTruthy();
     expect(res._image.mime).toBe("image/png");
     expect(res._image.b64).toBe(PNG_1x1.toString("base64"));
+  });
+});
+
+// Real-fs test: resolveMediaPath's whole job is to find a file the standard
+// workspace-anchored resolution misses (the "wrong folder" send_image bug), so
+// mocking existsSync would just test the mock — use a real temp file in uploads.
+describe("resolveMediaPath uploads fallback", () => {
+  const uploads = join(getLaxDir(), "uploads");
+  const name = `test-resolve-${process.pid}.bin`;
+  const full = join(uploads, name);
+  afterAll(() => { try { rmSync(full); } catch { /* best effort */ } });
+
+  it("falls back to ~/.lax/uploads by basename when the workspace resolution misses", () => {
+    mkdirSync(uploads, { recursive: true });
+    writeFileSync(full, "x");
+    expect(resolveMediaPath(name)).toBe(full);
+  });
+
+  it("returns the standard resolution for an absolute path that exists (no fallback)", () => {
+    expect(resolveMediaPath(full)).toBe(full);
+  });
+
+  it("returns the standard resolution (not uploads) when the file exists nowhere — clear error", () => {
+    const missing = `does-not-exist-${process.pid}.bin`;
+    expect(resolveMediaPath(missing)).not.toContain(join("uploads", missing));
   });
 });

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { join, basename } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import { createLogger } from "../logger.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
@@ -7,8 +8,22 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import { openValidatedRead, readValidatedFile } from "../security/validated-io.js";
 import { ALLOWED_MIME } from "./shared/image-acquire.js";
 import { detectMime } from "./shared/image-binary-meta.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 const logger = createLogger("tools.vision");
+
+// send_image/send_video get a model-supplied path that often names a file in
+// ~/.lax/uploads (a screenshot, or an incoming bridge photo/video) rather than
+// the workspace-anchored tree resolveAgentPath assumes — so a bare "screen-123
+// .jpg" resolved to the wrong folder and the send failed. Try the standard
+// resolution first; if the file isn't there, fall back to uploads by basename.
+// openValidatedRead still re-validates whichever path we return.
+export function resolveMediaPath(p: string): string {
+  const resolved = resolveAgentPath(p);
+  if (existsSync(resolved)) return resolved;
+  const inUploads = join(getLaxDir(), "uploads", basename(p));
+  return existsSync(inUploads) ? inUploads : resolved;
+}
 
 export const viewImageTool: ToolDefinition = {
   name: "view_image",
@@ -86,7 +101,7 @@ export const sendVideoTool: ToolDefinition = {
   async execute(args) {
     const { existsSync, fstatSync, closeSync } = await import("node:fs");
 
-    const filePath = resolveAgentPath(String(args.path || ""));
+    const filePath = resolveMediaPath(String(args.path || ""));
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
 
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
@@ -144,7 +159,7 @@ export const sendImageTool: ToolDefinition = {
   async execute(args) {
     const { existsSync, fstatSync, closeSync } = await import("node:fs");
 
-    const filePath = resolveAgentPath(String(args.path || ""));
+    const filePath = resolveMediaPath(String(args.path || ""));
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
 
     const ext = filePath.split(".").pop()?.toLowerCase() || "";

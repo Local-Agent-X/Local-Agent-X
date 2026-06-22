@@ -127,7 +127,7 @@ interface WarmUsage {
   cache_creation_input_tokens?: number;
 }
 
-interface FrameContext {
+export interface FrameContext {
   getAborted: () => boolean;
   getFullText: () => string;
   appendText: (delta: string) => void;
@@ -137,8 +137,9 @@ interface FrameContext {
 }
 
 /** Translate one CLI stdout frame into zero or more StreamEvents. Caller
- *  iterates until a `done` event is yielded (end of turn). */
-function* processFrame(frame: Record<string, unknown>, ctx: FrameContext): Generator<StreamEvent> {
+ *  iterates until a `done` event is yielded (end of turn). Exported for the
+ *  parser test (mirrors stream-cli's processStreamLine seam). */
+export function* processFrame(frame: Record<string, unknown>, ctx: FrameContext): Generator<StreamEvent> {
   const t = frame.type as string | undefined;
 
   // If the consumer aborted, drain frames silently until the CLI's

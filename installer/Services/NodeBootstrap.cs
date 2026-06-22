@@ -87,10 +87,14 @@ public class NodeBootstrap
         }
         if (OperatingSystem.IsMacOS())
         {
-            // brew first (install if missing), then node@24 — the current LTS,
-            // matching what Windows' OpenJS.NodeJS.LTS alias installs. The app
-            // floor stays Node 22 (install-common.mjs NODE_MAJOR_MIN), so
-            // existing installs on 22 keep working.
+            // Portable official Node FIRST — see desktop/src/node-runtime.ts:
+            // brew's node is ad-hoc signed, so its macOS TCC grants (Documents,
+            // Screen Recording, Accessibility) die on every `brew upgrade`. The
+            // official build is self-contained + Developer-ID signed, so the
+            // grant survives. Provision it into ~/.lax/runtime (where the desktop
+            // runtime resolves it). brew stays only as a last-resort fallback.
+            if (InstallNodeFromTarball()) return true;
+            OnStatus?.Invoke("Portable Node download failed — falling back to Homebrew…");
             if (!HasOnPath("brew"))
             {
                 OnStatus?.Invoke("Installing Homebrew…");
@@ -171,6 +175,49 @@ public class NodeBootstrap
         finally
         {
             try { File.Delete(zip); } catch { }
+        }
+    }
+
+    // macOS counterpart of InstallNodeFromZip: download the official, self-
+    // contained darwin tarball and extract it to ~/.lax/runtime — the stable,
+    // Developer-ID-signed Node the desktop runtime resolves first (server-
+    // process.ts prepends ~/.lax/runtime/bin to PATH). Writes the same
+    // .node-version sentinel node-runtime.ts reads.
+    bool InstallNodeFromTarball()
+    {
+        var arch = RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "arm64" : "x64";
+        var pkg = $"node-v{NODE_FALLBACK_VERSION}-darwin-{arch}";
+        var tgz = Path.Combine(Path.GetTempPath(), $"{pkg}.tar.gz");
+        var runtimeDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".lax", "runtime");
+        try
+        {
+            var url = $"https://nodejs.org/dist/v{NODE_FALLBACK_VERSION}/{pkg}.tar.gz";
+            OnLogLine?.Invoke($"Downloading {url}");
+            using (var http = new HttpClient())
+            {
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("LocalAgentXInstaller/1.0");
+                File.WriteAllBytes(tgz, http.GetByteArrayAsync(url).GetAwaiter().GetResult());
+            }
+            OnStatus?.Invoke("Unpacking the Node.js runtime…");
+            if (Directory.Exists(runtimeDir)) Directory.Delete(runtimeDir, true);
+            Directory.CreateDirectory(runtimeDir);
+            // tar ships on every macOS; --strip-components=1 drops the version
+            // dir so node lands at ~/.lax/runtime/bin/node.
+            if (!RunStreaming("/usr/bin/tar", new[] { "-xzf", tgz, "-C", runtimeDir, "--strip-components=1" }))
+                return false;
+            File.WriteAllText(Path.Combine(runtimeDir, ".node-version"), NODE_FALLBACK_VERSION);
+            SplicePath(Path.Combine(runtimeDir, "bin"));
+            return File.Exists(Path.Combine(runtimeDir, "bin", "node"));
+        }
+        catch (Exception ex)
+        {
+            OnLogLine?.Invoke($"[error] portable Node provision failed: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            try { File.Delete(tgz); } catch { }
         }
     }
 

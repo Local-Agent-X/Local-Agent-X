@@ -211,6 +211,7 @@ function cleanLines(raw) {
 // loop. macOS/Linux only: on Windows the runtime uses a pinned portable node
 // and install-common.mjs manages that PATH separately.
 const RUNTIME_NODE_PATH_AUGMENTS = [
+  join(homedir(), ".lax/runtime/bin"),
   "/opt/homebrew/bin", "/opt/homebrew/sbin",
   "/usr/local/bin", "/usr/local/sbin",
   join(homedir(), ".nvm/versions/node/current/bin"),

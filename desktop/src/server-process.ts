@@ -20,6 +20,7 @@ import { homedir } from "os";
 import { getProjectRoot, reloadLAXConfig, type LAXConfig } from "./config";
 import { PID_FILE, readServerPidFile, waitForServer } from "./server-probe";
 import { checkNodeFloor, type NodeFloorStatus } from "./node-floor";
+import { ensureManagedNode } from "./node-runtime";
 import { serverDistIsFresh } from "./dist-freshness";
 
 export { reclaimOrphanServer, isServerRunning, waitForServer } from "./server-probe";
@@ -92,11 +93,12 @@ export function panicAbortServer(): void {
 
 // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
 // PATH that excludes Homebrew, nvm, and asdf. Augment so `node` resolves
-// whether the user installed it via brew (arm64 or intel), nvm, or system
-// pkg. Exported so the node-floor check and upgrade resolve the SAME node
-// this module will spawn.
+// whether via the app-owned runtime (node-runtime.ts), brew, nvm, or system
+// pkg. ~/.lax/runtime/bin is FIRST so the stable Developer-ID-signed node wins
+// over brew's. Exported so the node-floor check resolves the SAME node spawned.
 export function buildAugmentedPath(): string {
   const PATH_AUGMENTS = [
+    join(homedir(), ".lax/runtime/bin"),
     "/opt/homebrew/bin", "/opt/homebrew/sbin",
     "/usr/local/bin", "/usr/local/sbin",
     join(homedir(), ".nvm/versions/node/current/bin"),
@@ -142,6 +144,10 @@ export function startServer(handlers?: ServerEventHandlers): void {
     ? ["--max-old-space-size=4096", join(projectRoot, "dist", "index.js")]
     : ["--max-old-space-size=4096", "--import=tsx", srcIndex];
 
+  // Make sure the app-owned Node runtime exists (macOS) so the spawn below
+  // resolves it instead of brew's — non-blocking; provisions in the background
+  // when absent and falls back to PATH node for this boot. See node-runtime.ts.
+  ensureManagedNode();
   const augmentedPath = buildAugmentedPath();
 
   // Node floor: refuse to spawn updated app code on a runtime below the
@@ -167,14 +173,10 @@ export function startServer(handlers?: ServerEventHandlers): void {
   lastSpawnAt = Date.now();
   recentServerStderr = "";
 
-  // We spawn a real `node` (PATH-resolved) rather than the bundled Electron
-  // binary via ELECTRON_RUN_AS_NODE: the server loads native addons
-  // (better-sqlite3, sqlite-vec, sherpa-onnx) built against the system Node
-  // ABI by the repo's own `npm install`. Electron's embedded Node has a
-  // different NODE_MODULE_VERSION, so running the server under it would crash
-  // on the first native require. Pinning to process.execPath is therefore
-  // unsafe here; the PATH augment above stays. (R4-08: config-sourced spawn
-  // cwd is now validated for ownership in config.ts.)
+  // Spawn a real PATH-resolved `node` (the app-owned runtime above, else
+  // brew's), NOT Electron-as-node: the native addons (better-sqlite3,
+  // sqlite-vec, sherpa-onnx) are built against standalone Node's ABI and crash
+  // under Electron's NODE_MODULE_VERSION. (R4-08: spawn cwd validated in config.ts.)
   serverProcess = spawn("node", nodeArgs, {
     cwd: projectRoot,
     // fd 3 = 'ipc': lets the server child request native OS actions (trashItem,

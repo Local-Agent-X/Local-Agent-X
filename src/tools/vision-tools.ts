@@ -187,7 +187,9 @@ export const screenCaptureTool: ToolDefinition = {
     "screen_capture just gives a flat image with no interaction handles. " +
     "If the user mentions a non-primary display (\"second screen\", \"other monitor\", \"my laptop screen\"), " +
     "OR if the app they want isn't on monitor 0, call `list_monitors` FIRST to see what's connected, " +
-    "then pass the right `monitor` index. Do NOT guess monitor:0 when the user hints at a different screen.",
+    "then pass the right `monitor` index. Do NOT guess monitor:0 when the user hints at a different screen. " +
+    "On WhatsApp/Telegram the freshly captured screenshot is delivered to the user automatically — do NOT " +
+    "also call send_image for it (that double-sends, and reusing an earlier screenshot path sends a stale shot).",
   parameters: {
     type: "object",
     properties: {
@@ -299,7 +301,8 @@ export const cameraCaptureTool: ToolDefinition = {
   name: "camera_capture",
   description:
     "Take a photo from the webcam. Returns the image for visual analysis. " +
-    "Use this when the user asks you to see them, take a photo, or use the camera.",
+    "Use this when the user asks you to see them, take a photo, or use the camera. " +
+    "On WhatsApp/Telegram the captured photo is delivered to the user automatically — do NOT also call send_image for it.",
   parameters: {
     type: "object",
     properties: {

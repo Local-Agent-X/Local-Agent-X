@@ -149,6 +149,13 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
           message: `worker exceeded MAX_TURNS=${MAX_TURNS}`,
           retryable: false,
         });
+        // This break skips commitTurn — the normal running → terminal
+        // transition — so the op would stay `running` and the chat UI would
+        // hang on STREAMING with a live cursor forever (live failure
+        // 2026-06-23). Fail the op explicitly, same as the adapter-error-
+        // exhausted floor in turn-loop.ts, so it finalizes and the spinner
+        // clears with a visible reason.
+        transitionOp(op, "failed", "max_turns_exceeded");
         break;
       }
       const r = await driveTurn(op, adapter, turnIdx, {

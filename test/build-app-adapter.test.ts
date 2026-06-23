@@ -294,7 +294,10 @@ describe("createAppBuildAdapter — in-canonical-sub-agent strategy", () => {
         return stubAdapter;
       },
     });
-    expect(adapter).toBe(stubAdapter);
+    // The provider adapter is wrapped by the post-build verify gate, so the
+    // returned adapter delegates to (rather than IS) the stub — name forwards.
+    expect(adapter).not.toBe(stubAdapter);
+    expect(adapter.name).toBe("stub");
     expect(factoryCalls).toHaveLength(1);
     expect(factoryCalls[0].provider).toBe("qwen");
     expect(factoryCalls[0].systemPrompt).toBe("PERSONA-PROMPT");

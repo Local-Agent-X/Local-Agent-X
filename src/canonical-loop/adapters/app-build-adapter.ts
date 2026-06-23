@@ -28,6 +28,7 @@ import { resolve } from "node:path";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { ProviderStateEnvelope } from "../contract-types.js";
 import { verifyWriteLanded } from "../../tools/verify.js";
+import { scanAppForBlockedFetch, formatBlockedFetchError } from "../../tools/app-build-verify.js";
 import { createAnthropicAdapter } from "./anthropic.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
@@ -98,15 +99,41 @@ const CODEX_INCREMENTAL_NOTE =
   "\n\nOUTPUT LIMIT: on this provider a single tool call's output is capped — emitting a whole large file in one `write` or `edit` gets truncated. Build the file up in steps: `write` a compact index.html first (structure + base styles), then add styles, scripts, and sections with separate `edit` calls. Keep each tool call's content modest (a few KB).";
 
 export async function createAppBuildAdapter(opts: AppBuildAdapterOptions): Promise<Adapter> {
-  if (opts.strategy === "cli-subprocess") {
-    return new CliBuildAdapter(opts);
+  const inner = opts.strategy === "cli-subprocess"
+    ? new CliBuildAdapter(opts)
+    : await (opts.providerAdapterFactory ?? defaultProviderAdapterFactory)(opts.provider, {
+        systemPrompt: opts.provider === "codex" ? opts.systemPrompt + CODEX_INCREMENTAL_NOTE : opts.systemPrompt,
+        sessionId: opts.sessionId,
+        model: opts.model,
+      });
+  return new AppBuildVerifyAdapter(inner, opts.appDir);
+}
+
+/**
+ * Wraps the real build adapter (either strategy) and gates a clean completion:
+ * when the inner adapter reports the turn `done`, scan the app for raw
+ * cross-origin fetch (CSP-blocked at runtime) and convert a hit into a build
+ * failure, so a silently-broken app never ships as APP_READY. Teaching alone is
+ * a request a strong-priored model can override; this gate is enforced on every
+ * model and strategy. Non-terminal turns and error terminals pass through
+ * untouched. See app-build-verify.ts.
+ */
+class AppBuildVerifyAdapter implements Adapter {
+  constructor(private readonly inner: Adapter, private readonly appDir: string) {}
+  get name(): string { return this.inner.name; }
+  get version(): string { return this.inner.version; }
+
+  async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
+    const result = await this.inner.runTurn(input, report);
+    if (result.terminalReason !== "done") return result;
+    const { violations } = scanAppForBlockedFetch(this.appDir);
+    if (violations.length === 0) return result;
+    const message = formatBlockedFetchError(violations);
+    report({ kind: "error", code: "blocked_external_fetch", message, retryable: false });
+    return { ...result, terminalReason: "error" };
   }
-  const factory = opts.providerAdapterFactory ?? defaultProviderAdapterFactory;
-  return factory(opts.provider, {
-    systemPrompt: opts.provider === "codex" ? opts.systemPrompt + CODEX_INCREMENTAL_NOTE : opts.systemPrompt,
-    sessionId: opts.sessionId,
-    model: opts.model,
-  });
+
+  abort(reason?: unknown): Promise<void> { return this.inner.abort(reason); }
 }
 
 class CliBuildAdapter implements Adapter {

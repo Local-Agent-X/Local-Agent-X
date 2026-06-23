@@ -861,7 +861,7 @@
           <div id="detail-meta" style="font-size:.72rem;color:var(--muted);margin-bottom:14px"></div>
           <div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Usage:</div>
           <code id="detail-usage" style="display:block;font-family:var(--mono);font-size:.8rem;color:var(--accent);padding:8px;background:var(--bg);border-radius:6px;margin-bottom:14px"></code>
-          <div class="btn-row"><button class="action-btn primary" onclick="updateSecretValue()">Update Value</button><button class="action-btn danger" onclick="deleteSecretItem()">Delete</button></div>
+          <div class="btn-row"><button class="action-btn primary" onclick="openSecretUpdateModal()">Update Value</button><button class="action-btn danger" onclick="deleteSecretItem()">Delete</button></div>
         </div>
       </div>
     </div>
@@ -869,7 +869,7 @@
     <div id="secret-create-modal-overlay" class="app-modal-overlay" onclick="if(event.target===this)closeSecretModal()">
       <div class="app-modal">
         <div class="app-modal-header">
-          <h3>New Secret</h3>
+          <h3 id="secret-modal-title">New Secret</h3>
           <button class="app-modal-close" onclick="closeSecretModal()" title="Close">×</button>
         </div>
         <p style="font-size:.75rem;color:var(--muted);margin-bottom:16px">Encrypted at rest. Reference in agent tools as <code style="color:var(--accent)">{{NAME}}</code>.</p>
@@ -880,7 +880,7 @@
         <div class="field"><label class="field-label">Value</label><input class="field-input" id="new-secret-value" type="password" placeholder="ghp_xxx" autocomplete="off"/></div>
         <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
           <button class="action-btn secondary" onclick="closeSecretModal()">Cancel</button>
-          <button class="action-btn primary" onclick="addSecret()">Add Secret</button>
+          <button class="action-btn primary" id="secret-modal-submit" onclick="saveSecret()">Add Secret</button>
         </div>
       </div>
     </div>

@@ -55,14 +55,48 @@ function renderSecretDetail() {
   document.getElementById('detail-meta').innerHTML = `Added: ${fmt(selectedSecret.addedAt)}<br>Updated: ${fmt(selectedSecret.updatedAt)}`;
 }
 
+// 'create' (blank form) or 'update' (name locked to the selected secret). Both
+// modes reuse the one modal + saveSecret() below.
+let secretModalMode = 'create';
+
+// New Secret: blank, editable name.
 function openSecretModal() {
   const o = document.getElementById('secret-create-modal-overlay'); if (!o) return;
+  secretModalMode = 'create';
+  const nameEl = document.getElementById('new-secret-name');
+  document.getElementById('secret-modal-title').textContent = 'New Secret';
+  document.getElementById('secret-modal-submit').textContent = 'Add Secret';
+  nameEl.value = '';
+  nameEl.readOnly = false;
+  document.getElementById('new-secret-service').value = '';
+  document.getElementById('new-secret-value').value = '';
   o.classList.add('visible');
-  setTimeout(() => document.getElementById('new-secret-name')?.focus(), 50);
+  setTimeout(() => nameEl.focus(), 50);
 }
+
+// Update Value: same modal, name pre-filled + locked (it identifies the secret),
+// straight to the value field. Replaces the old prompt() — prompt() is a no-op
+// in Electron's renderer (returns null), so "Update Value" silently did nothing.
+function openSecretUpdateModal() {
+  if (!selectedSecret) return;
+  const o = document.getElementById('secret-create-modal-overlay'); if (!o) return;
+  secretModalMode = 'update';
+  const nameEl = document.getElementById('new-secret-name');
+  document.getElementById('secret-modal-title').textContent = 'Update ' + selectedSecret.name;
+  document.getElementById('secret-modal-submit').textContent = 'Update Value';
+  nameEl.value = selectedSecret.name;
+  nameEl.readOnly = true;
+  document.getElementById('new-secret-service').value = selectedSecret.service || '';
+  document.getElementById('new-secret-value').value = '';
+  o.classList.add('visible');
+  setTimeout(() => document.getElementById('new-secret-value')?.focus(), 50);
+}
+
 function closeSecretModal() { document.getElementById('secret-create-modal-overlay')?.classList.remove('visible'); }
 
-async function addSecret() {
+// Shared create/update save. POST /api/secrets is an upsert (secretsStore.set),
+// so the same call covers both; the name field is locked in update mode.
+async function saveSecret() {
   const name = document.getElementById('new-secret-name').value.trim();
   const value = document.getElementById('new-secret-value').value.trim();
   const service = document.getElementById('new-secret-service').value.trim();
@@ -76,13 +110,8 @@ async function addSecret() {
   selectSecretItem(name.toUpperCase().replace(/[^A-Z0-9_]/g, '_'));
 }
 
-async function updateSecretValue() {
-  if (!selectedSecret) return;
-  const value = prompt('New value for ' + selectedSecret.name + ':');
-  if (!value) return;
-  await apiPost('/api/secrets', { name: selectedSecret.name, value, service: selectedSecret.service });
-  await loadSecrets();
-}
+// Back-compat alias: the create modal historically called addSecret().
+function addSecret() { return saveSecret(); }
 
 async function deleteSecretItem() {
   if (!selectedSecret || !confirm(`Delete "${selectedSecret.name}"?`)) return;

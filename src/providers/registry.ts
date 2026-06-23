@@ -108,6 +108,11 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "grok-4.20-0309-reasoning",
       "grok-4.20-0309-non-reasoning",
       "grok-4.20-multi-agent-0309",
+      // Coding-specialist models — selectable so the app-builder can run on a
+      // model trained for agentic coding instead of the generalist grok-4.3.
+      // resolveBuildModel honors whatever's selected, so picking one here drives
+      // the build path. grok-code-fast-1: GA, SWE-Bench-Verified 70.8%, cheap.
+      "grok-code-fast-1",
       "grok-build-0.1",
     ],
     defaultModel: "grok-4.3",

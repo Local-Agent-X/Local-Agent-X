@@ -7,6 +7,7 @@ import {
   CONTEXT_RESTRICTED_TOOLS,
   WORKTREE_REQUIRED_TOOLS,
   type FileAccessMode,
+  type InlineEvalPolicy,
   type ToolCallContext,
 } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
@@ -15,7 +16,7 @@ import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network
 import { kernelClassForTool } from "../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../tool-registry.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
-import { loadEgressMode, loadLocalServicePorts, loadFileAccessMode } from "./security-config.js";
+import { loadEgressMode, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy } from "./security-config.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("security.layer-core");
@@ -64,6 +65,9 @@ export class SecurityLayer {
   private localServicePorts: Set<string> = new Set();
   private sessionAllowedPaths = new Map<string, Set<string>>();
   fileAccessMode: FileAccessMode = "common";
+  // Inline-eval (R4-11/R4-13) escape-hatch policy — independent of
+  // fileAccessMode so a permissive file default can't silently open it.
+  inlineEvalPolicy: InlineEvalPolicy = "refuse";
 
   /** Allow an additional path for a specific session (e.g., agent worktree) */
   addAllowedPath(p: string, sessionId?: string): void {
@@ -107,9 +111,10 @@ export class SecurityLayer {
     return false;
   }
 
-  constructor(workspace: string, fileAccessMode?: FileAccessMode) {
+  constructor(workspace: string, fileAccessMode?: FileAccessMode, inlineEvalPolicy?: InlineEvalPolicy) {
     this.workspace = resolve(workspace);
     this.fileAccessMode = fileAccessMode || loadFileAccessMode();
+    this.inlineEvalPolicy = inlineEvalPolicy || loadInlineEvalPolicy();
     this.egressMode = loadEgressMode();
     this.localServicePorts = loadLocalServicePorts();
     // Load egress allowlist from ~/.lax/egress-allowlist.json.
@@ -236,6 +241,7 @@ export class SecurityLayer {
       decision = evaluateShellCommandAndPaths(command, {
         workspace: this.workspace,
         fileAccessMode: this.fileAccessMode,
+        inlineEvalPolicy: this.inlineEvalPolicy,
         allowedPathCheck: (rp, sid) => this.isInAllowedPaths(rp, sid),
         sessionId: ctx.sessionId,
       });
@@ -355,6 +361,7 @@ export class SecurityLayer {
       localServicePorts: this.localServicePorts,
       workspace: this.workspace,
       fileAccessMode: this.fileAccessMode,
+      inlineEvalPolicy: this.inlineEvalPolicy,
       isInAllowedPaths: (rp, sid) => this.isInAllowedPaths(rp, sid),
     });
   }

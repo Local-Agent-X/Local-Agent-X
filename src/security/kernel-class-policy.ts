@@ -1,6 +1,6 @@
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
-import type { FileAccessMode, ToolCallContext } from "./types.js";
+import type { FileAccessMode, InlineEvalPolicy, ToolCallContext } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { resolvePath as resolveSqlDbPath } from "../tools/sql-tools.js";
 import { evaluateWebFetch, type EgressMode } from "./network-policy.js";
@@ -15,6 +15,7 @@ export interface KernelClassPolicyCtx {
   localServicePorts: ReadonlySet<string>;
   workspace: string;
   fileAccessMode: FileAccessMode;
+  inlineEvalPolicy: InlineEvalPolicy;
   isInAllowedPaths: (realPath: string, sessionId?: string) => boolean;
 }
 
@@ -100,6 +101,7 @@ export function evaluateByKernelClass(
         return evaluateShellCommandAndPaths(command, {
           workspace: policy.workspace,
           fileAccessMode: policy.fileAccessMode,
+          inlineEvalPolicy: policy.inlineEvalPolicy,
           allowedPathCheck: (rp, sid) => policy.isInAllowedPaths(rp, sid),
           sessionId: ctx.sessionId,
         });

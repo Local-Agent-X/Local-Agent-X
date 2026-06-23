@@ -48,7 +48,7 @@ describe("SecurityLayer", () => {
     suiteWorkspaceRoot = realpathSync(mkdtempSync(join(tmpdir(), "security-ws-")));
     const workspace = join(suiteWorkspaceRoot, "workspace");
     mkdirSync(workspace, { recursive: true });
-    sec = new SecurityLayer(workspace);
+    sec = new SecurityLayer(workspace, "common");
   });
 
   afterAll(() => {
@@ -154,18 +154,27 @@ describe("SecurityLayer", () => {
     });
 
     // R4-11/R4-13: the inline-eval interpreter FORM (`python -c` / `node -e`)
-    // is now REFUSED in non-unrestricted modes — a regex can't soundly vet a
-    // Turing-complete body, so the agent writes a script file instead. This
-    // `sec` defaults to `common` mode, so the form is refused.
-    it("refuses python -c in common mode (R4-11 — write a script file instead)", () => {
+    // is REFUSED by default — a regex can't soundly vet a Turing-complete body,
+    // so the agent writes a script file instead. Governed by inlineEvalPolicy,
+    // which is DECOUPLED from fileAccessMode (default "refuse" regardless of
+    // file-access breadth).
+    it("refuses python -c by default (R4-11 — write a script file instead)", () => {
       const d = sec.evaluate({ toolName: "bash", args: { command: 'python -c "import os"' }, sessionId: "t" });
       expect(d.allowed).toBe(false);
     });
 
-    // ...but it stays permissive in unrestricted mode (the form is allowed).
-    it("allows python -c in unrestricted mode (data transform)", () => {
+    // Decoupling invariant: unrestricted FILE access must NOT imply inline-eval
+    // is allowed — a file-access default flip can't silently open the escape hatch.
+    it("unrestricted file mode does NOT allow python -c (decoupled from fileAccessMode)", () => {
       const unrestricted = new SecurityLayer(suiteWorkspaceRoot, "unrestricted");
       const d = unrestricted.evaluate({ toolName: "bash", args: { command: 'python -c "import os"' }, sessionId: "t" });
+      expect(d.allowed).toBe(false);
+    });
+
+    // ...the form is allowed only when inlineEvalPolicy is explicitly "allow".
+    it("allows python -c when inlineEvalPolicy is 'allow' (data transform)", () => {
+      const allowEval = new SecurityLayer(suiteWorkspaceRoot, "common", "allow");
+      const d = allowEval.evaluate({ toolName: "bash", args: { command: 'python -c "import os"' }, sessionId: "t" });
       expect(d.allowed).toBe(true);
     });
 

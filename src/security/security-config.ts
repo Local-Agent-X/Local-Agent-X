@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { getLaxDir } from "../lax-data-dir.js";
-import type { FileAccessMode } from "./types.js";
+import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import type { EgressMode } from "./network-policy.js";
 
 import { createLogger } from "../logger.js";
@@ -114,4 +114,22 @@ export function loadFileAccessMode(): FileAccessMode {
   // (memory ingest, reading exports in Downloads/Documents) work without the
   // user first changing a setting. Tighten to common/workspace in Settings.
   return "unrestricted";
+}
+
+// Inline-eval interpreter-escape policy (R4-11/R4-13). Loaded SEPARATELY from
+// loadFileAccessMode on purpose: the inline-interpreter escape hatch (a regex
+// can't soundly vet a Turing-complete `python -c` body) must stay closed
+// regardless of how broad file access is. Decoupling means a permissive file
+// default can never silently re-open it. Opt in with "allow" via security.json.
+export function loadInlineEvalPolicy(): InlineEvalPolicy {
+  try {
+    const cfgPath = join(getLaxDir(), "security.json");
+    if (existsSync(cfgPath)) {
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+      if (cfg.inlineEvalPolicy === "refuse" || cfg.inlineEvalPolicy === "allow") {
+        return cfg.inlineEvalPolicy;
+      }
+    }
+  } catch {}
+  return "refuse";
 }

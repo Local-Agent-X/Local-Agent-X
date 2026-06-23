@@ -4,6 +4,13 @@ export type CallContext = "local" | "api" | "delegated" | "cron";
 
 export type FileAccessMode = "workspace" | "common" | "unrestricted";
 
+// Inline-eval interpreter-escape policy (R4-11/R4-13). DELIBERATELY separate
+// from FileAccessMode: file-access breadth and the inline-interpreter escape
+// hatch are different security concerns. Welding them onto one enum let a
+// file-access default flip silently disable the shell defense. "refuse" forces
+// a script file; "allow" permits inline `python -c` / `node -e` bodies.
+export type InlineEvalPolicy = "refuse" | "allow";
+
 export interface ToolCallContext {
   toolName: string;
   args: Record<string, unknown>;

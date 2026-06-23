@@ -13,7 +13,7 @@ import {
   RENAME_ESCAPE_EVAL_FLAGS,
 } from "./shell-rules.js";
 import { realpathDeep } from "./file-access.js";
-import type { FileAccessMode } from "./types.js";
+import type { InlineEvalPolicy } from "./types.js";
 
 export function detectObfuscation(command: string): string | null {
   // Hex-encoded sequences (e.g., \x72\x6d = "rm")
@@ -312,10 +312,10 @@ function resolvesIntoWritableTree(token: string, workspace: string): boolean {
 // and a path-form `./myshell -c` IS the rename-escape this targets).
 export function detectInlineInterpreterEval(
   tokens: string[],
-  mode: FileAccessMode,
+  policy: InlineEvalPolicy,
   workspace: string,
 ): string | null {
-  if (mode === "unrestricted") return null; // permissive in unrestricted
+  if (policy === "allow") return null; // inline-eval permitted by policy
   if (tokens.length === 0) return null;
   const argv0 = tokens[0];
   const bin = execBasename(argv0);
@@ -327,7 +327,7 @@ export function detectInlineInterpreterEval(
       const t = tokens[i];
       if (t === "--") break; // end-of-flags; the rest are operands
       if (evalFlags.has(t)) {
-        return `Blocked: ${bin} inline-eval flag (${t}) — write a script file (write/edit) and run that instead. A regex can't soundly vet an inline interpreter body, so this form is refused outside unrestricted mode.`;
+        return `Blocked: ${bin} inline-eval flag (${t}) — write a script file (write/edit) and run that instead. A regex can't soundly vet an inline interpreter body, so this form is refused unless inline-eval is explicitly allowed.`;
       }
     }
     return null;

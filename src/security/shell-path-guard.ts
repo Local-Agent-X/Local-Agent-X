@@ -2,7 +2,7 @@ import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
-import type { FileAccessMode } from "./types.js";
+import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
 
@@ -32,6 +32,9 @@ import { evaluateShellCommand } from "./shell-policy.js";
 export interface ShellPathGuardCtx {
   workspace: string;
   fileAccessMode: FileAccessMode;
+  // Inline-eval (R4-11/R4-13) policy — independent of fileAccessMode. Optional
+  // so callers that omit it fail SAFE: an unset policy refuses inline-eval.
+  inlineEvalPolicy?: InlineEvalPolicy;
   allowedPathCheck: (realPath: string, sessionId?: string) => boolean;
   sessionId?: string;
 }
@@ -87,12 +90,12 @@ export function evaluateShellPaths(command: string, ctx: ShellPathGuardCtx): Sec
  * first failing decision; allows only if both steps pass.
  */
 export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuardCtx): SecurityDecision {
-  // Thread the file-access mode + workspace into the command scan so the
-  // R4-11/R4-13 inline-eval interpreter-escape refusal can gate on mode
-  // (unrestricted stays permissive) and resolve the rename-escape path against
-  // the workspace tree. This is the canonical mode-aware bash/process_start
-  // seam; the redundant secondary scan in process-session runs AFTER it.
-  const cmdDecision = evaluateShellCommand(command, ctx.fileAccessMode, ctx.workspace);
+  // Thread the inline-eval policy + workspace into the command scan so the
+  // R4-11/R4-13 inline-eval interpreter-escape refusal can gate on its own
+  // policy (NOT the file-access mode) and resolve the rename-escape path against
+  // the workspace tree. Unset policy → "refuse" (fail safe). This is the
+  // canonical seam; the redundant secondary scan in process-session runs AFTER it.
+  const cmdDecision = evaluateShellCommand(command, ctx.inlineEvalPolicy ?? "refuse", ctx.workspace);
   if (!cmdDecision.allowed) return cmdDecision;
   return evaluateShellPaths(command, ctx);
 }

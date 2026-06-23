@@ -107,6 +107,14 @@ export interface Op {
    * installs after commit 4c9e5c4.
    */
   model?: string;
+  /**
+   * For app_build ops: the deterministic preview URL. Lets the completion
+   * observer surface an "Open" link from the op itself, instead of parsing an
+   * APP_READY marker out of model output — which the in-canonical build path
+   * (the provider model owns the final message) doesn't reliably emit, so
+   * grok-built apps never got a link while the cli-subprocess path did.
+   */
+  appUrl?: string;
   lastFailureReason?: string;
   lastFailureAt?: string;
   // Reserved for later steps:

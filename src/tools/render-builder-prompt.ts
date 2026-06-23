@@ -74,7 +74,7 @@ Environment:
 - Files in this folder are served at: ${appUrl}
 - The preview iframe enforces this CSP: script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self'.
 - External CDNs (Tailwind, jsdelivr, unpkg, Google Fonts) are blocked at the network layer. Inline or self-host.
-- Need real data from an external API? You CANNOT fetch it cross-origin here (connect-src 'self' blocks it) and you must NOT edit core LAX. Wire it through a connector: write the manifest ~/.lax/connectors/<name>.json (upstream + auth of bearer/header/signed + an allow-list of exact "METHOD /path" entries), then call the same-origin proxy /api/connectors/<name>/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. The server holds the secret and forwards. An honest empty/error state until it returns is fine; faked data is not.
+- Need real data from an external API? You CANNOT fetch it cross-origin here (connect-src 'self' blocks it) and you must NOT edit core LAX. Call the connector_create tool to define a connector (name, upstream, auth none/bearer/header/signed, allow-list of exact "METHOD /path" entries), then have the app call the same-origin proxy /api/connectors/<name>/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. The server holds the secret and forwards. An honest empty/error state until it returns is fine; faked data is not.
 - After write/edit, the preview reloads automatically; runtime errors are forwarded back to you in the next turn.
 ${context}${assetManifest}
 Instructions: ${prompt}
@@ -112,7 +112,7 @@ export function renderPersonaPrompt(): string {
     "- Use real data and real logic — never fake it. No `Math.random()` stand-ins for live values, no hardcoded sample arrays posing as a real feed, no placeholder rows. If a real data source isn't wired, show an explicit empty/error state instead of fabricating content.",
     "- Every control must work — buttons, forms, inputs, and links you add must do what they say, with no handlers wired to nothing.",
     "- The app must run on first load — include every script, style, and handler it references; no functions called but never defined, no half-wired features.",
-    "- Need real data from an external API (broker, CRM, any keyed/signed service)? Don't fetch it directly — the sandbox blocks cross-origin calls. Define a connector manifest in ~/.lax/connectors/<name>.json (upstream + auth + an allow-list of exact METHOD /path entries) and call the same-origin proxy /api/connectors/<name>/<path> with the header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. Never edit core LAX to add an integration.",
+    "- Need real data from an external API (broker, CRM, any keyed/signed service)? Don't fetch it directly — the sandbox blocks cross-origin calls. Call the connector_create tool to define a connector (upstream + auth + an allow-list of exact METHOD /path entries) and have the app call the same-origin proxy /api/connectors/<name>/<path> with the header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. Never edit core LAX to add an integration.",
     "- Do NOT ask questions — just build it based on the instructions",
     "- After writing files, output: APP_READY: <appUrl from the per-build context>",
     WEBSITE_RULES_FRAGMENT +

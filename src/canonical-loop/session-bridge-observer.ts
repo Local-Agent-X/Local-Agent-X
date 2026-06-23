@@ -274,7 +274,10 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
           let resultUrl: string | undefined;
           if (status === "completed") {
             if (op?.type === "app_build") {
-              resultUrl = extractAppReadyUrl(event.opId);
+              // Prefer the op's known appUrl — deterministic, provider-agnostic.
+              // Falls back to the APP_READY marker only for legacy ops that
+              // predate the appUrl field.
+              resultUrl = op.appUrl || extractAppReadyUrl(event.opId);
             } else if (op?.type === "scheduled_mission") {
               const sess = sessionId || "";
               const cronMatch = sess.match(/^cron-(.+)-\d+$/);

@@ -16,6 +16,7 @@ import { extractSiteAssetsTool } from "./asset-tools.js";
 import { youtubeAnalyzeTool } from "./youtube-tool.js";
 import { globTool } from "./glob-tool.js";
 import { grepTool } from "./grep-tool.js";
+import { connectorCreateTool } from "./connector-tools.js";
 import { webSearchTool } from "./web-search-tool.js";
 import { imageSearchTool } from "./image-search-tool.js";
 import { spreadsheetTools } from "./spreadsheet-tools.js";
@@ -52,7 +53,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   primalBuildStatusTool, primalBuildResumeTool,
   viewImageTool, sendVideoTool, sendImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
   buildAppTool,
-  youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool,
+  youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool, connectorCreateTool,
   ...processTools,
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools, ...chartTools, ...previewTools,
   ...emailTools, ...calendarTools, ...telegramTools, ...whatsappTools, ...clipboardTools, ...sqlTools,

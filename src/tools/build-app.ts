@@ -48,10 +48,11 @@ import type { Op, OpVisibility } from "../ops/types.js";
 import { readTool, writeTool, editTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
 import { globTool } from "./glob-tool.js";
+import { connectorCreateTool } from "./connector-tools.js";
 
 /** Tool defs the in-canonical-sub-agent strategy hands to the agent. Mirrors
  *  the app-builder template's allowedTools verbatim. */
-const BUILDER_AGENT_TOOLS = [writeTool, readTool, editTool, bashTool, globTool];
+const BUILDER_AGENT_TOOLS = [writeTool, readTool, editTool, bashTool, globTool, connectorCreateTool];
 
 export const APP_BUILD_OP_TYPE = "app_build";
 
@@ -237,6 +238,7 @@ export const buildAppTool: ToolDefinition = {
       id: newOpId(`op_${APP_BUILD_OP_TYPE}`),
       type: APP_BUILD_OP_TYPE,
       task: `Build app "${appName}"`,
+      appUrl,
       contextPack,
       lane: "build",
       retryPolicy: getRetryPolicy(APP_BUILD_OP_TYPE),

@@ -64,6 +64,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
 
   // ── App-build pipeline ──
   build_app:             { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-build-app", decision: "allow", reason: "Build workspace apps", priority: 50 }] },
+  connector_create:      { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-connector-create", decision: "allow", reason: "Define an external-API connector manifest (data file; egress stays gated by the per-manifest allow-list + connector proxy)", priority: 50 }] },
   create_page:           { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-create-page", decision: "allow", reason: "Create custom pages", priority: 50 }] },
   start_app_build:       { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-start-app-build", decision: "allow", reason: "App-build kickoff handle", priority: 50 }] },
   finalize_app_build:    { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-finalize-app-build", decision: "allow", reason: "App-build finalize handle", priority: 50 }] },

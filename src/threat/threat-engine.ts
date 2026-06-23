@@ -107,12 +107,24 @@ export class ThreatEngine {
     // Classify the data in the result
     const classification = classifyData(result);
 
+    // Snapshot the restriction state BEFORE this call scores anything. A tool
+    // blocked *because the session is already restricted* is a symptom, not new
+    // evidence: re-scoring it climbs the load and resets the decay clock, so the
+    // restriction reinforces itself and never lifts in-session (live failure
+    // 2026-06-23 — a flail spent its whole turn budget re-tripping its own
+    // restriction). While restricted we still ENFORCE every block and AUDIT it;
+    // we just stop scoring it so accrued time/turn decay credit can drain the
+    // load and recover.
+    const alreadyRestricted = this.scorer.isRestricted();
+
     // Chain analysis (exfiltration + loop detection)
     const chainResult = this.chain.recordAndAnalyze(toolName, args, classification);
 
     // Record threat events
     if (!allowed) {
-      this.scorer.record("security_block", THREAT_SCORES.security_block, `${toolName} blocked`);
+      if (!alreadyRestricted) {
+        this.scorer.record("security_block", THREAT_SCORES.security_block, `${toolName} blocked`);
+      }
       this.audit.record({
         sessionId: this.sessionId,
         event: "tool_blocked",
@@ -141,8 +153,10 @@ export class ThreatEngine {
     }
 
     if (chainResult.blocked) {
-      const score = chainResult.exfil ? THREAT_SCORES.exfiltration_pattern : THREAT_SCORES.loop_detected;
-      this.scorer.record(chainResult.exfil ? "exfiltration" : "loop", score, chainResult.reason!);
+      if (!alreadyRestricted) {
+        const score = chainResult.exfil ? THREAT_SCORES.exfiltration_pattern : THREAT_SCORES.loop_detected;
+        this.scorer.record(chainResult.exfil ? "exfiltration" : "loop", score, chainResult.reason!);
+      }
       this.audit.record({
         sessionId: this.sessionId,
         event: chainResult.exfil ? "exfiltration_detected" : "loop_detected",

@@ -38,6 +38,7 @@ function toolSummary(name, args) {
     case 'memory_search': return `Searching memory: "${(args.query || '').slice(0, 40)}"`;
     case 'memory_save': return `Saving to ${args.target || 'daily'} memory`;
     case 'generate_image': return `Generating: ${(args.prompt || '').slice(0, 40)}...`;
+    case 'edit_image': return `Editing image: ${(args.prompt || '').slice(0, 40)}...`;
     case 'self_edit': return `Modifying LAX source: ${args.task || '(no task)'}`;
     default: return `${name} ${JSON.stringify(args).slice(0, 60)}`;
   }
@@ -256,18 +257,19 @@ function updateToolProgress(container, toolName, message) {
   }
 }
 
-// Inline media preview for generate_image / generate_video tool results.
-// Scans the result text for /images/<filename> or /videos/<filename> URLs
-// and injects an <img> / <video> directly into the assistant's message
+// Inline media preview for generate_image / edit_image / generate_video tool
+// results. Scans the result text for /images/<filename> or /videos/<filename>
+// URLs and injects an <img> / <video> directly into the assistant's message
 // body — NOT inside the collapsed Agent activity dropdown. The dropdown
 // keeps the tool metadata; the image is the artifact and belongs in the
 // chat at full size.
 //
 // Static routes /images/ and /videos/ require ?token= for auth (request-
 // handler.ts gates them). AUTH_TOKEN comes from shared.js.
+const MEDIA_PREVIEW_TOOLS = new Set(['generate_image', 'edit_image', 'generate_video']);
 function attachMediaPreview(card, toolName, result) {
   if (!card || !result) return;
-  if (toolName !== 'generate_image' && toolName !== 'generate_video') return;
+  if (!MEDIA_PREVIEW_TOOLS.has(toolName)) return;
 
   // Find the assistant message body to host the preview. Fall back to the
   // card itself if we can't locate one (shouldn't happen in practice).

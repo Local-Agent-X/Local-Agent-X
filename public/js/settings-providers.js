@@ -12,7 +12,7 @@ function loadToolsList() {
     { name: 'bash', status: 'rate-limited' },
     { name: 'web_fetch', status: 'rate-limited' }, { name: 'web_search', status: 'allowed' },
     { name: 'http_request', status: 'rate-limited' }, { name: 'browser', status: 'rate-limited' },
-    { name: 'generate_image', status: 'rate-limited' }, { name: 'generate_video', status: 'rate-limited' },
+    { name: 'generate_image', status: 'rate-limited' }, { name: 'edit_image', status: 'rate-limited' }, { name: 'generate_video', status: 'rate-limited' },
     { name: 'memory_search', status: 'allowed' }, { name: 'memory_save', status: 'allowed' },
     { name: 'memory_get', status: 'allowed' }, { name: 'memory_recall', status: 'allowed' },
     { name: 'memory_reflect', status: 'allowed' }, { name: 'memory_update_profile', status: 'allowed' },

@@ -39,6 +39,7 @@ const MUTATING_TOOLS = new Set([
   "memory_update_profile",
   "memory_reflect",
   "generate_image",
+  "edit_image",
   "generate_video",
   "mission_build",
   "mission_edit",

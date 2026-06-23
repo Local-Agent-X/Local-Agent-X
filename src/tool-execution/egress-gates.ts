@@ -62,13 +62,17 @@ function egressPayload(name: string, args: Record<string, unknown>): { text: str
       // model-supplied data payload generically. Off-box sinks that ride their
       // payload in a non-url arg (web_search query/queries[], generate_image/
       // generate_video prompt) are scanned the same way, and local files that
-      // get shipped off-box (generate_video reference_image, send_video path)
-      // are routed through the sensitive-attachment check.
+      // get shipped off-box (generate_video reference_image, edit_image
+      // image/mask, send_video path) are routed through the sensitive-attachment
+      // check — edit_image inlines the source file as base64, so a secret path
+      // passed as `image` would exfiltrate without this.
       push(args.url); push(args.body); push(args.data); push(args.value); push(args.text);
       push(args.query); push(args.prompt);
       if (Array.isArray(args.queries)) for (const q of args.queries) push(q);
       pushLocalFile(args.reference_image, attachmentPaths);
       if (Array.isArray(args.reference_images)) for (const r of args.reference_images) pushLocalFile(r, attachmentPaths);
+      pushLocalFile(args.image, attachmentPaths);
+      pushLocalFile(args.mask, attachmentPaths);
       pushLocalFile(args.path, attachmentPaths);
       break;
   }

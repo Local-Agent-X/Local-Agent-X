@@ -21,6 +21,7 @@ export const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
   bash: ["cron"],                         // Shell blocked in cron (no worktree isolation)
   browser: ["cron"],                      // No browser in automated jobs
   generate_image: ["cron"],               // Resource-intensive, block in cron
+  edit_image: ["cron"],                    // Resource-intensive off-box edit, block in cron
 };
 
 // Tools that require worktree isolation for delegated agents.

@@ -122,8 +122,10 @@ export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
   // Media gen — first-class capabilities for medium-tier providers (xAI
   // Grok via SuperGrok, Gemini, etc.). Used to be filter+RAG-gated which
   // meant "generate an image" would silently drop the tool when RAG
-  // wasn't warmed yet or the cap squeezed it out.
-  "generate_image", "generate_video",
+  // wasn't warmed yet or the cap squeezed it out. edit_image rides here too
+  // so "edit this photo" reaches the model instead of falling back to a
+  // from-scratch generate_image that never sees the source pixels.
+  "generate_image", "edit_image", "generate_video",
 ];
 
 /**

@@ -26,6 +26,16 @@ import type { ToolRegistry } from "../tool-search.js";
 
 export type RequestHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
+// GET-only `/api/` routes that render an HTML page meant to be opened as a
+// top-level browser navigation (Electron child window / external tab). Such a
+// navigation can't attach an `Authorization` header, so for THESE routes only
+// the gate also accepts `?token=<bearer>` — the same posture the static media
+// routes (/uploads, /videos, /images) already use. An explicit allowlist keeps
+// token-in-URL off every mutation and JSON-API read. Currently just the cron
+// mission "latest report" HTML view linked from the AGENTS sidebar worker card
+// (public/js/chat-agent-feeds.js appends the token to the link's href).
+const BROWSER_OPENABLE_GET_API = /^\/api\/cron\/[^/]+\/reports\/latest$/;
+
 export function createRequestHandler(deps: {
   config: LAXConfig;
   security: SecurityLayer;
@@ -91,7 +101,10 @@ export function createRequestHandler(deps: {
     const authExemptPrefixes = ["/api/health/"];
     if (url.pathname.startsWith("/api/") && !authExempt.has(url.pathname) && !authExemptPrefixes.some(p => url.pathname.startsWith(p))) {
       const clientIp = req.socket.remoteAddress || "unknown";
-      const token = (req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "";
+      const headerToken = (req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "";
+      // Browser-openable HTML routes can't carry an Authorization header on a
+      // top-level navigation, so accept ?token= for that GET allowlist only.
+      const token = headerToken || (method === "GET" && BROWSER_OPENABLE_GET_API.test(url.pathname) ? (url.searchParams.get("token") || "") : "");
       const lockout = getAuthFloodGuard().get(clientIp);
       if (lockout && lockout.lockedUntil > Date.now()) { res.writeHead(429, { ...corsHeaders(req), "Retry-After": String(Math.ceil((lockout.lockedUntil - Date.now()) / 1000)) }); res.end(JSON.stringify({ error: "Too many failed attempts." })); return; }
       if (!token) { json(401, { error: "Unauthorized" }); return; }

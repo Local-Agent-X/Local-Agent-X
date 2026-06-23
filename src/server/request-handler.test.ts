@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequestHandler } from "./request-handler.js";
@@ -90,8 +90,15 @@ function makeDeps() {
   return deps as unknown as Parameters<typeof createRequestHandler>[0];
 }
 
+const REPORT_JOB_ID = "cron_testjob";
+
 beforeAll(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "request-handler-test-"));
+  // Seed a cron report so /api/cron/<id>/reports/latest renders 200 HTML.
+  // dataDir === tmpDir, and the route reads <dataDir>/cron/reports/<id>/*.md.
+  const reportDir = join(tmpDir, "cron", "reports", REPORT_JOB_ID);
+  mkdirSync(reportDir, { recursive: true });
+  writeFileSync(join(reportDir, "report.md"), "# Mission report\n\nbody.");
   // Real RBAC: gives the operator token (= config.authToken) and the
   // per-process internal `agent` token via getInternalAgentToken().
   rbac = new RBACManager(tmpDir, OP_TOKEN);
@@ -157,5 +164,31 @@ describe("F1: auth gate over a real HTTP round-trip", () => {
   it("auth-exempt /api/health stays open without a token (exempt set preserved)", async () => {
     const res = await fetch(`${base()}/api/health`);
     expect(res.status).not.toBe(401);
+  });
+
+  // ── Browser-openable report HTML route: ?token= auth ────────────────────
+  // Regression for the worker-card "Open report" link returning
+  // {"error":"Unauthorized"}. A top-level browser navigation can't send an
+  // Authorization header, so this GET route accepts ?token=. The next two
+  // tests fence that exception so it never widens to other routes.
+
+  it("report-latest with ?token= (no Authorization header) renders the report — the Open-link fix", async () => {
+    const res = await fetch(`${base()}/api/cron/${REPORT_JOB_ID}/reports/latest?token=${OP_TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("Mission report");
+  });
+
+  it("report-latest with NO token is still 401 (the route is not public)", async () => {
+    const res = await fetch(`${base()}/api/cron/${REPORT_JOB_ID}/reports/latest`);
+    expect(res.status).toBe(401);
+  });
+
+  it("?token= is NOT honored on a non-allowlisted /api GET route (no security regression)", async () => {
+    // Same valid operator token in the query string, but on the secrets-reveal
+    // route. The gate must ignore it there → 401, proving the query-token
+    // exception is confined to the browser-openable allowlist.
+    const res = await fetch(`${base()}/api/secrets/${SEEDED_NAME}/reveal?token=${OP_TOKEN}`);
+    expect(res.status).toBe(401);
   });
 });

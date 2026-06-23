@@ -220,6 +220,7 @@ describe("renderPersonaPrompt — stable persona for AgentTemplate.systemPrompt"
       - Use real data and real logic — never fake it. No \`Math.random()\` stand-ins for live values, no hardcoded sample arrays posing as a real feed, no placeholder rows. If a real data source isn't wired, show an explicit empty/error state instead of fabricating content.
       - Every control must work — buttons, forms, inputs, and links you add must do what they say, with no handlers wired to nothing.
       - The app must run on first load — include every script, style, and handler it references; no functions called but never defined, no half-wired features.
+      - Need real data from an external API (broker, CRM, any keyed/signed service)? Don't fetch it directly — the sandbox blocks cross-origin calls. Define a connector manifest in ~/.lax/connectors/<name>.json (upstream + auth + an allow-list of exact METHOD /path entries) and call the same-origin proxy /api/connectors/<name>/<path> with the header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. Never edit core LAX to add an integration.
       - Do NOT ask questions — just build it based on the instructions
       - After writing files, output: APP_READY: <appUrl from the per-build context>
 

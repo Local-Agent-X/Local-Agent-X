@@ -4,6 +4,7 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
 import { authorizeDeviceHttp } from "../bridge/upgrade-auth.js";
+import { authorizeAppConnectorHttp, deriveConnectorCapability } from "./app-connector-auth.js";
 import { confineToDir } from "../security/file-access.js";
 import { getPageBundle } from "./static-bundle.js";
 import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes } from "../routes/index.js";
@@ -114,6 +115,12 @@ export function createRequestHandler(deps: {
         // surface (/api/apps, /apps/*) only. No-op when the bridge is off (no
         // device tokens exist) — loopback behavior is unchanged.
         if (authorizeDeviceHttp(token, url.pathname)) {
+          getAuthFloodGuard().delete(clientIp);
+          requestRole = "user";
+        } else if (authorizeAppConnectorHttp(token, url.pathname, config.authToken)) {
+          // Served apps get their operator token stripped, so they carry only
+          // this connector capability — admitted for /api/connectors/* alone.
+          // The connector proxy enforces its own per-manifest allow list.
           getAuthFloodGuard().delete(clientIp);
           requestRole = "user";
         } else {
@@ -256,7 +263,12 @@ export function createRequestHandler(deps: {
           h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
           h["Cache-Control"] = "no-cache, must-revalidate"; h["Pragma"] = "no-cache";
           let html = readFileSync(appFile, "utf-8");
-          const iso = `<script>sessionStorage.removeItem('lax_token');localStorage.removeItem('lax_token');delete window.__AUTH_TOKEN__;history.replaceState(null,'',location.pathname);</script>`;
+          // Strip the operator token (an app is a lower-trust principal) but hand
+          // it the connector capability so it can reach /api/connectors/* — and
+          // nothing else — instead of raw-fetching external APIs (CSP-blocked) or
+          // driving a core self_edit to wire an integration.
+          const connectorCap = deriveConnectorCapability(config.authToken);
+          const iso = `<script>sessionStorage.removeItem('lax_token');localStorage.removeItem('lax_token');delete window.__AUTH_TOKEN__;window.__LAX_CONNECTOR_TOKEN__=${JSON.stringify(connectorCap)};history.replaceState(null,'',location.pathname);</script>`;
           html = html.includes("<head>") ? html.replace("<head>", "<head>" + iso) : html.includes("<body>") ? html.replace("<body>", "<body>" + iso) : iso + html;
           res.writeHead(200, h); res.end(html); return;
         }

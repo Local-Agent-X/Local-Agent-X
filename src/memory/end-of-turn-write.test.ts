@@ -38,7 +38,7 @@ vi.mock("../classifiers/classify-with-llm.js", () => ({
 }));
 
 const { applyWrite, runEndOfTurnMemoryWrite } = await import("./end-of-turn-write.js");
-const { MemoryWriteBlocked } = await import("./write-safely.js");
+const { MemoryWriteBlocked, MAX_PROFILE_CHARS } = await import("./write-safely.js");
 const { PERSONALITY_FILES } = await import("./personality.js");
 
 interface FakeMemory {
@@ -131,18 +131,18 @@ describe("applyWrite — discriminated-union return contract", () => {
 
   it("returns { ok: false, reason: /limit/i } and does NOT set blocked when char limit is exceeded", async () => {
     // Seed USER.md with content just under the cap so the next append
-    // pushes it over the 2000-char USER.md limit.
+    // pushes it over the USER.md char cap.
     const userPath = join(tempDir, "memory", PERSONALITY_FILES.user);
-    writeFileSync(userPath, "x".repeat(1950), "utf-8");
+    writeFileSync(userPath, "x".repeat(MAX_PROFILE_CHARS - 50), "utf-8");
 
     const result = await applyWrite(
-      appendDecision("y".repeat(200)), // 1950 + ~200 > 2000
+      appendDecision("y".repeat(200)), // (cap - 50) + ~200 > cap
       memory as unknown as Parameters<typeof applyWrite>[1],
     );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toMatch(/2000/);
+      expect(result.reason).toMatch(new RegExp(String(MAX_PROFILE_CHARS)));
       // blocked must be absent (or false) on the char-limit branch so the
       // caller's switch routes to the generic "skipped" WARN, not the
       // taint-gate WARN.
@@ -203,7 +203,7 @@ describe("runEndOfTurnMemoryWrite — caller emits distinct WARN lines per varia
   it("logs a WARN that does NOT say 'blocked' when applyWrite returns ok:false without the flag", async () => {
     // Char-limit branch returns { ok: false, reason } with no blocked:true.
     const userPath = join(tempDir, "memory", PERSONALITY_FILES.user);
-    writeFileSync(userPath, "x".repeat(1950), "utf-8");
+    writeFileSync(userPath, "x".repeat(MAX_PROFILE_CHARS - 50), "utf-8");
 
     __nextDecision = appendDecision("y".repeat(200));
 
@@ -219,6 +219,6 @@ describe("runEndOfTurnMemoryWrite — caller emits distinct WARN lines per varia
     // The two WARN variants must be distinguishable — the skipped line
     // does NOT carry the "BLOCKED" phrase the gated line uses.
     expect(skipLine).not.toMatch(/BLOCKED/);
-    expect(skipLine).toMatch(/2000/); // reason carried through
+    expect(skipLine).toMatch(new RegExp(String(MAX_PROFILE_CHARS))); // reason carried through
   });
 });

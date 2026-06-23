@@ -28,7 +28,7 @@ import { redactKnownSecrets } from "../sanitize.js";
 import { resetSession as resetCurateNudge } from "./curate-nudge.js";
 import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
 import { PERSONALITY_FILES, dedupeProfileMarkdown } from "./personality.js";
-import { writeMemorySafely, MemoryWriteBlocked } from "./write-safely.js";
+import { writeMemorySafely, MemoryWriteBlocked, MAX_PROFILE_CHARS } from "./write-safely.js";
 import type { MemoryIndex } from "./index-core.js";
 
 const logger = createLogger("memory.end-of-turn-write");
@@ -197,11 +197,10 @@ export async function applyWrite(d: WriteDecision, memory: MemoryIndex): Promise
     updated = dedupeProfileMarkdown(updated);
   }
 
-  // Char-limit check — same caps as memory_update_profile tool.
-  const LIMITS: Record<string, number> = { "USER.md": 2000 };
-  const limit = LIMITS[filename];
-  if (limit !== undefined && updated.length > limit) {
-    const reason = `${filename} would be ${updated.length}/${limit}`;
+  // Char-limit pre-check (graceful skip); the write gate enforces the same cap
+  // as a hard backstop for writers that bypass this path.
+  if (filename === "USER.md" && updated.length > MAX_PROFILE_CHARS) {
+    const reason = `${filename} would be ${updated.length}/${MAX_PROFILE_CHARS}`;
     logger.warn(`[end-of-turn] skipped write — ${reason}`);
     return { ok: false, reason };
   }

@@ -6,6 +6,7 @@ import {
   writeMemorySafely,
   appendToDailyLogSafely,
   MemoryWriteBlocked,
+  MAX_PROFILE_CHARS,
 } from "../write-safely.js";
 
 export function createSaveTools(memory: MemoryIndex) {
@@ -242,7 +243,7 @@ export function createSaveTools(memory: MemoryIndex) {
         // 'identity' are user-author content with no limit — they're not
         // append targets.
         const PROFILE_CHAR_LIMITS: Record<string, number> = {
-          "USER.md": 2000,
+          "USER.md": MAX_PROFILE_CHARS,
         };
         const limit = PROFILE_CHAR_LIMITS[filename];
         if (limit !== undefined && updated.length > limit) {

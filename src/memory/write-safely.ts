@@ -26,9 +26,20 @@ import {
 import { redact } from "../security/credential-patterns.js";
 import { createLogger } from "../logger.js";
 import { atomicWriteFileSync } from "./utils.js";
+import { PERSONALITY_FILES } from "./personality.js";
 import type { MemoryIndex } from "./index-core.js";
 
 const logger = createLogger("memory.write-safely");
+
+// Narrative-profile files (USER/IDENTITY/HEART) are size-capped on EVERY
+// overwrite here — the single write gate — so no writer can balloon them.
+// auto-extract and sync bypassed the per-tool cap and let USER.md accrete
+// duplicate blocks to 12KB. The cap is a hard backstop that SURFACES an
+// over-limit (callers catch MemoryWriteBlocked) instead of growing silently.
+// Dedup/merge deliberately stays in the writers that emit conforming bullet
+// markdown (end-of-turn, memory_update_profile) — running the bullet-dedup
+// here would strip the free-form prose HEART/IDENTITY and ad-hoc writes carry.
+export const MAX_PROFILE_CHARS = 8000;
 
 export type MemoryWriteSource =
   | "tool"
@@ -83,10 +94,24 @@ export function writeMemorySafely(params: MemoryWriteParams): void {
   const mode = params.mode ?? "overwrite";
   if (mode === "append") {
     appendFileSync(params.target, sanitized, "utf-8");
-  } else {
-    snapshotBeforeOverwrite(params.target, sanitized);
-    atomicWriteFileSync(params.target, sanitized);
+    return;
   }
+
+  // Cap profile files on every overwrite, whichever writer called us. Read
+  // PERSONALITY_FILES at call time (not module load) — write-safely and
+  // personality import each other, so the binding is only safe to touch once
+  // both modules have finished evaluating.
+  if (Object.values(PERSONALITY_FILES).includes(basename(params.target)) && sanitized.length > MAX_PROFILE_CHARS) {
+    throw new MemoryWriteBlocked({
+      reason: `${basename(params.target)} would be ${sanitized.length}/${MAX_PROFILE_CHARS} chars — consolidate it before adding more`,
+      injectionScore: 0,
+      source: params.source,
+      target: params.target,
+    });
+  }
+
+  snapshotBeforeOverwrite(params.target, sanitized);
+  atomicWriteFileSync(params.target, sanitized);
 }
 
 // ── Overwrite history ──

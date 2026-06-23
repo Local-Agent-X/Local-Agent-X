@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeMemorySafely } from "./write-safely.js";
+import { writeMemorySafely, MemoryWriteBlocked, MAX_PROFILE_CHARS } from "./write-safely.js";
 
 let tempDir: string;
 
@@ -62,5 +62,39 @@ describe("writeMemorySafely overwrite history", () => {
       writeMemorySafely({ content: `version ${i}\n`, source: "tool", target });
     }
     expect(historyFiles().length).toBeLessThanOrEqual(20);
+  });
+});
+
+describe("writeMemorySafely profile bound (every writer, at the gate)", () => {
+  it("does not strip profile lines under the cap — no lossy transform at the gate", () => {
+    const target = join(tempDir, "USER.md");
+    // Mix of non-bullet lines (which dedupeProfileMarkdown drops) and a bullet.
+    writeMemorySafely({ content: "# About Me\nName: Alex\nRole: builder\n- Likes: pizza\n", source: "auto-extract", target });
+    const out = readFileSync(target, "utf-8");
+    expect(out).toContain("Name: Alex");
+    expect(out).toContain("Role: builder");
+    expect(out).toContain("- Likes: pizza");
+  });
+
+  it("blocks a profile write over the cap (surfaces, writes nothing)", () => {
+    const target = join(tempDir, "USER.md");
+    const huge = "# User Profile\n- bio: " + "word ".repeat(MAX_PROFILE_CHARS) + "\n";
+    expect(() => writeMemorySafely({ content: huge, source: "tool", target })).toThrow(MemoryWriteBlocked);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it("applies to IDENTITY.md and HEART.md too (all profile files)", () => {
+    for (const name of ["IDENTITY.md", "HEART.md"]) {
+      const target = join(tempDir, name);
+      const huge = "# x\n- bio: " + "word ".repeat(MAX_PROFILE_CHARS) + "\n";
+      expect(() => writeMemorySafely({ content: huge, source: "tool", target })).toThrow(MemoryWriteBlocked);
+    }
+  });
+
+  it("does NOT cap a non-profile file (daily logs, saved notes)", () => {
+    const target = join(tempDir, "notes.md");
+    const big = "line\n".repeat(MAX_PROFILE_CHARS); // well over the profile cap
+    expect(() => writeMemorySafely({ content: big, source: "tool", target })).not.toThrow();
+    expect(existsSync(target)).toBe(true);
   });
 });

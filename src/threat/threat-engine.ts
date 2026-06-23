@@ -136,17 +136,35 @@ export class ThreatEngine {
       });
     }
 
+    // Temporal staging signal (a sensitive read preceded this external call but
+    // nothing secret was on the wire). Not a block — a behavioral score so a
+    // persistent read-then-send pattern still escalates the session. Suppressed
+    // when the user consented to the flow, and while already restricted (same
+    // recovery rationale as blocks above).
+    if (chainResult.staging && !chainResult.allowedByConsent && !alreadyRestricted) {
+      this.scorer.record("exfiltration_staging", THREAT_SCORES.exfiltration_staging, chainResult.staging.description);
+      this.audit.record({
+        sessionId: this.sessionId,
+        event: "exfiltration_staging_signal",
+        toolName,
+        decision: "allow",
+        reason: chainResult.staging.description,
+        threatScore: this.scorer.getStatus().score,
+        threatLevel: this.scorer.getStatus().level,
+      });
+    }
+
     // An exfil pattern fired but was let through by user-consent. Audit
     // it as an "allowed exfiltration" event so the security record is
     // preserved — we ALLOWED it because the user consented, not because
     // the threat didn't exist.
-    if (chainResult.allowedByConsent && chainResult.exfil) {
+    if (chainResult.allowedByConsent && (chainResult.exfil || chainResult.staging)) {
       this.audit.record({
         sessionId: this.sessionId,
         event: "exfiltration_allowed_by_consent",
         toolName,
         decision: "allow",
-        reason: `${chainResult.exfil.description} — allowed by ${chainResult.allowedByConsent}`,
+        reason: `${(chainResult.exfil ?? chainResult.staging)!.description} — allowed by ${chainResult.allowedByConsent}`,
         threatScore: this.scorer.getStatus().score,
         threatLevel: this.scorer.getStatus().level,
       });

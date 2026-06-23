@@ -161,6 +161,11 @@ export const THREAT_SCORES = {
 
   // High-risk events
   exfiltration_pattern: 25,
+  // Temporal staging: a sensitive read preceded an external call but no secret
+  // was on the wire. A soft behavioral signal — well below a single-event
+  // restriction, so one read-then-call is harmless but a persistent pattern
+  // accumulates toward elevated/restricted.
+  exfiltration_staging: 12,
   canary_tripped: 50,
   security_block: 10,
   policy_block: 8,

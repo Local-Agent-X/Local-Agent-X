@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { DataClassification } from "./classification.js";
 import { fingerprintOf, isLearned } from "./trust-ledger.js";
-import { isSensitivePath, extractSensitivePathsFromCommand } from "../data-lineage-paths.js";
+import { isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage-paths.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // TOOL CHAIN ANALYSIS — Track tool sequences, block exfiltration
@@ -27,6 +27,20 @@ export interface ExfilPattern {
 // Tool call hashing for loop detection
 function hashToolCall(name: string, args: Record<string, unknown>): string {
   return createHash("sha256").update(`${name}:${JSON.stringify(args)}`).digest("hex").slice(0, 16);
+}
+
+// The bytes an external sink would put on the wire: URL + body + header values.
+// Scanned for secret-shaped spans so the exfil check is data-flow (what leaves)
+// rather than temporal (what was read). Mirrors the egress guard's pre-scan set
+// (http-egress-guard.ts), plus the URL so a secret in a GET query param is seen.
+function outboundPayload(args: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (args.url) parts.push(String(args.url));
+  if (args.body) parts.push(String(args.body));
+  if (args.headers && typeof args.headers === "object") {
+    for (const v of Object.values(args.headers as Record<string, unknown>)) parts.push(String(v));
+  }
+  return parts.join("\n");
 }
 
 export class ToolChainAnalyzer {
@@ -56,6 +70,10 @@ export class ToolChainAnalyzer {
     blocked: boolean;
     reason?: string;
     exfil?: ExfilPattern;
+    /** Non-blocking temporal signal: a sensitive read preceded this external
+     *  call but nothing secret was on the wire. The caller scores it (so
+     *  repeated staging escalates) without blocking the call. */
+    staging?: ExfilPattern;
     loopDetected?: string;
     allowedByConsent?: string;
     /** Fingerprint of the blocked pattern, when blocked. Layer B reads
@@ -93,9 +111,9 @@ export class ToolChainAnalyzer {
       }
     }
 
-    // Exfiltration detection: did we read something sensitive, then try to send it out?
+    // Exfiltration detection: is secret material actually in the outbound payload?
     if (access && this.isExternalSink(access)) {
-      const exfil = this.checkExfiltration(access);
+      const exfil = this.checkExfiltration(access, args);
       if (exfil) {
         const fp = fingerprintOf(exfil.source.type, exfil.sink.target);
         // Layer C: trust ledger. If the user has approved this exact
@@ -112,6 +130,20 @@ export class ToolChainAnalyzer {
         // record into the trust ledger for future auto-allows.
         if (fp) this.lastBlockedFingerprint = fp;
         return { blocked: true, reason: exfil.description, exfil, blockedFingerprint: fp ?? undefined };
+      }
+
+      // No secret on the wire, but a sensitive read preceded this external
+      // call: a staging SIGNAL, not a block. Scored by the caller so persistent
+      // read-then-send escalates the session, without trapping the legitimate
+      // configure-then-test / read-then-submit workflows that the temporal-only
+      // block used to hard-fail. Consent (or a learned pattern) suppresses even
+      // the signal — the user directed this flow.
+      const staging = this.checkTemporalStaging(access);
+      if (staging) {
+        if (this.isUserConsentActive()) {
+          return { blocked: false, allowedByConsent: this.userConsentReason || "user-consent-active", staging };
+        }
+        return { blocked: false, staging };
       }
     }
 
@@ -185,27 +217,57 @@ export class ToolChainAnalyzer {
     return ["web_fetch", "http_request", "browser"].includes(access.type);
   }
 
-  private checkExfiltration(sink: DataAccess): ExfilPattern | null {
-    // Look back through recent history for sensitive reads
-    // 15-minute window to catch delayed exfil attempts
+  private checkExfiltration(sink: DataAccess, args: Record<string, unknown>): ExfilPattern | null {
+    // Data-flow, not temporal. An external send is exfiltration only when the
+    // OUTBOUND PAYLOAD actually carries secret material — a prior sensitive read
+    // that never reaches the wire is normal credential/config use, not exfil
+    // (live failure 2026-06-23: reading a connector manifest then calling its
+    // own proxy tripped the old read-then-send correlation). {{SECRET_NAME}}
+    // placeholders are not secret-shaped, so injecting a stored key into its own
+    // API passes cleanly; a hardcoded raw key does not. Exact-byte exfil of a
+    // non-secret-shaped value is still covered by the data-lineage taint gate.
+    const payload = outboundPayload(args);
+    if (!payload) return null;
+    const { matched, kinds } = detectSecretsInOutput(payload);
+    if (!matched) return null;
+
+    // Attribute to the most recent in-window sensitive read for the audit
+    // description + trust-ledger fingerprint; fall back to the sink itself.
+    const now = Date.now();
+    const source = [...this.history].reverse().find(
+      s => s.sensitive && s !== sink && now - s.timestamp <= 900_000 &&
+        ["file_read", "shell", "memory", "secret"].includes(s.type),
+    ) ?? sink;
+    return {
+      source,
+      sink,
+      score: 0.9,
+      description:
+        `Exfiltration pattern detected: outbound ${sink.type} to ${sink.target.slice(0, 50)} ` +
+        `carries secret-shaped content (${kinds.join(", ")}). ` +
+        `This looks like an attempt to send sensitive data to an external service.`,
+    };
+  }
+
+  /** Temporal staging signal: a sensitive read within the window preceded this
+   *  external sink, but no secret reached the wire. Not a block — a behavioral
+   *  score the caller accumulates so persistent read-then-send still escalates. */
+  private checkTemporalStaging(sink: DataAccess): ExfilPattern | null {
     const lookback = 900_000; // 15 minutes
     const now = Date.now();
-
     for (const source of this.history) {
       if (!source.sensitive) continue;
       if (now - source.timestamp > lookback) continue;
       if (source === sink) continue;
-
-      // Sensitive source → external sink = exfiltration
       if (["file_read", "shell", "memory", "secret"].includes(source.type)) {
         return {
           source,
           sink,
-          score: 0.9,
+          score: 0.5,
           description:
-            `Exfiltration pattern detected: sensitive ${source.type} (${source.target.slice(0, 50)}) ` +
-            `followed by external ${sink.type} (${sink.target.slice(0, 50)}). ` +
-            `This looks like an attempt to send sensitive data to an external service.`,
+            `Suspected staging: sensitive ${source.type} (${source.target.slice(0, 50)}) ` +
+            `preceded external ${sink.type} (${sink.target.slice(0, 50)}) — no secret was in the payload, ` +
+            `so this is scored as a behavioral signal, not blocked.`,
         };
       }
     }

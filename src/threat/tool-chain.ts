@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { DataClassification } from "./classification.js";
 import { fingerprintOf, isLearned } from "./trust-ledger.js";
+import { isSensitivePath, extractSensitivePathsFromCommand } from "../data-lineage-paths.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // TOOL CHAIN ANALYSIS — Track tool sequences, block exfiltration
@@ -136,25 +137,11 @@ export class ToolChainAnalyzer {
     return this.lastBlockedFingerprint;
   }
 
-  /** Check if a file path is inherently sensitive (regardless of content) */
-  private isPathSensitive(filePath: string): boolean {
-    const p = filePath.toLowerCase().replace(/\\/g, "/");
-    const sensitivePatterns = [
-      /\.ssh\//,  /\.aws\//, /\.gnupg\//, /\.kube\//, /\.env$/,
-      /\.env\./, /id_rsa/, /id_ed25519/, /credentials/, /\.netrc/,
-      /\.npmrc/, /\.pypirc/, /auth\.json/, /secrets?\./, /password/,
-      /\.git\/config/, /config\.json$/, /token/, /\.lax\//,
-      /\.pem$/, /\.key$/, /\.p12$/, /\.pfx$/,
-      // Any file outside workspace is potentially sensitive
-    ];
-    return sensitivePatterns.some(pat => pat.test(p));
-  }
-
   /** Check if a shell command accesses sensitive resources */
   private isCommandSensitive(command: string): boolean {
     const c = command.toLowerCase();
     return /\b(cat|type|more|less|head|tail|get-content)\b/.test(c) &&
-      (this.isPathSensitive(c) || /\/etc\//.test(c) || /registry/.test(c));
+      (extractSensitivePathsFromCommand(command).length > 0 || /\/etc\//.test(c) || /registry/.test(c));
   }
 
   private classifyAccess(
@@ -167,7 +154,7 @@ export class ToolChainAnalyzer {
     switch (toolName) {
       case "read": {
         const path = String(args.path || "");
-        const sensitive = contentSensitive || this.isPathSensitive(path);
+        const sensitive = contentSensitive || isSensitivePath(path);
         return { type: "file_read", target: path, sensitive, timestamp: Date.now() };
       }
       case "write":

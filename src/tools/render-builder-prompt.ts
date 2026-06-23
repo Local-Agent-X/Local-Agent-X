@@ -74,6 +74,7 @@ Environment:
 - Files in this folder are served at: ${appUrl}
 - The preview iframe enforces this CSP: script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self'.
 - External CDNs (Tailwind, jsdelivr, unpkg, Google Fonts) are blocked at the network layer. Inline or self-host.
+- Need real data from an external API? You CANNOT fetch it cross-origin here (connect-src 'self' blocks it) and you must NOT edit core LAX. Wire it through a connector: write the manifest ~/.lax/connectors/<name>.json (upstream + auth of bearer/header/signed + an allow-list of exact "METHOD /path" entries), then call the same-origin proxy /api/connectors/<name>/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. The server holds the secret and forwards. An honest empty/error state until it returns is fine; faked data is not.
 - After write/edit, the preview reloads automatically; runtime errors are forwarded back to you in the next turn.
 ${context}${assetManifest}
 Instructions: ${prompt}
@@ -117,6 +118,22 @@ export function renderPersonaPrompt(): string {
     WEBSITE_RULES_FRAGMENT +
       "When the per-build context indicates a website request (or includes the WEBSITE-BUILD MODE rules), follow the rules above.",
   ].join("\n");
+}
+
+const APP_BUILDER_PERSONA_OPENER = "You are the App Builder agent.";
+
+/**
+ * Decide the refreshed app-builder systemPrompt for a persisted template.
+ * The template store seeds built-ins only on first run, so edits to the
+ * code-derived persona never reached an already-seeded store — the builder ran
+ * a stale prompt. Returns the fresh persona when the stored one is a built-in
+ * that drifted, or null to leave it untouched (a user who rewrote the persona
+ * from scratch, losing the built-in opener, keeps theirs).
+ */
+export function appBuilderPersonaRefresh(stored: string, fresh: string): string | null {
+  if (!stored.startsWith(APP_BUILDER_PERSONA_OPENER)) return null;
+  if (stored === fresh) return null;
+  return fresh;
 }
 
 /**

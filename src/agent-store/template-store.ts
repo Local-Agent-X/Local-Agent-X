@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import { TEMPLATES_FILE } from "./paths.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { builtInTemplateDefaults } from "./template-defaults.js";
+import { renderPersonaPrompt, appBuilderPersonaRefresh } from "../tools/render-builder-prompt.js";
 import { trashRecord } from "../safe-delete.js";
 import { createLogger } from "../logger.js";
 import type { AgentModelPin } from "../agents/types.js";
@@ -55,7 +56,7 @@ export class AgentTemplateStore {
   private static instance: AgentTemplateStore;
   private templates: AgentTemplate[] = [];
 
-  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateAppBuilderCodexStrategy(); this.migrateManagerModel(); this.seedDefaults(); }
+  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateAppBuilderCodexStrategy(); this.migrateManagerModel(); this.migrateAppBuilderPersona(); this.seedDefaults(); }
 
   /**
    * Strip deprecated org-membership fields from persisted templates.
@@ -135,6 +136,25 @@ export class AgentTemplateStore {
     t.updatedAt = Date.now();
     this.persist();
     logger.info("[agents] migrated builtin-manager default model: claude-opus-4-7 → claude-opus-4-8");
+  }
+
+  /**
+   * Refresh the app-builder systemPrompt from code on boot. The persona is
+   * code-derived (renderPersonaPrompt), but seedDefaults only inserts built-ins
+   * on first run — so edits to the persona never reached an already-seeded store
+   * and the builder kept running a stale prompt. Only rewrites a template still
+   * carrying the built-in opener; a fully-customized persona is left alone.
+   * Idempotent: already current → no-op.
+   */
+  private migrateAppBuilderPersona(): void {
+    const t = this.templates.find(x => x.id === "app-builder");
+    if (!t) return;
+    const next = appBuilderPersonaRefresh(t.systemPrompt, renderPersonaPrompt());
+    if (next === null) return;
+    t.systemPrompt = next;
+    t.updatedAt = Date.now();
+    this.persist();
+    logger.info("[agents] refreshed app-builder persona from code");
   }
 
   static getInstance(): AgentTemplateStore {

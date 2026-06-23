@@ -13,6 +13,7 @@ import {
   renderPersonaPrompt,
   renderPerBuildContext,
   looksLikeWebsiteRequest,
+  appBuilderPersonaRefresh,
   WEBSITE_RULES_FRAGMENT,
   type BuilderPromptInput,
 } from "../src/tools/render-builder-prompt.js";
@@ -43,6 +44,7 @@ Environment:
 - Files in this folder are served at: ${appUrl}
 - The preview iframe enforces this CSP: script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self'.
 - External CDNs (Tailwind, jsdelivr, unpkg, Google Fonts) are blocked at the network layer. Inline or self-host.
+- Need real data from an external API? You CANNOT fetch it cross-origin here (connect-src 'self' blocks it) and you must NOT edit core LAX. Wire it through a connector: write the manifest ~/.lax/connectors/<name>.json (upstream + auth of bearer/header/signed + an allow-list of exact "METHOD /path" entries), then call the same-origin proxy /api/connectors/<name>/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. The server holds the secret and forwards. An honest empty/error state until it returns is fine; faked data is not.
 - After write/edit, the preview reloads automatically; runtime errors are forwarded back to you in the next turn.
 ${context}${assetManifest}
 Instructions: ${prompt}
@@ -241,5 +243,42 @@ describe("renderPersonaPrompt — stable persona for AgentTemplate.systemPrompt"
     expect(out).toContain("APP_READY:");
     expect(out).toContain("WEBSITE-BUILD MODE");
     expect(out).toContain("IMAGE DISCIPLINE");
+  });
+});
+
+describe("renderPerBuildContext — connector teaching reaches both build strategies", () => {
+  // This lives in the per-build context (not the persona) on purpose: both the
+  // cli-subprocess path and the in-canonical path render this, and it's
+  // evaluated per build so it's never frozen at seed time. Regression for the
+  // BTC dashboard that raw-fetched CoinGecko (CSP-blocked) because the builder
+  // was never taught the connector escape hatch.
+  it("tells the builder to use the connector proxy instead of a raw external fetch", () => {
+    const out = renderPerBuildContext(SAMPLE_CREATE);
+    expect(out).toContain("/api/connectors/<name>/<path>");
+    expect(out).toContain("window.__LAX_CONNECTOR_TOKEN__");
+    expect(out).toContain("~/.lax/connectors/<name>.json");
+    expect(out).toContain("must NOT edit core LAX");
+  });
+});
+
+describe("appBuilderPersonaRefresh — un-freezes a seed-frozen persona", () => {
+  const FRESH = renderPersonaPrompt();
+
+  // Regression: the template store seeds built-ins only on first run, so a
+  // persona edit (e.g. the connector teaching) never reached an already-seeded
+  // store — the builder ran a stale prompt. This is the decision the boot
+  // migration uses to refresh it.
+  it("returns the fresh persona when a seed-frozen built-in has drifted", () => {
+    const stale = "You are the App Builder agent. (old persona without the new rules)";
+    expect(appBuilderPersonaRefresh(stale, FRESH)).toBe(FRESH);
+  });
+
+  it("no-ops when the stored persona already matches code", () => {
+    expect(appBuilderPersonaRefresh(FRESH, FRESH)).toBeNull();
+  });
+
+  it("leaves a fully-customized persona alone (built-in opener gone)", () => {
+    const custom = "You are Bob, a bespoke app builder with house rules.";
+    expect(appBuilderPersonaRefresh(custom, FRESH)).toBeNull();
   });
 });

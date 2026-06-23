@@ -92,6 +92,7 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "web_search",                // query/queries[] → off-box GET to DDG/Brave
   "image_search",              // query → off-box GET to image providers (same class as web_search)
   "generate_image",            // model `prompt` → POST api.x.ai / api.openai.com
+  "edit_image",                // model `prompt` + base64 source image/mask → POST api.openai.com
   "generate_video",            // model `prompt` + base64 reference_image → api.x.ai
   "send_video",                // ships a local file path off-box over a messaging bridge
   "send_image",                // ships a local image file off-box over a messaging bridge

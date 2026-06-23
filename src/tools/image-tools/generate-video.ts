@@ -1,11 +1,10 @@
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { getLaxDir } from "../../lax-data-dir.js";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { createLogger } from "../../logger.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, okWithVideo, resolveMediaProvider, findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
+import { ok, err, okWithVideo, resolveMediaProvider, resolveLocalImagePath, imageFileToDataUrl, findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
 
 const xaiLogger = createLogger("image-tools.xai");
 
@@ -24,34 +23,7 @@ async function generateViaXaiVideo(
 ): Promise<ToolResult> {
   const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` };
 
-  // Resolve a single reference-image string into an absolute filesystem
-  // path if it matches any known local shape. xAI's backend can't reach
-  // 127.0.0.1 loopback URLs, so anything local gets inlined as base64.
-  // Accepted shapes:
-  //   /images/foo.png            (chat tool-result URL)
-  //   /uploads/foo.png           (user-attached upload URL)
-  //   workspace/images/foo.png   (generated path Grok sometimes echoes)
-  //   workspace/uploads/foo.png  (rare but seen)
-  //   bare filename in workspace/images/  (Grok hallucinates these)
-  const resolveLocal = (u: string): string | null => {
-    const m =
-      u.match(/(?:^\/images\/|^workspace\/images\/)([A-Za-z0-9._-]+)/) ||
-      u.match(/(?:^\/uploads\/|^workspace\/uploads\/)([A-Za-z0-9._-]+)/);
-    if (m) {
-      const fname = m[1];
-      const fromImages = join(workspaceDir("images"), fname);
-      if (existsSync(fromImages)) return fromImages;
-      const fromUploads = join(getLaxDir(), "uploads", fname);
-      if (existsSync(fromUploads)) return fromUploads;
-    }
-    return null;
-  };
-  const fileToBase64Ref = (filePath: string) => {
-    const ext = (filePath.split(/[.]/).pop() || "png").toLowerCase();
-    const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
-    const b64 = readFileSync(filePath).toString("base64");
-    return { url: `data:${mime};base64,${b64}`, source: filePath };
-  };
+  const fileToBase64Ref = (filePath: string) => ({ url: imageFileToDataUrl(filePath), source: filePath });
 
   // Normalize. Grok's tool-call sometimes serializes an array as a
   // JSON-encoded string ("[\"foo.png\"]") instead of a real array —
@@ -61,7 +33,7 @@ async function generateViaXaiVideo(
   for (const raw of referenceImageUrls || []) {
     const u = (raw || "").trim();
     if (!u) continue;
-    const local = resolveLocal(u);
+    const local = resolveLocalImagePath(u);
     if (local) {
       const { url, source } = fileToBase64Ref(local);
       refs.push({ url });

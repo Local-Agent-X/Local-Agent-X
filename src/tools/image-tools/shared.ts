@@ -4,7 +4,7 @@
  * the prompt regex that signals the user is referring to an earlier image.
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ToolResult } from "../../types.js";
 import { getLaxDir } from "../../lax-data-dir.js";
@@ -136,3 +136,36 @@ export function findRecentLocalImage(): string | null {
 /** Regex for "this photo/image/girl/her/him/they" language in a prompt —
  *  signals the user is referencing something in the chat context. */
 export const PROMPT_REFS_EARLIER_IMAGE = /\b(this|the|her|him|they|that)\s+(photo|image|picture|girl|woman|man|guy|person|model|character|pic)\b|\battached\s+(image|photo|picture)\b|\bfrom\s+the\s+(image|photo|picture)\b/i;
+
+/** Resolve a model/user-supplied image reference to an absolute LOCAL file
+ *  path, or null for external URLs / unknown shapes. Accepts a direct
+ *  filesystem path, the chat tool-result URL (/images/foo.png), the upload
+ *  URL (/uploads/foo.png), the workspace-relative paths Grok sometimes echoes
+ *  (workspace/images|uploads/foo.png), and a bare image filename it
+ *  hallucinates — checking workspace/images first, then uploads. xAI's
+ *  backend can't reach 127.0.0.1 loopback URLs, so callers inline locals as
+ *  base64 via imageFileToDataUrl(). */
+export function resolveLocalImagePath(u: string): string | null {
+  const s = (u || "").trim();
+  if (!s) return null;
+  try { if (existsSync(s) && statSync(s).isFile()) return resolve(s); } catch { /* not a direct path */ }
+  const m =
+    s.match(/(?:^\/images\/|^workspace\/images\/)([A-Za-z0-9._-]+)/) ||
+    s.match(/(?:^\/uploads\/|^workspace\/uploads\/)([A-Za-z0-9._-]+)/) ||
+    s.match(/^([A-Za-z0-9._-]+\.(?:png|jpe?g|webp))$/i);
+  if (m) {
+    const fname = m[1];
+    const fromImages = join(workspaceDir("images"), fname);
+    if (existsSync(fromImages)) return fromImages;
+    const fromUploads = join(getLaxDir(), "uploads", fname);
+    if (existsSync(fromUploads)) return fromUploads;
+  }
+  return null;
+}
+
+/** Read a local image file into a `data:` URL, mime guessed from extension. */
+export function imageFileToDataUrl(filePath: string): string {
+  const ext = (filePath.split(".").pop() || "png").toLowerCase();
+  const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
+  return `data:${mime};base64,${readFileSync(filePath).toString("base64")}`;
+}

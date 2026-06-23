@@ -23,7 +23,7 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /calendar|event|meeting|schedule.*event/i, toolPrefixes: ["calendar_"] },
   { keywords: /clipboard|copy|paste/i, toolPrefixes: ["clipboard_"] },
   { keywords: /sql|database|query.*table|postgres|sqlite/i, toolPrefixes: ["sql_"] },
-  { keywords: /image|photo|generate.*image|draw|picture/i, toolPrefixes: ["generate_image", "generate_video", "ocr"] },
+  { keywords: /image|photo|generate.*image|draw|picture|\bedit\b/i, toolPrefixes: ["generate_image", "edit_image", "generate_video", "ocr"] },
   { keywords: /camera|webcam/i, toolPrefixes: ["camera_"] },
   // App tools surface on "app/dashboard/tracker" mentions. Sidebar tools are a
   // SEPARATE rule that requires an explicit sidebar/pin/unpin keyword — the

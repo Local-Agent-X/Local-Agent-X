@@ -110,5 +110,8 @@ export function loadFileAccessMode(): FileAccessMode {
       }
     }
   } catch {}
-  return "common"; // Default
+  // Default for fresh installs: ships full read access so out-of-box flows
+  // (memory ingest, reading exports in Downloads/Documents) work without the
+  // user first changing a setting. Tighten to common/workspace in Settings.
+  return "unrestricted";
 }

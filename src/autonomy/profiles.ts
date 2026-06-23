@@ -3,7 +3,7 @@
  *
  * A profile is a fixed policy table the user picks once: how should the
  * agent treat each class of tool call? Safe asks for almost everything,
- * Normal is the sensible default, Developer/Power loosen things for
+ * Normal is the conservative middle, Developer/Power loosen things for
  * trusted workflows, Autonomous runs unattended with rollback safety
  * nets where the risk is reversible.
  */
@@ -21,7 +21,10 @@ export type Profile = {
 export const PROFILE_NAMES = ["Safe", "Normal", "Developer", "Power", "Autonomous"] as const;
 export type ProfileName = (typeof PROFILE_NAMES)[number];
 
-export const DEFAULT_PROFILE: ProfileName = "Normal";
+// Shipped default for fresh installs. Power = autonomous for everything except
+// money and secrets (those still prompt). Existing users keep whatever their
+// ~/.lax/autonomy-profile.json already holds — this only sets the new-user start.
+export const DEFAULT_PROFILE: ProfileName = "Power";
 
 // ── Profile tables ──────────────────────────────────────────
 

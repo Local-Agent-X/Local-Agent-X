@@ -1,6 +1,6 @@
 /**
  * Profile store — persists the currently-active autonomy profile name to
- * ~/.lax/autonomy-profile.json. Fresh installs default to "Normal".
+ * ~/.lax/autonomy-profile.json. Fresh installs default to "Power".
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

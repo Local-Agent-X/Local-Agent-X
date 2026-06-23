@@ -90,8 +90,8 @@ describe("autonomy profiles", () => {
     expect([...PROFILE_NAMES]).toEqual(["Safe", "Normal", "Developer", "Power", "Autonomous"]);
   });
 
-  it("defaults to Normal", () => {
-    expect(DEFAULT_PROFILE).toBe("Normal");
+  it("defaults to Power", () => {
+    expect(DEFAULT_PROFILE).toBe("Power");
   });
 
   it("Normal allows the everyday-safe classes", () => {

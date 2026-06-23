@@ -28,12 +28,14 @@
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeErrorMessage } from "../server-utils.js";
 import { getSecretsStoreSingleton } from "../secrets.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
+import { type SignedAuthConfig, validateSignedAuth, signRequest } from "./connector-signing.js";
 
 const logger = createLogger("routes.connector-proxy");
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -49,6 +51,7 @@ export interface ConnectorManifest {
   auth:
     | { type: "bearer"; secret: string }
     | { type: "header"; header: string; secret: string }
+    | SignedAuthConfig
     | { type: "none" };
   allow: string[];
   forwardHeaders?: string[];
@@ -78,8 +81,11 @@ export function parseManifest(raw: string): { ok: true; manifest: ConnectorManif
   if (authType === "bearer" || authType === "header") {
     if (typeof auth?.secret !== "string" || !auth.secret) return { ok: false, error: `auth.type "${authType}" requires auth.secret (a vault secret name)` };
     if (authType === "header" && (typeof auth?.header !== "string" || !auth.header)) return { ok: false, error: `auth.type "header" requires auth.header` };
+  } else if (authType === "signed") {
+    const err = validateSignedAuth(auth);
+    if (err) return { ok: false, error: `auth.type "signed": ${err}` };
   } else if (authType !== "none") {
-    return { ok: false, error: `auth.type must be "bearer", "header", or "none"` };
+    return { ok: false, error: `auth.type must be "bearer", "header", "signed", or "none"` };
   }
 
   if (!Array.isArray(m.allow) || m.allow.length === 0) {
@@ -192,7 +198,7 @@ export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req,
   }
 
   const headers: Record<string, string> = { "Accept": "application/json" };
-  if (manifest.auth.type !== "none") {
+  if (manifest.auth.type === "bearer" || manifest.auth.type === "header") {
     const secret = getSecretsStoreSingleton()?.get(manifest.auth.secret);
     if (!secret) { json(401, { error: `Vault secret "${manifest.auth.secret}" is not configured — add it before using connector "${name}".` }); return true; }
     if (manifest.auth.type === "bearer") headers["Authorization"] = `Bearer ${secret}`;
@@ -212,9 +218,46 @@ export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req,
     body = raw;
   }
 
+  // Request signing (auth.type "signed") runs after the body is read so a body
+  // hash covers the real bytes. The signature may append a query param, so the
+  // forwarded search string is mutable from here. See connector-signing.ts.
+  let upstreamSearch = url.search || "";
+  if (manifest.auth.type === "signed") {
+    const cfg = manifest.auth;
+    const store = getSecretsStoreSingleton();
+    const keyMaterial = store?.get(cfg.secret);
+    if (!keyMaterial) { json(401, { error: `Vault secret "${cfg.secret}" is not configured — add it before using connector "${name}".` }); return true; }
+    const vault: Record<string, string> = {};
+    for (const tmpl of Object.values(cfg.headers ?? {})) {
+      for (const ref of tmpl.matchAll(/\{vault:([^}]+)\}/g)) {
+        const nm = ref[1];
+        if (vault[nm] !== undefined) continue;
+        const v = store?.get(nm);
+        if (!v) { json(401, { error: `Vault secret "${nm}" required by connector "${name}" is not configured.` }); return true; }
+        vault[nm] = v;
+      }
+    }
+    try {
+      const signed = signRequest({
+        config: cfg, keyMaterial, vault,
+        method, path: upstreamPath, query: upstreamSearch.replace(/^\?/, ""),
+        host: new URL(manifest.upstream).hostname, body,
+        now: new Date(), nonce: randomUUID(),
+      });
+      Object.assign(headers, signed.headers);
+      if (signed.queryAppend) {
+        const sep = upstreamSearch ? "&" : "?";
+        upstreamSearch += `${sep}${encodeURIComponent(signed.queryAppend.name)}=${encodeURIComponent(signed.queryAppend.value)}`;
+      }
+    } catch (e) {
+      json(500, { error: `Connector "${name}" signing failed: ${safeErrorMessage(e)}` });
+      return true;
+    }
+  }
+
   try {
     const up = await forwardWithTimeout(
-      manifest.upstream + upstreamPath + (url.search || ""),
+      manifest.upstream + upstreamPath + upstreamSearch,
       { method, headers, ...(body !== undefined ? { body: new Uint8Array(body) } : {}) },
       manifest.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     );

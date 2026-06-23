@@ -87,14 +87,17 @@ export interface BaseURLContext {
 }
 
 const REASONING_OPENAI_FAMILY = /^o[134]|gpt-5/i;
-// xAI reasoning models: grok-4 family (grok-4.3, grok-4.20-*reasoning,
-// grok-4.20-multi-agent) + legacy grok-code-fast-1 + grok-3-mini. The
-// explicit `-non-reasoning` variant (grok-4.20-0309-non-reasoning) is
-// excluded — sending reasoning_effort to it would either be ignored or
-// rejected. Without reasoning_effort set, the grok-4 family leaks
-// chain-of-thought into `delta.content` instead of the separate
-// `delta.reasoning_content` field, dumping raw thoughts into chat.
-const REASONING_GROK = /^grok-(?:4|3-mini|code-fast)(?!.*-non-reasoning)/i;
+// xAI models that accept the `reasoning_effort` request param: grok-4 family
+// (grok-4.3, grok-4.20-*reasoning, grok-4.20-multi-agent) + grok-3-mini. The
+// explicit `-non-reasoning` variant (grok-4.20-0309-non-reasoning) is excluded —
+// sending reasoning_effort to it is ignored or rejected. grok-code-fast is also
+// excluded: it reasons internally but does NOT accept the param, and sending it
+// 400s the whole request ("does not support parameter reasoningEffort"). Without
+// reasoning_effort set, the grok-4 family leaks chain-of-thought into
+// `delta.content` instead of the separate `delta.reasoning_content` field, so we
+// keep it set for them; grok-code-fast streams reasoning in the separate field
+// regardless, handled by the adapter's thinking-delta path.
+const REASONING_GROK = /^grok-(?:4|3-mini)(?!.*-non-reasoning)/i;
 const REASONING_GEMINI = /gemini-(2\.5|3)/i;
 const REASONING_OSS = /deepseek-r1|qwen.*reasoning|gpt-oss|glm-4\.7/i;
 

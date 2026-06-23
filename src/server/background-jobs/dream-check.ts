@@ -6,7 +6,7 @@ import type { SessionStore } from "../../memory/index.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy.js";
 import { createLogger } from "../../logger.js";
-import { DREAM_SYSTEM_PROMPT } from "./prompts.js";
+import { DREAM_SYSTEM_PROMPT, DREAM_TOOL_NAMES } from "./prompts.js";
 import type { ProviderId } from "../../providers/provider-ids.js";
 import { registerDreamRunner, type DreamRunResult } from "../../memory/dream.js";
 
@@ -56,7 +56,7 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
       // model per provider, not the user's flagship default.
       const dreamModel = backgroundModelFor(provider as ProviderId, model);
       const dreamSession: Session = { id: `dream-${Date.now()}`, title: "Memory Dream", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
-      const dreamTools = allAgentTools.filter(t => ["read", "write", "edit", "glob", "grep", "memory_search", "memory_save"].includes(t.name));
+      const dreamTools = allAgentTools.filter(t => (DREAM_TOOL_NAMES as readonly string[]).includes(t.name));
 
       const transcripts = listRecentSessionTranscripts(10);
       const batches = transcripts.length > 0 ? buildDreamBatches(transcripts) : [];

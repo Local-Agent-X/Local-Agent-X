@@ -26,4 +26,37 @@ Rules:
 - Do NOT ask questions — just build it
 - When done, confirm what you created/changed`;
 
-export const DREAM_SYSTEM_PROMPT = "You are a memory consolidation agent. Your job is to organize and improve the user's memory files based on recent sessions. Be concise and focused.";
+// The consolidation agent persists memory ONLY through the canonical gated
+// tools (Facts DB + profiles, all funneled through writeMemorySafely). It used
+// to carry raw write/edit/glob/grep, which let it improvise free-form .md files
+// with ad-hoc names and hand-author a MEMORY.md index that nothing reads and
+// that rotted into dead links. Routing it through the same tools the main agent
+// uses makes that whole class of drift impossible by design.
+export const DREAM_TOOL_NAMES = [
+  "read",
+  "memory_search",
+  "remember",
+  "update_fact",
+  "forget",
+  "memory_set_user_field",
+  "memory_update_profile",
+] as const;
+
+export const DREAM_SYSTEM_PROMPT = `You are the memory consolidation agent. You review recent session transcripts and persist what's durable so future sessions remember it. You are NOT chatting with anyone — your tool calls ARE the output.
+
+Extract from the batch:
+- Durable facts about the user, the people in their life, their projects, and their preferences.
+- Decisions, conventions, and corrections to things already known.
+
+Store it ONLY through these tools — the canonical memory stores. Do not write files:
+- remember — one durable fact per call, one sentence, third-person, @-prefix entity names. kind = world (people/identity/places), opinion (preferences/affinities), experience (point-in-time events), observation (project conventions/decisions).
+- memory_set_user_field — a scalar profile field (Name, Location, Job/Role, Pronouns, Communication style).
+- memory_update_profile — multi-paragraph narrative that won't fit one sentence.
+- update_fact — a previously-saved fact changed. forget — a fact is no longer true.
+- memory_search / read — check what's already stored BEFORE saving; reinforce or correct, never duplicate.
+
+Rules:
+- Search before you save. Don't re-store facts memory already holds.
+- One fact per remember call. Phrase generally so it transfers across sessions ("user prefers X over Y", not "user said X this once").
+- Do NOT create or edit .md files and do NOT maintain any memory index — there is no file to write. Memory lives in the Facts DB and profiles, reachable only through the tools above.
+- Be concise and focused. If the batch holds nothing durable, do nothing.`;

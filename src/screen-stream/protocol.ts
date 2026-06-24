@@ -126,6 +126,14 @@ export interface RtcDisplaysFrame {
   height: number;
 }
 
+/** Desktop tells the phone whether a text-editable element is focused, so it can
+ *  raise/dismiss the soft keyboard automatically (tap a text field → keyboard). */
+export interface RtcFocusFrame {
+  type: "rtc_focus";
+  rtcId: string;
+  editable: boolean;
+}
+
 /** Every signaling frame the phone sends (desktop receives + routes). */
 export type RtcInboundFrame = RtcStartFrame | RtcAnswerFrame | RtcIceFrame | RtcStopFrame | RtcInputFrame;
 
@@ -135,7 +143,8 @@ export type RtcOutboundFrame =
   | RtcDesktopIceFrame
   | RtcErrorFrame
   | RtcClosedFrame
-  | RtcDisplaysFrame;
+  | RtcDisplaysFrame
+  | RtcFocusFrame;
 
 /** All rtc_* type tags — used to claim a frame at the chat-ws router. */
 export const RTC_FRAME_TYPES = [
@@ -177,6 +186,10 @@ export function buildDisplays(
   height: number,
 ): RtcDisplaysFrame {
   return { type: "rtc_displays", rtcId, count, active, width, height };
+}
+
+export function buildFocus(rtcId: string, editable: boolean): RtcFocusFrame {
+  return { type: "rtc_focus", rtcId, editable };
 }
 
 /** Validate an untrusted input-event payload from the phone. Returns null for

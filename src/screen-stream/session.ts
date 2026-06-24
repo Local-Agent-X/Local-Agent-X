@@ -24,14 +24,20 @@ import {
   buildError,
   buildClosed,
   buildDisplays,
+  buildFocus,
   type RtcInboundFrame,
   type RtcIceCandidate,
   type RtcOutboundFrame,
 } from "./protocol.js";
 import { ScreenInputController, describeDisplays } from "./screen-input.js";
+import { queryEditableFocus } from "./focus-watch.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("screen-stream.session");
+
+/** Delay after a click/key before probing focus — lets the injected event land
+ *  and the target app move focus before we ask the OS what's focused. */
+const FOCUS_PROBE_DELAY_MS = 180;
 
 /** Sends an outbound signaling frame to the phone over the chat socket. */
 export type SendFrame = (frame: RtcOutboundFrame) => void;
@@ -55,6 +61,9 @@ export class ScreenSession {
   private capture: CaptureHandle | null = null;
   /** Remote-control injector — exists only while a session is live. */
   private input: ScreenInputController | null = null;
+  /** Debounced focus probe + last reported editable state (deduped to the phone). */
+  private focusTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastEditable = false;
   /** Local ICE candidates produced before we're ready to flush (rare ordering). */
   private pendingLocalIce: RtcIceCandidate[] = [];
   /** Remote ICE candidates buffered until the peer exists / answer applied. */
@@ -97,6 +106,11 @@ export class ScreenSession {
       case "rtc_input":
         // Drop input that arrives before/after a live session — no injector, no-op.
         this.input?.enqueue(frame.event);
+        // A click or focus-moving key can change which element is focused; probe
+        // shortly after so we can tell the phone to raise/dismiss its keyboard.
+        if (this.input && (frame.event.kind === "click" || frame.event.kind === "key")) {
+          this.scheduleFocusProbe(frame.rtcId);
+        }
         break;
       default: {
         const _exhaustive: never = frame;
@@ -108,6 +122,24 @@ export class ScreenSession {
   /** The WS dropped (disconnect or device revoke) — tear any session down. */
   handleDisconnect(): void {
     this.apply({ kind: "disconnect" });
+  }
+
+  /** Debounced focus probe: after the click/key settles, ask the OS whether a
+   *  text field is focused and, only on a change, tell the phone (rtc_focus). */
+  private scheduleFocusProbe(rtcId: string): void {
+    if (this.focusTimer) clearTimeout(this.focusTimer);
+    this.focusTimer = setTimeout(() => {
+      this.focusTimer = null;
+      void this.probeFocus(rtcId);
+    }, FOCUS_PROBE_DELAY_MS);
+  }
+
+  private async probeFocus(rtcId: string): Promise<void> {
+    if (!this.input) return; // session ended between schedule and fire
+    const editable = await queryEditableFocus();
+    if (!this.input || editable === this.lastEditable) return; // ended, or no change
+    this.lastEditable = editable;
+    this.opts.send(buildFocus(rtcId, editable));
   }
 
   private async runEffect(effect: SignalingEffect): Promise<void> {
@@ -217,6 +249,11 @@ export class ScreenSession {
     }
     this.capture = null;
     this.input = null;
+    if (this.focusTimer) {
+      clearTimeout(this.focusTimer);
+      this.focusTimer = null;
+    }
+    this.lastEditable = false;
     const peer = this.peer;
     this.peer = null;
     this.pendingLocalIce = [];

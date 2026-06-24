@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 61 top-level dirs · 60 live · 1 with no live importer · 1039 non-test source files · 0 god files (>400 LOC).
+**Totals:** 61 top-level dirs · 60 live · 1 with no live importer · 1040 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -68,7 +68,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/primal-auto-build/` | 3 | 37 | XL |  |
 | `src/context/` | 2 | 2 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
-| `src/screen-stream/` | 2 | 7 | L |  |
+| `src/screen-stream/` | 2 | 8 | L |  |
 | `src/server/` *(entrypoint)* | 2 | 24 | XL |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
 | `src/anticipatory-care/` | 1 | 6 | M |  |

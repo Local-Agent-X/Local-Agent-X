@@ -244,10 +244,17 @@ export class OutboundAudio {
     // audible mid-phrase gap. Continuous frames keep cadence smooth. Share one
     // in-flight create across racing ticks.
     return (this.encoderInit ??= createOpusEncoder({
-      bitrate: 24000,
+      // 32k (was 24k): headroom so the inband FEC below doesn't starve the
+      // primary frame — trivial bandwidth on a tailnet/LAN.
+      bitrate: 32000,
       inbandFec: true,
       dtx: false,
-      packetLossPerc: 10,
+      // 25 (was 10): the phone path is WebRTC over Wi-Fi; on-device the reply
+      // dropped syllables from packet loss the jitter buffer couldn't hide
+      // (2026-06-23, reproduced on both edge-tts and local kokoro → transport,
+      // not TTS). A higher expected-loss hint makes Opus carry more FEC so a
+      // dropped packet is reconstructed from the next one.
+      packetLossPerc: 25,
     }).then((enc) => {
       // close() may have raced in while the encoder was being created.
       if (this.closed) {

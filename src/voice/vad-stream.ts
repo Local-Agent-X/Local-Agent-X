@@ -54,14 +54,17 @@ export function createStreamingVAD(paths: VadModelPaths, cb: VadCallback = {}): 
   const config = {
     sileroVad: {
       model: paths.model,
-      threshold: 0.55,           // slightly above default to reduce false triggers
-      // 300ms — endpoint a touch faster than the old 400ms. Live streaming
-      // partials now show in the chat thread while the user speaks, so the
-      // perceived latency is already gone; this just trims the real wait.
-      // Going much lower risks endpointing on natural mid-sentence pauses
-      // (breath, "uh") — dial back toward 0.4 if it starts clipping.
+      // 0.65 (was 0.55): the mobile speakerphone mic feeds the desktop VAD a
+      // hot, noisy signal that storm-triggered barge-in (6 false interrupts in
+      // 19s, observed on-device 2026-06-23) — each abort flushes outbound audio
+      // and shreds the reply into dropped-syllable stutter. A higher speech-
+      // probability floor rejects the ambiguous/noisy frames that were tripping it.
+      threshold: 0.65,
       minSilenceDuration: 0.3,
-      minSpeechDuration: 0.2,    // sec — ignore clicks/breaths shorter than this
+      // 0.3 (was 0.2): require a longer sustained burst before counting speech,
+      // so brief room noise / breaths can't fire barge-in. Kept at 0.3 (not 0.4)
+      // so short spoken commands ("stop", "no") still register.
+      minSpeechDuration: 0.3,
       windowSize: 512,
       maxSpeechDuration: 20,
     },

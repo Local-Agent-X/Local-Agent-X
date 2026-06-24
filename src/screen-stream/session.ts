@@ -170,7 +170,7 @@ export class ScreenSession {
       this.input = new ScreenInputController(monitor, (message) =>
         this.opts.send(buildError(rtcId, message)),
       );
-      const d = describeDisplays(monitor);
+      const d = await describeDisplays(monitor);
       this.opts.send(buildDisplays(rtcId, d.count, d.active, d.width, d.height));
 
       const sdp = await peer.createOffer();

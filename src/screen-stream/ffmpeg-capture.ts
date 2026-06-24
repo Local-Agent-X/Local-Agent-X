@@ -12,7 +12,7 @@
 // This keeps the WebRTC peer free of any ffmpeg/codec knowledge (peer.ts) and the
 // capture free of any signaling knowledge — one responsibility per file.
 
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, execFileSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createSocket, type Socket } from "node:dgram";
 import { listMonitors } from "../screen-capture.js";
 import { createLogger } from "../logger.js";
@@ -141,6 +141,29 @@ async function avfScreenIndex(): Promise<string> {
 let captureDeviceHeld = false;
 
 /**
+ * SIGKILL any screen-capture ffmpeg ORPHANED by a prior process generation
+ * before we spawn our own. captureDeviceHeld only tracks captures this process
+ * started — an OTA restart or crash leaves the old ffmpeg child running, and the
+ * new process can't see it, so it spawns a second one and the two starve the
+ * singleton device into frozen frames (the exact recurrence we hit). Matched by
+ * our distinctive screen-grab signature (avfoundation/x11grab → loopback RTP) so
+ * no unrelated ffmpeg is ever touched. -9 because ffmpeg ignores SIGTERM
+ * mid-capture. POSIX only; Windows gdigrab reaping is a follow-up (taskkill can't
+ * match on args). Best-effort: a non-match exits 1, pkill may be absent — both fine.
+ */
+function reapOrphanCaptures(): void {
+  if (process.platform === "win32") return;
+  // Never shell out to pkill from the test runner — startCapture's unit tests
+  // drive it for real, and a sweep there would kill a developer's live capture.
+  if (process.env.VITEST) return;
+  try {
+    execFileSync("pkill", ["-9", "-f", "ffmpeg.*-f (avfoundation|x11grab).*-f rtp"], { timeout: 2000 });
+  } catch {
+    /* nothing matched / pkill unavailable */
+  }
+}
+
+/**
  * Start the capture pipeline. ffmpeg streams VP8 RTP to a loopback UDP port; the
  * bound reader forwards every datagram to `onRtp` (which the peer writes to the
  * track). Errors surface via `onError` so the session can fail cleanly — never a
@@ -201,6 +224,10 @@ export function startCapture(
 
   const launch = async (): Promise<void> => {
     if (stopped) return;
+    // Reap any orphan from a prior process generation right before we take the
+    // singleton device. Placed AFTER the stopped-guard so the mutex unit test
+    // (which stops its handles pre-launch) never reaches it.
+    reapOrphanCaptures();
     let args: string[];
     try {
       args = IS_MAC

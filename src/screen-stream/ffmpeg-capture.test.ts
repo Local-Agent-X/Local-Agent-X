@@ -31,11 +31,14 @@ describe("buildMacFfmpegArgs (macOS avfoundation)", () => {
     expect(args).toContain("libvpx");
   });
 
-  it("negotiates the input format (no -pixel_format pin) for portability", () => {
+  it("pins the input to the device-native uyvy422, converting to yuv420p for the encoder", () => {
     const args = buildMacFfmpegArgs("3", 15, 5004);
-    // Pinning the input pixel format breaks on screens that don't offer it; the
-    // device negotiates its native format and the encode tail converts to yuv420p.
-    expect(args).not.toContain("-pixel_format");
+    // avfoundation rejects yuv420p as an INPUT format. With no explicit input
+    // pixel format, ffmpeg negotiates yuv420p straight from the device, which
+    // rejects it and the capture dies (frozen live view). Pin the device's native
+    // uyvy422 IN (before -i); the encode tail converts to yuv420p OUT for libvpx.
+    expect(args[args.indexOf("-pixel_format") + 1]).toBe("uyvy422");
+    expect(args.indexOf("-pixel_format")).toBeLessThan(args.indexOf("-i"));
     expect(args.join(" ")).toContain("-pix_fmt yuv420p"); // encoder side, kept
   });
 });

@@ -89,10 +89,13 @@ export function buildMacFfmpegArgs(screenIndex: string, fps: number, rtpPort: nu
     "-hide_banner", "-loglevel", "error",
     "-f", "avfoundation",
     "-capture_cursor", "1",
-    // No -pixel_format: let avfoundation negotiate the device's native input
-    // format (uyvy422/nv12/0rgb/… varies by Mac + display) and encodeRtpArgs
-    // converts it to yuv420p for VP8. Pinning a specific input format fails on
-    // screens that don't offer it; negotiation is the portable choice.
+    // Pin the input to a format avfoundation actually offers for screen capture.
+    // WITHOUT this, ffmpeg negotiates yuv420p (what the VP8 output wants) straight
+    // from the device, which rejects it ("pixel format yuv420p not supported by
+    // the input device") and the capture process dies — the live view freezes on
+    // its last frame. uyvy422 is the device's native/first-listed screen format on
+    // macOS; encodeRtpArgs converts it to yuv420p for libvpx in the filter graph.
+    "-pixel_format", "uyvy422",
     "-i", `${screenIndex}:none`,
     "-r", String(fps),
     ...encodeRtpArgs(rtpPort),

@@ -32,6 +32,25 @@ export interface ChatBridgeDeps {
   openLoopback: () => LoopbackChatSocket;
 }
 
+/** The chat seam the broker dialer wires the peer's `chat` data channel into. ChatBridge
+ *  is the real impl (relays to loopback /ws/chat); NullChatChannel drops chat (used when
+ *  chat-over-broker isn't wired — tests, or a view-only build). */
+export interface ChatChannel {
+  attach(transport: ControlTransport): void;
+  close(): void;
+}
+
+/** Inert ChatChannel: the broker `chat` data channel is never bridged (chat stays on the
+ *  tailnet). Lets the dialer default to "no chat over broker" without a null check. */
+export class NullChatChannel implements ChatChannel {
+  attach(_transport: ControlTransport): void {
+    /* chat not bridged */
+  }
+  close(): void {
+    /* nothing to tear down */
+  }
+}
+
 /**
  * Relays one broker `chat` data channel ⇄ one loopback /ws/chat connection:
  *   data channel → loopback   (the phone's chat/stop/subscribe frames)
@@ -39,7 +58,7 @@ export interface ChatBridgeDeps {
  * Frames the phone sends before the loopback ws finishes connecting are BUFFERED and
  * flushed on open, so the first message after pairing isn't lost.
  */
-export class ChatBridge {
+export class ChatBridge implements ChatChannel {
   private transport: ControlTransport | null = null;
   private socket: LoopbackChatSocket | null = null;
   private socketOpen = false;

@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { BrokerScreenDialer, type ScreenSessionLike } from "./broker-screen-dialer.js";
 import type { SocketAdapter, CloseReason } from "./vendor/socket-adapter.js";
-import { DataChannelControl, type ControlChannel, type ControlOutbound } from "./control-channel.js";
+import { DataChannelControl, type ControlChannel, type ControlOutbound, type ScreenCommand } from "./control-channel.js";
 import type { ScreenSessionOptions } from "../screen-stream/session.js";
 import type { IceServerConfig, ControlTransport } from "../screen-stream/peer.js";
 import type { RtcInboundFrame, RtcOutboundFrame, ScreenInputEvent } from "../screen-stream/protocol.js";
@@ -36,8 +36,10 @@ class SpyControl implements ControlChannel {
   closed = 0;
   attached: ControlTransport[] = [];
   input: ((e: ScreenInputEvent) => void) | null = null;
+  screen: ((cmd: ScreenCommand) => void) | null = null;
   send(frame: ControlOutbound): void { this.sent.push(frame); }
   onInput(h: (e: ScreenInputEvent) => void): void { this.input = h; }
+  onScreenCommand(h: (cmd: ScreenCommand) => void): void { this.screen = h; }
   attach(t: ControlTransport): void { this.attached.push(t); }
   close(): void { this.closed++; }
 }
@@ -55,8 +57,12 @@ class FakeTransport implements ControlTransport {
 class FakeSession implements ScreenSessionLike {
   frames: RtcInboundFrame[] = [];
   disconnects = 0;
+  opened: Array<number | undefined> = [];
+  closedScreens = 0;
   handleFrame(frame: RtcInboundFrame): void { this.frames.push(frame); }
   handleDisconnect(): void { this.disconnects++; }
+  openScreen(monitor?: number): void { this.opened.push(monitor); }
+  closeScreen(): void { this.closedScreens++; }
   get types(): string[] { return this.frames.map((f) => f.type); }
 }
 
@@ -106,6 +112,26 @@ describe("BrokerScreenDialer — start trigger", () => {
     vi.advanceTimersByTime(2000);
     expect(session.types).toEqual(["rtc_start"]);
     expect(getOpts().getIceServers?.()).toEqual([]); // no minted servers → empty list
+  });
+});
+
+describe("BrokerScreenDialer — screen open/close commands (persistent peer)", () => {
+  it("starts ffmpeg only when the phone sends screen_open, and stops on screen_close", () => {
+    const { control, session } = makeDialer();
+    // Peer is up (chat flowing) but no capture yet — nothing opened.
+    expect(session.opened).toHaveLength(0);
+
+    control.screen?.({ kind: "open", monitor: 1 });
+    expect(session.opened).toEqual([1]);
+
+    control.screen?.({ kind: "close" });
+    expect(session.closedScreens).toBe(1);
+  });
+
+  it("the session defers capture on the broker path (deferCapture)", () => {
+    const { getOpts, socket } = makeDialer();
+    socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
+    expect(getOpts().deferCapture).toBe(true);
   });
 });
 

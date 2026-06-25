@@ -26,6 +26,12 @@ export type ControlOutbound = Extract<
   { type: "rtc_displays" } | { type: "rtc_focus" } | { type: "rtc_error" } | { type: "rtc_closed" }
 >;
 
+/** A screen-capture command the phone sends over the control channel on the PERSISTENT
+ *  broker peer: the peer stays up for chat, so the phone asks to START capture when it
+ *  opens the live view and STOP when it closes — ffmpeg only runs while someone watches.
+ *  Wire form: `{type:"screen_open", monitor?}` / `{type:"screen_close"}`. */
+export type ScreenCommand = { kind: "open"; monitor?: number } | { kind: "close" };
+
 /** Carries app control between the paired peers, out of band from broker signaling.
  *  The real implementation (DataChannelControl) rides the WebRTC data channel; this
  *  seam keeps the dialer from depending on it directly. */
@@ -34,6 +40,9 @@ export interface ControlChannel {
   send(frame: ControlOutbound): void;
   /** Register the inbound handler — remote input the phone drives. Called once. */
   onInput(handler: (event: ScreenInputEvent) => void): void;
+  /** Register the handler for screen open/close commands from the phone (persistent
+   *  broker peer: start/stop ffmpeg as the live view opens/closes). Called once. */
+  onScreenCommand(handler: (cmd: ScreenCommand) => void): void;
   /** Connect the underlying transport once the peer's data channel is open. The peer
    *  surfaces the ControlTransport asynchronously (post-negotiation), so the dialer
    *  may have buffered outbound control before this fires. */
@@ -51,6 +60,7 @@ export interface ControlChannel {
 export class DataChannelControl implements ControlChannel {
   private transport: ControlTransport | null = null;
   private inputHandler: ((event: ScreenInputEvent) => void) | null = null;
+  private screenHandler: ((cmd: ScreenCommand) => void) | null = null;
   private readonly outboundQueue: ControlOutbound[] = [];
   private closed = false;
 
@@ -62,6 +72,10 @@ export class DataChannelControl implements ControlChannel {
 
   onInput(handler: (event: ScreenInputEvent) => void): void {
     this.inputHandler = handler;
+  }
+
+  onScreenCommand(handler: (cmd: ScreenCommand) => void): void {
+    this.screenHandler = handler;
   }
 
   attach(transport: ControlTransport): void {
@@ -93,9 +107,25 @@ export class DataChannelControl implements ControlChannel {
     }
     if (!raw || typeof raw !== "object") return;
     const msg = raw as Record<string, unknown>;
-    if (msg.type !== "rtc_input") return; // the desktop only consumes input over the dc
-    const event = parseScreenInputEvent(msg.event);
-    if (event && this.inputHandler) this.inputHandler(event);
+    switch (msg.type) {
+      case "rtc_input": {
+        const event = parseScreenInputEvent(msg.event);
+        if (event && this.inputHandler) this.inputHandler(event);
+        return;
+      }
+      case "screen_open": {
+        const cmd: ScreenCommand =
+          typeof msg.monitor === "number" ? { kind: "open", monitor: msg.monitor } : { kind: "open" };
+        this.screenHandler?.(cmd);
+        return;
+      }
+      case "screen_close": {
+        this.screenHandler?.({ kind: "close" });
+        return;
+      }
+      default:
+        return; // unknown frame on the control channel — drop, never inject
+    }
   }
 }
 
@@ -119,6 +149,10 @@ export class NullControlChannel implements ControlChannel {
 
   onInput(_handler: (event: ScreenInputEvent) => void): void {
     /* no inbound path — remote control is inert */
+  }
+
+  onScreenCommand(_handler: (cmd: ScreenCommand) => void): void {
+    /* no inbound path — screen open/close commands are inert */
   }
 
   attach(_transport: ControlTransport): void {

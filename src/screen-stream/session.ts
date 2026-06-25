@@ -63,6 +63,16 @@ export interface ScreenSessionOptions {
    *  ControlTransport here once it's open. The tailnet path omits this — no data
    *  channel is created and control rides /ws/chat unchanged. */
   onControlTransport?: (transport: ControlTransport) => void;
+  /** Broker transport only: opt into a `chat` data channel on the SAME peer (so the one
+   *  broker connection multiplexes screen + chat). Surfaces its transport once open; the
+   *  dialer bridges it to the desktop's own /ws/chat. Omitted on the tailnet path. */
+  onChatTransport?: (transport: ControlTransport) => void;
+  /** Broker transport only: when true, `rtc_start` ESTABLISHES the peer (track + data
+   *  channels + offer) but does NOT start ffmpeg — the persistent broker peer carries
+   *  chat without the screen running. ffmpeg starts later via openScreen() when the
+   *  phone opens the live view. Default false = tailnet behavior (establish + capture
+   *  together on rtc_start), unchanged. */
+  deferCapture?: boolean;
 }
 
 export class ScreenSession {
@@ -79,9 +89,26 @@ export class ScreenSession {
   /** Remote ICE candidates buffered until the peer exists / answer applied. */
   private pendingRemoteIce: RtcIceCandidate[] = [];
   private readonly allocatePort: AllocateRtpPort;
+  /** Broker only: don't start ffmpeg on rtc_start (the persistent peer carries chat). */
+  private readonly deferCapture: boolean;
 
   constructor(private readonly opts: ScreenSessionOptions) {
     this.allocatePort = opts.allocatePort ?? defaultAllocatePort;
+    this.deferCapture = opts.deferCapture ?? false;
+  }
+
+  /** Phone opened the live view on an already-connected broker peer → start ffmpeg on
+   *  the existing (silent) video track. No re-negotiation: the track was negotiated when
+   *  the peer came up. No-op on the tailnet path (capture already running) or before the
+   *  peer exists. */
+  async openScreen(monitor?: number): Promise<void> {
+    if (!this.peer || this.capture) return;
+    await this.beginCapture(this.state.rtcId ?? "", monitor);
+  }
+
+  /** Phone closed the live view → stop ffmpeg but KEEP the peer (chat keeps flowing). */
+  closeScreen(): void {
+    this.endCapture();
   }
 
   /** Current lifecycle status (for diagnostics / the router log). */
@@ -155,7 +182,7 @@ export class ScreenSession {
   private async runEffect(effect: SignalingEffect): Promise<void> {
     switch (effect.kind) {
       case "startCapture":
-        await this.startCaptureAndOffer(effect.rtcId, effect.monitor);
+        await this.establishPeerAndOffer(effect.rtcId, effect.monitor);
         break;
       case "sendOffer":
         this.opts.send(buildOffer(effect.rtcId, effect.sdp));
@@ -186,8 +213,13 @@ export class ScreenSession {
     }
   }
 
-  private async startCaptureAndOffer(rtcId: string, monitor?: number): Promise<void> {
+  private async establishPeerAndOffer(rtcId: string, monitor?: number): Promise<void> {
     try {
+      // The broker peer multiplexes screen + chat (+ later apps) over ONE connection:
+      // open the `chat` channel alongside `control` when the dialer wants it.
+      const extraChannels = this.opts.onChatTransport
+        ? [{ label: "chat", onReady: this.opts.onChatTransport }]
+        : undefined;
       const peer = await ScreenPeer.create(
         {
           onLocalIce: (candidate) => {
@@ -201,29 +233,59 @@ export class ScreenSession {
         },
         this.opts.getIceServers?.(),
         this.opts.onControlTransport,
+        extraChannels,
       );
       this.peer = peer;
 
-      const rtpPort = this.allocatePort();
-      this.capture = startCapture(
-        { monitor, rtpPort },
-        (packet) => peer.writeRtp(packet),
-        (message) => this.apply({ kind: "fail", rtcId, message }),
-      );
-
-      // Arm remote control for this session + tell the phone how many monitors
-      // exist (so it offers swipe-between-screens only when there's more than one).
-      this.input = new ScreenInputController(monitor, (message) =>
-        this.opts.send(buildError(rtcId, message)),
-      );
-      const d = await describeDisplays(monitor);
-      this.opts.send(buildDisplays(rtcId, d.count, d.active, d.width, d.height));
+      // Tailnet (deferCapture=false): start ffmpeg now, exactly as before. Broker
+      // (deferCapture=true): defer until the phone opens the live view (openScreen), so
+      // the persistent peer carries chat without the screen running.
+      if (!this.deferCapture) await this.beginCapture(rtcId, monitor);
 
       const sdp = await peer.createOffer();
       this.apply({ kind: "offerReady", rtcId, sdp });
     } catch (e) {
       this.apply({ kind: "fail", rtcId, message: `Couldn't start live screen: ${(e as Error).message}` });
     }
+  }
+
+  /** Start ffmpeg capture on the (already-built) peer, arm remote control, and tell the
+   *  phone the monitor layout. Idempotent — a second call while capturing is a no-op. */
+  private async beginCapture(rtcId: string, monitor?: number): Promise<void> {
+    if (this.capture || !this.peer) return;
+    const peer = this.peer;
+
+    const rtpPort = this.allocatePort();
+    this.capture = startCapture(
+      { monitor, rtpPort },
+      (packet) => peer.writeRtp(packet),
+      (message) => this.apply({ kind: "fail", rtcId, message }),
+    );
+
+    // Arm remote control for this session + tell the phone how many monitors
+    // exist (so it offers swipe-between-screens only when there's more than one).
+    this.input = new ScreenInputController(monitor, (message) =>
+      this.opts.send(buildError(rtcId, message)),
+    );
+    const d = await describeDisplays(monitor);
+    this.opts.send(buildDisplays(rtcId, d.count, d.active, d.width, d.height));
+  }
+
+  /** Stop ffmpeg + remote control but LEAVE the peer intact (broker: chat keeps flowing
+   *  after the live view closes). Idempotent. */
+  private endCapture(): void {
+    try {
+      this.capture?.stop();
+    } catch {
+      /* already stopped */
+    }
+    this.capture = null;
+    this.input = null;
+    if (this.focusTimer) {
+      clearTimeout(this.focusTimer);
+      this.focusTimer = null;
+    }
+    this.lastEditable = false;
   }
 
   private async applyAnswer(rtcId: string, sdp: string): Promise<void> {
@@ -256,18 +318,7 @@ export class ScreenSession {
   }
 
   private async teardown(): Promise<void> {
-    try {
-      this.capture?.stop();
-    } catch {
-      /* already stopped */
-    }
-    this.capture = null;
-    this.input = null;
-    if (this.focusTimer) {
-      clearTimeout(this.focusTimer);
-      this.focusTimer = null;
-    }
-    this.lastEditable = false;
+    this.endCapture();
     const peer = this.peer;
     this.peer = null;
     this.pendingLocalIce = [];

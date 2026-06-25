@@ -15,7 +15,10 @@
 import { buildConnectUrl } from "./vendor/connect-url.js";
 import { openBrokerSocket } from "./ws-socket-adapter.js";
 import { DataChannelControl } from "./control-channel.js";
+import { ChatBridge } from "./chat-bridge.js";
+import { openBrokerChatLoopback } from "./chat-loopback.js";
 import { BrokerScreenDialer } from "./broker-screen-dialer.js";
+import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.presence");
@@ -114,7 +117,15 @@ export function defaultPresenceDeps(): BrokerPresenceDeps {
     createDialer: (connectUrl, token, onClosed) => {
       const socket = openBrokerSocket(connectUrl, token);
       const control = new DataChannelControl();
-      return new BrokerScreenDialer({ socket, control, onClosed });
+      // Chat rides the peer's `chat` data channel, bridged to the desktop's own /ws/chat
+      // over loopback (operator-authed; read fresh so a re-login's token is current).
+      const chat = new ChatBridge({
+        openLoopback: () => {
+          const cfg = getRuntimeConfig();
+          return openBrokerChatLoopback(cfg.port, cfg.authToken);
+        },
+      });
+      return new BrokerScreenDialer({ socket, control, chat, onClosed });
     },
     reconnectMs: DEFAULT_RECONNECT_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),

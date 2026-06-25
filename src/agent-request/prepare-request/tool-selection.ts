@@ -7,6 +7,7 @@ import type { ToolDefinition } from "../../types.js";
 import { filterToolsForMessage } from "../tool-filter.js";
 import { classifyIntent, hasLiteralToolCall, mightNeedToolForcing, NO_SPAWN_OVERRIDE_RE } from "../../classifiers/intent-classifier.js";
 import { isSlashCommandExpansion } from "../../slash-commands.js";
+import { providerUndercallsTools } from "../../providers/provider-ids.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("agent-request.prepare-request.tools");
@@ -102,13 +103,22 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // path neutered the narrowing because it padded the filtered set back
   // up to 128 with the rest of the catalogue.)
   const isAnthropicProvider = input.resolvedProvider === "anthropic";
+  // Strong tool-shy providers (Grok) skip build-intent NARROWING the same way
+  // the Anthropic-strong path does — they reason over the broad eager-audience
+  // ∪ RAG union fine, and build_app stays hard-pinned by tool_choice forcing
+  // (prepare-request) when intent demands it, so dropping the soft narrowing
+  // doesn't reopen the improvise-with-raw-write problem. They stay OUT of the
+  // bare-allAgentTools fast path above (uncached full catalog = real per-turn
+  // cost), so this is a bounded broadening, not the full inventory. Codex/OpenAI
+  // strong keep the narrowing — it's load-bearing for them (comment above).
+  const strongToolShy = tier === "strong" && providerUndercallsTools(input.resolvedProvider);
   let tools: ToolDefinition[];
   if (isBridge) {
     tools = input.bridgeTools;
   } else if (tier === "strong" && isAnthropicProvider) {
     tools = input.allAgentTools;
   } else {
-    tools = filterToolsForMessage(input.allAgentTools, input.message, { forceBuildIntent, skipBuildIntent: inMethodology });
+    tools = filterToolsForMessage(input.allAgentTools, input.message, { forceBuildIntent, skipBuildIntent: inMethodology || strongToolShy });
     if (tier !== "strong") {
       const before = tools.length;
       tools = shrinkToolsForTier(tools, tier, input.allAgentTools);

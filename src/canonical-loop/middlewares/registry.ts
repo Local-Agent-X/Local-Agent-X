@@ -17,7 +17,10 @@
  *                         claim-mismatch nudge wins first), open-steps
  *                         (forces continuation when the model left declared
  *                         task-list steps unfinished; runs on interactive too,
- *                         its open-tasks signal is safe for chat), self-check,
+ *                         its open-tasks signal is safe for chat), browser-handoff
+ *                         (interactive chat only — forces continuation when a
+ *                         browser-driving turn punts the obstruction back to the
+ *                         user with the page still open), self-check,
  *                         post-turn-detector, auto-build-app
  *                         (anthropic, runs AFTER post-turn-detector so the
  *                         detector sees the original empty-toolCalls state
@@ -40,6 +43,7 @@ import { actionClaimMiddleware } from "./action-claim.js";
 import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { openStepsMiddleware } from "./open-steps.js";
+import { browserHandoffMiddleware } from "./browser-handoff.js";
 import { selfCheckMiddleware } from "./self-check.js";
 import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
 import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
@@ -68,6 +72,10 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     // exclusive: that fires on no-commit, this on source-edit-committed).
     verifyGateMiddleware,
     openStepsMiddleware,
+    // Interactive chat only — forces one more turn when a browser-driving turn
+    // ends by punting the obstruction back to the user while the page is still
+    // open (the chat analogue of premature-completion, which is worker-only).
+    browserHandoffMiddleware,
     selfCheckMiddleware,
     postTurnDetectorMiddleware,
     autoBuildAppMiddleware,

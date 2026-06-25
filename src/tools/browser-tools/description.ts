@@ -37,7 +37,17 @@ export const BROWSER_TOOL_DESCRIPTION =
   "TIPS:\n" +
   "- After navigate, ALWAYS take a snapshot before interacting.\n" +
   "- Use click_text for popups/modals where you can see the button text.\n" +
-  "- When a login opens a new tab, use 'tabs' then 'switch_tab'.";
+  "- When a login opens a new tab, use 'tabs' then 'switch_tab'.\n\n" +
+  "OBSTRUCTIONS (overlays, consent/cookie banners, modals): a snapshot may report " +
+  "'OBSTRUCTION DETECTED' with no accept/dismiss button. Do NOT hand the task back to " +
+  "the user over this — clear it yourself, in order:\n" +
+  "1. click_text on a visible 'Accept'/'Got it'/'Close'/'X' label if there is one.\n" +
+  "2. evaluate to remove or hide it: find the overlay node and `el.remove()` " +
+  "(or set `el.style.display='none'`), then snapshot again.\n" +
+  "3. If it sits over the control you want, scroll/click the underlying element by ref.\n" +
+  "Only ask the user to act when the blocker is something ONLY they can supply " +
+  "(a password, a 2FA code, a CAPTCHA) — and only after you've actually tried the above. " +
+  "While the browser is open and responding, keep driving; don't stop with a summary.";
 
 export const BROWSER_TOOL_PARAMETERS = {
   type: "object",

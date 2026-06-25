@@ -109,6 +109,7 @@ export async function driveTurn(
 
   const finalized: CanonicalMessage[] = [];
   const toolCalls: ToolCall[] = [];
+  const observedTools: string[] = [];
   let adapterError: { code: string; message: string } | null = null;
   let middlewareDirective: MiddlewareDirective | null = null;
 
@@ -163,6 +164,10 @@ export async function driveTurn(
       }
       if (r.kind === "tool_call_requested") {
         toolCalls.push(r.call);
+        return;
+      }
+      if (r.kind === "tool_observed") {
+        observedTools.push(r.tool);
         return;
       }
       if (r.kind === "error") {
@@ -322,6 +327,7 @@ export async function driveTurn(
     toolMessages,
     toolSummary,
     toolCalls,
+    observedTools,
     assistantText,
     adapterTerminalReason: result.terminalReason ?? null,
     // The model's REAL stop signal (end_turn / stop), when the provider
@@ -337,6 +343,7 @@ export async function driveTurn(
     providerState,
     messages: allMessages,
     toolCallSummary: toolSummary,
+    observedTools,
     terminalReason,
     redirectConsumed: pendingRedirect != null,
     redirectInstructionId: pendingRedirect?.instructionId,

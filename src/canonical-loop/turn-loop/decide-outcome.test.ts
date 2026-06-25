@@ -28,6 +28,7 @@ vi.mock("../../tool-tracker.js", () => ({
 }));
 
 import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
+import { readOpTurns } from "../store.js";
 import type { ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
 import type { ToolCallSummary } from "../types.js";
@@ -55,6 +56,7 @@ function input(over: Partial<DecideOutcomeInput> = {}): DecideOutcomeInput {
     toolMessages: [bashOkResult],
     toolSummary: bashSummary,
     toolCalls: [bashCall],
+    observedTools: [],
     assistantText: "Working tree is clean.",
     // Tool turn: the adapter returns terminalReason=undefined → null here, so
     // the loop's done-decision is what's under test.
@@ -145,5 +147,25 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
     const { recordOpOutcome } = await import("../../tool-tracker.js");
     await decideTurnOutcome(input({ modelSignaledDone: false }));
     expect(recordOpOutcome).not.toHaveBeenCalled();
+  });
+
+  it("folds observed (CLI/MCP) tools into op categorization", async () => {
+    const { classifyOpCategory } = await import("../../tool-tracker.js");
+    await decideTurnOutcome(input({
+      toolCalls: [], toolMessages: [], toolSummary: [],
+      observedTools: ["mcp__lax__browser"],
+    }));
+    const arg = (classifyOpCategory as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Set<string>;
+    expect(arg.has("mcp__lax__browser")).toBe(true);
+  });
+
+  it("folds a prior turn's observed tools into op categorization", async () => {
+    vi.mocked(readOpTurns).mockReturnValueOnce(
+      [{ toolCallSummary: [], observedTools: ["mcp__lax__web_search"] }] as unknown as ReturnType<typeof readOpTurns>,
+    );
+    const { classifyOpCategory } = await import("../../tool-tracker.js");
+    await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
+    const arg = (classifyOpCategory as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Set<string>;
+    expect(arg.has("mcp__lax__web_search")).toBe(true);
   });
 });

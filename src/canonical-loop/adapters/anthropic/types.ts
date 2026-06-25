@@ -71,6 +71,7 @@ export interface TransportTool {
 export type TransportEvent =
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
+  | { type: "tool_observed"; name: string }
   | { type: "error"; code: string; message: string; retryable?: boolean }
   | {
       type: "done";

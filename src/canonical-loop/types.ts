@@ -71,6 +71,16 @@ export interface OpTurnRow {
   turnIdx: number;
   providerState: ProviderStateEnvelope;
   toolCallSummary: ToolCallSummary[];
+  /**
+   * Tools the PROVIDER executed out of band (the Anthropic CLI/MCP path,
+   * where Claude runs LAX tools inside the `claude` subprocess and surfaces
+   * them only as `mcp_activity`). Recorded for op-category telemetry ONLY.
+   * Kept SEPARATE from `toolCallSummary` on purpose: the middleware
+   * `toolsCalledThisOp` / `committingToolsThisOp` tallies read toolCallSummary,
+   * and an out-of-band tool must not perturb their gating. Names may carry an
+   * `mcp__<server>__` prefix — callers normalize at read time, not here.
+   */
+  observedTools?: string[];
   terminalReason: "done" | "error" | "cancelled" | null;
   redirectConsumed: boolean;
   createdAt: string;

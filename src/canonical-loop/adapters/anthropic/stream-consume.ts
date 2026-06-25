@@ -88,6 +88,14 @@ export async function streamConsume(
         });
         continue;
       }
+      if (ev.type === "tool_observed") {
+        // The provider ran this tool out of band (CLI/MCP subprocess). Record
+        // its NAME for op-category telemetry only — it already executed, so it
+        // must NOT join out.toolCallIds (an outstanding call would change the
+        // turn's terminalReason).
+        report({ kind: "tool_observed", tool: ev.name });
+        continue;
+      }
       if (ev.type === "error") {
         // Routine errors come through as adapter_reports (PRD §15 H).
         // We capture the FIRST error and propagate via TurnResult.

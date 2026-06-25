@@ -82,6 +82,19 @@ export type AdapterReport =
    */
   | { kind: "stream_redact"; replacementText: string }
   | { kind: "tool_call_requested"; call: ToolCall }
+  /**
+   * Emitted when the PROVIDER ran a tool itself, out of band — chiefly the
+   * Anthropic CLI/OAuth path, where tools execute inside the `claude`
+   * subprocess via MCP and surface to us only as `mcp_activity`. Unlike
+   * `tool_call_requested` (which the loop dispatches), a `tool_observed`
+   * tool has ALREADY run; the loop just records its NAME for op-category
+   * telemetry and does NOT dispatch it.
+   *
+   * `tool` is the tool name; callers normalize any `mcp__<server>__` prefix
+   * downstream, not here. Consumers that don't handle this kind ignore it
+   * (graceful degradation), same as `heartbeat`.
+   */
+  | { kind: "tool_observed"; tool: string }
   | { kind: "message_finalized"; message: CanonicalMessage }
   | { kind: "error"; code: string; message: string; retryable: boolean };
 

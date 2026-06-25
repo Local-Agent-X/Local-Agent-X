@@ -44,6 +44,8 @@ export interface DecideOutcomeInput {
   toolMessages: CommitTurnMessage[];
   toolSummary: ToolCallSummary[];
   toolCalls: ToolCall[];
+  /** Out-of-band (CLI/MCP) tool names observed THIS turn — folded into op categorization alongside prior turns' OpTurnRow.observedTools. */
+  observedTools: string[];
   assistantText: string;
   adapterTerminalReason: "done" | "error" | null;
   /**
@@ -70,7 +72,7 @@ export interface DecideOutcomeResult {
 export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<DecideOutcomeResult> {
   const {
     op, turnIdx, middlewareDirective,
-    finalized, toolMessages, toolSummary, toolCalls,
+    finalized, toolMessages, toolSummary, toolCalls, observedTools,
     assistantText, adapterTerminalReason, modelSignaledDone, adapterError,
   } = in_;
 
@@ -254,8 +256,10 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     const opToolNames = new Set<string>();
     for (const turn of readOpTurns(op.id)) {
       for (const s of turn.toolCallSummary ?? []) opToolNames.add(s.tool);
+      for (const t of turn.observedTools ?? []) opToolNames.add(t);
     }
     for (const tc of toolCalls) opToolNames.add(tc.tool);
+    for (const t of observedTools) opToolNames.add(t);
     const outcome: OpOutcome =
       terminalReason === "error" ? "aborted" : endedPartial ? "partial" : "clean";
     recordOpOutcome(classifyOpCategory(opToolNames), outcome, resolveOpModel(op));

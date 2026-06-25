@@ -49,6 +49,9 @@ export interface CommitTurnInput {
   providerState: ProviderStateEnvelope;
   messages: CommitTurnMessage[];
   toolCallSummary: ToolCallSummary[];
+  /** Out-of-band tool names observed this turn (CLI/MCP path). Persisted to
+   *  OpTurnRow.observedTools for categorization; NOT folded into toolCallSummary. */
+  observedTools?: string[];
   terminalReason: "done" | "error" | null;
   /** True if a `pending_redirect` was folded into this turn's prompt. */
   redirectConsumed?: boolean;
@@ -128,6 +131,7 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
     terminalReason: input.terminalReason,
     redirectConsumed,
     createdAt: new Date().toISOString(),
+    ...(input.observedTools && input.observedTools.length > 0 ? { observedTools: input.observedTools } : {}),
     ...(input.modelMs !== undefined ? { modelMs: input.modelMs } : {}),
     ...(input.toolDispatchMs !== undefined ? { toolDispatchMs: input.toolDispatchMs } : {}),
   };

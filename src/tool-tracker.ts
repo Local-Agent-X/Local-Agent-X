@@ -132,9 +132,28 @@ const CATEGORY_TOOLS: ReadonlyArray<readonly [OpCategory, readonly string[]]> = 
   ["research", ["web_search", "web_fetch", "http_request", "image_search", "youtube_analyze"]],
 ];
 
+/**
+ * Normalize a tool name observed out of band (CLI/MCP path) to its canonical
+ * LAX name so the category table matches it. LAX tools reach the `claude`
+ * subprocess as `mcp__<server>__<tool>` (e.g. mcp__lax__web_search); the
+ * <tool> segment is the canonical name. The one enabled native CLI tool,
+ * Anthropic's server-side `WebSearch`, maps to LAX's research bucket via
+ * web_search. Bare/already-canonical names pass through unchanged, so this is
+ * a no-op for tools the canonical loop dispatched itself.
+ */
+export function normalizeObservedToolName(raw: string): string {
+  if (raw.startsWith("mcp__")) {
+    const parts = raw.split("__");
+    if (parts.length >= 3) return parts.slice(2).join("__");
+  }
+  if (raw === "WebSearch") return "web_search";
+  return raw;
+}
+
 export function classifyOpCategory(toolsUsed: Set<string>): OpCategory {
+  const normalized = new Set([...toolsUsed].map(normalizeObservedToolName));
   for (const [category, names] of CATEGORY_TOOLS) {
-    if (names.some((n) => toolsUsed.has(n))) return category;
+    if (names.some((n) => normalized.has(n))) return category;
   }
   return "general";
 }

@@ -109,10 +109,15 @@ export function defaultAnthropicTransport(): AnthropicTransport {
                   }
                 : undefined,
             };
+          } else if (ev.type === "mcp_activity") {
+            // The CLI/MCP path executed this tool itself inside the subprocess; we
+            // surface its NAME so the canonical loop can categorize the op. It does
+            // NOT re-dispatch — the tool already ran. Nameless frames carry no
+            // signal, so skip them.
+            if (ev.name) {
+              yield { type: "tool_observed", name: ev.name };
+            }
           }
-          // mcp_activity events are observability; the canonical loop
-          // surfaces tool runs through `tool_started` / `tool_finished`
-          // emitted by `turn-loop.dispatchTools`. Skip here.
         }
       } catch (e) {
         yield {

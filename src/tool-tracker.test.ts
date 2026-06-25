@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyOpCategory, recordOpOutcome, getOpOutcomeStats, _resetOpOutcomeCache } from "./tool-tracker.js";
+import { classifyOpCategory, normalizeObservedToolName, recordOpOutcome, getOpOutcomeStats, _resetOpOutcomeCache } from "./tool-tracker.js";
 
 // op-outcome persistence resolves getLaxDir() lazily, so redirecting the write
 // off ~/.lax in beforeAll (not at import) is enough. Restore so the env doesn't
@@ -30,6 +30,33 @@ describe("classifyOpCategory", () => {
     expect(classifyOpCategory(new Set(["task_list"]))).toBe("general");
     expect(classifyOpCategory(new Set())).toBe("general");
   });
+
+  it("normalizes MCP-prefixed observed tool names before matching", () => {
+    expect(classifyOpCategory(new Set(["mcp__lax__browser"]))).toBe("browser");
+    expect(classifyOpCategory(new Set(["mcp__lax__web_search"]))).toBe("research");
+  });
+
+  it("maps native WebSearch to research", () => {
+    expect(classifyOpCategory(new Set(["WebSearch"]))).toBe("research");
+  });
+
+  it("passes bare dispatched names through unchanged", () => {
+    expect(classifyOpCategory(new Set(["bash"]))).toBe("coding");
+  });
+
+  it("keeps family precedence after normalization", () => {
+    expect(classifyOpCategory(new Set(["mcp__lax__web_search", "mcp__lax__browser"]))).toBe("browser");
+  });
+});
+
+describe("normalizeObservedToolName", () => {
+  it("strips the mcp__<server>__ prefix to the canonical name", () => {
+    expect(normalizeObservedToolName("mcp__lax__write")).toBe("write");
+  });
+
+  it("leaves bare names unchanged", () => {
+    expect(normalizeObservedToolName("bash")).toBe("bash");
+  });
 });
 
 describe("op-outcome telemetry", () => {
@@ -51,5 +78,16 @@ describe("op-outcome telemetry", () => {
   it("buckets a missing model under 'unknown'", () => {
     recordOpOutcome("general", "clean", undefined);
     expect(getOpOutcomeStats()["general::unknown"]?.clean).toBe(1);
+  });
+
+  it("regression (Bug A): a Claude op that only observed mcp__lax__browser records browser, not general", () => {
+    // The exact failure this work fixed: Claude's CLI/MCP tools were invisible,
+    // so every Claude op fell to general::claude-opus-4-8 (50/50 in the live
+    // data). With observed-tool categorization, the mcp__lax__ name normalizes
+    // and the op lands in its real category.
+    recordOpOutcome(classifyOpCategory(new Set(["mcp__lax__browser"])), "clean", "claude-opus-4-8");
+    const stats = getOpOutcomeStats();
+    expect(stats["browser::claude-opus-4-8"]?.clean).toBe(1);
+    expect(stats["general::claude-opus-4-8"]).toBeUndefined();
   });
 });

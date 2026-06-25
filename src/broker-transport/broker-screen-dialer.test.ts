@@ -135,6 +135,27 @@ describe("BrokerScreenDialer — screen open/close commands (persistent peer)", 
   });
 });
 
+describe("BrokerScreenDialer — phone reconnect rebuilds the peer (keep socket)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("a reconnect (peer-left → peer-joined) rebuilds the session on fresh ICE, keeping the socket", () => {
+    const { socket, session } = makeDialer();
+    socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
+    socket.deliver({ type: "ice-servers", iceServers: TURN, ttlSeconds: 300 });
+    expect(session.types).toEqual(["rtc_start"]);
+
+    // The phone reconnected → the broker re-fires our lifecycle: peer-left (tear down the
+    // stale session) then peer-joined (rebuild). We KEEP our broker socket throughout.
+    socket.deliver({ type: "peer-left" });
+    expect(session.disconnects).toBe(1);
+    socket.deliver({ type: "peer-joined" });
+    socket.deliver({ type: "ice-servers", iceServers: TURN, ttlSeconds: 300 }); // re-mint
+    expect(session.frames.filter((f) => f.type === "rtc_start")).toHaveLength(2);
+    expect(socket.closes).toHaveLength(0); // socket kept — no full reconnect
+  });
+});
+
 describe("BrokerScreenDialer — inbound signaling → session", () => {
   it("maps an answer signal to rtc_answer", () => {
     const { socket, session } = makeDialer();
@@ -192,11 +213,17 @@ describe("BrokerScreenDialer — control inbound + teardown", () => {
     });
   });
 
-  it("tears down the session on peer-left", () => {
+  it("rebuilds (not full-teardown) on peer-left: disconnects the session, keeps socket + control", () => {
     const { socket, session, control } = makeDialer();
+    // Establish first so there's a live peer to rebuild.
+    socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
+    socket.deliver({ type: "ice-servers", iceServers: TURN, ttlSeconds: 300 });
+    // Phone left (or reconnected → lifecycle re-fired): tear down the stale session, but
+    // KEEP our socket + control (we rebuild on the next peer-joined).
     socket.deliver({ type: "peer-left" });
     expect(session.disconnects).toBe(1);
-    expect(control.closed).toBe(1);
+    expect(socket.closes).toHaveLength(0); // socket kept — NOT a full teardown
+    expect(control.closed).toBe(0); // control kept (re-attaches on rebuild)
   });
 
   it("tears down on a terminal gate close (4403) and ignores later frames", () => {

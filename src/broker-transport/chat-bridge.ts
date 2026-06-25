@@ -72,29 +72,47 @@ export class ChatBridge implements ChatChannel {
    *  surfaces its `chat` channel (already open, so `transport.send` is valid). */
   attach(transport: ControlTransport): void {
     if (this.closed) return;
+    this.detach(); // drop any prior loopback — attach is re-entrant across peer rebuilds
     this.transport = transport;
     const socket = this.deps.openLoopback();
     this.socket = socket;
 
     socket.onOpen(() => {
+      if (this.socket !== socket) return; // a stale socket's late open — ignore
       this.socketOpen = true;
       for (const frame of this.pending) socket.send(frame);
       this.pending.length = 0;
     });
     socket.onMessage((text) => {
-      if (!this.closed) transport.send(text); // server event → phone
+      if (!this.closed && this.socket === socket) transport.send(text); // server event → phone
     });
     socket.onClose(() => {
-      // The loopback to our own process dropped (server shutdown / restart). Drop the
-      // open flag; the data channel stays so a reconnected server can be re-bridged by
-      // a fresh attach. We don't auto-reopen here — the presence/peer lifecycle owns that.
+      // The loopback dropped. Identity-check so a stale socket's late close doesn't null a
+      // freshly re-attached one. The data channel stays; a peer rebuild re-bridges via attach.
+      if (this.socket !== socket) return;
       this.socketOpen = false;
       this.socket = null;
       if (!this.closed) logger.warn("[broker-transport] chat loopback closed");
     });
 
     transport.onMessage((text) => this.toServer(text)); // phone frame → server
-    transport.onClose(() => this.close());
+    // The chat data channel closed (the peer is rebuilding after a reconnect). Drop the
+    // loopback but stay re-attachable — NOT a full close (that's the dialer-stop path).
+    transport.onClose(() => this.detach());
+  }
+
+  /** Drop the current loopback + buffered frames but stay re-attachable (the peer is
+   *  rebuilding). Distinct from close(), which is the permanent teardown. */
+  private detach(): void {
+    try {
+      this.socket?.close();
+    } catch {
+      /* already closed */
+    }
+    this.socket = null;
+    this.socketOpen = false;
+    this.pending.length = 0;
+    this.transport = null;
   }
 
   /** Forward a phone frame to the loopback server, buffering until it's connected. */

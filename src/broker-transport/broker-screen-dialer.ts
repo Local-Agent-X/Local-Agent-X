@@ -118,10 +118,10 @@ export class BrokerScreenDialer {
       onPeerPresent: () => this.onPeerPresent(),
       onSignal: (signal) => this.onSignal(signal),
       onIceServers: (servers) => this.onIceServers(servers),
-      // The phone left the rendezvous OR our socket dropped → tear down + let presence
-      // reconnect. Either way the live peer is gone; the broker evicts any stale slot so
-      // the re-dial succeeds (no role_taken loop).
-      onPeerLeft: () => this.teardown(),
+      // Phone left the rendezvous (or reconnected → the broker re-fires our lifecycle):
+      // rebuild our peer, KEEP our socket. A dropped OWN socket is a full teardown +
+      // presence reconnect. The broker evicts any stale slot so re-dials never role_taken.
+      onPeerLeft: () => this.prepareRebuild(),
       onClosed: () => this.teardown(),
       onError: (code, message) => {
         // The phone receives its OWN broker error and surfaces the actionable copy;
@@ -150,6 +150,19 @@ export class BrokerScreenDialer {
         this.maybeStart(true);
       }, ICE_GRACE_MS);
     }
+  }
+
+  /** The phone LEFT the rendezvous (a peer-left frame) — either it genuinely left, or the
+   *  broker re-fired our lifecycle because it RECONNECTED. Either way our session peer is
+   *  stale: tear it down + reset so the following peer-joined (the phone returning)
+   *  rebuilds it on the re-minted ICE — KEEPING our broker socket. (A dropped socket is a
+   *  separate path: onClosed → full teardown + presence reconnect.) The stale chat data
+   *  channel closes here, so the ChatBridge detaches + re-attaches on the rebuilt peer. */
+  private prepareRebuild(): void {
+    if (this.stopped || !this.started) return;
+    this.session.handleDisconnect();
+    this.started = false;
+    this.iceServers = []; // the broker's re-mint refills this before we rebuild
   }
 
   private onIceServers(servers: IceServer[]): void {

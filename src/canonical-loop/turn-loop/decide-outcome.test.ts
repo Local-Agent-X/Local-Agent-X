@@ -20,6 +20,11 @@ vi.mock("../middlewares/open-steps.js", () => ({
   openStepsTerminationWarning: vi.fn(() => null),
 }));
 vi.mock("./nudges.js", () => ({ appendNudgeAsUserMessage: vi.fn() }));
+vi.mock("../store.js", () => ({ readOpTurns: vi.fn(() => []) }));
+vi.mock("../../tool-tracker.js", () => ({
+  classifyOpCategory: vi.fn(() => "coding"),
+  recordOpOutcome: vi.fn(),
+}));
 
 import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
 import type { ToolCall } from "../contract-types.js";
@@ -106,5 +111,38 @@ describe("decideTurnOutcome — termination is stop-signal driven", () => {
       adapterError: { code: "boom", message: "provider failed" },
     }));
     expect(r.terminalReason).toBe("error");
+  });
+});
+
+describe("decideTurnOutcome — op-outcome telemetry", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("records a clean outcome on a terminal done with no open steps", async () => {
+    const { recordOpOutcome } = await import("../../tool-tracker.js");
+    await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
+    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "clean");
+  });
+
+  it("records partial when terminal done but open steps remain", async () => {
+    const { openStepsTerminationWarning } = await import("../middlewares/open-steps.js");
+    (openStepsTerminationWarning as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce("⚠️ 1 step still open");
+    const { recordOpOutcome } = await import("../../tool-tracker.js");
+    await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
+    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial");
+  });
+
+  it("records aborted on a terminal error", async () => {
+    const { recordOpOutcome } = await import("../../tool-tracker.js");
+    await decideTurnOutcome(input({
+      adapterTerminalReason: "error",
+      adapterError: { code: "x", message: "y" },
+    }));
+    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "aborted");
+  });
+
+  it("does NOT record on a non-terminal wrap-up turn", async () => {
+    const { recordOpOutcome } = await import("../../tool-tracker.js");
+    await decideTurnOutcome(input({ modelSignaledDone: false }));
+    expect(recordOpOutcome).not.toHaveBeenCalled();
   });
 });

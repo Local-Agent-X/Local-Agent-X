@@ -111,3 +111,56 @@ export function loadPersistedStats(): ToolStats | null {
   }
   return null;
 }
+
+// ── Per-category op-outcome telemetry ──
+// tool-stats above answers "does this tool work?". This answers "do we finish
+// the task?" — the signal the completion gates (decide-outcome.ts) need to know
+// which categories give up, instead of guessing from anecdotes.
+
+export type OpCategory = "browser" | "computer" | "coding" | "connector" | "research" | "general";
+export type OpOutcome = "clean" | "partial" | "aborted";
+
+// First family with a tool used wins, so an op that browsed and then web-fetched
+// still reads as "browser" — the drive category the gates care about. No match →
+// "general".
+const CATEGORY_TOOLS: ReadonlyArray<readonly [OpCategory, readonly string[]]> = [
+  ["browser", ["browser"]],
+  ["computer", ["computer", "computer_click", "computer_type", "computer_press", "computer_move", "computer_drag", "computer_position", "screen_capture"]],
+  ["coding", ["write", "edit", "edit_lines", "multi_edit", "bash", "build_app", "delete_file"]],
+  ["connector", ["email_send", "email_draft", "telegram_send", "whatsapp_send", "connector_create", "send_image", "send_video"]],
+  ["research", ["web_search", "web_fetch", "http_request", "image_search", "youtube_analyze"]],
+];
+
+export function classifyOpCategory(toolsUsed: Set<string>): OpCategory {
+  for (const [category, names] of CATEGORY_TOOLS) {
+    if (names.some((n) => toolsUsed.has(n))) return category;
+  }
+  return "general";
+}
+
+interface OpOutcomeEntry { total: number; clean: number; partial: number; aborted: number; }
+type OpOutcomeStats = Partial<Record<OpCategory, OpOutcomeEntry>>;
+
+const opOutcomes: { category: OpCategory; outcome: OpOutcome }[] = [];
+
+export function recordOpOutcome(category: OpCategory, outcome: OpOutcome): void {
+  opOutcomes.push({ category, outcome });
+  if (opOutcomes.length > MAX_ENTRIES) {
+    opOutcomes.splice(0, opOutcomes.length - MAX_ENTRIES);
+  }
+  // Resolve the dir at write time (not module load) so a late LAX_DATA_DIR — and
+  // tests that set it after import — land in the right place.
+  const dir = getLaxDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "op-outcomes.json"), JSON.stringify(getOpOutcomeStats(), null, 2), "utf-8");
+}
+
+export function getOpOutcomeStats(): OpOutcomeStats {
+  const stats: OpOutcomeStats = {};
+  for (const { category, outcome } of opOutcomes) {
+    const entry = (stats[category] ??= { total: 0, clean: 0, partial: 0, aborted: 0 });
+    entry.total++;
+    entry[outcome]++;
+  }
+  return stats;
+}

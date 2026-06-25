@@ -31,6 +31,8 @@ import { isSilentToolCall } from "./silent-tool-check.js";
 import { runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
+import { readOpTurns } from "../store.js";
+import { classifyOpCategory, recordOpOutcome, type OpOutcome } from "../../tool-tracker.js";
 import { randomUUID } from "node:crypto";
 
 export interface DecideOutcomeInput {
@@ -229,9 +231,11 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // middleware and the earned-done gate already spent their nudges — but a
   // partial must never LOOK like a finished answer, in chat or in a mission
   // report.
+  let endedPartial = false;
   if (terminalReason === "done") {
     const warning = openStepsTerminationWarning(op.id);
     if (warning) {
+      endedPartial = true;
       publishStreamChunk(op.id, { text: `\n\n${warning}` });
       allMessages.push({
         messageId: `open-steps-warn-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
@@ -239,6 +243,21 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
         content: { text: warning },
       });
     }
+  }
+
+  // Record the op outcome on its terminal turn (terminalReason stays non-null
+  // only when every continuation gate above declined to extend it → fires once
+  // per op). Category comes from every tool the op touched, not just this turn,
+  // so a browser run that ends on a tool-less wrap-up still counts as "browser".
+  if (terminalReason !== null) {
+    const opToolNames = new Set<string>();
+    for (const turn of readOpTurns(op.id)) {
+      for (const s of turn.toolCallSummary ?? []) opToolNames.add(s.tool);
+    }
+    for (const tc of toolCalls) opToolNames.add(tc.tool);
+    const outcome: OpOutcome =
+      terminalReason === "error" ? "aborted" : endedPartial ? "partial" : "clean";
+    recordOpOutcome(classifyOpCategory(opToolNames), outcome);
   }
 
   return { terminalReason, allMessages };

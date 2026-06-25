@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 62 top-level dirs · 60 live · 2 with no live importer · 1051 non-test source files · 0 god files (>400 LOC).
+**Totals:** 62 top-level dirs · 61 live · 1 with no live importer · 1060 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -60,9 +60,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/routing/` | 5 | 7 | M |  |
 | `src/util/` | 5 | 1 | S |  |
 | `src/context-manager/` | 4 | 8 | M |  |
-| `src/routes/` | 4 | 77 | XL |  |
+| `src/routes/` | 4 | 78 | XL |  |
 | `src/screen-stream/` | 4 | 8 | L |  |
 | `src/tool-policy/` | 4 | 17 | L |  |
+| `src/broker-transport/` | 3 | 18 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
 | `src/hooks/` | 3 | 3 | M |  |
@@ -87,7 +88,6 @@ See ARCHITECTURE.md's "Looks canonical, isn't" table for the curated verdicts.
 | Directory | Files | Size |
 |---|--:|:--:|
 | `src/benchmark-suite/` | 6 | M |
-| `src/broker-transport/` | 10 | M |
 
 ## Top-level `src/` files
 

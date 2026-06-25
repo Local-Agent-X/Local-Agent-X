@@ -319,6 +319,15 @@ export async function startServer(config: LAXConfig) {
       .then((r) => { if (r.bound) bootLogger.info(`[bridge] tailnet bind active at ${r.addr}:${config.port}`); })
       .catch((e) => bootLogger.warn(`[bridge] bind init failed: ${(e as Error).message}`));
 
+    // Opt-in agentxos broker transport (replaces the tailnet bridge for phone↔desktop):
+    // when LAX_TRANSPORT=broker AND this desktop is signed in + paired (set up via the
+    // in-app account page → broker-transport/account), dial the broker so the paired
+    // phone can reach it. DARK by default — with the flag off this is a no-op and the
+    // tailnet path above is unchanged. Fire-and-forget; a failed dial never blocks boot.
+    void import("../broker-transport/account/runtime.js")
+      .then(({ maybeStartBrokerPresence }) => maybeStartBrokerPresence())
+      .catch((e) => bootLogger.warn(`[broker-transport] presence init failed: ${(e as Error).message}`));
+
     // The server bound successfully — confirm any pending self_edit merge so the
     // boot-time crashed-merge guard knows the merged code actually boots.
     void import("../self-edit-rollback.js")

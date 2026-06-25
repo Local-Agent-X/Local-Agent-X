@@ -12,6 +12,8 @@ interface TrayConfig {
   onNewSession: () => void;
   getServerStatus: () => Promise<boolean>;
   onRestartServer: () => void;
+  /** Open the agentxos account page (device-code login + phone pairing). */
+  onConnectAccount: () => void;
 }
 
 let tray: Tray | null = null;
@@ -37,6 +39,10 @@ export function createTray(config: TrayConfig): void {
       {
         label: "New Session",
         click: config.onNewSession,
+      },
+      {
+        label: "Connect agentxos Account…",
+        click: config.onConnectAccount,
       },
       { type: "separator" },
       {

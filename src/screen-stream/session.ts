@@ -16,7 +16,7 @@ import {
   type SignalingEffect,
   type SignalingMachine,
 } from "./signaling-machine.js";
-import { ScreenPeer } from "./peer.js";
+import { ScreenPeer, type IceServerConfig, type ControlTransport } from "./peer.js";
 import { startCapture, type CaptureHandle } from "./ffmpeg-capture.js";
 import {
   buildOffer,
@@ -53,6 +53,16 @@ function defaultAllocatePort(): number {
 export interface ScreenSessionOptions {
   send: SendFrame;
   allocatePort?: AllocateRtpPort;
+  /** Supplies the ICE servers for the peer at construction time. The broker transport
+   *  returns the broker-minted STUN+TURN list (which arrives just before capture
+   *  starts); the tailnet path omits this, so the peer keeps its env-STUN behavior.
+   *  A getter (not a value) because the minted list lands after the session is built. */
+  getIceServers?: () => IceServerConfig[];
+  /** Broker transport only: opt into a control data channel. When set, the peer opens
+   *  one (input + display/focus hints flow over it instead of /ws/chat) and surfaces a
+   *  ControlTransport here once it's open. The tailnet path omits this — no data
+   *  channel is created and control rides /ws/chat unchanged. */
+  onControlTransport?: (transport: ControlTransport) => void;
 }
 
 export class ScreenSession {
@@ -178,16 +188,20 @@ export class ScreenSession {
 
   private async startCaptureAndOffer(rtcId: string, monitor?: number): Promise<void> {
     try {
-      const peer = await ScreenPeer.create({
-        onLocalIce: (candidate) => {
-          if (candidate === null) return; // end-of-candidates; nothing to trickle
-          this.pendingLocalIce.push(candidate);
-          this.apply({ kind: "localIce", rtcId });
+      const peer = await ScreenPeer.create(
+        {
+          onLocalIce: (candidate) => {
+            if (candidate === null) return; // end-of-candidates; nothing to trickle
+            this.pendingLocalIce.push(candidate);
+            this.apply({ kind: "localIce", rtcId });
+          },
+          onConnectionState: (connection) => {
+            this.apply({ kind: "peerState", rtcId, connection });
+          },
         },
-        onConnectionState: (connection) => {
-          this.apply({ kind: "peerState", rtcId, connection });
-        },
-      });
+        this.opts.getIceServers?.(),
+        this.opts.onControlTransport,
+      );
       this.peer = peer;
 
       const rtpPort = this.allocatePort();

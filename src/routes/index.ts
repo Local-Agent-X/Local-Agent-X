@@ -13,3 +13,4 @@ export { handleMcpServerRoutes } from "./mcp-servers.js";
 export { handleAutopilotRoutes } from "./autopilot.js";
 export { handleConnectorProxyRoutes } from "./connector-proxy.js";
 export { handleHealthRoutes } from "./health.js";
+export { handleAccountRoutes } from "./account.js";

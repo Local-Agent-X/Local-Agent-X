@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect agentxos account · Local Agent X</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+        font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background: #0b0f12; color: #e7edf0; padding: 32px;
+      }
+      .card {
+        width: 100%; max-width: 460px; background: #11171c; border: 1px solid #1e2933;
+        border-radius: 16px; padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,.4);
+      }
+      .eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: #5fd4d4; margin: 0 0 10px; }
+      h1 { font-size: 24px; margin: 0 0 8px; }
+      p { color: #9fb0bb; margin: 0 0 18px; }
+      .btn {
+        appearance: none; border: 0; border-radius: 999px; padding: 12px 22px; font-size: 15px; font-weight: 600;
+        background: #2fd4d4; color: #04181a; cursor: pointer;
+      }
+      .btn:disabled { opacity: .5; cursor: default; }
+      .btn.ghost { background: transparent; color: #9fb0bb; border: 1px solid #2a3742; }
+      .code { font-size: 34px; letter-spacing: .22em; font-weight: 800; text-align: center; margin: 14px 0; color: #fff; font-variant-numeric: tabular-nums; }
+      .qr { display: block; margin: 6px auto 14px; width: 240px; height: 240px; border-radius: 12px; background: #fff; padding: 10px; }
+      a { color: #5fd4d4; }
+      .err { color: #ff6b6b; font-size: 13px; margin-top: 12px; }
+      .ok { color: #54e08a; font-weight: 700; }
+      .muted { font-size: 13px; color: #6c7d88; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    </style>
+  </head>
+  <body>
+    <div class="card" id="card">
+      <p class="eyebrow">agentxos account</p>
+      <div id="body"><p>Loading…</p></div>
+      <div class="err" id="err" hidden></div>
+    </div>
+
+    <script>
+      const token = new URLSearchParams(location.search).get("token") || "";
+      const bodyEl = document.getElementById("body");
+      const errEl = document.getElementById("err");
+
+      async function api(path, method = "GET") {
+        const res = await fetch(path, { method, headers: { Authorization: "Bearer " + token } });
+        return res.ok ? res.json().catch(() => ({})) : Promise.reject(new Error("HTTP " + res.status));
+      }
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+      let busy = false;
+      async function trigger(path) {
+        if (busy) return;
+        busy = true;
+        try { await api(path, "POST"); } catch (e) { showErr(e.message); } finally { busy = false; render(await safeStatus()); }
+      }
+      function showErr(m) { errEl.hidden = !m; errEl.textContent = m || ""; }
+      async function safeStatus() { try { return await api("/api/account/status"); } catch (e) { showErr(e.message); return null; } }
+
+      function render(s) {
+        if (!s) return;
+        showErr(s.error);
+        // 1) paired → done
+        if (s.paired) {
+          bodyEl.innerHTML =
+            '<h1><span class="ok">✓ Connected</span></h1>' +
+            "<p>This Mac is paired with your phone and reachable through the agentxos broker. You can close this window.</p>" +
+            '<div class="row"><button class="btn ghost" id="out">Sign out</button></div>';
+          document.getElementById("out").onclick = () => trigger("/api/account/signout");
+          return;
+        }
+        // 2) pairing in flight → show QR
+        if (s.pairing) {
+          const secsLeft = Math.max(0, Math.round((s.pairing.expiresAt - Date.now()) / 1000));
+          bodyEl.innerHTML =
+            "<h1>Scan to pair your phone</h1>" +
+            "<p>Open the agentxos app on your phone and scan this code.</p>" +
+            '<img class="qr" alt="Pairing QR" src="' + esc(s.pairing.qrDataUrl) + '" />' +
+            '<p class="muted">Code expires in ' + secsLeft + "s. It refreshes automatically if it lapses.</p>";
+          return;
+        }
+        // 3) signed in, not paired → offer to pair
+        if (s.signedIn) {
+          bodyEl.innerHTML =
+            "<h1>Pair your phone</h1>" +
+            "<p>Signed in as <strong>" + esc(s.email) + "</strong>. Show a one-time QR for your phone to scan.</p>" +
+            '<div class="row"><button class="btn" id="pair">Show pairing QR</button>' +
+            '<button class="btn ghost" id="out">Sign out</button></div>';
+          document.getElementById("pair").onclick = () => trigger("/api/account/pair/start");
+          document.getElementById("out").onclick = () => trigger("/api/account/signout");
+          return;
+        }
+        // 4) login in flight → show the user code + approval link
+        if (s.login) {
+          bodyEl.innerHTML =
+            "<h1>Approve this device</h1>" +
+            "<p>On any signed-in browser, open the approval page and enter this code:</p>" +
+            '<div class="code">' + esc(s.login.userCodeDisplay) + "</div>" +
+            '<div class="row"><a class="btn" href="' + esc(s.login.verificationUriComplete) + '" target="_blank" rel="noopener">Open approval page ↗</a></div>' +
+            '<p class="muted">' + esc(s.login.verificationUri) + "</p>";
+          return;
+        }
+        // 5) signed out → start
+        bodyEl.innerHTML =
+          "<h1>Connect your agentxos account</h1>" +
+          "<p>Sign in so your phone can reach this Mac through the agentxos broker.</p>" +
+          '<div class="row"><button class="btn" id="in">Sign in</button></div>';
+        document.getElementById("in").onclick = () => trigger("/api/account/login/start");
+      }
+
+      if (!token) {
+        bodyEl.innerHTML = "<h1>Missing token</h1><p>Open this page from the Local Agent X menu.</p>";
+      } else {
+        (async () => { render(await safeStatus()); setInterval(async () => render(await safeStatus()), 2000); })();
+      }
+    </script>
+  </body>
+</html>

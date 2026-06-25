@@ -23,7 +23,7 @@ import {
   setQuitting,
   setRestarting,
 } from "./server-process";
-import { createWindow, getMainWindow, isStuckOnSplash, showWindow, toggleWindow, prewarmAppWindow } from "./window";
+import { createWindow, getMainWindow, isStuckOnSplash, showWindow, toggleWindow, prewarmAppWindow, openAccountWindow } from "./window";
 import { setupApplicationMenu } from "./app-menu";
 import { registerHotkey, registerPanicHotkey, showNotification } from "./hotkey-notifications";
 import { setupIPC } from "./ipc";
@@ -324,6 +324,7 @@ app.on("ready", async () => {
       showWindow();
       getMainWindow()?.webContents.executeJavaScript("window.startNewSession?.()");
     },
+    onConnectAccount: openAccountWindow,
     getServerStatus: isServerRunning,
     onRestartServer: async () => {
       setRestarting(true);

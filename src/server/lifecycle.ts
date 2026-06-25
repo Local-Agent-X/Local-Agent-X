@@ -227,6 +227,10 @@ export function registerShutdown(deps: {
       const { WatchdogService } = await import("../agents/watchdog.js");
       WatchdogService.getInstance().stop();
     } catch { /* watchdog may never have started */ }
+    try {
+      const { stopBrokerPresence } = await import("../broker-transport/account/runtime.js");
+      stopBrokerPresence();
+    } catch { /* broker presence may never have started (tailnet path) */ }
     agentSync.stopHeartbeat();
     EventBus.removeAllListeners();
     await agentSync.push().catch(() => {});

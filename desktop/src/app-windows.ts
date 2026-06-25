@@ -92,6 +92,16 @@ function buildAppWindow(hidden: boolean): BrowserWindow {
   return win;
 }
 
+/** Open the agentxos account page (device-code login + phone pairing) in an in-app
+ *  window. Reuses the app-window shell: loopback-origin locked, and popups (the
+ *  external "approval page" link) route to the default browser via handleWindowOpen —
+ *  so the token stays in-app, not in the system browser's history. */
+export function openAccountWindow(): void {
+  const laxConfig = getLAXConfig();
+  const win = buildAppWindow(false);
+  win.loadURL(`http://127.0.0.1:${laxConfig.port}/account.html?token=${laxConfig.authToken}`);
+}
+
 // Inject the draggable strip on every page load. App pages are arbitrary
 // user-built HTML — the strip samples the app's bg and reports it back
 // for the OS overlay so both halves of the top 32px share one color.

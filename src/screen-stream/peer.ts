@@ -10,6 +10,7 @@
 import type {
   RTCPeerConnection as WeriftPeerConnection,
   MediaStreamTrack as WeriftMediaStreamTrack,
+  RTCDataChannel as WeriftDataChannel,
   RTCIceCandidate,
 } from "werift";
 import type { RtcIceCandidate } from "./protocol.js";
@@ -42,35 +43,81 @@ export interface PeerHandlers {
   onConnectionState: (state: PeerState) => void;
 }
 
+/** ICE server config for the RTCPeerConnection — the standard RTCIceServer subset.
+ *  STUN entries carry just `urls`; TURN entries also carry a (short-lived)
+ *  `username`/`credential`. Structurally identical to the broker's IceServer, so the
+ *  broker transport can pass its minted list straight through without this low-level
+ *  module importing the broker glue. */
+export interface IceServerConfig {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+/** A duplex text channel for APP CONTROL (remote input + display/focus hints),
+ *  carried over the WebRTC data channel in the broker transport. Kept as a minimal
+ *  local seam so the broker glue (control-channel.ts) plugs in without this low-level
+ *  peer module depending on it. Over the tailnet, control rides /ws/chat instead and
+ *  no data channel is created (see `create`'s `onControlReady`). */
+export interface ControlTransport {
+  send(text: string): void;
+  onMessage(handler: (text: string) => void): void;
+  onClose(handler: () => void): void;
+}
+
 /**
- * The desktop screen peer. STUN is OPTIONAL on the tailnet (host candidates
- * connect directly, no NAT) — we pass an empty iceServers list by default and
- * let the operator add a STUN url via LAX_RTC_STUN if their tailnet topology
- * needs it. No TURN for the prototype (constitution §6 / protocol note).
+ * The desktop screen peer. ICE servers depend on the transport:
+ * - TAILNET (default): STUN is OPTIONAL (host candidates connect directly, no NAT) —
+ *   `create` is called with no iceServers, so we fall back to an empty list or an
+ *   operator-supplied LAX_RTC_STUN url. No TURN (constitution §6 / protocol note).
+ * - BROKER: the broker mints STUN + short-lived TURN once both peers are gated, and
+ *   the dialer passes that list into `create` — the env path is then bypassed.
  */
 export class ScreenPeer {
   private readonly pc: WeriftPeerConnection;
   private readonly track: WeriftMediaStreamTrack;
+  /** The control data channel — created only in the broker transport (when
+   *  `onControlReady` is supplied). Null on the tailnet path. */
+  private controlChannel: WeriftDataChannel | null = null;
   private closed = false;
 
   /**
    * Build a peer. Async because werift is imported lazily (see loadWerift) —
    * the dynamic import resolves before any werift value is touched, so a
    * missing dep rejects here and is handled by the caller rather than crashing.
+   *
+   * `iceServers` is the broker-minted STUN+TURN config (broker transport). When
+   * omitted (tailnet path) we fall back to the env LAX_RTC_STUN behavior unchanged.
+   *
+   * `onControlReady` opts INTO a control data channel (broker transport): the desktop
+   * (offerer) creates it, and once it opens, the supplied callback receives a
+   * ControlTransport to carry remote input + display/focus hints. Omit it (tailnet
+   * path) and NO data channel is created — control rides /ws/chat as before.
    */
-  static async create(handlers: PeerHandlers): Promise<ScreenPeer> {
+  static async create(
+    handlers: PeerHandlers,
+    iceServers?: IceServerConfig[],
+    onControlReady?: (transport: ControlTransport) => void,
+  ): Promise<ScreenPeer> {
     const werift = await loadWerift();
-    return new ScreenPeer(werift, handlers);
+    return new ScreenPeer(werift, handlers, iceServers, onControlReady);
   }
 
   private constructor(
     private readonly werift: WeriftModule,
     private readonly handlers: PeerHandlers,
+    iceServers?: IceServerConfig[],
+    onControlReady?: (transport: ControlTransport) => void,
   ) {
     const { RTCPeerConnection, MediaStreamTrack, useVP8 } = werift;
+    // Broker transport supplies the minted ICE list; the tailnet path leaves it
+    // undefined and falls back to the optional operator STUN url (env), as before.
     const stun = process.env.LAX_RTC_STUN?.trim();
+    const servers: IceServerConfig[] = iceServers ?? (stun ? [{ urls: stun }] : []);
     this.pc = new RTCPeerConnection({
-      iceServers: stun ? [{ urls: stun }] : [],
+      // werift's RTCIceServer takes a SINGLE url per entry; the standard/broker shape
+      // allows an array, so flatten array `urls` into one entry each.
+      iceServers: servers.flatMap(toWeriftIceServers),
       // The desktop only SENDS video; advertise VP8 to match the ffmpeg encoder.
       codecs: { video: [useVP8({ payloadType: VP8_PAYLOAD_TYPE, clockRate: VP8_CLOCK_RATE })] },
     });
@@ -85,6 +132,43 @@ export class ScreenPeer {
     this.pc.connectionStateChange.subscribe((state) => {
       if (this.closed && state !== "closed") return;
       this.handlers.onConnectionState(state);
+    });
+
+    // Broker transport only: open a control data channel (input + display/focus
+    // hints). It MUST be created before createOffer so it is negotiated in the SDP.
+    if (onControlReady) this.setupControlChannel(onControlReady);
+  }
+
+  /** Create + wire the control data channel. The desktop is the offerer, so it
+   *  CREATES the channel; the transport is surfaced once it opens (send is only valid
+   *  then). Inbound messages (remote input from the phone) flow through onMessage. */
+  private setupControlChannel(onReady: (transport: ControlTransport) => void): void {
+    const dc = this.pc.createDataChannel("control");
+    this.controlChannel = dc;
+    const transport: ControlTransport = {
+      send: (text) => {
+        if (this.closed) return;
+        try {
+          dc.send(text);
+        } catch (e) {
+          logger.warn(`[screen-stream] control send failed: ${(e as Error).message}`);
+        }
+      },
+      onMessage: (handler) => {
+        dc.onMessage.subscribe((data) => handler(typeof data === "string" ? data : data.toString()));
+      },
+      onClose: (handler) => {
+        dc.stateChanged.subscribe((state) => {
+          if (state === "closed") handler();
+        });
+      },
+    };
+    let surfaced = false;
+    dc.stateChanged.subscribe((state) => {
+      if (state === "open" && !surfaced) {
+        surfaced = true;
+        onReady(transport);
+      }
     });
   }
 
@@ -131,6 +215,12 @@ export class ScreenPeer {
     if (this.closed) return;
     this.closed = true;
     try {
+      this.controlChannel?.close();
+    } catch {
+      /* already closed */
+    }
+    this.controlChannel = null;
+    try {
       this.track.stop();
     } catch {
       /* already stopped */
@@ -141,6 +231,19 @@ export class ScreenPeer {
       logger.warn(`[screen-stream] peer close threw: ${(e as Error).message}`);
     }
   }
+}
+
+/** Expand one IceServerConfig (urls may be an array, standard/broker shape) into the
+ *  single-url-per-entry shape werift's RTCIceServer requires. Drops absent
+ *  username/credential so STUN entries don't carry empty TURN creds. */
+function toWeriftIceServers(s: IceServerConfig): { urls: string; username?: string; credential?: string }[] {
+  const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+  return urls.map((u) => {
+    const entry: { urls: string; username?: string; credential?: string } = { urls: u };
+    if (s.username !== undefined) entry.username = s.username;
+    if (s.credential !== undefined) entry.credential = s.credential;
+    return entry;
+  });
 }
 
 /** Normalize a werift RTCIceCandidate to the wire shape we send the phone. */

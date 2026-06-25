@@ -17,11 +17,11 @@ import { bgForTheme, overlayForTheme } from "./theme";
 import { getSetting, setSetting } from "./settings";
 import { buildSplashDataUrl } from "./splash";
 import { isServerRunning, isQuittingFlag } from "./server-process";
-import { handleWindowOpen, openDocByPath, prewarmAppWindow } from "./app-windows";
+import { handleWindowOpen, openDocByPath, prewarmAppWindow, openAccountWindow } from "./app-windows";
 
 // Child app windows (the /apps/<id> frameless windows + warm pool) live in
 // app-windows.ts; re-exported so main.ts's existing import path is unchanged.
-export { prewarmAppWindow };
+export { prewarmAppWindow, openAccountWindow };
 
 let mainWindow: BrowserWindow | null = null;
 

@@ -118,7 +118,11 @@ export class BrokerScreenDialer {
       onPeerPresent: () => this.onPeerPresent(),
       onSignal: (signal) => this.onSignal(signal),
       onIceServers: (servers) => this.onIceServers(servers),
+      // The phone left the rendezvous OR our socket dropped → tear down + let presence
+      // reconnect. Either way the live peer is gone; the broker evicts any stale slot so
+      // the re-dial succeeds (no role_taken loop).
       onPeerLeft: () => this.teardown(),
+      onClosed: () => this.teardown(),
       onError: (code, message) => {
         // The phone receives its OWN broker error and surfaces the actionable copy;
         // on the desktop we just tear down (no UI here). Gate/auth errors are terminal.

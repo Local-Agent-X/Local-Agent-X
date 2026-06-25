@@ -42,8 +42,12 @@ export interface BrokerClientHooks {
   /** The peer (the other device) is now present in the rendezvous — the offerer
    *  can begin negotiation. Fires on `joined{peerPresent:true}` or `peer-joined`. */
   onPeerPresent?(): void;
-  /** The peer left the rendezvous (its socket dropped). Tear down the live session. */
+  /** The OTHER peer left the rendezvous (a `peer-left` frame). OUR socket is still fine:
+   *  tear down the live PEER but keep the socket and rebuild when the peer returns. */
   onPeerLeft?(): void;
+  /** OUR broker socket dropped (a non-auth close: network change, broker restart, idle
+   *  timeout). Terminal for this client — the host should RECONNECT (build a new one). */
+  onClosed?(): void;
   /** An actionable gate/auth/transport error. `code` is the broker's BrokerErrorCode
    *  or a synthetic code for a terminal close; `message` is user-facing copy (§16). */
   onError?(code: BrokerErrorCode, message: string): void;
@@ -150,14 +154,13 @@ export class BrokerClient {
       this.fail(errorCode, reason || closeMessage(code));
       return;
     }
-    // A non-auth close is a TRANSPORT DROP (network change like wifi→cellular, broker
-    // restart, idle timeout). Latch terminal FIRST (so the dialer's client.stop() in
-    // teardown is a safe no-op), then notify the host so it tears down + RECONNECTS.
-    // Without this the session silently dies — e.g. chat never recovers after a network
-    // switch, because no hook fires and the presence supervisor is never triggered.
+    // A non-auth close is a TRANSPORT DROP of OUR socket (network change like
+    // wifi→cellular, broker restart, idle timeout). Latch terminal FIRST (so the dialer's
+    // client.stop() in teardown is a safe no-op), then fire onClosed so the host
+    // RECONNECTS. DISTINCT from onPeerLeft (the other peer left but our socket is fine).
     this.transition("closed");
     this.terminal = true;
-    this.hooks.onPeerLeft?.();
+    this.hooks.onClosed?.();
   }
 
   /** Move to the error state, fire onError once, and latch terminal. Gate/auth

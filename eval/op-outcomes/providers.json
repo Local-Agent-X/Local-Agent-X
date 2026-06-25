@@ -1,0 +1,8 @@
+{
+  "_comment": "The big 3 to A/B. EDIT the model ids to match your install exactly (open Settings → Model and copy the id). Only 'grok' is confirmed from this machine; 'claude'/'openai' ids below are placeholders. run.mjs flips the live provider+model via POST /api/settings before each batch and restores your original at the end.",
+  "providers": [
+    { "label": "grok",   "provider": "xai",       "model": "grok-4.3" },
+    { "label": "claude", "provider": "anthropic", "model": "claude-opus-4-8" },
+    { "label": "openai", "provider": "openai",    "model": "gpt-5" }
+  ]
+}

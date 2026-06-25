@@ -5,18 +5,21 @@
  * Drives cases.json against a RUNNING dev server (the one with the telemetry
  * code) via /api/chat, with real tool execution. For each provider it:
  *   1. flips the live provider+model via POST /api/settings,
- *   2. runs every case, scoring give-up vs success directly from the reply,
- *   3. snapshots the ~/.lax/op-outcomes.json delta for that batch,
+ *   2. VERIFIES the flip actually took (a probe op whose telemetry tag must
+ *      match the target model) — if the provider isn't authed the runtime
+ *      silently falls back to another model, so a flip "succeeding" at the
+ *      settings layer means nothing; this guard catches it,
+ *   3. runs every case --repeat times, scoring give-up vs success per run and
+ *      reporting a give-up RATE (consent/overlay walls are non-deterministic —
+ *      a single pass/fail is a coin flip, not a signal),
+ *   4. snapshots the ~/.lax/op-outcomes.json delta,
  * then restores your original provider/model and prints a comparison.
  *
  * Why score the reply directly (not just trust op-outcomes): a browser punt
- * with no task ledger records as "clean" (the known telemetry blind spot), so
- * give-up detection on the assistant text is the trustworthy signal here.
+ * with no task ledger records as "clean" (the known telemetry blind spot).
  *
- * Run:  node eval/op-outcomes/run.mjs            # current configured provider
- *       node eval/op-outcomes/run.mjs --all      # loop providers.json (big 3)
- *       node eval/op-outcomes/run.mjs --provider claude
- *       node eval/op-outcomes/run.mjs --only browser --skip-intrusive
+ * Run:  node eval/op-outcomes/run.mjs --all --repeat 3
+ *       node eval/op-outcomes/run.mjs --provider openai --only browser --repeat 5
  *
  * Requires: the DEV build running (npm run dev), app quit (it owns port 7007).
  * Real browser windows open and real tokens are spent. Run while away.
@@ -28,7 +31,6 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// ── Config ──
 const CONFIG_PATH = join(homedir(), ".lax", "config.json");
 if (!existsSync(CONFIG_PATH)) { console.error(`ERROR: ${CONFIG_PATH} not found — start the server once.`); process.exit(2); }
 const config = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
@@ -39,7 +41,6 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const H = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
 const OUTCOMES_PATH = join(homedir(), ".lax", "op-outcomes.json");
 
-// ── Args ──
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(n);
 const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
@@ -48,6 +49,7 @@ const SKIP_INTRUSIVE = flag("--skip-intrusive");
 const RUN_ALL = flag("--all");
 const PROVIDER_LABEL = opt("--provider");
 const TIMEOUT = Number(opt("--timeout")) || 150_000;
+const REPEAT = Math.max(1, Number(opt("--repeat")) || 1);
 
 // Give-up phrasings — a model punting an obstruction back to the user. The
 // cases deliberately need no login, so a "need you to / do it yourself" here is
@@ -70,30 +72,41 @@ const cases = JSON.parse(readFileSync(join(__dirname, "cases.json"), "utf-8")).c
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function health() {
-  try { const r = await fetch(`${BASE}/api/health`, { headers: H }); return r.ok; } catch { return false; }
-}
-async function getSettings() {
-  try { const r = await fetch(`${BASE}/api/settings`, { headers: H }); return r.ok ? await r.json() : {}; } catch { return {}; }
-}
+async function health() { try { const r = await fetch(`${BASE}/api/health`, { headers: H }); return r.ok; } catch { return false; } }
+async function getSettings() { try { const r = await fetch(`${BASE}/api/settings`, { headers: H }); return r.ok ? await r.json() : {}; } catch { return {}; } }
 async function setProviderModel(provider, model) {
   const r = await fetch(`${BASE}/api/settings`, { method: "POST", headers: H, body: JSON.stringify({ provider, model }) });
   if (!r.ok) return false;
   const s = await getSettings();
   return s.provider === provider && s.model === model;
 }
-function readOutcomes() {
-  try { return JSON.parse(readFileSync(OUTCOMES_PATH, "utf-8")); } catch { return {}; }
-}
+function readOutcomes() { try { return JSON.parse(readFileSync(OUTCOMES_PATH, "utf-8")); } catch { return {}; } }
 function outcomeDelta(before, after) {
   const d = {};
   for (const k of Object.keys(after)) {
     const b = before[k] || { total: 0, clean: 0, partial: 0, aborted: 0 };
-    const a = after[k];
-    const dt = a.total - b.total;
-    if (dt > 0) d[k] = { total: dt, clean: a.clean - b.clean, partial: a.partial - b.partial, aborted: a.aborted - b.aborted };
+    const dt = after[k].total - b.total;
+    if (dt > 0) d[k] = { total: dt, clean: after[k].clean - b.clean, partial: after[k].partial - b.partial, aborted: after[k].aborted - b.aborted };
   }
   return d;
+}
+
+// Drive one trivial op and read back, from the telemetry tag, the model that
+// ACTUALLY ran it — the only honest way to detect a silent provider fallback
+// (the model's own self-report and GET /api/settings both lie about it).
+async function detectActualModel() {
+  const before = readOutcomes();
+  const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 60_000);
+  try {
+    const res = await fetch(`${BASE}/api/chat`, { method: "POST", headers: H, body: JSON.stringify({ message: "Reply with exactly: OK", sessionId: `lax-bench-probe-${Math.random().toString(36).slice(2, 8)}` }), signal: ac.signal });
+    for await (const _ of res.body) { /* drain to completion */ }
+  } catch { /* ignore */ }
+  clearTimeout(t);
+  const after = readOutcomes();
+  for (const k of Object.keys(after)) {
+    if (after[k].total > (before[k]?.total || 0)) return k.split("::")[1];
+  }
+  return null;
 }
 
 async function runCase(c) {
@@ -133,38 +146,56 @@ async function runCase(c) {
   const contentOk = c.mustContain ? trimmed.toLowerCase().includes(String(c.mustContain).toLowerCase()) : trimmed.length > 40;
   const pass = !err && !gaveUp && contentOk;
   const verdict = err ? "ERR" : gaveUp ? "GAVE-UP" : pass ? "PASS" : "MISS";
-  return { id: c.id, category: c.category, verdict, pass, gaveUp, err, tools, secs: ((Date.now() - t0) / 1000).toFixed(1), snippet: trimmed.slice(0, 120).replace(/\s+/g, " ") };
+  return { verdict, pass, gaveUp, err, secs: ((Date.now() - t0) / 1000).toFixed(1), snippet: trimmed.slice(0, 110).replace(/\s+/g, " ") };
 }
 
-async function runBatch(label) {
+async function runBatch(pv) {
+  // Fallback guard: a flip to an unauthed provider silently runs a different
+  // model. Verify the real model before burning a whole batch on a mislabeled
+  // duplicate.
+  if (pv.model) {
+    const actual = await detectActualModel();
+    if (actual && actual !== pv.model) {
+      console.error(`  ✗ ${pv.label}: flipped to ${pv.model} but ops ran on ${actual} — ${pv.provider} not authed (silent fallback). SKIPPING.`);
+      return null;
+    }
+    console.log(`  ✓ ${pv.label}: verified running ${actual || pv.model}`);
+  }
   const live = await getSettings();
-  console.log(`\n══ ${label}  (${live.provider}/${live.model}) ══`);
+  console.log(`\n══ ${pv.label}  (${live.provider}/${live.model})  ×${REPEAT} ══`);
   const before = readOutcomes();
   const results = [];
   for (const c of cases) {
-    const r = await runCase(c);
-    const tag = r.verdict.padEnd(7);
-    console.log(`  ${tag} [${r.category}] ${r.id}  ${r.secs}s  ${r.err || r.snippet}`);
-    results.push(r);
-    await sleep(1500); // share the server rate-limit bucket politely
+    const runs = [];
+    for (let i = 0; i < REPEAT; i++) {
+      const r = await runCase(c);
+      runs.push(r);
+      console.log(`  ${r.verdict.padEnd(7)} [${c.category}] ${c.id}${REPEAT > 1 ? ` #${i + 1}` : ""}  ${r.secs}s  ${r.err || r.snippet}`);
+      await sleep(1500);
+    }
+    const gaveUp = runs.filter((r) => r.gaveUp).length;
+    const pass = runs.filter((r) => r.pass).length;
+    results.push({ id: c.id, category: c.category, n: REPEAT, pass, gaveUp, runs });
   }
-  return { label, provider: live.provider, model: live.model, results, opDelta: outcomeDelta(before, readOutcomes()) };
+  return { label: pv.label, provider: live.provider, model: live.model, results, opDelta: outcomeDelta(before, readOutcomes()) };
 }
 
 function summarize(batches) {
-  console.log(`\n${"═".repeat(60)}\nSUMMARY — give-up rate is the Phase-B signal\n${"═".repeat(60)}`);
+  console.log(`\n${"═".repeat(64)}\nSUMMARY — give-up RATE is the Phase-B signal (n=${REPEAT}/case)\n${"═".repeat(64)}`);
   for (const b of batches) {
+    if (!b) continue;
     const byCat = {};
     for (const r of b.results) {
       const c = (byCat[r.category] ??= { n: 0, pass: 0, gaveUp: 0 });
-      c.n++; if (r.pass) c.pass++; if (r.gaveUp) c.gaveUp++;
+      c.n += r.n; c.pass += r.pass; c.gaveUp += r.gaveUp;
     }
-    const tot = b.results.length, pass = b.results.filter((r) => r.pass).length, gu = b.results.filter((r) => r.gaveUp).length;
-    console.log(`\n${b.label} (${b.provider}/${b.model}):  ${pass}/${tot} pass, ${gu} gave up`);
+    const n = b.results.reduce((a, r) => a + r.n, 0);
+    const pass = b.results.reduce((a, r) => a + r.pass, 0);
+    const gu = b.results.reduce((a, r) => a + r.gaveUp, 0);
+    console.log(`\n${b.label} (${b.provider}/${b.model}):  ${pass}/${n} pass, give-up ${gu}/${n} (${(100 * gu / n).toFixed(0)}%)`);
     for (const [cat, c] of Object.entries(byCat)) {
-      console.log(`   ${cat.padEnd(9)} pass ${c.pass}/${c.n}   gave-up ${c.gaveUp}/${c.n}`);
+      console.log(`   ${cat.padEnd(9)} pass ${c.pass}/${c.n}   give-up ${c.gaveUp}/${c.n} (${(100 * c.gaveUp / c.n).toFixed(0)}%)`);
     }
-    console.log(`   op-outcomes delta: ${JSON.stringify(b.opDelta)}`);
   }
 }
 
@@ -178,9 +209,9 @@ else if (PROVIDER_LABEL) {
   const p = providerCfg.find((x) => x.label === PROVIDER_LABEL);
   if (!p) { console.error(`ERROR: --provider ${PROVIDER_LABEL} not in providers.json (${providerCfg.map((x) => x.label).join(", ")})`); process.exit(2); }
   plan = [p];
-} else plan = [{ label: "current", provider: null, model: null }]; // no flip
+} else plan = [{ label: "current", provider: null, model: null }];
 
-console.log(`\n  Op-outcome battery — ${cases.length} cases × ${plan.length} provider(s) against ${BASE}`);
+console.log(`\n  Op-outcome battery — ${cases.length} cases ×${REPEAT} × ${plan.length} provider(s) against ${BASE}`);
 const original = await getSettings();
 const batches = [];
 try {
@@ -188,10 +219,10 @@ try {
     if (pv.provider && pv.model) {
       process.stdout.write(`\n  switching to ${pv.label} (${pv.provider}/${pv.model})… `);
       const ok = await setProviderModel(pv.provider, pv.model);
-      console.log(ok ? "ok" : "FAILED — skipping (check the model id in providers.json)");
+      console.log(ok ? "ok" : "FAILED (settings rejected) — skipping");
       if (!ok) continue;
     }
-    batches.push(await runBatch(pv.label));
+    batches.push(await runBatch(pv));
   }
 } finally {
   if (original.provider && original.model) {
@@ -203,6 +234,6 @@ try {
 summarize(batches);
 const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const out = join(__dirname, `results-${stamp}.json`);
-writeFileSync(out, JSON.stringify({ when: stamp, base: BASE, batches }, null, 2), "utf-8");
+writeFileSync(out, JSON.stringify({ when: stamp, base: BASE, repeat: REPEAT, batches: batches.filter(Boolean) }, null, 2), "utf-8");
 console.log(`\n  full results → ${out}`);
-console.log(`  NOTE: ${cases.length * plan.length} throwaway 'lax-bench-*' sessions are now in your sidebar — safe to bulk-delete.`);
+console.log(`  NOTE: throwaway 'lax-bench-*' sessions are now in your sidebar — safe to bulk-delete.`);

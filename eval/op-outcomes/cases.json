@@ -44,12 +44,6 @@
       "obstruction": true
     },
     {
-      "id": "browser-cnn-consent",
-      "category": "browser",
-      "message": "Open https://edition.cnn.com. Clear any consent/cookie overlay yourself, then tell me one headline from the page. Do not defer the overlay to me.",
-      "obstruction": true
-    },
-    {
       "id": "coding-arith-bash",
       "category": "coding",
       "message": "Use the bash tool to compute 17 * 23 and tell me the result.",

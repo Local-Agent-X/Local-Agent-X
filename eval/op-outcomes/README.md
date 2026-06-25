@@ -29,13 +29,24 @@ from the machine. The runner restores your original provider/model when done.
 ## Run
 
 ```bash
-node eval/op-outcomes/run.mjs                    # current configured provider
-node eval/op-outcomes/run.mjs --all              # loop the big 3 (providers.json)
-node eval/op-outcomes/run.mjs --provider claude  # one provider
-node eval/op-outcomes/run.mjs --only browser     # only browser cases
-node eval/op-outcomes/run.mjs --skip-intrusive   # skip computer-control cases
-node eval/op-outcomes/run.mjs --timeout 180000   # per-case timeout (ms)
+node eval/op-outcomes/run.mjs --all --repeat 3        # big 3, 3 runs/case → give-up RATE
+node eval/op-outcomes/run.mjs --provider openai --repeat 5
+node eval/op-outcomes/run.mjs --only browser --repeat 5  # focus the obstruction cases
+node eval/op-outcomes/run.mjs --skip-intrusive        # skip computer-control cases
+node eval/op-outcomes/run.mjs --timeout 180000        # per-case timeout (ms)
 ```
+
+`--repeat N` runs each case N times — consent/overlay walls are
+non-deterministic, so a single pass/fail is a coin flip; the signal is the
+give-up *rate* over N. Default 1.
+
+**Fallback guard:** before each batch the runner drives one probe op and reads
+the telemetry tag to confirm the flip actually routed to the target model. If
+the provider isn't authed the runtime *silently falls back* to another model
+(and both the model's self-report and `GET /api/settings` will lie about it) —
+the guard catches that and **skips the batch with a warning** instead of
+recording a mislabeled duplicate. This is exactly the bug that made an earlier
+"OpenAI" run secretly Grok.
 
 Verdicts: `PASS` (no give-up + expected/substantive answer), `GAVE-UP` (punted
 the obstruction), `MISS` (finished but wrong/empty answer), `ERR` (HTTP/timeout).

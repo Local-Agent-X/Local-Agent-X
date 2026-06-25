@@ -3,6 +3,6 @@
   "providers": [
     { "label": "grok",   "provider": "xai",       "model": "grok-4.3" },
     { "label": "claude", "provider": "anthropic", "model": "claude-opus-4-8" },
-    { "label": "openai", "provider": "openai",    "model": "gpt-5" }
+    { "label": "openai", "provider": "codex",     "model": "gpt-5.5" }
   ]
 }

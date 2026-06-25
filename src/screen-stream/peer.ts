@@ -65,6 +65,15 @@ export interface ControlTransport {
   onClose(handler: () => void): void;
 }
 
+/** One additional named data channel to open on the broker peer beyond `control`
+ *  (e.g. `chat`, `apps`). The desktop (offerer) creates it before the offer so it is
+ *  negotiated in the SDP; `onReady` receives a ControlTransport once it opens. This is
+ *  how the single broker peer multiplexes screen + chat + apps over one connection. */
+export interface DataChannelSpec {
+  label: string;
+  onReady: (transport: ControlTransport) => void;
+}
+
 /**
  * The desktop screen peer. ICE servers depend on the transport:
  * - TAILNET (default): STUN is OPTIONAL (host candidates connect directly, no NAT) —
@@ -76,9 +85,10 @@ export interface ControlTransport {
 export class ScreenPeer {
   private readonly pc: WeriftPeerConnection;
   private readonly track: WeriftMediaStreamTrack;
-  /** The control data channel — created only in the broker transport (when
-   *  `onControlReady` is supplied). Null on the tailnet path. */
-  private controlChannel: WeriftDataChannel | null = null;
+  /** Every data channel opened on this peer (control, plus any extra named channels
+   *  like chat/apps in the broker transport). Empty on the tailnet path. Closed en
+   *  masse on teardown. */
+  private readonly channels: WeriftDataChannel[] = [];
   private closed = false;
 
   /**
@@ -98,9 +108,10 @@ export class ScreenPeer {
     handlers: PeerHandlers,
     iceServers?: IceServerConfig[],
     onControlReady?: (transport: ControlTransport) => void,
+    extraChannels?: readonly DataChannelSpec[],
   ): Promise<ScreenPeer> {
     const werift = await loadWerift();
-    return new ScreenPeer(werift, handlers, iceServers, onControlReady);
+    return new ScreenPeer(werift, handlers, iceServers, onControlReady, extraChannels);
   }
 
   private constructor(
@@ -108,6 +119,7 @@ export class ScreenPeer {
     private readonly handlers: PeerHandlers,
     iceServers?: IceServerConfig[],
     onControlReady?: (transport: ControlTransport) => void,
+    extraChannels?: readonly DataChannelSpec[],
   ) {
     const { RTCPeerConnection, MediaStreamTrack, useVP8 } = werift;
     // Broker transport supplies the minted ICE list; the tailnet path leaves it
@@ -134,17 +146,20 @@ export class ScreenPeer {
       this.handlers.onConnectionState(state);
     });
 
-    // Broker transport only: open a control data channel (input + display/focus
-    // hints). It MUST be created before createOffer so it is negotiated in the SDP.
-    if (onControlReady) this.setupControlChannel(onControlReady);
+    // Broker transport only: open the control data channel (input + display/focus
+    // hints) plus any extra named channels (chat, apps). They MUST be created before
+    // createOffer so they are negotiated in the SDP. The tailnet path supplies none.
+    if (onControlReady) this.setupDataChannel("control", onControlReady);
+    if (extraChannels) for (const ch of extraChannels) this.setupDataChannel(ch.label, ch.onReady);
   }
 
-  /** Create + wire the control data channel. The desktop is the offerer, so it
-   *  CREATES the channel; the transport is surfaced once it opens (send is only valid
-   *  then). Inbound messages (remote input from the phone) flow through onMessage. */
-  private setupControlChannel(onReady: (transport: ControlTransport) => void): void {
-    const dc = this.pc.createDataChannel("control");
-    this.controlChannel = dc;
+  /** Create + wire one named data channel. The desktop is the offerer, so it CREATES
+   *  the channel; the transport is surfaced once it opens (send is only valid then).
+   *  Inbound messages flow through onMessage. Used for `control` and the multiplexed
+   *  `chat`/`apps` channels — all duplex text channels with identical plumbing. */
+  private setupDataChannel(label: string, onReady: (transport: ControlTransport) => void): void {
+    const dc = this.pc.createDataChannel(label);
+    this.channels.push(dc);
     const transport: ControlTransport = {
       send: (text) => {
         if (this.closed) return;
@@ -214,12 +229,14 @@ export class ScreenPeer {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    try {
-      this.controlChannel?.close();
-    } catch {
-      /* already closed */
+    for (const dc of this.channels) {
+      try {
+        dc.close();
+      } catch {
+        /* already closed */
+      }
     }
-    this.controlChannel = null;
+    this.channels.length = 0;
     try {
       this.track.stop();
     } catch {

@@ -2,12 +2,6 @@
   "_comment": "Op-outcome battery. Weighted toward browser OBSTRUCTIONS (the Phase-B failure mode: a model punting a consent banner / overlay back to the user instead of clearing it). Coding/research cases are low-give-up controls. Each case: id, category, message, optional mustContain (verifiable answer, case-insensitive substring). Cases without mustContain are scored on give-up detection + a substantive reply. intrusive:true cases drive the real desktop (mouse/screen) and are skipped with --skip-intrusive.",
   "cases": [
     {
-      "id": "browser-example-h1",
-      "category": "browser",
-      "message": "Open https://example.com and tell me the exact text of the H1 heading on the page.",
-      "mustContain": "Example Domain"
-    },
-    {
       "id": "browser-wikipedia-fact",
       "category": "browser",
       "message": "Open https://en.wikipedia.org/wiki/Eiffel_Tower and tell me the year it was completed, as listed in the article.",

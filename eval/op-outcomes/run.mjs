@@ -64,6 +64,12 @@ const GIVEUP_RE = [
   /\bplease (do|handle|dismiss|close|clear)\b[^.?!]*\b(manually|yourself|on your)\b/i,
   /\bi'?m (blocked|stuck|unable)\b/i,
   /\bneed you to\b/i,
+  // Failure phrased as a BLOCK, not a hand-back ("Blocked by consent overlay…
+  // can't locate the accept button"). The hand-back patterns above missed these
+  // and they scored a false PASS — validated against real Grok/gpt-5.5 replies.
+  /\bblocked by\b[^.?!]{0,40}\b(overlay|consent|modal|popup|banner|wall|cookie|dialog|iframe)\b/i,
+  /\b(can'?t|cannot|couldn'?t|unable to)\b[^.?!]{0,30}\b(locate|dismiss|find|clear|get past)\b[^.?!]{0,30}\b(accept|dismiss|reject|close|consent|overlay|banner|button)\b/i,
+  /\bno (clickable|detectable|visible|accessible)\b[^.?!]{0,25}\b(accept|dismiss|reject|button|close)\b/i,
 ];
 
 const cases = JSON.parse(readFileSync(join(__dirname, "cases.json"), "utf-8")).cases

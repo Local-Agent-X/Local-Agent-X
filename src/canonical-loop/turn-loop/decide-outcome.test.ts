@@ -21,6 +21,7 @@ vi.mock("../middlewares/open-steps.js", () => ({
 }));
 vi.mock("./nudges.js", () => ({ appendNudgeAsUserMessage: vi.fn() }));
 vi.mock("../store.js", () => ({ readOpTurns: vi.fn(() => []) }));
+vi.mock("../op-model.js", () => ({ resolveOpModel: vi.fn(() => "grok-4.3") }));
 vi.mock("../../tool-tracker.js", () => ({
   classifyOpCategory: vi.fn(() => "coding"),
   recordOpOutcome: vi.fn(),
@@ -120,7 +121,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
   it("records a clean outcome on a terminal done with no open steps", async () => {
     const { recordOpOutcome } = await import("../../tool-tracker.js");
     await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
-    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "clean");
+    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "clean", "grok-4.3");
   });
 
   it("records partial when terminal done but open steps remain", async () => {
@@ -128,7 +129,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
     (openStepsTerminationWarning as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce("⚠️ 1 step still open");
     const { recordOpOutcome } = await import("../../tool-tracker.js");
     await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
-    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial");
+    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial", "grok-4.3");
   });
 
   it("records aborted on a terminal error", async () => {
@@ -137,7 +138,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
       adapterTerminalReason: "error",
       adapterError: { code: "x", message: "y" },
     }));
-    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "aborted");
+    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "aborted", "grok-4.3");
   });
 
   it("does NOT record on a non-terminal wrap-up turn", async () => {

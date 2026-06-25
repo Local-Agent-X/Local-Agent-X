@@ -32,6 +32,7 @@ import { runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
 import { readOpTurns } from "../store.js";
+import { resolveOpModel } from "../op-model.js";
 import { classifyOpCategory, recordOpOutcome, type OpOutcome } from "../../tool-tracker.js";
 import { randomUUID } from "node:crypto";
 
@@ -257,7 +258,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     for (const tc of toolCalls) opToolNames.add(tc.tool);
     const outcome: OpOutcome =
       terminalReason === "error" ? "aborted" : endedPartial ? "partial" : "clean";
-    recordOpOutcome(classifyOpCategory(opToolNames), outcome);
+    recordOpOutcome(classifyOpCategory(opToolNames), outcome, resolveOpModel(op));
   }
 
   return { terminalReason, allMessages };

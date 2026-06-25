@@ -112,10 +112,11 @@ export function loadPersistedStats(): ToolStats | null {
   return null;
 }
 
-// ── Per-category op-outcome telemetry ──
+// ── Op-outcome telemetry (per category × model) ──
 // tool-stats above answers "does this tool work?". This answers "do we finish
-// the task?" — the signal the completion gates (decide-outcome.ts) need to know
-// which categories give up, instead of guessing from anecdotes.
+// the task?" — the signal Phase B needs: which categories AND which providers
+// give up. Keyed by category and model because a blended "browser 60% clean"
+// across Grok + Claude is meaningless — separating them is the whole question.
 
 export type OpCategory = "browser" | "computer" | "coding" | "connector" | "research" | "general";
 export type OpOutcome = "clean" | "partial" | "aborted";
@@ -139,28 +140,48 @@ export function classifyOpCategory(toolsUsed: Set<string>): OpCategory {
 }
 
 interface OpOutcomeEntry { total: number; clean: number; partial: number; aborted: number; }
-type OpOutcomeStats = Partial<Record<OpCategory, OpOutcomeEntry>>;
+/** Keyed by `${category}::${model}`. Counts are additive, so seeding from the
+ *  on-disk aggregate and incrementing in memory survives restarts cleanly — the
+ *  app restarts constantly (OTA, quit/reopen), and without this every restart
+ *  reset the file to the current session. */
+type OpOutcomeStats = Record<string, OpOutcomeEntry>;
 
-const opOutcomes: { category: OpCategory; outcome: OpOutcome }[] = [];
+const OP_OUTCOMES_FILE = "op-outcomes.json";
+let opOutcomeStats: OpOutcomeStats | null = null;
 
-export function recordOpOutcome(category: OpCategory, outcome: OpOutcome): void {
-  opOutcomes.push({ category, outcome });
-  if (opOutcomes.length > MAX_ENTRIES) {
-    opOutcomes.splice(0, opOutcomes.length - MAX_ENTRIES);
+// Load lazily (not at module import) so a late LAX_DATA_DIR — and tests that set
+// it after import — resolve to the right file. Seeded from disk on the first
+// record after a (re)start so prior counts aren't clobbered.
+function loadOpOutcomeStats(): OpOutcomeStats {
+  if (opOutcomeStats) return opOutcomeStats;
+  let loaded: OpOutcomeStats;
+  try {
+    const raw = JSON.parse(readFileSync(join(getLaxDir(), OP_OUTCOMES_FILE), "utf-8"));
+    loaded = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  } catch {
+    loaded = {};
   }
-  // Resolve the dir at write time (not module load) so a late LAX_DATA_DIR — and
-  // tests that set it after import — land in the right place.
+  opOutcomeStats = loaded;
+  return loaded;
+}
+
+export function recordOpOutcome(category: OpCategory, outcome: OpOutcome, model: string | undefined): void {
+  const stats = loadOpOutcomeStats();
+  const key = `${category}::${model || "unknown"}`;
+  const entry = (stats[key] ??= { total: 0, clean: 0, partial: 0, aborted: 0 });
+  entry.total++;
+  entry[outcome]++;
   const dir = getLaxDir();
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "op-outcomes.json"), JSON.stringify(getOpOutcomeStats(), null, 2), "utf-8");
+  writeFileSync(join(dir, OP_OUTCOMES_FILE), JSON.stringify(stats, null, 2), "utf-8");
 }
 
 export function getOpOutcomeStats(): OpOutcomeStats {
-  const stats: OpOutcomeStats = {};
-  for (const { category, outcome } of opOutcomes) {
-    const entry = (stats[category] ??= { total: 0, clean: 0, partial: 0, aborted: 0 });
-    entry.total++;
-    entry[outcome]++;
-  }
-  return stats;
+  return { ...loadOpOutcomeStats() };
+}
+
+/** Test-only — drop the in-memory cache so the next read reloads from disk
+ *  (exercises restart-survival). */
+export function _resetOpOutcomeCache(): void {
+  opOutcomeStats = null;
 }

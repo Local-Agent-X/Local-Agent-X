@@ -1,6 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { CanonicalLoopContext } from "./types.js";
 import { browserHandoffMiddleware } from "./browser-handoff.js";
+import { classifyGaveUp } from "../../classifiers/give-up-classify.js";
+
+vi.mock("../../classifiers/give-up-classify.js", () => ({
+  classifyGaveUp: vi.fn(async () => null),
+}));
+
+const mockClassify = classifyGaveUp as unknown as ReturnType<typeof vi.fn>;
 
 let opCounter = 0;
 function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
@@ -9,6 +16,7 @@ function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
     turnIdx: 1,
     toolCalls: [],
     toolsCalledThisOp: new Set(["browser"]),
+    userMessage: "open the page and tell me the headline",
     assistantContent: "Dismiss it yourself or give me a Cloudflare API token.",
     ...over,
   } as unknown as CanonicalLoopContext;
@@ -66,5 +74,27 @@ describe("browser-handoff gate", () => {
       ctx({ assistantContent: "The consent banner is still blocking the page. Want me to keep driving, or switch to the API token route?" }),
     );
     expect(res.kind).toBe("nudge");
+  });
+
+  it("fires on a give-up the regex misses when the classifier flags it", async () => {
+    mockClassify.mockResolvedValueOnce(true);
+    const res = await fire(
+      ctx({ assistantContent: "I wasn't able to pull the headline from the page." }),
+    );
+    expect(res.kind).toBe("nudge");
+  });
+
+  it("does NOT fire when the classifier says the task completed, even if the regex would", async () => {
+    mockClassify.mockResolvedValueOnce(false);
+    // The default assistantContent matches HANDOFF_PATTERNS, so the regex alone
+    // would fire — the model verdict overrides it toward NOT nudging.
+    expect((await fire(ctx())).kind).toBe("continue");
+  });
+
+  it("falls back to the regex on null and continues when it doesn't match", async () => {
+    mockClassify.mockResolvedValueOnce(null);
+    expect(
+      (await fire(ctx({ assistantContent: "Both sites are open in separate tabs." }))).kind,
+    ).toBe("continue");
   });
 });

@@ -16,9 +16,14 @@
  * Fires at most once per op. Genuine blockers (a password, 2FA, a CAPTCHA) are
  * preserved — the nudge tells the model to keep that ask if it truly needs the
  * user, but only after it has actually tried to clear the obstruction itself.
+ *
+ * The give-up verdict is now model-graded (`classifyGaveUp`) as the PRIMARY
+ * signal; the HANDOFF_PATTERNS regex below is kept only as the FALLBACK, used
+ * when the classifier is unavailable / times out.
  */
 import type { CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
+import { classifyGaveUp } from "../../classifiers/give-up-classify.js";
 
 interface FiredFlag {
   fired: boolean;
@@ -55,12 +60,11 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
 
   when: (ctx) => ctx.op.type === "chat_turn",
 
-  afterModelCall(ctx) {
+  async afterModelCall(ctx) {
     if (ctx.toolCalls.length > 0) return { kind: "continue" };
     const text = ctx.assistantContent.trim();
     if (text.length === 0) return { kind: "continue" };
     if (!DRIVE_TOOLS.some((t) => ctx.toolsCalledThisOp.has(t))) return { kind: "continue" };
-    if (!looksLikeHandoff(text)) return { kind: "continue" };
 
     const flag = getMiddlewareState<FiredFlag>(
       ctx.op.id,
@@ -68,6 +72,15 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
       () => ({ fired: false }),
     );
     if (flag.fired) return { kind: "continue" };
+
+    // Model-graded give-up verdict is PRIMARY — it catches punts regardless of
+    // phrasing (the regex missed novel give-ups like "Blocked by overlay"). The
+    // HANDOFF_PATTERNS regex is the FALLBACK, used only when the classifier is
+    // unavailable / times out (null), preserving the prior behavior on that path.
+    const gaveUp = await classifyGaveUp({ task: ctx.userMessage, finalText: text });
+    const shouldFire = gaveUp ?? looksLikeHandoff(text);
+    if (!shouldFire) return { kind: "continue" };
+
     flag.fired = true;
 
     const message =

@@ -88,6 +88,16 @@ export const openStepsMiddleware: CanonicalMiddleware = {
   },
 };
 
+/** True when THIS op successfully called a task_* tool — the precondition both
+ *  the loud-partial warning and the earned-done gate share before they nag
+ *  about open steps (so a later op that never touched the list isn't blamed for
+ *  steps an earlier one left open). */
+function opTouchedTaskLedger(opId: string): boolean {
+  return readOpTurns(opId).some((turn) =>
+    (turn.toolCallSummary ?? []).some((s) => s.resultStatus === "ok" && s.tool.startsWith("task_")),
+  );
+}
+
 /**
  * Loud-partial warning for a turn that is genuinely terminating with steps
  * still open (the give-up moment after the nudge above was spent). Returns
@@ -105,10 +115,7 @@ export function openStepsTerminationWarning(opId: string): string | null {
   if (!sessionId) return null;
   const open = getOpenTasksForSession(sessionId);
   if (open.length === 0) return null;
-  const touchedTasks = readOpTurns(opId).some((turn) =>
-    (turn.toolCallSummary ?? []).some((s) => s.resultStatus === "ok" && s.tool.startsWith("task_")),
-  );
-  if (!touchedTasks) return null;
+  if (!opTouchedTaskLedger(opId)) return null;
   const names = open.map((t) => t.description).join("; ");
   const headline = `⚠️ Stopped with ${open.length} step${open.length === 1 ? "" : "s"} still open: `;
   const budget = 199 - headline.length;
@@ -140,10 +147,7 @@ export function earnedDoneNudge(op: Op): string | null {
   if (!sessionId) return null;
   const open = getOpenTasksForSession(sessionId);
   if (open.length === 0) return null;
-  const touchedTasks = readOpTurns(op.id).some((turn) =>
-    (turn.toolCallSummary ?? []).some((s) => s.resultStatus === "ok" && s.tool.startsWith("task_")),
-  );
-  if (!touchedTasks) return null;
+  if (!opTouchedTaskLedger(op.id)) return null;
 
   earnedDoneFired.add(op.id);
   const list = open.map((t, i) => `${i + 1}. ${t.description}`).join("\n");

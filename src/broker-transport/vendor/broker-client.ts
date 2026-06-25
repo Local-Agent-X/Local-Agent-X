@@ -150,9 +150,14 @@ export class BrokerClient {
       this.fail(errorCode, reason || closeMessage(code));
       return;
     }
-    // A normal/transport close. If we never errored, this is an ordinary teardown.
+    // A non-auth close is a TRANSPORT DROP (network change like wifi→cellular, broker
+    // restart, idle timeout). Latch terminal FIRST (so the dialer's client.stop() in
+    // teardown is a safe no-op), then notify the host so it tears down + RECONNECTS.
+    // Without this the session silently dies — e.g. chat never recovers after a network
+    // switch, because no hook fires and the presence supervisor is never triggered.
     this.transition("closed");
     this.terminal = true;
+    this.hooks.onPeerLeft?.();
   }
 
   /** Move to the error state, fire onError once, and latch terminal. Gate/auth

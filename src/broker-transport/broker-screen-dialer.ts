@@ -24,6 +24,7 @@ import type { IceServer, RtcSignal } from "./vendor/protocol.js";
 import type { SocketAdapter } from "./vendor/socket-adapter.js";
 import type { ControlChannel } from "./control-channel.js";
 import { NullChatChannel, type ChatChannel } from "./chat-bridge.js";
+import { NullHttpChannel, type HttpChannel } from "./http-tunnel-bridge.js";
 import { ScreenSession } from "../screen-stream/session.js";
 import type { ScreenSessionOptions } from "../screen-stream/session.js";
 import type { RtcIceCandidate, RtcOutboundFrame } from "../screen-stream/protocol.js";
@@ -57,6 +58,9 @@ export interface BrokerScreenDialerDeps {
   /** Where chat flows: the peer's `chat` data channel, bridged to the desktop's own
    *  /ws/chat. Defaults to NullChatChannel (chat stays on the tailnet / not wired). */
   chat?: ChatChannel;
+  /** Where device REST flows: the peer's `http` data channel, tunneled to the desktop's
+   *  loopback (app list / sessions / settings). Defaults to NullHttpChannel. */
+  http?: HttpChannel;
   /** Builds the session. Defaults to the real ScreenSession; tests inject a fake. */
   createSession?: (opts: ScreenSessionOptions) => ScreenSessionLike;
   /** Fires ONCE when this dialer goes terminal (peer left, error, or stop) — the
@@ -69,6 +73,7 @@ export class BrokerScreenDialer {
   private readonly client: BrokerClient;
   private readonly control: ControlChannel;
   private readonly chat: ChatChannel;
+  private readonly http: HttpChannel;
   private readonly session: ScreenSessionLike;
   private readonly onClosed: (() => void) | undefined;
   /** One synthetic session correlation id — the broker has no rtcId (the rendezvous
@@ -85,6 +90,7 @@ export class BrokerScreenDialer {
   constructor(deps: BrokerScreenDialerDeps) {
     this.control = deps.control;
     this.chat = deps.chat ?? new NullChatChannel();
+    this.http = deps.http ?? new NullHttpChannel();
     this.onClosed = deps.onClosed;
 
     const sessionOpts: ScreenSessionOptions = {
@@ -93,8 +99,9 @@ export class BrokerScreenDialer {
       // The peer surfaces its control data channel once it opens; hand it to the
       // ControlChannel so buffered + future control frames flow over it.
       onControlTransport: (transport) => this.control.attach(transport),
-      // …and its `chat` channel to the ChatBridge, so chat rides the same broker peer.
+      // …its `chat` channel to the ChatBridge, and its `http` channel to the HttpTunnel.
       onChatTransport: (transport) => this.chat.attach(transport),
+      onHttpTransport: (transport) => this.http.attach(transport),
       // Broker peer is PERSISTENT (carries chat): establish it on present, but defer
       // ffmpeg until the phone opens the live view (openScreen, below).
       deferCapture: true,
@@ -248,6 +255,7 @@ export class BrokerScreenDialer {
     this.session.handleDisconnect();
     this.control.close();
     this.chat.close();
+    this.http.close();
     this.onClosed?.();
   }
 }

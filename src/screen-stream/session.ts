@@ -67,6 +67,10 @@ export interface ScreenSessionOptions {
    *  broker connection multiplexes screen + chat). Surfaces its transport once open; the
    *  dialer bridges it to the desktop's own /ws/chat. Omitted on the tailnet path. */
   onChatTransport?: (transport: ControlTransport) => void;
+  /** Broker transport only: opt into an `http` data channel on the same peer (device REST
+   *  — app list / sessions / settings — tunneled to the desktop's loopback). Omitted on
+   *  the tailnet path. */
+  onHttpTransport?: (transport: ControlTransport) => void;
   /** Broker transport only: when true, `rtc_start` ESTABLISHES the peer (track + data
    *  channels + offer) but does NOT start ffmpeg — the persistent broker peer carries
    *  chat without the screen running. ffmpeg starts later via openScreen() when the
@@ -215,11 +219,12 @@ export class ScreenSession {
 
   private async establishPeerAndOffer(rtcId: string, monitor?: number): Promise<void> {
     try {
-      // The broker peer multiplexes screen + chat (+ later apps) over ONE connection:
-      // open the `chat` channel alongside `control` when the dialer wants it.
-      const extraChannels = this.opts.onChatTransport
-        ? [{ label: "chat", onReady: this.opts.onChatTransport }]
-        : undefined;
+      // The broker peer multiplexes screen + chat + http over ONE connection: open the
+      // `chat` and `http` channels alongside `control` when the dialer wants them.
+      const extra: Array<{ label: string; onReady: (t: ControlTransport) => void }> = [];
+      if (this.opts.onChatTransport) extra.push({ label: "chat", onReady: this.opts.onChatTransport });
+      if (this.opts.onHttpTransport) extra.push({ label: "http", onReady: this.opts.onHttpTransport });
+      const extraChannels = extra.length > 0 ? extra : undefined;
       const peer = await ScreenPeer.create(
         {
           onLocalIce: (candidate) => {

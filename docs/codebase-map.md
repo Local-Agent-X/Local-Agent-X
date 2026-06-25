@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 62 top-level dirs · 61 live · 1 with no live importer · 1063 non-test source files · 0 god files (>400 LOC).
+**Totals:** 62 top-level dirs · 61 live · 1 with no live importer · 1064 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -51,19 +51,19 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/protocols/` | 7 | 32 | XL |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
+| `src/bridge/` | 6 | 7 | M |  |
 | `src/sandbox/` | 6 | 6 | L |  |
+| `src/screen-stream/` | 6 | 8 | L |  |
 | `src/ari-kernel/` | 5 | 12 | L |  |
-| `src/bridge/` | 5 | 7 | M |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
 | `src/mcp-client/` | 5 | 6 | L |  |
 | `src/operations/` | 5 | 5 | L |  |
 | `src/routing/` | 5 | 7 | M |  |
-| `src/screen-stream/` | 5 | 8 | L |  |
 | `src/util/` | 5 | 1 | S |  |
 | `src/context-manager/` | 4 | 8 | M |  |
 | `src/routes/` | 4 | 78 | XL |  |
 | `src/tool-policy/` | 4 | 17 | L |  |
-| `src/broker-transport/` | 3 | 20 | L |  |
+| `src/broker-transport/` | 3 | 21 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
 | `src/hooks/` | 3 | 3 | M |  |

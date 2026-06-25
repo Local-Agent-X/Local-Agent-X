@@ -17,6 +17,7 @@ import { openBrokerSocket } from "./ws-socket-adapter.js";
 import { DataChannelControl } from "./control-channel.js";
 import { ChatBridge } from "./chat-bridge.js";
 import { openBrokerChatLoopback } from "./chat-loopback.js";
+import { HttpTunnelBridge } from "./http-tunnel-bridge.js";
 import { BrokerScreenDialer } from "./broker-screen-dialer.js";
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
@@ -125,7 +126,15 @@ export function defaultPresenceDeps(): BrokerPresenceDeps {
           return openBrokerChatLoopback(cfg.port, cfg.authToken);
         },
       });
-      return new BrokerScreenDialer({ socket, control, chat, onClosed });
+      // Device REST (app list / sessions / settings) tunnels to the desktop's own loopback,
+      // device-scoped (the HttpTunnelBridge enforces the same allowlist a tailnet device had).
+      const http = new HttpTunnelBridge({
+        loopback: () => {
+          const cfg = getRuntimeConfig();
+          return { origin: `http://127.0.0.1:${cfg.port}`, token: cfg.authToken };
+        },
+      });
+      return new BrokerScreenDialer({ socket, control, chat, http, onClosed });
     },
     reconnectMs: DEFAULT_RECONNECT_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),

@@ -10,6 +10,7 @@ export { withBrowserLock, getCurrentBrowserOwnerSessionId } from "./mutex.js";
 export { recentDownloads, getRecentDownloads } from "./downloads.js";
 export { setBrowserAuthContext } from "./auth-context.js";
 export { BrowserManager } from "./manager.js";
+export { BrowserWedgeError } from "./observation.js";
 export {
   getBrowserManager,
   closeBrowser,

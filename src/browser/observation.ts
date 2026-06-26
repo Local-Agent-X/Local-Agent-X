@@ -52,6 +52,44 @@ export interface BrowserObservation {
   crossOriginIframes: IframeInfo[];
 }
 
+/**
+ * Hard ceiling on a single page scan. waitForStability caps at 3s and the DOM
+ * extractors are normally sub-second, so a legit observe is ~5s even on a heavy
+ * page. Past this the underlying CDP call is wedged — and because each sub-op
+ * below has its own `.catch()`, a wedge HANGS rather than rejects, so none of
+ * those guards fire. Surface it as a typed error so the tool layer force-resets
+ * the session in ~10s instead of waiting out the 30s per-tool timeout.
+ */
+export const OBSERVE_WEDGE_TIMEOUT_MS = 10_000;
+
+/** Thrown when a page scan exceeds OBSERVE_WEDGE_TIMEOUT_MS — the signal that
+ *  the browser session is wedged and must be reset. browser-tools catches this
+ *  and calls resetWedgedBrowser(). */
+export class BrowserWedgeError extends Error {
+  constructor(message = "browser page scan wedged") {
+    super(message);
+    this.name = "BrowserWedgeError";
+  }
+}
+
+/** Race `work` against the wedge ceiling. On expiry, reject with
+ *  BrowserWedgeError; the abandoned `work` keeps running until the session is
+ *  force-reset (its late rejection is swallowed here so it isn't unhandled).
+ *  `ms` is injectable for tests. */
+export async function withWedgeTimeout<T>(work: Promise<T>, ms = OBSERVE_WEDGE_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new BrowserWedgeError(`page scan exceeded ${ms}ms`)), ms);
+    timer.unref?.();
+  });
+  work.catch(() => { /* swallow the late rejection when the timeout already won */ });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export class ObservationRegistry {
   private refs = new Map<number, DurableRef>();
   private signatureToRef = new Map<string, number>();
@@ -72,6 +110,10 @@ export class ObservationRegistry {
   }
 
   async observe(page: Page): Promise<BrowserObservation> {
+    return withWedgeTimeout(this.observeInner(page));
+  }
+
+  private async observeInner(page: Page): Promise<BrowserObservation> {
     await waitForStability(page);
 
     const url = page.url();

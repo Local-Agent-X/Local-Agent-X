@@ -15,7 +15,7 @@
  */
 
 import type { ToolDefinition, ToolResult } from "../../types.js";
-import { getBrowserManager, closeBrowser, withBrowserLock, resetWedgedBrowser } from "../../browser/index.js";
+import { getBrowserManager, closeBrowser, withBrowserLock, resetWedgedBrowser, BrowserWedgeError } from "../../browser/index.js";
 import type { BrowserEngine, BrowserManager } from "../../browser/index.js";
 import { getToolTimeout } from "../../tool-timeout.js";
 import { raceWedgeDeadline, WEDGED } from "./wedge-deadline.js";
@@ -152,6 +152,16 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           return await applyProgressGuard(action, manager, sessionId, result);
         } catch (e) {
           const message = (e as Error).message;
+          if (e instanceof BrowserWedgeError) {
+            // A page scan hung (wedged CDP connection). Reset now — ~10s — so
+            // the next call re-acquires a fresh Chrome, rather than waiting out
+            // the 30s tool timeout and reusing the wedged session.
+            resetWedgedBrowser(sessionId);
+            return err(
+              "The browser stopped responding while scanning the page and its session was reset. " +
+              "Retry your last action — a fresh browser will open.",
+            );
+          }
           if (message.includes("Timeout")) {
             // Auto-recovery: snapshot the page anyway — it may be partially usable
             try {

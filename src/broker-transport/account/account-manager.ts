@@ -127,13 +127,33 @@ export class AgentxosAccountManager {
         publicKey: id.publicKey,
         label: this.deps.deviceLabel,
       });
-      this.deps.saveState({ email: result.email, sessionToken: result.token, deviceId: reg.deviceId });
+      const saved: AccountState = { email: result.email, sessionToken: result.token, deviceId: reg.deviceId };
+      this.deps.saveState(saved);
+      // A returning user (signed out, then back in) is still paired server-side — sign-out
+      // never revokes the pairing. Reconcile so we show "Connected" instead of a QR that
+      // can't pair anything. Best-effort: a failed lookup just falls through to the pairing
+      // screen, whose own guard re-checks before ever showing a QR.
+      try { await this.adoptExistingPairing(saved); } catch { /* best-effort reconcile */ }
     } catch (e) {
       this.error = (e as Error).message;
     } finally {
       this.loginRunning = false;
       this.loginPrompt = null;
     }
+  }
+
+  /** Adopt this desktop's existing server-side pairing if one is live. Sign-out clears the
+   *  LOCAL pairing but never the server record, and redeem is idempotent (re-scanning the
+   *  same phone returns the SAME pairing) — so a pre-existing pairing means we ARE paired and
+   *  there is nothing to scan. Sets pairedPhoneId + fires onPaired. Returns whether it found one. */
+  private async adoptExistingPairing(state: AccountState): Promise<boolean> {
+    const mine = (await this.deps.api.listPairings(state.sessionToken)).find(
+      (p) => p.desktopDeviceId === state.deviceId,
+    );
+    if (!mine) return false;
+    const next = this.deps.updateState({ pairedPhoneId: mine.phoneDeviceId });
+    if (next) this.deps.onPaired?.(next);
+    return true;
   }
 
   /** Begin pairing: request a challenge, show its QR, then poll until a phone redeems
@@ -148,6 +168,10 @@ export class AgentxosAccountManager {
 
   private async runPairing(state: AccountState): Promise<void> {
     try {
+      // Already paired server-side? Adopt it instead of issuing a challenge: the poll below
+      // would otherwise find the stale pairing on its first tick and "complete" instantly,
+      // tearing the QR down before you could scan it.
+      if (await this.adoptExistingPairing(state)) return;
       const issued = await this.deps.api.requestPairingChallenge(state.sessionToken, state.deviceId);
       this.pairing = { qrDataUrl: await this.deps.renderQr(issued.qrPayload), expiresAt: issued.expiresAt };
 

@@ -15,6 +15,7 @@ function harness(opts: { polls?: DeviceCodePoll[]; pairings?: () => PairingEntry
   let pollI = 0;
   const polls = opts.polls ?? [{ status: "approved", token: "TOK", accountId: "acct-1", email: "a@b.co" }];
   const registered: unknown[] = [];
+  let challenges = 0;
   const api: AccountApi = {
     startDeviceCode: async () => STARTED,
     pollDeviceCode: async () => polls[Math.min(pollI++, polls.length - 1)],
@@ -22,7 +23,7 @@ function harness(opts: { polls?: DeviceCodePoll[]; pairings?: () => PairingEntry
       registered.push({ token, input });
       return { deviceId: "desk-1", created: true };
     },
-    requestPairingChallenge: async () => ({ code: "C", expiresAt: 90_000, qrPayload: '{"v":1,"code":"C","connectUrl":"u"}' }),
+    requestPairingChallenge: async () => { challenges++; return { code: "C", expiresAt: 90_000, qrPayload: '{"v":1,"code":"C","connectUrl":"u"}' }; },
     listPairings: async () => (opts.pairings ? opts.pairings() : []),
   };
   let t = 0;
@@ -38,8 +39,12 @@ function harness(opts: { polls?: DeviceCodePoll[]; pairings?: () => PairingEntry
     sleep: async () => { t += 2000; },
     now: () => t,
   };
-  return { manager: new AgentxosAccountManager(deps), getState: () => state, registered };
+  return { manager: new AgentxosAccountManager(deps), getState: () => state, registered, challengeCount: () => challenges };
 }
+
+const PAIRING = (over: Partial<PairingEntry> = {}): PairingEntry => ({
+  pairingId: "p1", desktopDeviceId: "desk-1", phoneDeviceId: "phone-9", desktopLabel: null, phoneLabel: null, createdAt: 1, ...over,
+});
 
 describe("AgentxosAccountManager — login", () => {
   it("logs in, registers the desktop, and persists the session", async () => {
@@ -70,17 +75,44 @@ describe("AgentxosAccountManager — login", () => {
 });
 
 describe("AgentxosAccountManager — pairing", () => {
-  it("issues a QR, discovers the paired phone, and stores its id", async () => {
-    // The phone 'pairs' after the first poll: listPairings returns the pairing.
-    let paired = false;
-    const { manager, getState } = harness({
-      pairings: () => (paired ? [{ pairingId: "p1", desktopDeviceId: "desk-1", phoneDeviceId: "phone-9", desktopLabel: null, phoneLabel: null, createdAt: 1 }] : []),
+  it("issues a QR and discovers a phone that pairs DURING the poll", async () => {
+    // No pairing exists at login or when the QR goes up; the phone scans on a later poll.
+    // listPairings is hit at login-reconcile, the startPairing adopt-check, then each poll —
+    // so gate the pairing to appear only after the QR is shown (3rd call onward).
+    let calls = 0;
+    const { manager, getState, challengeCount } = harness({
+      pairings: () => (++calls >= 3 ? [PAIRING()] : []),
     });
     await manager.startLogin();
-    paired = true; // phone scans + redeems between issue and the first discovery poll
     await manager.startPairing();
+    expect(challengeCount()).toBe(1); // a QR was genuinely issued
     expect(getState()?.pairedPhoneId).toBe("phone-9");
     expect(manager.status().paired).toBe(true);
+  });
+
+  it("adopts an existing server-side pairing at login instead of showing a QR", async () => {
+    // The bug: sign-out clears the LOCAL pairing but never the server record, so a returning
+    // user is still paired. We must adopt it (→ Connected), NOT issue a QR that completes
+    // instantly off the stale record and tears the window down before a scan. Regression.
+    const { manager, getState, challengeCount } = harness({ pairings: () => [PAIRING()] });
+    await manager.startLogin(); // login-time reconcile adopts it
+    expect(getState()?.pairedPhoneId).toBe("phone-9");
+    expect(manager.status().paired).toBe(true);
+    expect(manager.status().pairing).toBeNull(); // never showed a QR
+    expect(challengeCount()).toBe(0); // no challenge requested at all
+  });
+
+  it("startPairing adopts a pairing that appeared after login, without issuing a QR", async () => {
+    // Defense in depth: if login-reconcile missed it (lookup failed, or the pairing landed
+    // later), the startPairing guard still adopts rather than showing a doomed QR.
+    let exists = false;
+    const { manager, getState, challengeCount } = harness({ pairings: () => (exists ? [PAIRING()] : []) });
+    await manager.startLogin();
+    expect(manager.status().paired).toBe(false);
+    exists = true;
+    await manager.startPairing();
+    expect(challengeCount()).toBe(0); // guard adopted at the first listPairings — no QR
+    expect(getState()?.pairedPhoneId).toBe("phone-9");
   });
 
   it("times out with an actionable error if no phone pairs before expiry", async () => {

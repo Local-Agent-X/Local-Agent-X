@@ -32,6 +32,10 @@ export interface ConnectParams {
    *  threads this via the SocketAdapter's URL; we add it here so both clients build
    *  the full dial URL in one place. */
   device?: string;
+  /** Optional secondary room within the SAME pairing (e.g. "voice"), so a second media
+   *  peer lands in its own rendezvous + TURN session instead of colliding with the
+   *  persistent screen/chat peer. Omit for the main room. The broker allowlists it. */
+  channel?: string;
 }
 
 /**
@@ -40,7 +44,7 @@ export interface ConnectParams {
  * refusal (the broker's own validation still rejects a bad role/target on the wire).
  */
 export function buildConnectUrl(params: ConnectParams): string {
-  const { brokerWsUrl, role, target, token, device } = params;
+  const { brokerWsUrl, role, target, token, device, channel } = params;
   if (!brokerWsUrl) throw new Error("buildConnectUrl: brokerWsUrl is required");
   if (!target) throw new Error("buildConnectUrl: target device id is required");
 
@@ -51,5 +55,6 @@ export function buildConnectUrl(params: ConnectParams): string {
   url.searchParams.set("target", target);
   if (device) url.searchParams.set("device", device);
   if (token) url.searchParams.set("token", token);
+  if (channel) url.searchParams.set("channel", channel);
   return url.toString();
 }

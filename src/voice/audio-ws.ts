@@ -36,6 +36,7 @@ import { isLoopbackOrigin } from "../server-utils.js";
 import { authorizeUpgrade, trackDeviceSocket, WS_UNAUTHORIZED } from "../bridge/upgrade-auth.js";
 import { isBridgeEnabled } from "../bridge/config.js";
 import { isTailnetOrigin } from "../bridge/tailnet.js";
+import { createPeerAudioRouter } from "./voice-peer-session.js";
 const logger = createLogger("voice.audio-ws");
 
 export interface VoiceSession {
@@ -72,7 +73,7 @@ export interface VoiceSessionContext {
   sendEvent: (event: Record<string, unknown>) => void;
 }
 
-type VoiceSessionFactory = (ctx: VoiceSessionContext) => VoiceSession;
+export type VoiceSessionFactory = (ctx: VoiceSessionContext) => VoiceSession;
 
 // Default factory: loopback. Echoes mic frames back as audio frames.
 // Replaced by the orchestrator in Phase 3 once STT/LLM/TTS are wired up.
@@ -85,6 +86,13 @@ let sessionFactory: VoiceSessionFactory = (ctx) => ({
  *  voice orchestrator is initialized (Phase 3). */
 export function setVoiceSessionFactory(factory: VoiceSessionFactory): void {
   sessionFactory = factory;
+}
+
+/** The currently-registered factory. The broker voice bridge reuses the SAME factory
+ *  (wired with the real voiceTurnRunner) so broker voice runs the identical STT→LLM→TTS
+ *  session — no forked voice brain, just a second transport in front of it. */
+export function getVoiceSessionFactory(): VoiceSessionFactory {
+  return sessionFactory;
 }
 
 // ── Optional WebRTC audio transport ──────────────────────────────────────
@@ -187,7 +195,6 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
     let session: VoiceSession | null = null;
     let closed = false;
     let peer: VoicePeerLike | null = null;
-    let ttsSampleRate = 48000;
     let transport: "pcm" | "webrtc" = "pcm";
 
     const ctx: VoiceSessionContext = {
@@ -250,30 +257,18 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
           const clientStt = msg.clientStt === true;
           const reqTransport = msg.transport === "webrtc" ? "webrtc" : "pcm";
 
-          // For webrtc, AUDIO leaves the WS: sendAudio routes TTS PCM to the
-          // peer, and sendEvent snoops the TTS sample rate (carried on the
-          // voice_ready event) so writeTtsPcm gets the right rate. The control
-          // plane (sendEvent) ALWAYS stays on the WS — only audio moves.
-          const webrtcSendAudio = (frame: Int16Array) => { peer?.writeTtsPcm(frame, ttsSampleRate); };
-          const snoopEvent = (event: Record<string, unknown>) => {
-            const r = event["ttsSampleRate"];
-            if (typeof r === "number" && r > 0) ttsSampleRate = r;
-            // Barge-in: the turn machine cancels TTS synthesis here, but the
-            // desktop synthesizes faster than real-time, so the RTP pacer can
-            // still hold seconds of already-encoded reply. Flush it now so the
-            // agent goes silent on the phone within ~one frame. The control
-            // event still goes to the client below (it also flushes its own
-            // playback buffer on tts_interrupt).
-            if (event["type"] === "tts_interrupt") peer?.interruptTts();
-            ctx.sendEvent(event);
-          };
-
+          // For webrtc, AUDIO leaves the WS: sendAudio routes TTS PCM to the peer at the
+          // snooped engine rate, and the wrapped sendEvent snoops that rate + flushes the
+          // RTP pacer on barge-in. createPeerAudioRouter owns BOTH behaviors and is shared
+          // with the broker voice path, so they can never drift. The control plane stays on
+          // the WS — only audio moves. The router reads `peer` live (it's built async below).
+          const router = createPeerAudioRouter(() => peer);
           session = sessionFactory({
             sessionId,
             mode,
             clientStt,
-            sendAudio: reqTransport === "webrtc" ? webrtcSendAudio : ctx.sendAudio,
-            sendEvent: reqTransport === "webrtc" ? snoopEvent : ctx.sendEvent,
+            sendAudio: reqTransport === "webrtc" ? router.sendAudio : ctx.sendAudio,
+            sendEvent: reqTransport === "webrtc" ? router.wrapSendEvent(ctx.sendEvent) : ctx.sendEvent,
           });
           ctx.sendEvent({ type: "ready", sessionId, mode });
           logger.info(`[voice-ws] session opened: ${sessionId} (mode=${mode}, transport=${reqTransport})`);

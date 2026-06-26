@@ -17,6 +17,7 @@ import { loadAccountState, saveAccountState, updateAccountState, clearAccountSta
 import { renderQrDataUrl } from "./qr-render.js";
 import { transportMode } from "../config.js";
 import { startBrokerPresence, type BrokerPresence } from "../broker-presence.js";
+import { startBrokerVoicePresence } from "../broker-voice-presence.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("broker-transport.account");
@@ -26,6 +27,9 @@ const DEFAULT_BROKER_URL = "wss://broker.agentxos.ai";
 
 let manager: AgentxosAccountManager | null = null;
 let presence: BrokerPresence | null = null;
+/** A SECOND presence in the voice rendezvous (channel=voice), so the phone can start a
+ *  voice session on demand without touching the screen/chat peer. */
+let voicePresence: BrokerPresence | null = null;
 
 function accountApiUrl(): string {
   return process.env.LAX_ACCOUNT_API_URL?.trim() || DEFAULT_ACCOUNT_API_URL;
@@ -64,17 +68,22 @@ export function maybeStartBrokerPresence(state: AccountState | null = loadAccoun
   if (transportMode() !== "broker") return; // DARK unless LAX_TRANSPORT=broker
   if (!state || !state.pairedPhoneId) return; // need a session + a pairing
   logger.info(`[broker-transport] activating desktop presence (device ${state.deviceId} ↔ phone ${state.pairedPhoneId})`);
-  presence = startBrokerPresence({
+  const config = {
     brokerWsUrl: brokerWsUrl(),
     deviceId: state.deviceId,
     pairedPhoneId: state.pairedPhoneId,
     // Read the token fresh each (re)dial so a re-login is picked up.
     getToken: () => loadAccountState()?.sessionToken ?? "",
-  });
+  };
+  presence = startBrokerPresence(config);
+  // A second presence for the on-demand voice room (channel=voice). Same gating + token.
+  voicePresence = startBrokerVoicePresence(config);
 }
 
 /** Stop broker presence (shutdown / sign-out). Idempotent. */
 export function stopBrokerPresence(): void {
   presence?.stop();
   presence = null;
+  voicePresence?.stop();
+  voicePresence = null;
 }

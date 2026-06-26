@@ -19,12 +19,18 @@
 import type {
   RTCPeerConnection as WeriftPeerConnection,
   MediaStreamTrack as WeriftMediaStreamTrack,
+  RTCDataChannel as WeriftDataChannel,
   RTCIceCandidate,
   RtpPacket as WeriftRtpPacket,
 } from "werift";
 import { createOpusDecoder, resampleInt16, OPUS_SAMPLE_RATE } from "./opus-codec.js";
 import type { OpusDecoder } from "./opus-codec.js";
 import { OutboundAudio, OPUS_PAYLOAD_TYPE } from "./voice-rtp-audio.js";
+// ControlTransport + IceServerConfig are generic WebRTC transport contracts (NOT
+// screen-specific logic) — the same seams the http tunnel bridge already reuses
+// cross-subsystem. Voice uses them only on the BROKER path (a control data channel +
+// broker-minted ICE); the tailnet path passes neither and is byte-for-byte unchanged.
+import type { ControlTransport, IceServerConfig } from "../screen-stream/peer.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("voice.peer");
@@ -78,6 +84,9 @@ export class VoicePeer {
   private readonly pc: WeriftPeerConnection;
   private readonly outboundTrack: WeriftMediaStreamTrack;
   private readonly outbound: OutboundAudio;
+  /** Data channels opened on this peer (the broker path's `voice` control channel).
+   *  Empty on the tailnet path. Closed en masse on teardown. */
+  private readonly channels: WeriftDataChannel[] = [];
   /** Lazily created on the first inbound RTP packet (a peer with no mic input
    *  never spins up the wasm decoder). */
   private decoder: OpusDecoder | null = null;
@@ -88,20 +97,39 @@ export class VoicePeer {
   /**
    * Build a peer. Async because werift is imported lazily (see loadWerift) — a
    * missing dep rejects here and is handled by the caller, not at boot.
+   *
+   * `iceServers` is the broker-minted STUN+TURN config (broker path). Omit it (tailnet
+   * path) to fall back to the optional operator LAX_RTC_STUN, unchanged.
+   *
+   * `onControlReady` opts INTO a `voice` control data channel (broker path): the desktop
+   * (offerer) creates it, and once it opens the callback receives a ControlTransport that
+   * carries the voice control JSON (hello/ready/final/deltas/eos/…). Omit it (tailnet
+   * path) and NO data channel is created — control rides /ws/voice as before.
    */
-  static async create(handlers: VoicePeerHandlers): Promise<VoicePeer> {
+  static async create(
+    handlers: VoicePeerHandlers,
+    iceServers?: IceServerConfig[],
+    onControlReady?: (transport: ControlTransport) => void,
+  ): Promise<VoicePeer> {
     const werift = await loadWerift();
-    return new VoicePeer(werift, handlers);
+    return new VoicePeer(werift, handlers, iceServers, onControlReady);
   }
 
   private constructor(
     private readonly werift: WeriftModule,
     private readonly handlers: VoicePeerHandlers,
+    iceServers?: IceServerConfig[],
+    onControlReady?: (transport: ControlTransport) => void,
   ) {
     const { RTCPeerConnection, MediaStreamTrack, useOPUS } = werift;
+    // Broker path supplies the minted ICE list; tailnet leaves it undefined and falls
+    // back to the optional operator STUN url (env), as before.
     const stun = process.env.LAX_RTC_STUN?.trim();
+    const servers: IceServerConfig[] = iceServers ?? (stun ? [{ urls: stun }] : []);
     this.pc = new RTCPeerConnection({
-      iceServers: stun ? [{ urls: stun }] : [],
+      // werift's RTCIceServer takes a SINGLE url per entry; the standard/broker shape
+      // allows an array, so flatten array `urls` into one entry each.
+      iceServers: servers.flatMap(toWeriftIceServers),
       // Advertise standard Opus (48kHz, stereo channel count, dynamic PT 111) so
       // react-native-webrtc on the phone negotiates it as the audio codec.
       codecs: { audio: [useOPUS({ payloadType: OPUS_PAYLOAD_TYPE })] },
@@ -110,6 +138,10 @@ export class VoicePeer {
     // ONE sendrecv audio transceiver: outbound = our TTS track, inbound = phone mic.
     this.outboundTrack = new MediaStreamTrack({ kind: "audio" });
     this.pc.addTransceiver(this.outboundTrack, { direction: "sendrecv" });
+
+    // Broker path only: open the `voice` control data channel BEFORE the offer so it's
+    // negotiated in the SDP. The tailnet path passes no onControlReady → no channel.
+    if (onControlReady) this.setupDataChannel("voice", onControlReady);
 
     this.outbound = new OutboundAudio(
       { RtpPacket: this.werift.RtpPacket, RtpHeader: this.werift.RtpHeader },
@@ -132,6 +164,39 @@ export class VoicePeer {
       track.onReceiveRtp.subscribe((rtp) => {
         this.handleInboundRtp(rtp);
       });
+    });
+  }
+
+  /** Create + wire the `voice` control data channel. The desktop is the offerer, so it
+   *  CREATES the channel; the transport is surfaced once it opens (send is only valid
+   *  then). Mirrors ScreenPeer.setupDataChannel — same duplex-text plumbing. */
+  private setupDataChannel(label: string, onReady: (transport: ControlTransport) => void): void {
+    const dc = this.pc.createDataChannel(label);
+    this.channels.push(dc);
+    const transport: ControlTransport = {
+      send: (text) => {
+        if (this.closed) return;
+        try {
+          dc.send(text);
+        } catch (e) {
+          logger.warn(`[voice] control send failed: ${(e as Error).message}`);
+        }
+      },
+      onMessage: (handler) => {
+        dc.onMessage.subscribe((data) => handler(typeof data === "string" ? data : data.toString()));
+      },
+      onClose: (handler) => {
+        dc.stateChanged.subscribe((state) => {
+          if (state === "closed") handler();
+        });
+      },
+    };
+    let surfaced = false;
+    dc.stateChanged.subscribe((state) => {
+      if (state === "open" && !surfaced) {
+        surfaced = true;
+        onReady(transport);
+      }
     });
   }
 
@@ -226,6 +291,14 @@ export class VoicePeer {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    for (const dc of this.channels) {
+      try {
+        dc.close();
+      } catch {
+        /* already closed */
+      }
+    }
+    this.channels.length = 0;
     this.outbound.close();
     if (this.decoder) {
       this.decoder.free();
@@ -252,4 +325,17 @@ function toIceInit(c: RTCIceCandidate): RtcIceCandidate {
     sdpMid: c.sdpMid ?? null,
     sdpMLineIndex: c.sdpMLineIndex ?? null,
   };
+}
+
+/** Expand one IceServerConfig (urls may be an array, standard/broker shape) into the
+ *  single-url-per-entry shape werift's RTCIceServer requires. Mirrors the screen peer's
+ *  helper; kept local so voice never imports screen internals for an 8-line util. */
+function toWeriftIceServers(s: IceServerConfig): { urls: string; username?: string; credential?: string }[] {
+  const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+  return urls.map((u) => {
+    const entry: { urls: string; username?: string; credential?: string } = { urls: u };
+    if (s.username !== undefined) entry.username = s.username;
+    if (s.credential !== undefined) entry.credential = s.credential;
+    return entry;
+  });
 }

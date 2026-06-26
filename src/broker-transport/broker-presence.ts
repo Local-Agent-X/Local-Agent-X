@@ -25,7 +25,7 @@ import { createLogger } from "../logger.js";
 const logger = createLogger("broker-transport.presence");
 
 /** Default delay before re-dialing after a dialer closes. */
-const DEFAULT_RECONNECT_MS = 3000;
+export const DEFAULT_RECONNECT_MS = 3000;
 
 export interface BrokerPresenceConfig {
   /** Broker base URL (ws/wss), no /connect suffix. */
@@ -37,6 +37,10 @@ export interface BrokerPresenceConfig {
   /** Read the current session bearer token fresh on each (re)dial, so a refreshed
    *  token is used after a re-login rather than a stale captured one. */
   getToken: () => string;
+  /** Optional secondary rendezvous channel (e.g. "voice") — a SEPARATE Durable Object for
+   *  the same pairing, so the voice peer never collides with the screen/chat peer. Omit
+   *  for the main (screen/chat/apps) room. */
+  channel?: string;
 }
 
 /** A live dialer the supervisor can stop. The real BrokerScreenDialer satisfies it. */
@@ -97,8 +101,10 @@ export class BrokerPresence {
       target: this.config.pairedPhoneId,
       device: this.config.deviceId,
       token,
+      ...(this.config.channel ? { channel: this.config.channel } : {}),
     });
-    logger.info(`[broker-transport] presence: dialing broker as desktop ${this.config.deviceId}`);
+    const room = this.config.channel ? ` [${this.config.channel}]` : "";
+    logger.info(`[broker-transport] presence: dialing broker as desktop ${this.config.deviceId}${room}`);
     this.current = this.deps.createDialer(connectUrl, token, () => this.onDialerClosed());
   }
 

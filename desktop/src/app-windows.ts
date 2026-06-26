@@ -14,6 +14,7 @@ import { isServerRunning } from "./server-process";
 import { buildAppDragStripJs } from "./window-injections";
 import { lockAppWindowNavigation } from "./app-window-guards";
 import { isExternalBrowserUrl } from "./url-classify";
+import { getMainWindow } from "./window";
 
 // Resolve /files/* paths against PROJECT_ROOT, not process.cwd() — a
 // Finder/Launchpad-launched .app has cwd `/`; a Windows desktop-launch.bat
@@ -99,6 +100,16 @@ function buildAppWindow(hidden: boolean): BrowserWindow {
 export function openAccountWindow(): void {
   const laxConfig = getLAXConfig();
   const win = buildAppWindow(false);
+  // Glue the popup to the main window: a CHILD window stays above its parent and is
+  // raised with it — clicking the LAX dock icon brings the popup forward too — and it
+  // needs no dock icon of its own. Fixes "it gets buried behind LAX and I have to
+  // minimize LAX to find it." setParentWindow (not the ctor) so buildAppWindow stays shared.
+  const parent = getMainWindow();
+  if (parent && !parent.isDestroyed()) win.setParentWindow(parent);
+  // It's real HTML on our origin, so give it the same draggable top strip the app
+  // windows get — openAccountWindow previously skipped this, so the window had no
+  // titlebar region to drag.
+  attachAppDragStrip(win);
   win.loadURL(`http://127.0.0.1:${laxConfig.port}/account.html?token=${laxConfig.authToken}`);
 }
 

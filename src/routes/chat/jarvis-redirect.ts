@@ -39,11 +39,10 @@ export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boole
     const targetOpId = activeOps[activeOps.length - 1];
     const taskHint = getOpTask(targetOpId);
 
-    // Feed the classifier the last few main-agent turns. Without this,
-    // Haiku sees only (workerTask, message) and a "yes" answering the MAIN
-    // agent's question gets misrouted to the worker. With recent turns,
-    // Haiku can see the question that "yes" is answering and route to
-    // MAIN_AGENT.
+    // Feed the classifier the last few main-agent turns. Without this, it
+    // sees only (workerTask, message) and a "yes" answering the MAIN agent's
+    // question gets misrouted to the worker. With recent turns, it can see the
+    // question that "yes" is answering and route to MAIN_AGENT.
     const recentTurns = recentSessionMessages
       .filter((m): m is { role: "user" | "assistant"; content: string } =>
         (m.role === "user" || m.role === "assistant") && typeof m.content === "string",

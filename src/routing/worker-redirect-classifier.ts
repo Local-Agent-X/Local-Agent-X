@@ -20,16 +20,14 @@
  * count as MAIN_AGENT because the main agent SEES the worker's
  * progress trace and can answer without disturbing the worker.
  *
- * Calls Anthropic Haiku with the same auth path the auto-delegate
- * classifier uses. Returns null on any failure — caller treats null as
- * MAIN_AGENT (safer default — never silently divert a user's message
+ * Routes through the canonical classifier wrapper (classifyWithLLM): runs on
+ * the user's provider + background model, no hardcoded model, works for every
+ * provider — not Anthropic-only. Returns null on any failure — caller treats
+ * null as MAIN_AGENT (safer default — never silently divert a user's message
  * to the worker if we're not confident).
  */
 
-import { createLogger } from "../logger.js";
-import { loadAnthropicTokens, isAnthropicTokenExpired } from "../auth/anthropic.js";
-
-const logger = createLogger("routing.worker-redirect-classifier");
+import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
 
 export interface WorkerRedirectResult {
   /** True if message should silently go to the worker as a redirect. */
@@ -68,9 +66,9 @@ export interface RecentTurn {
  *
  * `recentTurns` is the last few main-agent turns. Critical for short
  * replies: a "yes" answering the main agent's last question must NOT be
- * routed to the worker. Without this, Haiku sees only the message string
- * and the worker task — it has no way to know the user is replying to a
- * different agent.
+ * routed to the worker. Without this, the classifier sees only the message
+ * string and the worker task — it has no way to know the user is replying to
+ * a different agent.
  */
 export async function classifyWorkerRedirect(
   message: string,
@@ -92,15 +90,9 @@ export async function classifyWorkerRedirect(
     return { redirect: false, reason: "message too long to be redirect feedback", raw: "(skipped)" };
   }
 
-  const tokens = loadAnthropicTokens();
-  if (!tokens || isAnthropicTokenExpired(tokens)) return null;
-  const accessToken = tokens.accessToken || "";
-  if (!accessToken) return null;
-
   // Format the last few main-agent turns (most recent last). Cap each
   // turn at 400 chars and the whole block at the last 4 entries — enough
-  // signal for "the main agent just asked X" without bloating the Haiku
-  // prompt.
+  // signal for "the main agent just asked X" without bloating the prompt.
   const recentBlock = recentTurns.length > 0
     ? "Recent main-agent chat (most recent last):\n"
       + recentTurns
@@ -114,36 +106,24 @@ export async function classifyWorkerRedirect(
     ? `${recentBlock}Worker is currently working on: ${workerTask.slice(0, 200)}\n\nUser's new message: ${message}`
     : `${recentBlock}(Worker task unknown — judge by the message alone.)\n\nUser's new message: ${message}`;
 
-  try {
-    const { streamAnthropicResponse } = await import("../anthropic-client/index.js");
-    const stream = streamAnthropicResponse({
-      token: accessToken,
-      model: "claude-haiku-4-5-20251001",
-      messages: [{ role: "user", content: userPrompt } as never],
-      systemPrompt: SYSTEM_PROMPT,
-      temperature: 0,
-      signal,
-    });
+  return classifyWithLLM<WorkerRedirectResult>({
+    category: "worker-redirect",
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt,
+    parse: parseWorkerRedirect,
+    timeoutMs: 3000,
+    maxResponseChars: 500,
+    signal,
+  });
+}
 
-    let response = "";
-    for await (const event of stream) {
-      if (event.type === "text") response += event.delta || "";
-      if (response.length > 500) break;
-    }
-
-    const decisionMatch = response.match(/DECISION:\s*(REDIRECT|MAIN_AGENT)/i);
-    const reasonMatch = response.match(/REASON:\s*(.+?)$/im);
-    if (!decisionMatch) {
-      logger.warn(`couldn't parse classifier response: "${response.slice(0, 200)}"`);
-      return null;
-    }
-    return {
-      redirect: decisionMatch[1].toUpperCase() === "REDIRECT",
-      reason: reasonMatch?.[1].trim() || "(no reason given)",
-      raw: response,
-    };
-  } catch (e) {
-    logger.warn(`classifier call failed: ${(e as Error).message}`);
-    return null;
-  }
+export function parseWorkerRedirect(raw: string): WorkerRedirectResult | null {
+  const decisionMatch = raw.match(/DECISION:\s*(REDIRECT|MAIN_AGENT)/i);
+  if (!decisionMatch) return null;
+  const reasonMatch = raw.match(/REASON:\s*(.+?)$/im);
+  return {
+    redirect: decisionMatch[1].toUpperCase() === "REDIRECT",
+    reason: reasonMatch?.[1].trim() || "(no reason given)",
+    raw,
+  };
 }

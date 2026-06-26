@@ -74,6 +74,11 @@
       const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
       let busy = false;
+      // Auto-close only on a FRESH pair (we saw a non-paired state this session, then it
+      // flipped to paired) — never when the popup is opened already-connected, so a status
+      // check / sign-out isn't yanked away. `autoClosing` guards the 2s poll from re-arming.
+      let sawUnpaired = false;
+      let autoClosing = false;
       async function trigger(path) {
         if (busy) return;
         busy = true;
@@ -85,15 +90,21 @@
       function render(s) {
         if (!s) return;
         showErr(s.error);
-        // 1) paired → done
+        // 1) paired → done. Done closes now; a fresh pair also auto-closes after a beat.
         if (s.paired) {
+          const justConnected = sawUnpaired && !autoClosing;
           bodyEl.innerHTML =
             '<h1><span class="ok">✓ Connected</span></h1>' +
-            "<p>This Mac is paired with your phone and reachable through the agentxos broker. You can close this window.</p>" +
-            '<div class="row"><button class="btn ghost" id="out">Sign out</button></div>';
+            "<p>This Mac is paired with your phone and reachable through the agentxos broker." +
+            (justConnected ? " Closing this window…" : " You can close this window.") + "</p>" +
+            '<div class="row"><button class="btn" id="done">Done</button>' +
+            '<button class="btn ghost" id="out">Sign out</button></div>';
+          document.getElementById("done").onclick = () => window.close();
           document.getElementById("out").onclick = () => trigger("/api/account/signout");
+          if (justConnected) { autoClosing = true; setTimeout(() => window.close(), 2500); }
           return;
         }
+        sawUnpaired = true; // any non-paired state (signed-out / login / pairing)
         // 2) pairing in flight → show QR
         if (s.pairing) {
           const secsLeft = Math.max(0, Math.round((s.pairing.expiresAt - Date.now()) / 1000));

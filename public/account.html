@@ -4,33 +4,54 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Connect agentxos account · Local Agent X</title>
+    <!-- Apply the app's saved theme (dark/light/system) BEFORE paint, so this popup matches
+         Local Agent X instead of forcing dark. Same origin → it reads the same lax_theme. -->
+    <script src="/js/shared-theme.js?v=v1"></script>
     <style>
-      :root { color-scheme: dark; }
+      /* Design tokens copied verbatim from public/css/app.css so the popup matches LAX
+         and follows its light/dark toggle (shared-theme.js sets <html data-theme>). */
+      :root {
+        --bg: #0a0a0f; --surface: #0f0f18; --surface-2: #131325;
+        --border: #1a1a2e; --accent: #40f0f0; --accent-dim: #30cccc88;
+        --danger: #ff3333; --text: #c8d0e0; --muted: #666680; --hover: #151528;
+        --font: 'Segoe UI', system-ui, sans-serif;
+        --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      }
+      [data-theme="light"] {
+        --bg: #f5f5f7; --surface: #ffffff; --surface-2: #f0f0f5;
+        --border: #d8d8e0; --accent: #0066cc; --accent-dim: #0066cc44;
+        --danger: #dc3545; --text: #1a1a2e; --muted: #7777aa; --hover: #eeeef4;
+      }
       * { box-sizing: border-box; }
       body {
         margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-        font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        background: #0b0f12; color: #e7edf0; padding: 32px;
+        font: 15px/1.5 var(--font);
+        background: var(--bg); color: var(--text); padding: 32px;
       }
       .card {
-        width: 100%; max-width: 460px; background: #11171c; border: 1px solid #1e2933;
-        border-radius: 16px; padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,.4);
+        width: 100%; max-width: 460px; background: var(--surface); border: 1px solid var(--border);
+        border-radius: 12px; padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,.4);
       }
-      .eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: #5fd4d4; margin: 0 0 10px; }
+      .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin: 0 0 10px; }
       h1 { font-size: 24px; margin: 0 0 8px; }
-      p { color: #9fb0bb; margin: 0 0 18px; }
+      p { color: var(--muted); margin: 0 0 18px; }
+      /* Match LAX buttons: 8px radius, mono, transparent + accent border, fill on hover. */
       .btn {
-        appearance: none; border: 0; border-radius: 999px; padding: 12px 22px; font-size: 15px; font-weight: 600;
-        background: #2fd4d4; color: #04181a; cursor: pointer;
+        appearance: none; font-family: var(--mono); border-radius: 8px; padding: 8px 16px;
+        font-size: 13px; font-weight: 600; line-height: 1.2; text-decoration: none; display: inline-block;
+        background: transparent; border: 1px solid var(--accent); color: var(--accent);
+        cursor: pointer; transition: all .2s;
       }
-      .btn:disabled { opacity: .5; cursor: default; }
-      .btn.ghost { background: transparent; color: #9fb0bb; border: 1px solid #2a3742; }
-      .code { font-size: 34px; letter-spacing: .22em; font-weight: 800; text-align: center; margin: 14px 0; color: #fff; font-variant-numeric: tabular-nums; }
+      .btn:hover { background: var(--accent); color: var(--bg); box-shadow: 0 0 12px var(--accent-dim); }
+      .btn:disabled { opacity: .5; cursor: default; box-shadow: none; background: transparent; color: var(--accent); }
+      .btn.ghost { border-color: var(--border); color: var(--muted); }
+      .btn.ghost:hover { background: var(--hover); color: var(--text); border-color: var(--muted); box-shadow: none; }
+      .code { font-family: var(--mono); font-size: 34px; letter-spacing: .22em; font-weight: 800; text-align: center; margin: 14px 0; color: var(--text); font-variant-numeric: tabular-nums; }
       .qr { display: block; margin: 6px auto 14px; width: 240px; height: 240px; border-radius: 12px; background: #fff; padding: 10px; }
-      a { color: #5fd4d4; }
-      .err { color: #ff6b6b; font-size: 13px; margin-top: 12px; }
-      .ok { color: #54e08a; font-weight: 700; }
-      .muted { font-size: 13px; color: #6c7d88; }
+      a { color: var(--accent); }
+      .err { color: var(--danger); font-size: 13px; margin-top: 12px; }
+      .ok { color: #2aa84a; font-weight: 700; }
+      .muted { font-size: 13px; color: var(--muted); }
       .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     </style>
   </head>

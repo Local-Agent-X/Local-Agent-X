@@ -14,5 +14,6 @@ export {
   getBrowserManager,
   closeBrowser,
   closeAllBrowsers,
+  resetWedgedBrowser,
   setCurrentBrowserSession,
 } from "./instance.js";

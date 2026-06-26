@@ -15,8 +15,10 @@
  */
 
 import type { ToolDefinition, ToolResult } from "../../types.js";
-import { getBrowserManager, closeBrowser, withBrowserLock } from "../../browser/index.js";
+import { getBrowserManager, closeBrowser, withBrowserLock, resetWedgedBrowser } from "../../browser/index.js";
 import type { BrowserEngine, BrowserManager } from "../../browser/index.js";
+import { getToolTimeout } from "../../tool-timeout.js";
+import { raceWedgeDeadline, WEDGED } from "./wedge-deadline.js";
 import { VALID_ENGINES, err } from "./shared.js";
 import {
   BROWSER_TOOL_NAME,
@@ -105,7 +107,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
         }
 
         try {
-          const result = await (async (): Promise<ToolResult> => {
+          const dispatch = (async (): Promise<ToolResult> => {
           switch (action) {
             case "navigate": return await handleNavigate(manager, args, engine);
             case "new_tab": return await handleNewTab(manager, args);
@@ -132,6 +134,21 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
               );
           }
           })();
+
+          // In-process hang recovery: fire just under the per-tool browser
+          // timeout (tool-timeout.ts) and force-reset the wedged session so the
+          // NEXT call re-acquires a fresh Chrome — instead of the outer timeout
+          // abandoning the call and leaving the wedged Chrome to be reused until
+          // LAX restarts. See wedge-deadline.ts / instance.ts:resetWedgedBrowser.
+          const toolMs = getToolTimeout(BROWSER_TOOL_NAME);
+          const deadlineMs = toolMs > 0 ? Math.max(1_000, toolMs - 1_000) : 0;
+          const result = await raceWedgeDeadline(dispatch, deadlineMs, () => resetWedgedBrowser(sessionId));
+          if (result === WEDGED) {
+            return err(
+              "The browser stopped responding (an action hung) and its session was reset. " +
+              "Your last action did not complete — retry it and a fresh browser will open.",
+            );
+          }
           return await applyProgressGuard(action, manager, sessionId, result);
         } catch (e) {
           const message = (e as Error).message;

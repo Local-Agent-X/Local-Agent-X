@@ -92,3 +92,23 @@ export async function closeSharedBrowser(): Promise<void> {
   }
   log.info("[browser-runtime] shared Chrome closed");
 }
+
+/**
+ * Wedge recovery (no graceful await). A hung CDP op — e.g. an `observe()` that
+ * never returns — leaves `browser.isConnected()` true, so the connection is
+ * reused forever and only a process restart clears it. We can't `await
+ * browser.close()` here: on a wedged connection that close can itself hang.
+ * Instead SIGKILL the agent Chrome process and drop the handles immediately;
+ * the next `getSharedBrowser()` relaunches, and any in-flight op on the dead
+ * connection rejects promptly ("Target closed"). Only touches the agent's
+ * dedicated Chrome — never the user's.
+ */
+export function forceKillSharedBrowser(): void {
+  const proc = chromeProcess;
+  const b = browser;
+  chromeProcess = null;
+  browser = null;
+  if (proc) { try { proc.kill("SIGKILL"); } catch { /* already exited */ } }
+  if (b) { void b.close().catch(() => { /* connection already dead */ }); }
+  log.info("[browser-runtime] shared Chrome force-killed (wedge recovery)");
+}

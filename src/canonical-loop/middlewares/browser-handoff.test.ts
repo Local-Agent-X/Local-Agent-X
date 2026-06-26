@@ -97,4 +97,17 @@ describe("browser-handoff gate", () => {
       (await fire(ctx({ assistantContent: "Both sites are open in separate tabs." }))).kind,
     ).toBe("continue");
   });
+
+  it("regex backstop catches the 'Blocked … Which way?' option-menu punt (the Guardian give-up)", async () => {
+    // Production case 2026-06-26: Grok punted on the Guardian Sourcepoint wall
+    // with this exact shape; the classifier timed out (null) and the old regex
+    // matched none of it, so the turn was allowed to stop.
+    mockClassify.mockResolvedValueOnce(null);
+    const res = await fire(ctx({
+      assistantContent:
+        "Blocked: Guardian's persistent Sourcepoint consent overlay cannot be dismissed by the browser tools.\n\n" +
+        "Options:\n1. Switch to web_fetch.\n2. Use a different news site.\n3. Tell me to stop.\n\nWhich way?",
+    }));
+    expect(res.kind).toBe("nudge");
+  });
 });

@@ -5,9 +5,14 @@
  * an LLM second opinion.
  *
  * **Provider policy (revised 2026-05-06):** uses the user's CURRENTLY-SELECTED
- * provider and model — whatever they're chatting on. No more Haiku/Sonnet
- * fallback to Anthropic when the user is on Codex; that broke the multi-user-
- * app guarantee and produced the dark-mode-freeze bug (5+ Anthropic-only
+ * provider — whatever they're chatting on — but the provider's BACKGROUND
+ * (non-reasoning) model, not their chat model. A yes/no classifier must not
+ * burn a flagship reasoner's chain-of-thought: on xAI the chat model grok-4.3
+ * reasons by default and timed out EVERY classifier call (2026-06-26), so the
+ * give-up verdict silently never ran. backgroundModelFor() drops to the
+ * provider's fast tier (registry `backgroundModel`). Still no cross-provider
+ * fallback (no Haiku/Sonnet on a Codex turn) — that broke the multi-user-app
+ * guarantee and produced the dark-mode-freeze bug (5+ Anthropic-only
  * classifier calls fired on a Codex turn, hanging the UI for tens of seconds
  * after the actual reply finished).
  *
@@ -29,6 +34,8 @@
 
 import { createLogger } from "../logger.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
+import { backgroundModelFor } from "../providers/registry.js";
+import type { ProviderId } from "../providers/provider-ids.js";
 
 // Aggressive default timeout. These classifiers shape signal quality but
 // aren't load-bearing — every call site already has a regex/heuristic
@@ -57,7 +64,7 @@ export interface ClassifyOptions<T> {
   parse: (raw: string) => T | null;
   /** Hard upper bound (ms). Default 4000. */
   timeoutMs?: number;
-  /** Override the default model for this classifier. Default `claude-sonnet-4-6`. */
+  /** Override the model for this classifier. Default: the provider's background (non-reasoning) model. */
   model?: string;
   /** Stop reading the stream after this many chars (cheap circuit-break for runaway responses). Default 800. */
   maxResponseChars?: number;
@@ -93,9 +100,11 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
   const ctx = await resolveProviderContext();
   if (!ctx) return null;
   const { provider, apiKey } = ctx;
-  // Model precedence: explicit per-call override > the user's configured
-  // model (settings.json) > the classifier's cheaper per-provider floor.
-  const model = opts.model || ctx.model || MODEL_FALLBACKS[provider] || "";
+  // Model precedence: explicit per-call override > the provider's background
+  // (non-reasoning) model > the user's configured model > the cheaper floor.
+  // backgroundModelFor stays on the user's provider (no cross-provider fan-out)
+  // while dropping the reasoning tier that stalls a yes/no verdict.
+  const model = opts.model || backgroundModelFor(provider as ProviderId, ctx.model || MODEL_FALLBACKS[provider] || "");
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxChars = opts.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS;

@@ -49,6 +49,9 @@ const HANDOFF_PATTERNS: RegExp[] = [
   /\b(dismiss|close|clear|disable|remove)\b[^.?!]*\b(yourself|manually|on your (end|side))\b/i,
   /\b(can|could|would) you\b[^.?!]*\b(dismiss|close|clear|disable|grant|provide|log ?in|sign ?in)\b/i,
   /\bi can'?t\b[^.?!]*\b(dismiss|close|clear|proceed|continue|access|finish)\b/i,
+  /\bwhich (way|option)\b/i,
+  /\bcannot be (dismiss|clos|clear|remov)\w*\b/i,
+  /^\s*blocked\b/im,
 ];
 
 function looksLikeHandoff(text: string): boolean {

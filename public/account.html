@@ -46,6 +46,8 @@
       .btn:disabled { opacity: .5; cursor: default; box-shadow: none; background: transparent; color: var(--accent); }
       .btn.ghost { border-color: var(--border); color: var(--muted); }
       .btn.ghost:hover { background: var(--hover); color: var(--text); border-color: var(--muted); box-shadow: none; }
+      .btn.danger { border-color: var(--danger); color: var(--danger); }
+      .btn.danger:hover { background: var(--danger); color: var(--bg); box-shadow: none; }
       .code { font-family: var(--mono); font-size: 34px; letter-spacing: .22em; font-weight: 800; text-align: center; margin: 14px 0; color: var(--text); font-variant-numeric: tabular-nums; }
       .qr { display: block; margin: 6px auto 14px; width: 240px; height: 240px; border-radius: 12px; background: #fff; padding: 10px; }
       a { color: var(--accent); }
@@ -80,6 +82,8 @@
       // already-connected. `autoClosing` guards the 2s poll from re-arming the timer.
       let sawPairing = false;
       let autoClosing = false;
+      let closeTimer = null;        // the pending auto-close, so Disconnect can cancel it
+      let confirmingUnpair = false; // two-step guard on the destructive Disconnect action
       async function trigger(path) {
         if (busy) return;
         busy = true;
@@ -92,17 +96,34 @@
         if (!s) return;
         showErr(s.error);
         // 1) paired → done. Done closes now; a fresh QR-scan pair auto-closes 2s later.
+        //    "Disconnect phone" REVOKES the server-side pairing (sign-out alone leaves it
+        //    live, which is why a re-login re-adopts it) — confirm-gated, it's permanent.
         if (s.paired) {
           const justPaired = sawPairing && !autoClosing;
+          const unpairUi = confirmingUnpair
+            ? '<p class="muted" style="margin-top:16px">Disconnect this phone? It must scan a new QR to reconnect.</p>' +
+              '<div class="row"><button class="btn danger" id="unpairYes">Disconnect</button>' +
+              '<button class="btn ghost" id="unpairNo">Cancel</button></div>'
+            : '<div class="row" style="margin-top:16px"><button class="btn ghost" id="unpair">Disconnect phone</button></div>';
           bodyEl.innerHTML =
             '<h1><span class="ok">✓ Connected</span></h1>' +
             "<p>This Mac is paired with your phone and reachable through the agentxos broker." +
             (justPaired ? " Closing this window…" : " You can close this window.") + "</p>" +
             '<div class="row"><button class="btn" id="done">Done</button>' +
-            '<button class="btn ghost" id="out">Sign out</button></div>';
+            '<button class="btn ghost" id="out">Sign out</button></div>' +
+            unpairUi;
           document.getElementById("done").onclick = () => window.close();
           document.getElementById("out").onclick = () => trigger("/api/account/signout");
-          if (justPaired) { autoClosing = true; setTimeout(() => window.close(), 2000); }
+          if (confirmingUnpair) {
+            document.getElementById("unpairYes").onclick = () => { confirmingUnpair = false; sawPairing = false; trigger("/api/account/pair/unpair"); };
+            document.getElementById("unpairNo").onclick = () => { confirmingUnpair = false; render(s); };
+          } else {
+            document.getElementById("unpair").onclick = () => {
+              if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; } // don't close mid-confirm
+              confirmingUnpair = true; render(s);
+            };
+          }
+          if (justPaired && !confirmingUnpair) { autoClosing = true; closeTimer = setTimeout(() => window.close(), 2000); }
           return;
         }
         // 2) pairing in flight → show QR. Mark that we've shown it, so ONLY the eventual

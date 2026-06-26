@@ -104,6 +104,12 @@ export class AgentxosApiClient {
     return data.pairings;
   }
 
+  /** Revoke a pairing — the in-app "Disconnect phone" action. Server-side and permanent;
+   *  the phone can only rejoin by scanning a new QR (constitution §11, no remote add). */
+  async revokePairing(token: string, pairingId: string): Promise<void> {
+    await this.post<{ ok: boolean }>("/api/devices/revoke", { pairingId }, token);
+  }
+
   private async post<T>(path: string, body: unknown, token?: string): Promise<T> {
     return this.request<T>(path, "POST", body, token);
   }

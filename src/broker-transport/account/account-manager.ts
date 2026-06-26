@@ -30,6 +30,7 @@ export interface AccountApi {
   ): Promise<RegisteredDevice>;
   requestPairingChallenge(token: string, desktopDeviceId: string): Promise<IssuedPairing>;
   listPairings(token: string): Promise<PairingEntry[]>;
+  revokePairing(token: string, pairingId: string): Promise<void>;
 }
 
 /** What the account page renders. `login`/`pairing` are non-null only while a flow is
@@ -192,6 +193,25 @@ export class AgentxosAccountManager {
     } finally {
       this.pairingRunning = false;
       this.pairing = null;
+    }
+  }
+
+  /** Disconnect the paired phone for REAL: revoke the server-side pairing (not just the
+   *  local record — sign-out leaves the pairing live, which is why a re-login re-adopts it)
+   *  and clear pairedPhoneId. After this the page drops to "Pair your phone". The caller
+   *  stops broker presence. No-op if signed out. */
+  async unpair(): Promise<void> {
+    const state = this.deps.loadState();
+    if (!state) return;
+    this.error = null;
+    try {
+      const mine = (await this.deps.api.listPairings(state.sessionToken)).find(
+        (p) => p.desktopDeviceId === state.deviceId,
+      );
+      if (mine) await this.deps.api.revokePairing(state.sessionToken, mine.pairingId);
+      this.deps.updateState({ pairedPhoneId: undefined });
+    } catch (e) {
+      this.error = (e as Error).message;
     }
   }
 

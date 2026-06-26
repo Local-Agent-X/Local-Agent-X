@@ -31,6 +31,12 @@ export const handleAccountRoutes: RouteHandler = async (method, url, req, res) =
     jsonResponse(res, 202, { ok: true }, req);
     return true;
   }
+  if (method === "POST" && url.pathname === "/api/account/pair/unpair") {
+    await manager.unpair(); // revoke the server-side pairing, then drop presence
+    stopBrokerPresence();
+    jsonResponse(res, 200, { ok: true }, req);
+    return true;
+  }
   if (method === "POST" && url.pathname === "/api/account/signout") {
     manager.signOut();
     stopBrokerPresence();

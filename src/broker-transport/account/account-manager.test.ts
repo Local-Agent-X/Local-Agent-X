@@ -15,6 +15,7 @@ function harness(opts: { polls?: DeviceCodePoll[]; pairings?: () => PairingEntry
   let pollI = 0;
   const polls = opts.polls ?? [{ status: "approved", token: "TOK", accountId: "acct-1", email: "a@b.co" }];
   const registered: unknown[] = [];
+  const revoked = new Set<string>();
   let challenges = 0;
   const api: AccountApi = {
     startDeviceCode: async () => STARTED,
@@ -24,7 +25,8 @@ function harness(opts: { polls?: DeviceCodePoll[]; pairings?: () => PairingEntry
       return { deviceId: "desk-1", created: true };
     },
     requestPairingChallenge: async () => { challenges++; return { code: "C", expiresAt: 90_000, qrPayload: '{"v":1,"code":"C","connectUrl":"u"}' }; },
-    listPairings: async () => (opts.pairings ? opts.pairings() : []),
+    listPairings: async () => (opts.pairings ? opts.pairings() : []).filter((p) => !revoked.has(p.pairingId)),
+    revokePairing: async (_token, pairingId) => { revoked.add(pairingId); },
   };
   let t = 0;
   const deps: AccountManagerDeps = {
@@ -127,5 +129,20 @@ describe("AgentxosAccountManager — pairing", () => {
     const { manager } = harness();
     await manager.startPairing(); // not signed in → no-op
     expect(manager.status().pairing).toBeNull();
+  });
+
+  it("unpair revokes the server-side pairing so a re-login won't re-adopt it", async () => {
+    // The user's bug: sign-out then back in stayed Connected because the broker kept the
+    // pairing. unpair() must REVOKE it server-side, not just locally — proven by signing in
+    // again and NOT re-adopting (listPairings is empty once revoked).
+    const { manager, getState } = harness({ pairings: () => [PAIRING()] });
+    await manager.startLogin();
+    expect(manager.status().paired).toBe(true); // adopted the existing pairing
+    await manager.unpair();
+    expect(getState()?.pairedPhoneId).toBeUndefined();
+    expect(manager.status().paired).toBe(false);
+    manager.signOut();
+    await manager.startLogin(); // sign back in
+    expect(manager.status().paired).toBe(false); // stays unpaired — the revoke stuck
   });
 });

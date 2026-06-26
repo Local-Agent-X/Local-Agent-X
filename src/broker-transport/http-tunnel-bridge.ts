@@ -2,16 +2,15 @@
 // list) over the broker peer's `http` data channel instead of the tailnet HTTP bind.
 //
 // The phone frames an HTTP request; this bridge proxies it to the desktop's OWN loopback
-// server (127.0.0.1:port) and frames the response back. It enforces the SAME device-path
-// allowlist the tailnet device token did (isDeviceAllowedPath) — so the broker phone gets
-// the DEVICE scope, NOT operator access; it can never reach a path a tailnet device
-// couldn't. The loopback request carries the operator token only to satisfy local auth;
-// the allowlist is the security boundary (mirrors bridge/upgrade-auth.ts).
+// server (127.0.0.1:port) and frames the response back. It enforces the device-path
+// allowlist (isDeviceAllowedPath) — so the broker phone gets a NARROW scope, NOT operator
+// access. The loopback request carries the operator token only to satisfy local auth; the
+// allowlist is the security boundary (see device-paths.ts).
 //
 // Pure over an injected loopback resolver + fetch so it unit-tests with fakes.
 
 import type { ControlTransport } from "../screen-stream/peer.js";
-import { isDeviceAllowedPath } from "../bridge/upgrade-auth.js";
+import { isDeviceAllowedPath } from "./device-paths.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.http-tunnel");
@@ -152,7 +151,7 @@ export class HttpTunnelBridge implements HttpChannel {
   }
 }
 
-/** Inert HttpChannel: REST stays on the tailnet (chat/screen-only build / tests). */
+/** Inert HttpChannel: REST is not tunneled (chat/screen-only build / tests). */
 export class NullHttpChannel implements HttpChannel {
   attach(_transport: ControlTransport): void {
     /* not tunneled */

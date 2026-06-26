@@ -235,10 +235,10 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     json(200, appReg.getEvents(id, since)); return true;
   }
 
-  // Offline bundle — device-token scoped (the path is under /api/apps, which
-  // bridge/upgrade-auth.ts admits for paired devices). Returns the app HTML,
-  // an inlined asset manifest, and the live state snapshot so the phone can run
-  // the app with the desktop unreachable (product flow 5). Built in
+  // Offline bundle — the path is under /api/apps, the narrow scope the broker
+  // phone is held to (see broker-transport/device-paths.ts). Returns the app
+  // HTML, an inlined asset manifest, and the live state snapshot so the phone can
+  // run the app with the desktop unreachable (product flow 5). Built in
   // apps-bundle.ts to keep this file under the LOC cap.
   if (method === "GET" && appPath.match(/^\/api\/apps\/[a-zA-Z0-9_-]+\/bundle$/)) {
     const id = appPath.split("/")[3];

@@ -13,10 +13,10 @@
  *   - state snapshot → AppRegistry.getState() (the same state.json the in-page
  *     client polls), so the phone's local adapter starts from the live state.
  *
- * Security: this runs only behind the device-token HTTP scope (the route is
- * under /api/apps, which bridge/upgrade-auth.ts already admits for paired
- * devices). It never reads outside the workspace app dir (confineToDir) and
- * caps total inlined size so a huge app can't blow the response.
+ * Security: this runs under /api/apps, the narrow path scope the broker phone is
+ * held to (see broker-transport/device-paths.ts). It never reads outside the
+ * workspace app dir (confineToDir) and caps total inlined size so a huge app
+ * can't blow the response.
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";

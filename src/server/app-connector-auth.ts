@@ -6,8 +6,8 @@
 // HTML strips the operator token (see request-handler.ts). Without a narrow
 // capability it therefore can't reach /api/connectors at all. This mints one,
 // one-way derived from the operator token, that the gate admits ONLY for
-// /api/connectors/*. Same shape as authorizeDeviceHttp (bridge/upgrade-auth.ts):
-// a narrow principal for a narrow path set, never the operator surface.
+// /api/connectors/*: a narrow principal for a narrow path set, never the
+// operator surface.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -25,11 +25,11 @@ export function deriveConnectorCapability(operatorToken: string): string {
 }
 
 /**
- * Authorize an app's connector capability for an HTTP request — mirrors
- * authorizeDeviceHttp. Admits iff the path is under /api/connectors/ AND the
- * token is this server's capability. Constant-time; never reveals which half
- * failed. This grants "reach the connector surface", not "reach any connector
- * unchecked" — the connector proxy still enforces its per-manifest allow list.
+ * Authorize an app's connector capability for an HTTP request. Admits iff the
+ * path is under /api/connectors/ AND the token is this server's capability.
+ * Constant-time; never reveals which half failed. This grants "reach the
+ * connector surface", not "reach any connector unchecked" — the connector proxy
+ * still enforces its per-manifest allow list.
  */
 export function authorizeAppConnectorHttp(token: string, pathname: string, operatorToken: string): boolean {
   if (!token || !operatorToken) return false;

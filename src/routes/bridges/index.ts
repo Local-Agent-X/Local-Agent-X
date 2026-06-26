@@ -10,7 +10,6 @@ import { handleVoiceDictateRoutes } from "./voice-dictate.js";
 import { handleSecretsRoutes } from "./secrets.js";
 import { handleIntegrationsRoutes } from "./integrations.js";
 import { handleAuthRoutes } from "./auth.js";
-import { handlePairingRoutes } from "./pairing.js";
 
 const handlers: RouteHandler[] = [
   handleWhatsappRoutes,
@@ -24,7 +23,6 @@ const handlers: RouteHandler[] = [
   handleSecretsRoutes,
   handleIntegrationsRoutes,
   handleAuthRoutes,
-  handlePairingRoutes,
 ];
 
 export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {

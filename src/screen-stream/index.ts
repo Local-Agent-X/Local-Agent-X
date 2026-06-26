@@ -36,8 +36,8 @@ export function attachScreenStream(ws: WebSocket): ScreenAttachment {
 
   const session = new ScreenSession({ send });
 
-  // Socket close (incl. device revoke via closeDeviceSockets) ⇒ stop capture +
-  // peer immediately. Never a lingering ffmpeg or half-open peer (constitution §7).
+  // Socket close ⇒ stop capture + peer immediately. Never a lingering ffmpeg or
+  // half-open peer (constitution §7).
   ws.on("close", () => session.handleDisconnect());
 
   return {

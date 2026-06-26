@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 62 top-level dirs · 61 live · 1 with no live importer · 1068 non-test source files · 0 god files (>400 LOC).
+**Totals:** 61 top-level dirs · 60 live · 1 with no live importer · 1062 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -43,16 +43,15 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/integrations/` | 10 | 15 | M |  |
 | `src/workspace/` | 10 | 2 | M |  |
 | `src/cron/` | 9 | 7 | L |  |
-| `src/screen-stream/` | 9 | 8 | L |  |
 | `src/whatsapp-bridge/` | 9 | 6 | M |  |
 | `src/autopilot/` | 8 | 12 | L |  |
+| `src/screen-stream/` | 8 | 8 | L |  |
 | `src/self-edit/` | 8 | 13 | L |  |
 | `src/sync/` | 8 | 18 | L |  |
 | `src/agent-guards/` | 7 | 11 | M |  |
 | `src/protocols/` | 7 | 32 | XL |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
-| `src/bridge/` | 6 | 7 | M |  |
 | `src/sandbox/` | 6 | 6 | L |  |
 | `src/ari-kernel/` | 5 | 12 | L |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
@@ -61,16 +60,16 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/routing/` | 5 | 7 | M |  |
 | `src/util/` | 5 | 1 | S |  |
 | `src/context-manager/` | 4 | 8 | M |  |
-| `src/routes/` | 4 | 78 | XL |  |
+| `src/routes/` | 4 | 77 | XL |  |
+| `src/server/` *(entrypoint)* | 4 | 25 | XL |  |
 | `src/tool-policy/` | 4 | 17 | L |  |
-| `src/broker-transport/` | 3 | 24 | L |  |
+| `src/broker-transport/` | 3 | 25 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
 | `src/hooks/` | 3 | 3 | M |  |
 | `src/primal-auto-build/` | 3 | 37 | XL |  |
 | `src/context/` | 2 | 2 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
-| `src/server/` *(entrypoint)* | 2 | 24 | XL |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
 | `src/anticipatory-care/` | 1 | 6 | M |  |
 | `src/associative-recall/` | 1 | 7 | M |  |

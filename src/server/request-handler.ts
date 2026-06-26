@@ -3,7 +3,6 @@ import { join, resolve, relative } from "node:path";
 import { timingSafeEqual, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
-import { authorizeDeviceHttp } from "../bridge/upgrade-auth.js";
 import { authorizeAppConnectorHttp, deriveConnectorCapability } from "./app-connector-auth.js";
 import { confineToDir } from "../security/file-access.js";
 import { getPageBundle } from "./static-bundle.js";
@@ -95,10 +94,7 @@ export function createRequestHandler(deps: {
     // UI always holds the token (apiFetch attaches it), so they need no
     // exemption. Browser OAuth *redirects* land on dedicated callback servers
     // (ports 1455 / 56121), not these /api routes, so gating them is safe.
-    // /api/bridge/pair/claim is reachable by an UNPAIRED device: the pairing
-    // secret in the body IS the one-shot credential, so it can't require a
-    // token the phone doesn't have yet. The route validates the secret itself.
-    const authExempt = new Set(["/api/auth/status", "/api/auth/anthropic/status", "/api/auth/xai/status", "/api/health", "/api/bridge/pair/claim"]);
+    const authExempt = new Set(["/api/auth/status", "/api/auth/anthropic/status", "/api/auth/xai/status", "/api/health"]);
     const authExemptPrefixes = ["/api/health/"];
     if (url.pathname.startsWith("/api/") && !authExempt.has(url.pathname) && !authExemptPrefixes.some(p => url.pathname.startsWith(p))) {
       const clientIp = req.socket.remoteAddress || "unknown";
@@ -111,13 +107,7 @@ export function createRequestHandler(deps: {
       if (!token) { json(401, { error: "Unauthorized" }); return; }
       const authResult = rbac.authenticate(token);
       if (!authResult.valid || !authResult.entry) {
-        // Bridge fallback: a paired device token grants the narrow device HTTP
-        // surface (/api/apps, /apps/*) only. No-op when the bridge is off (no
-        // device tokens exist) — loopback behavior is unchanged.
-        if (authorizeDeviceHttp(token, url.pathname)) {
-          getAuthFloodGuard().delete(clientIp);
-          requestRole = "user";
-        } else if (authorizeAppConnectorHttp(token, url.pathname, config.authToken)) {
+        if (authorizeAppConnectorHttp(token, url.pathname, config.authToken)) {
           // Served apps get their operator token stripped, so they carry only
           // this connector capability — admitted for /api/connectors/* alone.
           // The connector proxy enforces its own per-manifest allow list.
@@ -203,11 +193,7 @@ export function createRequestHandler(deps: {
     if (method === "GET" && ["/uploads/", "/videos/", "/images/", "/files/"].some(r => url.pathname.startsWith(r))) {
       const provided = ((req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "") || url.searchParams.get("token") || "";
       const operatorOk = !!provided && provided.length === config.authToken.length && timingSafeEqual(Buffer.from(provided), Buffer.from(config.authToken));
-      // A paired device may also read the media its chat references.
-      // authorizeDeviceHttp gates by path: it admits the device for /uploads,
-      // /videos and /images (the device HTTP scope) — but not /files.
-      const deviceOk = !!provided && !!authorizeDeviceHttp(provided, url.pathname);
-      if (!operatorOk && !deviceOk) { json(401, { error: "Authentication required" }); return; }
+      if (!operatorOk) { json(401, { error: "Authentication required" }); return; }
     }
     if (method === "GET" && url.pathname.startsWith("/uploads/")) {
       const fn = url.pathname.replace("/uploads/", ""); if (/[^a-zA-Z0-9._-]/.test(fn)) { json(400, { error: "Invalid filename" }); return; }

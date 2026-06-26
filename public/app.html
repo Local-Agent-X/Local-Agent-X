@@ -276,7 +276,6 @@
       <button class="tab-pill" onclick="switchTab('image')">Media</button>
       <button class="tab-pill" onclick="switchTab('security')">Security</button>
       <button class="tab-pill" onclick="switchTab('whatsapp')">Communication</button>
-      <button id="tab-pill-mobile" class="tab-pill" onclick="switchTab('mobile')" style="display:none">Mobile</button>
       <button class="tab-pill" onclick="switchTab('integrations')">Tools &amp; Integrations</button>
       <button class="tab-pill" onclick="switchTab('sync')">Sync</button>
     </div>
@@ -678,53 +677,6 @@
             <div>4. Click <strong style="color:var(--text)">Connect</strong></div>
             <div>5. <strong style="color:var(--warn)">Immediately message your bot</strong> — the first person to message it becomes the owner. Nobody else will be able to use it after that.</div>
             <div style="margin-top:6px;color:var(--accent)">Works on multiple devices simultaneously — no conflicts.</div>
-          </div>
-        </div>
-      </div>
-      <!-- Mobile (AgentXOS pairing) -->
-      <div id="stab-mobile" class="tab-pane">
-        <!-- Always-visible enable toggle -->
-        <div class="section-card">
-          <div class="section-title">Mobile Bridge</div>
-          <div class="section-desc">Pair the AgentXOS phone app with this desktop so it can use your agent over your private Tailscale network. Your AI runs here, on your own subscription — the phone never holds provider credentials.</div>
-          <div class="toggle-row" style="margin-top:14px">
-            <div><div class="toggle-label">Enable mobile bridge</div><div class="toggle-desc">Expose this agent to paired phones over your Tailscale tailnet. Off by default — never reaches the public internet.</div></div>
-            <div class="toggle" id="tog-mobile-bridge" onclick="mobileToggleBridge(this)"></div>
-          </div>
-          <!-- Restart-to-apply banner (shown after a toggle changes the saved flag) -->
-          <div id="mobile-restart-banner" style="display:none;margin-top:14px;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;background:rgba(0,0,0,.04)">
-            <span id="mobile-restart-msg" style="font-size:.8rem;color:var(--text)"></span>
-            <button id="mobile-restart-btn" class="action-btn primary" style="margin-left:10px" onclick="mobileRestartToApply(this)">Restart to apply</button>
-          </div>
-          <!-- Env-override note (LAX_BRIDGE_ENABLED pins it on) -->
-          <div id="mobile-env-note" style="display:none;margin-top:12px;font-size:.74rem;color:var(--muted)">
-            Forced on by the <code id="mobile-env-var">LAX_BRIDGE_ENABLED</code> environment variable — clearing it requires editing your environment, not this toggle.
-          </div>
-          <!-- Tailscale-down note (enabled but no tailnet address) -->
-          <div id="mobile-tailscale-note" style="display:none;margin-top:12px;padding:10px 12px;border:1px solid var(--warn);border-radius:8px">
-            <div style="font-size:.8rem;color:var(--text);font-weight:600">Tailscale isn't up</div>
-            <div style="font-size:.74rem;color:var(--muted);margin-top:4px">The bridge is on but no Tailscale (100.64.0.0/10) interface was found, so it stayed loopback-only. Bring Tailscale up on this machine, then restart Local Agent X.</div>
-          </div>
-        </div>
-        <!-- Shown when the bridge is ON -->
-        <div id="mobile-enabled-box" style="display:none">
-          <div class="section-card">
-            <div class="section-title">Pair a phone</div>
-            <div class="section-desc">Open the AgentXOS app and scan this code to pair your phone. The code is one-time and expires in about a minute — generate a fresh one each time you pair a device.</div>
-            <div id="mobile-pair-error" style="display:none;color:var(--danger);font-size:.78rem;margin:10px 0"></div>
-            <div id="mobile-qr-box" style="display:none;text-align:center;margin:16px auto;padding:18px;background:#fff;border-radius:12px;max-width:280px">
-              <div id="mobile-qr-render" style="width:240px;height:240px;margin:0 auto"></div>
-              <div id="mobile-ttl" style="color:#333;font-size:.74rem;margin-top:10px;font-family:var(--mono)"></div>
-              <div style="color:#666;font-size:.66rem;margin-top:4px">Dial-in: <span id="mobile-tailnet-addr" style="font-family:var(--mono)"></span></div>
-            </div>
-            <div style="display:flex;gap:8px;margin-top:12px">
-              <button class="action-btn primary" id="mobile-gen-btn" onclick="mobileGenerateCode()">Generate new code</button>
-            </div>
-          </div>
-          <div class="section-card">
-            <div class="section-title">Paired devices</div>
-            <div class="section-desc">Phones currently paired with this desktop. Revoke any device to disconnect it instantly — it must re-pair to reconnect.</div>
-            <div id="mobile-devices-list" style="margin-top:12px">Loading…</div>
           </div>
         </div>
       </div>
@@ -1290,8 +1242,6 @@
 <script src="/js/chat.js?v=vd5"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
 <!-- settings.js modules — load BEFORE settings.js for the same reason. -->
-<script src="/vendor/qr/qrcode.js?v=v1"></script>
-<script src="/js/settings-mobile.js?v=v1"></script>
 <script src="/js/settings-whatsapp.js?v=v1"></script>
 <script src="/js/settings-telegram.js?v=v1"></script>
 <script src="/js/settings-onboarding-oauth.js?v=v3"></script>

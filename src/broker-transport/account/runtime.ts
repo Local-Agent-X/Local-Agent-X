@@ -5,9 +5,9 @@
 // "dark until used" posture). This is the ONE place the manager's deps are assembled
 // from the real adapters (api client, identity, storage, QR, clock).
 //
-// ACTIVATION is DARK by default: the desktop only dials the broker when
-// LAX_TRANSPORT=broker AND it is signed in + paired. On the tailnet (default) this is
-// inert. The presence supervisor handles reconnects; stopBrokerPresence tears it down.
+// ACTIVATION: the desktop dials the broker once it is signed in + paired. Until
+// then this is inert. The presence supervisor handles reconnects;
+// stopBrokerPresence tears it down.
 
 import { hostname } from "node:os";
 import { AgentxosApiClient, DEFAULT_ACCOUNT_API_URL } from "./api-client.js";
@@ -59,13 +59,13 @@ export function getAccountManager(): AgentxosAccountManager {
 }
 
 /**
- * Start the desktop's broker presence IF eligible — the flag is on AND we're signed in
- * AND paired. Idempotent (won't double-start). Called at server startup (for an
+ * Start the desktop's broker presence IF eligible — signed in AND paired.
+ * Idempotent (won't double-start). Called at server startup (for an
  * already-paired install) and from the manager's onPaired hook (right after pairing).
  */
 export function maybeStartBrokerPresence(state: AccountState | null = loadAccountState()): void {
   if (presence) return; // already running
-  if (transportMode() !== "broker") return; // DARK unless LAX_TRANSPORT=broker
+  if (transportMode() !== "broker") return; // broker is the only transport
   if (!state || !state.pairedPhoneId) return; // need a session + a pairing
   logger.info(`[broker-transport] activating desktop presence (device ${state.deviceId} ↔ phone ${state.pairedPhoneId})`);
   const config = {

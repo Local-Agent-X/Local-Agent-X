@@ -289,15 +289,6 @@ export async function startServer(config: LAXConfig) {
   phaseSync("startConfigWatcher", () => startConfigWatcher(dataDir));
   phaseSync("bootstrapCanonicalLoop", () => bootstrapCanonicalLoop(getRuntimeConfig));
 
-  // Snapshot the persisted mobile-bridge flag into memory ONCE, before the bind
-  // decision below. isBridgeEnabled() is on the WS-upgrade hot path, so it reads
-  // this snapshot (not settings.json) per call. The flag only changes across
-  // restarts, so a startup snapshot is authoritative for this process.
-  await phase("loadBridgeFlag", async () => {
-    const { loadPersistedBridgeEnabled } = await import("../bridge/config.js");
-    loadPersistedBridgeEnabled();
-  });
-
   // Security guardian is a boot precondition — must be up before we accept
   // a single request. When ariRequired, a failure here exits the process.
   await phase("startSecurityKernel", () => startSecurityKernel({ config, dataDir }));
@@ -307,23 +298,10 @@ export async function startServer(config: LAXConfig) {
     bootLogger.info(`[boot-phase] TOTAL ${Date.now() - _bootT0}ms (port ${config.port} listening)`);
     logStartup({ config, dataDir });
 
-    // Opt-in mobile bridge: when enabled (UI toggle persists bridge.enabled, or
-    // the LAX_BRIDGE_ENABLED env override), bind a SECOND http.Server to the
-    // Tailscale tailnet that shares this server's request + upgrade handlers, so
-    // a paired phone can reach it. Default OFF — when disabled this is a no-op and
-    // the server stays loopback-only. A single http.Server can't .listen() twice
-    // (ERR_SERVER_ALREADY_LISTEN), hence the second server. Fire-and-forget; a
-    // bridge that can't bind never blocks the loopback path.
-    void import("../bridge/index.js")
-      .then(({ maybeBindBridge }) => maybeBindBridge(server, requestHandler, config.port))
-      .then((r) => { if (r.bound) bootLogger.info(`[bridge] tailnet bind active at ${r.addr}:${config.port}`); })
-      .catch((e) => bootLogger.warn(`[bridge] bind init failed: ${(e as Error).message}`));
-
-    // Opt-in agentxos broker transport (replaces the tailnet bridge for phone↔desktop):
-    // when LAX_TRANSPORT=broker AND this desktop is signed in + paired (set up via the
-    // in-app account page → broker-transport/account), dial the broker so the paired
-    // phone can reach it. DARK by default — with the flag off this is a no-op and the
-    // tailnet path above is unchanged. Fire-and-forget; a failed dial never blocks boot.
+    // agentxos broker transport — the phone↔desktop path: when this desktop is
+    // signed in + paired (set up via the in-app account page →
+    // broker-transport/account), dial the broker so the paired phone can reach
+    // it. A no-op until paired. Fire-and-forget; a failed dial never blocks boot.
     void import("../broker-transport/account/runtime.js")
       .then(({ maybeStartBrokerPresence }) => maybeStartBrokerPresence())
       .catch((e) => bootLogger.warn(`[broker-transport] presence init failed: ${(e as Error).message}`));

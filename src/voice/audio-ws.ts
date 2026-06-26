@@ -33,9 +33,7 @@ import type { IncomingMessage, Server } from "node:http";
 
 import { createLogger } from "../logger.js";
 import { isLoopbackOrigin } from "../server-utils.js";
-import { authorizeUpgrade, trackDeviceSocket, WS_UNAUTHORIZED } from "../bridge/upgrade-auth.js";
-import { isBridgeEnabled } from "../bridge/config.js";
-import { isTailnetOrigin } from "../bridge/tailnet.js";
+import { authorizeUpgrade, WS_UNAUTHORIZED } from "../server/ws-operator-auth.js";
 import { createPeerAudioRouter } from "./voice-peer-session.js";
 const logger = createLogger("voice.audio-ws");
 
@@ -153,10 +151,10 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
       if (u.pathname !== "/ws/voice") return; // not our path — leave socket alone
       // Reject cross-origin WS handshakes (cross-site WebSocket hijacking) —
       // browsers always send Origin; a non-loopback Origin is a cross-site page.
-      // The paired mobile app sends no Origin and faces the token gate below;
-      // tailnet-host Origins are admitted only when the bridge is enabled.
+      // The broker voice bridge connects to loopback as the operator (no Origin)
+      // and faces the operator-token gate below.
       const origin = req.headers.origin;
-      if (origin && !isLoopbackOrigin(origin) && !(isBridgeEnabled() && isTailnetOrigin(origin))) { try { socket.destroy(); } catch {} return; }
+      if (origin && !isLoopbackOrigin(origin)) { try { socket.destroy(); } catch {} return; }
       const hasToken = u.searchParams.get("token") ? "yes" : "no";
       logger.info(`[voice-ws] upgrade hit: url=${req.url} hasToken=${hasToken}`);
       wss.handleUpgrade(req, socket as import("node:net").Socket, head, (ws) => {
@@ -178,8 +176,7 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
       const idx = parts.indexOf("lax-auth");
       if (idx >= 0 && parts[idx + 1]) token = parts[idx + 1];
     }
-    // Shared upgrade gate: operator token (loopback, unchanged) OR a valid
-    // per-device bridge token when the bridge is enabled. Clean code + reason,
+    // Upgrade gate: the operator token only (loopback). Clean code + reason,
     // never a silent hang (constitution §7).
     const auth = authorizeUpgrade(token, authToken);
     if (!auth.ok) {
@@ -188,7 +185,6 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
       ws.close(WS_UNAUTHORIZED, auth.reason || "Unauthorized");
       return;
     }
-    if (auth.principal === "device" && auth.deviceId) trackDeviceSocket(auth.deviceId, ws);
     logger.info(`[voice-ws] connection accepted from ${req.socket.remoteAddress} (${auth.principal})`);
 
     let sessionId = "";

@@ -1,32 +1,24 @@
-// config tests — the kill-switch must fail SAFE: anything short of an explicit
-// LAX_TRANSPORT=broker plus a complete dial config resolves to the tailnet path.
+// config tests — the broker is the only phone↔desktop transport now, so
+// transportMode is constant and loadBrokerConfig resolves on dial creds alone
+// (no LAX_TRANSPORT gate), still failing SAFE on a partial dial config.
 
 import { describe, it, expect } from "vitest";
 import { transportMode, loadBrokerConfig } from "./config.js";
 
 const FULL = {
-  LAX_TRANSPORT: "broker",
   LAX_DEVICE_ID: "desk-1",
   LAX_PAIRED_PHONE_ID: "phone-1",
   LAX_BROKER_TOKEN: "tok",
 } as NodeJS.ProcessEnv;
 
 describe("transportMode", () => {
-  it("defaults to tailnet when unset", () => {
-    expect(transportMode({} as NodeJS.ProcessEnv)).toBe("tailnet");
-  });
-  it("only the exact string 'broker' selects the broker path", () => {
-    expect(transportMode({ LAX_TRANSPORT: "broker" } as NodeJS.ProcessEnv)).toBe("broker");
-    expect(transportMode({ LAX_TRANSPORT: "Broker" } as NodeJS.ProcessEnv)).toBe("tailnet");
-    expect(transportMode({ LAX_TRANSPORT: "1" } as NodeJS.ProcessEnv)).toBe("tailnet");
+  it("is always 'broker' (the tailnet bridge is gone)", () => {
+    expect(transportMode({} as NodeJS.ProcessEnv)).toBe("broker");
+    expect(transportMode({ LAX_TRANSPORT: "anything" } as NodeJS.ProcessEnv)).toBe("broker");
   });
 });
 
 describe("loadBrokerConfig", () => {
-  it("returns null when the flag is off (even with full creds)", () => {
-    expect(loadBrokerConfig({ ...FULL, LAX_TRANSPORT: "tailnet" })).toBeNull();
-  });
-
   it("returns null when any dial parameter is missing (no partial activation)", () => {
     expect(loadBrokerConfig({ ...FULL, LAX_DEVICE_ID: undefined })).toBeNull();
     expect(loadBrokerConfig({ ...FULL, LAX_PAIRED_PHONE_ID: undefined })).toBeNull();

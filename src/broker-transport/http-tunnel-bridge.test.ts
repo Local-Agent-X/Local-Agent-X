@@ -36,6 +36,17 @@ function fakeResponse(status: number, body: string): Response {
   } as unknown as Response;
 }
 
+function fakeBinaryResponse(status: number, bytes: Uint8Array, contentType: string): Response {
+  return {
+    status,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    text: async () => {
+      throw new Error("binary body must not be read as text");
+    },
+    headers: { get: () => contentType },
+  } as unknown as Response;
+}
+
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 describe("HttpTunnelBridge", () => {
@@ -87,6 +98,41 @@ describe("HttpTunnelBridge", () => {
     await flush();
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(t.sent).toHaveLength(0);
+  });
+
+  it("base64-frames a binary asset and never reads it as text", async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0xff]);
+    const fetchImpl = vi.fn(async () => fakeBinaryResponse(200, png, "image/png"));
+    const bridge = new HttpTunnelBridge({
+      loopback: () => ({ origin: "http://127.0.0.1:7007", token: "op-tok" }),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const t = new FakeTransport();
+    bridge.attach(t);
+
+    t.emit({ t: "req", id: "9", method: "GET", path: "/apps/foo/logo.png" });
+    await flush();
+
+    const res = t.lastRes() as { id: string; status: number; enc?: string; body: string };
+    expect(res).toMatchObject({ id: "9", status: 200, enc: "base64" });
+    expect(Buffer.from(res.body, "base64").equals(Buffer.from(png))).toBe(true);
+  });
+
+  it("frames a text response as utf8 with no enc (backward-compatible wire shape)", async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(200, '{"ok":true}'));
+    const bridge = new HttpTunnelBridge({
+      loopback: () => ({ origin: "http://127.0.0.1:7007", token: "op-tok" }),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const t = new FakeTransport();
+    bridge.attach(t);
+
+    t.emit({ t: "req", id: "8", method: "GET", path: "/api/apps/foo/state" });
+    await flush();
+
+    const res = t.lastRes() as { id: string; body: string; enc?: string };
+    expect(res).toMatchObject({ id: "8", body: '{"ok":true}' });
+    expect(res.enc).toBeUndefined();
   });
 
   it("returns 502 when the loopback fetch throws (no silent hang)", async () => {

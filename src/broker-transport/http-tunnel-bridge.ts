@@ -29,14 +29,32 @@ interface TunnelRequest {
   body?: string;
 }
 
-/** Desktop → phone: the framed response. `body` is text (JSON/HTML); binary media is a
- *  follow-on (it would need base64 framing). */
+/** Desktop → phone: the framed response. `body` is the HTTP body; `enc` says how it's
+ *  encoded — utf8 text (JSON/HTML/CSS/JS) or base64 for binary media (images/fonts), so
+ *  the phone can serve an app's real assets over the tunnel. Absent `enc` ⇒ utf8 (the
+ *  prior wire shape, so existing text consumers see byte-identical frames). */
 interface TunnelResponse {
   t: "res";
   id: string;
   status: number;
   headers?: Record<string, string>;
+  enc?: "utf8" | "base64";
   body: string;
+}
+
+/** Content-types served as utf8 text; everything else is base64-framed as binary. Covers
+ *  the document + the asset kinds an agent-built app references (CSS/JS/SVG/JSON). */
+function isTextContentType(contentType: string): boolean {
+  const ct = contentType.toLowerCase();
+  return (
+    ct.startsWith("text/") ||
+    ct.includes("json") ||
+    ct.includes("javascript") ||
+    ct.includes("xml") ||
+    ct.includes("svg") ||
+    ct.includes("ecmascript") ||
+    ct.includes("x-www-form-urlencoded")
+  );
 }
 
 export interface HttpTunnelDeps {
@@ -104,13 +122,28 @@ export class HttpTunnelBridge implements HttpChannel {
         headers: { ...(req.headers ?? {}), Authorization: `Bearer ${token}` },
         ...(req.body !== undefined ? { body: req.body } : {}),
       });
-      const body = await r.text();
+      const contentType = r.headers.get("content-type") ?? "application/json";
+      const headers = { "content-type": contentType };
+      if (isTextContentType(contentType)) {
+        const text = await r.text();
+        return {
+          t: "res",
+          id: req.id,
+          status: r.status,
+          headers,
+          body: text.length > MAX_BODY ? text.slice(0, MAX_BODY) : text,
+        };
+      }
+      // Binary asset (image/font/etc.): base64-frame it so it survives the JSON wire.
+      const bytes = Buffer.from(await r.arrayBuffer());
+      const capped = bytes.length > MAX_BODY ? bytes.subarray(0, MAX_BODY) : bytes;
       return {
         t: "res",
         id: req.id,
         status: r.status,
-        headers: { "content-type": r.headers.get("content-type") ?? "application/json" },
-        body: body.length > MAX_BODY ? body.slice(0, MAX_BODY) : body,
+        headers,
+        enc: "base64",
+        body: capped.toString("base64"),
       };
     } catch (e) {
       logger.warn(`[broker-transport] http tunnel proxy failed: ${(e as Error).message}`);

@@ -28,6 +28,11 @@
  * consumers: the keep-driving nudge (this gate) AND the terminal-outcome label
  * (decide-outcome.ts reads `opGaveUpUnrecovered`) — so an op that ends still
  * giving up records `partial`, never a rounded-up `clean`.
+ *
+ * Research ops (web_fetch/web_search, no open page) get the LABEL too but NOT
+ * the nudge: a research op that exhausts its routes and reports "I can't find
+ * it" should record `partial`, but nudging it to "keep driving" just loops. So
+ * the precondition is drive OR research attempted; the nudge stays drive-only.
  */
 import type { CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
@@ -59,10 +64,18 @@ export function opGaveUpUnrecovered(opId: string): boolean {
   return getMiddlewareState<GiveUpVerdict>(opId, GIVE_UP_VERDICT_STATE, () => ({ gaveUp: false })).gaveUp;
 }
 
-// Surfaces whose successful use earlier in the op means a live page/desktop is
-// open — the precondition that makes "keep driving" the right nudge rather than
-// nagging an ordinary tool-less chat answer.
+// Surfaces whose use earlier in the op means a live page/desktop is open — the
+// precondition that makes "keep driving" the right NUDGE rather than nagging an
+// ordinary tool-less chat answer.
 const DRIVE_TOOLS = ["browser", "computer"];
+
+// Non-drive surfaces where a tool-less ending can still be a give-up worth
+// LABELING: a research op that exhausts web_fetch/web_search and reports "I
+// can't find it" must record `partial`, not be rounded up to `clean`. These get
+// the verdict (→ the label) but NOT the nudge — by the time a research op stops
+// it has usually exhausted its routes, so "keep trying" just loops. Mirrors the
+// `research` category in tool-tracker.classifyOpCategory.
+const RESEARCH_TOOLS = ["web_search", "web_fetch", "http_request", "image_search", "youtube_analyze"];
 
 // Phrases that mark a turn ENDING by deferring an obstruction to the user or
 // declaring a soft block, as opposed to a genuine completion. Tuned to the
@@ -97,12 +110,14 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
     if (ctx.toolCalls.length > 0) return { kind: "continue" };
     const text = ctx.assistantContent.trim();
     if (text.length === 0) return { kind: "continue" };
-    // An ATTEMPTED drive tool — including one that errored or crashed — is the
+    // An ATTEMPTED tool — including one that errored or crashed — is the
     // precondition, not a SUCCESSFUL one. The give-up we most need to catch is
     // "the browser crashed, so the model punted the task back" — and the crash
     // keeps it out of the ok-only toolsCalledThisOp, so gating on success made
     // the gate blind to exactly that case. attemptedToolsThisOp includes it.
-    if (!DRIVE_TOOLS.some((t) => ctx.attemptedToolsThisOp.has(t))) return { kind: "continue" };
+    const driveAttempted = DRIVE_TOOLS.some((t) => ctx.attemptedToolsThisOp.has(t));
+    const researchAttempted = RESEARCH_TOOLS.some((t) => ctx.attemptedToolsThisOp.has(t));
+    if (!driveAttempted && !researchAttempted) return { kind: "continue" };
 
     // Model-graded give-up verdict is PRIMARY — it catches punts regardless of
     // phrasing (the regex missed novel give-ups like "Blocked by overlay"). The
@@ -123,6 +138,11 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
       () => ({ gaveUp: false }),
     );
     verdict.gaveUp = shouldFire;
+
+    // Research ops get the honest LABEL (stored above) but no nudge — see
+    // RESEARCH_TOOLS. Only a drive op has an open page/desktop where "keep
+    // driving" is the right push; nudging an exhausted research op just loops.
+    if (!driveAttempted) return { kind: "continue" };
 
     const flag = getMiddlewareState<FiredFlag>(
       ctx.op.id,

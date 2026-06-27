@@ -54,8 +54,8 @@ describe("browser-handoff gate", () => {
     expect((await fire(ctx({ toolCalls: [{} as never] }))).kind).toBe("continue");
   });
 
-  it("continues when no browser/computer tool was used this op", async () => {
-    expect((await fire(ctx({ toolsCalledThisOp: new Set(["web_fetch"]) }))).kind).toBe("continue");
+  it("continues when no drive or research tool was used this op", async () => {
+    expect((await fire(ctx({ toolsCalledThisOp: new Set(["bash"]) }))).kind).toBe("continue");
   });
 
   it("continues on a genuine completion (no hand-off phrasing)", async () => {
@@ -154,8 +154,31 @@ describe("browser-handoff gate", () => {
   });
 
   it("leaves the verdict false for an op the gate never evaluated", async () => {
-    const c = ctx({ toolsCalledThisOp: new Set(["web_fetch"]) });
-    await fire(c);                       // no drive tool attempted → gate skips
+    const c = ctx({ toolsCalledThisOp: new Set(["bash"]) });
+    await fire(c);                       // neither drive nor research → gate skips
+    expect(opGaveUpUnrecovered(c.op.id)).toBe(false);
+  });
+
+  it("labels a research give-up but does NOT nudge (no open page to keep driving)", async () => {
+    mockClassify.mockResolvedValueOnce(true);
+    const c = ctx({
+      toolsCalledThisOp: new Set(["web_fetch"]),
+      attemptedToolsThisOp: new Set(["web_fetch", "web_search"]),
+      assistantContent: "I couldn't pull the Reuters headline — every fetch 404'd and search only surfaces the homepage.",
+    });
+    const res = await fire(c);
+    expect(res.kind).toBe("continue");                 // research = label-only, no nudge
+    expect(opGaveUpUnrecovered(c.op.id)).toBe(true);   // but the verdict IS stored for the label
+  });
+
+  it("does not store a give-up for a research op that delivered", async () => {
+    mockClassify.mockResolvedValueOnce(false);
+    const c = ctx({
+      toolsCalledThisOp: new Set(["web_fetch"]),
+      attemptedToolsThisOp: new Set(["web_fetch"]),
+      assistantContent: "Reuters' top headline is: \"Markets rally on rate-cut hopes\".",
+    });
+    expect((await fire(c)).kind).toBe("continue");
     expect(opGaveUpUnrecovered(c.op.id)).toBe(false);
   });
 

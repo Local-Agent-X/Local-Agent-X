@@ -37,6 +37,32 @@ export async function screenshotAsBase64(page: Page, engine: string): Promise<st
   return `Screenshot captured\nURL: ${url}\nTitle: ${title}\nEngine: ${engine}\nSize: ${buffer.length} bytes\n\n[base64:${base64.slice(0, 200)}...]\n\nUse 'extract' action to read the page text content.`;
 }
 
+// page.evaluate has no built-in timeout, so a model script that awaits
+// something that never resolves would hang the call until the per-tool wedge
+// deadline (toolMs−1s ≈ 29s) force-kills the whole session. Bound it well under
+// that so a bad script fails THIS call with a clean error and the session lives.
+// A SYNCHRONOUSLY-infinite script still blocks the page's JS thread and falls
+// through to the wedge — CDP can't interrupt that without a reset.
+const EVAL_TIMEOUT = 12_000;
+
+async function evaluateWithTimeout(page: Page, expression: string, ms: number): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const work = page.evaluate(expression);
+  work.catch(() => { /* swallow the late rejection if the timeout already won */ });
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`evaluate exceeded ${ms}ms — the script may be awaiting something that never resolves`)),
+      ms,
+    );
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Run an arbitrary JS expression in the page. Caller must pre-check it.
  *  Wraps the script intelligently so the agent can write either an
  *  expression OR statements with `return`:
@@ -47,7 +73,7 @@ export async function screenshotAsBase64(page: Page, engine: string): Promise<st
  *  expression, so any top-level `return` errors with "Illegal return
  *  statement" — that's been silently breaking agent browser flows.
  */
-export async function evaluateScript(page: Page, script: string): Promise<string> {
+export async function evaluateScript(page: Page, script: string, timeoutMs = EVAL_TIMEOUT): Promise<string> {
   const trimmed = script.trim().replace(/;\s*$/, "");
   // Playwright's page.evaluate(string) treats the input as an EXPRESSION
   // position. That means top-level `const`/`let`/`var`, multi-statement
@@ -79,7 +105,7 @@ export async function evaluateScript(page: Page, script: string): Promise<string
   const wrapped = needsIife
     ? `(() => { ${trimmed} })()`
     : `(${trimmed})`;
-  const result = await page.evaluate(wrapped);
+  const result = await evaluateWithTimeout(page, wrapped, timeoutMs);
   let output = typeof result === "string" ? result : JSON.stringify(result, null, 2);
   if (output && output.length > MAX_TEXT_LENGTH) {
     output = output.slice(0, MAX_TEXT_LENGTH) + `\n\n[Truncated at ${MAX_TEXT_LENGTH} chars]`;

@@ -24,7 +24,13 @@ function resolveDownloadsDir(): string {
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser.launcher");
 
-export const NAV_TIMEOUT = 30_000;
+// Kept under the browser tool's wedge deadline (toolMs−1s ≈ 29s in
+// tool-timeout.ts + wedge-deadline.ts): navigate = goto(NAV_TIMEOUT) + the 5s
+// load-wait + 1s settle, so a goto allowed 30s could push the whole action past
+// the wedge and get the session force-killed instead of failing with a clean
+// "navigation timeout". 20s leaves margin and is ample for a domcontentloaded
+// wait — pages that don't reach DOMContentLoaded in 20s are hung, not slow.
+export const NAV_TIMEOUT = 20_000;
 export const ACTION_TIMEOUT = 10_000;
 export const MAX_TEXT_LENGTH = 8_000;
 

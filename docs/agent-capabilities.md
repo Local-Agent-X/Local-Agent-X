@@ -47,7 +47,7 @@ demand via tool search and aren't all listed here.)
 
 - `setting` — Change app settings — theme, model, provider, voice, and more. _e.g._ "change the app to dark mode"
 
-### Tool discovery
+### Tool discovery. Eager for spawned agents too
 
 - `tool_search` — Discover deeper tools not loaded by default.
 
@@ -55,6 +55,7 @@ demand via tool search and aren't all listed here.)
 
 - `view_image` — Look at an image you share. _e.g._ "what's in this screenshot?"
 - `send_video` — Send/attach a video.
+- `send_image`
 - `screen_capture` — Capture the screen. _e.g._ "take a screenshot of my screen"
 - `telegram_send`
 - `whatsapp_send`
@@ -131,6 +132,7 @@ demand via tool search and aren't all listed here.)
 ### Apps. app_create/app_list are deferred
 
 - `build_app` — Build a working app from a description. _e.g._ "build me a todo app"
+- `connector_create`
 
 ### Sidebar
 
@@ -158,4 +160,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_75 capabilities · 55 with a description · 20 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_77 capabilities · 55 with a description · 22 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._

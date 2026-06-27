@@ -60,13 +60,12 @@ Paths below were verified against the tree (the generated map's importer counts
 
 Superseded code that still exists. Tracing into these will mislead an evaluation.
 The authoritative **"no live importer"** set is computed in
-[docs/codebase-map.md](docs/codebase-map.md) (currently just `src/benchmark-suite/`).
+[docs/codebase-map.md](docs/codebase-map.md) (currently empty).
 The rows below are the curated cases a raw count can't explain — a shim, or a dir
 that *looks* like the canonical owner but isn't:
 
 | Path | Status | Read instead / note |
 |---|---|---|
-| `src/benchmark-suite/` | **Dead** — no live importer of any kind | `docs/benchmarks/`, `bench/` |
 | `src/agent-loop/` | **Pruned to one live file** — `inject-queue.ts` (consumed by canonical-loop); the rest is gone | `src/canonical-loop/` |
 | `src/tool-executor.ts` | **Shim** (re-export) | `src/tool-execution/` |
 | `src/anthropic-client/` | Parse/convert utilities only — **not** the turn transport | provider adapters in `src/canonical-loop/adapters/` |

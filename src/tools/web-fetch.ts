@@ -2,6 +2,7 @@ import { fetch as undiciFetch } from "undici";
 import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
+import { extractFromHtml } from "./html-extract.js";
 import {
   EgressRedirectBlocked,
   assertRedirectEgressAllowed,
@@ -114,6 +115,28 @@ export const webFetchTool: ToolDefinition = {
       }
 
       let body = await res.text();
+
+      // Return readable content, not a raw-HTML haystack. web_fetch gets no JS
+      // execution, so a JS-heavy page dumps 50K chars of obfuscated markup the
+      // model can't parse — every model then flails, and the give-up-prone ones
+      // quit (the Reuters-headline failure). Extract title + meta + JSON-LD +
+      // visible text on HTML; pass JSON/XML/RSS/sitemap/plain through RAW (the
+      // model wants those structured). Sniff the body when content-type is
+      // missing so a mislabeled text/plain HTML page still gets cleaned up.
+      const contentType = (res.headers.get("content-type") || "").toLowerCase();
+      const isHtml =
+        /text\/html|application\/xhtml/.test(contentType) ||
+        (!contentType && /^﻿?\s*<(?:!doctype html|html)\b/i.test(body));
+      if (isHtml) {
+        const extracted = extractFromHtml(body);
+        body = extracted.looksEmpty
+          ? "[This page is JS-rendered — its content is loaded client-side and is NOT in the static HTML, " +
+            "so there is nothing to extract. Reach the same goal another way: try the site's structured " +
+            "endpoints (sitemap.xml / news-sitemap.xml / an RSS or JSON feed) or the JSON API the page calls; " +
+            "if it needs a logged-in session, use the browser tool." +
+            (extracted.content ? `\n\nThe little that was extractable:\n${extracted.content}` : "")
+          : extracted.content;
+      }
 
       const MAX_CHARS = 50_000;
       const fullBytes = body.length;

@@ -26,8 +26,8 @@ export const loopDetectionMiddleware: CanonicalMiddleware = {
 
   async afterModelCall(ctx) {
     if (ctx.toolCalls.length === 0) return { kind: "continue" };
-    const { classifyModel } = await import("../../model-tiers.js");
-    const modelTier = classifyModel(ctx.model);
+    const { loopGuardTier } = await import("../../model-tiers.js");
+    const modelTier = loopGuardTier(ctx.model);
     const state = getMiddlewareState<LoopState>(ctx.op.id, "loop-detection", createLoopState);
     // Interactive chat runs nudge-only: a runaway spin (the grok `ls` loop)
     // must be broken, but a legitimate repeated call that the user actually

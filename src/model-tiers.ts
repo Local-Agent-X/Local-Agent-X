@@ -102,6 +102,21 @@ export function toolCapTierForProvider(provider: string, model: string): ModelTi
 }
 
 /**
+ * Effective tier for the canonical-loop SPIN GUARDS (loop-detection's
+ * repeat / discovery / no-progress thresholds) — a different axis from the
+ * tool-CATALOG tier. grok-4 reasons fine over a large catalog, so
+ * classifyModel keeps it "strong" (shrinking its menu made it worse — see the
+ * grok-4 note above), but it's still more prone to re-calling / narrating than
+ * the Anthropic/OpenAI frontier, so it benefits from the tighter medium-tier
+ * spin thresholds. Tighten the guards without touching the catalog.
+ */
+export function loopGuardTier(model: string): ModelTier {
+  const tier = classifyModel(model);
+  if (tier === "strong" && /^grok-4(\b|-|$)/.test(model.toLowerCase())) return "medium";
+  return tier;
+}
+
+/**
  * Priority-ordered list of tools that MUST stay in the shrunken set
  * when we cap. Covers the 80% of agent operations.
  */

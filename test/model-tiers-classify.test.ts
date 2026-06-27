@@ -17,6 +17,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyModel,
+  loopGuardTier,
+  toolCapTierForProvider,
   shrinkToolsForTier,
   maxToolsForTier,
   ESSENTIAL_TOOLS_ORDER,
@@ -63,6 +65,27 @@ describe("classifyModel — tier heuristic", () => {
 
   it("throws on empty/missing identifier (fail-closed, caller bug)", () => {
     expect(() => classifyModel("")).toThrow(/empty\/missing model identifier/);
+  });
+});
+
+describe("loopGuardTier — spin-guard tier, decoupled from catalog tier", () => {
+  it("downgrades grok-4 to medium for loop guards while the catalog stays strong", () => {
+    expect(loopGuardTier("grok-4")).toBe("medium");
+    expect(loopGuardTier("grok-4-fast")).toBe("medium");
+    // Catalog axis is untouched — grok-4 keeps the full tool menu.
+    expect(classifyModel("grok-4")).toBe("strong");
+    expect(toolCapTierForProvider("xai", "grok-4")).toBe("strong");
+  });
+
+  it("leaves non-grok-4 models on their classifyModel tier", () => {
+    expect(loopGuardTier("claude-opus-4-1")).toBe("strong");
+    expect(loopGuardTier("grok-3")).toBe("medium");
+    expect(loopGuardTier("grok-3-mini")).toBe("weak");
+    expect(loopGuardTier("qwen2:7b")).toBe("weak");
+  });
+
+  it("throws on empty identifier (same fail-closed posture as classifyModel)", () => {
+    expect(() => loopGuardTier("")).toThrow(/empty\/missing model identifier/);
   });
 });
 

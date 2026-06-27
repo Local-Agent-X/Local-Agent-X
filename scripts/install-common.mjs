@@ -134,8 +134,8 @@ const ALL_STEPS = [
   { id: "settings",     label: "User settings",            platforms: ["win32", "darwin", "linux"] },
   { id: "build",        label: "App build",                platforms: ["win32", "darwin", "linux"] },
   { id: "config",       label: "Configuration",            platforms: ["win32", "darwin", "linux"] },
-  { id: "desktop",      label: "Desktop app",              platforms: ["win32", "darwin", "linux"] },
   { id: "posixshell",   label: "POSIX shell",              platforms: ["win32"] },
+  { id: "desktop",      label: "Desktop app",              platforms: ["win32", "darwin", "linux"] },
 ];
 
 const STEPS_PLAN = ALL_STEPS
@@ -1018,7 +1018,35 @@ writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
 ok(`Wired ${cfgPath} → projectRoot=${cfg.projectRoot}, authToken=${cfg.authToken.slice(0,4)}...${cfg.authToken.slice(-4)}`);
 stepDone("config");
 
-// 7. macOS: build the Mac .app and install it to /Applications.
+// 7. POSIX shell guarantee (Windows). GitBootstrap (C# installer / install.ps1 /
+//    install.bat) provisions a real Git-for-Windows bash before this script
+//    runs. Run it BEFORE the desktop step so (a) desktop stays the final step
+//    and (b) the shell guarantee lands before the heaviest build. Then prove it
+//    — `echo ok | grep ok` through the resolved bash — and FAIL otherwise, so
+//    the runtime (src/tools/shell-env.ts resolveWindowsShell) can assume bash.
+if (process.platform === "win32") {
+  step("posixshell");
+  let bash = resolvePosixShell();
+  if (!bash) {
+    // An OLDER installer binary may lack GitBootstrap while this freshly-
+    // downloaded script has the check — so provision the POSIX shell ourselves
+    // rather than hard-failing on that version skew.
+    log("No POSIX shell present — provisioning PortableGit…");
+    bash = await provisionPortableGit();
+  }
+  if (!bash) {
+    fail("No POSIX shell (Git Bash) and PortableGit could not be provisioned. Install Git for Windows from https://git-scm.com/download/win and re-run.");
+  }
+  const probe = spawnSync(bash, ["-c", "echo ok | grep ok"], { encoding: "utf-8" });
+  const out = `${probe.stdout || ""}${probe.stderr || ""}`.trim();
+  if (probe.status !== 0 || !out.includes("ok")) {
+    fail(`POSIX shell check failed — ${bash} couldn't run 'echo ok | grep ok' (exit ${probe.status}). Reinstall Git for Windows from https://git-scm.com/download/win and re-run.`);
+  }
+  ok(`POSIX shell verified — ${bash}`);
+  stepDone("posixshell");
+}
+
+// 8. macOS: build the Mac .app and install it to /Applications.
 step("desktop", process.platform === "darwin" ? "Electron .app build (~3–5 min)" : process.platform === "win32" ? "Electron desktop bundle build" : null);
 //    Set LAX_SKIP_APP=1 to skip (useful for headless dev iteration).
 let appInstalled = false;
@@ -1243,35 +1271,6 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   log("(Linux: no native app target yet — use `npm run dev` to launch the server.)");
 }
 stepDone("desktop");
-
-// 8. POSIX shell guarantee (Windows). GitBootstrap (C# installer / install.ps1 /
-//    install.bat) provisions a real Git-for-Windows bash BEFORE this script
-//    runs, so a POSIX shell must exist by now. Prove it — run `echo ok | grep ok`
-//    through the resolved bash and FAIL the install if it doesn't return "ok".
-//    This turns "bash present" from a hope into a verified post-condition that
-//    the runtime (src/tools/shell-env.ts resolveWindowsShell) can assume.
-if (process.platform === "win32") {
-  step("posixshell");
-  let bash = resolvePosixShell();
-  if (!bash) {
-    // The installer's GitBootstrap (C# / install.ps1 / install.bat) normally
-    // provisions Git before we reach here — but an OLDER installer binary may
-    // lack it while this freshly-downloaded script has the check. Rather than
-    // hard-fail on that version skew, provision the POSIX shell ourselves.
-    log("No POSIX shell present — provisioning PortableGit…");
-    bash = await provisionPortableGit();
-  }
-  if (!bash) {
-    fail("No POSIX shell (Git Bash) and PortableGit could not be provisioned. Install Git for Windows from https://git-scm.com/download/win and re-run.");
-  }
-  const probe = spawnSync(bash, ["-c", "echo ok | grep ok"], { encoding: "utf-8" });
-  const out = `${probe.stdout || ""}${probe.stderr || ""}`.trim();
-  if (probe.status !== 0 || !out.includes("ok")) {
-    fail(`POSIX shell check failed — ${bash} couldn't run 'echo ok | grep ok' (exit ${probe.status}). Reinstall Git for Windows from https://git-scm.com/download/win and re-run.`);
-  }
-  ok(`POSIX shell verified — ${bash}`);
-  stepDone("posixshell");
-}
 
 // Standalone installs: the GUI installer resolved the source ref to an
 // immutable commit sha, downloaded that exact archive, and forwarded the sha

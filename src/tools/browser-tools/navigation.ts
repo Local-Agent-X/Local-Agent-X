@@ -8,7 +8,14 @@ import type { ToolResult } from "../../types.js";
 import type { BrowserManager, BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { dnsPinCheck } from "../../browser/guards.js";
+import { createLogger } from "../../logger.js";
 import { ok, err, computeAuthWallPrefix } from "./shared.js";
+
+// Navigations were invisible in the logs — only browser *spawns* logged, never
+// where the agent went. That made route-arounds (X login wall -> navigate to a
+// different source) impossible to see without excavating the per-op record.
+// One line per navigate turns the whole browse trail into a greppable story.
+const log = createLogger("browser.nav");
 
 export async function handleNavigate(
   manager: BrowserManager,
@@ -20,6 +27,7 @@ export async function handleNavigate(
   // DNS rebinding protection — resolve hostname before browser navigates
   const pinResult = await dnsPinCheck(url);
   if (pinResult) return err(pinResult);
+  log.info(`navigate -> ${url}`);
   const navResult = await manager.navigate(url, engine);
   // Auto-snapshot on navigate. Without this, the agent has to
   // remember to call snapshot before fill/click/evaluate — which
@@ -47,6 +55,7 @@ export async function handleNewTab(
   if (!url) return err("'url' parameter is required for new_tab action.");
   const pinResult = await dnsPinCheck(url);
   if (pinResult) return err(pinResult);
+  log.info(`new_tab -> ${url}`);
   const tabResult = await manager.newTab(url);
   try {
     const snap = await manager.snapshot();

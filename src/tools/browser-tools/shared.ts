@@ -5,6 +5,9 @@
 import type { ToolResult } from "../../types.js";
 import type { BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
+import { createLogger } from "../../logger.js";
+
+const log = createLogger("browser.wall");
 
 export function ok(content: string): ToolResult {
   return { content };
@@ -91,5 +94,8 @@ export function computeAuthWallPrefix(snapshot: string): string {
   const hasLoginCta = /\b(sign in|log ?in|continue|submit|enter)\b/i.test(window);
   if (!hasEmailOrUsername && !hasLoginCta) return "";
 
+  // Observability: mark the block moment so a route-around reads as
+  // "navigate X -> auth-wall detected -> navigate Y" in the logs.
+  log.info("auth-wall detected on page snapshot");
   return `[AUTH-WALL DETECTED] This page has a primary login form. STOP. Tell the user what they need to log into and wait for them to handle it. Do NOT call more browser actions hoping to bypass it. Do NOT type passwords yourself — the user enters credentials in the browser themselves.\n\n`;
 }

@@ -133,6 +133,11 @@ export class ObservationRegistry {
       }),
       listIframes(page).catch(() => [] as IframeInfo[]),
     ]);
+    if (obstructions.length > 0) {
+      // Observability: mark consent/cookie/modal blocks (the Guardian case) so
+      // a route-around reads as a clear trail next to navigations + auth-walls.
+      logger.info(`obstruction(s) detected: ${obstructions.map(o => o.kind).join(", ")} (${obstructions.length})`);
+    }
     const dialogs = pendingDialogs(page);
     this.observationCount++;
 

@@ -13,7 +13,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { resolve, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeWorktrees, type WorktreeEntry } from "./worktree-core.js";
+import { activeWorktrees, MAX_CONCURRENT_WORKTREES, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
+import { createWorktree, createNamedWorktree, cleanupWorktree } from "./worktree-lifecycle.js";
 import { getMergeDeltaFiles, securitySensitiveChangedFiles } from "./worktree-state.js";
 import { scanWorktreeForStagedSecrets } from "../self-edit/exfil-scan.js";
 
@@ -179,5 +180,113 @@ describe("self_edit merge-gate scoping (R6-B1/B2)", () => {
     }
     // A non-engine file is NOT held (the gate stays targeted, not hermetic).
     expect(securitySensitiveChangedFiles(["src/routes/apps.ts"])).toEqual([]);
+  });
+});
+
+// Global concurrent-worktree cap: a cross-source safety backstop so a runaway
+// (agent spawns + self-edit + update + autopilot, each from a different entry
+// point) can't fill the disk with full repo copies. The cap is fail-safe and
+// contract-compatible — over-cap returns null, the same shape callers already
+// handle as a creation failure. These seed activeWorktrees directly so the cap
+// trips WITHOUT touching git (the registry is the single source of truth).
+describe("concurrent-worktree cap", () => {
+  // Pad the registry up to the live cap with placeholder entries.
+  function fillToCap(): string[] {
+    const ids: string[] = [];
+    for (let i = activeWorktrees.size; i < MAX_CONCURRENT_WORKTREES; i++) {
+      const id = `cap-fill-${i}`;
+      activeWorktrees.set(id, {
+        path: join(tmpdir(), "lax-worktrees", id),
+        branch: `agent/${id}`,
+        baseBranch: "main",
+        repoRoot: tmpdir(),
+        mergedSuccessfully: false,
+      });
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  function clearFill(ids: string[]): void {
+    for (const id of ids) activeWorktrees.delete(id);
+  }
+
+  it("createWorktree returns null at cap without creating git artifacts", () => {
+    const filled = fillToCap();
+    try {
+      expect(activeWorktrees.size).toBe(MAX_CONCURRENT_WORKTREES);
+      expect(worktreeSlotAvailable()).toBe(false);
+      const before = activeWorktrees.size;
+      // Refused at the cap guard — returns null and never registers an entry.
+      expect(createWorktree("over-cap-agent")).toBeNull();
+      expect(activeWorktrees.has("over-cap-agent")).toBe(false);
+      expect(activeWorktrees.size).toBe(before); // no git worktree add ran
+    } finally {
+      clearFill(filled);
+    }
+  });
+
+  it("createNamedWorktree returns null at cap without creating git artifacts", () => {
+    const filled = fillToCap();
+    try {
+      expect(worktreeSlotAvailable()).toBe(false);
+      const before = activeWorktrees.size;
+      expect(createNamedWorktree("over-cap-named", "autopilot/over-cap")).toBeNull();
+      expect(activeWorktrees.has("over-cap-named")).toBe(false);
+      expect(activeWorktrees.size).toBe(before);
+    } finally {
+      clearFill(filled);
+    }
+  });
+
+  it("a freed slot (cleanupWorktree) re-opens room under the cap", () => {
+    const filled = fillToCap();
+    try {
+      expect(worktreeSlotAvailable()).toBe(false);
+      // Free one slot — the placeholder repoRoot is just tmpdir, so the git
+      // worktree-remove is a harmless no-op (caught internally); the entry is
+      // removed from the registry, which is what frees the slot.
+      const freed = filled.pop()!;
+      cleanupWorktree(freed);
+      expect(activeWorktrees.has(freed)).toBe(false);
+      expect(worktreeSlotAvailable()).toBe(true);
+    } finally {
+      clearFill(filled);
+    }
+  });
+
+  it("createWorktree proceeds when a slot is available (real temp repo)", () => {
+    // Below the cap: creation should reach git and succeed in a real repo.
+    const home = mkdtempSync(join(tmpdir(), "lax-cap-home-"));
+    const repo = mkdtempSync(join(tmpdir(), "lax-cap-repo-"));
+    const id = "cap-under-agent";
+    const prevCwd = process.cwd();
+    const env = { ...process.env };
+    try {
+      const g = (args: string[]): void => {
+        execFileSync("git", args, { cwd: repo, stdio: "ignore", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } });
+      };
+      g(["init", "-q"]);
+      g(["config", "user.email", "t@t"]);
+      g(["config", "user.name", "t"]);
+      writeFileSync(join(repo, "base.txt"), "base");
+      g(["add", "-A"]);
+      g(["commit", "-qm", "base"]);
+      g(["branch", "-M", "main"]);
+
+      // createWorktree shells out to git from process.cwd(); point it at the repo.
+      process.chdir(repo);
+      expect(worktreeSlotAvailable()).toBe(true);
+      const wt = createWorktree(id);
+      expect(wt).not.toBeNull();
+      expect(activeWorktrees.has(id)).toBe(true);
+    } finally {
+      process.chdir(prevCwd);
+      try { cleanupWorktree(id); } catch { /* best-effort */ }
+      activeWorktrees.delete(id);
+      Object.assign(process.env, env);
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

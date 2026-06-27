@@ -7,11 +7,15 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { activeWorktrees, git, logger, WORKTREE_BASE } from "./worktree-core.js";
+import { activeWorktrees, git, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeSlotAvailable } from "./worktree-core.js";
 import { linkDirectoryInto, unlinkSharedJunctions } from "./worktree-junctions.js";
 
 /** Create an isolated worktree for an agent */
 export function createWorktree(agentId: string): { path: string; branch: string } | null {
+  if (!worktreeSlotAvailable()) {
+    logger.warn(`[worktree] cap reached (${activeWorktrees.size}/${MAX_CONCURRENT_WORKTREES}) — refusing new worktree for ${agentId}`);
+    return null;
+  }
   try {
     const repoRoot = git("rev-parse --show-toplevel");
     const baseBranch = git("rev-parse --abbrev-ref HEAD", repoRoot);
@@ -140,6 +144,10 @@ export function createNamedWorktree(
   name: string,
   branchName: string,
 ): { path: string; branch: string; baseBranch: string } | null {
+  if (!worktreeSlotAvailable()) {
+    logger.warn(`[worktree] cap reached (${activeWorktrees.size}/${MAX_CONCURRENT_WORKTREES}) — refusing new worktree for ${name}`);
+    return null;
+  }
   try {
     const repoRoot = git("rev-parse --show-toplevel");
     const baseBranch = git("rev-parse --abbrev-ref HEAD", repoRoot);

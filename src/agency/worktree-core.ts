@@ -24,6 +24,20 @@ export const WORKTREE_BASE = join(tmpdir(), "lax-worktrees");
 export const activeWorktrees = new Map<string, WorktreeEntry>();
 
 /**
+ * Generous global cap on concurrent worktrees, as a cross-source safety
+ * backstop: each worktree is a full repo copy, and the agent/self-edit/update/
+ * autopilot paths all create them from different entry points with no single
+ * combined limit. The default (12) only trips on a runaway — the legitimate
+ * max is ~agent-lane-cap(5) + self-edit(1) + update(1) + autopilot headroom.
+ */
+export const MAX_CONCURRENT_WORKTREES = Number(process.env.LAX_MAX_WORKTREES) || 12;
+
+/** True while there's room under the global cap to create another worktree. */
+export function worktreeSlotAvailable(): boolean {
+  return activeWorktrees.size < MAX_CONCURRENT_WORKTREES;
+}
+
+/**
  * Run git with an explicit args array via execFileSync (no shell).
  *
  * The previous implementation used `execSync(\`git ${cmd}\`)` which spawns

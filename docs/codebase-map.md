@@ -12,27 +12,27 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 61 top-level dirs · 60 live · 1 with no live importer · 1063 non-test source files · 0 god files (>400 LOC).
+**Totals:** 61 top-level dirs · 60 live · 1 with no live importer · 1069 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/security/` | 59 | 22 | XL |  |
-| `src/ops/` | 50 | 20 | L |  |
+| `src/ops/` | 52 | 20 | L |  |
 | `src/memory/` | 38 | 106 | XL |  |
 | `src/providers/` | 34 | 13 | L |  |
-| `src/canonical-loop/` | 29 | 100 | XL |  |
-| `src/tools/` | 29 | 119 | XL |  |
+| `src/tools/` | 30 | 119 | XL |  |
+| `src/canonical-loop/` | 29 | 102 | XL |  |
 | `src/agent-store/` | 24 | 7 | M |  |
 | `src/agency/` | 22 | 14 | L |  |
 | `src/threat/` | 20 | 12 | L |  |
+| `src/classifiers/` | 18 | 8 | L |  |
 | `src/orchestrator/` | 18 | 21 | L |  |
 | `src/session/` | 18 | 7 | M |  |
 | `src/agent-request/` | 17 | 11 | L |  |
 | `src/auth/` | 17 | 9 | L |  |
 | `src/agents/` | 16 | 13 | L |  |
-| `src/classifiers/` | 16 | 7 | M |  |
 | `src/chat-ws/` | 14 | 8 | M |  |
 | `src/app-runtime/` | 13 | 12 | L |  |
 | `src/browser/` | 12 | 23 | XL |  |
@@ -46,7 +46,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/whatsapp-bridge/` | 9 | 6 | M |  |
 | `src/autopilot/` | 8 | 12 | L |  |
 | `src/screen-stream/` | 8 | 8 | L |  |
-| `src/self-edit/` | 8 | 13 | L |  |
+| `src/self-edit/` | 8 | 14 | L |  |
 | `src/sync/` | 8 | 18 | L |  |
 | `src/agent-guards/` | 7 | 11 | M |  |
 | `src/protocols/` | 7 | 32 | XL |  |
@@ -62,7 +62,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context-manager/` | 4 | 8 | M |  |
 | `src/routes/` | 4 | 77 | XL |  |
 | `src/server/` *(entrypoint)* | 4 | 25 | XL |  |
-| `src/tool-policy/` | 4 | 17 | L |  |
+| `src/tool-policy/` | 4 | 19 | L |  |
 | `src/broker-transport/` | 3 | 25 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
@@ -129,7 +129,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/demo-recorder.ts` | M |
 | `src/demo-runner.ts` | M |
 | `src/desktop-bridge.ts` | S |
-| `src/doctor.ts` | S |
+| `src/doctor.ts` | M |
 | `src/driver-abstraction.ts` | M |
 | `src/embedded-runtime.ts` | S |
 | `src/embedding-singleton.ts` | S |

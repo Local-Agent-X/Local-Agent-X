@@ -92,7 +92,10 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     writeFileSync(join(pkgDir, "src", "app.ts"), "NEW");
     writeFileSync(join(pkgDir, "added.txt"), "added");
     const tarPath = join(root, "rel.tar.gz");
-    execFileSync("tar", ["czf", tarPath, "-C", root, "pkg"]);
+    // Run from `root` with relative paths so no Windows drive-letter (`C:\…`)
+    // reaches tar — GNU tar reads the colon in `czf C:\…` as a remote rsh host
+    // ("Cannot connect to C:"). Relative names work for GNU tar and bsdtar alike.
+    execFileSync("tar", ["czf", "rel.tar.gz", "pkg"], { cwd: root });
 
     const m = new OTAManager("o", "r", join(root, "lax"));
     await expect(
@@ -134,7 +137,10 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     writeFileSync(join(pkgDir, "node_modules", "dep", "native.node"), "FROM-TARBALL");
     writeFileSync(join(pkgDir, "src", "app.ts"), "NEW");
     const tarPath = join(root, "rel.tar.gz");
-    execFileSync("tar", ["czf", tarPath, "-C", root, "pkg"]);
+    // Run from `root` with relative paths so no Windows drive-letter (`C:\…`)
+    // reaches tar — GNU tar reads the colon in `czf C:\…` as a remote rsh host
+    // ("Cannot connect to C:"). Relative names work for GNU tar and bsdtar alike.
+    execFileSync("tar", ["czf", "rel.tar.gz", "pkg"], { cwd: root });
 
     const m = new OTAManager("o", "r", join(root, "lax"));
     await m.applyUpdate(tarPath, installDir, "v0", "deadbeefcafebabe0000000000000000feedface");
@@ -162,7 +168,10 @@ describe("OTAManager — rolling-channel integrity gate (R4-06)", () => {
     writeFileSync(join(installDir, "src", "app.ts"), "OLD");
     writeFileSync(join(pkgDir, "src", "app.ts"), "NEW");
     const tarPath = join(root, "rel.tar.gz");
-    execFileSync("tar", ["czf", tarPath, "-C", root, "pkg"]);
+    // Run from `root` with relative paths so no Windows drive-letter (`C:\…`)
+    // reaches tar — GNU tar reads the colon in `czf C:\…` as a remote rsh host
+    // ("Cannot connect to C:"). Relative names work for GNU tar and bsdtar alike.
+    execFileSync("tar", ["czf", "rel.tar.gz", "pkg"], { cwd: root });
 
     const m = new OTAManager("o", "r", join(root, "lax"));
     // Empty commit ⇒ no integrity binding ⇒ must throw BEFORE extracting.

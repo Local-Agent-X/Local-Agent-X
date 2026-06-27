@@ -30,8 +30,13 @@ describe("resolveProjectDir", () => {
   it("resolves into the WORKSPACE ROOT, not the source repo (regression)", () => {
     // The bug: projectsDir() came from import.meta.url (the code location),
     // landing builds at <repo>/workspace/apps where the sandbox blocks writes.
-    // It must track the configured workspace root instead.
-    expect(projectsDir().replace(/\\/g, "/")).toBe(`${TEST_WS.replace(/\\/g, "/")}/apps`);
+    // It must track the configured workspace root instead. Asserted on the
+    // distinctive configured suffix rather than an exact `.toBe(TEST_WS+…)`:
+    // projectsDir() runs path.resolve, which on Windows prefixes the drive
+    // (`/tmp/…` → `C:/tmp/…`) that the POSIX-literal TEST_WS lacks. The unique
+    // "lax-test-projects" segment proves it tracks the CONFIGURED workspace, not
+    // the repo, on every platform.
+    expect(projectsDir().replace(/\\/g, "/")).toMatch(/\/lax-test-projects\/workspace\/apps$/);
   });
 
   it("returns absolute paths unchanged (windows)", () => {

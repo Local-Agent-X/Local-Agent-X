@@ -5,7 +5,6 @@ import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { selfCheckMiddleware } from "./self-check.js";
-import { deadEndMiddleware } from "./dead-end.js";
 import { postCommitMiddleware } from "./post-commit.js";
 
 function ctxWithLane(lane: string): CanonicalLoopContext {
@@ -26,19 +25,21 @@ describe("isWorkerOp", () => {
 
 describe("nudge middlewares gate on isWorkerOp", () => {
   // These inject stall-nudges that leak into interactive replies / voice, so
-  // they're skipped on the interactive lane. Two guards are intentionally NOT
+  // they're skipped on the interactive lane. THREE guards are intentionally NOT
   // here because a spin must be broken on every lane: mid-turn-stale (its
-  // second-strike abort caps a spinning interactive/voice turn) and
-  // loop-detection (runs everywhere, but nudge-only on interactive so it breaks
-  // an exact-repeat spin like the grok `ls` loop without hard-killing a turn the
-  // user wanted — see loop-detection.test.ts).
+  // second-strike abort caps a spinning interactive/voice turn), loop-detection
+  // (runs everywhere, but nudge-only on interactive so it breaks an exact-repeat
+  // spin like the grok `ls` loop without hard-killing a turn the user wanted),
+  // and dead-end (nudge-only on 3 empty tool results in a row — a genuine spin
+  // worth breaking on any lane; the `when` gate was deliberately removed in
+  // d2f85ea4 "run the empty-result nudge on interactive chat too", same
+  // rationale as loop-detection — see dead-end.ts).
   const middlewares = [
     postTurnDetectorMiddleware,
     prematureCompletionMiddleware,
     actionClaimMiddleware,
     hallucinationCheckMiddleware,
     selfCheckMiddleware,
-    deadEndMiddleware,
     postCommitMiddleware,
   ];
 

@@ -1,6 +1,6 @@
 import { mkdir, writeFile, readFile, rm, copyFile, utimes } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, basename, join } from "node:path";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
@@ -212,14 +212,25 @@ export class OTAManager {
     const extractDir = join(this.updatesDir, `extract-${Date.now()}`);
     await mkdir(extractDir, { recursive: true });
 
+    // Extract with a RELATIVE archive name (running from the tarball's own dir)
+    // so no Windows drive letter reaches tar's `-f` arg. GNU tar — which
+    // Git-for-Windows ships and which can shadow System32 bsdtar on PATH —
+    // reads the colon in `xzf C:\…` as a remote rsh host ("Cannot connect to
+    // C:") and aborts; both the primary AND the old powershell fallback hit
+    // that when GNU tar wins the PATH, so OTA extraction was a coin-flip on the
+    // host's tar. `-C <abs dir>` is safe (only the archive arg is rsh-parsed),
+    // and a relative archive name works for GNU tar and bsdtar alike.
+    const tarDir = dirname(tarPath);
+    const tarName = basename(tarPath);
     try {
-      await shell("tar", ["xzf", tarPath, "-C", extractDir, "--strip-components=1"]);
+      await shell("tar", ["xzf", tarName, "-C", extractDir, "--strip-components=1"], tarDir);
     } catch {
-      // Windows fallback
+      // Fallback for hosts without a usable `tar` on PATH (older Win10 builds
+      // predate the bundled bsdtar). Same relative-name reason.
       await shell("powershell", [
         "-Command",
-        `tar xzf "${tarPath}" -C "${extractDir}" --strip-components=1`,
-      ]);
+        `tar xzf "${tarName}" -C "${extractDir}" --strip-components=1`,
+      ], tarDir);
     }
 
     // Validation gate: run the same build/bind/smoke gates a self_edit gets,

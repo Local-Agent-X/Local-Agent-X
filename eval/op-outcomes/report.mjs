@@ -229,7 +229,7 @@ function parseJsonl(text) {
   return rows;
 }
 
-function readSoakDir(dir) {
+export function readSoakDir(dir) {
   if (!dir || !existsSync(dir)) return [];
   let files;
   try {
@@ -250,7 +250,7 @@ function readSoakDir(dir) {
   return rows;
 }
 
-function readOpOutcomes(path) {
+export function readOpOutcomes(path) {
   if (!path || !existsSync(path)) return {};
   try {
     const raw = JSON.parse(readFileSync(path, "utf-8"));
@@ -260,7 +260,7 @@ function readOpOutcomes(path) {
   }
 }
 
-function laxDir() {
+export function laxDir() {
   return process.env.LAX_DATA_DIR || join(homedir(), ".lax");
 }
 

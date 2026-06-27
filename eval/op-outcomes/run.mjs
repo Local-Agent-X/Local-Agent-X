@@ -28,6 +28,7 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { computeOutcomeReport, renderMarkdown, readSoakDir, readOpOutcomes } from "./report.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -243,3 +244,12 @@ const out = join(__dirname, `results-${stamp}.json`);
 writeFileSync(out, JSON.stringify({ when: stamp, base: BASE, repeat: REPEAT, batches: batches.filter(Boolean) }, null, 2), "utf-8");
 console.log(`\n  full results → ${out}`);
 console.log(`  NOTE: throwaway 'lax-bench-*' sessions are now in your sidebar — safe to bulk-delete.`);
+
+// Headline outcome report — read the telemetry THIS run just produced (soak
+// JSONL in the server's workspace/ + the same op-outcomes.json snapshotted for
+// opDelta above) and render it. Additive: never alters results/exit codes; on a
+// --repeat/batched run the aggregate is printed once, here at the very end.
+const SOAK_DIR = join(process.cwd(), "workspace");
+const outcomeReport = computeOutcomeReport(readSoakDir(SOAK_DIR), readOpOutcomes(OUTCOMES_PATH));
+console.log(`\n=== Outcome report ===\n`);
+console.log(renderMarkdown(outcomeReport));

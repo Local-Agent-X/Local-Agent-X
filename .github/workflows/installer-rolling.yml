@@ -112,6 +112,27 @@ jobs:
           certificate-profile-name: ${{ secrets.AZURE_SIGN_CERT_PROFILE }}
           files: ${{ github.workspace }}\Install Local Agent X Windows Installer.exe
 
+      - name: Verify signing identity (fail-closed on cert drift)
+        # SmartScreen reputation accrues to the cert SUBJECT. If a rebuild ever
+        # signs with a different Trusted Signing account/profile, that reputation
+        # resets to zero. Pin the expected subject (public — it's in every shipped
+        # binary) as repo VARIABLE WIN_SIGN_EXPECTED_SUBJECT and fail the build on
+        # drift, so a cert swap can't silently ship. Skips when signing was skipped
+        # or the var is unset (non-breaking until you set it).
+        if: ${{ env.AZURE_SIGN_CLIENT_ID != '' && vars.WIN_SIGN_EXPECTED_SUBJECT != '' }}
+        shell: pwsh
+        run: |
+          $exe = "Install Local Agent X Windows Installer.exe"
+          $sig = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($sig.Status -ne 'Valid') { Write-Error "Signature not Valid: $($sig.Status) - $($sig.StatusMessage)"; exit 1 }
+          $subj = $sig.SignerCertificate.Subject
+          $want = "${{ vars.WIN_SIGN_EXPECTED_SUBJECT }}"
+          if ($subj -notlike "*$want*") {
+            Write-Error "Signing identity drift: subject [$subj] does not contain expected [$want]. A cert/profile swap would reset SmartScreen reputation - refusing to ship."
+            exit 1
+          }
+          Write-Host "Signing identity OK: $subj"
+
       - uses: actions/upload-artifact@v7
         with:
           name: windows-installer-rolling
@@ -177,6 +198,23 @@ jobs:
         run: |
           chmod +x scripts/build-mac-installer.sh
           ./scripts/build-mac-installer.sh
+
+      - name: Verify signing identity (fail-closed on cert drift)
+        # Notarization + in-app-update continuity depend on the Apple Team. If a
+        # rebuild ever signs with a different Team/Developer ID, fail HERE — before
+        # wasting a ~30-min notarization cycle. Pin repo VARIABLE MAC_EXPECTED_TEAM_ID
+        # (the 10-char Team ID is public — it's in every shipped binary). Skips
+        # when the var is unset (non-breaking until you set it).
+        if: ${{ vars.MAC_EXPECTED_TEAM_ID != '' }}
+        run: |
+          set -euo pipefail
+          GOT=$(codesign -dvv "$APP_PATH" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+          WANT="${{ vars.MAC_EXPECTED_TEAM_ID }}"
+          if [ "$GOT" != "$WANT" ]; then
+            echo "::error::Signing identity drift: TeamIdentifier=$GOT, expected $WANT. A Team/cert swap breaks notarization + update continuity - refusing to ship."
+            exit 1
+          fi
+          echo "Signing identity OK: TeamIdentifier=$GOT"
 
       - name: Reclaim disk space before .dmg packaging
         run: |

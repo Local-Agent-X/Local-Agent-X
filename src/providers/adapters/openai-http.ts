@@ -50,6 +50,17 @@ export function isReasoningEffortRejection(message: string | undefined): boolean
   return /does not support parameter\s+reasoning_?effort/i.test(message ?? "");
 }
 
+// o1/o3/o-series models 400 the whole request on a non-default `temperature`
+// ("Unsupported value: 'temperature' does not support 0.7 with this model.
+// Only the default (1) value is supported."). Match that specific rejection —
+// and only that — so the catch drops the temperature field (letting the API
+// use its default) and retries, while every other 400 still propagates.
+export function isTemperatureRejection(message: string | undefined): boolean {
+  return /unsupported value:\s*'?temperature|temperature.*only the default|does not support.*temperature/i.test(
+    message ?? "",
+  );
+}
+
 export class OpenAIHttpAdapter extends BaseAdapter {
   readonly name: string = "openai-http";
 
@@ -59,6 +70,10 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     const reasoningCapable =
       isReasoningCapable(req.baseURL, req.model) &&
       !hasParamUnsupported(req.baseURL, req.model, "reasoning_effort");
+    // o-series models reject a non-default temperature; once we've learned a
+    // (baseURL, model) does, omit the field up front so the first call skips
+    // the failed round-trip.
+    const temperatureAllowed = !hasParamUnsupported(req.baseURL, req.model, "temperature");
 
     // Translate canonical toolChoice → OpenAI Chat Completions tool_choice
     // shape. Only meaningful when we're shipping tools this turn.
@@ -72,60 +87,84 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       return undefined;
     })();
 
+    // Single source of truth for the create() body. Each retry branch flips
+    // exactly one include-flag off rather than re-specifying the whole body,
+    // so the params can't drift between the initial call and a self-heal.
+    // When includeTemperature is false we OMIT the field entirely (the API
+    // falls back to its own default) instead of sending a value.
+    const buildParams = (opts: {
+      includeTools: boolean;
+      includeReasoningEffort: boolean;
+      includeTemperature: boolean;
+    }) => ({
+      model: req.model,
+      messages: [
+        { role: "system" as const, content: req.systemPrompt },
+        ...req.messages,
+      ],
+      ...(opts.includeTools ? { tools: toOpenAITools(req.tools) } : {}),
+      ...(opts.includeTools && openaiToolChoice ? { tool_choice: openaiToolChoice } : {}),
+      ...(opts.includeTemperature ? { temperature: req.temperature ?? 0.7 } : {}),
+      stream: true as const,
+      ...(opts.includeReasoningEffort ? { reasoning_effort: "medium" as const } : {}),
+    });
+
     let stream;
     try {
       stream = await client.chat.completions.create(
-        {
-          model: req.model,
-          messages: [
-            { role: "system", content: req.systemPrompt },
-            ...req.messages,
-          ],
-          ...(useTools ? { tools: toOpenAITools(req.tools) } : {}),
-          ...(openaiToolChoice ? { tool_choice: openaiToolChoice } : {}),
-          temperature: req.temperature ?? 0.7,
-          stream: true,
-          ...(reasoningCapable ? { reasoning_effort: "medium" as const } : {}),
-        },
+        buildParams({
+          includeTools: useTools,
+          includeReasoningEffort: reasoningCapable,
+          includeTemperature: temperatureAllowed,
+        }),
         { signal: req.signal || undefined },
       ).catch(async (err: Error) => {
-        // "Does not support tools" fallback — some Ollama models (llama3,
-        // qwen2, etc.) reject the `tools` field entirely. Trigger on the
-        // error string regardless of baseURL: 127.0.0.1, localhost, custom
-        // remote ollama, and any other OpenAI-compat provider with the
-        // same constraint all benefit. Harmless for providers that DO
-        // support tools — they never emit this error.
-        if (err.message?.includes("does not support tools")) {
+        // Same-provider self-heal: when a 400 names exactly one param we sent,
+        // remember it so the next call skips the param, then retry THIS call
+        // once with that single knob turned off (everything else unchanged).
+        // Only one retry — if the retried call 400s on a different param, that
+        // error propagates, same as before. Every unrelated error re-throws.
+        const retry = (opts: {
+          includeTools: boolean;
+          includeReasoningEffort: boolean;
+          includeTemperature: boolean;
+        }) =>
+          client.chat.completions.create(buildParams(opts), { signal: req.signal || undefined });
+
+        // "Does not support tools" — some Ollama models (llama3, qwen2, etc.)
+        // reject the `tools` field entirely. Trigger on the error string
+        // regardless of baseURL; harmless for providers that DO support tools
+        // (they never emit it). Chat-only retry also drops tool_choice.
+        if (useTools && err.message?.includes("does not support tools")) {
           markNoToolSupport(req.baseURL, req.model);
           logger.info(`model ${req.model} doesn't support tools — switching to chat-only`);
-          return client.chat.completions.create({
-            model: req.model,
-            messages: [
-              { role: "system", content: req.systemPrompt },
-              ...req.messages,
-            ],
-            temperature: req.temperature ?? 0.7,
-            stream: true,
-          }, { signal: req.signal || undefined });
+          return retry({
+            includeTools: false,
+            includeReasoningEffort: reasoningCapable,
+            includeTemperature: temperatureAllowed,
+          });
         }
-        // reasoning_effort 400 fallback — only when WE sent the param and the
-        // server named that exact parameter. Remember it so the next call
-        // skips the param, and retry this one without it. Mirrors the tools
-        // fallback above; every other error propagates.
+        // reasoning_effort 400 — only when WE sent the param and the server
+        // named that exact parameter.
         if (reasoningCapable && isReasoningEffortRejection(err.message)) {
           markParamUnsupported(req.baseURL, req.model, "reasoning_effort");
           logger.info(`model ${req.model} rejected reasoning_effort — retrying without it`);
-          return client.chat.completions.create({
-            model: req.model,
-            messages: [
-              { role: "system", content: req.systemPrompt },
-              ...req.messages,
-            ],
-            ...(useTools ? { tools: toOpenAITools(req.tools) } : {}),
-            ...(openaiToolChoice ? { tool_choice: openaiToolChoice } : {}),
-            temperature: req.temperature ?? 0.7,
-            stream: true,
-          }, { signal: req.signal || undefined });
+          return retry({
+            includeTools: useTools,
+            includeReasoningEffort: false,
+            includeTemperature: temperatureAllowed,
+          });
+        }
+        // temperature 400 — o-series models reject a non-default temperature.
+        // Only when WE actually sent it; retry omitting the field.
+        if (temperatureAllowed && isTemperatureRejection(err.message)) {
+          markParamUnsupported(req.baseURL, req.model, "temperature");
+          logger.info(`model ${req.model} rejected temperature — retrying without it`);
+          return retry({
+            includeTools: useTools,
+            includeReasoningEffort: reasoningCapable,
+            includeTemperature: false,
+          });
         }
         throw err;
       });

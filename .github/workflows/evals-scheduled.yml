@@ -1,0 +1,136 @@
+# ---------------------------------------------------------------------------
+# Scheduled model-dependent evals (NON-BLOCKING)
+#
+# These evals drive a REAL chat model end-to-end (tool discovery + op-outcome
+# give-up battery). They need provider API keys and burn real tokens/minutes,
+# so they CANNOT gate per-PR like security.yml does — they run on a nightly
+# cron and on manual workflow_dispatch instead, and every eval step is
+# continue-on-error (this workflow never blocks merges).
+#
+# REPO OWNER MUST DO (one-time) for this to authenticate:
+#   Add Actions secrets (Settings → Secrets and variables → Actions):
+#     - XAI_API_KEY      (REQUIRED — xai/grok is the default CI provider below)
+#     - OPENAI_API_KEY   (optional — enables the openai/codex batch)
+#     - GEMINI_API_KEY   (optional)
+#   The Anthropic provider authenticates via the Claude CLI / OAuth, NOT an
+#   HTTP API key, so it can't be driven from a CI secret — xai (and openai)
+#   are the reliable CI providers here. The op-outcomes --all batch flips
+#   through every provider in eval/op-outcomes/providers.json and SKIPS any
+#   that aren't authed (silent-fallback guard in run.mjs), so missing keys
+#   just shrink the matrix; they don't fail the run.
+#
+# How the server auth works without seeding a vault: the booted server reads
+# provider keys from process.env as a fallback (src/auth/auth-provider.ts), so
+# injecting the secrets as job-level env is sufficient for it to authenticate.
+#
+# FIRST RUN: confirm it manually via the "Run workflow" button
+# (workflow_dispatch) before trusting the nightly cron.
+# ---------------------------------------------------------------------------
+name: Scheduled Evals (model-dependent)
+
+on:
+  schedule:
+    # Nightly at 07:00 UTC
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    name: Model-dependent evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Provider keys — the booted server resolves these from process.env as an
+      # auth fallback (no secrets-vault seeding needed).
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # CRITICAL: the eval runners hard-code homedir()/.lax/config.json (and
+      # op-outcomes also reads homedir()/.lax/op-outcomes.json) — they do NOT
+      # honor LAX_DATA_DIR like the server does. So LAX_DATA_DIR must point at
+      # the runner's real ~/.lax, otherwise the server writes config.json
+      # somewhere the evals can't find it. On ubuntu-latest HOME=/home/runner.
+      LAX_DATA_DIR: /home/runner/.lax
+      LAX_SANDBOX: disabled
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Boot the dev server in the background and wait until it's ready, then
+      # leave it running for the eval steps below. Mirrors the integration
+      # job's boot-and-wait loop in security.yml (poll /api/health + wait for
+      # config.json, fail fast if it never comes up, cat the log on failure).
+      - name: Boot server
+        run: |
+          mkdir -p "$LAX_DATA_DIR"
+          npm run dev:nowatch > /tmp/lax-server.log 2>&1 &
+          SERVER_PID=$!
+          echo "$SERVER_PID" > /tmp/lax-server.pid
+          READY=0
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:7007/api/health > /dev/null 2>&1 && [ -f "$LAX_DATA_DIR/config.json" ]; then
+              echo "server ready after $((i * 2))s"; READY=1; break
+            fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then echo "server exited during boot"; break; fi
+            sleep 2
+          done
+          if [ "$READY" != "1" ]; then
+            echo "server never became ready"; cat /tmp/lax-server.log; exit 1
+          fi
+
+      # Point the live chat provider at xai so tool-discovery runs against a
+      # real model. /api/settings accepts a {provider,model} body (model is
+      # optional). Best-effort — don't fail the run if it's rejected.
+      - name: Configure default provider
+        continue-on-error: true
+        run: |
+          curl -sf -X POST http://127.0.0.1:7007/api/settings \
+            -H "Authorization: Bearer $(jq -r .authToken "$LAX_DATA_DIR/config.json")" \
+            -H 'Content-Type: application/json' \
+            -d '{"provider":"xai"}'
+
+      - name: Tool-discovery eval
+        continue-on-error: true
+        run: |
+          mkdir -p eval-results
+          npm run eval:tools 2>&1 | tee eval-results/tool-discovery.txt
+
+      - name: Op-outcomes eval
+        continue-on-error: true
+        run: |
+          mkdir -p eval-results
+          node eval/op-outcomes/run.mjs --all --repeat 1 2>&1 | tee eval-results/op-outcomes.txt
+
+      - name: Stop server
+        if: always()
+        run: |
+          PID="$(cat /tmp/lax-server.pid 2>/dev/null || true)"
+          [ -n "$PID" ] && kill "$PID" 2>/dev/null || true
+          true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: |
+            eval-results/
+            eval/op-outcomes/results-*.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Server log on failure
+        if: failure()
+        run: cat /tmp/lax-server.log || true

@@ -77,6 +77,8 @@ __pycache__/
 # should never be committed.
 installer/bin/
 installer/obj/
+installer.Tests/bin/
+installer.Tests/obj/
 installer/dist-mac/
 # Electron runtime archive (~100MB) fetched per-platform by
 # scripts/fetch-electron-bundle.mjs and embedded into the installer at build

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSanitizedEnv, resolveWindowsShell, isLikelyAvKill } from "../src/tools/shell-env.js";
+import { buildSanitizedEnv, resolveWindowsShell, isLikelyAvKill, portableGitBashPath } from "../src/tools/shell-env.js";
 import { detectTargetShell, translateForShell } from "../src/tools/shell-translate.js";
 
 const isWin = process.platform === "win32";
@@ -67,6 +67,24 @@ describe("resolveWindowsShell — deterministic POSIX shell, never the WSL launc
     expect(target).toBe("bash");
     const cmd = "ls -la | grep foo && echo done > /dev/null";
     expect(translateForShell(cmd, target)).toBe(cmd);
+  });
+});
+
+// The installer (GitBootstrap.cs) provisions PortableGit to a fixed dir and the
+// runtime resolver reads bash.exe from it. That path is ONE fact in two files
+// (this resolver + GitBootstrap.ExtractDir) — if they drift, the installer
+// writes bash where the resolver never looks. This locks the resolver side.
+describe("portableGitBashPath — load-bearing coupling with installer GitBootstrap", () => {
+  it("builds …\\LocalAgentX\\PortableGit\\bin\\bash.exe under LOCALAPPDATA", () => {
+    const p = portableGitBashPath("C:\\Users\\x\\AppData\\Local");
+    // Normalize separators so the assertion is host-agnostic (join uses the
+    // platform separator; the coupling is about the path segments, not the slash).
+    expect(p?.replace(/\//g, "\\")).toBe(
+      "C:\\Users\\x\\AppData\\Local\\LocalAgentX\\PortableGit\\bin\\bash.exe",
+    );
+  });
+  it("returns null when LOCALAPPDATA is unset (no Windows env → no candidate)", () => {
+    expect(portableGitBashPath(undefined)).toBeNull();
   });
 });
 

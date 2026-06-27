@@ -12,6 +12,7 @@ namespace LocalAgentX.Installer.ViewModels;
 public partial class MainWindowViewModel : ObservableObject
 {
     private readonly InstallProcess _process = new();
+    private readonly GitBootstrap _git = new();
     private readonly NodeBootstrap _node = new();
     private readonly SourceDownloader _source = new();
     private readonly StringBuilder _log = new();
@@ -58,6 +59,12 @@ public partial class MainWindowViewModel : ObservableObject
         _node.OnLogLine += line => Dispatcher.UIThread.Post(() =>
         {
             _log.AppendLine($"[node-bootstrap] {line}");
+            LogText = _log.ToString();
+        });
+        _git.OnStatus  += s => Dispatcher.UIThread.Post(() => { CurrentStepLabel = s; });
+        _git.OnLogLine += line => Dispatcher.UIThread.Post(() =>
+        {
+            _log.AppendLine($"[git-bootstrap] {line}");
             LogText = _log.ToString();
         });
         _source.OnStatus += s => Dispatcher.UIThread.Post(() => { CurrentStepDetail = s; });
@@ -116,6 +123,25 @@ public partial class MainWindowViewModel : ObservableObject
                 ErrorMessage = $"Couldn't download Local Agent X source.\n\n{ex.Message}\n\nCheck your internet connection and try again.";
                 return;
             }
+        }
+
+        // Git bootstrap runs BEFORE Node (and before the IPC stream) so a real
+        // POSIX shell is guaranteed by the time install-common.mjs runs its
+        // posix-shell verification. Windows-only — macOS/Linux ship a real bash.
+        if (OperatingSystem.IsWindows() && !_git.GitAvailable())
+        {
+            CurrentStepLabel = "POSIX shell (Git Bash)";
+            CurrentStepDetail = "Installing Git for Windows (one-time)…";
+            Steps.Add(new StepViewModel { Id = "_bootstrap_git", Label = "POSIX shell (Git Bash)", State = "running", Detail = "Installing Git for Windows…" });
+            bool gitOk = await Task.Run(() => _git.InstallGit());
+            if (!gitOk)
+            {
+                Screen = "error";
+                ErrorMessage = "Couldn't install Git for Windows (the POSIX shell the agent relies on). Install Git from https://git-scm.com/download/win and re-run.";
+                return;
+            }
+            var gitStep = Steps.FirstOrDefault(s => s.Id == "_bootstrap_git");
+            if (gitStep != null) gitStep.State = "done";
         }
 
         // Node bootstrap runs BEFORE the IPC stream because install-common.mjs

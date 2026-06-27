@@ -135,6 +135,7 @@ const ALL_STEPS = [
   { id: "build",        label: "App build",                platforms: ["win32", "darwin", "linux"] },
   { id: "config",       label: "Configuration",            platforms: ["win32", "darwin", "linux"] },
   { id: "desktop",      label: "Desktop app",              platforms: ["win32", "darwin", "linux"] },
+  { id: "posixshell",   label: "POSIX shell",              platforms: ["win32"] },
 ];
 
 const STEPS_PLAN = ALL_STEPS
@@ -469,6 +470,34 @@ function killOllamaServe() {
   } else {
     spawnSync("pkill", ["-f", "ollama serve"], { stdio: "ignore" });
   }
+}
+
+// Resolve a real Git-for-Windows bash (never the WSL launcher
+// System32\bash.exe / WindowsApps stub). Mirrors src/tools/shell-env.ts
+// findGitBash and installer/Services/GitBootstrap.cs FindExistingBash — the
+// installer-provisioned PortableGit dir is probed first. Windows-only.
+function resolvePosixShell() {
+  const isWsl = (p) => { const l = p.toLowerCase().replace(/\//g, "\\"); return l.includes("\\system32\\") || l.includes("\\windowsapps\\"); };
+  const local = process.env.LOCALAPPDATA;
+  const pathDirs = (process.env.PATH || "").split(";");
+  const cands = [];
+  // Installer-provisioned PortableGit (load-bearing coupling with GitBootstrap).
+  if (local) cands.push(join(local, "LocalAgentX", "PortableGit", "bin", "bash.exe"));
+  // git.exe on PATH → <root>\{bin,usr\bin}\bash.exe
+  for (const d of pathDirs) {
+    if (!d) continue;
+    const g = join(d, "git.exe");
+    if (existsSync(g) && !isWsl(g)) {
+      const root = dirname(dirname(g));
+      cands.push(join(root, "bin", "bash.exe"), join(root, "usr", "bin", "bash.exe"));
+    }
+  }
+  const pf = process.env.ProgramFiles || "C:\\Program Files";
+  cands.push(join(pf, "Git", "bin", "bash.exe"), join(pf, "Git", "usr", "bin", "bash.exe"));
+  if (local) cands.push(join(local, "Programs", "Git", "bin", "bash.exe"));
+  for (const d of pathDirs) { if (d) cands.push(join(d, "bash.exe")); }
+  for (const c of cands) { if (!isWsl(c) && existsSync(c)) return c; }
+  return null;
 }
 
 // ── In-app Node upgrade (desktop one-click path) ───────────────────────
@@ -1154,6 +1183,27 @@ if (process.platform === "darwin" && !process.env.LAX_SKIP_APP) {
   log("(Linux: no native app target yet — use `npm run dev` to launch the server.)");
 }
 stepDone("desktop");
+
+// 8. POSIX shell guarantee (Windows). GitBootstrap (C# installer / install.ps1 /
+//    install.bat) provisions a real Git-for-Windows bash BEFORE this script
+//    runs, so a POSIX shell must exist by now. Prove it — run `echo ok | grep ok`
+//    through the resolved bash and FAIL the install if it doesn't return "ok".
+//    This turns "bash present" from a hope into a verified post-condition that
+//    the runtime (src/tools/shell-env.ts resolveWindowsShell) can assume.
+if (process.platform === "win32") {
+  step("posixshell");
+  const bash = resolvePosixShell();
+  if (!bash) {
+    fail("No POSIX shell (Git Bash) found. The installer should have provisioned Git for Windows — install it from https://git-scm.com/download/win and re-run.");
+  }
+  const probe = spawnSync(bash, ["-c", "echo ok | grep ok"], { encoding: "utf-8" });
+  const out = `${probe.stdout || ""}${probe.stderr || ""}`.trim();
+  if (probe.status !== 0 || !out.includes("ok")) {
+    fail(`POSIX shell check failed — ${bash} couldn't run 'echo ok | grep ok' (exit ${probe.status}). Reinstall Git for Windows from https://git-scm.com/download/win and re-run.`);
+  }
+  ok(`POSIX shell verified — ${bash}`);
+  stepDone("posixshell");
+}
 
 // Standalone installs: the GUI installer resolved the source ref to an
 // immutable commit sha, downloaded that exact archive, and forwarded the sha

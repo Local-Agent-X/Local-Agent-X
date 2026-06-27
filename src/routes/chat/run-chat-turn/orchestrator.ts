@@ -167,6 +167,22 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     lockHeld = true;
     if (decision.reason === "aborted-non-committing") {
       logger.info(`[turn-lock] aborted prior non-committing turn for sess=${sessionId} (was ${decision.previous?.elapsedMs}ms in, iter=${decision.previous?.iteration})`);
+      // The prior turn just salvaged its committed work into session.messages
+      // (tryAcquireOrReplace awaited its completion before returning). `prepared`
+      // snapshotted history BEFORE that await — at line ~116, before the lock —
+      // so refresh cleanHistory from the now-current session so THIS resume turn
+      // sees what the interrupted turn did instead of re-deriving it. Closes the
+      // same-instant "keep going" race; the common stop→read→resume path was
+      // already covered by the salvage landing before the resume's prepare.
+      try {
+        const { buildCleanHistory } = await import("../../../providers/sanitize.js");
+        prepared.cleanHistory = buildCleanHistory(
+          session.messages as Parameters<typeof buildCleanHistory>[0],
+          "web",
+        );
+      } catch (e) {
+        logger.warn(`[turn-lock] cleanHistory refresh after replace failed: ${(e as Error).message}`);
+      }
     }
 
     const result = await runCanonicalChat({

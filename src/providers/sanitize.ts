@@ -137,6 +137,23 @@ export function sanitizeHistory(messages: ChatCompletionMessageParam[]): ChatCom
  * silently dropped from `old` when a session grows past maxKeep
  * post-compaction.
  */
+// Build a chat turn's cleanHistory from raw session messages: sanitize
+// provider-illegal shapes, then keep the most recent `maxKeep` (40 for web
+// chat, 30 otherwise). Lives here next to its two building blocks so the resume
+// path (run-chat-turn orchestrator, after a turn-lock replace) can rebuild
+// cleanHistory from freshly-salvaged session.messages WITHOUT pulling in the
+// heavy prepare-request pipeline. `prepared` snapshots history before the lock
+// awaits the prior turn's salvage, so this refresh is what lets a same-instant
+// "keep going" see the interrupted turn's work instead of re-deriving it.
+export function buildCleanHistory(
+  sessionMessages: ChatCompletionMessageParam[],
+  channel: string,
+  maxHistory?: number,
+): ChatCompletionMessageParam[] {
+  const maxKeep = maxHistory || (channel === "web" ? 40 : 30);
+  return truncateHistory(sanitizeHistory(sessionMessages), maxKeep);
+}
+
 export function truncateHistory(messages: ChatCompletionMessageParam[], maxKeep: number = 30): ChatCompletionMessageParam[] {
   let preservedLeader: ChatCompletionMessageParam | null = null;
   let body: ChatCompletionMessageParam[] = messages;

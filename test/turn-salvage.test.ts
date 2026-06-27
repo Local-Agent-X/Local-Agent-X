@@ -4,6 +4,7 @@ import {
   invalidateTurnContextCache,
 } from "../src/agent-request/turn-context-cache.js";
 import { persistTurnState } from "../src/routes/chat/run-chat-turn/canonical-run.js";
+import { buildCleanHistory } from "../src/providers/sanitize.js";
 
 // Fix C — turn salvage on stop.
 //
@@ -89,3 +90,31 @@ describe("invalidateTurnContextCache — stale context evicted on interrupt", ()
 interface TurnContextLike {
   block: string;
 }
+
+// Race fix: when the user hits stop and immediately resumes, the resume turn's
+// `prepared` snapshots history BEFORE the lock awaits the prior turn's salvage.
+// The orchestrator rebuilds prepared.cleanHistory via buildCleanHistory from the
+// now-current session.messages after an aborted-non-committing acquire — so the
+// salvaged work must survive that rebuild into the resume's history window.
+describe("buildCleanHistory — resume turn re-reads salvaged work", () => {
+  it("keeps the most recent salvaged messages incl. the interrupted marker", () => {
+    const history: Array<{ role: string; content: string }> = [];
+    for (let i = 0; i < 50; i++) {
+      history.push({ role: i % 2 === 0 ? "user" : "assistant", content: `old-${i}` });
+    }
+    history.push({ role: "user", content: "clone the repo and ingest it" });
+    history.push({
+      role: "assistant",
+      content: "[Previous turn was interrupted before it finished. The work above ran; continue from there.]",
+    });
+
+    const clean = buildCleanHistory(history as never, "web");
+    const texts = clean.map((m) => String((m as { content: unknown }).content));
+
+    // The aborted request + interrupted boundary survive into the resume turn.
+    expect(texts.some((t) => t === "clone the repo and ingest it")).toBe(true);
+    expect(texts.some((t) => /interrupted/i.test(t))).toBe(true);
+    // Truncated (older "old-*" turns dropped), but the recent salvaged work kept.
+    expect(clean.length).toBeLessThan(history.length);
+  });
+});

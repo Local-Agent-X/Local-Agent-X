@@ -11,7 +11,7 @@
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { sanitizeHistory, truncateHistory } from "../providers/sanitize.js";
+import { buildCleanHistory } from "../providers/sanitize.js";
 import type { AgentRequestInput, ForcedToolChoice, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { providerUndercallsTools } from "../providers/provider-ids.js";
@@ -77,8 +77,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // the right shape, with `[system_summary, ...recent_msgs]` when
   // compacted and just `[...msgs]` otherwise.
   end = stepStart("truncateHistory");
-  const maxKeep = input.maxHistory || (input.channel === "web" ? 40 : 30);
-  const cleanHistory = truncateHistory(sanitizeHistory(input.sessionMessages), maxKeep);
+  const cleanHistory = buildCleanHistory(input.sessionMessages, input.channel, input.maxHistory);
   end();
 
   // 3. Tool selection (intent + tier filter + RAG re-rank). Must run

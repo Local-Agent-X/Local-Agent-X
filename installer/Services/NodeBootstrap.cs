@@ -220,9 +220,8 @@ public class NodeBootstrap
         }
     }
 
-    // PATH/process helpers live in InstallerShell now (GitBootstrap is a 3rd
-    // consumer — one owner, not three copies). These thin wrappers forward this
-    // bootstrap's OnLogLine sink so the call sites below read unchanged.
+    // PATH/process helpers live in InstallerShell. These thin wrappers forward
+    // this bootstrap's OnLogLine sink so the call sites below read unchanged.
     bool RunStreaming(string cmd, string[] args) => InstallerShell.RunStreaming(cmd, args, OnLogLine);
     bool HasOnPath(string cmd) => InstallerShell.HasOnPath(cmd);
 }

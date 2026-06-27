@@ -70,11 +70,12 @@ describe("resolveWindowsShell — deterministic POSIX shell, never the WSL launc
   });
 });
 
-// The installer (GitBootstrap.cs) provisions PortableGit to a fixed dir and the
-// runtime resolver reads bash.exe from it. That path is ONE fact in two files
-// (this resolver + GitBootstrap.ExtractDir) — if they drift, the installer
-// writes bash where the resolver never looks. This locks the resolver side.
-describe("portableGitBashPath — load-bearing coupling with installer GitBootstrap", () => {
+// install-common.mjs provisions PortableGit to a fixed dir and the runtime
+// resolver reads bash.exe from it. That path is ONE fact in two files (this
+// resolver + scripts/portable-git.mjs portableGitExtractDir) — if they drift,
+// the installer writes bash where the resolver never looks. This locks the
+// resolver side; test/portable-git.test.ts locks the installer side.
+describe("portableGitBashPath — load-bearing coupling with portable-git.mjs", () => {
   it("builds …\\LocalAgentX\\PortableGit\\bin\\bash.exe under LOCALAPPDATA", () => {
     const p = portableGitBashPath("C:\\Users\\x\\AppData\\Local");
     // Normalize separators so the assertion is host-agnostic (join uses the

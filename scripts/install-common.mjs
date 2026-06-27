@@ -23,6 +23,10 @@ import { spawnSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import {
+  GIT_PORTABLE_VERSION, GIT_PORTABLE_SHA256,
+  portableGitAssetName, portableGitDownloadUrl, portableGitExtractDir,
+} from "./portable-git.mjs";
 
 // The Node floor comes from package.json engines.node — ONE source of truth
 // that ships with every OTA update. (The C# installer's NodeBootstrap.cs and
@@ -474,14 +478,14 @@ function killOllamaServe() {
 
 // Resolve a real Git-for-Windows bash (never the WSL launcher
 // System32\bash.exe / WindowsApps stub). Mirrors src/tools/shell-env.ts
-// findGitBash and installer/Services/GitBootstrap.cs FindExistingBash — the
-// installer-provisioned PortableGit dir is probed first. Windows-only.
+// findGitBash — the PortableGit dir provisioned by provisionPortableGit() is
+// probed first. Windows-only.
 function resolvePosixShell() {
   const isWsl = (p) => { const l = p.toLowerCase().replace(/\//g, "\\"); return l.includes("\\system32\\") || l.includes("\\windowsapps\\"); };
   const local = process.env.LOCALAPPDATA;
   const pathDirs = (process.env.PATH || "").split(";");
   const cands = [];
-  // Installer-provisioned PortableGit (load-bearing coupling with GitBootstrap).
+  // Provisioned PortableGit (load-bearing coupling with portable-git.mjs).
   if (local) cands.push(join(local, "LocalAgentX", "PortableGit", "bin", "bash.exe"));
   // git.exe on PATH → <root>\{bin,usr\bin}\bash.exe
   for (const d of pathDirs) {
@@ -500,12 +504,6 @@ function resolvePosixShell() {
   return null;
 }
 
-// Pinned PortableGit release — keep in sync with installer/Services/GitBootstrap.cs
-// (GIT_PORTABLE_VERSION / GIT_PORTABLE_SHA256), install.ps1, install.bat. The
-// release TAG is v{VER}.windows.1 but the asset/version string is just {VER}.
-const GIT_PORTABLE_VERSION = "2.54.0";
-const GIT_PORTABLE_SHA256 = "bea006a6cc69673f27b1647e84ab3a68e912fbc175ab6320c5987e012897f311";
-
 // Persist dirs to the USER PATH via the Environment API (NOT setx — setx
 // truncates PATH at 1024 chars). Prepended so our shell wins over a later
 // shadow. Windows-only; best-effort.
@@ -515,21 +513,19 @@ function persistUserPathWin(dirs) {
   try { spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { stdio: "ignore" }); } catch { /* best-effort */ }
 }
 
-// Provision a real Git-for-Windows bash when none is present — the POSIX-shell
-// fallback so this step works even when run by an older installer binary that
-// predates installer/Services/GitBootstrap.cs. Mirrors GitBootstrap.InstallGitFromSfx:
-// the pinned PortableGit self-extractor, checksum-verified fail-closed, extracted
-// to %LOCALAPPDATA%\LocalAgentX\PortableGit. Returns the bash path or null.
+// Provision a real Git-for-Windows bash when none is present — the ONE owner of
+// POSIX-shell provisioning (pins live in ./portable-git.mjs). Downloads the
+// pinned PortableGit self-extractor, checksum-verifies it fail-closed, and
+// extracts to %LOCALAPPDATA%\LocalAgentX\PortableGit. Returns the bash path or null.
 async function provisionPortableGit() {
   const local = process.env.LOCALAPPDATA;
   if (!local) { warn("No LOCALAPPDATA — cannot provision PortableGit."); return null; }
-  const parent = join(local, "LocalAgentX");
-  const extractDir = join(parent, "PortableGit");
-  const asset = `PortableGit-${GIT_PORTABLE_VERSION}-64-bit.7z.exe`;
+  const extractDir = portableGitExtractDir(local);
   // The SFX extracts to <its-own-dir>\PortableGit (it ignores any output flag
-  // and the cwd), so it MUST sit in `parent` for the output to land at extractDir.
-  const sfx = join(parent, asset);
-  const url = `https://github.com/git-for-windows/git/releases/download/v${GIT_PORTABLE_VERSION}.windows.1/${asset}`;
+  // and the cwd), so the .exe MUST sit in extractDir's parent.
+  const parent = dirname(extractDir);
+  const sfx = join(parent, portableGitAssetName());
+  const url = portableGitDownloadUrl();
   try {
     mkdirSync(parent, { recursive: true });
     log(`Downloading PortableGit ${GIT_PORTABLE_VERSION} (~56 MB, one-time)…`);
@@ -1018,19 +1014,22 @@ writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
 ok(`Wired ${cfgPath} → projectRoot=${cfg.projectRoot}, authToken=${cfg.authToken.slice(0,4)}...${cfg.authToken.slice(-4)}`);
 stepDone("config");
 
-// 7. POSIX shell guarantee (Windows). GitBootstrap (C# installer / install.ps1 /
-//    install.bat) provisions a real Git-for-Windows bash before this script
-//    runs. Run it BEFORE the desktop step so (a) desktop stays the final step
-//    and (b) the shell guarantee lands before the heaviest build. Then prove it
-//    — `echo ok | grep ok` through the resolved bash — and FAIL otherwise, so
-//    the runtime (src/tools/shell-env.ts resolveWindowsShell) can assume bash.
+// 7. POSIX shell guarantee (Windows). install-common.mjs is the single owner of
+//    POSIX-shell provisioning: resolve a real Git-for-Windows bash, and if none
+//    exists, download + extract the pinned PortableGit (provisionPortableGit).
+//    Runs BEFORE the desktop step so (a) desktop stays the final step and (b)
+//    the shell guarantee lands before the heaviest build. Then prove it —
+//    `echo ok | grep ok` — and FAIL otherwise, so the runtime
+//    (src/tools/shell-env.ts resolveWindowsShell) can assume bash exists.
+//    Ordering: nothing before this needs git/bash today; if a git+ npm
+//    dependency is ever added, move this step above the npm step.
 if (process.platform === "win32") {
   step("posixshell");
-  let bash = resolvePosixShell();
+  // LAX_FORCE_GIT_BOOTSTRAP=1 skips detection so the real download/extract path
+  // can be exercised on a box that already has Git.
+  const forceGit = process.env.LAX_FORCE_GIT_BOOTSTRAP === "1" || process.env.LAX_FORCE_GIT_BOOTSTRAP === "true";
+  let bash = forceGit ? null : resolvePosixShell();
   if (!bash) {
-    // An OLDER installer binary may lack GitBootstrap while this freshly-
-    // downloaded script has the check — so provision the POSIX shell ourselves
-    // rather than hard-failing on that version skew.
     log("No POSIX shell present — provisioning PortableGit…");
     bash = await provisionPortableGit();
   }

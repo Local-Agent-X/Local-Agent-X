@@ -3,12 +3,11 @@ using System.Text;
 
 namespace LocalAgentX.Installer.Services;
 
-// Shared process/PATH helpers for the C# bootstrap steps. NodeBootstrap and
-// GitBootstrap both provision a per-user portable runtime the same way (download
-// → unpack → splice the bin dir into PATH for this run → persist it for reboot),
-// so the mechanics live here once instead of being copy-pasted per bootstrap.
-// The "two places" comment in the bootstraps refers to C#-vs-shell (install.ps1
-// / install.bat), which genuinely can't DRY — these C# consumers can.
+// Shared process/PATH helpers for the C# bootstrap (download → unpack → splice
+// the bin dir into PATH for this run → persist it for reboot). Consumed by
+// NodeBootstrap. Kept separate from it as a small, reusable utility; the
+// "two places" comment in NodeBootstrap refers to C#-vs-shell (install.ps1 /
+// install.bat), which genuinely can't DRY.
 public static class InstallerShell
 {
     // Prepend a dir to the USER PATH (HKCU) so a portable runtime survives a

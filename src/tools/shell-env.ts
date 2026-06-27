@@ -47,13 +47,14 @@ function isWslLauncher(p: string): boolean {
   return low.includes("\\system32\\") || low.includes("\\windowsapps\\");
 }
 
-// The bash.exe the installer's GitBootstrap provisions PortableGit to.
+// The bash.exe the installer provisions PortableGit to.
 //
-// LOAD-BEARING COUPLING: this path MUST stay byte-identical to ExtractDir() in
-// installer/Services/GitBootstrap.cs (…\LocalAgentX\PortableGit, bin\bash.exe
-// under it). The installer writes PortableGit there; this resolver reads it.
-// Change one, change both, or the resolver won't find what the installer wrote.
-// Pure + exported so the coupling is unit-testable without a Windows box.
+// LOAD-BEARING COUPLING: this path MUST stay byte-identical to
+// portableGitExtractDir() in scripts/portable-git.mjs (…\LocalAgentX\PortableGit,
+// bin\bash.exe under it), which install-common.mjs writes to. The installer
+// writes PortableGit there; this resolver reads it. Change one, change both, or
+// the resolver won't find what the installer wrote. Pure + exported so the
+// coupling is unit-testable without a Windows box.
 export function portableGitBashPath(localAppData: string | undefined): string | null {
   if (!localAppData) return null;
   return join(localAppData, "LocalAgentX", "PortableGit", "bin", "bash.exe");

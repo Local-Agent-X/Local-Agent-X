@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyOpCategory, normalizeObservedToolName, recordOpOutcome, getOpOutcomeStats, _resetOpOutcomeCache } from "./tool-tracker.js";
+import { classifyOpCategory, normalizeObservedToolName, recordOpOutcome, recordGaveUpNudge, getOpOutcomeStats, _resetOpOutcomeCache } from "./tool-tracker.js";
 
 // op-outcome persistence resolves getLaxDir() lazily, so redirecting the write
 // off ~/.lax in beforeAll (not at import) is enough. Restore so the env doesn't
@@ -89,5 +89,19 @@ describe("op-outcome telemetry", () => {
     const stats = getOpOutcomeStats();
     expect(stats["browser::claude-opus-4-8"]?.clean).toBe(1);
     expect(stats["general::claude-opus-4-8"]).toBeUndefined();
+  });
+
+  it("counts give-up nudges per model without bumping the outcome total", () => {
+    recordGaveUpNudge("browser", "nudge-test-model");
+    recordGaveUpNudge("browser", "nudge-test-model");
+    const entry = getOpOutcomeStats()["browser::nudge-test-model"];
+    expect(entry?.gaveUpNudged).toBe(2);
+    expect(entry?.total).toBe(0); // the nudge fires mid-op — never the terminal outcome
+  });
+
+  it("give-up nudge count survives a restart", () => {
+    recordGaveUpNudge("research", "nudge-restart-model");
+    _resetOpOutcomeCache();
+    expect(getOpOutcomeStats()["research::nudge-restart-model"]?.gaveUpNudged).toBe(1);
   });
 });

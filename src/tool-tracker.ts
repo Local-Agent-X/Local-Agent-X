@@ -158,7 +158,7 @@ export function classifyOpCategory(toolsUsed: Set<string>): OpCategory {
   return "general";
 }
 
-interface OpOutcomeEntry { total: number; clean: number; partial: number; aborted: number; }
+interface OpOutcomeEntry { total: number; clean: number; partial: number; aborted: number; gaveUpNudged?: number; }
 /** Keyed by `${category}::${model}`. Counts are additive, so seeding from the
  *  on-disk aggregate and incrementing in memory survives restarts cleanly — the
  *  app restarts constantly (OTA, quit/reopen), and without this every restart
@@ -190,6 +190,22 @@ export function recordOpOutcome(category: OpCategory, outcome: OpOutcome, model:
   const entry = (stats[key] ??= { total: 0, clean: 0, partial: 0, aborted: 0 });
   entry.total++;
   entry[outcome]++;
+  const dir = getLaxDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, OP_OUTCOMES_FILE), JSON.stringify(stats, null, 2), "utf-8");
+}
+
+/**
+ * Count a give-up / hand-off nudge the loop fired mid-op (browser-handoff).
+ * Separate from recordOpOutcome — the nudge fires DURING the op, not at the
+ * terminal outcome — so it bumps only `gaveUpNudged`, never `total`. Same
+ * additive-on-disk aggregate, so the per-model give-up rate survives restarts.
+ */
+export function recordGaveUpNudge(category: OpCategory, model: string | undefined): void {
+  const stats = loadOpOutcomeStats();
+  const key = `${category}::${model || "unknown"}`;
+  const entry = (stats[key] ??= { total: 0, clean: 0, partial: 0, aborted: 0 });
+  entry.gaveUpNudged = (entry.gaveUpNudged ?? 0) + 1;
   const dir = getLaxDir();
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, OP_OUTCOMES_FILE), JSON.stringify(stats, null, 2), "utf-8");

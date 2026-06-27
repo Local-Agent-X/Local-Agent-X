@@ -2,12 +2,18 @@ import { describe, it, expect, vi } from "vitest";
 import type { CanonicalLoopContext } from "./types.js";
 import { browserHandoffMiddleware } from "./browser-handoff.js";
 import { classifyGaveUp } from "../../classifiers/give-up-classify.js";
+import { recordGaveUpNudge } from "../../tool-tracker.js";
 
 vi.mock("../../classifiers/give-up-classify.js", () => ({
   classifyGaveUp: vi.fn(async () => null),
 }));
+vi.mock("../../tool-tracker.js", () => ({
+  recordGaveUpNudge: vi.fn(),
+  classifyOpCategory: vi.fn(() => "browser"),
+}));
 
 const mockClassify = classifyGaveUp as unknown as ReturnType<typeof vi.fn>;
+const mockRecord = recordGaveUpNudge as unknown as ReturnType<typeof vi.fn>;
 
 let opCounter = 0;
 function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
@@ -96,6 +102,22 @@ describe("browser-handoff gate", () => {
     expect(
       (await fire(ctx({ assistantContent: "Both sites are open in separate tabs." }))).kind,
     ).toBe("continue");
+  });
+
+  it("records the give-up nudge in durable telemetry when it fires", async () => {
+    mockRecord.mockClear();
+    mockClassify.mockResolvedValueOnce(true);
+    const res = await fire(ctx({ assistantContent: "I'm blocked by the overlay." }));
+    expect(res.kind).toBe("nudge");
+    expect(mockRecord).toHaveBeenCalledTimes(1);
+    expect(mockRecord.mock.calls[0][0]).toBe("browser");
+  });
+
+  it("does NOT record a nudge when the turn completes cleanly", async () => {
+    mockRecord.mockClear();
+    mockClassify.mockResolvedValueOnce(false);
+    await fire(ctx({ assistantContent: "Both sites are open in separate tabs." }));
+    expect(mockRecord).not.toHaveBeenCalled();
   });
 
   it("regex backstop catches the 'Blocked … Which way?' option-menu punt (the Guardian give-up)", async () => {

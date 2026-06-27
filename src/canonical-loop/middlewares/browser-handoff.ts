@@ -24,6 +24,10 @@
 import type { CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { classifyGaveUp } from "../../classifiers/give-up-classify.js";
+import { recordGaveUpNudge, classifyOpCategory } from "../../tool-tracker.js";
+import { createLogger } from "../../logger.js";
+
+const log = createLogger("canonical-loop.browser-handoff");
 
 interface FiredFlag {
   fired: boolean;
@@ -85,6 +89,17 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
     if (!shouldFire) return { kind: "continue" };
 
     flag.fired = true;
+
+    // Make the gate observable: a log line confirms the nudge fired (and which
+    // path — model verdict vs regex backstop), and the durable per-model counter
+    // lets the give-up rate be tracked across sessions, not inferred from action
+    // counts. See tool-tracker.recordGaveUpNudge.
+    const category = classifyOpCategory(ctx.toolsCalledThisOp);
+    log.info(
+      `give-up nudge fired — verdict=${gaveUp === true ? "classifier" : "regex-fallback"} ` +
+      `model=${ctx.model} category=${category}`,
+    );
+    recordGaveUpNudge(category, ctx.model);
 
     const message =
       "The browser is still open — you're handing this back before exhausting " +

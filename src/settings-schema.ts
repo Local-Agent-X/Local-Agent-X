@@ -87,6 +87,18 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "LLM sampling temperature (0-2). Lower=more deterministic",
   },
   {
+    field: "dailyBudgetUsd",
+    validate: z.number().min(0),
+    runtime: true,
+    description: "Opt-in daily USD spend cap. 0 = disabled. When >0, all tool calls are blocked once today's total cost reaches this budget",
+  },
+  {
+    field: "sessionBudgetUsd",
+    validate: z.number().min(0),
+    runtime: true,
+    description: "Opt-in per-session USD spend cap. 0 = disabled. When >0, all tool calls are blocked once the current session's cost reaches this budget",
+  },
+  {
     field: "enableShell",
     validate: z.boolean(),
     runtime: true,

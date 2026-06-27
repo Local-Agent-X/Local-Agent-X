@@ -382,4 +382,13 @@ export interface LAXConfig {
    *  enableComputerControl. When false, the live-screen session drops every
    *  rtc_input. The panic hotkey flips this off too. */
   enableRemoteControl: boolean;
+
+  /** Opt-in daily USD spend cap. 0 (default) = disabled. When > 0, the
+   *  spend-cap pack blocks every tool call once today's total cost reaches
+   *  this budget. Not a security kill-switch; user-flippable. */
+  dailyBudgetUsd: number;
+  /** Opt-in per-session USD spend cap. 0 (default) = disabled. When > 0, the
+   *  spend-cap pack blocks every tool call once the active session's cost
+   *  reaches this budget. Not a security kill-switch; user-flippable. */
+  sessionBudgetUsd: number;
 }

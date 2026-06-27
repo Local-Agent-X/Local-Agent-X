@@ -18,7 +18,8 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { readOp } from "../ops/op-store.js";
-import { readLatestOpTurn, readOpTurns } from "./store.js";
+import { readOpTurns } from "./store.js";
+import { aggregateOpUsage } from "./op-usage.js";
 import { schedulerSnapshot } from "./scheduler.js";
 import { getPricing } from "../cost-tracker.js";
 import type { CanonicalEvent } from "./types.js";
@@ -114,17 +115,25 @@ function finalize(opId: string, terminal: "succeeded" | "failed" | "cancelled"):
   // Aggregate per-turn metadata across ALL rounds. Earlier we only read
   // the latest op_turn, which lost token + tool data from earlier rounds
   // in multi-round ops (chat with tool chains regularly hit 2-5 rounds).
+  //
+  // Token usage + model resolution is shared with the live cost ledger
+  // (cost-recording.ts) via aggregateOpUsage(). The soak-only per-turn
+  // fields (adapter identity, modelMs, toolDispatchMs, tool names) stay
+  // in this loop.
+  const usage = aggregateOpUsage(opId);
+  const usageInputTokens = usage.usageInputTokens;
+  const usageOutputTokens = usage.usageOutputTokens;
+  const cacheReadTokens = usage.cacheReadTokens;
+  const cacheCreateTokens = usage.cacheCreateTokens;
+  const sawAnyUsage = usage.sawAnyUsage;
+  const sawAnyCache = usage.sawAnyCache;
+  const model = usage.model;
+
   let adapter: string | null = null;
   let adapterVersion: string | null = null;
-  let usageInputTokens = 0;
-  let usageOutputTokens = 0;
-  let cacheReadTokens = 0;
-  let cacheCreateTokens = 0;
   let modelMs = 0;
   let toolDispatchMs = 0;
   const toolsCalledSet = new Set<string>();
-  let sawAnyUsage = false;
-  let sawAnyCache = false;
   let sawAnyModelMs = false;
   let sawAnyToolDispatchMs = false;
   try {
@@ -135,17 +144,6 @@ function finalize(opId: string, terminal: "succeeded" | "failed" | "cancelled"):
       const ps = t.providerState;
       if (ps && typeof ps.adapterName === "string") adapter = ps.adapterName;
       if (ps && typeof ps.adapterVersion === "string") adapterVersion = ps.adapterVersion;
-      const payload = ps?.providerPayload as Record<string, unknown> | undefined;
-      if (payload) {
-        const ui = payload.usageInputTokens;
-        const uo = payload.usageOutputTokens;
-        const cr = payload.cacheReadTokens;
-        const cc = payload.cacheCreateTokens;
-        if (typeof ui === "number") { usageInputTokens += ui; sawAnyUsage = true; }
-        if (typeof uo === "number") { usageOutputTokens += uo; sawAnyUsage = true; }
-        if (typeof cr === "number") { cacheReadTokens += cr; sawAnyCache = true; }
-        if (typeof cc === "number") { cacheCreateTokens += cc; sawAnyCache = true; }
-      }
       if (typeof t.modelMs === "number") { modelMs += t.modelMs; sawAnyModelMs = true; }
       if (typeof t.toolDispatchMs === "number") { toolDispatchMs += t.toolDispatchMs; sawAnyToolDispatchMs = true; }
       for (const tc of t.toolCallSummary ?? []) {
@@ -156,9 +154,6 @@ function finalize(opId: string, terminal: "succeeded" | "failed" | "cancelled"):
 
   // Cost estimate from the model + tokens. Cache-aware when we saw
   // cache fields (Anthropic), otherwise plain input × rate.
-  const model = (op?.contextPack?.routing as Record<string, unknown> | undefined)?.preferredModel as string | undefined
-    ?? (readLatestOpTurn(opId)?.providerState?.providerPayload as Record<string, unknown> | undefined)?.model as string | undefined
-    ?? null;
   let estimatedCostUsd: number | null = null;
   if (sawAnyUsage && model) {
     try {

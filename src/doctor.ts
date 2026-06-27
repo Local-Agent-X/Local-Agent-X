@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { getLaxDir } from "./lax-data-dir.js";
 import { workspaceRoot } from "./config.js";
+import { getToolStats } from "./tool-tracker.js";
+import { AUDIENCES_BY_TOOL } from "./tools/audience-map.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
@@ -164,6 +166,59 @@ function checkSecretsVault(): DiagnosticResult {
   }
 }
 
+/**
+ * Read-only catalog-rebalance proposal driven by tool-usage telemetry.
+ * Surfaces (a) EAGER tools (keys of AUDIENCES_BY_TOOL) that telemetry shows are
+ * never/rarely used — candidates to DEFER, and (b) tools with a poor success
+ * rate — candidates to debug or defer. Advisory ONLY: it names candidates and
+ * points at src/tools/audience-map.ts; it never edits the catalog.
+ */
+export function checkToolTelemetryHealth(): DiagnosticResult {
+  const name = "Tool telemetry";
+  try {
+    const stats = getToolStats();
+    const eagerTools = Object.keys(AUDIENCES_BY_TOOL);
+
+    let totalCalls = 0;
+    for (const entry of Object.values(stats)) totalCalls += entry.totalCalls;
+
+    // Fresh-install guard: with too little data, every eager tool would read as
+    // "unused". Stay quiet until there's enough signal to propose anything.
+    if (totalCalls < 50) {
+      return { name, status: "pass", message: "Not enough usage data yet to propose catalog changes" };
+    }
+
+    const eagerUnused = eagerTools.filter((tool) => {
+      const entry = stats[tool];
+      return !entry || entry.totalCalls === 0;
+    });
+
+    const lowSuccess = Object.entries(stats)
+      .filter(([, entry]) => entry.totalCalls >= 5 && entry.successes / entry.totalCalls < 0.5)
+      .map(([tool, entry]) => ({ tool, rate: entry.successes / entry.totalCalls }));
+
+    if (eagerUnused.length === 0 && lowSuccess.length === 0) {
+      return { name, status: "pass", message: `${eagerTools.length} eager tools, all exercised; no low-success outliers` };
+    }
+
+    const message = `${eagerUnused.length} eager tool(s) rarely/never used, ${lowSuccess.length} low-success outlier(s) — catalog-rebalance candidates`;
+
+    const parts: string[] = [];
+    if (eagerUnused.length > 0) {
+      parts.push(`Consider deferring (rarely used): ${eagerUnused.join(", ")}`);
+    }
+    if (lowSuccess.length > 0) {
+      const labeled = lowSuccess.map((o) => `${o.tool} (${Math.round(o.rate * 100)}%)`);
+      parts.push(`Investigate low success rate: ${labeled.join(", ")}`);
+    }
+    parts.push("These are proposals — edit src/tools/audience-map.ts to act.");
+
+    return { name, status: "warn", message, fix: parts.join(". ") };
+  } catch (e) {
+    return { name, status: "warn", message: `telemetry read failed: ${(e as Error).message}` };
+  }
+}
+
 // ── Run All Checks ──
 
 export async function runDoctor(): Promise<DoctorReport> {
@@ -177,6 +232,7 @@ export async function runDoctor(): Promise<DoctorReport> {
     checkPlaywright,
     checkMemoryDir,
     checkSecretsVault,
+    checkToolTelemetryHealth,
     () => checkApiKey("OpenAI", "OPENAI_API_KEY", "https://api.openai.com/v1/models", {}),
     () => checkApiKey("Anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.com/v1/models", { "anthropic-version": "2023-06-01" }),
     () => checkApiKey("xAI", "XAI_API_KEY", "https://api.x.ai/v1/models", {}),

@@ -44,10 +44,12 @@ describe("classifyGaveUp — pass-through over classifyYesNo", () => {
     expect(arg.userPrompt).toContain("FINAL_MARKER");
   });
 
-  it("the prompt treats a delivered answer as complete even when hedged (anti-doubling guard)", async () => {
+  it("the prompt encodes the decision tree: delivered answer = complete, missing answer = give-up", async () => {
     classifyYesNoMock.mockResolvedValue(false);
     await classifyGaveUp({ task: "headline", finalText: "answered" });
     const arg = classifyYesNoMock.mock.calls[0][0];
+    // answer-present → NO (anti-doubling), answer-missing → YES (catches punts incl. offer-options)
     expect(arg.systemPrompt).toMatch(/answer.*(present|delivered)/i);
+    expect(arg.systemPrompt).toMatch(/answer\s+MISSING/);
   });
 });

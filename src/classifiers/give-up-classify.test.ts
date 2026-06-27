@@ -52,4 +52,13 @@ describe("classifyGaveUp — pass-through over classifyYesNo", () => {
     expect(arg.systemPrompt).toMatch(/answer.*(present|delivered)/i);
     expect(arg.systemPrompt).toMatch(/answer\s+MISSING/);
   });
+
+  it("the prompt makes answer-present override an offer-to-switch (kills the doubling)", async () => {
+    classifyYesNoMock.mockResolvedValue(false);
+    await classifyGaveUp({ task: "headline", finalText: "answered, want me to try another site?" });
+    const arg = classifyYesNoMock.mock.calls[0][0];
+    // A delivered answer + a trailing "want me to try…" must NOT read as give-up.
+    expect(arg.systemPrompt).toMatch(/answer-present always wins/i);
+    expect(arg.systemPrompt).toMatch(/instead of answering/i);
+  });
 });

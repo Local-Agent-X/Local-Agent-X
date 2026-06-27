@@ -29,13 +29,13 @@
 
 import { classifyYesNo } from "./classify-with-llm.js";
 
-const SYSTEM_PROMPT = `You are judging whether an AI assistant COMPLETED a browser/computer task or GAVE UP and handed it back to the user. Decide in this order:
+const SYSTEM_PROMPT = `You are judging whether an AI assistant COMPLETED a browser/computer task or GAVE UP and handed it back to the user. Decide in this order, and STOP at the first rule that applies:
 
-1. Is the REQUESTED ANSWER present in the assistant's message (the headline, the data, the value asked for)? If YES → reply NO. The task is complete; trailing caveats ("the banner is still there", "I removed what I could", "it's a stubborn overlay") do NOT turn a delivered answer into a give-up.
+1. Is the REQUESTED ANSWER present in the assistant's message (the headline, the data, the value asked for)? If YES → reply NO, and stop. The task is complete. A delivered answer STAYS complete no matter what follows it — trailing caveats ("the banner is still there", "I removed what I could", "it's a stubborn overlay"), hedges, OR an offer to keep trying ("want me to try a different approach / another site, or just leave it?") do NOT turn a delivered answer into a give-up. Answer-present always wins over any offer-to-switch.
 
 2. Otherwise the answer is MISSING. Is the assistant genuinely blocked on something ONLY the user can provide — a password, a 2FA/verification code, a CAPTCHA, or private login credentials? If YES → reply NO. Asking for those is legitimate.
 
-3. Otherwise (answer MISSING and the blocker is NOT user-only) → reply YES. This is a give-up: the assistant stopped, deferred, asked the user how to proceed, OFFERED TO SWITCH APPROACHES ("want me to try web_fetch / a different selector / stop?"), or declared itself blocked by a surmountable obstacle (a cookie/consent banner, an overlay, a popup) it should work around itself.
+3. Otherwise (answer MISSING and the blocker is NOT user-only) → reply YES. This is a give-up: with no answer delivered, the assistant stopped, deferred, asked the user how to proceed, OFFERED TO SWITCH APPROACHES INSTEAD OF ANSWERING ("want me to try web_fetch / a different selector / stop?"), or declared itself blocked by a surmountable obstacle (a cookie/consent banner, an overlay, a popup) it should work around itself.
 
 Reply with EXACTLY one line starting with YES or NO, followed by a brief reason.`;
 

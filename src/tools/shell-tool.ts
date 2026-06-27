@@ -3,13 +3,13 @@ import type { ServerEvent, ToolDefinition } from "../types.js";
 import { getSandboxMode, execInSandbox, wrapSpawnForSandbox } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell } from "./shell-translate.js";
-import { resolveWindowsShell, recordAvSuspectKill, buildSanitizedEnv } from "./shell-env.js";
+import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
 
 export const bashTool: ToolDefinition = {
   name: "bash",
   description:
     "Run a shell command (bash; on Windows uses Git Bash when installed, else PowerShell). " +
-    "BASH IS THE ESCAPE HATCH, NOT THE DEFAULT. Spawning a shell is expensive and on Windows triggers antivirus heuristics that kill the process mid-stream. Use these native tools instead whenever possible:\n" +
+    "BASH IS THE ESCAPE HATCH, NOT THE DEFAULT. Spawning a shell is slower and less reliable than a purpose-built tool. Use these native tools instead whenever possible:\n" +
     "- List files in a directory → `glob` (NOT `ls`/`Get-ChildItem`)\n" +
     "- Read a file's contents → `read` (NOT `cat`/`Get-Content`/`type`)\n" +
     "- Search file contents → `grep` (NOT `grep`/`Select-String`/`findstr`)\n" +
@@ -20,7 +20,7 @@ export const bashTool: ToolDefinition = {
     "- Make HTTP requests → `http_request` (NOT `curl`/`wget`/`Invoke-WebRequest`)\n" +
     "- Open a URL → `browser` (NOT `start`/`open`)\n\n" +
     "Use bash ONLY for: build/test commands the project defines (npm/yarn/pytest/cargo), git operations beyond what tool surface covers, custom user-supplied scripts, OS-level operations no native tool exposes (process listing, env vars, services). " +
-    "If you can do it with a native tool above, you MUST. Reaching for bash on something a native tool covers is a behavior bug — antivirus kills will follow and the user will see hangs.\n\n" +
+    "If you can do it with a native tool above, you MUST. Reaching for bash on something a native tool covers is a behavior bug — it's slower and the native tool returns cleaner, verifiable output.\n\n" +
     "When you DO use bash, prefer ONE focused command over piping multiple together. " +
     "For processing large JSON/CSV files, use `python -c \"import json; ...\"` instead of reading them line by line.",
   parameters: {
@@ -210,21 +210,21 @@ export const bashTool: ToolDefinition = {
 
         child.on("error", (e) => settle(rejectP, e));
         child.on("exit", (code) => {
-          // Antivirus detection: on Windows, AV behavior shields (AVG, Avast,
-          // Norton, Defender heuristic) kill powershell mid-execution. The
-          // signature is consistent: very fast death (< 800ms), exit code
-          // non-zero or null (the AV killed it before clean exit), no stdout
-          // produced, command was non-trivial. We track per-process via the
-          // module-scoped detector (below) and surface a one-time UI banner
-          // when the count crosses threshold so the user sees what's wrong
-          // BEFORE debugging hangs themselves.
+          // Antivirus detection — scoped to the PowerShell path only. AV
+          // behavior-shields (AVG/Avast/Norton/Defender heuristic) kill
+          // powershell.exe mid-execution; a signed Git Bash is not that target,
+          // and a fast no-output failure under it is a normal error (127 =
+          // command-not-found), not an AV kill. isLikelyAvKill encodes that.
+          // On a real PS-path kill we track it and surface a one-time UI banner
+          // so the user sees what's wrong before debugging phantom hangs.
           const elapsed = Date.now() - startMs;
-          const looksLikeAvKill =
-            isWin &&
-            (code === null || (code !== 0 && code !== 1)) &&
-            elapsed < 800 &&
-            stdout.length === 0 &&
-            cmd.trim().length > 8; // skip trivial commands
+          const looksLikeAvKill = isLikelyAvKill({
+            isPowerShell: winUsesPowerShell,
+            code,
+            elapsedMs: elapsed,
+            stdoutLen: stdout.length,
+            cmdLen: cmd.trim().length,
+          });
           if (looksLikeAvKill) {
             recordAvSuspectKill(onEvent);
           }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSanitizedEnv, resolveWindowsShell } from "../src/tools/shell-env.js";
+import { buildSanitizedEnv, resolveWindowsShell, isLikelyAvKill } from "../src/tools/shell-env.js";
 import { detectTargetShell, translateForShell } from "../src/tools/shell-translate.js";
 
 const isWin = process.platform === "win32";
@@ -52,5 +52,36 @@ describe("resolveWindowsShell — deterministic POSIX shell, never the WSL launc
     expect(target).toBe("bash");
     const cmd = "ls -la | grep foo && echo done > /dev/null";
     expect(translateForShell(cmd, target)).toBe(cmd);
+  });
+});
+
+// AV behavior-shields hunt powershell.exe; a signed Git Bash isn't that target.
+// Regression: once Git Bash became the default shell, a "command not found"
+// (exit 127, fast, no stdout) under bash was misreported as an "antivirus
+// signature". The heuristic is now PowerShell-only and excludes exit 127.
+describe("isLikelyAvKill — AV detection scoped to the PowerShell path", () => {
+  const avSignature = { code: null as number | null, elapsedMs: 80, stdoutLen: 0, cmdLen: 20 };
+
+  it("fires for the real AV signature on the PowerShell path", () => {
+    expect(isLikelyAvKill({ isPowerShell: true, ...avSignature })).toBe(true);
+    expect(isLikelyAvKill({ isPowerShell: true, code: 3221225794, elapsedMs: 120, stdoutLen: 0, cmdLen: 30 })).toBe(true);
+  });
+
+  it("does NOT fire under Git Bash (signed bash.exe is not the AV target)", () => {
+    // Same fast no-output failure, but bash path → a normal command error, not AV.
+    expect(isLikelyAvKill({ isPowerShell: false, ...avSignature })).toBe(false);
+    expect(isLikelyAvKill({ isPowerShell: false, code: 127, elapsedMs: 81, stdoutLen: 0, cmdLen: 13 })).toBe(false);
+  });
+
+  it("excludes exit 127 (command-not-found) even on the PowerShell path", () => {
+    expect(isLikelyAvKill({ isPowerShell: true, code: 127, elapsedMs: 81, stdoutLen: 0, cmdLen: 13 })).toBe(false);
+  });
+
+  it("ignores clean/expected exits, slow deaths, output, and trivial commands", () => {
+    expect(isLikelyAvKill({ isPowerShell: true, code: 0, elapsedMs: 50, stdoutLen: 0, cmdLen: 20 })).toBe(false);
+    expect(isLikelyAvKill({ isPowerShell: true, code: 1, elapsedMs: 50, stdoutLen: 0, cmdLen: 20 })).toBe(false);
+    expect(isLikelyAvKill({ isPowerShell: true, ...avSignature, elapsedMs: 1500 })).toBe(false);
+    expect(isLikelyAvKill({ isPowerShell: true, ...avSignature, stdoutLen: 200 })).toBe(false);
+    expect(isLikelyAvKill({ isPowerShell: true, ...avSignature, cmdLen: 4 })).toBe(false);
   });
 });

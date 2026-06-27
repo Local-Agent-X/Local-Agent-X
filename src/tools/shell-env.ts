@@ -151,6 +151,32 @@ export function recordAvSuspectKill(
   } catch { /* best-effort */ }
 }
 
+// Does a finished subprocess look like an AV behavior-shield KILL rather than a
+// normal command failure? AV (AVG/Avast/Norton/Defender heuristic) hunts
+// `powershell.exe` specifically — the constantly-varying `-Command` string is
+// the living-off-the-land attacker signature — so this only fires on the
+// PowerShell path. A signed Git-for-Windows `bash.exe` is NOT that target, and
+// under it a fast, no-output, non-zero exit is an ordinary command error
+// (exit 127 = command-not-found), not an AV kill — flagging it produced the
+// misleading "antivirus signature" message we saw once Git Bash became the
+// default shell. Exit 127 is excluded on every path for the same reason. Pure +
+// exported so the heuristic is unit-testable without spawning a process.
+export function isLikelyAvKill(p: {
+  isPowerShell: boolean;
+  code: number | null;
+  elapsedMs: number;
+  stdoutLen: number;
+  cmdLen: number;
+}): boolean {
+  return (
+    p.isPowerShell &&
+    (p.code === null || (p.code !== 0 && p.code !== 1 && p.code !== 127)) &&
+    p.elapsedMs < 800 &&
+    p.stdoutLen === 0 &&
+    p.cmdLen > 8
+  );
+}
+
 // Env scrub for spawned subprocesses. Copies only a known-safe allowlist of
 // vars plus any var that's neither a credential-name match nor a high-entropy
 // secret-looking value. Shared by bash and the process_* family so both spawn

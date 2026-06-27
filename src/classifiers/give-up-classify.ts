@@ -31,11 +31,13 @@ import { classifyYesNo } from "./classify-with-llm.js";
 
 const SYSTEM_PROMPT = `You are judging whether an AI assistant COMPLETED a browser/computer task or GAVE UP and handed an obstruction back to the user.
 
-Reply YES (gave up) if the assistant stopped short of the goal and is asking the user to do something the assistant could and should do itself from the page/app it already has open — e.g. dismiss a cookie/consent banner, close an overlay, click "accept", scroll, or navigate a public page ("you'll need to dismiss the banner", "I'm blocked by the overlay", "can you close that").
+THE PRIMARY TEST: is the REQUESTED ANSWER present in the assistant's message?
 
-Reply NO (did not give up) if EITHER of these holds:
-- The assistant actually completed the task and reported the result, OR
+Reply NO (did not give up) if ANY of these holds:
+- The assistant already delivered the requested result/answer (the headline, the data, the value asked for) — EVEN IF it also complains about an obstacle, hedges, or offers to do more. A delivered answer means the task is COMPLETE; trailing caveats ("the banner is still there", "I removed what I could", "it's a stubborn overlay") do NOT turn a completed task into a give-up.
 - The assistant is legitimately blocked on something ONLY the user can provide: a password, a 2FA/verification code, a CAPTCHA, or private login credentials. Asking for those is NOT giving up.
+
+Reply YES (gave up) ONLY if the answer is MISSING and the assistant is asking the user to do something it could and should do itself from the page/app it already has open — e.g. dismiss a cookie/consent banner, close an overlay, click "accept", scroll, or navigate a public page ("you'll need to dismiss the banner", "I'm blocked by the overlay", "can you close that").
 
 Reply with EXACTLY one line starting with YES or NO, followed by a brief reason.`;
 

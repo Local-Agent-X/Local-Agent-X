@@ -43,4 +43,11 @@ describe("classifyGaveUp — pass-through over classifyYesNo", () => {
     expect(arg.userPrompt).toContain("TASK_MARKER");
     expect(arg.userPrompt).toContain("FINAL_MARKER");
   });
+
+  it("the prompt treats a delivered answer as complete even when hedged (anti-doubling guard)", async () => {
+    classifyYesNoMock.mockResolvedValue(false);
+    await classifyGaveUp({ task: "headline", finalText: "answered" });
+    const arg = classifyYesNoMock.mock.calls[0][0];
+    expect(arg.systemPrompt).toMatch(/answer.*(present|delivered)/i);
+  });
 });

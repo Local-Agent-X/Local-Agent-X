@@ -155,6 +155,25 @@ describe("ingestConversations — scan → parse → index → dedup", () => {
     }
   });
 
+  it("skips a non-conversation file (README.md) but still ingests the real export", async () => {
+    // Regression: the 2026-06-27 ingest pointed at a repo dir warn-logged
+    // "Unknown format: README.md" and dropped it silently. Now README is
+    // counted as skipped (honest result, no error) and the export still lands.
+    const dir = mkdtempSync(join(tmpdir(), "lax-ingest-"));
+    try {
+      writeFileSync(join(dir, "README.md"), "# My Repo\n\nJust documentation, not a conversation export.\n", "utf-8");
+      writeFileSync(join(dir, "export.json"), chatgptFixture("conv-readme"), "utf-8");
+      const mem = stubMemory();
+
+      const r = await ingestConversations(mem as never, dir);
+      expect(r.processed).toBe(1);
+      expect(r.skipped).toBe(1);
+      expect(r.errors).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("re-importing a generic-json export now skips it (the Date.now() id bug)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-ingest-"));
     try {

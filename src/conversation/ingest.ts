@@ -178,7 +178,18 @@ async function ingestSingleFile(
     const content = readFileSync(filePath, "utf-8");
     const format = detectFormat(content, ext);
     if (format === "unknown") {
-      logger.warn(`[ingest] Unknown format: ${basename(filePath)}`);
+      // A non-conversation file in a mixed export dir (README.md, notes.txt,
+      // LICENSE) is EXPECTED — skip it quietly and COUNT it so the result is
+      // honest about what was left out, instead of dropping it silently and
+      // warn-spamming the log (the 2026-06-27 ingest hit this on README.md). A
+      // structured .json/.jsonl that fails detection is more likely a real
+      // problem, so that one still logs at warn.
+      if (ext === ".md" || ext === ".txt") {
+        logger.debug(`[ingest] Skipping non-conversation file: ${basename(filePath)}`);
+      } else {
+        logger.warn(`[ingest] Unrecognized ${ext} format, skipping: ${basename(filePath)}`);
+      }
+      result.skipped++;
       return result;
     }
     try {

@@ -14,6 +14,7 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { dirname, basename, resolve, sep } from "node:path";
 import { buildSanitizedEnv } from "./shell-tools.js";
+import { resolveWindowsShell } from "./shell-env.js";
 import { evaluateShellCommand } from "../security/shell-policy.js";
 import { getSandboxMode, wrapSpawnForSandbox } from "../sandbox/index.js";
 
@@ -116,8 +117,16 @@ export function startSession(
 
   const sessionId = newSessionId();
   const isWin = process.platform === "win32";
-  const shell = isWin ? "powershell.exe" : "/bin/bash";
-  const shellArgs = isWin ? ["-NoProfile", "-Command", command] : ["-c", command];
+  // Mirror the bash tool's shell resolution (the canonical resolveWindowsShell):
+  // a real Git Bash runs the model's POSIX commands natively; only PowerShell
+  // needs the `-NoProfile -Command` form. Background processes hit the same
+  // WSL/PowerShell mismatch as bash, so they resolve through the same path.
+  const winShell = isWin ? resolveWindowsShell() : null;
+  const winUsesPowerShell = winShell !== null && winShell.kind !== "bash";
+  const shell = isWin ? winShell!.path : "/bin/bash";
+  const shellArgs = winUsesPowerShell
+    ? ["-NoProfile", "-Command", command]
+    : ["-c", command];
 
   // Unlike docker (refused above — it can't keep a live child handle),
   // seatbelt and bwrap are transparent: sandbox-exec/bwrap exec the shell in

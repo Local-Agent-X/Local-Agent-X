@@ -1,0 +1,56 @@
+import { describe, it, expect } from "vitest";
+import { buildSanitizedEnv, resolveWindowsShell } from "../src/tools/shell-env.js";
+import { detectTargetShell, translateForShell } from "../src/tools/shell-translate.js";
+
+const isWin = process.platform === "win32";
+
+// Fix E regression: a private-repo `git clone` in the agent shell hung on
+// `/dev/tty: No such device` because git tried to prompt for credentials with
+// no controlling TTY. The shared env builder now forces non-interactive git so
+// a missing credential fails fast instead of hanging.
+describe("buildSanitizedEnv — non-interactive git (no /dev/tty hang)", () => {
+  it("forces GIT_TERMINAL_PROMPT=0", () => {
+    expect(buildSanitizedEnv().GIT_TERMINAL_PROMPT).toBe("0");
+  });
+  it("defaults GIT_ASKPASS to empty (no askpass prompt)", () => {
+    expect(buildSanitizedEnv().GIT_ASKPASS).toBe("");
+  });
+  it("lets an explicit caller override the default", () => {
+    expect(buildSanitizedEnv({ GIT_TERMINAL_PROMPT: "1" }).GIT_TERMINAL_PROMPT).toBe("1");
+  });
+});
+
+// Fix A regression: on Windows the `bash` tool ran the model's POSIX commands
+// through PowerShell (translating a few idioms), and a literal `bash` resolved
+// to the WSL launcher (System32\bash.exe → "execvpe(/bin/bash) failed"). The
+// resolver now selects a real Git Bash when present and NEVER the WSL launcher.
+describe("resolveWindowsShell — deterministic POSIX shell, never the WSL launcher", () => {
+  it("returns a validated shell with a known kind and non-empty path", () => {
+    const s = resolveWindowsShell();
+    expect(["bash", "pwsh", "powershell"]).toContain(s.kind);
+    expect(typeof s.path).toBe("string");
+    expect(s.path.length).toBeGreaterThan(0);
+  });
+
+  it("never selects the WSL launcher (System32\\bash.exe / WindowsApps stub)", () => {
+    const lower = resolveWindowsShell().path.toLowerCase().replace(/\//g, "\\");
+    expect(lower).not.toContain("\\system32\\bash.exe");
+    expect(lower).not.toContain("\\windowsapps\\");
+  });
+
+  it.runIf(isWin)("selects a real Git Bash on Windows (Git for Windows is installed here)", () => {
+    const s = resolveWindowsShell();
+    expect(s.kind).toBe("bash");
+    expect(s.path.toLowerCase()).toMatch(/bash\.exe$/);
+  });
+
+  it("a bash shell path skips POSIX→PS translation so commands run natively", () => {
+    // The contract the fix depends on: detectTargetShell on a bash path yields
+    // a no-op translation target, so a real POSIX command is passed through
+    // unchanged instead of being rewritten for PowerShell.
+    const target = detectTargetShell("C:/Program Files/Git/bin/bash.exe");
+    expect(target).toBe("bash");
+    const cmd = "ls -la | grep foo && echo done > /dev/null";
+    expect(translateForShell(cmd, target)).toBe(cmd);
+  });
+});

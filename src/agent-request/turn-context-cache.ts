@@ -142,6 +142,18 @@ export function clearTurnContextCache(): void {
   cache.clear();
 }
 
+/**
+ * Drop one session's cached turn-context (both provider variants) so the next
+ * turn rebuilds it from current state. Called when a turn is INTERRUPTED: the
+ * salvaged history changes what the memory/situational block should contain, so
+ * the stale entry (a 30-min TTL can otherwise serve pre-interruption context —
+ * the 388s-old HIT seen on 2026-06-27) must be evicted rather than reused.
+ */
+export function invalidateTurnContextCache(sessionId: string): void {
+  cache.delete(`${sessionId}::anthropic`);
+  cache.delete(`${sessionId}::codex`);
+}
+
 /** Telemetry. */
 export function turnContextCacheSnapshot(): Array<{ sessionId: string; ageSec: number; hits: number }> {
   const now = Date.now();

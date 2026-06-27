@@ -3,12 +3,12 @@ import type { ServerEvent, ToolDefinition } from "../types.js";
 import { getSandboxMode, execInSandbox, wrapSpawnForSandbox } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell } from "./shell-translate.js";
-import { getWindowsShell, recordAvSuspectKill, buildSanitizedEnv } from "./shell-env.js";
+import { resolveWindowsShell, recordAvSuspectKill, buildSanitizedEnv } from "./shell-env.js";
 
 export const bashTool: ToolDefinition = {
   name: "bash",
   description:
-    "Run a shell command (PowerShell on Windows, bash elsewhere). " +
+    "Run a shell command (bash; on Windows uses Git Bash when installed, else PowerShell). " +
     "BASH IS THE ESCAPE HATCH, NOT THE DEFAULT. Spawning a shell is expensive and on Windows triggers antivirus heuristics that kill the process mid-stream. Use these native tools instead whenever possible:\n" +
     "- List files in a directory → `glob` (NOT `ls`/`Get-ChildItem`)\n" +
     "- Read a file's contents → `read` (NOT `cat`/`Get-Content`/`type`)\n" +
@@ -45,16 +45,22 @@ export const bashTool: ToolDefinition = {
     // process_start/process_restart too, not just bash. Single source there.
     const sanitizedEnv = buildSanitizedEnv();
 
+    const isWin = process.platform === "win32";
+    // Resolve the Windows shell ONCE so translation and spawn agree on it. A
+    // real Git Bash runs the model's POSIX commands natively (no rewrite);
+    // only the PowerShell fallbacks need the POSIX→PS translation and the
+    // `mkdir -p` rewrite. On a Git Bash shell those rewrites would CORRUPT a
+    // valid command (`mkdir -p` is real bash), so they are gated on PowerShell.
+    const winShell = isWin ? resolveWindowsShell() : null;
+    const winUsesPowerShell = winShell !== null && winShell.kind !== "bash";
+
     let cmd = command;
-    if (process.platform === "win32") {
+    if (winUsesPowerShell) {
       cmd = cmd.replace(/\bmkdir\s+-p\s+/g, "New-Item -ItemType Directory -Force -Path ");
-    }
-    // Cross-platform translation: rewrite POSIX-isms (`&&`, `||`,
-    // `/dev/null`) when the resolved shell is PS 5.1 specifically.
-    // pwsh 7+ and bash handle them natively, so detectTargetShell returns
-    // a no-op target for those. Mac and Linux always no-op here.
-    if (process.platform === "win32") {
-      cmd = translateForShell(cmd, detectTargetShell(getWindowsShell()));
+      // Rewrite POSIX-isms (`&&`, `||`, `/dev/null`) for PS 5.1 specifically;
+      // pwsh 7+ handles `&&`/`||` natively (detectTargetShell returns a no-op
+      // target there). Real bash and Mac/Linux never reach this branch.
+      cmd = translateForShell(cmd, detectTargetShell(winShell!.path));
     }
 
     const sandboxMode = getSandboxMode();
@@ -101,9 +107,10 @@ export const bashTool: ToolDefinition = {
           (fn as (v: unknown) => void)(val);
         };
 
-        const isWin = process.platform === "win32";
-        const shell = isWin ? getWindowsShell() : "/bin/bash";
-        const shellArgs = isWin ? ["-NoProfile", "-Command", cmd] : ["-c", cmd];
+        const shell = isWin ? winShell!.path : "/bin/bash";
+        const shellArgs = winUsesPowerShell
+          ? ["-NoProfile", "-Command", cmd]
+          : ["-c", cmd];
 
         // In seatbelt/bwrap mode this rewrites (shell, args) to run under
         // sandbox-exec/bwrap; host/docker modes pass through unchanged. The wrapper

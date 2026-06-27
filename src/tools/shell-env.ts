@@ -4,25 +4,101 @@ import { homedir, platform } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import type { ServerEvent } from "../types.js";
 
-// Prefer PowerShell 7+ (pwsh.exe) over the built-in PS 5.1 (powershell.exe)
-// when it's on PATH. PS 5.1 treats `&&`/`||` as parser errors; pwsh 7+
-// accepts them as pipeline chain operators. Without this detection every
-// bash call that chains commands fails on PS 5.1 even when pwsh is
-// installed. Live failure 2026-05-14 from another machine: the model
-// emitted `ls ... && echo ---EXISTS---` and PS 5.1 rejected it; this
-// machine dodged the bug only because the model never happened to chain
-// in any of that session's bash calls.
-let _winShellCache: string | null = null;
-export function getWindowsShell(): string {
-  if (_winShellCache) return _winShellCache;
-  const pathDirs = (process.env.PATH || "").split(delimiter);
-  for (const d of pathDirs) {
+// ── Windows shell resolution ──────────────────────────────────────────────
+//
+// The `bash` tool and process_* spawn a shell per call. On Windows the model
+// emits POSIX-style commands (pipes to grep/head, `git clone`, `&&`), so the
+// RELIABLE shell is a real POSIX bash — Git for Windows ships one. Routing the
+// model's bash through PowerShell + a partial POSIX→PS translation is the
+// "works sometimes" failure mode: simple commands translate, anything with a
+// pipe to grep/head, a heredoc, or `git clone` does not. Live failure
+// (2026-06-27): an ingest session's `git clone` hit `/dev/tty: No such device`
+// and a literal `bash` resolved to the WSL launcher (System32\bash.exe →
+// "execvpe(/bin/bash) failed") because the tool ran the command through
+// PowerShell and there was no real bash selected.
+//
+// Resolution order: real Git Bash → pwsh 7+ → Windows PowerShell 5.1. Each is
+// existence-validated (the old code returned the bare string "powershell.exe"
+// with NO check, so a missing shell surfaced as an opaque spawn error). The WSL
+// launcher (System32\bash.exe / WindowsApps stubs) is explicitly EXCLUDED — it
+// is not a usable POSIX shell without a distro and is exactly what broke above.
+export type WindowsShellKind = "bash" | "pwsh" | "powershell";
+export interface WindowsShell {
+  kind: WindowsShellKind;
+  path: string;
+}
+
+let _winShellResolved: WindowsShell | null = null;
+
+function findOnPath(exe: string): string | null {
+  for (const d of (process.env.PATH || "").split(delimiter)) {
     if (!d) continue;
-    const candidate = join(d, "pwsh.exe");
-    if (existsSync(candidate)) { _winShellCache = candidate; return _winShellCache; }
+    const candidate = join(d, exe);
+    if (existsSync(candidate)) return candidate;
   }
-  _winShellCache = "powershell.exe";
-  return _winShellCache;
+  return null;
+}
+
+// `C:\Windows\System32\bash.exe` and the WindowsApps store stubs are the WSL
+// entrypoint — they throw "execvpe(/bin/bash) failed" when no distro is
+// installed, so they must never be selected as a POSIX shell.
+function isWslLauncher(p: string): boolean {
+  const low = p.toLowerCase().replace(/\//g, "\\");
+  return low.includes("\\system32\\") || low.includes("\\windowsapps\\");
+}
+
+// A real Git-for-Windows bash, validated to exist and to not be the WSL
+// launcher. Probed from git-on-PATH first (the common case), then the standard
+// install roots, then a PATH scan.
+function findGitBash(): string | null {
+  const candidates: string[] = [];
+  const gitExe = findOnPath("git.exe");
+  if (gitExe && !isWslLauncher(gitExe)) {
+    // <Git>\cmd\git.exe or <Git>\bin\git.exe → <Git>
+    const gitRoot = join(gitExe, "..", "..");
+    candidates.push(join(gitRoot, "bin", "bash.exe"), join(gitRoot, "usr", "bin", "bash.exe"));
+  }
+  const pf = process.env.ProgramFiles || "C:\\Program Files";
+  const pfx86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const local = process.env.LOCALAPPDATA;
+  candidates.push(
+    join(pf, "Git", "bin", "bash.exe"),
+    join(pf, "Git", "usr", "bin", "bash.exe"),
+    join(pfx86, "Git", "bin", "bash.exe"),
+  );
+  if (local) candidates.push(join(local, "Programs", "Git", "bin", "bash.exe"));
+  for (const d of (process.env.PATH || "").split(delimiter)) {
+    if (d) candidates.push(join(d, "bash.exe"));
+  }
+  for (const c of candidates) {
+    if (!isWslLauncher(c) && existsSync(c)) return c;
+  }
+  return null;
+}
+
+export function resolveWindowsShell(): WindowsShell {
+  if (_winShellResolved) return _winShellResolved;
+  const gitBash = findGitBash();
+  if (gitBash) return (_winShellResolved = { kind: "bash", path: gitBash });
+  const pwsh = findOnPath("pwsh.exe");
+  if (pwsh) return (_winShellResolved = { kind: "pwsh", path: pwsh });
+  return (_winShellResolved = {
+    kind: "powershell",
+    path: findOnPath("powershell.exe") ?? "powershell.exe",
+  });
+}
+
+// Back-compat string accessor. Prefer resolveWindowsShell() when you also need
+// the kind (to pick `-c` vs `-NoProfile -Command` and to skip the POSIX→PS
+// translation when the shell is a real bash).
+export function getWindowsShell(): string {
+  return resolveWindowsShell().path;
+}
+
+// Test-only: drop the memoized resolution so a test can re-resolve under a
+// different PATH / install layout.
+export function _resetWindowsShellCache(): void {
+  _winShellResolved = null;
 }
 
 // ── Antivirus interference detector ──────────────────────────────────────
@@ -164,6 +240,16 @@ export function buildSanitizedEnv(extra?: Record<string, string>): Record<string
       ? `${sanitizedEnv.NODE_PATH}${delimiter}${bundled}`
       : bundled;
   }
+  // Git must never block on an interactive credential prompt in an automated
+  // agent shell. Without a controlling TTY a private-repo `git clone` hangs on
+  // /dev/tty (Windows: "could not read Password ... /dev/tty: No such device")
+  // instead of failing — exactly what stalled the 2026-06-27 ingest session.
+  // Force non-interactive: stored creds / Git Credential Manager still work
+  // (credential.helper is invoked, not askpass), but a MISSING credential now
+  // fails fast with a clear error the agent can report. Set before the `extra`
+  // overlay so an explicit caller override still wins.
+  sanitizedEnv.GIT_TERMINAL_PROMPT = "0";
+  if (sanitizedEnv.GIT_ASKPASS === undefined) sanitizedEnv.GIT_ASKPASS = "";
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
       if (typeof v === "string" && !v.includes("\0")) sanitizedEnv[k] = v;

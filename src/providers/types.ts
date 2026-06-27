@@ -63,4 +63,39 @@ export function _resetNoToolSupportForTests(): void {
   _noToolSupport.clear();
 }
 
+/**
+ * Per-(baseURL, model, param) memory of request params an endpoint's model
+ * rejects with a hard 400 — e.g. grok-4.20-0309-reasoning 400s the whole
+ * request on `reasoning_effort` ("does not support parameter reasoningEffort").
+ * Same (baseURL, model) keying rationale as _noToolSupport: the same model
+ * name behind a different endpoint may accept the param. Seeded with the one
+ * model we already know rejects reasoning_effort so its first call skips the
+ * failed round-trip; the openai-http catch records the rest at runtime.
+ */
+function paramKey(baseURL: string | undefined, model: string, param: string): string {
+  return `${baseURL ?? ""}::${model}::${param}`;
+}
+
+const _seedUnsupportedParams: ReadonlyArray<[string, string, string]> = [
+  ["https://api.x.ai/v1", "grok-4.20-0309-reasoning", "reasoning_effort"],
+];
+
+const _unsupportedParams = new Set<string>(
+  _seedUnsupportedParams.map(([b, m, p]) => paramKey(b, m, p)),
+);
+
+export function hasParamUnsupported(baseURL: string | undefined, model: string, param: string): boolean {
+  return _unsupportedParams.has(paramKey(baseURL, model, param));
+}
+
+export function markParamUnsupported(baseURL: string | undefined, model: string, param: string): void {
+  _unsupportedParams.add(paramKey(baseURL, model, param));
+}
+
+/** Test-only: reset to the seeded state so test ordering doesn't leak state. */
+export function _resetUnsupportedParamsForTests(): void {
+  _unsupportedParams.clear();
+  for (const [b, m, p] of _seedUnsupportedParams) _unsupportedParams.add(paramKey(b, m, p));
+}
+
 export type { ChatCompletionMessageParam };

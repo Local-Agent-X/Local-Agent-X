@@ -13,7 +13,7 @@ import OpenAI from "openai";
 import { BaseAdapter } from "../adapter/base-adapter.js";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import { toOpenAITools } from "../shared/tool-shape.js";
-import { hasNoToolSupport, markNoToolSupport } from "../types.js";
+import { hasNoToolSupport, markNoToolSupport, hasParamUnsupported, markParamUnsupported } from "../types.js";
 import { createLogger } from "../../logger.js";
 import { PROVIDERS, isHttpProvider } from "../registry.js";
 import { PROVIDER_IDS, type ProviderId } from "../provider-ids.js";
@@ -40,13 +40,25 @@ function isReasoningCapable(baseURL: string | undefined, model: string): boolean
   return /deepseek-r1|qwen.*reasoning|gpt-oss|glm-4\.7/i.test(model);
 }
 
+// Some models named as reasoners still 400 the whole request on the
+// `reasoning_effort` param (grok-4.20-0309-reasoning is the live case:
+// "does not support parameter reasoningEffort"). Match that specific
+// rejection — and only that — so the catch strips reasoning_effort and
+// retries, while every other 400 (rate limit, context length, auth) still
+// propagates untouched.
+export function isReasoningEffortRejection(message: string | undefined): boolean {
+  return /does not support parameter\s+reasoning_?effort/i.test(message ?? "");
+}
+
 export class OpenAIHttpAdapter extends BaseAdapter {
   readonly name: string = "openai-http";
 
   async *stream(req: ProviderRequest): AsyncIterable<StreamChunk> {
     const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL });
     const useTools = !hasNoToolSupport(req.baseURL, req.model);
-    const reasoningCapable = isReasoningCapable(req.baseURL, req.model);
+    const reasoningCapable =
+      isReasoningCapable(req.baseURL, req.model) &&
+      !hasParamUnsupported(req.baseURL, req.model, "reasoning_effort");
 
     // Translate canonical toolChoice → OpenAI Chat Completions tool_choice
     // shape. Only meaningful when we're shipping tools this turn.
@@ -92,6 +104,25 @@ export class OpenAIHttpAdapter extends BaseAdapter {
               { role: "system", content: req.systemPrompt },
               ...req.messages,
             ],
+            temperature: req.temperature ?? 0.7,
+            stream: true,
+          }, { signal: req.signal || undefined });
+        }
+        // reasoning_effort 400 fallback — only when WE sent the param and the
+        // server named that exact parameter. Remember it so the next call
+        // skips the param, and retry this one without it. Mirrors the tools
+        // fallback above; every other error propagates.
+        if (reasoningCapable && isReasoningEffortRejection(err.message)) {
+          markParamUnsupported(req.baseURL, req.model, "reasoning_effort");
+          logger.info(`model ${req.model} rejected reasoning_effort — retrying without it`);
+          return client.chat.completions.create({
+            model: req.model,
+            messages: [
+              { role: "system", content: req.systemPrompt },
+              ...req.messages,
+            ],
+            ...(useTools ? { tools: toOpenAITools(req.tools) } : {}),
+            ...(openaiToolChoice ? { tool_choice: openaiToolChoice } : {}),
             temperature: req.temperature ?? 0.7,
             stream: true,
           }, { signal: req.signal || undefined });

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, basename } from "node:path";
+import { err } from "./result-helpers.js";
 
 // ── Edit-failure recovery helpers ────────────────────────────────────────
 // When edit() fails, the model previously saw a bare string like
@@ -44,6 +45,22 @@ export function suggestNearbyLines(content: string, oldStr: string, max = 5): { 
     if (lines[i].includes(probe)) hits.push({ line: i + 1, text: lines[i] });
   }
   return hits;
+}
+
+// Single owner for the "File not found" tool result across the read/edit
+// family. A model that typos a path (foo.ts vs foo.tsx, right dir wrong name)
+// gets the nearest siblings as a recovery hint instead of a dead-end string,
+// so its next call can self-correct without a wasted turn. edit had this
+// inline; read / edit_lines / multi_edit returned a bare string — route them
+// all through here so the format can't drift.
+export function fileNotFoundError(filePath: string) {
+  const siblings = suggestSiblingPaths(filePath);
+  return err(
+    `File not found: ${filePath}`,
+    siblings.length
+      ? { path: filePath, recovery: `Did you mean one of:\n  ${siblings.join("\n  ")}` }
+      : { path: filePath },
+  );
 }
 
 export function suggestSiblingPaths(missingPath: string, max = 5): string[] {

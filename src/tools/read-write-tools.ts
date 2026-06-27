@@ -6,6 +6,7 @@ import { readValidatedFile, writeValidatedFile } from "../security/validated-io.
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
+import { fileNotFoundError } from "./edit-recovery.js";
 import { validateSyntax } from "./syntax-validate.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 import { appUrlHint, servedFileHint } from "./file-hints.js";
@@ -27,7 +28,7 @@ export const readTool: ToolDefinition = {
   },
   async execute(args) {
     const filePath = resolveAgentPath(String(args.path));
-    if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
+    if (!existsSync(filePath)) return fileNotFoundError(filePath);
 
     // Open the VALIDATED canonical inode (realpath + O_NOFOLLOW on the leaf) so
     // the bytes read are the inode the pre-dispatch gate approved — a symlink

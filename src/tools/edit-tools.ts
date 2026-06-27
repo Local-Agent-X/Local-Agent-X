@@ -9,7 +9,7 @@ import { appUrlHint, servedFileHint } from "./file-hints.js";
 import {
   locateOccurrences,
   suggestNearbyLines,
-  suggestSiblingPaths,
+  fileNotFoundError,
   whitespaceTolerantEdit,
 } from "./edit-recovery.js";
 
@@ -106,15 +106,7 @@ export const editTool: ToolDefinition = {
   },
   async execute(args) {
     const filePath = resolveAgentPath(String(args.path));
-    if (!existsSync(filePath)) {
-      const siblings = suggestSiblingPaths(filePath);
-      return err(
-        `File not found: ${filePath}`,
-        siblings.length
-          ? { recovery: `Did you mean one of:\n  ${siblings.join("\n  ")}` }
-          : undefined,
-      );
-    }
+    if (!existsSync(filePath)) return fileNotFoundError(filePath);
 
     try {
       const content = readFileSync(filePath, "utf-8");
@@ -145,7 +137,7 @@ export const editLinesTool: ToolDefinition = {
   },
   async execute(args) {
     const filePath = resolveAgentPath(String(args.path));
-    if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
+    if (!existsSync(filePath)) return fileNotFoundError(filePath);
 
     try {
       const content = readFileSync(filePath, "utf-8");
@@ -206,7 +198,7 @@ export const multiEditTool: ToolDefinition = {
   },
   async execute(args) {
     const filePath = resolveAgentPath(String(args.path));
-    if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
+    if (!existsSync(filePath)) return fileNotFoundError(filePath);
     const edits = Array.isArray(args.edits) ? args.edits : [];
     if (edits.length === 0) return err("multi_edit requires a non-empty `edits` array.");
 

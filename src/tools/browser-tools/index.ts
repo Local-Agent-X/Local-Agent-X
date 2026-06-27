@@ -47,6 +47,13 @@ import {
 import { handleAct } from "./act.js";
 import { handleObserve } from "./observe.js";
 import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
+import { createLogger } from "../../logger.js";
+
+// Names the action that wedged. Without it the circuit-breaker FAIL only says
+// "an action hung" — which action is left to inference. The destructive part is
+// the force-kill, so knowing whether it was click_text / evaluate / act / a scan
+// is what tells you where the next unbounded operation to cap lives.
+const log = createLogger("browser.wedge");
 
 // Actions that establish a fresh page context — clear stall state, don't compare.
 const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close"]);
@@ -144,6 +151,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           const deadlineMs = toolMs > 0 ? Math.max(1_000, toolMs - 1_000) : 0;
           const result = await raceWedgeDeadline(dispatch, deadlineMs, () => resetWedgedBrowser(sessionId));
           if (result === WEDGED) {
+            log.warn(`action '${action}' hung past ${deadlineMs}ms — session force-reset`);
             return err(
               "The browser stopped responding (an action hung) and its session was reset. " +
               "Your last action did not complete — retry it and a fresh browser will open.",
@@ -156,6 +164,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             // A page scan hung (wedged CDP connection). Reset now — ~10s — so
             // the next call re-acquires a fresh Chrome, rather than waiting out
             // the 30s tool timeout and reusing the wedged session.
+            log.warn(`action '${action}' wedged during page scan — session force-reset`);
             resetWedgedBrowser(sessionId);
             return err(
               "The browser stopped responding while scanning the page and its session was reset. " +

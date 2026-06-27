@@ -24,6 +24,16 @@ export interface ActionResult {
 const CLICK_TIMEOUT = 8_000;
 const SCROLL_TIMEOUT = 2_000;
 
+// Overall wall-clock budget for the whole multi-selector / multi-scroll text
+// search. Each probe that MATCHES an element but can't click it (a covered or
+// animating overlay button) burns up to CLICK_TIMEOUT before moving on; with 3
+// scroll attempts × 6 selector probes that stacks past the browser tool's wedge
+// deadline (toolMs−1s ≈ 29s), and the session gets FORCE-KILLED mid-search
+// instead of the click just failing. Cap the search well under that so an
+// un-dismissable overlay returns a clean "couldn't click" and the model routes
+// around (web_fetch / a different source). See tools/browser-tools/wedge-deadline.ts.
+const CLICK_TEXT_BUDGET = 12_000;
+
 /**
  * Pick the right Playwright Frame for a ref. Main-frame refs (no
  * frameUrl) resolve against `page`. Same-origin iframe refs (`frameUrl`
@@ -167,37 +177,48 @@ async function tryResolutionChain(
  * twice and retries — handles virtualized lists and long-scroll pages where
  * the target is below the fold.
  */
-export async function clickByText(page: Page, text: string): Promise<ActionResult> {
+export async function clickByText(page: Page, text: string, budgetMs = CLICK_TEXT_BUDGET): Promise<ActionResult> {
   await waitForStability(page);
   const vh = page.viewportSize()?.height ?? 800;
+  const deadline = Date.now() + budgetMs;
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    const result = await tryClickByText(page, text);
+    const result = await tryClickByText(page, text, deadline);
     if (result.ok) return result;
+    if (Date.now() >= deadline) break;
     if (attempt < 2) {
-      await page.evaluate(`window.scrollBy(0, ${vh})`);
+      await page.evaluate(`window.scrollBy(0, ${vh})`).catch(() => {});
       await page.waitForTimeout(400);
     }
   }
-  return { ok: false, via: "none", message: `no element matching text "${text}" found (scrolled 2 viewports)` };
+  return { ok: false, via: "none", message: `no clickable element matching text "${text}" found (it may be covered by an overlay — try web_fetch or a different source)` };
 }
 
-async function tryClickByText(page: Page, text: string): Promise<ActionResult> {
+// Each click gets the smaller of CLICK_TIMEOUT and the time left in the budget,
+// so a series of matching-but-unclickable probes can't outlast the wedge
+// deadline. Floors at 500ms so a click at the very end of the budget still gets
+// a real (if brief) attempt rather than 0.
+function remainingClickTimeout(deadline: number): number {
+  return Math.max(500, Math.min(CLICK_TIMEOUT, deadline - Date.now()));
+}
+
+async function tryClickByText(page: Page, text: string, deadline: number): Promise<ActionResult> {
   try {
     const loc = page.getByText(text, { exact: false });
     if ((await loc.count()) > 0) {
       await loc.first().scrollIntoViewIfNeeded({ timeout: SCROLL_TIMEOUT }).catch(() => {});
-      await loc.first().click({ timeout: CLICK_TIMEOUT });
+      await loc.first().click({ timeout: remainingClickTimeout(deadline) });
       return { ok: true, via: "text", message: `clicked visible text "${text}"` };
     }
   } catch { /* continue */ }
 
   for (const role of ["button", "link", "menuitem", "tab", "checkbox"] as const) {
+    if (Date.now() >= deadline) break;
     try {
       const loc = page.getByRole(role, { name: text, exact: false });
       if ((await loc.count()) > 0) {
         await loc.first().scrollIntoViewIfNeeded({ timeout: SCROLL_TIMEOUT }).catch(() => {});
-        await loc.first().click({ timeout: CLICK_TIMEOUT });
+        await loc.first().click({ timeout: remainingClickTimeout(deadline) });
         return { ok: true, via: "role", message: `clicked ${role} "${text}"` };
       }
     } catch { /* continue */ }

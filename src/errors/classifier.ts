@@ -91,7 +91,7 @@ export interface ClassifiedError {
 // ── Pattern definitions (consolidated from scattered call sites) ────────
 
 /** Tool result that's effectively "no data" — used by agent-guards dead-end detector. */
-const EMPTY_RESULT_RE = /^\s*(\(no output\)|\[\]|\{\}|null|none|No results?|0 results?|Nothing found|No matches|No relevant memor|Command failed)/i;
+const EMPTY_RESULT_RE = /^\s*(\(no output\)|\[\]|\{\}|null|none|No results?|0 results?|Nothing found|No matches|No files matched?|No relevant memor|Command failed)/i;
 
 /** Worker output that signals refusal / "I can't do this" — used by worker classifier. */
 const REFUSAL_PATTERNS = [

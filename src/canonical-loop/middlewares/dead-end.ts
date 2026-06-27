@@ -1,8 +1,13 @@
 /**
  * Dead-end detector — 3 empty tool results in a row → nudge a re-plan.
  * Canonical-loop port of src/agent-loop/middlewares/dead-end.ts.
+ *
+ * Runs on ALL lanes including interactive chat. It only ever returns a
+ * nudge (never an abort), so — like loop-detection — it's safe on
+ * interactive: a weak model spinning on empty searches in normal chat is
+ * exactly where the "stop, pick a different tool" hint is most useful.
  */
-import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
+import { type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import {
   checkDeadEnd,
@@ -12,7 +17,6 @@ import {
 
 export const deadEndMiddleware: CanonicalMiddleware = {
   name: "dead-end",
-  when: isWorkerOp,
 
   afterToolExecution(ctx) {
     const state = getMiddlewareState<DeadEndState>(

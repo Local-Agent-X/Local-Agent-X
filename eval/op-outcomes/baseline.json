@@ -1,0 +1,20 @@
+{
+  "description": "Warn-only regression floors for the op-outcome report. NON-BLOCKING by design: op-outcomes is non-deterministic and report-only, so report.mjs prints a ⚠️ line when a category's completion rate falls below its floor or give-up rises above the ceiling, but never exits non-zero and never gates a commit. Floors sit a few points under observed rates to absorb run-to-run noise; raise them when the bar genuinely moves.",
+  "completionFloorByCategory": {
+    "coding": 0.90,
+    "general": 0.92,
+    "browser": 0.90,
+    "research": 0.90
+  },
+  "giveUpCeiling": 0.15,
+  "lastBaseline": {
+    "date": "2026-06-27",
+    "source": "local grok-4.3 battery + accumulated soak",
+    "observed": {
+      "coding": 0.974,
+      "general": 1.0,
+      "browser": 1.0,
+      "research": 1.0
+    }
+  }
+}

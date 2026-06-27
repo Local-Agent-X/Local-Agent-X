@@ -54,11 +54,37 @@ function mean(nums) {
  * @param {object[]} soakRows  parsed canonical-loop-soak JSONL rows
  * @param {object} opOutcomes  parsed op-outcomes.json (`category::model` → counts)
  */
-export function computeOutcomeReport(soakRows, opOutcomes) {
+export function computeOutcomeReport(soakRows, opOutcomes, baseline) {
+  const completion = computeCompletion(opOutcomes || {});
   return {
-    completion: computeCompletion(opOutcomes || {}),
+    completion,
     efficiency: computeEfficiency(Array.isArray(soakRows) ? soakRows : []),
+    regression: baseline ? compareToBaseline(completion, baseline) : null,
   };
+}
+
+/**
+ * Warn-only regression check: observed per-category completion vs baseline.json
+ * floors, plus a global give-up ceiling. Pure; never throws, never gates — the
+ * report renders ⚠️ lines but the CLI always exits 0 (op-outcomes is
+ * non-deterministic, so this informs, it doesn't block).
+ * @param {object} completion  computeCompletion() output (category → rates)
+ * @param {object} baseline    parsed baseline.json
+ */
+export function compareToBaseline(completion, baseline) {
+  const floors = baseline?.completionFloorByCategory || {};
+  const ceiling = typeof baseline?.giveUpCeiling === "number" ? baseline.giveUpCeiling : null;
+  const checks = [];
+  for (const [cat, g] of Object.entries(completion || {})) {
+    const floor = floors[cat];
+    if (typeof floor === "number" && g.completionRate !== null && g.completionRate < floor) {
+      checks.push({ category: cat, kind: "completion", observed: g.completionRate, threshold: floor });
+    }
+    if (ceiling !== null && g.giveUpRate !== null && g.giveUpRate > ceiling) {
+      checks.push({ category: cat, kind: "give-up", observed: g.giveUpRate, threshold: ceiling });
+    }
+  }
+  return { checks, ok: checks.length === 0 };
 }
 
 function computeCompletion(opOutcomes) {
@@ -210,6 +236,24 @@ export function renderMarkdown(report) {
     }
   }
   lines.push("");
+
+  // Regression check (warn-only) — rendered only when a baseline was supplied.
+  if (report.regression) {
+    lines.push("### Regression check (warn-only)");
+    lines.push("");
+    if (report.regression.ok) {
+      lines.push("✅ all categories at or above baseline floors");
+    } else {
+      for (const c of report.regression.checks) {
+        lines.push(
+          c.kind === "completion"
+            ? `⚠️ ${c.category}: completion ${fmtRate(c.observed)} below floor ${fmtRate(c.threshold)}`
+            : `⚠️ ${c.category}: give-up ${fmtRate(c.observed)} above ceiling ${fmtRate(c.threshold)}`,
+        );
+      }
+    }
+    lines.push("");
+  }
   return lines.join("\n");
 }
 
@@ -260,6 +304,16 @@ export function readOpOutcomes(path) {
   }
 }
 
+export function readBaseline(path) {
+  if (!path || !existsSync(path)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf-8"));
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
 export function laxDir() {
   return process.env.LAX_DATA_DIR || join(homedir(), ".lax");
 }
@@ -274,11 +328,13 @@ function main() {
 
   const soakDir = opt("--soak-dir") || join(process.cwd(), "workspace");
   const opOutcomesPath = opt("--op-outcomes") || join(laxDir(), "op-outcomes.json");
+  const baselinePath = opt("--baseline") || join(dirname(__filename), "baseline.json");
 
   const soakRows = readSoakDir(soakDir);
   const opOutcomes = readOpOutcomes(opOutcomesPath);
+  const baseline = readBaseline(baselinePath);
 
-  const report = computeOutcomeReport(soakRows, opOutcomes);
+  const report = computeOutcomeReport(soakRows, opOutcomes, baseline);
 
   if (soakRows.length === 0 && Object.keys(opOutcomes).length === 0) {
     process.stdout.write(

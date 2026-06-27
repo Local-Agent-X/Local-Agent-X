@@ -28,7 +28,7 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { computeOutcomeReport, renderMarkdown, readSoakDir, readOpOutcomes } from "./report.mjs";
+import { computeOutcomeReport, renderMarkdown, readSoakDir, readOpOutcomes, readBaseline } from "./report.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -250,6 +250,10 @@ console.log(`  NOTE: throwaway 'lax-bench-*' sessions are now in your sidebar â€
 // opDelta above) and render it. Additive: never alters results/exit codes; on a
 // --repeat/batched run the aggregate is printed once, here at the very end.
 const SOAK_DIR = join(process.cwd(), "workspace");
-const outcomeReport = computeOutcomeReport(readSoakDir(SOAK_DIR), readOpOutcomes(OUTCOMES_PATH));
+const outcomeReport = computeOutcomeReport(
+  readSoakDir(SOAK_DIR),
+  readOpOutcomes(OUTCOMES_PATH),
+  readBaseline(join(__dirname, "baseline.json")),
+);
 console.log(`\n=== Outcome report ===\n`);
 console.log(renderMarkdown(outcomeReport));

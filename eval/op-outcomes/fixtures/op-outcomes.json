@@ -1,0 +1,21 @@
+{
+  "browser::grok-4.3": {
+    "total": 3,
+    "clean": 2,
+    "partial": 1,
+    "aborted": 0,
+    "gaveUpNudged": 1
+  },
+  "browser::claude-opus-4-8": {
+    "total": 2,
+    "clean": 2,
+    "partial": 0,
+    "aborted": 0
+  },
+  "coding::grok-4.3": {
+    "total": 4,
+    "clean": 2,
+    "partial": 1,
+    "aborted": 1
+  }
+}

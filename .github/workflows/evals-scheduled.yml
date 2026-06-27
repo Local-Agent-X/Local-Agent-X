@@ -29,9 +29,11 @@
 name: Scheduled Evals (model-dependent)
 
 on:
-  schedule:
-    # Nightly at 07:00 UTC
-    - cron: "0 7 * * *"
+  # Nightly cron removed: GitHub runners can't sustain the streaming connection
+  # to api.x.ai (every grok call premature-closes ~5-8s in — a CI↔xAI network
+  # issue, not a timeout we control), so scheduled runs burned grok credits
+  # nightly producing empty "100% aborted" reports. grok streams fine on a real
+  # machine — run these evals locally instead. Manual dispatch kept for ad-hoc use.
   workflow_dispatch:
 
 permissions:

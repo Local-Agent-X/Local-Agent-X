@@ -27,10 +27,12 @@ import { isProtectedSetting } from "../settings-schema.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";
+import { makeSpendCapPack } from "../tool-policy/packs/spend-cap-pack.js";
 import { makeSecurityLayerPack } from "../tool-policy/packs/security-layer-pack.js";
 import { makeDefaultPolicyPack } from "../tool-policy/packs/default-policy-pack.js";
 import { makeThreatEnginePack } from "../tool-policy/packs/threat-engine-pack.js";
 import { makeArikernelPack } from "../tool-policy/packs/arikernel-pack.js";
+import { makeEgressRefutationPack } from "../tool-policy/packs/egress-refutation-pack.js";
 
 export type ToolBlockedStage =
   | "session-policy"
@@ -77,10 +79,12 @@ export interface PreDispatchCtx {
 /** Map pack id → ToolBlocked stage so the existing caller-side stage map
  *  (in tool-executor.ts) keeps working unchanged. */
 const PACK_TO_STAGE: Record<string, ToolBlockedStage> = {
+  "spend-cap": "tool-policy",
   "security-layer": "security",
   "default-policy": "tool-policy",
   "threat-engine": "threat",
   "arikernel": "arikernel",
+  "egress-refutation": "threat",
 };
 
 export async function assertToolCallAllowed(
@@ -153,10 +157,12 @@ export async function assertToolCallAllowed(
 
   // Unified policy evaluation: one pass over the four rule packs.
   const packs: RulePack[] = [
+    makeSpendCapPack(),
     makeSecurityLayerPack(ctx.security),
     makeDefaultPolicyPack(ctx.toolPolicy),
     makeThreatEnginePack(ctx.threatEngine),
     makeArikernelPack(),
+    makeEgressRefutationPack(),
   ];
   const decision = await evaluatePolicy(
     { id: call.id, name: call.name, args: call.args },

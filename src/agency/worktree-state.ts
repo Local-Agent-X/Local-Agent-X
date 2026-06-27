@@ -136,6 +136,44 @@ export function getMergeDeltaFiles(name: string): string[] {
   return [...files];
 }
 
+/**
+ * The unified-diff TEXT of the merge delta — the same committed-plus-uncommitted
+ * content getMergeDeltaFiles reports as a file list, but as the actual patch the
+ * LLM refutation gate scrutinizes. Same base/range semantics: the committed
+ * portion is `base...head` (diffed against the merge base) and the uncommitted
+ * portion is the working-tree diff on top. Truncated to a sane cap so a giant
+ * generated diff can't blow the classifier's context. Returns "" on ANY error —
+ * the caller fails OPEN (a self_edit must not be blocked just because the diff
+ * couldn't be read).
+ */
+const MERGE_DELTA_DIFF_CAP = 8000;
+export function getMergeDeltaDiff(name: string): string {
+  try {
+    const wt = activeWorktrees.get(name);
+    if (!wt) return "";
+    let diff = "";
+    // Committed delta: merge base → branch head (three-dot, mirrors the file list).
+    const base = git(["rev-parse", wt.baseBranch], wt.repoRoot);
+    const head = git(["rev-parse", "HEAD"], wt.path);
+    if (base !== head) {
+      diff += git(["diff", `${base}...${head}`], wt.path);
+    }
+    // Uncommitted changes the merge step will `git add -A` and commit. Include
+    // untracked files (--no-index would need pairing); `git diff HEAD` plus
+    // `git diff` covers staged+unstaged against HEAD.
+    const uncommitted = git(["diff", "HEAD"], wt.path);
+    if (uncommitted.trim()) {
+      diff += (diff ? "\n" : "") + uncommitted;
+    }
+    if (diff.length > MERGE_DELTA_DIFF_CAP) {
+      return diff.slice(0, MERGE_DELTA_DIFF_CAP) + "\n…[diff truncated]";
+    }
+    return diff;
+  } catch {
+    return "";
+  }
+}
+
 /** Hard reset uncommitted changes in worktree. */
 export function resetWorktree(name: string): void {
   const wt = activeWorktrees.get(name);

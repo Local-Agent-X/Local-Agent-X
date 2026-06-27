@@ -26,13 +26,14 @@
 
 import { rmSync } from "node:fs";
 import { type ChildProcess } from "node:child_process";
-import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getMergeDeltaFiles, securitySensitiveChangedFiles } from "./agency/worktree.js";
+import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getMergeDeltaFiles, getMergeDeltaDiff, securitySensitiveChangedFiles } from "./agency/worktree.js";
 import { recordMerge } from "./self-edit-rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
 import { runSurgeon, formatSurgeonOutput } from "./self-edit/surgeon.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./self-edit/global-lock.js";
 import { fingerprintParentDeps, restoreParentDeps } from "./self-edit/parent-deps-guard.js";
 import { scanWorktreeForStagedSecrets } from "./self-edit/exfil-scan.js";
+import { refuteSelfEditMerge } from "./self-edit/refute-merge.js";
 import { redactSecrets } from "./security/secret-scanner.js";
 import { slugify, nowSlug, pickProbePort } from "./self-edit-sandbox-naming.js";
 export { pickProbePort } from "./self-edit-sandbox-naming.js";
@@ -241,6 +242,38 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
           `Auto-merge is BLOCKED — a prompt-injected subprocess could be staging a credential ` +
           `for exfiltration. Review the diff before merging (false positives are possible — e.g. ` +
           `a test fixture or an edit to the secret-pattern catalog itself):\n` +
+          `Review:  git diff ${base}...${branch}\n` +
+          `Merge:   git checkout ${base} && git merge ${branch}`,
+      };
+    }
+
+    // Refutation gate (verify-by-refutation): the build/bind/smoke + security +
+    // exfil gates are mechanical — they can't judge whether the diff is CORRECT
+    // or quietly does something beyond its stated intent (a subtle logic bug, a
+    // weakened check that still compiles, a scope-creep change). Fire independent
+    // LLM skeptics at the actual merge diff; a strict-majority refutation HOLDS
+    // the merge for human review — same posture as the security gate, branch
+    // preserved. Fail-OPEN: if the diff can't be read or the classifier is
+    // unavailable (inconclusive), PROCEED — never block a self_edit just because
+    // the background model is down.
+    progress("Refutation gate: scrutinizing the merge diff…");
+    const refute = await refuteSelfEditMerge({
+      diff: getMergeDeltaDiff(name),
+      intent: surgeonOutput,
+      signal: opts.signal,
+    });
+    if (refute.hold) {
+      logger.warn(`[self-edit.sandbox] merge diff refuted by skeptics — holding merge for human review: ${refute.reason}`);
+      const base = mergeInfo?.baseBranch ?? "main";
+      return {
+        ok: false, output: surgeonOutput,
+        gates: { deps, build, bind: bindOutcome.result, smoke },
+        branchName: branch, filesMerged: null, heldForReview: true,
+        failure:
+          `Gates passed, but a majority of independent skeptics refuted this self_edit ` +
+          `(${refute.reason}).\n\n` +
+          `Auto-merge is BLOCKED — the diff appears unsafe, incorrect, or to do something ` +
+          `beyond its stated intent. Review the diff before merging:\n` +
           `Review:  git diff ${base}...${branch}\n` +
           `Merge:   git checkout ${base} && git merge ${branch}`,
       };

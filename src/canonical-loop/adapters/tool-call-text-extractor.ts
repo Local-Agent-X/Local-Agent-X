@@ -331,3 +331,27 @@ export function proseLooksLikeToolCall(
   }
   return /\b(?:run|use|call|invoke|execute)\b[^\n]{0,20}\btool\b/i.test(text);
 }
+
+/**
+ * Last-resort guard for the openai-compat adapter: after the one-shot
+ * wire-format retry, a stubborn model (Grok narrating an `edit` is the live
+ * case) may STILL describe the call in prose instead of emitting it. Left
+ * alone, that false-confident text ("I'll edit the file…") becomes the
+ * assistant reply with nothing executed — a silent no-op the user reads as
+ * success. Return an annotated copy of the text that makes the failure
+ * visible to both the user and the model's next turn. Returns null when
+ * there's nothing to flag (a real call was salvaged, or the text isn't
+ * narration) so the caller leaves a healthy turn untouched.
+ */
+export function annotatePersistentNarration(
+  assembledText: string,
+  pendingToolCallCount: number,
+  validToolNames: Set<string>,
+): string | null {
+  if (pendingToolCallCount > 0) return null;
+  if (!proseLooksLikeToolCall(assembledText, validToolNames)) return null;
+  return (
+    assembledText.trimEnd() +
+    "\n\n[wire-format-error: the text above described a tool call but did not emit one — nothing was executed. Reissue it as a real tool call.]"
+  );
+}

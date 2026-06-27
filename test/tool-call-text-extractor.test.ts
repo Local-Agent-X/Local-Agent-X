@@ -8,9 +8,10 @@ import { describe, it, expect } from "vitest";
 import {
   extractToolCallsFromText,
   proseLooksLikeToolCall,
+  annotatePersistentNarration,
 } from "../src/canonical-loop/adapters/tool-call-text-extractor.js";
 
-const TOOLS = new Set(["browser", "read", "write", "bash"]);
+const TOOLS = new Set(["browser", "read", "write", "bash", "edit"]);
 
 describe("extractToolCallsFromText — full envelope pattern", () => {
   it("extracts a bare OpenAI-shape envelope", () => {
@@ -200,6 +201,26 @@ describe("proseLooksLikeToolCall", () => {
   });
   it("is false for empty input", () => {
     expect(proseLooksLikeToolCall("", TOOLS)).toBe(false);
+  });
+});
+
+describe("annotatePersistentNarration — visible no-op on stubborn narration", () => {
+  it("annotates a narrated edit that yielded no structured call (the silent no-op)", () => {
+    const text = "I'll call the edit tool on src/index.ts to fix the import.";
+    const out = annotatePersistentNarration(text, 0, TOOLS);
+    expect(out).not.toBeNull();
+    expect(out).toContain(text);
+    expect(out).toMatch(/wire-format-error/);
+    expect(out).toMatch(/nothing was executed/i);
+  });
+
+  it("returns null when a real tool call was salvaged", () => {
+    const text = "I'll call the edit tool on src/index.ts.";
+    expect(annotatePersistentNarration(text, 1, TOOLS)).toBeNull();
+  });
+
+  it("returns null for a healthy completion (leaves the turn untouched)", () => {
+    expect(annotatePersistentNarration("All set — the file looks correct now.", 0, TOOLS)).toBeNull();
   });
 });
 

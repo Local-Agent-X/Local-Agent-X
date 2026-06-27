@@ -44,7 +44,7 @@ import {
 import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
-import { proseLooksLikeToolCall } from "./tool-call-text-extractor.js";
+import { proseLooksLikeToolCall, annotatePersistentNarration } from "./tool-call-text-extractor.js";
 import { classifyModelStop } from "./model-stop.js";
 
 export { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./openai-compat/types.js";
@@ -176,6 +176,14 @@ export class OpenAICompatAdapter implements Adapter {
       this.inflight = this.runStreamOnce(nudgeReq, report);
       result = await this.inflight;
       applyToolCallTextFallback(result, report, model, toolNameSet);
+      // Retry didn't yield a structured call and the text still reads like
+      // narration → make the no-op visible instead of letting the
+      // false-confident prose stand as a clean reply.
+      const annotated = annotatePersistentNarration(result.assembledText, result.pendingToolCalls.length, toolNameSet);
+      if (annotated !== null) {
+        result.assembledText = annotated;
+        logger.info(`${model} re-narrated a tool call after the wire-format nudge — annotated the reply so the no-op is visible`);
+      }
     }
 
     // Empty-response retry. Some models (qwen2:7b is the canonical offender)

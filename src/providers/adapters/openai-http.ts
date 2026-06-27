@@ -61,6 +61,23 @@ export function isTemperatureRejection(message: string | undefined): boolean {
   );
 }
 
+// stream_options.include_usage makes an OpenAI-compatible stream emit a final
+// usage-only chunk (it's omitted otherwise), which soak-metrics needs to price
+// the op. Only request it from KNOWN cloud http providers (xAI, OpenAI,
+// Gemini's OpenAI-compat endpoint) — their baseURLs are static and all support
+// the param. Unknown/local baseURLs (Ollama, custom) run free and some strict
+// servers reject the param, so leave them alone.
+function streamUsageSupported(baseURL: string | undefined): boolean {
+  if (!baseURL) return false;
+  for (const id of PROVIDER_IDS) {
+    const meta = PROVIDERS[id as ProviderId];
+    if (!isHttpProvider(meta)) continue;
+    const metaURL = typeof meta.baseURL === "string" ? meta.baseURL : null;
+    if (metaURL && baseURL.startsWith(metaURL)) return true;
+  }
+  return false;
+}
+
 export class OpenAIHttpAdapter extends BaseAdapter {
   readonly name: string = "openai-http";
 
@@ -74,6 +91,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     // (baseURL, model) does, omit the field up front so the first call skips
     // the failed round-trip.
     const temperatureAllowed = !hasParamUnsupported(req.baseURL, req.model, "temperature");
+    const streamUsage = streamUsageSupported(req.baseURL);
 
     // Translate canonical toolChoice → OpenAI Chat Completions tool_choice
     // shape. Only meaningful when we're shipping tools this turn.
@@ -106,6 +124,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       ...(opts.includeTools && openaiToolChoice ? { tool_choice: openaiToolChoice } : {}),
       ...(opts.includeTemperature ? { temperature: req.temperature ?? 0.7 } : {}),
       stream: true as const,
+      ...(streamUsage ? { stream_options: { include_usage: true } } : {}),
       ...(opts.includeReasoningEffort ? { reasoning_effort: "medium" as const } : {}),
     });
 
@@ -187,6 +206,13 @@ export class OpenAIHttpAdapter extends BaseAdapter {
         }
         const choice = chunk.choices[0];
         if (choice?.finish_reason) stopReason = choice.finish_reason;
+        // Usage rides its own trailing chunk (choices: []) when
+        // stream_options.include_usage is set — read it before the no-delta
+        // `continue` below, which would otherwise drop it.
+        if (chunk.usage) {
+          promptTokens += chunk.usage.prompt_tokens || 0;
+          completionTokens += chunk.usage.completion_tokens || 0;
+        }
         const delta = choice?.delta;
         if (!delta) continue;
 
@@ -216,11 +242,6 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             if (tc.function?.name) toolBuf[tc.index].name = tc.function.name;
             if (tc.function?.arguments) toolBuf[tc.index].arguments += tc.function.arguments;
           }
-        }
-
-        if (chunk.usage) {
-          promptTokens += chunk.usage.prompt_tokens || 0;
-          completionTokens += chunk.usage.completion_tokens || 0;
         }
       }
     } catch (e) {

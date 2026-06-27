@@ -276,6 +276,15 @@ export function buildSanitizedEnv(extra?: Record<string, string>): Record<string
   // overlay so an explicit caller override still wins.
   sanitizedEnv.GIT_TERMINAL_PROMPT = "0";
   if (sanitizedEnv.GIT_ASKPASS === undefined) sanitizedEnv.GIT_ASKPASS = "";
+  // Pagers hang a non-interactive shell. `git log`/`git diff`/`git branch`
+  // (and `man`, `less`, `psql`) pipe their output to a pager that waits for `q`
+  // with no controlling TTY, so the command never returns and the turn stalls
+  // until the timeout fires. Force straight-through output: GIT_PAGER wins over
+  // core.pager/PAGER for git, PAGER covers the non-git tools. Set unconditionally
+  // (an inherited PAGER=less would reintroduce the hang) but before the `extra`
+  // overlay, so an explicit caller can still opt back into a pager.
+  sanitizedEnv.GIT_PAGER = "cat";
+  sanitizedEnv.PAGER = "cat";
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
       if (typeof v === "string" && !v.includes("\0")) sanitizedEnv[k] = v;

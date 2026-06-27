@@ -20,6 +20,21 @@ describe("buildSanitizedEnv — non-interactive git (no /dev/tty hang)", () => {
   });
 });
 
+// Regression: a non-interactive agent shell hung when `git log`/`git diff`/
+// `git branch` (or `man`/`less`/`psql`) piped to a pager that blocks for `q`
+// with no TTY. The env builder forces a straight-through pager so the command
+// returns instead of stalling to the timeout.
+describe("buildSanitizedEnv — non-blocking pager (no git/less hang)", () => {
+  it("forces GIT_PAGER and PAGER to cat", () => {
+    const env = buildSanitizedEnv();
+    expect(env.GIT_PAGER).toBe("cat");
+    expect(env.PAGER).toBe("cat");
+  });
+  it("lets an explicit caller opt back into a pager", () => {
+    expect(buildSanitizedEnv({ PAGER: "less" }).PAGER).toBe("less");
+  });
+});
+
 // Fix A regression: on Windows the `bash` tool ran the model's POSIX commands
 // through PowerShell (translating a few idioms), and a literal `bash` resolved
 // to the WSL launcher (System32\bash.exe → "execvpe(/bin/bash) failed"). The

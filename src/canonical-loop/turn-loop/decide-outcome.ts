@@ -31,6 +31,7 @@ import { isSilentToolCall } from "./silent-tool-check.js";
 import { runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
+import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
 import { readOpTurns } from "../store.js";
 import { resolveOpModel } from "../op-model.js";
 import { classifyOpCategory, recordOpOutcome, type OpOutcome } from "../../tool-tracker.js";
@@ -260,8 +261,16 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     }
     for (const tc of toolCalls) opToolNames.add(tc.tool);
     for (const t of observedTools) opToolNames.add(t);
+    // An op that ends still flagged give-up (browser-handoff computed the
+    // verdict; the model was nudged but never delivered) is NOT clean — record
+    // it as partial so the completion metric stops rounding give-ups up to
+    // success. The verdict defaults false for ops the gate never evaluated, so
+    // this only ever demotes a real unrecovered give-up.
     const outcome: OpOutcome =
-      terminalReason === "error" ? "aborted" : endedPartial ? "partial" : "clean";
+      terminalReason === "error" ? "aborted"
+        : endedPartial ? "partial"
+        : opGaveUpUnrecovered(op.id) ? "partial"
+        : "clean";
     recordOpOutcome(classifyOpCategory(opToolNames), outcome, resolveOpModel(op));
   }
 

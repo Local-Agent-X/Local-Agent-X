@@ -26,6 +26,9 @@ vi.mock("../../tool-tracker.js", () => ({
   classifyOpCategory: vi.fn(() => "coding"),
   recordOpOutcome: vi.fn(),
 }));
+vi.mock("../middlewares/browser-handoff.js", () => ({
+  opGaveUpUnrecovered: vi.fn(() => false),
+}));
 
 import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
 import { readOpTurns } from "../store.js";
@@ -129,6 +132,14 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
   it("records partial when terminal done but open steps remain", async () => {
     const { openStepsTerminationWarning } = await import("../middlewares/open-steps.js");
     (openStepsTerminationWarning as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce("⚠️ 1 step still open");
+    const { recordOpOutcome } = await import("../../tool-tracker.js");
+    await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
+    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial", "grok-4.3");
+  });
+
+  it("records partial when the op ended still giving up (browser-handoff verdict)", async () => {
+    const { opGaveUpUnrecovered } = await import("../middlewares/browser-handoff.js");
+    (opGaveUpUnrecovered as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
     const { recordOpOutcome } = await import("../../tool-tracker.js");
     await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
     expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial", "grok-4.3");

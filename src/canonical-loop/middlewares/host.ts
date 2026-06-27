@@ -85,8 +85,10 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
   // op_messages doesn't carry status alongside the tool name.
   const toolsCalledThisOp = new Set<string>();
   const committingToolsThisOp = new Set<string>();
+  const attemptedToolsThisOp = new Set<string>();
   for (const turn of readOpTurns(op.id)) {
     for (const s of turn.toolCallSummary ?? []) {
+      attemptedToolsThisOp.add(s.tool);
       if (s.resultStatus !== "ok") continue;
       toolsCalledThisOp.add(s.tool);
       if (isCommittingTool(s.tool)) committingToolsThisOp.add(s.tool);
@@ -117,6 +119,7 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
     toolResults: args.toolResults ?? [],
     toolsCalledThisOp,
     committingToolsThisOp,
+    attemptedToolsThisOp,
     evidenceHistory: args.evidenceHistory,
     onEvent: args.onEvent,
   };

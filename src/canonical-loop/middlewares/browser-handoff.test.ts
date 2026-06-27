@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { CanonicalLoopContext } from "./types.js";
-import { browserHandoffMiddleware } from "./browser-handoff.js";
+import { browserHandoffMiddleware, opGaveUpUnrecovered } from "./browser-handoff.js";
 import { classifyGaveUp } from "../../classifiers/give-up-classify.js";
 import { recordGaveUpNudge } from "../../tool-tracker.js";
 
@@ -17,11 +17,15 @@ const mockRecord = recordGaveUpNudge as unknown as ReturnType<typeof vi.fn>;
 
 let opCounter = 0;
 function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
+  const toolsCalledThisOp = over.toolsCalledThisOp ?? new Set(["browser"]);
   return {
     op: { id: `op-${opCounter++}`, type: "chat_turn", lane: "interactive" },
     turnIdx: 1,
     toolCalls: [],
-    toolsCalledThisOp: new Set(["browser"]),
+    toolsCalledThisOp,
+    // Defaults to the ok-only set; the crash-then-punt test overrides it to
+    // exercise a drive tool that was attempted but never succeeded.
+    attemptedToolsThisOp: over.attemptedToolsThisOp ?? toolsCalledThisOp,
     userMessage: "open the page and tell me the headline",
     assistantContent: "Dismiss it yourself or give me a Cloudflare API token.",
     ...over,
@@ -118,6 +122,41 @@ describe("browser-handoff gate", () => {
     mockClassify.mockResolvedValueOnce(false);
     await fire(ctx({ assistantContent: "Both sites are open in separate tabs." }));
     expect(mockRecord).not.toHaveBeenCalled();
+  });
+
+  it("fires when the drive tool only FAILED (browser crashed, then the model punted)", async () => {
+    // The crash keeps `browser` out of the ok-only toolsCalledThisOp; the gate
+    // must still fire off attemptedToolsThisOp. This is the sweep's Task-A miss.
+    mockClassify.mockResolvedValueOnce(true);
+    const res = await fire(ctx({
+      toolsCalledThisOp: new Set(),
+      attemptedToolsThisOp: new Set(["browser"]),
+      assistantContent: "Browser tool is crashing on the page. Want me to try web_fetch instead?",
+    }));
+    expect(res.kind).toBe("nudge");
+  });
+
+  it("persists the give-up verdict so the terminal label can demote it to partial", async () => {
+    mockClassify.mockResolvedValueOnce(true);
+    const c = ctx({ assistantContent: "I'm blocked by the overlay." });
+    await fire(c);
+    expect(opGaveUpUnrecovered(c.op.id)).toBe(true);
+  });
+
+  it("clears the give-up verdict when a later turn delivers (recovery stays clean)", async () => {
+    const c = ctx();
+    mockClassify.mockResolvedValueOnce(true);
+    await fire(c);                       // turn N: gives up → nudge, verdict true
+    expect(opGaveUpUnrecovered(c.op.id)).toBe(true);
+    mockClassify.mockResolvedValueOnce(false);
+    await fire({ ...c, assistantContent: "The headline is: Markets rally." });  // turn N+1: delivered
+    expect(opGaveUpUnrecovered(c.op.id)).toBe(false);
+  });
+
+  it("leaves the verdict false for an op the gate never evaluated", async () => {
+    const c = ctx({ toolsCalledThisOp: new Set(["web_fetch"]) });
+    await fire(c);                       // no drive tool attempted → gate skips
+    expect(opGaveUpUnrecovered(c.op.id)).toBe(false);
   });
 
   it("regex backstop catches the 'Blocked … Which way?' option-menu punt (the Guardian give-up)", async () => {

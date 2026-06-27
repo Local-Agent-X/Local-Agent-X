@@ -13,13 +13,21 @@
  * for chat is browser-in-use + hand-off phrasing (not "nothing committed",
  * which interactive turns legitimately produce).
  *
- * Fires at most once per op. Genuine blockers (a password, 2FA, a CAPTCHA) are
- * preserved — the nudge tells the model to keep that ask if it truly needs the
- * user, but only after it has actually tried to clear the obstruction itself.
+ * The trigger is an ATTEMPTED drive tool, not a successful one: a browser that
+ * crashed mid-op then got punted back is the give-up we most need to catch, and
+ * the crash keeps it out of the ok-only toolsCalledThisOp — so we gate on
+ * attemptedToolsThisOp instead.
  *
- * The give-up verdict is now model-graded (`classifyGaveUp`) as the PRIMARY
- * signal; the HANDOFF_PATTERNS regex below is kept only as the FALLBACK, used
- * when the classifier is unavailable / times out.
+ * The NUDGE fires at most once per op. Genuine blockers (a password, 2FA, a
+ * CAPTCHA) are preserved — the nudge tells the model to keep that ask if it
+ * truly needs the user, but only after it has tried to clear the obstruction.
+ *
+ * The give-up verdict is model-graded (`classifyGaveUp`) as the PRIMARY signal;
+ * the HANDOFF_PATTERNS regex is the FALLBACK, used only when the classifier is
+ * unavailable / times out. The verdict is computed once here and serves two
+ * consumers: the keep-driving nudge (this gate) AND the terminal-outcome label
+ * (decide-outcome.ts reads `opGaveUpUnrecovered`) — so an op that ends still
+ * giving up records `partial`, never a rounded-up `clean`.
  */
 import type { CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
@@ -31,6 +39,24 @@ const log = createLogger("canonical-loop.browser-handoff");
 
 interface FiredFlag {
   fired: boolean;
+}
+
+interface GiveUpVerdict {
+  gaveUp: boolean;
+}
+
+const GIVE_UP_VERDICT_STATE = "give-up-verdict";
+
+/**
+ * The latest give-up verdict this gate computed for the op, persisted so the
+ * terminal-outcome label (decide-outcome.ts) can read it. An op that ends still
+ * flagged give-up must record as `partial`, not be rounded up to `clean` — the
+ * gate is the single place the verdict is computed; the label is a pure reader.
+ * Defaults to false, so ops the gate never evaluated (non-drive, no tool-less
+ * turn) keep their prior clean/partial labeling untouched.
+ */
+export function opGaveUpUnrecovered(opId: string): boolean {
+  return getMiddlewareState<GiveUpVerdict>(opId, GIVE_UP_VERDICT_STATE, () => ({ gaveUp: false })).gaveUp;
 }
 
 // Surfaces whose successful use earlier in the op means a live page/desktop is
@@ -71,14 +97,12 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
     if (ctx.toolCalls.length > 0) return { kind: "continue" };
     const text = ctx.assistantContent.trim();
     if (text.length === 0) return { kind: "continue" };
-    if (!DRIVE_TOOLS.some((t) => ctx.toolsCalledThisOp.has(t))) return { kind: "continue" };
-
-    const flag = getMiddlewareState<FiredFlag>(
-      ctx.op.id,
-      "browser-handoff",
-      () => ({ fired: false }),
-    );
-    if (flag.fired) return { kind: "continue" };
+    // An ATTEMPTED drive tool — including one that errored or crashed — is the
+    // precondition, not a SUCCESSFUL one. The give-up we most need to catch is
+    // "the browser crashed, so the model punted the task back" — and the crash
+    // keeps it out of the ok-only toolsCalledThisOp, so gating on success made
+    // the gate blind to exactly that case. attemptedToolsThisOp includes it.
+    if (!DRIVE_TOOLS.some((t) => ctx.attemptedToolsThisOp.has(t))) return { kind: "continue" };
 
     // Model-graded give-up verdict is PRIMARY — it catches punts regardless of
     // phrasing (the regex missed novel give-ups like "Blocked by overlay"). The
@@ -86,6 +110,26 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
     // unavailable / times out (null), preserving the prior behavior on that path.
     const gaveUp = await classifyGaveUp({ task: ctx.userMessage, finalText: text });
     const shouldFire = gaveUp ?? looksLikeHandoff(text);
+
+    // Persist the verdict BEFORE the once-per-op short-circuit, every qualifying
+    // turn. The terminal-outcome label reads this; computing it here (not a
+    // second classifyGaveUp call at op-end) keeps one verdict path. Storing it
+    // each turn means a post-nudge recovery — the model delivers on the next
+    // turn, shouldFire flips false — correctly clears the give-up flag so a
+    // recovered op still records clean.
+    const verdict = getMiddlewareState<GiveUpVerdict>(
+      ctx.op.id,
+      GIVE_UP_VERDICT_STATE,
+      () => ({ gaveUp: false }),
+    );
+    verdict.gaveUp = shouldFire;
+
+    const flag = getMiddlewareState<FiredFlag>(
+      ctx.op.id,
+      "browser-handoff",
+      () => ({ fired: false }),
+    );
+    if (flag.fired) return { kind: "continue" };
     if (!shouldFire) return { kind: "continue" };
 
     flag.fired = true;

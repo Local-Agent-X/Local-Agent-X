@@ -79,6 +79,12 @@ export interface CanonicalLoopContext {
   // a failed spawn is not proof that a worker exists.
   toolsCalledThisOp: Set<string>;
   committingToolsThisOp: Set<string>;
+  /** Every tool the op has ATTEMPTED across turns — incl. ones that errored or
+   *  were cancelled. The counterpart to the ok-only set above: a browser that
+   *  crashed mid-op is absent from toolsCalledThisOp but present here, which is
+   *  exactly the "tool failed, then the model punted" give-up the handoff gate
+   *  must still catch. Use this for "did the op TRY X", not "did X succeed". */
+  attemptedToolsThisOp: Set<string>;
   /** Per-turn evidence counts, oldest first. Maintained across turns. */
   evidenceHistory: number[];
 

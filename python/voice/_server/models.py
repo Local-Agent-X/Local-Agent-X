@@ -46,11 +46,32 @@ def _load_vad():
     return _vad_model
 
 
+def _neutralize_phonemizer_words_mismatch():
+    """kokoro-onnx phonemizes via espeak-ng. phonemizer's words-mismatch guard
+    raises RuntimeError("number of lines in input and output must be equal")
+    when espeak emits a different line count than the input — a known
+    espeak/phonemizer version-skew bug that fires on ordinary text. The guard
+    is a sanity warning, not a correctness requirement, and the module-level
+    phonemize() call kokoro uses gives no way to opt out. Left alone it makes
+    tts.create() throw, which drops the whole voice turn to the edge-tts
+    fallback. The raise lives in the shared _mismatched_lines(), but each mode
+    class overrides process(), so pass-through every one (the pinned phonemizer
+    keeps these class names stable)."""
+    try:
+        from phonemizer.backend.espeak import words_mismatch as wm
+        passthrough = lambda self, text: text
+        for cls in (wm.BaseWordsMismatch, wm.Ignore, wm.Remove, wm.Warn):
+            cls.process = passthrough
+    except Exception:
+        pass
+
+
 def _load_tts():
     global _tts
     if _tts is not None:
         return _tts
     from kokoro_onnx import Kokoro
+    _neutralize_phonemizer_words_mismatch()
     model_path = os.path.expanduser("~/.lax/python-voice/kokoro/model.onnx")
     voices_path = os.path.expanduser("~/.lax/python-voice/kokoro/voices.bin")
     log.info("loading kokoro-onnx...")

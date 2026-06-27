@@ -30,6 +30,8 @@ export function defaultVoicePresenceDeps(): BrokerPresenceDeps {
     reconnectMs: DEFAULT_RECONNECT_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (timer) => clearTimeout(timer),
+    now: () => Date.now(),
+    random: () => Math.random(),
   };
 }
 

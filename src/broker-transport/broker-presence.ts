@@ -24,8 +24,18 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.presence");
 
-/** Default delay before re-dialing after a dialer closes. */
+/** Base delay before re-dialing after a dialer closes. The supervisor grows this
+ *  exponentially per consecutive fast failure (see backoffMs) so a broker outage can't
+ *  turn into a 3-second retry storm; a dialer that held a real session resets it. */
 export const DEFAULT_RECONNECT_MS = 3000;
+/** Ceiling for the exponential reconnect backoff. During an outage the desktop settles
+ *  at one dial per minute instead of ~20/min — the difference between a quiet broker and
+ *  a self-inflicted request flood (and, without hibernation, a burned free-tier cap). */
+export const MAX_RECONNECT_MS = 60_000;
+const BACKOFF_FACTOR = 2;
+/** A dialer that stayed up at least this long met its peer / ran a real session, so the
+ *  next drop is a normal reconnect, not an outage — reset the backoff to the base. */
+const STABLE_SESSION_MS = 10_000;
 
 export interface BrokerPresenceConfig {
   /** Broker base URL (ws/wss), no /connect suffix. */
@@ -52,9 +62,15 @@ export interface BrokerPresenceDeps {
   /** Build + start a dialer for one rendezvous session. `onClosed` MUST be invoked
    *  when the dialer goes terminal so the supervisor can reconnect. */
   createDialer: (connectUrl: string, token: string, onClosed: () => void) => DialerHandle;
+  /** Base reconnect delay; the actual wait grows exponentially from here per consecutive
+   *  fast failure, capped at MAX_RECONNECT_MS. */
   reconnectMs: number;
   setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
+  /** Clock for measuring how long a dialer stayed up (to decide reset-vs-grow). */
+  now: () => number;
+  /** Jitter source in [0, 1). Injected so the spread is deterministic under test. */
+  random: () => number;
 }
 
 export class BrokerPresence {
@@ -63,6 +79,10 @@ export class BrokerPresence {
   private current: DialerHandle | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  /** Consecutive fast-failure count; drives the exponential backoff. Reset to 0 when a
+   *  dialer held a stable session, so a real reconnect is fast and only an outage backs off. */
+  private attempt = 0;
+  private dialStartedAt = 0;
 
   constructor(config: BrokerPresenceConfig, deps: BrokerPresenceDeps) {
     this.config = config;
@@ -105,16 +125,31 @@ export class BrokerPresence {
     });
     const room = this.config.channel ? ` [${this.config.channel}]` : "";
     logger.info(`[broker-transport] presence: dialing broker as desktop ${this.config.deviceId}${room}`);
+    this.dialStartedAt = this.deps.now();
     this.current = this.deps.createDialer(connectUrl, token, () => this.onDialerClosed());
   }
 
   private onDialerClosed(): void {
     this.current = null;
     if (this.stopped) return;
+    // A dialer that ran a real session (peer met, stream/voice flowed) resets the backoff so
+    // the next reconnect is immediate; a fast failure (broker 500, instant refusal) grows it.
+    const upMs = this.deps.now() - this.dialStartedAt;
+    if (upMs >= STABLE_SESSION_MS) this.attempt = 0;
+    this.attempt += 1;
+    const delay = this.backoffMs();
+    logger.info(`[broker-transport] presence: reconnect attempt ${this.attempt} in ${delay}ms`);
     this.reconnectTimer = this.deps.setTimer(() => {
       this.reconnectTimer = null;
       this.dial();
-    }, this.deps.reconnectMs);
+    }, delay);
+  }
+
+  /** Exponential backoff from the base, capped, with ±25% jitter so a recovering broker
+   *  doesn't get a synchronized reconnect stampede from every desktop at once. */
+  private backoffMs(): number {
+    const capped = Math.min(MAX_RECONNECT_MS, this.deps.reconnectMs * BACKOFF_FACTOR ** (this.attempt - 1));
+    return Math.round(capped * (0.75 + 0.5 * this.deps.random()));
   }
 }
 
@@ -145,6 +180,8 @@ export function defaultPresenceDeps(): BrokerPresenceDeps {
     reconnectMs: DEFAULT_RECONNECT_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (timer) => clearTimeout(timer),
+    now: () => Date.now(),
+    random: () => Math.random(),
   };
 }
 

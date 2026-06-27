@@ -20,7 +20,7 @@
 // Prose mode behavior is unchanged when --ipc is absent.
 
 import { spawnSync, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
@@ -498,6 +498,66 @@ function resolvePosixShell() {
   for (const d of pathDirs) { if (d) cands.push(join(d, "bash.exe")); }
   for (const c of cands) { if (!isWsl(c) && existsSync(c)) return c; }
   return null;
+}
+
+// Pinned PortableGit release — keep in sync with installer/Services/GitBootstrap.cs
+// (GIT_PORTABLE_VERSION / GIT_PORTABLE_SHA256), install.ps1, install.bat. The
+// release TAG is v{VER}.windows.1 but the asset/version string is just {VER}.
+const GIT_PORTABLE_VERSION = "2.54.0";
+const GIT_PORTABLE_SHA256 = "bea006a6cc69673f27b1647e84ab3a68e912fbc175ab6320c5987e012897f311";
+
+// Persist dirs to the USER PATH via the Environment API (NOT setx — setx
+// truncates PATH at 1024 chars). Prepended so our shell wins over a later
+// shadow. Windows-only; best-effort.
+function persistUserPathWin(dirs) {
+  const list = dirs.map((d) => `'${d.replace(/'/g, "''")}'`).join(",");
+  const ps = `$p=[Environment]::GetEnvironmentVariable('PATH','User'); foreach($d in @(${list})){ if($p -notlike ('*'+$d+'*')){$p=$d+';'+$p} }; [Environment]::SetEnvironmentVariable('PATH',$p,'User')`;
+  try { spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { stdio: "ignore" }); } catch { /* best-effort */ }
+}
+
+// Provision a real Git-for-Windows bash when none is present — the POSIX-shell
+// fallback so this step works even when run by an older installer binary that
+// predates installer/Services/GitBootstrap.cs. Mirrors GitBootstrap.InstallGitFromSfx:
+// the pinned PortableGit self-extractor, checksum-verified fail-closed, extracted
+// to %LOCALAPPDATA%\LocalAgentX\PortableGit. Returns the bash path or null.
+async function provisionPortableGit() {
+  const local = process.env.LOCALAPPDATA;
+  if (!local) { warn("No LOCALAPPDATA — cannot provision PortableGit."); return null; }
+  const parent = join(local, "LocalAgentX");
+  const extractDir = join(parent, "PortableGit");
+  const asset = `PortableGit-${GIT_PORTABLE_VERSION}-64-bit.7z.exe`;
+  // The SFX extracts to <its-own-dir>\PortableGit (it ignores any output flag
+  // and the cwd), so it MUST sit in `parent` for the output to land at extractDir.
+  const sfx = join(parent, asset);
+  const url = `https://github.com/git-for-windows/git/releases/download/v${GIT_PORTABLE_VERSION}.windows.1/${asset}`;
+  try {
+    mkdirSync(parent, { recursive: true });
+    log(`Downloading PortableGit ${GIT_PORTABLE_VERSION} (~56 MB, one-time)…`);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    writeFileSync(sfx, buf);
+    // Fail-closed checksum — git-for-windows publishes no SHASUMS file, so the
+    // pinned constant is the source of truth.
+    const { createHash } = await import("node:crypto");
+    const got = createHash("sha256").update(buf).digest("hex");
+    if (got !== GIT_PORTABLE_SHA256) throw new Error(`checksum mismatch (got ${got}, want ${GIT_PORTABLE_SHA256})`);
+    log("Unpacking the POSIX shell (Git Bash)…");
+    rmSync(extractDir, { recursive: true, force: true });
+    // 7-Zip SFX (NOT a zip): -y assume-yes, -gm2 GUI hidden, -nr no auto-run.
+    // spawnSync waits for the extractor to finish before returning.
+    const ex = spawnSync(sfx, ["-y", "-gm2", "-nr"], { encoding: "utf-8" });
+    if (ex.status !== 0) throw new Error(`self-extractor exit ${ex.status}`);
+    const bin = join(extractDir, "bin"), cmd = join(extractDir, "cmd");
+    process.env.PATH = `${bin};${cmd};${process.env.PATH || ""}`;
+    persistUserPathWin([cmd, bin]);
+    return resolvePosixShell();
+  } catch (e) {
+    warn(`PortableGit provision failed: ${e.message}`);
+    return null;
+  } finally {
+    try { rmSync(sfx, { force: true }); } catch { /* best-effort */ }
+  }
 }
 
 // ── In-app Node upgrade (desktop one-click path) ───────────────────────
@@ -1192,9 +1252,17 @@ stepDone("desktop");
 //    the runtime (src/tools/shell-env.ts resolveWindowsShell) can assume.
 if (process.platform === "win32") {
   step("posixshell");
-  const bash = resolvePosixShell();
+  let bash = resolvePosixShell();
   if (!bash) {
-    fail("No POSIX shell (Git Bash) found. The installer should have provisioned Git for Windows — install it from https://git-scm.com/download/win and re-run.");
+    // The installer's GitBootstrap (C# / install.ps1 / install.bat) normally
+    // provisions Git before we reach here — but an OLDER installer binary may
+    // lack it while this freshly-downloaded script has the check. Rather than
+    // hard-fail on that version skew, provision the POSIX shell ourselves.
+    log("No POSIX shell present — provisioning PortableGit…");
+    bash = await provisionPortableGit();
+  }
+  if (!bash) {
+    fail("No POSIX shell (Git Bash) and PortableGit could not be provisioned. Install Git for Windows from https://git-scm.com/download/win and re-run.");
   }
   const probe = spawnSync(bash, ["-c", "echo ok | grep ok"], { encoding: "utf-8" });
   const out = `${probe.stdout || ""}${probe.stderr || ""}`.trim();

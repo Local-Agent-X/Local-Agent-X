@@ -113,6 +113,15 @@ jobs:
           mkdir -p eval-results
           node eval/op-outcomes/run.mjs --all --repeat 1 2>&1 | tee eval-results/op-outcomes.txt
 
+      # Render the outcome report into the GitHub job summary so it's visible
+      # without downloading the artifact. Non-blocking: these evals are
+      # non-deterministic, so the report informs but never gates the workflow.
+      - name: Outcome report → job summary
+        if: always()
+        continue-on-error: true
+        run: |
+          node eval/op-outcomes/report.mjs --soak-dir workspace --op-outcomes "$LAX_DATA_DIR/op-outcomes.json" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Stop server
         if: always()
         run: |

@@ -85,6 +85,45 @@ describe("parseExportFile", () => {
   });
 });
 
+describe("stable conversation ids — dedup across re-imports", () => {
+  const genericConvo = JSON.stringify([
+    { role: "user", content: "what's the capital of France" },
+    { role: "assistant", content: "Paris" },
+  ]);
+
+  it("generic-json gets a deterministic content-hash id (was Date.now())", () => {
+    const a = parseExportFile(genericConvo, ".json")[0].id;
+    const b = parseExportFile(genericConvo, ".json")[0].id;
+    expect(a).toBe(b);
+    expect(a).toMatch(/^generic-json-[0-9a-f]{16}$/);
+  });
+
+  it("distinct conversations get distinct ids", () => {
+    const other = JSON.stringify([
+      { role: "user", content: "what's the capital of Spain" },
+      { role: "assistant", content: "Madrid" },
+    ]);
+    expect(parseExportFile(genericConvo, ".json")[0].id).not.toBe(parseExportFile(other, ".json")[0].id);
+  });
+
+  it("claude-code jsonl re-parses to the same id", () => {
+    const jsonl = '{"type":"user","message":{"content":"hi there"}}\n{"type":"assistant","message":{"content":"hello back"}}';
+    const a = parseExportFile(jsonl, ".jsonl")[0]?.id;
+    expect(a).toBeDefined();
+    expect(a).toBe(parseExportFile(jsonl, ".jsonl")[0]?.id);
+  });
+
+  it("two different single Claude.ai conversations don't collide (was the constant-id bug)", () => {
+    const one = JSON.stringify({ messages: [{ role: "user", content: "convo one" }, { role: "assistant", content: "reply one" }] });
+    const two = JSON.stringify({ messages: [{ role: "user", content: "convo two" }, { role: "assistant", content: "reply two" }] });
+    const idOne = parseExportFile(one, ".json")[0]?.id;
+    const idTwo = parseExportFile(two, ".json")[0]?.id;
+    expect(idOne).toBeDefined();
+    expect(idTwo).toBeDefined();
+    expect(idOne).not.toBe(idTwo);
+  });
+});
+
 describe("ingestConversations — scan → parse → index → dedup", () => {
   function stubMemory() {
     const ingested = new Set<string>();
@@ -111,6 +150,26 @@ describe("ingestConversations — scan → parse → index → dedup", () => {
       expect(r2.processed).toBe(0);
       expect(r2.skipped).toBe(1);
       expect(mem.indexChunks).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("re-importing a generic-json export now skips it (the Date.now() id bug)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-ingest-"));
+    try {
+      writeFileSync(join(dir, "g.json"), JSON.stringify([
+        { role: "user", content: "remember my cat is Mochi" },
+        { role: "assistant", content: "noted — Mochi" },
+      ]), "utf-8");
+      const mem = stubMemory();
+
+      const r1 = await ingestConversations(mem as never, dir);
+      expect(r1.processed).toBe(1);
+
+      const r2 = await ingestConversations(mem as never, dir);
+      expect(r2.processed).toBe(0);
+      expect(r2.skipped).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

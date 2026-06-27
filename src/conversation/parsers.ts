@@ -5,6 +5,8 @@
  * Supported: ChatGPT, Claude.ai, Claude Code, OpenAI Codex CLI, Slack, generic JSON, plain text.
  */
 
+import { createHash } from "node:crypto";
+
 // ── Types ──
 
 export interface ParsedMessage {
@@ -89,7 +91,7 @@ function parseChatGPT(data: unknown): ParsedConversation[] {
     const messages = walkMappingTree(convo.mapping);
     if (messages.length < 2) continue;
     results.push({
-      id: convo.id || convo.conversation_id || `chatgpt-${Date.now()}-${results.length}`,
+      id: conversationId("chatgpt", messages, convo.id || convo.conversation_id),
       title: convo.title || "Untitled",
       messages,
       createTime: convo.create_time ? convo.create_time * 1000 : undefined,
@@ -155,7 +157,7 @@ function parseClaudeAI(data: unknown): ParsedConversation[] {
   if (!Array.isArray(data) && typeof data === "object" && data !== null) {
     const obj = data as Record<string, unknown>;
     const msgs = obj.messages || obj.chat_messages;
-    if (Array.isArray(msgs)) return [parseClaudeAIMessages(msgs, "claude-ai-single")];
+    if (Array.isArray(msgs)) return [parseClaudeAIMessages(msgs)];
     return [];
   }
   if (!Array.isArray(data)) return [];
@@ -164,15 +166,15 @@ function parseClaudeAI(data: unknown): ParsedConversation[] {
   if (data[0]?.chat_messages) {
     return data.map((convo: any, i: number) => {
       const msgs = convo.chat_messages || [];
-      return parseClaudeAIMessages(msgs, convo.uuid || `claude-ai-${i}`, convo.name);
+      return parseClaudeAIMessages(msgs, convo.uuid, convo.name);
     }).filter(c => c.messages.length >= 2);
   }
 
   // Flat messages list
-  return [parseClaudeAIMessages(data, "claude-ai-flat")];
+  return [parseClaudeAIMessages(data)];
 }
 
-function parseClaudeAIMessages(msgs: any[], id: string, title?: string): ParsedConversation {
+function parseClaudeAIMessages(msgs: any[], providedId?: string, title?: string): ParsedConversation {
   const messages: ParsedMessage[] = [];
   for (const item of msgs) {
     if (!item || typeof item !== "object") continue;
@@ -182,7 +184,7 @@ function parseClaudeAIMessages(msgs: any[], id: string, title?: string): ParsedC
     if (role === "user" || role === "human") messages.push({ role: "user", content: text });
     else if (role === "assistant" || role === "ai") messages.push({ role: "assistant", content: text });
   }
-  return { id, title: title || "Claude.ai conversation", messages, source: "claude-ai" };
+  return { id: conversationId("claude-ai", messages, providedId), title: title || "Claude.ai conversation", messages, source: "claude-ai" };
 }
 
 // ── Claude Code Parser (JSONL) ──
@@ -204,7 +206,7 @@ function parseClaudeCode(content: string): ParsedConversation[] {
   }
 
   if (messages.length < 2) return [];
-  return [{ id: `claude-code-${Date.now()}`, title: "Claude Code session", messages, source: "claude-code" }];
+  return [{ id: conversationId("claude-code", messages), title: "Claude Code session", messages, source: "claude-code" }];
 }
 
 // ── OpenAI Codex CLI Parser (JSONL) ──
@@ -227,7 +229,7 @@ function parseCodexCLI(content: string): ParsedConversation[] {
   }
 
   if (messages.length < 2) return [];
-  return [{ id: `codex-${Date.now()}`, title: "Codex CLI session", messages, source: "codex-cli" }];
+  return [{ id: conversationId("codex-cli", messages), title: "Codex CLI session", messages, source: "codex-cli" }];
 }
 
 // ── Slack Parser ──
@@ -253,7 +255,7 @@ function parseSlack(data: unknown): ParsedConversation[] {
   }
 
   if (messages.length < 2) return [];
-  return [{ id: `slack-${Date.now()}`, title: "Slack conversation", messages, source: "slack" }];
+  return [{ id: conversationId("slack", messages), title: "Slack conversation", messages, source: "slack" }];
 }
 
 // ── Generic JSON Parser ──
@@ -273,7 +275,7 @@ function parseGenericJSON(data: unknown): ParsedConversation[] {
   }
 
   if (messages.length < 2) return [];
-  return [{ id: `generic-${Date.now()}`, title: "Imported conversation", messages, source: "generic-json" }];
+  return [{ id: conversationId("generic-json", messages), title: "Imported conversation", messages, source: "generic-json" }];
 }
 
 // ── Plain Text Parser ──
@@ -301,10 +303,23 @@ function parsePlainText(content: string): ParsedConversation[] {
   if (currentRole && buffer.trim()) messages.push({ role: currentRole, content: buffer.trim() });
 
   if (messages.length < 2) return [];
-  return [{ id: `text-${Date.now()}`, title: "Text conversation", messages, source: "plain-text" }];
+  return [{ id: conversationId("plain-text", messages), title: "Text conversation", messages, source: "plain-text" }];
 }
 
 // ── Helpers ──
+
+// Stable conversation id. Prefer the export's own id; otherwise derive a
+// deterministic hash of the conversation content so re-imports dedup (the
+// conversation-level skip is keyed on this id) and distinct conversations
+// don't collide. Replaces Date.now() ids (re-imports duplicated) and constant
+// fallbacks like "claude-ai-single" (different conversations collided).
+function conversationId(source: string, messages: ParsedMessage[], providedId?: string | null): string {
+  const given = providedId == null ? "" : String(providedId).trim();
+  if (given) return given;
+  const h = createHash("sha256");
+  for (const m of messages) h.update(m.role + "\x00" + m.content + "\x00");
+  return `${source}-${h.digest("hex").slice(0, 16)}`;
+}
 
 function extractContent(content: unknown): string {
   if (typeof content === "string") return content.trim();

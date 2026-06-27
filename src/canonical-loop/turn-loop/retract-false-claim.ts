@@ -13,11 +13,14 @@
 // chunk. The next turn's answer becomes the only assistant message the user
 // sees, in both the live view and on reload.
 //
-// Scoped to confirmed-false reasons only. worker-hallucination is provably
-// false (built from the tool-call ledger — no spawn-class call fired);
-// creation-hallucination is LLM-verified before it nudges. approval-
-// hallucination is excluded: "requires approval" is a misplaced permission
-// ask, not a false claim of completed work, so its text should stand.
+// The set covers two shapes the next turn SUPERSEDES, so the premature text
+// shouldn't stand: (1) confirmed-false work claims — worker-hallucination
+// (provably false from the tool-call ledger — no spawn-class call fired),
+// creation-hallucination (LLM-verified before it nudges); and (2) premature
+// "I can't" denials the model is being nudged to recover from —
+// tool-search-recovery (claimed a missing tool), browser-handoff (gave up on a
+// surmountable obstruction). approval-hallucination is excluded: "requires
+// approval" is a misplaced permission ask, not superseded work, so it stands.
 
 import type { CommitTurnMessage } from "../checkpoint.js";
 
@@ -30,6 +33,14 @@ const RETRACTABLE_REASONS: ReadonlySet<string> = new Set([
   // answer — whether that's the completed action or a genuine "still can't"
   // (the user shouldn't watch it say "I can't" and then immediately do it).
   "tool-search-recovery",
+  // A give-up / hand-off punt the browser-handoff gate is nudging the model to
+  // recover from ("I'm blocked by the overlay — you dismiss it / give me a
+  // token"). Same shape as tool-search-recovery: a premature "I can't" the
+  // nudge supersedes. Retract it so the user sees only the post-nudge result.
+  // If the model re-punts, that terminal turn carries a `continue` (the gate
+  // nudges once), so it is NOT retracted — the single honest punt stands, and
+  // decide-outcome records it `partial`.
+  "browser-handoff",
 ]);
 
 export function isRetractableHallucination(reason: string | null | undefined): boolean {

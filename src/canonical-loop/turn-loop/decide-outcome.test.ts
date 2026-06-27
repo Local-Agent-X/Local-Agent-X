@@ -154,6 +154,18 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
     expect(recordOpOutcome).toHaveBeenCalledWith("coding", "aborted", "grok-4.3");
   });
 
+  it("retracts the give-up punt when the browser-handoff nudge fires (no doubling)", async () => {
+    const r = await decideTurnOutcome(input({
+      toolCalls: [], toolMessages: [], toolSummary: [],
+      middlewareDirective: { kind: "nudge", reason: "browser-handoff", firedBy: "browser-handoff", message: "keep driving" },
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: "I'm blocked by the overlay — you dismiss it." } }],
+    }));
+    // The superseded punt is stripped from the commit; the nudge keeps the op
+    // running so the next turn (recovery or a single honest re-punt) is shown.
+    expect(r.allMessages.some(m => m.role === "assistant")).toBe(false);
+    expect(r.terminalReason).toBeNull();
+  });
+
   it("does NOT record on a non-terminal wrap-up turn", async () => {
     const { recordOpOutcome } = await import("../../tool-tracker.js");
     await decideTurnOutcome(input({ modelSignaledDone: false }));

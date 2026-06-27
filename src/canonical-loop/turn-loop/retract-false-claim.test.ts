@@ -8,6 +8,11 @@ describe("isRetractableHallucination", () => {
     expect(isRetractableHallucination("creation-hallucination")).toBe(true);
   });
 
+  it("retracts a premature 'I can't' the nudge supersedes (capability denial, give-up punt)", () => {
+    expect(isRetractableHallucination("tool-search-recovery")).toBe(true);
+    expect(isRetractableHallucination("browser-handoff")).toBe(true);
+  });
+
   it("does not retract a misplaced permission ask", () => {
     // "requires approval" is wrong but not a false claim of completed work —
     // its text should stand and the model is nudged to just call the tool.

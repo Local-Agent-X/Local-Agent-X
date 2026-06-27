@@ -14,6 +14,10 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
+:: The POSIX shell (Git Bash) is provisioned by install-common.mjs itself (its
+:: win32 posix-shell step downloads PortableGit when none is present) — bash
+:: isn't needed to RUN that script, only Node is, so it doesn't bootstrap here.
+
 where node >nul 2>&1
 if %errorlevel% neq 0 (
     echo [install] Installing Node 22...

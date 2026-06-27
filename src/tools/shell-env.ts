@@ -47,11 +47,26 @@ function isWslLauncher(p: string): boolean {
   return low.includes("\\system32\\") || low.includes("\\windowsapps\\");
 }
 
+// The bash.exe the installer provisions PortableGit to.
+//
+// LOAD-BEARING COUPLING: this path MUST stay byte-identical to
+// portableGitExtractDir() in scripts/portable-git.mjs (…\LocalAgentX\PortableGit,
+// bin\bash.exe under it), which install-common.mjs writes to. The installer
+// writes PortableGit there; this resolver reads it. Change one, change both, or
+// the resolver won't find what the installer wrote. Pure + exported so the
+// coupling is unit-testable without a Windows box.
+export function portableGitBashPath(localAppData: string | undefined): string | null {
+  if (!localAppData) return null;
+  return join(localAppData, "LocalAgentX", "PortableGit", "bin", "bash.exe");
+}
+
 // A real Git-for-Windows bash, validated to exist and to not be the WSL
-// launcher. Probed from git-on-PATH first (the common case), then the standard
-// install roots, then a PATH scan.
+// launcher. Probed from the installer-provisioned PortableGit first, then
+// git-on-PATH, then the standard install roots, then a PATH scan.
 function findGitBash(): string | null {
   const candidates: string[] = [];
+  const portable = portableGitBashPath(process.env.LOCALAPPDATA);
+  if (portable) candidates.push(portable);
   const gitExe = findOnPath("git.exe");
   if (gitExe && !isWslLauncher(gitExe)) {
     // <Git>\cmd\git.exe or <Git>\bin\git.exe → <Git>

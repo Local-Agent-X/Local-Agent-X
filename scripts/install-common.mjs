@@ -20,9 +20,13 @@
 // Prose mode behavior is unchanged when --ipc is absent.
 
 import { spawnSync, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import {
+  GIT_PORTABLE_VERSION, GIT_PORTABLE_SHA256,
+  portableGitAssetName, portableGitDownloadUrl, portableGitExtractDir,
+} from "./portable-git.mjs";
 
 // The Node floor comes from package.json engines.node — ONE source of truth
 // that ships with every OTA update. (The C# installer's NodeBootstrap.cs and
@@ -134,6 +138,7 @@ const ALL_STEPS = [
   { id: "settings",     label: "User settings",            platforms: ["win32", "darwin", "linux"] },
   { id: "build",        label: "App build",                platforms: ["win32", "darwin", "linux"] },
   { id: "config",       label: "Configuration",            platforms: ["win32", "darwin", "linux"] },
+  { id: "posixshell",   label: "POSIX shell",              platforms: ["win32"] },
   { id: "desktop",      label: "Desktop app",              platforms: ["win32", "darwin", "linux"] },
 ];
 
@@ -468,6 +473,86 @@ function killOllamaServe() {
     spawnSync("taskkill", ["/F", "/IM", "ollama.exe", "/T"], { stdio: "ignore", shell: true });
   } else {
     spawnSync("pkill", ["-f", "ollama serve"], { stdio: "ignore" });
+  }
+}
+
+// Resolve a real Git-for-Windows bash (never the WSL launcher
+// System32\bash.exe / WindowsApps stub). Mirrors src/tools/shell-env.ts
+// findGitBash — the PortableGit dir provisioned by provisionPortableGit() is
+// probed first. Windows-only.
+function resolvePosixShell() {
+  const isWsl = (p) => { const l = p.toLowerCase().replace(/\//g, "\\"); return l.includes("\\system32\\") || l.includes("\\windowsapps\\"); };
+  const local = process.env.LOCALAPPDATA;
+  const pathDirs = (process.env.PATH || "").split(";");
+  const cands = [];
+  // Provisioned PortableGit (load-bearing coupling with portable-git.mjs).
+  if (local) cands.push(join(local, "LocalAgentX", "PortableGit", "bin", "bash.exe"));
+  // git.exe on PATH → <root>\{bin,usr\bin}\bash.exe
+  for (const d of pathDirs) {
+    if (!d) continue;
+    const g = join(d, "git.exe");
+    if (existsSync(g) && !isWsl(g)) {
+      const root = dirname(dirname(g));
+      cands.push(join(root, "bin", "bash.exe"), join(root, "usr", "bin", "bash.exe"));
+    }
+  }
+  const pf = process.env.ProgramFiles || "C:\\Program Files";
+  cands.push(join(pf, "Git", "bin", "bash.exe"), join(pf, "Git", "usr", "bin", "bash.exe"));
+  if (local) cands.push(join(local, "Programs", "Git", "bin", "bash.exe"));
+  for (const d of pathDirs) { if (d) cands.push(join(d, "bash.exe")); }
+  for (const c of cands) { if (!isWsl(c) && existsSync(c)) return c; }
+  return null;
+}
+
+// Persist dirs to the USER PATH via the Environment API (NOT setx — setx
+// truncates PATH at 1024 chars). Prepended so our shell wins over a later
+// shadow. Windows-only; best-effort.
+function persistUserPathWin(dirs) {
+  const list = dirs.map((d) => `'${d.replace(/'/g, "''")}'`).join(",");
+  const ps = `$p=[Environment]::GetEnvironmentVariable('PATH','User'); foreach($d in @(${list})){ if($p -notlike ('*'+$d+'*')){$p=$d+';'+$p} }; [Environment]::SetEnvironmentVariable('PATH',$p,'User')`;
+  try { spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { stdio: "ignore" }); } catch { /* best-effort */ }
+}
+
+// Provision a real Git-for-Windows bash when none is present — the ONE owner of
+// POSIX-shell provisioning (pins live in ./portable-git.mjs). Downloads the
+// pinned PortableGit self-extractor, checksum-verifies it fail-closed, and
+// extracts to %LOCALAPPDATA%\LocalAgentX\PortableGit. Returns the bash path or null.
+async function provisionPortableGit() {
+  const local = process.env.LOCALAPPDATA;
+  if (!local) { warn("No LOCALAPPDATA — cannot provision PortableGit."); return null; }
+  const extractDir = portableGitExtractDir(local);
+  // The SFX extracts to <its-own-dir>\PortableGit (it ignores any output flag
+  // and the cwd), so the .exe MUST sit in extractDir's parent.
+  const parent = dirname(extractDir);
+  const sfx = join(parent, portableGitAssetName());
+  const url = portableGitDownloadUrl();
+  try {
+    mkdirSync(parent, { recursive: true });
+    log(`Downloading PortableGit ${GIT_PORTABLE_VERSION} (~56 MB, one-time)…`);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    writeFileSync(sfx, buf);
+    // Fail-closed checksum — git-for-windows publishes no SHASUMS file, so the
+    // pinned constant is the source of truth.
+    const { createHash } = await import("node:crypto");
+    const got = createHash("sha256").update(buf).digest("hex");
+    if (got !== GIT_PORTABLE_SHA256) throw new Error(`checksum mismatch (got ${got}, want ${GIT_PORTABLE_SHA256})`);
+    log("Unpacking the POSIX shell (Git Bash)…");
+    rmSync(extractDir, { recursive: true, force: true });
+    // 7-Zip SFX (NOT a zip): -y assume-yes, -gm2 GUI hidden, -nr no auto-run.
+    // spawnSync waits for the extractor to finish before returning.
+    const ex = spawnSync(sfx, ["-y", "-gm2", "-nr"], { encoding: "utf-8" });
+    if (ex.status !== 0) throw new Error(`self-extractor exit ${ex.status}`);
+    const bin = join(extractDir, "bin"), cmd = join(extractDir, "cmd");
+    process.env.PATH = `${bin};${cmd};${process.env.PATH || ""}`;
+    persistUserPathWin([cmd, bin]);
+    return resolvePosixShell();
+  } catch (e) {
+    warn(`PortableGit provision failed: ${e.message}`);
+    return null;
+  } finally {
+    try { rmSync(sfx, { force: true }); } catch { /* best-effort */ }
   }
 }
 
@@ -929,7 +1014,38 @@ writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
 ok(`Wired ${cfgPath} → projectRoot=${cfg.projectRoot}, authToken=${cfg.authToken.slice(0,4)}...${cfg.authToken.slice(-4)}`);
 stepDone("config");
 
-// 7. macOS: build the Mac .app and install it to /Applications.
+// 7. POSIX shell guarantee (Windows). install-common.mjs is the single owner of
+//    POSIX-shell provisioning: resolve a real Git-for-Windows bash, and if none
+//    exists, download + extract the pinned PortableGit (provisionPortableGit).
+//    Runs BEFORE the desktop step so (a) desktop stays the final step and (b)
+//    the shell guarantee lands before the heaviest build. Then prove it —
+//    `echo ok | grep ok` — and FAIL otherwise, so the runtime
+//    (src/tools/shell-env.ts resolveWindowsShell) can assume bash exists.
+//    Ordering: nothing before this needs git/bash today; if a git+ npm
+//    dependency is ever added, move this step above the npm step.
+if (process.platform === "win32") {
+  step("posixshell");
+  // LAX_FORCE_GIT_BOOTSTRAP=1 skips detection so the real download/extract path
+  // can be exercised on a box that already has Git.
+  const forceGit = process.env.LAX_FORCE_GIT_BOOTSTRAP === "1" || process.env.LAX_FORCE_GIT_BOOTSTRAP === "true";
+  let bash = forceGit ? null : resolvePosixShell();
+  if (!bash) {
+    log("No POSIX shell present — provisioning PortableGit…");
+    bash = await provisionPortableGit();
+  }
+  if (!bash) {
+    fail("No POSIX shell (Git Bash) and PortableGit could not be provisioned. Install Git for Windows from https://git-scm.com/download/win and re-run.");
+  }
+  const probe = spawnSync(bash, ["-c", "echo ok | grep ok"], { encoding: "utf-8" });
+  const out = `${probe.stdout || ""}${probe.stderr || ""}`.trim();
+  if (probe.status !== 0 || !out.includes("ok")) {
+    fail(`POSIX shell check failed — ${bash} couldn't run 'echo ok | grep ok' (exit ${probe.status}). Reinstall Git for Windows from https://git-scm.com/download/win and re-run.`);
+  }
+  ok(`POSIX shell verified — ${bash}`);
+  stepDone("posixshell");
+}
+
+// 8. macOS: build the Mac .app and install it to /Applications.
 step("desktop", process.platform === "darwin" ? "Electron .app build (~3–5 min)" : process.platform === "win32" ? "Electron desktop bundle build" : null);
 //    Set LAX_SKIP_APP=1 to skip (useful for headless dev iteration).
 let appInstalled = false;

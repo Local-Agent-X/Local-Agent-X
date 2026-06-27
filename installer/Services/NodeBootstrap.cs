@@ -5,7 +5,6 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace LocalAgentX.Installer.Services;
 
@@ -110,8 +109,8 @@ public class NodeBootstrap
                 // Silicon) or /usr/local/bin (Intel), but our process PATH was
                 // captured before that dir existed — splice it in so the brew
                 // calls below resolve without re-launching the app.
-                SplicePath("/opt/homebrew/bin");
-                SplicePath("/usr/local/bin");
+                InstallerShell.SplicePath("/opt/homebrew/bin");
+                InstallerShell.SplicePath("/usr/local/bin");
             }
             var nodeOk = RunStreaming("brew", new[] { "install", "node@24" });
             if (!nodeOk) return false;
@@ -129,7 +128,7 @@ public class NodeBootstrap
     // can find it without a relaunch. (The zip fallback splices its own dir.)
     static void SpliceNodeDir()
     {
-        SplicePath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs"));
+        InstallerShell.SplicePath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs"));
     }
 
     // Fallback when winget can't deliver Node: download the official Windows
@@ -163,8 +162,8 @@ public class NodeBootstrap
             ZipFile.ExtractToDirectory(zip, installRoot);
             // Portable runtime: make it findable now (this process) and at
             // runtime/reboot (persisted to the user PATH — no admin needed).
-            SplicePath(nodeDir);
-            PersistUserPath(nodeDir);
+            InstallerShell.SplicePath(nodeDir);
+            InstallerShell.PersistUserPath(nodeDir);
             return true;
         }
         catch (Exception ex)
@@ -207,7 +206,7 @@ public class NodeBootstrap
             if (!RunStreaming("/usr/bin/tar", new[] { "-xzf", tgz, "-C", runtimeDir, "--strip-components=1" }))
                 return false;
             File.WriteAllText(Path.Combine(runtimeDir, ".node-version"), NODE_FALLBACK_VERSION);
-            SplicePath(Path.Combine(runtimeDir, "bin"));
+            InstallerShell.SplicePath(Path.Combine(runtimeDir, "bin"));
             return File.Exists(Path.Combine(runtimeDir, "bin", "node"));
         }
         catch (Exception ex)
@@ -221,95 +220,8 @@ public class NodeBootstrap
         }
     }
 
-    // Persist a dir to the USER PATH (HKCU) so node survives a reboot and stays
-    // visible to the desktop app. PREPENDED, not appended: a user with an older
-    // system Node already on PATH would otherwise shadow ours at runtime, the
-    // desktop node-floor gate would trip, and its winget-based --upgrade-node
-    // would fail on the very machines that lacked winget to begin with. Avoids
-    // setx (it truncates PATH at 1024 chars) and needs no elevation. Windows-only
-    // — the User target is only reached from inside the IsWindows() branch above.
-    static void PersistUserPath(string dir)
-    {
-        var userPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) ?? "";
-        if (userPath.Split(';').Contains(dir, StringComparer.OrdinalIgnoreCase)) return;
-        var updated = userPath.Length == 0 ? dir : $"{dir};{userPath}";
-        Environment.SetEnvironmentVariable("PATH", updated, EnvironmentVariableTarget.User);
-    }
-
-    // Prepend a dir to this process's PATH if it exists and isn't already
-    // there. Child processes spawned afterward inherit the updated PATH.
-    static void SplicePath(string dir)
-    {
-        if (!Directory.Exists(dir)) return;
-        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
-        var sep = OperatingSystem.IsWindows() ? ';' : ':';
-        if (path.Split(sep).Contains(dir)) return;
-        Environment.SetEnvironmentVariable("PATH", $"{dir}{sep}{path}");
-    }
-
-    bool HasOnPath(string cmd)
-    {
-        try
-        {
-            var p = Process.Start(new ProcessStartInfo
-            {
-                FileName = OperatingSystem.IsWindows() ? "where" : "command",
-                Arguments = OperatingSystem.IsWindows() ? cmd : $"-v {cmd}",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            });
-            p!.WaitForExit(3000);
-            return p.ExitCode == 0;
-        }
-        catch { return false; }
-    }
-
-    // winget/msiexec animate progress by redrawing one line with bare carriage
-    // returns (\r, no newline). When that whole burst arrives as a single
-    // OutputDataReceived "line", keep only the final frame (text after the last
-    // \r) so the log shows the last rendered state — not dozens of concatenated
-    // redraw frames piled into one wall.
-    static string LastFrame(string s)
-    {
-        var i = s.LastIndexOf('\r');
-        return i >= 0 ? s.Substring(i + 1) : s;
-    }
-
-    bool RunStreaming(string cmd, string[] args)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = cmd,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            // winget emits its progress bar with UTF-8 block glyphs (█ ▒ ░).
-            // Without forcing UTF-8 here, .NET decodes the stream with the
-            // console's ANSI codepage (CP1252 on Windows), turning every glyph
-            // into mojibake (█ → "â–ˆ") — which is what buried the real Node
-            // install error in an unreadable wall of symbols. Matches the
-            // encoding InstallProcess.cs already sets on the IPC stream.
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var a in args) psi.ArgumentList.Add(a);
-        try
-        {
-            using var p = Process.Start(psi)!;
-            p.OutputDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) OnLogLine?.Invoke(LastFrame(e.Data!)); };
-            p.ErrorDataReceived  += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) OnLogLine?.Invoke(LastFrame(e.Data!)); };
-            p.BeginOutputReadLine();
-            p.BeginErrorReadLine();
-            p.WaitForExit();
-            return p.ExitCode == 0;
-        }
-        catch (Exception ex)
-        {
-            OnLogLine?.Invoke($"[error] {ex.Message}");
-            return false;
-        }
-    }
+    // PATH/process helpers live in InstallerShell. These thin wrappers forward
+    // this bootstrap's OnLogLine sink so the call sites below read unchanged.
+    bool RunStreaming(string cmd, string[] args) => InstallerShell.RunStreaming(cmd, args, OnLogLine);
+    bool HasOnPath(string cmd) => InstallerShell.HasOnPath(cmd);
 }

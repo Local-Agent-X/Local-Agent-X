@@ -12,7 +12,10 @@ Set-Location $PSScriptRoot
 
 function Has($cmd) { [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
 
-# Node 22+ (OS-specific bootstrap — must run BEFORE install-common.mjs).
+# Node 22+ (OS-specific bootstrap — must run BEFORE install-common.mjs). The
+# POSIX shell (Git Bash) is provisioned by install-common.mjs itself (its win32
+# posix-shell step downloads PortableGit when none is present) — bash isn't
+# needed to RUN that script, only Node is, so it doesn't bootstrap here.
 $nodeOk = (Has node) -and ([int]((& node -v).TrimStart('v').Split('.')[0]) -ge 22)
 if (-not $nodeOk) {
   Write-Host "[install] Installing Node 24 (LTS)…"

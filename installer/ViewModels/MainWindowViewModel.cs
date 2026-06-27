@@ -118,6 +118,10 @@ public partial class MainWindowViewModel : ObservableObject
             }
         }
 
+        // POSIX shell (Git Bash) is provisioned by install-common.mjs itself
+        // (its win32 posix-shell step downloads PortableGit when none is present),
+        // so there's no pre-step here — bash isn't needed to RUN that script.
+
         // Node bootstrap runs BEFORE the IPC stream because install-common.mjs
         // can't execute without Node. Show a synthetic step in the UI so the
         // user sees something happening — the IPC plan event will replace

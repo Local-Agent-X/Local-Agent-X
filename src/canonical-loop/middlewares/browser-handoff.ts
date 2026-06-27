@@ -102,16 +102,17 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
     recordGaveUpNudge(category, ctx.model);
 
     const message =
-      "The browser is still open — you're handing this back before exhausting " +
-      "what you can do from here. Before deferring to me:\n" +
-      "- A no-dismiss overlay or consent banner is still clearable: use `evaluate` " +
-      "to remove the node (or set display:none), or `click_text` on its button, " +
-      "then re-`snapshot` and continue.\n" +
-      "- If a click or fill missed, retry with a different ref/selector, or " +
-      "`evaluate` to locate the right element.\n" +
-      "Keep driving the task. Only stop to ask me if you genuinely need something " +
-      "I alone can provide (a password, a 2FA code, a CAPTCHA) — and only after " +
-      "you've actually tried to clear the obstruction yourself.";
+      "The browser is still open and you're handing this back before exhausting your options. " +
+      "The obstacle is not the goal:\n" +
+      "- FIRST, get the answer directly — the content you need is usually already in the page " +
+      "behind the overlay. `extract`/`observe` the text (or read it via `evaluate`) instead of " +
+      "trying to clear the banner; a consent overlay is cosmetic, it doesn't remove the data underneath.\n" +
+      "- If it's genuinely gated, reach the SAME goal another way — `web_fetch` the URL, a different/" +
+      "print/amp URL, or another source. Don't loop trying to remove a cross-origin iframe " +
+      "(Sourcepoint-style banners can't be clicked into) — switch routes instead.\n" +
+      "- Only as a brief last resort, try to dismiss the banner (`click_text` its accept button).\n" +
+      "Keep driving toward the answer. Only stop to ask me if you genuinely need something I alone " +
+      "can provide (a password, a 2FA code, a CAPTCHA) — and say it once, concretely.";
 
     return { kind: "nudge", message, reason: "browser-handoff" };
   },

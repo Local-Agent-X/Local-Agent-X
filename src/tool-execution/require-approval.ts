@@ -12,6 +12,7 @@ import {
   getRiskDecision,
   decisionRequiresPrompt,
   decisionDenies,
+  applyIrreversibleFloor,
   destructiveOperationReason,
 } from "../approval-manager.js";
 import type { Phase } from "./context.js";
@@ -26,9 +27,16 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // profile table is the single source of truth; there is no confirm floor
   // above it.
   const destructive = destructiveOperationReason(ctx.tc.name, ctx.args);
-  const decision = destructive
+  let decision = destructive
     ? getRiskDecision("destructive", ctx.sessionId)
     : getToolDecision(ctx.tc.name, ctx.sessionId);
+
+  // Irreversible-action floor: in an interactive run, force one confirm before a
+  // truly-unrecoverable shell op (rm -rf, dd, force-push, …) even if the profile
+  // would allow it silently. Unattended runs stay governed by the profile.
+  if (ctx.callContext === "local") {
+    decision = applyIrreversibleFloor(decision, ctx.tc.name, ctx.args);
+  }
 
   if (decisionDenies(decision)) {
     const result: ToolResult = {

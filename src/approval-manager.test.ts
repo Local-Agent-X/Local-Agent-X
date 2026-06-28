@@ -5,9 +5,41 @@ import {
   getApprovalManager,
   isDestructiveCommand,
   destructiveOperationReason,
+  applyIrreversibleFloor,
 } from "./approval-manager.js";
 import { classifyToolRisk } from "./autonomy/risk.js";
 import type { ServerEvent } from "./types.js";
+
+describe("applyIrreversibleFloor", () => {
+  const rmrf = { command: "rm -rf build" };
+  const forcePush = { command: "git push --force origin main" };
+
+  it("upgrades allow → ask for a truly-irreversible shell op", () => {
+    expect(applyIrreversibleFloor("allow", "bash", rmrf)).toBe("ask");
+    expect(applyIrreversibleFloor("allow", "bash", forcePush)).toBe("ask");
+    expect(applyIrreversibleFloor("allow", "bash", { command: "dd of=/dev/sda" })).toBe("ask");
+  });
+
+  it("upgrades allow-with-rollback → ask (its git-stash net can't undo these)", () => {
+    expect(applyIrreversibleFloor("allow-with-rollback", "bash", rmrf)).toBe("ask");
+  });
+
+  it("leaves a non-destructive command alone", () => {
+    expect(applyIrreversibleFloor("allow", "bash", { command: "ls -la" })).toBe("allow");
+    expect(applyIrreversibleFloor("allow-with-rollback", "bash", { command: "git status" })).toBe("allow-with-rollback");
+  });
+
+  it("does NOT floor a recoverable destructive TOOL (delete_file → trash)", () => {
+    // delete_file routes through the recycle bin, so it must not nag — only
+    // unrecoverable shell text trips the floor.
+    expect(applyIrreversibleFloor("allow", "delete_file", { path: "/tmp/x" })).toBe("allow");
+  });
+
+  it("never relaxes deny or re-floors an existing ask", () => {
+    expect(applyIrreversibleFloor("deny", "bash", rmrf)).toBe("deny");
+    expect(applyIrreversibleFloor("ask", "bash", rmrf)).toBe("ask");
+  });
+});
 
 // Unique per-test session IDs so the singleton ApprovalManager doesn't bleed
 // cache state across tests.

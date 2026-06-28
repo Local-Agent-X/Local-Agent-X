@@ -181,16 +181,48 @@ describe("requireApprovalPhase — destructive reclassification", () => {
     expect(events.some((e) => e.type === "approval_requested")).toBe(true);
     expect(outcome.kind).toBe("halt");
 
-    // Power: destructive=allow — same command runs without a prompt.
+    // Power: destructive=allow, BUT rm -rf is irreversible — the floor forces
+    // one confirm even under Power ("never something it can't undo"). Decline → halt.
     const s2 = pinned("Power");
     const events2: ServerEvent[] = [];
     const ctx2 = makeCtx({
       name: "bash", sessionId: s2, callContext: "local",
-      args: { command: "rm -rf /tmp/x" }, onEvent: (e) => events2.push(e),
+      args: { command: "rm -rf /tmp/x" },
+      onEvent: (e) => {
+        events2.push(e);
+        if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, false);
+      },
     });
     const outcome2 = await requireApprovalPhase(ctx2);
-    expect(outcome2.kind).toBe("continue");
-    expect(events2.some((e) => e.type === "approval_requested")).toBe(false);
+    expect(events2.some((e) => e.type === "approval_requested")).toBe(true);
+    expect(outcome2.kind).toBe("halt");
+
+    // The floor is scoped: a non-irreversible command under Power still runs
+    // silently — no nagging on recoverable work.
+    const s3 = pinned("Power");
+    const events3: ServerEvent[] = [];
+    const ctx3 = makeCtx({
+      name: "bash", sessionId: s3, callContext: "local",
+      args: { command: "echo hi" }, onEvent: (e) => events3.push(e),
+    });
+    const outcome3 = await requireApprovalPhase(ctx3);
+    expect(outcome3.kind).toBe("continue");
+    expect(events3.some((e) => e.type === "approval_requested")).toBe(false);
+  });
+
+  it("the irreversible floor does NOT fire in an unattended (non-local) run", async () => {
+    // Unattended stays governed by the profile so explicit automation isn't
+    // broken: Power's destructive=allow runs rm -rf without prompting (there's
+    // no human to confirm). The floor is interactive-only.
+    const s = pinned("Power");
+    const events: ServerEvent[] = [];
+    const ctx = makeCtx({
+      name: "bash", sessionId: s, callContext: "cron",
+      args: { command: "rm -rf /tmp/x" }, onEvent: (e) => events.push(e),
+    });
+    const outcome = await requireApprovalPhase(ctx);
+    expect(outcome.kind).toBe("continue");
+    expect(events.some((e) => e.type === "approval_requested")).toBe(false);
   });
 
   it("Safe denies a destructive operation outright (destructive=deny)", async () => {

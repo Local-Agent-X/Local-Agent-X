@@ -62,6 +62,36 @@ export function decisionDenies(d: Decision): boolean {
 }
 
 /**
+ * Irreversible-action floor. A truly-irreversible SHELL op (rm -rf, dd, mkfs,
+ * git reset --hard, git push --force, …) bypasses the recycle bin and can't be
+ * undone — yet Power's `destructive: "allow"` (and Developer/Autonomous's
+ * "allow-with-rollback", whose git-stash net can't undo a force-push or a
+ * delete outside a repo) would run it with no human confirm. Upgrade such a
+ * decision to "ask" so an interactive run gets ONE confirm regardless of
+ * profile — "never asks except before something it can't undo".
+ *
+ * Scoped to isDestructiveCommand (shell text) ONLY: recoverable destructive
+ * TOOLS (delete_file → trash) are deliberately excluded so the floor never
+ * nags on something undoable — the exact over-broad behavior that got an
+ * earlier confirm floor removed. Callers apply it in interactive (local)
+ * context only; unattended runs stay governed by the profile so explicit
+ * automation isn't broken.
+ */
+export function applyIrreversibleFloor(
+  decision: Decision,
+  toolName: string,
+  args: Record<string, unknown>,
+): Decision {
+  if (
+    (decision === "allow" || decision === "allow-with-rollback") &&
+    isDestructiveCommand(toolName, args) !== null
+  ) {
+    return "ask";
+  }
+  return decision;
+}
+
+/**
  * Compute a stable, risk-relevant fingerprint of a tool call's args. Used to
  * key the session auto-approve cache so a grant for `bash git status` does
  * NOT cover `bash rm -rf /`. Must be pure — no Date.now, no randomness, no

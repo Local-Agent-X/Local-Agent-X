@@ -31,6 +31,7 @@ export {
   getRiskDecision,
   decisionRequiresPrompt,
   decisionDenies,
+  applyIrreversibleFloor,
   computeArgsFingerprint,
   isDestructiveCommand,
   destructiveOperationReason,

@@ -20,6 +20,7 @@ import {
   getRiskDecision,
   decisionRequiresPrompt,
   decisionDenies,
+  applyIrreversibleFloor,
   destructiveOperationReason,
 } from "../approval-manager.js";
 import { getRuntimeConfig } from "../config.js";
@@ -206,9 +207,14 @@ export async function assertToolCallAllowed(
     // irreversible operation is decided by the profile's destructive tier —
     // no confirm floor above the profile table.
     const destructive = destructiveOperationReason(call.name, call.args);
-    const decision = destructive
+    let decision = destructive
       ? getRiskDecision("destructive", ctx.sessionId)
       : getToolDecision(call.name, ctx.sessionId);
+
+    // Irreversible-action floor (this block is already local-only): force one
+    // confirm before a truly-unrecoverable shell op even if the profile allows
+    // it silently. See applyIrreversibleFloor.
+    decision = applyIrreversibleFloor(decision, call.name, call.args);
 
     if (decisionDenies(decision)) {
       throw new ToolBlocked({

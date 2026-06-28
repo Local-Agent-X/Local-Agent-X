@@ -59,7 +59,16 @@ function handleVoiceWsMessage(e) {
       // transcribe-then-send step without saving any time.
       const empty = document.getElementById('empty');
       if (empty) empty.remove();
-      if (typeof addMessageEl === 'function') addMessageEl('user', msg.text);
+      if (typeof addMessageEl === 'function') {
+        const userEl = addMessageEl('user', msg.text);
+        // Pin the just-spoken utterance near the top so it stays readable —
+        // the user checks here whether their speech transcribed correctly.
+        // The reply streams (and is spoken) below it instead of autoscroll
+        // shoving the utterance off the top.
+        if (userEl && typeof userEl.scrollIntoView === 'function') {
+          userEl.scrollIntoView({ block: 'start' });
+        }
+      }
       if (typeof activeChat !== 'undefined' && activeChat) {
         activeChat.messages.push({ role: 'user', content: msg.text });
         activeChat.updatedAt = Date.now();
@@ -99,9 +108,12 @@ function handleVoiceWsMessage(e) {
     case 'assistant_delta':
       if (!voiceCurrentMsgBody) break;
       voiceCurrentMsgText += msg.text || '';
-      voiceCurrentMsgBody.innerHTML = (typeof md === 'function' ? md(voiceCurrentMsgText) : voiceCurrentMsgText);
-      const msgs = document.getElementById('messages');
-      if (msgs) msgs.scrollTop = msgs.scrollHeight;
+      // Plain text, not markdown re-parsed every token: voice replies are
+      // spoken conversational text, and re-rendering the whole block per delta
+      // was the on-screen jitter. No autoscroll-to-bottom here either — that
+      // yanked the user's utterance off the top. The reply grows below the
+      // pinned utterance (and is spoken), so the user keeps their read-back.
+      voiceCurrentMsgBody.textContent = voiceCurrentMsgText;
       // Browser tier — server isn't sending TTS PCM frames; speak deltas
       // locally via window.speechSynthesis. Buffer until a sentence
       // terminator so we don't speak fragmented words.

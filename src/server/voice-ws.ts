@@ -116,27 +116,52 @@ export async function setupVoiceWs(deps: {
           }
         }
       } catch { /* keep config-default */ }
-      const voiceTools = visualsEnabled
-        ? allAgentTools
-        : allAgentTools.filter(t => t.name !== "voice_visual");
+      // Governor: a voice turn is FAST and tool-light. It answers / does quick
+      // lookups inline, drives the agent's OWN browser for web tasks, and
+      // DELEGATES genuinely heavy/long work to a background worker
+      // (op_submit_async) instead of grinding the full 169-tool agentic loop on
+      // the voice critical path — which produced 13-22s silences and tool-parse
+      // failures.
+      //
+      // `browser` drives the agent's own visible Chrome (its own persistent
+      // profile, controllable over CDP) — so "open google" then "search it"
+      // works as one flow, in a window the agent can actually act on. NOT the
+      // user's real browser: open_url (OS launch → real browser) was removed
+      // because the agent can't control what it opens there — a dead end. NO
+      // http_request either (the model abused it to fake browser control via
+      // invented localhost endpoints, then hallucinated success).
+      const VOICE_FAST_TOOLS = ["op_submit_async", "op_status", "web_search", "browser"];
+      const voiceTools = allAgentTools.filter(t =>
+        VOICE_FAST_TOOLS.includes(t.name) || (visualsEnabled && t.name === "voice_visual"));
       const visualPromptTail = visualsEnabled
-        ? "\nYou also have voice_visual(kind, value) to morph the on-screen " +
-          "sphere when something is emotionally significant. Use it RARELY — " +
-          "most replies have no visual, max 1 per reply, 2.5s cooldown. Never " +
-          "narrate it; just call it. e.g. voice_visual({kind:\"mood\", " +
-          "value:\"excited\"}) on good news, voice_visual({kind:\"emoji\", " +
-          "value:\"🙂\"}) for a friendly beat. Default to NO visual call."
+        ? "\nThe sphere (voice_visual) is decoration, NOT your voice — never use it " +
+          "instead of speaking. Use it RARELY for an emotional beat only (max " +
+          "1/reply, 2.5s cooldown), e.g. voice_visual({kind:\"mood\", " +
+          "value:\"excited\"}). Default to NO visual call."
         : "";
       const voiceSystemPrompt = prepared.systemPrompt +
         "\n\n## Voice mode\n" +
-        "You are speaking to the user; your reply is read aloud by TTS. Reply in " +
-        "1-3 short conversational sentences — no markdown, lists, code, headings, " +
-        "or emoji in the spoken text. Use natural spoken English.\n" +
-        "You have your full set of tools. When the user asks you to DO something " +
-        "(open a page, search, change a setting, run something), actually CALL " +
-        "the tool and do it — never describe the action as if done. If a tool " +
-        "fails, or it needs an approval voice can't show yet, say so plainly and " +
-        "briefly; NEVER claim you did something you didn't." + visualPromptTail;
+        "You're a fast, conversational voice assistant. The user HEARS your reply " +
+        "(TTS) and only hears your spoken words — tool calls and the sphere are " +
+        "silent. Keep every spoken line short and natural; no markdown, lists, " +
+        "code, or emoji.\n" +
+        "Route each request:\n" +
+        "• A question you can answer, or a quick fact lookup: answer directly, or " +
+        "use web_search inline, then say what you found in a sentence or two.\n" +
+        "• Opening or using a website (\"open google\", \"pull up youtube\", \"search " +
+        "X\", \"go to my email\"): use the browser tool. It opens and drives the " +
+        "agent's OWN visible Chrome window — yours to control, so you can keep " +
+        "going (\"open google\" then \"search it for X\" works). It is NOT the user's " +
+        "everyday browser. Do the action, then say one short line about what you " +
+        "see. Never claim you opened or did something the browser tool didn't " +
+        "actually return.\n" +
+        "• Genuinely heavy/long work (build an app, a big multi-site automation, " +
+        "anything > ~30s): don't grind it on this turn. Call op_submit_async to " +
+        "run it in the background, say one short line like \"On it — I'll let you " +
+        "know when it's done,\" and STOP. Never narrate steps or claim it finished.\n" +
+        "• When a background task you started has completed, its result is in your " +
+        "context — open with it (\"That search came back — …\").\n" +
+        "Never say you did something you didn't." + visualPromptTail;
 
       let assistantText = "";
       const onEvent = (event: ServerEvent) => {
@@ -194,10 +219,12 @@ export async function setupVoiceWs(deps: {
           tools: voiceTools,
           security, toolPolicy, rbac,
           sessionId,
-          // Same iteration budget as text chat — voice now does real multi-step
-          // tool work (call → interpret → act), not a 1-shot reply. Runaway is
-          // bounded by the op wall-clock ceiling, not this cap.
-          maxIterations: prepared.maxIterations,
+          // Budget: a quick lookup (web_search → speak) or delegate-and-ack
+          // (op_submit_async → speak) needs ~2; a browser flow needs room for
+          // navigate → observe → maybe one more action → speak. 8 covers an
+          // open-and-act without inviting the deep agentic grind (genuinely long
+          // work delegates to a worker, so a voice turn still stays shallow).
+          maxIterations: 8,
           temperature: prepared.temperature,
           signal,
           onEvent,

@@ -11,7 +11,7 @@
  * BOTH build strategies (cli-subprocess + in-canonical) at one chokepoint.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, dirname } from "node:path";
 
 export interface BlockedFetchViolation {
   /** App-relative file path (forward slashes). */
@@ -103,6 +103,67 @@ export function scanAppForBlockedFetch(appDir: string): { violations: BlockedFet
     }
   }
   return { violations };
+}
+
+// ── Startup sanity: catch the "loads to a blank page" class deterministically ──
+// Complements render-verify (which catches runtime JS errors once a preview
+// loads) with two checks that need no running preview and can't false-positive
+// on a valid app: a missing HTML entry, and a <script src> pointing at a file
+// that isn't there (a 404 that white-screens the app). Runtime JS errors stay
+// render-verify's job — static JS parsing false-positives on ES modules.
+
+export interface StartupError {
+  /** App-relative file (or "(app root)"). */
+  file: string;
+  problem: string;
+}
+
+const SCRIPT_SRC = /<script\b[^>]*\bsrc\s*=\s*['"]([^'"]+)['"]/gi;
+// Anything with a scheme (http:, data:), protocol-relative (//), or an anchor
+// is not a local file we can resolve — skip it (CDN/external is a separate CSP
+// concern, not a missing-file one).
+const EXTERNAL_OR_SPECIAL = /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i;
+
+export function scanAppForStartupErrors(appDir: string): { errors: StartupError[] } {
+  if (!existsSync(appDir)) return { errors: [] };
+  const files: string[] = [];
+  collectFiles(appDir, appDir, files);
+  const rel = (f: string) => relative(appDir, f).replace(/\\/g, "/");
+  const htmlFiles = files.filter(f => /\.html?$/i.test(f));
+
+  if (htmlFiles.length === 0) {
+    return { errors: [{ file: "(app root)", problem: "no HTML file — the app has no entry point to load." }] };
+  }
+
+  const errors: StartupError[] = [];
+  for (const html of htmlFiles) {
+    let content: string;
+    try { content = readFileSync(html, "utf8"); } catch { continue; }
+    for (const m of content.matchAll(SCRIPT_SRC)) {
+      const ref = m[1].trim();
+      if (!ref || EXTERNAL_OR_SPECIAL.test(ref)) continue;
+      const clean = ref.split(/[?#]/)[0];
+      const target = clean.startsWith("/")
+        ? join(appDir, clean.slice(1))
+        : join(dirname(html), clean);
+      if (!existsSync(target)) {
+        errors.push({ file: rel(html), problem: `references a missing script "${ref}" — it 404s on load, so the app renders blank.` });
+      }
+    }
+  }
+  return { errors };
+}
+
+/** Actionable build-failure message naming the broken-on-load files + the fix. */
+export function formatStartupErrors(errors: StartupError[]): string {
+  const lines = errors.map(e => `  - ${e.file}: ${e.problem}`);
+  return (
+    "Build rejected: the app would fail on first load:\n" +
+    lines.join("\n") +
+    "\n\nMake the app render and run out of the box — every <script src> must point " +
+    "to a file that exists in the app, and there must be an HTML entry point. " +
+    "Fix this, then emit APP_READY."
+  );
 }
 
 /** Actionable build-failure message naming the offending files + the fix. */

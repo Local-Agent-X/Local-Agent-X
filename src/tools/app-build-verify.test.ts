@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { scanAppForBlockedFetch, formatBlockedFetchError } from "./app-build-verify.js";
+import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors } from "./app-build-verify.js";
 
 const dirs: string[] = [];
 function makeApp(files: Record<string, string>): string {
@@ -16,6 +16,49 @@ function makeApp(files: Record<string, string>): string {
   return dir;
 }
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+
+describe("scanAppForStartupErrors — catches blank-on-load builds", () => {
+  it("passes a clean app whose script reference resolves", () => {
+    const dir = makeApp({
+      "index.html": `<script src="app.js"></script>`,
+      "app.js": `console.log("hi");`,
+    });
+    expect(scanAppForStartupErrors(dir).errors).toHaveLength(0);
+  });
+
+  it("flags an app with no HTML entry point", () => {
+    const dir = makeApp({ "app.js": `console.log("orphan");` });
+    const { errors } = scanAppForStartupErrors(dir);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].problem).toMatch(/no HTML/i);
+  });
+
+  it("flags a <script src> that points at a missing file", () => {
+    const dir = makeApp({ "index.html": `<script src="main.js"></script>` });
+    const { errors } = scanAppForStartupErrors(dir);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].file).toBe("index.html");
+    expect(errors[0].problem).toMatch(/missing script "main\.js"/);
+  });
+
+  it("resolves a root-absolute script path against the app root", () => {
+    const dir = makeApp({
+      "index.html": `<script src="/js/app.js"></script>`,
+      "js/app.js": `console.log("ok");`,
+    });
+    expect(scanAppForStartupErrors(dir).errors).toHaveLength(0);
+  });
+
+  it("ignores external/CDN and inline scripts (a different, non-missing-file concern)", () => {
+    const dir = makeApp({
+      "index.html":
+        `<script src="https://cdn.example.com/x.js"></script>` +
+        `<script src="//cdn.example.com/y.js"></script>` +
+        `<script>console.log("inline ok");</script>`,
+    });
+    expect(scanAppForStartupErrors(dir).errors).toHaveLength(0);
+  });
+});
 
 describe("scanAppForBlockedFetch — flags raw cross-origin fetch", () => {
   // Regression for the grok-code-fast weather app: endpoint in a variable, then

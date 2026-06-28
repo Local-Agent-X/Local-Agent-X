@@ -42,6 +42,7 @@ export function recordCostEvent(event: CanonicalEvent): void {
 		const op = readOp(opId);
 		const sessionId = op?.canonical?.sessionId ?? null;
 		const provider = op?.contextPack?.routing?.preferredProvider ?? null;
+		const authSource = op?.contextPack?.routing?.authSource;
 
 		trackUsage(
 			sessionId ?? "unknown",
@@ -49,6 +50,8 @@ export function recordCostEvent(event: CanonicalEvent): void {
 			provider ?? "unknown",
 			usage.usageInputTokens,
 			usage.usageOutputTokens,
+			undefined,
+			authSource,
 		);
 	} catch (e) {
 		if (!warnedOnce) {

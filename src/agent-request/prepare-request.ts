@@ -14,6 +14,7 @@ import { randomBytes } from "node:crypto";
 import { buildCleanHistory } from "../providers/sanitize.js";
 import type { AgentRequestInput, ForcedToolChoice, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";
+import { noteResolvedAuthSource } from "../cost-tracker.js";
 import { providerUndercallsTools } from "../providers/provider-ids.js";
 import { createLogger } from "../logger.js";
 
@@ -69,6 +70,10 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     input.modelOverride,
   );
   end();
+  // Record the resolved billing mode process-wide so the spend cap can tell a
+  // flat-rate subscription (oauth) from a real per-call API key — the cap must
+  // not block a subscription user whose per-call cost is zero.
+  noteResolvedAuthSource(resolved.authSource);
 
   // 2. Sanitize + truncate history. Compaction now lives as a leading
   // `system` message in sessionMessages itself (round-tripped through a
@@ -279,6 +284,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     images,
     temperature: resolved.temperature,
     maxIterations: resolved.maxIterations,
+    authSource: resolved.authSource,
     toolChoice,
   };
 }

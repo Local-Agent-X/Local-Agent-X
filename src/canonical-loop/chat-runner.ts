@@ -120,6 +120,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     // and Codex turns surfaced as `provider:"anthropic" adapter:"codex"`,
     // breaking apples-to-apples filtering.
     preferredProvider: ctx.prepared.provider,
+    authSource: ctx.prepared.authSource,
     budget: { maxIterations: ctx.prepared.maxIterations || 30, maxWallTimeMs: chatWallClockMs },
   });
 

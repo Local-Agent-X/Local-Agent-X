@@ -4,6 +4,7 @@ import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
 import { PROVIDERS, isHttpProvider } from "../providers/registry.js";
 import { loadSettings, getSetting } from "../settings.js";
 import { resolveCredential } from "../auth/resolve.js";
+import type { CredentialSource } from "../auth/auth-provider.js";
 
 const isProviderId = (s: string): s is ProviderId =>
   (PROVIDER_IDS as readonly string[]).includes(s);
@@ -26,6 +27,11 @@ export async function resolveProvider(
   customBaseURL?: string;
   temperature: number;
   maxIterations: number;
+  /** How the active provider's credential was sourced — `oauth` means a
+   *  flat-rate subscription (Claude CLI / SuperGrok / ChatGPT) where per-call
+   *  USD is fiction; the rest are real per-token API keys. Drives whether the
+   *  USD spend cap applies (see cost-tracker `isBillableSource`). */
+  authSource?: CredentialSource;
 }> {
   // Load saved settings (spread because the codepath blanks saved.model below)
   const saved: Record<string, unknown> = { ...loadSettings() };
@@ -76,6 +82,7 @@ export async function resolveProvider(
   const meta = PROVIDERS[provider];
   const r = await resolveCredential(provider, { configOpenAIKey: config.openaiApiKey });
   apiKey = r?.credential ?? "";
+  const authSource = r?.source;
 
   if (!isHttpProvider(meta)) {
     // Anthropic (CLI transport) also carries a Codex side-key so build_app
@@ -99,5 +106,5 @@ export async function resolveProvider(
   const temperature = typeof saved.temperature === "number" ? saved.temperature : config.temperature;
   const maxIterations = typeof saved.maxIterations === "number" ? saved.maxIterations : config.maxIterations;
 
-  return { provider, apiKey, model, codexApiKey, customBaseURL, temperature, maxIterations };
+  return { provider, apiKey, model, codexApiKey, customBaseURL, temperature, maxIterations, authSource };
 }

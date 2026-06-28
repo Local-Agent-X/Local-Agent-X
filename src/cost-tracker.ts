@@ -7,6 +7,29 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
+import type { CredentialSource } from "./auth/auth-provider.js";
+
+// ── Billing mode ──
+// A flat-rate subscription (oauth: Claude CLI / SuperGrok / ChatGPT) costs $0
+// per call — the token×price figure is a *shadow* cost, never real money. Local
+// models (sentinel) are free. Everything else is a real per-token API key. The
+// USD spend cap must bill only the latter; otherwise it falsely blocks a
+// subscription user whose marginal cost is zero. `undefined` is treated as
+// billable so an untagged record never silently escapes the cap.
+export function isBillableSource(source: CredentialSource | undefined): boolean {
+  return source !== "oauth" && source !== "sentinel";
+}
+
+// Process-level latest resolved billing mode, set each turn by prepareAgentRequest.
+// Lets the spend-cap pack short-circuit the USD cap for a subscription user even
+// before any usage record carries a source (e.g. legacy/worker ops).
+let _lastResolvedAuthSource: CredentialSource | undefined;
+export function noteResolvedAuthSource(source: CredentialSource | undefined): void {
+  if (source) _lastResolvedAuthSource = source;
+}
+export function getResolvedAuthSource(): CredentialSource | undefined {
+  return _lastResolvedAuthSource;
+}
 
 // ── Pricing per 1M tokens (USD) ──
 
@@ -84,6 +107,9 @@ export interface UsageRecord {
   costUsd: number;
   timestamp: number;
   agentId?: string;
+  /** How the credential was sourced. `oauth`/`sentinel` = $0 real cost; the
+   *  USD spend cap bills only records where `isBillableSource` is true. */
+  authSource?: CredentialSource;
 }
 
 export interface UsageSummary {
@@ -122,6 +148,7 @@ export function trackUsage(
   inputTokens: number,
   outputTokens: number,
   agentId?: string,
+  authSource?: CredentialSource,
 ): UsageRecord {
   const pricing = getPricing(model);
   const costUsd = (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
@@ -131,6 +158,7 @@ export function trackUsage(
     costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, // 6 decimal places
     timestamp: Date.now(),
     agentId,
+    authSource,
   };
 
   const records = loadRecords();
@@ -188,4 +216,26 @@ export function getTodayCost(): { costUsd: number; inputTokens: number; outputTo
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
   const summary = getUsageSummary({ since: startOfDay.getTime() });
   return { costUsd: summary.totalCostUsd, inputTokens: summary.totalInputTokens, outputTokens: summary.totalOutputTokens };
+}
+
+/** Real-money spend only — sums records on a per-call API key, excluding
+ *  flat-rate subscription/local usage. This is what the USD spend cap enforces;
+ *  `getTodayCost` keeps the full (incl. shadow) total for display. */
+export function getTodayBillableCost(): { costUsd: number; shadowUsd: number } {
+  const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+  return sumBillable(loadRecords().filter(r => r.timestamp >= startOfDay.getTime()));
+}
+
+export function getSessionBillableCost(sessionId: string): { costUsd: number; shadowUsd: number } {
+  return sumBillable(loadRecords().filter(r => r.sessionId === sessionId));
+}
+
+function sumBillable(records: UsageRecord[]): { costUsd: number; shadowUsd: number } {
+  let billable = 0;
+  let shadow = 0;
+  for (const r of records) {
+    if (isBillableSource(r.authSource)) billable += r.costUsd;
+    else shadow += r.costUsd;
+  }
+  return { costUsd: Math.round(billable * 100) / 100, shadowUsd: Math.round(shadow * 100) / 100 };
 }

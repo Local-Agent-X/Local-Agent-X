@@ -23,6 +23,7 @@ import { join, dirname, isAbsolute, resolve, relative } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ContextPack, FileSnapshot, MemoryHit, OpBudget, OpLane, ProviderCapabilityRequirement } from "./types.js";
+import type { CredentialSource } from "../auth/auth-provider.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.context-pack");
@@ -48,6 +49,7 @@ export interface BuildPackInput {
   capabilities?: ProviderCapabilityRequirement;
   lane?: OpLane;                        // default "build"
   preferredProvider?: string;
+  authSource?: CredentialSource;        // billing mode of the active credential
   budget?: Partial<OpBudget>;
   secretsAllowed?: string[];
 
@@ -89,7 +91,7 @@ export async function buildContextPack(input: BuildPackInput): Promise<ContextPa
     },
     capabilities: input.capabilities ?? {},
     budget,
-    routing: { lane, preferredProvider: input.preferredProvider },
+    routing: { lane, preferredProvider: input.preferredProvider, authSource: input.authSource },
     secrets: { allowed: input.secretsAllowed ?? [] },
   };
 }

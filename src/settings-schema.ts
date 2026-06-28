@@ -90,13 +90,13 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     field: "dailyBudgetUsd",
     validate: z.number().min(0),
     runtime: true,
-    description: "Opt-in daily USD spend cap. 0 = disabled. When >0, all tool calls are blocked once today's total cost reaches this budget",
+    description: "Opt-in daily USD cap on real per-call API spend. 0 = disabled. When >0, tool calls are blocked once today's billable cost reaches this budget. Flat-rate subscription usage is not capped",
   },
   {
     field: "sessionBudgetUsd",
     validate: z.number().min(0),
     runtime: true,
-    description: "Opt-in per-session USD spend cap. 0 = disabled. When >0, all tool calls are blocked once the current session's cost reaches this budget",
+    description: "Opt-in per-session USD cap on real per-call API spend. 0 = disabled. When >0, tool calls are blocked once the session's billable cost reaches this budget. Flat-rate subscription usage is not capped",
   },
   {
     field: "enableShell",

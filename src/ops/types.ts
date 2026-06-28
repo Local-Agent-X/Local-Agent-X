@@ -8,6 +8,7 @@
  */
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import type { CredentialSource } from "../auth/auth-provider.js";
 
 // ── Op model ───────────────────────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ export interface ContextPack {
   };
   capabilities: ProviderCapabilityRequirement;
   budget: OpBudget;
-  routing: { lane: OpLane; preferredProvider?: string };
+  routing: { lane: OpLane; preferredProvider?: string; authSource?: CredentialSource };
   secrets: { allowed: string[] };               // names only, never values (§12)
 }
 

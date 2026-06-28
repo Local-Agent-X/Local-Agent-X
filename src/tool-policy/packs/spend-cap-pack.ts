@@ -1,7 +1,13 @@
 /**
- * Spend-cap pack — opt-in USD budget gate. When the configured daily or
- * per-session spend cap is reached, every further tool call is denied with a
- * clear recovery message so the agent stops burning money and tells the user.
+ * Spend-cap pack — opt-in USD budget gate on REAL per-call API spend. When the
+ * configured daily or per-session cap is reached, every further tool call is
+ * denied with a clear recovery message so the agent stops burning money and
+ * tells the user.
+ *
+ * Auth-aware: a flat-rate subscription (oauth — Claude CLI / SuperGrok /
+ * ChatGPT) has no per-call USD cost, so the cap never applies to it (the
+ * token×price figure is a shadow estimate, not money). The cap bills only
+ * usage on a real per-token API key — see cost-tracker `isBillableSource`.
  *
  * Disabled by default: with both budgets at 0/undefined this pack always
  * allows, so it's a no-op until the user sets a cap in Settings. Runs early
@@ -9,7 +15,7 @@
  * policy work.
  */
 import { getRuntimeConfig } from "../../config.js";
-import { getTodayCost, getSessionCost } from "../../cost-tracker.js";
+import { getTodayBillableCost, getSessionBillableCost, getResolvedAuthSource } from "../../cost-tracker.js";
 import { USER_HINTS } from "../../types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
@@ -49,8 +55,16 @@ export function makeSpendCapPack(): RulePack {
       // Disabled by default — no caps configured.
       if (!dailyBudgetUsd && !sessionBudgetUsd) return { allowed: true };
 
+      // Flat-rate subscription (Claude CLI / SuperGrok / ChatGPT): per-call USD
+      // is fiction — the user pays a fixed monthly fee, not per token. A USD cap
+      // must never block them. Runaway loops are still bounded by the universal
+      // iteration + wall-clock guards on the op budget.
+      if (getResolvedAuthSource() === "oauth") return { allowed: true };
+
+      // Bill only real-money (per-call API key) usage; subscription/local spend
+      // is shadow cost and excluded by getXBillableCost.
       if (dailyBudgetUsd > 0) {
-        const spent = getTodayCost().costUsd;
+        const spent = getTodayBillableCost().costUsd;
         if (spent >= dailyBudgetUsd) {
           return {
             allowed: false,
@@ -64,7 +78,7 @@ export function makeSpendCapPack(): RulePack {
       }
 
       if (sessionBudgetUsd > 0) {
-        const spent = getSessionCost(ctx.sessionId).costUsd;
+        const spent = getSessionBillableCost(ctx.sessionId).costUsd;
         if (spent >= sessionBudgetUsd) {
           return {
             allowed: false,

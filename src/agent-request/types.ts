@@ -3,6 +3,7 @@ import type { ToolDefinition, LAXConfig } from "../types.js";
 import type { MemoryIndex, MemoryManager } from "../memory/index.js";
 import type { IntegrationRegistry } from "../integrations/index.js";
 import type { SecretsStore } from "../secrets.js";
+import type { CredentialSource } from "../auth/auth-provider.js";
 
 export type ChannelKind = "web" | "telegram" | "whatsapp" | "cron" | "agent";
 
@@ -82,6 +83,10 @@ export interface PreparedAgentRequest {
   images: Array<{ url: string; filePath?: string; name: string }>;
   temperature: number;
   maxIterations: number;
+  /** How the active provider's credential was sourced — `oauth` = flat-rate
+   *  subscription, others = real per-token API key. Threaded to the op routing
+   *  so the USD spend cap only bills real-money usage. */
+  authSource?: CredentialSource;
   /** Force a single tool for this turn — see intent-classifier.ts. */
   toolChoice?: ForcedToolChoice;
 }

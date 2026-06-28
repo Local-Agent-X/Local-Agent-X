@@ -163,11 +163,13 @@ const configSchema = z.object({
   // driving from mobile. Same risk profile: DEFAULT OFF, also needs the OS grant.
   enableRemoteControl: z.boolean().default(false),
 
-  /** Opt-in USD spend caps. 0 = disabled (default). When > 0, the spend-cap
-   *  rule pack blocks every tool call once the matching spend reaches the
-   *  budget — dailyBudgetUsd against today's total cost, sessionBudgetUsd
-   *  against the active session's cost. Not security kill-switches, so they're
-   *  user-flippable in interactive sessions (not protected). */
+  /** Opt-in USD spend caps on REAL per-call API spend. 0 = disabled (default).
+   *  When > 0, the spend-cap rule pack blocks every tool call once the matching
+   *  billable spend reaches the budget — dailyBudgetUsd against today's,
+   *  sessionBudgetUsd against the active session's. Flat-rate subscription
+   *  (Claude CLI / SuperGrok / ChatGPT) usage is not billed and never capped.
+   *  Not security kill-switches, so they're user-flippable in interactive
+   *  sessions (not protected). */
   dailyBudgetUsd: z.number().min(0).default(0),
   sessionBudgetUsd: z.number().min(0).default(0),
 });

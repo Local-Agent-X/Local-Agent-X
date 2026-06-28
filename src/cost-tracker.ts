@@ -23,15 +23,23 @@ export function isBillableSource(source: CredentialSource | undefined): boolean 
   return source !== "oauth" && source !== "sentinel";
 }
 
-// Process-level latest resolved billing mode, set each turn by prepareAgentRequest.
-// Lets the spend-cap pack short-circuit the USD cap for a subscription user even
-// before any usage record carries a source (e.g. legacy/worker ops).
+// Process-level latest resolved billing mode + model, set each turn by
+// prepareAgentRequest. Lets the spend-cap pack short-circuit the USD cap for a
+// subscription user (before any record carries a source) and know which model a
+// per-model cap should apply to.
 let _lastResolvedAuthSource: CredentialSource | undefined;
+let _lastResolvedModel: string | undefined;
 export function noteResolvedAuthSource(source: CredentialSource | undefined): void {
   if (source) _lastResolvedAuthSource = source;
 }
 export function getResolvedAuthSource(): CredentialSource | undefined {
   return _lastResolvedAuthSource;
+}
+export function noteResolvedModel(model: string | undefined): void {
+  if (model) _lastResolvedModel = model;
+}
+export function getResolvedModel(): string | undefined {
+  return _lastResolvedModel;
 }
 
 // ── Pricing per 1M tokens (USD) ──
@@ -274,6 +282,47 @@ export function getTodayBillableCost(): { costUsd: number; shadowUsd: number } {
 export function getBillableCostSince(sinceMs?: number): { costUsd: number; shadowUsd: number } {
   const records = sinceMs ? loadRecords().filter(r => r.timestamp >= sinceMs) : loadRecords();
   return sumBillable(records);
+}
+
+/** Real (billable) spend for ONE model since `sinceMs` — what a per-model daily
+ *  cap enforces. Subscription/local records for the model contribute $0, so a
+ *  per-model cap only ever bites real per-call API spend. */
+export function getBillableCostForModelSince(model: string, sinceMs?: number): number {
+  let billable = 0;
+  for (const r of loadRecords()) {
+    if (r.model !== model) continue;
+    if (sinceMs && r.timestamp < sinceMs) continue;
+    if (isBillableSource(r.authSource)) billable += r.costUsd;
+  }
+  return Math.round(billable * 1_000_000) / 1_000_000;
+}
+
+export interface ModelBreakdownEntry {
+  input: number;
+  output: number;
+  cost: number;
+  provider: string;
+  /** True when this model was used on a real per-call API key (so it's eligible
+   *  for a per-model spend cap). Subscription/local usage is display-only. */
+  billable: boolean;
+}
+
+/** Per-model usage for the dashboard: tokens, cost, provider, and whether it's a
+ *  real-money (API-key) model — the dashboard only offers a limit picker for
+ *  billable models. */
+export function getModelBreakdown(sinceMs?: number): Record<string, ModelBreakdownEntry> {
+  const out: Record<string, ModelBreakdownEntry> = {};
+  for (const r of loadRecords()) {
+    if (sinceMs && r.timestamp < sinceMs) continue;
+    const e = (out[r.model] ??= { input: 0, output: 0, cost: 0, provider: r.provider, billable: false });
+    e.input += r.inputTokens;
+    e.output += r.outputTokens;
+    e.cost += r.costUsd;
+    if (r.provider) e.provider = r.provider;
+    if (isBillableSource(r.authSource)) e.billable = true;
+  }
+  for (const e of Object.values(out)) e.cost = Math.round(e.cost * 1_000_000) / 1_000_000;
+  return out;
 }
 
 export function getSessionBillableCost(sessionId: string): { costUsd: number; shadowUsd: number } {

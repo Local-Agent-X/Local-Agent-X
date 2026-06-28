@@ -400,13 +400,23 @@
         <div class="section-card">
           <div class="section-title">Usage</div>
           <div class="section-desc">Tokens and estimated cost. <span id="usage-mode-note"></span></div>
-          <div class="field" style="max-width:200px">
-            <label class="field-label">Period</label>
-            <select class="field-select" id="usage-period" onchange="loadUsage()">
-              <option value="today">Today</option>
-              <option value="week">Last 7 days</option>
-              <option value="month">Last 30 days</option>
-            </select>
+          <div class="field-row">
+            <div class="field" style="max-width:160px">
+              <label class="field-label">Period</label>
+              <select class="field-select" id="usage-period" onchange="loadUsage()">
+                <option value="today">Today</option>
+                <option value="week">Last 7 days</option>
+                <option value="month">Last 30 days</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field-label">Per-model daily limit</label>
+              <div style="display:flex;gap:6px;align-items:center">
+                <select class="field-select" id="usage-model-pick" onchange="onUsageModelPick()" style="flex:1"><option value="">Pick an API model…</option></select>
+                <input class="field-input" id="usage-model-limit" type="number" min="0" step="0.5" placeholder="USD/day" style="width:110px;display:none" onchange="saveModelBudget()"/>
+              </div>
+              <div class="field-hint">Only API-key models can be capped — subscription &amp; local usage isn’t billed.</div>
+            </div>
           </div>
           <div id="usage-stats" style="display:flex;gap:22px;flex-wrap:wrap;margin:14px 0;font-family:var(--mono)"></div>
           <div id="usage-by-model"></div>

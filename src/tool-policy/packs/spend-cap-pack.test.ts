@@ -16,7 +16,7 @@ afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-const { trackUsage, isBillableSource, noteResolvedAuthSource } = await import("../../cost-tracker.js");
+const { trackUsage, isBillableSource, noteResolvedAuthSource, noteResolvedModel } = await import("../../cost-tracker.js");
 const { setRuntimeConfig, loadConfig } = await import("../../config.js");
 const { makeSpendCapPack } = await import("./spend-cap-pack.js");
 
@@ -26,8 +26,8 @@ const CTX = { sessionId: SESSION, callContext: "local" as const };
 
 const evalCap = () => Promise.resolve(makeSpendCapPack().evaluate(CALL, CTX));
 
-function setBudgets(daily: number, session: number): void {
-  setRuntimeConfig({ ...loadConfig(), dailyBudgetUsd: daily, sessionBudgetUsd: session });
+function setBudgets(daily: number, session: number, modelDailyBudgetsUsd: Record<string, number> = {}): void {
+  setRuntimeConfig({ ...loadConfig(), dailyBudgetUsd: daily, sessionBudgetUsd: session, modelDailyBudgetsUsd });
 }
 
 // $6 of opus output tokens (25/M output) — used to exceed a $5 cap.
@@ -92,5 +92,46 @@ describe("spend-cap pack — auth-aware", () => {
     const d = await evalCap();
     expect(d.allowed).toBe(false);
     expect(d.ruleId).toBe("spend-cap.session");
+  });
+});
+
+describe("spend-cap pack — per-model daily limit", () => {
+  // grok-4.3 @ $1.25/M input: 3M input = $3.75, over a $3 cap.
+  function spendOnGrok(authSource: "env" | "oauth"): void {
+    trackUsage(SESSION, "grok-4.3", "xai", 3_000_000, 0, undefined, authSource);
+  }
+
+  it("blocks a model once its real spend passes its per-model cap", async () => {
+    setBudgets(0, 0, { "grok-4.3": 3 });
+    noteResolvedAuthSource("env");
+    noteResolvedModel("grok-4.3");
+    spendOnGrok("env");
+    const d = await evalCap();
+    expect(d.allowed).toBe(false);
+    expect(d.ruleId).toBe("spend-cap.model");
+  });
+
+  it("does not affect a different model that has no cap", async () => {
+    setBudgets(0, 0, { "grok-4.3": 3 });
+    noteResolvedAuthSource("env");
+    noteResolvedModel("claude-opus-4-8"); // not in the budget map
+    spendOnGrok("env");
+    expect((await evalCap()).allowed).toBe(true);
+  });
+
+  it("never caps a subscription model — its billable spend is $0", async () => {
+    setBudgets(0, 0, { "grok-4.3": 3 });
+    noteResolvedAuthSource("oauth"); // subscription → short-circuits before any cap
+    noteResolvedModel("grok-4.3");
+    spendOnGrok("oauth");
+    expect((await evalCap()).allowed).toBe(true);
+  });
+
+  it("allows a capped model still under its limit", async () => {
+    setBudgets(0, 0, { "grok-4.3": 100 });
+    noteResolvedAuthSource("env");
+    noteResolvedModel("grok-4.3");
+    spendOnGrok("env"); // $3.75, under $100
+    expect((await evalCap()).allowed).toBe(true);
   });
 });

@@ -391,4 +391,7 @@ export interface LAXConfig {
    *  spend-cap pack blocks every tool call once the active session's cost
    *  reaches this budget. Not a security kill-switch; user-flippable. */
   sessionBudgetUsd: number;
+  /** Per-model daily USD caps on real per-call API spend, keyed by model id.
+   *  Subscription (flat-rate) models are never billable, so never capped. */
+  modelDailyBudgetsUsd: Record<string, number>;
 }

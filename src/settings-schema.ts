@@ -99,6 +99,12 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Opt-in per-session USD cap on real per-call API spend. 0 = disabled. When >0, tool calls are blocked once the session's billable cost reaches this budget. Flat-rate subscription usage is not capped",
   },
   {
+    field: "modelDailyBudgetsUsd",
+    validate: z.record(z.number().min(0)),
+    runtime: true,
+    description: "Per-model daily USD caps on real per-call API spend, keyed by model id. A model over its cap is blocked for the rest of the day. Flat-rate subscription models are never capped",
+  },
+  {
     field: "enableShell",
     validate: z.boolean(),
     runtime: true,

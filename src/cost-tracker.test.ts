@@ -14,7 +14,7 @@ afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-const { getPricing, hasExactPricing, trackUsage, getBillableCostSince } = await import("./cost-tracker.js");
+const { getPricing, hasExactPricing, trackUsage, getBillableCostSince, getModelBreakdown, getBillableCostForModelSince } = await import("./cost-tracker.js");
 
 // Each test that reads the usage log starts from a clean slate so time-filtered
 // queries don't pick up records written by earlier tests in this file.
@@ -74,5 +74,29 @@ describe("getBillableCostSince — dashboard split", () => {
     const split = getBillableCostSince(Date.now() - 60_000);
     expect(split.costUsd).toBeCloseTo(1.25, 2);   // only the api-key record bills
     expect(split.shadowUsd).toBeCloseTo(1.25, 2); // subscription record is shadow
+  });
+});
+
+describe("getModelBreakdown — per-model, with provider + billable flag", () => {
+  it("tags an API-key model billable and a local model not, and counts local tokens", () => {
+    trackUsage("s", "grok-4.3", "xai", 1000, 50, undefined, "env");       // api-key
+    trackUsage("s", "qwen2:7b", "local", 2000, 800, undefined, "sentinel"); // local, free
+    const bm = getModelBreakdown(Date.now() - 60_000);
+    expect(bm["grok-4.3"].billable).toBe(true);
+    expect(bm["grok-4.3"].provider).toBe("xai");
+    expect(bm["qwen2:7b"].billable).toBe(false);  // local → never cappable
+    expect(bm["qwen2:7b"].provider).toBe("local");
+    expect(bm["qwen2:7b"].input).toBe(2000);      // local token counts ARE tracked
+    expect(bm["qwen2:7b"].output).toBe(800);
+    expect(bm["qwen2:7b"].cost).toBe(0);          // local pricing is free
+  });
+});
+
+describe("getBillableCostForModelSince — per-model cap input", () => {
+  it("sums only the named model's real (API-key) spend", () => {
+    trackUsage("s", "grok-4.3", "xai", 1_000_000, 0, undefined, "env");   // $1.25 billable
+    trackUsage("s", "grok-4.3", "xai", 1_000_000, 0, undefined, "oauth"); // shadow — excluded
+    trackUsage("s", "claude-opus-4-8", "anthropic", 1_000_000, 0, undefined, "env"); // other model
+    expect(getBillableCostForModelSince("grok-4.3", Date.now() - 60_000)).toBeCloseTo(1.25, 2);
   });
 });

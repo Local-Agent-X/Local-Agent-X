@@ -15,7 +15,7 @@
  * policy work.
  */
 import { getRuntimeConfig } from "../../config.js";
-import { getTodayBillableCost, getSessionBillableCost, getResolvedAuthSource } from "../../cost-tracker.js";
+import { getTodayBillableCost, getSessionBillableCost, getResolvedAuthSource, getResolvedModel, getBillableCostForModelSince } from "../../cost-tracker.js";
 import { USER_HINTS } from "../../types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
@@ -51,9 +51,11 @@ export function makeSpendCapPack(): RulePack {
       const cfg = getRuntimeConfig();
       const dailyBudgetUsd = cfg.dailyBudgetUsd ?? 0;
       const sessionBudgetUsd = cfg.sessionBudgetUsd ?? 0;
+      const modelBudgets = cfg.modelDailyBudgetsUsd ?? {};
+      const hasModelBudget = Object.values(modelBudgets).some(v => (v ?? 0) > 0);
 
       // Disabled by default — no caps configured.
-      if (!dailyBudgetUsd && !sessionBudgetUsd) return { allowed: true };
+      if (!dailyBudgetUsd && !sessionBudgetUsd && !hasModelBudget) return { allowed: true };
 
       // Flat-rate subscription (Claude CLI / SuperGrok / ChatGPT): per-call USD
       // is fiction — the user pays a fixed monthly fee, not per token. A USD cap
@@ -86,6 +88,26 @@ export function makeSpendCapPack(): RulePack {
             reason: `Session spend ($${spent.toFixed(2)}) has reached the configured budget ($${sessionBudgetUsd.toFixed(2)}).`,
             recovery:
               "The session budget is spent. Tell the user and stop calling tools; raise the budget in Settings or start a new session. Do not retry — this will deny again.",
+            userHint: USER_HINTS.policy,
+          };
+        }
+      }
+
+      // Per-model daily cap. Reached only on API-key billing (the oauth
+      // short-circuit above already returned for subscription), against the
+      // model actually in use this turn.
+      const model = getResolvedModel();
+      const modelCap = model ? (modelBudgets[model] ?? 0) : 0;
+      if (model && modelCap > 0) {
+        const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+        const spent = getBillableCostForModelSince(model, startOfDay.getTime());
+        if (spent >= modelCap) {
+          return {
+            allowed: false,
+            ruleId: "spend-cap.model",
+            reason: `Today's ${model} spend ($${spent.toFixed(2)}) has reached its daily cap ($${modelCap.toFixed(2)}).`,
+            recovery:
+              `The daily limit for ${model} is spent. Tell the user; switch to a different model, or raise this model's limit in Settings → Usage. Do not retry on ${model} — this will deny again.`,
             userHint: USER_HINTS.policy,
           };
         }

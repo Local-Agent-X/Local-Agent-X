@@ -87,7 +87,7 @@ export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, re
   // Usage/cost report API
   if (method === "GET" && url.pathname === "/api/usage") {
     try {
-      const { getUsageSummary, getBillableCostSince, getResolvedAuthSource } = await import("../../cost-tracker.js");
+      const { getUsageSummary, getBillableCostSince, getModelBreakdown, getResolvedAuthSource } = await import("../../cost-tracker.js");
       const { getRuntimeConfig } = await import("../../config.js");
       const period = url.searchParams.get("period") || "today";
       let since: number | undefined;
@@ -106,12 +106,17 @@ export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, re
         shadowUsd: billable.shadowUsd,   // subscription/local — estimated, not real money
         inputTokens: summary.totalInputTokens,
         outputTokens: summary.totalOutputTokens,
-        byModel: summary.byModel,
-        // Subscription = flat-rate (dollars are an estimate). api-key = real per-call.
-        authMode: authSource === "oauth" ? "subscription" : authSource ? "api-key" : "unknown",
+        // Per model: tokens, cost, provider, and whether it's real-money (API key).
+        // Local models report token counts too (cost $0 — free).
+        byModel: getModelBreakdown(since),
+        // Subscription = flat-rate (estimate). local = free. api-key = real per-call.
+        authMode: authSource === "oauth" ? "subscription"
+          : authSource === "sentinel" ? "local"
+          : authSource ? "api-key" : "unknown",
         budgets: {
           dailyBudgetUsd: cfg.dailyBudgetUsd ?? 0,
           sessionBudgetUsd: cfg.sessionBudgetUsd ?? 0,
+          modelDailyBudgetsUsd: cfg.modelDailyBudgetsUsd ?? {},
         },
       });
     } catch (e) { json(500, { error: (e as Error).message }); }

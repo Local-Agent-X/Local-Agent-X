@@ -8,6 +8,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import type { CredentialSource } from "./auth/auth-provider.js";
+import { createLogger } from "./logger.js";
+
+const logger = createLogger("cost-tracker");
 
 // ── Billing mode ──
 // A flat-rate subscription (oauth: Claude CLI / SuperGrok / ChatGPT) costs $0
@@ -52,9 +55,11 @@ const PRICING: Record<string, ModelPricing> = {
   "claude-haiku-4-5": { input: 1, output: 5 },
   "claude-haiku-4-5-20251001": { input: 1, output: 5 },
   "claude-haiku-3-5-20241022": { input: 0.80, output: 4 },
-  // OpenAI
+  // OpenAI / Codex (GPT-5.x — developers.openai.com/api/docs/pricing)
   "gpt-5.5": { input: 5, output: 30 },
   "gpt-5.5-pro": { input: 30, output: 180 },
+  "gpt-5.4": { input: 2.50, output: 15 },
+  "gpt-5.4-mini": { input: 0.75, output: 4.50 },
   "gpt-4o": { input: 2.50, output: 10 },
   "gpt-4o-mini": { input: 0.15, output: 0.60 },
   "gpt-4.1": { input: 2, output: 8 },
@@ -63,20 +68,30 @@ const PRICING: Record<string, ModelPricing> = {
   "o3": { input: 2, output: 8 },
   "o3-pro": { input: 20, output: 80 },
   "o4-mini": { input: 1.10, output: 4.40 },
-  // xAI
+  // xAI (grok-4.3 + 4.20 family all $1.25/$2.50, cached $0.20 — x.ai/api)
+  "grok-4.3": { input: 1.25, output: 2.50 },
+  "grok-4.20-0309-reasoning": { input: 1.25, output: 2.50 },
+  "grok-4.20-0309-non-reasoning": { input: 1.25, output: 2.50 },
+  "grok-4.20-multi-agent-0309": { input: 1.25, output: 2.50 },
+  "grok-code-fast-1": { input: 0.20, output: 1.50 },
+  "grok-build-0.1": { input: 0.20, output: 1.50 }, // est — coding model, priced as grok-code-fast-1
   "grok-4": { input: 3, output: 15 },
   "grok-4-fast": { input: 0.20, output: 0.50 },
   "grok-4-heavy": { input: 5, output: 25 },
-  "grok-code-fast-1": { input: 0.20, output: 1.50 },
   "grok-3": { input: 3, output: 15 },
   "grok-3-mini": { input: 0.30, output: 0.50 },
   "grok-2": { input: 2, output: 10 },
-  // Gemini
+  // Gemini (≤200k context tier — ai.google.dev/gemini-api/docs/pricing)
+  "gemini-3.1-pro-preview": { input: 2, output: 12 }, // est — priced as gemini-3-pro
+  "gemini-3-pro-preview": { input: 2, output: 12 },
   "gemini-2.5-pro": { input: 1.25, output: 10 },
   "gemini-2.5-pro-preview": { input: 1.25, output: 10 },
   "gemini-2.5-flash": { input: 0.15, output: 0.60 },
   "gemini-2.5-flash-preview": { input: 0.15, output: 0.60 },
   "gemini-2.0-flash": { input: 0.10, output: 0.40 },
+  // Cerebras (OSS inference — est, not gate-required)
+  "gpt-oss-120b": { input: 0.35, output: 0.75 },
+  "zai-glm-4.7": { input: 0.40, output: 1.60 },
   // Local models (free)
   "llama": { input: 0, output: 0 },
   "mistral": { input: 0, output: 0 },
@@ -86,14 +101,34 @@ const PRICING: Record<string, ModelPricing> = {
   "gemma": { input: 0, output: 0 },
 };
 
-export function getPricing(model: string): ModelPricing {
-  if (PRICING[model]) return PRICING[model];
-  // Fuzzy match: check if model starts with a known key
+/** When the rates above were last verified against provider pricing pages.
+ *  check:pricing-coverage warns once this is older than the staleness window —
+ *  a nudge to re-check, since a hardcoded table can't know a provider repriced. */
+export const PRICES_VERIFIED_AT = "2026-06-28";
+
+type PricingSource = "exact" | "prefix" | "fallback";
+
+/** Resolve a model's rate AND how confident we are in it. `exact` = a table
+ *  entry; `prefix` = a startsWith alias (e.g. dated/[1m] suffixes of a real
+ *  entry); `fallback` = no match, so the mid-road default — that's a guess, and
+ *  callers flag it (loud fallback) so a stale price can't masquerade as fact. */
+function resolvePricing(model: string): { pricing: ModelPricing; source: PricingSource } {
+  if (PRICING[model]) return { pricing: PRICING[model], source: "exact" };
   for (const [key, pricing] of Object.entries(PRICING)) {
-    if (model.startsWith(key)) return pricing;
+    if (model.startsWith(key)) return { pricing, source: "prefix" };
   }
-  // Default: middle-of-road pricing for unknown models
-  return { input: 3, output: 15 };
+  return { pricing: { input: 3, output: 15 }, source: "fallback" };
+}
+
+export function getPricing(model: string): ModelPricing {
+  return resolvePricing(model).pricing;
+}
+
+/** True only for an exact table entry — what the build-time coverage gate
+ *  requires of every selectable model, so the grok-4.3 class (a real model
+ *  silently prefix-matched to the wrong tier) can't ship. */
+export function hasExactPricing(model: string): boolean {
+  return Object.prototype.hasOwnProperty.call(PRICING, model);
 }
 
 // ── Usage Record ──
@@ -110,6 +145,10 @@ export interface UsageRecord {
   /** How the credential was sourced. `oauth`/`sentinel` = $0 real cost; the
    *  USD spend cap bills only records where `isBillableSource` is true. */
   authSource?: CredentialSource;
+  /** Set when the model had no price entry and fell back to the default rate,
+   *  so `costUsd` is a guess — surfaced as "≈ est." rather than presented as
+   *  fact. Absent on a real (exact/prefix) price. */
+  pricingEstimated?: boolean;
 }
 
 export interface UsageSummary {
@@ -150,7 +189,7 @@ export function trackUsage(
   agentId?: string,
   authSource?: CredentialSource,
 ): UsageRecord {
-  const pricing = getPricing(model);
+  const { pricing, source } = resolvePricing(model);
   const costUsd = (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
 
   const record: UsageRecord = {
@@ -159,7 +198,11 @@ export function trackUsage(
     timestamp: Date.now(),
     agentId,
     authSource,
+    ...(source === "fallback" ? { pricingEstimated: true } : {}),
   };
+  if (source === "fallback") {
+    logger.warn(`[cost] no price for model "${model}" — using default $${pricing.input}/$${pricing.output} per 1M (estimate). Add it to PRICING.`);
+  }
 
   const records = loadRecords();
   records.push(record);

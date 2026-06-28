@@ -113,7 +113,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/contradiction-detector.ts` | M |
 | `src/contradiction-patterns.ts` | S |
 | `src/correction-learning.ts` | M |
-| `src/cost-tracker.ts` | S |
+| `src/cost-tracker.ts` | M |
 | `src/crash-analytics.ts` | S |
 | `src/data-lineage-fingerprint.ts` | S |
 | `src/data-lineage-paths.ts` | M |

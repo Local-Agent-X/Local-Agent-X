@@ -16,6 +16,7 @@ import type { AdapterReport } from "../../adapter-contract.js";
 import { hasInjects } from "../../../agent-loop/inject-queue.js";
 import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
 import { createLogger } from "../../../logger.js";
+import { withTransportRetry } from "../transport-retry.js";
 import { parseArgs, redactSecrets } from "./helpers.js";
 import type {
   AnthropicTransport,
@@ -48,7 +49,11 @@ export async function streamConsume(
     interruptedByInject: false,
   };
   try {
-    for await (const ev of transport.stream(req)) {
+    for await (const ev of withTransportRetry(() => transport.stream(req), {
+      label: "anthropic",
+      signal: req.signal,
+      isAborted: deps.isAborted,
+    })) {
       if (deps.isAborted()) break;
       // Mid-stream user interrupt. Anthropic's streaming model does
       // in-stream tool execution: one runTurn can include many model

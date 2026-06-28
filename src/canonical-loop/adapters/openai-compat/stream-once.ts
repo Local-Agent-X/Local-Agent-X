@@ -18,6 +18,7 @@ import type { ProviderRequest } from "../../../providers/adapter/types.js";
 import { hasInjects } from "../../../agent-loop/inject-queue.js";
 import { createLogger } from "../../../logger.js";
 import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
+import { withTransportRetry } from "../transport-retry.js";
 import { parseArgs } from "./helpers.js";
 import type { StreamOnceResult } from "./types.js";
 
@@ -48,7 +49,11 @@ export async function streamOnce(
     // shares — OpenAI, xAI, Gemini compat, and local + cloud Ollama. They
     // differ only by baseURL/apiKey, which ride on `req`.
     const { openaiHttpAdapter } = await import("../../../providers/adapters/openai-http.js");
-    for await (const ev of openaiHttpAdapter.stream(req)) {
+    for await (const ev of withTransportRetry(() => openaiHttpAdapter.stream(req), {
+      label: "openai-compat",
+      signal: req.signal,
+      isAborted: deps.isAborted,
+    })) {
       if (deps.isAborted()) break;
       // Mid-stream user interrupt — same shape as anthropic.ts and
       // codex.ts. Abort the stream when the user types so the next

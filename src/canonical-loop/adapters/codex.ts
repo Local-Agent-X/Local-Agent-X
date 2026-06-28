@@ -17,6 +17,7 @@ import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
 import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
 import { classifyModelStop } from "./model-stop.js";
+import { withTransportRetry } from "./transport-retry.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.codex");
@@ -119,7 +120,10 @@ export class CodexAdapter implements Adapter {
 
     const consume = async (): Promise<void> => {
       try {
-        for await (const ev of transport.stream(req as Parameters<typeof transport.stream>[0])) {
+        for await (const ev of withTransportRetry(
+          () => transport.stream(req as Parameters<typeof transport.stream>[0]),
+          { label: "codex", signal: req.signal, isAborted: () => this.aborted },
+        )) {
           if (this.aborted) break;
           // Mid-stream user interrupt — same shape as anthropic.ts. When
           // the user types during a long in-stream tool-loop, abort the

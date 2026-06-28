@@ -17,6 +17,7 @@ import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
 import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
 import { classifyModelStop } from "./model-stop.js";
+import { withTransportRetry } from "./transport-retry.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.gemini-native");
@@ -85,7 +86,11 @@ export class GeminiNativeAdapter implements Adapter {
 
     const consume = async (): Promise<void> => {
       try {
-        for await (const ev of transport.stream(req)) {
+        for await (const ev of withTransportRetry(() => transport.stream(req), {
+          label: "gemini",
+          signal: req.signal,
+          isAborted: () => this.aborted,
+        })) {
           if (this.aborted) break;
           if (this.opts.sessionId && hasInjects(this.opts.sessionId)) {
             interruptedByInject = true;

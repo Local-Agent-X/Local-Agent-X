@@ -32,6 +32,7 @@
     "eval:install-hook": "node scripts/install-eval-hook.mjs",
     "eval:report": "node eval/op-outcomes/report.mjs",
     "eval:compaction": "node eval/compaction-fidelity/run.mjs",
+    "memory:check": "node scripts/check-memory-freshness.mjs",
     "hooks:push-guard": "node scripts/install-push-guard.mjs",
     "setup-ai": "node scripts/setup-ai.js"
   },

@@ -1,0 +1,69 @@
+{
+  "_comment": "Compaction-fidelity fixtures. Each case carries load-bearing facts as DISTINCTIVE, unparaphrasable tokens (codenames, amounts, IDs, versions) stated in `turns`. The runner lays these turns in the OLD head (which gets summarized away), pads with filler, then sends the transcript to /api/eval/compact with force=true. Score = how many `facts` survive verbatim in the compacted output. Categories mirror the COMPACTION_SYSTEM_PROMPT extraction targets (constraints / user-facts / decisions / outstanding-asks).",
+  "cases": [
+    {
+      "id": "constraints-deploy-target",
+      "category": "constraints",
+      "turns": [
+        { "user": "Hard rule for this whole project: only ever deploy to the STAGING-7f3a environment. Never deploy to production under any circumstance.", "assistant": "Understood. I'll restrict every deploy to STAGING-7f3a and never touch production." }
+      ],
+      "facts": ["STAGING-7f3a"]
+    },
+    {
+      "id": "constraints-budget-ceiling",
+      "category": "constraints",
+      "turns": [
+        { "user": "Keep total monthly cloud spend under $4,217. If a change would push us over that, stop and ask me first.", "assistant": "Got it — I'll treat $4,217 as the hard monthly ceiling and check with you before exceeding it." }
+      ],
+      "facts": ["4,217"]
+    },
+    {
+      "id": "user-facts-codename-tz",
+      "category": "user-facts",
+      "turns": [
+        { "user": "For context about me: my internal codename on the team is Falcon-92 and I work in timezone UTC+5:45, so schedule things accordingly.", "assistant": "Noted — you're Falcon-92, working in UTC+5:45. I'll factor that into any scheduling." }
+      ],
+      "facts": ["Falcon-92", "UTC+5:45"]
+    },
+    {
+      "id": "user-facts-medical",
+      "category": "user-facts",
+      "turns": [
+        { "user": "One important personal detail to remember: I'm allergic to penicillin, so never suggest it if we ever discuss the first-aid app's content.", "assistant": "I'll remember you're allergic to penicillin and avoid recommending it anywhere." }
+      ],
+      "facts": ["penicillin"]
+    },
+    {
+      "id": "decisions-db-choice",
+      "category": "decisions",
+      "turns": [
+        { "user": "Decision locked in from our review: we're going with PostgreSQL 16.2 for the datastore, not Mongo. Build everything around that.", "assistant": "Locked in — PostgreSQL 16.2 is the datastore, Mongo is out. I'll design around Postgres 16.2." }
+      ],
+      "facts": ["PostgreSQL 16.2"]
+    },
+    {
+      "id": "decisions-api-version",
+      "category": "decisions",
+      "turns": [
+        { "user": "We agreed to pin the partner API to version v3.8.1 exactly — do not auto-upgrade past it, their v4 breaks our auth.", "assistant": "Pinned: partner API stays at v3.8.1, no upgrades past it." }
+      ],
+      "facts": ["v3.8.1"]
+    },
+    {
+      "id": "outstanding-asks-review",
+      "category": "outstanding-asks",
+      "turns": [
+        { "user": "Don't let me forget: commit a1b2c3d still needs a security review before we can ship. It's blocking the release.", "assistant": "I'll keep that open — commit a1b2c3d needs a security review before release; it's a blocker." }
+      ],
+      "facts": ["a1b2c3d"]
+    },
+    {
+      "id": "outstanding-asks-invoice",
+      "category": "outstanding-asks",
+      "turns": [
+        { "user": "Still outstanding on the finance side: we're waiting on invoice #INV-90852 to be paid before the vendor unblocks us.", "assistant": "Tracked — invoice #INV-90852 is unpaid and blocking the vendor; I'll surface it." }
+      ],
+      "facts": ["INV-90852"]
+    }
+  ]
+}

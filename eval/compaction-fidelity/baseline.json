@@ -1,0 +1,15 @@
+{
+  "description": "Warn-only retention floors for the compaction-fidelity eval. NON-BLOCKING: compaction summarization is non-deterministic and LLM-driven, so run.mjs prints a ⚠️ line when a category's verbatim fact-retention falls below its floor but never exits non-zero. 'Retention' is a CONSERVATIVE fidelity floor — a fact paraphrased rather than kept verbatim counts as a miss, so the true fidelity is at least this. Raise floors when the bar genuinely moves; seed `observed` from the first local run.",
+  "retentionFloorByCategory": {
+    "constraints": 0.8,
+    "user-facts": 0.8,
+    "decisions": 0.8,
+    "outstanding-asks": 0.8
+  },
+  "retentionFloorOverall": 0.8,
+  "lastBaseline": {
+    "date": "2026-06-27",
+    "source": "pending first local run",
+    "observed": {}
+  }
+}

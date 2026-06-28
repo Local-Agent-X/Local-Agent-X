@@ -115,8 +115,18 @@ describe("buildTurnInput — situational-awareness wiring", () => {
     expect(text.indexOf("[SITUATIONAL CONTEXT")).toBeLessThan(text.indexOf("ship it"));
   });
 
-  it("does NOT inject on non-interactive lanes", async () => {
-    const input = await buildTurnInput(makeOp("background"), 1, null);
+  it("injects on the long autonomous lanes (agent/background) — they drift too", async () => {
+    for (const lane of ["agent", "background"] as const) {
+      const input = await buildTurnInput(makeOp(lane), 1, null);
+      const last = input.messages[input.messages.length - 1];
+      const text = (last.content as { text: string }).text;
+      expect(text, lane).toContain("[SITUATIONAL CONTEXT");
+      expect(text, lane).toContain("ship it");
+    }
+  });
+
+  it("does NOT inject on the build lane (soak-sensitive, has its own gates)", async () => {
+    const input = await buildTurnInput(makeOp("build"), 1, null);
     const last = input.messages[input.messages.length - 1];
     const text = (last.content as { text: string }).text;
     expect(text).not.toContain("[SITUATIONAL CONTEXT");

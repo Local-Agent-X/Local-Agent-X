@@ -31,6 +31,7 @@ import { readOpTurns, readOpMessages } from "../store.js";
 import type { OpTurnRow } from "../types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { recentActions, type LedgerAction } from "../../ops/action-ledger.js";
+import { getOpenTasksForSession } from "../../tools/task-tools.js";
 import { resolveOpModel } from "../op-model.js";
 import { classifyModel, type ModelTier } from "../../model-tiers.js";
 import { createLogger } from "../../logger.js";
@@ -92,8 +93,13 @@ export function buildSituationalAwareness(op: Op, turnIdx: number): string | nul
   const pack = restating ? (op.contextPack as Op["contextPack"] | undefined) : undefined;
   const successCriteria = pack?.task?.successCriteria ?? [];
   const constraints = pack?.task?.constraints ?? [];
+  // Durable plan: the open task list lives in tasks.json, so re-injecting it
+  // every turn keeps the agent's place even after compaction summarizes the
+  // turns where the plan was written. Shown on every turn, not just the restate
+  // ones — losing your place is most likely deep in a long task.
+  const openTasks = sessionId ? getOpenTasksForSession(sessionId) : [];
   const digest = composeDigest({
-    turnIdx, totalTokens, recent, firstUserText, successCriteria, constraints, restateAfter,
+    turnIdx, totalTokens, recent, firstUserText, successCriteria, constraints, restateAfter, openTasks,
   });
   // Debug seam: the digest is ephemeral (injected into the prompt, never
   // persisted), so this log is the only way to observe what the model actually
@@ -113,10 +119,14 @@ export function composeDigest(input: {
   /** Turn at/after which goal + criteria re-grounding renders. Defaults to the
    *  strong-tier cadence so existing (tier-unaware) callers are unchanged. */
   restateAfter?: number;
+  /** Open steps from the durable task list — re-anchored every turn so the plan
+   *  survives compaction. */
+  openTasks?: { id: string; description: string }[];
 }): string | null {
   const { turnIdx, totalTokens, recent, firstUserText } = input;
   const successCriteria = input.successCriteria ?? [];
   const constraints = input.constraints ?? [];
+  const openTasks = input.openTasks ?? [];
   const restateAfter = input.restateAfter ?? GOAL_RESTATE_AFTER_TURN_DEFAULT;
   const lines: string[] = [];
 
@@ -126,6 +136,9 @@ export function composeDigest(input: {
 
   const recentLine = recentActionsLine(recent);
   if (recentLine) lines.push(recentLine);
+
+  const planLine = openStepsLine(openTasks);
+  if (planLine) lines.push(planLine);
 
   if (turnIdx >= restateAfter) {
     const goal = goalLine(firstUserText);
@@ -138,6 +151,22 @@ export function composeDigest(input: {
 
   if (lines.length === 0) return null;
   return [OPEN, ...lines, CLOSE].join("\n");
+}
+
+// Max open steps to surface — enough to anchor a real plan, capped so a runaway
+// task list can't bloat every prompt.
+const OPEN_STEPS_CAP = 12;
+const STEP_MAX_CHARS = 100;
+
+function openStepsLine(openTasks: { id: string; description: string }[]): string | null {
+  if (openTasks.length === 0) return null;
+  const shown = openTasks.slice(0, OPEN_STEPS_CAP).map((t, i) => {
+    const d = t.description.replace(/\s+/g, " ").trim();
+    const clipped = d.length > STEP_MAX_CHARS ? d.slice(0, STEP_MAX_CHARS) + "…" : d;
+    return `${i + 1}. ${clipped}`;
+  });
+  const more = openTasks.length > OPEN_STEPS_CAP ? ` (+${openTasks.length - OPEN_STEPS_CAP} more)` : "";
+  return `Open plan steps still to finish${more}:\n  ${shown.join("\n  ")}`;
 }
 
 function bulletLine(label: string, items: string[]): string | null {

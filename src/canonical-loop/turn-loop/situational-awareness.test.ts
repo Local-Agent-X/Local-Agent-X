@@ -38,6 +38,34 @@ describe("composeDigest", () => {
     expect(d).toContain("~5k tokens used so far");
   });
 
+  it("re-anchors the durable open plan every turn — even at turn 0, before any restate", () => {
+    const d = composeDigest({
+      turnIdx: 0, totalTokens: 0, recent: [], firstUserText: "build a todo app",
+      openTasks: [
+        { id: "t1", description: "scaffold the HTML" },
+        { id: "t2", description: "wire up add/remove" },
+      ],
+    });
+    expect(d).toContain("Open plan steps still to finish");
+    expect(d).toContain("1. scaffold the HTML");
+    expect(d).toContain("2. wire up add/remove");
+    // The plan shows independently of the goal-restate gate.
+    expect(d).not.toContain("Original request");
+  });
+
+  it("caps the plan and notes the overflow", () => {
+    const openTasks = Array.from({ length: 15 }, (_, i) => ({ id: `t${i}`, description: `step ${i}` }));
+    const d = composeDigest({ turnIdx: 1, totalTokens: 0, recent: [], firstUserText: "", openTasks })!;
+    expect(d).toContain("(+3 more)");
+    expect(d).toContain("12. step 11");
+    expect(d).not.toContain("13. step 12");
+  });
+
+  it("omits the plan line when there are no open tasks", () => {
+    const d = composeDigest({ turnIdx: 1, totalTokens: 0, recent: [], firstUserText: "", openTasks: [] });
+    expect(d).not.toContain("Open plan steps");
+  });
+
   it("omits the goal restatement until the request has scrolled away", () => {
     const early = composeDigest({ turnIdx: 2, totalTokens: 0, recent: [], firstUserText: "build the thing" });
     expect(early).not.toContain("Original request");

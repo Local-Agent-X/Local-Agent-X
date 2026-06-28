@@ -49,13 +49,14 @@ export async function buildTurnInput(
   };
   if (pendingRedirect) input.pendingRedirect = pendingRedirect;
 
-  // Ephemeral situational-awareness digest. Interactive lane only (chat +
-  // voice) — background/build workers have their own evidence-history gates
-  // and we don't want to perturb their soak behavior. Prepended to the turn's
-  // last user message so it rides into every adapter (all replay
-  // input.messages) without being persisted to op_messages. Recomputed each
-  // turn; never accumulates.
-  if (op.lane === "interactive") {
+  // Ephemeral situational-awareness digest — goal/constraint re-anchoring +
+  // the durable open-plan, recomputed each turn and prepended to the last user
+  // message (never persisted to op_messages, so it doesn't accumulate). Now on
+  // the long autonomous lanes too (agent/background), which drift from the goal
+  // over many turns exactly like interactive does — they were the lane most in
+  // need of re-anchoring, not least. The `build` (app-build) lane stays out: it
+  // has its own evidence/render gates and is the soak-sensitive one.
+  if (op.lane === "interactive" || op.lane === "agent" || op.lane === "background") {
     const digest = buildSituationalAwareness(op, turnIdx);
     if (digest) input.messages = prependDigestToLastUser(input.messages, digest);
   }

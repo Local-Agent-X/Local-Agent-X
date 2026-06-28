@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
-import type { LAXConfig, ServerEvent, ToolDefinition } from "../types.js";
+import type { LAXConfig, ServerEvent, ToolDefinition, Session } from "../types.js";
 import type { MemoryIndex, MemoryManager } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
 import type { IntegrationRegistry } from "../integrations/index.js";
@@ -32,11 +32,17 @@ export async function setupVoiceWs(deps: {
    *  registering the voice session's sink, voice_visual's emits get
    *  dropped on Anthropic (they work on Codex which calls natively). */
   activeOnEventBySession: Map<string, (event: ServerEvent) => void>;
+  /** Same session store text chat uses — voice persists/loads its transcript
+   *  here so a conversation survives reconnects and continues across modalities
+   *  (the client sends the chat thread's own id). */
+  getOrCreateSession: (id: string) => Session;
+  saveSession: (session: Session) => Promise<void>;
+  flushSession: (id: string) => Promise<void>;
 }): Promise<void> {
   const {
     server, config, dataDir, memoryIndex, memoryManager, integrations,
     secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac,
-    activeOnEventBySession,
+    activeOnEventBySession, getOrCreateSession, saveSession, flushSession,
   } = deps;
   try {
     const { setupVoiceWebSocket, setVoiceSessionFactory } = await import("../voice/audio-ws.js");
@@ -44,7 +50,7 @@ export async function setupVoiceWs(deps: {
     const { prepareAgentRequest } = await import("../agent-request/index.js");
     setupVoiceWebSocket(server, config.authToken, config.maxUploadBytes);
 
-    const voiceTurnRunner: import("../voice/voice-session/index.js").VoiceTurnRunner = async ({ text, history, signal, onDelta, onVisual, sessionId: voiceSessionId }) => {
+    const voiceTurnRunner: import("../voice/voice-session/index.js").VoiceTurnRunner = async ({ text, signal, onDelta, onVisual, sessionId: voiceSessionId }) => {
       // Per-connection voice session id. The previous hardcoded "voice" caused
       // every concurrent voice connection to share global session-scoped state
       // (active onEvent callback, browser session, sub-agent inheritance).
@@ -62,15 +68,19 @@ export async function setupVoiceWs(deps: {
       //   2. No turn-lock / queue (voice has its own session-level concurrency)
       //   3. No fallback chain (voice picks the configured provider; an error
       //      surfaces as agent_error to the client which will retry)
-      const sessionMessages = history.map(m => ({
-        role: (m.role === "user" || m.role === "assistant" || m.role === "system" ? m.role : "user") as "user" | "assistant" | "system",
-        content: typeof m.content === "string" ? m.content : "",
-      }));
+      // Durable, continuous memory: load the persisted thread from the same
+      // store text chat uses, rather than a per-connection in-memory history
+      // that resets on every reconnect. The client sends the chat thread's own
+      // id, so voice resumes after a drop AND continues what was typed.
+      // flushSession first to read committed bytes, not a stale cache (the
+      // store's documented read-after-write invariant).
+      await flushSession(sessionId);
+      const session = getOrCreateSession(sessionId);
 
       const prepared = await prepareAgentRequest({
         channel: "web",
         message: text,
-        sessionMessages,
+        sessionMessages: session.messages,
         sessionId,
         config, dataDir,
         memoryIndex, memoryManager, integrations, secretsStore,
@@ -217,13 +227,18 @@ export async function setupVoiceWs(deps: {
       const interruptedMarker = aborted ? " [interrupted by user]" : "";
       const finalAssistantText = (assistantText + interruptedMarker).trim();
 
-      const updatedHistory = [
-        ...history,
+      // Commit this turn to the durable thread (same store + shape the
+      // messaging bridges use). saveSession is queued and serialized per
+      // session; the next turn flushSession's before reading it back.
+      session.messages = [
+        ...session.messages,
         { role: "user" as const, content: text },
         { role: "assistant" as const, content: finalAssistantText || "[no reply]" },
       ];
+      session.updatedAt = Date.now();
+      void saveSession(session);
 
-      return { assistantText: finalAssistantText, updatedHistory };
+      return { assistantText: finalAssistantText, updatedHistory: session.messages };
     };
 
     setVoiceSessionFactory(createVoiceSessionFactory(voiceTurnRunner, (name) => secretsStore.get(name) || ""));

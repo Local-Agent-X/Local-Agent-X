@@ -79,7 +79,9 @@ async function startVoiceMode() {
     const sessionMode = dictateMode ? 'dictate' : 'chat';
     ws.send(JSON.stringify({
       type: 'hello',
-      sessionId: 'chat-' + sid + '-' + Date.now(),
+      // Chat thread's own id verbatim (not a per-connect throwaway) so voice
+      // shares the SAME persisted session as text — survives reconnects.
+      sessionId: sid,
       mode: sessionMode,
       clientStt: useClientStt,
     }));

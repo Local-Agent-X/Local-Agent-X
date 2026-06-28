@@ -250,7 +250,7 @@ export async function startServer(config: LAXConfig) {
     setMessageCountForSession((id) => sessionStore.load(id)?.messages?.length ?? 0);
   }
 
-  await phase("setupVoiceWs", () => setupVoiceWs({ server, config, dataDir, memoryIndex, memoryManager, integrations, secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac, activeOnEventBySession }));
+  await phase("setupVoiceWs", () => setupVoiceWs({ server, config, dataDir, memoryIndex, memoryManager, integrations, secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac, activeOnEventBySession, getOrCreateSession, saveSession, flushSession }));
 
   // The WS forward layer calls into the same chat-turn helper the HTTP
   // /api/chat route uses (no more localhost HTTP self-loop). It needs a

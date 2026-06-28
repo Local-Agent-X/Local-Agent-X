@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
+import { getApprovalManager } from "../approval-manager.js";
 import type { LAXConfig, ServerEvent, ToolDefinition, Session } from "../types.js";
 import type { MemoryIndex, MemoryManager } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
@@ -95,20 +96,15 @@ export async function setupVoiceWs(deps: {
         throw new Error(`No API key configured for ${prepared.provider}.`);
       }
 
-      // Voice-mode policy: persona + memory yes, tools mostly NO. The agent
-      // in text chat has dozens of tools (http_request, browser_*, settings,
-      // etc.) and eagerly uses them — but in voice that produced a turn that
-      // changed the user's voice setting mid-conversation, then went into a
-      // 40k-token tool-exploration loop before aborting. Voice is a
-      // conversation, not an action surface.
-      //
-      // Exception: when voice_visuals_enabled is on (default), we expose
-      // ONE tightly-scoped tool — voice_visual — that lets the agent morph
-      // the on-screen particle sphere into emojis/text/shapes/moods when
-      // something is emotionally significant. The tool is rate-limited
-      // server-side (1 call/turn + 2.5s cooldown) so it can't be abused.
-      // Read the live toggle from settings.json so a flip in the UI takes
-      // effect on the next voice turn — no restart required.
+      // Voice has the SAME tools as text chat (full parity). The old "tools
+      // mostly off" policy was a vestige of a weaker harness: it was meant to
+      // stop a runaway tool-loop and a mid-conversation setting change, but the
+      // op budget + wall-clock ceiling now bound runaway, and the tool-policy /
+      // approval / rbac gates (all wired into this canonical run) enforce safety
+      // identically in voice and text — so a request shouldn't behave
+      // differently just because it was spoken. With no real tools the agent
+      // FABRICATED actions it couldn't perform ("opened it"); parity fixes that.
+      // The visuals toggle only governs the one cosmetic tool (voice_visual).
       let visualsEnabled = config.voice_visuals_enabled !== false;
       try {
         const { readFileSync, existsSync } = await import("node:fs");
@@ -120,32 +116,27 @@ export async function setupVoiceWs(deps: {
           }
         }
       } catch { /* keep config-default */ }
-      let voiceTools: ToolDefinition[] = [];
-      if (visualsEnabled) {
-        const tool = allAgentTools.find(t => t.name === "voice_visual");
-        if (tool) voiceTools = [tool];
-      }
+      const voiceTools = visualsEnabled
+        ? allAgentTools
+        : allAgentTools.filter(t => t.name !== "voice_visual");
       const visualPromptTail = visualsEnabled
-        ? "\nYou have one tool: voice_visual(kind, value). Use it RARELY — " +
-          "only when something is emotionally significant. Most replies have " +
-          "no tool call. The system enforces max 1 call per reply with a 2.5s " +
-          "cooldown, so don't try to chain them. Never narrate the call (\"let " +
-          "me show you\"); just call it. Examples:\n" +
-          "  voice_visual({kind:\"mood\", value:\"excited\"}) — user shares good news\n" +
-          "  voice_visual({kind:\"emoji\", value:\"🙂\"}) — friendly beat\n" +
-          "  voice_visual({kind:\"shape\", value:\"heart\"}) — sweet moment\n" +
-          "  voice_visual({kind:\"text\", value:\"yes!\"}) — emphatic agreement\n" +
-          "  voice_visual({kind:\"mood\", value:\"thinking\"}) — working through something\n" +
-          "Default to NO call. Quality > frequency."
-        : "\nYou have no tools right now — don't try to call any. If the user " +
-          "needs something tool-driven (open an app, change a setting, search " +
-          "the web), tell them to switch to the text chat for that.";
+        ? "\nYou also have voice_visual(kind, value) to morph the on-screen " +
+          "sphere when something is emotionally significant. Use it RARELY — " +
+          "most replies have no visual, max 1 per reply, 2.5s cooldown. Never " +
+          "narrate it; just call it. e.g. voice_visual({kind:\"mood\", " +
+          "value:\"excited\"}) on good news, voice_visual({kind:\"emoji\", " +
+          "value:\"🙂\"}) for a friendly beat. Default to NO visual call."
+        : "";
       const voiceSystemPrompt = prepared.systemPrompt +
         "\n\n## Voice mode\n" +
-        "You are speaking to the user. Your reply will be read aloud by TTS. " +
-        "Reply in 1-3 short conversational sentences. No markdown, no lists, " +
-        "no code, no headings, no emoji in the spoken text. Use natural " +
-        "spoken English." + visualPromptTail;
+        "You are speaking to the user; your reply is read aloud by TTS. Reply in " +
+        "1-3 short conversational sentences — no markdown, lists, code, headings, " +
+        "or emoji in the spoken text. Use natural spoken English.\n" +
+        "You have your full set of tools. When the user asks you to DO something " +
+        "(open a page, search, change a setting, run something), actually CALL " +
+        "the tool and do it — never describe the action as if done. If a tool " +
+        "fails, or it needs an approval voice can't show yet, say so plainly and " +
+        "briefly; NEVER claim you did something you didn't." + visualPromptTail;
 
       let assistantText = "";
       const onEvent = (event: ServerEvent) => {
@@ -155,6 +146,15 @@ export async function setupVoiceWs(deps: {
         } else if (event.type === "visual" && onVisual) {
           // Forward the visual directive through to the voice WebSocket.
           onVisual(event.kind, event.value, event.durationMs);
+        } else if (event.type === "approval_requested") {
+          // Voice has no approval UI yet, and the approval timeout is 5 min —
+          // letting it ride would hang the turn in silence. Decline immediately
+          // so an approval-gated tool blocks cleanly; the prompt tells the agent
+          // to say the action needs approval. This is the exact seam the verbal
+          // "yes/no" approval renderer will replace (speak the prompt + capture
+          // the spoken answer) instead of auto-declining.
+          logger.info(`[voice-ws] auto-declining approval for ${event.toolName} (no voice approval UI yet)`);
+          getApprovalManager().resolveApproval(event.approvalId, false);
         }
       };
 
@@ -194,10 +194,10 @@ export async function setupVoiceWs(deps: {
           tools: voiceTools,
           security, toolPolicy, rbac,
           sessionId,
-          // Headroom for a result-bearing tool turn (call → interpret).
-          // voice_visual is fire-and-forget (silent-tool-check), so a
-          // visual-only reply terminates in one turn and never re-speaks.
-          maxIterations: visualsEnabled ? 2 : 1,
+          // Same iteration budget as text chat — voice now does real multi-step
+          // tool work (call → interpret → act), not a 1-shot reply. Runaway is
+          // bounded by the op wall-clock ceiling, not this cap.
+          maxIterations: prepared.maxIterations,
           temperature: prepared.temperature,
           signal,
           onEvent,

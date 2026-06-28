@@ -12,6 +12,7 @@
 import type { VoiceSession, VoiceSessionContext } from "./audio-ws.js";
 import { createGPUBridge, type GPUBridge } from "./gpu-bridge.js";
 import { createVoiceTurnMachine, SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./voice-session/turn-runner.js";
+import { registerVoiceSpeaker, unregisterVoiceSpeaker } from "./proactive-registry.js";
 import type { VoiceTurnRunner } from "./voice-session/index.js";
 
 import { createLogger } from "../logger.js";
@@ -111,6 +112,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     isClosed: () => closed,
     logger,
   });
+  registerVoiceSpeaker(ctx.sessionId, machine.speakProactive);
 
   bridge = createGPUBridge({
     onReady: (gpu) => {
@@ -194,6 +196,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     close() {
       if (closed) return;
       closed = true;
+      unregisterVoiceSpeaker(ctx.sessionId);
       machine.close();
       try { bridge?.close(); } catch {}
       pendingFrames.length = 0;

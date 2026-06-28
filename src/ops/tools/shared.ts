@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { buildContextPack } from "../context-pack-builder.js";
 import { getRetryPolicy } from "../heartbeat.js";
 import { newOpId } from "../op-store.js";
+import { readRecentSessionMessages } from "../session-bridge.js";
 import type { Op, OpLane, OpVisibility } from "../types.js";
 
 export interface SubmitArgs {
@@ -53,8 +54,17 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
   const opType = String(args.type || "freeform");
   const lane = (typeof args.lane === "string" && ["interactive", "build", "background"].includes(args.lane) ? args.lane : "build") as OpLane;
 
+  // Context relay: seed the worker with the originating session's recent turns
+  // so a terse task ("set up an agent") is read against what the user actually
+  // discussed, not in a vacuum. The agent's curated fields (success_criteria,
+  // constraints, context_files) still take precedence; this is the safety net
+  // for when the agent under-specifies the handoff.
+  const sessionId = typeof rawArgs._sessionId === "string" ? rawArgs._sessionId : "";
+  const parentSessionMessages = sessionId ? readRecentSessionMessages(sessionId) : [];
+
   const contextPack = await buildContextPack({
     description: task,
+    parentSessionMessages,
     successCriteria: Array.isArray(args.success_criteria) ? args.success_criteria.map(String) : [],
     constraints: Array.isArray(args.constraints) ? args.constraints.map(String) : [],
     notWhatToRedo: Array.isArray(args.not_what_to_redo) ? args.not_what_to_redo.map(String) : [],

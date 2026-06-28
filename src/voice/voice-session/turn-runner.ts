@@ -87,6 +87,10 @@ export interface VoiceTurnMachine {
   noteAudioShipped(ms: number): void;
   /** Engine's TTS queue drained (in-process onIdle / GPU last audio_done). */
   markTtsDrained(): void;
+  /** Speak a server-initiated line (op finished / needs input). Speaks now if
+   *  idle; otherwise queues and drains at the next turn boundary so it never
+   *  cuts off a live reply or the user. */
+  speakProactive(text: string): void;
   /** Tear down on session close. */
   close(): void;
 }
@@ -98,6 +102,12 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   let activeTurn: AbortController | null = null;
   let llmDone = false;
   let history: ChatCompletionMessageParam[] = [];
+
+  // Proactive utterances (a background op finished / needs input) queued for
+  // the SERVER to speak on its own initiative. They never preempt a live turn:
+  // if one is in flight they wait here and drain at the next turn boundary, so
+  // the agent finishes what it's saying and the user is never cut off.
+  const proactiveQueue: string[] = [];
 
   // Playback-completion estimator. The engine's drain signal fires when it
   // STOPS synthesizing, but the browser ring still holds 1-3s of buffered
@@ -147,8 +157,56 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
       if (activeTurn && !isClosed()) {
         finishTurn();
         ctx.sendEvent({ type: "playback_complete" });
+        // Turn boundary reached — surface any queued proactive line now.
+        tryDrainProactive();
       }
     }, delay);
+  }
+
+  // Speak a server-initiated line as a synthetic turn: same speaker, same
+  // drain/barge-in machinery as a real reply (so the user can talk over it and
+  // it can't corrupt a live turn's speaker buffer). Only entered when idle.
+  function runProactiveTurn(text: string): void {
+    ctx.sendEvent({ type: "agent_start" });
+    const turn = new AbortController();
+    activeTurn = turn;
+    llmDone = false;
+    turnStartTs = Date.now();
+    ttftMs = 0;
+    firstAudioMs = 0;
+    speaker.reset();
+    ctx.sendEvent({ type: "assistant_delta", text });
+    speaker.feed(text);
+    speaker.flushTail();
+    ctx.sendEvent({ type: "assistant_done", text });
+    if (!speaker.hasQueued()) {
+      ctx.sendEvent({ type: "tts_idle" });
+      ctx.sendEvent({ type: "playback_complete" });
+      finishTurn();
+      tryDrainProactive();
+      return;
+    }
+    llmDone = true;
+    if (speaker.pendingCount && speaker.pendingCount() === 0) markTtsDrained();
+  }
+
+  function tryDrainProactive(): void {
+    if (isClosed() || activeTurn || proactiveQueue.length === 0) return;
+    const text = (proactiveQueue.shift() || "").trim();
+    if (!text) { tryDrainProactive(); return; }
+    logger.info(`[turn] ${sid}: proactive speak (${text.length} chars)`);
+    runProactiveTurn(text);
+  }
+
+  /** Enqueue a line for the agent to speak proactively. Speaks now if idle,
+   *  otherwise drains at the next turn boundary. No-op in dictate mode (no
+   *  agent TTS there) or once closed. */
+  function speakProactive(text: string): void {
+    if (isClosed() || ctx.mode === "dictate") return;
+    const t = (text || "").trim();
+    if (!t) return;
+    proactiveQueue.push(t);
+    tryDrainProactive();
   }
 
   async function handleFinalTranscript(rawText: string, sttMs?: number): Promise<void> {
@@ -223,6 +281,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
         ctx.sendEvent({ type: "tts_idle" });
         ctx.sendEvent({ type: "playback_complete" });
         finishTurn();
+        tryDrainProactive();
         return;
       }
 
@@ -251,5 +310,5 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     activeTurn = null;
   }
 
-  return { handleFinalTranscript, interrupt, noteAudioShipped, markTtsDrained, close };
+  return { handleFinalTranscript, interrupt, noteAudioShipped, markTtsDrained, speakProactive, close };
 }

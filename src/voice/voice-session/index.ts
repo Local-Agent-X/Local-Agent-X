@@ -21,6 +21,7 @@ import { resolveVoiceSettings } from "./settings.js";
 import { createAudioBuffers } from "./audio-buffers.js";
 import { initializeVoiceStack } from "./model-init.js";
 import { createVoiceTurnMachine, SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./turn-runner.js";
+import { registerVoiceSpeaker, unregisterVoiceSpeaker } from "../proactive-registry.js";
 import type { VoiceTurnRunner, SecretLookup } from "./types.js";
 
 const logger = createLogger("voice.voice-session");
@@ -125,6 +126,11 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
       isClosed: () => closed,
       logger,
     });
+
+    // Make this session reachable for proactive narration (op finished /
+    // worker needs input). The machine queues a proactive line behind any live
+    // turn, so this is safe to call from anywhere; cleared on close below.
+    registerVoiceSpeaker(ctx.sessionId, machine.speakProactive);
 
     // Browser tier shortcut: when the client *can* do STT itself (real
     // browser with Web Speech API), we skip the entire server stack —
@@ -300,6 +306,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
       close() {
         if (closed) return;
         closed = true;
+        unregisterVoiceSpeaker(ctx.sessionId);
         machine.close();
         try { stt?.close(); } catch {}
         try { tts?.close(); } catch {}

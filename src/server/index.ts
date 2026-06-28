@@ -51,7 +51,8 @@ export async function startServer(config: LAXConfig) {
   // in-process and don't need a worker pool; the session bridge owns the
   // session-to-op binding used by op_status / sidebar wiring.
   const { bootstrapProviderMatrix } = await import("../ops/provider-matrix.js");
-  const { initSessionBridge, setSessionPersister } = await import("../ops/session-bridge.js");
+  const { initSessionBridge, setSessionPersister, setSessionMessageReader, setVoiceProactiveSpeaker } = await import("../ops/session-bridge.js");
+  const { speakToActiveVoice } = await import("../voice/proactive-registry.js");
   bootstrapProviderMatrix();
   initSessionBridge();
   // Persist worker completion acks (session-bridge worker-completed path)
@@ -71,6 +72,20 @@ export async function startServer(config: LAXConfig) {
     } catch { /* persister must never break worker completion */ }
   };
   setSessionPersister(persistAssistant);
+
+  // Context relay: a delegated worker is seeded with the originating session's
+  // recent turns so it isn't blind to what the user actually meant. Without
+  // this, op_submit_async handed workers only the task string (e.g. "set up an
+  // agent") with empty recentTurns, and the worker had to guess or bail.
+  setSessionMessageReader((sessionId: string) => {
+    try {
+      return sessionStore.load(sessionId)?.messages ?? [];
+    } catch { return []; }
+  });
+
+  // Proactive voice narration: lets the op-completion path speak a line into an
+  // active voice session at its next turn boundary (never cutting off a reply).
+  setVoiceProactiveSpeaker(speakToActiveVoice);
 
   // Auto-resume any orchestrator runs that were in flight when LAX last
   // died. Fire-and-forget — never blocks boot. Skips if the feature flag

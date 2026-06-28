@@ -9,6 +9,7 @@
  */
 
 import type { ServerEvent } from "../types.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.session-bridge");
@@ -74,6 +75,55 @@ export function setSessionPersister(fn: (sessionId: string, content: string) => 
 
 export function getSessionPersister(): ((sessionId: string, content: string) => void) | null {
   return persister;
+}
+
+// Reads the originating session's message history so a delegated op can be
+// seeded with the recent conversation (context relay). Injected at boot from
+// the server's session store — the ops layer never imports it directly.
+let sessionMessageReader: ((sessionId: string) => ChatCompletionMessageParam[]) | null = null;
+
+export function setSessionMessageReader(fn: (sessionId: string) => ChatCompletionMessageParam[]): void {
+  sessionMessageReader = fn;
+}
+
+/**
+ * Recent messages from the session that submitted an op, for context relay.
+ * Returns [] when no reader is wired or the session is unknown — a worker
+ * starting blind is the failure this exists to prevent, but it must never
+ * throw and break op submission.
+ */
+export function readRecentSessionMessages(sessionId: string): ChatCompletionMessageParam[] {
+  if (!sessionMessageReader || !sessionId) return [];
+  try {
+    return sessionMessageReader(sessionId) || [];
+  } catch (e) {
+    logger.warn(`[session-bridge] session message read threw: ${(e as Error).message}`);
+    return [];
+  }
+}
+
+// Hands a line to the active voice session for a sessionId so the agent speaks
+// it proactively (op finished / worker needs input). Injected at boot from the
+// voice layer's proactive registry — the ops layer never imports voice.
+let voiceProactiveSpeaker: ((sessionId: string, text: string) => boolean) | null = null;
+
+export function setVoiceProactiveSpeaker(fn: (sessionId: string, text: string) => boolean): void {
+  voiceProactiveSpeaker = fn;
+}
+
+/**
+ * Speak a line into the active voice session for `sessionId`, if one is
+ * connected. Returns true when voice took it (so the caller can skip / dedupe
+ * the chat-only path), false when there's no live voice session.
+ */
+export function proactiveSpeakToSession(sessionId: string, text: string): boolean {
+  if (!voiceProactiveSpeaker || !sessionId || !text) return false;
+  try {
+    return voiceProactiveSpeaker(sessionId, text);
+  } catch (e) {
+    logger.warn(`[session-bridge] proactive speak threw: ${(e as Error).message}`);
+    return false;
+  }
 }
 
 export function trackOpForSession(opId: string, sessionId: string, task?: string): void {

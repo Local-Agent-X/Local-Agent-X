@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1064 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1065 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -55,12 +55,12 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/sandbox/` | 6 | 6 | L |  |
 | `src/ari-kernel/` | 5 | 12 | L |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
+| `src/context-manager/` | 5 | 8 | M |  |
 | `src/mcp-client/` | 5 | 6 | L |  |
 | `src/operations/` | 5 | 5 | L |  |
 | `src/routing/` | 5 | 7 | M |  |
 | `src/util/` | 5 | 1 | S |  |
-| `src/context-manager/` | 4 | 8 | M |  |
-| `src/routes/` | 4 | 77 | XL |  |
+| `src/routes/` | 4 | 78 | XL |  |
 | `src/server/` *(entrypoint)* | 4 | 25 | XL |  |
 | `src/tool-policy/` | 4 | 19 | L |  |
 | `src/broker-transport/` | 3 | 25 | L |  |

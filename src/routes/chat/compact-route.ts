@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import { CompactSchema, validateBody } from "../../route-schemas.js";
 import type { ServerContext } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
@@ -45,18 +46,24 @@ export async function handleCompactRoute(
   const oldMessages = session.messages.slice(0, cutIdx);
   const recentMessages = session.messages.slice(cutIdx);
 
-  const summaryLines: string[] = [];
-  for (const m of oldMessages) {
-    if (m.role === "user" && typeof m.content === "string") {
-      summaryLines.push(`[User] ${m.content.slice(0, 200).replace(/\n/g, " ")}`);
-    } else if (m.role === "assistant" && typeof m.content === "string") {
-      summaryLines.push(
-        `[Agent] ${m.content.split("\n").filter(l => l.trim()).slice(0, 2).join(" ").slice(0, 200)}`,
-      );
+  // Prefer the canonical LLM summary — the same path the automatic per-turn
+  // compaction uses — so the button produces a real digest, not a flat quote
+  // dump. Fall back to a transcript digest when the LLM call is disabled,
+  // times out, or fails, so the button never errors.
+  let summaryBody = await summarizeOldMessages(oldMessages);
+  if (!summaryBody) {
+    const lines: string[] = [];
+    for (const m of oldMessages) {
+      if (m.role === "user" && typeof m.content === "string") {
+        lines.push(`[User] ${m.content.slice(0, 200).replace(/\n/g, " ")}`);
+      } else if (m.role === "assistant" && typeof m.content === "string") {
+        lines.push(`[Agent] ${m.content.split("\n").filter(l => l.trim()).slice(0, 2).join(" ").slice(0, 200)}`);
+      }
     }
+    summaryBody = lines.join("\n");
   }
   const compactSummary =
-    `[COMPACTED CONTEXT — ${oldMessages.length} messages summarized]\n${summaryLines.join("\n")}\n[END COMPACTED CONTEXT — ${recentMessages.length} recent messages follow]`;
+    `[COMPACTED CONTEXT — ${oldMessages.length} messages summarized]\n${summaryBody}\n[END COMPACTED CONTEXT — ${recentMessages.length} recent messages follow]`;
 
   session.messages = [
     { role: "system", content: compactSummary },

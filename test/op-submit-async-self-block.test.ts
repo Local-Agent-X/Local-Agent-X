@@ -78,6 +78,25 @@ describe("op_submit_async — host-op self-block regression", () => {
     expect(result.content).toMatch(/submitted/);
   });
 
+  it("does NOT block when only the host voice_turn op is live (the voice self-block bug)", async () => {
+    // voice-ws submits a `voice_turn` host op per utterance. The guard only
+    // excluded chat_turn, so from voice op_submit_async saw its own parent as
+    // a live peer and self-blocked on EVERY call — no worker ever spawned and
+    // the model read the BLOCKED text aloud as "already running."
+    const sessionId = `chat-test-${Date.now().toString(36)}-voice`;
+    const hostOp = persist(mkOp(newOpId("op_voice_turn"), "voice_turn", "running"));
+    trackOpForSession(hostOp.id, sessionId, hostOp.task);
+
+    const result = await opSubmitAsyncTool.execute({
+      task: "open google for the user",
+      lane: "interactive",
+      _sessionId: sessionId,
+    });
+
+    expect(result.content).not.toMatch(/^BLOCKED/);
+    expect(result.content).toMatch(/submitted|queued/);
+  });
+
   it("STILL blocks when a real peer op (non chat_turn) is live for the session", async () => {
     const sessionId = `chat-test-${Date.now().toString(36)}-peer`;
     const hostOp = persist(mkOp(newOpId("op_chat_turn"), "chat_turn", "running"));

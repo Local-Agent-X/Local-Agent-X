@@ -5,7 +5,7 @@
 
 import type { ToolDefinition } from "../../types.js";
 import { opCancel } from "../../canonical-loop/index.js";
-import { readOp } from "../op-store.js";
+import { readOp, isInteractiveHostOpType } from "../op-store.js";
 import { listOpsForSession } from "../session-bridge.js";
 
 export const opKillTool: ToolDefinition = {
@@ -24,7 +24,7 @@ export const opKillTool: ToolDefinition = {
       const live = liveIds
         .map(id => readOp(id))
         .filter((o): o is NonNullable<typeof o> => !!o)
-        .filter(o => (o.status === "running" || o.status === "pending") && o.type !== "chat_turn");
+        .filter(o => (o.status === "running" || o.status === "pending") && !isInteractiveHostOpType(o.type));
       if (live.length === 0) return { content: "no live op to kill for this session.", isError: true };
       opId = live[live.length - 1].id;
     }

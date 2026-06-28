@@ -13,7 +13,7 @@ import {
   canonicalLoopEntry,
   registerAdapterForOp,
 } from "../../canonical-loop/index.js";
-import { readOp } from "../op-store.js";
+import { readOp, isInteractiveHostOpType } from "../op-store.js";
 import { trackOpForSession, listOpsForSession } from "../session-bridge.js";
 import {
   buildOpFromArgs,
@@ -42,17 +42,18 @@ export const opSubmitAsyncTool: ToolDefinition = {
       // duplicates. By the time the user noticed they had 4 parallel
       // research ops on the same topic. Block while live.
       //
-      // EXCLUDE chat_turn ops: the chat-turn wrapper is the HOST that's
-      // running this very tool call (chat-runner.ts:308 registers it
-      // before the model gets its first tool call). Including it makes the
-      // guard self-block — the host op blocks its own delegations and the
-      // returned BLOCKED message references the host's id. Models then
-      // copy-paste the id back, narrating a fake delegation. See repro at
-      // test/op-submit-async-self-block.test.ts.
+      // EXCLUDE the interactive HOST turn (chat_turn OR voice_turn): the host
+      // wrapper is the op running this very tool call (chat-runner.ts:308 /
+      // voice-ws registers it before the model gets its first tool call).
+      // Including it makes the guard self-block — the host op blocks its own
+      // delegations and the BLOCKED message references the host. Models then
+      // narrate a fake delegation ("already running"). voice_turn was the
+      // missing case: from voice this self-blocked on EVERY call, so no worker
+      // ever spawned. See test/op-submit-async-self-block.test.ts.
       const liveOps = listOpsForSession(sessionId)
         .map(id => readOp(id))
         .filter((o): o is NonNullable<typeof o> => !!o)
-        .filter(o => (o.status === "running" || o.status === "pending") && o.type !== "chat_turn");
+        .filter(o => (o.status === "running" || o.status === "pending") && !isInteractiveHostOpType(o.type));
       if (liveOps.length > 0) {
         const live = liveOps[0];
         return {

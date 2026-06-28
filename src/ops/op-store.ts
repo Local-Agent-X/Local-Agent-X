@@ -22,6 +22,19 @@ const logger = createLogger("workers.op-store");
 
 const OPS_BASE = join(getLaxDir(), "operations");
 
+/**
+ * Interactive HOST-turn op types: the op executing the current tool-calling
+ * turn (a chat turn or a voice turn). The per-session "is a peer op already
+ * running?" (op_submit_async) and "most recent live op" (op_kill) guards MUST
+ * exclude these — otherwise a tool called from inside the host turn counts its
+ * own parent as a blocking/target peer. chat_turn was excluded but voice_turn
+ * was missed, so op_submit_async self-blocked in voice: it never spawned a
+ * worker and the model read the BLOCKED text aloud as "already running."
+ */
+export function isInteractiveHostOpType(type: string): boolean {
+  return type === "chat_turn" || type === "voice_turn";
+}
+
 export function writeOp(op: Op): void {
   const target = join(opDir(op.id), "operation.json");
   const tmp = target + ".tmp";

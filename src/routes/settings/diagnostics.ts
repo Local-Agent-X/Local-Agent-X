@@ -87,14 +87,33 @@ export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, re
   // Usage/cost report API
   if (method === "GET" && url.pathname === "/api/usage") {
     try {
-      const { getUsageSummary, getTodayCost } = await import("../../cost-tracker.js");
+      const { getUsageSummary, getBillableCostSince, getResolvedAuthSource } = await import("../../cost-tracker.js");
+      const { getRuntimeConfig } = await import("../../config.js");
       const period = url.searchParams.get("period") || "today";
-      if (period === "today") {
-        json(200, getTodayCost());
-      } else {
-        const since = period === "week" ? Date.now() - 7 * 86400000 : period === "month" ? Date.now() - 30 * 86400000 : undefined;
-        json(200, getUsageSummary({ since }));
-      }
+      let since: number | undefined;
+      if (period === "today") { const d = new Date(); d.setHours(0, 0, 0, 0); since = d.getTime(); }
+      else if (period === "week") since = Date.now() - 7 * 86400000;
+      else if (period === "month") since = Date.now() - 30 * 86400000;
+
+      const summary = getUsageSummary({ since });
+      const billable = getBillableCostSince(since);
+      const authSource = getResolvedAuthSource();
+      const cfg = getRuntimeConfig();
+      json(200, {
+        period,
+        totalUsd: summary.totalCostUsd,
+        billableUsd: billable.costUsd,   // real per-call API spend
+        shadowUsd: billable.shadowUsd,   // subscription/local — estimated, not real money
+        inputTokens: summary.totalInputTokens,
+        outputTokens: summary.totalOutputTokens,
+        byModel: summary.byModel,
+        // Subscription = flat-rate (dollars are an estimate). api-key = real per-call.
+        authMode: authSource === "oauth" ? "subscription" : authSource ? "api-key" : "unknown",
+        budgets: {
+          dailyBudgetUsd: cfg.dailyBudgetUsd ?? 0,
+          sessionBudgetUsd: cfg.sessionBudgetUsd ?? 0,
+        },
+      });
     } catch (e) { json(500, { error: (e as Error).message }); }
     return true;
   }

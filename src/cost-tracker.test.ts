@@ -1,5 +1,5 @@
-import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { describe, it, expect, afterAll, beforeEach } from "vitest";
+import { mkdtempSync, rmSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,7 +14,14 @@ afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-const { getPricing, hasExactPricing, trackUsage } = await import("./cost-tracker.js");
+const { getPricing, hasExactPricing, trackUsage, getBillableCostSince } = await import("./cost-tracker.js");
+
+// Each test that reads the usage log starts from a clean slate so time-filtered
+// queries don't pick up records written by earlier tests in this file.
+beforeEach(() => {
+  const f = join(tmp, "usage-log.json");
+  if (existsSync(f)) unlinkSync(f);
+});
 
 describe("getPricing — real rates", () => {
   it("prices grok-4.3 at its real $1.25/$2.50, not the grok-4 fuzzy default", () => {
@@ -55,5 +62,17 @@ describe("trackUsage — loud fallback + correct cost", () => {
   it("flags a record as estimated when the model has no price entry", () => {
     const r = trackUsage("s1", "some-new-unpriced-model", "xai", 1000, 1000);
     expect(r.pricingEstimated).toBe(true);
+  });
+});
+
+describe("getBillableCostSince — dashboard split", () => {
+  it("separates real API-key spend from subscription shadow cost", () => {
+    const sessionId = "billable-split";
+    // grok-4.3 @ $1.25/$2.50 → 1M input = $1.25 each.
+    trackUsage(sessionId, "grok-4.3", "xai", 1_000_000, 0, undefined, "env");    // billable
+    trackUsage(sessionId, "grok-4.3", "xai", 1_000_000, 0, undefined, "oauth");  // shadow
+    const split = getBillableCostSince(Date.now() - 60_000);
+    expect(split.costUsd).toBeCloseTo(1.25, 2);   // only the api-key record bills
+    expect(split.shadowUsd).toBeCloseTo(1.25, 2); // subscription record is shadow
   });
 });

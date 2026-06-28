@@ -266,7 +266,14 @@ export function getTodayCost(): { costUsd: number; inputTokens: number; outputTo
  *  `getTodayCost` keeps the full (incl. shadow) total for display. */
 export function getTodayBillableCost(): { costUsd: number; shadowUsd: number } {
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
-  return sumBillable(loadRecords().filter(r => r.timestamp >= startOfDay.getTime()));
+  return getBillableCostSince(startOfDay.getTime());
+}
+
+/** Period-aware billable/shadow split — `sinceMs` undefined = all-time. Backs
+ *  the usage dashboard's honest "real spend vs estimated" framing. */
+export function getBillableCostSince(sinceMs?: number): { costUsd: number; shadowUsd: number } {
+  const records = sinceMs ? loadRecords().filter(r => r.timestamp >= sinceMs) : loadRecords();
+  return sumBillable(records);
 }
 
 export function getSessionBillableCost(sessionId: string): { costUsd: number; shadowUsd: number } {

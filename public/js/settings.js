@@ -98,6 +98,7 @@ function switchTab(id) {
   if (event?.target) event.target.classList.add('active');
   if (id === 'image' && typeof refreshVoiceSetup === 'function') refreshVoiceSetup();
   if (id === 'image' && typeof loadUploadsStats === 'function') loadUploadsStats();
+  if (id === 'usage' && typeof loadUsage === 'function') loadUsage();
   if (window.MemoryBrain) { if (id === 'memory') window.MemoryBrain.ensure(); else window.MemoryBrain.pause(); }
 }
 

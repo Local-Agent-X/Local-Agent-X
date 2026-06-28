@@ -8,8 +8,14 @@
   },
   "retentionFloorOverall": 0.8,
   "lastBaseline": {
-    "date": "2026-06-27",
-    "source": "pending first local run",
-    "observed": {}
+    "date": "2026-06-28",
+    "source": "local grok-4.20-0309-non-reasoning, filler=24, 8 cases / 9 facts",
+    "observed": {
+      "constraints": 1.0,
+      "user-facts": 1.0,
+      "decisions": 1.0,
+      "outstanding-asks": 1.0,
+      "overall": 1.0
+    }
   }
 }

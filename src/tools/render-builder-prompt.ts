@@ -65,7 +65,9 @@ export function compiledRuleLines(appDir: string): string[] {
     "",
     "COMPILED-LANGUAGE MODE — this is a real compiled program (Rust/Go/C/C++/…), not a web page:",
     `- Actually compile and RUN it with its real toolchain. A compile can exceed the bash timeout — prefer the process_start tool for the build/run (e.g. process_start({command: "cargo run --release", cwd: "${appDir}"})) and poll process_status until it finishes; use bash only for fast commands.`,
-    "- index.html is a VIEWER for the REAL output the program produced — embed the generated image/file it wrote, or show its captured real stdout. It must NOT be a browser reimplementation of the program presented as the program's result.",
+    "- The DELIVERABLE is the program's REAL output artifact — the image/file it generated, or its captured stdout — NOT an app and NOT a dashboard.",
+    "- Write index.html as a MINIMAL full-bleed VIEWER of that single artifact and nothing else: the generated image filling the page (dark background, object-fit: contain, no chrome), or the raw stdout in a <pre>. NO cards, stats, headers, navigation, descriptions, controls, or surrounding UI — the artifact IS the page, so the app's link opens straight to the render.",
+    "- Do NOT reimplement the program in browser JavaScript and present that as its result.",
   ];
 }
 
@@ -115,7 +117,9 @@ export function renderPerBuildContext(input: BuilderPromptInput): string {
         ? `\n\nNO LOCAL ASSETS YET. If the user mentioned a source URL or attached photos, the parent agent should have extracted them into assets/ before invoking you. Do NOT use placeholder.com or stock CDNs — instead, build a bold typography-driven hero with CSS gradients and ask in PROJECT.md for the photos to be added.\n`
         : "");
 
-  const starterLine = isUpdate
+  // compiled-native skips the seed (build-app.ts) so its viewer is written
+  // fresh and minimal — don't tell the agent to edit a starter that isn't there.
+  const starterLine = (isUpdate || input.tier === "compiled-native")
     ? ""
     : "- An index.html starter + AGENTS.md have been seeded — READ both, then EDIT index.html rather than rewriting it from scratch. Keep the inline-only CSP rule.\n";
 

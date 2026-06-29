@@ -314,12 +314,23 @@ describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", 
     );
   });
 
-  it("compiled-native tier instructs running the real toolchain, index.html as a viewer", () => {
+  it("compiled-native tier instructs running the real toolchain + a MINIMAL viewer, not a dashboard", () => {
     const out = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "compiled-native" });
     expect(out).toContain("COMPILED-LANGUAGE MODE");
     expect(out).toContain("cargo run");
-    expect(out).toContain("VIEWER for the REAL output");
+    expect(out).toContain("MINIMAL full-bleed VIEWER");
+    // The dual-agent finding: a single render came out wrapped in dashboard
+    // chrome. The prompt must explicitly forbid that shape.
+    expect(out).toContain("NOT an app and NOT a dashboard");
+    expect(out).toContain("NO cards, stats, headers");
     expect(out).not.toContain("FULL-STACK MODE");
+  });
+
+  it("compiled-native suppresses the 'edit the seeded starter' line (build_app skips the seed for it)", () => {
+    const out = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "compiled-native" });
+    expect(out).not.toContain("An index.html starter + AGENTS.md have been seeded");
+    // quick-html (the default) still seeds + tells the agent to edit the starter.
+    expect(renderPerBuildContext(SAMPLE_CREATE)).toContain("An index.html starter + AGENTS.md have been seeded");
   });
 
   it("tier rule builders embed the app identifiers", () => {

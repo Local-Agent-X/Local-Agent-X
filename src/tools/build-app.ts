@@ -227,7 +227,12 @@ export const buildAppTool: ToolDefinition = {
     // than generating from scratch — cuts weak-model regressions where a
     // first turn tries to load Tailwind CDN and lands an unstyled page.
     // Idempotent on update flows (existing files are preserved).
-    if (!isUpdate) seedAppTemplate(appDir, appName);
+    // EXCEPT compiled-native: the starter is a card/hero "dashboard", and the
+    // builder is told to edit it in place — which is exactly how a single
+    // render (Rust → output.png) came out wrapped in dashboard chrome. A
+    // compiled program's deliverable is its artifact, shown by a minimal
+    // full-bleed viewer the worker writes fresh, so don't seed the dashboard.
+    if (!isUpdate && tier !== "compiled-native") seedAppTemplate(appDir, appName);
 
     const contextFiles = isUpdate ? readUpdateContextFiles(appDir) : [];
     const assetFiles = listAssetsDir(appDir);
@@ -333,8 +338,9 @@ export const buildAppTool: ToolDefinition = {
     return {
       content:
         `App build queued — op ${op.id} (strategy=${strategy}, provider=${provider}, lane=build).\n` +
-        `Running in background — you can keep responding to the user. ` +
-        `The user will see a notification when APP_READY emits with the URL.\n` +
+        `This op owns the ENTIRE build and will deliver the result to the user itself when done. ` +
+        `Do NOT build it yourself this turn (no bash/cargo, no write/edit of source, no send_image) — that duplicates the work. ` +
+        `Just briefly tell the user it's building; they'll see it when APP_READY emits.\n` +
         `Cancel: op_kill(op_id="${op.id}")`,
       metadata: {
         chip: {

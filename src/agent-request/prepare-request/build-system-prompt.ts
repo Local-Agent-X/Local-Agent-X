@@ -137,22 +137,21 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
     systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + providerRider;
   }
 
-  // CLI/OAuth nudge for build_app. The Anthropic CLI path ignores the
-  // tool_choice the orchestrator sets. Without an inline directive, Opus
-  // will sometimes call write/edit/glob to create app files directly
-  // instead of going through build_app — which means no canonical op,
-  // no AGENTS sidebar card, no streaming progress, no cancel button.
-  // Append a strong directive to the system prompt for this turn only
-  // so the model picks build_app even when tool_choice is dropped.
-  if (input.forceBuildIntent && input.resolvedProvider === "anthropic") {
+  // build_app hand-off directive. Fires for EVERY provider (not just the
+  // Anthropic CLI/OAuth path that ignores tool_choice) because the failure it
+  // prevents — the main agent building the app ITSELF in parallel with the
+  // background op — showed up worst on Grok/GPT, which previously got no
+  // directive at all and so ran cargo + send_image inline, duplicating the
+  // worker's build. The inline-build tools are also stripped from this turn's
+  // toolset (tool-selection.ts) as the hard guarantee; this directive explains
+  // WHY they're gone so the model hands off cleanly instead of flailing.
+  if (input.forceBuildIntent) {
     systemPrompt +=
       `\n\n--- TURN DIRECTIVE ---\n` +
       `Intent classifier identified this turn as a build_app request: ${input.intentReason ?? "(no reason)"}.\n` +
-      `You MUST call the build_app tool for this. Do NOT call write, edit, or glob to create the app files inline — ` +
-      `that path skips canonical-loop tracking and the user will see no progress card. ` +
-      `build_app spawns a background op that streams in the AGENTS sidebar and can be cancelled. ` +
-      `If the user's request is small enough that you could write it inline, you should STILL use build_app — ` +
-      `the user explicitly asked for an app.\n` +
+      `Call the build_app tool — that is the ONLY way to build this. The build then runs as a background op (the "side agent") that owns the ENTIRE build: it runs the real toolchain, produces the artifact, and delivers the result to the user itself when done. ` +
+      `Do NOT build it yourself this turn — no bash/cargo/compiler, no write/edit of source files, no send_image of a result you produced. Building it twice wastes minutes of compute and confuses the user with a duplicate output. ` +
+      `After calling build_app, just briefly tell the user it's building and they'll see it when it's ready.\n` +
       `--- END TURN DIRECTIVE ---\n`;
   }
 

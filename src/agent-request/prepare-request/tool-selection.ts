@@ -36,6 +36,38 @@ export interface ToolSelectionResult {
   isBridge: boolean;
 }
 
+// Tools that let the agent build something ITSELF — write source, run a
+// compiler/dev-server, or surface the artifact. When intent forcing pins
+// build_app, the build is owned by the background app_build op (the "side
+// agent"); the main chat agent must NOT also build it inline. That dual-build
+// bug shipped a Rust raytrace TWICE — the worker compiled it at apps/<id>/
+// while the main agent ALSO ran cargo at workspace/<id>/, producing two outputs
+// and a confusing double result. The TURN DIRECTIVE asks the model not to; this
+// strip is the hard guarantee across EVERY provider (the directive fired only on
+// Anthropic, and the build-intent narrowing keeps bash/write/edit by design).
+// Read-only tools (read/glob/grep) stay — they can't build. build_app is never
+// stripped (tool_choice forcing pins it).
+const INLINE_BUILD_TOOLS = new Set([
+  "write", "edit", "edit_lines", "multi_edit", "bash",
+  "process_start", "process_status", "process_kill",
+  "send_image", "connector_create", "app_serve_backend", "self_edit",
+]);
+
+/** Remove the inline-build tools so a forced build_app turn can't ALSO build
+ *  the app itself. build_app is preserved (re-added from the full catalog if a
+ *  prior narrowing step dropped it) so tool_choice forcing still resolves. */
+export function stripInlineBuildTools(
+  tools: ToolDefinition[],
+  allTools: ToolDefinition[],
+): ToolDefinition[] {
+  const kept = tools.filter((t) => !INLINE_BUILD_TOOLS.has(t.name));
+  if (!kept.some((t) => t.name === "build_app")) {
+    const buildApp = allTools.find((t) => t.name === "build_app");
+    if (buildApp) return [buildApp, ...kept];
+  }
+  return kept;
+}
+
 export async function selectTools(input: ToolSelectionInput): Promise<ToolSelectionResult> {
   const isBridge = input.channel === "telegram" || input.channel === "whatsapp";
 
@@ -176,6 +208,14 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     if (tools.length !== before) {
       logger.info(`[tools] ${input.resolvedProvider} cap ${before}→${tools.length} (tier=${tier}→${capTier}; endpoint tool limit)`);
     }
+  }
+
+  // Forced build_app turn: the background op owns the whole build, so deny the
+  // main agent the tools to build it inline (the dual-build fix). Last step, so
+  // it applies on every selection path — including the Anthropic-strong full
+  // inventory and the Grok strong-tool-shy path that both skip the narrowing.
+  if (forceBuildIntent && !isBridge) {
+    tools = stripInlineBuildTools(tools, input.allAgentTools);
   }
 
   return { tools, tier, intentVerdict, forceBuildIntent, isBridge };

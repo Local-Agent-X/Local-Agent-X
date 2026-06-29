@@ -69,3 +69,15 @@ export function resolveAgentPathFrom(workspace: string, p: string): string {
 export function resolveAgentPath(p: string): string {
   return resolveAgentPathFrom(workspaceRoot(), p);
 }
+
+// The project root — the parent of the workspace, the SAME anchor relative agent
+// paths resolve against (see resolveAgentPathFrom). The default working
+// directory for shell-class tools (bash / process_start) when the caller gives
+// none: without it they inherited the SERVER process cwd, so a relative command
+// like `cat notes.txt` looked in the install dir instead of the project and
+// failed until the model retried with an absolute path — while the bash gate
+// already ASSUMES relative tokens resolve inside the project. Anchoring here
+// makes the runtime match the gate and the file tools.
+export function projectRoot(): string {
+  return resolve(workspaceRoot(), "..");
+}

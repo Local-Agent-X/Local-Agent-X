@@ -5,6 +5,7 @@ import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js"
 import { detectTargetShell, translateForShell } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
+import { projectRoot } from "../workspace/paths.js";
 
 export const bashTool: ToolDefinition = {
   name: "bash",
@@ -120,7 +121,11 @@ export const bashTool: ToolDefinition = {
         const spawned = wrapSpawnForSandbox(shell, shellArgs);
         const child = spawn(spawned.cmd, spawned.args, {
           env: sanitizedEnv,
-          cwd: (args._cwd as string) || undefined,
+          // _cwd (worktree, set by enforce-policy) wins; otherwise default to the
+          // project root — the anchor the file tools and the bash path-gate already
+          // assume — so a relative `cat notes.txt` finds project files instead of
+          // inheriting the server cwd and failing until the model retries absolute.
+          cwd: (args._cwd as string) || projectRoot(),
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],
         });

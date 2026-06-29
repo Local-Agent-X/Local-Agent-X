@@ -3,7 +3,7 @@ import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig, uploadsDir } from "../config.js";
-import { resolveAgentPath } from "./paths.js";
+import { resolveAgentPath, projectRoot } from "./paths.js";
 import { isSensitivePath } from "../data-lineage-paths.js";
 
 // resolveAgentPath is the single source of truth for turning an agent's raw
@@ -84,5 +84,13 @@ describe("resolveAgentPath", () => {
   it("a ~-form credential path still resolves to a sensitive path", () => {
     expect(isSensitivePath(resolveAgentPath("~/.pgpass"))).toBe(true);
     expect(isSensitivePath(resolveAgentPath("~/.ssh/id_ecdsa"))).toBe(true);
+  });
+
+  // The shell-class default working directory (bash / process_start with no cwd)
+  // is the project root — the workspace parent, the same anchor relative agent
+  // paths use — so a relative command resolves in the project, not the server cwd.
+  it("projectRoot is the workspace parent (the relative-path anchor)", () => {
+    expect(projectRoot()).toBe(resolve(WS, ".."));
+    expect(projectRoot()).toBe(resolveAgentPath("."));
   });
 });

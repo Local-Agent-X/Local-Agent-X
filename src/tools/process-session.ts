@@ -18,6 +18,7 @@ import { resolveWindowsShell } from "./shell-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
 import { evaluateShellCommand } from "../security/shell-policy.js";
 import { getSandboxMode, wrapSpawnForSandbox } from "../sandbox/index.js";
+import { projectRoot } from "../workspace/paths.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("tools.process");
@@ -135,6 +136,12 @@ export function startSession(
   // kill path are unchanged. Host/docker modes pass through unwrapped.
   const spawned = wrapSpawnForSandbox(shell, shellArgs);
 
+  // An explicit caller cwd (build/dev flows) wins; otherwise default to the
+  // project root rather than inheriting the server cwd — same anchor as bash and
+  // the file tools, so a background command's relative paths resolve in the
+  // project. cwdHint reuses the resolved value so process_restart respawns there.
+  const effectiveCwd = cwd || projectRoot();
+
   let child: ChildProcess;
   try {
     // detached:true on non-Windows makes the child a process-group leader so
@@ -143,7 +150,7 @@ export function startSession(
     // tree, and detached would risk a stray console. Pipes are unaffected.
     child = spawn(spawned.cmd, spawned.args, {
       env: sanitizeEnv(env),
-      cwd,
+      cwd: effectiveCwd,
       windowsHide: true,
       detached: !isWin,
       stdio: ["ignore", "pipe", "pipe"],
@@ -156,7 +163,7 @@ export function startSession(
   const session: ProcessSession = {
     sessionId,
     command,
-    cwdHint: cwd,
+    cwdHint: effectiveCwd,
     envHint: env,
     pid: child.pid ?? null,
     child,

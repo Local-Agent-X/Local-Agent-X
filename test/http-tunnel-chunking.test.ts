@@ -80,4 +80,18 @@ describe("HttpTunnelBridge — chunking is GATED on the phone's chunked flag (no
     expect(t.sent.length).toBe(1);
     expect(JSON.parse(t.sent[0]).t).toBe("res"); // whole frame, exactly as before
   });
+
+  it("marks every forwarded request x-lax-tunnel so the /apps proxy injects phone live-reload", async () => {
+    let seen: Record<string, string> = {};
+    const capturing = (async (_u: string, init: { headers: Record<string, string> }) => {
+      seen = init.headers;
+      return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
+    }) as unknown as typeof fetch;
+    const bridge = new HttpTunnelBridge({ loopback, fetchImpl: capturing });
+    const t = driveTransport();
+    bridge.attach(t as unknown as Parameters<typeof bridge.attach>[0]);
+    t.emit({ t: "req", id: "3", method: "GET", path: "/apps/x/" });
+    await new Promise((r) => setTimeout(r, 15));
+    expect(seen["x-lax-tunnel"]).toBe("1");
+  });
 });

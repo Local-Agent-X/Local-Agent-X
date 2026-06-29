@@ -124,4 +124,35 @@ describe("proxyFrontendDevServer (desktop-first live frontend)", () => {
     expect(r.status).toBe(200);
     expect(await r.text()).toContain("booted");
   });
+
+  it("serves the live-reload token at __lax-livereload without forwarding to Vite", async () => {
+    // Handled before any upstream connection, so the port is irrelevant here.
+    const proxy = await listen(proxyTo(9));
+    const r = await fetch(`http://127.0.0.1:${proxy}/apps/no-such-app/__lax-livereload`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toContain("text/plain");
+    expect(await r.text()).toMatch(/^\d+$/); // numeric mtime token (0 for an unknown app)
+  });
+
+  it("injects the live-reload poller into a PHONE (tunneled) HTML response", async () => {
+    const up = await listen((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end("<html><head></head><body>app</body></html>");
+    });
+    const proxy = await listen(proxyTo(up));
+    const r = await fetch(`http://127.0.0.1:${proxy}/apps/spa/`, { headers: { "x-lax-tunnel": "1" } });
+    const body = await r.text();
+    expect(body).toContain("__lax-livereload");
+    expect(body).toContain("location.reload");
+  });
+
+  it("does NOT inject the poller for a DESKTOP (non-tunneled) request — native HMR untouched", async () => {
+    const up = await listen((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end("<html><head></head><body>app</body></html>");
+    });
+    const proxy = await listen(proxyTo(up));
+    const r = await fetch(`http://127.0.0.1:${proxy}/apps/spa/`); // no x-lax-tunnel header
+    expect(await r.text()).not.toContain("__lax-livereload");
+  });
 });

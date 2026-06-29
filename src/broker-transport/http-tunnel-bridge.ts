@@ -147,7 +147,10 @@ export class HttpTunnelBridge implements HttpChannel {
     try {
       const r = await this.fetchImpl(`${origin}${req.path}`, {
         method: req.method,
-        headers: { ...(req.headers ?? {}), Authorization: `Bearer ${token}` },
+        // x-lax-tunnel marks a request as coming from the phone over the broker,
+        // so the /apps proxy can inject the live-reload poller (the phone can't
+        // use Vite's HMR websocket) while leaving desktop native HMR untouched.
+        headers: { ...(req.headers ?? {}), Authorization: `Bearer ${token}`, "x-lax-tunnel": "1" },
         ...(req.body !== undefined ? { body: req.body } : {}),
       });
       const contentType = r.headers.get("content-type") ?? "application/json";

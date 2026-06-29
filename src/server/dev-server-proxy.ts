@@ -12,9 +12,54 @@
  */
 import { request as httpRequest } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { createLogger } from "../logger.js";
+import { workspacePath } from "../config.js";
 
 const logger = createLogger("server.dev-server-proxy");
+
+// Live-reload over the broker: the phone can't use Vite's HMR websocket, so a
+// tiny injected poller (added only for phone requests, marked x-lax-tunnel)
+// watches a source-change token over the same HTTP tunnel the page uses and
+// full-reloads on a save. Desktop keeps native (state-preserving) HMR untouched.
+const LIVERELOAD_PATH = "__lax-livereload";
+const TOKEN_SKIP_DIRS = new Set(["node_modules", ".vite", "dist", "build", ".git", "target"]);
+
+/** Newest source mtime under an app's dir (excluding build output) — changes on
+ *  any save, which the phone poller compares to trigger a reload. Bounded walk. */
+function sourceChangeToken(appId: string): string {
+  const root = workspacePath("apps", appId);
+  let newest = 0;
+  let seen = 0;
+  const walk = (dir: string): void => {
+    if (seen > 2000) return;
+    let entries: string[];
+    try { entries = readdirSync(dir); } catch { return; }
+    for (const name of entries) {
+      if (seen > 2000) return;
+      if (TOKEN_SKIP_DIRS.has(name)) continue;
+      const full = join(dir, name);
+      let st;
+      try { st = statSync(full); } catch { continue; }
+      if (st.isDirectory()) { walk(full); continue; }
+      seen += 1;
+      if (st.mtimeMs > newest) newest = st.mtimeMs;
+    }
+  };
+  if (existsSync(root)) walk(root);
+  return String(Math.round(newest));
+}
+
+function liveReloadScript(appId: string): string {
+  const url = `/apps/${appId}/${LIVERELOAD_PATH}`;
+  return (
+    `<script>(function(){var last=null;setInterval(function(){` +
+    `fetch(${JSON.stringify(url)},{cache:'no-store'}).then(function(r){return r.text();})` +
+    `.then(function(t){if(last!==null&&t!==last){location.reload();}last=t;}).catch(function(){});` +
+    `},2000);})();</script>`
+  );
+}
 
 // Hop-by-hop headers must not be forwarded across a proxy boundary (RFC 7230).
 const HOP_BY_HOP = new Set([
@@ -84,9 +129,23 @@ export function proxyFrontendDevServer(
     res.end("websocket upgrade not supported on the app proxy yet");
     return;
   }
+  const appId = url.pathname.split("/")[2] || "";
+
+  // Live-reload poll endpoint — handled HERE (not forwarded to Vite): return the
+  // app's current source-change token so the injected poller can detect a save.
+  if (url.pathname.endsWith(`/${LIVERELOAD_PATH}`)) {
+    res.writeHead(200, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+    res.end(sourceChangeToken(appId));
+    return;
+  }
+
   // Per-request trace so a phone load over the broker is fully visible: which
   // subresources arrive, their status/size, and any error/hang.
   logger.info(`[dev-proxy] → GET ${url.pathname}${url.search}`);
+
+  // Phone requests are marked by the broker tunnel; only those get the live-
+  // reload poller (the phone can't use Vite's HMR ws). Desktop keeps native HMR.
+  const tunneled = !!req.headers["x-lax-tunnel"];
 
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(req.headers)) {
@@ -115,7 +174,8 @@ export function proxyFrontendDevServer(
           const chunks: Buffer[] = [];
           up.on("data", (c) => chunks.push(c as Buffer));
           up.on("end", () => {
-            const html = injectHead(Buffer.concat(chunks).toString("utf-8"), connectorBootstrapScript(connectorToken));
+            const inject = connectorBootstrapScript(connectorToken) + (tunneled ? liveReloadScript(appId) : "");
+            const html = injectHead(Buffer.concat(chunks).toString("utf-8"), inject);
             delete out["content-length"];
             out["Content-Security-Policy"] = DEV_FRONTEND_CSP;
             out["Cache-Control"] = "no-cache, must-revalidate";

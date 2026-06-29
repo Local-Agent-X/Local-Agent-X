@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, isAbsolute, basename, extname } from "node:path";
 
-import { writeMcpConfig } from "./mcp-config.js";
+import { writeMcpConfig, mcpBridgeBasePath } from "./mcp-config.js";
 import { buildMcpChildEnv, __resetMcpEnvLogState } from "../mcp-client/connection.js";
 
 // Snapshot + restore process.env around every test. The strip-pass is
@@ -189,5 +189,20 @@ describe("writeMcpConfig", () => {
 
     expect("PATH" in env).toBe(false);
     expect(env.LAX_MCP_TOKEN).toBe("t");
+  });
+});
+
+describe("mcpBridgeBasePath", () => {
+  // The spawner (writeMcpConfig) appends `.js`/`.ts` to this base; the
+  // stale-bridge reaper (reap-stale-procs.ts) substring-matches it against
+  // process cmdlines. The reaper's match is only correct if the base is
+  // EXTENSIONLESS — so lock that contract. A regression that returns
+  // `mcp-bridge.js` here would silently make the reaper miss the `.ts` form
+  // (dev) and stop reaping orphaned bridges.
+  it("is the absolute, extensionless `<dir>/mcp-bridge` base both sides agree on", () => {
+    const base = mcpBridgeBasePath();
+    expect(isAbsolute(base)).toBe(true);
+    expect(basename(base)).toBe("mcp-bridge");
+    expect(extname(base)).toBe("");
   });
 });

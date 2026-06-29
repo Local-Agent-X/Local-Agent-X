@@ -25,6 +25,7 @@ import {
   APP_BUILD_OP_TYPE,
 } from "../src/tools/build-app.js";
 import { AgentTemplateStore } from "../src/agent-store/index.js";
+import { TOOLS } from "../src/tool-registry.js";
 import { readOp } from "../src/ops/op-store.js";
 import {
   opCancel,
@@ -258,5 +259,17 @@ describe("builderToolsForTier — real-build tiers get the process tools", () =>
     const n = names("compiled-native");
     expect(n).toContain("process_start");
     expect(n).not.toContain("app_serve_backend");
+  });
+
+  // Regression for the whole class: a tool handed to the builder but missing
+  // from the policy registry (tool-policies.*) makes the ARI kernel fail-closed
+  // and BLOCK the call — which is exactly how the full-stack notes build broke
+  // (app_serve_backend not in TOOLS). Every tier's toolset must be classified.
+  it("every builder tool, for every tier, is classified in the policy registry", () => {
+    for (const tier of ["quick-html", "full-stack", "compiled-native"] as const) {
+      for (const t of builderToolsForTier(tier)) {
+        expect(TOOLS[t.name], `${t.name} (tier=${tier}) is unclassified — the ARI kernel fail-closes and BLOCKS it`).toBeDefined();
+      }
+    }
   });
 });

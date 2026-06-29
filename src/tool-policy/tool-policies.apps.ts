@@ -72,6 +72,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   // connector_create sibling, which only writes a manifest. Allowed via the
   // app_* glob (same as app_create/app_delete).
   app_serve_backend:     { kernel: "shell", risk: "shell" },
+  app_serve_frontend:    { kernel: "shell", risk: "shell" },   // spawns a frontend dev server — same sink as app_serve_backend
   create_page:           { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-create-page", decision: "allow", reason: "Create custom pages", priority: 50 }] },
   start_app_build:       { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-start-app-build", decision: "allow", reason: "App-build kickoff handle", priority: 50 }] },
   finalize_app_build:    { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-finalize-app-build", decision: "allow", reason: "App-build finalize handle", priority: 50 }] },

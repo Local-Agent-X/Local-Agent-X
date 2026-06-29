@@ -43,16 +43,28 @@ import {
   setDevServerWake,
 } from "./dev-server-access.js";
 
+/**
+ * What the dev server IS, which decides how it's surfaced:
+ *   - "backend"  — a real API server; the frontend reaches it through the
+ *     /api/connectors/dev-<appId> proxy (works over loopback AND the broker).
+ *   - "frontend" — a build-step dev server (Vite/Next/SPA); LAX reverse-proxies
+ *     /apps/<appId>/ straight to it so the app URL serves the live dev server
+ *     with HMR (desktop). No connector — it's not an API.
+ */
+export type DevServerKind = "backend" | "frontend";
+
 export interface DevServerRecord {
   appId: string;
   command: string;
   cwd: string;
   port: number;
-  /** Connector slug the frontend calls (always `dev-<appId>`). */
+  /** Connector slug the frontend calls (always `dev-<appId>`). Backend only. */
   connector: string;
   /** Last process-session id. Ephemeral — null/stale after a server restart,
    *  which is fine: ensureDevServerRunning restarts on the next app open. */
   sessionId?: string;
+  /** Defaults to "backend" for records written before the frontend kind. */
+  kind?: DevServerKind;
 }
 
 /** Test seam: swap process control so unit tests never spawn a real server. */
@@ -99,7 +111,7 @@ export function readDevServerRecord(appId: string): DevServerRecord | null {
   try {
     const o = JSON.parse(readFileSync(recordPath(appId), "utf8")) as Partial<DevServerRecord>;
     if (o && typeof o.command === "string" && typeof o.port === "number") {
-      return { appId, command: o.command, cwd: o.cwd ?? "", port: o.port, connector: o.connector ?? devConnectorName(appId), sessionId: o.sessionId };
+      return { appId, command: o.command, cwd: o.cwd ?? "", port: o.port, connector: o.connector ?? devConnectorName(appId), sessionId: o.sessionId, kind: o.kind === "frontend" ? "frontend" : "backend" };
     }
   } catch { /* no record */ }
   return null;
@@ -121,21 +133,24 @@ function devConnectorManifest(port: number): ConnectorManifest {
 }
 
 export type RegisterResult =
-  | { ok: true; connector: string; sessionId: string; port: number; cwd: string; restarted: boolean }
+  | { ok: true; connector: string; sessionId: string; port: number; cwd: string; restarted: boolean; kind: DevServerKind }
   | { ok: false; error: string };
 
 /**
- * Wire the connector, (re)start the backend, and persist the record. Re-running
- * for an already-running app restarts it (the command may have changed).
+ * Wire the connector (backend only), (re)start the dev server, and persist the
+ * record. Re-running for an already-running app restarts it (the command may
+ * have changed). `kind` defaults to "backend"; "frontend" registers a build-step
+ * dev server that the /apps/<id>/ route reverse-proxies (no connector).
  */
 export function registerDevServer(
-  input: { appId: string; command: string; port: number; cwd?: string },
+  input: { appId: string; command: string; port: number; cwd?: string; kind?: DevServerKind },
   d: DevServerDeps = {},
 ): RegisterResult {
   const { appId, command, port } = input;
   if (!appId || !command || !Number.isFinite(port) || port <= 0) {
     return { ok: false, error: "appId, command, and a positive numeric port are required" };
   }
+  const kind: DevServerKind = input.kind === "frontend" ? "frontend" : "backend";
   const dd = deps(d);
   // Default cwd is the APP ROOT (not /server) so the command can `cd server`
   // into a backend subfolder OR run a root-level backend directly — both work.
@@ -149,15 +164,17 @@ export function registerDevServer(
   const restarted = !!(existing?.sessionId && dd.isAlive(existing.sessionId));
   if (restarted && existing?.sessionId) dd.kill(existing.sessionId);
 
-  saveConnectorManifest(connector, devConnectorManifest(port));
+  // A backend is reached through its connector proxy; a frontend is reverse-
+  // proxied transparently at /apps/<id>/, so it needs no connector manifest.
+  if (kind === "backend") saveConnectorManifest(connector, devConnectorManifest(port));
 
   const started = dd.start(command, cwd);
   if ("error" in started) return { ok: false, error: started.error };
 
   const sessionId = started.session.sessionId;
-  writeRecord({ appId, command, cwd, port, connector, sessionId });
+  writeRecord({ appId, command, cwd, port, connector, sessionId, kind });
   noteDevServerAccess(appId);
-  return { ok: true, connector, sessionId, port, cwd, restarted };
+  return { ok: true, connector, sessionId, port, cwd, restarted, kind };
 }
 
 export type EnsureResult =
@@ -318,6 +335,60 @@ export const appServeBackendTool: ToolDefinition = {
         `Connector "${res.connector}" wired — the frontend should fetch /api/connectors/${res.connector}/<path> ` +
         `with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.\n` +
         `LAX will restart this backend when the app is opened and stop it when the app is deleted.`,
+    };
+  },
+};
+
+export const appServeFrontendTool: ToolDefinition = {
+  name: "app_serve_frontend",
+  description:
+    "Start and keep alive a build-step FRONTEND dev server (Vite / Next / a React/Vue/Svelte SPA with HMR) for an app. LAX reverse-proxies /apps/<app_id>/ straight to it, so the app's own URL serves the live dev server. Use this INSTEAD of writing a single static index.html when the frontend genuinely needs its own dev server / build step. REQUIRED dev-server config: set base path to '/apps/<app_id>/' and HMR client port to the dev port (so hot-reload connects from the browser on desktop), and bind the given port. Hot-reload is desktop-only for now; the phone shows the result on reload.",
+  parameters: {
+    type: "object",
+    properties: {
+      app_id: { type: "string", description: "The app's directory name (workspace/apps/<app_id>)." },
+      command: { type: "string", description: "Command that starts the dev server, e.g. 'npm install && npm run dev'." },
+      port: { type: "number", description: "The localhost port the dev server listens on (also the HMR client port)." },
+      cwd: { type: "string", description: "Working directory. Defaults to workspace/apps/<app_id>." },
+    },
+    required: ["app_id", "command", "port"],
+  },
+  async execute(args): Promise<ToolResult> {
+    const appId = String(args.app_id || "").replace(/[^a-zA-Z0-9_-]/g, "-");
+    const command = String(args.command || "");
+    const port = Number(args.port);
+    const cwd = args.cwd ? String(args.cwd) : undefined;
+    const res = registerDevServer({ appId, command, port, cwd, kind: "frontend" });
+    if (!res.ok) return { content: `Could not start frontend dev server: ${res.error}`, isError: true };
+
+    const outcome = await waitForBackend(res.sessionId, port, BACKEND_READY_TIMEOUT_MS);
+    if (outcome.status === "crashed") {
+      stopDevServer(appId, {}, { forget: true });
+      return {
+        content:
+          `Frontend dev server for "${appId}" exited (code ${outcome.code}) — the command failed, so /apps/${appId}/ has nothing to proxy.\n` +
+          `Command: ${command} (runs from ${res.cwd}). Fix it and call app_serve_frontend again.\n` +
+          (outcome.output ? `Output:\n${outcome.output}` : "(no output captured)"),
+        isError: true,
+      };
+    }
+    if (outcome.status === "timeout") {
+      const s = SESSIONS.get(res.sessionId);
+      const out = s ? tailLines(s.stderr || s.stdout || "", 20).trim() : "";
+      return {
+        content:
+          `Frontend dev server for "${appId}" did NOT start listening on port ${port} within ${BACKEND_READY_TIMEOUT_MS / 1000}s — do not treat it as ready.\n` +
+          `Likely a slow/failing install or a different port. Check process_status(session_id="${res.sessionId}").\n` +
+          (out ? `Output:\n${out}` : ""),
+        isError: true,
+      };
+    }
+    return {
+      content:
+        `Frontend dev server for "${appId}" is up on port ${port} (session ${res.sessionId}). ` +
+        `/apps/${appId}/ now reverse-proxies to it — open the app to see the live dev server.\n` +
+        `Confirm the dev server's base is '/apps/${appId}/' and its HMR client port is ${port}, or assets/hot-reload will 404.\n` +
+        `LAX restarts it when the app is opened and stops it when the app is deleted.`,
     };
   },
 };

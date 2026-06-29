@@ -4,7 +4,8 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
 import { authorizeAppConnectorHttp, deriveConnectorCapability } from "./app-connector-auth.js";
-import { ensureDevServerRunning } from "../tools/dev-server.js";
+import { ensureDevServerRunning, readDevServerRecord } from "../tools/dev-server.js";
+import { proxyFrontendDevServer } from "./dev-server-proxy.js";
 import { confineToDir } from "../security/file-access.js";
 import { getPageBundle } from "./static-bundle.js";
 import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes, handleAccountRoutes } from "../routes/index.js";
@@ -233,6 +234,18 @@ export function createRequestHandler(deps: {
       res.writeHead(200, h); res.end(readFileSync(file)); return;
     }
     if (method === "GET" && url.pathname.startsWith("/apps/")) {
+      // Live FRONTEND dev server (Vite/Next/SPA): if this app registered a
+      // `kind: "frontend"` dev server, reverse-proxy the app URL straight to it
+      // instead of serving a static file. Desktop gets HMR (the dev CSP lets the
+      // browser open the dev server's ws on localhost); the phone gets the
+      // proxied document + assets over the broker (full reload, no live HMR).
+      const fid = url.pathname.split("/")[2];
+      const frontendRec = fid ? readDevServerRecord(fid) : null;
+      if (frontendRec && frontendRec.kind === "frontend") {
+        try { ensureDevServerRunning(fid); } catch { /* best-effort wake */ }
+        proxyFrontendDevServer(req, res, frontendRec.port, url, deriveConnectorCapability(config.authToken));
+        return;
+      }
       const appsDir = resolve(config.workspace);
       let appFile = confineToDir(appsDir, "." + url.pathname);
       if (!appFile) { json(403, { error: "Path traversal blocked" }); return; }

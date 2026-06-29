@@ -1,0 +1,81 @@
+import { describe, it, expect, afterEach } from "vitest";
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import { AddressInfo } from "node:net";
+import { proxyFrontendDevServer } from "../src/server/dev-server-proxy.js";
+
+// Real servers on both ends — the proxy uses res.pipe() for non-HTML, which
+// needs a genuine Writable, so http-mocks won't do here.
+const open: Server[] = [];
+function listen(handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<number> {
+  return new Promise((resolve) => {
+    const server = createServer(handler);
+    open.push(server);
+    server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port));
+  });
+}
+afterEach(async () => {
+  await Promise.all(open.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
+});
+
+function proxyTo(port: number) {
+  return (req: IncomingMessage, res: ServerResponse) =>
+    proxyFrontendDevServer(req, res, port, new URL(req.url!, "http://localhost"), "TOKEN-XYZ");
+}
+
+describe("proxyFrontendDevServer (desktop-first live frontend)", () => {
+  it("injects the connector token + dev CSP into an HTML document, drops the upstream CSP", async () => {
+    const up = await listen((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html", "Content-Security-Policy": "default-src 'none'" });
+      res.end("<html><head><title>Vite</title></head><body>app</body></html>");
+    });
+    const proxy = await listen(proxyTo(up));
+
+    const r = await fetch(`http://127.0.0.1:${proxy}/apps/spa/`);
+    const body = await r.text();
+
+    expect(r.status).toBe(200);
+    expect(body).toContain("window.__LAX_CONNECTOR_TOKEN__");
+    expect(body).toContain("TOKEN-XYZ");
+    expect(body).toContain("<title>Vite</title>");          // upstream document preserved
+    const csp = r.headers.get("content-security-policy") || "";
+    expect(csp).toContain("ws://localhost:*");              // HMR websocket allowed (desktop)
+    expect(csp).toContain("'unsafe-eval'");                 // Vite dev module runtime
+    expect(csp).not.toContain("default-src 'none'");        // upstream's CSP is replaced, not forwarded
+  });
+
+  it("streams a non-HTML asset through untouched (no token injection)", async () => {
+    const up = await listen((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/javascript" });
+      res.end("export const x = 1;");
+    });
+    const proxy = await listen(proxyTo(up));
+
+    const r = await fetch(`http://127.0.0.1:${proxy}/apps/spa/main.js`);
+    const body = await r.text();
+
+    expect(r.headers.get("content-type")).toContain("application/javascript");
+    expect(body).toBe("export const x = 1;");               // byte-for-byte
+    expect(body).not.toContain("__LAX_CONNECTOR_TOKEN__");
+  });
+
+  it("forwards the full /apps/<id>/ path (so Vite's base resolves) and query string", async () => {
+    let seenPath = "";
+    const up = await listen((req, res) => { seenPath = req.url || ""; res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}"); });
+    const proxy = await listen(proxyTo(up));
+
+    await fetch(`http://127.0.0.1:${proxy}/apps/spa/assets/index.js?v=abc`);
+    expect(seenPath).toBe("/apps/spa/assets/index.js?v=abc");
+  });
+
+  it("returns 502 when the dev server is unreachable", async () => {
+    // Grab an ephemeral port, then free it so a connect is refused deterministically.
+    const tmp = createServer();
+    const deadPort: number = await new Promise((resolve) =>
+      tmp.listen(0, "127.0.0.1", () => resolve((tmp.address() as AddressInfo).port)));
+    await new Promise<void>((r) => tmp.close(() => r()));
+    const proxy = await listen(proxyTo(deadPort));
+
+    const r = await fetch(`http://127.0.0.1:${proxy}/apps/spa/`);
+    expect(r.status).toBe(502);
+  });
+});

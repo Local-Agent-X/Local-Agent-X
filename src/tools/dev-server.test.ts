@@ -179,6 +179,31 @@ describe("idle auto-stop + shutdown cleanup (so a backend doesn't run forever)",
   });
 });
 
+describe("registerDevServer kind — backend vs frontend", () => {
+  it("backend (default) writes a connector manifest; the record is kind=backend", () => {
+    const { deps } = fakeDeps();
+    const r = registerDevServer({ appId: "api", command: "node s.js", port: 5200, cwd: "/tmp/x" }, deps);
+    expect(r.ok && r.kind).toBe("backend");
+    expect(existsSync(connectorFile("dev-api"))).toBe(true);
+    expect(readDevServerRecord("api")?.kind).toBe("backend");
+  });
+
+  it("frontend writes NO connector manifest (it's reverse-proxied, not an API) and records kind=frontend", () => {
+    const { deps } = fakeDeps();
+    const r = registerDevServer({ appId: "spa", command: "npm run dev", port: 5201, cwd: "/tmp/x", kind: "frontend" }, deps);
+    expect(r.ok && r.kind).toBe("frontend");
+    expect(existsSync(connectorFile("dev-spa"))).toBe(false);   // frontend ≠ connector
+    expect(readDevServerRecord("spa")?.kind).toBe("frontend");
+  });
+
+  it("a record written before the kind field reads back as backend (back-compat)", () => {
+    const { deps } = fakeDeps();
+    registerDevServer({ appId: "legacy", command: "x", port: 5202, cwd: "/tmp/x" }, deps);
+    // readDevServerRecord defaults a missing kind to "backend".
+    expect(readDevServerRecord("legacy")?.kind).toBe("backend");
+  });
+});
+
 describe("appServeBackendTool", () => {
   it("validates inputs (numeric port required)", async () => {
     const r = await appServeBackendTool.execute({ app_id: "notes", command: "node s.js", port: "not-a-number" });

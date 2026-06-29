@@ -83,6 +83,7 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "clipboard_write",           // crosses into another app's read surface
   "process_start",             // spawns a subprocess that can carry data off-box
   "app_serve_backend",         // spawns a full-stack app's dev-server subprocess (same sink as process_start)
+  "app_serve_frontend",        // spawns a frontend (Vite/Next) dev-server subprocess (same sink as process_start)
   "browser",                   // browser navigation/fetch actions (browser_* below)
   "extract_site_assets",       // model-controlled url → off-box GET (was DNS-pin only)
   "youtube_analyze",           // model-derived url → off-box GET + yt-dlp spawn
@@ -126,6 +127,7 @@ const SHELL_TOOLS: ReadonlySet<string> = new Set([
   "bash",          // canonical
   "shell", "ari_shell", "process_start",
   "app_serve_backend",  // wraps a process spawn — gate it as shell like process_start
+  "app_serve_frontend", // also wraps a process spawn (Vite/Next dev server)
 ]);
 
 const CAPABILITY_SETS: Record<CapabilityClass, ReadonlySet<string>> = {

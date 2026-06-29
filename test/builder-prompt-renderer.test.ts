@@ -309,6 +309,8 @@ describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", 
     expect(out).toContain("bcrypt");                       // names native offenders beyond better-sqlite3
     expect(out).toContain("VERIFIES it actually binds the port");  // the bind-or-fail backstop is taught
     expect(out).toContain("does a clean restart");                 // re-run app_serve_backend after backend edits
+    expect(out).toContain("app_serve_frontend");                   // live Vite/Next dev-server path (desktop-first proxy)
+    expect(out).toContain(`base to "/apps/todo-app/"`);            // the base-path config that makes the proxy resolve
     // The tier block sits right after the shared native rules.
     expect(out.indexOf("FULL-STACK MODE")).toBeGreaterThan(
       out.indexOf(NATIVE_BUILD_RULE_LINES[0]),

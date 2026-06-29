@@ -87,6 +87,12 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
  *  a backend that needs longer than this almost always has a failing native
  *  install, which is exactly what we want to surface. */
 const BACKEND_READY_TIMEOUT_MS = 20_000;
+// A frontend dev server's cold `npm install` pulls a much heavier tree (vite +
+// react + plugins = hundreds of packages), so give it longer to bind before we
+// call it failed. A too-short window falsely reports "didn't start" even though
+// the dev server comes up moments later — which pushes the model toward a
+// needless production build to "verify" (the exact GPT-5.5 failure path).
+const FRONTEND_READY_TIMEOUT_MS = 60_000;
 const BACKEND_POLL_MS = 400;
 
 /** Idle auto-stop: a backend untouched for this long is killed (its record is
@@ -361,7 +367,7 @@ export const appServeFrontendTool: ToolDefinition = {
     const res = registerDevServer({ appId, command, port, cwd, kind: "frontend" });
     if (!res.ok) return { content: `Could not start frontend dev server: ${res.error}`, isError: true };
 
-    const outcome = await waitForBackend(res.sessionId, port, BACKEND_READY_TIMEOUT_MS);
+    const outcome = await waitForBackend(res.sessionId, port, FRONTEND_READY_TIMEOUT_MS);
     if (outcome.status === "crashed") {
       stopDevServer(appId, {}, { forget: true });
       return {
@@ -377,7 +383,7 @@ export const appServeFrontendTool: ToolDefinition = {
       const out = s ? tailLines(s.stderr || s.stdout || "", 20).trim() : "";
       return {
         content:
-          `Frontend dev server for "${appId}" did NOT start listening on port ${port} within ${BACKEND_READY_TIMEOUT_MS / 1000}s — do not treat it as ready.\n` +
+          `Frontend dev server for "${appId}" did NOT start listening on port ${port} within ${FRONTEND_READY_TIMEOUT_MS / 1000}s — do not treat it as ready.\n` +
           `Likely a slow/failing install or a different port. Check process_status(session_id="${res.sessionId}").\n` +
           (out ? `Output:\n${out}` : ""),
         isError: true,

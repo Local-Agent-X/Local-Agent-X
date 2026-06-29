@@ -23,15 +23,24 @@ describe("classifyAppTier — compiled-native", () => {
   });
 });
 
-describe("classifyAppTier — full-stack", () => {
+describe("classifyAppTier — frontend-spa (build-step frontend, live dev server)", () => {
   it.each([
     "scaffold a vite react project",
     "build a Next.js app with SSR",
+    "a react dashboard application",
+    "make me a svelte kit site",
+    "a vue frontend with vite",
+  ])("flags %j as frontend-spa", (prompt) => {
+    expect(classifyAppTier(prompt)).toBe("frontend-spa");
+  });
+});
+
+describe("classifyAppTier — full-stack (real backend, no build-step frontend)", () => {
+  it.each([
     "make an express backend with a few endpoints",
     "a full-stack notes app",
     "an app that stores users in postgres",
     "todo app backed by sqlite",
-    "a react dashboard application",
     "wire up a graphql api server",
   ])("flags %j as full-stack", (prompt) => {
     expect(classifyAppTier(prompt)).toBe("full-stack");
@@ -61,12 +70,19 @@ describe("classifyAppTier — precedence", () => {
   it("compiled-native wins over full-stack signals (a rust web server)", () => {
     expect(classifyAppTier("a rust backend server with an api")).toBe("compiled-native");
   });
+
+  it("frontend-spa wins over full-stack for a build-step frontend WITH a backend", () => {
+    // Needs a frontend dev server (so skip the static seed) AND can add a
+    // backend — the SPA path covers both, so it must win over full-stack.
+    expect(classifyAppTier("a full-stack vite react app with an express backend")).toBe("frontend-spa");
+  });
 });
 
 describe("tierLabel", () => {
   it("labels each tier", () => {
     expect(tierLabel("quick-html")).toMatch(/quick HTML/i);
     expect(tierLabel("full-stack")).toMatch(/full-stack/i);
+    expect(tierLabel("frontend-spa")).toMatch(/frontend SPA/i);
     expect(tierLabel("compiled-native")).toMatch(/compiled/i);
   });
 });

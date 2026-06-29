@@ -28,7 +28,8 @@ import { resolve } from "node:path";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { ProviderStateEnvelope } from "../contract-types.js";
 import { verifyWriteLanded } from "../../tools/verify.js";
-import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors, formatStartupErrors, scanAppForUnverifiedNativeParity, formatUnverifiedNativeParity } from "../../tools/app-build-verify.js";
+import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors, formatStartupErrors, scanAppForUnverifiedNativeParity, formatUnverifiedNativeParity, scanAppForFakedFrontend, formatFakedFrontend } from "../../tools/app-build-verify.js";
+import type { AppTier } from "../../tools/app-tier.js";
 import { createAnthropicAdapter } from "./anthropic.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
@@ -44,6 +45,10 @@ export interface AppBuildAdapterOptions {
   appName: string;
   appDir: string;
   appUrl: string;
+  /** App tier — gates the frontend-spa faked-frontend check at the build
+   *  terminal. Omitted/undefined behaves like the pre-tier builds (no extra
+   *  gate). */
+  tier?: AppTier;
   /** Fully-rendered builder prompt — fed verbatim to the CLI subprocess
    *  (cli-subprocess strategy). Ignored on the in-canonical path, which
    *  reads its per-build user message from op_messages. */
@@ -106,7 +111,7 @@ export async function createAppBuildAdapter(opts: AppBuildAdapterOptions): Promi
         sessionId: opts.sessionId,
         model: opts.model,
       });
-  return new AppBuildVerifyAdapter(inner, opts.appDir);
+  return new AppBuildVerifyAdapter(inner, opts.appDir, opts.tier);
 }
 
 /**
@@ -119,13 +124,28 @@ export async function createAppBuildAdapter(opts: AppBuildAdapterOptions): Promi
  * untouched. See app-build-verify.ts.
  */
 class AppBuildVerifyAdapter implements Adapter {
-  constructor(private readonly inner: Adapter, private readonly appDir: string) {}
+  constructor(private readonly inner: Adapter, private readonly appDir: string, private readonly tier?: AppTier) {}
   get name(): string { return this.inner.name; }
   get version(): string { return this.inner.version; }
 
   async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
     const result = await this.inner.runTurn(input, report);
     if (result.terminalReason !== "done") return result;
+    // A frontend-spa build that shipped a static page instead of a real project
+    // FAKED it — the invariant that closes the live-Vite-fake class. Tier-gated
+    // so it's inert on every other build. A startup error (no HTML entry) on a
+    // real-built SPA is expected pre-dev-server, so the faked check supersedes it.
+    if (this.tier === "frontend-spa") {
+      const fake = scanAppForFakedFrontend(this.appDir);
+      if (fake.faked) {
+        report({ kind: "error", code: "faked_frontend_build", message: formatFakedFrontend(fake.reason), retryable: false });
+        return { ...result, terminalReason: "error" };
+      }
+      // Real project present — skip the static-HTML startup/fetch scans below
+      // (a Vite app's index.html legitimately points at /src/main.jsx, which
+      // those scans would misread as a missing-file or cross-origin smell).
+      return result;
+    }
     const { errors } = scanAppForStartupErrors(this.appDir);
     const { violations } = scanAppForBlockedFetch(this.appDir);
     const { violations: parity } = scanAppForUnverifiedNativeParity(this.appDir);

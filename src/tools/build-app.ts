@@ -67,10 +67,14 @@ const BUILDER_AGENT_TOOLS = [writeTool, readTool, editTool, bashTool, globTool, 
 export function builderToolsForTier(tier: AppTier): typeof BUILDER_AGENT_TOOLS {
   if (tier === "quick-html") return BUILDER_AGENT_TOOLS;
   const withProcess = [...BUILDER_AGENT_TOOLS, processStartTool, processStatusTool, processKillTool];
-  // Full-stack additionally gets the turnkey dev-server primitives: a real
-  // backend (app_serve_backend, connector-wired) and/or a build-step frontend
-  // dev server (app_serve_frontend, reverse-proxied at /apps/<id>/).
-  if (tier === "full-stack") return [...withProcess, appServeBackendTool, appServeFrontendTool];
+  // Full-stack and frontend-spa both get the turnkey dev-server primitives: a
+  // real backend (app_serve_backend, connector-wired) and/or a build-step
+  // frontend dev server (app_serve_frontend, reverse-proxied at /apps/<id>/).
+  // A frontend-spa app can also need a backend; a full-stack app can serve a
+  // build-step frontend — so both tiers get both tools.
+  if (tier === "full-stack" || tier === "frontend-spa") {
+    return [...withProcess, appServeBackendTool, appServeFrontendTool];
+  }
   return withProcess;
 }
 
@@ -228,12 +232,15 @@ export const buildAppTool: ToolDefinition = {
     // than generating from scratch — cuts weak-model regressions where a
     // first turn tries to load Tailwind CDN and lands an unstyled page.
     // Idempotent on update flows (existing files are preserved).
-    // EXCEPT compiled-native: the starter is a card/hero "dashboard", and the
-    // builder is told to edit it in place — which is exactly how a single
-    // render (Rust → output.png) came out wrapped in dashboard chrome. A
-    // compiled program's deliverable is its artifact, shown by a minimal
-    // full-bleed viewer the worker writes fresh, so don't seed the dashboard.
-    if (!isUpdate && tier !== "compiled-native") seedAppTemplate(appDir, appName);
+    // EXCEPT the real-build tiers (compiled-native, frontend-spa): the starter
+    // is a static card/hero "dashboard" and the builder is told to edit it in
+    // place — which is exactly how the model FAKES a real build (a Rust render
+    // wrapped in dashboard chrome; a Vite app faked as a static page that merely
+    // describes Vite). Skipping the seed removes the fakeable artifact so the
+    // model must produce the real thing (its toolchain output / a real dev
+    // server). One rule, both real-build tiers — a class fix, not a per-tier one.
+    const realBuildTier = tier === "compiled-native" || tier === "frontend-spa";
+    if (!isUpdate && !realBuildTier) seedAppTemplate(appDir, appName);
 
     const contextFiles = isUpdate ? readUpdateContextFiles(appDir) : [];
     const assetFiles = listAssetsDir(appDir);
@@ -250,9 +257,11 @@ export const buildAppTool: ToolDefinition = {
 
     const tierCriteria = tier === "full-stack"
       ? [`a real backend is running (started via app_serve_backend, which verifies it bound its port) and index.html reaches it through its dev connector`]
-      : tier === "compiled-native"
-        ? [`the real toolchain was actually run (not a browser reimplementation); index.html shows the program's real output`]
-        : [];
+      : tier === "frontend-spa"
+        ? [`a REAL framework project was scaffolded (package.json + framework config + src/) and a live dev server is running via app_serve_frontend (it verifies the port bound) — NOT a static index.html that mimics the framework`]
+        : tier === "compiled-native"
+          ? [`the real toolchain was actually run (not a browser reimplementation); index.html shows the program's real output`]
+          : [];
     const contextPack = await buildContextPack({
       description: `Build ${tierLabel(tier)} "${appName}" (${strategy})`,
       successCriteria: [`APP_READY: <url> emitted`, `index.html written to ${appDir}`, ...tierCriteria],
@@ -332,6 +341,7 @@ export const buildAppTool: ToolDefinition = {
       systemPrompt: personaPrompt,
       sessionId: sessionId || undefined,
       model: buildModel,
+      tier,
     }));
 
     canonicalLoopEntry(op, sessionId ? { sessionId } : {});

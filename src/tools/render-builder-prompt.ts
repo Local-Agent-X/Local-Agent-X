@@ -62,6 +62,18 @@ export function fullStackRuleLines(appName: string, appDir: string): string[] {
   ];
 }
 
+export function frontendSpaRuleLines(appName: string, appDir: string): string[] {
+  return [
+    "",
+    "FRONTEND-SPA MODE — this is a REAL build-step frontend (Vite / Next / a React/Vue/Svelte SPA with HMR), NOT a static HTML page. Writing a static index.html that merely LOOKS like or DESCRIBES the framework is the exact failure this mode exists to prevent — do not do it.",
+    `- Scaffold a REAL project under ${appDir}: a package.json with the framework's real deps, the framework config file, and source under src/. e.g. Vite+React: package.json, vite.config.js, index.html with <script type="module" src="/src/main.jsx">, and src/main.jsx + src/App.jsx. There is NO seeded starter — create these files.`,
+    `- In the dev-server config, set the base path to "/apps/${appName}/" AND the HMR client port to the dev port — Vite: \`base: '/apps/${appName}/', server: { port: <P>, host: true, hmr: { clientPort: <P>, host: 'localhost' } }\`. Without this, assets and hot-reload 404.`,
+    `- Start it with app_serve_frontend({ app_id: "${appName}", command: "npm install && npm run dev", port: <P> }). LAX reverse-proxies /apps/${appName}/ to the live dev server (HMR on desktop). app_serve_frontend VERIFIES the dev server actually bound its port — if it reports a failure, FIX the project; do NOT fall back to a static page.`,
+    "- The deliverable is the live DEV server. Do NOT run a production build (`npm run build` / `vite build` / `next build`) — it is unnecessary (the proxy serves the dev server, not a dist/ bundle), it's slow, and a production-build error on a bleeding-edge framework version must NOT block you. Skip it entirely.",
+    "- You are NOT done until app_serve_frontend reports the dev server is up. A hand-written page imitating the app does not count. If the app ALSO needs a backend API, additionally call app_serve_backend.",
+  ];
+}
+
 export function compiledRuleLines(appDir: string): string[] {
   return [
     "",
@@ -77,6 +89,7 @@ export function compiledRuleLines(appDir: string): string[] {
  *  block for the real-build tiers. */
 function renderTierBlock(tier: AppTier, appName: string, appDir: string): string {
   const lines = tier === "full-stack" ? fullStackRuleLines(appName, appDir)
+    : tier === "frontend-spa" ? frontendSpaRuleLines(appName, appDir)
     : tier === "compiled-native" ? compiledRuleLines(appDir)
     : [];
   return lines.length > 0 ? "\n" + lines.join("\n") : "";
@@ -119,9 +132,11 @@ export function renderPerBuildContext(input: BuilderPromptInput): string {
         ? `\n\nNO LOCAL ASSETS YET. If the user mentioned a source URL or attached photos, the parent agent should have extracted them into assets/ before invoking you. Do NOT use placeholder.com or stock CDNs — instead, build a bold typography-driven hero with CSS gradients and ask in PROJECT.md for the photos to be added.\n`
         : "");
 
-  // compiled-native skips the seed (build-app.ts) so its viewer is written
-  // fresh and minimal — don't tell the agent to edit a starter that isn't there.
-  const starterLine = (isUpdate || input.tier === "compiled-native")
+  // The real-build tiers (compiled-native, frontend-spa) skip the seed
+  // (build-app.ts) so the model can't fake the build by editing a static
+  // starter — don't tell the agent to edit one that isn't there.
+  const realBuildTier = input.tier === "compiled-native" || input.tier === "frontend-spa";
+  const starterLine = (isUpdate || realBuildTier)
     ? ""
     : "- An index.html starter + AGENTS.md have been seeded — READ both, then EDIT index.html rather than rewriting it from scratch. Keep the inline-only CSP rule.\n";
 

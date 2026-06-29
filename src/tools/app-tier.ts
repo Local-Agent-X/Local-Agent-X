@@ -29,7 +29,7 @@
  * dashboard shoved into the heavy path) hurt the common case, so we avoid them.
  */
 
-export type AppTier = "quick-html" | "full-stack" | "compiled-native";
+export type AppTier = "quick-html" | "full-stack" | "frontend-spa" | "compiled-native";
 
 // Compiled / native languages that cannot run as browser JS — their presence in
 // a brief means there's a real program to actually build and run. Checked FIRST
@@ -54,22 +54,35 @@ const COMPILED_NATIVE_RE = new RegExp(
   "i",
 );
 
-// Real-backend / build-step signals. HIGH PRECISION only — every entry here
-// genuinely implies a compiler/bundler or a server process the static HTML path
-// can't honestly provide. Deliberately omits "dashboard", "database", "db",
-// "api" (bare), and "react" (bare) — all of which a plain HTML app uses.
+// Build-step FRONTEND signals — a framework whose dev surface is a dev server
+// with HMR, NOT a static index.html. These get their own tier (frontend-spa) so
+// the builder is told to scaffold a REAL project + run app_serve_frontend, and
+// the static dashboard seed is skipped — otherwise the model edits the seeded
+// index.html into a page that merely DESCRIBES the framework (the live Vite-fake
+// failure). HIGH PRECISION: a named build tool, or a framework WITH an artifact
+// noun. Bare "react"/"vue" alone do NOT qualify (a plain HTML app uses them).
+const FRONTEND_SPA_RE = new RegExp(
+  [
+    // build-step toolchains / metaframeworks (a real dev server)
+    "\\b(?:vite|webpack|rollup|parcel|esbuild|next\\.?js|nuxt|svelte\\s?kit|remix|astro|gatsby)\\b",
+    // frontend frameworks WITH an artifact noun (implies a build step)
+    "\\b(?:react|vue|angular|svelte|solid|preact)(?:\\.?js)?\\s+(?:app|project|application|spa|frontend|front-?end|site|dashboard|component|ui)\\b",
+  ].join("|"),
+  "i",
+);
+
+// Real-BACKEND signals. HIGH PRECISION only — every entry here genuinely implies
+// a server process the static HTML path can't honestly provide. Deliberately
+// omits "dashboard", "database", "db", "api" (bare) — all of which a plain HTML
+// app uses. The frontend build-tool signals moved to FRONTEND_SPA_RE above.
 const FULL_STACK_RE = new RegExp(
   [
-    // build-step frontend toolchains / metaframeworks
-    "\\b(?:vite|webpack|rollup|parcel|esbuild|next\\.?js|nuxt|svelte\\s?kit|remix|astro|gatsby)\\b",
     // backend servers / frameworks
     "\\b(?:express|fastify|nest\\.?js|koa|hapi|django|flask|fastapi|rails|laravel|spring\\s?boot|node\\s+server|backend|back-?end|server-?side|api\\s+server|rest\\s+api|graphql|web\\s?socket\\s+server)\\b",
     // explicit full-stack phrasing
     "\\bfull[-\\s]?stack\\b",
     // real database engines / ORMs (named — not the bare word "database")
     "\\b(?:postgres(?:ql)?|mysql|mariadb|mongo(?:db)?|redis|sqlite|prisma|drizzle|sequelize|supabase|firebase|firestore)\\b",
-    // frontend frameworks WITH an artifact noun (implies a build step)
-    "\\b(?:react|vue|angular|svelte|solid|preact)(?:\\.?js)?\\s+(?:app|project|application|spa|frontend|front-?end|site|dashboard|component|ui)\\b",
     // run-a-dev-server phrasing
     "\\bnpm\\s+run\\s+dev\\b",
   ].join("|"),
@@ -77,12 +90,16 @@ const FULL_STACK_RE = new RegExp(
 );
 
 /**
- * Classify a build brief into one of the three app tiers. Precedence:
- * compiled-native (most specific) → full-stack → quick-html (default).
+ * Classify a build brief into one of the four app tiers. Precedence:
+ * compiled-native (most specific) → frontend-spa → full-stack → quick-html.
+ * frontend-spa is checked before full-stack so "full-stack react app" (which
+ * needs a frontend dev server AND can add a backend) lands on the SPA path that
+ * skips the static seed; its prompt covers adding app_serve_backend too.
  */
 export function classifyAppTier(prompt: string): AppTier {
   const text = prompt || "";
   if (COMPILED_NATIVE_RE.test(text)) return "compiled-native";
+  if (FRONTEND_SPA_RE.test(text)) return "frontend-spa";
   if (FULL_STACK_RE.test(text)) return "full-stack";
   return "quick-html";
 }
@@ -91,6 +108,7 @@ export function classifyAppTier(prompt: string): AppTier {
 export function tierLabel(tier: AppTier): string {
   switch (tier) {
     case "compiled-native": return "compiled-native program";
+    case "frontend-spa": return "frontend SPA (live dev server)";
     case "full-stack": return "full-stack app (real backend)";
     case "quick-html": return "quick HTML app";
   }

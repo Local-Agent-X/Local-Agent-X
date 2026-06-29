@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors, scanAppForUnverifiedNativeParity, formatUnverifiedNativeParity } from "./app-build-verify.js";
+import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors, scanAppForUnverifiedNativeParity, formatUnverifiedNativeParity, scanAppForFakedFrontend, formatFakedFrontend } from "./app-build-verify.js";
 
 const dirs: string[] = [];
 function makeApp(files: Record<string, string>): string {
@@ -181,5 +181,37 @@ describe("scanAppForUnverifiedNativeParity — catches the compiled-lang JS-twin
     expect(msg).toContain("cargo run");
     expect(msg).toContain("remove the equivalence claim");
     expect(msg).toContain("Never claim parity you didn't verify");
+  });
+});
+
+describe("scanAppForFakedFrontend — catches a frontend-spa build faked as a static page", () => {
+  it("flags an app with NO package.json (a static HTML fake of a framework)", () => {
+    const dir = makeApp({ "index.html": "<html><body>Vite React Sample (static mock)</body></html>" });
+    const r = scanAppForFakedFrontend(dir);
+    expect(r.faked).toBe(true);
+    expect(r.reason).toMatch(/no package\.json/i);
+  });
+
+  it("flags a package.json that declares no framework / build tool", () => {
+    const dir = makeApp({ "package.json": JSON.stringify({ name: "x", dependencies: { lodash: "^4" } }) });
+    expect(scanAppForFakedFrontend(dir).faked).toBe(true);
+  });
+
+  it("passes a REAL Vite+React project (package.json declares the framework)", () => {
+    const dir = makeApp({
+      "package.json": JSON.stringify({
+        name: "spa",
+        dependencies: { react: "latest", "react-dom": "latest", vite: "latest", "@vitejs/plugin-react": "latest" },
+      }),
+      "vite.config.js": "export default {}",
+    });
+    expect(scanAppForFakedFrontend(dir).faked).toBe(false);
+  });
+
+  it("formats an actionable message pointing at a real scaffold + app_serve_frontend", () => {
+    const msg = formatFakedFrontend("there is no package.json");
+    expect(msg).toContain("app_serve_frontend");
+    expect(msg).toContain("package.json");
+    expect(msg).toMatch(/not the app/i);
   });
 });

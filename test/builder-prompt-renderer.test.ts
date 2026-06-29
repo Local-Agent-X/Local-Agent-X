@@ -336,6 +336,23 @@ describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", 
     expect(renderPerBuildContext(SAMPLE_CREATE)).toContain("An index.html starter + AGENTS.md have been seeded");
   });
 
+  it("frontend-spa tier demands a REAL project + app_serve_frontend, forbids a static fake AND a production build", () => {
+    const out = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "frontend-spa" });
+    expect(out).toContain("FRONTEND-SPA MODE");
+    expect(out).toContain("app_serve_frontend");
+    expect(out).toContain(`base path to "/apps/todo-app/"`);   // the proxy-resolving config
+    // The live-Vite-fake failure: a static page that imitates the framework.
+    expect(out).toContain("NOT a static HTML page");
+    // The GPT-5.5 failure: an unnecessary production build that errored.
+    expect(out).toContain("Do NOT run a production build");
+    expect(out).not.toContain("FULL-STACK MODE");
+  });
+
+  it("frontend-spa suppresses the seeded-starter line (no seed for it either)", () => {
+    const out = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "frontend-spa" });
+    expect(out).not.toContain("An index.html starter + AGENTS.md have been seeded");
+  });
+
   it("tier rule builders embed the app identifiers", () => {
     expect(fullStackRuleLines("notes", "/abs/apps/notes").join("\n")).toContain("dev-notes");
     expect(compiledRuleLines("/abs/apps/rt").join("\n")).toContain("/abs/apps/rt");

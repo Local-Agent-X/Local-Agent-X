@@ -261,6 +261,42 @@ export function formatUnverifiedNativeParity(violations: NativeParityViolation[]
   );
 }
 
+// ── Honesty: a frontend-framework app (Vite/Next/React/Vue/…) that the model
+// FAKED as a static HTML page instead of scaffolding a real project + running
+// its dev server. This is the live-Vite failure: the builder edits a static
+// index.html into a page that merely DESCRIBES the framework. The seed-skip +
+// prompt push toward the real path; this is the invariant that GUARANTEES it.
+// Tier-gated (the caller runs it only for frontend-spa) — a real project must
+// carry a package.json declaring the framework. Pure read-only.
+
+// Framework / build-tool deps that prove a real project was scaffolded (matched
+// against package.json text — covers dependencies and devDependencies alike).
+const FRONTEND_FRAMEWORK_DEP_RE =
+  /"(?:vite|@vitejs\/[a-z-]+|next|nuxt|svelte|@sveltejs\/kit|@remix-run\/[a-z-]+|astro|gatsby|react|react-dom|vue|@angular\/core|solid-js|preact|webpack|parcel|rollup|esbuild)"\s*:/i;
+
+export function scanAppForFakedFrontend(appDir: string): { faked: boolean; reason: string } {
+  const pkgPath = join(appDir, "package.json");
+  if (!existsSync(pkgPath)) {
+    return { faked: true, reason: "there is no package.json — no real framework project was scaffolded, just static files" };
+  }
+  let pkg: string;
+  try { pkg = readFileSync(pkgPath, "utf8"); } catch { return { faked: false, reason: "" }; }
+  if (!FRONTEND_FRAMEWORK_DEP_RE.test(pkg)) {
+    return { faked: true, reason: "package.json declares no frontend framework or build tool (vite, next, react, vue, svelte, …)" };
+  }
+  return { faked: false, reason: "" };
+}
+
+/** Actionable build-failure message: the static-fake was rejected; build it for real. */
+export function formatFakedFrontend(reason: string): string {
+  return (
+    "Build rejected: this is a frontend-framework app (Vite / Next / a React/Vue/Svelte SPA), but it shipped as a static page instead of a real project — " +
+    reason + ".\n\n" +
+    "A hand-written index.html that imitates the framework is not the app. Scaffold a REAL project: a package.json with the framework's deps, the framework config (e.g. vite.config.js with base '/apps/<id>/' and hmr.clientPort set to the dev port), and source under src/. Then start it with " +
+    "app_serve_frontend({ app_id, command: \"npm install && npm run dev\", port }) — LAX reverse-proxies /apps/<id>/ to the live dev server. Fix this, then emit APP_READY."
+  );
+}
+
 /** Actionable build-failure message naming the offending files + the fix. */
 export function formatBlockedFetchError(violations: BlockedFetchViolation[]): string {
   const lines = violations.map(v => `  - ${v.file} → ${v.hosts.join(", ")}`);

@@ -97,7 +97,7 @@ async function loadApps() {
     }
 
     // Skip rebuild if nothing changed (id/version/status/updatedAt are enough)
-    const nextKey = apps.map(a => `${a.id}:${a.version || 0}:${a.status || 'active'}:${a.updatedAt || 0}`).join('|');
+    const nextKey = apps.map(a => `${a.id}:${a.version || 0}:${a.status || 'active'}:${a.updatedAt || 0}:${a.hasBackend ? 1 : 0}`).join('|');
     if (nextKey === _appsRenderKey) { if (empty) empty.style.display = 'none'; return; }
     _appsRenderKey = nextKey;
 
@@ -133,6 +133,9 @@ async function loadApps() {
             : a.status === 'suspended'
               ? `<button class="app-action-btn" onclick="activateApp('${esc(a.id)}')" title="Reactivate app">Activate</button>`
               : ''}
+          ${a.hasBackend
+            ? `<button class="app-action-btn" onclick="restartBackend('${esc(a.id)}','${esc(a.name)}',this)" title="Restart this app's backend dev server (after backend code changes)">Restart backend</button>`
+            : ''}
           <button class="app-action-btn danger" onclick="deleteApp('${esc(a.id)}','${esc(a.name)}')" title="Delete">Delete</button>
         </div>
       </div>`;
@@ -212,6 +215,9 @@ async function deleteApp(id, name) {
     }, 180);
   } catch { loadApps(); }
 }
+
+// restartBackend(id, name, btn) lives in apps-ide.js (backend/dev-server logic),
+// callable from this file's app-card onclick since both load as global scripts.
 
 // Click-to-edit on app name. Swaps the span for an input; Enter commits,
 // Escape cancels. On commit, POSTs /api/apps/<id>/rename which moves the

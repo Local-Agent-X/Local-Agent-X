@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1070 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1071 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/security/` | 59 | 22 | XL |  |
 | `src/ops/` | 52 | 20 | L |  |
 | `src/memory/` | 38 | 106 | XL |  |
-| `src/tools/` | 36 | 123 | XL |  |
+| `src/tools/` | 37 | 123 | XL |  |
 | `src/providers/` | 34 | 13 | L |  |
 | `src/canonical-loop/` | 29 | 103 | XL |  |
 | `src/agent-store/` | 24 | 7 | M |  |
@@ -58,7 +58,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/bridge-voice/` | 5 | 5 | M |  |
 | `src/mcp-client/` | 5 | 6 | L |  |
 | `src/operations/` | 5 | 5 | L |  |
-| `src/routes/` | 5 | 78 | XL |  |
+| `src/routes/` | 5 | 79 | XL |  |
 | `src/routing/` | 5 | 7 | M |  |
 | `src/util/` | 5 | 1 | S |  |
 | `src/server/` *(entrypoint)* | 4 | 25 | XL |  |

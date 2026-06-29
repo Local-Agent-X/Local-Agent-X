@@ -28,8 +28,54 @@ window.__uploadContexts.ide = {
   setState: (arr) => { idePendingUploads = arr; },
 };
 
+// Reveal the IDE "Restart backend" button only for apps that actually have a
+// registered backend dev server. One source of truth (the /api/apps hasBackend
+// flag) so every IDE entry path — card, post-build, session-restore — is right.
+async function refreshIdeBackendButton(appId) {
+  const btn = document.getElementById('ide-restart-backend-btn');
+  if (!btn) return;
+  btn.style.display = 'none';
+  try {
+    const r = await fetch(`${API}/api/apps`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const apps = await r.json();
+    const me = Array.isArray(apps) ? apps.find(a => a.id === appId) : null;
+    if (me && me.hasBackend) btn.style.display = '';
+  } catch { /* leave hidden */ }
+}
+
+// Restart a Tier-1.5 backend dev server. Backend SOURCE edits don't take effect
+// until the dev server bounces (it stays live ~15 min, so closing and reopening
+// the app doesn't restart it). POSTs /api/apps/<id>/restart-backend, which does
+// a clean kill-then-restart server-side. Shared by the app-card button
+// (apps.js) and the IDE topbar; both load as global scripts.
+async function restartBackend(id, name, btn) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+  try {
+    const r = await fetch(`${API}/api/apps/${id}/restart-backend`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
+    });
+    const data = await r.json().catch(() => ({}));
+    if (btn) {
+      btn.textContent = r.ok ? 'Restarted ✓' : 'Failed';
+      btn.title = r.ok ? `Backend restarted on port ${data.port}` : (data.error || 'Restart failed');
+      setTimeout(() => { btn.disabled = false; btn.textContent = label || 'Restart backend'; }, 1600);
+    }
+  } catch (e) {
+    if (btn) { btn.textContent = 'Failed'; setTimeout(() => { btn.disabled = false; btn.textContent = label || 'Restart backend'; }, 1600); }
+  }
+}
+
+// Restart the current IDE app's backend (delegates to the shared handler above).
+function ideRestartBackend() {
+  if (!_ideAppId) return;
+  restartBackend(_ideAppId, _ideAppId, document.getElementById('ide-restart-backend-btn'));
+}
+
 function enterIdeView(appId, appName, appUrl, buildPrompt) {
   _ideAppId = appId;
+  refreshIdeBackendButton(appId);
   // Stable session ID per app so chat persists across leave/return. Used
   // to be `ide-${appId}-${Date.now()}` which made every IDE entry a fresh
   // session — user lost the conversation as soon as they navigated away

@@ -86,15 +86,42 @@ describe("proxyFrontendDevServer (desktop-first live frontend)", () => {
     expect((res as unknown as { writableEnded: boolean }).writableEnded).toBe(true);
   });
 
-  it("returns 502 when the dev server is unreachable", async () => {
+  it("returns 502 when the dev server stays unreachable past the cold-start window", async () => {
     // Grab an ephemeral port, then free it so a connect is refused deterministically.
     const tmp = createServer();
     const deadPort: number = await new Promise((resolve) =>
       tmp.listen(0, "127.0.0.1", () => resolve((tmp.address() as AddressInfo).port)));
     await new Promise<void>((r) => tmp.close(() => r()));
-    const proxy = await listen(proxyTo(deadPort));
+    // Short cold-start window so the test 502s fast instead of waiting the 12s default.
+    const proxy = await listen((req, res) =>
+      proxyFrontendDevServer(req, res, deadPort, new URL(req.url!, "http://localhost"), "T", { coldStartWaitMs: 200 }));
 
     const r = await fetch(`http://127.0.0.1:${proxy}/apps/spa/`);
     expect(r.status).toBe(502);
+  });
+
+  it("WAITS for a cold-starting dev server and serves once it binds (no 502, no reload)", async () => {
+    // Reserve then free a port so the first attempts get ECONNREFUSED (cold start).
+    const tmp = createServer();
+    const port: number = await new Promise((resolve) =>
+      tmp.listen(0, "127.0.0.1", () => resolve((tmp.address() as AddressInfo).port)));
+    await new Promise<void>((r) => tmp.close(() => r()));
+
+    const proxy = await listen((req, res) =>
+      proxyFrontendDevServer(req, res, port, new URL(req.url!, "http://localhost"), "T", { coldStartWaitMs: 5000 }));
+
+    // The dev server "boots" ~500ms later — the proxy should be mid-retry and then serve.
+    setTimeout(() => {
+      const up = createServer((_q, s) => {
+        s.writeHead(200, { "Content-Type": "text/html" });
+        s.end("<html><head></head><body>booted</body></html>");
+      });
+      open.push(up);
+      up.listen(port, "127.0.0.1");
+    }, 500);
+
+    const r = await fetch(`http://127.0.0.1:${proxy}/apps/spa/`);
+    expect(r.status).toBe(200);
+    expect(await r.text()).toContain("booted");
   });
 });

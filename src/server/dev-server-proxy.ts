@@ -22,6 +22,14 @@ const HOP_BY_HOP = new Set([
   "te", "trailers", "transfer-encoding", "upgrade",
 ]);
 
+// Cold-start tolerance: opening an app kicks its dev server (ensureDevServerRunning),
+// but Vite takes a few seconds to bind. Rather than 502 on that gap (a flash the
+// user has to reload past), retry the upstream connection until it's ready. A
+// WARM server answers on the first attempt — zero added delay; a COLD start waits
+// exactly as long as the boot takes; a genuinely-down server 502s after the cap.
+const COLD_START_WAIT_MS = 12_000;
+const COLD_START_POLL_MS = 300;
+
 // Dev-relaxed CSP, applied ONLY to a proxied frontend-dev document — never the
 // static-app path. Vite's dev runtime needs 'unsafe-eval' (module eval) and its
 // HMR client needs a ws:/wss: connect-src to reach the dev server on localhost.
@@ -62,6 +70,7 @@ export function proxyFrontendDevServer(
   port: number,
   url: URL,
   connectorToken: string,
+  opts: { coldStartWaitMs?: number } = {},
 ): void {
   // A websocket upgrade (Vite HMR) cannot be proxied here — this forwarder only
   // handles a normal HTTP response, so forwarding an upgrade would HANG (Node
@@ -87,47 +96,59 @@ export function proxyFrontendDevServer(
   }
   headers.host = `localhost:${port}`;
 
-  const upstream = httpRequest(
-    { host: "127.0.0.1", port, method: "GET", path: url.pathname + url.search, headers },
-    (up) => {
-      const ct = String(up.headers["content-type"] || "");
-      logger.info(`[dev-proxy] ← ${up.statusCode} ${url.pathname} (${ct || "no-ct"})`);
-      const out: Record<string, string | string[]> = {};
-      for (const [k, v] of Object.entries(up.headers)) {
-        if (v !== undefined && !HOP_BY_HOP.has(k.toLowerCase()) && k.toLowerCase() !== "content-security-policy") {
-          out[k] = v as string | string[];
-        }
-      }
+  const deadline = Date.now() + (opts.coldStartWaitMs ?? COLD_START_WAIT_MS);
 
-      if (ct.includes("text/html")) {
-        const chunks: Buffer[] = [];
-        up.on("data", (c) => chunks.push(c as Buffer));
-        up.on("end", () => {
-          const html = injectHead(Buffer.concat(chunks).toString("utf-8"), connectorBootstrapScript(connectorToken));
-          delete out["content-length"];
-          out["Content-Security-Policy"] = DEV_FRONTEND_CSP;
-          out["Cache-Control"] = "no-cache, must-revalidate";
-          out["X-Content-Type-Options"] = "nosniff";
-          res.writeHead(up.statusCode || 200, out);
-          res.end(html);
-        });
-        up.on("error", () => { if (!res.writableEnded) res.end(); });
+  const attempt = (): void => {
+    const upstream = httpRequest(
+      { host: "127.0.0.1", port, method: "GET", path: url.pathname + url.search, headers },
+      (up) => {
+        const ct = String(up.headers["content-type"] || "");
+        logger.info(`[dev-proxy] ← ${up.statusCode} ${url.pathname} (${ct || "no-ct"})`);
+        const out: Record<string, string | string[]> = {};
+        for (const [k, v] of Object.entries(up.headers)) {
+          if (v !== undefined && !HOP_BY_HOP.has(k.toLowerCase()) && k.toLowerCase() !== "content-security-policy") {
+            out[k] = v as string | string[];
+          }
+        }
+
+        if (ct.includes("text/html")) {
+          const chunks: Buffer[] = [];
+          up.on("data", (c) => chunks.push(c as Buffer));
+          up.on("end", () => {
+            const html = injectHead(Buffer.concat(chunks).toString("utf-8"), connectorBootstrapScript(connectorToken));
+            delete out["content-length"];
+            out["Content-Security-Policy"] = DEV_FRONTEND_CSP;
+            out["Cache-Control"] = "no-cache, must-revalidate";
+            out["X-Content-Type-Options"] = "nosniff";
+            res.writeHead(up.statusCode || 200, out);
+            res.end(html);
+          });
+          up.on("error", () => { if (!res.writableEnded) res.end(); });
+          return;
+        }
+
+        res.writeHead(up.statusCode || 200, out);
+        up.pipe(res);
+      },
+    );
+
+    upstream.on("error", (e) => {
+      // Still booting (not listening yet) — retry until the cold-start deadline.
+      const code = (e as NodeJS.ErrnoException).code;
+      if ((code === "ECONNREFUSED" || code === "ECONNRESET") && !res.headersSent && Date.now() < deadline) {
+        setTimeout(attempt, COLD_START_POLL_MS);
         return;
       }
+      logger.warn(`[dev-proxy] ✗ ${url.pathname}: ${(e as Error).message}`);
+      if (!res.headersSent) {
+        res.writeHead(502, { "Content-Type": "text/plain" });
+        res.end("Frontend dev server unreachable — it may still be starting. Reload in a moment.");
+      } else if (!res.writableEnded) {
+        res.end();
+      }
+    });
+    upstream.end();
+  };
 
-      res.writeHead(up.statusCode || 200, out);
-      up.pipe(res);
-    },
-  );
-
-  upstream.on("error", (e) => {
-    logger.warn(`[dev-proxy] ✗ ${url.pathname}: ${(e as Error).message}`);
-    if (!res.headersSent) {
-      res.writeHead(502, { "Content-Type": "text/plain" });
-      res.end("Frontend dev server unreachable — it may still be starting. Reload in a moment.");
-    } else if (!res.writableEnded) {
-      res.end();
-    }
-  });
-  upstream.end();
+  attempt();
 }

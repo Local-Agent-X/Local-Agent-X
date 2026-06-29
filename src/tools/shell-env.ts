@@ -91,10 +91,29 @@ function findGitBash(): string | null {
   return null;
 }
 
+let _fallbackWarned = false;
+
 export function resolveWindowsShell(): WindowsShell {
   if (_winShellResolved) return _winShellResolved;
   const gitBash = findGitBash();
   if (gitBash) return (_winShellResolved = { kind: "bash", path: gitBash });
+  // No real POSIX shell. We STILL fall back to PowerShell (+ the partial
+  // POSIX→PS translation in shell-tool) so the agent isn't dead in the water —
+  // but that path is the "works sometimes" mode: pipes to grep/head, heredocs,
+  // and `git clone` can fail. A real install GUARANTEES Git Bash (the
+  // install-common.mjs posix-shell step provisions PortableGit and fails closed
+  // if `echo ok | grep ok` doesn't run), so reaching here means an unmanaged or
+  // dev box with no Git for Windows. Surface that ONCE, loudly, instead of
+  // degrading in silence — that silence is precisely what made the original
+  // POSIX failures undiagnosable. Keep the net; just stop hiding it.
+  if (!_fallbackWarned && platform() === "win32") {
+    _fallbackWarned = true;
+    console.warn(
+      "[shell] No POSIX shell (Git Bash) found on Windows — falling back to PowerShell with limited " +
+      "POSIX translation. Pipes to grep/head, heredocs, and `git clone` may fail. " +
+      "Install Git for Windows (https://git-scm.com/download/win) or reinstall the app to provision it.",
+    );
+  }
   const pwsh = findOnPath("pwsh.exe");
   if (pwsh) return (_winShellResolved = { kind: "pwsh", path: pwsh });
   return (_winShellResolved = {
@@ -114,6 +133,7 @@ export function getWindowsShell(): string {
 // different PATH / install layout.
 export function _resetWindowsShellCache(): void {
   _winShellResolved = null;
+  _fallbackWarned = false;
 }
 
 // ── Antivirus interference detector ──────────────────────────────────────

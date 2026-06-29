@@ -63,6 +63,16 @@ export interface LoopState {
   // in a bash tool result. Next iteration the agent gets a nudge to wrap up.
   // The perma-fix mandate keeps agents going past their commit; this caps it.
   postCommitNudgePending: boolean;
+  // Lifetime count of loop-break nudges emitted for this op. In the interactive
+  // lane the abort paths downgrade to nudges (never kill a turn the user wants),
+  // and each path resets its own window so it can't spam per-turn — but nothing
+  // bounded the TOTAL: a model that ignored every nudge got re-nudged forever,
+  // backstopped only by the wall-clock (up to 2h). Once this exceeds
+  // NUDGE_CEILING we escalate to a hard abort even in the interactive lane —
+  // six "you're looping, pivot" warnings is enough rope; past that it's a
+  // runaway and ending the turn beats spinning. (The user keeps the chat and
+  // can just send another message.)
+  nudgeCount: number;
 }
 
 export function createLoopState(): LoopState {
@@ -76,6 +86,7 @@ export function createLoopState(): LoopState {
     lastTurnHadNovelResult: false,
     iterationsSinceProgress: 0,
     postCommitNudgePending: false,
+    nudgeCount: 0,
   };
 }
 
@@ -96,6 +107,13 @@ const DISCOVERY_LOOP_THRESHOLD_WEAK = 4;
 // for an agent that's genuinely stuck across many different tools.
 export const NO_PROGRESS_LIMIT = 25;
 export const NO_PROGRESS_LIMIT_WEAK = 15;
+// Lifetime loop-break nudges allowed in the interactive lane before the detector
+// stops nudging and hard-aborts the turn. Mirrors the repeat-failure middleware's
+// NUDGE_AT/ABORT_AT escalation shape. Generous on purpose — each nudge already
+// costs several turns to re-accumulate, so six of them spans many turns of the
+// model being told to pivot and ignoring it. The wall-clock ceiling (up to 2h)
+// is the only other backstop, so without this a stubborn loop ran far too long.
+export const NUDGE_CEILING = 6;
 // Read-only discovery / lookup tools an agent spins on when it can't find
 // something. No risk-taxonomy tier models "discovery spin", so this stays a
 // curated list — but every member MUST be read-only (a fence test in
@@ -135,6 +153,21 @@ export function checkToolLoops(
   const repeatLimit = isWeakOrMedium ? 2 : 3;
   const discoveryLimit = isWeakOrMedium ? DISCOVERY_LOOP_THRESHOLD_WEAK : DISCOVERY_LOOP_THRESHOLD;
 
+  // Every nudge below routes through here so the per-op lifetime ceiling can
+  // bound a runaway. In the interactive lane (nudgeOnly), once the model has
+  // been nudged past NUDGE_CEILING times and is STILL looping, stop nudging and
+  // hard-abort the turn — the only other backstop is the 2h wall-clock. In the
+  // worker lane the count still increments but never escalates here (workers
+  // already hard-abort via the exact-repeat / no-progress paths).
+  const emitNudge = (nudge: string): { abort: boolean; nudge: string | null } => {
+    state.nudgeCount++;
+    if (opts?.nudgeOnly && state.nudgeCount > NUDGE_CEILING) {
+      logRetry({ kind: "loop-abort", tool: "nudge-ceiling", detail: { nudgeCount: state.nudgeCount, ceiling: NUDGE_CEILING, modelTier: opts?.modelTier } });
+      return { abort: true, nudge: `SYSTEM: ending the turn — you've been told you're looping ${state.nudgeCount} times and kept going. Stopping now. Reply with what you have, or ask the user how to proceed.` };
+    }
+    return { abort: false, nudge };
+  };
+
   // Exact-repeat detection. Aborts only when the repeated call ALSO keeps
   // producing the same result (confirmed via noteToolResults after each
   // dispatch) — so a user-requested batch of identical commands or a poll
@@ -151,8 +184,9 @@ export function checkToolLoops(
         // Interactive chat: never kill the turn out from under the user. Break
         // the spin with a pivot nudge, then reset so it must re-accumulate
         // before nudging again (no per-turn spam if the model keeps spinning).
+        // emitNudge escalates to a hard abort once the lifetime ceiling is hit.
         state.identicalResultRepeats = 0;
-        return { abort: false, nudge: `SYSTEM: ${toolCalls[0]?.name} called with identical arguments and unchanged results ${state.sameToolCount}× — you're looping. Stop repeating it: take a different action, call a different tool, or answer with what you already have.` };
+        return emitNudge(`SYSTEM: ${toolCalls[0]?.name} called with identical arguments and unchanged results ${state.sameToolCount}× — you're looping. Stop repeating it: take a different action, call a different tool, or answer with what you already have.`);
       }
       return { abort: true, nudge: "\n\n(Detected repeated tool calls with unchanging results — stopping loop)" };
     }
@@ -209,10 +243,7 @@ export function checkToolLoops(
       // Reset so the next turn starts clean whether we abort or just nudge.
       state.iterationsSinceProgress = 0;
       if (opts?.nudgeOnly) {
-        return {
-          abort: false,
-          nudge: `SYSTEM: ${noProgLimit}+ tool calls with no progress (no file/page/API changes). Step back — take a concrete next action or respond to the user now.`,
-        };
+        return emitNudge(`SYSTEM: ${noProgLimit}+ tool calls with no progress (no file/page/API changes). Step back — take a concrete next action or respond to the user now.`);
       }
       return {
         abort: true,
@@ -233,10 +264,7 @@ export function checkToolLoops(
     const pivotHint = (toolName === "read" || toolName === "glob" || toolName === "grep")
       ? " You have enough context — switch tactic: use write/edit/bash to act on what you've already read, or ask the user a focused question if you're truly stuck."
       : " You have enough context — produce the answer or take the next concrete action.";
-    return {
-      abort: false,
-      nudge: `SYSTEM: ${toolName} called ${count} times this turn — that's a discovery loop signal.${pivotHint} Do not call ${toolName} again unless you have a specific new file/path/term to look up.`,
-    };
+    return emitNudge(`SYSTEM: ${toolName} called ${count} times this turn — that's a discovery loop signal.${pivotHint} Do not call ${toolName} again unless you have a specific new file/path/term to look up.`);
   }
 
   return { abort: false, nudge: null };

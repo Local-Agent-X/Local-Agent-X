@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { checkToolLoops, noteToolResults, createLoopState, NO_PROGRESS_LIMIT, SPIRALABLE_TOOLS, type LoopState } from "./loop-detection.js";
+import { checkToolLoops, noteToolResults, createLoopState, NO_PROGRESS_LIMIT, NUDGE_CEILING, SPIRALABLE_TOOLS, type LoopState } from "./loop-detection.js";
 import { TOOLS } from "../tool-registry.js";
 
 type Call = { name: string; arguments: string };
@@ -139,6 +139,64 @@ describe("checkToolLoops — discovery (result-delta)", () => {
       if (searchTurn(state, i, "fresh hits " + i).nudge) nudged = true;
     }
     expect(nudged).toBe(false);
+  });
+});
+
+describe("checkToolLoops — interactive nudge ceiling (runaway backstop)", () => {
+  // The interactive lane downgrades the hard aborts to nudges so a turn the
+  // user wants is never killed. But a model that IGNORES every nudge used to be
+  // re-nudged forever, bounded only by the 2h wall-clock. The lifetime ceiling
+  // converts the nudge to an abort once the model has been warned past
+  // NUDGE_CEILING times and is still looping.
+
+  it("a stubborn same-call/same-result spin eventually hard-aborts in the interactive lane", () => {
+    const state = createLoopState();
+    let nudgesBeforeAbort = 0;
+    let abortVerdict: ReturnType<typeof checkToolLoops> | null = null;
+    for (let i = 0; i < 60; i++) {
+      const v = turn(state, [lsCall], "identical-output", { modelTier: "strong", nudgeOnly: true });
+      if (v.abort) { abortVerdict = v; break; }
+      if (v.nudge) nudgesBeforeAbort++;
+    }
+    // It must have nudged repeatedly (giving the model many chances) THEN aborted.
+    expect(abortVerdict?.abort).toBe(true);
+    expect(nudgesBeforeAbort).toBeGreaterThanOrEqual(NUDGE_CEILING);
+    // The abort is the ceiling escalation, not a normal loop-abort message.
+    expect(abortVerdict?.nudge).toMatch(/ending the turn/i);
+  });
+
+  it("stays within the generous window: no abort before the ceiling is exceeded", () => {
+    const state = createLoopState();
+    let nudges = 0;
+    let aborted = false;
+    for (let i = 0; i < 60 && !aborted; i++) {
+      const v = turn(state, [lsCall], "identical-output", { modelTier: "strong", nudgeOnly: true });
+      const v2 = v.abort;
+      if (v.nudge && !v2) nudges++;
+      if (v2) {
+        aborted = true;
+        // By the time we abort, the model has been nudged at least the ceiling
+        // number of times — the escalation never fires early.
+        expect(nudges).toBeGreaterThanOrEqual(NUDGE_CEILING);
+      }
+    }
+    expect(aborted).toBe(true);
+  });
+
+  it("worker lane: the ceiling never escalates a discovery nudge (workers keep their own hard-abort path)", () => {
+    const state = createLoopState();
+    const searchCall = (i: number) => ({ name: "web_search", arguments: JSON.stringify({ q: "q" + i }) });
+    let sawNudge = false;
+    // 10 turns of an identical-result discovery loop: discovery nudges fire, but
+    // the no-progress hard-abort (turn ~25) hasn't been reached yet — so within
+    // this window a worker-lane verdict must never be an abort caused by the
+    // interactive-only nudge ceiling.
+    for (let i = 0; i < 10; i++) {
+      const v = turn(state, [searchCall(i)], "no results", { modelTier: "strong" }); // nudgeOnly omitted = worker
+      if (v.nudge) sawNudge = true;
+      expect(v.abort).toBe(false);
+    }
+    expect(sawNudge).toBe(true);
   });
 });
 

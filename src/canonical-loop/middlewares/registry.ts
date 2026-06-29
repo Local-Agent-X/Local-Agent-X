@@ -41,6 +41,7 @@ import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
 import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
+import { falseRefusalMiddleware } from "./false-refusal.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { openStepsMiddleware } from "./open-steps.js";
 import { browserHandoffMiddleware } from "./browser-handoff.js";
@@ -61,6 +62,12 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     loopDetectionMiddleware,
     hallucinationCheckMiddleware,
     actionClaimMiddleware,
+    // Interactive + worker — in UNRESTRICTED file mode, a tool-less turn that
+    // refuses a file action on a guessed restriction ("outside the sandbox")
+    // without ever calling `read` gets a grounding nudge. Runs BEFORE
+    // tool-search-nudge so this file-permission case gets "you're permitted,
+    // call read" instead of the (useless-for-an-eager-read) "go search" nudge.
+    falseRefusalMiddleware,
     // All lanes (incl. interactive chat) — forces a tool_search when the model
     // declines a capability with zero tool calls, before the denial reaches the
     // user. Runs before premature-completion so a "no tool" denial gets the

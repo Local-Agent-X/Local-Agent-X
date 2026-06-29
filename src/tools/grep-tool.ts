@@ -7,8 +7,19 @@ import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, extname } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { resolveAgentPath } from "../workspace/paths.js";
 
 type OutputMode = "content" | "files_with_matches" | "count";
+
+// Resolve the search root through the canonical agent-path resolver — the SAME
+// one read/glob and the security gate use — so a "~/..." or workspace-relative
+// root expands once, identically to how it's gated, instead of being joined
+// onto a raw cwd and failing until the model retries. Absent path → cwd.
+export function searchRoot(args: Record<string, unknown>): string {
+  return args.path != null && String(args.path) !== ""
+    ? resolveAgentPath(String(args.path))
+    : process.cwd();
+}
 
 const DEFAULT_HEAD_LIMIT = 250;
 
@@ -36,7 +47,7 @@ function buildRgArgs(args: Record<string, unknown>): string[] {
   else if (mode === "count") rg.push("-c");
   else if (mode === "content") { rg.push("-n"); if (ctx !== undefined) rg.push("-C", String(ctx)); }
 
-  rg.push(pattern, String(args.path || process.cwd()));
+  rg.push(pattern, searchRoot(args));
   return rg;
 }
 
@@ -85,7 +96,7 @@ async function fallbackSearch(args: Record<string, unknown>, limit: number): Pro
   const pattern = new RegExp(String(args.pattern), args.case_insensitive ? "i" : "");
   const mode = (args.output_mode as OutputMode) || "files_with_matches";
   const ctx = typeof args.context === "number" ? (args.context as number) : 0;
-  const root = String(args.path || process.cwd());
+  const root = searchRoot(args);
   const lines: string[] = [];
   const onProgress = args._onProgress as ((msg: string) => void) | undefined;
 

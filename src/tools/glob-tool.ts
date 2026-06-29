@@ -3,10 +3,21 @@
  * Replaces bash find/ls with structured glob results sorted by mtime.
  */
 import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
 import fg from "fast-glob";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
+import { resolveAgentPath } from "../workspace/paths.js";
+
+// Resolve the search base through the canonical agent-path resolver — the SAME
+// one read/grep and the security gate use — so a "~/..." or workspace-relative
+// base expands once, identically to how it's gated, instead of being joined
+// onto a raw cwd and failing until the model retries. Absent path → cwd.
+// Exported for direct testing (guards against a regression back to a cwd join).
+export function searchBase(rawPath: unknown): string {
+  return rawPath != null && String(rawPath) !== ""
+    ? resolveAgentPath(String(rawPath))
+    : process.cwd();
+}
 
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
@@ -63,7 +74,7 @@ export const globTool: ToolDefinition = {
     const pattern = String(args.pattern ?? "");
     if (!pattern) return err("pattern is required");
 
-    const cwd = resolve(String(args.path ?? process.cwd()));
+    const cwd = searchBase(args.path);
     const startMs = Date.now();
 
     try {

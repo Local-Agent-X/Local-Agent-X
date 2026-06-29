@@ -10,6 +10,8 @@ import type { IntegrationRegistry } from "../../integrations/index.js";
 import { loadSystemPrompt } from "../../config-loader.js";
 import { createLogger } from "../../logger.js";
 import { providerRiderFor } from "./provider-riders.js";
+import type { FileAccessMode } from "../../security/types.js";
+import { loadFileAccessMode } from "../../security/security-config.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -19,6 +21,25 @@ const PROVIDER_NAMES: Record<string, string> = {
 };
 
 const COLD_START_VERBS = /\b(build|create|make|deploy|publish|launch|set\s+up|put\s+\S+\s+(live|online)|ship|generate|scaffold|spin\s+up)\b/i;
+
+/**
+ * Per-turn grounding for the live file-access mode. The model is otherwise
+ * never told which of the three modes is active, so it guesses — and guesses
+ * restrictively, refusing reads it is actually permitted (worst on Grok, which
+ * was observed refusing an Unrestricted-mode read as "outside the sandbox"
+ * without ever calling the tool). Stating the active policy forces a refusal to
+ * come from a real tool result, not an assumption. Pure + exported for testing.
+ */
+export function fileAccessGroundingBlock(mode: FileAccessMode): string {
+  switch (mode) {
+    case "unrestricted":
+      return "\n\n[FILE ACCESS: UNRESTRICTED] You can read ANY file on this computer. A read fails ONLY if the file does not exist or is a blocked credential/key file — nothing else. Do not refuse a read on any other grounds: call the tool and report the real result.";
+    case "common":
+      return "\n\n[FILE ACCESS: COMMON] You can read the workspace, the project, ~/.lax, and the user's content folders (Documents, Downloads, Desktop, Pictures, Videos, Music). Paths outside those are blocked; credential/key files are always blocked. Attempt the read; if it is genuinely outside the allowed roots, say so in one line and mention the user can switch to Unrestricted in Settings — don't claim you are simply unable.";
+    case "workspace":
+      return "\n\n[FILE ACCESS: WORKSPACE-ONLY] Reads are limited to the workspace folder and ~/.lax. Reads elsewhere are blocked BY POLICY, not by a missing tool. Attempt the read; if it is blocked, say so in one line and tell the user they can switch to Common or Unrestricted in Settings — don't claim you are unable.";
+  }
+}
 
 export interface BuildSystemPromptInput {
   message: string;
@@ -109,10 +130,18 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
 
   const providerRider = providerRiderFor(input.resolvedProvider);
 
+  // Per-turn file-access grounding — see fileAccessGroundingBlock. Appended in
+  // BOTH branches so sub-agents reading files are grounded too. Best-effort:
+  // a config read failure must never break prompt assembly.
+  let fileAccessBlock = "";
+  try {
+    fileAccessBlock = fileAccessGroundingBlock(loadFileAccessMode());
+  } catch { /* best-effort */ }
+
   let systemPrompt: string;
   if (input.systemPromptOverride) {
     // Sub-agents provide their own prompt
-    systemPrompt = input.systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + providerRider;
+    systemPrompt = input.systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider;
   } else {
     // Use full prompt for all providers. The empty-response issue was caused
     // by reasoning: { effort: "low" } in codex-client.ts, not prompt size.
@@ -134,7 +163,7 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
       notificationHint,
       bridgeContext: input.bridgeContext,
     });
-    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + providerRider;
+    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider;
   }
 
   // build_app hand-off directive. Fires for EVERY provider (not just the

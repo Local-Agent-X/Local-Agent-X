@@ -12,13 +12,13 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1076 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1077 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/security/` | 60 | 24 | XL |  |
+| `src/security/` | 61 | 24 | XL |  |
 | `src/ops/` | 52 | 20 | L |  |
 | `src/memory/` | 38 | 106 | XL |  |
 | `src/tools/` | 37 | 124 | XL |  |
@@ -28,7 +28,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agency/` | 22 | 14 | L |  |
 | `src/auth/` | 21 | 9 | L |  |
 | `src/threat/` | 20 | 12 | L |  |
-| `src/classifiers/` | 18 | 8 | L |  |
+| `src/classifiers/` | 19 | 8 | L |  |
 | `src/orchestrator/` | 18 | 21 | L |  |
 | `src/session/` | 18 | 7 | M |  |
 | `src/agent-request/` | 17 | 12 | L |  |
@@ -41,8 +41,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/autonomy/` | 11 | 4 | M |  |
 | `src/workspace/` | 11 | 2 | M |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
+| `src/cron/` | 10 | 8 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |
-| `src/cron/` | 9 | 7 | L |  |
 | `src/whatsapp-bridge/` | 9 | 6 | M |  |
 | `src/autopilot/` | 8 | 12 | L |  |
 | `src/screen-stream/` | 8 | 8 | L |  |

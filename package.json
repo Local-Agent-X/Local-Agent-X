@@ -34,6 +34,7 @@
     "eval:report": "node eval/op-outcomes/report.mjs",
     "eval:compaction": "node eval/compaction-fidelity/run.mjs",
     "eval:dedup": "tsx eval/dedup-live/run.ts",
+    "eval:grounding": "tsx eval/capability-grounding/run.ts",
     "memory:check": "node scripts/check-memory-freshness.mjs",
     "hooks:push-guard": "node scripts/install-push-guard.mjs",
     "setup-ai": "node scripts/setup-ai.js"

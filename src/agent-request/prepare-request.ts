@@ -8,10 +8,8 @@
 // unexpected provider switches, and never validated that workers can
 // make Codex perform on long tasks. Workers + fresh context IS the fix.
 
-import { join } from "node:path";
-import { writeFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
 import { buildCleanHistory } from "../providers/sanitize.js";
+import { processAttachments } from "./attachments.js";
 import type { AgentRequestInput, ForcedToolChoice, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { noteResolvedAuthSource, noteResolvedModel } from "../cost-tracker.js";
@@ -198,49 +196,11 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   });
   end();
 
-  // 7. Process image attachments. Web uploads first and sends a `/uploads/<f>`
-  // path in `url`; the mobile app has no upload step and sends the image inline
-  // as a base64 `dataUrl` (url:null) — decode that to a file so both land in the
-  // same on-disk form the rest of the pipeline reads.
-  const images: Array<{ url: string; filePath?: string; name: string }> = [];
-  // Non-image attachments (PDF/doc/etc.) the model can read via a file tool. The
-  // model is shown the friendly name in the user message; without the on-disk
-  // ref it calls e.g. `pdf read "Invoice.pdf"`, which resolves against the
-  // workspace and 404s — the file actually lives in uploads. We surface the
-  // "/uploads/<f>" ref (resolveAgentPath maps it back to the uploads dir).
-  const fileAttachments: Array<{ name: string; ref: string }> = [];
-  if (input.attachments && input.uploadsDir) {
-    for (const a of input.attachments) {
-      const inline = (a as { dataUrl?: string | null }).dataUrl ?? null;
-      const src = (a.url as string | null) || inline;
-      if (!src) continue;
-      const dataMatch = /^data:([^;]+);base64,(.+)$/.exec(src);
-      let ref: string;
-      let filePath: string;
-      if (dataMatch) {
-        const ext = (dataMatch[1].split("/")[1] || "bin").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "bin";
-        const fname = `att-${randomBytes(6).toString("hex")}.${ext}`;
-        filePath = join(input.uploadsDir, fname);
-        try {
-          writeFileSync(filePath, Buffer.from(dataMatch[2], "base64"));
-        } catch {
-          continue; // unwritable upload dir — skip rather than fail the turn
-        }
-        ref = `/uploads/${fname}`;
-      } else {
-        const fname = src.replace(/^\/uploads\//, "");
-        ref = `/uploads/${fname}`;
-        filePath = join(input.uploadsDir, fname);
-      }
-      if (a.isImage) images.push({ name: a.name, url: ref, filePath });
-      else fileAttachments.push({ name: a.name, ref });
-    }
-  }
-  const fileAttachmentNote = fileAttachments.length
-    ? `\n\nThe user attached non-image file(s), saved and readable by your file tools. ` +
-      `Pass the PATH (not the display name) to a tool such as \`pdf\` (read) or \`read\`:\n` +
-      fileAttachments.map((f) => `- "${f.name}" → ${f.ref}`).join("\n")
-    : "";
+  // 7. Process attachments. Images become message image-blocks; non-image files
+  // (PDF/doc/etc.) get a system-prompt note handing the model the readable
+  // "/uploads/<f>" PATH. One tested unit (attachments.ts) owns this — it used to
+  // be inline and silently dropped non-images, 404'ing every PDF/doc upload.
+  const { images, fileAttachmentNote } = processAttachments(input.attachments, input.uploadsDir);
 
   // 8. Intent-classifier tool_choice forcing. Verdict was computed in
   // step 3 so it could drive tool-filter narrowing; here we reuse it to

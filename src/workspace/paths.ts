@@ -42,9 +42,20 @@ export function mapUploadsRef(p: string): string | null {
 // to make cwd-relative agent paths reach the relocated workspace. The anchor is
 // derived from config.workspace, so it is correct whether or not that junction
 // was ever created.
-export function resolveAgentPath(p: string): string {
+// The pure resolver, parameterized by the workspace dir whose PARENT is the
+// project root. resolveAgentPath (file tools) calls it with config.workspace;
+// the SecurityLayer gate (evaluateFileAccess) calls it with its OWN workspace
+// arg. Routing both through this ONE function means the gated path is
+// byte-for-byte the opened path and the two can never drift — the exact
+// split-brain that silently 404'd / denied attachment reads. Do NOT re-inline
+// this logic at either callsite.
+export function resolveAgentPathFrom(workspace: string, p: string): string {
   const upload = mapUploadsRef(p);
   if (upload) return upload;
   if (isAbsolute(p)) return resolve(p);
-  return resolve(workspaceRoot(), "..", p);
+  return resolve(workspace, "..", p);
+}
+
+export function resolveAgentPath(p: string): string {
+  return resolveAgentPathFrom(workspaceRoot(), p);
 }

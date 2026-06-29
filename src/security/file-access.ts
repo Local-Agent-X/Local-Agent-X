@@ -4,7 +4,7 @@ import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
 import { isAppAtRestSecretBasename } from "./known-secrets.js";
-import { mapUploadsRef } from "../workspace/paths.js";
+import { resolveAgentPathFrom } from "../workspace/paths.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
 // ── The app's OWN at-rest secret/key/seed files under a `.lax` data dir ──
@@ -180,15 +180,12 @@ export function evaluateFileAccess(
   // TOCTOU. Absolute paths (incl. the sql layer's pre-resolved db path) pass
   // through unchanged.
   const rawWorkspace = resolve(workspace);
-  // A "/uploads/<f>" attachment ref must resolve to the uploads dir EXACTLY as
-  // resolveAgentPath (the file tool) does — via the one shared mapper — or the
-  // gate checks a root-level "/uploads/x" that is outside the workspace and
-  // denies the read in workspace/common mode while the tool would open the real
-  // file (resolution TOCTOU + the attachment false-deny this fixes).
-  const resolved = mapUploadsRef(rawPath)
-    ?? (isAbsolute(rawPath)
-      ? resolve(rawPath)
-      : resolve(rawWorkspace, "..", rawPath));
+  // Resolve through the ONE shared resolver the file tool uses (resolveAgentPath
+  // → resolveAgentPathFrom), parameterized by THIS gate's workspace. The gated
+  // path is then byte-for-byte the path the tool opens — no second copy of the
+  // "/uploads ref + absolute + project-root-relative" rule to drift out of sync
+  // (the split-brain that silently broke attachment reads).
+  const resolved = resolveAgentPathFrom(rawWorkspace, rawPath);
 
   // Canonicalize BOTH the workspace root and the target to their real on-disk
   // paths before any containment check. realpathSync follows symlinks AND

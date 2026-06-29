@@ -1,4 +1,5 @@
 import { resolve, isAbsolute, join, basename } from "node:path";
+import { homedir } from "node:os";
 import { workspaceRoot, uploadsDir } from "../config.js";
 
 // A "/uploads/<file>" reference — the URL form web/mobile attachments carry —
@@ -52,6 +53,15 @@ export function mapUploadsRef(p: string): string | null {
 export function resolveAgentPathFrom(workspace: string, p: string): string {
   const upload = mapUploadsRef(p);
   if (upload) return upload;
+  // A leading "~" is the user's home, the same as every other path consumer
+  // (sql-tools, email-config, http-egress-guard, shell-path-guard). Without
+  // this a model passing "~/.zshrc" had it treated as workspace-RELATIVE and
+  // glued onto the project root (".../Local Agent X/~/.zshrc") → File not found
+  // on the first try, only working after the model re-sent an expanded path.
+  // Expanding here, in the ONE resolver both the file tool and the security
+  // gate call, means the gate evaluates the SAME real target the tool opens.
+  if (p === "~") return homedir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));
   if (isAbsolute(p)) return resolve(p);
   return resolve(workspace, "..", p);
 }

@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { resolve, join } from "node:path";
+import { homedir } from "node:os";
 import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig, uploadsDir } from "../config.js";
 import { resolveAgentPath } from "./paths.js";
+import { isSensitivePath } from "../data-lineage-paths.js";
 
 // resolveAgentPath is the single source of truth for turning an agent's raw
 // `path` argument into an absolute path. It must anchor RELATIVE paths to the
@@ -56,5 +58,31 @@ describe("resolveAgentPath", () => {
   it("confines a /uploads reference to the flat uploads dir (no traversal escape)", () => {
     expect(resolveAgentPath("/uploads/../auth.json")).toBe(join(uploadsDir(), "auth.json"));
     expect(resolveAgentPath("/uploads/../../etc/passwd")).toBe(join(uploadsDir(), "passwd"));
+  });
+
+  // A leading "~" is the user's home — not a workspace-relative path. Without
+  // expansion "~/.zshrc" was glued onto the project root (".../Local Agent
+  // X/~/.zshrc") → File not found on the first try, only working after the model
+  // re-sent an expanded path. Matches every other resolver (sql/email/egress/shell).
+  it("expands a leading ~/ to the user's home directory", () => {
+    expect(resolveAgentPath("~/.zshrc")).toBe(resolve(homedir(), ".zshrc"));
+    expect(resolveAgentPath("~/Documents/notes.txt")).toBe(resolve(homedir(), "Documents", "notes.txt"));
+  });
+
+  it("expands a bare ~ to the home directory", () => {
+    expect(resolveAgentPath("~")).toBe(homedir());
+  });
+
+  it("does not treat a ~ in the MIDDLE of a path as home (only a leading ~)", () => {
+    // "backup~/x" is a real relative name, not a home reference.
+    expect(resolveAgentPath("backup~/x")).toBe(resolve(WS, "..", "backup~/x"));
+  });
+
+  // The resolver is shared by the file tool AND the security gate, so expanding
+  // ~ here means the gate now evaluates the REAL target: a ~-form credential path
+  // must still be flagged sensitive (the gate ⊇ taint invariant holds post-expand).
+  it("a ~-form credential path still resolves to a sensitive path", () => {
+    expect(isSensitivePath(resolveAgentPath("~/.pgpass"))).toBe(true);
+    expect(isSensitivePath(resolveAgentPath("~/.ssh/id_ecdsa"))).toBe(true);
   });
 });

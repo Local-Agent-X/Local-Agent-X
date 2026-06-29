@@ -10,7 +10,7 @@
  * Use this anywhere a spawned subprocess might be aborted before
  * natural completion (user Stop, timeout, lease loss, abort signal).
  */
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
@@ -29,4 +29,29 @@ export function killProcessTree(
       );
     } catch { /* ignore */ }
   }
+}
+
+/**
+ * Best-effort kill of a DETACHED process and its whole group, by pid.
+ *
+ * Unlike {@link killProcessTree} (which signals a known ChildProcess and, on
+ * Windows, taskkills its tree), this targets a process spawned DETACHED so it
+ * leads its own process group: on POSIX a negative-pid SIGKILL takes down the
+ * entire group — the children the agent cares about (shells, dev servers) that
+ * a plain proc.kill would orphan — falling back to killing just `fallbackChild`
+ * if the group kill throws (the pid wasn't a group leader). On Windows
+ * `taskkill /F /T` walks the tree the same way. Never throws.
+ *
+ * The ONE home for detached-spawn tree-killing: process-session
+ * (killSession/killWinPid) and the shell tool's abort handler all route here so
+ * the platform logic can't drift between them.
+ */
+export function killProcessGroup(pid: number, fallbackChild?: ChildProcess): void {
+  try {
+    if (process.platform === "win32") {
+      spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { windowsHide: true, stdio: "ignore" });
+    } else {
+      try { process.kill(-pid, "SIGKILL"); } catch { fallbackChild?.kill("SIGKILL"); }
+    }
+  } catch { /* best-effort */ }
 }

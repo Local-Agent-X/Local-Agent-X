@@ -4,6 +4,7 @@ import { getSandboxMode, execInSandbox, wrapSpawnForSandbox } from "../sandbox/i
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
+import { killProcessGroup } from "../process-tree-kill.js";
 
 export const bashTool: ToolDefinition = {
   name: "bash",
@@ -124,15 +125,7 @@ export const bashTool: ToolDefinition = {
           stdio: ["ignore", "pipe", "pipe"],
         });
 
-        const killTree = () => {
-          try {
-            if (isWin && child.pid) {
-              spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], { windowsHide: true, stdio: "ignore" });
-            } else if (child.pid) {
-              try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
-            }
-          } catch {}
-        };
+        const killTree = () => { if (child.pid) killProcessGroup(child.pid, child); };
 
         const abortSignal = args._signal as AbortSignal | undefined;
         if (abortSignal) {

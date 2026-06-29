@@ -15,6 +15,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, basename, resolve, sep } from "node:path";
 import { buildSanitizedEnv } from "./shell-tools.js";
 import { resolveWindowsShell } from "./shell-env.js";
+import { killProcessGroup } from "../process-tree-kill.js";
 import { evaluateShellCommand } from "../security/shell-policy.js";
 import { getSandboxMode, wrapSpawnForSandbox } from "../sandbox/index.js";
 
@@ -214,17 +215,12 @@ export function startSession(
 export function killSession(session: ProcessSession): void {
   if (session.exitedAt !== null) return;
   const pid = session.child?.pid;
-  if (process.platform === "win32" && pid) {
-    spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { windowsHide: true, stdio: "ignore" });
-  } else if (pid) {
-    try { process.kill(-pid, "SIGKILL"); } catch { session.child?.kill("SIGKILL"); }
-  } else {
-    session.child?.kill("SIGKILL");
-  }
+  if (pid) killProcessGroup(pid, session.child ?? undefined);
+  else session.child?.kill("SIGKILL");
 }
 
 export function killWinPid(pid: number): void {
-  spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { windowsHide: true, stdio: "ignore" });
+  killProcessGroup(pid);
 }
 
 /**

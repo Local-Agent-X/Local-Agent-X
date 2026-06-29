@@ -49,10 +49,24 @@ import { readTool, writeTool, editTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
 import { globTool } from "./glob-tool.js";
 import { connectorCreateTool } from "./connector-tools.js";
+import { processStartTool, processStatusTool, processKillTool } from "./process-tools-defs.js";
+import { classifyAppTier, tierLabel, type AppTier } from "./app-tier.js";
 
 /** Tool defs the in-canonical-sub-agent strategy hands to the agent. Mirrors
  *  the app-builder template's allowedTools verbatim. */
 const BUILDER_AGENT_TOOLS = [writeTool, readTool, editTool, bashTool, globTool, connectorCreateTool];
+
+/**
+ * Tools for the in-canonical builder, by tier. Real-build tiers (full-stack,
+ * compiled-native) additionally get the process_* tools so the agent can run a
+ * long-lived dev server or a multi-minute compile without blocking the turn on
+ * bash. No new security surface: the agent already has bash (arbitrary shell),
+ * so process_start can't reach anything bash couldn't.
+ */
+export function builderToolsForTier(tier: AppTier): typeof BUILDER_AGENT_TOOLS {
+  if (tier === "quick-html") return BUILDER_AGENT_TOOLS;
+  return [...BUILDER_AGENT_TOOLS, processStartTool, processStatusTool, processKillTool];
+}
 
 export const APP_BUILD_OP_TYPE = "app_build";
 
@@ -175,6 +189,7 @@ export const buildAppTool: ToolDefinition = {
     // failure 2026-05-14 on Anthropic Opus 4.7 — prompt missing, description
     // present. Schema docs the right key; alias keeps back-compat.
     const prompt = String(args.prompt || args.description || "");
+    const tier = classifyAppTier(prompt);
     const backend = String(args.backend || "auto");
     const sessionId = String(args._sessionId || "");
     // The chat turn handler stamps args._runtimeProvider/_runtimeModel via
@@ -213,18 +228,23 @@ export const buildAppTool: ToolDefinition = {
     const assetFiles = listAssetsDir(appDir);
 
     const perBuildContext = renderPerBuildContext({
-      appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles,
+      appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles, tier,
     });
     // cli-subprocess path expects the full legacy prompt (per-build context
     // + WEBSITE_RULES_FRAGMENT when applicable). Composed via the legacy
     // renderer so the subprocess gets a byte-identical prompt to pre-migration.
     const cliPrompt = renderBuilderPrompt({
-      appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles,
+      appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles, tier,
     });
 
+    const tierCriteria = tier === "full-stack"
+      ? [`a real backend runs under ${appDir}/server (started via process_start) and index.html reaches it through a connector`]
+      : tier === "compiled-native"
+        ? [`the real toolchain was actually run (not a browser reimplementation); index.html shows the program's real output`]
+        : [];
     const contextPack = await buildContextPack({
-      description: `Build app "${appName}" (${strategy})`,
-      successCriteria: [`APP_READY: <url> emitted`, `index.html written to ${appDir}`],
+      description: `Build ${tierLabel(tier)} "${appName}" (${strategy})`,
+      successCriteria: [`APP_READY: <url> emitted`, `index.html written to ${appDir}`, ...tierCriteria],
       constraints: [],
       lane: "build",
       preferredProvider: provider,
@@ -269,7 +289,8 @@ export const buildAppTool: ToolDefinition = {
     });
 
     if (strategy === "in-canonical-sub-agent") {
-      registerToolsForOp(op.id, BUILDER_AGENT_TOOLS.map(t => ({
+      const builderTools = builderToolsForTier(tier);
+      registerToolsForOp(op.id, builderTools.map(t => ({
         name: t.name,
         description: t.description,
         inputSchema: t.parameters,
@@ -283,7 +304,7 @@ export const buildAppTool: ToolDefinition = {
       const security = new SecurityLayer(workspaceRoot(), "common");
       security.addAllowedPath(appDir, sessionId || op.id);
       registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
-        tools: BUILDER_AGENT_TOOLS,
+        tools: builderTools,
         security,
         sessionId: sessionId || op.id,
         opId: op.id,

@@ -16,6 +16,8 @@ import {
   appBuilderPersonaRefresh,
   WEBSITE_RULES_FRAGMENT,
   NATIVE_BUILD_RULE_LINES,
+  fullStackRuleLines,
+  compiledRuleLines,
   type BuilderPromptInput,
 } from "../src/tools/render-builder-prompt.js";
 
@@ -281,6 +283,42 @@ describe("native-build honesty rule reaches both build strategies", () => {
     const out = renderPerBuildContext(SAMPLE_CREATE);
     expect(out).toContain("Actually build and RUN it with its real toolchain");
     expect(out).toContain("Never claim a preview");
+  });
+});
+
+describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", () => {
+  // quick-html (the default) must stay byte-identical to the pre-tier prompt —
+  // already proven by the legacy-compose tests above (samples omit `tier`).
+  it("quick-html (default) adds no tier block — no FULL-STACK or COMPILED mode", () => {
+    const out = renderPerBuildContext(SAMPLE_CREATE);
+    expect(out).not.toContain("FULL-STACK MODE");
+    expect(out).not.toContain("COMPILED-LANGUAGE MODE");
+  });
+
+  it("full-stack tier instructs a real backend via process_start + a connector, not faked data", () => {
+    const out = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "full-stack" });
+    expect(out).toContain("FULL-STACK MODE");
+    expect(out).toContain("process_start");
+    expect(out).toContain('connector_create({name: "dev-todo-app"');
+    expect(out).toContain("/api/connectors/dev-todo-app/");
+    expect(out).toContain("better-sqlite3");
+    // The tier block sits right after the shared native rules.
+    expect(out.indexOf("FULL-STACK MODE")).toBeGreaterThan(
+      out.indexOf(NATIVE_BUILD_RULE_LINES[0]),
+    );
+  });
+
+  it("compiled-native tier instructs running the real toolchain, index.html as a viewer", () => {
+    const out = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "compiled-native" });
+    expect(out).toContain("COMPILED-LANGUAGE MODE");
+    expect(out).toContain("cargo run");
+    expect(out).toContain("VIEWER for the REAL output");
+    expect(out).not.toContain("FULL-STACK MODE");
+  });
+
+  it("tier rule builders embed the app identifiers", () => {
+    expect(fullStackRuleLines("notes", "/abs/apps/notes").join("\n")).toContain("dev-notes");
+    expect(compiledRuleLines("/abs/apps/rt").join("\n")).toContain("/abs/apps/rt");
   });
 });
 

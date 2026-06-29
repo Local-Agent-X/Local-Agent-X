@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   buildAppTool,
+  builderToolsForTier,
   checkBuildCollision,
   pickForcedProviderFromRuntime,
   resolveBuildProvider,
@@ -231,5 +232,28 @@ describe("build_app — canonical-shape result", () => {
     expect(op?.type).toBe(APP_BUILD_OP_TYPE);
 
     try { rmSync(resolve("workspace", "apps", appName), { recursive: true, force: true }); } catch { /* swallow */ }
+  });
+});
+
+describe("builderToolsForTier — real-build tiers get the process tools", () => {
+  const names = (tier: Parameters<typeof builderToolsForTier>[0]) =>
+    builderToolsForTier(tier).map((t) => t.name);
+
+  it("quick-html gets the base toolset, no process_* tools", () => {
+    const n = names("quick-html");
+    expect(n).toContain("bash");
+    expect(n).toContain("connector_create");
+    expect(n).not.toContain("process_start");
+  });
+
+  it("full-stack adds process_start/status/kill so a dev server can run un-blocked", () => {
+    const n = names("full-stack");
+    expect(n).toContain("process_start");
+    expect(n).toContain("process_status");
+    expect(n).toContain("process_kill");
+  });
+
+  it("compiled-native adds the process tools for multi-minute compiles", () => {
+    expect(names("compiled-native")).toContain("process_start");
   });
 });

@@ -9,6 +9,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import type { AppTier } from "./app-tier.js";
 
 const WEBSITE_NOUN_IN_PROMPT_RE =
   /\b(website|web ?site|landing page|landing|home ?page|marketing ?page|micro ?site|one[- ]?pager|business site|biz site|menu page|portfolio|splash page|brochure site)\b/i;
@@ -41,12 +42,49 @@ export const NATIVE_BUILD_RULE_LINES = [
   "- Never claim a preview \"matches\", is \"identical to\", or is \"the same as\" a program's real output unless you actually ran that program and are showing its real output. If you genuinely can't run the toolchain in this sandbox, say so plainly and show only what you verified — an honest \"couldn't compile/run it here\" beats a fabricated match.",
 ];
 
+// Tier-specific RULES, spliced into the per-build context after the shared
+// NATIVE_BUILD_RULE_LINES. quick-html adds nothing (the default funnel is
+// already right for it), so a quick build's prompt is byte-identical to before
+// this seam existed. full-stack and compiled-native get the real-build path:
+// run the toolchain / stand up the backend instead of faking an HTML twin.
+export function fullStackRuleLines(appName: string, appDir: string): string[] {
+  return [
+    "",
+    "FULL-STACK MODE — this app needs a REAL backend; do NOT fake it with hardcoded data in index.html:",
+    `- Build a real backend under ${appDir}/server. Node + Express is the default; for storage you may use SQLite via better-sqlite3 (already installed) — persist to ${appDir}/server/data.db.`,
+    `- Start the backend as a LONG-LIVED process with the process_start tool (e.g. process_start({command: "npm install && npm run dev", cwd: "${appDir}/server"})). Do NOT start a dev server with bash — bash blocks the turn and times out; process_start keeps it running in the background. Poll process_status until it logs that it's listening on its port.`,
+    `- index.html (the served frontend) must reach the backend through a CONNECTOR, not a direct localhost fetch — a direct http://localhost fetch breaks the moment the app is opened from the phone, where "localhost" is the phone and not this machine. Call connector_create({name: "dev-${appName}", upstream: "http://localhost:<port>", auth: "none", allow: ["GET /*", "POST /*", "PUT /*", "DELETE /*"]}), then fetch the same-origin proxy /api/connectors/dev-${appName}/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.`,
+    "- The backend is real and persistent — never hardcode sample rows in the frontend to simulate it. Show an honest empty/error state until the real API returns.",
+  ];
+}
+
+export function compiledRuleLines(appDir: string): string[] {
+  return [
+    "",
+    "COMPILED-LANGUAGE MODE — this is a real compiled program (Rust/Go/C/C++/…), not a web page:",
+    `- Actually compile and RUN it with its real toolchain. A compile can exceed the bash timeout — prefer the process_start tool for the build/run (e.g. process_start({command: "cargo run --release", cwd: "${appDir}"})) and poll process_status until it finishes; use bash only for fast commands.`,
+    "- index.html is a VIEWER for the REAL output the program produced — embed the generated image/file it wrote, or show its captured real stdout. It must NOT be a browser reimplementation of the program presented as the program's result.",
+  ];
+}
+
+/** "" for quick-html (byte-identical to the pre-tier prompt); a leading-newline
+ *  block for the real-build tiers. */
+function renderTierBlock(tier: AppTier, appName: string, appDir: string): string {
+  const lines = tier === "full-stack" ? fullStackRuleLines(appName, appDir)
+    : tier === "compiled-native" ? compiledRuleLines(appDir)
+    : [];
+  return lines.length > 0 ? "\n" + lines.join("\n") : "";
+}
+
 export interface BuilderPromptInput {
   appName: string;
   prompt: string;
   appDir: string;
   appUrl: string;
   isUpdate: boolean;
+  /** App tier — drives the tier-specific RULES block. Defaults to quick-html
+   *  (no extra rules) when omitted, so existing quick builds are unchanged. */
+  tier?: AppTier;
   /** Pre-read context blocks (e.g. PROJECT.md / TODO.md / index.html sections).
    *  Each entry is the full block including its `=== FILE ===` header. */
   contextFiles: string[];
@@ -63,6 +101,7 @@ export interface BuilderPromptInput {
 export function renderPerBuildContext(input: BuilderPromptInput): string {
   const { appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles } = input;
   const isWebsite = looksLikeWebsiteRequest(prompt);
+  const tierBlock = renderTierBlock(input.tier ?? "quick-html", appName, appDir);
 
   const context = contextFiles.length > 0
     ? `\n\nExisting app context:\n${contextFiles.join("\n\n")}`
@@ -98,7 +137,7 @@ ${starterLine}- Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in ${appDir}/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
 - Make it look polished — use modern CSS, good colors, responsive design
-${NATIVE_BUILD_RULE_LINES.join("\n")}
+${NATIVE_BUILD_RULE_LINES.join("\n")}${tierBlock}
 - The app will be served at ${appUrl}
 - Do NOT ask questions — just build it based on the instructions
 - After writing files, output: APP_READY: ${appUrl}`;

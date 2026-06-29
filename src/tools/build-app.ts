@@ -50,7 +50,7 @@ import { bashTool } from "./shell-tools.js";
 import { globTool } from "./glob-tool.js";
 import { connectorCreateTool } from "./connector-tools.js";
 import { processStartTool, processStatusTool, processKillTool } from "./process-tools-defs.js";
-import { appServeBackendTool, appServeFrontendTool } from "./dev-server.js";
+import { appServeBackendTool, appServeFrontendTool } from "./dev-server-tools.js";
 import { classifyAppTier, tierLabel, type AppTier } from "./app-tier.js";
 
 /** Tool defs the in-canonical-sub-agent strategy hands to the agent. Mirrors

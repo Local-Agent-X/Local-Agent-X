@@ -10,9 +10,9 @@ import {
   stopAllDevServers,
   readDevServerRecord,
   devConnectorName,
-  appServeBackendTool,
   type DevServerDeps,
 } from "./dev-server.js";
+import { appServeBackendTool } from "./dev-server-tools.js";
 import { clearDevServerActivity, devServerActivity } from "./dev-server-access.js";
 
 let tmpLax: string;

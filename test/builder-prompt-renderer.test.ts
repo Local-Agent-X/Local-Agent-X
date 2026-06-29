@@ -355,6 +355,17 @@ describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", 
     expect(out).not.toContain("An index.html starter + AGENTS.md have been seeded");
   });
 
+  it("emits the path-quoting note ONLY when appDir contains a space (installed-app footgun)", () => {
+    // Real failure: Grok ran `cd …/Local Agent X/… && npm i` unquoted → npm ran
+    // in `…/Local` and couldn't find package.json.
+    const spaced = { ...SAMPLE_CREATE, tier: "frontend-spa" as const, appDir: "/abs/Local Agent X/workspace/apps/todo-app" };
+    const out = renderPerBuildContext(spaced);
+    expect(out).toContain("contains SPACES");
+    expect(out).toContain(`cd "/abs/Local Agent X/workspace/apps/todo-app"`);
+    // A space-free dev-checkout path sees no quoting noise.
+    expect(renderPerBuildContext({ ...SAMPLE_CREATE, tier: "frontend-spa" })).not.toContain("contains SPACES");
+  });
+
   it("tier rule builders embed the app identifiers", () => {
     expect(fullStackRuleLines("notes", "/abs/apps/notes").join("\n")).toContain("dev-notes");
     expect(compiledRuleLines("/abs/apps/rt").join("\n")).toContain("/abs/apps/rt");

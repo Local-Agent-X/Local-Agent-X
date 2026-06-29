@@ -47,10 +47,24 @@ export const NATIVE_BUILD_RULE_LINES = [
 // already right for it), so a quick build's prompt is byte-identical to before
 // this seam existed. full-stack and compiled-native get the real-build path:
 // run the toolchain / stand up the backend instead of faking an HTML twin.
+// The app directory path can contain SPACES (an installed app lives under
+// e.g. "…/Local Agent X/workspace/apps/<id>"). An unquoted path in a shell
+// command splits on the space — the real failure: `cd …/Local Agent X/… && npm
+// install` ran in `…/Local` and npm couldn't find package.json. Only emitted
+// when the path actually has a space, so a space-free dev checkout sees no
+// noise. Shared across every real-build tier (each shells against appDir).
+function shellPathQuotingLines(appDir: string): string[] {
+  if (!appDir.includes(" ")) return [];
+  return [
+    `- The app directory path contains SPACES — ALWAYS wrap paths in double quotes in shell commands (e.g. \`cd "${appDir}" && npm install\`). An unquoted path splits on the space and the command runs in the wrong directory (npm/cargo then can't find the project).`,
+  ];
+}
+
 export function fullStackRuleLines(appName: string, appDir: string): string[] {
   return [
     "",
     "FULL-STACK MODE — this app needs a REAL backend; do NOT fake it with hardcoded data in index.html:",
+    ...shellPathQuotingLines(appDir),
     `- Build a real backend under ${appDir}/server in whatever language the request implies — Node + Express is a fine default; Python + Flask/FastAPI, Go, etc. are equally fine.`,
     `- STORAGE: prefer a built-in / no-compile store — Node → import { DatabaseSync } from "node:sqlite"; Python → the stdlib sqlite3 module. Persist to ${appDir}/server/data.db; these need NO install and NO native build, so they can't fail to compile.`,
     `- NATIVE DEPENDENCIES (better-sqlite3, bcrypt, argon2, sharp, canvas, …): depend ONLY on the LATEST version (e.g. "better-sqlite3": "latest") so the package manager fetches a prebuilt matching this machine's runtime. NEVER pin an old version like "^9.x" — old native modules have no prebuilt for a current runtime, fall back to a source compile, and fail, leaving the app with a dead backend.`,
@@ -66,6 +80,7 @@ export function frontendSpaRuleLines(appName: string, appDir: string): string[] 
   return [
     "",
     "FRONTEND-SPA MODE — this is a REAL build-step frontend (Vite / Next / a React/Vue/Svelte SPA with HMR), NOT a static HTML page. Writing a static index.html that merely LOOKS like or DESCRIBES the framework is the exact failure this mode exists to prevent — do not do it.",
+    ...shellPathQuotingLines(appDir),
     `- Scaffold a REAL project under ${appDir}: a package.json with the framework's real deps, the framework config file, and source under src/. e.g. Vite+React: package.json, vite.config.js, index.html with <script type="module" src="/src/main.jsx">, and src/main.jsx + src/App.jsx. There is NO seeded starter — create these files.`,
     `- In the dev-server config, set the base path to "/apps/${appName}/" AND the HMR client port to the dev port — Vite: \`base: '/apps/${appName}/', server: { port: <P>, host: true, hmr: { clientPort: <P>, host: 'localhost' } }\`. Without this, assets and hot-reload 404.`,
     `- Start it with app_serve_frontend({ app_id: "${appName}", command: "npm install && npm run dev", port: <P> }). LAX reverse-proxies /apps/${appName}/ to the live dev server (HMR on desktop). app_serve_frontend VERIFIES the dev server actually bound its port — if it reports a failure, FIX the project; do NOT fall back to a static page.`,
@@ -78,6 +93,7 @@ export function compiledRuleLines(appDir: string): string[] {
   return [
     "",
     "COMPILED-LANGUAGE MODE — this is a real compiled program (Rust/Go/C/C++/…), not a web page:",
+    ...shellPathQuotingLines(appDir),
     `- Actually compile and RUN it with its real toolchain. A compile can exceed the bash timeout — prefer the process_start tool for the build/run (e.g. process_start({command: "cargo run --release", cwd: "${appDir}"})) and poll process_status until it finishes; use bash only for fast commands.`,
     "- The DELIVERABLE is the program's REAL output artifact — the image/file it generated, or its captured stdout — NOT an app and NOT a dashboard.",
     "- Write index.html as a MINIMAL full-bleed VIEWER of that single artifact and nothing else: the generated image filling the page (dark background, object-fit: contain, no chrome), or the raw stdout in a <pre>. NO cards, stats, headers, navigation, descriptions, controls, or surrounding UI — the artifact IS the page, so the app's link opens straight to the render.",

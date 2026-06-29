@@ -189,7 +189,15 @@ export const runSandboxedPhase: Phase = async (ctx) => {
         redactReason = `bash command referenced sensitive path(s): ${matches.join(", ")}`;
       }
       const stdout = typeof ctx.result?.content === "string" ? ctx.result.content : "";
-      if (stdout.length > 0) {
+      // Only a SUCCESSFUL command's output is data the agent actually read; a
+      // FAILED command's output is a diagnostic/error message. Don't taint on an
+      // errored command — that was the over-block: a benign nonzero-exit bash
+      // whose stderr carried a high-entropy build hash or a coincidental token
+      // tripped the secret scanner, tainted the session, and (after the next
+      // shell denial) locked the run out of editing the user's own app. A
+      // successful `cat .env` (isError falsy) still taints. Mirrors the
+      // web_fetch/http_request branch below, which already guards on !isError.
+      if (stdout.length > 0 && ctx.result && !ctx.result.isError) {
         const det = detectSecretsInOutput(stdout);
         if (det.matched) {
           recordSensitiveRead(sessionId || "default", "secret", `bash:${det.kinds.join(",")}`, stdout);

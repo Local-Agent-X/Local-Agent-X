@@ -13,6 +13,8 @@ import { runSandboxedPhase } from "./run-sandboxed.js";
 import type { ToolCallContext } from "./context.js";
 import { readTool, editTool } from "../tools/file-tools.js";
 import type { ToolDefinition } from "../types.js";
+import { checkEgressTaint, clearSessionTaint } from "../data-lineage-taint.js";
+import { detectSecretsInOutput } from "../data-lineage-paths.js";
 
 const dirs = new Set<string>();
 afterEach(() => {
@@ -79,5 +81,44 @@ describe("stale-read guard (run-sandboxed integration)", () => {
     expect(res.status).toBe("blocked");
     expect(res.content).toMatch(/changed on disk/);
     expect(readFileSync(file, "utf-8")).toBe("changed underneath\n"); // untouched
+  });
+});
+
+// A fake `bash` whose result we fully control — runSandboxedPhase keys the taint
+// branch on tc.name === "bash" and reads ctx.result.{content,isError}.
+function fakeBash(content: string, isError: boolean): ToolDefinition {
+  return {
+    name: "bash",
+    description: "fake bash for taint tests",
+    parameters: { type: "object", properties: { command: { type: "string" } } },
+    async execute() { return { content, isError }; },
+  } as unknown as ToolDefinition;
+}
+
+describe("bash-output taint respects isError (the ARI over-block fix)", () => {
+  // Secret-shaped output (canonical AWS example key). The first test pins that
+  // the scanner really matches it, so the two taint assertions are meaningful.
+  const SECRET = "config dump: AKIAIOSFODNN7EXAMPLE region=us-east-1";
+
+  it("sanity: the sample is detected as secret-shaped", () => {
+    expect(detectSecretsInOutput(SECRET).matched).toBe(true);
+  });
+
+  it("a SUCCESSFUL bash with secret-shaped output still taints the session", async () => {
+    const s = freshSession();
+    clearSessionTaint(s);
+    await run(fakeBash(SECRET, false), { command: "cat config" }, s);
+    expect(checkEgressTaint(s).blocked).toBe(true);   // real read → egress blocked
+    clearSessionTaint(s);
+  });
+
+  it("a FAILED bash with secret-shaped error output does NOT taint", async () => {
+    const s = freshSession();
+    clearSessionTaint(s);
+    await run(fakeBash(SECRET, true), { command: "cat config" }, s);
+    // The bug: a benign nonzero-exit command whose stderr happened to contain a
+    // secret-shaped token tainted the session and locked the run out of editing.
+    expect(checkEgressTaint(s).blocked).toBe(false);
+    clearSessionTaint(s);
   });
 });

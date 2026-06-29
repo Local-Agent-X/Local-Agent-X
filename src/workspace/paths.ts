@@ -7,6 +7,17 @@ import { workspaceRoot, uploadsDir } from "../config.js";
 // isAbsolute because "/uploads/x" reads as absolute on Windows.
 const UPLOADS_REF = /^[/\\]uploads[/\\](.+)$/;
 
+// Map a "/uploads/<file>" reference to its on-disk path, or null if it isn't
+// one. Exported as the SINGLE source of truth for this mapping so the file tool
+// (resolveAgentPath) and the SecurityLayer gate (evaluateFileAccess) resolve an
+// attachment ref to the SAME path — otherwise the gate checks a root-level
+// "/uploads/x" (outside the workspace → denied) while the tool opens the real
+// uploads dir, which is both a TOCTOU and a false-deny in workspace/common mode.
+export function mapUploadsRef(p: string): string | null {
+  const m = UPLOADS_REF.exec(p);
+  return m ? join(uploadsDir(), basename(m[1])) : null;
+}
+
 // ── Canonical resolver for AGENT-SUPPLIED file paths ──
 //
 // Every agent file tool (read / write / edit / delete) and the SecurityLayer
@@ -32,8 +43,8 @@ const UPLOADS_REF = /^[/\\]uploads[/\\](.+)$/;
 // derived from config.workspace, so it is correct whether or not that junction
 // was ever created.
 export function resolveAgentPath(p: string): string {
-  const upload = UPLOADS_REF.exec(p);
-  if (upload) return join(uploadsDir(), basename(upload[1]));
+  const upload = mapUploadsRef(p);
+  if (upload) return upload;
   if (isAbsolute(p)) return resolve(p);
   return resolve(workspaceRoot(), "..", p);
 }

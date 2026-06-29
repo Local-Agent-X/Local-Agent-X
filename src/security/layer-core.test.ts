@@ -9,6 +9,8 @@ import { detectInlineInterpreterEval } from "./shell-detectors.js";
 import { evaluateShellCommandAndPaths, evaluateShellPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch } from "./network-policy.js";
 import { TOOL_PATH_ARGS } from "../tool-registry.js";
+import { uploadsDir } from "../config.js";
+import { mapUploadsRef } from "../workspace/paths.js";
 
 // All tests build a SecurityLayer with an explicit fileAccessMode so the
 // constructor doesn't read ~/.lax/security.json and produce host-dependent
@@ -849,6 +851,38 @@ describe("relative agent paths anchor to the project root, not cwd", () => {
   it("blocks a relative path that climbs out of the project root", () => {
     const d = evaluateFileAccess(ws, "workspace", () => false, "read", "../../../../../../etc/shadow");
     expect(d.allowed).toBe(false);
+  });
+});
+
+// A non-image attachment lands in the LAX data dir's uploads folder under a
+// hashed name; the model is handed a "/uploads/<f>" ref. The file tool resolves
+// it via resolveAgentPath → uploadsDir(); the SecurityLayer gate MUST resolve it
+// the SAME way (the shared mapUploadsRef) or it checks a root-level "/uploads/x",
+// finds it outside the workspace, and DENIES the read in workspace/common mode —
+// the exact "not in a searchable location in the workspace path" attachment
+// failure. Regression for that resolver split-brain.
+describe("attachment /uploads refs resolve like the file tool (no gate split-brain)", () => {
+  let up: string;
+  beforeAll(() => {
+    up = uploadsDir(); // join(LAX_DATA_DIR, "uploads") — the suite beforeAll set LAX_DATA_DIR
+    mkdirSync(up, { recursive: true });
+    writeFileSync(join(up, "receipt.pdf"), "%PDF-1.4\n", "utf-8");
+  });
+
+  for (const mode of ["workspace", "common"] as const) {
+    it(`${mode} mode: ALLOWS reading a /uploads attachment ref`, () => {
+      const d = evaluateFileAccess(WORKSPACE, mode, () => false, "read", "/uploads/receipt.pdf");
+      expect(d.allowed).toBe(true);
+    });
+  }
+
+  it("did NOT blanket-allow: a non-/uploads path outside the workspace stays denied", () => {
+    const d = evaluateFileAccess(WORKSPACE, "workspace", () => false, "read", "/etc/passwd");
+    expect(d.allowed).toBe(false);
+  });
+
+  it("basename-confines a /uploads ref — '../auth.json' lands INSIDE uploads, never the real data-dir secret", () => {
+    expect(mapUploadsRef("/uploads/../auth.json")).toBe(join(up, "auth.json"));
   });
 });
 

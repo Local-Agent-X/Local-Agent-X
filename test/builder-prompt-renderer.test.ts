@@ -343,8 +343,10 @@ describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", 
     expect(out).toContain(`base path to "/apps/todo-app/"`);   // the proxy-resolving config
     // The live-Vite-fake failure: a static page that imitates the framework.
     expect(out).toContain("NOT a static HTML page");
-    // The GPT-5.5 failure: an unnecessary production build that errored.
-    expect(out).toContain("Do NOT run a production build");
+    // The class both GPT-5.5 (vite build) and Grok (npm run lint) tripped on:
+    // unnecessary post-scaffold tooling that errors and derails the finish.
+    expect(out).toContain("Do NOT run any extra tooling");
+    expect(out).toContain("no lint");
     expect(out).not.toContain("FULL-STACK MODE");
   });
 

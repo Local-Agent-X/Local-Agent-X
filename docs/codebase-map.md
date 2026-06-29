@@ -24,7 +24,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/tools/` | 37 | 124 | XL |  |
 | `src/providers/` | 34 | 13 | L |  |
 | `src/canonical-loop/` | 29 | 103 | XL |  |
-| `src/agent-store/` | 24 | 7 | M |  |
+| `src/agent-store/` | 25 | 7 | M |  |
 | `src/agency/` | 22 | 14 | L |  |
 | `src/auth/` | 21 | 9 | L |  |
 | `src/threat/` | 20 | 12 | L |  |
@@ -37,10 +37,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/app-runtime/` | 13 | 12 | L |  |
 | `src/browser/` | 12 | 23 | XL |  |
 | `src/voice/` | 12 | 65 | XL |  |
+| `src/anthropic-client/` | 11 | 18 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
 | `src/workspace/` | 11 | 2 | M |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
-| `src/anthropic-client/` | 10 | 18 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |
 | `src/cron/` | 9 | 7 | L |  |
 | `src/whatsapp-bridge/` | 9 | 6 | M |  |
@@ -134,7 +134,6 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/file-audit.ts` | S |
 | `src/growth-tracker-store.ts` | S |
 | `src/growth-tracker.ts` | M |
-| `src/headless.ts` | S |
 | `src/hot-reload.ts` | S |
 | `src/index.ts` | M |
 | `src/injection-patterns.ts` | S |
@@ -144,7 +143,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/language-mirror.ts` | M |
 | `src/lax-data-dir.ts` | S |
 | `src/lifecycle.ts` | S |
-| `src/llm-dispatch.ts` | S |
+| `src/llm-dispatch.ts` | M |
 | `src/logger.ts` | S |
 | `src/mcp-bridge.ts` | S |
 | `src/memory-tiers.ts` | M |

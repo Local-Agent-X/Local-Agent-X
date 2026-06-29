@@ -37,10 +37,30 @@ function populateMissionModels(provider) {
   }
 }
 
+// Fill a <select> with the runtime's IANA timezone list, a leading
+// "Server local time" (value="") option, and `selected` pre-chosen. When
+// `selected` is undefined we default to this device's detected zone so a
+// clock-time cron (e.g. "0 9 * * *") fires at the user's local 9am, not the
+// server's. Falls back to a tiny curated list if the engine lacks
+// Intl.supportedValuesOf (older runtimes).
+function populateTimezoneSelect(el, selected) {
+  if (!el) return;
+  let zones = [];
+  try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = []; }
+  const detected = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
+  if (!zones.length) zones = [detected, 'UTC', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Europe/London', 'Europe/Paris', 'Asia/Tokyo'].filter(Boolean);
+  const want = selected !== undefined ? selected : detected;
+  const opts = ['<option value="">Server local time</option>']
+    .concat(zones.map(z => `<option value="${z}"${z === want ? ' selected' : ''}>${z}</option>`));
+  el.innerHTML = opts.join('');
+  el.value = want || '';
+}
+
 function openMissionModal() {
   const o = document.getElementById('mission-modal-overlay'); if (!o) return;
   o.classList.add('visible');
   initMissionModelSelector();
+  populateTimezoneSelect(document.getElementById('new-cron-tz')); // default = this device's zone
   setTimeout(() => document.getElementById('new-cron-name')?.focus(), 50);
 }
 function closeMissionModal() { document.getElementById('mission-modal-overlay')?.classList.remove('visible'); }
@@ -56,10 +76,12 @@ async function addCronJob() {
   const provider = document.getElementById('new-cron-provider')?.value || '';
   const model = (provider && document.getElementById('new-cron-model')?.value) || '';
   const profile = document.getElementById('new-cron-profile')?.value || '';
+  const tz = document.getElementById('new-cron-tz')?.value || '';
   const body = { name, schedule, prompt };
   if (provider) body.provider = provider;
   if (model) body.model = model;
   if (profile) body.profile = profile;
+  if (tz) body.tz = tz;
   try {
     const data = await apiPost('/api/cron', body);
     if (data.ok && data.job) {
@@ -105,6 +127,10 @@ function editCronJob() {
   document.getElementById('cron-edit-name').value = selectedJob.name || '';
   document.getElementById('cron-edit-schedule').value = selectedJob.schedule || '';
   document.getElementById('cron-edit-prompt').value = selectedJob.prompt || '';
+  // Pass the job's existing tz explicitly so an unset job shows "Server local
+  // time" rather than defaulting to this device's zone (which would silently
+  // change behavior on the next save).
+  populateTimezoneSelect(document.getElementById('cron-edit-tz'), selectedJob.tz || '');
   document.getElementById('cron-edit-form').style.display = '';
   document.getElementById('cron-default-actions').style.display = 'none';
   const promptEl = document.getElementById('cron-detail-prompt');
@@ -127,11 +153,14 @@ async function saveCronJobEdits() {
     alert('Name, schedule, and instructions are all required.');
     return;
   }
+  // Always send tz (even "") so editing a job can CLEAR a timezone back to
+  // server local — the server treats an empty tz as "use server local time".
+  const tz = document.getElementById('cron-edit-tz')?.value ?? '';
   try {
     const res = await fetch(API + '/api/cron/' + selectedJob.id, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
-      body: JSON.stringify({ name, schedule, prompt }),
+      body: JSON.stringify({ name, schedule, prompt, tz }),
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);

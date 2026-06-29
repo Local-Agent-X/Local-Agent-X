@@ -20,6 +20,7 @@ import {
   msSinceLastCronOccurrence,
   getIntervalMs,
   msUntilNextRun,
+  isValidTimeZone,
 } from "./cron-parser.js";
 import {
   RunHistoryStore,
@@ -145,7 +146,7 @@ export class CronService {
   /** Computed next-run time for a job, in ISO. Returns null if disabled / unscheduled. */
   getNextRunAt(job: CronJob): string | null {
     if (!job.enabled || !this.settings.enabled) return null;
-    const ms = msUntilNextRun(job.schedule);
+    const ms = msUntilNextRun(job.schedule, job.tz);
     if (ms == null) return null;
     return new Date(Date.now() + ms).toISOString();
   }
@@ -157,7 +158,7 @@ export class CronService {
       if (!job.enabled) continue;
       this.scheduleJob(job);
 
-      const msSince = msSinceLastCronOccurrence(job.schedule, job.lastRun);
+      const msSince = msSinceLastCronOccurrence(job.schedule, job.lastRun, job.tz);
       if (msSince === null || msSince > 24 * 3600_000) continue;
 
       const missedTime = new Date(Date.now() - msSince).toISOString();
@@ -191,7 +192,7 @@ export class CronService {
   }
 
   private scheduleCronRun(job: CronJob): void {
-    const ms = msUntilNextCron(job.schedule);
+    const ms = msUntilNextCron(job.schedule, job.tz);
     if (!ms) return;
     const timer = setTimeout(async () => {
       await this.executeJob(job, { manual: false });
@@ -212,9 +213,12 @@ export class CronService {
     return runJob(this, job, opts);
   }
 
-  create(name: string, schedule: string, prompt: string, systemJob?: boolean, opts?: { provider?: string; model?: string; profile?: ProfileName }): CronJob {
+  create(name: string, schedule: string, prompt: string, systemJob?: boolean, opts?: { provider?: string; model?: string; profile?: ProfileName; tz?: string }): CronJob {
     if (prompt.length > 5000) throw new Error("Cron job prompt too long (max 5000 characters)");
     if (!schedule || schedule.trim().length === 0) throw new Error("Schedule is required");
+    if (opts?.tz && !isValidTimeZone(opts.tz)) {
+      throw new Error(`Invalid timezone "${opts.tz}" — use an IANA name like "America/New_York" or leave blank for server local time`);
+    }
     // Validate the schedule by attempting to compute next-run time. Without
     // this, malformed expressions (e.g. "* * * *" — only 4 fields) silently
     // never schedule a timer and the user sees an enabled job that never
@@ -238,6 +242,7 @@ export class CronService {
       ...(opts?.provider ? { provider: opts.provider } : {}),
       ...(opts?.model ? { model: opts.model } : {}),
       ...(opts?.profile ? { profile: opts.profile } : {}),
+      ...(opts?.tz ? { tz: opts.tz } : {}),
     };
     this.jobs_internal.set(id, job);
     this.saveJobs();
@@ -248,6 +253,10 @@ export class CronService {
   update(id: string, updates: Partial<CronJob>): CronJob | null {
     const job = this.jobs_internal.get(id);
     if (!job) return null;
+    // A non-empty tz must resolve; "" is allowed and clears back to server local.
+    if (typeof updates.tz === "string" && updates.tz !== "" && !isValidTimeZone(updates.tz)) {
+      throw new Error(`Invalid timezone "${updates.tz}" — use an IANA name like "America/New_York" or leave blank for server local time`);
+    }
     Object.assign(job, updates, { id });
     this.saveJobs();
     if (job.enabled) this.scheduleJob(job);

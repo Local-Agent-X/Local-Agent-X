@@ -16,10 +16,11 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     json(200, { missions, settings: ctx.cronService.getSettings() }); return true;
   }
   if (method === "POST" && url.pathname === "/api/cron") {
-    const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; provider?: string; model?: string; profile?: string };
+    const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; provider?: string; model?: string; profile?: string; tz?: string };
     if (!body.name || !body.schedule || !body.prompt) { json(400, { error: "name, schedule, and prompt are required" }); return true; }
     if (body.profile !== undefined && !isProfileName(body.profile)) { json(400, { error: `Invalid profile "${body.profile}"` }); return true; }
-    try { json(200, { ok: true, job: ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob, { provider: body.provider, model: body.model, profile: body.profile }) }); }
+    const tz = typeof body.tz === "string" && body.tz.trim() ? body.tz.trim() : undefined;
+    try { json(200, { ok: true, job: ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob, { provider: body.provider, model: body.model, profile: body.profile, tz }) }); }
     catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }

@@ -155,7 +155,7 @@ function renderCronLiveStatus(data) {
 function renderCronDetail() {
   if (!selectedJob) return;
   document.getElementById('cron-detail-name').textContent = selectedJob.name;
-  document.getElementById('cron-detail-schedule').textContent = selectedJob.schedule;
+  document.getElementById('cron-detail-schedule').textContent = selectedJob.schedule + (selectedJob.tz ? ` (${selectedJob.tz})` : '');
   document.getElementById('cron-detail-prompt').textContent = selectedJob.prompt;
 
   const statusEl = document.getElementById('cron-detail-status');

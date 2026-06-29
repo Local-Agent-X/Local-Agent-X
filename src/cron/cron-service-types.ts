@@ -13,6 +13,10 @@ export interface CronJob {
   id: string;
   name: string;
   schedule: string; // cron expression or interval like "5m", "1h"
+  /** IANA timezone (e.g. "America/New_York") the cron expression is evaluated
+   *  in. Undefined/empty = server OS local time (legacy behavior). Ignored for
+   *  fixed intervals, which are timezone-independent. */
+  tz?: string;
   prompt: string;
   enabled: boolean;
   systemJob?: boolean;

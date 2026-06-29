@@ -34,12 +34,14 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
           name: { type: "string", description: "Job name" },
           schedule: { type: "string", description: "Cron expression or interval (e.g., '5m', '1h', '*/30 * * * *')" },
           prompt: { type: "string", description: "The prompt/instruction to execute each run" },
+          timezone: { type: "string", description: "Optional IANA timezone the cron expression runs in (e.g. 'America/New_York', 'Europe/London'). Omit for the server's local time. Ignored for fixed intervals. If the user gives a clock time (e.g. '9am daily'), set this to their timezone so it fires at their local time." },
         },
         required: ["name", "schedule", "prompt"],
       },
       async execute(args) {
-        const job = cron.create(String(args.name), String(args.schedule), String(args.prompt));
-        return { content: `Created job "${job.name}" (${job.id}) — runs every ${job.schedule}` };
+        const tz = typeof args.timezone === "string" && args.timezone.trim() ? args.timezone.trim() : undefined;
+        const job = cron.create(String(args.name), String(args.schedule), String(args.prompt), undefined, { tz });
+        return { content: `Created job "${job.name}" (${job.id}) — runs every ${job.schedule}${job.tz ? ` (${job.tz})` : ""}` };
       },
     },
     {
@@ -57,7 +59,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
     },
     {
       name: "mission_schedule_update",
-      description: "Update an existing scheduled mission. Provide the id (use mission_schedule_list to find it) and any fields to change: name, schedule, or prompt. Other fields stay the same.",
+      description: "Update an existing scheduled mission. Provide the id (use mission_schedule_list to find it) and any fields to change: name, schedule, prompt, or timezone. Other fields stay the same.",
       parameters: {
         type: "object",
         properties: {
@@ -65,6 +67,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
           name: { type: "string", description: "New name (optional)" },
           schedule: { type: "string", description: "New cron expression or interval (optional)" },
           prompt: { type: "string", description: "New prompt that the agent will execute each run (optional)" },
+          timezone: { type: "string", description: "New IANA timezone for the cron expression (optional, e.g. 'America/New_York'). Pass an empty string to clear it back to server local time." },
         },
         required: ["id"],
       },
@@ -73,12 +76,18 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
         if (typeof args.name === "string") updates.name = args.name;
         if (typeof args.schedule === "string") updates.schedule = args.schedule;
         if (typeof args.prompt === "string") updates.prompt = args.prompt;
+        if (typeof args.timezone === "string") updates.tz = args.timezone.trim();
         if (Object.keys(updates).length === 0) {
-          return { content: "No fields to update. Provide name, schedule, or prompt.", isError: true };
+          return { content: "No fields to update. Provide name, schedule, prompt, or timezone.", isError: true };
         }
-        const job = cron.update(String(args.id), updates);
+        let job: CronJob | null;
+        try {
+          job = cron.update(String(args.id), updates);
+        } catch (e) {
+          return { content: (e as Error).message, isError: true };
+        }
         if (!job) return { content: `Job "${args.id}" not found.`, isError: true };
-        const changed = Object.keys(updates).join(", ");
+        const changed = Object.keys(updates).map(k => k === "tz" ? "timezone" : k).join(", ");
         return { content: `Updated mission "${job.name}" (${changed}).` };
       },
     },

@@ -18,6 +18,26 @@ const logger = createLogger("broker-transport.http-tunnel");
 /** Cap on a proxied body in either direction (app docs/state/lists are small). */
 const MAX_BODY = 8 * 1024 * 1024;
 
+// WebRTC data channels cap a single message at ~64KB. A large response — a Vite
+// dev module like react-dom is ~800KB — sent whole never reaches the phone (the
+// send fails on the cap → white screen). Split the framed JSON into ordered
+// chunks the phone reassembles by id. 12K chars ⇒ ≤48KB UTF-8 (4 bytes/char
+// worst case), safely under the cap. A small message sends as one frame, so the
+// common REST path is byte-for-byte unchanged.
+export const MAX_CHUNK_CHARS = 12_288;
+
+/** Send a framed payload, splitting it into `{t:"chunk",id,i,n,b}` frames when it
+ *  exceeds the data-channel message cap. The phone joins chunks of the same id in
+ *  order. Pure over a `{send}` sink so it unit-tests with a fake transport. */
+export function sendFramed(transport: { send(text: string): void }, id: string, payload: string): void {
+  if (payload.length <= MAX_CHUNK_CHARS) { transport.send(payload); return; }
+  const n = Math.ceil(payload.length / MAX_CHUNK_CHARS);
+  for (let i = 0; i < n; i += 1) {
+    const b = payload.slice(i * MAX_CHUNK_CHARS, (i + 1) * MAX_CHUNK_CHARS);
+    transport.send(JSON.stringify({ t: "chunk", id, i, n, b }));
+  }
+}
+
 /** Phone → desktop: one framed HTTP request. */
 interface TunnelRequest {
   t: "req";
@@ -26,6 +46,10 @@ interface TunnelRequest {
   path: string; // pathname + search, e.g. /api/apps?x=1
   headers?: Record<string, string>;
   body?: string;
+  /** The phone signals it can REASSEMBLE chunked responses. Only then does the
+   *  desktop split a large response — an older app build that lacks reassembly
+   *  keeps getting whole frames (its prior behavior), so this can't regress it. */
+  chunked?: boolean;
 }
 
 /** Desktop → phone: the framed response. `body` is the HTTP body; `enc` says how it's
@@ -105,7 +129,12 @@ export class HttpTunnelBridge implements HttpChannel {
       return; // non-JSON noise
     }
     const res = await this.proxy(req);
-    if (!this.closed && this.transport) this.transport.send(JSON.stringify(res));
+    if (!this.closed && this.transport) {
+      // Only chunk for a phone that advertised reassembly support (req.chunked);
+      // otherwise send the whole frame as before — backward-compatible.
+      if (req.chunked) sendFramed(this.transport, res.id, JSON.stringify(res));
+      else this.transport.send(JSON.stringify(res));
+    }
   }
 
   private async proxy(req: TunnelRequest): Promise<TunnelResponse> {

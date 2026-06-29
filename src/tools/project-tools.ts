@@ -19,6 +19,7 @@
 
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ProjectStore, type Project } from "../agent-store/index.js";
+import { seedProjectRosters } from "../project-rosters.js";
 import { readProjectBrief, updateProjectBrief } from "../memory/project-brief.js";
 
 function ok(content: string): ToolResult { return { content }; }
@@ -42,24 +43,6 @@ async function broadcastProjectsChanged(): Promise<void> {
     const { broadcastAll } = await import("../chat-ws/index.js");
     broadcastAll({ type: "projects_changed" });
   } catch { /* no WS context (e.g. test) — tool itself still succeeded */ }
-}
-
-/** Mirror of seedProjectRosters in src/routes/agents/projects.ts so a
- *  tool-created project ends up shaped identically to one created via
- *  the HTTP API. CEO-led trees auto-wire reportsTo so the org chart
- *  isn't flat by default. */
-async function seedRosters(projectId: string, agentIds: string[]): Promise<void> {
-  if (agentIds.length === 0) return;
-  const { ProjectRosterStore } = await import("../project-rosters.js");
-  const rosterStore = ProjectRosterStore.getInstance();
-  const projectStore = ProjectStore.getInstance();
-  const hasCeo = agentIds.includes("builtin-ceo");
-  for (const agentId of agentIds) {
-    rosterStore.upsert(projectId, agentId, {
-      reportsTo: (hasCeo && agentId !== "builtin-ceo") ? "builtin-ceo" : undefined,
-    });
-    projectStore.addAgent(projectId, agentId);
-  }
 }
 
 export function createProjectTools(): ToolDefinition[] {
@@ -138,7 +121,7 @@ export function createProjectTools(): ToolDefinition[] {
             secretKeys: Array.isArray(args.secret_keys) ? args.secret_keys.map(String) : undefined,
             allowedTools: Array.isArray(args.allowed_tools) ? args.allowed_tools.map(String) : undefined,
           });
-          await seedRosters(project.id, agentIds);
+          await seedProjectRosters(project.id, agentIds);
 
           // Seed the brief from the summary. Best-effort: a failed brief write
           // must not fail project creation (the project already exists).
@@ -209,7 +192,7 @@ export function createProjectTools(): ToolDefinition[] {
         const agentId = String(args.agent_id);
         const project = ProjectStore.getInstance().get(projectId);
         if (!project) return err(`Project not found: ${projectId}. Use project_list to see available projects.`);
-        await seedRosters(projectId, [agentId]);
+        await seedProjectRosters(projectId, [agentId]);
         await broadcastProjectsChanged();
         return ok(`Added ${agentId} to ${project.name} (id: ${projectId}).`);
       },

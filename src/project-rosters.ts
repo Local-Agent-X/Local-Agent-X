@@ -313,3 +313,31 @@ export class ProjectRosterStore {
     return removed;
   }
 }
+
+/**
+ * Seed roster entries for a freshly-created project's agentIds. CEO-led trees
+ * auto-wire reportsTo so the org chart isn't flat by default. The ONE
+ * implementation shared by both project-creation paths (the project_create tool
+ * and the HTTP /api/projects routes) so a tool-made project and an API-made
+ * project end up shaped identically.
+ *
+ * `projectStore` defaults to the ProjectStore singleton (the tool path); the
+ * route path passes its own ctx.projectStore. Lazily imported to avoid a cycle
+ * (ProjectStore transitively imports this module).
+ */
+export async function seedProjectRosters(
+  projectId: string,
+  agentIds: string[],
+  projectStore?: { addAgent(id: string, agentId: string): boolean },
+): Promise<void> {
+  if (agentIds.length === 0) return;
+  const rosterStore = ProjectRosterStore.getInstance();
+  const store = projectStore ?? (await import("./agent-store/index.js")).ProjectStore.getInstance();
+  const hasCeo = agentIds.includes("builtin-ceo");
+  for (const agentId of agentIds) {
+    rosterStore.upsert(projectId, agentId, {
+      reportsTo: (hasCeo && agentId !== "builtin-ceo") ? "builtin-ceo" : undefined,
+    });
+    store.addAgent(projectId, agentId);
+  }
+}

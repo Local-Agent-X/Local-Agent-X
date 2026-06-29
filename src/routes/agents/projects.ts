@@ -1,6 +1,7 @@
 import type { RouteHandler, ServerContext } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import type { Project } from "../../agent-store/index.js";
+import { seedProjectRosters } from "../../project-rosters.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("routes.agents.projects");
@@ -18,27 +19,6 @@ async function broadcastProjectsChanged(): Promise<void> {
   } catch { /* no WS context — request itself still succeeded */ }
 }
 
-/** Create roster entries for any seeded agentIds on a freshly-created project.
- *  Mirrors what the legacy migration does for pre-L3 data: each entry becomes
- *  a real ProjectRoster row (the source of truth post-L3), with CEO-led trees
- *  auto-wiring reportsTo so the org chart isn't flat by default. */
-async function seedProjectRosters(
-  projectId: string,
-  agentIds: string[],
-  ctx: { projectStore: { addAgent(id: string, agentId: string): boolean } },
-): Promise<void> {
-  if (agentIds.length === 0) return;
-  const { ProjectRosterStore } = await import("../../project-rosters.js");
-  const rosterStore = ProjectRosterStore.getInstance();
-  const hasCeo = agentIds.includes("builtin-ceo");
-  for (const agentId of agentIds) {
-    rosterStore.upsert(projectId, agentId, {
-      reportsTo: (hasCeo && agentId !== "builtin-ceo") ? "builtin-ceo" : undefined,
-    });
-    ctx.projectStore.addAgent(projectId, agentId);
-  }
-}
-
 export const handleProjectRoutes: RouteHandler = async (method, url, req, res, ctx: ServerContext, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
@@ -48,7 +28,7 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
     const dup = ctx.projectStore.findByName(body.name as string);
     if (dup) { json(409, { error: `Project name '${body.name}' already exists`, existingId: dup.id, existing: dup }); return true; }
     const project = ctx.projectStore.create({ name: body.name as string, description: (body.description as string) || "", agentIds: (body.agentIds as string[]) || [], workspace: body.workspace as string | undefined });
-    await seedProjectRosters(project.id, (body.agentIds as string[]) || [], ctx);
+    await seedProjectRosters(project.id, (body.agentIds as string[]) || [], ctx.projectStore);
     await broadcastProjectsChanged();
     json(200, project); return true;
   }
@@ -66,7 +46,7 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
     // (the L3 source of truth). Without this, a project created with
     // agentIds:[...] looked populated on disk but had zero hires for the
     // Team tab / org chart / membership reads.
-    await seedProjectRosters(project.id, (body.agentIds as string[]) || [], ctx);
+    await seedProjectRosters(project.id, (body.agentIds as string[]) || [], ctx.projectStore);
     await broadcastProjectsChanged();
     json(200, project); return true;
   }

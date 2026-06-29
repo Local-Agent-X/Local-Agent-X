@@ -35,6 +35,13 @@ import {
   deleteConnectorManifest,
   type ConnectorManifest,
 } from "../routes/connector-proxy.js";
+import {
+  noteDevServerAccess,
+  forgetDevServerAccess,
+  devServerActivity,
+  clearDevServerActivity,
+  setDevServerWake,
+} from "./dev-server-access.js";
 
 export interface DevServerRecord {
   appId: string;
@@ -67,6 +74,12 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
  *  reporting success. Long enough to catch a bad command; short enough not to
  *  block on a healthy (slow) `npm install`. */
 const START_CRASH_WINDOW_MS = 2500;
+
+/** Idle auto-stop: a backend untouched for this long is killed (its record is
+ *  kept, so opening the app — or any connector request — wakes it again). */
+export const DEV_SERVER_IDLE_MS = 15 * 60_000;
+/** How often the sweeper checks for idle backends. */
+const DEV_SERVER_SWEEP_MS = 2 * 60_000;
 
 export function devConnectorName(appId: string): string {
   return `dev-${appId}`;
@@ -141,6 +154,7 @@ export function registerDevServer(
 
   const sessionId = started.session.sessionId;
   writeRecord({ appId, command, cwd, port, connector, sessionId });
+  noteDevServerAccess(appId);
   return { ok: true, connector, sessionId, port, cwd, restarted };
 }
 
@@ -158,6 +172,7 @@ export function ensureDevServerRunning(appId: string, d: DevServerDeps = {}): En
   const rec = readDevServerRecord(appId);
   if (!rec) return { status: "none" };
   const dd = deps(d);
+  noteDevServerAccess(appId);
   if (rec.sessionId && dd.isAlive(rec.sessionId)) return { status: "running", record: rec };
 
   const started = dd.start(rec.command, rec.cwd || undefined);
@@ -177,10 +192,54 @@ export function stopDevServer(appId: string, d: DevServerDeps = {}, opts: { forg
   const dd = deps(d);
   if (rec?.sessionId && dd.isAlive(rec.sessionId)) dd.kill(rec.sessionId);
   if (opts.forget) {
+    forgetDevServerAccess(appId);
     deleteConnectorManifest(rec?.connector ?? devConnectorName(appId));
     if (existsSync(recordPath(appId))) { try { rmSync(recordPath(appId), { force: true }); } catch { /* gone */ } }
   }
 }
+
+/**
+ * Stop backends untouched for longer than `idleMs`. The record is KEPT (opening
+ * the app or any connector request restarts it), only the live process is
+ * killed. Returns the appIds stopped. Called by the sweeper; pure in its inputs
+ * (now + idleMs) so it's unit-testable without timers.
+ */
+export function stopIdleDevServers(idleMs: number, now: number, d: DevServerDeps = {}): string[] {
+  const stopped: string[] = [];
+  for (const [appId, ts] of [...devServerActivity()]) {
+    if (now - ts <= idleMs) continue;
+    stopDevServer(appId, d);          // kill process, keep record for a later wake
+    forgetDevServerAccess(appId);     // drop from the active set until reopened
+    stopped.push(appId);
+  }
+  return stopped;
+}
+
+/**
+ * Kill every running backend (records kept). Wired into LAX shutdown so dev
+ * servers don't orphan past the app's own lifetime — without this, the detached
+ * child processes survive LAX exit and would hold their ports on restart.
+ */
+export function stopAllDevServers(d: DevServerDeps = {}): void {
+  for (const [appId] of [...devServerActivity()]) stopDevServer(appId, d);
+  clearDevServerActivity();
+}
+
+let sweeperStarted = false;
+/** Start the idle-stop sweeper (once). Called at server boot; the interval is
+ *  unref'd so it never holds the process open. */
+export function startDevServerSweeper(): void {
+  if (sweeperStarted) return;
+  sweeperStarted = true;
+  const t = setInterval(() => {
+    try { stopIdleDevServers(DEV_SERVER_IDLE_MS, Date.now()); } catch { /* best-effort */ }
+  }, DEV_SERVER_SWEEP_MS);
+  t.unref();
+}
+
+// Connector traffic for dev-<appId> wakes a backend idle-stop took down while
+// its app was still open — see dev-server-access.ts.
+setDevServerWake((appId) => { ensureDevServerRunning(appId); });
 
 export const appServeBackendTool: ToolDefinition = {
   name: "app_serve_backend",

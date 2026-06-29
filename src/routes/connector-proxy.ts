@@ -36,6 +36,7 @@ import { getSecretsStoreSingleton } from "../secrets.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
 import { type SignedAuthConfig, validateSignedAuth, signRequest } from "./connector-signing.js";
+import { wakeDevServer } from "../tools/dev-server-access.js";
 
 const logger = createLogger("routes.connector-proxy");
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -201,6 +202,11 @@ export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req,
   const name = slash === -1 ? rest : rest.slice(0, slash);
   const upstreamPath = slash === -1 ? "/" : rest.slice(slash);
   if (!NAME_RE.test(name)) { json(400, { error: "Connector name must be a lowercase slug." }); return true; }
+
+  // Traffic to a dev-<appId> connector means the app is in use: bump its
+  // activity (keeps idle-stop off) and restart it if idle-stop took it down
+  // while the app stayed open.
+  if (name.startsWith("dev-")) wakeDevServer(name.slice(4));
 
   const loaded = loadManifest(name);
   if (!loaded.ok) { json(loaded.status, { error: loaded.error }); return true; }

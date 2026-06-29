@@ -223,6 +223,9 @@ export function registerShutdown(deps: {
   process.on("SIGINT", async () => {
     getScheduler()?.stopAll();
     cronService.stop();
+    // Kill any running full-stack app backends so they don't orphan past LAX
+    // (they're spawned detached, so without this they'd survive and hold ports).
+    try { const { stopAllDevServers } = await import("../tools/dev-server.js"); stopAllDevServers(); } catch { /* none running */ }
     try {
       const { WatchdogService } = await import("../agents/watchdog.js");
       WatchdogService.getInstance().stop();

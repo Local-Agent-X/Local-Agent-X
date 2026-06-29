@@ -351,6 +351,18 @@ export async function startServer(config: LAXConfig) {
     })();
   });
 
+  // Dev-server idle sweeper — stops full-stack app backends left untouched, so
+  // they don't run indefinitely once an app is opened (registerShutdown kills
+  // any still-running on exit).
+  void (async () => {
+    try {
+      const { startDevServerSweeper } = await import("../tools/dev-server.js");
+      startDevServerSweeper();
+    } catch (e) {
+      bootLogger.warn(`[dev-server] sweeper start failed: ${(e as Error).message}`);
+    }
+  })();
+
   registerShutdown({
     getScheduler: () => jobScheduler,
     cronService, agentSync, memoryIndex, secretsStore,

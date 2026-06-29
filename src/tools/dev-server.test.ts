@@ -6,11 +6,14 @@ import {
   registerDevServer,
   ensureDevServerRunning,
   stopDevServer,
+  stopIdleDevServers,
+  stopAllDevServers,
   readDevServerRecord,
   devConnectorName,
   appServeBackendTool,
   type DevServerDeps,
 } from "./dev-server.js";
+import { clearDevServerActivity, devServerActivity } from "./dev-server-access.js";
 
 let tmpLax: string;
 let prevDataDir: string | undefined;
@@ -32,6 +35,7 @@ beforeEach(() => {
   tmpLax = mkdtempSync(join(tmpdir(), "lax-devsrv-"));
   prevDataDir = process.env.LAX_DATA_DIR;
   process.env.LAX_DATA_DIR = tmpLax;
+  clearDevServerActivity();   // the activity map is module-level — isolate tests
 });
 afterEach(() => {
   if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR;
@@ -138,6 +142,40 @@ describe("stopDevServer — plain stop vs forget-on-delete", () => {
     stopDevServer("notes", deps);
     expect(sessions.get(id)).toBe(false);
     expect(readDevServerRecord("notes")?.command).toBe("node s.js");  // record kept
+  });
+});
+
+describe("idle auto-stop + shutdown cleanup (so a backend doesn't run forever)", () => {
+  it("stopIdleDevServers kills a backend past the idle window but KEEPS its record", () => {
+    const { deps, sessions } = fakeDeps();
+    const reg = registerDevServer({ appId: "stale", command: "x", port: 5191, cwd: "/tmp/x" }, deps);
+    const id = reg.ok ? reg.sessionId : "";
+
+    const stopped = stopIdleDevServers(0, Date.now() + 1000, deps);  // window 0 → idle
+    expect(stopped).toContain("stale");
+    expect(sessions.get(id)).toBe(false);                  // process killed
+    expect(readDevServerRecord("stale")).not.toBeNull();   // record kept → reopening restarts it
+    expect(devServerActivity().has("stale")).toBe(false);  // dropped from the active set
+  });
+
+  it("stopIdleDevServers leaves a freshly-used backend running", () => {
+    const { deps, sessions } = fakeDeps();
+    const reg = registerDevServer({ appId: "fresh", command: "x", port: 5192, cwd: "/tmp/x" }, deps);
+    const id = reg.ok ? reg.sessionId : "";
+
+    const stopped = stopIdleDevServers(60_000, Date.now(), deps);    // used <60s ago
+    expect(stopped).not.toContain("fresh");
+    expect(sessions.get(id)).toBe(true);                   // still alive
+  });
+
+  it("stopAllDevServers kills every running backend (LAX-shutdown path)", () => {
+    const { deps, sessions } = fakeDeps();
+    const a = registerDevServer({ appId: "a", command: "x", port: 5193, cwd: "/tmp/x" }, deps);
+    const b = registerDevServer({ appId: "b", command: "x", port: 5194, cwd: "/tmp/x" }, deps);
+    stopAllDevServers(deps);
+    expect(sessions.get(a.ok ? a.sessionId : "")).toBe(false);
+    expect(sessions.get(b.ok ? b.sessionId : "")).toBe(false);
+    expect(devServerActivity().size).toBe(0);
   });
 });
 

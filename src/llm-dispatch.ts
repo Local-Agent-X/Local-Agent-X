@@ -19,6 +19,8 @@
 
 import { resolveCredential } from "./auth/resolve.js";
 import { resolveProviderContext } from "./providers/resolve-provider-context.js";
+import { backgroundModelFor } from "./providers/registry.js";
+import type { ProviderId } from "./providers/provider-ids.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("llm-dispatch");
@@ -46,16 +48,28 @@ export interface DispatchOptions {
 
 const DEFAULTS = {
   ollamaModel: "llama3:8b",
-  anthropicModel: "claude-haiku-4-5-20251001",
-  openaiModel: "gpt-4o-mini",
-  // Non-reasoning so a short single-shot completion isn't consumed by hidden
-  // chain-of-thought (which returns empty → null). Mirrors backgroundModelFor.
-  xaiModel: "grok-4.20-0309-non-reasoning",
-  codexModel: "gpt-5.4-mini",
   temperature: 0,
   maxTokens: 200,
   timeoutMs: 30_000,
 } as const;
+
+// The four non-ollama dispatch providers map 1:1 onto registry ProviderIds.
+// ollama isn't a separate registry provider, so its model stays a local default.
+const DISPATCH_REGISTRY_ID: Record<Exclude<LLMProvider, "ollama">, ProviderId> = {
+  anthropic: "anthropic", openai: "openai", xai: "xai", codex: "codex",
+};
+const DISPATCH_MODEL_FALLBACK: Record<Exclude<LLMProvider, "ollama">, string> = {
+  anthropic: "claude-haiku-4-5", openai: "gpt-4o-mini",
+  xai: "grok-4.20-0309-non-reasoning", codex: "gpt-5.4-mini",
+};
+/** Background (cheap/fast) model for a dispatch provider, read from the registry
+ *  (backgroundModelFor) so dispatch can't drift from the canonical per-provider
+ *  background model. Falls back to a local literal only if the registry lacks one.
+ *  xAI's entry is non-reasoning so a short single-shot completion isn't consumed
+ *  by hidden chain-of-thought (which returns empty → null). */
+export function dispatchBackgroundModel(provider: Exclude<LLMProvider, "ollama">): string {
+  return backgroundModelFor(DISPATCH_REGISTRY_ID[provider], DISPATCH_MODEL_FALLBACK[provider]);
+}
 
 const DISPATCHABLE = new Set<LLMProvider>(["ollama", "anthropic", "openai", "xai", "codex"]);
 
@@ -93,10 +107,10 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
   const timeout = opts.timeoutMs ?? DEFAULTS.timeoutMs;
 
   if (provider === "ollama") return callOllama(opts.prompt, opts.ollamaModel ?? DEFAULTS.ollamaModel, temp, maxTokens, timeout);
-  if (provider === "anthropic") return callAnthropic(opts.prompt, opts.anthropicModel ?? DEFAULTS.anthropicModel, temp, maxTokens, timeout, opts.rejectOAuth ?? false);
-  if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? DEFAULTS.openaiModel, temp, maxTokens, timeout);
-  if (provider === "xai") return callXai(opts.prompt, opts.xaiModel ?? DEFAULTS.xaiModel, temp, maxTokens, timeout);
-  if (provider === "codex") return callCodex(opts.prompt, opts.codexModel ?? DEFAULTS.codexModel, temp, timeout);
+  if (provider === "anthropic") return callAnthropic(opts.prompt, opts.anthropicModel ?? dispatchBackgroundModel("anthropic"), temp, maxTokens, timeout, opts.rejectOAuth ?? false);
+  if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? dispatchBackgroundModel("openai"), temp, maxTokens, timeout);
+  if (provider === "xai") return callXai(opts.prompt, opts.xaiModel ?? dispatchBackgroundModel("xai"), temp, maxTokens, timeout);
+  if (provider === "codex") return callCodex(opts.prompt, opts.codexModel ?? dispatchBackgroundModel("codex"), temp, timeout);
   return null;
 }
 

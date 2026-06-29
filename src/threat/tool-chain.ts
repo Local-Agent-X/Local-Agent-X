@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { DataClassification } from "./classification.js";
 import { fingerprintOf, isLearned } from "./trust-ledger.js";
 import { isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage-paths.js";
+import { outboundPayloadParts } from "../security/outbound-payload.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // TOOL CHAIN ANALYSIS — Track tool sequences, block exfiltration
@@ -31,16 +32,11 @@ function hashToolCall(name: string, args: Record<string, unknown>): string {
 
 // The bytes an external sink would put on the wire: URL + body + header values.
 // Scanned for secret-shaped spans so the exfil check is data-flow (what leaves)
-// rather than temporal (what was read). Mirrors the egress guard's pre-scan set
-// (http-egress-guard.ts), plus the URL so a secret in a GET query param is seen.
+// rather than temporal (what was read). Shares the byte-assembly helper with the
+// egress guard (security/outbound-payload.ts); includeUrl=true so a secret in a
+// GET query param is seen.
 function outboundPayload(args: Record<string, unknown>): string {
-  const parts: string[] = [];
-  if (args.url) parts.push(String(args.url));
-  if (args.body) parts.push(String(args.body));
-  if (args.headers && typeof args.headers === "object") {
-    for (const v of Object.values(args.headers as Record<string, unknown>)) parts.push(String(v));
-  }
-  return parts.join("\n");
+  return outboundPayloadParts(args, { includeUrl: true });
 }
 
 export class ToolChainAnalyzer {

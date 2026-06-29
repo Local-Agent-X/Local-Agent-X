@@ -19,6 +19,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { scanForSecrets, decodedPayloadViews } from "../security/secret-scanner.js";
+import { outboundPayloadParts } from "../security/outbound-payload.js";
 import { matchEgressList } from "../security/network-policy.js";
 import { classifyData } from "../threat/classification.js";
 import { loadDataEgressGuard } from "../security/security-config.js";
@@ -77,14 +78,10 @@ export function checkOutboundRequest(args: GuardArgs): GuardBlock | null {
 
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return null;
 
-  const preScanParts: string[] = [];
-  if (args.body) preScanParts.push(String(args.body));
-  if (args.headers && typeof args.headers === "object") {
-    for (const v of Object.values(args.headers as Record<string, unknown>)) {
-      preScanParts.push(String(v));
-    }
-  }
-  const preScanText = preScanParts.join("\n");
+  // GET/HEAD/OPTIONS already short-circuited above, so the URL adds nothing to
+  // scan here — includeUrl=false. The shared helper (security/outbound-payload.ts)
+  // assembles the same body + header-value byte set the exfil analyzer scans.
+  const preScanText = outboundPayloadParts(args, { includeUrl: false });
   if (!preScanText) return null;
 
   const scan = scanForSecrets(preScanText);

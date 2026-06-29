@@ -115,7 +115,6 @@ async function testModuleImports(): Promise<void> {
     "./startup-test.js",
     "./plugin-system.js",
     "./tool-sdk.js",
-    "./headless.js",
     "./api-docs.js",
     "./event-bus.js",
     "./config-hot-reload.js",

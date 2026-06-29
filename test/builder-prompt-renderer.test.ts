@@ -301,7 +301,9 @@ describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", 
     expect(out).toContain('app_serve_backend({ app_id: "todo-app"');
     expect(out).toContain("cd server && npm install");   // command runs from app root → cd into the backend
     expect(out).toContain("/api/connectors/dev-todo-app/");
-    expect(out).toContain("better-sqlite3");
+    expect(out).toContain("node:sqlite");                // built-in SQLite — no native compile to fail
+    expect(out).toContain('"better-sqlite3": "latest"');  // if native, latest ships a prebuilt
+    expect(out).toContain("NEVER pin an old version");     // the exact mistake that broke Grok's build
     // The tier block sits right after the shared native rules.
     expect(out.indexOf("FULL-STACK MODE")).toBeGreaterThan(
       out.indexOf(NATIVE_BUILD_RULE_LINES[0]),

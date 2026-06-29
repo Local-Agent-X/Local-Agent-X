@@ -189,10 +189,10 @@ describe("appServeBackendTool", () => {
   // (not a dead "running" backend) and not left registered for auto-retry.
   // Regression for the notes build where `cd server` (from inside server/)
   // crashed instantly, npm install never ran, and the app shipped backend-less.
-  it("reports an immediately-crashing command instead of a dead 'running' backend", async () => {
+  it("reports a crashing command instead of a dead 'running' backend", async () => {
     const r = await appServeBackendTool.execute({ app_id: "crashy", command: "exit 7", port: 39517, cwd: tmpLax });
     expect(r.isError).toBe(true);
-    expect(String(r.content)).toMatch(/exited immediately/i);
+    expect(String(r.content)).toMatch(/exited/i);
     expect(existsSync(connectorFile("dev-crashy"))).toBe(false);   // forgot the bad registration
   }, 10_000);
 

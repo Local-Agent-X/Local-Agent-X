@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { workspacePath } from "../config.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { SESSIONS, startSession, killSession, sleep, tailLines } from "./process-session.js";
+import { SESSIONS, startSession, killSession, sleep, tailLines, pidsOnPort } from "./process-session.js";
 import {
   saveConnectorManifest,
   deleteConnectorManifest,
@@ -70,10 +70,12 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
   };
 }
 
-/** How long to watch a freshly-started backend for an immediate crash before
- *  reporting success. Long enough to catch a bad command; short enough not to
- *  block on a healthy (slow) `npm install`. */
-const START_CRASH_WINDOW_MS = 2500;
+/** How long to wait for a freshly-started backend to actually bind its port
+ *  (or crash) before reporting. Covers a pure-JS `npm install` (express) + boot;
+ *  a backend that needs longer than this almost always has a failing native
+ *  install, which is exactly what we want to surface. */
+const BACKEND_READY_TIMEOUT_MS = 20_000;
+const BACKEND_POLL_MS = 400;
 
 /** Idle auto-stop: a backend untouched for this long is killed (its record is
  *  kept, so opening the app — or any connector request — wakes it again). */
@@ -241,6 +243,26 @@ export function startDevServerSweeper(): void {
 // its app was still open — see dev-server-access.ts.
 setDevServerWake((appId) => { ensureDevServerRunning(appId); });
 
+type BackendOutcome =
+  | { status: "listening" }
+  | { status: "crashed"; code: number | null; output: string }
+  | { status: "timeout" };
+
+/** Poll until the backend binds its port, the process exits, or we time out —
+ *  so app_serve_backend never reports a dead/never-bound backend as running. */
+async function waitForBackend(sessionId: string, port: number, timeoutMs: number): Promise<BackendOutcome> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await sleep(BACKEND_POLL_MS);
+    const s = SESSIONS.get(sessionId);
+    if (s && s.exitedAt) {
+      return { status: "crashed", code: s.exitCode, output: tailLines(s.stderr || s.stdout || "", 20).trim() };
+    }
+    if (pidsOnPort(port).length > 0) return { status: "listening" };
+  }
+  return { status: "timeout" };
+}
+
 export const appServeBackendTool: ToolDefinition = {
   name: "app_serve_backend",
   description:
@@ -263,26 +285,36 @@ export const appServeBackendTool: ToolDefinition = {
     const res = registerDevServer({ appId, command, port, cwd });
     if (!res.ok) return { content: `Could not start backend: ${res.error}`, isError: true };
 
-    // Catch a command that crashes on startup (bad cwd, missing script, a
-    // compile/ESM error) so the model FIXES it instead of emitting APP_READY for
-    // a dead backend. A healthy `npm install` is still running after this window,
-    // so we only fail on an EARLY exit — not a slow-but-fine install.
-    await sleep(START_CRASH_WINDOW_MS);
-    const s = SESSIONS.get(res.sessionId);
-    if (s && s.exitedAt) {
-      stopDevServer(appId, {}, { forget: true });   // don't auto-retry a known-bad command
-      const out = tailLines(s.stderr || s.stdout || "", 20).trim();
+    // Don't claim success until the backend actually binds its port (or fails).
+    // This is what catches the real failures: a native module (e.g.
+    // better-sqlite3) that won't `npm install` against this Node, a wrong cwd, a
+    // missing script, an ESM error — all of which otherwise ship a dead backend.
+    const outcome = await waitForBackend(res.sessionId, port, BACKEND_READY_TIMEOUT_MS);
+    if (outcome.status === "crashed") {
+      stopDevServer(appId, {}, { forget: true });   // definitively dead — don't auto-retry it
       return {
         content:
-          `Backend for "${appId}" exited immediately (code ${s.exitCode}) — the command failed, so the app has no working backend.\n` +
-          `Command: ${command}\nThe command runs from the app root (${res.cwd ?? ""}). Fix it and call app_serve_backend again.\n` +
-          (out ? `Output:\n${out}` : "(no output captured)"),
+          `Backend for "${appId}" exited (code ${outcome.code}) — the command failed, so the app has no working backend.\n` +
+          `Command: ${command} (runs from the app root ${res.cwd}).\n` +
+          `Common cause: a native dependency pinned to an OLD version that can't compile against this Node — use Node's built-in node:sqlite (no install), or depend on "better-sqlite3": "latest" (recent versions ship a prebuilt binary; an old "^9.x" pin does not). Fix it and call app_serve_backend again.\n` +
+          (outcome.output ? `Output:\n${outcome.output}` : "(no output captured)"),
+        isError: true,
+      };
+    }
+    if (outcome.status === "timeout") {
+      const s = SESSIONS.get(res.sessionId);
+      const out = s ? tailLines(s.stderr || s.stdout || "", 20).trim() : "";
+      return {
+        content:
+          `Backend for "${appId}" did NOT start listening on port ${port} within ${BACKEND_READY_TIMEOUT_MS / 1000}s — do not treat it as ready.\n` +
+          `Likely a slow or failing install (an OLD native module like better-sqlite3 compiling from source), or it binds a different port. Check process_status(session_id="${res.sessionId}"); prefer node:sqlite (no build), or "better-sqlite3": "latest" (prebuilt).\n` +
+          (out ? `Output:\n${out}` : ""),
         isError: true,
       };
     }
     return {
       content:
-        `Backend for "${appId}" is running (session ${res.sessionId}, port ${port}).\n` +
+        `Backend for "${appId}" is up and listening on port ${port} (session ${res.sessionId}).\n` +
         `Connector "${res.connector}" wired — the frontend should fetch /api/connectors/${res.connector}/<path> ` +
         `with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.\n` +
         `LAX will restart this backend when the app is opened and stop it when the app is deleted.`,

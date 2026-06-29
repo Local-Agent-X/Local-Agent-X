@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { buildSanitizedEnv } from "./shell-env.js";
+import { buildSanitizedEnv, mergePathDirs } from "./shell-env.js";
 
 // buildSanitizedEnv reads process.env; each test sets a var, asserts, restores.
 const TOUCHED: string[] = [];
@@ -78,5 +78,36 @@ describe("buildSanitizedEnv NODE_PATH for bundled deps", () => {
     const dirs = env.NODE_PATH!.split(delimiter);
     expect(dirs[0]).toBe("/some/inherited/path");
     expect(dirs.length).toBeGreaterThan(1);
+  });
+});
+
+// Regression for the broken compiled-language (Rust) builds: a Finder-launched
+// app inherits a minimal PATH without Homebrew/cargo, so `cargo: command not
+// found` and the toolchain never runs. The repair appends existing standard
+// toolchain dirs so the binary is reachable however LAX was launched.
+describe("mergePathDirs — toolchain PATH repair", () => {
+  const P = (...d: string[]) => d.join(delimiter);
+
+  it("appends a missing dir AFTER the existing ones (system tools keep priority)", () => {
+    const out = mergePathDirs(P("/usr/bin", "/bin"), ["/opt/homebrew/bin"]);
+    expect(out).toBe(P("/usr/bin", "/bin", "/opt/homebrew/bin"));
+    const parts = out.split(delimiter);
+    expect(parts.indexOf("/usr/bin")).toBeLessThan(parts.indexOf("/opt/homebrew/bin"));
+  });
+
+  it("does not duplicate a dir already on PATH", () => {
+    expect(mergePathDirs(P("/usr/bin", "/opt/homebrew/bin"), ["/opt/homebrew/bin", "/usr/bin"]))
+      .toBe(P("/usr/bin", "/opt/homebrew/bin"));
+  });
+
+  it("handles an empty or undefined PATH", () => {
+    expect(mergePathDirs("", ["/opt/homebrew/bin"])).toBe("/opt/homebrew/bin");
+    expect(mergePathDirs(undefined, ["/x", "/y"])).toBe(P("/x", "/y"));
+  });
+
+  it("buildSanitizedEnv never drops an inherited PATH entry", () => {
+    setEnv("PATH", P("/usr/bin", "/bin", "/sbin"));
+    const env = buildSanitizedEnv();
+    for (const d of ["/usr/bin", "/bin", "/sbin"]) expect(env.PATH!.split(delimiter)).toContain(d);
   });
 });

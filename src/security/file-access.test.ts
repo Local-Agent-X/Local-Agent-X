@@ -11,8 +11,9 @@ import {
   closeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { evaluateFileAccess, confineToDir } from "./file-access.js";
+import { evaluateFileAccess, confineToDir, matchesSensitivePath } from "./file-access.js";
 import { openValidatedRead, readValidatedFile } from "./validated-io.js";
+import { isSensitivePath } from "../data-lineage-paths.js";
 
 // Hermetic temp root, realpath-resolved so the test's lexical paths and the
 // gate's realpath'd paths agree (collapses the macOS /var → /private/var
@@ -148,6 +149,32 @@ describe("app's OWN at-rest secret files under .lax (R4-04/R4-05)", () => {
     }
     expect(threw).toBe(true);
   });
+});
+
+describe("matchesSensitivePath is a SUPERSET of isSensitivePath (shared catalog)", () => {
+  // The gate (matchesSensitivePath) and the read-taint classifier (isSensitivePath)
+  // both consume security/sensitive-paths.ts (classifySensitivePath), so the gate
+  // can never miss a credential file the taint path flags. Before the shared
+  // catalog the gate's regex list silently dropped several of these (.pgpass,
+  // id_ecdsa, .databrickscfg, .keychain-db, age/keys.txt). This battery is the net:
+  // for each credential path BOTH must be truthy. (On non-Windows the gate sees the
+  // path as-is, so the same absolute path goes to both.)
+  const credentialPaths = [
+    "/Users/me/.pgpass",
+    "/Users/me/.ssh/id_ecdsa",
+    "/Users/me/.config/sops/age/keys.txt",
+    "/Users/me/.vault-token",
+    "/Users/me/.boto",
+    "/Users/me/.databrickscfg",
+    "/Users/me/Library/Keychains/login.keychain-db",
+  ];
+
+  for (const p of credentialPaths) {
+    it(`taints AND gates: ${p}`, () => {
+      expect(isSensitivePath(p)).toBe(true);
+      expect(matchesSensitivePath(p)).toBeTruthy();
+    });
+  }
 });
 
 describe("confineToDir — symlink-safe HTTP file-route containment (round-7)", () => {

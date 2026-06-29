@@ -10,66 +10,8 @@
 import { homedir } from "node:os";
 import { scanForSecrets } from "./security/secret-scanner.js";
 import { isAppAtRestSecretBasename } from "./security/known-secrets.js";
+import { classifySensitivePath } from "./security/sensitive-paths.js";
 import { getLaxDir } from "./lax-data-dir.js";
-
-// Basenames that are credential files regardless of where they live on disk.
-// Match is case-insensitive but exact — `secrets.json` matches, `mysecrets.json`
-// and `secrets.py` do not.
-const SENSITIVE_BASENAMES: ReadonlySet<string> = new Set([
-  // Shell / package auth dotfiles.
-  ".env", ".envrc", ".npmrc", ".pypirc", ".netrc",
-  // SSH private keys (canonical algorithm names).
-  "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
-  // Generic credential / secrets files.
-  "auth.json",
-  "secrets.json", "secrets.yaml", "secrets.yml", "secrets.toml",
-  "credentials.json", "credentials.db",
-  // Windows DPAPI-protected master keys (Chromium, etc.).
-  "master.dpapi", "master.key",
-  // Git stored-credentials (plaintext https creds).
-  ".git-credentials",
-  // gcloud Application Default Credentials (refresh token / SA key, plaintext).
-  "application_default_credentials.json",
-  // Postgres / MySQL client password files.
-  ".pgpass", ".my.cnf",
-  // Databricks CLI config (host + PAT token).
-  ".databrickscfg",
-]);
-
-// Suffix matches for key material containers. Endpoint-anchored, so a
-// `notes.key.md` file doesn't trip on `.key`.
-const SENSITIVE_EXTENSIONS: ReadonlyArray<string> = [
-  ".pem", ".key", ".p12", ".pfx", ".keystore", ".keychain-db",
-];
-
-// (parent-directory, basename) pairs. The file is sensitive only when its
-// immediate parent directory has the named identity — so `~/.aws/credentials`
-// trips, but `~/notes/credentials` does not, and a stray `config` file is
-// only flagged inside a known config-dir (.ssh, .aws, .kube).
-const DIR_SCOPED_FILES: ReadonlyArray<readonly [string, string]> = [
-  [".aws", "credentials"],
-  [".aws", "config"],
-  [".ssh", "config"],
-  [".docker", "config.json"],
-  [".kube", "config"],
-  // gcloud + gh credential stores live under ~/.config/<tool>/...
-  ["gcloud", "credentials.db"],
-  ["gcloud", "access_tokens.db"],
-  ["gh", "hosts.yml"],
-  // rclone remote configs hold cloud-storage tokens/keys.
-  ["rclone", "rclone.conf"],
-  // sops age keys.txt: ~/.config/sops/age/keys.txt — parent dir is `age`.
-  ["age", "keys.txt"],
-];
-
-// Directories whose entire contents are credential material. Any file at any
-// depth inside one of these is flagged — matched mid-path, not just as a
-// basename's parent. `.gnupg` is the GPG home. `legacy_credentials` is gcloud's
-// per-account OAuth store (~/.config/gcloud/legacy_credentials/<acct>/adc.json):
-// the old `["gcloud","legacy_credentials"]` DIR_SCOPED_FILES rule was DEAD — it
-// expected `legacy_credentials` as a BASENAME, but the real layout has it as a
-// mid-path directory, so every adc.json under it slipped through.
-const SENSITIVE_DIR_NAMES: ReadonlySet<string> = new Set([".gnupg", "legacy_credentials"]);
 
 function pathSegments(p: string): string[] {
   return p.split(/[\\/]/).filter(Boolean);
@@ -89,32 +31,21 @@ export function isSensitivePath(filePath: string): boolean {
   if (!filePath) return false;
   const segs = pathSegments(filePath);
   if (segs.length === 0) return false;
-  const segsLower = segs.map(s => s.toLowerCase());
-  const base = segsLower[segsLower.length - 1];
+  const base = segs[segs.length - 1].toLowerCase();
 
-  if (SENSITIVE_BASENAMES.has(base)) return true;
+  // The shared credential-file catalog (security/sensitive-paths.ts) owns the
+  // basename / `.env.` / extension / dir-scoped / cred-dir SHAPE checks — the ONE
+  // source of truth the file-access gate (matchesSensitivePath) also consumes, so
+  // the gate stays a provable superset of this taint classifier.
+  if (classifySensitivePath(filePath)) return true;
   // The app's OWN at-rest key/seed/vault files (audit-key, audit-key.enc,
   // secrets.salt, secrets.enc, master.*, auth.json). Derived from the ONE
   // canonical set in security/known-secrets.ts so the read-taint classifier
   // can't drift from the write-block / attachment-denylist. These basenames are
   // specific enough that matching them anywhere is not a taint-storm risk.
+  // Kept here (not in the shared catalog) because each caller scopes it
+  // differently (the file gate requires a `.lax` data-dir segment).
   if (isAppAtRestSecretBasename(base)) return true;
-  // `.env.local`, `.env.production`, etc. Open-ended, so not in the basename set.
-  if (base.startsWith(".env.")) return true;
-  for (const ext of SENSITIVE_EXTENSIONS) {
-    if (base.endsWith(ext)) return true;
-  }
-
-  if (segsLower.length >= 2) {
-    const parent = segsLower[segsLower.length - 2];
-    for (const [dir, name] of DIR_SCOPED_FILES) {
-      if (parent === dir && base === name) return true;
-    }
-  }
-
-  for (const seg of segsLower) {
-    if (SENSITIVE_DIR_NAMES.has(seg)) return true;
-  }
 
   return false;
 }

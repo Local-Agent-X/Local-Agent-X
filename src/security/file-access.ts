@@ -4,6 +4,7 @@ import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
 import { isAppAtRestSecretBasename } from "./known-secrets.js";
+import { classifySensitivePath } from "./sensitive-paths.js";
 import { resolveAgentPathFrom } from "../workspace/paths.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
@@ -30,10 +31,18 @@ function isAppAtRestSecretUnderLax(p: string): boolean {
 // rule: the regex catalog below OR the app's own at-rest key/seed files under
 // its data dir. ONE checker so the pre-dispatch gate and the read sink stay in
 // lockstep.
-export function matchesSensitivePath(normalized: string): RegExp | "app-at-rest-secret" | null {
+export function matchesSensitivePath(normalized: string): RegExp | "app-at-rest-secret" | "sensitive-catalog" | null {
   for (const pattern of SENSITIVE_PATTERNS) {
     if (pattern.test(normalized)) return pattern;
   }
+  // The gate = its regexes ∪ the shared credential-file catalog. The catalog
+  // (security/sensitive-paths.ts) is the SAME shape-checker the read-taint
+  // classifier uses, so the gate is a provable SUPERSET of taint — it can never
+  // miss a credential file the taint path flags (.pgpass, id_ecdsa,
+  // .databrickscfg, .keychain-db, age/keys.txt, .my.cnf, …). The regexes above
+  // stay additive (some match broader substrings, e.g. /id_rsa/i), so adding the
+  // catalog only widens the gate — no newly-allowed sensitive reads.
+  if (classifySensitivePath(normalized)) return "sensitive-catalog";
   if (isAppAtRestSecretUnderLax(normalized)) return "app-at-rest-secret";
   return null;
 }

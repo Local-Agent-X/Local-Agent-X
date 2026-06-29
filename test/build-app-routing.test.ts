@@ -246,14 +246,17 @@ describe("builderToolsForTier — real-build tiers get the process tools", () =>
     expect(n).not.toContain("process_start");
   });
 
-  it("full-stack adds process_start/status/kill so a dev server can run un-blocked", () => {
+  it("full-stack adds process tools + the turnkey app_serve_backend primitive", () => {
     const n = names("full-stack");
     expect(n).toContain("process_start");
     expect(n).toContain("process_status");
     expect(n).toContain("process_kill");
+    expect(n).toContain("app_serve_backend");
   });
 
-  it("compiled-native adds the process tools for multi-minute compiles", () => {
-    expect(names("compiled-native")).toContain("process_start");
+  it("compiled-native adds the process tools but NOT app_serve_backend (no backend)", () => {
+    const n = names("compiled-native");
+    expect(n).toContain("process_start");
+    expect(n).not.toContain("app_serve_backend");
   });
 });

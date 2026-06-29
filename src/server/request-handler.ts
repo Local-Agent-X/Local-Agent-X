@@ -4,6 +4,7 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
 import { authorizeAppConnectorHttp, deriveConnectorCapability } from "./app-connector-auth.js";
+import { ensureDevServerRunning } from "../tools/dev-server.js";
 import { confineToDir } from "../security/file-access.js";
 import { getPageBundle } from "./static-bundle.js";
 import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes, handleAccountRoutes } from "../routes/index.js";
@@ -245,6 +246,12 @@ export function createRequestHandler(deps: {
         const ext = appFile.split(".").pop() || "", ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml" };
         const h: Record<string, string> = { "Content-Type": ct[ext] || "application/octet-stream" };
         if (ext === "html") {
+          // Lazy keep-alive: if this app has a registered full-stack backend,
+          // make sure it's running before its frontend starts hitting the
+          // connector. Cheap no-op (a Map lookup) for the common backend-less
+          // app; best-effort, never blocks serving the page.
+          const appId = url.pathname.split("/")[2];
+          if (appId) { try { ensureDevServerRunning(appId); } catch { /* best-effort */ } }
           h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self'";
           h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
           h["Cache-Control"] = "no-cache, must-revalidate"; h["Pragma"] = "no-cache";

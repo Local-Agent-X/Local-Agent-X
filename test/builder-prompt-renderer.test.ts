@@ -295,11 +295,10 @@ describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", 
     expect(out).not.toContain("COMPILED-LANGUAGE MODE");
   });
 
-  it("full-stack tier instructs a real backend via process_start + a connector, not faked data", () => {
+  it("full-stack tier instructs a real backend via the turnkey app_serve_backend primitive, not faked data", () => {
     const out = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "full-stack" });
     expect(out).toContain("FULL-STACK MODE");
-    expect(out).toContain("process_start");
-    expect(out).toContain('connector_create({name: "dev-todo-app"');
+    expect(out).toContain('app_serve_backend({ app_id: "todo-app"');
     expect(out).toContain("/api/connectors/dev-todo-app/");
     expect(out).toContain("better-sqlite3");
     // The tier block sits right after the shared native rules.

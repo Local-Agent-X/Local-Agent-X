@@ -50,6 +50,7 @@ import { bashTool } from "./shell-tools.js";
 import { globTool } from "./glob-tool.js";
 import { connectorCreateTool } from "./connector-tools.js";
 import { processStartTool, processStatusTool, processKillTool } from "./process-tools-defs.js";
+import { appServeBackendTool } from "./dev-server.js";
 import { classifyAppTier, tierLabel, type AppTier } from "./app-tier.js";
 
 /** Tool defs the in-canonical-sub-agent strategy hands to the agent. Mirrors
@@ -65,7 +66,11 @@ const BUILDER_AGENT_TOOLS = [writeTool, readTool, editTool, bashTool, globTool, 
  */
 export function builderToolsForTier(tier: AppTier): typeof BUILDER_AGENT_TOOLS {
   if (tier === "quick-html") return BUILDER_AGENT_TOOLS;
-  return [...BUILDER_AGENT_TOOLS, processStartTool, processStatusTool, processKillTool];
+  const withProcess = [...BUILDER_AGENT_TOOLS, processStartTool, processStatusTool, processKillTool];
+  // Full-stack additionally gets the turnkey dev-server primitive so a real
+  // backend is started + kept alive + connector-wired in one reliable call.
+  if (tier === "full-stack") return [...withProcess, appServeBackendTool];
+  return withProcess;
 }
 
 export const APP_BUILD_OP_TYPE = "app_build";

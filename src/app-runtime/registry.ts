@@ -29,6 +29,7 @@ import {
 } from "./types.js";
 import { validateAppDefinition } from "./validation.js";
 import { createLogger } from "../logger.js";
+import { stopDevServer } from "../tools/dev-server.js";
 
 const logger = createLogger("app-runtime");
 
@@ -180,6 +181,10 @@ export class AppRegistry {
     const wsAppExists = !!(wsAppDir && wsAppsRoot && wsAppDir.startsWith(wsAppsRoot) && existsSync(wsAppDir));
 
     if (!def && !wsAppExists) return { deleted: false, registry: false, workspace: false, error: "App not found" };
+
+    // Stop any registered full-stack backend for this app and forget its record
+    // + connector, so nothing keeps running against a deleted app.
+    try { stopDevServer(id, {}, { forget: true }); } catch { /* best-effort */ }
 
     if (def) {
       const access = this.checkAccess(id, actor, "admin");

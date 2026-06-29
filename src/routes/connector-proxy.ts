@@ -26,7 +26,7 @@
  * Secrets resolve from the vault by name and never leave the server.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
@@ -60,6 +60,20 @@ export interface ConnectorManifest {
 
 export function connectorsDir(): string {
   return join(getLaxDir(), "connectors");
+}
+
+/** Persist a validated manifest as the canonical connector file. The single
+ *  writer — connector_create and the dev-server lifecycle both call this so the
+ *  on-disk shape can't drift between them. */
+export function saveConnectorManifest(name: string, manifest: ConnectorManifest): void {
+  const dir = connectorsDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${name}.json`), JSON.stringify(manifest, null, 2) + "\n");
+}
+
+/** Remove a connector file (e.g. when its owning app is deleted). Best-effort. */
+export function deleteConnectorManifest(name: string): void {
+  try { rmSync(join(connectorsDir(), `${name}.json`), { force: true }); } catch { /* already gone */ }
 }
 
 export function parseManifest(raw: string): { ok: true; manifest: ConnectorManifest } | { ok: false; error: string } {

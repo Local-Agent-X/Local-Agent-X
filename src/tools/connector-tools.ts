@@ -1,7 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { connectorsDir, parseManifest, type ConnectorManifest } from "../routes/connector-proxy.js";
+import { saveConnectorManifest, parseManifest, type ConnectorManifest } from "../routes/connector-proxy.js";
 import { getSecretsStoreSingleton } from "../secrets.js";
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
@@ -67,10 +65,7 @@ export const connectorCreateTool: ToolDefinition = {
     const parsed = parseManifest(JSON.stringify(manifest));
     if (!parsed.ok) return err(`Invalid connector manifest: ${parsed.error}`);
 
-    const dir = connectorsDir();
-    mkdirSync(dir, { recursive: true });
-    const file = join(dir, `${name}.json`);
-    writeFileSync(file, JSON.stringify(parsed.manifest, null, 2) + "\n");
+    saveConnectorManifest(name, parsed.manifest);
 
     const secrets = getSecretsStoreSingleton();
     const missing = referencedSecrets(parsed.manifest.auth).filter(n => !secrets?.has(n));

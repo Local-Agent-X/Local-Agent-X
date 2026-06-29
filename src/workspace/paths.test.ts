@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import type { LAXConfig } from "../types.js";
-import { setRuntimeConfig } from "../config.js";
+import { setRuntimeConfig, uploadsDir } from "../config.js";
 import { resolveAgentPath } from "./paths.js";
 
 // resolveAgentPath is the single source of truth for turning an agent's raw
@@ -41,5 +41,20 @@ describe("resolveAgentPath", () => {
     const out = resolveAgentPath("apps/demo/index.html");
     expect(out.startsWith(resolve(WS, ".."))).toBe(true);
     expect(out.startsWith(process.cwd())).toBe(false);
+  });
+
+  // Attachments land in ~/.lax/uploads under a hashed name; the model is given a
+  // "/uploads/<f>" reference. The resolver must map it to the uploads dir — NOT
+  // a drive-root "/uploads" (which is what isAbsolute would otherwise produce on
+  // Windows), or a file tool the model points at an attachment 404s.
+  it("maps a /uploads reference to the uploads dir, not a drive root", () => {
+    expect(resolveAgentPath("/uploads/55c07720aae37cf.pdf")).toBe(
+      join(uploadsDir(), "55c07720aae37cf.pdf"),
+    );
+  });
+
+  it("confines a /uploads reference to the flat uploads dir (no traversal escape)", () => {
+    expect(resolveAgentPath("/uploads/../auth.json")).toBe(join(uploadsDir(), "auth.json"));
+    expect(resolveAgentPath("/uploads/../../etc/passwd")).toBe(join(uploadsDir(), "passwd"));
   });
 });

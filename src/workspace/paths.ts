@@ -1,5 +1,11 @@
-import { resolve, isAbsolute } from "node:path";
-import { workspaceRoot } from "../config.js";
+import { resolve, isAbsolute, join, basename } from "node:path";
+import { workspaceRoot, uploadsDir } from "../config.js";
+
+// A "/uploads/<file>" reference — the URL form web/mobile attachments carry —
+// resolves to the on-disk uploads dir, NOT a drive-root path. basename() pins it
+// to the flat uploads dir so "/uploads/../auth.json" can't escape. Matched before
+// isAbsolute because "/uploads/x" reads as absolute on Windows.
+const UPLOADS_REF = /^[/\\]uploads[/\\](.+)$/;
 
 // ── Canonical resolver for AGENT-SUPPLIED file paths ──
 //
@@ -26,6 +32,8 @@ import { workspaceRoot } from "../config.js";
 // derived from config.workspace, so it is correct whether or not that junction
 // was ever created.
 export function resolveAgentPath(p: string): string {
+  const upload = UPLOADS_REF.exec(p);
+  if (upload) return join(uploadsDir(), basename(upload[1]));
   if (isAbsolute(p)) return resolve(p);
   return resolve(workspaceRoot(), "..", p);
 }

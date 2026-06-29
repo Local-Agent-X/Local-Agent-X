@@ -203,29 +203,44 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // as a base64 `dataUrl` (url:null) — decode that to a file so both land in the
   // same on-disk form the rest of the pipeline reads.
   const images: Array<{ url: string; filePath?: string; name: string }> = [];
+  // Non-image attachments (PDF/doc/etc.) the model can read via a file tool. The
+  // model is shown the friendly name in the user message; without the on-disk
+  // ref it calls e.g. `pdf read "Invoice.pdf"`, which resolves against the
+  // workspace and 404s — the file actually lives in uploads. We surface the
+  // "/uploads/<f>" ref (resolveAgentPath maps it back to the uploads dir).
+  const fileAttachments: Array<{ name: string; ref: string }> = [];
   if (input.attachments && input.uploadsDir) {
     for (const a of input.attachments) {
-      if (!a.isImage) continue;
       const inline = (a as { dataUrl?: string | null }).dataUrl ?? null;
       const src = (a.url as string | null) || inline;
       if (!src) continue;
       const dataMatch = /^data:([^;]+);base64,(.+)$/.exec(src);
+      let ref: string;
+      let filePath: string;
       if (dataMatch) {
-        const ext = (dataMatch[1].split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "jpg";
+        const ext = (dataMatch[1].split("/")[1] || "bin").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "bin";
         const fname = `att-${randomBytes(6).toString("hex")}.${ext}`;
-        const filePath = join(input.uploadsDir, fname);
+        filePath = join(input.uploadsDir, fname);
         try {
           writeFileSync(filePath, Buffer.from(dataMatch[2], "base64"));
         } catch {
           continue; // unwritable upload dir — skip rather than fail the turn
         }
-        images.push({ name: a.name, url: `/uploads/${fname}`, filePath });
+        ref = `/uploads/${fname}`;
       } else {
         const fname = src.replace(/^\/uploads\//, "");
-        images.push({ name: a.name, url: src, filePath: join(input.uploadsDir, fname) });
+        ref = `/uploads/${fname}`;
+        filePath = join(input.uploadsDir, fname);
       }
+      if (a.isImage) images.push({ name: a.name, url: ref, filePath });
+      else fileAttachments.push({ name: a.name, ref });
     }
   }
+  const fileAttachmentNote = fileAttachments.length
+    ? `\n\nThe user attached non-image file(s), saved and readable by your file tools. ` +
+      `Pass the PATH (not the display name) to a tool such as \`pdf\` (read) or \`read\`:\n` +
+      fileAttachments.map((f) => `- "${f.name}" → ${f.ref}`).join("\n")
+    : "";
 
   // 8. Intent-classifier tool_choice forcing. Verdict was computed in
   // step 3 so it could drive tool-filter narrowing; here we reuse it to
@@ -280,7 +295,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     model: resolved.model,
     codexApiKey: resolved.codexApiKey,
     customBaseURL: resolved.customBaseURL,
-    systemPrompt,
+    systemPrompt: systemPrompt + fileAttachmentNote,
     tools: toolSel.tools,
     cleanHistory,
     images,

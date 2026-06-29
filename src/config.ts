@@ -350,6 +350,13 @@ export function getAuthPath(): string {
   return join(getConfigDir(), "auth.json");
 }
 
+// Where web/mobile attachments land (~/.lax/uploads). The HTTP upload route and
+// the chat request pipeline both write here; resolveAgentPath maps a
+// "/uploads/<file>" reference back to this dir so file tools can open them.
+export function uploadsDir(): string {
+  return join(getLaxDir(), "uploads");
+}
+
 // ── Runtime config store ──
 // Set once at startup, readable from any module without threading config through every call.
 

@@ -243,7 +243,7 @@ export const buildAppTool: ToolDefinition = {
     });
 
     const tierCriteria = tier === "full-stack"
-      ? [`a real backend runs under ${appDir}/server (started via process_start) and index.html reaches it through a connector`]
+      ? [`a real backend is running (started via app_serve_backend, which verifies it bound its port) and index.html reaches it through its dev connector`]
       : tier === "compiled-native"
         ? [`the real toolchain was actually run (not a browser reimplementation); index.html shows the program's real output`]
         : [];

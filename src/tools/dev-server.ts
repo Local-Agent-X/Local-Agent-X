@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { workspacePath } from "../config.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { SESSIONS, startSession, killSession } from "./process-session.js";
+import { SESSIONS, startSession, killSession, sleep, tailLines } from "./process-session.js";
 import {
   saveConnectorManifest,
   deleteConnectorManifest,
@@ -62,6 +62,11 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
     kill: d.kill ?? ((sid) => { const s = SESSIONS.get(sid); if (s) killSession(s); }),
   };
 }
+
+/** How long to watch a freshly-started backend for an immediate crash before
+ *  reporting success. Long enough to catch a bad command; short enough not to
+ *  block on a healthy (slow) `npm install`. */
+const START_CRASH_WINDOW_MS = 2500;
 
 export function devConnectorName(appId: string): string {
   return `dev-${appId}`;
@@ -101,7 +106,7 @@ function devConnectorManifest(port: number): ConnectorManifest {
 }
 
 export type RegisterResult =
-  | { ok: true; connector: string; sessionId: string; port: number; restarted: boolean }
+  | { ok: true; connector: string; sessionId: string; port: number; cwd: string; restarted: boolean }
   | { ok: false; error: string };
 
 /**
@@ -117,7 +122,11 @@ export function registerDevServer(
     return { ok: false, error: "appId, command, and a positive numeric port are required" };
   }
   const dd = deps(d);
-  const cwd = input.cwd ?? workspacePath("apps", appId, "server");
+  // Default cwd is the APP ROOT (not /server) so the command can `cd server`
+  // into a backend subfolder OR run a root-level backend directly — both work.
+  // A /server default broke the common `cd server && npm install && npm run dev`
+  // (cd server from inside server/ fails → install never runs → dead backend).
+  const cwd = input.cwd ?? workspacePath("apps", appId);
   const connector = devConnectorName(appId);
 
   // Restart cleanly if an earlier session for this app is still alive.
@@ -132,7 +141,7 @@ export function registerDevServer(
 
   const sessionId = started.session.sessionId;
   writeRecord({ appId, command, cwd, port, connector, sessionId });
-  return { ok: true, connector, sessionId, port, restarted };
+  return { ok: true, connector, sessionId, port, cwd, restarted };
 }
 
 export type EnsureResult =
@@ -194,6 +203,24 @@ export const appServeBackendTool: ToolDefinition = {
     const cwd = args.cwd ? String(args.cwd) : undefined;
     const res = registerDevServer({ appId, command, port, cwd });
     if (!res.ok) return { content: `Could not start backend: ${res.error}`, isError: true };
+
+    // Catch a command that crashes on startup (bad cwd, missing script, a
+    // compile/ESM error) so the model FIXES it instead of emitting APP_READY for
+    // a dead backend. A healthy `npm install` is still running after this window,
+    // so we only fail on an EARLY exit — not a slow-but-fine install.
+    await sleep(START_CRASH_WINDOW_MS);
+    const s = SESSIONS.get(res.sessionId);
+    if (s && s.exitedAt) {
+      stopDevServer(appId, {}, { forget: true });   // don't auto-retry a known-bad command
+      const out = tailLines(s.stderr || s.stdout || "", 20).trim();
+      return {
+        content:
+          `Backend for "${appId}" exited immediately (code ${s.exitCode}) — the command failed, so the app has no working backend.\n` +
+          `Command: ${command}\nThe command runs from the app root (${res.cwd ?? ""}). Fix it and call app_serve_backend again.\n` +
+          (out ? `Output:\n${out}` : "(no output captured)"),
+        isError: true,
+      };
+    }
     return {
       content:
         `Backend for "${appId}" is running (session ${res.sessionId}, port ${port}).\n` +

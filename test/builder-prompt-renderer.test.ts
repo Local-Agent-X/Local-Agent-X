@@ -299,6 +299,7 @@ describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", 
     const out = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "full-stack" });
     expect(out).toContain("FULL-STACK MODE");
     expect(out).toContain('app_serve_backend({ app_id: "todo-app"');
+    expect(out).toContain("cd server && npm install");   // command runs from app root → cd into the backend
     expect(out).toContain("/api/connectors/dev-todo-app/");
     expect(out).toContain("better-sqlite3");
     // The tier block sits right after the shared native rules.

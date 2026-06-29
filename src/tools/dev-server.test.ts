@@ -62,6 +62,14 @@ describe("registerDevServer — wires connector + record + starts the process", 
     expect(rec?.sessionId).toBe(r.sessionId);
   });
 
+  it("defaults cwd to the app ROOT (not /server) so `cd server` in the command works", () => {
+    const { deps } = fakeDeps();
+    registerDevServer({ appId: "myapp", command: "cd server && npm run dev", port: 5190 }, deps);  // no cwd
+    const rec = readDevServerRecord("myapp");
+    expect(rec?.cwd.endsWith(join("apps", "myapp"))).toBe(true);
+    expect(rec?.cwd.endsWith(join("myapp", "server"))).toBe(false);
+  });
+
   it("rejects a missing/invalid port without writing anything", () => {
     const { deps } = fakeDeps();
     const r = registerDevServer({ appId: "x", command: "node s.js", port: 0, cwd: "/tmp/x" }, deps);
@@ -138,6 +146,17 @@ describe("appServeBackendTool", () => {
     const r = await appServeBackendTool.execute({ app_id: "notes", command: "node s.js", port: "not-a-number" });
     expect(r.isError).toBe(true);
   });
+
+  // Real spawn: an immediately-exiting command must be reported as a FAILURE
+  // (not a dead "running" backend) and not left registered for auto-retry.
+  // Regression for the notes build where `cd server` (from inside server/)
+  // crashed instantly, npm install never ran, and the app shipped backend-less.
+  it("reports an immediately-crashing command instead of a dead 'running' backend", async () => {
+    const r = await appServeBackendTool.execute({ app_id: "crashy", command: "exit 7", port: 39517, cwd: tmpLax });
+    expect(r.isError).toBe(true);
+    expect(String(r.content)).toMatch(/exited immediately/i);
+    expect(existsSync(connectorFile("dev-crashy"))).toBe(false);   // forgot the bad registration
+  }, 10_000);
 
   it("devConnectorName is always dev-<appId>", () => {
     expect(devConnectorName("my-app")).toBe("dev-my-app");

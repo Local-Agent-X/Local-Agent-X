@@ -12,6 +12,9 @@
  */
 import { request as httpRequest } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("server.dev-server-proxy");
 
 // Hop-by-hop headers must not be forwarded across a proxy boundary (RFC 7230).
 const HOP_BY_HOP = new Set([
@@ -60,6 +63,22 @@ export function proxyFrontendDevServer(
   url: URL,
   connectorToken: string,
 ): void {
+  // A websocket upgrade (Vite HMR) cannot be proxied here — this forwarder only
+  // handles a normal HTTP response, so forwarding an upgrade would HANG (Node
+  // routes the 101 to an 'upgrade' event we never read). Fail it FAST so the
+  // client's HMR socket gives up immediately instead of wedging the page.
+  // Tracked separately for real websocket-over-tunnel support.
+  const isUpgrade = String(req.headers.upgrade || "").toLowerCase().includes("websocket");
+  if (isUpgrade) {
+    logger.info(`[dev-proxy] ws-upgrade FAST-FAIL ${url.pathname} (HMR over tunnel not yet supported)`);
+    res.writeHead(501, { "Content-Type": "text/plain" });
+    res.end("websocket upgrade not supported on the app proxy yet");
+    return;
+  }
+  // Per-request trace so a phone load over the broker is fully visible: which
+  // subresources arrive, their status/size, and any error/hang.
+  logger.info(`[dev-proxy] → GET ${url.pathname}${url.search}`);
+
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(req.headers)) {
     if (typeof v === "string" && !HOP_BY_HOP.has(k.toLowerCase()) && k.toLowerCase() !== "host") {
@@ -72,6 +91,7 @@ export function proxyFrontendDevServer(
     { host: "127.0.0.1", port, method: "GET", path: url.pathname + url.search, headers },
     (up) => {
       const ct = String(up.headers["content-type"] || "");
+      logger.info(`[dev-proxy] ← ${up.statusCode} ${url.pathname} (${ct || "no-ct"})`);
       const out: Record<string, string | string[]> = {};
       for (const [k, v] of Object.entries(up.headers)) {
         if (v !== undefined && !HOP_BY_HOP.has(k.toLowerCase()) && k.toLowerCase() !== "content-security-policy") {
@@ -100,7 +120,8 @@ export function proxyFrontendDevServer(
     },
   );
 
-  upstream.on("error", () => {
+  upstream.on("error", (e) => {
+    logger.warn(`[dev-proxy] ✗ ${url.pathname}: ${(e as Error).message}`);
     if (!res.headersSent) {
       res.writeHead(502, { "Content-Type": "text/plain" });
       res.end("Frontend dev server unreachable — it may still be starting. Reload in a moment.");

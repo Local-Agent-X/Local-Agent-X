@@ -67,6 +67,25 @@ describe("proxyFrontendDevServer (desktop-first live frontend)", () => {
     expect(seenPath).toBe("/apps/spa/assets/index.js?v=abc");
   });
 
+  it("fast-fails a websocket upgrade (HMR) instead of hanging the page", async () => {
+    // A forwarded upgrade would wedge: Node routes the 101 to an 'upgrade' event
+    // the forwarder never reads, so the request hangs → white screen on the
+    // phone. The proxy must answer immediately. Driven directly (fetch strips
+    // the Upgrade header) — no upstream needed, since it returns before forward.
+    let status = 0;
+    const res = {
+      headersSent: false,
+      writableEnded: false,
+      writeHead(s: number) { status = s; this.headersSent = true; return this; },
+      end() { this.writableEnded = true; },
+    } as unknown as ServerResponse;
+    const req = { headers: { upgrade: "websocket", connection: "Upgrade" } } as unknown as IncomingMessage;
+
+    proxyFrontendDevServer(req, res, 5173, new URL("http://localhost/apps/spa/@vite/client"), "T");
+    expect(status).toBe(501);                 // answered, not hung
+    expect((res as unknown as { writableEnded: boolean }).writableEnded).toBe(true);
+  });
+
   it("returns 502 when the dev server is unreachable", async () => {
     // Grab an ephemeral port, then free it so a connect is refused deterministically.
     const tmp = createServer();

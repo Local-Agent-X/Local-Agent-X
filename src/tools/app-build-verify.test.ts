@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors } from "./app-build-verify.js";
+import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors, scanAppForUnverifiedNativeParity, formatUnverifiedNativeParity } from "./app-build-verify.js";
 
 const dirs: string[] = [];
 function makeApp(files: Record<string, string>): string {
@@ -125,5 +125,61 @@ describe("formatBlockedFetchError", () => {
     expect(msg).toContain("connector_create");
     expect(msg).toContain("/api/connectors/");
     expect(msg).toContain("window.__LAX_CONNECTOR_TOKEN__");
+  });
+});
+
+describe("scanAppForUnverifiedNativeParity — catches the compiled-lang JS-twin lie", () => {
+  // Reproduces the reported scenario: real Rust source sidelined, a JS twin in
+  // index.html labeled "identical to Rust output" — a claim the browser can't verify.
+  it("flags a Rust app whose index.html claims its preview is identical to the Rust output", () => {
+    const dir = makeApp({
+      "src/main.rs": "fn main() { /* 326-line raytracer */ }",
+      "index.html": "<canvas id=c></canvas><div>✅ Render complete — identical to Rust output</div><script>/* JS twin */</script>",
+    });
+    const { violations } = scanAppForUnverifiedNativeParity(dir);
+    expect(violations.length).toBe(1);
+    expect(violations[0].file).toBe("index.html");
+    expect(violations[0].claim.toLowerCase()).toContain("identical to");
+  });
+
+  it("flags a Go app claiming a 1:1 match", () => {
+    const dir = makeApp({
+      "main.go": "package main\nfunc main() {}",
+      "index.html": "<p>This canvas is a 1:1 match of the Go binary's frames.</p>",
+    });
+    expect(scanAppForUnverifiedNativeParity(dir).violations.length).toBe(1);
+  });
+
+  it("does NOT flag a pure web app even when it claims to match a mockup (no compiled source)", () => {
+    const dir = makeApp({
+      "index.html": "<p>Pixel-perfect, identical to the Figma mockup.</p><script>app()</script>",
+    });
+    expect(scanAppForUnverifiedNativeParity(dir).violations.length).toBe(0);
+  });
+
+  it("does NOT flag a compiled-lang app that honestly shows its real produced artifact", () => {
+    const dir = makeApp({
+      "src/main.rs": "fn main() { /* writes output.png */ }",
+      "output.png": "\x89PNG fake bytes",
+      "index.html": "<img src=output.png alt='rendered by the actual Rust program (cargo run)'>",
+    });
+    expect(scanAppForUnverifiedNativeParity(dir).violations.length).toBe(0);
+  });
+
+  it("does NOT mistake a real cargo build artifact for an honesty problem", () => {
+    const dir = makeApp({
+      "src/main.rs": "fn main() {}",
+      "target/debug/app": "binary",
+      "index.html": "<img src=out.png>",
+    });
+    expect(scanAppForUnverifiedNativeParity(dir).violations.length).toBe(0);
+  });
+
+  it("formats a message naming the file + the two honest exits", () => {
+    const msg = formatUnverifiedNativeParity([{ file: "index.html", claim: "identical to" }]);
+    expect(msg).toContain("index.html");
+    expect(msg).toContain("cargo run");
+    expect(msg).toContain("remove the equivalence claim");
+    expect(msg).toContain("Never claim parity you didn't verify");
   });
 });

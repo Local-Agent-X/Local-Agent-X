@@ -15,6 +15,7 @@ import {
   looksLikeWebsiteRequest,
   appBuilderPersonaRefresh,
   WEBSITE_RULES_FRAGMENT,
+  NATIVE_BUILD_RULE_LINES,
   type BuilderPromptInput,
 } from "../src/tools/render-builder-prompt.js";
 
@@ -56,6 +57,7 @@ ${starterLine}- Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in ${appDir}/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
 - Make it look polished — use modern CSS, good colors, responsive design
+${NATIVE_BUILD_RULE_LINES.join("\n")}
 - The app will be served at ${appUrl}
 - Do NOT ask questions — just build it based on the instructions
 - After writing files, output: APP_READY: ${appUrl}
@@ -222,6 +224,8 @@ describe("renderPersonaPrompt — stable persona for AgentTemplate.systemPrompt"
       - Use real data and real logic — never fake it. No \`Math.random()\` stand-ins for live values, no hardcoded sample arrays posing as a real feed, no placeholder rows. If a real data source isn't wired, show an explicit empty/error state instead of fabricating content.
       - Every control must work — buttons, forms, inputs, and links you add must do what they say, with no handlers wired to nothing.
       - The app must run on first load — include every script, style, and handler it references; no functions called but never defined, no half-wired features.
+      - Building something that isn't a web page — a Rust/Go/C/C++/native program, a CLI, anything needing a real compiler or runtime? Actually build and RUN it with its real toolchain via bash (e.g. \`cargo run\`, \`go run .\`, \`cc main.c && ./a.out\`), and make index.html show the REAL output it produced — embed the generated image/file, or the captured real stdout. Do NOT reimplement the program in browser JavaScript and present that as its result.
+      - Never claim a preview "matches", is "identical to", or is "the same as" a program's real output unless you actually ran that program and are showing its real output. If you genuinely can't run the toolchain in this sandbox, say so plainly and show only what you verified — an honest "couldn't compile/run it here" beats a fabricated match.
       - Need real data from an external API (broker, CRM, any keyed/signed service)? Don't fetch it directly — the sandbox blocks cross-origin calls. Call the connector_create tool to define a connector (upstream + auth + an allow-list of exact METHOD /path entries) and have the app call the same-origin proxy /api/connectors/<name>/<path> with the header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. Never edit core LAX to add an integration.
       - Do NOT ask questions — just build it based on the instructions
       - After writing files, output: APP_READY: <appUrl from the per-build context>
@@ -258,6 +262,25 @@ describe("renderPerBuildContext — connector teaching reaches both build strate
     expect(out).toContain("window.__LAX_CONNECTOR_TOKEN__");
     expect(out).toContain("connector_create tool");
     expect(out).toContain("must NOT edit core LAX");
+  });
+});
+
+describe("native-build honesty rule reaches both build strategies", () => {
+  // A Rust/Go/C app must run its real toolchain and never claim an unverified
+  // JS-twin matches the real output. The rule lives in the persona (in-canonical
+  // strategy) AND the per-build context (cli-subprocess strategy) so neither path
+  // misses it. Regression for the raytracer that shipped a JS twin labeled
+  // "identical to Rust output" without ever running cargo.
+  it("persona carries the run-the-real-toolchain + no-unverified-parity rule", () => {
+    const out = renderPersonaPrompt();
+    expect(out).toContain("Actually build and RUN it with its real toolchain");
+    expect(out).toContain("Never claim a preview");
+  });
+
+  it("per-build context carries the same rule (cli-subprocess path)", () => {
+    const out = renderPerBuildContext(SAMPLE_CREATE);
+    expect(out).toContain("Actually build and RUN it with its real toolchain");
+    expect(out).toContain("Never claim a preview");
   });
 });
 

@@ -166,6 +166,101 @@ export function formatStartupErrors(errors: StartupError[]): string {
   );
 }
 
+// ── Honesty: a compiled-language app that ships a browser reimplementation and
+// claims it matches the real program's output without ever running that program.
+// The builder writes real Rust/Go/C (the model is capable), but the app contract
+// is HTML-first, so it sidelines the source and renders a JS twin labeled e.g.
+// "identical to Rust output" — a claim it cannot have verified from inside the
+// browser (and is often provably wrong; the twin isn't even the same scene). The
+// gate fires only when BOTH a compiled-language source file AND a parity claim
+// are present, so it's inert on the 99% pure-web build (no native source = no
+// gate). Pure read-only scan; the message gives the two honest exits.
+
+export interface NativeParityViolation {
+  /** App-relative file (forward slashes) that makes the claim. */
+  file: string;
+  /** The matched claim phrase. */
+  claim: string;
+}
+
+// Languages that need a real compiler / native runtime and cannot execute as
+// browser JS — their presence in the app means there's a real program a JS
+// preview could be falsely claiming parity with. Interpreted languages that a
+// preview legitimately mirrors (.py via Pyodide, etc.) are intentionally absent.
+const COMPILED_SOURCE_RE = /\.(rs|go|c|cc|cpp|cxx|zig|swift|kt|java)$/i;
+const PARITY_SCAN_EXT = new Set([".html", ".htm", ".js", ".mjs", ".md", ".txt"]);
+// Equivalence-of-output assertions. Tuned to output-parity phrasings so ordinary
+// copy ("matches the brand color") doesn't trip — and it's already gated behind
+// compiled-source presence, so the combined false-positive surface is tiny.
+const PARITY_CLAIM_RE =
+  /(identical to|pixel[- ]?perfect|exactly (?:matches|reproduces)|same (?:as|output as) the (?:rust|go|c\+\+|native|real|original|compiled)\b|faithful (?:port|reproduction|recreation)|1:1 (?:match|port|reproduction)|matches the (?:rust|go|c\+\+|native|real|original|reference|compiled)\b)/i;
+// target/ (cargo) and the shared SKIP_DIRS hold build output / vendored code, not
+// the app's own source — skipping them keeps the walk fast and avoids matching a
+// registry crate's .rs as if it were the app's.
+const NATIVE_SKIP_DIRS = new Set([...SKIP_DIRS, "target"]);
+
+function walkAppFiles(dir: string, accept: (name: string) => boolean, out: string[]): void {
+  if (out.length >= MAX_FILES) return;
+  let entries: string[];
+  try { entries = readdirSync(dir); } catch { return; }
+  for (const name of entries) {
+    if (out.length >= MAX_FILES) return;
+    const full = join(dir, name);
+    let st;
+    try { st = statSync(full); } catch { continue; }
+    if (st.isDirectory()) {
+      if (NATIVE_SKIP_DIRS.has(name)) continue;
+      walkAppFiles(full, accept, out);
+    } else if (accept(name)) {
+      out.push(full);
+    }
+  }
+}
+
+/**
+ * Flag a compiled-language app that claims its in-browser preview matches the
+ * real program's output without that program having been run. Returns [] unless
+ * the app BOTH contains compiled-language source AND a shipped text file asserts
+ * output parity — so a pure web app, or a compiled-language app that honestly
+ * shows its real produced artifact, never trips it.
+ */
+export function scanAppForUnverifiedNativeParity(appDir: string): { violations: NativeParityViolation[] } {
+  if (!existsSync(appDir)) return { violations: [] };
+  const compiled: string[] = [];
+  walkAppFiles(appDir, (name) => COMPILED_SOURCE_RE.test(name), compiled);
+  if (compiled.length === 0) return { violations: [] };
+
+  const texts: string[] = [];
+  walkAppFiles(appDir, (name) => PARITY_SCAN_EXT.has(name.slice(name.lastIndexOf(".")).toLowerCase()), texts);
+
+  const violations: NativeParityViolation[] = [];
+  for (const file of texts) {
+    let content: string;
+    try { content = readFileSync(file, "utf8"); } catch { continue; }
+    const m = content.match(PARITY_CLAIM_RE);
+    if (m) violations.push({ file: relative(appDir, file).replace(/\\/g, "/"), claim: m[0] });
+  }
+  return { violations };
+}
+
+/** Actionable build-failure message: name the false claim + the two honest exits. */
+export function formatUnverifiedNativeParity(violations: NativeParityViolation[]): string {
+  const lines = violations.map((v) => `  - ${v.file}: claims "${v.claim}"`);
+  return (
+    "Build rejected: this app contains real compiled-language source, but a shipped file claims its " +
+    "in-browser preview matches the program's output — a claim you can't have verified, since the " +
+    "real program wasn't run here:\n" +
+    lines.join("\n") +
+    "\n\nA JavaScript reimplementation is not the program. Do ONE of these:\n" +
+    "  1. Actually run the real toolchain via bash (e.g. `cargo run`, `go run .`, `cc main.c && ./a.out`), " +
+    "then make index.html display the REAL artifact it produced — embed the generated image/file, or show " +
+    "the captured real stdout.\n" +
+    "  2. If you can't compile/run it in this sandbox, remove the equivalence claim, label the preview " +
+    "honestly as an independent reimplementation, and state that the real program was not run.\n" +
+    "Never claim parity you didn't verify. Fix this, then emit APP_READY."
+  );
+}
+
 /** Actionable build-failure message naming the offending files + the fix. */
 export function formatBlockedFetchError(violations: BlockedFetchViolation[]): string {
   const lines = violations.map(v => `  - ${v.file} → ${v.hosts.join(", ")}`);

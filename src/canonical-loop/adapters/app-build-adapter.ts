@@ -28,7 +28,7 @@ import { resolve } from "node:path";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { ProviderStateEnvelope } from "../contract-types.js";
 import { verifyWriteLanded } from "../../tools/verify.js";
-import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors, formatStartupErrors } from "../../tools/app-build-verify.js";
+import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors, formatStartupErrors, scanAppForUnverifiedNativeParity, formatUnverifiedNativeParity } from "../../tools/app-build-verify.js";
 import { createAnthropicAdapter } from "./anthropic.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
@@ -128,12 +128,16 @@ class AppBuildVerifyAdapter implements Adapter {
     if (result.terminalReason !== "done") return result;
     const { errors } = scanAppForStartupErrors(this.appDir);
     const { violations } = scanAppForBlockedFetch(this.appDir);
-    if (errors.length === 0 && violations.length === 0) return result;
+    const { violations: parity } = scanAppForUnverifiedNativeParity(this.appDir);
+    if (errors.length === 0 && violations.length === 0 && parity.length === 0) return result;
     // Startup errors first — a blank-on-load app is the more fundamental break.
     const parts: string[] = [];
     if (errors.length > 0) parts.push(formatStartupErrors(errors));
     if (violations.length > 0) parts.push(formatBlockedFetchError(violations));
-    const code = errors.length > 0 ? "app_startup_error" : "blocked_external_fetch";
+    if (parity.length > 0) parts.push(formatUnverifiedNativeParity(parity));
+    const code = errors.length > 0 ? "app_startup_error"
+      : violations.length > 0 ? "blocked_external_fetch"
+      : "unverified_native_parity";
     report({ kind: "error", code, message: parts.join("\n\n"), retryable: false });
     return { ...result, terminalReason: "error" };
   }

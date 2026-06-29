@@ -1,13 +1,17 @@
 const MODEL_CONTEXTS: Record<string, number> = {
-  "gpt-5.3-codex-spark": 128_000,
   "gpt-5.4": 272_000,        // Native 1.05M, default working 272k
   "gpt-5.4-mini": 272_000,
   "gpt-5.5": 1_000_000,
-  "gpt-5.5-pro": 1_000_000,
   "gpt-4o": 128_000,
   "gpt-4o-mini": 128_000,
-  "grok-3-mini": 131_072,
-  "grok-3": 131_072,
+  "o3-pro": 128_000,
+  // xAI Grok 4.x — 131k window
+  "grok-4.3": 131_072,
+  "grok-4.20-0309-reasoning": 131_072,
+  "grok-4.20-0309-non-reasoning": 131_072,
+  "grok-4.20-multi-agent-0309": 131_072,
+  "grok-code-fast-1": 131_072,
+  "grok-build-0.1": 131_072,
   // Fable 5 — 1M context (native; the maximum is also the default)
   "claude-fable-5": 1_000_000,
   // Anthropic Claude 4.x family — 200k base window
@@ -27,6 +31,9 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "gemini-2.0-flash": 1_000_000,
   "gemini-2.5-pro": 1_000_000,
   "gemini-2.5-flash": 1_000_000,
+  // Gemini 3.x previews — 1M context
+  "gemini-3-pro-preview": 1_000_000,
+  "gemini-3.1-pro-preview": 1_000_000,
 };
 
 // Ollama models typically have smaller context; use conservative default

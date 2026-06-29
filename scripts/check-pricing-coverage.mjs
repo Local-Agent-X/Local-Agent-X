@@ -26,12 +26,24 @@ const STALE_DAYS = 90;
 
 const registry = readFileSync(join(root, "src/providers/registry.ts"), "utf8");
 const costTracker = readFileSync(join(root, "src/cost-tracker.ts"), "utf8");
+const modelWindows = readFileSync(join(root, "src/context-manager/model-windows.ts"), "utf8");
 
 // Exact PRICING keys: lines like  "model-id": { input: ...
 const priced = new Set();
 for (const m of costTracker.matchAll(/^\s*["']([^"']+)["']:\s*\{\s*input:/gm)) priced.add(m[1]);
 
 const verifiedAt = (costTracker.match(/PRICES_VERIFIED_AT\s*=\s*["']([^"']+)["']/) || [])[1];
+
+// Exact MODEL_CONTEXTS keys from src/context-manager/model-windows.ts. A missing
+// key isn't fatal (lookupContextWindow substring-falls-back to a safe default),
+// so this feeds a WARN, not the FAIL above.
+const ctxKeys = new Set();
+const ctxBlockMatch = modelWindows.match(/const MODEL_CONTEXTS[^=]*=\s*\{([\s\S]*?)\n\};/);
+if (ctxBlockMatch) {
+  // Strip line comments first so commented-out model names aren't counted.
+  const ctxBlock = ctxBlockMatch[1].replace(/\/\/[^\n]*/g, "");
+  for (const m of ctxBlock.matchAll(/^\s*["']([^"']+)["']\s*:/gm)) ctxKeys.add(m[1]);
+}
 
 // Per metered provider, pull models[] + defaultModel + backgroundModel. Provider
 // blocks sit at 2-space indent and close with "\n  },"; inner objects are inline
@@ -52,11 +64,13 @@ function modelsFor(id) {
 }
 
 const missing = [];
+const ctxMissing = [];
 let total = 0;
 for (const id of METERED) {
   for (const model of modelsFor(id)) {
     total++;
     if (!priced.has(model)) missing.push(`${id}: ${model}`);
+    if (!ctxKeys.has(model)) ctxMissing.push(`${id}: ${model}`);
   }
 }
 
@@ -82,4 +96,16 @@ if (!Number.isFinite(verifiedMs)) {
   );
 }
 
-console.log(`check-pricing-coverage: OK (${total} metered models priced, verified ${verifiedAt ?? "unknown"})`);
+// Context-window coverage: WARN-only. lookupContextWindow substring-falls-back
+// to a safe default for an unknown model, so a missing key is a nudge to add an
+// exact entry, not a build-breaker.
+if (ctxMissing.length > 0) {
+  console.warn("check-pricing-coverage: WARN — metered models with no exact context window in src/context-manager/model-windows.ts MODEL_CONTEXTS:");
+  for (const m of ctxMissing) console.warn(`  - ${m}`);
+  console.warn("\nAdd each model's window to MODEL_CONTEXTS (lookupContextWindow's substring fallback still applies, so this is a WARN, not a failure).");
+}
+
+const ctxCovered = total - ctxMissing.length;
+console.log(
+  `check-pricing-coverage: OK (${total} metered models priced, ${ctxCovered}/${total} with exact context window, verified ${verifiedAt ?? "unknown"})`,
+);

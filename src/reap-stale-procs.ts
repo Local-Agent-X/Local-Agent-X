@@ -1,8 +1,7 @@
 import { execFile } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { mcpBridgeBasePath } from "./anthropic-client/mcp-config.js";
 import { createLogger } from "./logger.js";
 
 const execFileAsync = promisify(execFile);
@@ -121,10 +120,10 @@ async function startedBefore(pid: number, cutoffMs: number): Promise<boolean> {
  */
 export async function cleanupStaleMcpBridges(): Promise<void> {
   const logger = createLogger("mcp-cleanup");
-  const here = dirname(fileURLToPath(import.meta.url));
-  // src/reap-stale-procs.ts → src/mcp-bridge. Extensionless so both the tsx
-  // (.ts) and compiled (.js) forms are matched, mirroring mcp-config.ts.
-  const bridgePath = resolve(join(here, "mcp-bridge"));
+  // Extensionless base so both the tsx (.ts) and compiled (.js) forms are
+  // matched. ONE resolver shared with the spawner (mcp-config.ts) so spawn
+  // and reap can't disagree on where the bridge lives.
+  const bridgePath = mcpBridgeBasePath();
   const startedAt = new Date(Date.now() - process.uptime() * 1000);
   logger.info(`[mcp-cleanup] scanning for stale mcp-bridge processes under ${bridgePath}`);
   const killed = await findAndKillProcesses({

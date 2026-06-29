@@ -61,6 +61,16 @@ export interface McpConfigInput {
 }
 
 /**
+ * Absolute, EXTENSIONLESS base path of the MCP bridge script
+ * (`<src-or-dist>/mcp-bridge`). The spawner appends `.js`/`.ts`; the stale-bridge
+ * reaper (reap-stale-procs.ts) substring-matches this base against process
+ * cmdlines. ONE resolver so spawn and reap can't disagree on where the bridge is.
+ */
+export function mcpBridgeBasePath(): string {
+  return resolve(import.meta.dirname || ".", "..", "mcp-bridge");
+}
+
+/**
  * Writes the MCP config JSON to `~/.lax/tmp/mcp-<tag>.json` and returns the
  * absolute path. Caller is responsible for unlinking when done (cold path
  * deletes per-request; warm-pool deletes on process exit).
@@ -70,10 +80,9 @@ export function writeMcpConfig(input: McpConfigInput): string {
   if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
   const configPath = join(tmpDir, `mcp-${input.tag}.json`);
 
-  const here = import.meta.dirname || ".";
-  const tsPath = resolve(join(here, "..", "mcp-bridge.ts"));
-  const jsPath = resolve(join(here, "..", "mcp-bridge.js"));
-  const bridgePath = existsSync(jsPath) ? jsPath : tsPath;
+  const base = mcpBridgeBasePath();
+  const jsPath = `${base}.js`;
+  const bridgePath = existsSync(jsPath) ? jsPath : `${base}.ts`;
   const needsTsx = bridgePath.endsWith(".ts");
 
   const env: Record<string, string> = {

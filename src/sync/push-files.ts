@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
 import { workspaceRoot, workspacePath } from "../config.js";
+import { loadSettings, settingsPath } from "../settings.js";
 import {
   BRAIN_BINARY_FILES,
   BRAIN_DIRS,
@@ -61,11 +62,10 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
   // Extract just the `sidebarPins` key from settings.json and ship it
   // as its own file so machine-specific keys (port, voiceTier4Device,
   // etc.) don't ride along.
-  const settingsPath = join(dataDir, "settings.json");
-  if (existsSync(settingsPath)) {
+  if (existsSync(settingsPath())) {
     try {
-      const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-      const pins = Array.isArray(settings.sidebarPins) ? settings.sidebarPins : [];
+      const rawPins = loadSettings().sidebarPins;
+      const pins = Array.isArray(rawPins) ? rawPins : [];
       writeFileSync(join(syncDir, "sidebar-pins.json"), JSON.stringify(pins, null, 2));
     } catch (e) {
       logger.warn(`[sync] sidebar-pins push skipped: ${(e as Error).message}`);

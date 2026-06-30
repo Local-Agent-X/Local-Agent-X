@@ -4,12 +4,17 @@
 
 export type SandboxMode = "host" | "docker" | "seatbelt" | "bwrap";
 
-// Which process a kernel-sandbox profile confines. "shell" is the phase-A
-// posture (agent shell children: network denied, all sensitive dirs denied).
-// "server" is the phase-B posture (the whole Node server: network allowed —
-// the in-process egress chokepoint governs destinations — and the dirs the
-// server itself owns are exempted; see SERVER_SCOPE_EXEMPT_DIRS).
-export type SandboxScope = "shell" | "server";
+// Which confinement profile a kernel-sandbox applies.
+// - "shell"   — strict shell-child cage: network DENIED + every sensitive dir
+//   denied. The opt-in lockdown (mode "seatbelt"/"bwrap").
+// - "guarded" — default shell-child cage: network ALLOWED (so npm/git/curl keep
+//   working) + sensitive dirs denied EXCEPT the dev-tool exemptions
+//   (GUARDED_SCOPE_EXEMPT_DIRS). Backstops the command parser's $VAR/$(...) blind
+//   spot at the kernel without breaking the host dev shell.
+// - "server"  — phase-B whole-server cage: network allowed (the in-process egress
+//   chokepoint governs destinations) + sensitive dirs denied except the ones the
+//   server itself owns (SERVER_SCOPE_EXEMPT_DIRS).
+export type SandboxScope = "shell" | "guarded" | "server";
 
 export interface SandboxConfig {
   mode: SandboxMode;

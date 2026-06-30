@@ -24,13 +24,19 @@
 // symlinked home dir would otherwise leave the real target exposed) and MUST
 // exist (bwrap aborts the whole invocation on a missing tmpfs/bind target,
 // which would break every shell command, not just weaken the cage).
+//
+// The "guarded" scope is the DEFAULT posture: the sensitive-dir/file shadowing
+// WITHOUT --unshare-net and exempting ~/.config — so the namespace backstops the
+// command parser's $VAR/$(...) blind spot on credentials while npm/git/curl keep
+// working. The "shell" scope is the strict opt-in that adds --unshare-net and
+// shadows ~/.config too.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 import type { SandboxScope } from "./types.js";
 
 // Shell rc files a confined shell must not be able to persist into. The
@@ -90,9 +96,11 @@ export function generateBwrapArgs(home: string = homedir(), scope: SandboxScope 
     "--die-with-parent",       // caller's kill/timeout reaches the confined child
   ];
 
-  const denyDirs = scope === "server"
-    ? HOME_RELATIVE_DENY_DIRS.filter((d) => !SERVER_SCOPE_EXEMPT_DIRS.has(d))
-    : HOME_RELATIVE_DENY_DIRS;
+  const exemptDirs =
+    scope === "server" ? SERVER_SCOPE_EXEMPT_DIRS :
+    scope === "guarded" ? GUARDED_SCOPE_EXEMPT_DIRS :
+    new Set<string>();
+  const denyDirs = HOME_RELATIVE_DENY_DIRS.filter((d) => !exemptDirs.has(d));
   for (const dir of denyDirs) {
     const p = canonical(join(realHome, dir));
     if (existsSync(p)) args.push("--tmpfs", p);
@@ -118,9 +126,10 @@ export function wrapForBwrap(
   shell: string,
   shellArgs: string[],
   home?: string,
+  scope: SandboxScope = "shell",
 ): { cmd: string; args: string[] } {
   if (!isBwrapAvailable()) return { cmd: shell, args: shellArgs };
-  return { cmd: "bwrap", args: [...generateBwrapArgs(home), shell, ...shellArgs] };
+  return { cmd: "bwrap", args: [...generateBwrapArgs(home, scope), shell, ...shellArgs] };
 }
 
 /**
@@ -162,6 +171,28 @@ export function bwrapServerCageRuns(home?: string): boolean {
     const out = execFileSync(
       "bwrap",
       [...generateBwrapArgs(home, "server"), "/bin/sh", "-c", "echo RAN"],
+      { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    return out.includes("RAN");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Self-check for the GUARDED-scope cage (the default shell posture): can bwrap
+ * build these namespaces and exec a target on this kernel? Like the server check,
+ * no network assertion — guarded keeps the host network by design; the tmpfs/
+ * ro-bind credential shadowing is structural once the cage builds. Used by the
+ * mode resolver to decide whether "guarded" is usable here or must fall back to
+ * host (e.g. unprivileged userns disabled).
+ */
+export function bwrapGuardedRuns(home?: string): boolean {
+  if (!isBwrapAvailable()) return false;
+  try {
+    const out = execFileSync(
+      "bwrap",
+      [...generateBwrapArgs(home, "guarded"), "/bin/sh", "-c", "echo RAN"],
       { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] },
     );
     return out.includes("RAN");

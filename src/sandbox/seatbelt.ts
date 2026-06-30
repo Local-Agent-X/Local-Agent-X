@@ -20,6 +20,12 @@
 // Hermetic, write-everywhere-denied confinement remains docker mode / phase B
 // (whole-server). See ari-redteam-round5.md.
 //
+// The "guarded" scope is the DEFAULT posture: items 2 and 3 (credential +
+// persistence denies) WITHOUT item 1 (network) and exempting ~/.config — so the
+// kernel backstops the command parser's $VAR/$(...) blind spot on credentials
+// while npm/git/curl keep working. The "shell" scope is the strict opt-in that
+// adds the network deny and denies ~/.config too.
+//
 // Subpaths MUST be realpath'd: the kernel matches the canonical path, so a deny
 // of "/tmp/x" never fires (it resolves to /private/tmp/x), and a deny of the
 // realpath fires even when the access comes in via a symlink alias — which is
@@ -30,7 +36,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 import type { SandboxScope } from "./types.js";
 
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
@@ -82,9 +88,11 @@ const ABSOLUTE_PERSISTENCE_DIRS = ["/Library/LaunchAgents", "/Library/LaunchDaem
 export function generateSeatbeltProfile(home: string = homedir(), scope: SandboxScope = "shell"): string {
   const realHome = canonical(home);
 
-  const denyDirs = scope === "server"
-    ? HOME_RELATIVE_DENY_DIRS.filter((d) => !SERVER_SCOPE_EXEMPT_DIRS.has(d))
-    : HOME_RELATIVE_DENY_DIRS;
+  const exemptDirs =
+    scope === "server" ? SERVER_SCOPE_EXEMPT_DIRS :
+    scope === "guarded" ? GUARDED_SCOPE_EXEMPT_DIRS :
+    new Set<string>();
+  const denyDirs = HOME_RELATIVE_DENY_DIRS.filter((d) => !exemptDirs.has(d));
   const sensitiveSubpaths = denyDirs.map((d) => canonical(join(realHome, d)));
   const sensitiveFiles = HOME_RELATIVE_DENY_FILES.map((f) => canonical(join(realHome, f)));
 
@@ -120,9 +128,10 @@ export function wrapForSeatbelt(
   shell: string,
   shellArgs: string[],
   home?: string,
+  scope: SandboxScope = "shell",
 ): { cmd: string; args: string[] } {
   if (!isSeatbeltAvailable()) return { cmd: shell, args: shellArgs };
-  const profile = generateSeatbeltProfile(home);
+  const profile = generateSeatbeltProfile(home, scope);
   return { cmd: SANDBOX_EXEC, args: ["-p", profile, shell, ...shellArgs] };
 }
 

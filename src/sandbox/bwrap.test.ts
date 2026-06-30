@@ -4,8 +4,8 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { generateBwrapArgs, isBwrapAvailable, wrapForBwrap, bwrapEnforces, bwrapServerCageRuns } from "./bwrap.js";
-import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { generateBwrapArgs, isBwrapAvailable, wrapForBwrap, bwrapEnforces, bwrapServerCageRuns, bwrapGuardedRuns } from "./bwrap.js";
+import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 
 const bwrapHere = isBwrapAvailable();
 
@@ -75,6 +75,26 @@ describe("bwrap arg generation", () => {
       for (const file of HOME_RELATIVE_DENY_FILES) {
         expect(joined).toContain(`--ro-bind /dev/null ${join(home, file)}`);
       }
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("guarded scope (default) keeps the network namespace and exempts ~/.config but still shadows the crown jewels", () => {
+    const home = makeHome();
+    try {
+      const args = generateBwrapArgs(home, "guarded");
+      const joined = args.join(" ");
+      expect(args).not.toContain("--unshare-net"); // npm/git/curl keep working
+      for (const dir of HOME_RELATIVE_DENY_DIRS) {
+        if (GUARDED_SCOPE_EXEMPT_DIRS.has(dir)) {
+          expect(joined).not.toContain(`--tmpfs ${join(home, dir)}`); // ~/.config stays readable
+        } else {
+          expect(joined).toContain(`--tmpfs ${join(home, dir)}`); // ~/.ssh, ~/.aws, … shadowed
+        }
+      }
+      for (const file of HOME_RELATIVE_DENY_FILES) {
+        expect(joined).toContain(`--ro-bind /dev/null ${join(home, file)}`);
+      }
+      expect(joined).toContain(`--ro-bind /dev/null ${join(home, ".bashrc")}`);
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
@@ -166,6 +186,31 @@ describe.skipIf(!bwrapHere)("bwrap enforcement (live)", () => {
     const home = makeHome();
     try {
       expect(bwrapServerCageRuns(home)).toBe(true);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("bwrapGuardedRuns() self-check passes (guarded scope builds and execs)", () => {
+    const home = makeHome();
+    try {
+      expect(bwrapGuardedRuns(home)).toBe(true);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("guarded scope hides ~/.ssh but leaves ~/.config readable (dev tools keep working)", () => {
+    const home = makeHome();
+    try {
+      writeFileSync(join(home, ".ssh", "id_rsa"), "PRIVATE-KEY");
+      mkdirSync(join(home, ".config", "gh"), { recursive: true });
+      writeFileSync(join(home, ".config", "gh", "hosts.yml"), "GH-CONFIG");
+      const out = execFileSync(
+        "bwrap",
+        [...generateBwrapArgs(home, "guarded"), "/bin/bash", "-c",
+          `cat "${join(home, ".ssh", "id_rsa")}" 2>&1; cat "${join(home, ".config", "gh", "hosts.yml")}" 2>&1; echo RAN`],
+        { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      expect(out).toContain("RAN");
+      expect(out).not.toContain("PRIVATE-KEY");
+      expect(out).toContain("GH-CONFIG");
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 

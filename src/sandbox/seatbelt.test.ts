@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { generateSeatbeltProfile, isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt, SANDBOX_EXEC } from "./seatbelt.js";
-import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 
 const onDarwin = process.platform === "darwin";
 
@@ -59,6 +59,24 @@ describe("seatbelt profile generation", () => {
       expect(profile).toContain(`(literal "${sb(join(home, file))}")`);
     }
     expect(profile).toContain(`(subpath "${sb(join(home, "Library/LaunchAgents"))}")`);
+  });
+
+  it("guarded scope (default) keeps network and exempts ~/.config but still denies the crown jewels", () => {
+    const profile = generateSeatbeltProfile(home, "guarded");
+    expect(profile).not.toContain("(deny network*)"); // npm/git/curl keep working
+    for (const dir of HOME_RELATIVE_DENY_DIRS) {
+      const entry = `(subpath "${sb(join(home, dir))}")`;
+      if (GUARDED_SCOPE_EXEMPT_DIRS.has(dir)) {
+        expect(profile).not.toContain(entry); // ~/.config stays readable (dev tools)
+      } else {
+        expect(profile).toContain(entry); // ~/.ssh, ~/.aws, … still denied
+      }
+    }
+    // Credential files + persistence write-denies still apply.
+    for (const file of HOME_RELATIVE_DENY_FILES) {
+      expect(profile).toContain(`(literal "${sb(join(home, file))}")`);
+    }
+    expect(profile).toContain(`(literal "${sb(join(home, ".zshrc"))}")`);
   });
 });
 
@@ -182,6 +200,44 @@ describe.skipIf(!onDarwin)("seatbelt server-scope enforcement (live sandbox-exec
       const r = runServerConfined(dir, `echo pwned >> "${join(dir, ".zshrc")}" && echo WROTE || echo DENIED`);
       expect(r.out).toContain("DENIED");
       expect(r.out).not.toContain("WROTE");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+// Guarded scope is the DEFAULT shell cage. Prove the two properties that make it
+// the right default: the credential crown jewels are kernel-unreadable (so a
+// $VAR/$(...) read the parser missed still can't reach ~/.ssh), but ~/.config —
+// where gh/git/etc. keep their config — stays readable so dev tools don't break.
+describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exec)", () => {
+  function runGuarded(home: string, command: string): { status: number | null; out: string } {
+    const { cmd, args } = wrapForSeatbelt("/bin/bash", ["-c", command], home, "guarded");
+    try {
+      const out = execFileSync(cmd, args, { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
+      return { status: 0, out };
+    } catch (e) {
+      const err = e as { status?: number | null; stdout?: string; stderr?: string };
+      return { status: err.status ?? null, out: (err.stdout ?? "") + (err.stderr ?? "") };
+    }
+  }
+
+  it("still blocks reads of ~/.ssh (the crown jewel)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      mkdirSync(join(dir, ".ssh"));
+      writeFileSync(join(dir, ".ssh", "id_rsa"), "PRIVATE-KEY");
+      const r = runGuarded(dir, `cat "${join(dir, ".ssh", "id_rsa")}"`);
+      expect(r.out).not.toContain("PRIVATE-KEY");
+      expect(r.out.toLowerCase()).toContain("operation not permitted");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("ALLOWS reads of ~/.config so dev tools (gh/git) keep working", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      mkdirSync(join(dir, ".config", "gh"), { recursive: true });
+      writeFileSync(join(dir, ".config", "gh", "hosts.yml"), "GH-CONFIG");
+      const r = runGuarded(dir, `cat "${join(dir, ".config", "gh", "hosts.yml")}"`);
+      expect(r.out).toContain("GH-CONFIG");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

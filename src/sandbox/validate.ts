@@ -44,6 +44,16 @@ export const HOME_RELATIVE_DENY_FILES = [
 // touch the app's own state or its mirrored tokens.
 export const SERVER_SCOPE_EXEMPT_DIRS = new Set([".lax", ".codex"]);
 
+// Deny-list entries the GUARDED-scope shell cage exempts. Guarded is the
+// default posture: it confines agent shell children at the kernel (so credential
+// reads via $VAR/$(...) the command parser misses are blocked) but must not
+// break the dev tools the shell exists to run. ~/.config holds config for gh,
+// git, and many CLIs the agent legitimately invokes; denying read+write there
+// would break them, so the default cage leaves it readable. The trade-off:
+// ~/.config/<tool> tokens (e.g. gh's) stay readable in guarded mode — the strict
+// "shell" cage denies them, and is the lockdown for users who want it.
+export const GUARDED_SCOPE_EXEMPT_DIRS = new Set([".config"]);
+
 // Absolute path prefixes that must not be mounted. "Equal or inside" semantics.
 const ABSOLUTE_DENY_DIRS = [
   "/etc/sudoers.d",

@@ -8,7 +8,7 @@
 
 import { type AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
-import type { Operation, OperationPhase } from "../operations/types.js";
+import type { Operation, OperationPhase } from "./operation-types.js";
 import type { AutopilotConfig } from "./types.js";
 import type { ToolDefinition, LAXConfig } from "../types.js";
 import { SecurityLayer } from "../security/index.js";

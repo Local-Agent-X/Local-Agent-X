@@ -8,7 +8,7 @@
 
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Operation } from "../operations/types.js";
+import type { Operation } from "./operation-types.js";
 import type { AutopilotState, BootProof, RoundResult } from "./types.js";
 import { runAutopilotRound } from "./round-agent.js";
 import { validateRound, partitionByScope } from "./validate.js";

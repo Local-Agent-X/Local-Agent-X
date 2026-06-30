@@ -31,8 +31,6 @@ import { deriveOrigin } from "../secrets.js";
 import { getBrowserManager } from "./index.js";
 import { registerRedactedSecretValue } from "../sanitize.js";
 import { getActivePreBlessedSecrets } from "../operations/executor.js";
-import { loadOperation } from "../operations/conductor.js";
-import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser-secret-fill");
@@ -48,16 +46,6 @@ const ALLOWED_SELECTOR_PATTERNS: Array<{ test: (el: { tag: string; type?: string
   { label: "input[autocomplete=username]", test: (el) => el.tag === "input" && el.autocomplete === "username" },
   { label: "input[autocomplete=email]", test: (el) => el.tag === "input" && el.autocomplete === "email" },
 ];
-
-function operationsWorkspace(): string {
-  return join(process.cwd(), "workspace", "operations");
-}
-
-function loadOpForPreBless(operationId: string): { preBlessedSecrets?: string[] } | null {
-  const op = loadOperation(operationsWorkspace(), operationId);
-  if (!op) return null;
-  return { preBlessedSecrets: op.preBlessedSecrets };
-}
 
 function auditLog(row: Record<string, unknown>): void {
   try {
@@ -219,7 +207,7 @@ export function createBrowserSecretFillTool(
       // --- Guardrail 3: approval ladder ---
       const sameSession = !!(meta.createdBySession && sessionId && meta.createdBySession === sessionId);
       const userApproved = secretsStore.isFillApproved(name, currentOrigin);
-      const preBlessed = getActivePreBlessedSecrets(loadOpForPreBless).has(name);
+      const preBlessed = getActivePreBlessedSecrets().has(name);
 
       const gateOutcome: "session" | "approved" | "pre_bless" | "denied" =
         sameSession ? "session" :

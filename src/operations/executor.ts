@@ -147,18 +147,26 @@ export async function awaitOperationStarted(
     : { running: false, reason: `did not reach running within ${timeoutMs}ms` };
 }
 
-/** Union of preBlessedSecrets across all currently-running operations. Used by
- *  browser_fill_from_secret to decide whether to skip the first-use approval
- *  gate. Origin-binding is enforced separately and is not overridden by this. */
-export function getActivePreBlessedSecrets(
-  loadOperationFn: (operationId: string) => { preBlessedSecrets?: string[] } | null
-): Set<string> {
+/** Union preBlessedSecrets across the ops named by `opIds`, loaded from `dir`.
+ *  Pure + exported so the security-gate logic is unit-testable without the
+ *  module-private activeExecutors set. */
+export function collectPreBlessedSecrets(dir: string, opIds: Iterable<string>): Set<string> {
   const result = new Set<string>();
-  for (const opId of activeExecutors.keys()) {
-    const op = loadOperationFn(opId);
+  for (const opId of opIds) {
+    const op = loadOperation(dir, opId);
     if (op?.preBlessedSecrets) for (const name of op.preBlessedSecrets) result.add(name);
   }
   return result;
+}
+
+/** Union of preBlessedSecrets across all currently-running operations, read from
+ *  the canonical operations dir (defaultOperationsDir) — the SAME dir
+ *  operation_start writes to, so the reader and writer can't point at different
+ *  directories. Used by browser_fill_from_secret to decide whether to skip the
+ *  first-use approval gate; origin-binding is enforced separately and is not
+ *  overridden by this. */
+export function getActivePreBlessedSecrets(): Set<string> {
+  return collectPreBlessedSecrets(defaultOperationsDir(), activeExecutors.keys());
 }
 
 // ── Internal loop ───────────────────────────────────────────────────────

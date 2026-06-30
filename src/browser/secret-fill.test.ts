@@ -61,10 +61,6 @@ vi.mock("../operations/executor.js", () => ({
   getActivePreBlessedSecrets: () => new Set<string>(),
 }));
 
-vi.mock("../operations/conductor.js", () => ({
-  loadOperation: () => null,
-}));
-
 // Capture redaction registrations (and assert secret IS handed to the redactor —
 // that's the GOOD path; redaction registry is internal and never leaks).
 vi.mock("../sanitize.js", () => ({

@@ -19,7 +19,7 @@ vi.mock("./conductor.js", async (importOriginal) => {
   };
 });
 
-import { awaitOperationStarted } from "./executor.js";
+import { awaitOperationStarted, collectPreBlessedSecrets } from "./executor.js";
 
 beforeEach(() => {
   loadOperationMock.mockReset();
@@ -101,5 +101,42 @@ describe("awaitOperationStarted", () => {
     const result = await awaitOperationStarted("op-G", { timeoutMs: 200 });
 
     expect(result).toEqual({ running: true });
+  });
+});
+
+describe("collectPreBlessedSecrets (the pre-bless gate source)", () => {
+  it("loads each op from the dir it is HANDED and unions their preBlessedSecrets", () => {
+    // Regression guard: the reader once rolled its own process.cwd()-relative
+    // path, diverging from the dir operation_start writes to, which silently
+    // broke pre-bless. The dir must be whatever the caller passes (the canonical
+    // defaultOperationsDir), never recomputed internally.
+    loadOperationMock.mockImplementation((_dir: string, id: string) => {
+      if (id === "op-1") return { preBlessedSecrets: ["GH_TOKEN", "NPM_TOKEN"] };
+      if (id === "op-2") return { preBlessedSecrets: ["NPM_TOKEN", "AWS_KEY"] };
+      return null;
+    });
+
+    expect(collectPreBlessedSecrets("/canonical/operations", ["op-1", "op-2"]))
+      .toEqual(new Set(["GH_TOKEN", "NPM_TOKEN", "AWS_KEY"]));
+    expect(loadOperationMock).toHaveBeenCalledWith("/canonical/operations", "op-1");
+  });
+
+  it("scopes to the given ids only — an op NOT in the live set is never unioned", () => {
+    loadOperationMock.mockImplementation((_dir: string, id: string) =>
+      id === "live" ? { preBlessedSecrets: ["LIVE"] } : { preBlessedSecrets: ["STALE"] });
+
+    // Passing only the live op id must not pull in the stale op's pre-bless —
+    // this is the liveness-scoping invariant getActivePreBlessedSecrets relies on.
+    expect(collectPreBlessedSecrets("/ops", ["live"])).toEqual(new Set(["LIVE"]));
+  });
+
+  it("tolerates a missing op (load returns null) without throwing", () => {
+    loadOperationMock.mockReturnValue(null);
+    expect(collectPreBlessedSecrets("/ops", ["gone"])).toEqual(new Set());
+  });
+
+  it("returns empty when there are no live ops (no auto-approval by default)", () => {
+    expect(collectPreBlessedSecrets("/ops", [])).toEqual(new Set());
+    expect(loadOperationMock).not.toHaveBeenCalled();
   });
 });

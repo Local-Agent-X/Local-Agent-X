@@ -27,8 +27,9 @@ import { NullChatChannel, type ChatChannel } from "./chat-bridge.js";
 import { NullHttpChannel, type HttpChannel } from "./http-tunnel-bridge.js";
 import { ScreenSession } from "../screen-stream/session.js";
 import type { ScreenSessionOptions } from "../screen-stream/session.js";
-import type { RtcIceCandidate, RtcOutboundFrame } from "../screen-stream/protocol.js";
+import type { RtcOutboundFrame } from "../screen-stream/protocol.js";
 import { createLogger } from "../logger.js";
+import { iceSignal } from "./ice-signal.js";
 
 const logger = createLogger("broker-transport.dialer");
 
@@ -258,10 +259,4 @@ export class BrokerScreenDialer {
     this.http.close();
     this.onClosed?.();
   }
-}
-
-/** Map a desktop ICE candidate to the broker's ice signal, coercing the optional
- *  sdpMid/sdpMLineIndex to the explicit `null` the wire contract requires (§2). */
-function iceSignal(c: RtcIceCandidate): RtcSignal {
-  return { kind: "ice", candidate: c.candidate, sdpMid: c.sdpMid ?? null, sdpMLineIndex: c.sdpMLineIndex ?? null };
 }

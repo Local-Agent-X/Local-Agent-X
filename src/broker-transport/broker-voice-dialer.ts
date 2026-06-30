@@ -19,6 +19,7 @@
 import { BrokerClient } from "./vendor/broker-client.js";
 import type { IceServer, RtcSignal } from "./vendor/protocol.js";
 import type { SocketAdapter } from "./vendor/socket-adapter.js";
+import { iceSignal } from "./ice-signal.js";
 import { VoiceBridge } from "./voice-bridge.js";
 import { VoicePeer } from "../voice/voice-peer.js";
 import type { RtcIceCandidate, VoicePeerHandlers } from "../voice/voice-peer.js";
@@ -205,10 +206,4 @@ export class BrokerVoiceDialer {
     this.voice.close();
     this.onClosed?.();
   }
-}
-
-/** Map a desktop ICE candidate to the broker's ice signal, coercing the optional
- *  sdpMid/sdpMLineIndex to the explicit `null` the wire contract requires. */
-function iceSignal(c: RtcIceCandidate): RtcSignal {
-  return { kind: "ice", candidate: c.candidate, sdpMid: c.sdpMid ?? null, sdpMLineIndex: c.sdpMLineIndex ?? null };
 }

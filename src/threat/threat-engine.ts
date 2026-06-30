@@ -101,6 +101,10 @@ export class ThreatEngine {
   ): {
     blocked: boolean;
     reason?: string;
+    /** The block is a runaway-loop circuit-break, not a security/consent event.
+     *  The renderer uses this to give a recoverable "change approach" message
+     *  instead of the /approve consent template. */
+    loop?: boolean;
     threatLevel: ThreatLevel;
     threatScore: number;
     dataLabels: DataLabel[];
@@ -172,7 +176,15 @@ export class ThreatEngine {
     }
 
     if (chainResult.blocked) {
-      if (!alreadyRestricted) {
+      // A runaway loop is a circuit-breaker concern, not a security threat. The
+      // block itself already halts the loop; scoring it into the SECURITY scorer
+      // would push a benign read-only loop (e.g. grep↔read making no progress)
+      // toward network-restricted mode — the EXFILTRATION response — and the
+      // /approve consent path the renderer attaches to a security block is a dead
+      // end for a model that's merely stuck. So a loop is audited (below) but
+      // never scored or escalated. Exfil and encoding-prep blocks are genuine
+      // security events and keep their existing score.
+      if (!alreadyRestricted && !chainResult.loopDetected) {
         const score = chainResult.exfil ? THREAT_SCORES.exfiltration_pattern : THREAT_SCORES.loop_detected;
         this.scorer.record(chainResult.exfil ? "exfiltration" : "loop", score, chainResult.reason!);
       }
@@ -197,6 +209,7 @@ export class ThreatEngine {
       return {
         blocked: true,
         reason: chainResult.reason,
+        loop: !!chainResult.loopDetected,
         threatLevel: status.level,
         threatScore: status.score,
         dataLabels: classification.labels,

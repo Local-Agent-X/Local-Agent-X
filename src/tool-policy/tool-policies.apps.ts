@@ -45,12 +45,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   task_list:      { kernel: "internal", risk: "safe" },
   task_update:    { kernel: "internal", risk: "workspace-write" },
 
-  // ── Operations / worker-pool (operation_* / op_* globs) ──
-  operation_start:   { kernel: "internal", risk: "workspace-write" },
-  operation_list:    { kernel: "internal", risk: "safe" },
-  operation_status:  { kernel: "internal", risk: "safe" },
-  operation_next:    { kernel: "internal", risk: "safe" },
-  operation_advance: { kernel: "internal", risk: "workspace-write" },
+  // ── Worker-pool (op_* globs) ──
   op_submit:         { kernel: "internal", risk: "workspace-write" },
   op_submit_async:   { kernel: "internal", risk: "workspace-write" },
   op_wait:           { kernel: "internal", risk: "safe" },

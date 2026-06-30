@@ -36,7 +36,6 @@ const CORE_NAMES = new Set([
   "memory_search", "memory_save", "memory_recall", "memory_get",
   "memory_forget", "memory_reflect", "memory_update_profile", "memory_stats",
   "memory_consolidate", "memory_ingest",
-  "operation_start", "operation_list", "operation_status", "operation_next", "operation_advance",
   "op_status", "op_kill", "op_redirect",
   "autopilot_start", "autopilot_stop", "autopilot_status",
   "self_edit",

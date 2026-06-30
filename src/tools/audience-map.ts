@@ -84,12 +84,6 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // pasted literal call. 2026-06 usage telemetry should confirm before any
   // come back.
 
-  // Operations — long-horizon goal orchestration
-  operation_start:   ["main-chat"],
-  operation_list:    ["main-chat"],
-  operation_status:  ["main-chat"],
-  operation_next:    ["main-chat"],
-  operation_advance: ["main-chat"],
 
   // Worker-pool observation (submit lives in canonical, not exposed).
   // op_kill/op_redirect stay EAGER: the supervisor must be able to watch and

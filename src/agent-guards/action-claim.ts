@@ -31,7 +31,7 @@ const ACTION_VERB_TO_TOOLS: Array<{ verb: RegExp; tools: string[] }> = [
     "sidebar_pin", "secret_save", "browser_capture_to_secret", "cron_create",
     "mission_schedule_create", "memory_save", "memory_update_profile", "write",
     "build_app", "skill_install", "http_request", "agent_spawn", "delegate",
-    "email_setup", "operation_start", "bash", "edit",
+    "email_setup", "bash", "edit",
   ] },
   // "noted/remembered/recorded/logged X" — memory-specific claim verbs.
   // Real-world failure: model says "noted, I'll remember that" or "got it,

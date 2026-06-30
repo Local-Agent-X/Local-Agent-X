@@ -40,28 +40,51 @@ function budgetResult(content: string, maxSize: number = DEFAULT_MAX_RESULT_SIZE
   }
 }
 
+// Two semantically different blocks flow through here. An exfil/sink block is a
+// CONSENT problem — a human must vouch for the data flow, so the message routes
+// the model to /approve. A loop block is a PROGRESS problem — the model is
+// repeating itself with no consent to grant, so /approve is a dead end; it needs
+// to stop and change approach. Keeping these welded (one /approve template for
+// both) is what dead-ended a benign read-only grep↔read loop in the field.
+export function threatBlockMessage(reason: string | undefined, loop: boolean): string {
+  if (loop) {
+    return (
+      `STOPPED: you're repeating the same tool calls without making progress (${reason}). ` +
+      `This is a loop, not a permissions problem — asking the user to approve anything will NOT ` +
+      `unblock it. Stop and use what the previous results already told you, then change approach: ` +
+      `a different tool, a broader or different search, or a concrete edit. If you genuinely cannot ` +
+      `make progress, say so plainly and report what you found and what's left.`
+    );
+  }
+  // Enriched block message tells the model how the USER can grant consent via
+  // /approve <description>. Without it, observed live (2026-05-13) the model
+  // collapsed into "Tool call: ..." narration with no recovery channel. The
+  // /approve handler lives in routes/chat/run-chat-turn.ts and grants 30-min
+  // session-level consent via consent-store.ts.
+  return (
+    `BLOCKED by threat engine: ${reason}\n\n` +
+    `If this is a legitimate workflow (user explicitly shared data with you and named the destination), ` +
+    `tell the user to type:\n` +
+    `  /approve <one-line description>\n` +
+    `That grants 30 minutes of consent for this session. Retry the tool after they approve.\n` +
+    `Do NOT retry without /approve — you will hit the same block.`
+  );
+}
+
 function evaluateThreat(ctx: ToolCallContext): void {
   const { threatEngine, tc, args } = ctx;
   if (!threatEngine) return;
   const result = ctx.result!;
   const threat = threatEngine.evaluateToolResult(tc.name, args, result.content, ctx.allowed);
   if (threat.blocked) {
-    // Enriched block message tells the model how the USER can grant consent
-    // via /approve <description>. Without it, observed live (2026-05-13)
-    // the model collapsed into "Tool call: ..." narration with no recovery
-    // channel. The /approve handler lives in routes/chat/run-chat-turn.ts
-    // and grants 30-min session-level consent via consent-store.ts.
     ctx.result = {
-      content:
-        `BLOCKED by threat engine: ${threat.reason}\n\n` +
-        `If this is a legitimate workflow (user explicitly shared data with you and named the destination), ` +
-        `tell the user to type:\n` +
-        `  /approve <one-line description>\n` +
-        `That grants 30 minutes of consent for this session. Retry the tool after they approve.\n` +
-        `Do NOT retry without /approve — you will hit the same block.`,
+      content: threatBlockMessage(threat.reason, !!threat.loop),
       isError: true,
       status: "blocked",
-      metadata: { layer: "threat", userHint: USER_HINTS.threatConsent },
+      metadata: {
+        layer: "threat",
+        userHint: threat.loop ? USER_HINTS.retryExhausted : USER_HINTS.threatConsent,
+      },
     };
   }
   if (threatEngine.isRestricted() && ["http_request", "web_fetch", "browser"].includes(tc.name)) {

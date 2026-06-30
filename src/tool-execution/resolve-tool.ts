@@ -22,7 +22,7 @@ export function unmarkDryRunSession(sessionId: string): void { dryRunSessions.de
 // Tools that need session-scoped state stamped into their args.
 const SESSION_SCOPED_TOOLS = new Set([
   "enter_plan_mode", "exit_plan_mode", "skill_run", "usage_report",
-  "browser", "operation_start",
+  "browser",
   "agent_spawn", "browser_capture_to_secret", "browser_fill_from_secret",
   "session_status", "request_secret", "request_secrets",
   "voice_visual",

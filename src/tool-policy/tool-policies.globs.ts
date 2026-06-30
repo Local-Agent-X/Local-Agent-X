@@ -11,7 +11,6 @@ export const TOOL_POLICIES_GLOBS: Record<string, ToolPolicyEntry> = {
   // ── Glob-family rules (cover concrete tools above + tools registered
   //    outside TOOLS). No kernel/risk — these are policy patterns only. ──
   "memory_*":            { rules: [{ id: "allow-memory", decision: "allow", reason: "Memory operations (internal)", priority: 50 }] },
-  "operation_*":         { rules: [{ id: "allow-operations", decision: "allow", reason: "Operations orchestration (safe — writes only to workspace/operations/)", priority: 50 }] },
   "autopilot_*":         { rules: [{ id: "allow-autopilot", decision: "allow", reason: "Autopilot operations (bounded, isolated worktree)", priority: 50 }] },
   "op_*":                { rules: [{ id: "allow-op", decision: "allow", reason: "Worker pool ops — heavy work runs in isolated subprocess", priority: 50 }] },
   "process_*":           { rules: [{ id: "allow-process", decision: "allow", reason: "Long-running process sessions (in-process buffered)", priority: 50 }] },

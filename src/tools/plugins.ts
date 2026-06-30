@@ -176,13 +176,6 @@ export const plugins: ToolPlugin[] = [
     register() { return [agentEscalate]; },
   },
   {
-    id: "operations",
-    async register() {
-      const { createOperationTools } = await import("../operations/tools.js");
-      return createOperationTools();
-    },
-  },
-  {
     id: "arikernelBridge",
     // Per-tool toolClass differs across bridges, so this plugin self-registers
     // into ctx.registry with the right metadata. Bootstrap's dedup-by-name

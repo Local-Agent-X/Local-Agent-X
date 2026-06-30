@@ -162,13 +162,12 @@ export function startServer(handlers?: ServerEventHandlers): void {
   }
 
   console.log(`[desktop] Starting LAX server (${useDist ? "compiled dist" : "tsx"})...`);
-  // LAX_BUNDLED_MODELS_DIR points the server at electron-builder's
-  // extraResources directory so whisper-model-fetch can find the
-  // pre-bundled tiny.en files before falling back to download. In dev
-  // (npm run dev / direct tsx), this is unset and the server falls back
-  // to ~/.lax/models normally.
+  // Electron's resources dir holds extraResources: bundled whisper files
+  // (LAX_BUNDLED_MODELS_DIR) and the ripgrep binary (LAX_BUNDLED_BIN_DIR) — the
+  // server uses them by absolute path since a Finder app's minimal launchd PATH
+  // can't find a bare `rg`. Unset in dev (tsx); the server falls back normally.
   const electron = require("electron") as typeof import("electron");
-  const bundledModelsDir = electron.app.isPackaged ? process.resourcesPath : "";
+  const bundledResourcesDir = electron.app.isPackaged ? process.resourcesPath : "";
 
   lastSpawnAt = Date.now();
   recentServerStderr = "";
@@ -195,7 +194,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
       // Move); the server sanitizes that to the real on-disk ~/Documents — a
       // high-write agent workspace must not live under OneDrive. See config.ts.
       LAX_DOCUMENTS_DIR: electron.app.getPath("documents"),
-      ...(bundledModelsDir ? { LAX_BUNDLED_MODELS_DIR: bundledModelsDir } : {}),
+      ...(bundledResourcesDir ? { LAX_BUNDLED_MODELS_DIR: bundledResourcesDir, LAX_BUNDLED_BIN_DIR: bundledResourcesDir } : {}),
     },
     windowsHide: true,
   });

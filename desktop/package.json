@@ -7,7 +7,8 @@
     "build:native:mac": "bash native/mac/build.sh",
     "build:native:win": "powershell -ExecutionPolicy Bypass -File native/win/build.ps1",
     "build:native:whisper": "node native/whisper/fetch.mjs",
-    "build:native": "node -e \"const p=process.platform;const cp=require('child_process');cp.execSync(p==='darwin'?'npm run build:native:mac':p==='win32'?'npm run build:native:win':'echo [native-speech] no helper for '+p,{stdio:'inherit'});cp.execSync('npm run build:native:whisper',{stdio:'inherit'})\"",
+    "build:native:ripgrep": "node native/ripgrep/stage.mjs",
+    "build:native": "node -e \"const p=process.platform;const cp=require('child_process');cp.execSync(p==='darwin'?'npm run build:native:mac':p==='win32'?'npm run build:native:win':'echo [native-speech] no helper for '+p,{stdio:'inherit'});cp.execSync('npm run build:native:whisper',{stdio:'inherit'});cp.execSync('npm run build:native:ripgrep',{stdio:'inherit'})\"",
     "build": "tsc && npm run build:native",
     "start": "electron dist/main.js",
     "dev": "npm run build && electron dist/main.js",
@@ -15,6 +16,7 @@
     "dist": "npm run build && electron-builder"
   },
   "devDependencies": {
+    "@vscode/ripgrep": "^1.18.0",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
     "typescript": "^5.8.0"
@@ -48,9 +50,15 @@
           "to": "lax-speech-win.exe"
         },
         {
+          "from": "native/dist-bin/rg.exe",
+          "to": "rg.exe"
+        },
+        {
           "from": "native/dist-bin/whisper-tiny-en",
           "to": "whisper-tiny-en",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         }
       ]
     },
@@ -59,24 +67,37 @@
       "allowToChangeInstallationDirectory": false
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "../public/icon.png",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": { "teamId": "CHV92LAWAZ" },
+      "notarize": {
+        "teamId": "CHV92LAWAZ"
+      },
       "extraResources": [
         {
           "from": "native/dist-bin/LaxSpeech.app",
           "to": "LaxSpeech.app",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "native/dist-bin/rg",
+          "to": "rg"
         },
         {
           "from": "native/dist-bin/whisper-tiny-en",
           "to": "whisper-tiny-en",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         }
       ],
       "extendInfo": {

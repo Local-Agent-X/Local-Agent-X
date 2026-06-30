@@ -4,6 +4,7 @@
  */
 
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, extname } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
@@ -33,6 +34,21 @@ function truncate(lines: string[], limit: number): string {
 
 // ── ripgrep path ──
 
+// Resolve the ripgrep binary. The desktop app bundles `rg` and the Electron
+// main hands its resources dir to the server in LAX_BUNDLED_BIN_DIR — prefer
+// that absolute path, because a Finder-launched app gets a minimal launchd PATH
+// where a bare `rg` isn't found (which is why this silently fell to the slow
+// Node search). Dev / source installs have no bundle, so fall back to `rg` on
+// PATH; runRg then falls back to the Node search if even that is absent.
+export function ripgrepBin(): string {
+  const bundled = process.env.LAX_BUNDLED_BIN_DIR;
+  if (bundled) {
+    const p = join(bundled, process.platform === "win32" ? "rg.exe" : "rg");
+    if (existsSync(p)) return p;
+  }
+  return "rg";
+}
+
 function buildRgArgs(args: Record<string, unknown>): string[] {
   const pattern = String(args.pattern);
   const mode = (args.output_mode as OutputMode) || "files_with_matches";
@@ -54,7 +70,7 @@ function buildRgArgs(args: Record<string, unknown>): string[] {
 function runRg(args: Record<string, unknown>, limit: number, signal?: AbortSignal): Promise<ToolResult> {
   const rgArgs = buildRgArgs(args);
   return new Promise((resolve, reject) => {
-    const child = execFile("rg", rgArgs, { maxBuffer: 10 * 1024 * 1024, signal }, (error, stdout) => {
+    const child = execFile(ripgrepBin(), rgArgs, { maxBuffer: 10 * 1024 * 1024, signal }, (error, stdout) => {
       if (signal?.aborted) return resolve(err("Aborted"));
       // ENOENT = rg not found in PATH — reject so fallback kicks in
       if (error && (error as NodeJS.ErrnoException).code === "ENOENT") return reject(error);

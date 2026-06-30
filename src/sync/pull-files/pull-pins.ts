@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createLogger } from "../../logger.js";
+import { reloadSettings, saveSettings } from "../../settings.js";
 import { unionMergeBy } from "./merge-helpers.js";
 
 const logger = createLogger("sync.pull-files.pins");
@@ -23,11 +24,10 @@ export async function pullSidebarPins(dataDir: string, syncDir: string): Promise
   try {
     const remotePins = JSON.parse(readFileSync(syncPins, "utf-8"));
     if (!Array.isArray(remotePins)) return;
-    const localSettingsPath = join(dataDir, "settings.json");
-    let localSettings: Record<string, unknown> = {};
-    if (existsSync(localSettingsPath)) {
-      try { localSettings = JSON.parse(readFileSync(localSettingsPath, "utf-8")); } catch { /* swallow */ }
-    }
+    // Fresh whole-object disk read via the canonical seam (preserves the
+    // prior "see external writes" semantics); merge the new pins onto it and
+    // save atomically so no sibling key is dropped.
+    const localSettings = reloadSettings();
     const localPins = Array.isArray(localSettings.sidebarPins) ? localSettings.sidebarPins as Array<{ name: string }> : [];
     const merged = unionMergeBy<{ name: string }>(
       localPins, remotePins as Array<{ name: string }>,
@@ -41,7 +41,7 @@ export async function pullSidebarPins(dataDir: string, syncDir: string): Promise
       logger.info(`[sync] pin tombstones filtered ${merged.length - filteredPins.length} pin(s)`);
     }
     localSettings.sidebarPins = filteredPins;
-    writeFileSync(localSettingsPath, JSON.stringify(localSettings, null, 2), "utf-8");
+    saveSettings(localSettings);
   } catch (e) {
     logger.warn(`[sync] sidebar-pins pull skipped: ${(e as Error).message}`);
   }

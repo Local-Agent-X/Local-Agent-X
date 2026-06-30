@@ -5,12 +5,11 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { ok, err } from "./shared.js";
 import { workspacePath } from "../../config.js";
-import { getLaxDir } from "../../lax-data-dir.js";
-import { reloadSettings } from "../../settings.js";
+import { reloadSettings, saveSettings } from "../../settings.js";
 
 export const sidebarPin: ToolDefinition = {
   name: "sidebar_pin",
@@ -30,7 +29,6 @@ export const sidebarPin: ToolDefinition = {
     const icon = String(args.icon || "📌");
 
     // Resolve the app URL — check workspace/apps/ for a matching folder
-    const dataDir = getLaxDir();
     const workspaceApps = workspacePath("apps");
     const slug = name.toLowerCase().replace(/\s+/g, "-");
 
@@ -54,10 +52,12 @@ export const sidebarPin: ToolDefinition = {
       }
     }
 
-    // Read/write settings.json
-    const settingsPath = join(dataDir, "settings.json");
-    let settings: Record<string, unknown> = {};
-    try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
+    // Read/write settings.json via the canonical seam. reloadSettings() gives
+    // a fresh whole-object disk read; saveSettings() atomically rewrites the
+    // WHOLE object (mode 0600) AND updates the in-memory cache, so /api/apps
+    // (the mobile's icon source, which reads loadSettings()) sees the new pin
+    // without a restart — no trailing reloadSettings() needed.
+    const settings = reloadSettings();
     const pins = (settings.sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
 
     if (pins.length >= 10 && !pins.some(p => p.name === name)) {
@@ -69,10 +69,7 @@ export const sidebarPin: ToolDefinition = {
 
     pins.push({ name, icon, url: pageUrl });
     settings.sidebarPins = pins;
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
-    // Refresh the in-memory settings cache so /api/apps (the mobile's icon
-    // source, which reads loadSettings()) sees the new pin without a restart.
-    reloadSettings();
+    saveSettings(settings);
 
     // Notify connected clients
     try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
@@ -96,18 +93,14 @@ export const sidebarUnpin: ToolDefinition = {
     const name = String(args.name || "").trim();
     if (!name) return err("name is required");
 
-    const dataDir = getLaxDir();
-    const settingsPath = join(dataDir, "settings.json");
-    let settings: Record<string, unknown> = {};
-    try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
+    const settings = reloadSettings();
     const currentPins = (settings.sidebarPins || []) as Array<{ name: string }>;
 
     if (name.toLowerCase() === "all") {
       if (currentPins.length === 0) return ok("Sidebar is already empty.");
       const removed = currentPins.map(p => p.name).join(", ");
       settings.sidebarPins = [];
-      writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
-      reloadSettings();
+      saveSettings(settings);
       try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins: [] }); } catch {}
       return ok(`Removed all pins from the sidebar: ${removed}`);
     }
@@ -122,8 +115,7 @@ export const sidebarUnpin: ToolDefinition = {
     }
 
     settings.sidebarPins = pins;
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
-    reloadSettings();
+    saveSettings(settings);
 
     try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
 

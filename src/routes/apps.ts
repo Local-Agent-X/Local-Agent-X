@@ -5,7 +5,7 @@ import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
 import { confineToDir } from "../security/file-access.js";
 import { renderApp } from "../app-renderer/index.js";
 import type { AppDefinition } from "../app-runtime/index.js";
-import { loadSettings, reloadSettings } from "../settings.js";
+import { loadSettings, reloadSettings, saveSettings } from "../settings.js";
 import { readDevServerRecord, registerDevServer } from "../tools/dev-server.js";
 
 /** Default launcher glyph for an app with no explicit icon and no sidebar pin. */
@@ -152,26 +152,24 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
       renameSync(oldDir, newDir);
     } catch (e) { json(500, { error: `folder rename failed: ${(e as Error).message}` }); return true; }
 
-    // Update any sidebar pin that pointed at /apps/<oldId>/
+    // Update any sidebar pin that pointed at /apps/<oldId>/. reloadSettings()
+    // gives a fresh whole-object disk read; saveSettings() atomically rewrites
+    // the WHOLE object (mode 0600) AND updates the loadSettings() cache that
+    // /api/apps reads — coherent without a trailing reloadSettings().
     try {
-      const { readFileSync: rf, writeFileSync: wf } = await import("node:fs");
-      const settingsPath = join(ctx.dataDir, "settings.json");
-      if (existsSync(settingsPath)) {
-        const s = JSON.parse(rf(settingsPath, "utf-8"));
-        const pins = (s.sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
-        let changed = false;
-        for (const p of pins) {
-          if (p.url === `/apps/${oldId}/` || p.url === `/apps/${oldId}`) {
-            p.url = `/apps/${newId}/`;
-            changed = true;
-          }
+      const s = reloadSettings();
+      const pins = (s.sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
+      let changed = false;
+      for (const p of pins) {
+        if (p.url === `/apps/${oldId}/` || p.url === `/apps/${oldId}`) {
+          p.url = `/apps/${newId}/`;
+          changed = true;
         }
-        if (changed) {
-          s.sidebarPins = pins;
-          wf(settingsPath, JSON.stringify(s, null, 2), { encoding: "utf-8", mode: 0o600 });
-          reloadSettings();  // keep the loadSettings() cache (read by /api/apps) coherent
-          try { const { broadcastAll } = await import("../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
-        }
+      }
+      if (changed) {
+        s.sidebarPins = pins;
+        saveSettings(s);
+        try { const { broadcastAll } = await import("../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
       }
     } catch (e) { logger.warn(`[apps] pin update after rename failed: ${(e as Error).message}`); }
 

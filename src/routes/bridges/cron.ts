@@ -15,6 +15,28 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     }));
     json(200, { missions, settings: ctx.cronService.getSettings() }); return true;
   }
+  // Natural-language → schedule translation for the New Mission form. The
+  // model produces a cron/interval; the deterministic parser validates it
+  // before we ever hand it back, so a mis-read can't schedule garbage. Returns
+  // { ok:false } (not an error) when the phrase is too vague / the model is
+  // unavailable — the UI then asks the user to use the picker or refine.
+  if (method === "POST" && url.pathname === "/api/cron/parse-schedule") {
+    const body = await safeParseBody(req) as { text?: string; tz?: string } | null;
+    if (!body || typeof body.text !== "string" || !body.text.trim()) { json(400, { error: "text is required" }); return true; }
+    try {
+      const { parseScheduleNL } = await import("../../cron/schedule-nl.js");
+      const parsed = await parseScheduleNL(body.text, { tz: typeof body.tz === "string" ? body.tz : undefined, nowISO: new Date().toISOString() });
+      if (!parsed) { json(200, { ok: false }); return true; }
+      // Echo the next run so the UI preview is authoritative (server computes it
+      // with the same tz-aware logic that actually schedules the job).
+      const nextRunAt = ctx.cronService.getNextRunAt({
+        id: "preview", name: "preview", schedule: parsed.schedule, prompt: "", enabled: true, createdAt: "",
+        ...(body.tz ? { tz: body.tz } : {}),
+      });
+      json(200, { ok: true, schedule: parsed.schedule, description: parsed.description, nextRunAt });
+    } catch (e) { json(200, { ok: false, error: safeErrorMessage(e) }); }
+    return true;
+  }
   if (method === "POST" && url.pathname === "/api/cron") {
     const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; provider?: string; model?: string; profile?: string; tz?: string };
     if (!body.name || !body.schedule || !body.prompt) { json(400, { error: "name, schedule, and prompt are required" }); return true; }

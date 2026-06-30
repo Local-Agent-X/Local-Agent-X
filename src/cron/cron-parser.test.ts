@@ -13,10 +13,38 @@ import { describe, it, expect } from "vitest";
 import {
   getCronFields,
   isValidTimeZone,
+  isValidCronExpression,
+  isValidSchedule,
   msUntilNextCron,
   msUntilNextRun,
   getIntervalMs,
 } from "./cron-parser.js";
+
+describe("isValidCronExpression / isValidSchedule — structural validation", () => {
+  it("accepts well-formed cron expressions incl. far-future monthly/yearly", () => {
+    expect(isValidCronExpression("0 9 * * *")).toBe(true);
+    expect(isValidCronExpression("30 18 * * 1,4")).toBe(true);
+    expect(isValidCronExpression("0 12 1 * *")).toBe(true); // 1st of month — next run weeks away
+    expect(isValidCronExpression("*/15 * * * *")).toBe(true);
+    expect(isValidCronExpression("0 0 29 2 *")).toBe(true); // Feb 29 — valid, rarely matches
+  });
+  it("rejects malformed and out-of-range expressions", () => {
+    expect(isValidCronExpression("* * * *")).toBe(false); // 4 fields
+    expect(isValidCronExpression("every other tuesday at 3pm")).toBe(false); // 5 non-numeric tokens
+    expect(isValidCronExpression("60 9 * * *")).toBe(false); // minute out of range
+    expect(isValidCronExpression("0 24 * * *")).toBe(false); // hour out of range
+    expect(isValidCronExpression("0 9 0 * *")).toBe(false); // day-of-month < 1
+    expect(isValidCronExpression("0 9 * * 9")).toBe(false); // day-of-week > 6
+  });
+  it("isValidSchedule covers intervals AND crons but not garbage", () => {
+    expect(isValidSchedule("5m")).toBe(true);
+    expect(isValidSchedule("0 9 * * 1-5")).toBe(true);
+    // The latent bug guard: a 5-token non-cron must NOT pass (msUntilNextCron's
+    // 24h no-match fallback would otherwise green-light it).
+    expect(isValidSchedule("every other tuesday at 3pm")).toBe(false);
+    expect(isValidSchedule("daily 9am")).toBe(false);
+  });
+});
 
 describe("isValidTimeZone", () => {
   it("accepts real IANA zones", () => {

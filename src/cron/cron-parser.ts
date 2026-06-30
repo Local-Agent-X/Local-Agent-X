@@ -75,6 +75,63 @@ export function parseInterval(schedule: string): number | null {
   return parseInt(num) * (multipliers[unit] || 60000);
 }
 
+/**
+ * Structural validity of one cron field against its [min,max] range. Accepts
+ * `*`, `*\/N`, `N-M` ranges, `N,M` lists, and bare `N` — every numeric token
+ * must sit in range. This is SEPARATE from "does it match soon": a monthly cron
+ * is structurally valid even though its next run is weeks away (past the
+ * next-run search window), so validation must not lean on msUntilNextCron.
+ */
+function isValidCronField(field: string, min: number, max: number): boolean {
+  if (!field) return false;
+  for (const raw of field.split(",")) {
+    const part = raw.trim();
+    if (part === "*") continue;
+    if (part.startsWith("*/")) {
+      const step = part.slice(2);
+      if (!/^\d+$/.test(step) || parseInt(step) <= 0) return false;
+      continue;
+    }
+    const range = part.match(/^(\d+)-(\d+)$/);
+    if (range) {
+      const lo = +range[1], hi = +range[2];
+      if (lo < min || hi > max || lo > hi) return false;
+      continue;
+    }
+    if (/^\d+$/.test(part)) {
+      const v = +part;
+      if (v < min || v > max) return false;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+/** True if `schedule` is a structurally-valid 5-field cron expression. */
+export function isValidCronExpression(schedule: string): boolean {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  return (
+    isValidCronField(parts[0], 0, 59) && // minute
+    isValidCronField(parts[1], 0, 23) && // hour
+    isValidCronField(parts[2], 1, 31) && // day-of-month
+    isValidCronField(parts[3], 1, 12) && // month
+    isValidCronField(parts[4], 0, 6) //    day-of-week (Sun=0)
+  );
+}
+
+/**
+ * Single source of truth for "the cron service can run this schedule": a fixed
+ * interval ("5m") OR a structurally-valid cron expression. Used by create()
+ * validation, the NL short-circuit/gate, and the form preview. Does NOT use
+ * msUntilNextCron — its 24h no-match fallback would green-light garbage like
+ * "every other tuesday at 3pm" (5 non-numeric tokens that match nothing).
+ */
+export function isValidSchedule(schedule: string): boolean {
+  return getIntervalMs(schedule) !== null || isValidCronExpression(schedule);
+}
+
 /** Match a single cron field. Supports: *, N, star-slash-N, N-M, comma lists. */
 export function cronFieldMatches(field: string, value: number, _max: number): boolean {
   for (const part of field.split(",")) {

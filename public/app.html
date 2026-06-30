@@ -935,12 +935,8 @@
             <input class="field-input" id="cron-edit-name" type="text"/>
           </div>
           <div class="field" style="margin-bottom:8px">
-            <label class="field-label">Schedule (cron expression or interval like 5m, 1h, daily 9am)</label>
-            <input class="field-input" id="cron-edit-schedule" type="text"/>
-          </div>
-          <div class="field" style="margin-bottom:8px">
-            <label class="field-label">Timezone (for clock-time cron expressions; ignored for intervals)</label>
-            <select class="field-input" id="cron-edit-tz"></select>
+            <label class="field-label">When it runs</label>
+            <div id="cron-edit-sched-picker"></div>
           </div>
           <div class="field" style="margin-bottom:8px">
             <label class="field-label">Agent Instructions</label>
@@ -964,15 +960,14 @@
     </div>
 
     <div id="mission-modal-overlay" class="app-modal-overlay" onclick="if(event.target===this)closeMissionModal()">
-      <div class="app-modal">
+      <div class="app-modal wide">
         <div class="app-modal-header">
           <h3>New Mission</h3>
           <button class="app-modal-close" onclick="closeMissionModal()" title="Close">×</button>
         </div>
         <p style="font-size:.75rem;color:var(--muted);margin-bottom:16px">Schedule a recurring task. The agent executes your instructions on a timer.</p>
         <div class="field"><label class="field-label">Mission Name</label><input class="field-input" id="new-cron-name" placeholder="Daily report"/></div>
-        <div class="field"><label class="field-label">Schedule <span style="color:var(--muted);font-weight:400">— cron expression or interval (e.g. <code>every 1h</code>, <code>daily 9am</code>, <code>0 9 * * *</code>)</span></label><input class="field-input" id="new-cron-schedule" placeholder="every 1h / daily 9am"/></div>
-        <div class="field"><label class="field-label">Timezone <span style="color:var(--muted);font-weight:400">— for clock-time cron expressions; ignored for intervals</span></label><select class="field-input" id="new-cron-tz"></select></div>
+        <div class="field"><label class="field-label">When it runs</label><div id="new-cron-sched-picker"></div></div>
         <div class="field"><label class="field-label">Agent Instructions</label><textarea class="field-input" id="new-cron-prompt" rows="6" placeholder="Check my email and summarize the most important threads..." style="resize:vertical;font-family:var(--mono);font-size:.78rem"></textarea></div>
         <div class="field"><label class="field-label">Model <span style="color:var(--muted);font-weight:400">— optional; defaults to your chat model</span></label>
           <div style="display:flex;gap:8px">
@@ -1324,8 +1319,9 @@
 <!-- Missions modules. cron.js owns shared state (cronJobs, selectedJob, …)
      so it must load first. -->
 <script src="/js/cron.js?v=v2"></script>
+<script src="/js/cron-schedule-picker.js?v=v1"></script>
 <script src="/js/cron-detail.js?v=v1"></script>
-<script src="/js/cron-actions.js?v=v1"></script>
+<script src="/js/cron-actions.js?v=v2"></script>
 <script src="/js/protocols.js"></script>
 <script src="/js/notifications.js"></script>
 <script src="/js/apps.js"></script>

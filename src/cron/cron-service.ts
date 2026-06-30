@@ -21,6 +21,7 @@ import {
   getIntervalMs,
   msUntilNextRun,
   isValidTimeZone,
+  isValidSchedule,
 } from "./cron-parser.js";
 import {
   RunHistoryStore,
@@ -219,12 +220,12 @@ export class CronService {
     if (opts?.tz && !isValidTimeZone(opts.tz)) {
       throw new Error(`Invalid timezone "${opts.tz}" — use an IANA name like "America/New_York" or leave blank for server local time`);
     }
-    // Validate the schedule by attempting to compute next-run time. Without
-    // this, malformed expressions (e.g. "* * * *" — only 4 fields) silently
-    // never schedule a timer and the user sees an enabled job that never
-    // fires. Either a fixed interval ("5m", "1h") OR a cron expression with
-    // a parseable next-run is acceptable.
-    if (getIntervalMs(schedule) === null && msUntilNextRun(schedule) === null) {
+    // Validate the schedule STRUCTURALLY. Without this, malformed expressions
+    // silently never fire: "* * * *" (4 fields) is rejected, and — the subtler
+    // case — a 5-token non-cron like "every other tuesday at 3pm" used to pass
+    // because msUntilNextCron returns a 24h fallback when nothing matches. A
+    // fixed interval ("5m", "1h") OR a structurally-valid cron is acceptable.
+    if (!isValidSchedule(schedule)) {
       throw new Error(`Invalid schedule "${schedule}" — must be a cron expression (e.g. "0 22 * * *") or fixed interval (e.g. "5m", "1h")`);
     }
     const existing = [...this.jobs_internal.values()].find(j => j.name === name);

@@ -15,7 +15,7 @@
  * Detection logic lives in src/agent-guards/cleanup-verify.ts; this is the thin
  * canonical wiring.
  */
-import { type CanonicalMiddleware } from "./types.js";
+import { type CanonicalLoopContext, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import {
   looksLikeCleanupSweep,
@@ -23,8 +23,25 @@ import {
   checkCleanupVerify,
   claimsCleanupDone,
   createCleanupVerifyState,
+  type CleanupToolResult,
   type CleanupVerifyState,
 } from "../../agent-guards/index.js";
+
+/** Pair this turn's tool results with their calls (by id) so a grep result
+ *  carries the pattern it searched — the gate tracks cleanliness per pattern. */
+function buildCleanupEvidence(ctx: CanonicalLoopContext): CleanupToolResult[] {
+  const patternById = new Map<string, string>();
+  for (const tc of ctx.toolCalls) {
+    const args = (tc.args ?? {}) as Record<string, unknown>;
+    if (typeof args.pattern === "string") patternById.set(tc.toolCallId, args.pattern);
+  }
+  return ctx.toolResults.map(tr => ({
+    toolName: tr.toolName,
+    content: tr.content,
+    status: tr.status,
+    pattern: patternById.get(tr.toolCallId),
+  }));
+}
 
 /**
  * The latest verdict this gate computed for the op, persisted so the
@@ -46,7 +63,7 @@ export const cleanupVerifyMiddleware: CanonicalMiddleware = {
     const state = getMiddlewareState<CleanupVerifyState>(
       ctx.op.id, "cleanup-verify", createCleanupVerifyState,
     );
-    noteCleanupEvidence(ctx.toolResults, state);
+    noteCleanupEvidence(buildCleanupEvidence(ctx), state);
     return { kind: "continue" };
   },
 

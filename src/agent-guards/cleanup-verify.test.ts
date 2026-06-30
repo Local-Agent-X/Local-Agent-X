@@ -6,6 +6,7 @@ import {
   noteCleanupEvidence,
   checkCleanupVerify,
   createCleanupVerifyState,
+  type CleanupToolResult,
 } from "./cleanup-verify.js";
 
 // The first is the exact scenario the three models ran in the live comparison —
@@ -113,5 +114,48 @@ describe("checkCleanupVerify + noteCleanupEvidence", () => {
     noteCleanupEvidence([{ toolName: "grep", content: "No matches found.", status: "ok" }], s);
     checkCleanupVerify(s); // re-evaluate at the next wrap-up
     expect(s.unverified).toBe(false);
+  });
+});
+
+describe("per-pattern tracking — a narrow empty grep can't vouch for a broad one", () => {
+  const grep = (pattern: string, content: string): CleanupToolResult =>
+    ({ toolName: "grep", pattern, content, status: "ok" });
+  const EMPTY = "No matches found.";
+  const HITS = "app/src/voice/errors.ts:24:  same Tailscale network";
+
+  it("regression (the live run): narrow `tailnetAddr` empty does NOT clear a broad `tailnet|Tailscale` that still matches", () => {
+    const s = createCleanupVerifyState();
+    // The renamed identifier is genuinely gone…
+    noteCleanupEvidence([grep("tailnetAddr", EMPTY)], s);
+    // …but the broad target still has live matches (user-facing strings).
+    noteCleanupEvidence([grep("tailnet|Tailscale|tailnetAddr", HITS)], s);
+    expect(s.confirmedClean).toBe(false);
+    const r = checkCleanupVerify(s);
+    expect(r.nudge).toMatch(/still returned matches|narrower/i);
+    expect(s.unverified).toBe(true);
+  });
+
+  it("does not un-latch on order: a later narrow empty after a broad match stays unverified", () => {
+    const s = createCleanupVerifyState();
+    noteCleanupEvidence([grep("tailnet|Tailscale", HITS)], s); // broad: matches
+    noteCleanupEvidence([grep("tailnetAddr", EMPTY)], s);       // narrow: clean
+    expect(s.confirmedClean).toBe(false); // broad pattern still outstanding
+  });
+
+  it("recovery: re-running the SAME broad pattern empty clears it", () => {
+    const s = createCleanupVerifyState();
+    noteCleanupEvidence([grep("tailnet|Tailscale", HITS)], s);
+    expect(s.confirmedClean).toBe(false);
+    noteCleanupEvidence([grep("tailnet|Tailscale", EMPTY)], s); // fixed, re-grep clean
+    expect(s.confirmedClean).toBe(true);
+    expect(checkCleanupVerify(s).nudge).toBeNull();
+  });
+
+  it("normalizes reordered alternations to the same bucket", () => {
+    const s = createCleanupVerifyState();
+    noteCleanupEvidence([grep("tailnet|Tailscale", HITS)], s);
+    // re-grep with branches reordered + different case — same logical search
+    noteCleanupEvidence([grep("tailscale|tailnet", EMPTY)], s);
+    expect(s.confirmedClean).toBe(true);
   });
 });

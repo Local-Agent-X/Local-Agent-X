@@ -23,10 +23,23 @@ export interface CleanupToolResult {
   toolName: string;
   content: string;
   status?: "ok" | "error" | "cancelled";
+  /** The grep's search pattern, when known. Lets the gate track cleanliness PER
+   *  pattern: an empty result for a narrow pattern must not vouch for a broader
+   *  one that still matches. Absent → an anonymous single bucket (legacy). */
+  pattern?: string;
 }
 
 export interface CleanupVerifyState {
-  /** A grep this op returned "No matches found." — the proof a removal landed. */
+  /** At least one (non-errored) grep ran this op. */
+  searchedAny: boolean;
+  /** Normalized patterns whose MOST RECENT grep still returned matches. A
+   *  pattern stays here until a later grep for it comes back empty. The bug this
+   *  fixes: a single empty grep used to latch "clean" forever, so a broad search
+   *  that kept matching never revoked the verdict — the model "verified" a narrow
+   *  pattern (already gone) and claimed the broad one clean. */
+  outstanding: string[];
+  /** Derived: every searched pattern is currently empty (the removal is proven).
+   *  Kept as a field so callers can read it straight after noteCleanupEvidence. */
   confirmedClean: boolean;
   /** Verdict for the terminal-outcome label: a cleanup reported done without a
    *  clean search. Recomputed each wrap-up so a post-nudge re-grep that comes
@@ -37,7 +50,25 @@ export interface CleanupVerifyState {
 }
 
 export function createCleanupVerifyState(): CleanupVerifyState {
-  return { confirmedClean: false, unverified: false, fired: false };
+  return { searchedAny: false, outstanding: [], confirmedClean: false, unverified: false, fired: false };
+}
+
+/** Anonymous bucket for a grep whose pattern wasn't threaded through (legacy /
+ *  test callers). Real wiring always supplies the pattern. */
+const ANON_PATTERN = "__anon__";
+
+/** Canonicalize a grep pattern into a stable key. Simple `a|b|c` alternations
+ *  are sorted so a reordered-but-equivalent search shares the bucket (avoids a
+ *  spurious "still outstanding" when the model re-greps with the branches in a
+ *  different order). Anything with regex structure is matched verbatim. */
+export function normalizeGrepPattern(pattern?: string): string {
+  if (!pattern) return ANON_PATTERN;
+  const t = pattern.trim().toLowerCase();
+  if (!t) return ANON_PATTERN;
+  if (/^[^()\\[\]{}.*+?^$]*\|[^()\\[\]{}.*+?^$]*$/.test(t)) {
+    return t.split("|").map(s => s.trim()).filter(Boolean).sort().join("|");
+  }
+  return t;
 }
 
 // A removal/cleanup verb. Narrower than broad-sweep's find-and-change set: only
@@ -89,35 +120,51 @@ export function claimsCleanupDone(text: string): boolean {
   return COMPLETION_CLAIM.test(t) && !NEGATION.test(t);
 }
 
-/** Fold one turn's tool results into the running state: a non-errored grep that
- *  came back empty is the clean-search proof. */
+/** Fold one turn's tool results into the running state. Per grep pattern, the
+ *  MOST RECENT result wins: empty clears that pattern, matches mark it
+ *  outstanding. The cleanup is confirmed clean only when every searched pattern
+ *  is currently empty — so a narrow empty grep can't vouch for a broad pattern
+ *  that still has hits. */
 export function noteCleanupEvidence(
   results: CleanupToolResult[],
   state: CleanupVerifyState,
 ): void {
   for (const r of results) {
-    if (r.toolName === "grep" && r.status !== "error" && isEmptyGrepResult(r.content)) {
-      state.confirmedClean = true;
+    if (r.toolName !== "grep" || r.status === "error") continue;
+    state.searchedAny = true;
+    const key = normalizeGrepPattern(r.pattern);
+    if (isEmptyGrepResult(r.content)) {
+      state.outstanding = state.outstanding.filter(p => p !== key);
+    } else if (!state.outstanding.includes(key)) {
+      state.outstanding.push(key);
     }
   }
+  state.confirmedClean = state.searchedAny && state.outstanding.length === 0;
 }
 
 /** Evaluate at wrap-up. Refreshes the terminal-label verdict (every call) and
  *  returns a one-time nudge when a cleanup is being reported done without a
  *  confirming search. */
 export function checkCleanupVerify(state: CleanupVerifyState): { nudge: string | null } {
+  state.confirmedClean = state.searchedAny && state.outstanding.length === 0;
   state.unverified = !state.confirmedClean;
   if (state.confirmedClean || state.fired) return { nudge: null };
   state.fired = true;
+  const hadMatches = state.outstanding.length > 0;
   return {
     nudge:
       "You're reporting this cleanup as done, but nothing this run has confirmed " +
       "the target is actually gone. A removal isn't finished until a fresh search " +
       "comes back empty — a passing build doesn't count, since dead references in " +
-      "comments, docs, strings, config, and tests all compile fine. Re-run `grep` " +
-      "across the WHOLE project for the thing you removed (and its aliases / old " +
-      "names). If ANY references remain, finish them, then re-grep. Only report it " +
-      "done once the search returns no matches. If you're trusting a memory or a " +
-      "note that says it's already done, don't — verify against the actual code now.",
+      "comments, docs, strings, config, and tests all compile fine. " +
+      (hadMatches
+        ? "Your last search for it STILL returned matches — an empty result for a " +
+          "narrower or differently-scoped pattern does NOT prove the broader target " +
+          "is gone. Go fix the remaining hits, then re-run the SAME broad search. "
+        : "Re-run `grep` across the WHOLE project for the thing you removed (and its " +
+          "aliases / old names). ") +
+      "If ANY references remain, finish them, then re-grep. Only report it done once " +
+      "the search returns no matches. If you're trusting a memory or a note that says " +
+      "it's already done, don't — verify against the actual code now.",
   };
 }

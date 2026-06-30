@@ -7,15 +7,19 @@
  * is the immediate need (filtering `/api/tags` output so embedding-only
  * models don't show up in the chat-model picker).
  *
- * Phase 2 (planned): probe-on-first-use + persistent registry at
- * `~/.lax/model-capabilities.json` keyed by `(provider, model_name)`.
- * Records discovered facts: tools support (works | rejects-explicit |
- * silent-fail | none), reasoning emission (none | inline-tags | channel),
- * tool-call format, context window. Self-healing: runtime observations
- * feed back into the registry. Replaces both the existing string-match
- * fallback in openai-http.ts and the empty-output retry hack in
- * local-ollama.ts with a single `consultRegistry(model) → strategy`
- * call.
+ * Phase 2 (the persistent registry): now lives in
+ * `src/providers/model-capabilities-store.ts` — a self-healing,
+ * publicly-seeded store at `~/.lax/model-capabilities.json` keyed by
+ * `(baseURL, model)`. It persists the facts the runtime already learns
+ * (tools support, hard-400 params like reasoning_effort/temperature) so they
+ * survive restarts, and ships a public seed (model-capabilities-seed.ts) so
+ * day-one behavior is correct without phoning home. The openai-http catch and
+ * openai-compat empty-response latch write through it via the markNoToolSupport
+ * / markParamUnsupported wrappers in providers/types.ts.
+ *
+ * Still deferred: probe-on-first-use (Ollama /api/show), reasoning-emission
+ * and context-window facts (context window stays in context-manager/
+ * model-windows.ts for now — a different, lower-pain fact type).
  */
 
 /**

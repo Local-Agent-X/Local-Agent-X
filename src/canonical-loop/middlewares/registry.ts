@@ -42,6 +42,7 @@ import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { attributionClaimMiddleware } from "./attribution-claim.js";
 import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
+import { broadSweepNudgeMiddleware } from "./broad-sweep-nudge.js";
 import { falseRefusalMiddleware } from "./false-refusal.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { openStepsMiddleware } from "./open-steps.js";
@@ -78,6 +79,13 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     // user. Runs before premature-completion so a "no tool" denial gets the
     // search nudge, not the do-the-work nudge.
     toolSearchNudgeMiddleware,
+    // All lanes — when the task is a codebase-wide sweep ("fix every X", "remove
+    // all references to Y") but the model wraps up tool-lessly without ever
+    // running grep/glob, force ONE enumeration pass first. Runs after
+    // tool-search-nudge (a capability denial gets the search nudge) and before
+    // premature-completion ("enumerate the surface" beats the generic "do the
+    // work" nudge for an under-scoped sweep).
+    broadSweepNudgeMiddleware,
     prematureCompletionMiddleware,
     // Worker edited source but never built/typechecked/tested before wrapping
     // up → nudge once. Runs after premature-completion (they're mutually

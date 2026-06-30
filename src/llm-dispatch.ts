@@ -166,59 +166,51 @@ async function callAnthropic(prompt: string, model: string, temperature: number,
   }
 }
 
-async function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
+// OpenAI Chat Completions wire format — shared by OpenAI proper and every
+// OpenAI-compatible endpoint (xAI's api.x.ai/v1 is byte-identical). One body,
+// one parse, one error shape; the two callers differ only by credential id,
+// baseURL, and log label. callOpenAI/callXai stay as named wrappers so the
+// dispatch switch reads the same as the other providers.
+async function callOpenAICompatible(
+  label: string,
+  credentialProvider: ProviderId,
+  baseURL: string,
+  prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number,
+): Promise<string | null> {
   try {
-    const resolved = await resolveCredential("openai");
+    const resolved = await resolveCredential(credentialProvider);
     if (!resolved) return null;
     const apiKey = resolved.credential;
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch(`${baseURL}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model, temperature, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {
-      logger.warn(`openai call failed: HTTP ${res.status}`);
+      logger.warn(`${label} call failed: HTTP ${res.status}`);
       return null;
     }
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
     return data.choices?.[0]?.message?.content || null;
   } catch (e) {
-    logger.warn(`openai call threw: ${(e as Error).message}`);
+    logger.warn(`${label} call threw: ${(e as Error).message}`);
     return null;
   }
 }
 
-async function callXai(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
-  // xAI exposes an OpenAI-compatible endpoint at api.x.ai/v1; wire-identical
-  // to /v1/chat/completions on api.openai.com, so the OpenAI client shape
-  // works unchanged. Auth comes from either env XAI_API_KEY or the secrets
-  // store (chat path stores it there). Without this, every background
-  // classifier (identity-extract, claim-verify, intent-classifier, etc.)
-  // silently no-ops for xAI users — verified May 2026: identity-shape
-  // statements ("my kid's name is X") didn't auto-save because
-  // classify-with-llm hit the xAI/Gemini fallback that returns null
+function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
+  return callOpenAICompatible("openai", "openai", "https://api.openai.com/v1", prompt, model, temperature, maxTokens, timeoutMs);
+}
+
+function callXai(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
+  // xAI exposes an OpenAI-compatible endpoint at api.x.ai/v1; the OpenAI body
+  // works unchanged. Auth comes from env XAI_API_KEY or the secrets store (the
+  // chat path stores it there). Without this, every background classifier
+  // (identity-extract, claim-verify, intent-classifier, …) silently no-ops for
+  // xAI users — classify-with-llm hits the xAI fallback that returns null
   // before reaching this dispatcher.
-  try {
-    const resolved = await resolveCredential("xai");
-    if (!resolved) return null;
-    const apiKey = resolved.credential;
-    const res = await fetch("https://api.x.ai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, temperature, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) {
-      logger.warn(`xai call failed: HTTP ${res.status}`);
-      return null;
-    }
-    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-    return data.choices?.[0]?.message?.content || null;
-  } catch (e) {
-    logger.warn(`xai call threw: ${(e as Error).message}`);
-    return null;
-  }
+  return callOpenAICompatible("xai", "xai", "https://api.x.ai/v1", prompt, model, temperature, maxTokens, timeoutMs);
 }
 
 async function callCodex(prompt: string, model: string, temperature: number, timeoutMs: number): Promise<string | null> {

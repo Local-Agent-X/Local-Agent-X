@@ -8,6 +8,7 @@ import { readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, rmdirSync
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
+import { resolveCredential } from "./auth/resolve.js";
 
 /** Safely parse a fraction string like "30000/1001" without eval() */
 function parseFraction(s: string): number {
@@ -189,7 +190,10 @@ export async function summarizeVideo(
 
   // Optionally describe frames with vision model
   if (options.describe) {
-    const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY ?? "";
+    // Explicit options.apiKey wins; otherwise resolve via the canonical
+    // credential seam (Claude OAuth / secrets store / ANTHROPIC_API_KEY).
+    const apiKey =
+      options.apiKey ?? (await resolveCredential("anthropic"))?.credential ?? "";
     const model = options.model ?? "claude-sonnet-4-20250514";
 
     if (apiKey) {

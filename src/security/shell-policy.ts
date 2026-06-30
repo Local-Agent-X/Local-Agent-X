@@ -132,11 +132,13 @@ export function evaluateShellCommand(
     if (/[`\r\n]/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
       return { allowed: false, reason: "Blocked: shell metacharacters detected (backtick or command substitution).", userHint: USER_HINTS.commandShell };
     }
-    // Block ; (sequential chaining) and single & (background) but allow && and ||.
-    // These are only separators OUTSIDE quotes — a `;` inside
-    // `python -c "import json; ..."` is literal to the shell, not a chain.
+    // Block ; (sequential chaining) and a bare & (background) but allow && and ||.
+    // The & exclusions also spare fd-redirect forms — 2>&1, >&2, &>file all carry
+    // a literal & that is job-control NOTHING (it's a descriptor dup/merge). Only
+    // a & with no adjacent redirect arrow is backgrounding. Separators count only
+    // OUTSIDE quotes — a `;` inside `python -c "import json; ..."` is shell-literal.
     const unquoted = stripQuotedSpans(command);
-    if (/;/.test(unquoted) || /(?<![&|])&(?![&|])/.test(unquoted)) {
+    if (/;/.test(unquoted) || /(?<![&|<>])&(?![&|>])/.test(unquoted)) {
       return { allowed: false, reason: "Blocked: use && instead of ; for chaining, and don't background processes with &.", userHint: USER_HINTS.commandShell };
     }
   }

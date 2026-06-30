@@ -8,7 +8,7 @@ import { getRuntimeConfig, saveConfig } from "../config.js";
 import type { SandboxConfig, SandboxMode } from "./types.js";
 import { validateSandboxConfig } from "./validate.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
-import { isBwrapAvailable, bwrapEnforces, wrapForBwrap } from "./bwrap.js";
+import { isBwrapAvailable, bwrapEnforces, bwrapGuardedRuns, wrapForBwrap } from "./bwrap.js";
 const logger = createLogger("sandbox");
 
 export type { SandboxMode } from "./types.js";
@@ -34,6 +34,20 @@ function isBwrapUsable(): boolean {
     bwrapUsable = isBwrapAvailable() && bwrapEnforces();
   }
   return bwrapUsable;
+}
+
+// Memoized: whether the GUARDED default cage (credential deny, network kept) is
+// usable on THIS host — macOS via seatbelt, Linux via bwrap. Separate from the
+// strict-mode checks above: guarded keeps network, so the bwrap probe is the
+// build-only bwrapGuardedRuns (NOT bwrapEnforces, which requires net-blocked).
+let guardedUsable: boolean | null = null;
+export function isGuardedUsable(): boolean {
+  if (guardedUsable === null) {
+    if (process.platform === "darwin") guardedUsable = isSeatbeltAvailable() && seatbeltProfileLoads(undefined, "guarded");
+    else if (process.platform === "linux") guardedUsable = isBwrapAvailable() && bwrapGuardedRuns();
+    else guardedUsable = false;
+  }
+  return guardedUsable;
 }
 
 /**
@@ -174,6 +188,7 @@ export function getSandboxMode(): SandboxMode {
       logger.warn("[sandbox] Runtime mode is docker but Docker not available. Falling back to host.");
       return "host";
     }
+    if (runtimeMode === "guarded" && !isGuardedUsable()) return "host";
     return runtimeMode;
   }
   const envMode = (process.env.LAX_SANDBOX ?? "").toLowerCase();
@@ -202,6 +217,9 @@ export function getSandboxMode(): SandboxMode {
     }
     return "bwrap";
   }
+  if (envMode === "guarded") {
+    return isGuardedUsable() ? "guarded" : "host";
+  }
   // Persisted user setting from settings UI (~/.lax/config.json).
   try {
     const cfgMode = getRuntimeConfig().sandboxMode;
@@ -226,13 +244,14 @@ export function getSandboxMode(): SandboxMode {
       }
       return "bwrap";
     }
+    if (cfgMode === "guarded") return isGuardedUsable() ? "guarded" : "host";
     if (cfgMode === "host") return "host";
   } catch { /* config not initialized yet (early boot) — fall through */ }
-  // Default is host. Docker is opt-in via LAX_SANDBOX=docker or the settings UI.
-  // Auto-enabling when Docker is merely installed silently confines bash to a
-  // network-less Alpine container; the AI can't see it's caged and reports the
-  // wrong root cause when commands fail.
-  return "host";
+  // Default: the guarded kernel cage where a backend is usable (macOS/Linux),
+  // else host. Guarded keeps the shell fully usable (network + dev tools) while
+  // kernel-denying credential reads, so it's a safe default — unlike docker,
+  // which is network-less and opt-in. host is the explicit no-cage escape hatch.
+  return isGuardedUsable() ? "guarded" : "host";
 }
 
 /**
@@ -249,6 +268,14 @@ export function wrapSpawnForSandbox(shell: string, shellArgs: string[]): { cmd: 
   if (mode === "bwrap") {
     return wrapForBwrap(shell, shellArgs);
   }
+  if (mode === "guarded") {
+    // Default cage: credential deny, network kept. getSandboxMode only returns
+    // "guarded" when a backend is usable, so pick the platform's; passthrough is
+    // a belt-and-suspenders no-op if neither is somehow available.
+    if (isSeatbeltAvailable()) return wrapForSeatbelt(shell, shellArgs, undefined, "guarded");
+    if (isBwrapAvailable()) return wrapForBwrap(shell, shellArgs, undefined, "guarded");
+    return { cmd: shell, args: shellArgs };
+  }
   return { cmd: shell, args: shellArgs };
 }
 
@@ -262,6 +289,9 @@ export function setSandboxMode(mode: SandboxMode): { ok: boolean; actual: Sandbo
   }
   if (mode === "bwrap" && !isBwrapUsable()) {
     return { ok: false, actual: "host", error: "Namespace sandbox (bwrap) is not usable on this machine — it requires Linux with bubblewrap installed and unprivileged user namespaces enabled." };
+  }
+  if (mode === "guarded" && !isGuardedUsable()) {
+    return { ok: false, actual: "host", error: "The kernel cage is not available on this machine (needs macOS, or Linux with unprivileged user namespaces) — bash runs unconfined here." };
   }
   runtimeMode = mode;
   try {

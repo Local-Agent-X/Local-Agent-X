@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { validateSandboxConfig, execInSandbox } from "./index.js";
+import { validateSandboxConfig, execInSandbox, getSandboxMode, wrapSpawnForSandbox, isGuardedUsable } from "./index.js";
 import type { SandboxConfig } from "./types.js";
 
 // Sandbox config validator unit tests. These tests do NOT spawn docker —
@@ -138,6 +138,35 @@ describe("validateSandboxConfig", () => {
     const r = validateSandboxConfig(withMounts([`${inRepo}:/lax`]));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/repo/i);
+  });
+});
+
+describe("guarded sandbox mode (default)", () => {
+  const prev = process.env.LAX_SANDBOX;
+  afterEach(() => { if (prev === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prev; });
+
+  it("LAX_SANDBOX=guarded resolves to guarded where a kernel backend is usable, else host", () => {
+    process.env.LAX_SANDBOX = "guarded";
+    expect(getSandboxMode()).toBe(isGuardedUsable() ? "guarded" : "host");
+  });
+
+  it.skipIf(!isGuardedUsable())("guarded wrap applies the cage but keeps network (no network deny)", () => {
+    process.env.LAX_SANDBOX = "guarded";
+    const { cmd, args } = wrapSpawnForSandbox("/bin/bash", ["-c", "echo hi"]);
+    // The cage is applied — not a bare passthrough...
+    expect(cmd).not.toBe("/bin/bash");
+    expect(args.slice(-3)).toEqual(["/bin/bash", "-c", "echo hi"]);
+    // ...but network is NOT denied (the guarded difference vs strict seatbelt/bwrap).
+    const blob = [cmd, ...args].join(" ");
+    expect(blob).not.toContain("(deny network*)"); // seatbelt
+    expect(blob).not.toContain("--unshare-net"); // bwrap
+  });
+
+  it.skipIf(isGuardedUsable())("guarded wrap is a passthrough where no kernel backend exists", () => {
+    process.env.LAX_SANDBOX = "guarded";
+    const { cmd, args } = wrapSpawnForSandbox("/bin/bash", ["-c", "echo hi"]);
+    expect(cmd).toBe("/bin/bash");
+    expect(args).toEqual(["-c", "echo hi"]);
   });
 });
 

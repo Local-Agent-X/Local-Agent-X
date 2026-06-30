@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { randomBytes } from "node:crypto";
-import type { LAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
+import type { LAXConfig } from "./types.js";
 import { getLaxDir } from "./lax-data-dir.js";
 import {
   deOneDrive,
@@ -16,38 +16,11 @@ import {
 import { createLogger } from "./logger.js";
 const logger = createLogger("config");
 
-// ── Deployment Profile Defaults ──
-// Each profile bundles sane defaults for its target audience.
-// "home"       — single user, max ease, secure but hands-off
-// "dev"        — local development, relaxed policies, verbose logs
-// "enterprise" — locked down, full audit, confirm everything
-
-export const PROFILE_DEFAULTS: Record<DeploymentProfile, ProfileDefaults> = {
-  home: {
-    sandboxMode: "host",
-    toolApproval: "auto",
-    retentionDays: 90,
-    autoUpdate: true,
-    networkExposure: "localhost",
-    logLevel: "detailed",
-  },
-  dev: {
-    sandboxMode: "host",
-    toolApproval: "auto",
-    retentionDays: 90,
-    autoUpdate: true,
-    networkExposure: "localhost",
-    logLevel: "detailed",
-  },
-  enterprise: {
-    sandboxMode: "docker",
-    toolApproval: "confirm-all",
-    retentionDays: 30,
-    autoUpdate: false,
-    networkExposure: "localhost",
-    logLevel: "full-audit",
-  },
-};
+// PROFILE_DEFAULTS moved to config-profiles.ts (config.ts is at the source-hygiene
+// LOC ceiling); re-exported so existing `import { PROFILE_DEFAULTS } from "./config"`
+// callers keep working.
+import { PROFILE_DEFAULTS } from "./config-profiles.js";
+export { PROFILE_DEFAULTS };
 
 // System prompt is loaded from config/system-prompt.md (agent-editable safe zone).
 // Falls back to a minimal prompt if the file is missing.
@@ -83,16 +56,21 @@ const configSchema = z.object({
   retentionDays: z.number().int().min(7).max(365).default(90),
   autoUpdate: z.boolean().default(true),
   logLevel: z.enum(["basic", "detailed", "full-audit"]).default("basic"),
-  /** Bash sandbox mode. "host" runs commands directly on the host OS (default,
-   *  full functionality). "docker" runs commands inside a network-isolated
-   *  Alpine container — opt-in for paranoid setups; breaks host-OS commands
-   *  and network access. "seatbelt" (macOS only) runs commands under a kernel
-   *  sandbox-exec profile — no Docker needed; denies network and reads/writes
-   *  of sensitive home dirs while leaving the rest of the host shell usable.
-   *  "bwrap" (Linux only) is the same posture via bubblewrap namespaces —
-   *  no Docker needed; external network unshared, sensitive home dirs
-   *  shadowed with tmpfs. Toggleable from Settings → Security. */
-  sandboxMode: z.enum(["host", "docker", "seatbelt", "bwrap"]).default("host"),
+  /** Bash sandbox mode. "guarded" (default, macOS/Linux) runs bash under a
+   *  kernel cage that denies reads/writes of credential dirs (~/.ssh, ~/.aws, …)
+   *  at the syscall — backstopping the command parser's $VAR/$(...) blind spot —
+   *  while keeping network and ~/.config so npm/git/gh keep working; falls back
+   *  to "host" where no kernel backend exists. "host" runs commands directly on
+   *  the host OS with no kernel cage (full functionality, parser-only guard).
+   *  "docker" runs commands inside a network-isolated Alpine container — opt-in
+   *  for paranoid setups; breaks host-OS commands and network access. "seatbelt"
+   *  (macOS) / "bwrap" (Linux) are the STRICT kernel cage — same credential deny
+   *  PLUS all-network deny and ~/.config deny. Toggleable from Settings → Security. */
+  sandboxMode: z.enum(["host", "guarded", "docker", "seatbelt", "bwrap"]).default("guarded"),
+  /** One-time marker: the "host"→"guarded" default upgrade has run. Lets the
+   *  migration upgrade installs still on the OLD "host" default exactly once,
+   *  without re-flipping a user who later picks "host" deliberately. */
+  sandboxModeMigrated: z.boolean().default(false),
 
   /** Whole-server kernel confinement (phase B). When true, the entry point
    *  re-execs the ENTIRE server under seatbelt (macOS) / bwrap (Linux):
@@ -257,6 +235,19 @@ export function loadConfig(): LAXConfig {
   if (!raw.retentionDays) config.retentionDays = profileDefaults.retentionDays;
   if (raw.autoUpdate === undefined) config.autoUpdate = profileDefaults.autoUpdate;
   if (!raw.logLevel) config.logLevel = profileDefaults.logLevel;
+
+  // One-time upgrade to the kernel-guarded bash default. "host" was the old
+  // default; move installs still on it to "guarded" (credential dirs kernel-
+  // denied at the syscall, network + ~/.config kept) exactly once. The marker
+  // means a user who later picks "host" deliberately is respected and not
+  // re-flipped on the next boot. Mirrors the legacy-workspace migration below.
+  if (!raw.sandboxModeMigrated) {
+    if (raw.sandboxMode === undefined || raw.sandboxMode === "host") {
+      config.sandboxMode = "guarded";
+    }
+    config.sandboxModeMigrated = true;
+    saveConfig(config);
+  }
 
   // Workspace location. The packaged desktop app sets LAX_DOCUMENTS_DIR so the
   // agent workspace lives in the user's Documents (findable in Finder/Explorer,

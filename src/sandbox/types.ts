@@ -2,7 +2,7 @@
 // sandbox-validate.ts can import SandboxConfig without pulling in
 // sandbox.ts (which would create a cycle).
 
-export type SandboxMode = "host" | "docker" | "seatbelt" | "bwrap";
+export type SandboxMode = "host" | "guarded" | "docker" | "seatbelt" | "bwrap";
 
 // Which confinement profile a kernel-sandbox applies.
 // - "shell"   — strict shell-child cage: network DENIED + every sensitive dir

@@ -109,6 +109,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/computer-control.ts` | S |
 | `src/config-hot-reload.ts` | S |
 | `src/config-loader.ts` | S |
+| `src/config-profiles.ts` | S |
 | `src/config.ts` | M |
 | `src/contradiction-detector.ts` | M |
 | `src/contradiction-patterns.ts` | S |

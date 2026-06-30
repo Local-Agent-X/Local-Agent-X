@@ -119,8 +119,8 @@ export const NUDGE_CEILING = 6;
 // curated list — but every member MUST be read-only (a fence test in
 // loop-detection.test.ts asserts risk ∈ {safe, network-read}), so a mutating
 // tool can never be mistaken for a harmless lookup. Worker-pool status checks
-// (op_status / op_wait / agent_status) loop just like the legacy operation_status
-// — a chat agent polled op_status 16x in one turn — so they're spiralable too.
+// (op_status / op_wait / agent_status) get polled in a tight loop — a chat agent
+// polled op_status 16x in one turn — so they're spiralable too.
 //
 // Mutation / progress classification (which tools reset the no-progress and
 // discovery counters) lives in tool-mutation-check.ts, derived from the risk
@@ -129,7 +129,7 @@ export const SPIRALABLE_TOOLS = new Set([
   "glob", "web_search", "read", "grep",
   "agent_whoami", "agent_team_list", "issue_list", "issue_search",
   "memory_search", "memory_recall", "memory_get",
-  "task_list", "operation_status", "operation_list",
+  "task_list",
   "op_status", "op_wait", "agent_status", "agent_output",
 ]);
 

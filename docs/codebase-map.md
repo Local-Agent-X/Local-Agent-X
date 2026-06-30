@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 59 live · 1 with no live importer · 1088 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1083 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -32,23 +32,23 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/orchestrator/` | 18 | 21 | L |  |
 | `src/session/` | 18 | 7 | M |  |
 | `src/agent-request/` | 17 | 12 | L |  |
-| `src/agents/` | 16 | 13 | L |  |
+| `src/agents/` | 15 | 13 | L |  |
 | `src/workspace/` | 15 | 2 | M |  |
 | `src/chat-ws/` | 14 | 8 | M |  |
 | `src/app-runtime/` | 13 | 12 | L |  |
-| `src/browser/` | 12 | 23 | XL |  |
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/anthropic-client/` | 11 | 18 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
+| `src/browser/` | 11 | 23 | XL |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |
 | `src/whatsapp-bridge/` | 9 | 6 | M |  |
 | `src/agent-guards/` | 8 | 12 | L |  |
-| `src/autopilot/` | 8 | 13 | L |  |
 | `src/screen-stream/` | 8 | 8 | L |  |
 | `src/self-edit/` | 8 | 14 | L |  |
 | `src/sync/` | 8 | 18 | L |  |
+| `src/autopilot/` | 7 | 13 | L |  |
 | `src/context-manager/` | 7 | 8 | M |  |
 | `src/protocols/` | 7 | 32 | XL |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
@@ -80,12 +80,7 @@ over 400 LOC (the source-hygiene ceiling).
 
 ## No live importer (dead / superseded candidates)
 
-Zero non-test importers. Likely superseded; confirm before tracing into them.
-See ARCHITECTURE.md's "Looks canonical, isn't" table for the curated verdicts.
-
-| Directory | Files | Size |
-|---|--:|:--:|
-| `src/operations/` | 5 | L |
+_None — every directory has at least one live importer._
 
 ## Top-level `src/` files
 

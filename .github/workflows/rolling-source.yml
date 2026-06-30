@@ -1,0 +1,93 @@
+name: Rolling Source Asset (verified OTA payload)
+
+# Publishes the per-commit, checksum-verified source asset the in-app updater
+# PREFERS over GitHub's on-demand archive/<sha>.tar.gz.
+#
+# Why this exists (closes TODO(rolling-checksum)): the rolling OTA channel
+# resolves `main` → an immutable commit sha, then tries
+#     releases/download/rolling/lax-source-<sha>.tar.gz  (+ .sha256 sidecar)
+# and verifies the bytes with assertSha256 before extracting
+# (src/ota-update.ts downloadMainTarball). GitHub's on-demand git-archive bytes
+# are NOT byte-stable, so they can't be pre-hashed — only an uploaded, immutable
+# release asset can. This job builds that asset + its SHA256 sidecar for every
+# commit on main, so the hash the app checks is the hash of the bytes it
+# downloads. With no asset published the app silently falls back to the
+# commit-pinned (but un-checksummed) archive — strictly today's behavior.
+#
+# Runs on EVERY push to main (no path filter): the app can resolve to ANY main
+# HEAD, so every HEAD needs an asset or that commit silently loses byte-level
+# verification. The asset format contract lives in scripts/build-rolling-source.mjs
+# and is locked by test/rolling-source-contract.test.ts (publish ⟷ verify).
+#
+# This job only ADDS source assets to the `rolling` release; installer-rolling.yml
+# OWNS the release metadata + the .exe/.dmg installers and is untouched here.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Serialize so a burst of pushes can't race the upload/prune against each other.
+# Don't cancel in-flight runs — each commit should still publish its own asset.
+concurrency:
+  group: rolling-source
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # gh release upload/delete-asset needs write
+
+jobs:
+  publish-source-asset:
+    name: Build + publish verified source asset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build verified source asset for this commit
+        run: node scripts/build-rolling-source.mjs "${{ github.sha }}" rolling-dist
+
+      - name: Publish the asset + sidecar to the `rolling` release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="${{ github.sha }}"
+          asset="rolling-dist/lax-source-${sha}.tar.gz"
+          # The `rolling` release is normally created by installer-rolling.yml.
+          # If it doesn't exist yet (fresh repo / installer workflow not run),
+          # create a minimal prerelease placeholder so the upload has a home —
+          # the installer workflow enriches name/body/installers later. We never
+          # set those fields here, so we can't clobber its metadata.
+          if ! gh release view rolling >/dev/null 2>&1; then
+            gh release create rolling --prerelease --title "rolling" \
+              --notes "Rolling channel assets (auto-managed). Installers published by installer-rolling.yml."
+          fi
+          gh release upload rolling "$asset" "${asset}.sha256" --clobber
+          echo "Published lax-source-${sha}.tar.gz (+ .sha256) to the rolling release."
+
+      - name: Prune old source assets (keep newest 10)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          KEEP=10
+          # Only HEAD's asset is ever needed by a client; keep a small ring for
+          # in-flight updaters on a just-superseded HEAD, prune the rest so the
+          # release can't grow without bound (mirrors the repo's other caps).
+          mapfile -t ALL < <(gh release view rolling --json assets \
+            --jq '.assets
+                  | map(select(.name | test("^lax-source-[0-9a-f]{40}\\.tar\\.gz$")))
+                  | sort_by(.createdAt) | reverse | .[].name')
+          pruned=0
+          for name in "${ALL[@]:$KEEP}"; do
+            echo "Pruning $name (+ .sha256)"
+            gh release delete-asset rolling "$name" -y || true
+            gh release delete-asset rolling "${name}.sha256" -y || true
+            pruned=$((pruned + 1))
+          done
+          echo "Pruned $pruned old source asset(s); kept newest $KEEP."

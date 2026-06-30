@@ -126,11 +126,10 @@ export class OTAManager {
   // binding and we refuse to download (mirrors downloadUpdate's
   // reject-on-missing-checksum posture).
   //
-  // TODO(rolling-checksum): once installer-rolling.yml publishes a SHA256SUMS
-  // for the per-commit archive, also fetch + verify that here so a poisoned CDN
-  // response for a valid sha URL is rejected too. The commit-pin already
-  // removes the mutable-ref swap; the published checksum would add bytes-level
-  // verification on top.
+  // Bytes-level verification (closes the former TODO(rolling-checksum)): the
+  // verified-asset path below fetches a published immutable asset + .sha256 and
+  // rejects on mismatch — catching a poisoned CDN response for a valid sha URL,
+  // not just the mutable-ref swap. Asset built per commit by rolling-source.yml.
   async downloadMainTarball(commit: string): Promise<string> {
     if (!commit) {
       throw new Error(

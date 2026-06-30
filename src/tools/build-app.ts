@@ -17,7 +17,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getLaxDir } from "../lax-data-dir.js";
+import { getSetting } from "../settings.js";
 import { workspacePath, workspaceRoot } from "../config.js";
 import type { ToolDefinition } from "../types.js";
 import { PROVIDERS } from "../providers/registry.js";
@@ -111,11 +111,17 @@ export function resolveBuildProvider(
   if (backendArg === "claude" || backendArg === "anthropic") return "anthropic";
   if (backendArg && backendArg !== "auto") return backendArg;
   try {
-    const settingsPath = opts.settingsPath
-      ?? join(getLaxDir(), "settings.json");
-    if (existsSync(settingsPath)) {
-      const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
-      if (typeof s.provider === "string" && s.provider.length > 0) return s.provider;
+    // Tests inject a custom settingsPath; honor that raw read. The default
+    // (no override) goes through the canonical cached settings reader so the
+    // file is parsed once, coherently, across the whole process.
+    if (opts.settingsPath) {
+      if (existsSync(opts.settingsPath)) {
+        const s = JSON.parse(readFileSync(opts.settingsPath, "utf-8"));
+        if (typeof s.provider === "string" && s.provider.length > 0) return s.provider;
+      }
+    } else {
+      const provider = getSetting<string>("provider");
+      if (typeof provider === "string" && provider.length > 0) return provider;
     }
   } catch { /* fall through */ }
   return "anthropic";

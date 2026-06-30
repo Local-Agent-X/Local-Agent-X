@@ -19,10 +19,10 @@
  * bypass paths call runSurgeon().
  */
 import { spawn, execSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { getLaxDir } from "../lax-data-dir.js";
+import { getSetting } from "../settings.js";
 import { buildSelfEditChildEnv } from "./child-env.js";
 import { runGenericSurgeon } from "./generic-surgeon.js";
 import { killProcessTree } from "../process-tree-kill.js";
@@ -86,11 +86,8 @@ const CLI_PRIORITY: SurgeonProviderKey[] = ["anthropic", "codex", "xai"];
 /** Read the active chat provider from settings.json — same source build_app uses. */
 export function readActiveProvider(): string {
   try {
-    const p = join(getLaxDir(), "settings.json");
-    if (existsSync(p)) {
-      const s = JSON.parse(readFileSync(p, "utf-8")) as { provider?: unknown };
-      if (typeof s.provider === "string" && s.provider) return s.provider;
-    }
+    const provider = getSetting<unknown>("provider");
+    if (typeof provider === "string" && provider) return provider;
   } catch { /* fall through to default */ }
   return "anthropic";
 }

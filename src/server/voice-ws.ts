@@ -1,5 +1,4 @@
 import { type Server } from "node:http";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
@@ -107,13 +106,10 @@ export async function setupVoiceWs(deps: {
       // The visuals toggle only governs the one cosmetic tool (voice_visual).
       let visualsEnabled = config.voice_visuals_enabled !== false;
       try {
-        const { readFileSync, existsSync } = await import("node:fs");
-        const settingsPath = join(dataDir, "settings.json");
-        if (existsSync(settingsPath)) {
-          const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
-          if (typeof s.voice_visuals_enabled === "boolean") {
-            visualsEnabled = s.voice_visuals_enabled;
-          }
+        const { getSetting } = await import("../settings.js");
+        const setting = getSetting<boolean>("voice_visuals_enabled");
+        if (typeof setting === "boolean") {
+          visualsEnabled = setting;
         }
       } catch { /* keep config-default */ }
       // Governor: a voice turn is FAST and tool-light. It answers / does quick

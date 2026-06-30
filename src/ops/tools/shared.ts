@@ -7,9 +7,7 @@
  * single-module semantics now that the tools live in separate files.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { getLaxDir } from "../../lax-data-dir.js";
-import { join } from "node:path";
+import { getSetting } from "../../settings.js";
 import { buildContextPack } from "../context-pack-builder.js";
 import { getRetryPolicy } from "../heartbeat.js";
 import { newOpId } from "../op-store.js";
@@ -39,10 +37,8 @@ export interface SubmitArgs {
  */
 export async function readSettingsProvider(): Promise<string | null> {
   try {
-    const sp = join(getLaxDir(), "settings.json");
-    if (!existsSync(sp)) return null;
-    const s = JSON.parse(readFileSync(sp, "utf-8"));
-    return typeof s.provider === "string" ? s.provider : null;
+    const provider = getSetting<string>("provider");
+    return typeof provider === "string" ? provider : null;
   } catch {
     return null;
   }

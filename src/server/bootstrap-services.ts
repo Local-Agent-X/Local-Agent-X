@@ -1,6 +1,7 @@
-import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { loadSettings } from "../settings.js";
 import { SecurityLayer } from "../security/index.js";
 import { loadToolPolicy } from "../tool-policy.js";
 import { SessionStore, MemoryIndex, MemoryManager, ensurePersonalityFiles } from "../memory/index.js";
@@ -58,8 +59,7 @@ export async function initOrRefreshEmbeddingProvider(deps: {
   const { config, dataDir, secretsStore, memoryIndex } = deps;
   try {
     const { createEmbeddingProvider } = await import("../embedding-providers/index.js");
-    const sp = join(dataDir, "settings.json");
-    const settings = existsSync(sp) ? JSON.parse(readFileSync(sp, "utf-8")) : {};
+    const settings = loadSettings() as Record<string, any>;
     const embProvider = settings.embeddingProvider || "ollama";
     const embModel = settings.embeddingModel || undefined;
 
@@ -285,10 +285,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   _t();
 
   function loadSavedSettings() {
-    try {
-      const sp = join(dataDir, "settings.json");
-      if (existsSync(sp)) return JSON.parse(readFileSync(sp, "utf-8"));
-    } catch {} return {};
+    return loadSettings();
   }
 
   return { security, publicDir, dataDir, toolPolicy, rbac, agentSync, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations, loadSavedSettings };

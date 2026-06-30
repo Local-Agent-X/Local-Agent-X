@@ -92,8 +92,34 @@ async function* walkDir(dir: string, typeFilter?: string, globFilter?: string): 
   }
 }
 
+// JS RegExp rejects ripgrep/PCRE-style inline flags like `(?i)` with "Invalid
+// group", so a case-insensitive search ripgrep accepts dies only when rg is
+// absent and this fallback runs. Lift a LEADING inline-flag group into real
+// RegExp flags (merging the case_insensitive option) so the two paths behave
+// alike. Exported for testing.
+export function parsePattern(raw: string, caseInsensitive: boolean): { source: string; flags: string } {
+  const flags = new Set<string>();
+  if (caseInsensitive) flags.add("i");
+  let source = raw;
+  const lead = /^\(\?([ims]+)\)/.exec(source);
+  if (lead) {
+    for (const f of lead[1]) flags.add(f);
+    source = source.slice(lead[0].length);
+  }
+  return { source, flags: [...flags].join("") };
+}
+
 async function fallbackSearch(args: Record<string, unknown>, limit: number): Promise<ToolResult> {
-  const pattern = new RegExp(String(args.pattern), args.case_insensitive ? "i" : "");
+  let pattern: RegExp;
+  try {
+    const { source, flags } = parsePattern(String(args.pattern), Boolean(args.case_insensitive));
+    pattern = new RegExp(source, flags);
+  } catch (e) {
+    return err(
+      `Invalid regex pattern: ${(e as Error).message}. ` +
+      "Tip: use the case_insensitive option instead of an inline (?i) flag.",
+    );
+  }
   const mode = (args.output_mode as OutputMode) || "files_with_matches";
   const ctx = typeof args.context === "number" ? (args.context as number) : 0;
   const root = searchRoot(args);

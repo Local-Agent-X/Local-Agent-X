@@ -21,6 +21,7 @@ import { readOp, writeOp } from "../ops/op-store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { driveTurn } from "./turn-loop.js";
+import { recordTerminalOutcome } from "./turn-loop/decide-outcome.js";
 import { seedInitialUserMessage } from "./initial-prompt.js";
 import {
   startCancelTracker,
@@ -155,6 +156,13 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
         // 2026-06-23). Fail the op explicitly, same as the adapter-error-
         // exhausted floor in turn-loop.ts, so it finalizes and the spinner
         // clears with a visible reason.
+        //
+        // Skipping commitTurn also skips decide-outcome, so a truncated op used
+        // to escape the outcome ledger entirely — the completion metric went
+        // blind to every run that hit the cap (and they're disproportionately
+        // the bad ones: stalled, looping, or wrapping up over a broken build).
+        // Record it as aborted before failing, so the metric stays honest.
+        recordTerminalOutcome(op, "aborted");
         transitionOp(op, "failed", "max_turns_exceeded");
         break;
       }

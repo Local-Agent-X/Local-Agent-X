@@ -253,25 +253,17 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
 
   // Record the op outcome on its terminal turn (terminalReason stays non-null
   // only when every continuation gate above declined to extend it → fires once
-  // per op). Category comes from every tool the op touched, not just this turn,
-  // so a browser run that ends on a tool-less wrap-up still counts as "browser".
+  // per op).
+  //
+  // An op that ends still flagged give-up (browser-handoff computed the verdict;
+  // the model was nudged but never delivered) is NOT clean — record it as partial
+  // so the completion metric stops rounding give-ups up to success. Likewise a
+  // removal/cleanup sweep that ends without a confirming empty search
+  // (cleanup-verify's verdict), and a coding op that edited source but never
+  // reached a clean build/type-check (verify-gate's verdict): "done" over an
+  // unverified edit is a partial, not a clean. All verdicts default false for ops
+  // the gate never evaluated, so they only ever demote a real unrecovered case.
   if (terminalReason !== null) {
-    const opToolNames = new Set<string>();
-    for (const turn of readOpTurns(op.id)) {
-      for (const s of turn.toolCallSummary ?? []) opToolNames.add(s.tool);
-      for (const t of turn.observedTools ?? []) opToolNames.add(t);
-    }
-    for (const tc of toolCalls) opToolNames.add(tc.tool);
-    for (const t of observedTools) opToolNames.add(t);
-    // An op that ends still flagged give-up (browser-handoff computed the
-    // verdict; the model was nudged but never delivered) is NOT clean — record
-    // it as partial so the completion metric stops rounding give-ups up to
-    // success. Likewise a removal/cleanup sweep that ends without a confirming
-    // empty search (cleanup-verify's verdict), and a coding op that edited
-    // source but never reached a clean build/type-check (verify-gate's verdict):
-    // "done" over an unverified edit is a partial, not a clean. All verdicts
-    // default false for ops the gate never evaluated, so they only ever demote a
-    // real unrecovered case.
     const outcome: OpOutcome =
       terminalReason === "error" ? "aborted"
         : endedPartial ? "partial"
@@ -279,8 +271,31 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
         : opCleanupUnverified(op.id) ? "partial"
         : opEditedSourceUnverified(op.id) ? "partial"
         : "clean";
-    recordOpOutcome(classifyOpCategory(opToolNames), outcome, resolveOpModel(op));
+    recordTerminalOutcome(op, outcome, [...toolCalls.map(tc => tc.tool), ...observedTools]);
   }
 
   return { terminalReason, allMessages };
+}
+
+/**
+ * Record the op's terminal outcome under its tool-derived category. The category
+ * spans every tool the op touched across all committed turns (plus any extras
+ * observed this turn), so an op that ends tool-lessly still classifies right.
+ * Shared with the MAX_TURNS truncation path in worker.ts: a force-terminated op
+ * transitions straight to failed, skipping this turn-loop, so without recording
+ * here it would escape the outcome ledger entirely (the completion metric went
+ * blind to every truncated run).
+ */
+export function recordTerminalOutcome(
+  op: Op,
+  outcome: OpOutcome,
+  extraToolNames: Iterable<string> = [],
+): void {
+  const opToolNames = new Set<string>();
+  for (const turn of readOpTurns(op.id)) {
+    for (const s of turn.toolCallSummary ?? []) opToolNames.add(s.tool);
+    for (const t of turn.observedTools ?? []) opToolNames.add(t);
+  }
+  for (const t of extraToolNames) opToolNames.add(t);
+  recordOpOutcome(classifyOpCategory(opToolNames), outcome, resolveOpModel(op));
 }

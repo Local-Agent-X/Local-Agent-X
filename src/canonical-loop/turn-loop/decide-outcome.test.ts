@@ -33,7 +33,8 @@ vi.mock("../middlewares/cleanup-verify.js", () => ({
   opCleanupUnverified: vi.fn(() => false),
 }));
 
-import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
+import { decideTurnOutcome, recordTerminalOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
+import { recordOpOutcome } from "../../tool-tracker.js";
 import { readOpTurns } from "../store.js";
 import type { ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
@@ -201,5 +202,25 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
     await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
     const arg = (classifyOpCategory as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Set<string>;
     expect(arg.has("mcp__lax__web_search")).toBe(true);
+  });
+});
+
+describe("recordTerminalOutcome — the MAX_TURNS / truncation path", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("records the given outcome under the op's tool-derived category", () => {
+    (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    recordTerminalOutcome(op, "aborted", ["grep", "edit"]);
+    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "aborted", "grok-4.3");
+  });
+
+  it("folds the op's committed-turn tools into the category set, not just this turn's", async () => {
+    (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      [{ toolCallSummary: [{ tool: "browser" }], observedTools: [] }] as unknown as ReturnType<typeof readOpTurns>,
+    );
+    const { classifyOpCategory } = await import("../../tool-tracker.js");
+    recordTerminalOutcome(op, "aborted");
+    const arg = (classifyOpCategory as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Set<string>;
+    expect(arg.has("browser")).toBe(true);
   });
 });

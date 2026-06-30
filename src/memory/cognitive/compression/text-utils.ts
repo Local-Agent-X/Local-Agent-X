@@ -3,9 +3,11 @@ import { createHash } from "node:crypto";
 import { STOP_WORDS } from "./constants.js";
 import { extractRelationTriples } from "../../relation-patterns.js";
 
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
+// One token estimator across the codebase — the canonical (slightly
+// conservative) one in context-manager. Compression used to keep its own
+// `/4` copy; folded here so the heuristic can't drift between the chat
+// context-window accounting and the memory compressor.
+export { estimateTokens } from "../../../context-manager/token-estimation.js";
 
 export function generateId(content: string): string {
   return createHash("sha256").update(content).digest("hex").slice(0, 16);

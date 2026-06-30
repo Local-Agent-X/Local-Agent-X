@@ -15,6 +15,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { killProcessTree } from "../../process-tree-kill.js";
 import type { ProjectLaunchSpec } from "./types.js";
 
 export interface LaunchedApp {
@@ -42,19 +43,10 @@ export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, s
 
   const stop = async (): Promise<void> => {
     if (proc.killed || proc.exitCode !== null) return;
-    try {
-      // On Windows, killing the npm process leaves the actual node dev
-      // server orphaned. Use taskkill with /T to kill the whole tree.
-      if (isWin && proc.pid) {
-        await new Promise<void>((resolve) => {
-          const tk = spawn("taskkill", ["/F", "/T", "/PID", String(proc.pid)], { shell: false });
-          tk.on("close", () => resolve());
-          tk.on("error", () => resolve());
-        });
-      } else {
-        proc.kill("SIGTERM");
-      }
-    } catch { /* best-effort */ }
+    // killProcessTree signals SIGTERM and, on Windows, taskkills the whole
+    // tree — npm wraps the real node dev server, which a bare proc.kill would
+    // orphan. One home for the platform logic (process-tree-kill.ts).
+    killProcessTree(proc, "SIGTERM");
   };
 
   signal?.addEventListener("abort", () => { void stop(); });

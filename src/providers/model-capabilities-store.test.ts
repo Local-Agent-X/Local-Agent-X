@@ -70,6 +70,10 @@ describe("public seed — correct day-one without phoning home", () => {
     expect(hasUnsupportedParam(XAI, "grok-4.20-0309-reasoning", "reasoning_effort")).toBe(true);
   });
 
+  it("the seeded o-series temperature rejection is known on a fresh store", () => {
+    expect(hasUnsupportedParam("https://api.openai.com/v1", "o3-pro", "temperature")).toBe(true);
+  });
+
   it("a read-only seed fact does not write a user file", () => {
     // Only a runtime observation should create ~/.lax/model-capabilities.json.
     expect(hasUnsupportedParam(XAI, "grok-4.20-0309-reasoning", "reasoning_effort")).toBe(true);

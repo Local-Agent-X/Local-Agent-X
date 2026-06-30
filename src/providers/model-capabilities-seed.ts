@@ -42,4 +42,13 @@ export const MODEL_CAPABILITY_SEED: ReadonlyArray<ModelCapabilitySeedEntry> = [
     model: "grok-4.20-0309-reasoning",
     unsupportedParams: ["reasoning_effort"],
   },
+  // o-series (o3-pro) 400s on a non-default `temperature` — only the default is
+  // accepted (see isTemperatureRejection in adapters/openai-http.ts). Omitting
+  // it up front is strictly safe: the API falls back to the one value o-series
+  // allows. Captured by the failure manifest (eval/op-outcomes/failure-manifest.md).
+  {
+    baseURL: "https://api.openai.com/v1",
+    model: "o3-pro",
+    unsupportedParams: ["temperature"],
+  },
 ];

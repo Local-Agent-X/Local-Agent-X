@@ -57,6 +57,14 @@ export async function registerProviderAdapter(
     throw new Error(`provider ${provider} has no usable OpenAI-compat target — check API key and base URL config`);
   }
   const finalTarget = target;
+  // Ollama (local + cloud) reports model capabilities via /api/show. Probe once
+  // up front so a tool-less local model is recorded in the registry before the
+  // first turn, rather than discovered via the empty-response stumble. Bounded,
+  // fail-safe, and cached per (baseURL, model) — a no-op for non-Ollama.
+  if (provider === "local" || provider === "ollama-cloud") {
+    const { probeOllamaCapabilities } = await import("../../providers/ollama-capability-probe.js");
+    await probeOllamaCapabilities(finalTarget.baseURL, model, finalTarget.apiKey);
+  }
   registerAdapterForOp(opId, () =>
     createOpenAICompatAdapter({
       systemPrompt,

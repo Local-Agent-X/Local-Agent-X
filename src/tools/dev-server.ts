@@ -28,7 +28,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { workspacePath } from "../config.js";
-import { SESSIONS, startSession, killSession } from "./process-session.js";
+import { SESSIONS, startSession, killSession, pidsOnPort } from "./process-session.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("tools.dev-server");
 import {
   saveConnectorManifest,
   deleteConnectorManifest,
@@ -71,6 +74,9 @@ export interface DevServerDeps {
   start?: (command: string, cwd?: string) => { session: { sessionId: string } } | { error: string };
   isAlive?: (sessionId: string) => boolean;
   kill?: (sessionId: string) => void;
+  /** Is something actually listening on the dev port? Verified alongside the
+   *  session flag so a stale session (process gone) is healed by a restart. */
+  portBound?: (port: number) => boolean;
 }
 
 function deps(d: DevServerDeps): Required<DevServerDeps> {
@@ -78,6 +84,7 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
     start: d.start ?? ((command, cwd) => startSession(command, cwd)),
     isAlive: d.isAlive ?? ((sid) => { const s = SESSIONS.get(sid); return !!s && !s.exitedAt; }),
     kill: d.kill ?? ((sid) => { const s = SESSIONS.get(sid); if (s) killSession(s); }),
+    portBound: d.portBound ?? ((port) => pidsOnPort(port).length > 0),
   };
 }
 
@@ -187,12 +194,21 @@ export function ensureDevServerRunning(appId: string, d: DevServerDeps = {}): En
   if (!rec) return { status: "none" };
   const dd = deps(d);
   noteDevServerAccess(appId);
-  if (rec.sessionId && dd.isAlive(rec.sessionId)) return { status: "running", record: rec };
+  // "Running" requires BOTH the in-memory session flag AND the port actually
+  // listening. A session can be stale — marked alive but its process gone (a
+  // dev server killed externally, or one whose 'exit' didn't reach us) — which
+  // otherwise wedges the app forever on a dead port: ensureDevServerRunning
+  // returns "running", the proxy connects, ECONNREFUSED. Verifying the port
+  // makes this self-healing.
+  const alive = !!(rec.sessionId && dd.isAlive(rec.sessionId));
+  if (alive && dd.portBound(rec.port)) return { status: "running", record: rec };
+  if (alive) { logger.info(`[dev-server] ${appId}: session ${rec.sessionId} alive but port ${rec.port} dead — restarting`); dd.kill(rec.sessionId!); }
 
   const started = dd.start(rec.command, rec.cwd || undefined);
-  if ("error" in started) return { status: "error", error: started.error };
+  if ("error" in started) { logger.warn(`[dev-server] ${appId}: restart failed: ${started.error}`); return { status: "error", error: started.error }; }
   const updated: DevServerRecord = { ...rec, sessionId: started.session.sessionId };
   writeRecord(updated);
+  logger.info(`[dev-server] ${appId}: (re)started session ${started.session.sessionId} on port ${rec.port}`);
   return { status: "started", record: updated };
 }
 

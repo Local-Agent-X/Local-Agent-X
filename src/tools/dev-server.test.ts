@@ -27,6 +27,7 @@ function fakeDeps(): { deps: Required<DevServerDeps>; sessions: Map<string, bool
     start: (command) => { const id = `s${++n}`; sessions.set(id, true); starts.push(command); return { session: { sessionId: id } }; },
     isAlive: (sid) => sessions.get(sid) === true,
     kill: (sid) => { sessions.set(sid, false); },
+    portBound: () => true,   // default: an alive session is also bound to its port
   };
   return { deps, sessions, starts };
 }
@@ -119,6 +120,20 @@ describe("ensureDevServerRunning — lazy start-on-access", () => {
     expect(res.status).toBe("started");
     if (res.status === "started") expect(res.record.sessionId).not.toBe(oldId);
     expect(readDevServerRecord("notes")?.sessionId).not.toBe(oldId);
+  });
+
+  it("self-heals a STALE session: alive flag set but the port is DEAD → restart, not a wedge", () => {
+    // The real-world bug: a dev server killed externally leaves its session flag
+    // 'alive' in memory, so ensureDevServerRunning returned 'running' and the
+    // proxy connected to a dead port forever (ECONNREFUSED). The port probe fixes it.
+    const { deps, sessions, starts } = fakeDeps();
+    const reg = registerDevServer({ appId: "stale", command: "vite", port: 5210, cwd: "/tmp/x" }, deps);
+    expect(reg.ok && sessions.get(reg.sessionId)).toBe(true);   // session reads alive
+    const portDead = { ...deps, portBound: () => false };       // ...but nothing on the port
+
+    const res = ensureDevServerRunning("stale", portDead);
+    expect(res.status).toBe("started");   // restarted, NOT a no-op 'running'
+    expect(starts).toHaveLength(2);       // original register + the heal restart
   });
 });
 

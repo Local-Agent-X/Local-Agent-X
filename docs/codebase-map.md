@@ -12,14 +12,14 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1086 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 59 live · 1 with no live importer · 1088 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/security/` | 62 | 24 | XL |  |
-| `src/ops/` | 52 | 20 | L |  |
+| `src/ops/` | 53 | 21 | L |  |
 | `src/memory/` | 38 | 106 | XL |  |
 | `src/tools/` | 37 | 124 | XL |  |
 | `src/providers/` | 35 | 16 | L |  |
@@ -45,7 +45,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/integrations/` | 10 | 15 | M |  |
 | `src/whatsapp-bridge/` | 9 | 6 | M |  |
 | `src/agent-guards/` | 8 | 12 | L |  |
-| `src/autopilot/` | 8 | 12 | L |  |
+| `src/autopilot/` | 8 | 13 | L |  |
 | `src/screen-stream/` | 8 | 8 | L |  |
 | `src/self-edit/` | 8 | 14 | L |  |
 | `src/sync/` | 8 | 18 | L |  |
@@ -57,7 +57,6 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ari-kernel/` | 5 | 12 | L |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
 | `src/mcp-client/` | 5 | 6 | L |  |
-| `src/operations/` | 5 | 5 | L |  |
 | `src/routes/` | 5 | 79 | XL |  |
 | `src/routing/` | 5 | 7 | M |  |
 | `src/util/` | 5 | 1 | S |  |
@@ -81,7 +80,12 @@ over 400 LOC (the source-hygiene ceiling).
 
 ## No live importer (dead / superseded candidates)
 
-_None — every directory has at least one live importer._
+Zero non-test importers. Likely superseded; confirm before tracing into them.
+See ARCHITECTURE.md's "Looks canonical, isn't" table for the curated verdicts.
+
+| Directory | Files | Size |
+|---|--:|:--:|
+| `src/operations/` | 5 | L |
 
 ## Top-level `src/` files
 

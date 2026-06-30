@@ -16,6 +16,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { containsNulByte } from "../binary-sniff.js";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { scanForSecrets, decodedPayloadViews } from "../security/secret-scanner.js";
@@ -214,9 +215,7 @@ export function canonicalizeAttachmentPath(p: string): string {
 // a binary file almost always has a NUL byte in its head, a text file almost
 // never does. Scan a bounded head so a large attachment stays cheap.
 function isProbablyBinary(buf: Buffer): boolean {
-  const n = Math.min(buf.length, 8192);
-  for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
-  return false;
+  return containsNulByte(buf);
 }
 
 export function checkAttachmentPaths(sink: string, paths: readonly string[]): GuardBlock | null {

@@ -6,6 +6,7 @@
  */
 import { writeFileSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { randomBytes, createHash } from "node:crypto";
+import { containsNulByte } from "../binary-sniff.js";
 import type { FactKind, RetainedFact } from "./types.js";
 
 // ── File I/O helpers ──
@@ -26,7 +27,7 @@ export function safeReadTextFile(filePath: string): string | null {
   try {
     let content = readFileSync(filePath, "utf-8");
     if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
-    if (content.includes("\0")) return null;
+    if (containsNulByte(content)) return null;
     return content.replace(/\r\n/g, "\n");
   } catch { return null; }
 }

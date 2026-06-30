@@ -1,4 +1,5 @@
 import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { containsNulByte } from "../binary-sniff.js";
 import { dirname } from "node:path";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { moveToTrash } from "../safe-delete.js";
@@ -50,12 +51,7 @@ export const readTool: ToolDefinition = {
     // files almost never do. Surface a clear actionable error pointing at the
     // right tool for binary content.
     {
-      const sample = probe.subarray(0, Math.min(8192, probe.length));
-      let hasNull = false;
-      for (let i = 0; i < sample.length; i++) {
-        if (sample[i] === 0) { hasNull = true; break; }
-      }
-      if (hasNull) {
+      if (containsNulByte(probe)) {
         return err(
           `File appears to be binary (${probe.length} bytes, null byte detected in header) — refusing to decode as utf-8. ` +
           `For images use view_image. For other binaries use bash (e.g. \`file\`, \`xxd\`, \`unzip -l\`).`,

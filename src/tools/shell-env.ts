@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { containsNulByte } from "../binary-sniff.js";
 import { createRequire } from "node:module";
 import { homedir, platform } from "node:os";
 import { delimiter, join, sep } from "node:path";
@@ -319,7 +320,7 @@ export function buildSanitizedEnv(extra?: Record<string, string>): Record<string
       continue;
     }
     if (CREDENTIAL_ENV_PATTERNS.some((p) => p.test(key))) continue;
-    if (value.includes("\0")) continue;
+    if (containsNulByte(value)) continue;
     if (value.length >= 32 && /^[A-Za-z0-9+/=_-]+$/.test(value)) continue;
     if (CONNECTION_STRING_CREDENTIAL.test(value)) continue;
     sanitizedEnv[key] = value;
@@ -351,7 +352,7 @@ export function buildSanitizedEnv(extra?: Record<string, string>): Record<string
   sanitizedEnv.PAGER = "cat";
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
-      if (typeof v === "string" && !v.includes("\0")) sanitizedEnv[k] = v;
+      if (typeof v === "string" && !containsNulByte(v)) sanitizedEnv[k] = v;
     }
   }
   // Repair PATH so an installed (Finder/launchd-launched) app can still find the

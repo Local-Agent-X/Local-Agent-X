@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { validateSandboxConfig, execInSandbox, getSandboxMode, wrapSpawnForSandbox, isGuardedUsable } from "./index.js";
+import { validateSandboxConfig, execInSandbox, getSandboxMode, wrapSpawnForSandbox, isGuardedUsable, sandboxDenialHint } from "./index.js";
 import type { SandboxConfig } from "./types.js";
 
 // Sandbox config validator unit tests. These tests do NOT spawn docker —
@@ -167,6 +167,43 @@ describe("guarded sandbox mode (default)", () => {
     const { cmd, args } = wrapSpawnForSandbox("/bin/bash", ["-c", "echo hi"]);
     expect(cmd).toBe("/bin/bash");
     expect(args).toEqual(["-c", "echo hi"]);
+  });
+});
+
+describe("sandboxDenialHint", () => {
+  const epermAws = "cat: /Users/dad/.aws/credentials: Operation not permitted";
+
+  it("names the cage + off switch when a credential dir is denied under a cage", () => {
+    const hint = sandboxDenialHint("guarded", epermAws);
+    expect(hint).toBeTruthy();
+    expect(hint).toContain('mode "guarded"');
+    expect(hint).toContain("~/.aws");
+    expect(hint).toMatch(/Settings/);
+  });
+
+  it("fires for seatbelt and bwrap too", () => {
+    expect(sandboxDenialHint("seatbelt", "ls: /Users/dad/.ssh: Operation not permitted")).toContain("~/.ssh");
+    expect(sandboxDenialHint("bwrap", "Permission denied: /home/u/.kube/config")).toContain("~/.kube");
+  });
+
+  it("returns null in host/docker mode (no kernel cage to blame)", () => {
+    expect(sandboxDenialHint("host", epermAws)).toBeNull();
+    expect(sandboxDenialHint("docker", epermAws)).toBeNull();
+  });
+
+  it("returns null on an ordinary permission error with no cage-denied path", () => {
+    expect(sandboxDenialHint("guarded", "cat: /etc/secret: Permission denied")).toBeNull();
+  });
+
+  it("returns null on a non-permission failure", () => {
+    expect(sandboxDenialHint("guarded", "bash: frobnicate: command not found")).toBeNull();
+  });
+
+  it("does NOT blame the cage for ~/.config — guarded exempts it", () => {
+    // ~/.config is readable in guarded, so an EPERM mentioning it is a real error.
+    expect(sandboxDenialHint("guarded", "open /Users/dad/.config/x: Operation not permitted")).toBeNull();
+    // ...but strict seatbelt DOES deny ~/.config, so there it's the cage.
+    expect(sandboxDenialHint("seatbelt", "open /Users/dad/.config/x: Operation not permitted")).toContain("~/.config");
   });
 });
 

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ServerEvent, ToolDefinition } from "../types.js";
-import { getSandboxMode, execInSandbox, wrapSpawnForSandbox } from "../sandbox/index.js";
+import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
@@ -280,7 +280,11 @@ export const bashTool: ToolDefinition = {
       }
 
       const out = [stdout, stderr].filter(Boolean).join("\n");
-      return err(out || `Exit code: ${code}`, {
+      // If the kernel cage (guarded/seatbelt/bwrap) denied a credential dir, the
+      // bare "Operation not permitted" reads as a mystery — name the sandbox + the
+      // off switch so the agent reports it right instead of flailing.
+      const cageNotice = sandboxDenialHint(sandboxMode, out);
+      return err((cageNotice ? cageNotice + "\n" : "") + (out || `Exit code: ${code}`), {
         exit_code: code,
         duration_ms: durationMs,
         stderr: stderr || undefined,

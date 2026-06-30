@@ -41,6 +41,12 @@ const RETRACTABLE_REASONS: ReadonlySet<string> = new Set([
   // nudges once), so it is NOT retracted — the single honest punt stands, and
   // decide-outcome records it `partial`.
   "browser-handoff",
+  // The final summary credited the result with a tool/model/service it never
+  // used (attribution-claim gate, model-graded). Retract the confabulated text
+  // so only the nudged, accurate re-narration stands. Unlike the others this
+  // fires on a turn that DID call a tool — stripRetractedAssistant drops only
+  // the assistant text, so the real tool result (e.g. the created deck) is kept.
+  "attribution-confabulation",
 ]);
 
 export function isRetractableHallucination(reason: string | null | undefined): boolean {

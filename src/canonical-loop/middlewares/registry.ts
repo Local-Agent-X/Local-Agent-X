@@ -40,6 +40,7 @@ import { repeatFailureMiddleware } from "./repeat-failure.js";
 import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
 import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
+import { attributionClaimMiddleware } from "./attribution-claim.js";
 import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
 import { falseRefusalMiddleware } from "./false-refusal.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
@@ -62,6 +63,10 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     loopDetectionMiddleware,
     hallucinationCheckMiddleware,
     actionClaimMiddleware,
+    // Interactive chat — catches a final summary that CREDITS the result with a
+    // tool/model/service it never used (action-claim is worker-only + checks
+    // action verbs, not attribution). Phrase-gated → model-graded; retractable.
+    attributionClaimMiddleware,
     // Interactive + worker — in UNRESTRICTED file mode, a tool-less turn that
     // refuses a file action on a guessed restriction ("outside the sandbox")
     // without ever calling `read` gets a grounding nudge. Runs BEFORE

@@ -40,3 +40,12 @@ export {
   type VerifyGateState,
   type VerifyTurnAction,
 } from "./verify-gate.js";
+export {
+  looksLikeCleanupSweep,
+  isEmptyGrepResult,
+  noteCleanupEvidence,
+  checkCleanupVerify,
+  createCleanupVerifyState,
+  type CleanupVerifyState,
+  type CleanupToolResult,
+} from "./cleanup-verify.js";

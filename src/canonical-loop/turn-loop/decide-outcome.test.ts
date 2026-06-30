@@ -29,6 +29,9 @@ vi.mock("../../tool-tracker.js", () => ({
 vi.mock("../middlewares/browser-handoff.js", () => ({
   opGaveUpUnrecovered: vi.fn(() => false),
 }));
+vi.mock("../middlewares/cleanup-verify.js", () => ({
+  opCleanupUnverified: vi.fn(() => false),
+}));
 
 import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
 import { readOpTurns } from "../store.js";
@@ -140,6 +143,14 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
   it("records partial when the op ended still giving up (browser-handoff verdict)", async () => {
     const { opGaveUpUnrecovered } = await import("../middlewares/browser-handoff.js");
     (opGaveUpUnrecovered as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+    const { recordOpOutcome } = await import("../../tool-tracker.js");
+    await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
+    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial", "grok-4.3");
+  });
+
+  it("records partial when a cleanup ended without a confirming search (cleanup-verify verdict)", async () => {
+    const { opCleanupUnverified } = await import("../middlewares/cleanup-verify.js");
+    (opCleanupUnverified as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
     const { recordOpOutcome } = await import("../../tool-tracker.js");
     await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
     expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial", "grok-4.3");

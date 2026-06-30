@@ -53,6 +53,7 @@ import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
 import { forceToolUseMiddleware } from "./force-tool-use.js";
 import { autoBuildAppMiddleware } from "./auto-build-app.js";
 import { verifyGateMiddleware } from "./verify-gate.js";
+import { cleanupVerifyMiddleware } from "./cleanup-verify.js";
 
 export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
   return [
@@ -91,6 +92,15 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     // up → nudge once. Runs after premature-completion (they're mutually
     // exclusive: that fires on no-commit, this on source-edit-committed).
     verifyGateMiddleware,
+    // All lanes — the SEARCH-verification sibling of verify-gate: on a
+    // removal/cleanup sweep ("remove all X", "finish cleaning up Y"), nudge once
+    // when the model reports it done without a grep ever coming back empty, and
+    // keep the outcome honest (an unconfirmed cleanup records `partial`). A
+    // passing build doesn't prove a ref is gone — dead refs in comments/docs/
+    // strings compile fine — so this checks the model's own clean-search
+    // evidence, not the build. Runs after verify-gate so an edited-but-unbuilt
+    // worker still gets the build nudge first.
+    cleanupVerifyMiddleware,
     openStepsMiddleware,
     // Interactive chat only — forces one more turn when a browser-driving turn
     // ends by punting the obstruction back to the user while the page is still

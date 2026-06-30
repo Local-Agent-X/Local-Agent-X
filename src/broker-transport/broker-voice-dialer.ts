@@ -1,25 +1,22 @@
-// BrokerVoiceDialer — the desktop glue that drives a VOICE session from a SEPARATE broker
-// rendezvous (channel=voice) instead of the tailnet /ws/voice socket. It is the voice
-// analogue of BrokerScreenDialer, and deliberately a SEPARATE peer from the persistent
-// screen/chat peer: voice gets its own on-demand rendezvous + TURN session, so it never
-// renegotiates or collides with the screen peer's signaling (see memory
-// apps-over-broker-loopback-proxy / the broker ?channel= change).
+// BrokerVoiceDialer — drives a VOICE session over its OWN broker rendezvous (channel=voice),
+// a SEPARATE peer from the persistent screen/chat peer: voice gets its own on-demand
+// rendezvous + TURN session, so it never renegotiates or collides with the screen peer's
+// signaling (see memory apps-over-broker-loopback-proxy / the broker ?channel= change).
 //
-// The mapping (mirrors BrokerScreenDialer):
-//   onPeerPresent (+ice-servers/grace) → build the VoicePeer + send the offer
-//   onSignal(answer) → peer.applyAnswer   onSignal(ice) → peer.addRemoteIce
-//   peer→onLocalIce  → sendSignal(ice)     peer→offer    → sendSignal(offer)
+// The voice payload over the shared BrokerDialer lifecycle:
+//   onStart        → build the VoicePeer on the minted ICE + send the offer
+//   onAnswer/ice   → peer.applyAnswer / peer.addRemoteIce
+//   peer→onLocalIce         → sendIce (drop the end-of-candidates null)
 //   peer→onControlTransport → VoiceBridge.attach (the JSON control plane)
-//   peer→onMicPcm    → VoiceBridge.onMicFrame (decoded mic → the session's STT)
-//   onPeerLeft → rebuild the peer (KEEP the socket)   onClosed/onError → teardown
+//   peer→onMicPcm           → VoiceBridge.onMicFrame (decoded mic → the session's STT)
+//   onRebuild      → close the stale peer (KEEP the socket)
+//   onTeardown     → close the peer + the bridge
 //
-// Desktop = OFFERER (unchanged). Pure over an injected peer factory so it unit-tests with
-// a fake peer + a fake session (no werift, no broker socket).
+// Desktop = OFFERER. Pure over an injected peer factory so it unit-tests with a fake peer +
+// a fake session (no werift, no broker socket).
 
-import { BrokerClient } from "./vendor/broker-client.js";
-import type { IceServer, RtcSignal } from "./vendor/protocol.js";
 import type { SocketAdapter } from "./vendor/socket-adapter.js";
-import { iceSignal } from "./ice-signal.js";
+import { BrokerDialer, type RemoteIceCandidate } from "./broker-dialer.js";
 import { VoiceBridge } from "./voice-bridge.js";
 import { VoicePeer } from "../voice/voice-peer.js";
 import type { RtcIceCandidate, VoicePeerHandlers } from "../voice/voice-peer.js";
@@ -28,10 +25,6 @@ import type { ControlTransport, IceServerConfig } from "../screen-stream/peer.js
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.voice-dialer");
-
-/** Same TURN-grace window the screen dialer uses: a TURN-less broker never sends an
- *  ice-servers frame, so we must not wait forever before offering STUN/host-only. */
-const ICE_GRACE_MS = 2000;
 
 /** The slice of VoicePeer the dialer drives — lets tests inject a fake peer that records
  *  actions instead of spawning werift. Satisfied by the real VoicePeer. */
@@ -55,155 +48,72 @@ export interface BrokerVoiceDialerDeps {
     iceServers: IceServerConfig[],
     onControlReady: (transport: ControlTransport) => void,
   ) => Promise<VoicePeerLike>;
-  /** Fires ONCE when this dialer goes terminal — the voice presence schedules a reconnect.
-   *  A dialer is single-use: after this, build a new one. */
+  /** Fires ONCE when this dialer goes terminal — the voice presence schedules a reconnect. */
   onClosed?: () => void;
 }
 
-export class BrokerVoiceDialer {
-  private readonly client: BrokerClient;
+export class BrokerVoiceDialer extends BrokerDialer {
   private readonly voice: VoiceBridge;
   private readonly createPeer: NonNullable<BrokerVoiceDialerDeps["createPeer"]>;
-  private readonly onClosed: (() => void) | undefined;
-
   private peer: VoicePeerLike | null = null;
-  private iceServers: IceServer[] = [];
-  private peerPresent = false;
-  private started = false;
-  private stopped = false;
-  private graceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: BrokerVoiceDialerDeps) {
-    this.onClosed = deps.onClosed;
+    super({ onClosed: deps.onClosed, logLabel: "voice " });
     this.createPeer = deps.createPeer ?? ((h, ice, onCtrl) => VoicePeer.create(h, ice, onCtrl));
-    // The bridge owns the voice control plane + session; getPeer reads the dialer's
-    // current peer live (rebuilt on reconnect), so the audio router always targets it.
+    // The bridge owns the voice control plane + session; getPeer reads the dialer's current
+    // peer live (rebuilt on reconnect), so the audio router always targets it.
     this.voice = new VoiceBridge({ getPeer: () => this.peer, sessionFactory: deps.sessionFactory });
+    this.wireBroker(deps.socket);
+  }
 
-    this.client = new BrokerClient(deps.socket, {
-      onPeerPresent: () => this.onPeerPresent(),
-      onSignal: (signal) => this.onSignal(signal),
-      onIceServers: (servers) => this.onIceServers(servers),
-      // Phone left (or the broker re-fired our lifecycle on its reconnect): rebuild the
-      // peer, KEEP our socket. A dropped OWN socket is onClosed → full teardown.
-      onPeerLeft: () => this.prepareRebuild(),
-      onClosed: () => this.teardown(),
-      onError: (code, message) => {
-        logger.warn(`[broker-transport] voice broker error (${code}): ${message}`);
-        this.teardown();
+  /** Build the peer + send the offer. The phone DIALING the voice rendezvous IS the
+   *  "user tapped mic" trigger. The broker IceServer shape is structurally IceServerConfig. */
+  protected async onStart(): Promise<void> {
+    const handlers: VoicePeerHandlers = {
+      onLocalIce: (candidate) => {
+        // null = end-of-candidates; the broker ice signal has no null variant, so we
+        // simply stop trickling.
+        if (candidate) this.sendIce(candidate);
       },
-    });
-  }
-
-  /** Stop the voice session locally (presence shutdown / app exit). Idempotent. */
-  stop(): void {
-    this.teardown();
-  }
-
-  // ── inbound: broker → peer ─────────────────────────────────────────────────────
-
-  private onPeerPresent(): void {
-    this.peerPresent = true;
-    void this.maybeStart();
-    if (!this.started && this.graceTimer === null) {
-      this.graceTimer = setTimeout(() => {
-        this.graceTimer = null;
-        logger.warn(`[broker-transport] voice: no ice-servers within ${ICE_GRACE_MS}ms — STUN/host-only`);
-        void this.maybeStart(true);
-      }, ICE_GRACE_MS);
+      onConnectionState: (state) => {
+        if (state === "failed") {
+          logger.warn("[broker-transport] voice peer failed — tearing down");
+          this.teardown();
+        }
+      },
+      onMicPcm: (frame) => this.voice.onMicFrame(frame),
+    };
+    const peer = await this.createPeer(handlers, this.iceServers, (t) => this.voice.attach(t));
+    if (this.stopped) {
+      void peer.close();
+      return;
     }
+    this.peer = peer;
+    this.sendOffer(await peer.createOffer());
   }
 
-  private onIceServers(servers: IceServer[]): void {
-    this.iceServers = servers;
-    void this.maybeStart();
+  protected onAnswer(sdp: string): void {
+    void this.peer?.applyAnswer(sdp).catch((e: unknown) =>
+      logger.warn(`[broker-transport] voice applyAnswer failed: ${(e as Error).message}`),
+    );
   }
 
-  /** Build the peer + send the offer once the phone is present AND we have ICE (or grace
-   *  elapsed). The phone DIALING the voice rendezvous IS the "user tapped mic" trigger. */
-  private async maybeStart(force = false): Promise<void> {
-    if (this.started || this.stopped || !this.peerPresent) return;
-    if (this.iceServers.length === 0 && !force) return;
-    this.started = true;
-    if (this.graceTimer !== null) {
-      clearTimeout(this.graceTimer);
-      this.graceTimer = null;
-    }
-    try {
-      const handlers: VoicePeerHandlers = {
-        onLocalIce: (candidate) => {
-          // null = end-of-candidates; the broker ice signal has no null variant, so we
-          // simply stop trickling (matches the screen path).
-          if (candidate && !this.stopped) this.client.sendSignal(iceSignal(candidate));
-        },
-        onConnectionState: (state) => {
-          if (state === "failed") {
-            logger.warn("[broker-transport] voice peer failed — tearing down");
-            this.teardown();
-          }
-        },
-        onMicPcm: (frame) => this.voice.onMicFrame(frame),
-      };
-      // The broker IceServer shape is structurally the peer's IceServerConfig.
-      const peer = await this.createPeer(handlers, this.iceServers, (t) => this.voice.attach(t));
-      if (this.stopped) {
-        void peer.close();
-        return;
-      }
-      this.peer = peer;
-      const sdp = await peer.createOffer();
-      if (!this.stopped) this.client.sendSignal({ kind: "offer", sdp });
-    } catch (e) {
-      logger.error(`[broker-transport] voice peer setup failed: ${(e as Error).message}`);
-      this.teardown();
-    }
+  protected onRemoteIce(candidate: RemoteIceCandidate): void {
+    void this.peer?.addRemoteIce(candidate).catch((e: unknown) =>
+      logger.warn(`[broker-transport] voice addRemoteIce failed: ${(e as Error).message}`),
+    );
   }
 
-  private onSignal(signal: RtcSignal): void {
-    if (this.stopped) return;
-    switch (signal.kind) {
-      case "answer":
-        void this.peer?.applyAnswer(signal.sdp).catch((e: unknown) =>
-          logger.warn(`[broker-transport] voice applyAnswer failed: ${(e as Error).message}`),
-        );
-        break;
-      case "ice":
-        void this.peer
-          ?.addRemoteIce({ candidate: signal.candidate, sdpMid: signal.sdpMid, sdpMLineIndex: signal.sdpMLineIndex })
-          .catch((e: unknown) => logger.warn(`[broker-transport] voice addRemoteIce failed: ${(e as Error).message}`));
-        break;
-      case "offer":
-        logger.warn("[broker-transport] ignoring unexpected inbound voice offer (desktop is the offerer)");
-        break;
-      default: {
-        const _exhaustive: never = signal;
-        break;
-      }
-    }
-  }
-
-  /** Phone left the voice rendezvous: drop the stale peer (its data-channel close ends the
-   *  bridge's session), reset so the next peer-present rebuilds on the re-minted ICE. KEEP
-   *  the socket (a dropped socket is the separate onClosed → teardown path). */
-  private prepareRebuild(): void {
-    if (this.stopped || !this.started) return;
+  /** Drop the stale peer (its data-channel close ends the bridge's session); the next
+   *  peer-present rebuilds it on the re-minted ICE. KEEP the socket. */
+  protected onRebuild(): void {
     void this.peer?.close();
     this.peer = null;
-    this.started = false;
-    this.iceServers = [];
   }
 
-  private teardown(): void {
-    if (this.stopped) return;
-    this.stopped = true;
-    if (this.graceTimer !== null) {
-      clearTimeout(this.graceTimer);
-      this.graceTimer = null;
-    }
-    this.client.stop();
+  protected onTeardown(): void {
     void this.peer?.close();
     this.peer = null;
     this.voice.close();
-    this.onClosed?.();
   }
 }

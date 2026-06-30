@@ -143,4 +143,20 @@ describe("BrokerVoiceDialer — lifecycle", () => {
     expect(closed.count).toBe(1);
     expect(peers[0]!.closed).toBe(1);
   });
+
+  it("tears down + fires onClosed when the async peer build rejects (base routes onStart failure)", async () => {
+    const socket = new FakeSocket();
+    const closed = { count: 0 };
+    new BrokerVoiceDialer({
+      socket,
+      sessionFactory: (): VoiceSession => new FakeSession(),
+      createPeer: () => Promise.reject(new Error("werift boom")),
+      onClosed: () => { closed.count++; },
+    });
+    socket.deliver({ type: "peer-joined" });
+    socket.deliver({ type: "ice-servers", iceServers: [{ urls: "stun:x" }], ttlSeconds: 300 });
+    await flush();
+    expect(closed.count).toBe(1); // the detached onStart rejection was routed to teardown
+    expect(socket.closes.length).toBeGreaterThanOrEqual(1); // socket closed on the terminal path
+  });
 });

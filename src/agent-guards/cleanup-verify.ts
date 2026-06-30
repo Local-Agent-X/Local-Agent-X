@@ -68,6 +68,27 @@ export function isEmptyGrepResult(content: string): boolean {
   return /^\s*No matches found\.?\s*$/i.test(content);
 }
 
+// A wrap-up that ASSERTS the cleanup is finished ("Cleanup complete", "all
+// references removed", "no tailnet code remains"). Used only to decide whether
+// the gate's nudge should also RETRACT the bubble — an unverified done-claim is
+// a confirmed-false statement the next turn supersedes, so it shouldn't stand.
+const COMPLETION_CLAIM =
+  /\b(?:complete(?:d|ly)?|finished|all\s+(?:set|clear|done|removed|gone|cleaned)|fully\s+(?:removed|cleaned|migrated|gone)|no\s+(?:\w+\s+){0,4}(?:references?|refs?|mentions?|usages?|occurrences?|code|tailnet|tailscale|imports?)\s+(?:remain|left|exist)|nothing\s+(?:left|remain)|all\s+done|done)\b/i;
+
+// Negation / incompleteness markers. An HONEST "not done / still remain /
+// partial" wrap-up must NOT be retracted (it's the truthful state we want kept),
+// so any of these present cancels the retract — erring toward keeping text.
+const NEGATION =
+  /n['’]t|\b(?:not|cannot|unable|incomplete|partial|still\s+(?:remain|present|need|have|left|exist|to)|not\s+yet|remaining|some\s+(?:remain|left)|more\s+(?:to|remain))\b/i;
+
+/** True when the wrap-up text positively asserts the cleanup is finished, with
+ *  no negation — i.e. a confirmed-false done-claim worth retracting. */
+export function claimsCleanupDone(text: string): boolean {
+  const t = (text || "").trim();
+  if (!t) return false;
+  return COMPLETION_CLAIM.test(t) && !NEGATION.test(t);
+}
+
 /** Fold one turn's tool results into the running state: a non-errored grep that
  *  came back empty is the clean-search proof. */
 export function noteCleanupEvidence(

@@ -43,6 +43,7 @@ export {
 export {
   looksLikeCleanupSweep,
   isEmptyGrepResult,
+  claimsCleanupDone,
   noteCleanupEvidence,
   checkCleanupVerify,
   createCleanupVerifyState,

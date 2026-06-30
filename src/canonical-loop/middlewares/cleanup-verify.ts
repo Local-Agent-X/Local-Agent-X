@@ -21,6 +21,7 @@ import {
   looksLikeCleanupSweep,
   noteCleanupEvidence,
   checkCleanupVerify,
+  claimsCleanupDone,
   createCleanupVerifyState,
   type CleanupVerifyState,
 } from "../../agent-guards/index.js";
@@ -59,7 +60,18 @@ export const cleanupVerifyMiddleware: CanonicalMiddleware = {
       ctx.op.id, "cleanup-verify", createCleanupVerifyState,
     );
     const r = checkCleanupVerify(state);
-    if (r.nudge) return { kind: "nudge", message: r.nudge, reason: "cleanup-verify" };
+    if (r.nudge) {
+      // When the wrap-up positively claims the cleanup is finished but no search
+      // confirmed it, that bubble is a confirmed-false claim the next turn
+      // supersedes — flag it for retraction (decide-outcome strips it) so the
+      // user never reads a "Cleanup complete" that the loop is about to walk
+      // back. An honest "not done / still remain" wrap-up keeps the plain reason
+      // and stands.
+      const reason = claimsCleanupDone(ctx.assistantContent)
+        ? "cleanup-verify-false-done"
+        : "cleanup-verify";
+      return { kind: "nudge", message: r.nudge, reason };
+    }
     return { kind: "continue" };
   },
 };

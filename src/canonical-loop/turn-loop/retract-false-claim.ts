@@ -47,6 +47,14 @@ const RETRACTABLE_REASONS: ReadonlySet<string> = new Set([
   // fires on a turn that DID call a tool — stripRetractedAssistant drops only
   // the assistant text, so the real tool result (e.g. the created deck) is kept.
   "attribution-confabulation",
+  // A cleanup/removal sweep declared finished ("Cleanup complete — no tailnet
+  // code remains") with no search ever confirming it (cleanup-verify gate). The
+  // claim is confirmed-false the moment it's made — the gate only emits this
+  // reason when the wrap-up positively asserts done AND no grep came back empty
+  // — so retract it; the nudged next turn carries the real, verified state. An
+  // honest "not done / still remain" wrap-up uses the plain "cleanup-verify"
+  // reason and is NOT in this set, so it stands.
+  "cleanup-verify-false-done",
 ]);
 
 export function isRetractableHallucination(reason: string | null | undefined): boolean {

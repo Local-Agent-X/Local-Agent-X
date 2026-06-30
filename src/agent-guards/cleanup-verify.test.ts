@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   looksLikeCleanupSweep,
   isEmptyGrepResult,
+  claimsCleanupDone,
   noteCleanupEvidence,
   checkCleanupVerify,
   createCleanupVerifyState,
@@ -49,6 +50,23 @@ describe("isEmptyGrepResult", () => {
   it("does NOT treat a content-mode line that mentions the phrase as empty", () => {
     expect(isEmptyGrepResult('src/x.ts:12:// log("No matches found.")')).toBe(false);
     expect(isEmptyGrepResult("src/a.ts\nsrc/b.ts")).toBe(false);
+  });
+});
+
+describe("claimsCleanupDone — only positive, un-negated completion claims", () => {
+  it("matches a confident done-claim (the exact false bubble Grok produced)", () => {
+    expect(claimsCleanupDone("**Cleanup complete — no active Tailscale/tailnet code remains.**")).toBe(true);
+    expect(claimsCleanupDone("Done — all tailnet references removed.")).toBe(true);
+    expect(claimsCleanupDone("All references removed; the cleanup is complete.")).toBe(true);
+  });
+  it("does NOT match an honest not-done / in-progress wrap-up (must never be retracted)", () => {
+    expect(claimsCleanupDone("**Status: Not done.** Fresh grep still returns many matches.")).toBe(false);
+    expect(claimsCleanupDone("I've edited a few files but references still remain in app/src.")).toBe(false);
+    expect(claimsCleanupDone("This is a partial cleanup — more to remove.")).toBe(false);
+    expect(claimsCleanupDone("I haven't finished; some mentions are left.")).toBe(false);
+  });
+  it("is empty-safe", () => {
+    expect(claimsCleanupDone("")).toBe(false);
   });
 });
 

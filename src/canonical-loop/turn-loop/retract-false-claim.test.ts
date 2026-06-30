@@ -13,6 +13,12 @@ describe("isRetractableHallucination", () => {
     expect(isRetractableHallucination("browser-handoff")).toBe(true);
   });
 
+  it("retracts an unverified cleanup done-claim, but not the honest not-done wrap-up", () => {
+    expect(isRetractableHallucination("cleanup-verify-false-done")).toBe(true);
+    // The plain reason (honest "still remain" wrap-up) must stand.
+    expect(isRetractableHallucination("cleanup-verify")).toBe(false);
+  });
+
   it("does not retract a misplaced permission ask", () => {
     // "requires approval" is wrong but not a false claim of completed work —
     // its text should stand and the model is nudged to just call the tool.

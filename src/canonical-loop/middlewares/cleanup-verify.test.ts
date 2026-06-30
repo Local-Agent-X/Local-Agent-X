@@ -30,22 +30,29 @@ function grepTurn(op: string, content: string, status: "ok" | "error" = "ok") {
   );
 }
 
-function wrapUp(op: string, task = CLEANUP_TASK) {
+function wrapUp(op: string, task = CLEANUP_TASK, text = "Done — all tailnet references removed.") {
   return cleanupVerifyMiddleware.afterModelCall!(
-    ctxFor(op, { userMessage: task, toolCalls: [], assistantContent: "Done — all tailnet references removed." }),
+    ctxFor(op, { userMessage: task, toolCalls: [], assistantContent: text }),
   );
 }
 
 describe("cleanupVerifyMiddleware", () => {
-  it("nudges once when a cleanup wraps up with no clean search", async () => {
+  it("nudges once when a cleanup wraps up with no clean search; a done-claim is retractable", async () => {
     _resetMiddlewareStates();
     const op = opId();
-    const r = await wrapUp(op);
-    expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify" });
+    const r = await wrapUp(op); // default text positively claims done
+    expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify-false-done" });
     expect(opCleanupUnverified(op)).toBe(true);
     // fire-once
     expect((await wrapUp(op)).kind).toBe("continue");
     expect(opCleanupUnverified(op)).toBe(true);
+  });
+
+  it("an honest 'not done' wrap-up nudges with the NON-retractable reason", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const r = await wrapUp(op, CLEANUP_TASK, "Not done yet — references still remain in app/src.");
+    expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify" });
   });
 
   it("stays quiet when a grep came back empty before wrap-up", async () => {

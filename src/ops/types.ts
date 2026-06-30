@@ -48,7 +48,13 @@ export interface ContextPack {
   capabilities: ProviderCapabilityRequirement;
   budget: OpBudget;
   routing: { lane: OpLane; preferredProvider?: string; authSource?: CredentialSource };
-  secrets: { allowed: string[] };               // names only, never values (§12)
+  secrets: {
+    allowed: string[];                          // names only, never values (§12)
+    /** Names the user pre-blessed at submit (op_submit_async pre_blessed_secrets):
+     *  while this op is running, browser_fill_from_secret skips the first-use
+     *  approval gate for these names on their bound origin. See ops/pre-bless.ts. */
+    preBlessed?: string[];
+  };
 }
 
 export interface FileSnapshot {

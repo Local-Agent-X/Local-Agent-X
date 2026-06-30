@@ -20,6 +20,17 @@ export { deriveOrigin } from "./secrets-crypto.js";
 export type { SecretMetadata, SecretMetaView } from "./secrets-types.js";
 
 /**
+ * Canonical secret-name normalization: SCREAMING_SNAKE_CASE, non-alphanumerics
+ * to underscore. The vault, the fill gate, and pre-bless seeding MUST all run a
+ * name through this so a name written by one path is found by another — an
+ * earlier seam bug silently fail-closed the pre-bless gate because two paths
+ * disagreed on the key.
+ */
+export function normalizeSecretName(raw: string): string {
+  return String(raw || "").toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+}
+
+/**
  * Encrypted secrets store for API keys and tokens.
  * Secrets are AES-256-GCM encrypted at rest in ~/.lax/secrets.enc
  *

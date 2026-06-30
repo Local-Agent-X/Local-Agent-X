@@ -14,7 +14,7 @@
 //      (a) Same-session provenance: this session captured the secret.
 //      (b) User-saved approval for {secret, origin} in the vault.
 //      (c) Operation pre-bless: user passed pre_blessed_secrets to
-//          operation_start this run.
+//          op_submit_async this run.
 //      Otherwise returns an error asking for approval. Never silently proceeds.
 //   4. Post-fill redaction — the plaintext value is registered with
 //      registerRedactedSecretValue so subsequent snapshots / extracts /
@@ -27,10 +27,10 @@
 
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
-import { deriveOrigin } from "../secrets.js";
+import { deriveOrigin, normalizeSecretName } from "../secrets.js";
 import { getBrowserManager } from "./index.js";
 import { registerRedactedSecretValue } from "../sanitize.js";
-import { getActivePreBlessedSecrets } from "../operations/executor.js";
+import { getActivePreBlessedSecrets } from "../ops/pre-bless.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser-secret-fill");
@@ -67,7 +67,7 @@ export function createBrowserSecretFillTool(
       "GUARDRAILS (all enforced server-side):\n" +
       " • Field must be <input type=\"password\"> or have autocomplete=username|email|current-password|new-password.\n" +
       " • Current page origin MUST match the secret's recorded origin — no cross-origin fill, ever.\n" +
-      " • First use of a given {secret, origin} pair requires user approval UNLESS this session captured the secret itself OR the user pre-blessed it via operation_start.preBlessedSecrets. If denied, the error tells you exactly how to get approval.\n\n" +
+      " • First use of a given {secret, origin} pair requires user approval UNLESS this session captured the secret itself OR the user pre-blessed it via op_submit_async(pre_blessed_secrets). If denied, the error tells you exactly how to get approval.\n\n" +
       "After a successful fill the plaintext value is added to the snapshot/extract redaction list — it can't leak back to you via subsequent tool output.\n\n" +
       "Pass `ref` (from a browser.snapshot) OR `selector` (CSS). Prefer ref.",
     parameters: {
@@ -93,8 +93,7 @@ export function createBrowserSecretFillTool(
       required: ["name"],
     },
     async execute(args) {
-      const rawName = String(args.name || "");
-      const name = rawName.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+      const name = normalizeSecretName(String(args.name || ""));
       if (!name) return err("Secret name is required.");
 
       const ref = typeof args.ref === "number" ? args.ref : undefined;
@@ -224,7 +223,7 @@ export function createBrowserSecretFillTool(
           `First-use approval required for secret "${name}" on ${currentOrigin}. ` +
           `This secret was not captured by the current session and has not been pre-approved. ` +
           `How to proceed: (a) Ask the user to open Settings → Secrets → "${name}" and approve "${currentOrigin}" (one-click, persists). ` +
-          `Or (b) if this is part of an operation, restart the operation with operation_start(..., pre_blessed_secrets: ["${name}"]) — the user must pass that list explicitly. ` +
+          `Or (b) if this is part of a delegated op, re-submit it with op_submit_async(..., pre_blessed_secrets: ["${name}"]) — the user must authorize that list explicitly. ` +
           `Do NOT re-try this call until one of those is done; you will just hit the same error.`
         );
       }

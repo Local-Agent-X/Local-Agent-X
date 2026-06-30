@@ -57,7 +57,7 @@ vi.mock("./index.js", () => ({
 }));
 
 // Pre-bless: always empty (don't take that gate).
-vi.mock("../operations/executor.js", () => ({
+vi.mock("../ops/pre-bless.js", () => ({
   getActivePreBlessedSecrets: () => new Set<string>(),
 }));
 

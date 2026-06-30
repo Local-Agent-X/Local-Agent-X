@@ -8,6 +8,7 @@
  */
 
 import { getSetting } from "../../settings.js";
+import { normalizeSecretName } from "../../secrets.js";
 import { buildContextPack } from "../context-pack-builder.js";
 import { getRetryPolicy } from "../heartbeat.js";
 import { newOpId } from "../op-store.js";
@@ -27,6 +28,7 @@ export interface SubmitArgs {
   preferred_provider?: string;
   max_iterations?: number;
   max_wall_time_ms?: number;
+  pre_blessed_secrets?: string[];
 }
 
 /**
@@ -75,6 +77,15 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
     },
   });
 
+  // Pre-blessed secrets: the user authorizes specific secret NAMES for auto-fill
+  // during this op (browser_fill_from_secret skips first-use approval while the
+  // op runs). Normalize through the canonical helper so the names match exactly
+  // what the fill gate looks up — see ops/pre-bless.ts. Names only, never values.
+  const preBlessed = Array.isArray(args.pre_blessed_secrets)
+    ? Array.from(new Set(args.pre_blessed_secrets.map((n) => normalizeSecretName(String(n))).filter(Boolean)))
+    : [];
+  if (preBlessed.length) contextPack.secrets.preBlessed = preBlessed;
+
   return {
     id: newOpId(`op_${opType}`),
     type: opType,
@@ -106,6 +117,7 @@ export const submitParameters = {
     preferred_provider: { type: "string", description: "Optional provider id (e.g., 'httpKeyOpenAi', 'cliOauthAnthropic')." },
     max_iterations: { type: "number", description: "Cap on agent iterations. Default 30." },
     max_wall_time_ms: { type: "number", description: "Hard wall-time cap. Default 900000 (15 min)." },
+    pre_blessed_secrets: { type: "array", items: { type: "string" }, description: "Secret NAMES (SCREAMING_SNAKE_CASE, already in the vault) the USER has explicitly authorized this op to auto-fill into login forms without stopping for first-use approval. ONLY set this when the user told you to pre-approve them — it lets browser_fill_from_secret fill these names while the op runs. Origin binding still applies (a secret only fills on its own recorded site) and the value never passes through you. Leave empty otherwise." },
   },
   required: ["task"],
 };

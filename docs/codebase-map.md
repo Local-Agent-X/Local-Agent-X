@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1082 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1083 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -26,7 +26,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/canonical-loop/` | 29 | 105 | XL |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/agency/` | 22 | 14 | L |  |
-| `src/auth/` | 21 | 9 | L |  |
+| `src/auth/` | 22 | 9 | L |  |
 | `src/classifiers/` | 20 | 8 | L |  |
 | `src/threat/` | 20 | 12 | L |  |
 | `src/orchestrator/` | 18 | 21 | L |  |
@@ -49,10 +49,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/self-edit/` | 8 | 14 | L |  |
 | `src/sync/` | 8 | 18 | L |  |
 | `src/agent-guards/` | 7 | 11 | M |  |
+| `src/context-manager/` | 7 | 8 | M |  |
 | `src/protocols/` | 7 | 32 | XL |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
-| `src/context-manager/` | 6 | 8 | M |  |
 | `src/sandbox/` | 6 | 6 | L |  |
 | `src/ari-kernel/` | 5 | 12 | L |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
@@ -63,7 +63,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/util/` | 5 | 1 | S |  |
 | `src/server/` *(entrypoint)* | 4 | 26 | XL |  |
 | `src/tool-policy/` | 4 | 19 | L |  |
-| `src/broker-transport/` | 3 | 25 | L |  |
+| `src/broker-transport/` | 3 | 26 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
 | `src/hooks/` | 3 | 3 | M |  |
@@ -99,6 +99,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/auto-retry.ts` | S |
 | `src/battery-scheduler.ts` | S |
 | `src/benchmark-longmemeval.ts` | S |
+| `src/binary-sniff.ts` | S |
 | `src/bridge-control.ts` | S |
 | `src/bridge-media-queue.ts` | S |
 | `src/channel-formatter.ts` | M |
@@ -144,7 +145,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/language-mirror.ts` | M |
 | `src/lax-data-dir.ts` | S |
 | `src/lifecycle.ts` | S |
-| `src/llm-dispatch.ts` | M |
+| `src/llm-dispatch.ts` | S |
 | `src/logger.ts` | S |
 | `src/mcp-bridge.ts` | S |
 | `src/memory-tiers.ts` | M |

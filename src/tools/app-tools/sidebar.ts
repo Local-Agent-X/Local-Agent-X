@@ -11,6 +11,35 @@ import { ok, err } from "./shared.js";
 import { workspacePath } from "../../config.js";
 import { reloadSettings, saveSettings } from "../../settings.js";
 
+// One loose-match rule shared by pin (app-folder lookup) and unpin (pin
+// lookup): equal, or either side contains the other, case-insensitively. Both
+// tools must use the SAME predicate — they drifted before (pin matched loosely,
+// unpin required an exact name), so a partial reference could miss a pin stored
+// under a longer name and wrongly report it wasn't pinned.
+export function looseNameMatch(a: string, b: string): boolean {
+  const x = a.toLowerCase();
+  const y = b.toLowerCase();
+  return x === y || x.includes(y) || y.includes(x);
+}
+
+export type UnpinResolution =
+  | { kind: "match"; name: string }
+  | { kind: "ambiguous"; candidates: string[] }
+  | { kind: "none" };
+
+// Exact (case-insensitive) match wins, so a precise name removes exactly that
+// pin even when a longer pin also contains it. Only when nothing matches
+// exactly do we fall back to the forgiving substring match.
+export function resolvePinToUnpin(pinNames: string[], query: string): UnpinResolution {
+  const q = query.trim();
+  const exact = pinNames.find((n) => n.toLowerCase() === q.toLowerCase());
+  if (exact) return { kind: "match", name: exact };
+  const fuzzy = pinNames.filter((n) => looseNameMatch(n, q));
+  if (fuzzy.length === 1) return { kind: "match", name: fuzzy[0] };
+  if (fuzzy.length > 1) return { kind: "ambiguous", candidates: fuzzy };
+  return { kind: "none" };
+}
+
 export const sidebarPin: ToolDefinition = {
   name: "sidebar_pin",
   description:
@@ -39,7 +68,7 @@ export const sidebarPin: ToolDefinition = {
       // Fuzzy match against available apps
       try {
         const dirs = readdirSync(workspaceApps).filter(d => existsSync(resolve(workspaceApps, d, "index.html")));
-        const match = dirs.find(d => d === slug || d.includes(slug) || slug.includes(d));
+        const match = dirs.find(d => looseNameMatch(d, slug));
         if (match) {
           pageUrl = `/apps/${match}/`;
         } else if (dirs.length > 0) {
@@ -105,15 +134,24 @@ export const sidebarUnpin: ToolDefinition = {
       return ok(`Removed all pins from the sidebar: ${removed}`);
     }
 
-    // Case-insensitive match. Already-gone is success, not an error — the
-    // desired end state holds, and an err() here reads as "try again" to
-    // weaker models, which looped them re-unpinning a finished removal.
-    const pins = currentPins.filter(p => p.name.toLowerCase() !== name.toLowerCase());
-    if (pins.length === currentPins.length) {
+    // Resolve the reference the same forgiving way sidebar_pin does, so a
+    // partial name still finds a pin stored under a longer one.
+    const resolution = resolvePinToUnpin(currentPins.map(p => p.name), name);
+
+    if (resolution.kind === "none") {
+      // Already-gone is success, not an error — the desired end state holds, and
+      // an err() here reads as "try again" to weaker models, which looped them
+      // re-unpinning a finished removal.
       const available = currentPins.map(p => p.name).join(", ");
       return ok(`${name} is already not pinned — nothing to do. Current pins: ${available || "none"}`);
     }
 
+    if (resolution.kind === "ambiguous") {
+      return ok(`"${name}" matches more than one pin: ${resolution.candidates.join(", ")}. Tell me the exact name to unpin.`);
+    }
+
+    const targetName = resolution.name;
+    const pins = currentPins.filter(p => p.name !== targetName);
     settings.sidebarPins = pins;
     saveSettings(settings);
 
@@ -121,7 +159,7 @@ export const sidebarUnpin: ToolDefinition = {
 
     // Remaining pins in the result so the model has the post-state inline —
     // no reason left to "verify" with a follow-up GET /api/sidebar/pins.
-    return ok(`Removed ${name} from the sidebar. Remaining pins: ${pins.map(p => p.name).join(", ") || "none"}`);
+    return ok(`Removed ${targetName} from the sidebar. Remaining pins: ${pins.map(p => p.name).join(", ") || "none"}`);
   },
 };
 

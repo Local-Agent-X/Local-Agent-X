@@ -7,8 +7,10 @@
  *
  * Callers branch on the four-valued Decision instead of a boolean:
  *   - "allow"               → run, no prompt
- *   - "allow-with-rollback" → run (rollback layer wraps separately; not
- *                             yet wired — treat as allow for now)
+ *   - "allow-with-rollback" → run, but first snapshot what can be undone
+ *                             (tool-execution/capture-rollback.ts phase →
+ *                             autonomy/rollback.ts; restore via the
+ *                             settings/system rollback route)
  *   - "ask"                 → emit approval_requested, wait for user
  *   - "deny"                → block without prompting
  *

@@ -88,9 +88,12 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     // work" nudge for an under-scoped sweep).
     broadSweepNudgeMiddleware,
     prematureCompletionMiddleware,
-    // Worker edited source but never built/typechecked/tested before wrapping
-    // up → nudge once. Runs after premature-completion (they're mutually
-    // exclusive: that fires on no-commit, this on source-edit-committed).
+    // All lanes — edited source but never reached a clean build/type-check/test
+    // before wrapping up → nudge (gently if nothing verified it, sharply if a
+    // verify RAN and FAILED). Like cleanup-verify, NOT worker-only: a coding task
+    // arrives most often as interactive chat where the user trusts "done". Runs
+    // after premature-completion (they key on opposite signals: no-commit vs a
+    // committed source edit, so they don't contend).
     verifyGateMiddleware,
     // All lanes — the SEARCH-verification sibling of verify-gate: on a
     // removal/cleanup sweep ("remove all X", "finish cleaning up Y"), nudge once

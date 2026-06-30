@@ -36,6 +36,7 @@ export {
   noteVerifyEvidence,
   checkVerifyGate,
   createVerifyGateState,
+  opEditedSourceUnverified,
   isSourceFile,
   type VerifyGateState,
   type VerifyTurnAction,

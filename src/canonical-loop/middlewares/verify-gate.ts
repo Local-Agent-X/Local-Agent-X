@@ -1,26 +1,44 @@
 /**
- * Verify-gate middleware — autonomous worker edited source code but never ran
- * a build / type-check / test before wrapping up. Accumulate edit-vs-verify
+ * Verify-gate middleware — the op edited source code but never reached a clean
+ * build / type-check / test before wrapping up. Accumulate edit-vs-verify
  * evidence after each turn's dispatch; at wrap-up (model ends tool-lessly with
- * text, same signal premature-completion keys on) nudge once to verify.
+ * text, same signal premature-completion keys on) nudge: gently when nothing
+ * verified the edit, sharply when a verify actually RAN and FAILED.
  *
- * Worker ops only (isWorkerOp) — interactive turns show results live and the
- * user verifies. Mutually exclusive with premature-completion: that guard
- * bails when committing tools ran this op, this one fires only when they did
- * (an edit IS a committing tool), so the two never contend for the same turn.
+ * All lanes — like its search-verification sibling cleanup-verify, and unlike
+ * the worker-progress guards, this is NOT worker-only. An autonomous coding task
+ * ("rename X→Y", "remove all refs to Z", "fix this bug") arrives most often as
+ * interactive chat, where the user trusts the "done" claim rather than re-running
+ * the build themselves — exactly the case that needs the gate. The gate only
+ * fires when source was actually edited, so a pure-conversation turn never trips
+ * it. Still mutually exclusive with premature-completion in practice: that keys
+ * on no-commit, this on a committed source edit.
  *
  * Detection logic lives in src/agent-guards/verify-gate.ts; this is the thin
  * canonical wiring.
  */
-import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
+import { type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import {
   noteVerifyEvidence,
   checkVerifyGate,
   createVerifyGateState,
+  opEditedSourceUnverified as opEditedSourceUnverifiedState,
   type VerifyGateState,
   type VerifyTurnAction,
 } from "../../agent-guards/index.js";
+
+/**
+ * Outcome-label verdict (read by decide-outcome): the op edited source and never
+ * reached a clean verify — it ran none, or ran one that failed. Reporting "done"
+ * over an unverified edit records `partial`, not a rounded-up `clean`. Defaults
+ * false for ops the gate never evaluated, so it only ever demotes a real case.
+ */
+export function opEditedSourceUnverified(opId: string): boolean {
+  return opEditedSourceUnverifiedState(
+    getMiddlewareState<VerifyGateState>(opId, "verify-gate", createVerifyGateState),
+  );
+}
 
 function buildActions(
   toolCalls: { toolCallId: string; tool: string; args: unknown }[],
@@ -44,7 +62,6 @@ function buildActions(
 
 export const verifyGateMiddleware: CanonicalMiddleware = {
   name: "verify-gate",
-  when: isWorkerOp,
 
   afterToolExecution(ctx) {
     const state = getMiddlewareState<VerifyGateState>(

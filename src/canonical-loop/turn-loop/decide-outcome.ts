@@ -33,6 +33,7 @@ import { isRetractableHallucination, stripRetractedAssistant } from "./retract-f
 import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
 import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
 import { opCleanupUnverified } from "../middlewares/cleanup-verify.js";
+import { opEditedSourceUnverified } from "../middlewares/verify-gate.js";
 import { readOpTurns } from "../store.js";
 import { resolveOpModel } from "../op-model.js";
 import { classifyOpCategory, recordOpOutcome, type OpOutcome } from "../../tool-tracker.js";
@@ -266,14 +267,17 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     // verdict; the model was nudged but never delivered) is NOT clean — record
     // it as partial so the completion metric stops rounding give-ups up to
     // success. Likewise a removal/cleanup sweep that ends without a confirming
-    // empty search (cleanup-verify's verdict): "done" on an unverified removal
-    // is a partial, not a clean. Both verdicts default false for ops the gate
-    // never evaluated, so they only ever demote a real unrecovered case.
+    // empty search (cleanup-verify's verdict), and a coding op that edited
+    // source but never reached a clean build/type-check (verify-gate's verdict):
+    // "done" over an unverified edit is a partial, not a clean. All verdicts
+    // default false for ops the gate never evaluated, so they only ever demote a
+    // real unrecovered case.
     const outcome: OpOutcome =
       terminalReason === "error" ? "aborted"
         : endedPartial ? "partial"
         : opGaveUpUnrecovered(op.id) ? "partial"
         : opCleanupUnverified(op.id) ? "partial"
+        : opEditedSourceUnverified(op.id) ? "partial"
         : "clean";
     recordOpOutcome(classifyOpCategory(opToolNames), outcome, resolveOpModel(op));
   }

@@ -19,6 +19,56 @@ function turn(state: LoopState, calls: Call[], result: string, opts: Parameters<
   return verdict;
 }
 
+describe("checkToolLoops — redundant-search (same pattern, varied scope)", () => {
+  const grep = (pattern: string, glob: string): Call =>
+    ({ name: "grep", arguments: JSON.stringify({ pattern, glob }) });
+
+  it("nudges when ONE search pattern is re-run past the limit, even as globs + results vary", () => {
+    const state = createLoopState();
+    let firstNudgeAt = -1;
+    for (let i = 0; i < 8; i++) {
+      // Varied glob (different call bytes → exact-repeat can't see it) + a UNIQUE
+      // result each turn (novel → resets discovery + no-progress). Only the
+      // pattern-keyed redundant-search detector can catch this.
+      const v = turn(state, [grep("tailnet|Tailscale", `**/*.v${i}`)], `match-set-${i}`, { modelTier: "strong", nudgeOnly: true });
+      if (v.nudge && firstNudgeAt < 0) firstNudgeAt = i + 1;
+      expect(v.abort).toBe(false);
+    }
+    expect(firstNudgeAt).toBe(8); // REDUNDANT_SEARCH_LIMIT (strong)
+  });
+
+  it("does NOT fire across DIFFERENT patterns (legitimate distinct searches)", () => {
+    const state = createLoopState();
+    let nudged = false;
+    for (let i = 0; i < 12; i++) {
+      const v = turn(state, [grep(`distinct-term-${i}`, "**/*")], `r${i}`, { modelTier: "strong", nudgeOnly: true });
+      if (v.nudge) nudged = true;
+    }
+    expect(nudged).toBe(false);
+  });
+
+  it("collapses reordered alternations to one search (tailnet|Tailscale == Tailscale|tailnet)", () => {
+    const state = createLoopState();
+    let firstNudgeAt = -1;
+    const variants = ["tailnet|Tailscale", "Tailscale|tailnet", "tailnet|tailscale"];
+    for (let i = 0; i < 8; i++) {
+      const v = turn(state, [grep(variants[i % variants.length], `**/*.${i}`)], `m${i}`, { modelTier: "strong", nudgeOnly: true });
+      if (v.nudge && firstNudgeAt < 0) firstNudgeAt = i + 1;
+    }
+    expect(firstNudgeAt).toBe(8);
+  });
+
+  it("weak models trip sooner", () => {
+    const state = createLoopState();
+    let firstNudgeAt = -1;
+    for (let i = 0; i < 5; i++) {
+      const v = turn(state, [grep("foo", `**/*.${i}`)], `res-${i}`, { modelTier: "weak", nudgeOnly: true });
+      if (v.nudge && firstNudgeAt < 0) firstNudgeAt = i + 1;
+    }
+    expect(firstNudgeAt).toBe(5); // REDUNDANT_SEARCH_LIMIT_WEAK
+  });
+});
+
 describe("checkToolLoops — exact-repeat", () => {
   it("interactive (nudgeOnly): a same-call/same-result spin is nudged, never aborted", () => {
     const state = createLoopState();

@@ -31,6 +31,7 @@
 import { createHash } from "node:crypto";
 import { logRetry } from "../retry-telemetry.js";
 import { isMutationTool, isProgressTool } from "../tool-mutation-check.js";
+import { normalizeGrepPattern } from "./cleanup-verify.js";
 
 export interface LoopState {
   lastToolKey: string;
@@ -63,6 +64,13 @@ export interface LoopState {
   // in a bash tool result. Next iteration the agent gets a nudge to wrap up.
   // The perma-fix mandate keeps agents going past their commit; this caps it.
   postCommitNudgePending: boolean;
+  // Per normalized SEARCH PATTERN, how many times it's been searched this op.
+  // The discovery counter resets on any edit/novel-result, so a model that
+  // re-runs ONE broad search between edits (with varied globs making each result
+  // look novel) sails past it — one cleanup re-grepped a single pattern 26×,
+  // burning ~40% of its turn budget before truncation. This counter keys on the
+  // PATTERN and never resets on progress, so that diffuse waste is visible.
+  searchKeyCounts: Map<string, number>;
   // Lifetime count of loop-break nudges emitted for this op. In the interactive
   // lane the abort paths downgrade to nudges (never kill a turn the user wants),
   // and each path resets its own window so it can't spam per-turn — but nothing
@@ -86,8 +94,36 @@ export function createLoopState(): LoopState {
     lastTurnHadNovelResult: false,
     iterationsSinceProgress: 0,
     postCommitNudgePending: false,
+    searchKeyCounts: new Map(),
     nudgeCount: 0,
   };
+}
+
+// Re-running the SAME search this many times is redundant: the answer won't
+// change without an intervening edit, and even with edits between, re-confirming
+// one broad pattern over and over is waste. Generous so a careful grep→fix→grep
+// convergence (which narrows or changes the pattern as it goes) isn't tripped;
+// the weak floor catches models that loop harder. Re-nudges every few repeats
+// past the limit, routing through the lifetime ceiling like the other paths.
+const REDUNDANT_SEARCH_LIMIT = 8;
+const REDUNDANT_SEARCH_LIMIT_WEAK = 5;
+const REDUNDANT_SEARCH_RENUDGE = 4;
+// Tools whose repeated identical SEARCH (not the call bytes — the pattern) is
+// the waste signal. Curated + read-only, like SPIRALABLE_TOOLS.
+const REPEAT_SEARCH_TOOLS = new Set(["grep", "web_search"]);
+
+/** A stable key for "the same search", or null for a non-search call. Keys on
+ *  the search PATTERN/QUERY (normalized), NOT the full args — so a re-grep with
+ *  a different glob/scope still collapses to one key. */
+function searchKeyOf(name: string, argsJson: string): string | null {
+  if (!REPEAT_SEARCH_TOOLS.has(name)) return null;
+  let args: Record<string, unknown>;
+  try { args = JSON.parse(argsJson) as Record<string, unknown>; } catch { return null; }
+  const raw = typeof args.pattern === "string" ? args.pattern
+    : typeof args.query === "string" ? args.query
+    : null;
+  if (!raw) return null;
+  return `${name}:${normalizeGrepPattern(raw)}`;
 }
 
 // Cap on remembered result signatures (~50 bytes each → ~13 KB at the cap).
@@ -251,6 +287,25 @@ export function checkToolLoops(
       };
     }
   }
+  // Redundant-search detector. Counts by normalized search PATTERN and never
+  // resets on progress, so it catches the diffuse re-search the discovery loop
+  // above can't see (edits between greps + varied globs keep that one resetting).
+  const searchLimit = isWeakOrMedium ? REDUNDANT_SEARCH_LIMIT_WEAK : REDUNDANT_SEARCH_LIMIT;
+  let redundant: { term: string; count: number } | null = null;
+  for (const tc of toolCalls) {
+    const sk = searchKeyOf(tc.name, tc.arguments);
+    if (!sk) continue;
+    const n = (state.searchKeyCounts.get(sk) || 0) + 1;
+    state.searchKeyCounts.set(sk, n);
+    if (n >= searchLimit && (n - searchLimit) % REDUNDANT_SEARCH_RENUDGE === 0) {
+      redundant = { term: sk.slice(sk.indexOf(":") + 1), count: n };
+    }
+  }
+  if (redundant) {
+    logRetry({ kind: "loop-abort", tool: "redundant-search", detail: { term: redundant.term, count: redundant.count, modelTier: opts?.modelTier } });
+    return emitNudge(`SYSTEM: you've run the same search (${redundant.term}) ${redundant.count}× this op — re-running it won't change the answer. Stop re-searching: act on the matches you already have (edit the files), or if the search came back clean, move on. Re-run the search only ONCE after you've actually changed files, to confirm.`);
+  }
+
   const stuck = [...state.toolNameCounts.entries()].find(([name, count]) =>
     count >= discoveryLimit && SPIRALABLE_TOOLS.has(name)
   );

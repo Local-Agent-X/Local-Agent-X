@@ -49,6 +49,7 @@
     "@evan/opus": "^1.0.3",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@types/diff": "^7.0.2",
+    "@vscode/ripgrep": "^1.18.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.8.0",
     "clipboardy": "^5.3.1",

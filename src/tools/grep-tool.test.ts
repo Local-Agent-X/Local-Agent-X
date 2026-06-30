@@ -44,20 +44,18 @@ describe("grep parsePattern — inline-flag tolerance", () => {
   });
 });
 
-describe("ripgrepBin — bundled-binary resolution", () => {
+describe("ripgrepBin — binary resolution", () => {
   const ORIG = process.env.LAX_BUNDLED_BIN_DIR;
   const exe = process.platform === "win32" ? "rg.exe" : "rg";
+  // @vscode/ripgrep is a root dependency, so node_modules holds the per-OS
+  // binary in CI and dev — the no-bundle tiers resolve to it, not bare `rg`.
+  const VSCODE_RG = /@vscode[/\\]ripgrep.*[/\\]bin[/\\]rg(\.exe)?$/;
   afterEach(() => {
     if (ORIG === undefined) delete process.env.LAX_BUNDLED_BIN_DIR;
     else process.env.LAX_BUNDLED_BIN_DIR = ORIG;
   });
 
-  it("returns bare 'rg' when no bundle dir is set", () => {
-    delete process.env.LAX_BUNDLED_BIN_DIR;
-    expect(ripgrepBin()).toBe("rg");
-  });
-
-  it("returns the bundled absolute path when the binary exists there", () => {
+  it("prefers the .app-bundled binary when present", () => {
     const dir = mkdtempSync(join(tmpdir(), "rgbin-"));
     const p = join(dir, exe);
     writeFileSync(p, "#!/bin/sh\n");
@@ -65,8 +63,13 @@ describe("ripgrepBin — bundled-binary resolution", () => {
     expect(ripgrepBin()).toBe(p);
   });
 
-  it("falls back to 'rg' when the bundle dir lacks the binary", () => {
+  it("falls to the @vscode/ripgrep node_modules binary when there's no .app bundle", () => {
+    delete process.env.LAX_BUNDLED_BIN_DIR;
+    expect(ripgrepBin()).toMatch(VSCODE_RG);
+  });
+
+  it("skips a bundle dir that lacks the binary, falling to node_modules", () => {
     process.env.LAX_BUNDLED_BIN_DIR = mkdtempSync(join(tmpdir(), "rgempty-"));
-    expect(ripgrepBin()).toBe("rg");
+    expect(ripgrepBin()).toMatch(VSCODE_RG);
   });
 });

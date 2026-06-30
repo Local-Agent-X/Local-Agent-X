@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, extname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 
@@ -34,19 +35,36 @@ function truncate(lines: string[], limit: number): string {
 
 // ── ripgrep path ──
 
-// Resolve the ripgrep binary. The desktop app bundles `rg` and the Electron
-// main hands its resources dir to the server in LAX_BUNDLED_BIN_DIR — prefer
-// that absolute path, because a Finder-launched app gets a minimal launchd PATH
-// where a bare `rg` isn't found (which is why this silently fell to the slow
-// Node search). Dev / source installs have no bundle, so fall back to `rg` on
-// PATH; runRg then falls back to the Node search if even that is absent.
+// The @vscode/ripgrep binary in node_modules, resolved once. Reaches OTA users
+// — a source-update's npm sync installs the dep — plus dev and source installs,
+// none of which have the packaged .app's bundled copy. Null when the per-OS
+// package isn't installed; the caller then falls through to `rg` on PATH.
+let cachedNodeModulesRg: string | null | undefined;
+function nodeModulesRg(): string | null {
+  if (cachedNodeModulesRg !== undefined) return cachedNodeModulesRg;
+  try {
+    const exe = process.platform === "win32" ? "rg.exe" : "rg";
+    const p = fileURLToPath(import.meta.resolve(`@vscode/ripgrep-${process.platform}-${process.arch}/bin/${exe}`));
+    cachedNodeModulesRg = existsSync(p) ? p : null;
+  } catch {
+    cachedNodeModulesRg = null;
+  }
+  return cachedNodeModulesRg;
+}
+
+// Resolve the ripgrep binary, by how reliably each source is present:
+//   1. the signed copy in the packaged .app (LAX_BUNDLED_BIN_DIR, set by the
+//      Electron main) — a Finder-launched app's minimal launchd PATH can't find
+//      a bare `rg`, which is why grep used to fall to the slow Node search;
+//   2. @vscode/ripgrep in node_modules — reaches OTA users, dev, source installs;
+//   3. `rg` on PATH; then runRg falls back to the Node search if even that is gone.
 export function ripgrepBin(): string {
   const bundled = process.env.LAX_BUNDLED_BIN_DIR;
   if (bundled) {
     const p = join(bundled, process.platform === "win32" ? "rg.exe" : "rg");
     if (existsSync(p)) return p;
   }
-  return "rg";
+  return nodeModulesRg() ?? "rg";
 }
 
 function buildRgArgs(args: Record<string, unknown>): string[] {

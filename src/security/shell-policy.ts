@@ -5,6 +5,7 @@ import { countTopLevelPipes } from "../tools/shell-translate.js";
 import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS } from "./shell-rules.js";
 import {
   detectObfuscation,
+  detectSecretPlaceholder,
   detectScriptWrite,
   stripQuotedSpans,
   detectInterpreterEscape,
@@ -41,6 +42,15 @@ export function evaluateShellCommand(
     }
   } catch {
     // Don't crash on obfuscation check failure — allow the command through
+  }
+
+  // Secret-placeholder guard: `{{SECRET_NAME}}` only resolves in http_request
+  // (into headers, off-argv). In a shell command the braces either pass through
+  // literally (opaque downstream failure) or would leak the secret into argv —
+  // so refuse the shape and redirect. Placed early so this specific message wins.
+  const secretPlaceholder = detectSecretPlaceholder(command);
+  if (secretPlaceholder) {
+    return { allowed: false, reason: secretPlaceholder, userHint: USER_HINTS.commandShell };
   }
 
   // Reject launching a URL in the system browser — route to the browser tool

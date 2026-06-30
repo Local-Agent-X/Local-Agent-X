@@ -71,6 +71,21 @@ export function detectObfuscation(command: string): string | null {
   return null;
 }
 
+// ── Secret-placeholder injection into shell commands ──
+// `{{SECRET_NAME}}` placeholders resolve ONLY in http_request (into headers,
+// off-argv). The shell tool never resolves them, so `git clone
+// https://{{GITHUB_SYNC_TOKEN}}@github.com` fails opaquely (literal braces
+// reach git) — and resolving it here would be worse: the cleartext secret
+// would land in argv (visible in any process listing) and the tool_progress
+// command tails. Refuse the shape up front and redirect to the safe paths.
+// Matches only the SCREAMING_SNAKE form real secret names use, so Go/Docker
+// `{{.Field}}` (leading dot) and Jinja `{{ VAR }}` (spaces) don't trip it.
+export function detectSecretPlaceholder(command: string): string | null {
+  const m = command.match(/\{\{([A-Z][A-Z0-9_]*)\}\}/);
+  if (!m) return null;
+  return `Blocked: {{${m[1]}}} secret placeholders are not resolved in shell commands (that would leak the secret into argv / process listings). Use http_request — it injects {{SECRET_NAME}} into headers off-argv. For git over HTTPS the token is supplied via the credential helper, never the URL.`;
+}
+
 // Hard-block heredoc + inline-script writes targeting the repo. Workers were
 // using `cat <<EOF > foo` and `python -c "open(...).write(...)"` to "edit"
 // files; bash exits 0 even when the script silently no-ops, so the worker

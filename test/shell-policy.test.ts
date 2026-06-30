@@ -396,6 +396,31 @@ describe("evaluateShellCommand — legitimate commands stay allowed", () => {
   }
 });
 
+// Regression: the agent put a {{SECRET_NAME}} placeholder in a shell command
+// (`git clone https://{{GITHUB_SYNC_TOKEN}}@github.com`). Bash never resolves
+// those — only http_request does, into headers off-argv — so the literal
+// braces reached git and it failed with an opaque auth error. Refuse the shape
+// up front with a redirect, and never let a resolved secret touch argv.
+describe("evaluateShellCommand — secret placeholders in shell commands (regression)", () => {
+  it("blocks the git-clone-with-token-placeholder form that failed in the wild", () => {
+    const r = evaluateShellCommand("git clone https://{{GITHUB_SYNC_TOKEN}}@github.com/org/repo.git");
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("GITHUB_SYNC_TOKEN");
+  });
+  it("blocks a placeholder anywhere in the command, quoted or bare", () => {
+    expect(evaluateShellCommand('curl -H "Authorization: Bearer {{API_KEY}}" x').allowed).toBe(false);
+    expect(evaluateShellCommand("echo {{DB_PASSWORD}}").allowed).toBe(false);
+  });
+  // Precision: real templating CLIs use {{.Field}} (dot) or {{ Var }} (spaces),
+  // which are NOT the SCREAMING_SNAKE secret shape and must stay allowed.
+  it("does NOT false-fire on Go/Docker {{.Field}} format templates", () => {
+    expect(evaluateShellCommand('docker ps --format "{{.Names}}: {{.Status}}"').allowed).toBe(true);
+  });
+  it("does NOT false-fire on spaced Jinja-style {{ VAR }} placeholders", () => {
+    expect(evaluateShellCommand("render --tpl '{{ TITLE }}'").allowed).toBe(true);
+  });
+});
+
 // C3-3: the shell-class path (process_start / process_restart) and the bash
 // path BOTH call evaluateShellCommandAndPaths, so process_start now inherits the
 // SAME file-access confinement bash has — it can no longer `cat ~/.ssh/id_rsa`

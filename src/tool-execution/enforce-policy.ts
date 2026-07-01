@@ -9,7 +9,8 @@ import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
 import { getKernelTaintSources } from "../data-lineage.js";
-import { WORKTREE_PATH_TOOLS, hasCapability } from "../tool-registry.js";
+import { WORKTREE_PATH_TOOLS } from "../tool-registry.js";
+import { taintedShellBlockReason, blockedSelfVerifyGuidance } from "./shell-block-guidance.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit } from "../circuit-breaker.js";
 import { checkToolRateLimit } from "./rate-limiter.js";
@@ -65,33 +66,6 @@ export const ARI_ACTION_MAP: Record<string, string> = {
   // retrieval — vector/keyword session search
   search_past_sessions: "search",
 };
-
-// Kernel taint sources that @arikernel/core's deny-tainted-shell rule treats as
-// untrusted content (its `match.taintSources`). Mirrored here so LAX can PRE-EMPT
-// the shell denial before the kernel observes the taint+shell event — see
-// taintedShellBlockReason. Kept in lockstep with the real rule by
-// ari-taint-shell-contract.test.ts (drives the live kernel against this helper).
-const SHELL_TAINT_DENY_SOURCES: ReadonlySet<string> = new Set(["web", "rag", "email"]);
-
-/**
- * If `toolName` is a shell-class tool AND the session carries untrusted
- * (web/rag/email) taint, return a clear denial message; otherwise null.
- *
- * WHY pre-empt the kernel: the kernel's deny-tainted-shell would also deny, but
- * its `web_taint_sensitive_probe` behavioral rule QUARANTINES the whole run on a
- * taint+shell attempt — and a quarantined run also blocks file WRITES. That
- * bricks legit editing for the rest of the op after the agent merely read a
- * credential/.env file. Denying HERE keeps shell blocked (the real exfil wall —
- * `bash` is NOT egress-gated, so deny-tainted-shell is its only backstop) WITHOUT
- * the write-blocking quarantine. Egress keeps its own independent guards; this
- * changes nothing there. Pure + exported for the contract test.
- */
-export function taintedShellBlockReason(toolName: string, taintSources: readonly string[]): string | null {
-  if (!hasCapability(toolName, "shell")) return null;
-  const hit = taintSources.filter((s) => SHELL_TAINT_DENY_SOURCES.has(s));
-  if (hit.length === 0) return null;
-  return `Shell is blocked for this task: this session read sensitive/credential content (taint: ${hit.join(", ")}), and running a shell command after reading secrets is an exfiltration risk, so shell stays denied while the session is tainted. This does NOT block your file edits (read/write/edit) or the build/verify typecheck — keep using those to make progress. If that read was intended and safe, ask the user to clear it in Settings (declassify). The lock resets on your next turn.`;
-}
 
 async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId } = ctx;
@@ -195,12 +169,21 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
       "arikernel": "arikernel",
       "approval": "approval",
     };
+    // A blocked verify-shaped shell command (running the project's build/type-check
+    // on source) gets accurate guidance instead of the generic "find a safer way"
+    // recovery, which otherwise sends the model hunting a nonexistent executor. The
+    // orchestrator build-verify gate covers it — see build-verify.ts.
+    const selfVerify = blockedSelfVerifyGuidance(ctx.tc.name, ctx.args);
     ctx.allowed = false;
     ctx.result = {
       content: e.message,
       isError: true,
       status: "blocked",
-      metadata: { layer: layerMap[e.stage], recovery: e.recovery, userHint: e.userHint },
+      metadata: {
+        layer: layerMap[e.stage],
+        recovery: selfVerify?.recovery ?? e.recovery,
+        userHint: selfVerify?.userHint ?? e.userHint,
+      },
     };
     return BLOCK;
   }

@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { startAriKernel, stopAriKernel } from "../ari-kernel/lifecycle.js";
 import { getFirewallForTest } from "../ari-kernel/state.js";
 import { ariEvaluate } from "../ari-kernel/evaluate.js";
-import { taintedShellBlockReason } from "./enforce-policy.js";
+import { taintedShellBlockReason } from "./shell-block-guidance.js";
 
 /** Live firewall narrowed to the restricted-mode getter we assert on. */
 function isRestricted(): boolean {

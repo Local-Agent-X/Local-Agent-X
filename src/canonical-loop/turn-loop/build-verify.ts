@@ -21,7 +21,10 @@ import { opEditedSourcePaths, recordOrchestratorVerify } from "../middlewares/ve
 import { projectRoot } from "../../workspace/paths.js";
 import { bashTool } from "../../tools/shell-tool.js";
 import { statusOf } from "../../tools/result-helpers.js";
+import { createLogger } from "../../logger.js";
 import type { Op } from "../../ops/types.js";
+
+const logger = createLogger("canonical-loop.build-verify");
 
 const RETRIES = new Map<string, number>();
 
@@ -128,10 +131,14 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
 
   const probe = opts.probe ?? realProbe;
   const detected = detectBuildCommand(editedPaths, probe);
-  if (!detected) return NO_RETRY;
+  if (!detected) {
+    logger.debug(`op=${op.id} edited source but no buildable project found in ${editedPaths.length} path(s) — can't self-verify`);
+    return NO_RETRY;
+  }
 
   const exec = opts.exec ?? defaultExec;
   const res = await exec(detected.command, detected.cwd);
+  logger.info(`op=${op.id} ran \`${detected.command}\` in ${detected.cwd} → ${res.ok ? "PASSED" : "FAILED"} (retry ${getBuildVerifyRetries(op.id)})`);
 
   // Authoritative verdict into the edit/verify ledger: clean → outcome clean,
   // red → outcome partial. Done before the retry branches so the label is

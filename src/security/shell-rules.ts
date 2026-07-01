@@ -11,8 +11,13 @@ export const BLOCKED_COMMANDS = [
   /\bmkfs\b/i,
   /\bdd\s+.*of=/i,
   /\bformat\b.*[/\\]/i,
-  // Language-wrapper escapes (allow python -c and node -e for data transforms)
-  /\beval\b/i,
+  // Shell `eval` builtin as a COMMAND (eval "$(curl …)"). Anchored so it does
+  // NOT fire on "eval" inside a PATH or filename (/…/lais-eval/…, config.eval.ts,
+  // this repo's own eval/ dir) — the unanchored /\beval\b/ blocked every verify
+  // command whose cwd contained the substring. The lookbehind excludes the
+  // path/identifier chars (word, . / \ -) that precede a substring occurrence;
+  // a real command `eval` is preceded by start / whitespace / a separator.
+  /(?<![\w./\\-])eval\b/i,
   // Bare interpreter-escape forms. These catch `perl -e`, `ruby -e`, `php -r`
   // with the flag IMMEDIATELY after the binary. Intervening flags (`perl -w
   // -e`, `ruby -rsocket -e`) slip past these word-boundary patterns, so the
@@ -106,8 +111,14 @@ export const BLOCKED_COMMANDS = [
   // ── Shell escape / injection edge cases ──
   /^\.\s+\//,                               // dot-sourcing: ". /path" (source command)
   /\bsource\s+\//i,                         // source /path
-  /[<>]&\d/,                                // fd redirection: <&3, >&3
-  /\d+>&\d/,                                // fd duplication: 2>&1 in exotic forms
+  // fd-redirect onto a NON-standard descriptor (>=3): the io-duplication a
+  // reverse shell uses to wire stdio onto a pre-opened socket fd (`>&5`, `<&3`,
+  // `2>&7`). The socket OPEN itself is caught by the /dev/tcp + `exec N<>` rules
+  // below. Benign std-stream merges (2>&1, 1>&2, >&2) target fd 0-2 — they can't
+  // reach the network and are the ubiquitous output-capture idiom — so the
+  // narrowed pattern leaves them ALLOWED (the bare /\d+>&\d/ blocked 2>&1, which
+  // starved every verify command that captured stderr).
+  /[<>]&(?:[3-9]|\d{2,})/,                  // fd redirect to fd>=3 (<&3, >&5, 2>&10)
   /\\\n/,                                   // backslash-newline continuation (multi-line escape)
   // ── Interactive shell / reverse shell escapes ──
   /\bbash\s+-i\b/i,                         // interactive bash

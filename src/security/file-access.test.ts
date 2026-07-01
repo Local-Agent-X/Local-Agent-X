@@ -151,6 +151,46 @@ describe("app's OWN at-rest secret files under .lax (R4-04/R4-05)", () => {
   });
 });
 
+describe("platform-source protection is anchored — user apps & foreign projects are NOT caught", () => {
+  // The class bug: engine files (src/security.ts, src/auth.ts, …) were matched
+  // by bare path-suffix, so a user app under workspace/ (or any project) with
+  // an identically-named file got wrongly write-blocked. Protection now comes
+  // from the platform-root-anchored check, so LAX's own src/ stays locked while
+  // a user app's src/ is free. Credentials (.env, .lax secrets) stay global.
+  const userAppSrc = join(WORKSPACE, "userapp", "src");
+  const platformSrc = join(ROOT, "src"); // sibling of workspace = the platform tree
+
+  beforeAll(() => {
+    mkdirSync(userAppSrc, { recursive: true });
+    mkdirSync(platformSrc, { recursive: true });
+    writeFileSync(join(userAppSrc, "auth.ts"), "export const x = 1;\n");
+    writeFileSync(join(userAppSrc, "security.ts"), "export const y = 1;\n");
+    writeFileSync(join(platformSrc, "auth.ts"), "export const z = 1;\n");
+  });
+
+  it("ALLOWS editing a user app's src/auth.ts under workspace/ (was a false positive)", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "edit", join(userAppSrc, "auth.ts"));
+    expect(d.allowed).toBe(true);
+  });
+
+  it("ALLOWS editing a user app's src/security.ts under workspace/", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "edit", join(userAppSrc, "security.ts"));
+    expect(d.allowed).toBe(true);
+  });
+
+  it("still BLOCKS the platform's OWN src/ file (anchored, outside workspace)", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "edit", join(platformSrc, "auth.ts"));
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/platform files|src\/ or public/i);
+  });
+
+  it("still BLOCKS a .env write inside a user app (credential secret stays global)", () => {
+    writeFileSync(join(WORKSPACE, "userapp", ".env"), "SECRET=1\n");
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "edit", join(WORKSPACE, "userapp", ".env"));
+    expect(d.allowed).toBe(false);
+  });
+});
+
 describe("matchesSensitivePath is a SUPERSET of isSensitivePath (shared catalog)", () => {
   // The gate (matchesSensitivePath) and the read-taint classifier (isSensitivePath)
   // both consume security/sensitive-paths.ts (classifySensitivePath), so the gate

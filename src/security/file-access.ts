@@ -290,16 +290,15 @@ export function evaluateFileAccess(
   // Block writes/edits to core agent files — CODE ENFORCED, not just documented
   // Even if the AI is prompt-injected, it CANNOT weaken its own security
   if (action === "write" || action === "edit") {
+    // Credential/secret files — sensitive in ANY project, so matched by pattern
+    // everywhere (unanchored). The platform's ENGINE SOURCE (src/security.ts,
+    // src/auth.ts, src/codex-client.ts, …) is deliberately NOT listed here: a
+    // bare path-suffix regex like /src/auth.ts$/ ALSO matched a user app or a
+    // foreign project's identically-named file and wrongly blocked the edit. The
+    // engine source is protected instead by the platform-root-anchored check
+    // below (inPlatform && !inWorkspace && touchesSrcOrPublic) — a strict
+    // superset for the platform tree, with zero false hits outside it.
     const coreProtectedFiles = [
-      /[/\\]src[/\\]security\.ts$/i,        // Security layer — guardrails
-      /[/\\]src[/\\]auth\.ts$/i,            // Auth — token handling
-      /[/\\]src[/\\]codex-client\.ts$/i,    // API client — token transport
-      /[/\\]src[/\\]keychain\.ts$/i,        // Encryption key management
-      /[/\\]src[/\\]sanitize\.ts$/i,        // Prompt injection defense
-      /[/\\]src[/\\]threat-engine\.ts$/i,   // Threat detection / canary tokens
-      /[/\\]src[/\\]rbac\.ts$/i,            // Role-based access control
-      /[/\\]src[/\\]safe-regex\.ts$/i,      // Regex safety
-      /[/\\]src[/\\]tool-policy\.ts$/i,     // Tool policy enforcement
       /[/\\]\.env$/i,                        // Environment secrets
       /[/\\]\.lax[/\\]secrets\./i,           // Encrypted secrets store
       /[/\\]\.lax[/\\]master\./i,            // Master encryption key

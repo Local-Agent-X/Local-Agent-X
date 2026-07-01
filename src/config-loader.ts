@@ -11,12 +11,19 @@
  */
 
 import { readFileSync, existsSync, watch } from "node:fs";
-import { join, resolve, normalize } from "node:path";
+import { join, resolve, normalize, isAbsolute, relative } from "node:path";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("config-loader");
 
 const CONFIG_DIR = resolve(join(import.meta.dirname || ".", "..", "config"));
+
+// The platform's own install/repo root — the parent of config/. Self-protection
+// is anchored HERE: only files inside this tree can be protected. Without the
+// anchor, entries like "src/index.ts" / "src/types.ts" / "src/config.ts" matched
+// by path-suffix and wrongly blocked a model from editing an unrelated user
+// project that happens to use the same (extremely common) filenames.
+const PLATFORM_ROOT = resolve(CONFIG_DIR, "..");
 
 // ── Cached values ──
 
@@ -96,11 +103,25 @@ export function pathMatchesProtected(candidate: string, entry: string): boolean 
   return atBoundary || candidate.includes("/" + e + "/") || candidate.startsWith(e + "/");
 }
 
-/** Check if a file path is protected (cannot be modified by the agent). */
+/**
+ * Check if a file path is protected (cannot be modified by the agent). Only the
+ * platform's OWN source under PLATFORM_ROOT is protected — a path in any other
+ * project is never protected, even when its repo-relative shape is identical
+ * (e.g. a user project's own src/index.ts). A relative path is interpreted
+ * against the platform root, because that's where the agent's path resolver
+ * lands a bare "src/…" edit; an absolute path must fall inside the tree.
+ */
 export function isProtectedFile(filePath: string): { protected: boolean; reason?: string } {
+  const raw = String(filePath ?? "");
+  if (!raw) return { protected: false };
+
+  const abs = isAbsolute(raw) ? normalize(raw) : resolve(PLATFORM_ROOT, raw);
+  const rel = relative(PLATFORM_ROOT, abs).replace(/\\/g, "/");
+  // Outside the platform tree (../… or a different drive) → another project's
+  // file → never protected. This is the anchor the old suffix match lacked.
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return { protected: false };
+
   const protectedList = loadProtectedFiles();
-  // Normalize the path for comparison
-  const normalized = normalize(filePath).replace(/\\/g, "/");
 
   // Load reasons
   let reasons: Record<string, string> = {};
@@ -111,7 +132,7 @@ export function isProtectedFile(filePath: string): { protected: boolean; reason?
   } catch {}
 
   for (const protectedPath of protectedList) {
-    if (pathMatchesProtected(normalized, protectedPath)) {
+    if (pathMatchesProtected(rel, protectedPath)) {
       return {
         protected: true,
         reason: reasons[protectedPath] || `${protectedPath} is a protected core file`,

@@ -14,6 +14,8 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "grok-build-0.1": 131_072,
   // Fable 5 — 1M context (native; the maximum is also the default)
   "claude-fable-5": 1_000_000,
+  // Sonnet 5 — Claude 5 balanced tier, 1M context
+  "claude-sonnet-5": 1_000_000,
   // Anthropic Claude 4.x family — 200k base window
   "claude-sonnet-4-5": 200_000,
   "claude-sonnet-4-6": 200_000,

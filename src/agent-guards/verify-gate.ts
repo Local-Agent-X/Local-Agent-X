@@ -8,6 +8,13 @@
 // Logic lives here (pure, testable over normalized actions); the canonical
 // middleware in src/canonical-loop/middlewares/verify-gate.ts feeds it the
 // per-turn tool calls and clears state on op-terminal.
+//
+// Also carries the test-deletion tripwire: the orchestrator build-verify gate
+// runs the op's EDITED tests, but a DELETED test isn't run — so "delete the
+// failing test" is an invisible path to green the gate can't see. This tracks
+// test-file deletions and nudges the model to justify or undo them.
+
+import { isTestFile } from "./build-command.js";
 
 /** Normalized view of one tool call + its dispatch outcome for a turn. */
 export interface VerifyTurnAction {
@@ -42,6 +49,12 @@ export interface VerifyGateState {
    *  failure own the spiral past this point; the outcome label still records
    *  partial regardless). */
   failNudges: number;
+  /** Test files the op DELETED (via delete_file). The build-verify gate can't
+   *  see these — a deleted test isn't run — so they're tracked to nudge against
+   *  deleting a test to dodge a red suite. */
+  deletedTestPaths: string[];
+  /** Fire-once cap for the deleted-test nudge. */
+  firedDeletedTest: boolean;
 }
 
 export function createVerifyGateState(): VerifyGateState {
@@ -52,6 +65,8 @@ export function createVerifyGateState(): VerifyGateState {
     verifyFailedSinceEdit: false,
     firedNoVerify: false,
     failNudges: 0,
+    deletedTestPaths: [],
+    firedDeletedTest: false,
   };
 }
 
@@ -122,6 +137,22 @@ export function noteVerifyEvidence(
         state.verifiedSinceEdit = false;
       }
     }
+    // Test-deletion tripwire: delete_file on a test path (or a bash `rm` of one).
+    // A deleted test is invisible to the build-verify gate — it only runs EDITED
+    // tests — so "delete the failing test" would otherwise go green unseen.
+    const deletedTest =
+      a.tool === "delete_file" && a.filePath && isTestFile(a.filePath)
+        ? a.filePath
+        : a.tool === "bash" && a.command
+          ? a.command.match(/\brm\b[^|;&]*?([^\s|;&]+\.(?:test|spec)\.[cm]?[jt]sx?)\b/i)?.[1] ?? null
+          : null;
+    if (
+      deletedTest &&
+      !state.deletedTestPaths.includes(deletedTest) &&
+      state.deletedTestPaths.length < MAX_EDITED_PATHS
+    ) {
+      state.deletedTestPaths.push(deletedTest);
+    }
   }
 }
 
@@ -153,11 +184,28 @@ const NUDGE_BUILD_RED =
   "genuinely cannot make it pass from here, say so plainly and report exactly " +
   "which errors remain — never claim success over a failing build.";
 
+const nudgeDeletedTest = (paths: readonly string[]): string =>
+  `You deleted test file(s): ${paths.join(", ")}. Deleting or skipping a test to make the ` +
+  "suite pass is NOT allowed — the build-verify gate only runs EDITED tests, so a test you " +
+  "removed is invisible to it. If the test was failing, restore it and fix the underlying code " +
+  "(or the test's wrong expectation). If it is genuinely obsolete or worthless (e.g. it only " +
+  "asserts its own mocks), don't just drop coverage — replace it with a REAL test that exercises " +
+  "the current behavior. If you truly believe removal is correct, say so explicitly and explain " +
+  "why so the user can decide — never remove a test silently to go green.";
+
 /** Evaluate at wrap-up. Two tiers: a gentle one-shot nudge when source changed
  *  but nothing verified it, and a stronger (re-fireable, bounded) nudge when a
  *  verify actually RAN and FAILED — the model has the errors and is wrapping up
  *  over them anyway, the exact ship-broken-and-claim-done failure. */
 export function checkVerifyGate(state: VerifyGateState): { nudge: string | null } {
+  // Deleted-test tripwire fires independently of the edit/verify state — deleting
+  // a test to dodge a red suite is a concern even on an otherwise-clean op, and a
+  // deletion doesn't touch editedSource.
+  if (state.deletedTestPaths.length > 0 && !state.firedDeletedTest) {
+    state.firedDeletedTest = true;
+    return { nudge: nudgeDeletedTest(state.deletedTestPaths) };
+  }
+
   if (!state.editedSource || state.verifiedSinceEdit) return { nudge: null };
 
   if (state.verifyFailedSinceEdit) {

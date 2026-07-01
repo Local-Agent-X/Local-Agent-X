@@ -16,6 +16,7 @@ import {
 
 const edit = (filePath: string): VerifyTurnAction => ({ tool: "edit", filePath });
 const bash = (command: string, status: "ok" | "error"): VerifyTurnAction => ({ tool: "bash", command, status });
+const del = (filePath: string): VerifyTurnAction => ({ tool: "delete_file", filePath });
 
 describe("isSourceFile — which extensions demand a verify", () => {
   it("flags compiled/checked languages, not pure data files", () => {
@@ -115,6 +116,40 @@ describe("checkVerifyGate — verified but FAILED (the ship-broken-and-claim-don
     // No longer flagged as a failed build (must be re-verified), but still
     // unverified overall → outcome stays partial until a clean run.
     expect(opEditedSourceUnverified(s)).toBe(true);
+  });
+});
+
+describe("test-deletion tripwire — deleting a test to dodge a red suite", () => {
+  it("nudges (once) when a test file is deleted via delete_file", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([del("tests/integration/undo-zero-cost.test.ts")], s);
+    const r = checkVerifyGate(s);
+    expect(r.nudge).toMatch(/deleted test file/i);
+    expect(r.nudge).toMatch(/NOT allowed/);
+    expect(r.nudge).toContain("undo-zero-cost.test.ts");
+    // fire-once
+    expect(checkVerifyGate(s).nudge).toBeNull();
+  });
+
+  it("fires even on an otherwise-clean op (independent of edit/verify state)", () => {
+    const s = createVerifyGateState();
+    // edited + self-verified clean, but ALSO deleted a test — the tripwire wins.
+    noteVerifyEvidence([edit("src/a.ts"), bash("tsc --noEmit", "ok"), del("src/a.spec.ts")], s);
+    expect(checkVerifyGate(s).nudge).toMatch(/deleted test file/i);
+  });
+
+  it("catches a bash `rm` of a test file too", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([bash("rm src/foo.test.ts", "ok")], s);
+    expect(s.deletedTestPaths).toContain("src/foo.test.ts");
+    expect(checkVerifyGate(s).nudge).toMatch(/deleted test file/i);
+  });
+
+  it("does not fire when a NON-test file is deleted", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([del("src/legacy-helper.ts")], s);
+    expect(s.deletedTestPaths).toEqual([]);
+    expect(checkVerifyGate(s).nudge).toBeNull();
   });
 });
 

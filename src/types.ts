@@ -189,7 +189,7 @@ export const USER_HINTS = {
     "I can't touch credential files or platform internals — give me a different path, or you'll need to edit that file yourself.",
   /** Delegated agent + source-code write/edit/bash without a sandbox. */
   worktreeIsolation:
-    "I can't safely change source code from a delegated agent without an isolated sandbox — let me run this directly instead.",
+    "A delegated agent can't run shell commands against source code without an isolated sandbox. If you were trying to run the project's build or type-check to verify your edits, you don't need to — the harness runs it automatically when the turn ends and hands back any real errors. Make your edits with the file tools and finish; verification is handled.",
   /** Tool-policy default-deny, rate cap by policy, blocked args, host allowlist, hook, RBAC, declined approval, context-restricted tool. */
   policy:
     "That action isn't permitted by the current policy — tell me what you'd like instead, or relax the rule in ~/.lax/tool-policy.json.",

@@ -44,15 +44,23 @@ describe("runBuildVerifyGate", () => {
     expect(r.nudge).toContain("TS2339");
     expect(recordOrchestratorVerify).toHaveBeenCalledWith("op-bv", false);
     expect(getBuildVerifyRetries("op-bv")).toBe(1);
+    // A red build is never rounded up to a clean confirmation.
+    expect(r.verifiedClean).toBe(false);
+    expect(r.confirmation).toBe("");
   });
 
-  it("on a GREEN build: lets done stand and records the verdict as passed", async () => {
+  it("on a GREEN build: lets done stand, records passed, and confirms clean for the record", async () => {
     const exec = vi.fn(GREEN);
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
     expect(r.shouldRetry).toBe(false);
     expect(r.nudge).toBe("");
     expect(recordOrchestratorVerify).toHaveBeenCalledWith("op-bv", true);
     expect(getBuildVerifyRetries("op-bv")).toBe(0);
+    // Reconcile-on-green: a real pass surfaces a positive confirmation so a
+    // model that couldn't self-verify doesn't leave "unverified" as the last word.
+    expect(r.verifiedClean).toBe(true);
+    expect(r.confirmation).toContain("Verified");
+    expect(r.confirmation).toContain("npm run typecheck");
   });
 
   it("caps the fix loop: past MAX_RETRIES it stops retrying but still reports red", async () => {
@@ -73,6 +81,9 @@ describe("runBuildVerifyGate", () => {
     expect(r.shouldRetry).toBe(false);
     expect(exec).not.toHaveBeenCalled();
     expect(recordOrchestratorVerify).not.toHaveBeenCalled();
+    // "no buildable project" is NOT a clean verify — it must not confirm.
+    expect(r.verifiedClean).toBe(false);
+    expect(r.confirmation).toBe("");
   });
 
   it("no edited paths: no-op", async () => {

@@ -92,6 +92,18 @@ function formatBuildErrorsForAgent(command: string, cwd: string, output: string,
   );
 }
 
+/** Green-path counterpart to formatBuildErrorsForAgent: the model edited source
+ *  but couldn't self-verify (blocked from running the build on source paths), so
+ *  it may have wrapped up sounding unsure. The harness ran the build and it
+ *  PASSED — say so, so the committed record matches the verdict the label
+ *  already reflects instead of leaving a false "unverified" as the last word. */
+function formatVerifiedForAgent(command: string, cwd: string, kind: string): string {
+  return (
+    `✓ Verified: the harness ran \`${command}\` in ${cwd} and the project's ${kind} passed ` +
+    `with no errors — the change is complete and verified.`
+  );
+}
+
 export interface BuildVerifyGateResult {
   /** Formatted error block for the next turn's user message (empty if none). */
   nudge: string;
@@ -99,6 +111,11 @@ export interface BuildVerifyGateResult {
   shouldRetry: boolean;
   /** Retry cap reached — build still red, but stop looping; label stays partial. */
   capReached: boolean;
+  /** The orchestrator actually RAN the build and it passed (not merely "no
+   *  buildable project found"). Distinguishes a real green from a no-op. */
+  verifiedClean: boolean;
+  /** Green-path confirmation for the committed record (empty unless verifiedClean). */
+  confirmation: string;
 }
 
 export interface BuildVerifyOptions {
@@ -110,7 +127,7 @@ export interface BuildVerifyOptions {
   exec?: (command: string, cwd: string) => Promise<{ ok: boolean; output: string }>;
 }
 
-const NO_RETRY: BuildVerifyGateResult = { nudge: "", shouldRetry: false, capReached: false };
+const NO_RETRY: BuildVerifyGateResult = { nudge: "", shouldRetry: false, capReached: false, verifiedClean: false, confirmation: "" };
 
 /**
  * Decide whether to suppress this turn's terminal "done" by running the
@@ -145,12 +162,20 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
   // correct whether or not we loop.
   recordOrchestratorVerify(op.id, res.ok);
 
-  if (res.ok) return NO_RETRY;
+  if (res.ok) {
+    return {
+      nudge: "",
+      shouldRetry: false,
+      capReached: false,
+      verifiedClean: true,
+      confirmation: formatVerifiedForAgent(detected.command, detected.cwd, detected.kind),
+    };
+  }
 
   const nudge = formatBuildErrorsForAgent(detected.command, detected.cwd, res.output, detected.kind);
   if (getBuildVerifyRetries(op.id) >= MAX_RETRIES) {
-    return { nudge, shouldRetry: false, capReached: true };
+    return { nudge, shouldRetry: false, capReached: true, verifiedClean: false, confirmation: "" };
   }
   bumpBuildVerifyRetries(op.id);
-  return { nudge, shouldRetry: true, capReached: false };
+  return { nudge, shouldRetry: true, capReached: false, verifiedClean: false, confirmation: "" };
 }

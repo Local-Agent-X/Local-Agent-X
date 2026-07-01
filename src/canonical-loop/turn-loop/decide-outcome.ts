@@ -223,11 +223,18 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // verdict is recorded into the verify-gate ledger, so a clean run lets "done"
   // stand AND records `clean`, while a red run loops (capped) and the label
   // stays `partial`. Mirrors render-verify: orchestrator gate, never a tool call.
+  let buildVerifyConfirmation = "";
   if (terminalReason === "done" && opEditedSourceUnverified(op.id)) {
     const gate = await runBuildVerifyGate(op);
     if (gate.shouldRetry) {
       appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);
       terminalReason = null;
+    } else if (gate.verifiedClean) {
+      // The orchestrator ran the project's build itself and it PASSED, but the
+      // model couldn't self-verify (blocked from running a build on source paths)
+      // and may have wrapped up sounding unsure. Hold the green confirmation and
+      // surface it below once we know the op truly ends this turn.
+      buildVerifyConfirmation = gate.confirmation;
     }
   }
 
@@ -266,6 +273,23 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
         content: { text: warning },
       });
     }
+  }
+
+  // Reconcile-on-green: the orchestrator build-verify gate above ran the project's
+  // build itself and it PASSED, but the model couldn't self-verify (blocked from
+  // running a build on source paths) and may have wrapped up sounding unsure.
+  // Surface the green verdict as the last word so the committed transcript matches
+  // the outcome label (already recorded clean via recordOrchestratorVerify) — the
+  // inverse of the loud-partial guarantee: a partial must never look done, and a
+  // verified-clean edit must never look unverified. Only when the op truly ends
+  // here and didn't also end partial.
+  if (terminalReason !== null && !endedPartial && buildVerifyConfirmation) {
+    publishStreamChunk(op.id, { text: `\n\n${buildVerifyConfirmation}` });
+    allMessages.push({
+      messageId: `build-verify-ok-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
+      role: "assistant",
+      content: { text: buildVerifyConfirmation },
+    });
   }
 
   // Record the op outcome on its terminal turn (terminalReason stays non-null

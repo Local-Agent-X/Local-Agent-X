@@ -29,7 +29,7 @@ import {
 } from "./tool-failure-summary.js";
 import { isSilentToolCall } from "./silent-tool-check.js";
 import { runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
-import { runBuildVerifyGate } from "./build-verify.js";
+import { runBuildVerifyGate, groundTruthSizesNote } from "./build-verify.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
 import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
@@ -290,6 +290,23 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
       role: "assistant",
       content: { text: buildVerifyConfirmation },
     });
+  }
+
+  // Ground-truth file sizes: the claim-verify guards catch a lie about what a
+  // TOOL did, but not a lie about what a FILE is. When the model's summary quotes
+  // a line count (e.g. "AgentController.ts is 294 lines" when it's 588), state the
+  // real sizes as the authoritative last word so a fabricated count can't stand.
+  // Fires whether or not the model self-verified; silent when no size was quoted.
+  if (terminalReason !== null && !endedPartial) {
+    const sizesNote = groundTruthSizesNote(op.id, assistantText);
+    if (sizesNote) {
+      publishStreamChunk(op.id, { text: `\n\n${sizesNote}` });
+      allMessages.push({
+        messageId: `ground-truth-sizes-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
+        role: "assistant",
+        content: { text: sizesNote },
+      });
+    }
   }
 
   // Record the op outcome on its terminal turn (terminalReason stays non-null

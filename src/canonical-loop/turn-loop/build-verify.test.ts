@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // The gate writes its verdict into the verify-gate ledger and reads edited
 // paths from it. Mock that seam so the test isolates the gate's own control
@@ -12,8 +15,9 @@ import {
   runBuildVerifyGate,
   getBuildVerifyRetries,
   _resetBuildVerifyState,
+  groundTruthSizesNote,
 } from "./build-verify.js";
-import { recordOrchestratorVerify } from "../middlewares/verify-gate.js";
+import { recordOrchestratorVerify, opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import type { FsProbe } from "../../agent-guards/index.js";
 import type { Op } from "../../ops/types.js";
 
@@ -78,6 +82,12 @@ describe("runBuildVerifyGate", () => {
     expect(r.confirmation).toContain("npm run typecheck");
   });
 
+  it("green build's confirmation stays size-free (sizes are a separate op-end note)", async () => {
+    const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec: vi.fn(GREEN) });
+    expect(r.verifiedClean).toBe(true);
+    expect(r.confirmation).not.toContain("Ground-truth size");
+  });
+
   it("caps the fix loop: past MAX_RETRIES it stops retrying but still reports red", async () => {
     const exec = vi.fn(RED);
     const run = () => runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
@@ -137,5 +147,43 @@ describe("runBuildVerifyGate", () => {
     expect(r.nudge).toContain("TS2339");
     expect(exec).toHaveBeenCalledTimes(1); // type-check only; test pass skipped while red
     expect(exec).not.toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", "/proj");
+  });
+});
+
+describe("groundTruthSizesNote — real file sizes when the model quotes one", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns the wc -l line count of edited files when the reply quotes a size", () => {
+    // 137 newlines → `wc -l` == 137; a reply claiming any other number (e.g. 294)
+    // is contradicted by this authoritative note.
+    const dir = mkdtempSync(join(tmpdir(), "bv-size-"));
+    try {
+      const file = join(dir, "big.ts");
+      writeFileSync(file, "const x = 1;\n".repeat(137));
+      vi.mocked(opEditedSourcePaths).mockReturnValueOnce([file]);
+      const note = groundTruthSizesNote("op-bv", "Done — big.ts is now 294 lines, clean split.");
+      expect(note).not.toBeNull();
+      expect(note).toContain("137 lines");
+      expect(note).toContain("wc -l");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stays silent (null) when the reply quotes NO size — zero noise on normal edits", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bv-size-"));
+    try {
+      const file = join(dir, "big.ts");
+      writeFileSync(file, "const x = 1;\n".repeat(10));
+      vi.mocked(opEditedSourcePaths).mockReturnValueOnce([file]);
+      expect(groundTruthSizesNote("op-bv", "Done — renamed the type across the repo, tsc clean.")).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null when a size was quoted but no source file was edited", () => {
+    vi.mocked(opEditedSourcePaths).mockReturnValueOnce([]);
+    expect(groundTruthSizesNote("op-bv", "The file is 400 lines.")).toBeNull();
   });
 });

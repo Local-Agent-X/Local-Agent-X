@@ -38,6 +38,7 @@ vi.mock("../middlewares/verify-gate.js", () => ({
 }));
 vi.mock("./build-verify.js", () => ({
   runBuildVerifyGate: vi.fn(async () => ({ nudge: "", shouldRetry: false, capReached: false })),
+  groundTruthSizesNote: vi.fn(() => null),
 }));
 
 import { decideTurnOutcome, recordTerminalOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
@@ -90,6 +91,18 @@ describe("decideTurnOutcome — termination is stop-signal driven", () => {
     // done in a single turn — not drive a spurious wrap-up pass.
     const r = await decideTurnOutcome(input({ modelSignaledDone: true }));
     expect(r.terminalReason).toBe("done");
+  });
+
+  it("emits the ground-truth sizes note into the record when it fires on a terminal done", async () => {
+    const { groundTruthSizesNote } = await import("./build-verify.js");
+    (groundTruthSizesNote as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      "Ground-truth size of the files edited this task … big.ts — 588 lines",
+    );
+    const r = await decideTurnOutcome(input({ modelSignaledDone: true, assistantText: "Done — big.ts is 294 lines." }));
+    expect(r.terminalReason).toBe("done");
+    expect(
+      r.allMessages.some((m) => (m.content as { text?: string })?.text?.includes("588 lines")),
+    ).toBe(true);
   });
 
   it("FALLBACK preserved: same turn with NO stop signal still drives a wrap-up", async () => {

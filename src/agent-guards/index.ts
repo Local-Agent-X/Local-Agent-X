@@ -44,7 +44,10 @@ export {
 } from "./verify-gate.js";
 export {
   detectBuildCommand,
+  detectTestCommand,
+  isTestFile,
   type BuildCommand,
+  type TestCommand,
   type FsProbe,
 } from "./build-command.js";
 export {

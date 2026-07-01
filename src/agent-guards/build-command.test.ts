@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectBuildCommand, type FsProbe } from "./build-command.js";
+import { detectBuildCommand, detectTestCommand, isTestFile, type FsProbe } from "./build-command.js";
 
 // A fake project tree. Keys are absolute paths. A `true` value means the path
 // merely exists (tsconfig, lockfile, the tsc bin); an object value is a
@@ -95,6 +95,56 @@ describe("detectBuildCommand", () => {
     });
     // Two edits in /b, one in /a → build /b.
     const r = detectBuildCommand(["/a/x.ts", "/b/y.ts", "/b/z.ts"], probe);
+    expect(r?.cwd).toBe("/b");
+  });
+});
+
+describe("isTestFile", () => {
+  it("recognizes test/spec files across extensions", () => {
+    for (const p of ["a.test.ts", "x/b.spec.tsx", "c.test.js", "d.test.mjs", "e.spec.jsx"]) {
+      expect(isTestFile(p)).toBe(true);
+    }
+    for (const p of ["a.ts", "test.ts", "b.testing.ts", "c.tsx", "spec.ts"]) {
+      expect(isTestFile(p)).toBe(false);
+    }
+  });
+});
+
+describe("detectTestCommand", () => {
+  it("runs the edited test file with the local vitest binary", () => {
+    const probe = probeFrom({ "/p/package.json": { name: "x" }, "/p/node_modules/.bin/vitest": true });
+    const r = detectTestCommand(["/p/src/foo.test.ts"], probe);
+    expect(r).toEqual({ command: "node_modules/.bin/vitest run src/foo.test.ts", cwd: "/p" });
+  });
+
+  it("falls back to jest when there's no vitest binary", () => {
+    const probe = probeFrom({ "/p/package.json": { name: "x" }, "/p/node_modules/.bin/jest": true });
+    const r = detectTestCommand(["/p/a.spec.ts"], probe);
+    expect(r).toEqual({ command: "node_modules/.bin/jest a.spec.ts", cwd: "/p" });
+  });
+
+  it("runs only the edited test files, not the whole suite (multiple files)", () => {
+    const probe = probeFrom({ "/p/package.json": true, "/p/node_modules/.bin/vitest": true });
+    const r = detectTestCommand(["/p/src/a.ts", "/p/src/x.test.ts", "/p/src/y.test.ts"], probe);
+    expect(r).toEqual({ command: "node_modules/.bin/vitest run src/x.test.ts src/y.test.ts", cwd: "/p" });
+  });
+
+  it("returns null when no test file was edited", () => {
+    const probe = probeFrom({ "/p/package.json": true, "/p/node_modules/.bin/vitest": true });
+    expect(detectTestCommand(["/p/src/a.ts", "/p/src/b.ts"], probe)).toBeNull();
+  });
+
+  it("returns null when a test was edited but no runner is installed", () => {
+    const probe = probeFrom({ "/p/package.json": true });
+    expect(detectTestCommand(["/p/src/a.test.ts"], probe)).toBeNull();
+  });
+
+  it("picks the project with the most edited test files", () => {
+    const probe = probeFrom({
+      "/a/package.json": true, "/a/node_modules/.bin/vitest": true,
+      "/b/package.json": true, "/b/node_modules/.bin/vitest": true,
+    });
+    const r = detectTestCommand(["/a/x.test.ts", "/b/y.test.ts", "/b/z.test.ts"], probe);
     expect(r?.cwd).toBe("/b");
   });
 });

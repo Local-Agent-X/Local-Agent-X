@@ -16,7 +16,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { detectBuildCommand, type FsProbe } from "../../agent-guards/index.js";
+import { detectBuildCommand, detectTestCommand, type FsProbe } from "../../agent-guards/index.js";
 import { opEditedSourcePaths, recordOrchestratorVerify } from "../middlewares/verify-gate.js";
 import { projectRoot } from "../../workspace/paths.js";
 import { bashTool } from "../../tools/shell-tool.js";
@@ -92,14 +92,30 @@ function formatBuildErrorsForAgent(command: string, cwd: string, output: string,
   );
 }
 
+/** Test-failure counterpart: the edit type-checks, but a test the op TOUCHED is
+ *  red. A type-clean change whose own test fails is not done — and the model
+ *  couldn't run the test itself (blocked on source paths), so surface it. */
+function formatTestFailuresForAgent(command: string, cwd: string, output: string): string {
+  return (
+    `STOP — your edits type-check, but a test you touched is FAILING.\n\n` +
+    `You edited a test file and wrapped up without running it, so the harness ran \`${command}\` ` +
+    `in ${cwd} on your behalf. It failed:\n\n` +
+    "```\n" + truncateHead(output.trim(), NUDGE_BODY_LIMIT) + "\n```\n\n" +
+    `Do NOT report this done while a test is red. Either the code is wrong or the test's ` +
+    `expectation is wrong — read the assertion, decide which, and make them agree. Don't just ` +
+    `delete the assertion to go green; fix the real mismatch.`
+  );
+}
+
 /** Green-path counterpart to formatBuildErrorsForAgent: the model edited source
  *  but couldn't self-verify (blocked from running the build on source paths), so
- *  it may have wrapped up sounding unsure. The harness ran the build and it
+ *  it may have wrapped up sounding unsure. The harness ran the checks and they
  *  PASSED — say so, so the committed record matches the verdict the label
  *  already reflects instead of leaving a false "unverified" as the last word. */
-function formatVerifiedForAgent(command: string, cwd: string, kind: string): string {
+function formatVerifiedForAgent(checks: readonly { command: string; cwd: string }[]): string {
+  const ran = checks.map((c) => `\`${c.command}\``).join(" and ");
   return (
-    `✓ Verified: the harness ran \`${command}\` in ${cwd} and the project's ${kind} passed ` +
+    `✓ Verified: the harness ran ${ran} in ${checks[0].cwd} and they passed ` +
     `with no errors — the change is complete and verified.`
   );
 }
@@ -154,28 +170,44 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
   }
 
   const exec = opts.exec ?? defaultExec;
-  const res = await exec(detected.command, detected.cwd);
-  logger.info(`op=${op.id} ran \`${detected.command}\` in ${detected.cwd} → ${res.ok ? "PASSED" : "FAILED"} (retry ${getBuildVerifyRetries(op.id)})`);
 
-  // Authoritative verdict into the edit/verify ledger: clean → outcome clean,
-  // red → outcome partial. Done before the retry branches so the label is
-  // correct whether or not we loop.
-  recordOrchestratorVerify(op.id, res.ok);
+  // Red-path result: record the partial verdict, then loop (under cap) or stop
+  // looping. Shared by the type-check and the edited-test failure branches so a
+  // single retry counter governs both.
+  const redResult = (nudge: string): BuildVerifyGateResult => {
+    recordOrchestratorVerify(op.id, false);
+    if (getBuildVerifyRetries(op.id) >= MAX_RETRIES) {
+      return { nudge, shouldRetry: false, capReached: true, verifiedClean: false, confirmation: "" };
+    }
+    bumpBuildVerifyRetries(op.id);
+    return { nudge, shouldRetry: true, capReached: false, verifiedClean: false, confirmation: "" };
+  };
 
-  if (res.ok) {
-    return {
-      nudge: "",
-      shouldRetry: false,
-      capReached: false,
-      verifiedClean: true,
-      confirmation: formatVerifiedForAgent(detected.command, detected.cwd, detected.kind),
-    };
+  // 1. Type-check (fast, side-effect-free). The broken-reference class fails here.
+  const build = await exec(detected.command, detected.cwd);
+  logger.info(`op=${op.id} ran \`${detected.command}\` in ${detected.cwd} → ${build.ok ? "PASSED" : "FAILED"} (retry ${getBuildVerifyRetries(op.id)})`);
+  if (!build.ok) return redResult(formatBuildErrorsForAgent(detected.command, detected.cwd, build.output, detected.kind));
+
+  const checks: { command: string; cwd: string }[] = [{ command: detected.command, cwd: detected.cwd }];
+
+  // 2. If the op edited a test file, run THOSE tests too. A type-clean change
+  //    whose own test is red is not done — and the model couldn't run the test
+  //    itself (blocked from shell on source paths), so it never saw the failure.
+  const testCmd = detectTestCommand(editedPaths, probe);
+  if (testCmd) {
+    const test = await exec(testCmd.command, testCmd.cwd);
+    logger.info(`op=${op.id} ran \`${testCmd.command}\` in ${testCmd.cwd} → ${test.ok ? "PASSED" : "FAILED"} (retry ${getBuildVerifyRetries(op.id)})`);
+    if (!test.ok) return redResult(formatTestFailuresForAgent(testCmd.command, testCmd.cwd, test.output));
+    checks.push({ command: testCmd.command, cwd: testCmd.cwd });
   }
 
-  const nudge = formatBuildErrorsForAgent(detected.command, detected.cwd, res.output, detected.kind);
-  if (getBuildVerifyRetries(op.id) >= MAX_RETRIES) {
-    return { nudge, shouldRetry: false, capReached: true, verifiedClean: false, confirmation: "" };
-  }
-  bumpBuildVerifyRetries(op.id);
-  return { nudge, shouldRetry: true, capReached: false, verifiedClean: false, confirmation: "" };
+  // 3. Every check green — record clean and hand back the confirmation.
+  recordOrchestratorVerify(op.id, true);
+  return {
+    nudge: "",
+    shouldRetry: false,
+    capReached: false,
+    verifiedClean: true,
+    confirmation: formatVerifiedForAgent(checks),
+  };
 }

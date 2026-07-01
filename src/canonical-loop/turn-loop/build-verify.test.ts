@@ -28,6 +28,21 @@ const probe: FsProbe = {
 const RED = async () => ({ ok: false, output: "src/a.ts(3,5): error TS2339: Property 'x' does not exist." });
 const GREEN = async () => ({ ok: true, output: "" });
 
+// A project at /proj with a typecheck script AND a local vitest binary — so a
+// test file edit triggers the edited-test pass on top of the type-check.
+const probeWithVitest: FsProbe = {
+  exists: (p) => p === "/proj/package.json" || p === "/proj/node_modules/.bin/vitest",
+  readJson: (p) => (p === "/proj/package.json" ? { scripts: { typecheck: "tsc --noEmit" } } : null),
+};
+
+// An exec that answers by command: the vitest run vs the type-check.
+const byCommand = (typecheckOk: boolean, testOk: boolean) =>
+  vi.fn(async (command: string) =>
+    command.includes("vitest")
+      ? { ok: testOk, output: testOk ? "" : "FAIL foo.test.ts > keeps user msg — expected 6 got 5" }
+      : { ok: typecheckOk, output: typecheckOk ? "" : "src/a.ts(3,5): error TS2339" },
+  );
+
 describe("runBuildVerifyGate", () => {
   beforeEach(() => {
     _resetBuildVerifyState();
@@ -91,5 +106,36 @@ describe("runBuildVerifyGate", () => {
     const r = await runBuildVerifyGate(op, { editedPaths: [], probe, exec });
     expect(r.shouldRetry).toBe(false);
     expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("edited test that FAILS: type-check passes but the test is red → nudge + retry, records partial", async () => {
+    const exec = byCommand(true, false);
+    const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/foo.test.ts"], probe: probeWithVitest, exec });
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", "/proj");
+    expect(exec).toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", "/proj");
+    expect(r.shouldRetry).toBe(true);
+    expect(r.verifiedClean).toBe(false);
+    expect(r.nudge).toMatch(/test you touched is FAILING/i);
+    expect(r.nudge).toContain("vitest run src/foo.test.ts");
+    // A type-clean-but-test-red edit records partial, not clean.
+    expect(recordOrchestratorVerify).toHaveBeenCalledWith("op-bv", false);
+  });
+
+  it("edited test that PASSES: type-check + test both green → verifiedClean, confirmation names both", async () => {
+    const exec = byCommand(true, true);
+    const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/foo.test.ts"], probe: probeWithVitest, exec });
+    expect(r.verifiedClean).toBe(true);
+    expect(r.confirmation).toContain("npm run typecheck");
+    expect(r.confirmation).toContain("vitest run src/foo.test.ts");
+    expect(recordOrchestratorVerify).toHaveBeenLastCalledWith("op-bv", true);
+  });
+
+  it("edited test but type-check FAILS: stops at the type-check, never runs the test", async () => {
+    const exec = byCommand(false, true);
+    const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/foo.test.ts"], probe: probeWithVitest, exec });
+    expect(r.shouldRetry).toBe(true);
+    expect(r.nudge).toContain("TS2339");
+    expect(exec).toHaveBeenCalledTimes(1); // type-check only; test pass skipped while red
+    expect(exec).not.toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", "/proj");
   });
 });

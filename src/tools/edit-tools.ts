@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolveAgentPath } from "../workspace/paths.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
-import { validateSyntax } from "./syntax-validate.js";
+import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 import { createLogger } from "../logger.js";
 import { appUrlHint, servedFileHint } from "./file-hints.js";
@@ -78,15 +78,19 @@ function applyStringEdit(content: string, rawOld: string, rawNew: string, replac
   return { ok: false, message: `old_string not found.${ambiguous} Make sure it matches exactly.`, recovery };
 }
 
-// Guard + write + post-write syntax check, shared by every edit-family tool.
+// Guard + write-time syntax gate + write, shared by every edit-family tool. The
+// gate rejects an edit that would turn a syntactically-clean file broken (the
+// file is left untouched), so a bad edit never lands on disk.
 function commitEdit(filePath: string, updated: string, verb: string): ToolResult {
   const guard = checkAppWrite(filePath, updated);
   if (!guard.allow) return err(writeGuardRejectionMessage(guard.reason ?? "policy violation"));
+  const before = existsSync(filePath) ? readFileSync(filePath, "utf-8") : null;
+  const verdict = checkEditSyntax(filePath, before, updated);
+  if (verdict.reject) return err(syntaxRejectionMessage(filePath, verdict.issue as string));
   writeFileSync(filePath, updated, "utf-8");
-  const syntaxIssue = validateSyntax(filePath, updated);
   return ok(
     `${verb} ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
-    syntaxIssue ? { recovery: syntaxIssue } : undefined,
+    verdict.issue ? { recovery: verdict.issue } : undefined,
   );
 }
 

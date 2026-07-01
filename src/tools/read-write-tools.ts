@@ -8,7 +8,7 @@ import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
 import { fileNotFoundError } from "./edit-recovery.js";
-import { validateSyntax } from "./syntax-validate.js";
+import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 import { appUrlHint, servedFileHint } from "./file-hints.js";
 
@@ -137,29 +137,34 @@ export const writeTool: ToolDefinition = {
       // diffs, and noisy across machines syncing the same file. Only
       // detect on EXISTING files; new-file writes use whatever the model
       // emitted (LF, matching every other code-gen tool).
-      let toWrite = content;
+      let before: string | null = null;
       if (existsSync(filePath)) {
-        try {
-          const existing = readFileSync(filePath, "utf-8");
-          // Simple majority heuristic: if the existing file's \r\n count
-          // exceeds half its \n count, the file is CRLF — promote new
-          // content to CRLF. Otherwise leave as LF.
-          const lfCount = (existing.match(/\n/g) || []).length;
-          const crlfCount = (existing.match(/\r\n/g) || []).length;
-          if (lfCount > 0 && crlfCount > lfCount / 2) {
-            toWrite = content.replace(/\r?\n/g, "\r\n");
-          }
-        } catch { /* read failed — fall back to writing as-is */ }
+        try { before = readFileSync(filePath, "utf-8"); } catch { before = null; }
       }
+      let toWrite = content;
+      if (before !== null) {
+        // Simple majority heuristic: if the existing file's \r\n count
+        // exceeds half its \n count, the file is CRLF — promote new
+        // content to CRLF. Otherwise leave as LF.
+        const lfCount = (before.match(/\n/g) || []).length;
+        const crlfCount = (before.match(/\r\n/g) || []).length;
+        if (lfCount > 0 && crlfCount > lfCount / 2) {
+          toWrite = content.replace(/\r?\n/g, "\r\n");
+        }
+      }
+      // Write-time syntax gate: refuse a write that turns a clean file broken
+      // (see checkEditSyntax). A new file uses a clean (null) baseline, so a
+      // broken new .ts/.json is refused too.
+      const verdict = checkEditSyntax(filePath, before, toWrite);
+      if (verdict.reject) return err(syntaxRejectionMessage(filePath, verdict.issue as string));
       // O_NOFOLLOW write: a symlink pre-planted at filePath is rejected (ELOOP)
       // instead of redirecting the write to overwrite a file outside the
       // workspace (R4-19 write leg). The pre-dispatch gate already realpath-
       // confined this path; this closes the leaf-swap TOCTOU at the open.
       writeValidatedFile(filePath, toWrite);
-      const syntaxIssue = validateSyntax(filePath, toWrite);
       return ok(
         `Wrote ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
-        syntaxIssue ? { recovery: syntaxIssue } : undefined,
+        verdict.issue ? { recovery: verdict.issue } : undefined,
       );
     } catch (e) {
       return err(`Failed to write ${filePath}: ${(e as Error).message}`);

@@ -24,7 +24,7 @@ export const handleXaiAuthRoutes: RouteHandler = async (method, url, req, res, c
   // ── xAI Grok OAuth (SuperGrok / X Premium+) ──
   if (method === "POST" && url.pathname === "/api/auth/xai/login") {
     try {
-      const { initiateXaiLogin } = await import("../../../auth/xai.js");
+      const { initiateXaiLogin } = await import("../../../auth/xai-login.js");
       const { authUrl, promise } = await initiateXaiLogin();
       promise.then(() => logger.info("xAI login completed")).catch((e) => logger.warn("xAI login failed:", e.message));
       // Open in the system browser from the server process. The renderer's
@@ -56,7 +56,7 @@ export const handleXaiAuthRoutes: RouteHandler = async (method, url, req, res, c
     try {
       const body = await safeParseBody(req);
       const code = typeof body?.code === "string" ? body.code : "";
-      const { exchangeXaiCodeManually } = await import("../../../auth/xai.js");
+      const { exchangeXaiCodeManually } = await import("../../../auth/xai-login.js");
       await exchangeXaiCodeManually(code);
       json(200, { ok: true });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }

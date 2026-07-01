@@ -29,6 +29,7 @@ import {
 } from "./tool-failure-summary.js";
 import { isSilentToolCall } from "./silent-tool-check.js";
 import { runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
+import { runBuildVerifyGate } from "./build-verify.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
 import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
@@ -212,6 +213,22 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     // gate.capReached → leave terminalReason="done" but the errors are
     // already drained; the user sees the broken preview + the model's
     // "done", same as today. Future: emit a one-line warning event.
+  }
+
+  // Build-verify gate (iteration 5). When the model says "done" on an op that
+  // edited source but never reached a clean self-verify, the orchestrator runs
+  // the project's OWN build/type-check itself and injects the REAL errors as the
+  // next turn's user message — the model dodges the gentle "go verify" nudge, so
+  // the environment verifies and hands back ground truth instead. The build
+  // verdict is recorded into the verify-gate ledger, so a clean run lets "done"
+  // stand AND records `clean`, while a red run loops (capped) and the label
+  // stays `partial`. Mirrors render-verify: orchestrator gate, never a tool call.
+  if (terminalReason === "done" && opEditedSourceUnverified(op.id)) {
+    const gate = await runBuildVerifyGate(op);
+    if (gate.shouldRetry) {
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);
+      terminalReason = null;
+    }
   }
 
   // Earned-"done" gate (unattended lanes only). Before accepting a worker /

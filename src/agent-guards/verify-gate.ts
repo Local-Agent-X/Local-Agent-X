@@ -22,6 +22,11 @@ export interface VerifyTurnAction {
 export interface VerifyGateState {
   /** A source file was created/edited at some point this op. */
   editedSource: boolean;
+  /** Distinct source-file paths edited this op, insertion-ordered. Read by the
+   *  orchestrator build-verify gate to locate the project to build (walk up to
+   *  the nearest build manifest). Capped so a pathological run can't grow it
+   *  unbounded; the cap only limits which dirs we'd detect, never correctness. */
+  editedPaths: string[];
   /** A verify command ran OK (exit 0) AFTER the most recent source edit. */
   verifiedSinceEdit: boolean;
   /** A verify command ran and FAILED (non-zero exit → status "error") after the
@@ -42,12 +47,17 @@ export interface VerifyGateState {
 export function createVerifyGateState(): VerifyGateState {
   return {
     editedSource: false,
+    editedPaths: [],
     verifiedSinceEdit: false,
     verifyFailedSinceEdit: false,
     firedNoVerify: false,
     failNudges: 0,
   };
 }
+
+/** Cap on tracked edited paths. Far above any real op's distinct-file count;
+ *  a backstop against an adversarial loop, not a functional limit. */
+const MAX_EDITED_PATHS = 200;
 
 /** Past this many "build is RED but you're wrapping up anyway" nudges, the model
  *  has demonstrably failed to fix it from here — stop nudging and let the spiral
@@ -85,6 +95,12 @@ export function noteVerifyEvidence(
   for (const a of actions) {
     if (EDIT_TOOLS.has(a.tool) && a.filePath && isSourceFile(a.filePath)) {
       state.editedSource = true;
+      if (
+        !state.editedPaths.includes(a.filePath) &&
+        state.editedPaths.length < MAX_EDITED_PATHS
+      ) {
+        state.editedPaths.push(a.filePath);
+      }
       // A fresh edit invalidates both a prior pass AND a prior failure — the
       // edit is presumed a fix attempt that must be re-verified from scratch.
       state.verifiedSinceEdit = false;
@@ -107,6 +123,17 @@ export function noteVerifyEvidence(
       }
     }
   }
+}
+
+/** Record an authoritative verify verdict the ORCHESTRATOR ran itself (the
+ *  build-verify gate runs the project's build/type-check between turns), rather
+ *  than inferring one from the model's own bash calls. The orchestrator chose
+ *  the command, so it sets the verdict directly: a clean run satisfies the edit,
+ *  a failed run marks the project red. No-op if nothing was edited. */
+export function recordExternalVerify(state: VerifyGateState, passed: boolean): void {
+  if (!state.editedSource) return;
+  state.verifiedSinceEdit = passed;
+  state.verifyFailedSinceEdit = !passed;
 }
 
 const NUDGE_NEVER_VERIFIED =

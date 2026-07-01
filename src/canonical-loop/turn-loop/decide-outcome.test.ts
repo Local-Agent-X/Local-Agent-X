@@ -32,6 +32,12 @@ vi.mock("../middlewares/browser-handoff.js", () => ({
 vi.mock("../middlewares/cleanup-verify.js", () => ({
   opCleanupUnverified: vi.fn(() => false),
 }));
+vi.mock("../middlewares/verify-gate.js", () => ({
+  opEditedSourceUnverified: vi.fn(() => false),
+}));
+vi.mock("./build-verify.js", () => ({
+  runBuildVerifyGate: vi.fn(async () => ({ nudge: "", shouldRetry: false, capReached: false })),
+}));
 
 import { decideTurnOutcome, recordTerminalOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
 import { recordOpOutcome } from "../../tool-tracker.js";
@@ -155,6 +161,39 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
     const { recordOpOutcome } = await import("../../tool-tracker.js");
     await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
     expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial", "grok-4.3");
+  });
+
+  it("orchestrator build-verify suppresses 'done' and loops when the build is red", async () => {
+    // The model said done after editing source without a clean verify; the
+    // orchestrator ran the build, it failed, so the turn must NOT terminate —
+    // the real errors are injected and the same model gets another pass.
+    const { opEditedSourceUnverified } = await import("../middlewares/verify-gate.js");
+    (opEditedSourceUnverified as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+    const { runBuildVerifyGate } = await import("./build-verify.js");
+    (runBuildVerifyGate as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      nudge: "STOP — build red: TS2339", shouldRetry: true, capReached: false,
+    });
+    const { appendNudgeAsUserMessage } = await import("./nudges.js");
+    const r = await decideTurnOutcome(input({
+      toolCalls: [], toolMessages: [], toolSummary: [], modelSignaledDone: true,
+    }));
+    expect(runBuildVerifyGate).toHaveBeenCalled();
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, "STOP — build red: TS2339");
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("orchestrator build-verify lets 'done' stand when the build passes (no loop)", async () => {
+    const { opEditedSourceUnverified } = await import("../middlewares/verify-gate.js");
+    (opEditedSourceUnverified as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+    const { runBuildVerifyGate } = await import("./build-verify.js");
+    (runBuildVerifyGate as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      nudge: "", shouldRetry: false, capReached: false,
+    });
+    const r = await decideTurnOutcome(input({
+      toolCalls: [], toolMessages: [], toolSummary: [], modelSignaledDone: true,
+    }));
+    expect(runBuildVerifyGate).toHaveBeenCalled();
+    expect(r.terminalReason).toBe("done");
   });
 
   it("records aborted on a terminal error", async () => {

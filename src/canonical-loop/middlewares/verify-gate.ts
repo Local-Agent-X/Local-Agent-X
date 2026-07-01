@@ -24,6 +24,7 @@ import {
   checkVerifyGate,
   createVerifyGateState,
   opEditedSourceUnverified as opEditedSourceUnverifiedState,
+  recordExternalVerify,
   type VerifyGateState,
   type VerifyTurnAction,
 } from "../../agent-guards/index.js";
@@ -37,6 +38,22 @@ import {
 export function opEditedSourceUnverified(opId: string): boolean {
   return opEditedSourceUnverifiedState(
     getMiddlewareState<VerifyGateState>(opId, "verify-gate", createVerifyGateState),
+  );
+}
+
+/** Source-file paths the op edited (insertion-ordered). The orchestrator
+ *  build-verify gate uses these to locate the project to build. */
+export function opEditedSourcePaths(opId: string): string[] {
+  return getMiddlewareState<VerifyGateState>(opId, "verify-gate", createVerifyGateState).editedPaths;
+}
+
+/** Record the verdict of a build/type-check the ORCHESTRATOR ran itself into the
+ *  op's edit/verify ledger, so the outcome label reads clean on a pass and
+ *  partial on a failure — the same ledger the model's own verify writes to. */
+export function recordOrchestratorVerify(opId: string, passed: boolean): void {
+  recordExternalVerify(
+    getMiddlewareState<VerifyGateState>(opId, "verify-gate", createVerifyGateState),
+    passed,
   );
 }
 

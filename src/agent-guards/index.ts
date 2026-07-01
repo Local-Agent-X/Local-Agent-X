@@ -37,10 +37,16 @@ export {
   checkVerifyGate,
   createVerifyGateState,
   opEditedSourceUnverified,
+  recordExternalVerify,
   isSourceFile,
   type VerifyGateState,
   type VerifyTurnAction,
 } from "./verify-gate.js";
+export {
+  detectBuildCommand,
+  type BuildCommand,
+  type FsProbe,
+} from "./build-command.js";
 export {
   looksLikeCleanupSweep,
   isEmptyGrepResult,

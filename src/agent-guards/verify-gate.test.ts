@@ -4,6 +4,7 @@ import {
   noteVerifyEvidence,
   checkVerifyGate,
   opEditedSourceUnverified,
+  recordExternalVerify,
   isSourceFile,
   type VerifyTurnAction,
 } from "./verify-gate.js";
@@ -114,6 +115,38 @@ describe("checkVerifyGate — verified but FAILED (the ship-broken-and-claim-don
     // No longer flagged as a failed build (must be re-verified), but still
     // unverified overall → outcome stays partial until a clean run.
     expect(opEditedSourceUnverified(s)).toBe(true);
+  });
+});
+
+describe("editedPaths — what the orchestrator build-verify gate locates the project from", () => {
+  it("records distinct edited source paths in order, ignoring data files and reads", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts"), { tool: "read", filePath: "src/z.ts" }, edit("README.md")], s);
+    noteVerifyEvidence([edit("src/b.ts"), edit("src/a.ts")], s); // a.ts repeat is deduped
+    expect(s.editedPaths).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+});
+
+describe("recordExternalVerify — the orchestrator's own build verdict", () => {
+  it("a passing orchestrator build clears the unverified flag (→ clean)", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts")], s);
+    expect(opEditedSourceUnverified(s)).toBe(true);
+    recordExternalVerify(s, true);
+    expect(opEditedSourceUnverified(s)).toBe(false);
+  });
+
+  it("a failing orchestrator build keeps it unverified (→ partial)", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts"), bash("tsc", "ok")], s); // model self-verified clean
+    recordExternalVerify(s, false); // ...but the orchestrator's run disagrees
+    expect(opEditedSourceUnverified(s)).toBe(true);
+  });
+
+  it("is a no-op when nothing was edited (never invents a verdict)", () => {
+    const s = createVerifyGateState();
+    recordExternalVerify(s, true);
+    expect(s.verifiedSinceEdit).toBe(false);
   });
 });
 

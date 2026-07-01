@@ -9,7 +9,7 @@ import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
 import { getKernelTaintSources } from "../data-lineage.js";
-import { WORKTREE_PATH_TOOLS } from "../tool-registry.js";
+import { WORKTREE_PATH_TOOLS, hasCapability } from "../tool-registry.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit } from "../circuit-breaker.js";
 import { checkToolRateLimit } from "./rate-limiter.js";
@@ -66,6 +66,33 @@ export const ARI_ACTION_MAP: Record<string, string> = {
   search_past_sessions: "search",
 };
 
+// Kernel taint sources that @arikernel/core's deny-tainted-shell rule treats as
+// untrusted content (its `match.taintSources`). Mirrored here so LAX can PRE-EMPT
+// the shell denial before the kernel observes the taint+shell event — see
+// taintedShellBlockReason. Kept in lockstep with the real rule by
+// ari-taint-shell-contract.test.ts (drives the live kernel against this helper).
+const SHELL_TAINT_DENY_SOURCES: ReadonlySet<string> = new Set(["web", "rag", "email"]);
+
+/**
+ * If `toolName` is a shell-class tool AND the session carries untrusted
+ * (web/rag/email) taint, return a clear denial message; otherwise null.
+ *
+ * WHY pre-empt the kernel: the kernel's deny-tainted-shell would also deny, but
+ * its `web_taint_sensitive_probe` behavioral rule QUARANTINES the whole run on a
+ * taint+shell attempt — and a quarantined run also blocks file WRITES. That
+ * bricks legit editing for the rest of the op after the agent merely read a
+ * credential/.env file. Denying HERE keeps shell blocked (the real exfil wall —
+ * `bash` is NOT egress-gated, so deny-tainted-shell is its only backstop) WITHOUT
+ * the write-blocking quarantine. Egress keeps its own independent guards; this
+ * changes nothing there. Pure + exported for the contract test.
+ */
+export function taintedShellBlockReason(toolName: string, taintSources: readonly string[]): string | null {
+  if (!hasCapability(toolName, "shell")) return null;
+  const hit = taintSources.filter((s) => SHELL_TAINT_DENY_SOURCES.has(s));
+  if (hit.length === 0) return null;
+  return `Shell is blocked for this task: this session read sensitive/credential content (taint: ${hit.join(", ")}), and running a shell command after reading secrets is an exfiltration risk, so shell stays denied while the session is tainted. This does NOT block your file edits (read/write/edit) or the build/verify typecheck — keep using those to make progress. If that read was intended and safe, ask the user to clear it in Settings (declassify). The lock resets on your next turn.`;
+}
+
 async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId } = ctx;
   if (shouldGateInKernel(tc.name)) {
@@ -82,6 +109,14 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     // dead code. The MODEL can't supply taint — it comes from the trusted
     // runtime tracker keyed off the session id.
     const taintLabels = getKernelTaintSources(sessionId || "default");
+    // Tainted-shell pre-gate: deny here, BEFORE ariEvaluate, so the kernel never
+    // observes a taint+shell event and quarantines the run (which would also
+    // block file writes for the rest of this op). Shell stays denied; editing
+    // keeps working. See taintedShellBlockReason for the full rationale.
+    const shellTaintBlock = taintedShellBlockReason(tc.name, taintLabels);
+    if (shellTaintBlock) {
+      return terminate(ctx, { rendered: "raw", content: `User hint: ${USER_HINTS.policy}\n${shellTaintBlock}`, allowed: false });
+    }
     const ariResult = await ariEvaluate(tc.name, ARI_ACTION_MAP[tc.name] || "exec", args, taintLabels);
     if (!ariResult.allowed) {
       const hint = ariResult.userHint ?? USER_HINTS.policy;

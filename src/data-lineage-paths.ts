@@ -211,16 +211,25 @@ const SECRET_SCAN_CAP = 256 * 1024;
  * Caller responsibility: if `matched` is true, call recordSensitiveRead with
  * source "secret" to taint the session.
  */
-export function detectSecretsInOutput(text: string): { matched: boolean; kinds: string[] } {
-  if (!text || typeof text !== "string") return { matched: false, kinds: [] };
+export function detectSecretsInOutput(text: string): { matched: boolean; kinds: string[]; structured: boolean } {
+  if (!text || typeof text !== "string") return { matched: false, kinds: [], structured: false };
   const slice = text.length > SECRET_SCAN_CAP ? text.slice(0, SECRET_SCAN_CAP) : text;
   const kinds = new Set<string>();
+  let structured = false;
 
   for (const m of scanForSecrets(slice).matches) {
     kinds.add(m.pattern);
+    // `structured` = a real credential SHAPE (API-key/PEM/JWT/known stored value)
+    // — high confidence. The high-entropy pass is a deliberately-loose catch-all
+    // for UNKNOWN secrets; it also fires on long camelCase identifiers and hashes
+    // in ordinary source. Callers that gate a heavy response (tainting + shell
+    // block) should key on `structured`, not `matched`, so a coincidental
+    // identifier can't brick a benign read. `matched` stays for outbound/egress
+    // scanning, where any secret-shaped span — even coincidental — must be caught.
+    if (m.type !== "high-entropy-token") structured = true;
   }
 
-  return { matched: kinds.size > 0, kinds: [...kinds] };
+  return { matched: kinds.size > 0, kinds: [...kinds], structured };
 }
 
 /**

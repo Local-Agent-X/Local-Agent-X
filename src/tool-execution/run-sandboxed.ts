@@ -199,12 +199,26 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       // web_fetch/http_request branch below, which already guards on !isError.
       if (stdout.length > 0 && ctx.result && !ctx.result.isError) {
         const det = detectSecretsInOutput(stdout);
-        if (det.matched) {
+        // Taint (and shell-block for the turn) only on a STRUCTURED credential —
+        // a real API-key/PEM/JWT/known-value shape that genuinely surfaced a
+        // secret to stdout. A high-entropy-ONLY match must NOT brick the shell:
+        // the entropy pass fires on long camelCase identifiers and hashes in
+        // ordinary source (live: `grep "as any"` over a real repo flagged hook
+        // names like `useIframeNavigationApi` as "High-Entropy Token"), and
+        // shell-block-on-taint would then wedge the primary coding workflow for
+        // the whole turn. Real exfil of such a token is still caught at send time
+        // by the egress guard AND the threat tool-chain's outbound scan (both key
+        // on `matched`). Mirrors the web_fetch / errored-command tolerance below.
+        if (det.structured) {
           recordSensitiveRead(sessionId || "default", "secret", `bash:${det.kinds.join(",")}`, stdout);
           logger.warn(
             `bash output contained secret-shaped content (kinds: ${det.kinds.join(", ")}) — session tainted`,
           );
           redactReason = `bash output contained secret-shaped content (${det.kinds.join(", ")})`;
+        } else if (det.matched) {
+          logger.debug(
+            `bash output had a high-entropy-only match (kinds: ${det.kinds.join(", ")}) — not tainting (coincidental identifier/hash in source; egress + tool-chain still scan any outbound send)`,
+          );
         }
       }
     }

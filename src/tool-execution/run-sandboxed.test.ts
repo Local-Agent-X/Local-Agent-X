@@ -122,3 +122,36 @@ describe("bash-output taint respects isError (the ARI over-block fix)", () => {
     clearSessionTaint(s);
   });
 });
+
+describe("bash-output taint requires a STRUCTURED secret (high-entropy-only FP fix)", () => {
+  // A benign source line whose long identifier trips the deliberately-loose
+  // high-entropy pass but matches no credential shape. The live brick: `grep
+  // "as any"` over a real repo flagged hook names (useIframeNavigationApi…) as
+  // "High-Entropy Token", tainting + shell-blocking the whole turn so the coding
+  // task couldn't run its own build/guard. High-entropy-only must not taint.
+  const HIGH_ENTROPY = `server/x.ts:42:  const u = req.user as any; // useIframeNavigationApiHandlerFactory`;
+  const STRUCTURED = "config dump: AKIAIOSFODNN7EXAMPLE region=us-east-1";
+
+  it("sanity: high-entropy-only matches but is NOT structured; a real key IS structured", () => {
+    const he = detectSecretsInOutput(HIGH_ENTROPY);
+    expect(he.matched).toBe(true);      // the loose pass still fires (egress scan needs it)
+    expect(he.structured).toBe(false);  // …but it's not a confirmed credential
+    expect(detectSecretsInOutput(STRUCTURED).structured).toBe(true);
+  });
+
+  it("a SUCCESSFUL bash whose output is high-entropy-ONLY does NOT taint (no shell brick)", async () => {
+    const s = freshSession();
+    clearSessionTaint(s);
+    await run(fakeBash(HIGH_ENTROPY, false), { command: 'grep -rn "as any" src' }, s);
+    expect(checkEgressTaint(s).blocked).toBe(false);
+    clearSessionTaint(s);
+  });
+
+  it("a SUCCESSFUL bash whose output carries a STRUCTURED credential still taints", async () => {
+    const s = freshSession();
+    clearSessionTaint(s);
+    await run(fakeBash(STRUCTURED, false), { command: "cat config" }, s);
+    expect(checkEgressTaint(s).blocked).toBe(true);
+    clearSessionTaint(s);
+  });
+});

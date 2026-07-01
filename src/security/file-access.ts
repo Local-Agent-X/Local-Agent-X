@@ -35,6 +35,16 @@ export function matchesSensitivePath(normalized: string): RegExp | "app-at-rest-
   for (const pattern of SENSITIVE_PATTERNS) {
     if (pattern.test(normalized)) return pattern;
   }
+  // Keyword-in-name patterns catch secret DATA files but NOT source code whose
+  // name happens to contain the word (passwordReset.ts). Skip them for source
+  // files — the agent's own work product is never sensitive by name. Every other
+  // check below (catalog, app-at-rest) still runs, so a genuinely-cataloged
+  // source path is unaffected.
+  if (!SOURCE_CODE_EXT.test(normalized)) {
+    for (const pattern of SOURCE_NAME_KEYWORD_PATTERNS) {
+      if (pattern.test(normalized)) return pattern;
+    }
+  }
   // The gate = its regexes ∪ the shared credential-file catalog. The catalog
   // (security/sensitive-paths.ts) is the SAME shape-checker the read-taint
   // classifier uses, so the gate is a provable SUPERSET of taint — it can never
@@ -58,13 +68,10 @@ const SENSITIVE_PATTERNS = [
   /[/\\]\.env\./i,
   /id_rsa/i,
   /id_ed25519/i,
-  /[/\\]credentials/i,
   /[/\\]\.netrc/i,
   /[/\\]\.npmrc/i,
   /[/\\]\.pypirc/i,
   /[/\\]auth\.json/i,
-  /[/\\]secrets?\./i,
-  /[/\\]password/i,
   /[/\\]\.git[/\\]config/i,
   /[/\\]\.docker[/\\]config\.json/i,         // Docker credentials
   /[/\\]\.kube[/\\]config/i,                 // Kubernetes config
@@ -80,6 +87,30 @@ const SENSITIVE_PATTERNS = [
   /[/\\]\.vault-token/i,                      // HashiCorp Vault token
   /[/\\]\.boto$/i,                            // AWS boto config
 ];
+
+// Keyword-in-NAME patterns: they catch secret DATA files (passwords.txt,
+// secrets.yaml, ~/.aws/credentials) and stores, but the SAME word appears in
+// perfectly ordinary SOURCE filenames (passwordReset.ts, credentialsService.ts,
+// secrets.ts). Applied to source code they are the exact unanchored-substring
+// false positive LAX's anchored catalog (sensitive-paths.ts) was built to
+// replace — and here they were quarantining legitimate coding runs. So they run
+// only against NON-source paths (see matchesSensitivePath); genuine secret DATA
+// files aren't source-extensioned, so they stay blocked. The AWS credentials
+// file is additionally covered by the `.aws/` dir pattern above + the catalog.
+const SOURCE_NAME_KEYWORD_PATTERNS = [
+  /[/\\]credentials/i,
+  /[/\\]secrets?\./i,
+  /[/\\]password/i,
+];
+
+// A file with a source-code extension is CODE — the agent's legitimate work
+// product — never a "sensitive file" merely because its name contains a security
+// word. Mirrors the ARI gate's carve-out (ari-kernel/evaluate.ts): one invariant,
+// both gates. The dir/extension/data-basename SENSITIVE_PATTERNS above and the
+// anchored catalog still apply to source paths, so a real secret under .ssh/ or a
+// cataloged credential file is unaffected.
+const SOURCE_CODE_EXT =
+  /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|rb|php|c|cc|cpp|h|hpp|cs|swift|kt|kts|scala|m|mm|vue|svelte)$/i;
 
 // Canonical real path that follows symlinks/junctions at every EXISTING
 // segment. For a target that doesn't exist yet (write to a new file), the

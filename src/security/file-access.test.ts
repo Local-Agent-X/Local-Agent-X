@@ -256,3 +256,40 @@ describe("confineToDir — symlink-safe HTTP file-route containment (round-7)", 
     expect(confineToDir(WORKSPACE, "plain.txt\x00.png")).toBeNull();
   });
 });
+
+// The keyword-in-name patterns (password / credentials / secrets.) must catch
+// secret DATA files but NOT source code whose name merely contains the word —
+// the false positive that was quarantining legitimate coding runs (a Grok split
+// that created server/passwordReset.ts got the whole op bricked read-only).
+describe("sensitive-path keyword patterns exempt source code, not secret data", () => {
+  it("ALLOWS source files whose NAME contains a security keyword", () => {
+    for (const p of [
+      "/Users/x/proj/server/passwordReset.ts",
+      "/Users/x/proj/src/credentialsService.ts",
+      "/Users/x/proj/src/secrets.ts",
+      "/Users/x/proj/lib/password_utils.py",
+      "/Users/x/proj/src/AuthCredentials.tsx",
+      "/Users/x/proj/pkg/secret_store.go",
+    ]) {
+      expect(matchesSensitivePath(p)).toBeNull();
+    }
+  });
+
+  it("still BLOCKS genuine secret data files and dirs (same keywords, non-source)", () => {
+    for (const p of [
+      "/Users/x/.aws/credentials",
+      "/Users/x/proj/passwords.txt",
+      "/Users/x/proj/config/secrets.yaml",
+      "/Users/x/proj/secrets.json",
+      "/Users/x/.ssh/id_rsa",
+      "/Users/x/proj/.env",
+    ]) {
+      expect(matchesSensitivePath(p)).not.toBeNull();
+    }
+  });
+
+  it("still BLOCKS a source-extensioned file under a genuine secret DIR", () => {
+    // .ssh/ is a hard dir pattern — a .ts under it is not exempted.
+    expect(matchesSensitivePath("/Users/x/.ssh/helper.ts")).not.toBeNull();
+  });
+});

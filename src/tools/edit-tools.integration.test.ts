@@ -76,3 +76,39 @@ describe("writeTool — write-time syntax gate", () => {
     expect(readFileSync(file, "utf-8")).toBe(CLEAN_TS);
   });
 });
+
+// A machine-specific home path is a NON-FATAL portability nudge, not a reject:
+// the file must still land (an absolute home path can be intentional), and the
+// model must get a recovery note pointing at process.cwd()/os.homedir(). This is
+// the "works on my machine" class (a guard hardcoding ROOT="/Users/dad/…").
+describe("write-time portability nudge (non-fatal)", () => {
+  it("writeTool LANDS a new .ts with a hardcoded home path AND returns a portability note", async () => {
+    const file = join(dir, "guard.ts");
+    const content = `const ROOT = "/Users/dad/lais-eval/project";\nexport const root = ROOT;\n`;
+    const r = await writeTool.execute({ path: file, content });
+    expect(r.isError).toBeFalsy();                             // NOT rejected
+    expect(readFileSync(file, "utf-8")).toBe(content);         // file landed intact
+    expect(String(r.metadata?.recovery)).toMatch(/portability/i);
+    expect(String(r.metadata?.recovery)).toContain("process.cwd()");
+  });
+
+  it("editTool LANDS an edit that introduces a home path AND notes it", async () => {
+    const file = join(dir, "cfg.ts");
+    writeFileSync(file, `export const root = compute();\n`);
+    const r = await editTool.execute({
+      path: file,
+      old_string: "compute()",
+      new_string: `"/home/alice/repo"`,
+    });
+    expect(r.isError).toBeFalsy();
+    expect(readFileSync(file, "utf-8")).toContain("/home/alice/repo");
+    expect(String(r.metadata?.recovery)).toContain("/home/alice/repo");
+  });
+
+  it("does NOT note a clean portable write", async () => {
+    const file = join(dir, "clean.ts");
+    const r = await writeTool.execute({ path: file, content: `const root = process.cwd();\n` });
+    expect(r.isError).toBeFalsy();
+    expect(r.metadata?.recovery).toBeUndefined();
+  });
+});

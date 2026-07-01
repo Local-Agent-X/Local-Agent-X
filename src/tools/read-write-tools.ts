@@ -9,6 +9,7 @@ import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
 import { fileNotFoundError } from "./edit-recovery.js";
 import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
+import { checkHardcodedHomePath } from "./portable-path-check.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 import { appUrlHint, servedFileHint } from "./file-hints.js";
 
@@ -162,9 +163,13 @@ export const writeTool: ToolDefinition = {
       // workspace (R4-19 write leg). The pre-dispatch gate already realpath-
       // confined this path; this closes the leaf-swap TOCTOU at the open.
       writeValidatedFile(filePath, toWrite);
+      // Non-fatal portability nudge (the file already landed): a machine-specific
+      // home path baked into portable source is the "works on my machine" bug.
+      const portability = checkHardcodedHomePath(filePath, before, toWrite);
+      const note = [verdict.issue, portability].filter(Boolean).join("\n\n");
       return ok(
         `Wrote ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
-        verdict.issue ? { recovery: verdict.issue } : undefined,
+        note ? { recovery: note } : undefined,
       );
     } catch (e) {
       return err(`Failed to write ${filePath}: ${(e as Error).message}`);

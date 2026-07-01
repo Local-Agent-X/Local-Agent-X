@@ -3,6 +3,7 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
 import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
+import { checkHardcodedHomePath } from "./portable-path-check.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 import { createLogger } from "../logger.js";
 import { appUrlHint, servedFileHint } from "./file-hints.js";
@@ -88,9 +89,13 @@ function commitEdit(filePath: string, updated: string, verb: string): ToolResult
   const verdict = checkEditSyntax(filePath, before, updated);
   if (verdict.reject) return err(syntaxRejectionMessage(filePath, verdict.issue as string));
   writeFileSync(filePath, updated, "utf-8");
+  // Non-fatal portability nudge (the file already landed): a machine-specific
+  // home path baked into portable source is the "works on my machine" bug.
+  const portability = checkHardcodedHomePath(filePath, before, updated);
+  const note = [verdict.issue, portability].filter(Boolean).join("\n\n");
   return ok(
     `${verb} ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
-    verdict.issue ? { recovery: verdict.issue } : undefined,
+    note ? { recovery: note } : undefined,
   );
 }
 

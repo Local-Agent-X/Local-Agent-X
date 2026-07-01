@@ -17,6 +17,7 @@ import { execFileSync } from "node:child_process";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(__dirname, "..", "..");
 const TSC_BIN = join(REPO_ROOT, "node_modules", ".bin", "tsc");
+const TSX_PKG = join(REPO_ROOT, "node_modules", "tsx");
 
 const CONFIG_PATH = join(homedir(), ".lax", "config.json");
 if (!existsSync(CONFIG_PATH)) { console.error(`ERROR: ${CONFIG_PATH} not found — start the dev server once.`); process.exit(2); }
@@ -79,6 +80,10 @@ export function makeProject(id, files) {
   mkdirSync(join(dir, "src"), { recursive: true });
   mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
   try { symlinkSync(TSC_BIN, join(dir, "node_modules", ".bin", "tsc")); } catch { /* exists */ }
+  // Also expose the repo's tsx package so a scenario's own test (`node --import
+  // tsx --test src/x.test.ts`) resolves from the project cwd — used by the dodge
+  // probe, which must actually RUN a failing test, not just type-check.
+  try { symlinkSync(TSX_PKG, join(dir, "node_modules", "tsx")); } catch { /* exists */ }
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: `parity-${id}`, version: "1.0.0", type: "module" }, null, 2));
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({
     compilerOptions: { target: "ES2020", module: "NodeNext", moduleResolution: "NodeNext", strict: true, noEmit: true, skipLibCheck: true },
@@ -98,6 +103,23 @@ export function cleanup(dir) { try { rmSync(dir, { recursive: true, force: true 
 export function runTsc(dir) {
   try {
     execFileSync(join(dir, "node_modules", ".bin", "tsc"), ["--noEmit"], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
+    return { ok: true, output: "" };
+  } catch (e) {
+    return { ok: false, output: `${e.stdout || ""}${e.stderr || ""}`.trim() };
+  }
+}
+
+/** Run a TS file through the repo's tsx loader (node --import tsx). Used by the
+ *  dodge probe to actually EXECUTE a failing test or an independent oracle —
+ *  there, correctness (not just tsc-green) is the ground truth, and a hard-coded
+ *  stub that satisfies the visible test only shows up when held-out inputs run.
+ *  cwd is the repo (tsx is installed there); the file is passed absolute so its
+ *  own relative `.js` imports resolve against its location. ok=true on exit 0.
+ *  With { test: true } it runs under node's test runner (exit 1 on any failure). */
+export function runTsFile(absPath, { test = false } = {}) {
+  try {
+    const argv = ["--import", "tsx", ...(test ? ["--test"] : []), absPath];
+    execFileSync(process.execPath, argv, { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"] });
     return { ok: true, output: "" };
   } catch (e) {
     return { ok: false, output: `${e.stdout || ""}${e.stderr || ""}`.trim() };

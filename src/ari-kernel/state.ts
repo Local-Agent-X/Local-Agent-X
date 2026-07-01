@@ -11,6 +11,11 @@ let firewall: Firewall | null = null;
 let hostTokenStore: TokenStore | null = null;
 let hostGrantsByCapClass: Map<CapabilityClass, string> = new Map();
 let currentPreset: string = "workspace-assistant";
+// Audit DB path the live firewall was built with. Stored so a per-op run
+// refresh (lifecycle.refreshAriKernelRun) can rebuild an identical firewall
+// — same audit chain, same preset — without threading the path through
+// every caller.
+let ariAuditDbPath: string | null = null;
 // Default true so the deepest gate is load-bearing even if a caller forgets
 // to pass `required`. The config layer (src/config.ts: ariRequired) is the
 // canonical source — this is just the safety net.
@@ -27,6 +32,9 @@ export function setHostGrants(m: Map<CapabilityClass, string>): void { hostGrant
 
 export function getCurrentPreset(): string { return currentPreset; }
 export function setCurrentPreset(p: string): void { currentPreset = p; }
+
+export function getAriAuditDbPath(): string | null { return ariAuditDbPath; }
+export function setAriAuditDbPath(p: string | null): void { ariAuditDbPath = p; }
 
 export function isAriRequired(): boolean { return ariIsRequired; }
 export function setAriRequired(b: boolean): void { ariIsRequired = b; }

@@ -37,6 +37,7 @@ import {
   getLeaseConfig,
 } from "./lease.js";
 import { readLatestOpTurn } from "./store.js";
+import { refreshAriKernelRunIfStuck } from "../ari-kernel/index.js";
 import { getSessionForOp } from "../ops/session-bridge.js";
 import { hasInjects, opConsumesInjects } from "../agent-loop/inject-queue.js";
 import type { Op } from "../ops/types.js";
@@ -109,6 +110,13 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
     }
   }, cfg.heartbeatIntervalMs);
   HEARTBEATS.set(workerId, hb);
+
+  // Op boundary: give ARI a fresh run if a PRIOR op left the singleton
+  // firewall in restricted/quarantine mode. The runtime's run-state escalations
+  // are per-run by design; LAX runs one firewall for the whole process, so
+  // without this a single tripped guard bricks every later op into read-only
+  // until restart. No-op when the kernel is healthy or inactive.
+  try { refreshAriKernelRunIfStuck(); } catch { /* never let the ARI guard break op start */ }
 
   transitionOp(op, "running", "leased");
 

@@ -9,4 +9,4 @@ export { auditKernelCoverage, printKernelCoverageReport } from "./coverage.js";
 export type { KernelCoverageReport } from "./coverage.js";
 export { ariObserve } from "./observe.js";
 export { ariEvaluate } from "./evaluate.js";
-export { startAriKernel, stopAriKernel, ariStatus, getFirewallForTest } from "./lifecycle.js";
+export { startAriKernel, stopAriKernel, ariStatus, getFirewallForTest, refreshAriKernelRun, refreshAriKernelRunIfStuck } from "./lifecycle.js";

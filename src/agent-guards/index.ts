@@ -39,8 +39,12 @@ export {
   opEditedSourceUnverified,
   recordExternalVerify,
   isSourceFile,
+  guessTestSubject,
+  decideDeletedTest,
+  nudgeDeletedTest,
   type VerifyGateState,
   type VerifyTurnAction,
+  type TestDeletionVerdict,
 } from "./verify-gate.js";
 export {
   detectBuildCommand,

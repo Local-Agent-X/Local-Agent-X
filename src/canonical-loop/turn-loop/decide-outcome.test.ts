@@ -34,6 +34,7 @@ vi.mock("../middlewares/cleanup-verify.js", () => ({
 }));
 vi.mock("../middlewares/verify-gate.js", () => ({
   opEditedSourceUnverified: vi.fn(() => false),
+  opDeletedTestDodge: vi.fn(() => false),
 }));
 vi.mock("./build-verify.js", () => ({
   runBuildVerifyGate: vi.fn(async () => ({ nudge: "", shouldRetry: false, capReached: false })),

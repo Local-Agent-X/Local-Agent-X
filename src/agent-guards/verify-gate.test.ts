@@ -6,6 +6,8 @@ import {
   opEditedSourceUnverified,
   recordExternalVerify,
   isSourceFile,
+  guessTestSubject,
+  decideDeletedTest,
   type VerifyTurnAction,
 } from "./verify-gate.js";
 
@@ -119,37 +121,74 @@ describe("checkVerifyGate — verified but FAILED (the ship-broken-and-claim-don
   });
 });
 
-describe("test-deletion tripwire — deleting a test to dodge a red suite", () => {
-  it("nudges (once) when a test file is deleted via delete_file", () => {
+describe("test-deletion tripwire — detection (noteVerifyEvidence)", () => {
+  it("records a test file deleted via delete_file", () => {
     const s = createVerifyGateState();
     noteVerifyEvidence([del("tests/integration/undo-zero-cost.test.ts")], s);
-    const r = checkVerifyGate(s);
-    expect(r.nudge).toMatch(/deleted test file/i);
-    expect(r.nudge).toMatch(/NOT allowed/);
-    expect(r.nudge).toContain("undo-zero-cost.test.ts");
-    // fire-once
-    expect(checkVerifyGate(s).nudge).toBeNull();
-  });
-
-  it("fires even on an otherwise-clean op (independent of edit/verify state)", () => {
-    const s = createVerifyGateState();
-    // edited + self-verified clean, but ALSO deleted a test — the tripwire wins.
-    noteVerifyEvidence([edit("src/a.ts"), bash("tsc --noEmit", "ok"), del("src/a.spec.ts")], s);
-    expect(checkVerifyGate(s).nudge).toMatch(/deleted test file/i);
+    expect(s.deletedTestPaths).toContain("tests/integration/undo-zero-cost.test.ts");
   });
 
   it("catches a bash `rm` of a test file too", () => {
     const s = createVerifyGateState();
     noteVerifyEvidence([bash("rm src/foo.test.ts", "ok")], s);
     expect(s.deletedTestPaths).toContain("src/foo.test.ts");
-    expect(checkVerifyGate(s).nudge).toMatch(/deleted test file/i);
   });
 
-  it("does not fire when a NON-test file is deleted", () => {
+  it("does not record a NON-test file deletion", () => {
     const s = createVerifyGateState();
     noteVerifyEvidence([del("src/legacy-helper.ts")], s);
     expect(s.deletedTestPaths).toEqual([]);
+  });
+
+  it("checkVerifyGate no longer fires on a deletion — that decision moved to the judge", () => {
+    const s = createVerifyGateState();
+    // Edited + self-verified clean, but ALSO deleted a test. The pure gate stays
+    // silent; the async LLM judge (in the middleware) owns the dodge-vs-cleanup call.
+    noteVerifyEvidence([edit("src/a.ts"), bash("tsc --noEmit", "ok"), del("src/a.spec.ts")], s);
     expect(checkVerifyGate(s).nudge).toBeNull();
+  });
+});
+
+describe("guessTestSubject — the code a test exercises", () => {
+  it("strips the .test/.spec infix, keeping the extension", () => {
+    expect(guessTestSubject("src/foo.test.ts")).toBe("src/foo.ts");
+    expect(guessTestSubject("a/b.spec.tsx")).toBe("a/b.tsx");
+    expect(guessTestSubject("x/y.test.mjs")).toBe("x/y.mjs");
+    // A non-test path is returned unchanged.
+    expect(guessTestSubject("src/plain.ts")).toBe("src/plain.ts");
+  });
+});
+
+describe("decideDeletedTest — nudge/label from the judge verdict", () => {
+  const deleted = ["src/foo.test.ts"];
+
+  it("dodge → nudge once + demote the label", () => {
+    const r = decideDeletedTest(deleted, "dodge", false);
+    expect(r.nudge).toMatch(/deleted test file/i);
+    expect(r.dodge).toBe(true);
+  });
+
+  it("legit-cleanup → suppress the nudge + do NOT demote", () => {
+    const r = decideDeletedTest(deleted, "legit-cleanup", false);
+    expect(r.nudge).toBeNull();
+    expect(r.dodge).toBe(false);
+  });
+
+  it("null (judge unavailable) → fail safe: advisory nudge, but no demotion", () => {
+    const r = decideDeletedTest(deleted, null, false);
+    expect(r.nudge).toMatch(/deleted test file/i);
+    expect(r.dodge).toBe(false);
+  });
+
+  it("does not re-nudge once already fired (label verdict still returned)", () => {
+    expect(decideDeletedTest(deleted, "dodge", true).nudge).toBeNull();
+    expect(decideDeletedTest(deleted, "dodge", true).dodge).toBe(true);
+  });
+
+  it("empty deletion set (test restored) → no nudge, no demotion", () => {
+    const r = decideDeletedTest([], "dodge", false);
+    expect(r.nudge).toBeNull();
+    expect(r.dodge).toBe(false);
   });
 });
 

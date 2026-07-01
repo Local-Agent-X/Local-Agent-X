@@ -12,7 +12,8 @@
 // Also carries the test-deletion tripwire: the orchestrator build-verify gate
 // runs the op's EDITED tests, but a DELETED test isn't run — so "delete the
 // failing test" is an invisible path to green the gate can't see. This tracks
-// test-file deletions and nudges the model to justify or undo them.
+// test-file deletions and exposes a pure decision (decideDeletedTest); the
+// dodge-vs-legit-cleanup judgment itself is an async LLM call in the middleware.
 
 import { isTestFile } from "./build-command.js";
 
@@ -184,7 +185,7 @@ const NUDGE_BUILD_RED =
   "genuinely cannot make it pass from here, say so plainly and report exactly " +
   "which errors remain — never claim success over a failing build.";
 
-const nudgeDeletedTest = (paths: readonly string[]): string =>
+export const nudgeDeletedTest = (paths: readonly string[]): string =>
   `You deleted test file(s): ${paths.join(", ")}. Deleting or skipping a test to make the ` +
   "suite pass is NOT allowed — the build-verify gate only runs EDITED tests, so a test you " +
   "removed is invisible to it. If the test was failing, restore it and fix the underlying code " +
@@ -193,19 +194,49 @@ const nudgeDeletedTest = (paths: readonly string[]): string =>
   "the current behavior. If you truly believe removal is correct, say so explicitly and explain " +
   "why so the user can decide — never remove a test silently to go green.";
 
+/** Best-guess path of the code a test file exercises: strip the `.test`/`.spec`
+ *  infix, keep the extension. `src/foo.test.ts` → `src/foo.ts`,
+ *  `a/b.spec.tsx` → `a/b.tsx`. A heuristic — a `__tests__/` sibling won't map —
+ *  so it's fed to the judge as a hint (subject-exists), never the sole decider. */
+export function guessTestSubject(testPath: string): string {
+  return testPath.replace(/\.(test|spec)(\.[cm]?[jt]sx?)$/i, "$2");
+}
+
+/** The verdict the test-deletion judge returns, or null when it was unavailable. */
+export type TestDeletionVerdict = "dodge" | "legit-cleanup";
+
+/**
+ * Pure decision for a detected test deletion, given the judge's verdict. Kept
+ * out of `checkVerifyGate` (which is sync) because the verdict comes from an
+ * async LLM call in the middleware; this stays pure + unit-testable.
+ *
+ * - `legit-cleanup` (user-directed or the subject code was removed) → suppress
+ *   the nudge, don't demote the label.
+ * - `dodge` (a live-code test deleted to go green) → nudge once + demote.
+ * - `null` (judge unavailable) → FAIL SAFE to the prior blanket behavior: fire
+ *   the advisory nudge, but leave the label alone (an unconfirmed dodge is not a
+ *   demotion). `dodge` is only ever true on a CONFIRMED dodge.
+ */
+export function decideDeletedTest(
+  stillDeleted: readonly string[],
+  verdict: TestDeletionVerdict | null,
+  alreadyFired: boolean,
+): { nudge: string | null; dodge: boolean } {
+  if (stillDeleted.length === 0) return { nudge: null, dodge: false };
+  const shouldNudge = verdict !== "legit-cleanup";
+  return {
+    nudge: shouldNudge && !alreadyFired ? nudgeDeletedTest(stillDeleted) : null,
+    dodge: verdict === "dodge",
+  };
+}
+
 /** Evaluate at wrap-up. Two tiers: a gentle one-shot nudge when source changed
  *  but nothing verified it, and a stronger (re-fireable, bounded) nudge when a
  *  verify actually RAN and FAILED — the model has the errors and is wrapping up
  *  over them anyway, the exact ship-broken-and-claim-done failure. */
 export function checkVerifyGate(state: VerifyGateState): { nudge: string | null } {
-  // Deleted-test tripwire fires independently of the edit/verify state — deleting
-  // a test to dodge a red suite is a concern even on an otherwise-clean op, and a
-  // deletion doesn't touch editedSource.
-  if (state.deletedTestPaths.length > 0 && !state.firedDeletedTest) {
-    state.firedDeletedTest = true;
-    return { nudge: nudgeDeletedTest(state.deletedTestPaths) };
-  }
-
+  // The deleted-test tripwire is handled in the middleware (it needs an async
+  // LLM judge to tell a dodge from legit cleanup); this stays edit/verify-only.
   if (!state.editedSource || state.verifiedSinceEdit) return { nudge: null };
 
   if (state.verifyFailedSinceEdit) {

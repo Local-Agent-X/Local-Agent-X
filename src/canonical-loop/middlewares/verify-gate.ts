@@ -17,7 +17,8 @@
  * Detection logic lives in src/agent-guards/verify-gate.ts; this is the thin
  * canonical wiring.
  */
-import { type CanonicalMiddleware } from "./types.js";
+import { existsSync } from "node:fs";
+import { type CanonicalMiddleware, type CanonicalLoopContext } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import {
   noteVerifyEvidence,
@@ -25,9 +26,13 @@ import {
   createVerifyGateState,
   opEditedSourceUnverified as opEditedSourceUnverifiedState,
   recordExternalVerify,
+  guessTestSubject,
+  decideDeletedTest,
   type VerifyGateState,
   type VerifyTurnAction,
 } from "../../agent-guards/index.js";
+import { classifyTestDeletion } from "../../classifiers/test-deletion-classify.js";
+import { resolveAgentPath } from "../../workspace/paths.js";
 
 /**
  * Outcome-label verdict (read by decide-outcome): the op edited source and never
@@ -45,6 +50,92 @@ export function opEditedSourceUnverified(opId: string): boolean {
  *  build-verify gate uses these to locate the project to build. */
 export function opEditedSourcePaths(opId: string): string[] {
   return getMiddlewareState<VerifyGateState>(opId, "verify-gate", createVerifyGateState).editedPaths;
+}
+
+const TEST_DELETION_VERDICT_STATE = "test-deletion-verdict";
+
+interface TestDeletionVerdictState {
+  /** The judge CONFIRMED a dodge (a live-code test deleted to go green). Read by
+   *  decide-outcome for the label. Only ever true on a confirmed dodge — a null
+   *  (judge unavailable) or legit-cleanup leaves it false, so an op the judge
+   *  couldn't confirm keeps its clean/partial labeling untouched. */
+  dodge: boolean;
+  /** The deletion set (sorted-joined) the current verdict was computed for.
+   *  Memo key: re-judging an unchanged set each wrap-up turn would burn LLM
+   *  calls for no new signal. Only a NON-null verdict is memoized, so a
+   *  momentary judge outage retries next turn. */
+  judgedFor: string;
+}
+
+/**
+ * Outcome-label verdict (read by decide-outcome): the op deleted a test and the
+ * LLM judge classified it a DODGE — a live-code test removed to dodge a red
+ * suite, not user-directed or dead-test cleanup. Reporting "done" over a dodge
+ * records `partial`. Defaults false, so ops with no deletion (or a legit /
+ * unjudged one) keep their prior labeling.
+ */
+export function opDeletedTestDodge(opId: string): boolean {
+  return getMiddlewareState<TestDeletionVerdictState>(
+    opId,
+    TEST_DELETION_VERDICT_STATE,
+    () => ({ dodge: false, judgedFor: "" }),
+  ).dodge;
+}
+
+/**
+ * The deleted-test tripwire, model-graded. Fires the async LLM judge to tell a
+ * dodge from legit cleanup, then returns the nudge (if any) and persists the
+ * dodge verdict for the outcome label. Called at wrap-up from afterModelCall.
+ *
+ * Recovery-aware: a test that's been RESTORED (present on disk again) drops out
+ * of the deletion set, so heeding the nudge clears both the nag and the label.
+ */
+async function evaluateDeletedTests(
+  ctx: CanonicalLoopContext,
+  state: VerifyGateState,
+): Promise<string | null> {
+  if (state.deletedTestPaths.length === 0) return null;
+
+  const verdictState = getMiddlewareState<TestDeletionVerdictState>(
+    ctx.op.id,
+    TEST_DELETION_VERDICT_STATE,
+    () => ({ dodge: false, judgedFor: "" }),
+  );
+
+  // A restored test is no longer a deletion — filter to those still absent.
+  const stillDeleted = state.deletedTestPaths.filter((p) => !existsSync(resolveAgentPath(p)));
+  if (stillDeleted.length === 0) {
+    verdictState.dodge = false;
+    return null;
+  }
+
+  const key = [...stillDeleted].sort().join("|");
+  let verdict: "dodge" | "legit-cleanup" | null;
+  if (verdictState.judgedFor === key) {
+    // Unchanged deletion set already judged — reuse (memoized non-null verdict).
+    verdict = verdictState.dodge ? "dodge" : "legit-cleanup";
+  } else {
+    const subjects = stillDeleted.map((t) => {
+      const subjectGuess = guessTestSubject(t);
+      return { test: t, subjectGuess, subjectExists: existsSync(resolveAgentPath(subjectGuess)) };
+    });
+    verdict = await classifyTestDeletion({
+      userRequest: ctx.userMessage,
+      deletedTests: stillDeleted,
+      editedPaths: state.editedPaths,
+      subjects,
+    });
+    // Only memoize a real verdict; a null (judge unavailable) leaves the label
+    // undemoted and retries on the next wrap-up turn.
+    if (verdict !== null) {
+      verdictState.judgedFor = key;
+      verdictState.dodge = verdict === "dodge";
+    }
+  }
+
+  const { nudge } = decideDeletedTest(stillDeleted, verdict, state.firedDeletedTest);
+  if (nudge) state.firedDeletedTest = true;
+  return nudge;
 }
 
 /** Record the verdict of a build/type-check the ORCHESTRATOR ran itself into the
@@ -90,7 +181,7 @@ export const verifyGateMiddleware: CanonicalMiddleware = {
     return { kind: "continue" };
   },
 
-  afterModelCall(ctx) {
+  async afterModelCall(ctx) {
     // Only evaluate at wrap-up: model ended the turn with text and no tool
     // calls. Mirrors premature-completion's wrap-up detection.
     if (ctx.toolCalls.length > 0) return { kind: "continue" };
@@ -101,6 +192,13 @@ export const verifyGateMiddleware: CanonicalMiddleware = {
       "verify-gate",
       createVerifyGateState,
     );
+
+    // Deleted-test tripwire first (mirrors the old checkVerifyGate ordering): the
+    // async LLM judge decides dodge vs legit cleanup, and a confirmed dodge also
+    // demotes the outcome label via opDeletedTestDodge.
+    const delNudge = await evaluateDeletedTests(ctx, state);
+    if (delNudge) return { kind: "nudge", message: delNudge, reason: "verify-gate-test-deletion" };
+
     const r = checkVerifyGate(state);
     if (r.nudge) return { kind: "nudge", message: r.nudge, reason: "verify-gate" };
     return { kind: "continue" };

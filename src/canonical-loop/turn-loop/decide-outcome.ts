@@ -34,7 +34,7 @@ import { isRetractableHallucination, stripRetractedAssistant } from "./retract-f
 import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
 import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
 import { opCleanupUnverified } from "../middlewares/cleanup-verify.js";
-import { opEditedSourceUnverified } from "../middlewares/verify-gate.js";
+import { opEditedSourceUnverified, opDeletedTestDodge } from "../middlewares/verify-gate.js";
 import { readOpTurns } from "../store.js";
 import { resolveOpModel } from "../op-model.js";
 import { classifyOpCategory, recordOpOutcome, type OpOutcome } from "../../tool-tracker.js";
@@ -300,10 +300,12 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // the model was nudged but never delivered) is NOT clean — record it as partial
   // so the completion metric stops rounding give-ups up to success. Likewise a
   // removal/cleanup sweep that ends without a confirming empty search
-  // (cleanup-verify's verdict), and a coding op that edited source but never
-  // reached a clean build/type-check (verify-gate's verdict): "done" over an
-  // unverified edit is a partial, not a clean. All verdicts default false for ops
-  // the gate never evaluated, so they only ever demote a real unrecovered case.
+  // (cleanup-verify's verdict), a coding op that edited source but never reached
+  // a clean build/type-check (verify-gate's verdict), and an op the test-deletion
+  // judge flagged as a DODGE (a live-code test deleted to go green): "done" over
+  // an unverified edit or a dodged test is a partial, not a clean. All verdicts
+  // default false for ops the gate never evaluated, so they only ever demote a
+  // real unrecovered case.
   if (terminalReason !== null) {
     const outcome: OpOutcome =
       terminalReason === "error" ? "aborted"
@@ -311,6 +313,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
         : opGaveUpUnrecovered(op.id) ? "partial"
         : opCleanupUnverified(op.id) ? "partial"
         : opEditedSourceUnverified(op.id) ? "partial"
+        : opDeletedTestDodge(op.id) ? "partial"
         : "clean";
     recordTerminalOutcome(op, outcome, [...toolCalls.map(tc => tc.tool), ...observedTools]);
   }

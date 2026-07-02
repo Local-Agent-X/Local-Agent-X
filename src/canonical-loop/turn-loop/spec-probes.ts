@@ -242,6 +242,13 @@ export async function runSpecProbeGate(op: Op, opts: SpecProbeOptions = {}): Pro
   const exec = opts.exec ?? defaultExec;
   const run = await exec(probe, solutionDir, opts.signal);
   logger.info(`op=${op.id} ran ${probe.language} spec-probe in ${solutionDir} → ${run.verdict} (retry ${getSpecProbeRetries(op.id)})`);
+  // Opt-in diagnostic: on a non-pass verdict, dump the probe the active model
+  // authored + what it produced, so an INVALID can be traced to its cause (wrong
+  // import/signature guess vs a real block) and a RED can be confirmed as a true
+  // spec miss rather than a false-red. Off unless LAX_SPEC_PROBE_DEBUG is set.
+  if (process.env.LAX_SPEC_PROBE_DEBUG && run.verdict !== "pass") {
+    logger.info(`[probe-debug] op=${op.id} verdict=${run.verdict}\n--- probe ---\n${probe.script.slice(0, 900)}\n--- output ---\n${run.output.slice(0, 900)}`);
+  }
 
   if (run.verdict === "invalid") {
     // The probe couldn't validly exercise the code (mis-guessed API, wouldn't

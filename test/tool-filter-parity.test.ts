@@ -48,7 +48,7 @@ const CORE_NAMES = new Set([
   "agent_status", "agent_cancel", "agent_output",
   "browser",
   "build_app", "app_create", "app_list",
-  "primal_run_build_plan", "primal_build_status", "primal_build_resume",
+  "run_build_plan", "build_plan_status", "build_plan_resume",
   "start_app_build", "finalize_app_build",
   "request_secret", "request_secrets", "list_secrets",
 ]);
@@ -142,7 +142,7 @@ const MESSAGES = [
   "what's 2+2",
   "build me an app",
   "send an email to the team",
-  'primal_run_build_plan({"project_dir":"petbook"})',
+  'run_build_plan({"project_dir":"petbook"})',
   "open my spreadsheet",
   "pin this to sidebar",
   "check my calendar",

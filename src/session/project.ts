@@ -1,7 +1,7 @@
 /**
  * Per-session current-project context.
  *
- * The user's active chat may be nested under a Project. When Primal
+ * The user's active chat may be nested under a Project. When the chat agent
  * spawns an agent from that chat, the spawn should be scoped to the
  * project's roster (Q3 + Q4 from canonical-agent-design.md). Rather
  * than thread projectId through every layer (chat WS → agent loop →

@@ -20,14 +20,14 @@ export const DEFAULT_TIMEOUTS: Record<string, number> = {
 
   // ── Exempt long-runners (0 = unbounded) ──
   // self_edit drives a claude/codex subprocess; build_app / start_app_build /
-  // primal_run_build_plan kick off canonical app-build ops; op_submit blocks
+  // run_build_plan kick off canonical app-build ops; op_submit blocks
   // on the worker pool up to 30min; agent_* / delegate / swarm_create spawn
   // sub-agents. None of these are hung when they run long.
   self_edit: 0,
   build_app: 0,
   start_app_build: 0,
   finalize_app_build: 0,
-  primal_run_build_plan: 0,
+  run_build_plan: 0,
   op_submit: 0,
   op_submit_async: 0,
   agent_spawn: 0,

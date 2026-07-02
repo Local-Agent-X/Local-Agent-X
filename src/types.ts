@@ -10,7 +10,7 @@ import type { SandboxMode } from "./sandbox/types.js";
  * mapping is owned by src/tools/audience-map.ts.
  */
 export type Audience =
-  | "main-chat"      // top-level user-facing chat (Primal)
+  | "main-chat"      // top-level user-facing chat (the main agent)
   | "spawned-agent"  // sub-agents spawned via agent_spawn (default)
   | "operator"       // Operations-phase workers (browser + file + memory)
   | "build-intent";  // strip-down used when main-chat detects build intent
@@ -271,7 +271,7 @@ export interface OAuthTokens {
   expiresAt: number;
   // Captured from the OAuth response when present. Used to mirror
   // credentials into ~/.codex/auth.json so a single LAX sign-in
-  // covers the Codex CLI subprocess too (build_app, primal-build,
+  // covers the Codex CLI subprocess too (build_app, auto-build,
   // etc.). Optional because pre-bridge installs don't have them on
   // disk yet — the next token refresh repopulates.
   idToken?: string;

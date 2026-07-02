@@ -73,14 +73,6 @@ demand via tool search and aren't all listed here.)
 - `memory_get` — Fetch a specific memory entry.
 - `memory_forget` — Mark a fact as no longer true. _e.g._ "forget that I use Coinbase"
 
-### Operations
-
-- `operation_start` — Begin a long-horizon, multi-step goal. _e.g._ "start an operation to ship feature X"
-- `operation_list` — List active operations.
-- `operation_status` — Check an operation's status.
-- `operation_next` — Get the next step of an operation.
-- `operation_advance` — Advance an operation a step.
-
 ### Worker-pool observation
 
 - `op_status` — Check running background workers. _e.g._ "what are my background tasks doing?"
@@ -142,9 +134,9 @@ demand via tool search and aren't all listed here.)
 
 ### Auto-build orchestrator
 
-- `primal_run_build_plan` — Run a staged app-build plan.
-- `primal_build_status` — Check an app build's status.
-- `primal_build_resume` — Resume a paused app build.
+- `run_build_plan` — Run a staged app-build plan.
+- `build_plan_status` — Check an app build's status.
+- `build_plan_resume` — Resume a paused app build.
 - `start_app_build`
 - `finalize_app_build`
 
@@ -160,4 +152,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_77 capabilities · 55 with a description · 22 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_72 capabilities · 50 with a description · 22 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._

@@ -21,11 +21,11 @@
  *     pack names like `instagram_post`. Input is normalized to lowercase.
  *   - The args are everything after the first whitespace, trimmed.
  *   - Backed by the same `loadSkillBody` cache used by the worker prompt,
- *     so a single SKILL.md fully drives both the in-Primal slash command
+ *     so a single SKILL.md fully drives both the in-chat slash command
  *     AND the subprocess discipline anchor — no duplication.
  */
 
-import { loadSkillBody } from "./primal-auto-build/skill-bodies.js";
+import { loadSkillBody } from "./auto-build/skill-bodies.js";
 import { getAllProtocols } from "./protocols/index.js";
 import type { Protocol } from "./protocols/index.js";
 

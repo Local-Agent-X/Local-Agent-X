@@ -40,7 +40,7 @@ export const openStepsMiddleware: CanonicalMiddleware = {
    * in-conversation, where weak models actually comply, instead of relying
    * on the system-prompt directive they ignore. Conditional phrasing keeps
    * single-action ops from manufacturing one-step task lists. The build lane
-   * is excluded: primal-auto-build has its own phase plan, and a second
+   * is excluded: auto-build has its own phase plan, and a second
    * planning directive there would fork the source of truth.
    */
   beforeTurn(ctx) {

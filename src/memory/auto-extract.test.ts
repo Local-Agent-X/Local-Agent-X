@@ -171,7 +171,7 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     __nextReturn = { agent_name: "Aria" };
     writeFileSync(
       join(memoryDir(), "IDENTITY.md"),
-      "# Agent\n- Canonical name: Primal\n",
+      "# Agent\n- Canonical name: Atlas\n",
       "utf-8",
     );
 
@@ -179,7 +179,7 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
 
     const identity = readFileSync(join(memoryDir(), "IDENTITY.md"), "utf-8");
     expect(identity).toContain("- Name: Aria");
-    expect(identity).toContain("- Canonical name: Primal"); // existing content preserved
+    expect(identity).toContain("- Canonical name: Atlas"); // existing content preserved
   });
 
   it("user_name → replaces existing Name bullet in USER.md and appends daily-log entry", async () => {

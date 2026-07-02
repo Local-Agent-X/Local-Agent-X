@@ -30,7 +30,7 @@ describe("pullMemoryDir — first-party provenance", () => {
   it("pulls a curated note that scores mid-band (the Dan Martell FP)", () => {
     writeRemote(
       "user_ai_journey.md",
-      "Watched a Dan Martell video; run `tsc --noEmit` in CI; Primal should act as a partner.",
+      "Watched a Dan Martell video; run `tsc --noEmit` in CI; the assistant should act as a partner.",
     );
     pullMemoryDir(dataDir, syncDir);
     const landed = join(dataDir, "memory", "user_ai_journey.md");

@@ -218,14 +218,25 @@ export const deleteFileTool: ToolDefinition = {
       const st = statSync(filePath);
       if (st.isDirectory()) {
         return err(
-          `Refusing to delete a directory: ${filePath}. delete_file removes single files only — if you need to clear a directory, delete its contents one file at a time.`,
+          `Refusing to delete a directory: ${filePath}. delete_file removes single files only. ` +
+          `If this is an app under workspace/apps, call app_delete({ id: "<dir name>" }) instead — ` +
+          `it stops the app's running server first, then recycles the whole folder. Otherwise ` +
+          `delete the directory's contents one file at a time.`,
           { path: filePath, isDirectory: true },
         );
       }
       const trashed = await moveToTrash(filePath, "delete_file");
       return ok(`Deleted ${filePath}${trashed ? ` (moved to ${trashed} — recoverable)` : ""}`);
     } catch (e) {
-      return err(`Failed to delete ${filePath}: ${(e as Error).message}`, { path: filePath });
+      const code = (e as NodeJS.ErrnoException).code;
+      // EBUSY/EPERM = a live process holds the file (classic case: a running
+      // app's SQLite db). Retrying delete_file can't win — name the way out.
+      const busyHint = code === "EBUSY" || code === "EPERM"
+        ? ` The file is held open by a running process. If it belongs to an app under workspace/apps, ` +
+          `call app_delete({ id: "<dir name>" }) — it stops the app's server before deleting. ` +
+          `Otherwise stop the process that owns the file, then retry.`
+        : "";
+      return err(`Failed to delete ${filePath}: ${(e as Error).message}.${busyHint}`, { path: filePath, code });
     }
   },
 };

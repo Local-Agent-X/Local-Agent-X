@@ -217,7 +217,7 @@ function main() {
 
   // Preserve hand-bundled entries we don't want to clobber. The methodology
   // bodies (app-build, senior-engineer, vibe-code, brownfield, refactor-godfiles)
-  // are load-bearing: primal-auto-build inlines them into worker prompts via
+  // are load-bearing: auto-build inlines them into worker prompts via
   // loadSkillBody, so an upstream import must never wipe them.
   const PRESERVED = new Set([
     "credentialed-integration-setup", "git-status", "summarize",

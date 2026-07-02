@@ -139,9 +139,9 @@ const BLURB: Record<string, { say?: string; does: string }> = {
   sidebar_unpin: { does: "Unpin a sidebar item." },
   sidebar_clear: { say: "clear the sidebar", does: "Clear the sidebar." },
 
-  primal_run_build_plan: { does: "Run a staged app-build plan." },
-  primal_build_status:   { does: "Check an app build's status." },
-  primal_build_resume:   { does: "Resume a paused app build." },
+  run_build_plan: { does: "Run a staged app-build plan." },
+  build_plan_status:   { does: "Check an app build's status." },
+  build_plan_resume:   { does: "Resume a paused app build." },
 
   request_secret:  { say: "I need to store my OpenAI key", does: "Securely request + store a secret." },
   request_secrets: { does: "Request multiple secrets." },

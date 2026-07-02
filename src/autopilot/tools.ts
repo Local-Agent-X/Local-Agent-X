@@ -1,7 +1,7 @@
 /**
  * Autopilot tools for the chat agent.
  *
- * These let Primal (or any chat agent) launch an autopilot session by name
+ * These let the chat agent launch an autopilot session by name
  * without going through the HTTP API. The tool execute functions need
  * runtime context that's not in the ToolDefinition signature, so they
  * read from a globally-injected context that the server sets at startup.

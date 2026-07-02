@@ -71,9 +71,9 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   create_page:           { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-create-page", decision: "allow", reason: "Create custom pages", priority: 50 }] },
   start_app_build:       { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-start-app-build", decision: "allow", reason: "App-build kickoff handle", priority: 50 }] },
   finalize_app_build:    { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-finalize-app-build", decision: "allow", reason: "App-build finalize handle", priority: 50 }] },
-  primal_build_resume:   { kernel: "internal", risk: "workspace-write" },
-  primal_build_status:   { kernel: "internal", risk: "safe" },
-  primal_run_build_plan: { kernel: "internal", risk: "workspace-write" },
+  build_plan_resume:     { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-build-plan-resume", decision: "allow", reason: "Auto-build resume handle", priority: 50 }] },
+  build_plan_status:     { kernel: "internal", risk: "safe", rules: [{ id: "allow-build-plan-status", decision: "allow", reason: "Auto-build status read", priority: 50 }] },
+  run_build_plan:        { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-run-build-plan", decision: "allow", reason: "Auto-build loop kickoff", priority: 50 }] },
 
   // ── UI / state / config ──
   sidebar_pin:    { kernel: "internal", risk: "workspace-write" },

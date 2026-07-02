@@ -1,6 +1,6 @@
 // ── Chat WS: build-run summary formatter ──
 // Renders structured Build-Run Summary text from bg_op_completed metadata
-// emitted by the primal_run_build_plan orchestrator. Replaces the
+// emitted by the run_build_plan orchestrator. Replaces the
 // "halt reason as one paragraph" failure mode where the user couldn't
 // tell which chunk shipped or how to resume.
 function renderBuildRunSummary(meta) {
@@ -34,7 +34,7 @@ function renderBuildRunSummary(meta) {
   if (meta.resumable && meta.project_dir) {
     lines.push('');
     const pd = String(meta.project_dir).replace(/\\/g, '\\\\');
-    lines.push('Resume:  primal_build_resume({project_dir: "' + pd + '"})');
+    lines.push('Resume:  build_plan_resume({project_dir: "' + pd + '"})');
   }
   if (phase === 'COMPLETE') {
     lines.push('');

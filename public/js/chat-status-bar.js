@@ -245,7 +245,7 @@ function updateStatusBar(force) {
 
   // Project selector — drives the active chat's projectId. Left of the
   // provider picker because "what scope am I in" is the most upstream
-  // decision (it gates which agents Primal can spawn). Reads the live
+  // decision (it gates which agents this chat can spawn). Reads the live
   // window.projects list (populated by app.js from /api/projects).
   const liveProjects = Array.isArray(window.projects) ? window.projects : [];
   const activeProjectId = (window.activeChat && window.activeChat.projectId) || '';
@@ -256,7 +256,7 @@ function updateStatusBar(force) {
   }
 
   bar.innerHTML = `
-    <select id="project-quick-select" class="status-select" onchange="quickSwitchProject(this.value)" title="Project scope for this chat — controls which agents Primal can spawn">${projectOpts}</select>
+    <select id="project-quick-select" class="status-select" onchange="quickSwitchProject(this.value)" title="Project scope for this chat — controls which agents this chat can spawn">${projectOpts}</select>
     <span style="color:var(--border)">|</span>
     <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>
     <span style="color:var(--border)">&#9654;</span>

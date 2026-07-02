@@ -18,6 +18,7 @@ import { renderApp } from "../../app-renderer/index.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { workspaceRoot } from "../../config.js";
 import { EventBus } from "../../event-bus.js";
 import { verifyWriteLanded } from "../verify.js";
 import { ok, err, getActor, getAppPort } from "./shared.js";
@@ -175,21 +176,33 @@ export const appList: ToolDefinition = {
 
 export const appDelete: ToolDefinition = {
   name: "app_delete",
-  description: "Delete an app and all its state, events, and audit log. Requires admin access.",
+  description:
+    "Delete an app: stops its running dev server, removes its registry entry (state, events, " +
+    "audit log), and moves its workspace/apps/<id> folder to the recycle bin (recoverable). " +
+    "The right tool for clearing a generated app whose files are held open by its own server. " +
+    "Requires admin access.",
   parameters: {
     type: "object",
     properties: {
-      id: { type: "string", description: "App ID to delete" },
+      id: { type: "string", description: "App ID to delete (= its workspace/apps directory name)" },
     },
     required: ["id"],
   },
   async execute(args) {
     const actor = getActor(args);
     const id = String(args.id || "");
-    const result = await registry.delete(id, actor);
+    // Same semantics as the DELETE /api/apps/:id route: registry AND
+    // workspace dir. The tool used to omit workspaceDir, which stopped the
+    // dev server but left the folder — a half-delete that blocked
+    // finalize_app_build's no-overwrite guard with no way forward.
+    const result = await registry.delete(id, actor, { workspaceDir: workspaceRoot() });
     if (!result.deleted) return err(result.error || `App "${id}" not found`);
     EventBus.emit("app:delete", { id });
-    return ok(`App "${id}" deleted.`);
+    const removed = [
+      result.registry ? "registry entry" : "",
+      result.workspace ? "workspace folder (recycled)" : "",
+    ].filter(Boolean).join(" + ");
+    return ok(`App "${id}" deleted${removed ? ` (${removed})` : ""}.`);
   },
 };
 

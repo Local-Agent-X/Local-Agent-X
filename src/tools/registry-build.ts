@@ -36,9 +36,9 @@ import { sqlTools } from "./sql-tools.js";
 import { taskTools } from "./task-tools.js";
 import { planTools } from "./plan-tools.js";
 import { selfEditTool } from "./self-edit-tool.js";
-import { primalRunBuildPlanTool } from "../primal-auto-build/tool.js";
-import { startAppBuildTool, finalizeAppBuildTool } from "../primal-auto-build/app-build-tool.js";
-import { primalBuildStatusTool, primalBuildResumeTool } from "../primal-auto-build/orchestrator/tools.js";
+import { runBuildPlanTool } from "../auto-build/tool.js";
+import { startAppBuildTool, finalizeAppBuildTool } from "../auto-build/app-build-tool.js";
+import { buildPlanStatusTool, buildPlanResumeTool } from "../auto-build/orchestrator/tools.js";
 import { autopilotTools } from "../autopilot/tools.js";
 import { opTools } from "../ops/tools.js";
 // Legacy skill_list/skill_run tools removed — protocol(action:'list'/'get') covers the same surface.
@@ -49,8 +49,8 @@ const _toolSearchTool = createToolSearchTool(unifiedRegistry);
 export const allTools: ToolDefinition[] = applyPrompts([
   readTool, writeTool, editTool, editLinesTool, multiEditTool, deleteFileTool, bashTool, webFetchTool,
   globTool, grepTool, webSearchTool, imageSearchTool, _toolSearchTool,
-  selfEditTool, primalRunBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
-  primalBuildStatusTool, primalBuildResumeTool,
+  selfEditTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
+  buildPlanStatusTool, buildPlanResumeTool,
   viewImageTool, sendVideoTool, sendImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
   buildAppTool,
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool, connectorCreateTool,

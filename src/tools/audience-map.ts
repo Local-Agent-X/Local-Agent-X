@@ -8,10 +8,10 @@ import type { Audience, ToolDefinition } from "../types.js";
  * only via tool_search).
  *
  * Audiences:
- *   - main-chat:     Primal's per-turn schema (filtered by message/keyword)
+ *   - main-chat:     the main agent's per-turn schema (filtered by message/keyword)
  *   - spawned-agent: agent_spawn sub-agents
  *   - operator:      Operations-phase workers (narrower file/web/memory set)
- *   - build-intent:  strip-down applied when Primal's message matches "build me X"
+ *   - build-intent:  strip-down applied when the chat message matches "build me X"
  */
 export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Filesystem & code
@@ -158,9 +158,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   sidebar_clear: ["main-chat"],
 
   // Auto-build orchestrator
-  primal_run_build_plan: ["main-chat"],
-  primal_build_status:   ["main-chat"],
-  primal_build_resume:   ["main-chat"],
+  run_build_plan: ["main-chat"],
+  build_plan_status:   ["main-chat"],
+  build_plan_resume:   ["main-chat"],
   start_app_build:       ["main-chat"],
   finalize_app_build:    ["main-chat"],
 

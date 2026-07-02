@@ -139,7 +139,7 @@ export class UnifiedToolRegistry {
   /**
    * Keyword search — surfaced by the `tool_search` tool so the model can
    * discover deferred tools at turn time. Scoring rationale: exact name
-   * match dominates so a query like "primal_run_build_plan exact call"
+   * match dominates so a query like "run_build_plan exact call"
    * doesn't get beaten by `memory_recall` (which contains "call" via
    * "recall"). Substring matches stack below the exact-hit floor.
    */

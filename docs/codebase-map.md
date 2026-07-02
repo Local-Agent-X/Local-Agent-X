@@ -62,11 +62,11 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/util/` | 5 | 1 | S |  |
 | `src/server/` *(entrypoint)* | 4 | 26 | XL |  |
 | `src/tool-policy/` | 4 | 19 | L |  |
+| `src/auto-build/` | 3 | 37 | XL |  |
 | `src/broker-transport/` | 3 | 27 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
 | `src/hooks/` | 3 | 3 | M |  |
-| `src/primal-auto-build/` | 3 | 37 | XL |  |
 | `src/context/` | 2 | 2 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |

@@ -84,8 +84,8 @@ describe("UnifiedToolRegistry — F2 single-source store", () => {
 
   it("search() ranks exact name matches above substring noise", () => {
     registry.register(makeTool("memory_recall"), { searchHint: "recall stored memories" });
-    registry.register(makeTool("primal_run_build_plan"), { searchHint: "execute a build plan" });
-    const results = registry.search("primal_run_build_plan");
-    expect(results[0].name).toBe("primal_run_build_plan");
+    registry.register(makeTool("run_build_plan"), { searchHint: "execute a build plan" });
+    const results = registry.search("run_build_plan");
+    expect(results[0].name).toBe("run_build_plan");
   });
 });

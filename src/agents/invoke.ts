@@ -3,7 +3,7 @@
  *
  * Today every other spawn door has either been retired (operations/executor,
  * routes/agents template spawn) or routed through here (agent_spawn tool,
- * delegate tool, primal-auto-build chunk worker). After F1 closes, this
+ * delegate tool, auto-build chunk worker). After F1 closes, this
  * function is also where canonical-loop persistence kicks in: every run
  * lands in `~/.lax/operations/<opId>/events.jsonl` and is recoverable, not
  * just chat turns.

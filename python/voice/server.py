@@ -5,7 +5,7 @@ Replaces sherpa-onnx WASM (single-threaded CPU) with CUDA pipelines:
   * Silero VAD via torch.hub on GPU (~5-10ms per frame)
   * Kokoro-onnx 82M on GPU (~150-300ms TTS first-byte, then chunked stream)
 
-Hard architectural commitments (per Primal review):
+Hard architectural commitments (per agent design review):
   * STREAMING WebSocket, never request/response. Audio frames flow in
     continuously; partial transcripts and audio chunks flow out.
   * VAD endpointing happens server-side here, not in Node.

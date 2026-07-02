@@ -161,7 +161,7 @@ describe("evaluateShellCommand — pipe limits + segment scanning", () => {
   });
 });
 
-// Regression: the Primal ingest session had benign piped commands blocked with
+// Regression: a chat ingest session had benign piped commands blocked with
 // "pipe segment matches dangerous pattern" because binary-name patterns
 // (`\bhost\s`, `\bopen\s`, `\bping\s`, `\bmount\s`, …) substring-matched the word
 // as an ARGUMENT. They are now argv[0]-aware: the word as an argument passes; the

@@ -41,7 +41,6 @@ export const TOOL_POLICIES_GLOBS: Record<string, ToolPolicyEntry> = {
   "mission_schedule_*":  { rules: [{ id: "allow-mission-schedule", decision: "allow", reason: "Mission scheduling (recurring agent runs, reports under workspace/missions/)", priority: 50 }] },
   "cron_*":              { rules: [{ id: "allow-cron", decision: "allow", reason: "Cron job management (mission/reminder backing)", priority: 50 }] },
   "sidebar_*":           { rules: [{ id: "allow-sidebar", decision: "allow", reason: "Sidebar pin/unpin (user's left rail)", priority: 50 }] },
-  "primal_*":            { rules: [{ id: "allow-primal", decision: "allow", reason: "Primal auto-build pipeline (run_build_plan, build_status, build_resume)", priority: 50 }] },
   "marketplace_*":       { rules: [{ id: "allow-marketplace", decision: "allow", reason: "Protocol marketplace (search/install/list)", priority: 50 }] },
   // External MCP-server tools (mcp_<server>_<tool>) register at runtime, so they
   // never get a concrete entry above and would hit deny-by-default. They ARE a

@@ -1,6 +1,6 @@
 /**
  * Pins the supervisor's tool surface contract — the gate that decides
- * which tools Primal (the chat-side LLM) actually sees.
+ * which tools the chat-side LLM actually sees.
  *
  * Two invariants this test enforces, both load-bearing for the
  * canonical-agent design (see docs/canonical-agent-design.md Q1):

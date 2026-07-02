@@ -58,7 +58,7 @@ export async function setupVoiceWs(deps: {
       // we trust it so memory writes, retrieval, and tool plumbing isolate.
       const sessionId = voiceSessionId && voiceSessionId.trim() ? voiceSessionId : `voice-${randomUUID()}`;
       // Voice goes through the full agent pipeline so it knows the persona
-      // (Primal), has memory access, and can call tools. Earlier we routed
+      // (the main chat agent), has memory access, and can call tools. Earlier we routed
       // voice through a stripped-down LLM call to chase latency, but the
       // savings turned out to be marginal vs prompt caching, and the agent
       // appearing to forget who it was made the experience feel broken.

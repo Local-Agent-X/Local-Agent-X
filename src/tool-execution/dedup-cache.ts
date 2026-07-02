@@ -30,7 +30,7 @@ const DEDUP_TTL_MS = 60_000;
 // right now."
 const DEDUP_SKIP: ReadonlySet<string> = new Set([
   "process_status", "op_status", "agent_status", "session_status",
-  "autopilot_status", "primal_build_status", "memory_stats",
+  "autopilot_status", "build_plan_status", "memory_stats",
   "task_get", "task_list", "agent_list", "agent_team_list",
   "ari_database",
   // tool_search results depend on the deferred-tool catalog which can

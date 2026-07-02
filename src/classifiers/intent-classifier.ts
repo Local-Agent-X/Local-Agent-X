@@ -7,7 +7,7 @@
  *   - self_edit    — repair something broken in THIS app (LAX source)
  *   - free         — anything else; the agent picks its own tool
  *
- * Failure mode this fixes: Primal narrates tool calls in prose
+ * Failure mode this fixes: the chat agent narrates tool calls in prose
  * (`[Reading routes/]`, `[Calling http_request...]`) instead of emitting
  * structured tool_use blocks when the system prompt's tool-selection
  * guidance is ignored in ambiguous cases. Forcing tool_choice is the

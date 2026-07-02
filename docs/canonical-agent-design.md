@@ -267,7 +267,7 @@ ad-hoc spawn shape is gone (L2) — but the deletion itself has not run:
 ## Open work (cross-cutting hygiene)
 
 - The two pre-existing vitest flakes (`canonical-loop-08-lease-and-crash-recovery`
-  and `primal-loop`) fail under heavy parallel load but pass in isolation.
+  and `auto-build-loop`) fail under heavy parallel load but pass in isolation.
   Not blocking.
 
 ---

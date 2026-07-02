@@ -56,7 +56,7 @@ export async function routeMessage(
   // GONE from the live chat path. Instead of trying to predict whether a
   // turn needs a worker, we default INLINE for every regex-non-shortcut
   // message. The previous approach (Haiku/Sonnet predict on every turn)
-  // misrouted simple lookups ("what does primal stand for?") to background
+  // misrouted simple lookups ("what does LAX stand for?") to background
   // workers while also adding 200-1000ms of pre-turn latency AND requiring
   // Anthropic auth even when the user was on Codex.
   //

@@ -92,7 +92,7 @@ export async function startServer(config: LAXConfig) {
   // is off OR no in-flight registry entries exist (the common case).
   void (async () => {
     try {
-      const { autoResumeOrchestrations } = await import("../primal-auto-build/orchestrator/resume.js");
+      const { autoResumeOrchestrations } = await import("../auto-build/orchestrator/resume.js");
       const report = autoResumeOrchestrations();
       if (report.attempted > 0) {
         bootLogger.info(`[orchestrator-resume] scanned ${report.attempted}: ${report.resumed} resumed, ${report.abandoned} abandoned, ${report.cleared} cleared`);

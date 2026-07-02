@@ -41,7 +41,7 @@ const logger = createLogger("protocols.loader");
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** The one canonical resolver for the vendored bundled-protocol directory.
- *  Every consumer (the tier-2 loader below AND primal-auto-build's
+ *  Every consumer (the tier-2 loader below AND auto-build's
  *  loadSkillBody) imports this — do not recompute the path elsewhere. */
 export function bundledProtocolsDir(): string {
   return join(HERE, "bundled");

@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { sanitizeAssistantTextForRebuild } from "../src/anthropic-client/parse.js";
 
-const TOOLS = new Set(["agent_spawn", "bash", "Bash", "primal_run_build_plan", "browser", "read"]);
+const TOOLS = new Set(["agent_spawn", "bash", "Bash", "run_build_plan", "browser", "read"]);
 
 describe("sanitizeAssistantTextForRebuild", () => {
   it("returns original text when no leak detected", () => {

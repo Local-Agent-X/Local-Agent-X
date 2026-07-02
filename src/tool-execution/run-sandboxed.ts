@@ -19,7 +19,7 @@ import { isRetryable, isRetryableTool } from "../resilience-policy.js";
 import { getToolTimeout, withTimeout, ToolTimeoutError } from "../tool-timeout.js";
 import { timeout, blocked } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
-import { realpathDeep } from "../security/file-access.js";
+import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/file-access.js";
 import { checkFreshness, recordFileSeen } from "../tools/read-state.js";
 
 const logger = createLogger("tool-execution");
@@ -98,11 +98,18 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   if (isSensitiveReadCap && tc.name !== "bash" && typeof args.path === "string" && args.path) {
     let taintPath: string;
     try {
-      taintPath = realpathDeep(resolveAgentPath(String(args.path)));
+      // sessionId parity with the sink: a work-rooted session's relative arg
+      // must taint-resolve to the SAME inode the tool opens, not the default
+      // anchor (the same split the round-3 anchor fix closed for the gate).
+      taintPath = realpathDeep(resolveAgentPath(String(args.path), sessionId));
     } catch {
       taintPath = String(args.path);
     }
-    if (isSensitivePath(taintPath)) {
+    // The sanctioned work-root env file skips the PATH-based pre-taint — the
+    // post-execute check below taints it CONTENT-conditionally instead, so a
+    // placeholder-only .env.local never bricks the shell but a real key
+    // pasted into it still does.
+    if (isSensitivePath(taintPath) && !isSanctionedWorkRootEnvFile(sessionId, taintPath)) {
       recordSensitiveRead(sessionId || "default", "sensitive_file", taintPath);
       preTaintedPath = taintPath;
     }
@@ -153,11 +160,18 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       // actually opened — not a cwd-relative miss.
       let taintPath: string;
       try {
-        taintPath = realpathDeep(resolveAgentPath(rawArgPath));
+        taintPath = realpathDeep(resolveAgentPath(rawArgPath, sessionId));
       } catch {
         taintPath = rawArgPath;
       }
-      if (isSensitivePath(taintPath)) {
+      // The sanctioned work-root env file taints CONTENT-conditionally: a
+      // structured secret shape (real API key / JWT / PEM) in its bytes taints
+      // as usual, but placeholder-only content — the missing-creds recovery
+      // path — must not brick the session's shell for reading its own scaffold.
+      const fileContent = typeof ctx.result?.content === "string" ? ctx.result.content : undefined;
+      const sanctionedEnv = isSanctionedWorkRootEnvFile(sessionId, taintPath);
+      const envHoldsRealSecret = sanctionedEnv && !!fileContent && detectSecretsInOutput(fileContent).structured;
+      if (isSensitivePath(taintPath) && (!sanctionedEnv || envHoldsRealSecret)) {
         // The FLOOR was already set pre-execute (preTaintedPath) so a co-batched
         // egress check couldn't see an empty floor. This post-execute record is
         // the content-bearing UPGRADE: pass the read content so the taint entry
@@ -166,7 +180,6 @@ export const runSandboxedPhase: Phase = async (ctx) => {
         // stored as plaintext. Idempotency: if we already floor-set this exact
         // path AND there's no content to fingerprint, skip the duplicate (the
         // floor is presence-based, so a second content-less entry adds nothing).
-        const fileContent = typeof ctx.result?.content === "string" ? ctx.result.content : undefined;
         if (!(preTaintedPath === taintPath && !fileContent)) {
           recordSensitiveRead(sessionId || "default", "sensitive_file", taintPath, fileContent);
         }

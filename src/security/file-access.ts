@@ -129,7 +129,10 @@ export { realpathDeep } from "../workspace/paths.js";
 // content-level defenses (secret-shape taint, egress guard) stay fully armed.
 const CONVENTIONAL_ENV_BASENAME = /^\.env(\.(local|development|production|test|example|sample|dev|prod|staging|ci))?$/i;
 
-function isSanctionedWorkRootEnvFile(sessionId: string | undefined, realPath: string): boolean {
+// Exported: the read-taint recorder (run-sandboxed.ts) applies the SAME
+// carve-out — otherwise the gate allows the env read and the taint layer then
+// bricks the session's shell for it (the exact live collision this fixes).
+export function isSanctionedWorkRootEnvFile(sessionId: string | undefined, realPath: string): boolean {
   if (!CONVENTIONAL_ENV_BASENAME.test(basename(realPath))) return false;
   const workRoot = sessionWorkRootOf(sessionId);
   if (!workRoot) return false;

@@ -13,7 +13,7 @@
  * classification primitives — one-way, no cycle.
  */
 import { openSync, closeSync, lstatSync, readFileSync, writeFileSync, constants } from "node:fs";
-import { realpathDeep, matchesSensitivePath } from "./file-access.js";
+import { realpathDeep, matchesSensitivePath, isSanctionedWorkRootEnvFile } from "./file-access.js";
 
 // fs.constants.O_NOFOLLOW is POSIX-only; on Windows it is undefined and falls
 // back to 0 in the flag sets below. There the leaf check is emulated with an
@@ -66,7 +66,7 @@ function assertLeafNotSymlink(absPath: string): void {
  * exact inode it just validated. The caller MUST close the fd. A genuine open
  * error (ENOENT, EACCES, ELOOP, …) is surfaced, never swallowed.
  */
-export function openValidatedRead(absPath: string): { fd: number; canonicalPath: string } {
+export function openValidatedRead(absPath: string, sessionId?: string): { fd: number; canonicalPath: string } {
 	let canonicalPath: string;
 	try {
 		canonicalPath = realpathDeep(absPath);
@@ -79,8 +79,13 @@ export function openValidatedRead(absPath: string): { fd: number; canonicalPath:
 	}
 
 	const normalized = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
+	// Same carve-out as the pre-dispatch gate (evaluateFileAccess): a
+	// work-rooted session's own conventional env file is not refused at the
+	// sink either — checked against the CANONICAL inode path, so the sink and
+	// the gate can't disagree. Callers that pass no sessionId keep the strict
+	// behavior unchanged.
 	const match = matchesSensitivePath(normalized);
-	if (match) {
+	if (match && !isSanctionedWorkRootEnvFile(sessionId, canonicalPath)) {
 		throw new Error(`Blocked: matches sensitive path pattern ${typeof match === "string" ? match : match.source}`);
 	}
 
@@ -97,8 +102,8 @@ export function openValidatedRead(absPath: string): { fd: number; canonicalPath:
  * fully, and closes the fd. Preserves the caller's own size caps / encoding —
  * it returns a raw Buffer and never swallows an open or read error.
  */
-export function readValidatedFile(absPath: string): Buffer {
-	const { fd } = openValidatedRead(absPath);
+export function readValidatedFile(absPath: string, sessionId?: string): Buffer {
+	const { fd } = openValidatedRead(absPath, sessionId);
 	try {
 		return readFileSync(fd);
 	} finally {

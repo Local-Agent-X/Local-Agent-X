@@ -155,3 +155,63 @@ describe("bash-output taint requires a STRUCTURED secret (high-entropy-only FP f
     clearSessionTaint(s);
   });
 });
+
+// Regression (2026-07-02 fake-keys collision, taint half): the gate carve-out
+// let a work-rooted session write/read its own .env.local, but the READ-TAINT
+// layer still path-tainted the read — the worker lost its shell for touching
+// the placeholder file the recovery instruction told it to create. Taint on
+// the sanctioned env file is now CONTENT-conditional: placeholders never
+// taint; a real structured secret still does.
+describe("work-root env read-taint carve-out", () => {
+  it("reading a placeholder-only work-root .env.local does NOT taint the session", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-envtaint-"));
+    dirs.add(dir);
+    const envFile = join(dir, ".env.local");
+    writeFileSync(envFile, "NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co\nNEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder-anon-key\n", "utf-8");
+    const s = freshSession();
+    const { setSessionWorkRoot, clearSessionWorkRoot } = await import("../workspace/paths.js");
+    setSessionWorkRoot(s, dir);
+    try {
+      const res = await run(readTool, { path: envFile, _sessionId: s }, s);
+      expect(res.isError).toBeFalsy();
+      expect(String(res.content)).toContain("placeholder-anon-key"); // not redacted
+      expect(checkEgressTaint(s).blocked).toBe(false);
+    } finally {
+      clearSessionWorkRoot(s);
+      clearSessionTaint(s);
+    }
+  });
+
+  it("a REAL structured secret inside the work-root .env.local still taints", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-envtaint-"));
+    dirs.add(dir);
+    const envFile = join(dir, ".env.local");
+    // Realistic JWT shape (three base64url segments) — what a real anon key looks like.
+    const fakeJwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzE2MjM5MDIyfQ.4Adcj0vJhmXK9zX8qWvJ0eKfVpO2rDdE1yBhN3mLcAw";
+    writeFileSync(envFile, `NEXT_PUBLIC_SUPABASE_ANON_KEY=${fakeJwt}\n`, "utf-8");
+    const s = freshSession();
+    const { setSessionWorkRoot, clearSessionWorkRoot } = await import("../workspace/paths.js");
+    setSessionWorkRoot(s, dir);
+    try {
+      await run(readTool, { path: envFile, _sessionId: s }, s);
+      expect(checkEgressTaint(s).blocked).toBe(true);
+    } finally {
+      clearSessionWorkRoot(s);
+      clearSessionTaint(s);
+    }
+  });
+
+  it("an env file read WITHOUT a work root still path-taints as before", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-envtaint-"));
+    dirs.add(dir);
+    const envFile = join(dir, ".env.local");
+    writeFileSync(envFile, "HARMLESS=placeholder\n", "utf-8");
+    const s = freshSession(); // no work root registered
+    try {
+      await run(readTool, { path: envFile, _sessionId: s }, s);
+      expect(checkEgressTaint(s).blocked).toBe(true);
+    } finally {
+      clearSessionTaint(s);
+    }
+  });
+});

@@ -38,7 +38,7 @@ export const readTool: ToolDefinition = {
     // One read serves both the binary probe and the utf-8 decode below.
     let probe: Buffer;
     try {
-      probe = readValidatedFile(filePath);
+      probe = readValidatedFile(filePath, sessionIdOf(args));
     } catch (e) {
       return err(`Failed to read ${filePath}: ${(e as Error).message}`, { path: filePath });
     }

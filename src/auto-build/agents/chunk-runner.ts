@@ -164,12 +164,19 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
   // the project tree inside the LAX repo root. This is load-bearing —
   // without it, the agent's `bash`/`read`/`glob` calls run from wherever
   // the server was started (LAX repo) and it can't find the project.
+  // Forward slashes on purpose: a raw Windows path inside an unquoted
+  // bash command loses its backslashes (`cd C:\Users\...` → "C:Users...",
+  // live failure 2026-07-02), and every shell + Node path API on Windows
+  // accepts the forward-slash form.
+  const projectRootFwd = opts.projectDir?.replace(/\\/g, "/");
   const taskWithCwd = opts.projectDir
     ? `## Working directory\n\n` +
-      `Your project root is: \`${opts.projectDir}\`\n\n` +
-      `**ALL file paths in this chunk are relative to that directory.** Before reading, ` +
-      `globbing, or running bash, \`cd\` there. The plan file, spec/, scenarios/, source ` +
-      `files, and tests all live under that root. Don't look for them in the LAX repo.\n\n` +
+      `Your project root is: \`${projectRootFwd}\`\n\n` +
+      `**ALL file paths in this chunk are relative to that directory** — file tools ` +
+      `(read/write/edit/glob) resolve relative paths against it automatically. For bash, ` +
+      `\`cd "${projectRootFwd}"\` first (keep the quotes and forward slashes). The plan ` +
+      `file, spec/, source files, and tests all live under that root. Never touch paths ` +
+      `outside it, and don't look for the project in the LAX repo or the LAX workspace root.\n\n` +
       `---\n\n${opts.task}`
     : opts.task;
 

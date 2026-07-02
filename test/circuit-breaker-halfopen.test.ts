@@ -125,3 +125,37 @@ describe("circuit-breaker state machine", () => {
     expect(checkCircuit("sess-2", TOOL).state).toBe("closed");
   });
 });
+
+// Regression (2026-07-02 auto-build chunk 2): four reads of ONE wrong path
+// opened the per-tool breaker and the worker lost `read` for the whole run.
+// The breaker keys on the call signature now — the identical failing call
+// trips; the tool stays usable with different arguments.
+describe("per-call-signature keying", () => {
+  beforeEach(() => {
+    resetAllCircuits();
+    configureCircuitBreaker({ failureThreshold: THRESHOLD, cooldownMs: COOLDOWN });
+  });
+  afterEach(() => resetAllCircuits());
+
+  it("failures with varied args never share a breaker", () => {
+    for (let i = 0; i < THRESHOLD; i++) {
+      recordCircuitFailure(SID, "read", "File not found", `{"path":"a${i}.md"}`);
+    }
+    expect(checkCircuit(SID, "read", '{"path":"b.md"}').allowed).toBe(true);
+    expect(checkCircuit(SID, "read", '{"path":"a0.md"}').allowed).toBe(true);
+  });
+
+  it("the identical failing call trips only its own signature", () => {
+    const sig = '{"path":"missing.md"}';
+    for (let i = 0; i < THRESHOLD; i++) {
+      recordCircuitFailure(SID, "read", "File not found", sig);
+    }
+    expect(checkCircuit(SID, "read", sig).allowed).toBe(false);
+    expect(checkCircuit(SID, "read", sig).reason).toContain("same arguments");
+    // The tool itself stays usable — the live-failure regression.
+    expect(checkCircuit(SID, "read", '{"path":"other.md"}').allowed).toBe(true);
+    // A success on the failing signature clears it.
+    recordCircuitSuccess(SID, "read", sig);
+    expect(checkCircuit(SID, "read", sig).allowed).toBe(true);
+  });
+});

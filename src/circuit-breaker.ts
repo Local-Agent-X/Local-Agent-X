@@ -1,18 +1,27 @@
 /**
- * Per-(session, tool) circuit breaker.
+ * Per-(session, tool, call-signature) circuit breaker.
  *
- * Stops a specific tool from being called repeatedly after it fails N times
- * in a row in the same session. Prevents infinite-loop death spirals where
- * an agent keeps re-calling the same broken tool with the same args.
+ * Stops a specific CALL from being repeated after it fails N times in a row
+ * in the same session. Prevents infinite-loop death spirals where an agent
+ * keeps re-calling the same broken tool with the same args.
+ *
+ * Keyed by args signature on purpose: the old per-tool key locked out the
+ * WHOLE tool for the session — four reads of one wrong path and the worker
+ * lost `read` entirely for the cooldown, turning a recoverable flail into a
+ * guaranteed dead run (live failure 2026-07-02). Exploration with varied
+ * args is normal agent behavior; repeating the identical failing call is
+ * the pathology. Callers that don't pass a signature share one per-tool
+ * bucket (legacy semantics).
  *
  * State machine:
  *   closed   → normal, calls flow through. Failures increment counter.
  *   open     → calls are refused with a clear error. After cooldown, → half_open.
  *   half_open → next call is allowed; success closes, failure re-opens.
  *
- * Counter resets on any success. Successes in closed state are free.
+ * Success deletes the entry — the map only ever holds failing signatures.
  */
 
+import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import { USER_HINTS } from "./types.js";
 import { CIRCUIT_FAILURE_THRESHOLD, CIRCUIT_COOLDOWN_MS } from "./resilience-policy.js";
@@ -25,23 +34,43 @@ interface BreakerEntry {
   consecutiveFailures: number;
   openedAt: number;
   totalTrips: number;
+  lastFailureAt: number;
 }
 
 const breakers = new Map<string, BreakerEntry>();
+const MAX_ENTRIES = 1000;
 let failureThreshold = CIRCUIT_FAILURE_THRESHOLD;
 let cooldownMs = CIRCUIT_COOLDOWN_MS;
 
-function key(sessionId: string | undefined, toolName: string): string {
-  return `${sessionId || "default"}::${toolName}`;
+/** Stable signature for a tool call's arguments. Raw model-emitted args
+ *  (string or object) — capped before hashing so huge payloads stay cheap. */
+export function circuitArgsSig(rawArgs: unknown): string {
+  if (rawArgs === undefined || rawArgs === null) return "";
+  const s = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs);
+  return s.slice(0, 4000);
+}
+
+function key(sessionId: string | undefined, toolName: string, argsSig?: string): string {
+  const sig = argsSig ? createHash("sha1").update(argsSig).digest("hex").slice(0, 12) : "-";
+  return `${sessionId || "default"}::${toolName}::${sig}`;
 }
 
 function getOrCreate(k: string): BreakerEntry {
   let entry = breakers.get(k);
   if (!entry) {
-    entry = { state: "closed", consecutiveFailures: 0, openedAt: 0, totalTrips: 0 };
+    entry = { state: "closed", consecutiveFailures: 0, openedAt: 0, totalTrips: 0, lastFailureAt: 0 };
     breakers.set(k, entry);
   }
   return entry;
+}
+
+/** Bound the map: entries whose story is over (long-cold failures) go first. */
+function sweep(): void {
+  if (breakers.size <= MAX_ENTRIES) return;
+  const cutoff = Date.now() - 10 * cooldownMs;
+  for (const [k, e] of breakers.entries()) {
+    if (e.lastFailureAt < cutoff) breakers.delete(k);
+  }
 }
 
 export interface CircuitDecision {
@@ -54,9 +83,10 @@ export interface CircuitDecision {
 }
 
 /** Check whether a tool call may proceed. Call BEFORE executing the tool. */
-export function checkCircuit(sessionId: string | undefined, toolName: string): CircuitDecision {
-  const k = key(sessionId, toolName);
-  const entry = getOrCreate(k);
+export function checkCircuit(sessionId: string | undefined, toolName: string, argsSig?: string): CircuitDecision {
+  const k = key(sessionId, toolName, argsSig);
+  const entry = breakers.get(k);
+  if (!entry) return { allowed: true, state: "closed", consecutiveFailures: 0 };
 
   if (entry.state === "open") {
     const elapsed = Date.now() - entry.openedAt;
@@ -68,7 +98,7 @@ export function checkCircuit(sessionId: string | undefined, toolName: string): C
     return {
       allowed: false,
       state: "open",
-      reason: `Circuit OPEN for ${toolName}: ${entry.consecutiveFailures} consecutive failures. Try a different approach or wait ${remainingS}s. Calling the same tool with the same args will not work.`,
+      reason: `Circuit OPEN for this exact ${toolName} call: ${entry.consecutiveFailures} consecutive failures with the same arguments. Change the arguments (different path/command) or wait ${remainingS}s — repeating the identical call will not work.`,
       userHint: USER_HINTS.retryExhausted,
       consecutiveFailures: entry.consecutiveFailures,
     };
@@ -77,11 +107,9 @@ export function checkCircuit(sessionId: string | undefined, toolName: string): C
   return { allowed: true, state: entry.state, consecutiveFailures: entry.consecutiveFailures };
 }
 
-/** Record a successful tool execution. Closes the breaker. */
-export function recordCircuitSuccess(sessionId: string | undefined, toolName: string): void {
-  const entry = getOrCreate(key(sessionId, toolName));
-  entry.state = "closed";
-  entry.consecutiveFailures = 0;
+/** Record a successful tool execution. Closes (removes) the breaker entry. */
+export function recordCircuitSuccess(sessionId: string | undefined, toolName: string, argsSig?: string): void {
+  breakers.delete(key(sessionId, toolName, argsSig));
 }
 
 /** Record a failed tool execution. Trips the breaker after threshold.
@@ -93,9 +121,12 @@ export function recordCircuitFailure(
   sessionId: string | undefined,
   toolName: string,
   errorPreview?: string,
+  argsSig?: string,
 ): void {
-  const entry = getOrCreate(key(sessionId, toolName));
+  sweep();
+  const entry = getOrCreate(key(sessionId, toolName, argsSig));
   entry.consecutiveFailures += 1;
+  entry.lastFailureAt = Date.now();
 
   // Log EVERY failure with the error so we can see the ramp-up, not just
   // the trip. Capped to 200 chars to keep log lines digestible.
@@ -127,9 +158,12 @@ export function resetAllCircuits(): void {
   breakers.clear();
 }
 
-/** Reset a specific (session, tool) breaker. */
+/** Reset every breaker for a (session, tool) pair — all call signatures. */
 export function resetCircuit(sessionId: string | undefined, toolName: string): void {
-  breakers.delete(key(sessionId, toolName));
+  const prefix = `${sessionId || "default"}::${toolName}::`;
+  for (const k of breakers.keys()) {
+    if (k.startsWith(prefix)) breakers.delete(k);
+  }
 }
 
 /** Snapshot of breakers that are currently open or half-open. */

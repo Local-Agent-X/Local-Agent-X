@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1090 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1091 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -27,7 +27,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/agency/` | 22 | 14 | L |  |
 | `src/auth/` | 22 | 10 | L |  |
-| `src/classifiers/` | 21 | 9 | L |  |
+| `src/classifiers/` | 21 | 10 | L |  |
 | `src/threat/` | 20 | 12 | L |  |
 | `src/workspace/` | 19 | 2 | M |  |
 | `src/orchestrator/` | 18 | 21 | L |  |

@@ -159,3 +159,20 @@ export function recordUnsupportedParam(baseURL: string | undefined, model: strin
 export function _resetForTests(): void {
   learned = null;
 }
+
+/**
+ * Test-only: full test isolation — wipe disk + memory, unlike
+ * `_resetForTests()` which drops memory only to simulate a restart (and so
+ * reloads the same facts back off disk). Unlinks the store file (tolerating
+ * a missing file — never throws) and clears the in-memory learned layer, so
+ * the next access rebuilds from seed alone.
+ */
+export function _wipeForTests(): void {
+  try {
+    unlinkSync(storeFile());
+  } catch {
+    // ENOENT / already-absent → nothing to wipe. A test-isolation helper
+    // must never throw over a store file that was never written.
+  }
+  learned = null;
+}

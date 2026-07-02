@@ -62,12 +62,12 @@ export function markParamUnsupported(baseURL: string | undefined, model: string,
 
 /** Test-only: reset the in-memory learned layer so test ordering doesn't leak state. */
 export function _resetNoToolSupportForTests(): void {
-  capStore._resetForTests();
+  capStore._wipeForTests();
 }
 
 /** Test-only: alias of the above — the learned layer is one store now. */
 export function _resetUnsupportedParamsForTests(): void {
-  capStore._resetForTests();
+  capStore._wipeForTests();
 }
 
 export type { ChatCompletionMessageParam };

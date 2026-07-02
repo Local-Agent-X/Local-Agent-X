@@ -48,6 +48,7 @@ export async function runAutoFixWorker(opts: AutoFixOptions): Promise<AutoFixRes
   const result = await runChunkAgent({
     role: "scenario-fix",
     task,
+    projectDir: opts.projectDir,
     timeoutMs: opts.subprocessTimeoutMs,
     signal: opts.signal,
     parentSessionId: opts.parentSessionId,

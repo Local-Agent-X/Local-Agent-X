@@ -143,9 +143,9 @@ describe("extractSensitivePathsFromCommand", () => {
 
 describe("detectSecretsInOutput", () => {
   it("returns no match for empty / non-string input", () => {
-    expect(detectSecretsInOutput("")).toEqual({ matched: false, kinds: [] });
+    expect(detectSecretsInOutput("")).toEqual({ matched: false, kinds: [], structured: false });
     // @ts-expect-error exercising the runtime guard for non-string callers
-    expect(detectSecretsInOutput(null)).toEqual({ matched: false, kinds: [] });
+    expect(detectSecretsInOutput(null)).toEqual({ matched: false, kinds: [], structured: false });
   });
 
   // Secret-shaped fixtures are assembled at runtime rather than written as
@@ -158,6 +158,9 @@ describe("detectSecretsInOutput", () => {
     expect(res.matched).toBe(true);
     expect(res.kinds).toContain("Anthropic API Key");
     expect(res.kinds).not.toContain("OpenAI API Key");
+    // fd437008 contract: a real credential SHAPE is `structured` (high-confidence),
+    // so the shell-taint/brick path can gate on it (not on bare `matched`).
+    expect(res.structured).toBe(true);
   });
 
   it("detects a project-scoped openai-style key", () => {
@@ -187,7 +190,20 @@ describe("detectSecretsInOutput", () => {
     expect(detectSecretsInOutput("just some normal log output here")).toEqual({
       matched: false,
       kinds: [],
+      structured: false,
     });
+  });
+
+  it("a high-entropy-ONLY match is matched but NOT structured (structured:false)", () => {
+    // fd437008 contract, negative side: the entropy pass is a loose catch-all for
+    // UNKNOWN secrets and also fires on long mixed-case identifiers. Such a hit
+    // must set `matched` (so egress still scans) but leave `structured` false, so
+    // a coincidental token can't taint/brick a benign shell read. This literal is
+    // a mixed-case base64url run tripping ONLY the entropy pass — no catalog shape.
+    const res = detectSecretsInOutput("the value is Zk9pQ2rT7wXbN4hLm8vC1yUaJ3sDfG6eKpI5tRq as returned");
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toEqual(["High-Entropy Token"]);
+    expect(res.structured).toBe(false);
   });
 
   it("never returns the matched secret value, only kinds", () => {

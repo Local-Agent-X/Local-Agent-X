@@ -25,7 +25,7 @@ beforeEach(() => {
 
 describe("refuteSelfEditMerge", () => {
   it("(a) empty diff → hold:false with NO LLM call", async () => {
-    const result = await refuteSelfEditMerge({ diff: "   \n  ", intent: "tidy up" });
+    const result = await refuteSelfEditMerge({ diff: "   \n  ", requestedTask: "tidy up" });
     expect(result.hold).toBe(false);
     expect(result.verdict.verdict).toBe("inconclusive");
     expect(result.reason).toBe("no diff to scrutinize");
@@ -40,7 +40,7 @@ describe("refuteSelfEditMerge", () => {
 
     const result = await refuteSelfEditMerge({
       diff: "diff --git a/src/x.ts b/src/x.ts\n+const x = 1;",
-      intent: "add x",
+      requestedTask: "add x",
     });
     expect(result.hold).toBe(true);
     expect(result.verdict).toBe(verdict);
@@ -55,7 +55,7 @@ describe("refuteSelfEditMerge", () => {
 
     const result = await refuteSelfEditMerge({
       diff: "diff --git a/src/y.ts b/src/y.ts\n+const y = 2;",
-      intent: "add y",
+      requestedTask: "add y",
     });
     expect(result.hold).toBe(false);
     expect(verifyByRefutation).toHaveBeenCalledTimes(1);
@@ -68,7 +68,7 @@ describe("refuteSelfEditMerge", () => {
 
     const result = await refuteSelfEditMerge({
       diff: "diff --git a/src/z.ts b/src/z.ts\n+const z = 3;",
-      intent: "add z",
+      requestedTask: "add z",
     });
     expect(result.hold).toBe(false);
     expect(verifyByRefutation).toHaveBeenCalledTimes(1);
@@ -79,7 +79,7 @@ describe("refuteSelfEditMerge", () => {
       verdict: "holds", refutedCount: 0, holdsCount: 3, nullCount: 0, voters: 3,
     } satisfies RefutationVerdict);
 
-    await refuteSelfEditMerge({ diff: "some diff", intent: "do a thing" });
+    await refuteSelfEditMerge({ diff: "some diff", requestedTask: "do a thing" });
 
     const callArg = verifyByRefutation.mock.calls[0][0] as {
       category: string; envDisableVar: string; lenses: string[]; userPrompt: string;
@@ -89,5 +89,10 @@ describe("refuteSelfEditMerge", () => {
     expect(callArg.lenses).toHaveLength(3);
     expect(callArg.userPrompt).toContain("do a thing");
     expect(callArg.userPrompt).toContain("some diff");
+    // AB-11: the scope yardstick is the REQUEST, framed as the ask — never the
+    // surgeon's own account. The old "Stated intent" anchor let a scope-creeping
+    // edit grade itself.
+    expect(callArg.userPrompt).toContain("ASKED to do");
+    expect(callArg.userPrompt).not.toContain("Stated intent of this self_edit");
   });
 });

@@ -39,7 +39,11 @@ function emptyVerdict(): RefutationVerdict {
 
 export async function refuteSelfEditMerge(args: {
   diff: string;
-  intent: string;
+  /** What the self_edit was ASKED to do — the user's task, NOT the surgeon's
+   *  own account of what it changed. The scope-creep lens judges the diff
+   *  against this, so it must be the request; feeding it the editor's
+   *  self-report lets a scope-creeping edit author its own yardstick. */
+  requestedTask: string;
   signal?: AbortSignal;
 }): Promise<{ hold: boolean; verdict: RefutationVerdict; reason: string }> {
   // No diff to scrutinize (couldn't be read, or genuinely empty) → fail-open.
@@ -48,7 +52,8 @@ export async function refuteSelfEditMerge(args: {
   }
 
   const userPrompt =
-    `Stated intent of this self_edit:\n${args.intent}\n\n` +
+    `What this self_edit was ASKED to do — judge the diff's SCOPE against THIS actual ` +
+    `request, never against the change's own self-description:\n${args.requestedTask}\n\n` +
     `The merge diff (committed + uncommitted vs the merge base):\n${args.diff}`;
 
   const verdict = await verifyByRefutation({

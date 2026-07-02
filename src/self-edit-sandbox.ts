@@ -259,7 +259,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     progress("Refutation gate: scrutinizing the merge diff…");
     const refute = await refuteSelfEditMerge({
       diff: getMergeDeltaDiff(name),
-      intent: surgeonOutput,
+      requestedTask: opts.task,
       signal: opts.signal,
     });
     if (refute.hold) {

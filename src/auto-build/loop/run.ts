@@ -82,7 +82,9 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
   if (preflight.status === "pass") {
     emit({
       type: "preflight", chunkNumber: chunks[startIdx].number, totalChunks,
-      message: `Preflight probe passed in ${Math.round(preflight.durationMs / 1000)}s — worker invocation, path anchoring, write gate, bash cwd, and report shape all verified.`,
+      message: preflight.warning
+        ? `Preflight probe passed in ${Math.round(preflight.durationMs / 1000)}s (environment verified) — ${preflight.warning}`
+        : `Preflight probe passed in ${Math.round(preflight.durationMs / 1000)}s — worker invocation, path anchoring, write gate, and bash cwd all verified.`,
     });
   }
 

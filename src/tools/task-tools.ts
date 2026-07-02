@@ -41,11 +41,14 @@ function now(): string { return new Date().toISOString(); }
 const taskCreate: ToolDefinition = {
   name: "task_create",
   description:
-    'Create a task to track work progress. Example: description="Build the login page", parent_id="abc-123" for subtasks.',
+    'Create a task to track work progress. Example: description="Build the login page". ' +
+    'You may pass your own id="setup" to reference it later; otherwise one is assigned. ' +
+    'parent_id links a subtask to a parent.',
   parameters: {
     type: "object",
     properties: {
       description: { type: "string", description: "What the task is about" },
+      id: { type: "string", description: "Optional caller-chosen id to reference this task later" },
       parent_id: { type: "string", description: "Parent task ID for subtasks" },
     },
     required: ["description"],
@@ -54,15 +57,24 @@ const taskCreate: ToolDefinition = {
     const description = args.description as string;
     if (!description) return { content: "Missing required param: description", isError: true };
     const tasks = loadTasks();
+    // Honor a caller-chosen id when it's free — models name their own task ids
+    // (a universal to-do-list prior) and then reference them. Fighting that with
+    // a server-only random id made every later parent_id / update reference miss
+    // ("Parent task X not found" × N), and weak models derail into explaining the
+    // errors instead of finishing (live failure 2026-07-02, food-truck preflight).
+    const requestedId = typeof args.id === "string" && args.id.trim() ? args.id.trim() : undefined;
+    const id = requestedId && !tasks.has(requestedId) ? requestedId : randomUUID();
+    // A missing parent is coerced to a root task, never an error: the hierarchy
+    // is advisory (the open-steps gate scopes by session + status, not by tree),
+    // so a dangling parent must not block the actual work.
     const parentId = args.parent_id as string | undefined;
-    if (parentId && !tasks.has(parentId))
-      return { content: `Parent task ${parentId} not found`, isError: true };
-    const id = randomUUID();
+    const parent = parentId && tasks.has(parentId) ? parentId : undefined;
     const ts = now();
     const sessionId = (args._sessionId as string) || undefined;
-    tasks.set(id, { id, description, status: "pending", parent_id: parentId, session_id: sessionId, created_at: ts, updated_at: ts });
+    tasks.set(id, { id, description, status: "pending", parent_id: parent, session_id: sessionId, created_at: ts, updated_at: ts });
     saveTasks(tasks);
-    return { content: `Task created: ${id}\nDescription: ${description}`, metadata: { id } };
+    const note = parentId && !parent ? ` (parent ${parentId} not found — created as a root task)` : "";
+    return { content: `Task created: ${id}\nDescription: ${description}${note}`, metadata: { id } };
   },
 };
 
@@ -80,19 +92,31 @@ const taskUpdate: ToolDefinition = {
     required: ["id"],
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
+    const id = args.id as string;
+    if (!id) return { content: "Missing required param: id", isError: true };
+    if (args.status && !VALID_STATUSES.has(args.status as string))
+      return { content: `Invalid status: ${args.status}`, isError: true };
     const tasks = loadTasks();
-    const task = tasks.get(args.id as string);
-    if (!task) return { content: `Task ${args.id} not found`, isError: true };
-    if (args.status) {
-      if (!VALID_STATUSES.has(args.status as string))
-        return { content: `Invalid status: ${args.status}`, isError: true };
-      task.status = args.status as Task["status"];
+    // Upsert: an update to an unknown id creates it rather than erroring. The
+    // model believes the task exists (it "created" it under a name the old
+    // server-random id silently replaced); honoring that intent instead of
+    // hard-failing keeps a worker from stalling on a wall of "not found"s.
+    let task = tasks.get(id);
+    let created = false;
+    if (!task) {
+      const ts = now();
+      task = {
+        id, description: (args.output as string) || id, status: "pending",
+        session_id: (args._sessionId as string) || undefined, created_at: ts, updated_at: ts,
+      };
+      created = true;
     }
+    if (args.status) task.status = args.status as Task["status"];
     if (args.output !== undefined) task.output = args.output as string;
     task.updated_at = now();
     tasks.set(task.id, task);
     saveTasks(tasks);
-    return { content: `Task ${task.id} updated — status: ${task.status}` };
+    return { content: `Task ${task.id} ${created ? "created and set" : "updated"} — status: ${task.status}` };
   },
 };
 

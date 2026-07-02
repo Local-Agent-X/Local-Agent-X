@@ -68,14 +68,27 @@ describe("runPreflightProbe", () => {
     expect(r).toMatchObject({ status: "fail", contract: "worker-timeout" });
   });
 
-  it("names report-shape when the final message has no report block", async () => {
+  it("passes with a warning when the environment round-trips but the report block is missing", async () => {
+    // A worker that did the work but ended on prose (grok derailed by task
+    // errors, 2026-07-02) must NOT halt the build: the environment — the thing
+    // preflight verifies — is provably sound, and report discipline has its own
+    // per-chunk retry gate. Halting here was a live false-halt.
     const r = await runPreflightProbe({ projectDir: dir }, async () => {
       const t = token();
       writeFileSync(join(dir, PREFLIGHT_FILES.echo), t);
       writeFileSync(join(dir, PREFLIGHT_FILES.bash), t);
       return ok({ stdout: "I have completed the preflight steps successfully!" });
     });
-    expect(r).toMatchObject({ status: "fail", contract: "report-shape" });
+    expect(r.status).toBe("pass");
+    expect((r as { warning?: string }).warning).toContain("report block");
+  });
+
+  it("still fails a broken environment even when the report block is missing", async () => {
+    // Report-shape must never mask a real environment break: no files written
+    // AND no report → the environment failure is what gets named.
+    const r = await runPreflightProbe({ projectDir: dir }, async () =>
+      ok({ stdout: "done, all good!" }));
+    expect(r).toMatchObject({ status: "fail", contract: "file-write-anchoring" });
   });
 
   it("names file-write-anchoring when the relative write never lands", async () => {

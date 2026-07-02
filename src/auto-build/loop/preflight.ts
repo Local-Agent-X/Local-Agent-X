@@ -30,7 +30,7 @@ export const PREFLIGHT_FILES = {
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
 
 export type PreflightResult =
-  | { status: "pass"; durationMs: number }
+  | { status: "pass"; durationMs: number; warning?: string }
   | { status: "skipped" }
   | { status: "fail"; contract: string; detail: string };
 
@@ -48,7 +48,8 @@ function preflightTask(projectRootFwd: string, token: string): string {
     `## Preflight probe — harness environment check (NOT a real chunk)\n\n` +
     `The build harness is verifying its own contract with you before the first ` +
     `real chunk. Do exactly these four steps in order and nothing else — do not ` +
-    `explore the project, read the plan, or touch any other file.\n\n` +
+    `explore the project, read the plan, touch any other file, or create task-ledger ` +
+    `entries (this is a single trivial probe; no tracking needed).\n\n` +
     `1. Read the file \`${PREFLIGHT_FILES.sentinel}\` (relative path — it sits in ` +
     `your project root). It contains a single short token.\n` +
     `2. Using your file WRITE tool with a relative path, create ` +
@@ -111,8 +112,13 @@ export async function runPreflightProbe(
   }
 }
 
-/** The verification ladder. First broken rung names the contract — ordered
- *  so each check only fires when everything beneath it held. */
+/** The verification ladder. Environment contract FIRST — that is what the
+ *  preflight uniquely and cheaply verifies (paths, gates, cwd), and a break
+ *  there bricks every chunk. Report discipline is checked LAST and only warns:
+ *  it has its own per-chunk gate (report-shape → push_back retry), so a worker
+ *  that did the work but ended on prose must not halt the whole build when the
+ *  environment is provably sound (live false-halt 2026-07-02: the token
+ *  round-tripped perfectly but grok ended on an explanation of task errors). */
 function verdict(result: ChunkAgentResult, token: string, paths: Record<"sentinel" | "echo" | "bash", string>): PreflightResult {
   if (result.exitCode === 124) {
     return { status: "fail", contract: "worker-timeout", detail: `worker produced no result within the probe window — provider stall or event plumbing (handler:agent-result) not firing. ${result.error ?? ""}`.trim() };
@@ -121,11 +127,8 @@ function verdict(result: ChunkAgentResult, token: string, paths: Record<"sentine
     return { status: "fail", contract: "worker-invocation", detail: `worker run failed (exit=${result.exitCode}): ${result.error || result.stdout.slice(-400) || "(no output)"}` };
   }
 
-  const report = parseChunkReport(result.stdout);
-  if (!report.parsed) {
-    return { status: "fail", contract: "report-shape", detail: `worker's final message had no parseable STATUS/DONE_WHEN block — result extraction or report discipline broken. Output tail: ${JSON.stringify(result.stdout.slice(-400))}` };
-  }
-
+  // Environment contract — the preflight's reason to exist. A break here means
+  // chunks cannot recover, so it halts.
   if (!existsSync(paths.echo)) {
     return { status: "fail", contract: "file-write-anchoring", detail: `relative write of ${PREFLIGHT_FILES.echo} did not land in the project root — work-root anchoring or the delegated write gate is broken.` };
   }
@@ -133,13 +136,23 @@ function verdict(result: ChunkAgentResult, token: string, paths: Record<"sentine
   if (echoed !== token) {
     return { status: "fail", contract: "file-read-anchoring", detail: `worker wrote ${JSON.stringify(echoed.slice(0, 80))} instead of the sentinel token — it could not read ${PREFLIGHT_FILES.sentinel} via a relative path (wrong anchor root).` };
   }
-
   if (!existsSync(paths.bash)) {
     return { status: "fail", contract: "bash-cwd", detail: `bash \`cd "<project root>" && cp\` produced no file — shell policy, cwd anchoring, or path quoting is broken.` };
   }
   const bashed = readFileSync(paths.bash, "utf-8").trim();
   if (bashed !== token) {
     return { status: "fail", contract: "bash-cwd", detail: `bash copy carried ${JSON.stringify(bashed.slice(0, 80))} instead of the token — the shell resolved a different working directory than the project root.` };
+  }
+
+  // Environment is sound. Report discipline is advisory here — warn, don't halt;
+  // the per-chunk report-shape gate handles a prose-ending worker with a retry.
+  const report = parseChunkReport(result.stdout);
+  if (!report.parsed) {
+    return {
+      status: "pass",
+      durationMs: result.durationMs,
+      warning: `environment contract verified, but the worker ended without a parseable report block (report discipline is weak for this model). The per-chunk report-shape gate will retry it. Output tail: ${JSON.stringify(result.stdout.slice(-200))}`,
+    };
   }
 
   return { status: "pass", durationMs: result.durationMs };

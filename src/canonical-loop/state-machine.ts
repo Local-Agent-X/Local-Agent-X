@@ -18,6 +18,7 @@ import { clearMiddlewareStateForOp } from "./middlewares/state.js";
 import { clearEvidenceHistory } from "./middlewares/evidence-history.js";
 import { clearRenderVerifyStateForOp } from "./turn-loop/render-verify.js";
 import { clearBuildVerifyStateForOp } from "./turn-loop/build-verify.js";
+import { clearDesignVerifyStateForOp } from "./turn-loop/design-verify.js";
 import { clearSpecProbeStateForOp } from "./turn-loop/spec-probes.js";
 import { clearEarnedDoneStateForOp } from "./middlewares/open-steps.js";
 import type { Op, OpStatus } from "../ops/types.js";
@@ -104,6 +105,7 @@ export function transitionOp(
     clearEmittedErrorsForOp(op.id);
     clearRenderVerifyStateForOp(op.id);
     clearBuildVerifyStateForOp(op.id);
+    clearDesignVerifyStateForOp(op.id);
     clearSpecProbeStateForOp(op.id);
     clearEarnedDoneStateForOp(op.id);
   }

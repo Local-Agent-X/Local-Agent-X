@@ -31,6 +31,7 @@ import { isSilentToolCall } from "./silent-tool-check.js";
 import { appIdsTouchedByTurn, registerOpAppTouch, runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { runBuildVerifyGate, groundTruthSizesNote } from "./build-verify.js";
 import { runSpecProbeGate } from "./spec-probes.js";
+import { runDesignVerifyGate } from "./design-verify.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
 import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
@@ -257,6 +258,18 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // and must never demote the outcome label.
   if (terminalReason === "done" && opEditedSourcePaths(op.id).length > 0) {
     const gate = await runSpecProbeGate(op);
+    if (gate.shouldRetry) {
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);
+      terminalReason = null;
+    }
+  }
+
+  // Design-verify gate (the fifth gate). Runs last — only once the app is proven
+  // non-broken / compiling / behaving — turning a low visual-design score from the
+  // render probe's screenshot judge into ONE capped rebuild nudge. Nudge-only
+  // (records no verdict; never demotes the label). Contract lives in design-verify.ts.
+  if (terminalReason === "done") {
+    const gate = runDesignVerifyGate(op);
     if (gate.shouldRetry) {
       appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);
       terminalReason = null;

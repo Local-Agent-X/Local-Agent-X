@@ -206,7 +206,9 @@ export async function waitForPreviewRuntimeErrors(
 // evidence — the only source for a build no preview ever opened. Injected at
 // bootstrap so render-verify stays pure (no desktop-bridge / vision imports)
 // and unit-testable with a fake. Returns null when unavailable (headless).
-export type RenderProbeFn = (url: string, appDescription: string) => Promise<PreviewRuntimeError[] | null>;
+// `opId` lets the probe key per-op side signals (e.g. the design-verify stash)
+// off the same screenshot/vision call it already makes for the broken-check.
+export type RenderProbeFn = (url: string, appDescription: string, opId: string) => Promise<PreviewRuntimeError[] | null>;
 let renderProbe: RenderProbeFn | null = null;
 export function setRenderProbe(fn: RenderProbeFn | null): void {
   renderProbe = fn;
@@ -260,7 +262,7 @@ export async function runRenderVerifyGate(
     const probe = opts.probe ?? renderProbe;
     if (probe && opts.appUrl) {
       try {
-        const probed = await probe(opts.appUrl, opts.appDescription ?? "");
+        const probed = await probe(opts.appUrl, opts.appDescription ?? "", opId);
         if (probed && probed.length > 0) errors = probed;
       } catch { /* probe is best-effort evidence — treat failure as "no evidence" */ }
     }

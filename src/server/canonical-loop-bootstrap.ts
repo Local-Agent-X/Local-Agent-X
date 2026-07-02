@@ -51,7 +51,7 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
   // desktop bridge), so the gate degrades to its no-probe behavior. probeApp and
   // the judge are imported lazily so this bootstrap module keeps its light static
   // graph (the test suite imports it without the provider/dispatch transitive set).
-  setRenderProbe(async (url, appDescription): Promise<PreviewRuntimeError[] | null> => {
+  setRenderProbe(async (url, appDescription, opId): Promise<PreviewRuntimeError[] | null> => {
     const { probeApp } = await import("../desktop-bridge.js");
     const result = await probeApp(url, { wantScreenshot: true });
     if (!result) return null;
@@ -63,6 +63,13 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
       const verdict = await visionVerdictForScreenshot(result.screenshotB64, appDescription);
       if (verdict && !verdict.ok) {
         errors.push({ kind: "blank", message: `Screenshot looks broken: ${verdict.reason}`, ts: Date.now() });
+      } else if (verdict && verdict.ok && verdict.design) {
+        // App renders fine — stash its design score for the design-verify gate
+        // (decide-outcome runs it last, after the app is proven non-broken /
+        // compiling / behaving). Only when NOT broken: a broken app retries for
+        // brokenness first, and a design nudge over a broken screenshot is noise.
+        const { recordDesignVerdict } = await import("../canonical-loop/turn-loop/design-verify.js");
+        recordDesignVerdict(opId, verdict.design);
       }
     }
     return errors;

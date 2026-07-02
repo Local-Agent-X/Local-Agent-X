@@ -12,6 +12,8 @@ import {
   setLaneCapConfigReader,
 } from "../canonical-loop/index.js";
 import type { CanonicalLane } from "../canonical-loop/types.js";
+import { setRenderProbe } from "../canonical-loop/turn-loop/render-verify.js";
+import type { PreviewRuntimeError } from "../canonical-loop/turn-loop/render-verify.js";
 import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 
@@ -41,6 +43,30 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
   // (maxInteractiveSessions) take effect and follow hot-reload. Passing the
   // reader in keeps this module free of config.ts's import-time side effects.
   if (configReader) setLaneCapConfigReader(configReader);
+
+  // Wire the headless render probe: when a "done" build touched app files but no
+  // open preview reported errors, the render-verify gate loads the app in a
+  // hidden window and — if it captured a screenshot — asks the screenshot judge
+  // whether it looks broken. probeApp returns null on a headless server (no
+  // desktop bridge), so the gate degrades to its no-probe behavior. probeApp and
+  // the judge are imported lazily so this bootstrap module keeps its light static
+  // graph (the test suite imports it without the provider/dispatch transitive set).
+  setRenderProbe(async (url, appDescription): Promise<PreviewRuntimeError[] | null> => {
+    const { probeApp } = await import("../desktop-bridge.js");
+    const result = await probeApp(url, { wantScreenshot: true });
+    if (!result) return null;
+    const errors: PreviewRuntimeError[] = result.errors.map((e) => ({
+      kind: e.kind, message: e.message, source: e.source, line: e.line, ts: Date.now(),
+    }));
+    if (result.screenshotB64) {
+      const { visionVerdictForScreenshot } = await import("../tools/app-tools/vision-verify.js");
+      const verdict = await visionVerdictForScreenshot(result.screenshotB64, appDescription);
+      if (verdict && !verdict.ok) {
+        errors.push({ kind: "blank", message: `Screenshot looks broken: ${verdict.reason}`, ts: Date.now() });
+      }
+    }
+    return errors;
+  });
 
   // Stale-op recovery sweep is a fire-and-forget — no caller waits for the
   // result. Used to run synchronously inside this function and added 9-18s

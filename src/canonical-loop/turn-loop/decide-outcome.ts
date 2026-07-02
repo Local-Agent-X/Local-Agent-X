@@ -209,7 +209,9 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     // Let the phone-side ingress route this app's runtime errors to this op —
     // a phone-served page knows its appId, not a chat session id.
     for (const appId of appIdsTouchedByTurn(toolCalls)) registerOpAppTouch(op.id, appId);
-    const gate = await runRenderVerifyGate(op.id);
+    // appUrl lets the gate headlessly probe a build that no preview opened
+    // (e.g. phone-triggered); task is the description for the screenshot judge.
+    const gate = await runRenderVerifyGate(op.id, { appUrl: op.appUrl, appDescription: op.task });
     if (gate.shouldRetry) {
       appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);
       terminalReason = null;

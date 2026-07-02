@@ -199,6 +199,17 @@ export async function waitForPreviewRuntimeErrors(
   return [];
 }
 
+// Active probe seam. When no OPEN preview reported errors (desktop iframe or
+// phone ingress), the gate can actively load the app headlessly and collect
+// evidence — the only source for a build no preview ever opened. Injected at
+// bootstrap so render-verify stays pure (no desktop-bridge / vision imports)
+// and unit-testable with a fake. Returns null when unavailable (headless).
+export type RenderProbeFn = (url: string, appDescription: string) => Promise<PreviewRuntimeError[] | null>;
+let renderProbe: RenderProbeFn | null = null;
+export function setRenderProbe(fn: RenderProbeFn | null): void {
+  renderProbe = fn;
+}
+
 export interface RenderVerifyGateResult {
   /** Errors that landed in time, already formatted as the nudge body. */
   nudge: string;
@@ -224,11 +235,34 @@ export interface RenderVerifyGateResult {
  *      shouldRetry false + capReached true; errors are dropped (drained
  *      into the formatted nudge string but not pushed into op_messages by
  *      this function — the caller decides). */
+export interface RenderVerifyGateOptions extends WaitForErrorsOptions {
+  /** App URL to actively probe when no open preview reported errors. Omitted →
+   *  no headless fallback (behavior identical to before the probe existed). */
+  appUrl?: string;
+  /** App description handed to the screenshot judge inside the probe. */
+  appDescription?: string;
+  /** Test seam — overrides the bootstrap-registered probe. */
+  probe?: RenderProbeFn;
+}
+
 export async function runRenderVerifyGate(
   opId: string,
-  opts: WaitForErrorsOptions = {},
+  opts: RenderVerifyGateOptions = {},
 ): Promise<RenderVerifyGateResult> {
-  const errors = await waitForPreviewRuntimeErrors(opId, opts);
+  let errors = await waitForPreviewRuntimeErrors(opId, opts);
+  // No open preview reported anything. If a probe is available and we know the
+  // app URL, load it headlessly and use whatever it observes. Best-effort: a
+  // probe failure or a headless server (no probe registered) leaves errors
+  // empty, so the gate behaves exactly as it did before this fallback existed.
+  if (errors.length === 0) {
+    const probe = opts.probe ?? renderProbe;
+    if (probe && opts.appUrl) {
+      try {
+        const probed = await probe(opts.appUrl, opts.appDescription ?? "");
+        if (probed && probed.length > 0) errors = probed;
+      } catch { /* probe is best-effort evidence — treat failure as "no evidence" */ }
+    }
+  }
   if (errors.length === 0) {
     return { nudge: "", retryCount: getRenderVerifyRetries(opId), shouldRetry: false, capReached: false };
   }

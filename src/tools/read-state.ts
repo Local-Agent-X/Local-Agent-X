@@ -16,11 +16,26 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
+import { realpathDeep } from "../security/file-access.js";
 
 const seen = new Map<string, Map<string, string>>(); // sessionId -> (path -> hash)
 
 function sid(sessionId: string | undefined): string {
   return sessionId || "default";
+}
+
+// Key the freshness map by the CANONICAL path — following junctions/symlinks at
+// every existing segment via the SAME resolver the security gate and file tools
+// use. Without this, a read and a later edit of ONE physical file can land under
+// two different keys when the paths spell the same inode differently: the
+// workspace junction (…\local-agent-x\workspace\…) vs its target
+// (…\Documents\Local Agent X\workspace\…). The edit then reads as "unseen",
+// the stale-read guard blocks it, and the worker stalls on a file it just read
+// (live failure 2026-07-02, food-truck chunk 2: "wrong absolute path
+// (Documents/Local Agent X vs workspace)"). Canonicalizing here collapses both
+// spellings to one key, so record-on-read and check-on-edit always agree.
+function canonKey(path: string): string {
+  try { return realpathDeep(path); } catch { return path; }
 }
 
 function hash(content: string): string {
@@ -42,7 +57,7 @@ export function recordFileSeen(sessionId: string | undefined, path: string): voi
   if (h === null) return;
   let m = seen.get(sid(sessionId));
   if (!m) { m = new Map(); seen.set(sid(sessionId), m); }
-  m.set(path, h);
+  m.set(canonKey(path), h);
 }
 
 export type Freshness = "ok" | "stale" | "unseen";
@@ -52,7 +67,7 @@ export type Freshness = "ok" | "stale" | "unseen";
  *  - stale:  on-disk content changed since this session last saw it
  *  - ok:     this session has seen the current bytes */
 export function checkFreshness(sessionId: string | undefined, path: string): Freshness {
-  const known = seen.get(sid(sessionId))?.get(path);
+  const known = seen.get(sid(sessionId))?.get(canonKey(path));
   if (known === undefined) return "unseen";
   const current = diskHash(path);
   if (current === null) return "ok"; // missing file is the edit tool's problem to report, not ours

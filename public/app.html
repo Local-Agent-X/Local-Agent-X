@@ -3,7 +3,15 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<!-- PWA / mobile: the manifest makes "Add to Home Screen" a real standalone
+     app and, critically, gives Android a theme_color so the phone's native
+     status bar is painted (and its icons get legible contrast) instead of a
+     default bright white. shared-theme.js then updates <meta theme-color> live
+     to track the light/dark toggle. -->
+<link rel="manifest" href="/manifest.json"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="theme-color" content="#0a0a0f"/>
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* wss://127.0.0.1:* wss://localhost:*; img-src 'self' data: https: blob:; font-src 'self'; media-src 'self' blob: mediastream:; worker-src 'self' blob: data:; frame-src 'self' http://127.0.0.1:* http://localhost:*;">
 <meta http-equiv="Permissions-Policy" content="microphone=*, camera=*">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>

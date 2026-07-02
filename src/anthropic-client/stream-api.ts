@@ -1,5 +1,6 @@
 import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking } from "../anthropic-models.js";
 import { API_BASE, convertMessages } from "./request.js";
+import { connectTimeout } from "../providers/connect-timeout.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
@@ -57,19 +58,20 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     }
   }
 
-  // Compose connect timeout (60s) with the caller's external cancel
-  // signal — same shape as the codex client fix. Request-phase aborts
-  // when either fires.
-  const fetchSignals: AbortSignal[] = [AbortSignal.timeout(60_000)];
-  if (signal) fetchSignals.push(signal);
-  const fetchSignal = fetchSignals.length > 1 ? AbortSignal.any(fetchSignals) : fetchSignals[0];
+  // Connect timeout (60s) bounds ONLY the request/headers phase; it is cleared
+  // the instant the response starts streaming. Otherwise a generation longer
+  // than 60s is aborted mid-stream and a complete answer is truncated into an
+  // error. The caller's external cancel signal stays wired for the whole stream
+  // (below) so barge-in / op-cancel still aborts immediately.
+  const conn = connectTimeout(60_000, signal, "Anthropic");
 
   let externalAbortHandler: (() => void) | null = null;
   try {
     const response = await fetch(`${API_BASE}/v1/messages`, {
       method: "POST", headers, body: JSON.stringify(body),
-      signal: fetchSignal,
+      signal: conn.signal,
     });
+    conn.clear();
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -163,6 +165,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
   } catch (e) {
     yield { type: "error", error: `Anthropic error: ${(e as Error).message?.slice(0, 300)}` };
   } finally {
+    conn.clear();
     if (externalAbortHandler && signal) {
       signal.removeEventListener("abort", externalAbortHandler);
     }

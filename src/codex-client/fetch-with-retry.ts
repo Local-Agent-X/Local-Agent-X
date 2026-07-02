@@ -1,10 +1,11 @@
 // Retry-aware fetch for the Codex endpoint. Exponential backoff on 5xx,
-// 429, and network/timeout errors. Composes a 120s connect-timeout signal
-// with the caller's external cancel signal so a stop fires immediately
-// instead of waiting the full connect window.
+// 429, and network/timeout errors. Uses a 120s connect-timeout that is
+// cleared once headers arrive (so it never truncates the streamed body) and
+// composes the caller's external cancel signal so a stop fires immediately.
 
 import { createLogger } from "../logger.js";
 import { classify, isRetryable, backoffMs } from "../resilience-policy.js";
+import { connectTimeout } from "../providers/connect-timeout.js";
 
 const logger = createLogger("codex-client.fetch");
 
@@ -27,19 +28,20 @@ export async function fetchCodexWithRetry(input: FetchWithRetryInput): Promise<R
 
   let res: Response | undefined;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // Connect-timeout (120s) bounds ONLY the request/headers phase and is
+    // cleared the instant fetch resolves — otherwise it stays live on the
+    // returned Response and aborts the streamed body mid-generation (a partial
+    // answer silently standing as complete). The caller's external cancel
+    // signal stays composed for the whole body lifetime.
+    const conn = connectTimeout(120_000, signal, "Codex");
     try {
-      // Compose connect-timeout (120s) and the caller's external cancel
-      // signal into one fetch signal. If either fires we abort the
-      // outgoing request immediately — the worker doesn't wait the full
-      // 120s connect window when the user cancels mid-request.
-      const fetchSignals: AbortSignal[] = [AbortSignal.timeout(120_000)];
-      if (signal) fetchSignals.push(signal);
       res = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
-        signal: fetchSignals.length > 1 ? AbortSignal.any(fetchSignals) : fetchSignals[0],
+        signal: conn.signal,
       });
+      conn.clear();
 
       if (res.ok) return res;
 
@@ -70,10 +72,16 @@ export async function fetchCodexWithRetry(input: FetchWithRetryInput): Promise<R
       logger.error(`[codex] API error ${res.status}:`, errText.slice(0, 500));
       throw new Error(`Codex API error ${res.status}: ${errText.slice(0, 500)}`);
     } catch (e) {
-      if (attempt >= maxRetries || !isRetryable(e)) throw e;
-      const msg = (e as Error).message;
-      const waitMs = backoffMs(attempt, classify(e));
-      logger.warn(`[codex] Network error, retrying in ${Math.round(waitMs)}ms: ${msg.slice(0, 100)}`);
+      conn.clear();
+      // External cancel (barge-in / op-cancel / lease-lost) is terminal — never retry it.
+      if (signal?.aborted) throw e;
+      // A connect-timeout abort IS retryable, but the manual timer surfaces as
+      // a generic AbortError that classify() can't tag as "timeout" — so ask
+      // conn directly instead of relying on the message.
+      const connectTimedOut = conn.timedOut();
+      if (attempt >= maxRetries || (!connectTimedOut && !isRetryable(e))) throw e;
+      const waitMs = backoffMs(attempt, connectTimedOut ? "timeout" : classify(e));
+      logger.warn(`[codex] ${connectTimedOut ? "connect timeout" : "network error"}, retrying in ${Math.round(waitMs)}ms (attempt ${attempt}/${maxRetries})`);
       await new Promise((r) => setTimeout(r, waitMs));
       continue;
     }

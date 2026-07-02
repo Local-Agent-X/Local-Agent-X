@@ -104,6 +104,27 @@ describe("report parser", () => {
   });
 });
 
+// Regression (2026-07-01 food-truck-tracker chunk 1): the worker did the
+// chunk work but ended its run with no parseable report, and the old halt
+// killed the build at 0/7. A shape failure must be a push_back (retry once
+// with explicit format feedback) and must short-circuit the other gates —
+// they would fire spuriously on the empty fields and outrank the retry.
+describe("malformed report -> push_back retry, not halt", () => {
+  it("returns push_back with only the report-shape finding", () => {
+    const f = loadFixture("chunk-clean-proceed.json");
+    const chunk = chunkFromFixture(f);
+    const outcome = runChunkReview({
+      chunk,
+      allChunks: [chunk],
+      plan: emptyPlan(chunk),
+      rawReport: "Wrote app/layout.tsx\n\nTask 123 updated - status: completed",
+    });
+    expect(outcome.action).toBe("push_back");
+    expect(outcome.findings).toHaveLength(1);
+    expect(outcome.findings[0].gate).toBe("report-shape");
+    expect(outcome.reasoning).toContain("STATUS:");
+  });
+});
 describe("Bookwell fixture: chunk-clean-proceed → proceed", () => {
   it("returns proceed when all gates pass", () => {
     const f = loadFixture("chunk-clean-proceed.json");

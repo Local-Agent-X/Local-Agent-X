@@ -287,7 +287,7 @@ const pdfMerge: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const paths: string[] = (JSON.parse(args.files as string) as string[]).map(resolvePath);
+      const paths: string[] = (JSON.parse(args.files as string) as string[]).map(p => resolvePath(p));
       if (!Array.isArray(paths) || paths.length === 0) return fail("files must be a non-empty JSON array of paths");
 
       const merged = await PDFLibDocument.create();

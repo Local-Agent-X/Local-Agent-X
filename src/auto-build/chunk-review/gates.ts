@@ -47,16 +47,25 @@ export interface GateFinding {
   reasoning: string;
 }
 
-/** Gate 0 (precondition): the report must parse to a known shape. */
+/** Gate 0 (precondition): the report must parse to a known shape.
+ *
+ *  push_back, not halt: a missing/malformed report is the classic
+ *  weak-model dodge (live failure 2026-07-01: the worker did the chunk
+ *  work but ended its run with no final report text, halting the whole
+ *  build at 0/N). The loop's retry-once machinery respawns with the
+ *  reason below; a second shape failure escalates to halt as always. */
 export function gateReportShape(report: ChunkReport): GateFinding | null {
   if (report.parsed) return null;
   return {
     gate: "report-shape",
-    action: "halt",
+    action: "push_back",
     reasoning:
-      "Chunk subprocess returned a report that doesn't match the expected " +
-      "STATUS/DONE_WHEN/.../NOTE format. Either the subprocess timed out " +
-      "mid-report or it skipped the report block. Do not commit.",
+      "Your run ended without a parseable report. The LAST message of your run " +
+      "must be EXACTLY the report block — plain column-0 lines starting " +
+      "STATUS: / DONE_WHEN: / CHANGED: / TESTS: / NEW_FAILURES: / " +
+      "PRE_EXISTING_FAILURES: / SPEC_GAPS: / LAUNCH_READINESS: / NOTE: — no " +
+      "bold, no bullets, no code fence, no text after it. Verify what already " +
+      "landed on disk from the previous attempt before redoing work.",
   };
 }
 

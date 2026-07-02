@@ -67,7 +67,14 @@ export function runChunkReview(input: ChunkReviewInput): ChunkReviewOutcome {
   const findings: GateFinding[] = [];
   const collect = (f: GateFinding | null) => { if (f) findings.push(f); };
 
-  collect(gateReportShape(report));
+  // Malformed/missing report short-circuits: the other gates would fire
+  // spuriously on the empty fields (done-when "unmet", tests "missing")
+  // and their halt would outrank the retry. The only meaningful verdict
+  // here is "respawn once and demand the report block".
+  const shapeFinding = gateReportShape(report);
+  if (shapeFinding) {
+    return { action: shapeFinding.action, reasoning: shapeFinding.reasoning, findings: [shapeFinding], report };
+  }
   collect(gateDoneWhen(input.chunk, report));
   if (input.specDiff && input.specDiff.trim()) collect(gateAdditiveDiff(input.specDiff));
   collect(gatePhaseGate(input.chunk, input.plan, input.allChunks));

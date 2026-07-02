@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { resolveAgentPath } from "../workspace/paths.js";
+import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
 import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
@@ -114,7 +114,7 @@ export const editTool: ToolDefinition = {
     required: ["path", "old_string", "new_string"],
   },
   async execute(args) {
-    const filePath = resolveAgentPath(String(args.path));
+    const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
     if (!existsSync(filePath)) return fileNotFoundError(filePath);
 
     try {
@@ -145,7 +145,7 @@ export const editLinesTool: ToolDefinition = {
     required: ["path", "start_line", "new_string"],
   },
   async execute(args) {
-    const filePath = resolveAgentPath(String(args.path));
+    const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
     if (!existsSync(filePath)) return fileNotFoundError(filePath);
 
     try {
@@ -206,7 +206,7 @@ export const multiEditTool: ToolDefinition = {
     required: ["path", "edits"],
   },
   async execute(args) {
-    const filePath = resolveAgentPath(String(args.path));
+    const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
     if (!existsSync(filePath)) return fileNotFoundError(filePath);
     const edits = Array.isArray(args.edits) ? args.edits : [];
     if (edits.length === 0) return err("multi_edit requires a non-empty `edits` array.");

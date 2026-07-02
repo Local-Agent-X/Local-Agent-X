@@ -78,7 +78,10 @@ const DISCIPLINE_BLOCK =
   `route to launch-readiness.\n` +
   `- **Don't touch \`spec/\`.** Spec amendments are the reviewer's job. Surface gaps in NOTE.\n\n` +
   `## Report format (the review pass parses this — keep it exact)\n\n` +
-  `When you finish, reply with EXACTLY this block (no other text after it):\n\n` +
+  `When you finish, reply with EXACTLY this block (no other text after it). ` +
+  `Your run's LAST message must be this block by itself: never end the run on a ` +
+  `tool call — after your final task_update, send the report as plain text. ` +
+  `Column-0 UPPERCASE field lines, no bold, no bullets, no code fence:\n\n` +
   `STATUS: done | blocked | partial\n` +
   `DONE_WHEN: met | deferred-to-launch-readiness | unmet\n` +
   `CHANGED: <comma-separated file paths>\n` +

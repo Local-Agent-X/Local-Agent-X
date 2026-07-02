@@ -50,7 +50,7 @@ export function mapUploadsRef(p: string): string | null {
 // byte-for-byte the opened path and the two can never drift — the exact
 // split-brain that silently 404'd / denied attachment reads. Do NOT re-inline
 // this logic at either callsite.
-export function resolveAgentPathFrom(workspace: string, p: string): string {
+export function resolveAgentPathFrom(workspace: string, p: string, sessionId?: string): string {
   const upload = mapUploadsRef(p);
   if (upload) return upload;
   // A leading "~" is the user's home, the same as every other path consumer
@@ -63,11 +63,41 @@ export function resolveAgentPathFrom(workspace: string, p: string): string {
   if (p === "~") return homedir();
   if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));
   if (isAbsolute(p)) return resolve(p);
+  const workRoot = sessionId ? sessionWorkRoots.get(sessionId) : undefined;
+  if (workRoot) return resolve(workRoot, p);
   return resolve(workspace, "..", p);
 }
 
-export function resolveAgentPath(p: string): string {
-  return resolveAgentPathFrom(workspaceRoot(), p);
+export function resolveAgentPath(p: string, sessionId?: string): string {
+  return resolveAgentPathFrom(workspaceRoot(), p, sessionId);
+}
+
+// ── Per-session work-root anchor ──
+//
+// A worker run sanctioned to operate on a project OUTSIDE the data root
+// (auto-build chunk workers) registers its project dir here; RELATIVE agent
+// paths for that session anchor to the project instead of the project root
+// above. Without this, a chunk worker's task says "all paths are relative to
+// your project dir" while write("app/layout.tsx") actually landed in
+// <Documents>/Local Agent X/app/ (live failure 2026-07-01). Registered and
+// cleared by the agent driver (server/handler-events.ts) alongside the
+// security layer's session allowed-paths, so the gate and the tool keep
+// resolving identically — both call THIS resolver with the same sessionId.
+const sessionWorkRoots = new Map<string, string>();
+
+export function setSessionWorkRoot(sessionId: string, root: string): void {
+  if (sessionId && root) sessionWorkRoots.set(sessionId, resolve(root));
+}
+
+export function clearSessionWorkRoot(sessionId: string): void {
+  sessionWorkRoots.delete(sessionId);
+}
+
+/** The tool-executor-injected session id from a tool's args, if present.
+ *  File tools pass this into resolveAgentPath so a session with a
+ *  registered work root gets its relative paths anchored there. */
+export function sessionIdOf(args: Record<string, unknown>): string | undefined {
+  return typeof args._sessionId === "string" && args._sessionId ? args._sessionId : undefined;
 }
 
 // The project root — the parent of the workspace, the SAME anchor relative agent

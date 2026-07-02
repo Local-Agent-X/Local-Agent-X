@@ -3,7 +3,7 @@ import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig, uploadsDir } from "../config.js";
-import { resolveAgentPath, projectRoot } from "./paths.js";
+import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionIdOf } from "./paths.js";
 import { isSensitivePath } from "../data-lineage-paths.js";
 
 // resolveAgentPath is the single source of truth for turning an agent's raw
@@ -92,5 +92,42 @@ describe("resolveAgentPath", () => {
   it("projectRoot is the workspace parent (the relative-path anchor)", () => {
     expect(projectRoot()).toBe(resolve(WS, ".."));
     expect(projectRoot()).toBe(resolveAgentPath("."));
+  });
+});
+
+// Regression (2026-07-01 auto-build chunk 1): the chunk worker's task says
+// "all paths are relative to your project dir" but write("app/layout.tsx")
+// landed in <project root>/app/. A session with a registered work root must
+// anchor its relative paths there — and revert on clear.
+describe("session work-root anchor", () => {
+  const WS = resolve("/lax-test-home/Documents/Local Agent X/workspace");
+  const PROJ = resolve("/lax-test-home/Documents/Local Agent X/workspace/apps/food-trucks");
+
+  beforeAll(() => {
+    setRuntimeConfig({ workspace: WS } as Partial<LAXConfig> as LAXConfig);
+  });
+
+  it("anchors relative paths to the registered work root for that session", () => {
+    setSessionWorkRoot("agent-run-1", PROJ);
+    try {
+      expect(resolveAgentPath("app/layout.tsx", "agent-run-1")).toBe(resolve(PROJ, "app", "layout.tsx"));
+      // Other sessions are unaffected.
+      expect(resolveAgentPath("app/layout.tsx", "agent-run-2")).toBe(resolve(WS, "..", "app", "layout.tsx"));
+      // No session id → default anchor.
+      expect(resolveAgentPath("app/layout.tsx")).toBe(resolve(WS, "..", "app", "layout.tsx"));
+      // Absolute paths still pass through.
+      const abs = resolve("/some/abs/file.txt");
+      expect(resolveAgentPath(abs, "agent-run-1")).toBe(abs);
+    } finally {
+      clearSessionWorkRoot("agent-run-1");
+    }
+    expect(resolveAgentPath("app/layout.tsx", "agent-run-1")).toBe(resolve(WS, "..", "app", "layout.tsx"));
+  });
+
+  it("sessionIdOf extracts the executor-injected id and rejects non-strings", () => {
+    expect(sessionIdOf({ _sessionId: "agent-run-9" })).toBe("agent-run-9");
+    expect(sessionIdOf({ _sessionId: "" })).toBeUndefined();
+    expect(sessionIdOf({})).toBeUndefined();
+    expect(sessionIdOf({ _sessionId: 42 })).toBeUndefined();
   });
 });

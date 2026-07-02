@@ -225,7 +225,7 @@ export function evaluateFileAccess(
   // path is then byte-for-byte the path the tool opens — no second copy of the
   // "/uploads ref + absolute + project-root-relative" rule to drift out of sync
   // (the split-brain that silently broke attachment reads).
-  const resolved = resolveAgentPathFrom(rawWorkspace, rawPath);
+  const resolved = resolveAgentPathFrom(rawWorkspace, rawPath, sessionId);
 
   // Canonicalize BOTH the workspace root and the target to their real on-disk
   // paths before any containment check. realpathSync follows symlinks AND

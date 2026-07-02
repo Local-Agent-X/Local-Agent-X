@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { containsNulByte } from "../binary-sniff.js";
 import { dirname } from "node:path";
-import { resolveAgentPath } from "../workspace/paths.js";
+import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { moveToTrash } from "../safe-delete.js";
 import { readValidatedFile, writeValidatedFile } from "../security/validated-io.js";
 import type { ToolDefinition } from "../types.js";
@@ -29,7 +29,7 @@ export const readTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
-    const filePath = resolveAgentPath(String(args.path));
+    const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
     if (!existsSync(filePath)) return fileNotFoundError(filePath);
 
     // Open the VALIDATED canonical inode (realpath + O_NOFOLLOW on the leaf) so
@@ -109,7 +109,7 @@ export const writeTool: ToolDefinition = {
     required: ["path", "content"],
   },
   async execute(args) {
-    const filePath = resolveAgentPath(String(args.path));
+    const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
     const content = String(args.content);
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
     const skipSecretScan = ["css", "svg"].includes(ext);
@@ -212,7 +212,7 @@ export const deleteFileTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
-    const filePath = resolveAgentPath(String(args.path));
+    const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
     if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
     try {
       const st = statSync(filePath);

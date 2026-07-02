@@ -17,6 +17,7 @@ import type { AgentRunStore, AgentTemplateStore } from "../agent-store/index.js"
 
 import { createLogger } from "../logger.js";
 import { clearSessionProfile } from "../autonomy/profile-store.js";
+import { setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js";
 const logger = createLogger("server.handler-events");
 
 interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string; templateId?: string | null }
@@ -153,9 +154,14 @@ export function registerHandlerEvents(deps: {
       // project that is NOT the LAX repo (auto-build chunk workers) pass
       // req.workRoot. Registering it gives the run the same standing a
       // worktree grants — the delegated-bash gate keys on session
-      // allowed-paths — scoped to this run and removed in the finally.
+      // allowed-paths — and anchors the session's RELATIVE file paths to
+      // the project (write("app/x.tsx") lands in the project, not the
+      // data root). Scoped to this run, removed in the finally. Keyed by
+      // runSessionId — the id the tools' _sessionId and the gate's
+      // ctx.sessionId both carry.
       if (!worktreeInfo && req.workRoot) {
-        security.addAllowedPath(req.workRoot, `agent-${agentId}`);
+        security.addAllowedPath(req.workRoot, runSessionId);
+        setSessionWorkRoot(runSessionId, req.workRoot);
         workRootRegistered = true;
       }
 
@@ -257,7 +263,10 @@ export function registerHandlerEvents(deps: {
       const msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e);
       return { result: p ? `[${msg}]\n\n${p}` : msg, success: false };
     } finally {
-      if (workRootRegistered && req.workRoot) security.removeAllowedPath(req.workRoot, `agent-${agentId}`);
+      if (workRootRegistered && req.workRoot) {
+        security.removeAllowedPath(req.workRoot, runSessionId);
+        clearSessionWorkRoot(runSessionId);
+      }
       // Tear down any inherited per-session profile override (set at spawn in
       // invoke.ts). Only for the auto-minted per-run session — an explicit
       // req.sessionId is a shared/borrowed session whose lifecycle the caller owns.

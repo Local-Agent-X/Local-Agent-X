@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { handleCompactRoute } from "../src/routes/chat/compact-route.js";
 import type { ServerContext } from "../src/server-context.js";
 import type { Session } from "../src/types.js";
@@ -101,6 +101,24 @@ describe("handleCompactRoute — short sessions are not compacted", () => {
 });
 
 describe("handleCompactRoute — long sessions are compacted", () => {
+  // Disable the canonical LLM summarizer so summarizeOldMessages returns null
+  // and the route falls back to the DETERMINISTIC digest (the [User]/[Agent]
+  // quote format these tests assert). Without this, the route would spawn the
+  // real warm-pool claude CLI — nondeterministic, and an error string when
+  // logged out. Capture + restore so the change doesn't leak to other tests.
+  let prevLlmCompaction: string | undefined;
+  beforeAll(() => {
+    prevLlmCompaction = process.env.LAX_LLM_COMPACTION;
+    process.env.LAX_LLM_COMPACTION = "0";
+  });
+  afterAll(() => {
+    if (prevLlmCompaction === undefined) {
+      delete process.env.LAX_LLM_COMPACTION;
+    } else {
+      process.env.LAX_LLM_COMPACTION = prevLlmCompaction;
+    }
+  });
+
   it("replaces older messages with a single system summary entry", async () => {
     const url = new URL("http://test/api/compact");
     const req = mockJsonRequest({ sessionId: "s1" });

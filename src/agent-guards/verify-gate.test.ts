@@ -82,6 +82,43 @@ describe("checkVerifyGate — verified clean", () => {
   });
 });
 
+// Python's stdlib test runner (`python -m unittest`) needs no pip install, so
+// it's how a model verifies a Python task — but the gate used to be blind to it
+// (only pytest/mypy were recognized). That blindness both punished honest
+// verification and hid real test failures. These pin the language-completeness.
+describe("checkVerifyGate — Python stdlib unittest is a real verify", () => {
+  it("credits a passing `python -m unittest` (no spurious nudge)", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("poker.py"), bash("python3 -m unittest poker_test", "ok")], s);
+    expect(checkVerifyGate(s).nudge).toBeNull();
+    expect(opEditedSourceUnverified(s)).toBe(false);
+  });
+
+  it("nudges SHARPLY when `python -m unittest` FAILED (don't claim done over red)", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("poker.py"), bash("python3 -m unittest poker_test", "error")], s);
+    const r = checkVerifyGate(s);
+    expect(r.nudge).toMatch(/STOP/);
+    expect(r.nudge).toMatch(/FAILED/);
+    expect(opEditedSourceUnverified(s)).toBe(true);
+  });
+
+  it("running the module (`python file.py`) is NOT a verify — still nudges", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("poker.py"), bash("python3 poker.py", "ok")], s);
+    expect(checkVerifyGate(s).nudge).toMatch(/haven't run/i);
+    expect(opEditedSourceUnverified(s)).toBe(true);
+  });
+
+  it("also credits `python -m pytest` and the `py` launcher / trailing flags", () => {
+    for (const cmd of ["python3 -m pytest", "py -m unittest", "python -m unittest -v"]) {
+      const s = createVerifyGateState();
+      noteVerifyEvidence([edit("a.py"), bash(cmd, "ok")], s);
+      expect(checkVerifyGate(s).nudge, cmd).toBeNull();
+    }
+  });
+});
+
 describe("checkVerifyGate — verified but FAILED (the ship-broken-and-claim-done case)", () => {
   it("nudges sharply when a verify ran and exited error", () => {
     const s = createVerifyGateState();

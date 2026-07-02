@@ -93,9 +93,15 @@ const SOURCE_EXT_RE =
   /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|rb|php|c|cc|cpp|h|hpp|cs|swift|kt|kts|scala|m|mm)$/i;
 
 /** Shell commands that constitute a real verification pass. Conservative: a
- *  false positive only SUPPRESSES the nudge, which is the safe direction. */
+ *  false positive only SUPPRESSES the nudge, which is the safe direction.
+ *  `python -m unittest`/`-m pytest` (incl. intervening flags like `-W ignore`)
+ *  is the STDLIB test runner — it needs no pip install, so it's how a model
+ *  verifies a Python task. Without it the gate was blind to Python testing:
+ *  a passing `python -m unittest` wasn't credited (honest verify → spurious
+ *  nudge + partial label) and a FAILING one didn't trip the sharp "build is RED"
+ *  nudge (the failure went invisible). `pytest` bare already covers `-m pytest`. */
 const VERIFY_CMD_RE =
-  /\b(tsc|vitest|jest|mocha|pytest|mypy|pyright|ruff|eslint|cargo\s+(build|test|check|clippy)|go\s+(build|test|vet)|gradle|mvn|(npm|pnpm|yarn|bun)\s+(run\s+)?(build|test|typecheck|type-check|lint|check|tsc))\b/i;
+  /\b(tsc|vitest|jest|mocha|pytest|mypy|pyright|ruff|eslint|(?:python[0-9.]*|py)\s+-m\s+(?:unittest|pytest)|cargo\s+(build|test|check|clippy)|go\s+(build|test|vet)|gradle|mvn|(npm|pnpm|yarn|bun)\s+(run\s+)?(build|test|typecheck|type-check|lint|check|tsc))\b/i;
 
 export function isSourceFile(filePath: string): boolean {
   return SOURCE_EXT_RE.test(filePath);
@@ -173,7 +179,7 @@ const NUDGE_NEVER_VERIFIED =
   "type-check, or tests since the last change. Compiling or saving is not " +
   "the same as working — verify before you finish: run the project's " +
   "build/type-check/tests (e.g. the build or test script in package.json, " +
-  "`tsc --noEmit`, `pytest`, `cargo test`, `go test`) and fix anything it " +
+  "`tsc --noEmit`, `python -m unittest`, `pytest`, `cargo test`, `go test`) and fix anything it " +
   "surfaces. If you genuinely can't run it from here, say so explicitly " +
   "instead of reporting the work as done.";
 

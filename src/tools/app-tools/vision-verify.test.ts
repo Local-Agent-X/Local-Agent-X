@@ -120,6 +120,85 @@ describe("visionVerdictForScreenshot — dispatch request mapping", () => {
     expect(opts.maxTokens).toBe(200);
     expect(opts.temperature).toBe(0);
     expect(opts.prompt).toContain("a weather dashboard");
-    expect(opts.prompt).toContain('{"ok": boolean, "reason": string}');
+    expect(opts.prompt).toContain('{"ok": boolean, "reason": string, "design": {"score": integer, "issues": [string]}}');
+    // Both jobs ride the SAME single dispatch — the prompt asks for the design rubric too.
+    expect(opts.prompt).toContain("Design assessment");
+  });
+});
+
+describe("visionVerdictForScreenshot — graded design rubric", () => {
+  it("carries a well-formed design block alongside the broken-check", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning(
+        '{"ok": true, "reason": "Styled todo list", "design": {"score": 4, "issues": ["low contrast on secondary text", "cramped spacing in header"]}}',
+      ),
+    });
+    expect(verdict).toEqual({
+      ok: true,
+      reason: "Styled todo list",
+      design: { score: 4, issues: ["low contrast on secondary text", "cramped spacing in header"] },
+    });
+  });
+
+  it("stays valid with design undefined for the old {ok,reason} shape", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok": false, "reason": "Blank page"}'),
+    });
+    expect(verdict).toEqual({ ok: false, reason: "Blank page" });
+    expect(verdict?.design).toBeUndefined();
+  });
+
+  it("ignores a non-object design block but preserves a valid ok", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok": true, "reason": "fine", "design": "bad"}'),
+    });
+    expect(verdict?.ok).toBe(true);
+    expect(verdict?.reason).toBe("fine");
+    expect(verdict?.design).toBeUndefined();
+  });
+
+  it("drops the design block when score is not a number, keeping ok", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok": true, "reason": "fine", "design": {"score": "high", "issues": ["x"]}}'),
+    });
+    expect(verdict?.ok).toBe(true);
+    expect(verdict?.design).toBeUndefined();
+  });
+
+  it("clamps an above-range design score to 5", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok": true, "reason": "fine", "design": {"score": 9, "issues": []}}'),
+    });
+    expect(verdict?.design?.score).toBe(5);
+  });
+
+  it("rounds and floors a fractional/negative design score into 0-5", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok": true, "reason": "fine", "design": {"score": -3.7, "issues": []}}'),
+    });
+    expect(verdict?.design?.score).toBe(0);
+  });
+
+  it("coerces a non-array design.issues to an empty list", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok": true, "reason": "fine", "design": {"score": 3, "issues": "oops"}}'),
+    });
+    expect(verdict?.design).toEqual({ score: 3, issues: [] });
+  });
+
+  it("keeps only string entries in design.issues", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning(
+        '{"ok": true, "reason": "fine", "design": {"score": 2, "issues": ["low contrast", 5, null, "cramped spacing"]}}',
+      ),
+    });
+    expect(verdict?.design).toEqual({ score: 2, issues: ["low contrast", "cramped spacing"] });
+  });
+
+  it("still nulls the whole verdict when ok is invalid, even with a good design block", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"reason": "no ok", "design": {"score": 5, "issues": []}}'),
+    });
+    expect(verdict).toBeNull();
   });
 });

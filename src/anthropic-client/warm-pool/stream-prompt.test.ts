@@ -74,3 +74,25 @@ describe("warm-pool processFrame — tool routing (unchanged)", () => {
     expect(events.some((e) => e.type === "mcp_activity")).toBe(true);
   });
 });
+
+describe("warm-pool processFrame — an errored result frame is an error, not text", () => {
+  it("an is_error result yields an `error` event and no text with the message", () => {
+    // Same class of bug as the cold-spawn seam: a logged-out CLI's is_error
+    // result must not have its "Please run /login" text yielded as model
+    // content (it was being persisted as a compaction summary).
+    const events = drain(
+      [{ type: "result", subtype: "error_during_execution", is_error: true, result: "Not logged in · Please run /login" }],
+      makeCtx(),
+    );
+    const err = events.find((e) => e.type === "error");
+    expect(err).toBeDefined();
+    expect((err as { error: string }).error).toContain("Please run /login");
+    expect(events.some((e) => e.type === "text")).toBe(false);
+    expect(events.some((e) => e.type === "done")).toBe(false);
+  });
+
+  it("a successful result frame (is_error false) still yields done", () => {
+    const events = drain([{ type: "result", is_error: false, result: "hi" }], makeCtx());
+    expect(doneOf(events)).toBeDefined();
+  });
+});

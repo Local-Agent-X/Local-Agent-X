@@ -171,6 +171,14 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
         });
         let acc = "";
         for await (const event of stream) {
+          // A transport `error` event (e.g. the Claude CLI reporting
+          // "Please run /login" when logged out) means there is NO valid
+          // response. Abandon the call so the caller falls back to its
+          // regex/heuristic verdict — never treat the error text, or a
+          // truncated partial reply, as a real classification. Without this,
+          // an auth-error string was accepted as a compaction "summary" and
+          // persisted over real message history.
+          if (event.type === "error") throw new Error(event.error || "anthropic transport error");
           if (event.type === "text") acc += event.delta || "";
           if (acc.length >= maxChars) break;
         }

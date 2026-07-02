@@ -196,6 +196,20 @@ export function* processFrame(frame: Record<string, unknown>, ctx: FrameContext)
 
   // result frame = end of turn. Yield done.
   if (t === "result") {
+    // An errored `result` frame (is_error) carries a FAILURE message, not
+    // model output (e.g. "Invalid API key · Please run /login" when the CLI
+    // is logged out). Emitting it as `text` let the error string pose as a
+    // real reply — it was being persisted as a compaction "summary" over
+    // real history. Surface a structured `error` event instead. Mirrors the
+    // cold-spawn seam in stream-cli/stream-parse.ts — keep the two in sync.
+    if (frame.is_error === true) {
+      const errText =
+        typeof frame.result === "string" && frame.result.trim()
+          ? frame.result.trim()
+          : `Claude CLI reported an error result${typeof frame.subtype === "string" ? ` (${frame.subtype})` : ""}`;
+      yield { type: "error", error: errText };
+      return;
+    }
     const u = frame.usage as WarmUsage | undefined;
     const usage: WarmUsage = u && typeof u === "object" ? u : {};
     ctx.setUsage(usage);

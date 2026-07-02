@@ -85,3 +85,34 @@ describe("stream-parse — stop_reason is carried into the done event", () => {
     expect(doneOf(events)!.stopReason).toBeUndefined();
   });
 });
+
+describe("stream-parse — an errored result frame is an error, not model text", () => {
+  const valid = new Set<string>();
+
+  it("an is_error result yields an `error` event, NEVER a text event with the message", () => {
+    // Regression: a logged-out `claude` CLI emits an is_error result whose
+    // `result` is "Invalid API key · Please run /login". Emitting that as
+    // `text` let the error string pose as a real reply — it was accepted as a
+    // compaction "summary" and persisted over real message history.
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "Invalid API key · Please run /login",
+    });
+    const { events } = drain(line, valid);
+    const err = events.find((e) => e.type === "error");
+    expect(err).toBeDefined();
+    expect((err as { error: string }).error).toContain("Please run /login");
+    // The auth-error string must not reach any consumer as assistant content.
+    expect(events.some((e) => e.type === "text")).toBe(false);
+    // ...and no `done` (error is terminal), matching the stderr/exit path.
+    expect(events.some((e) => e.type === "done")).toBe(false);
+  });
+
+  it("a successful result frame (is_error false) still yields text + done", () => {
+    const { events } = drain(JSON.stringify({ type: "result", is_error: false, result: "hello" }), valid);
+    expect(events.some((e) => e.type === "text")).toBe(true);
+    expect(events.some((e) => e.type === "done")).toBe(true);
+  });
+});

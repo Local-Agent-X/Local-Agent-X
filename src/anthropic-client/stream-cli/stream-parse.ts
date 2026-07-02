@@ -155,6 +155,23 @@ export function* processStreamLine(
   }
 
   if (ev.type === "result") {
+    // An errored `result` frame (is_error) carries a FAILURE message in
+    // `result`, not model output — e.g. the CLI emits "Invalid API key ·
+    // Please run /login" when logged out, or an execution/max-turns error.
+    // Yielding it as `text` lets that error string masquerade as a real
+    // assistant reply (it was being accepted as an LLM "summary" and
+    // persisted OVER real history during compaction — irreversible loss).
+    // Surface a structured `error` event so every caller can fall back or
+    // show an error instead of swallowing the message as content.
+    if (ev.is_error === true) {
+      const errText =
+        typeof ev.result === "string" && ev.result.trim()
+          ? ev.result.trim()
+          : `Claude CLI reported an error result${typeof ev.subtype === "string" ? ` (${ev.subtype})` : ""}`;
+      logger.warn(`[claude] error result frame: ${errText.slice(0, 200)}`);
+      yield { type: "error", error: errText };
+      return;
+    }
     const result = typeof ev.result === "string" ? ev.result : "";
     if (result.length > state.prevText.length) {
       state.fullText = result;

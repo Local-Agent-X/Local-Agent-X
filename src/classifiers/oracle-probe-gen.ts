@@ -50,10 +50,12 @@ const SYSTEM_PROMPT = (language: ProbeLanguage) =>
 Write ${INTERP_NOTE[language]}. Cover the parts of a spec that implementations get wrong: boundary inputs, empty/zero cases, error and exception paths (exact exception TYPE and message text when the spec states them), EXACT output strings and formatting (spacing, punctuation, capitalization), argument order, and return types. Prefer a handful of high-value assertions over many shallow ones.
 
 HARD RULES:
-- For EACH assertion, put a comment immediately above it quoting the EXACT sentence from the spec that justifies it. If you cannot quote a spec sentence for a check, do NOT include that check.
+- Write the assertions at MODULE TOP LEVEL so they ALWAYS run when the file is executed. Do NOT wrap them in a function, class, or unittest/pytest framework — a test that is defined but never called exits 0 and proves nothing.
+- Above each assertion put a SHORT comment (a few words) naming the spec rule it checks — not the full sentence. Do NOT reproduce the spec as a header/preamble block. If you cannot ground a check in the spec, omit it.
 - Assert only what the SPEC states. Do not invent requirements, and do not encode your own guesses about the API beyond what the spec + file names imply.
 - The script must exit non-zero on a failed assertion and zero when all pass. Keep it self-contained and dependency-free (standard library only).
-- If the spec is too vague to derive even one quoted-and-justified check, output EXACTLY the single word: NONE
+- Keep the ENTIRE script SHORT: at most ~40 lines. A long script risks being cut off and is not needed — a few sharp assertions beat many.
+- If the spec is too vague to derive even one grounded check, output EXACTLY the single word: NONE
 - Output ONLY the script (or NONE). No prose, no markdown fences, no explanation.`;
 
 /**
@@ -84,7 +86,10 @@ export async function generateOracleProbe(input: {
     systemPrompt: SYSTEM_PROMPT(language),
     userPrompt: `TASK SPECIFICATION:\n${spec}\n\nFILES IN THE WORKSPACE (names only — you may NOT see their contents):\n${files}\n\nWrite the acceptance probe now.`,
     parse: (raw) => parseProbe(raw),
-    maxResponseChars: 4000,
+    // Headroom so a probe is never truncated mid-assertion (a cut-off script is a
+    // SyntaxError → discarded as invalid → the gate silently does nothing). The
+    // prompt already caps length to ~40 lines; this is the safety margin.
+    maxResponseChars: 12_000,
     timeoutMs: input.timeoutMs ?? 25_000,
     envDisableVar: "LAX_ORACLE_PROBES",
     signal: input.signal,

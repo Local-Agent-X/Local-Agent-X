@@ -1,11 +1,10 @@
-import { resolve, relative, dirname, basename, join, isAbsolute, sep } from "node:path";
-import { realpathSync } from "node:fs";
+import { resolve, relative, dirname, basename, isAbsolute, sep } from "node:path";
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
 import { isAppAtRestSecretBasename } from "./known-secrets.js";
 import { classifySensitivePath } from "./sensitive-paths.js";
-import { resolveAgentPathFrom } from "../workspace/paths.js";
+import { resolveAgentPathFrom, realpathDeep } from "../workspace/paths.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
 // ── The app's OWN at-rest secret/key/seed files under a `.lax` data dir ──
@@ -112,33 +111,12 @@ const SOURCE_NAME_KEYWORD_PATTERNS = [
 const SOURCE_CODE_EXT =
   /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|rb|php|c|cc|cpp|h|hpp|cs|swift|kt|kts|scala|m|mm|vue|svelte)$/i;
 
-// Canonical real path that follows symlinks/junctions at every EXISTING
-// segment. For a target that doesn't exist yet (write to a new file), the
-// deepest existing ancestor is canonicalized and the absent tail re-appended,
-// so a junction in the parent chain is resolved while the new leaf is kept.
-// Rethrows only ELOOP (symlink cycle) so the caller can treat it as an attack.
-//
-// Exported so the egress-attachment guard (http-egress-guard.ts) canonicalizes
-// an attachment path the SAME way the file tools do BEFORE running its
-// sensitivity predicate — closing the check-on-string / read-on-inode TOCTOU
-// where a symlink (/tmp/notes.txt → ~/.ssh/id_rsa) sails past a lexical check.
-export function realpathDeep(target: string): string {
-  let tail = "";
-  let cur = target;
-  for (let i = 0; i < 64; i++) {
-    try {
-      const real = realpathSync(cur);
-      return tail ? resolve(real, tail) : real;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "ELOOP") throw e;
-      const parent = dirname(cur);
-      if (parent === cur) return target; // reached filesystem root unresolved
-      tail = tail ? join(basename(cur), tail) : basename(cur);
-      cur = parent;
-    }
-  }
-  return target;
-}
+// Canonical real path — implementation moved to workspace/paths.ts (the
+// work-root registry there must canonicalize with the SAME resolver the gates
+// use, and importing from here would be a cycle). Re-exported so the many
+// existing consumers (egress guard, shell detectors, layer-core, read-state,
+// validated-io, run-sandboxed) keep their import path.
+export { realpathDeep } from "../workspace/paths.js";
 
 /**
  * Confine a caller-supplied path to `root`, symlink-safe. For HTTP file-serving

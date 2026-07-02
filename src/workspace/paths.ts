@@ -1,6 +1,37 @@
-import { resolve, isAbsolute, join, basename } from "node:path";
+import { resolve, isAbsolute, join, basename, dirname } from "node:path";
 import { homedir } from "node:os";
+import { realpathSync } from "node:fs";
 import { workspaceRoot, uploadsDir } from "../config.js";
+
+// Canonical real path that follows symlinks/junctions at every EXISTING
+// segment. For a target that doesn't exist yet (write to a new file), the
+// deepest existing ancestor is canonicalized and the absent tail re-appended,
+// so a junction in the parent chain is resolved while the new leaf is kept.
+// Rethrows only ELOOP (symlink cycle) so the caller can treat it as an attack.
+//
+// Lives HERE (not security/file-access.ts, which re-exports it) because path
+// IDENTITY is a workspace concern consumed on both sides of the security
+// boundary: the gates canonicalize targets, and the work-root registry below
+// canonicalizes its anchor — on this box the workspace is a junction
+// (…\local-agent-x\workspace → …\Documents\Local Agent X\workspace), so any
+// subsystem that keys or compares a raw spelling splits one file into two.
+export function realpathDeep(target: string): string {
+  let tail = "";
+  let cur = target;
+  for (let i = 0; i < 64; i++) {
+    try {
+      const real = realpathSync(cur);
+      return tail ? resolve(real, tail) : real;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ELOOP") throw e;
+      const parent = dirname(cur);
+      if (parent === cur) return target; // reached filesystem root unresolved
+      tail = tail ? join(basename(cur), tail) : basename(cur);
+      cur = parent;
+    }
+  }
+  return target;
+}
 
 // A "/uploads/<file>" reference — the URL form web/mobile attachments carry —
 // resolves to the on-disk uploads dir, NOT a drive-root path. basename() pins it
@@ -86,7 +117,11 @@ export function resolveAgentPath(p: string, sessionId?: string): string {
 const sessionWorkRoots = new Map<string, string>();
 
 export function setSessionWorkRoot(sessionId: string, root: string): void {
-  if (sessionId && root) sessionWorkRoots.set(sessionId, resolve(root));
+  // Canonicalize at registration — the ONE chokepoint — so every resolver hit
+  // and every downstream keyer (stale-read guard, security gate, git ops)
+  // receives the junction-TARGET spelling and can never split one physical
+  // project into two identities.
+  if (sessionId && root) sessionWorkRoots.set(sessionId, realpathDeep(resolve(root)));
 }
 
 export function clearSessionWorkRoot(sessionId: string): void {

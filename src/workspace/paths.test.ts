@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { resolve, join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig, uploadsDir } from "../config.js";
-import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionIdOf } from "./paths.js";
+import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionIdOf, realpathDeep } from "./paths.js";
 import { isSensitivePath } from "../data-lineage-paths.js";
 
 // resolveAgentPath is the single source of truth for turning an agent's raw
@@ -129,5 +130,39 @@ describe("session work-root anchor", () => {
     expect(sessionIdOf({ _sessionId: "" })).toBeUndefined();
     expect(sessionIdOf({})).toBeUndefined();
     expect(sessionIdOf({ _sessionId: 42 })).toBeUndefined();
+  });
+});
+
+// Regression (2026-07-02 path-identity class): the dev-box workspace is a
+// junction, so one physical project has two spellings. The work-root registry
+// must canonicalize at REGISTRATION — the chokepoint — so every resolver hit
+// hands downstream keyers (stale-read guard, security gate) the junction-TARGET
+// spelling regardless of which spelling the caller registered.
+describe("work-root canonicalization through junctions", () => {
+  const canJunction = (() => {
+    const base = mkdtempSync(join(tmpdir(), "lax-wr-probe-"));
+    try { symlinkSync(join(base, "x"), join(base, "link"), "junction"); return true; }
+    catch { return false; }
+    finally { try { rmSync(base, { recursive: true, force: true }); } catch { /* ignore */ } }
+  })();
+
+  it.skipIf(!canJunction)("a work root registered via a junction spelling anchors at the target spelling", () => {
+    const realProj = mkdtempSync(join(tmpdir(), "lax-wr-real-"));
+    const linkBase = mkdtempSync(join(tmpdir(), "lax-wr-link-"));
+    const viaJunction = join(linkBase, "proj");
+    symlinkSync(realProj, viaJunction, "junction");
+    try {
+      setSessionWorkRoot("agent-junc-1", viaJunction);
+      const resolved = resolveAgentPath("app/page.tsx", "agent-junc-1");
+      // realpathSync may normalize drive-letter case; compare canonically.
+      expect(resolved.toLowerCase()).toBe(resolve(realpathDeep(realProj), "app", "page.tsx").toLowerCase());
+      // The junction spelling must not leak into resolved paths.
+      expect(resolved.toLowerCase()).not.toContain(viaJunction.toLowerCase());
+    } finally {
+      clearSessionWorkRoot("agent-junc-1");
+      try { rmSync(viaJunction, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { rmSync(realProj, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { rmSync(linkBase, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
   });
 });

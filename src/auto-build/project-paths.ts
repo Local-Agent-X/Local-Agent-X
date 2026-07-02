@@ -22,6 +22,7 @@
 
 import { isAbsolute, join, resolve } from "node:path";
 import { workspaceRoot } from "../config.js";
+import { realpathDeep } from "../workspace/paths.js";
 
 /** Canonical projects directory: <workspace-root>/apps (NOT the code location). */
 export function projectsDir(): string {
@@ -38,9 +39,20 @@ export function resolveProjectDir(raw: unknown): string | null {
   // isAbsolute() is platform-specific — on POSIX it doesn't recognize a
   // Windows drive path like "C:\proj". Accept both so a path absolute on its
   // origin OS passes through unchanged regardless of where this runs.
-  if (isAbsolute(s) || /^[a-zA-Z]:[\\/]/.test(s)) return s;
-  if (isBareName(s)) return join(projectsDir(), s);
-  return resolve(process.cwd(), s);
+  //
+  // realpathDeep at the END: this is the establishment chokepoint for every
+  // auto-build entry (run_build_plan / status / resume / finalize), so the
+  // projectDir every downstream consumer sees — orchestrator state, git ops,
+  // work-root registration, chunk task text — carries the junction-TARGET
+  // spelling. Without it, a workspace junction hands one physical project to
+  // different subsystems under two spellings, and anything keying or comparing
+  // the raw string splits it in two (three live failures: security gate,
+  // work-root anchor, stale-read guard). Nonexistent dirs pass through
+  // realpathDeep unchanged (deepest-existing-ancestor rule), so the callers'
+  // existsSync checks still fire on the same path they report.
+  if (isAbsolute(s) || /^[a-zA-Z]:[\\/]/.test(s)) return realpathDeep(s);
+  if (isBareName(s)) return realpathDeep(join(projectsDir(), s));
+  return realpathDeep(resolve(process.cwd(), s));
 }
 
 function isBareName(s: string): boolean {

@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 import { readOp, writeOp } from "../ops/op-store.js";
 import { emit } from "./event-emitter.js";
-import { transitionOp } from "./state-machine.js";
+import { transitionOp, isTerminalCanonicalState, IllegalTransitionError } from "./state-machine.js";
 import { driveTurn } from "./turn-loop.js";
 import { recordTerminalOutcome } from "./turn-loop/decide-outcome.js";
 import { seedInitialUserMessage } from "./initial-prompt.js";
@@ -280,6 +280,56 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       message: (e as Error).message,
       retryable: false,
     });
+    // This catch used to emit the error and fall straight through to the
+    // finally's lease release — leaving the op stuck non-terminal with the
+    // lease nulled out. Finalize it here to a terminal state so recovery/UI
+    // observe a real end instead of a permanent wedge (the chat event pump
+    // waits for a terminal `state_changed` that never comes; the spinner never
+    // clears). Triggers: disk-full during commitTurn, the fail-closed
+    // unresolvable-model throw in middlewares/host.ts, a tool that throws
+    // mid-dispatch, or a cancel that landed mid-turn just before a throw.
+    //
+    // Choose the terminal target by the state AT THE THROW:
+    //   - `cancelling`: a cancel signal already moved running → cancelling
+    //     (cancel-handler.ts), so running → failed is ILLEGAL — cancelling →
+    //     cancelled is the only legal exit. Finalize the SAME way the
+    //     non-throwing cancel branch above does (finalizeCancel: await abort,
+    //     clear the signal, cancelling → cancelled). Without this the guarded
+    //     running → failed below throws IllegalTransitionError, gets swallowed,
+    //     and the op wedges `cancelling` + no-lease. finalizeCancel records no
+    //     outcome — matching the normal cancel path, which never enters the
+    //     completion ledger.
+    //   - any other non-terminal state (`running`): record the forced outcome
+    //     and transition → failed, mirroring the MAX_TURNS floor above.
+    // recovery.ts still closes the class as a backstop (recoverStaleOp now
+    // reclaims a non-terminal, no-lease orphan), but finalizing here means the
+    // live chat path never has to wait for the boot sweep.
+    //
+    // Guard the transition and keep any failure from escaping this catch — an
+    // escape would unwind past the finally's lease release and re-orphan the op.
+    const stateAtThrow = op.canonical?.state;
+    if (stateAtThrow && !isTerminalCanonicalState(stateAtThrow)) {
+      try {
+        if (stateAtThrow === "cancelling") {
+          await finalizeCancel(op, tracker);
+        } else {
+          recordTerminalOutcome(op, "aborted");
+          transitionOp(op, "failed", "worker_exception");
+        }
+      } catch (finalizeErr) {
+        // IllegalTransitionError = the op raced to terminal between the guard
+        // read and the write (the benign no-op cancel-handler / recovery
+        // already rely on). Anything else (e.g. a disk write failure) is
+        // surfaced rather than silently dropped — but never re-thrown.
+        if (!(finalizeErr instanceof IllegalTransitionError)) {
+          emit(op.id, "error", {
+            code: "worker_finalize_failed",
+            message: (finalizeErr as Error).message,
+            retryable: false,
+          });
+        }
+      }
+    }
   } finally {
     clearInterval(hb);
     if (wallClockTimer) clearTimeout(wallClockTimer);

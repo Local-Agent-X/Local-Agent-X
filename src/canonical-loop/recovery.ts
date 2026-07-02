@@ -7,9 +7,12 @@
  * bookkeeping:
  *
  *   1. Re-read the op from disk.
- *   2. Verify `state ∈ {running, cancelling}` AND lease is expired. Stop
- *      otherwise — terminal ops, paused ops, queued-with-no-lease ops are
- *      not recoverable.
+ *   2. Verify `state ∈ {running, cancelling}` AND the op has no LIVE owner —
+ *      either the lease is expired, OR there is no lease at all (the C3 orphan
+ *      shape: a worker threw after its finally released the lease but before a
+ *      terminal transition landed). Stop otherwise — terminal ops, paused ops,
+ *      queued ops, and running/cancelling ops holding a FRESH lease (a live
+ *      worker) are not recoverable.
  *   3. Evict the dead worker from the scheduler's active map (frees a
  *      lane slot for the replacement).
  *   4. Clear the dead lease columns on disk.
@@ -41,7 +44,9 @@ import type { CanonicalLane } from "./types.js";
 export type RecoveryOutcomeKind =
   | "recovered"     // running → queued, op re-enqueued.
   | "cancelled"     // cancelling → cancelled, no requeue.
-  | "no_lease"      // op has no lease — nothing to recover.
+  | "no_lease"      // (retained for the type surface) — recoverStaleOp no longer
+                    // returns it; a non-terminal no-lease op is now the C3
+                    // orphan shape and IS reclaimed. See recoverStaleOp.
   | "lease_fresh"   // lease still in date — leave it alone.
   | "not_running"   // op is not in a recoverable state.
   | "unknown_op";   // op id not on disk.
@@ -60,45 +65,80 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
   if (state !== "running" && state !== "cancelling") {
     return { ok: false, kind: "not_running" };
   }
-  if (!op.canonical?.leaseOwner) {
-    return { ok: false, kind: "no_lease" };
-  }
-  if (!isLeaseExpired(op)) {
+
+  // Recoverability: a non-terminal op is recoverable when it has NO LIVE OWNER.
+  // Two disk shapes qualify:
+  //   1. Expired lease — a worker died mid-turn and its lease timed out (the
+  //      classic Issue-08 crash-recovery case).
+  //   2. NO lease at all — the C3 orphan class: a worker threw AFTER its
+  //      `finally` released the lease but BEFORE a terminal transition landed
+  //      (disk-full during commitTurn's transition; a cancel-time throw that
+  //      hit the illegal cancelling → failed and was swallowed). Left alone the
+  //      op wedges non-terminal forever and the chat pump never sees a terminal
+  //      `state_changed`. Recovery is the single chokepoint that closes it.
+  //
+  // SAFETY — this can NEVER race a live worker. lease.ts writes the lease
+  // BEFORE the queued → running transition and heartbeats it; only releaseLease
+  // (the worker's `finally`) or recovery ever clears it. So a fresh lease ⇒ the
+  // worker is alive (left untouched by the `lease_fresh` guard below), and a
+  // non-terminal op with no lease ⇒ no live owner by construction — the absence
+  // of the lease IS the staleness signal, there is no expiry window to wait on.
+  // An op that just acquired a lease is `running` WITH a fresh lease, so this
+  // change can neither double-drive nor double-finalize a live op.
+  const leaseOwner = op.canonical?.leaseOwner ?? null;
+  if (leaseOwner && !isLeaseExpired(op)) {
     return { ok: false, kind: "lease_fresh" };
   }
 
-  const expiredWorkerId = op.canonical.leaseOwner;
-  // Drop the scheduler's claim on the dead worker so the replacement
-  // launch is not blocked by the lane cap. Idempotent.
+  // Drop the scheduler's claim on the (dead) worker so the replacement launch
+  // is not blocked by the lane cap. Idempotent; no-op when there was no lease.
   evictWorker(opId);
 
-  // Clear the expired lease columns on disk via persistOpKeepingSignals
-  // so we don't clobber control-API signals. This must precede the
-  // `lease_lost` emit so any consumer reading the op upon receiving
-  // the event observes the cleared lease.
-  if (!op.canonical) op.canonical = {};
-  op.canonical.leaseOwner = null;
-  op.canonical.leaseExpiresAt = null;
-  op.workerId = undefined;
-  // Recovery is one of the two legitimate writers of lease columns
-  // (alongside lease.ts). Opt out of disk-preservation so this clear
-  // actually lands.
-  persistOpKeepingSignals(op, { preserveLeaseFromDisk: false });
+  if (leaseOwner) {
+    // Expired-lease shape: clear the dead lease columns on disk via
+    // persistOpKeepingSignals (so we don't clobber control-API signals) BEFORE
+    // the `lease_lost` emit, so any consumer reading the op on the event
+    // observes the cleared lease. Recovery is one of the two legitimate writers
+    // of lease columns (alongside lease.ts) — opt out of disk-preservation so
+    // this clear lands.
+    if (!op.canonical) op.canonical = {};
+    op.canonical.leaseOwner = null;
+    op.canonical.leaseExpiresAt = null;
+    op.workerId = undefined;
+    persistOpKeepingSignals(op, { preserveLeaseFromDisk: false });
+    emit(opId, "lease_lost", { workerId: leaseOwner, reason: "expired" });
+  }
+  // No-lease (C3 orphan) shape: the worker's own `finally` already cleared the
+  // lease and emitted `lease_lost`. Nothing to clear or re-announce — proceed
+  // straight to the terminal / re-runnable transition.
 
-  emit(opId, "lease_lost", { workerId: expiredWorkerId, reason: "expired" });
+  const expiredWorkerId = leaseOwner ?? undefined;
 
   if (state === "cancelling") {
-    // Worker died mid-cancel. PRD §13 cancel always wins — finalize the
-    // cancellation here instead of resuming. Adapter is gone with the
-    // worker, so no further `abort()` is possible; just close the state.
-    safeRecoveryTransition(opId, "cancelled", "lease_expired_during_cancel");
+    // Worker died / threw mid-cancel. PRD §13 cancel always wins — finalize the
+    // cancellation instead of resuming. Adapter is gone with the worker, so no
+    // further `abort()` is possible; just close the state.
+    safeRecoveryTransition(
+      opId,
+      "cancelled",
+      leaseOwner ? "lease_expired_during_cancel" : "orphaned_during_cancel",
+    );
     return { ok: true, kind: "cancelled", expiredWorkerId };
   }
 
-  // running → queued: the loop is generic over what comes next. The
-  // replacement worker reads `op_turns` for the resume turnIdx and
-  // hands prior `provider_state` to the adapter (PRD §11).
-  safeRecoveryTransition(opId, "queued", "lease_expired");
+  // running → queued: re-enqueue for a replacement worker, which reads
+  // `op_turns` for the resume turnIdx and hands prior `provider_state` to the
+  // adapter (PRD §11). Identical to the expired-lease path — recovery's job is
+  // to resume, and the op's retryPolicy bounds re-attempts. A commit that threw
+  // never persisted its op_turns row, so the replacement re-drives that turn
+  // idempotently (checkpoint.ts's `(op_id, turn_idx)` replay guard also absorbs
+  // a turn that DID commit before the crash), so this cannot double-execute a
+  // committed turn.
+  safeRecoveryTransition(
+    opId,
+    "queued",
+    leaseOwner ? "lease_expired" : "orphaned_no_lease",
+  );
   enqueueOp(opId, op.lane as CanonicalLane);
   pumpScheduler();
   return { ok: true, kind: "recovered", expiredWorkerId };
@@ -127,10 +167,10 @@ export function recoverStaleOps(opIds: string[]): RecoveryOutcome[] {
  *
  * The sweep walks `~/.lax/operations/`, finds canonical ops where:
  *   - `op.canonical.flagValue === true`
- *   - `op.canonical.state ∈ {running, cancelling}` (queued / paused
- *     don't have leases to expire; terminal states are absorbing)
- *   - `op.canonical.leaseOwner` is set
- *   - `isLeaseExpired(op)` is true
+ *   - `op.canonical.state ∈ {running, cancelling}` (queued / paused are not
+ *     recoverable; terminal states are absorbing)
+ *   - the op has NO LIVE OWNER — either the lease is set AND expired, OR there
+ *     is no lease at all (the C3 orphan shape; see recoverStaleOp)
  * and routes each through `recoverStaleOp`.
  *
  * Safe to call exactly once at server boot. No-op if the operations
@@ -154,8 +194,10 @@ export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutco
     const c = op.canonical;
     if (!c || c.flagValue !== true) continue;
     if (c.state !== "running" && c.state !== "cancelling") continue;
-    if (!c.leaseOwner) continue;
-    if (!isLeaseExpired(op)) continue;
+    // A fresh lease ⇒ a live worker: skip. A no-lease non-terminal op is the C3
+    // orphan shape and IS recoverable (recoverStaleOp reclaims it), so it must
+    // NOT be skipped here. Mirror recoverStaleOp's recoverability test exactly.
+    if (c.leaseOwner && !isLeaseExpired(op)) continue;
 
     const outcome = recoverStaleOp(opId);
     out.push({ opId, outcome });

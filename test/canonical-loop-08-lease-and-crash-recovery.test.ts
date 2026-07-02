@@ -291,10 +291,13 @@ describe("recoverStaleOp guard rails", () => {
     expect(r.kind).toBe("not_running");
   });
 
-  it("returns no_lease for a running op that has no lease", () => {
+  it("reclaims a running op that has no lease (orphaned no-lease → recovered)", () => {
     const op = mkOp("guard-no-lease");
     canonicalLoopEntry(op);
-    // Synthesize "running with no lease" on disk.
+    // Synthesize "running with no lease" on disk — the C3 orphan shape: a worker
+    // threw after its `finally` released the lease but before a terminal
+    // transition landed. No lease ⇒ no live owner, so it must be reclaimed, not
+    // skipped (the old `no_lease` skip is exactly what wedged the op forever).
     const fresh = readOp(op.id)!;
     fresh.canonical!.state = "running";
     fresh.canonical!.leaseOwner = null;
@@ -302,8 +305,10 @@ describe("recoverStaleOp guard rails", () => {
     writeOp(fresh);
 
     const r = recoverStaleOp(op.id);
-    expect(r.ok).toBe(false);
-    expect(r.kind).toBe("no_lease");
+    expect(r.ok).toBe(true);
+    expect(r.kind).toBe("recovered");
+    // Re-enqueued for a replacement worker rather than left running forever.
+    expect(readOp(op.id)?.canonical?.state).toBe("queued");
   });
 
   it("returns lease_fresh for a running op whose lease is still in date", () => {

@@ -4,6 +4,7 @@ import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
 
 export type LoopEventType =
   | "git-baseline"
+  | "preflight"
   | "chunk-start"
   | "subprocess-spawned"
   | "subprocess-returned"

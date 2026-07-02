@@ -22,6 +22,7 @@
  */
 
 import { ensureGitBaseline, getHeadSha } from "../git-helpers.js";
+import { runPreflightProbe } from "./preflight.js";
 import { attemptPhaseGateScoring } from "../loop-phase-gate.js";
 import { emitLaunchReadiness } from "../loop-effects.js";
 import type { LoopEvent, LoopOptions, LoopResult } from "./types.js";
@@ -60,6 +61,28 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
       message: baseline.value.initialized
         ? `Initialized git repo + baseline commit ${baseline.value.sha.slice(0, 8)} in ${opts.projectDir}`
         : `Created baseline commit ${baseline.value.sha.slice(0, 8)} (repo had no HEAD)`,
+    });
+  }
+
+  // Probe the worker environment contract through the real agent path before
+  // committing a 30-minute chunk to it. A broken seam (path anchoring, write
+  // gate, bash cwd, report shape) halts here with the contract named instead
+  // of surfacing as an unexplained chunk-1 flail.
+  const preflight = await runPreflightProbe({
+    projectDir: opts.projectDir,
+    parentSessionId: opts.parentSessionId,
+    signal: opts.signal,
+  });
+  if (preflight.status === "fail") {
+    return haltedResult(
+      `preflight probe failed before chunk ${chunks[startIdx].number} — broken contract [${preflight.contract}]: ${preflight.detail}`,
+      chunks[startIdx].number, outcomes, events,
+    );
+  }
+  if (preflight.status === "pass") {
+    emit({
+      type: "preflight", chunkNumber: chunks[startIdx].number, totalChunks,
+      message: `Preflight probe passed in ${Math.round(preflight.durationMs / 1000)}s — worker invocation, path anchoring, write gate, bash cwd, and report shape all verified.`,
     });
   }
 

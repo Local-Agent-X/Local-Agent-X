@@ -149,6 +149,7 @@ const LOOP_EXCLUDES = [
   "*.log",
   ".lax-build-run.json",
   ".lax-build-history.json",
+  ".lax-preflight-*",
   ".primal-orchestrator-state.json",
   ".primal-build-state.json",
 ];

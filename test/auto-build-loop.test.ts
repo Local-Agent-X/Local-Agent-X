@@ -100,6 +100,10 @@ function git(cmd: string) {
 }
 
 beforeEach(() => {
+  // These tests exercise the chunk loop, not the environment probe — the
+  // probe would consume the first queued mock report. It has its own suite
+  // (auto-build-preflight.test.ts).
+  process.env.LAX_BUILD_PREFLIGHT = "0";
   __queue.length = 0;
   projectDir = mkdtempSync(join(tmpdir(), "auto-build-loop-test-"));
   __setProjectDirForMock(projectDir);
@@ -115,6 +119,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env.LAX_BUILD_PREFLIGHT;
   vi.clearAllMocks();
   try { rmSync(projectDir, { recursive: true, force: true }); } catch { /* best-effort */ }
 });

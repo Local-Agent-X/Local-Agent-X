@@ -8,9 +8,28 @@ function getEffectiveTheme(pref) {
   return pref;
 }
 
+// Tell the mobile browser what colour to paint its own chrome — the phone's
+// native status/nav bar and Android address bar read <meta name="theme-color">.
+// Without it, light mode leaves the native bar a default bright white with no
+// contrast (icons/text invisible). We track the app's real --bg per theme so
+// the OS renders the bar to match and picks legible icon contrast for it.
+function syncNativeChromeColor() {
+  let meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.setAttribute('name', 'theme-color');
+    document.head.appendChild(meta);
+  }
+  // Read the computed --bg so this always matches the active CSS theme rather
+  // than a hardcoded value that could drift from app.css.
+  const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  if (bg) meta.setAttribute('content', bg);
+}
+
 function applyTheme(pref) {
   const effective = getEffectiveTheme(pref);
   document.documentElement.setAttribute('data-theme', effective);
+  syncNativeChromeColor();
   const btn = document.getElementById('theme-toggle');
   if (btn) { btn.textContent = THEME_ICONS[pref]; btn.title = 'Theme: ' + THEME_LABELS[pref]; }
 }

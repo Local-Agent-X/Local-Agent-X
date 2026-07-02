@@ -15,6 +15,7 @@ import {
   runBuildVerifyGate,
   getBuildVerifyRetries,
   _resetBuildVerifyState,
+  clearBuildVerifyStateForOp,
   groundTruthSizesNote,
 } from "./build-verify.js";
 import { recordOrchestratorVerify, opEditedSourcePaths } from "../middlewares/verify-gate.js";
@@ -147,6 +148,76 @@ describe("runBuildVerifyGate", () => {
     expect(r.nudge).toContain("TS2339");
     expect(exec).toHaveBeenCalledTimes(1); // type-check only; test pass skipped while red
     expect(exec).not.toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", "/proj");
+  });
+});
+
+// Pick 2: retry-with-reframe. On the 2nd+ red build the nudge names which errors
+// the last edit FIXED vs which SURVIVED unchanged vs which are NEW — deterministic
+// error-signature diff, zero LLM calls. A weak model that gets the same dump twice
+// gives up or thrashes; telling it the same error survived redirects the fix.
+describe("runBuildVerifyGate — retry reframe (error-diff nudge)", () => {
+  beforeEach(() => { _resetBuildVerifyState(); vi.clearAllMocks(); });
+
+  // Distinct line numbers on purpose — normalization strips (row,col), so the
+  // SAME logical error compares equal across retries even as lines shift.
+  const R_ABC = "src/a.ts(3,5): error TS2339: Property 'x' does not exist.\nsrc/b.ts(7,9): error TS2551: Did you mean 'y'?\nsrc/c.ts(1,1): error TS1005: ';' expected.";
+  const R_ABC_shifted = "src/a.ts(9,5): error TS2339: Property 'x' does not exist.\nsrc/b.ts(2,9): error TS2551: Did you mean 'y'?\nsrc/c.ts(4,4): error TS1005: ';' expected.";
+  const R_AB_shifted = "src/a.ts(9,5): error TS2339: Property 'x' does not exist.\nsrc/b.ts(2,9): error TS2551: Did you mean 'y'?";
+  const R_A_plus_D = "src/a.ts(9,5): error TS2339: Property 'x' does not exist.\nsrc/d.ts(2,2): error TS2304: Cannot find name 'z'.";
+  const redWith = (output: string) => vi.fn(async () => ({ ok: false, output }));
+  const run = (exec: () => Promise<{ ok: boolean; output: string }>) =>
+    runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec: vi.fn(exec) });
+
+  it("FIRST red carries NO reframe — identical to today's nudge", async () => {
+    const r = await run(async () => ({ ok: false, output: R_ABC }));
+    expect(r.nudge).toContain("TS2339");        // full error block present
+    expect(r.nudge).not.toMatch(/PROGRESS|SURVIVED|still failing/);
+  });
+
+  it("SECOND red, same errors survive → NO PROGRESS reframe", async () => {
+    await run(async () => ({ ok: false, output: R_ABC }));
+    const r2 = await run(async () => ({ ok: false, output: R_ABC_shifted }));
+    expect(r2.nudge).toContain("NO PROGRESS");
+    expect(r2.nudge).toMatch(/fixed NONE/i);
+    expect(r2.nudge).toContain("still failing:");
+    expect(r2.nudge).toContain("TS2339");        // real block still below the reframe
+  });
+
+  it("SECOND red, some fixed + some survive → PROGRESS reframe with counts", async () => {
+    await run(async () => ({ ok: false, output: R_ABC }));
+    const r2 = await run(async () => ({ ok: false, output: R_AB_shifted }));
+    expect(r2.nudge).toContain("PROGRESS since your last edit");
+    expect(r2.nudge).toContain("fixed 1");
+    expect(r2.nudge).toContain("2 SURVIVED");
+  });
+
+  it("SECOND red with a brand-new error → flags the regression", async () => {
+    await run(async () => ({ ok: false, output: R_ABC }));
+    const r2 = await run(async () => ({ ok: false, output: R_A_plus_D }));
+    expect(r2.nudge).toMatch(/NEW error\(s\) appeared/);
+    expect(r2.nudge).toContain("TS2304");        // the new one, named
+  });
+
+  it("degrades to no reframe when output has no parseable error lines", async () => {
+    await run(async () => ({ ok: false, output: "" }));
+    const r2 = await run(async () => ({ ok: false, output: "" }));
+    expect(r2.nudge).not.toMatch(/PROGRESS|NO PROGRESS/);
+  });
+
+  it("clearBuildVerifyStateForOp wipes the snapshot — next red is treated as first", async () => {
+    await run(async () => ({ ok: false, output: R_ABC }));
+    clearBuildVerifyStateForOp("op-bv");
+    const r2 = await run(async () => ({ ok: false, output: R_ABC_shifted }));
+    expect(r2.nudge).not.toMatch(/PROGRESS|NO PROGRESS/);
+    expect(getBuildVerifyRetries("op-bv")).toBe(1); // counter also reset → back to first retry
+  });
+
+  it("channel switch (build-red → test-red) does NOT diff across kinds", async () => {
+    // build red first (channel=build), then build green + edited-test red (channel=test).
+    await runBuildVerifyGate(op, { editedPaths: ["/proj/src/foo.test.ts"], probe: probeWithVitest, exec: byCommand(false, false) });
+    const r2 = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/foo.test.ts"], probe: probeWithVitest, exec: byCommand(true, false) });
+    expect(r2.nudge).toMatch(/test you touched is FAILING/i);
+    expect(r2.nudge).not.toMatch(/PROGRESS|NO PROGRESS/); // no cross-channel diff
   });
 });
 

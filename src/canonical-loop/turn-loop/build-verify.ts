@@ -28,9 +28,20 @@ const logger = createLogger("canonical-loop.build-verify");
 
 const RETRIES = new Map<string, number>();
 
+// Per-op memory of the PREVIOUS red run's normalized error signatures, tagged by
+// channel (build vs test) so a build-red→test-red transition isn't diffed apples-
+// to-oranges. Powers the retry-reframe: on the 2nd+ red, say which errors the
+// last edit FIXED vs which PERSISTED unchanged vs which are NEW regressions —
+// deterministic, zero LLM calls. A weak model that gets the same error dump twice
+// tends to give up or thrash; naming that the same error survived its fix
+// redirects it to change the hypothesis instead of the wording.
+const PREV_RED = new Map<string, { channel: "build" | "test"; sigs: Set<string> }>();
+
 const MAX_RETRIES = 2;
 const BUILD_TIMEOUT_MS = 180_000;
 const NUDGE_BODY_LIMIT = 4000;
+/** Cap on error lines enumerated per bucket so the reframe stays compact. */
+const MAX_BUCKET_LINES = 5;
 
 export function getBuildVerifyRetries(opId: string): number {
   return RETRIES.get(opId) ?? 0;
@@ -44,11 +55,73 @@ function bumpBuildVerifyRetries(opId: string): number {
 
 export function clearBuildVerifyStateForOp(opId: string): void {
   RETRIES.delete(opId);
+  PREV_RED.delete(opId);
 }
 
 /** Test-only — drop all per-op build-verify state. */
 export function _resetBuildVerifyState(): void {
   RETRIES.clear();
+  PREV_RED.clear();
+}
+
+// Lines that look like a compiler/test diagnostic — language-agnostic, kept loose
+// on purpose (a miss just drops that line from the diff, degrading to a plainer
+// reframe; there is no wrong BLOCK, only a possibly-thinner note).
+const ERR_LINE_RE = /\b(error|errors|failed|fail|assert\w*|exception|traceback|panic|expected|mismatch|cannot|undefined|not found|no such|TS\d{3,}|E\d{3,})\b/i;
+
+/** Reduce build/test output to a SET of normalized error signatures — strip the
+ *  volatile bits (line:col, addresses, "line N") so the same logical error
+ *  compares equal across retries even if surrounding line numbers shifted. */
+function errorSignatures(output: string): Set<string> {
+  const sigs = new Set<string>();
+  for (const raw of output.split("\n")) {
+    const line = raw.trim();
+    if (!line || !ERR_LINE_RE.test(line)) continue;
+    const norm = line
+      .replace(/\(\d+\s*[,:]\s*\d+\)/g, "()")   // (3,5) / (3:5) → ()
+      .replace(/:\d+:\d+/g, ":")                // :3:5 → :
+      .replace(/\bline \d+/gi, "line N")        // line 42 → line N
+      .replace(/0x[0-9a-f]+/gi, "0x")           // hex addresses
+      .replace(/\s+/g, " ")
+      .slice(0, 200);
+    sigs.add(norm);
+  }
+  return sigs;
+}
+
+/**
+ * Build the reframe preamble prepended to a red nudge, and snapshot the current
+ * errors for the NEXT comparison. Returns "" on the FIRST red (no prior snapshot
+ * → today's nudge verbatim), on a channel switch, or when either side parsed to
+ * no signatures (degrade to the plain block). Pure string work — never blocks.
+ */
+function reframePreamble(opId: string, channel: "build" | "test", output: string): string {
+  const curr = errorSignatures(output);
+  const prev = PREV_RED.get(opId);
+  PREV_RED.set(opId, { channel, sigs: curr }); // snapshot for the next retry
+  if (!prev || prev.channel !== channel || prev.sigs.size === 0 || curr.size === 0) return "";
+
+  const persisted = [...curr].filter((s) => prev.sigs.has(s));
+  const fixed = [...prev.sigs].filter((s) => !curr.has(s));
+  const appeared = [...curr].filter((s) => !prev.sigs.has(s));
+  if (persisted.length === 0 && fixed.length === 0) return ""; // nothing comparable shifted
+
+  const lines: string[] = [];
+  // Phrasing conditions on the FIXED count: telling a model that fixed 12/13 "your
+  // hypothesis is wrong" is false and demoralizing (and this model gives up easily).
+  if (persisted.length > 0 && fixed.length > 0) {
+    lines.push(`PROGRESS since your last edit: you fixed ${fixed.length} error(s), but ${persisted.length} SURVIVED your change unchanged — your fix didn't touch what they actually require:`);
+  } else if (persisted.length > 0 && fixed.length === 0) {
+    lines.push(`NO PROGRESS: your last edit fixed NONE of these — the same ${persisted.length} error(s) are still here, unchanged. Your current approach is not addressing the real cause. Re-read the first error literally and change your HYPOTHESIS, not just the wording.`);
+  } else if (fixed.length > 0 && persisted.length === 0) {
+    lines.push(`You cleared the previous ${fixed.length} error(s), but the ${channel} is still red with different ones now:`);
+  }
+  for (const s of persisted.slice(0, MAX_BUCKET_LINES)) lines.push(`  • still failing: ${s}`);
+  if (appeared.length > 0) {
+    lines.push(`⚠ ${appeared.length} NEW error(s) appeared that were not there before — your edit introduced a regression:`);
+    for (const s of appeared.slice(0, MAX_BUCKET_LINES)) lines.push(`  • new: ${s}`);
+  }
+  return lines.join("\n") + "\n\n";
 }
 
 const realProbe: FsProbe = {
@@ -254,7 +327,10 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
   // 1. Type-check (fast, side-effect-free). The broken-reference class fails here.
   const build = await exec(detected.command, detected.cwd);
   logger.info(`op=${op.id} ran \`${detected.command}\` in ${detected.cwd} → ${build.ok ? "PASSED" : "FAILED"} (retry ${getBuildVerifyRetries(op.id)})`);
-  if (!build.ok) return redResult(formatBuildErrorsForAgent(detected.command, detected.cwd, build.output, detected.kind));
+  if (!build.ok) {
+    const reframe = reframePreamble(op.id, "build", build.output);
+    return redResult(reframe + formatBuildErrorsForAgent(detected.command, detected.cwd, build.output, detected.kind));
+  }
 
   const checks: { command: string; cwd: string }[] = [{ command: detected.command, cwd: detected.cwd }];
 
@@ -265,7 +341,10 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
   if (testCmd) {
     const test = await exec(testCmd.command, testCmd.cwd);
     logger.info(`op=${op.id} ran \`${testCmd.command}\` in ${testCmd.cwd} → ${test.ok ? "PASSED" : "FAILED"} (retry ${getBuildVerifyRetries(op.id)})`);
-    if (!test.ok) return redResult(formatTestFailuresForAgent(testCmd.command, testCmd.cwd, test.output));
+    if (!test.ok) {
+      const reframe = reframePreamble(op.id, "test", test.output);
+      return redResult(reframe + formatTestFailuresForAgent(testCmd.command, testCmd.cwd, test.output));
+    }
     checks.push({ command: testCmd.command, cwd: testCmd.cwd });
   }
 

@@ -13,32 +13,63 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { CanonicalMessage } from "../contract-types.js";
 import { getContextStatus } from "../../context-manager/status.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
+import { extractText, extractToolResultText } from "./content-extract.js";
 
 // Project canonical rows to the OpenAI-ish shape the context-manager helpers
-// read. Lossy by design — only role + text matter for token counting and the
-// summarizer transcript. tool_result/control collapse to user text so we never
-// need a tool_call_id; this projection is never sent to a provider.
-function toChatParams(messages: CanonicalMessage[]): ChatCompletionMessageParam[] {
+// read. Lossy by design, but never EMPTY: token counting and the summarizer
+// transcript must see tool payloads or a tool-heavy op under-counts and never
+// compacts. tool_result payloads live under `content.result` (dispatch-tools.ts)
+// and assistant tool calls under `content.toolCalls` (seed-messages.ts) — both
+// are surfaced here. tool_result/control collapse to user text so we never need
+// a tool_call_id; this projection is never sent to a provider.
+export function toChatParams(messages: CanonicalMessage[]): ChatCompletionMessageParam[] {
   return messages.map((m): ChatCompletionMessageParam => {
-    const text = extractText(m.content);
     switch (m.role) {
-      case "system": return { role: "system", content: text };
-      case "assistant": return { role: "assistant", content: text };
-      case "tool_result": return { role: "user", content: `[tool result] ${text}` };
-      default: return { role: "user", content: text }; // user + control
+      case "system": return { role: "system", content: extractText(m.content) };
+      case "assistant": return { role: "assistant", content: assistantText(m.content) };
+      case "tool_result": return { role: "user", content: `[tool result] ${extractToolResultText(m.content)}` };
+      default: return { role: "user", content: extractText(m.content) }; // user + control
     }
   });
 }
 
-// Index at which the kept-verbatim tail begins, chosen at a user-message
-// boundary so a tool cycle (assistant tool_use → tool_result) is never split —
-// splitting one orphans the tool_result and the provider rejects the turn. A
-// user message never sits inside a tool cycle, so the boundary is always safe.
+// Assistant rows carry their tool invocations under `content.toolCalls`; the
+// plain text alone blanks a tool-only turn. Append a compact one-line-per-call
+// marker so the estimator and summarizer SEE the calls (lossy but non-empty).
+function assistantText(content: unknown): string {
+  const text = extractText(content);
+  const calls =
+    content && typeof content === "object"
+      ? (content as { toolCalls?: unknown }).toolCalls
+      : undefined;
+  if (!Array.isArray(calls) || calls.length === 0) return text;
+  const markers = calls
+    .map((c) => {
+      const call = (c ?? {}) as { name?: unknown; arguments?: unknown };
+      const name = typeof call.name === "string" ? call.name : "tool";
+      const args = typeof call.arguments === "string" ? call.arguments : "";
+      const short = args.length > 200 ? `${args.slice(0, 200)}…` : args;
+      return `[called ${name}(${short})]`;
+    })
+    .join("\n");
+  return text ? `${text}\n${markers}` : markers;
+}
+
+// Index at which the kept-verbatim tail begins, chosen at a TURN boundary so a
+// tool cycle (assistant tool_use → tool_result) is never split — splitting one
+// orphans the tool_result and the provider rejects the turn. The tail must never
+// START on a `tool_result` (its assistant tool_use would be stranded in the
+// summarized head) nor on a mid-cycle `control` row. Both a `user` row and an
+// `assistant` row are safe turn-starts: an assistant's tool_results always come
+// AFTER it, so splitting on the assistant keeps the pair together. We walk back
+// only OFF tool_result/control rows onto the nearest such turn-start — NOT all
+// the way to a `user` row, which on a long single-user op is the lone seed at
+// index 0, collapsing compaction to a no-op (the very bug this exists to fix).
 // Returns 0 when there's nothing safe to compact (caller leaves history intact).
 export function safeSplitIndex(messages: CanonicalMessage[], keepLast: number): number {
   if (messages.length <= keepLast + 2) return 0;
   let idx = messages.length - keepLast;
-  while (idx > 0 && messages[idx].role !== "user") idx--;
+  while (idx > 0 && (messages[idx].role === "tool_result" || messages[idx].role === "control")) idx--;
   return idx;
 }
 
@@ -65,31 +96,35 @@ export async function compactHistory(
   // error, which is honest; a silent drop corrupts the conversation.
   if (!summary) return messages;
 
-  // Prepend the summary to the user row at the boundary (mirrors the
-  // situational-awareness digest) — no extra message, so no adjacent-user
-  // rejection and no leading-system-message handling to worry about.
   const anchor = recent[0];
   const block =
     `[Earlier conversation auto-summarized to save context — ${head.length} messages]\n` +
     `${summary}\n` +
     `[End of summary. Your most recent messages follow.]`;
-  const merged = `${block}\n\n${extractText(anchor.content)}`;
-  const mergedAnchor: CanonicalMessage = {
-    ...anchor,
-    content: hasImages(anchor.content)
-      ? { ...(anchor.content as Record<string, unknown>), text: merged }
-      : { text: merged },
-  };
-  return [mergedAnchor, ...recent.slice(1)];
-}
 
-function extractText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (content && typeof content === "object") {
-    const t = (content as { text?: unknown }).text;
-    if (typeof t === "string") return t;
+  // Fold the summary into a USER boundary row (no extra message → no adjacent-
+  // user rejection, mirrors the situational-awareness digest). But when the tail
+  // begins on an ASSISTANT turn-start (the long single-user op, where the head we
+  // dropped held the only seed user row), we must NOT overwrite that row: doing
+  // so strips its tool_calls and orphans the tool_result that follows. Prepend a
+  // standalone user summary row instead — user→assistant is a valid opener and
+  // restores the "first message is user" invariant that dropping the seed breaks.
+  if (anchor.role === "user") {
+    const merged = `${block}\n\n${extractText(anchor.content)}`;
+    const mergedAnchor: CanonicalMessage = {
+      ...anchor,
+      content: hasImages(anchor.content)
+        ? { ...(anchor.content as Record<string, unknown>), text: merged }
+        : { text: merged },
+    };
+    return [mergedAnchor, ...recent.slice(1)];
   }
-  return "";
+  const summaryRow: CanonicalMessage = {
+    messageId: `compact-summary-${anchor.messageId}`,
+    role: "user",
+    content: { text: block },
+  };
+  return [summaryRow, ...recent];
 }
 
 function hasImages(content: unknown): boolean {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -60,10 +60,15 @@ describe("write tool — surfaces syntax warning via recovery", () => {
     // not silently roll back what it intended to write.
     expect(r.content).toMatch(/Wrote/);
   });
-  it("ok + recovery on broken JSON", async () => {
-    const r = await writeTool.execute({ path: join(dir, "x.json"), content: '{"x":1,,}' });
-    expect(r.isError).toBeFalsy();
-    expect(String(r.metadata?.recovery || "")).toMatch(/JSON parse/);
+  it("hard-rejects broken JSON — write refused, file NOT created", async () => {
+    const p = join(dir, "x.json");
+    const r = await writeTool.execute({ path: p, content: '{"x":1,,}' });
+    // A write that would make a clean/new .json file syntactically broken is
+    // REFUSED (strictly safer than the old recover-and-save behavior): the file
+    // never lands, and the model gets the parse error back to fix and retry.
+    expect(r.isError).toBeTruthy();
+    expect(r.content).toMatch(/JSON parse/);
+    expect(existsSync(p)).toBe(false);
   });
 });
 

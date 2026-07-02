@@ -1,0 +1,63 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+  appIdsTouchedByTurn,
+  registerOpAppTouch,
+  listOpsForApp,
+  clearRenderVerifyStateForOp,
+  peekPreviewRuntimeErrorCount,
+  _resetRenderVerifyState,
+} from "./render-verify.js";
+import { handleAppRuntimeError } from "../../chat-ws/ide-runtime-error.js";
+import type { ToolCall } from "../contract-types.js";
+
+const call = (tool: string, path?: string): ToolCall =>
+  ({ tool, args: path ? { path } : {} }) as unknown as ToolCall;
+
+beforeEach(() => _resetRenderVerifyState());
+
+describe("appIdsTouchedByTurn", () => {
+  it("extracts the app id from write/edit paths", () => {
+    expect(appIdsTouchedByTurn([
+      call("write", "/x/workspace/apps/todo-list/index.html"),
+      call("edit", "workspace/apps/todo-list/app.js"),
+      call("edit", "C:\\ws\\workspace\\apps\\timer\\main.js"),
+    ])).toEqual(["todo-list", "timer"]);
+  });
+
+  it("ignores non-app paths, read tools, and pathless build_app", () => {
+    expect(appIdsTouchedByTurn([
+      call("write", "/x/src/main.ts"),
+      call("read", "/x/workspace/apps/todo-list/index.html"),
+      call("build_app"),
+    ])).toEqual([]);
+  });
+});
+
+describe("app→op registry", () => {
+  it("routes and clears per op", () => {
+    registerOpAppTouch("op1", "todo-list");
+    registerOpAppTouch("op2", "todo-list");
+    expect(listOpsForApp("todo-list").sort()).toEqual(["op1", "op2"]);
+    clearRenderVerifyStateForOp("op1");
+    expect(listOpsForApp("todo-list")).toEqual(["op2"]);
+    clearRenderVerifyStateForOp("op2");
+    expect(listOpsForApp("todo-list")).toEqual([]);
+  });
+});
+
+// Cross-seam contract: the phone ingress must land errors in the SAME buffer
+// the render-verify gate drains — no parallel pipe.
+describe("handleAppRuntimeError", () => {
+  it("buffers a phone-reported error against every live op that touched the app", async () => {
+    registerOpAppTouch("op1", "todo-list");
+    await handleAppRuntimeError("todo-list", { kind: "blank", message: "Preview rendered no visible content" });
+    expect(peekPreviewRuntimeErrorCount("op1")).toBe(1);
+  });
+
+  it("drops errors for an app no live op touched, and empty messages", async () => {
+    await handleAppRuntimeError("unknown-app", { kind: "error", message: "boom" });
+    registerOpAppTouch("op1", "todo-list");
+    await handleAppRuntimeError("todo-list", { kind: "error" });
+    expect(peekPreviewRuntimeErrorCount("op1")).toBe(0);
+  });
+});

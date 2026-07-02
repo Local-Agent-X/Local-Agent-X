@@ -16,6 +16,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../logger.js";
 import { workspacePath } from "../config.js";
+import { phoneErrorPipeScript } from "./error-pipe-inject.js";
 
 const logger = createLogger("server.dev-server-proxy");
 
@@ -115,7 +116,7 @@ export function proxyFrontendDevServer(
   port: number,
   url: URL,
   connectorToken: string,
-  opts: { coldStartWaitMs?: number } = {},
+  opts: { coldStartWaitMs?: number; publicDir?: string } = {},
 ): void {
   // A websocket upgrade (Vite HMR) cannot be proxied here — this forwarder only
   // handles a normal HTTP response, so forwarding an upgrade would HANG (Node
@@ -174,7 +175,11 @@ export function proxyFrontendDevServer(
           const chunks: Buffer[] = [];
           up.on("data", (c) => chunks.push(c as Buffer));
           up.on("end", () => {
-            const inject = connectorBootstrapScript(connectorToken) + (tunneled ? liveReloadScript(appId) : "");
+            // Tunneled (phone) documents also get the render-verify capture core —
+            // the desktop IDE injects it into its preview iframe itself, but nothing
+            // instruments a page the phone loads over the broker.
+            const inject = connectorBootstrapScript(connectorToken) +
+              (tunneled ? liveReloadScript(appId) + (opts.publicDir ? phoneErrorPipeScript(opts.publicDir, appId) : "") : "");
             const html = injectHead(Buffer.concat(chunks).toString("utf-8"), inject);
             delete out["content-length"];
             out["Content-Security-Policy"] = DEV_FRONTEND_CSP;

@@ -28,7 +28,7 @@ import {
   shouldNudgeForFailures,
 } from "./tool-failure-summary.js";
 import { isSilentToolCall } from "./silent-tool-check.js";
-import { runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
+import { appIdsTouchedByTurn, registerOpAppTouch, runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { runBuildVerifyGate, groundTruthSizesNote } from "./build-verify.js";
 import { runSpecProbeGate } from "./spec-probes.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
@@ -206,6 +206,9 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // model fix what it just broke. Capped at MAX_RETRIES so an unfixable
   // bug can't infinite-loop.
   if (terminalReason === "done" && turnTouchedAppFiles(toolCalls)) {
+    // Let the phone-side ingress route this app's runtime errors to this op —
+    // a phone-served page knows its appId, not a chat session id.
+    for (const appId of appIdsTouchedByTurn(toolCalls)) registerOpAppTouch(op.id, appId);
     const gate = await runRenderVerifyGate(op.id);
     if (gate.shouldRetry) {
       appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);

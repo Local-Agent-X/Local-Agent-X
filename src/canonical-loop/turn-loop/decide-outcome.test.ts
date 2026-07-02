@@ -14,6 +14,8 @@ vi.mock("../../ops/session-bridge.js", () => ({ getSessionForOp: vi.fn(() => und
 vi.mock("./render-verify.js", () => ({
   runRenderVerifyGate: vi.fn(async () => ({ shouldRetry: false })),
   turnTouchedAppFiles: vi.fn(() => false),
+  appIdsTouchedByTurn: vi.fn(() => []),
+  registerOpAppTouch: vi.fn(),
 }));
 vi.mock("../middlewares/open-steps.js", () => ({
   earnedDoneNudge: vi.fn(() => null),

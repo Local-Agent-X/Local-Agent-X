@@ -232,6 +232,19 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     json(200, { ok: true, duplicate: updated.duplicate === true }); return true;
   }
 
+  // Phone-side render-verify ingress: the capture core injected into tunneled
+  // app HTML (error-pipe-inject.ts) posts runtime errors here; they feed the
+  // same gate as the desktop preview's WS pipe. No-ops when no live op
+  // touched this app.
+  if (method === "POST" && appPath.match(/^\/api\/apps\/[a-zA-Z0-9_-]+\/runtime-error$/)) {
+    const id = appPath.split("/")[3];
+    const body = await safeParseBody(req);
+    if (!body) { json(400, { error: "Invalid JSON" }); return true; }
+    const { handleAppRuntimeError } = await import("../chat-ws/ide-runtime-error.js");
+    await handleAppRuntimeError(id, body);
+    json(200, { ok: true }); return true;
+  }
+
   // App events
   if (method === "POST" && appPath.match(/^\/api\/apps\/[^/]+\/events$/)) {
     const id = appPath.split("/")[3];

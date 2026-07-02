@@ -6,6 +6,7 @@ import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateL
 import { authorizeAppConnectorHttp, deriveConnectorCapability } from "./app-connector-auth.js";
 import { ensureDevServerRunning, readDevServerRecord } from "../tools/dev-server.js";
 import { proxyFrontendDevServer } from "./dev-server-proxy.js";
+import { phoneErrorPipeScript } from "./error-pipe-inject.js";
 import { confineToDir } from "../security/file-access.js";
 import { getPageBundle } from "./static-bundle.js";
 import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes, handleAccountRoutes } from "../routes/index.js";
@@ -243,7 +244,7 @@ export function createRequestHandler(deps: {
       const frontendRec = fid ? readDevServerRecord(fid) : null;
       if (frontendRec && frontendRec.kind === "frontend") {
         try { ensureDevServerRunning(fid); } catch { /* best-effort wake */ }
-        proxyFrontendDevServer(req, res, frontendRec.port, url, deriveConnectorCapability(config.authToken));
+        proxyFrontendDevServer(req, res, frontendRec.port, url, deriveConnectorCapability(config.authToken), { publicDir });
         return;
       }
       const appsDir = resolve(config.workspace);
@@ -274,7 +275,11 @@ export function createRequestHandler(deps: {
           // nothing else — instead of raw-fetching external APIs (CSP-blocked) or
           // driving a core self_edit to wire an integration.
           const connectorCap = deriveConnectorCapability(config.authToken);
-          const iso = `<script>sessionStorage.removeItem('lax_token');localStorage.removeItem('lax_token');delete window.__AUTH_TOKEN__;window.__LAX_CONNECTOR_TOKEN__=${JSON.stringify(connectorCap)};history.replaceState(null,'',location.pathname);</script>`;
+          // Phone requests (marked by the broker tunnel) get the render-verify
+          // capture core — the desktop IDE instruments its own preview iframe,
+          // but nothing else instruments a page served to the phone.
+          const errorPipe = req.headers["x-lax-tunnel"] && appId ? phoneErrorPipeScript(publicDir, appId) : "";
+          const iso = `<script>sessionStorage.removeItem('lax_token');localStorage.removeItem('lax_token');delete window.__AUTH_TOKEN__;window.__LAX_CONNECTOR_TOKEN__=${JSON.stringify(connectorCap)};history.replaceState(null,'',location.pathname);</script>` + errorPipe;
           html = html.includes("<head>") ? html.replace("<head>", "<head>" + iso) : html.includes("<body>") ? html.replace("<body>", "<body>" + iso) : iso + html;
           res.writeHead(200, h); res.end(html); return;
         }

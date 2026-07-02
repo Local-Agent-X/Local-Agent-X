@@ -24,6 +24,10 @@ export interface PreviewRuntimeError {
 
 const ERRORS = new Map<string, PreviewRuntimeError[]>();
 const RETRIES = new Map<string, number>();
+// appId → live ops whose turn touched that app. Lets the phone-side ingress
+// (POST /api/apps/<id>/runtime-error) route errors to the right op without a
+// session id — the phone-served page only knows which app it is.
+const APP_OPS = new Map<string, Set<string>>();
 
 const MAX_RETRIES = 2;
 const POLL_INTERVAL_MS = 250;
@@ -59,22 +63,40 @@ export function bumpRenderVerifyRetries(opId: string): number {
   return next;
 }
 
+export function registerOpAppTouch(opId: string, appId: string): void {
+  let ops = APP_OPS.get(appId);
+  if (!ops) {
+    ops = new Set();
+    APP_OPS.set(appId, ops);
+  }
+  ops.add(opId);
+}
+
+export function listOpsForApp(appId: string): string[] {
+  return [...(APP_OPS.get(appId) ?? [])];
+}
+
 export function clearRenderVerifyStateForOp(opId: string): void {
   ERRORS.delete(opId);
   RETRIES.delete(opId);
+  for (const [appId, ops] of APP_OPS) {
+    ops.delete(opId);
+    if (ops.size === 0) APP_OPS.delete(appId);
+  }
 }
 
 /** Test-only — drop all per-op render-verify state. */
 export function _resetRenderVerifyState(): void {
   ERRORS.clear();
   RETRIES.clear();
+  APP_OPS.clear();
 }
 
 // A turn touched an app if at least one tool call wrote/edited a path
 // under workspace/apps/<id>/. Read tools are not enough — we only care
 // when the model could have changed what the preview renders.
 const MUTATING_FILE_TOOLS = new Set(["write", "edit", "build_app"]);
-const APP_PATH_RE = /(^|[\\/])workspace[\\/]apps[\\/][^\\/]+[\\/]/;
+const APP_PATH_RE = /(^|[\\/])workspace[\\/]apps[\\/]([^\\/]+)[\\/]/;
 
 export function turnTouchedAppFiles(toolCalls: ToolCall[]): boolean {
   for (const call of toolCalls) {
@@ -89,6 +111,21 @@ export function turnTouchedAppFiles(toolCalls: ToolCall[]): boolean {
     if (APP_PATH_RE.test(raw.replace(/\\/g, "/"))) return true;
   }
   return false;
+}
+
+/** App ids whose files this turn wrote/edited. Path-derived only — build_app
+ *  without a path contributes none (the desktop pipe still covers that op). */
+export function appIdsTouchedByTurn(toolCalls: ToolCall[]): string[] {
+  const ids = new Set<string>();
+  for (const call of toolCalls) {
+    if (!MUTATING_FILE_TOOLS.has(call.tool)) continue;
+    const args = call.args as { path?: unknown; file_path?: unknown } | null | undefined;
+    const raw = args?.path ?? args?.file_path;
+    if (typeof raw !== "string") continue;
+    const m = APP_PATH_RE.exec(raw.replace(/\\/g, "/"));
+    if (m) ids.add(m[2]);
+  }
+  return [...ids];
 }
 
 // Terse, factual nudge body. Frontier models do worse with pep-talk framing;

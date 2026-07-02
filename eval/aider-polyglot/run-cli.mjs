@@ -71,7 +71,7 @@ function driveCli(cliDef, work, prompt, model, timeoutMs) {
   const [bin, args] = cliDef.cmd(work, prompt, model);
   const t0 = Date.now();
   return new Promise((resolve) => {
-    execFile(bin, args, {
+    const child = execFile(bin, args, {
       cwd: work,
       timeout: timeoutMs,
       maxBuffer: 16 * 1024 * 1024,
@@ -85,6 +85,11 @@ function driveCli(cliDef, work, prompt, model, timeoutMs) {
         secs,
       });
     });
+    // Close stdin NOW. `codex exec` sees a non-TTY stdin and blocks on
+    // "Reading additional input from stdin..." until EOF — with the default
+    // open pipe it hangs the full timeout and the task never starts. EOF makes
+    // it fall back to the positional prompt (probe-verified).
+    child.stdin?.end();
   });
 }
 

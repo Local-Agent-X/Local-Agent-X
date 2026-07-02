@@ -133,4 +133,13 @@ describe("runRenderVerifyGate — headless probe fallback", () => {
     });
     expect(gate.shouldRetry).toBe(false);
   });
+
+  it("_resetRenderVerifyState clears a registered probe so it can't leak across tests", async () => {
+    setRenderProbe(async () => [err("leaked probe fired")]);
+    _resetRenderVerifyState();
+    const gate = await runRenderVerifyGate("op-reset", {
+      totalMs: 0, appUrl: "http://localhost:4173/",
+    });
+    expect(gate.shouldRetry).toBe(false);
+  });
 });

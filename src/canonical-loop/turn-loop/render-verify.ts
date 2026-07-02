@@ -85,11 +85,13 @@ export function clearRenderVerifyStateForOp(opId: string): void {
   }
 }
 
-/** Test-only — drop all per-op render-verify state. */
+/** Test-only — drop all per-op render-verify state, including a probe a test
+ *  registered, so a probe set in one test can't leak into the next. */
 export function _resetRenderVerifyState(): void {
   ERRORS.clear();
   RETRIES.clear();
   APP_OPS.clear();
+  renderProbe = null;
 }
 
 // A turn touched an app if at least one tool call wrote/edited a path

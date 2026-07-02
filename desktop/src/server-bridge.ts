@@ -130,9 +130,11 @@ async function probeApp(req: ProbeRequest): Promise<ProbeOutcome> {
       await new Promise((r) => setTimeout(r, PROBE_SETTLE_MS));
       try {
         const stats = await wc.executeJavaScript(
-          "({ textLen: document.body ? document.body.innerText.trim().length : 0, els: document.body ? document.body.querySelectorAll('*').length : 0 })",
-        ) as { textLen: number; els: number };
-        if (stats.textLen === 0 && stats.els < 3) {
+          "({ textLen: document.body ? document.body.innerText.trim().length : 0, els: document.body ? document.body.querySelectorAll('*').length : 0, hasVisual: !!(document.body && document.body.querySelector('canvas,svg,img,video')) })",
+        ) as { textLen: number; els: number; hasVisual: boolean };
+        // A canvas/WebGL/SVG app renders no text and few DOM nodes but is NOT
+        // blank — so a rendered visual element vetoes the empty verdict.
+        if (stats.textLen === 0 && stats.els < 3 && !stats.hasVisual) {
           errors.push({ kind: "blank", message: "page rendered empty (no visible text or elements)" });
         }
       } catch { /* renderer died mid-probe; render-process-gone recorded it */ }

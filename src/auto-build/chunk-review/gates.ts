@@ -29,6 +29,7 @@
 
 import type { ParsedChunk, ParsedPlan } from "../plan-parser.js";
 import type { ChunkReport } from "./report-parser.js";
+import { workerWords } from "./report-parser.js";
 
 export type ReviewAction = "proceed" | "amend_spec" | "push_back" | "halt";
 
@@ -91,7 +92,7 @@ export function gateDoneWhen(chunk: ParsedChunk, report: ChunkReport): GateFindi
     return {
       gate: "done-when",
       action: "halt",
-      reasoning: `Chunk reported STATUS=${report.status}; needs user attention before continuing.`,
+      reasoning: `Chunk reported STATUS=${report.status}; needs user attention before continuing.${workerWords(report)}`,
     };
   }
 
@@ -99,7 +100,7 @@ export function gateDoneWhen(chunk: ParsedChunk, report: ChunkReport): GateFindi
     return {
       gate: "done-when",
       action: "halt",
-      reasoning: `Chunk reported DONE_WHEN=${report.doneWhen}. Done-when is the chunk's correctness contract — cannot proceed.`,
+      reasoning: `Chunk reported DONE_WHEN=${report.doneWhen}. Done-when is the chunk's correctness contract — cannot proceed.${workerWords(report)}`,
     };
   }
 

@@ -145,3 +145,16 @@ function normalizeListText(text: string): string {
 function isNoneLike(t: string): boolean {
   return /^(none|—|-|n\/a|nothing|null)$/i.test(t.trim());
 }
+
+/** The worker's own words (NOTE / SPEC_GAPS), formatted to travel WITH a
+ *  halt reason. Without them the halt the user sees is just
+ *  "STATUS=blocked" while the actual blocker only exists in a transient
+ *  agent session — diagnosing it means log spelunking (live pain
+ *  2026-07-02). Empty string when the report carries no words. */
+export function workerWords(report: ChunkReport): string {
+  const parts = [
+    report.note && `NOTE: ${report.note}`,
+    report.specGaps && `SPEC_GAPS: ${report.specGaps}`,
+  ].filter(Boolean);
+  return parts.length ? ` Worker report — ${parts.join(" | ").slice(0, 1200)}` : "";
+}

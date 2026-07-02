@@ -155,8 +155,11 @@ function onLoopEvent(orch: ActiveOrchestration, event: LoopEvent): void {
   orch.liveState = newState;
   state.write(newState);
 
-  // Forward as bg_op_progress so the sidebar shows live status.
+  // Forward as bg_op_progress so the sidebar shows live status, and mirror
+  // into the server log — a halted run's autopsy (which gate, what reasoning)
+  // must survive the transient sidebar session.
   const line = `[${(event.elapsedMs / 1000).toFixed(1)}s] [chunk ${event.chunkNumber}/${event.totalChunks}] ${event.type}: ${event.message}`;
+  logger.info(`[orchestrator] ${orch.opId} ${line}`);
   broadcastToSession(orch.sessionId, {
     type: "bg_op_progress",
     opId: orch.opId,

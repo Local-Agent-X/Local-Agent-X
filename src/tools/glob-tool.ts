@@ -6,17 +6,19 @@ import { stat } from "node:fs/promises";
 import fg from "fast-glob";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
-import { resolveAgentPath } from "../workspace/paths.js";
+import { resolveAgentPath, sessionIdOf, sessionWorkRootOf } from "../workspace/paths.js";
 
 // Resolve the search base through the canonical agent-path resolver — the SAME
 // one read/grep and the security gate use — so a "~/..." or workspace-relative
 // base expands once, identically to how it's gated, instead of being joined
-// onto a raw cwd and failing until the model retries. Absent path → cwd.
+// onto a raw cwd and failing until the model retries. Absent path → the
+// session's work root when one is registered (a chunk worker's bare
+// glob("**/*.ts") must search its project, not the server cwd), else cwd.
 // Exported for direct testing (guards against a regression back to a cwd join).
-export function searchBase(rawPath: unknown): string {
+export function searchBase(rawPath: unknown, sessionId?: string): string {
   return rawPath != null && String(rawPath) !== ""
-    ? resolveAgentPath(String(rawPath))
-    : process.cwd();
+    ? resolveAgentPath(String(rawPath), sessionId)
+    : sessionWorkRootOf(sessionId) ?? process.cwd();
 }
 
 function humanSize(bytes: number): string {
@@ -74,7 +76,7 @@ export const globTool: ToolDefinition = {
     const pattern = String(args.pattern ?? "");
     if (!pattern) return err("pattern is required");
 
-    const cwd = searchBase(args.path);
+    const cwd = searchBase(args.path, sessionIdOf(args));
     const startMs = Date.now();
 
     try {

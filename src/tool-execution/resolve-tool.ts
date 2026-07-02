@@ -11,6 +11,7 @@ import { logRetry } from "../retry-telemetry.js";
 import type { CallContext, Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, HALT } from "./context.js";
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
+import { sessionWorkRootOf } from "../workspace/paths.js";
 
 // Eval scaffolding — see markDryRunSession docstring below.
 const dryRunSessions = new Set<string>();
@@ -38,6 +39,12 @@ const SESSION_SCOPED_TOOLS = new Set([
   // derives runId/principal from trusted context (arikernel-bridge.ts), not
   // from forged model-supplied `_runId`/`_principalId`.
   "ari_file", "ari_http", "ari_shell", "ari_database", "ari_retrieval", "ari_sqlite",
+  // Path-taking file tools: sessionIdOf(args) feeds resolveAgentPath so a
+  // session with a registered work root (auto-build chunk workers) anchors
+  // relative paths there. Without the stamp the work-root registry is dead
+  // code — the resolver never learns which session is calling (live failure
+  // 2026-07-02: worker's relative read resolved to the workspace parent).
+  "read", "write", "edit", "multi_edit", "edit_lines", "delete_file", "glob", "grep",
 ]);
 
 function deriveCallContext(sessionId: string | undefined): CallContext {
@@ -137,6 +144,15 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
         }
       }
     } catch { /* registry import failed — fail open, autopilot just not active */ }
+  }
+
+  // A work-rooted session (auto-build chunk worker) anchors bash at its
+  // project dir — the same anchor its file tools resolve against, so the
+  // worker's tools agree about what "here" means. Worktree (enforce-policy)
+  // and autopilot cwds win; this only fills the default.
+  if (tc.name === "bash" && sessionId && !args._cwd) {
+    const workRoot = sessionWorkRootOf(sessionId);
+    if (workRoot) args._cwd = workRoot;
   }
 
   // Inject onEvent for tools that need to stream events.

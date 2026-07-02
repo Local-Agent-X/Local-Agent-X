@@ -9,18 +9,21 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { resolveAgentPath } from "../workspace/paths.js";
+import { resolveAgentPath, sessionIdOf, sessionWorkRootOf } from "../workspace/paths.js";
 
 type OutputMode = "content" | "files_with_matches" | "count";
 
 // Resolve the search root through the canonical agent-path resolver — the SAME
 // one read/glob and the security gate use — so a "~/..." or workspace-relative
 // root expands once, identically to how it's gated, instead of being joined
-// onto a raw cwd and failing until the model retries. Absent path → cwd.
+// onto a raw cwd and failing until the model retries. Absent path → the
+// session's work root when one is registered (a chunk worker's bare grep must
+// search its project, not the server cwd), else cwd.
 export function searchRoot(args: Record<string, unknown>): string {
+  const sessionId = sessionIdOf(args);
   return args.path != null && String(args.path) !== ""
-    ? resolveAgentPath(String(args.path))
-    : process.cwd();
+    ? resolveAgentPath(String(args.path), sessionId)
+    : sessionWorkRootOf(sessionId) ?? process.cwd();
 }
 
 const DEFAULT_HEAD_LIMIT = 250;

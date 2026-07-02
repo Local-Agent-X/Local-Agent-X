@@ -93,6 +93,14 @@ export function clearSessionWorkRoot(sessionId: string): void {
   sessionWorkRoots.delete(sessionId);
 }
 
+/** The registered work root for a session, if any. Consumers beyond the
+ *  resolver: bash's default cwd and glob/grep's default search base must
+ *  agree with where relative file paths anchor, or the worker's tools
+ *  contradict each other about what "here" means. */
+export function sessionWorkRootOf(sessionId: string | undefined): string | undefined {
+  return sessionId ? sessionWorkRoots.get(sessionId) : undefined;
+}
+
 /** The tool-executor-injected session id from a tool's args, if present.
  *  File tools pass this into resolveAgentPath so a session with a
  *  registered work root gets its relative paths anchored there. */

@@ -464,3 +464,34 @@ describe("Fixture directory smoke test", () => {
     expect(files).toContain("chunk-clean-proceed.json");
   });
 });
+
+describe("Halt reasons carry the worker's own words", () => {
+  // Regression (Jul 2 2026 food-truck run): chunk 2 halted with only
+  // "STATUS=blocked; needs user attention" — the actual blocker lived in the
+  // worker's NOTE, which existed nowhere durable. Diagnosis required log
+  // spelunking across a transient agent session.
+  it("blocked halt includes NOTE and SPEC_GAPS", () => {
+    const r = parseChunkReport(
+      "STATUS: blocked\nDONE_WHEN: unmet\nCHANGED: none\nTESTS: n/a\n" +
+      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\n" +
+      "SPEC_GAPS: spec does not say whether the map may self-host leaflet assets\n" +
+      "LAUNCH_READINESS: none\n" +
+      "NOTE: write gate rejected leaflet CSS from cdnjs; need self-host guidance"
+    );
+    const f = gateDoneWhen(chunkFromFixture(loadFixture("chunk-clean-proceed.json")), r)!;
+    expect(f.action).toBe("halt");
+    expect(f.reasoning).toContain("write gate rejected leaflet CSS");
+    expect(f.reasoning).toContain("self-host leaflet assets");
+  });
+
+  it("unmet done-when halt includes NOTE", () => {
+    const r = parseChunkReport(
+      "STATUS: done\nDONE_WHEN: unmet\nCHANGED: x.ts\nTESTS: 1/2\n" +
+      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
+      "LAUNCH_READINESS: none\nNOTE: e2e assertion needs a running dev server"
+    );
+    const f = gateDoneWhen(chunkFromFixture(loadFixture("chunk-clean-proceed.json")), r)!;
+    expect(f.action).toBe("halt");
+    expect(f.reasoning).toContain("running dev server");
+  });
+});

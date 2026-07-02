@@ -26,9 +26,12 @@ export const MISSING_CREDS_RECOVERY =
   "Missing third-party credentials are NEVER a blocker — do not report blocked/partial for this. " +
   "Recover in this order: (1) add clearly-fake placeholder values for every missing variable to the " +
   "framework's local env file (e.g. .env.local: NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co, " +
-  "NEXT_PUBLIC_SUPABASE_ANON_KEY=fake-anon-key-local-dev); (2) make client construction tolerate " +
-  "placeholders — the build and dev boot must succeed without the real service (guard or lazy-init, " +
-  "never throw at import time); (3) list each real-credential setup + verification step in " +
-  "LAUNCH_READINESS, naming the exact env vars; (4) report DONE_WHEN: deferred-to-launch-readiness if " +
-  "the done-when needs the live service, met otherwise. Everything that does not need the live service " +
-  "must still be fully implemented and verified.";
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder-anon-key). Placeholders MUST be plain low-entropy words " +
+  "like these — NEVER a realistic-looking token, JWT, or random string: realistic fakes are " +
+  "indistinguishable from real secrets, trip the security layer's secret-shape detectors, and get your " +
+  "shell blocked for the rest of the run. (2) Make client construction tolerate placeholders — the " +
+  "build and dev boot must succeed without the real service (guard or lazy-init, never throw at import " +
+  "time); (3) list each real-credential setup + verification step in LAUNCH_READINESS, naming the exact " +
+  "env vars; (4) report DONE_WHEN: deferred-to-launch-readiness if the done-when needs the live " +
+  "service, met otherwise. Everything that does not need the live service must still be fully " +
+  "implemented and verified.";

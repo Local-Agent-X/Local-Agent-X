@@ -293,3 +293,60 @@ describe("sensitive-path keyword patterns exempt source code, not secret data", 
     expect(matchesSensitivePath("/Users/x/.ssh/helper.ts")).not.toBeNull();
   });
 });
+
+// Regression (2026-07-02 fake-keys collision): the blanket .env deny blocked
+// the sanctioned missing-credentials recovery — a chunk worker scaffolding its
+// OWN project's .env.local with placeholders was denied (write at 04:50Z, read
+// at 20:56Z, even the chat session at 21:02Z). A session with a registered
+// work root may now touch conventional env files INSIDE that root; everything
+// else about the sensitive-path gate is unchanged.
+describe("work-root .env carve-out", () => {
+  const PROJ = join(ROOT, "workroot-proj");
+  const SESSION = "agent-envtest-1";
+
+  beforeAll(async () => {
+    mkdirSync(PROJ, { recursive: true });
+    writeFileSync(join(PROJ, ".env.local"), "NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co\n");
+    const { setSessionWorkRoot } = await import("../workspace/paths.js");
+    setSessionWorkRoot(SESSION, PROJ);
+  });
+  afterAll(async () => {
+    const { clearSessionWorkRoot } = await import("../workspace/paths.js");
+    clearSessionWorkRoot(SESSION);
+  });
+
+  it("allows read and write of <workRoot>/.env.local for the work-rooted session", () => {
+    for (const action of ["read", "write"]) {
+      const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, action, join(PROJ, ".env.local"), SESSION);
+      expect(d.allowed, `${action} .env.local`).toBe(true);
+    }
+  });
+
+  it("covers the conventional suffixes (.env.example, .env.development) too", () => {
+    // Bare ".env" write stays blocked by coreProtectedFiles (the platform's own
+    // .env) — deliberately not carved out; workers scaffold suffixed env files.
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(PROJ, ".env.example"), SESSION).allowed).toBe(true);
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(PROJ, ".env.development"), SESSION).allowed).toBe(true);
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(PROJ, ".env"), SESSION).allowed).toBe(false);
+  });
+
+  it("still blocks .env for a session WITHOUT a work root", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(PROJ, ".env.local"), "agent-other-9");
+    expect(d.allowed).toBe(false);
+  });
+
+  it("still blocks an env file OUTSIDE the work root for the work-rooted session", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(ROOT, ".env.local"), SESSION);
+    expect(d.allowed).toBe(false);
+  });
+
+  it("still blocks non-env sensitive files INSIDE the work root", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(PROJ, "id_rsa"), SESSION);
+    expect(d.allowed).toBe(false);
+  });
+
+  it("does not widen to unconventional .env.* names that match key patterns", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(PROJ, ".env.key"), SESSION);
+    expect(d.allowed).toBe(false);
+  });
+});

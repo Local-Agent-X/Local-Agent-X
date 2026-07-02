@@ -4,7 +4,7 @@ import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
 import { isAppAtRestSecretBasename } from "./known-secrets.js";
 import { classifySensitivePath } from "./sensitive-paths.js";
-import { resolveAgentPathFrom, realpathDeep } from "../workspace/paths.js";
+import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../workspace/paths.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
 // ── The app's OWN at-rest secret/key/seed files under a `.lax` data dir ──
@@ -117,6 +117,25 @@ const SOURCE_CODE_EXT =
 // existing consumers (egress guard, shell detectors, layer-core, read-state,
 // validated-io, run-sandboxed) keep their import path.
 export { realpathDeep } from "../workspace/paths.js";
+
+// A work-rooted session (auto-build chunk worker) owns its project's env
+// files: scaffolding <workRoot>/.env.local with placeholders is the sanctioned
+// missing-credentials recovery (chunk-review/missing-creds.ts), and the
+// blanket .env deny forced workers to route around the gate (live 2026-07-02).
+// Deliberately tight: ONLY conventional env basenames (".env.key"/".env.pem"
+// stay blocked — they also match key/cert patterns and this must never widen
+// those), ONLY under the session's registered work root (both sides
+// canonical), every other sensitive pattern still blocks inside the root, and
+// content-level defenses (secret-shape taint, egress guard) stay fully armed.
+const CONVENTIONAL_ENV_BASENAME = /^\.env(\.(local|development|production|test|example|sample|dev|prod|staging|ci))?$/i;
+
+function isSanctionedWorkRootEnvFile(sessionId: string | undefined, realPath: string): boolean {
+  if (!CONVENTIONAL_ENV_BASENAME.test(basename(realPath))) return false;
+  const workRoot = sessionWorkRootOf(sessionId);
+  if (!workRoot) return false;
+  const rel = relative(workRoot, realPath);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
 
 /**
  * Confine a caller-supplied path to `root`, symlink-safe. For HTTP file-serving
@@ -354,7 +373,7 @@ export function evaluateFileAccess(
   const normalizedResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
   const normalizedRealPath = process.platform === "win32" ? realPath.toLowerCase() : realPath;
   const match = matchesSensitivePath(normalizedResolved) ?? matchesSensitivePath(normalizedRealPath);
-  if (match) {
+  if (match && !isSanctionedWorkRootEnvFile(sessionId, realPath)) {
     return {
       allowed: false,
       reason: `Blocked: matches sensitive path pattern ${typeof match === "string" ? match : match.source}`,

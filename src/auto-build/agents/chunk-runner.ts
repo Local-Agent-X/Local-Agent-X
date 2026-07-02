@@ -81,7 +81,9 @@ const DISCIPLINE_BLOCK =
   `(e.g. .env.local), make client construction tolerate them — build and dev boot must succeed ` +
   `without the real service, never throw at import time — implement everything that doesn't need ` +
   `the live service, list the real-credential setup/verify steps in LAUNCH_READINESS (exact env ` +
-  `var names), and report DONE_WHEN: deferred-to-launch-readiness instead of blocked/partial.\n` +
+  `var names), and report DONE_WHEN: deferred-to-launch-readiness instead of blocked/partial. ` +
+  `Placeholders must be plain low-entropy words (placeholder-anon-key), NEVER realistic-looking ` +
+  `tokens or JWTs — realistic fakes trip the secret-shape detectors and get your shell blocked.\n` +
   `- **Don't touch \`spec/\`.** Spec amendments are the reviewer's job. Surface gaps in NOTE.\n\n` +
   `## Report format (the review pass parses this — keep it exact)\n\n` +
   `When you finish, reply with EXACTLY this block (no other text after it). ` +

@@ -15,8 +15,23 @@ describe("buildSanitizedEnv — non-interactive git (no /dev/tty hang)", () => {
   it("defaults GIT_ASKPASS to empty (no askpass prompt)", () => {
     expect(buildSanitizedEnv().GIT_ASKPASS).toBe("");
   });
+  it("forces GIT_ASKPASS empty even when the ambient env sets one (VS Code terminal)", () => {
+    // VS Code's integrated terminal exports GIT_ASKPASS pointing at its own
+    // askpass.sh; it must not survive into the agent shell or git can hang on a
+    // credential prompt. Env-independent guard — the default-when-unset bug only
+    // surfaced in shells that already had GIT_ASKPASS set.
+    const prev = process.env.GIT_ASKPASS;
+    process.env.GIT_ASKPASS = "/Applications/Visual Studio Code.app/Contents/Resources/app/extensions/git/dist/askpass.sh";
+    try {
+      expect(buildSanitizedEnv().GIT_ASKPASS).toBe("");
+    } finally {
+      if (prev === undefined) delete process.env.GIT_ASKPASS;
+      else process.env.GIT_ASKPASS = prev;
+    }
+  });
   it("lets an explicit caller override the default", () => {
     expect(buildSanitizedEnv({ GIT_TERMINAL_PROMPT: "1" }).GIT_TERMINAL_PROMPT).toBe("1");
+    expect(buildSanitizedEnv({ GIT_ASKPASS: "/my/askpass" }).GIT_ASKPASS).toBe("/my/askpass");
   });
 });
 

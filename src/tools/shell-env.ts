@@ -340,7 +340,12 @@ export function buildSanitizedEnv(extra?: Record<string, string>): Record<string
   // fails fast with a clear error the agent can report. Set before the `extra`
   // overlay so an explicit caller override still wins.
   sanitizedEnv.GIT_TERMINAL_PROMPT = "0";
-  if (sanitizedEnv.GIT_ASKPASS === undefined) sanitizedEnv.GIT_ASKPASS = "";
+  // Force empty, not just default-when-unset: an inherited GIT_ASKPASS (e.g. VS
+  // Code's terminal exports one pointing at its own askpass.sh) would otherwise
+  // survive the sanitize copy and reintroduce the very prompt/hang this guards
+  // against. Set unconditionally like GIT_PAGER below, but before the `extra`
+  // overlay so an explicit caller can still supply its own askpass.
+  sanitizedEnv.GIT_ASKPASS = "";
   // Pagers hang a non-interactive shell. `git log`/`git diff`/`git branch`
   // (and `man`, `less`, `psql`) pipe their output to a pager that waits for `q`
   // with no controlling TTY, so the command never returns and the turn stalls

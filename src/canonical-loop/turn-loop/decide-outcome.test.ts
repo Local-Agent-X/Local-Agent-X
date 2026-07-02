@@ -35,10 +35,14 @@ vi.mock("../middlewares/cleanup-verify.js", () => ({
 vi.mock("../middlewares/verify-gate.js", () => ({
   opEditedSourceUnverified: vi.fn(() => false),
   opDeletedTestDodge: vi.fn(() => false),
+  opEditedSourcePaths: vi.fn(() => []),
 }));
 vi.mock("./build-verify.js", () => ({
   runBuildVerifyGate: vi.fn(async () => ({ nudge: "", shouldRetry: false, capReached: false })),
   groundTruthSizesNote: vi.fn(() => null),
+}));
+vi.mock("./spec-probes.js", () => ({
+  runSpecProbeGate: vi.fn(async () => ({ nudge: "", shouldRetry: false })),
 }));
 
 import { decideTurnOutcome, recordTerminalOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
@@ -207,6 +211,34 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
       toolCalls: [], toolMessages: [], toolSummary: [], modelSignaledDone: true,
     }));
     expect(runBuildVerifyGate).toHaveBeenCalled();
+    expect(r.terminalReason).toBe("done");
+  });
+
+  it("spec-probe gate suppresses 'done' and loops when a spec-derived check fails", async () => {
+    // Build is green, but the implementation-blind probe caught a behavioral bug,
+    // so the turn must not terminate — the same model gets one more pass.
+    const { opEditedSourcePaths } = await import("../middlewares/verify-gate.js");
+    (opEditedSourcePaths as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(["/proj/wordy.py"]);
+    const { runSpecProbeGate } = await import("./spec-probes.js");
+    (runSpecProbeGate as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      nudge: "STOP — acceptance check failed", shouldRetry: true,
+    });
+    const { appendNudgeAsUserMessage } = await import("./nudges.js");
+    const r = await decideTurnOutcome(input({
+      toolCalls: [], toolMessages: [], toolSummary: [], modelSignaledDone: true,
+    }));
+    expect(runSpecProbeGate).toHaveBeenCalled();
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, "STOP — acceptance check failed");
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("spec-probe gate is skipped when the op edited no source (default off)", async () => {
+    const { runSpecProbeGate } = await import("./spec-probes.js");
+    (runSpecProbeGate as unknown as ReturnType<typeof vi.fn>).mockClear();
+    const r = await decideTurnOutcome(input({
+      toolCalls: [], toolMessages: [], toolSummary: [], modelSignaledDone: true,
+    }));
+    expect(runSpecProbeGate).not.toHaveBeenCalled();
     expect(r.terminalReason).toBe("done");
   });
 

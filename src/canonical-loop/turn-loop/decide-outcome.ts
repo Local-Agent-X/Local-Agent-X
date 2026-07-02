@@ -30,11 +30,12 @@ import {
 import { isSilentToolCall } from "./silent-tool-check.js";
 import { runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { runBuildVerifyGate, groundTruthSizesNote } from "./build-verify.js";
+import { runSpecProbeGate } from "./spec-probes.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
 import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
 import { opCleanupUnverified } from "../middlewares/cleanup-verify.js";
-import { opEditedSourceUnverified, opDeletedTestDodge } from "../middlewares/verify-gate.js";
+import { opEditedSourceUnverified, opDeletedTestDodge, opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import { readOpTurns } from "../store.js";
 import { resolveOpModel } from "../op-model.js";
 import { classifyOpCategory, recordOpOutcome, type OpOutcome } from "../../tool-tracker.js";
@@ -235,6 +236,25 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
       // and may have wrapped up sounding unsure. Hold the green confirmation and
       // surface it below once we know the op truly ends this turn.
       buildVerifyConfirmation = gate.confirmation;
+    }
+  }
+
+  // Spec-probe gate (iteration 6, the flagship). Build-green ≠ behaviorally
+  // correct: the model can ship code that compiles yet does the wrong thing,
+  // and its own self-tests miss it because it wrote them looking at the same
+  // buggy implementation. So — only once the build gate above is satisfied
+  // (terminalReason still "done") and the op edited source — the harness has the
+  // SAME active model author an acceptance check while blind to the code (spec +
+  // file names only), then EXECUTES it. A real spec-assertion failure injects one
+  // capped retry nudge; a probe that can't validly run is discarded, never nudged,
+  // so a correct implementation is never false-flagged. Nudge-only: unlike
+  // build-verify it records no verdict, because the probe's authorship is fallible
+  // and must never demote the outcome label.
+  if (terminalReason === "done" && opEditedSourcePaths(op.id).length > 0) {
+    const gate = await runSpecProbeGate(op);
+    if (gate.shouldRetry) {
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);
+      terminalReason = null;
     }
   }
 

@@ -495,3 +495,68 @@ describe("Halt reasons carry the worker's own words", () => {
     expect(f.reasoning).toContain("running dev server");
   });
 });
+
+describe("Missing-credentials recovery (the no-Supabase-keys class)", () => {
+  // Regression (Jul 2 2026, food-truck chunk 2): worker reported
+  // STATUS=partial with "Build fails solely on missing Supabase credentials
+  // (runtime infra, not code)" and the loop halted — the user had to type the
+  // fake-keys recovery by hand. The gate now automates it as a retry-once.
+  const report = (status: string, note: string, launch = "none", doneWhen = "unmet") =>
+    parseChunkReport(
+      `STATUS: ${status}\nDONE_WHEN: ${doneWhen}\nCHANGED: app/page.tsx\nTESTS: n/a\n` +
+      `NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n` +
+      `LAUNCH_READINESS: ${launch}\nNOTE: ${note}`
+    );
+
+  it("converts a cred-blocked partial into push_back carrying the recovery instruction", () => {
+    const f = gateDoneWhen(
+      chunkFromFixture(loadFixture("chunk-clean-proceed.json")),
+      report("partial", "Build fails solely on missing Supabase credentials (runtime infra, not code). All chunk 2 logic implemented.")
+    )!;
+    expect(f.action).toBe("push_back");
+    expect(f.reasoning).toContain("placeholder");
+    expect(f.reasoning).toContain("LAUNCH_READINESS");
+    expect(f.reasoning).toContain("missing Supabase credentials"); // worker words travel too
+  });
+
+  it("matches the env-var phrasing too", () => {
+    const f = gateDoneWhen(
+      chunkFromFixture(loadFixture("chunk-clean-proceed.json")),
+      report("blocked", "Build fails on missing Supabase env vars.")
+    )!;
+    expect(f.action).toBe("push_back");
+  });
+
+  it("a non-credential block still halts", () => {
+    const f = gateDoneWhen(
+      chunkFromFixture(loadFixture("chunk-clean-proceed.json")),
+      report("blocked", "Spec is ambiguous about whether the detail view is a modal or a page; need a decision.")
+    )!;
+    expect(f.action).toBe("halt");
+  });
+
+  // chunk-06's done-when ("integration test against a real Google dev
+  // workspace returns…") IS mechanical per the gate's regex — the right
+  // fixture for deferral behavior.
+  it("allows a mechanical done-when deferral whose LAUNCH_READINESS names the credentials", () => {
+    const f = gateDoneWhen(
+      chunkFromFixture(loadFixture("chunk-06-silent-deferral.json")),
+      report(
+        "done",
+        "Placeholder envs in .env.local; app builds and boots without the live service.",
+        "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to real project values, then verify realtime map updates end-to-end.",
+        "deferred-to-launch-readiness"
+      )
+    );
+    expect(f).toBeNull(); // sanctioned deferral — gateLaunchReadiness enforces concreteness
+  });
+
+  it("still halts a mechanical deferral with no credential story", () => {
+    const f = gateDoneWhen(
+      chunkFromFixture(loadFixture("chunk-06-silent-deferral.json")),
+      report("done", "Ran out of steam on the tests.", "verify later", "deferred-to-launch-readiness")
+    )!;
+    expect(f.action).toBe("halt");
+    expect(f.reasoning).toContain("silent-deferral");
+  });
+});

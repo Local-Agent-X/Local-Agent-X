@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1099 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1102 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/tools/` | 41 | 129 | XL |  |
 | `src/memory/` | 38 | 106 | XL |  |
 | `src/providers/` | 35 | 16 | L |  |
-| `src/canonical-loop/` | 29 | 110 | XL |  |
+| `src/canonical-loop/` | 29 | 111 | XL |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/agency/` | 22 | 14 | L |  |
 | `src/auth/` | 22 | 10 | L |  |
@@ -62,7 +62,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/util/` | 5 | 1 | S |  |
 | `src/server/` *(entrypoint)* | 4 | 27 | XL |  |
 | `src/tool-policy/` | 4 | 19 | L |  |
-| `src/auto-build/` | 3 | 38 | XL |  |
+| `src/auto-build/` | 3 | 40 | XL |  |
 | `src/broker-transport/` | 3 | 27 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |

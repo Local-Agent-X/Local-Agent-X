@@ -29,7 +29,6 @@
 
 import type { ParsedChunk, ParsedPlan } from "../plan-parser.js";
 import type { ChunkReport } from "./report-parser.js";
-import { workerWords } from "./report-parser.js";
 
 export type ReviewAction = "proceed" | "amend_spec" | "push_back" | "halt";
 
@@ -70,87 +69,9 @@ export function gateReportShape(report: ChunkReport): GateFinding | null {
   };
 }
 
-/**
- * Gate 1: Done-when verifier.
- *
- * Failure modes detected mechanically:
- *
- *  (a) STATUS != "done" → chunk explicitly didn't ship → halt
- *  (b) DONE_WHEN == "unmet" or "unknown" → halt
- *  (c) DONE_WHEN == "deferred-to-launch-readiness" but the chunk's
- *      plan-level done-when names an "integration test" or specific
- *      observable behavior (not a launch-time concern) → halt; this is
- *      the chunk-6 silent-deferral pattern.
- *  (d) STATUS == "done", DONE_WHEN == "met", BUT the NOTE body contains
- *      a contradictory phrase ("deferred", "stub", "todo", "follow up",
- *      "didn't run") indicating the structured field is too optimistic
- *      → halt. This catches the chunk-6 case even when the agent
- *      mis-fills the structured field.
- */
-export function gateDoneWhen(chunk: ParsedChunk, report: ChunkReport): GateFinding | null {
-  if (report.status === "blocked" || report.status === "partial") {
-    return {
-      gate: "done-when",
-      action: "halt",
-      reasoning: `Chunk reported STATUS=${report.status}; needs user attention before continuing.${workerWords(report)}`,
-    };
-  }
-
-  if (report.doneWhen === "unmet" || report.doneWhen === "unknown") {
-    return {
-      gate: "done-when",
-      action: "halt",
-      reasoning: `Chunk reported DONE_WHEN=${report.doneWhen}. Done-when is the chunk's correctness contract — cannot proceed.${workerWords(report)}`,
-    };
-  }
-
-  // (c) Silent deferral pattern. The chunk's plan-level done-when names a
-  // mechanical verification — if the agent says that's launch-readiness-
-  // deferred, halt. The user has to acknowledge.
-  if (report.doneWhen === "deferred-to-launch-readiness") {
-    const isMechanicalContract = /\b(integration test|unit test|asserts?|returns?|test|passes?)\b/i.test(chunk.doneWhen);
-    if (isMechanicalContract) {
-      return {
-        gate: "done-when",
-        action: "halt",
-        reasoning:
-          `Chunk's done-when ("${truncate(chunk.doneWhen, 120)}") names a mechanical verification, ` +
-          `but the report defers it to launch-readiness. This is the silent-deferral pattern — halt and surface to the user.`,
-      };
-    }
-  }
-
-  // (d) NOTE contradicts the structured field. Common Bookwell shape:
-  // "DONE_WHEN: met" but NOTE says "the integration test is launch-readiness
-  // deferred." That's the chunk-6 incident in a single check.
-  if (report.doneWhen === "met") {
-    const note = report.note.toLowerCase();
-    const contradictoryPhrases = [
-      "deferred to launch-readiness",
-      "deferred-to-launch",
-      "launch-readiness deferred",
-      "integration test is launch-readiness",
-      "didn't run the test",
-      "did not run the test",
-      "wasn't able to run",
-      "test was skipped",
-      "skipped the test",
-    ];
-    for (const phrase of contradictoryPhrases) {
-      if (note.includes(phrase)) {
-        return {
-          gate: "done-when",
-          action: "halt",
-          reasoning:
-            `Report says DONE_WHEN: met but NOTE contains "${phrase}". ` +
-            `The structured field contradicts the prose — treat this as a silent deferral and halt.`,
-        };
-      }
-    }
-  }
-
-  return null;
-}
+// Gate 1 (done-when verifier) lives in gate-done-when.ts — the largest single
+// gate, split at the 400-LOC ceiling. Re-exported so callers keep one import.
+export { gateDoneWhen } from "./gate-done-when.js";
 
 /**
  * Gate 2: Additive-diff check. The MOST IMPORTANT gate per the design.

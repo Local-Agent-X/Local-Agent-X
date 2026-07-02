@@ -76,6 +76,12 @@ const DISCIPLINE_BLOCK =
   `- **Run the tests.** If done-when names tests, those tests must pass before you report done. ` +
   `Don't mark deferred verifications as done — name them explicitly in NOTE so the reviewer can ` +
   `route to launch-readiness.\n` +
+  `- **Missing third-party credentials are never blockers.** If a service key/URL isn't configured ` +
+  `(Supabase, Stripe, etc.): put clearly-fake placeholder values in the framework's local env file ` +
+  `(e.g. .env.local), make client construction tolerate them — build and dev boot must succeed ` +
+  `without the real service, never throw at import time — implement everything that doesn't need ` +
+  `the live service, list the real-credential setup/verify steps in LAUNCH_READINESS (exact env ` +
+  `var names), and report DONE_WHEN: deferred-to-launch-readiness instead of blocked/partial.\n` +
   `- **Don't touch \`spec/\`.** Spec amendments are the reviewer's job. Surface gaps in NOTE.\n\n` +
   `## Report format (the review pass parses this — keep it exact)\n\n` +
   `When you finish, reply with EXACTLY this block (no other text after it). ` +

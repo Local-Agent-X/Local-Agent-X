@@ -92,6 +92,36 @@ export function planError(code: string, message: string, retryable = false): Moc
   };
 }
 
+/**
+ * A retryable provider error that arrives AFTER content has already streamed.
+ *
+ * The transport-retry seam (src/canonical-loop/adapters/transport-retry.ts) is
+ * CONTENT-SAFE: once any output (text / tool_call) has been yielded, a later
+ * error is SURFACED as terminal — never retried, which would double-emit the
+ * streamed text. So this plan makes even a `retryable:true` error terminal on
+ * the first attempt: exactly one `kind:"error"` report, no retry, no backoff.
+ *
+ * That lets a test assert the real post-retry contract — an UNRECOVERED
+ * provider error surfaces one error report and fails the op — without eating
+ * the multi-second real backoff a genuine attempt-exhaustion storm would cost
+ * (DEFAULT_MAX_ATTEMPTS is frozen at module load and the backoff sleep isn't
+ * injectable from a test, so a 3-attempt storm can't be neutralized here).
+ */
+export function planErrorAfterContent(
+  delta: string,
+  code: string,
+  message: string,
+  retryable = true,
+): MockTurnPlan {
+  return {
+    events: [
+      { event: { type: "text", delta } },
+      { event: { type: "error", code, message, retryable } },
+      { event: { type: "done", stopReason: "error" } },
+    ],
+  };
+}
+
 /** Long stream that won't naturally finish — use with abort tests. */
 export function planLongStream(chunks = 200, intervalMs = 25): MockTurnPlan {
   const events: { delayMs?: number; event: TransportEvent }[] = [];

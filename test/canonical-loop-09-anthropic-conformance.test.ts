@@ -56,6 +56,7 @@ import {
   planText,
   planToolCall,
   planError,
+  planErrorAfterContent,
   planLongStream,
 } from "./canonical-loop/anthropic-mock-transport.js";
 
@@ -250,9 +251,16 @@ describe("Issue 09 — provider stream → canonical adapter_reports", () => {
     expect(result.terminalReason).toBeUndefined();
   });
 
-  it("provider error events surface as error adapter_reports and never throw", async () => {
+  it("an unrecovered provider error surfaces as exactly one error adapter_report and never throws", async () => {
+    // Post-0f581efb the transport-retry seam retries a `retryable:true` error
+    // that hasn't streamed content yet — so a bare retryable error would be
+    // swallowed and recover, not surface. We assert the invariant that still
+    // matters: an UNRECOVERED error surfaces exactly one `kind:"error"` report.
+    // Streaming a delta first trips the CONTENT-SAFE rule (once output is seen,
+    // a later error is terminal, never retried), making the retryable error
+    // terminal on attempt 1 — no retry, no backoff — so this stays sub-second.
     const transport = new MockAnthropicTransport({
-      plans: [planError("rate_limited", "429 Too Many Requests", true)],
+      plans: [planErrorAfterContent("partial answer…", "rate_limited", "429 Too Many Requests", true)],
     });
     const adapter = new AnthropicAdapter({ transport });
     const reports: { kind: string; code?: string; message?: string; retryable?: boolean }[] = [];
@@ -272,6 +280,38 @@ describe("Issue 09 — provider stream → canonical adapter_reports", () => {
     expect(errs[0].code).toBe("rate_limited");
     expect(errs[0].retryable).toBe(true);
     expect(result?.terminalReason).toBe("error");
+  });
+
+  it("a transient retryable error RECOVERS on retry → turn succeeds with no error report", async () => {
+    // The counterpart to the test above: the retry behavior added by 0f581efb.
+    // plan[0] errors (retryable, no content streamed) and plan[1] is a clean
+    // success, so the transport-retry seam swallows the transient error,
+    // re-issues the request, and the turn completes cleanly. This pins
+    // retry-then-recover — the invariant that broke the two error tests — so a
+    // future refactor can't silently drop it. It DOES pay one real backoff
+    // (~1s), which is the only way to exercise a genuine retry from a test.
+    const transport = new MockAnthropicTransport({
+      plans: [
+        planError("rate_limited", "429 Too Many Requests", true),
+        planText("recovered", " answer"),
+      ],
+    });
+    const adapter = new AnthropicAdapter({ transport });
+    const reports: { kind: string; message?: unknown }[] = [];
+    const result = await adapter.runTurn(
+      { opId: "retry-recover", turnIdx: 0, messages: [], tools: [] },
+      r => reports.push(r as never),
+    );
+    // The transient error was retried away — never forwarded to the consumer.
+    expect(reports.some(r => r.kind === "error")).toBe(false);
+    // The turn completed on the retry's clean stream.
+    expect(result.terminalReason).toBe("done");
+    const finalized = reports.filter(r => r.kind === "message_finalized");
+    expect(finalized).toHaveLength(1);
+    expect((finalized[0] as { message: { content: { text: string } } }).message.content.text)
+      .toBe("recovered answer");
+    // Proof a retry actually happened: the transport was re-issued a 2nd time.
+    expect(transport.requests).toHaveLength(2);
   });
 });
 
@@ -364,9 +404,14 @@ describe("Issue 09 — adapter integrated with canonical-loop runtime", () => {
     expect(messages[1].role).toBe("assistant");
   });
 
-  it("provider error → op transitions to failed via the canonical state machine", async () => {
+  it("an unrecovered provider error → op transitions to failed via the canonical state machine", async () => {
+    // Same content-safe framing as the direct-adapter test above: streaming a
+    // delta before the retryable error makes it terminal on attempt 1 (no retry,
+    // no backoff), so a genuinely unrecovered provider error drives the op to
+    // `failed` deterministically. A bare retryable error here would be retried,
+    // hit the mock's default clean `done`, and the op would SUCCEED instead.
     const transport = new MockAnthropicTransport({
-      plans: [planError("rate_limited", "429 from upstream", true)],
+      plans: [planErrorAfterContent("partial answer…", "rate_limited", "429 from upstream", true)],
     });
     const adapter = new AnthropicAdapter({ transport });
     const op = mkOp("e2e-error");

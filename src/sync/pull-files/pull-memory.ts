@@ -74,11 +74,20 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
         throw e;
       }
     }
-  }
-  for (const f of readdirSync(memDir)) {
-    if (f.endsWith(".md") && !remoteMemFiles.has(f)) {
-      logger.info(`[sync] Deleting ${f} (removed from remote)`);
-      unlinkSync(join(memDir, f));
+
+    // Delete-reconciliation lives INSIDE the syncMemDir-exists guard. A
+    // present remote memory dir is the manifest of what should exist; a note
+    // absent from it was genuinely removed remotely (even an empty remote dir
+    // means "everything was deleted") and is unlinked locally. A MISSING
+    // remote memory dir is not an empty manifest — it means the remote has no
+    // memory state yet (fresh/empty sync repo). Reconciling against it deleted
+    // every local note before the first push ever ran, wiping notes on startup
+    // when pointing sync at a new repo. Skip deletion entirely in that case.
+    for (const f of readdirSync(memDir)) {
+      if (f.endsWith(".md") && !remoteMemFiles.has(f)) {
+        logger.info(`[sync] Deleting ${f} (removed from remote)`);
+        unlinkSync(join(memDir, f));
+      }
     }
   }
 }

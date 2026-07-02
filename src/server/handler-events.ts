@@ -146,6 +146,13 @@ export function registerHandlerEvents(deps: {
             worktreeBlock = `\n\n--- WORKTREE ---\nYou are in an isolated git worktree at: ${worktreeInfo.path}\nCode changes: cd here first. Output files (reports, exports) go to ${resolve(config.workspace)}/ (worktree gets cleaned up).\n--- END WORKTREE ---\n`;
           }
         } catch { /* not a git repo */ }
+      } else if (req.workRoot) {
+        // Project worker: the generic WORKSPACE block below points at the
+        // data root and taught workers to read spec/plan.md THERE (live
+        // failure 2026-07-02: four reads of <data root>/spec/plan.md
+        // tripped the read circuit breaker). One root, stated once.
+        const workRootFwd = req.workRoot.replace(/\\/g, "/");
+        worktreeBlock = `\n\n--- PROJECT ROOT ---\nAll your work happens under: ${workRootFwd}\nRelative paths in file tools resolve against it. For bash, cd "${workRootFwd}" first. Do not read or write anywhere else.\n--- END PROJECT ROOT ---\n`;
       } else {
         worktreeBlock = `\n\n--- WORKSPACE ---\nWrite files (screenshots, exports, notes) to ${resolve(config.workspace)}/. You have bash/write/edit for non-code tasks. Do NOT edit the repo's source code.\n--- END WORKSPACE ---\n`;
       }
@@ -166,9 +173,17 @@ export function registerHandlerEvents(deps: {
       }
 
       logger.info(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : req.workRoot ? ` (work root: ${req.workRoot})` : " (no worktree)"}`);
-      const platformLine = process.platform === "win32"
-        ? "Windows. bash runs PowerShell — use PowerShell syntax (Get-ChildItem, Select-Object) and Windows paths."
-        : "Linux/macOS. bash runs /bin/bash.";
+      // Describe the shell the bash tool will ACTUALLY run — the old
+      // hardcoded "bash runs PowerShell" line predates Git Bash resolution
+      // and taught workers the wrong syntax (backslash Windows paths in a
+      // POSIX shell lose their separators: `cd C:\Users\...` → "C:Users...").
+      let platformLine = "Linux/macOS. bash runs /bin/bash.";
+      if (process.platform === "win32") {
+        const { resolveWindowsShell } = await import("../tools/shell-env.js");
+        platformLine = resolveWindowsShell().kind === "bash"
+          ? "Windows with Git Bash. bash runs POSIX sh — use POSIX syntax, forward-slash paths (C:/Users/...), and quote any path containing spaces."
+          : "Windows. bash runs PowerShell — use PowerShell syntax (Get-ChildItem, Select-Object) and Windows paths.";
+      }
       const executionRules =
         `\n\nEXECUTION RULES:\n` +
         `- Platform: ${platformLine}\n` +

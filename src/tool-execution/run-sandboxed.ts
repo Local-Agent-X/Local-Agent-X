@@ -7,7 +7,7 @@
 import type { ServerEvent, ToolResult } from "../types.js";
 import { withRetry } from "../auto-retry.js";
 import { getRetryContext } from "../retry-context.js";
-import { recordCircuitFailure, recordCircuitSuccess } from "../circuit-breaker.js";
+import { circuitArgsSig, recordCircuitFailure, recordCircuitSuccess } from "../circuit-breaker.js";
 import { recordToolCall as recordToolStat } from "../tool-tracker.js";
 import { recordToolCall as recordRateLimit } from "./rate-limiter.js";
 import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput, redactSecretSpans } from "../data-lineage.js";
@@ -303,9 +303,9 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   try { recordToolStat(tc.name, sessionId || "default", succeeded, durationMs, result.isError ? result.content?.slice(0, 200) : undefined); } catch { /* tracker should never break the call */ }
   try { recordRateLimit(tc.name, sessionId); } catch { /* same */ }
   if (succeeded) {
-    recordCircuitSuccess(sessionId, tc.name);
+    recordCircuitSuccess(sessionId, tc.name, circuitArgsSig(tc.arguments));
   } else {
-    recordCircuitFailure(sessionId, tc.name, typeof result.content === "string" ? result.content : undefined);
+    recordCircuitFailure(sessionId, tc.name, typeof result.content === "string" ? result.content : undefined, circuitArgsSig(tc.arguments));
   }
   return CONTINUE;
 };

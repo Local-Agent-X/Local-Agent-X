@@ -12,7 +12,7 @@ import { getKernelTaintSources } from "../data-lineage.js";
 import { WORKTREE_PATH_TOOLS } from "../tool-registry.js";
 import { taintedShellBlockReason, blockedSelfVerifyGuidance } from "./shell-block-guidance.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
-import { checkCircuit } from "../circuit-breaker.js";
+import { checkCircuit, circuitArgsSig } from "../circuit-breaker.js";
 import { checkToolRateLimit } from "./rate-limiter.js";
 import { logRetry } from "../retry-telemetry.js";
 import { assertToolCallAllowed } from "../tools/pre-dispatch.js";
@@ -302,7 +302,7 @@ async function preToolUseHook(ctx: ToolCallContext): Promise<PhaseOutcome> {
 
 function circuitBreakerGate(ctx: ToolCallContext): PhaseOutcome {
   const { tc, sessionId } = ctx;
-  const circuit = checkCircuit(sessionId, tc.name);
+  const circuit = checkCircuit(sessionId, tc.name, circuitArgsSig(tc.arguments));
   if (circuit.allowed) return CONTINUE;
   const result: ToolResult = {
     content: `BLOCKED by circuit breaker: ${circuit.reason}`,

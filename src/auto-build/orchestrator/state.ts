@@ -186,7 +186,10 @@ export function markHalted(state: OrchestratorState, chunkNumber: number, gate: 
     phase: "halted",
     currentChunk: chunkNumber,
     haltGate: gate,
-    haltReason: reason,
+    // Cap the persisted reason: this string is rewritten to disk on every
+    // event and broadcast to the chat session. A raw git stderr dump once
+    // made it 3.6MB (CRLF warning spam) — the reason must stay a message.
+    haltReason: reason.length > 4000 ? reason.slice(0, 4000) + " …[truncated]" : reason,
     updatedAt: new Date().toISOString(),
   };
 }

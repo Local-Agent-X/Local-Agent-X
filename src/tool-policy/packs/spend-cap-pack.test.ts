@@ -93,6 +93,37 @@ describe("spend-cap pack — auth-aware", () => {
     expect(d.allowed).toBe(false);
     expect(d.ruleId).toBe("spend-cap.session");
   });
+
+  it("reports the DAILY reason when both daily and session caps are tripped", async () => {
+    // $6 spend trips both the $5 daily and the $5 session cap. Daily is checked
+    // first, so its rule must win — the agent should see the daily denial.
+    setBudgets(5, 5);
+    noteResolvedAuthSource("env");
+    spend6Usd("env");
+    const d = await evalCap();
+    expect(d.allowed).toBe(false);
+    expect(d.ruleId).toBe("spend-cap.daily");
+  });
+
+  it("shapes the deny with a formatted reason, a recovery, and a userHint", async () => {
+    setBudgets(5, 0);
+    noteResolvedAuthSource("env");
+    spend6Usd("env");
+    const d = await evalCap();
+    expect(d.allowed).toBe(false);
+    if (!d.allowed) {
+      // reason: "Daily spend ($X.XX) has reached the configured budget ($5.00)."
+      expect(d.reason).toMatch(
+        /^Daily spend \(\$\d+\.\d{2}\) has reached the configured budget \(\$5\.00\)\.$/,
+      );
+      // recovery: actionable — names the budget and where to raise it, tells the agent to stop.
+      expect(d.recovery).toContain("daily budget");
+      expect(d.recovery).toContain("Settings");
+      expect(d.recovery).toMatch(/do not retry/i);
+      // userHint: plain-English user-facing summary is present.
+      expect(d.userHint).toBeTruthy();
+    }
+  });
 });
 
 describe("spend-cap pack — per-model daily limit", () => {

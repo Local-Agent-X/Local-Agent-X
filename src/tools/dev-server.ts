@@ -24,11 +24,12 @@
  * Records live under ~/.lax/dev-servers/<appId>.json — server-side only, never
  * under workspace/apps/<id>/ where the static route would serve them to apps.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, appendFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { workspacePath } from "../config.js";
 import { SESSIONS, startSession, killSession, pidsOnPort } from "./process-session.js";
+import { waitForBackend, type BackendOutcome } from "./dev-server-readiness.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tools.dev-server");
@@ -77,6 +78,10 @@ export interface DevServerDeps {
   /** Is something actually listening on the dev port? Verified alongside the
    *  session flag so a stale session (process gone) is healed by a restart. */
   portBound?: (port: number) => boolean;
+  /** Fire-and-forget check that a lazily-restarted dev server actually bound its
+   *  port; on a crash/never-bind it persists the child's captured output. The
+   *  real impl polls live SESSIONS, so tests inject a no-op. */
+  verifyStartup?: (appId: string, sessionId: string, port: number) => void;
 }
 
 function deps(d: DevServerDeps): Required<DevServerDeps> {
@@ -85,11 +90,60 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
     isAlive: d.isAlive ?? ((sid) => { const s = SESSIONS.get(sid); return !!s && !s.exitedAt; }),
     kill: d.kill ?? ((sid) => { const s = SESSIONS.get(sid); if (s) killSession(s); }),
     portBound: d.portBound ?? ((port) => pidsOnPort(port).length > 0),
+    verifyStartup: d.verifyStartup ?? ((appId, sessionId, port) => { void defaultVerifyStartup(appId, sessionId, port); }),
   };
 }
 
 // The port-readiness check + the app_serve_* tools that use it live in
 // dev-server-tools.ts (kept this file under the LOC cap).
+
+/** How long the lazy-restart verifier waits for a re-spawned dev server to bind.
+ *  Matches the frontend serve timeout so a slow (but fine) cold `npm install`
+ *  isn't falsely reported; a crash returns immediately regardless. */
+const LAZY_RESTART_VERIFY_MS = 60_000;
+
+/** Where a failed lazy restart's diagnostic (the child's captured stderr) is
+ *  persisted. Server-side only, NOT under workspace/apps/<id>/. */
+function devServerLogPath(appId: string): string {
+  return join(getLaxDir(), "logs", "dev-servers", `${appId}.log`);
+}
+
+/** Turn a non-listening readiness outcome into a human diagnostic. Pure, so the
+ *  format is unit-testable without spawning a real process. */
+export function formatStartupFailure(appId: string, sessionId: string, port: number, outcome: BackendOutcome): string {
+  const head = `lazy restart of dev server "${appId}" (session ${sessionId}) FAILED`;
+  const body =
+    outcome.status === "crashed"
+      ? `process exited (code ${outcome.code}) without binding port ${port}`
+      : `process did NOT bind port ${port} within ${LAZY_RESTART_VERIFY_MS / 1000}s`;
+  const out = outcome.status === "listening" ? "" : outcome.output;
+  return `${head}: ${body}` + (out ? `\n--- output (tail) ---\n${out}` : "\n(no output captured)");
+}
+
+/** Persist a startup-failure diagnostic to server.log (via the logger) AND to a
+ *  per-app file, so the cause survives the in-memory session eviction that
+ *  previously erased it. Best-effort — never throws into the caller. */
+export function persistDevServerStartupFailure(appId: string, diagnostic: string): void {
+  logger.warn(`[dev-server] ${diagnostic}`);
+  try {
+    const p = devServerLogPath(appId);
+    mkdirSync(dirname(p), { recursive: true });
+    appendFileSync(p, `\n===== ${new Date().toISOString()} =====\n${diagnostic}\n`);
+  } catch { /* logging must never break the request path */ }
+}
+
+/** Real verifyStartup: poll the re-spawned session; on a crash or never-bind,
+ *  persist the diagnostic. Non-blocking (the caller voids the promise) so the
+ *  request that triggered the lazy restart isn't stalled — the proxy has its own
+ *  cold-start retry; this exists purely to CAPTURE why a restart didn't bind. */
+async function defaultVerifyStartup(appId: string, sessionId: string, port: number): Promise<void> {
+  const outcome = await waitForBackend(sessionId, port, LAZY_RESTART_VERIFY_MS);
+  if (outcome.status === "listening") {
+    logger.info(`[dev-server] ${appId}: restart confirmed listening on port ${port}`);
+    return;
+  }
+  persistDevServerStartupFailure(appId, formatStartupFailure(appId, sessionId, port, outcome));
+}
 
 /** Idle auto-stop: a backend untouched for this long is killed (its record is
  *  kept, so opening the app — or any connector request — wakes it again). */
@@ -209,6 +263,12 @@ export function ensureDevServerRunning(appId: string, d: DevServerDeps = {}): En
   const updated: DevServerRecord = { ...rec, sessionId: started.session.sessionId };
   writeRecord(updated);
   logger.info(`[dev-server] ${appId}: (re)started session ${started.session.sessionId} on port ${rec.port}`);
+  // Unlike the agent-facing app_serve_* tools (which block on waitForBackend),
+  // this lazy restart runs on the /apps request hot path, so it can't block. Fire
+  // a non-blocking verify whose ONLY job is to capture — to server.log + a
+  // per-app file — why a restart didn't bind, instead of the child's stderr being
+  // lost to session eviction (the silent-502 bug). See dev-server-readiness.ts.
+  dd.verifyStartup(appId, updated.sessionId!, rec.port);
   return { status: "started", record: updated };
 }
 

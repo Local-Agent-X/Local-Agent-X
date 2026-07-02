@@ -10,6 +10,8 @@ import {
   stopAllDevServers,
   readDevServerRecord,
   devConnectorName,
+  formatStartupFailure,
+  persistDevServerStartupFailure,
   type DevServerDeps,
 } from "./dev-server.js";
 import { appServeBackendTool } from "./dev-server-tools.js";
@@ -19,17 +21,26 @@ let tmpLax: string;
 let prevDataDir: string | undefined;
 
 // Fake process control so no real dev server is spawned. sessionId → alive.
-function fakeDeps(): { deps: Required<DevServerDeps>; sessions: Map<string, boolean>; starts: string[] } {
+// verifyStartup is stubbed to record its calls (the real one polls live SESSIONS
+// and writes log files — neither wanted in a unit test).
+function fakeDeps(): {
+  deps: Required<DevServerDeps>;
+  sessions: Map<string, boolean>;
+  starts: string[];
+  verifyCalls: { appId: string; sessionId: string; port: number }[];
+} {
   const sessions = new Map<string, boolean>();
   const starts: string[] = [];
+  const verifyCalls: { appId: string; sessionId: string; port: number }[] = [];
   let n = 0;
   const deps: Required<DevServerDeps> = {
     start: (command) => { const id = `s${++n}`; sessions.set(id, true); starts.push(command); return { session: { sessionId: id } }; },
     isAlive: (sid) => sessions.get(sid) === true,
     kill: (sid) => { sessions.set(sid, false); },
     portBound: () => true,   // default: an alive session is also bound to its port
+    verifyStartup: (appId, sessionId, port) => { verifyCalls.push({ appId, sessionId, port }); },
   };
-  return { deps, sessions, starts };
+  return { deps, sessions, starts, verifyCalls };
 }
 
 beforeEach(() => {
@@ -134,6 +145,60 @@ describe("ensureDevServerRunning — lazy start-on-access", () => {
     const res = ensureDevServerRunning("stale", portDead);
     expect(res.status).toBe("started");   // restarted, NOT a no-op 'running'
     expect(starts).toHaveLength(2);       // original register + the heal restart
+  });
+
+  // Regression for the silent-502 bug: the idle-sweep kills a dev server, the
+  // phone/desktop reopens the app → ensureDevServerRunning lazily restarts it, but
+  // NOTHING verified the restart bound its port, so a child that died left the
+  // proxy to spin 12s → ECONNREFUSED with the cause lost to session eviction.
+  it("fires verifyStartup on a lazy restart (so a never-bound restart is captured)", () => {
+    const { deps, sessions, verifyCalls } = fakeDeps();
+    const reg = registerDevServer({ appId: "notes", command: "npm run dev", port: 5180, cwd: "/tmp/x" }, deps);
+    const oldId = reg.ok ? reg.sessionId : "";
+    sessions.set(oldId, false);                           // server restart wiped the process
+
+    verifyCalls.length = 0;                               // ignore the register-time call
+    const res = ensureDevServerRunning("notes", deps);
+    expect(res.status).toBe("started");
+    expect(verifyCalls).toHaveLength(1);
+    expect(verifyCalls[0]).toMatchObject({ appId: "notes", port: 5180 });
+    if (res.status === "started") expect(verifyCalls[0].sessionId).toBe(res.record.sessionId);
+  });
+
+  it("does NOT fire verifyStartup when the server is already healthy (no restart)", () => {
+    const { deps, verifyCalls } = fakeDeps();
+    registerDevServer({ appId: "notes", command: "npm run dev", port: 5180, cwd: "/tmp/x" }, deps);
+    verifyCalls.length = 0;
+    const res = ensureDevServerRunning("notes", deps);   // alive + port bound
+    expect(res.status).toBe("running");
+    expect(verifyCalls).toHaveLength(0);
+  });
+});
+
+describe("startup-failure capture (survives session eviction)", () => {
+  it("formatStartupFailure surfaces the exit code + captured stderr tail", () => {
+    const crashed = formatStartupFailure("notes", "s1", 5180, {
+      status: "crashed", code: 127, output: "sh: vite: command not found",
+    });
+    expect(crashed).toMatch(/exited \(code 127\)/);
+    expect(crashed).toMatch(/vite: command not found/);
+
+    const timedOut = formatStartupFailure("notes", "s1", 5180, { status: "timeout", output: "" });
+    expect(timedOut).toMatch(/did NOT bind port 5180/);
+    expect(timedOut).toMatch(/no output captured/);
+  });
+
+  it("persistDevServerStartupFailure appends the diagnostic to a per-app log file", () => {
+    persistDevServerStartupFailure("notes", "lazy restart FAILED: process exited (code 1)");
+    const logFile = join(tmpLax, "logs", "dev-servers", "notes.log");
+    expect(existsSync(logFile)).toBe(true);
+    expect(readFileSync(logFile, "utf8")).toMatch(/process exited \(code 1\)/);
+
+    // Appends (doesn't clobber) so repeated restart failures accumulate.
+    persistDevServerStartupFailure("notes", "second failure");
+    const body = readFileSync(logFile, "utf8");
+    expect(body).toMatch(/process exited \(code 1\)/);
+    expect(body).toMatch(/second failure/);
   });
 });
 

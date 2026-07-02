@@ -10,8 +10,8 @@
  */
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { workspacePath } from "../config.js";
-import { SESSIONS, sleep, tailLines, pidsOnPort } from "./process-session.js";
 import { registerDevServer, stopDevServer } from "./dev-server.js";
+import { waitForBackend } from "./dev-server-readiness.js";
 import { detectFramework, type DetectedFramework } from "./framework-detect.js";
 
 /** How long to wait for a freshly-started backend to bind its port (or crash). */
@@ -21,27 +21,6 @@ const BACKEND_READY_TIMEOUT_MS = 20_000;
 // too-short window falsely reports "didn't start" and pushes the model toward a
 // needless production build to "verify".
 const FRONTEND_READY_TIMEOUT_MS = 60_000;
-const BACKEND_POLL_MS = 400;
-
-type BackendOutcome =
-  | { status: "listening" }
-  | { status: "crashed"; code: number | null; output: string }
-  | { status: "timeout" };
-
-/** Poll until the server binds its port, the process exits, or we time out —
- *  so app_serve_* never reports a dead/never-bound server as running. */
-async function waitForBackend(sessionId: string, port: number, timeoutMs: number): Promise<BackendOutcome> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await sleep(BACKEND_POLL_MS);
-    const s = SESSIONS.get(sessionId);
-    if (s && s.exitedAt) {
-      return { status: "crashed", code: s.exitCode, output: tailLines(s.stderr || s.stdout || "", 20).trim() };
-    }
-    if (pidsOnPort(port).length > 0) return { status: "listening" };
-  }
-  return { status: "timeout" };
-}
 
 export const appServeBackendTool: ToolDefinition = {
   name: "app_serve_backend",
@@ -82,13 +61,11 @@ export const appServeBackendTool: ToolDefinition = {
       };
     }
     if (outcome.status === "timeout") {
-      const s = SESSIONS.get(res.sessionId);
-      const out = s ? tailLines(s.stderr || s.stdout || "", 20).trim() : "";
       return {
         content:
           `Backend for "${appId}" did NOT start listening on port ${port} within ${BACKEND_READY_TIMEOUT_MS / 1000}s — do not treat it as ready.\n` +
           `Likely a slow or failing install (an OLD native module like better-sqlite3 compiling from source), or it binds a different port. Check process_status(session_id="${res.sessionId}"); prefer node:sqlite (no build), or "better-sqlite3": "latest" (prebuilt).\n` +
-          (out ? `Output:\n${out}` : ""),
+          (outcome.output ? `Output:\n${outcome.output}` : ""),
         isError: true,
       };
     }
@@ -181,13 +158,11 @@ export const appServeFrontendTool: ToolDefinition = {
       };
     }
     if (outcome.status === "timeout") {
-      const s = SESSIONS.get(res.sessionId);
-      const out = s ? tailLines(s.stderr || s.stdout || "", 20).trim() : "";
       return {
         content:
           `Frontend dev server for "${appId}" did NOT start listening on port ${port} within ${FRONTEND_READY_TIMEOUT_MS / 1000}s — do not treat it as ready.\n` +
           `Likely a slow/failing install or a different port. Check process_status(session_id="${res.sessionId}").\n` +
-          (out ? `Output:\n${out}` : ""),
+          (outcome.output ? `Output:\n${outcome.output}` : ""),
         isError: true,
       };
     }

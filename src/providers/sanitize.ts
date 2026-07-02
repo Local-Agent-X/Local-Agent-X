@@ -183,12 +183,11 @@ export function truncateHistory(messages: ChatCompletionMessageParam[], maxKeep:
   if (cutIdx > 0 && body[cutIdx - 1]?.role === "assistant") {
     const prev = body[cutIdx - 1] as unknown as Record<string, unknown>;
     if (prev.tool_calls && Array.isArray(prev.tool_calls)) {
-      // The assistant before the cut has tool_calls — include it and its results
+      // The assistant before the cut has tool_calls — include it and its
+      // trailing tool_result rows. Backing cutIdx onto the assistant is
+      // sufficient: recent = body.slice(cutIdx) captures the assistant AND
+      // every following tool_result, so no explicit walk is needed.
       cutIdx = cutIdx - 1;
-      // Also include all following tool result messages
-      while (cutIdx + 1 < body.length && body[cutIdx + 1]?.role === "tool") {
-        // These will be included in 'recent' anyway since cutIdx moved back
-      }
     }
   }
   // Also skip forward past any orphaned tool results at the start of recent

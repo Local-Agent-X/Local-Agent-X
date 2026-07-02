@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/security/` | 62 | 24 | XL |  |
 | `src/ops/` | 55 | 21 | L |  |
-| `src/tools/` | 40 | 127 | XL |  |
+| `src/tools/` | 41 | 127 | XL |  |
 | `src/memory/` | 38 | 106 | XL |  |
 | `src/providers/` | 35 | 16 | L |  |
 | `src/canonical-loop/` | 29 | 109 | XL |  |
@@ -144,7 +144,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/language-mirror.ts` | M |
 | `src/lax-data-dir.ts` | S |
 | `src/lifecycle.ts` | S |
-| `src/llm-dispatch.ts` | S |
+| `src/llm-dispatch.ts` | M |
 | `src/logger.ts` | S |
 | `src/mcp-bridge.ts` | S |
 | `src/memory-tiers.ts` | M |

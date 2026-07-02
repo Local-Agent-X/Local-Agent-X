@@ -1334,3 +1334,63 @@ describe("bash obeys the file-access mode (shell path guard)", () => {
     expect(bash(sec, "echo $'\\162\\155'").allowed).toBe(false);
   });
 });
+
+describe("delegated worktree gate — canonical classification + work-root provisioning", () => {
+  const delegated = (sec: SecurityLayer, toolName: string, args: Record<string, unknown>, sessionId: string) =>
+    sec.evaluate({ toolName, args, sessionId, callContext: "delegated" });
+
+  // Regression (2026-07-01 auto-build chunk 1). Three failure modes of one
+  // gate: (1) `startsWith(root + "/")` never matched Windows backslash
+  // paths, so repo source classified as "user content" and the gate was a
+  // no-op for delegated write/edit on Windows; (2) a junction/symlink
+  // spelling of the workspace flipped the classification; (3) sanctioned
+  // project workers had no way to satisfy the gate for bash at all.
+
+  it("denies delegated write to repo source without isolation (sep-safe)", () => {
+    const sec = makeLayer();
+    const d = delegated(sec, "write", { path: join(WORKSPACE_ROOT, "src", "index.ts"), content: "x" }, "agent-src");
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toContain("worktree isolation");
+  });
+
+  it("allows delegated write to workspace content without isolation", () => {
+    const sec = makeLayer();
+    const d = delegated(sec, "write", { path: join(WORKSPACE, "apps", "proj", "index.html"), content: "x" }, "agent-ws");
+    expect(d.allowed).toBe(true);
+  });
+
+  it("classifies a symlink/junction spelling of the workspace consistently", () => {
+    // Configured workspace is a LINK; the write path uses the TARGET
+    // spelling. Same physical dir — must classify as user content.
+    const realWs = join(WORKSPACE_ROOT, "actual-ws");
+    mkdirSync(realWs, { recursive: true });
+    const linkWs = join(WORKSPACE_ROOT, "ws-link");
+    try {
+      symlinkSync(realWs, linkWs, "junction");
+    } catch {
+      return; // symlink creation unavailable in this sandbox — nothing to assert
+    }
+    const sec = new SecurityLayer(linkWs, "common");
+    const d = delegated(sec, "write", { path: join(realWs, "apps", "p", "a.txt"), content: "x" }, "agent-j");
+    expect(d.allowed).toBe(true);
+  });
+
+  it("delegated bash is denied without a registered work root", () => {
+    const sec = makeLayer();
+    const d = delegated(sec, "bash", { command: "npm test" }, "agent-nb");
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toContain("worktree isolation");
+  });
+
+  it("delegated bash is allowed once the run's work root is registered", () => {
+    const sec = makeLayer();
+    const root = join(WORKSPACE, "apps", "proj");
+    sec.addAllowedPath(root, "agent-wb");
+    try {
+      const d = delegated(sec, "bash", { command: "npm test" }, "agent-wb");
+      expect(d.allowed).toBe(true);
+    } finally {
+      sec.removeAllowedPath(root, "agent-wb");
+    }
+  });
+});

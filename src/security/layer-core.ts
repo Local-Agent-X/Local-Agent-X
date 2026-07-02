@@ -1,4 +1,4 @@
-import { resolve, relative, join } from "node:path";
+import { resolve, relative, join, isAbsolute } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import type { SecurityDecision } from "../types.js";
 import { getLaxDir } from "../lax-data-dir.js";
@@ -10,7 +10,7 @@ import {
   type InlineEvalPolicy,
   type ToolCallContext,
 } from "./types.js";
-import { evaluateFileAccess } from "./file-access.js";
+import { evaluateFileAccess, realpathDeep } from "./file-access.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
 import { kernelClassForTool } from "../ari-kernel/tool-class-map.js";
@@ -101,12 +101,22 @@ export class SecurityLayer {
    */
   private isUserContentPath(targetPath: string): boolean {
     if (!targetPath) return false;
-    const abs = resolve(targetPath);
+    // Canonicalize BOTH sides before comparing. Two live failure modes:
+    // (1) `startsWith(root + "/")` never matched Windows backslash paths,
+    // so every repo source file classified as "user content" and delegated
+    // write/edit bypassed the worktree gate; (2) a junction/symlink gives
+    // one physical dir two spellings (e.g. <repo>/workspace → ~/Documents
+    // junction) and classification must not depend on the spelling used.
+    const abs = realpathDeep(resolve(targetPath));
+    const isUnder = (root: string, p: string) => {
+      const rel = relative(root, p);
+      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    };
     // Inside workspace/ → user content
-    if (abs === this.workspace || abs.startsWith(this.workspace + "/")) return true;
+    if (isUnder(realpathDeep(this.workspace), abs)) return true;
     // Outside the repo root entirely → user content (Documents, Desktop, /tmp, etc.)
-    const repoRoot = resolve(this.workspace, "..");
-    if (abs !== repoRoot && !abs.startsWith(repoRoot + "/")) return true;
+    const repoRoot = realpathDeep(resolve(this.workspace, ".."));
+    if (!isUnder(repoRoot, abs)) return true;
     // Inside repo but not workspace/ → source code (src/, packages/, scripts/, ...)
     return false;
   }

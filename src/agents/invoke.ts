@@ -138,6 +138,7 @@ export function invokeDefinition(
       sessionId: opts.sessionId,
       templateId,
       modelOverride,
+      workRoot: opts.workRoot,
     },
     abortController.signal,
   );

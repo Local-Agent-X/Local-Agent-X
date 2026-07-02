@@ -172,6 +172,10 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
 
   const ref = invokeDefinition(def, taskWithCwd, {
     parentSessionId: opts.parentSessionId,
+    // Register the project dir as this run's sanctioned mutation root —
+    // without it the delegated-bash/write gate blocks the worker (live
+    // failure 2026-07-01: chunk 1 denied "requires worktree isolation").
+    workRoot: opts.projectDir,
   });
   const agentId = ref.runId;
 

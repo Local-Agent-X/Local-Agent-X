@@ -95,6 +95,7 @@ export function registerHandlerEvents(deps: {
 
     const agentSession: Session = { id: `agent-${agentId}`, title: `Agent: ${role}`, messages: [], createdAt: Date.now(), updatedAt: Date.now() };
     let worktreeInfo: { path: string; branch: string } | null = null;
+    let workRootRegistered = false;
     try {
       const { resolveProvider } = await import("../agent-request/index.js");
       // Thread the resolved per-agent model pin into the provider chain.
@@ -148,7 +149,17 @@ export function registerHandlerEvents(deps: {
         worktreeBlock = `\n\n--- WORKSPACE ---\nWrite files (screenshots, exports, notes) to ${resolve(config.workspace)}/. You have bash/write/edit for non-code tasks. Do NOT edit the repo's source code.\n--- END WORKSPACE ---\n`;
       }
 
-      logger.info(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : " (no worktree)"}`);
+      // Project work-root provisioning: callers whose workers mutate a
+      // project that is NOT the LAX repo (auto-build chunk workers) pass
+      // req.workRoot. Registering it gives the run the same standing a
+      // worktree grants — the delegated-bash gate keys on session
+      // allowed-paths — scoped to this run and removed in the finally.
+      if (!worktreeInfo && req.workRoot) {
+        security.addAllowedPath(req.workRoot, `agent-${agentId}`);
+        workRootRegistered = true;
+      }
+
+      logger.info(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : req.workRoot ? ` (work root: ${req.workRoot})` : " (no worktree)"}`);
       const platformLine = process.platform === "win32"
         ? "Windows. bash runs PowerShell — use PowerShell syntax (Get-ChildItem, Select-Object) and Windows paths."
         : "Linux/macOS. bash runs /bin/bash.";
@@ -246,6 +257,7 @@ export function registerHandlerEvents(deps: {
       const msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e);
       return { result: p ? `[${msg}]\n\n${p}` : msg, success: false };
     } finally {
+      if (workRootRegistered && req.workRoot) security.removeAllowedPath(req.workRoot, `agent-${agentId}`);
       // Tear down any inherited per-session profile override (set at spawn in
       // invoke.ts). Only for the auto-minted per-run session — an explicit
       // req.sessionId is a shared/borrowed session whose lifecycle the caller owns.

@@ -113,6 +113,26 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     expect(r2!.tokens).toBe(7);
   });
 
+  // Regression (2026-07-01 auto-build chunk 1): the chunk worker's project
+  // dir must reach the driver so handler-events can register it with the
+  // security layer — without it, delegated bash/write is denied
+  // ("requires worktree isolation") and the build loop can't run.
+  it("threads workRoot through to the driver request", async () => {
+    let received: AgentRunDriverRequest | null = null;
+    registerAgentRunDriver(async (req) => {
+      received = req;
+      return { result: "ok", success: true };
+    });
+    const finalResults: Array<{ agentId: string }> = [];
+    EventBus.on("handler:agent-result", (d) => { finalResults.push(d as typeof finalResults[number]); });
+
+    const ref = invokeDefinition(TEST_DEF, "implement chunk 1", { workRoot: "/tmp/proj-root" });
+    await waitFor(() => finalResults.some(r => r.agentId === ref.runId), 1_000);
+
+    expect(received).not.toBeNull();
+    expect(received!.workRoot).toBe("/tmp/proj-root");
+  });
+
   it("emits handler:agent-spawn synchronously with the resolved agentId", async () => {
     registerAgentRunDriver(async () => ({ result: "", success: true }));
     const spawns: Array<{ agentId: string; name: string; role: string; templateId: string | null }> = [];

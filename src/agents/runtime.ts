@@ -44,6 +44,12 @@ export interface AgentRunDriverRequest {
    *  roster, template default). When undefined, the driver falls back
    *  to the global default via resolveProvider's normal chain. */
   modelOverride?: AgentModelPin;
+  /** Absolute dir this run may mutate — the driver registers it with the
+   *  security layer for the run's session (and removes it after), giving
+   *  delegated bash/write/edit the same standing a worktree grants.
+   *  Set by callers whose workers operate on a project that is NOT the
+   *  LAX repo (auto-build chunk workers). */
+  workRoot?: string;
 }
 
 /** What the driver returns when the canonical op reaches a terminal state. */

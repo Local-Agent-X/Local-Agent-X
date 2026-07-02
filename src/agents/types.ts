@@ -128,6 +128,12 @@ export interface InvokeOpts {
    *  highest-priority override, used by delegation tools that want to
    *  pick a model explicitly for a single invocation. */
   modelOverride?: AgentModelPin;
+  /** Absolute dir this run is sanctioned to mutate (e.g. the auto-build
+   *  loop's project dir). The driver registers it with the security layer
+   *  for the run's session — the same standing a worktree grants — and
+   *  removes it when the run ends. Ignored when the definition provisions
+   *  a real worktree. */
+  workRoot?: string;
 }
 
 /** Handle returned from invokeAgent. Callers poll run status via

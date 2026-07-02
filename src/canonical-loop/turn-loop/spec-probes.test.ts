@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   classifyProbeRun,
+  extractApiSurface,
   runSpecProbeGate,
   getSpecProbeRetries,
   clearSpecProbeStateForOp,
@@ -56,6 +60,25 @@ describe("classifyProbeRun — the anti-false-nag validity filter", () => {
     expect(classifyProbeRun("timeout", "Command timed out after 30s.")).toBe("invalid");
     expect(classifyProbeRun("blocked", "sandbox denied")).toBe("invalid");
     expect(classifyProbeRun("error", "Aborted")).toBe("invalid");
+  });
+});
+
+describe("extractApiSurface — signatures only, logic stays hidden", () => {
+  it("keeps def/class/export lines, drops bodies, skips unreadable files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sig-"));
+    try {
+      writeFileSync(join(dir, "wordy.py"), "import re\n\ndef answer(question):\n    total = 5\n    return total\n\nclass Parser:\n    def parse(self):\n        pass\n");
+      writeFileSync(join(dir, "t.ts"), "const secret = 42;\nexport function transpose(input: string): string {\n  return input;\n}\n");
+      const out = extractApiSurface([join(dir, "wordy.py"), join(dir, "t.ts"), join(dir, "missing.py")]);
+      expect(out).toContain("def answer(question)");
+      expect(out).toContain("class Parser");
+      expect(out).toContain("export function transpose");
+      // bodies/values never leak — that's the blindness the design needs
+      expect(out).not.toContain("total = 5");
+      expect(out).not.toContain("secret");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

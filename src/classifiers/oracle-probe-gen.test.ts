@@ -71,6 +71,22 @@ describe("generateOracleProbe", () => {
     expect(String(mockClassify.mock.calls[0][0].systemPrompt)).toContain("Node.js");
   });
 
+  it("authors with the ACTIVE model tier and passes the API surface (the invalid-class fix)", async () => {
+    // Locks two measured lessons (2026-07-02): the background non-reasoning tier
+    // authored the probes (never the flagship the design named), and a bare file
+    // list made it invent APIs → ModuleNotFound/AttributeError invalids.
+    mockClassify.mockResolvedValue("assert True" as never);
+    await generateOracleProbe({
+      userRequest: "Implement wordy per the spec above with enough length.",
+      fileList: ["wordy.py"],
+      apiSurface: "# wordy.py\ndef answer(question)",
+    });
+    const call = mockClassify.mock.calls[0][0];
+    expect(call.modelTier).toBe("active");
+    expect(String(call.userPrompt)).toContain("def answer(question)");
+    expect(String(call.userPrompt)).toContain("EXACTLY these names");
+  });
+
   it("forbids guessed computed values and steers to invariants (the false-red class-fix)", async () => {
     // Locks the 2026-07-02 measured lesson: a blind author asserting a computed
     // output it had to solve for (two-bucket move count) false-reds correct code.

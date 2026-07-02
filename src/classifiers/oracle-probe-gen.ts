@@ -86,6 +86,12 @@ HARD RULES:
 export async function generateOracleProbe(input: {
   userRequest: string;
   fileList: readonly string[];
+  /** The solution's public API — its `def`/`class`/export signature lines
+   *  (bodies stripped). Task-mandated names, so handing them to the author
+   *  keeps it blind to the LOGIC while ending wrong-API guesses (the dominant
+   *  invalid class measured 2026-07-02: ModuleNotFound/AttributeError/TypeError
+   *  from names the author invented off a bare file list). */
+  apiSurface?: string;
   language?: ProbeLanguage;
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -96,17 +102,26 @@ export async function generateOracleProbe(input: {
   const files = input.fileList.length
     ? input.fileList.map((f) => `  - ${f}`).join("\n")
     : "  (none listed)";
+  const api = input.apiSurface?.trim()
+    ? `\n\nPUBLIC API SIGNATURES (call EXACTLY these names and arities — do not invent others):\n${input.apiSurface.trim()}`
+    : "";
 
   const script = await classifyWithLLM<string>({
     category: "oracle-probe",
     systemPrompt: SYSTEM_PROMPT(language),
-    userPrompt: `TASK SPECIFICATION:\n${spec}\n\nFILES IN THE WORKSPACE (names only — you may NOT see their contents):\n${files}\n\nWrite the acceptance probe now.`,
+    userPrompt: `TASK SPECIFICATION:\n${spec}\n\nFILES IN THE WORKSPACE (names only — you may NOT see their contents):\n${files}${api}\n\nWrite the acceptance probe now.`,
     parse: (raw) => parseProbe(raw),
     // Headroom so a probe is never truncated mid-assertion (a cut-off script is a
     // SyntaxError → discarded as invalid → the gate silently does nothing). The
-    // prompt already caps length to ~40 lines; this is the safety margin.
+    // prompt already caps length to ~40 lines; this is the safety margin, and it
+    // also drives classify-with-llm's server-side maxTokens for dispatch providers.
     maxResponseChars: 12_000,
-    timeoutMs: input.timeoutMs ?? 25_000,
+    // The author is the ACTIVE (reasoning) model — probe QUALITY is the point,
+    // and the gate only fires at a done-claim where latency is acceptable. The
+    // background tier authored measurably worse probes (2026-07-02: guessed
+    // computed values, wrong APIs). A reasoning tier needs the longer ceiling.
+    modelTier: "active",
+    timeoutMs: input.timeoutMs ?? 40_000,
     envDisableVar: "LAX_ORACLE_PROBES",
     signal: input.signal,
   });

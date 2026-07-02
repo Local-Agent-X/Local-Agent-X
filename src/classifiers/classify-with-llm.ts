@@ -66,6 +66,15 @@ export interface ClassifyOptions<T> {
   timeoutMs?: number;
   /** Override the model for this classifier. Default: the provider's background (non-reasoning) model. */
   model?: string;
+  /**
+   * Which tier authors the reply when `model` isn't given. "background"
+   * (default) = the provider's fast non-reasoning model — right for yes/no
+   * verdicts that must return in seconds. "active" = the user's currently
+   * selected chat model — for the rare classifier whose OUTPUT QUALITY is the
+   * point (e.g. authoring an acceptance probe), where a reasoning tier is
+   * wanted and the call site owns a generous timeout.
+   */
+  modelTier?: "background" | "active";
   /** Stop reading the stream after this many chars (cheap circuit-break for runaway responses). Default 800. */
   maxResponseChars?: number;
   /** Disable via env var — caller's choice of name (e.g. "LAX_CLAIM_CLASSIFIER"). Set to "0" to skip. */
@@ -100,14 +109,25 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
   const ctx = await resolveProviderContext();
   if (!ctx) return null;
   const { provider, apiKey } = ctx;
-  // Model precedence: explicit per-call override > the provider's background
-  // (non-reasoning) model > the user's configured model > the cheaper floor.
-  // backgroundModelFor stays on the user's provider (no cross-provider fan-out)
-  // while dropping the reasoning tier that stalls a yes/no verdict.
-  const model = opts.model || backgroundModelFor(provider as ProviderId, ctx.model || MODEL_FALLBACKS[provider] || "");
+  // Model precedence: explicit per-call override > tier request > the cheaper
+  // floor. "active" = the user's selected chat model (a probe author wants the
+  // reasoning tier; the call site owns a long timeout). Default "background"
+  // stays on the provider's fast non-reasoning model — a yes/no verdict must
+  // not burn a flagship reasoner's chain-of-thought (grok-4.3 timed out EVERY
+  // 8s classifier call, 2026-06-26). Never cross-provider either way.
+  const model =
+    opts.model ||
+    (opts.modelTier === "active" && ctx.model) ||
+    backgroundModelFor(provider as ProviderId, ctx.model || MODEL_FALLBACKS[provider] || "");
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxChars = opts.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS;
+  // Server-side output budget for the dispatch()-based providers, derived from
+  // the same knob as the reader-side cut. The old hard-coded 400 silently
+  // TRUNCATED any long-form classifier output (an acceptance probe) mid-line —
+  // the reader-side maxResponseChars can't help when the server already cut the
+  // stream. ~3 chars/token keeps headroom for code (denser than prose).
+  const maxTokens = Math.max(400, Math.ceil(maxChars / 3));
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
@@ -180,7 +200,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
           prompt: `${opts.systemPrompt}\n\n---\n\n${opts.userPrompt}`,
           provider: "openai",
           openaiModel: model,
-          temperature: 0, maxTokens: 400, timeoutMs,
+          temperature: 0, maxTokens, timeoutMs,
         });
       })();
     } else if (provider === "ollama" || provider === "local") {
@@ -190,7 +210,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
           prompt: `${opts.systemPrompt}\n\n---\n\n${opts.userPrompt}`,
           provider: "ollama",
           ollamaModel: model,
-          temperature: 0, maxTokens: 400, timeoutMs,
+          temperature: 0, maxTokens, timeoutMs,
         });
       })();
     } else if (provider === "xai") {
@@ -204,7 +224,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
           prompt: `${opts.systemPrompt}\n\n---\n\n${opts.userPrompt}`,
           provider: "xai",
           xaiModel: model,
-          temperature: 0, maxTokens: 400, timeoutMs,
+          temperature: 0, maxTokens, timeoutMs,
         });
       })();
     } else {

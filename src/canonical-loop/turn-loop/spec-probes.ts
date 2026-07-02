@@ -24,7 +24,7 @@
 // behavior) on any failure. Per-op retry counter caps the loop; cleared on op
 // terminal via clearSpecProbeStateForOp (state-machine.ts).
 
-import { writeFileSync, unlinkSync } from "node:fs";
+import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { opEditedSourcePaths } from "../middlewares/verify-gate.js";
@@ -151,6 +151,40 @@ function firstUserRequest(opId: string): string {
   return "";
 }
 
+// Declaration lines that define a module's public surface — Python defs/classes,
+// JS/TS exports. Loose on purpose: a missed line just leaves that symbol
+// unguessed (yesterday's behavior); a stray match adds one harmless line.
+const SIG_LINE_RE = /^\s*(?:async\s+)?(?:def|class)\s+\w|^\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let)\s*\w?/;
+const MAX_SIG_LINES = 30;
+
+/**
+ * The solution's public API — its signature lines only, bodies stripped. Fed to
+ * the probe author so it calls REAL names instead of guessing from a bare file
+ * list (the dominant invalid class measured 2026-07-02: ModuleNotFound /
+ * AttributeError / TypeError from invented APIs). Deliberate blindness
+ * trade-off: names and arities are task-mandated surface (a stub / reviewer
+ * would see them); the LOGIC — bodies, branches, values — stays hidden, which
+ * is what decorrelation actually needs. Cost: a probe can no longer catch "the
+ * model renamed the required API", a rarer miss than the invalids this ends.
+ */
+export function extractApiSurface(absPaths: readonly string[]): string {
+  const lines: string[] = [];
+  for (const p of absPaths.slice(0, 3)) {
+    let text: string;
+    try {
+      text = readFileSync(p, "utf-8");
+    } catch {
+      continue;
+    }
+    const sigs = text.split("\n").filter((l) => SIG_LINE_RE.test(l));
+    if (sigs.length === 0) continue;
+    lines.push(`# ${basename(p)}`);
+    for (const s of sigs) lines.push(s.replace(/\s*[{:]\s*$/, "").trimEnd());
+    if (lines.length >= MAX_SIG_LINES) break;
+  }
+  return lines.slice(0, MAX_SIG_LINES).join("\n");
+}
+
 /** Pick the directory to run the probe in: the one holding the most edited source
  *  files (ties → first edited). That's where the solution module lives, so a
  *  co-located probe can import it. */
@@ -233,9 +267,15 @@ export async function runSpecProbeGate(op: Op, opts: SpecProbeOptions = {}): Pro
     probe = await generate({
       userRequest: firstUserRequest(op.id),
       fileList: abs.map((p) => basename(p)),
+      apiSurface: extractApiSurface(abs),
       signal: opts.signal,
     });
     PROBE_CACHE.set(op.id, probe);
+    if (!probe) {
+      // Name the no-op: a silent null here made a whole benchmark arm
+      // undiagnosable (opus 2026-07-02 — zero gate traces, cause unknowable).
+      logger.info(`op=${op.id} probe generation returned null (classifier unavailable, abstained, or unparseable) — gate is a no-op for this op`);
+    }
   }
   if (!probe) return NO_RETRY;
 

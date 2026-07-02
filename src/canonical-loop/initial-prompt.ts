@@ -73,6 +73,32 @@ export function buildInitialUserContent(op: Op): { text: string } {
     for (const s of notRedo) lines.push(`- ${s}`);
   }
 
+  // Recent conversation from the parent session (packed by
+  // context-pack-builder.sliceRecentTurns). Without this the worker sees only
+  // the terse task string and has to guess at everything the user discussed
+  // earlier. The task/criteria above stay authoritative — this is background
+  // framing. Capped to the last few turns, each truncated, so a long thread
+  // can't dominate the initial prompt.
+  const recentTurns = ctx?.recentTurns ?? [];
+  if (recentTurns.length > 0) {
+    const rendered: string[] = [];
+    for (const turn of recentTurns.slice(-6)) {
+      const body = renderTurnText(turn.content);
+      if (!body) continue;
+      const clipped = body.length > 400 ? body.slice(0, 400).trimEnd() + "…" : body;
+      const who = turn.role === "assistant" ? "assistant"
+        : turn.role === "user" ? "user"
+        : String(turn.role);
+      rendered.push(`**${who}:** ${clipped}`);
+    }
+    if (rendered.length > 0) {
+      lines.push("");
+      lines.push("## Recent conversation");
+      lines.push("Context from the parent session (the task above is authoritative):");
+      for (const r of rendered) lines.push(r);
+    }
+  }
+
   // Pre-loaded referenced files — content is truncated to 3000 chars per
   // file, same cap legacy uses (ops/worker-entry.ts:427).
   const referencedFiles = ctx?.referencedFiles ?? [];
@@ -104,6 +130,30 @@ export function buildInitialUserContent(op: Op): { text: string } {
 
   const text = lines.length > 0 ? lines.join("\n") : (task || "(no task)");
   return { text };
+}
+
+/**
+ * Flatten a recent-turn's content into plain prose for the "Recent
+ * conversation" block. `ChatCompletionMessageParam.content` is
+ * `string | ContentPart[] | null`; we take a string as-is and join the text
+ * parts of an array, skipping non-text parts (images, tool payloads) which
+ * don't belong in a conversation recap. Whitespace is collapsed so a
+ * multi-line turn renders as one compact line. Anything else → "" and the
+ * caller drops the turn.
+ */
+function renderTurnText(content: unknown): string {
+  if (typeof content === "string") return content.replace(/\s+/g, " ").trim();
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const p of content) {
+      if (p && typeof p === "object" && (p as { type?: unknown }).type === "text") {
+        const t = (p as { text?: unknown }).text;
+        if (typeof t === "string") parts.push(t);
+      }
+    }
+    return parts.join(" ").replace(/\s+/g, " ").trim();
+  }
+  return "";
 }
 
 /**

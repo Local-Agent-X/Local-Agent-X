@@ -6,6 +6,7 @@
 
 import type { ToolDefinition } from "../../types.js";
 import { awaitCanonicalOp } from "../../canonical-loop/index.js";
+import { extractFinalAssistantText } from "../../canonical-loop/session-bridge-extractors.js";
 
 export const opWaitTool: ToolDefinition = {
   name: "op_wait",
@@ -35,11 +36,15 @@ export const opWaitTool: ToolDefinition = {
       };
     }
 
+    // The worker's actual final message — what the caller asked op_wait to
+    // hold the turn open FOR. result.finalSummary is a synthesized status line
+    // ("op <id> completed") with no content; prefer the real assistant text.
+    const finalText = extractFinalAssistantText(opId);
     const summary =
       `op ${opId} ${result.status} in ${Math.round(wallMs / 1000)}s` +
       (result.error ? `\n  error: ${result.error.message}` : "") +
       (result.filesChanged.length > 0 ? `\n  files: ${result.filesChanged.slice(0, 5).join(", ")}${result.filesChanged.length > 5 ? "..." : ""}` : "") +
-      `\n\n${result.finalSummary}`;
+      `\n\n${finalText || result.finalSummary}`;
 
     return { content: summary, isError: result.status !== "completed" };
   },

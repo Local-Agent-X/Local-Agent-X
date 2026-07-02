@@ -10,6 +10,7 @@ import { readCheckpoint } from "../checkpoint.js";
 import { readEvents } from "../event-log.js";
 import { listOps, readOp } from "../op-store.js";
 import { listOpsForSession } from "../session-bridge.js";
+import { extractFinalAssistantText } from "../../canonical-loop/session-bridge-extractors.js";
 import {
   POLL_LOOP_MAX,
   POLL_LOOP_WINDOW_MS,
@@ -106,13 +107,24 @@ export const opStatusTool: ToolDefinition = {
       (turnLines.length > 0 ? `\nrecent turns (${turns.length} total):\n${turnLines.join("\n")}\n` : "") +
       (eventLines.length > 0 ? `\nrecent events (${events.length}):\n${eventLines.join("\n")}` : "");
 
+    // At terminal state, surface the worker's actual final message. The
+    // turn/event narrative above says WHAT it did each turn (tool names); the
+    // final assistant text is the RESULT the parent asked the op for — without
+    // it, op_status on a finished op never returns the answer.
+    const canonicalState = op.canonical?.state;
+    const isTerminal =
+      op.status === "completed" || op.status === "failed" || op.status === "cancelled" ||
+      canonicalState === "succeeded" || canonicalState === "failed" || canonicalState === "cancelled";
+    const finalText = isTerminal ? extractFinalAssistantText(opId, 1500) : "";
+
     return {
       content:
         `op ${op.id} [${op.status}]  type=${op.type}  attempts=${op.attemptCount}\n` +
         `task: ${op.task}\n` +
         (checkpoint ? `checkpoint: ${checkpoint.lastSafeBoundary.label} @ ${checkpoint.lastSafeBoundary.timestamp}\n` : "") +
         (op.lastFailureReason ? `last failure: ${op.lastFailureReason}\n` : "") +
-        (activity || "\n(no turn activity recorded yet)"),
+        (activity || "\n(no turn activity recorded yet)") +
+        (finalText ? `\n\nfinal result:\n${finalText}` : ""),
     };
   },
 };

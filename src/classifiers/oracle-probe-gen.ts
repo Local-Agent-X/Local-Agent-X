@@ -64,14 +64,14 @@ CRITICAL — you did NOT solve this task and you cannot run the code, so assert 
 
   2. STRUCTURAL INVARIANTS — properties of the output that must hold WITHOUT computing the answer: return type/shape (returns a 3-tuple, a list, a string), length relationships (output length == input length; a transpose swaps row/column counts), membership (the result uses only characters/items from the input), ordering (the result is sorted), idempotence or round-trips (decode(encode(x)) == x), and any defining property the spec names — e.g. "the goal bucket ends holding exactly N liters" → assert THAT field equals N, WITHOUT asserting the move count you would have had to solve for.
 
-FORBIDDEN: never assert a specific output VALUE you had to COMPUTE or SIMULATE yourself — a move/step count, a best-hand ranking, the numeric result of running a program, a search or optimization answer. If the spec does not literally print the expected value, you do not know it: assert an invariant about it instead, or omit the check. Guessing a computed value red-flags CORRECT code, which is worse than no check at all.
+FORBIDDEN: never assert a specific output VALUE you had to COMPUTE or SIMULATE yourself — a move/step count, a best-hand ranking, the numeric result of running a program, a search or optimization answer. If the spec does not literally print the expected value, you do not know it: assert an invariant about it instead. Guessing a computed value red-flags CORRECT code, which is worse than no check at all. This rule forbids ONE KIND of assertion — it is never a reason to skip the probe: search/optimization tasks still get their shape, error-path, and literal-example checks.
 
 HARD RULES:
 - Write the assertions at MODULE TOP LEVEL so they ALWAYS run when the file is executed. Do NOT wrap them in a function, class, or unittest/pytest framework — a test that is defined but never called exits 0 and proves nothing.
 - Above each assertion put a SHORT comment (a few words) naming the spec rule or invariant it checks — not the full sentence. Do NOT reproduce the spec as a header/preamble block.
 - The script must exit non-zero on a failed assertion and zero when all pass. Keep it self-contained and dependency-free (standard library only).
 - Keep the ENTIRE script SHORT: at most ~40 lines. A few sharp, spec-grounded assertions beat many.
-- If the spec gives no literal example and no checkable invariant, output EXACTLY the single word: NONE. Abstaining is correct and expected for search/optimization tasks — a wrong check is worse than none.
+- NONE is a LAST RESORT: nearly every spec supports at least a return-shape, error-path, or literal-example check, and API signatures alone justify shape/arity checks. Output the single word NONE only when you truly cannot ground even one such check — never merely because the task is a search/optimization problem.
 - Output ONLY the script (or NONE). No prose, no markdown fences, no explanation.`;
 
 /**

@@ -96,6 +96,10 @@ describe("generateOracleProbe", () => {
     expect(sys).toMatch(/FORBIDDEN/);
     expect(sys).toMatch(/INVARIANT/i);
     expect(sys).toMatch(/comput/i);
-    expect(sys).toMatch(/\bNONE\b/); // abstaining is explicitly correct for search tasks
+    // Abstention must stay a LAST RESORT: framed as "correct and expected for
+    // search tasks", the reasoning tier obediently replied NONE on every
+    // search-shaped exercise (2026-07-02) and the gate went dark.
+    expect(sys).toMatch(/LAST RESORT/);
+    expect(sys).toMatch(/never merely because/);
   });
 });

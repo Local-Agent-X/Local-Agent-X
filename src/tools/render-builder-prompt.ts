@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { AppTier } from "./app-tier.js";
+import { selectDesignBrief, DESIGN_ANTI_PATTERNS } from "./design-brief.js";
 
 const WEBSITE_NOUN_IN_PROMPT_RE =
   /\b(website|web ?site|landing page|landing|home ?page|marketing ?page|micro ?site|one[- ]?pager|business site|biz site|menu page|portfolio|splash page|brochure site)\b/i;
@@ -137,6 +138,14 @@ export function renderPerBuildContext(input: BuilderPromptInput): string {
   const { appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles } = input;
   const isWebsite = looksLikeWebsiteRequest(prompt);
   const tierBlock = renderTierBlock(input.tier ?? "quick-html", appName, appDir);
+  // Visual design guidance, per build. Lives here, in the per-build context, so
+  // it reaches EVERY build path without touching the persisted persona
+  // (renderPersonaPrompt) and its drift-refresh. The archetype brief keys off
+  // the app DESCRIPTION, which only a CREATE carries; an UPDATE's prompt is a
+  // change instruction ("add a payments page"), so classifying it would inject a
+  // mismatched archetype — the established design in the existing files governs
+  // the look on updates. Updates still get the universal anti-patterns.
+  const design = isUpdate ? null : selectDesignBrief(prompt);
 
   const context = contextFiles.length > 0
     ? `\n\nExisting app context:\n${contextFiles.join("\n\n")}`
@@ -179,6 +188,9 @@ ${starterLine}- Create PROJECT.md with app description and status
 ${NATIVE_BUILD_RULE_LINES.join("\n")}${tierBlock}
 - The app will be served at ${appUrl}
 - Do NOT ask questions — just build it based on the instructions
+
+${design ? `${design.brief}\n\n` : ""}${DESIGN_ANTI_PATTERNS}
+
 - After writing files, output: APP_READY: ${appUrl}`;
 }
 

@@ -70,4 +70,16 @@ describe("generateOracleProbe", () => {
     await generateOracleProbe({ userRequest: "Implement the transpose per the spec above.", fileList: ["transpose.ts"] });
     expect(String(mockClassify.mock.calls[0][0].systemPrompt)).toContain("Node.js");
   });
+
+  it("forbids guessed computed values and steers to invariants (the false-red class-fix)", async () => {
+    // Locks the 2026-07-02 measured lesson: a blind author asserting a computed
+    // output it had to solve for (two-bucket move count) false-reds correct code.
+    mockClassify.mockResolvedValue("assert True" as never);
+    await generateOracleProbe({ userRequest: "Return the number of moves needed to reach the goal amount.", fileList: ["two_bucket.py"] });
+    const sys = String(mockClassify.mock.calls[0][0].systemPrompt);
+    expect(sys).toMatch(/FORBIDDEN/);
+    expect(sys).toMatch(/INVARIANT/i);
+    expect(sys).toMatch(/comput/i);
+    expect(sys).toMatch(/\bNONE\b/); // abstaining is explicitly correct for search tasks
+  });
 });

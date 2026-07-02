@@ -15,6 +15,15 @@
  * this fallible authorship stays advisory — a bad probe is discarded or rebutted,
  * never a hard block. Returns null on any failure (classifier unavailable, no
  * spec-anchored check derivable, unparseable) → the gate degrades to today.
+ *
+ * INVARIANTS-ONLY (measured 2026-07-02): a blind author can only assert what it
+ * can DERIVE from the spec. Asserting a specific COMPUTED output it had to solve
+ * for (a two-bucket move count, a poker ranking) false-reds CORRECT code — grok
+ * blind-guessed `measure(3,5,1,"one")==(8,"one",3)` when the answer is
+ * `(4,"one",5)` and nagged a correct solution. So the prompt permits only LITERAL
+ * spec examples, spec-stated error paths, and STRUCTURAL INVARIANTS (type, length,
+ * ordering, membership, round-trips, spec-named defining properties), and forbids
+ * guessed computed values — abstaining (NONE) on search/optimization tasks.
  */
 
 import { classifyWithLLM } from "./classify-with-llm.js";
@@ -47,15 +56,22 @@ const INTERP_NOTE: Record<ProbeLanguage, string> = {
 const SYSTEM_PROMPT = (language: ProbeLanguage) =>
   `You are writing an ACCEPTANCE TEST for a coding task, BEFORE and WITHOUT seeing the implementation. You are given ONLY the task specification and a list of file names — never the code. Your job is to encode the spec's REQUIREMENTS as executable checks so a wrong implementation fails loudly.
 
-Write ${INTERP_NOTE[language]}. Cover the parts of a spec that implementations get wrong: boundary inputs, empty/zero cases, error and exception paths (exact exception TYPE and message text when the spec states them), EXACT output strings and formatting (spacing, punctuation, capitalization), argument order, and return types. Prefer a handful of high-value assertions over many shallow ones.
+Write ${INTERP_NOTE[language]}.
+
+CRITICAL — you did NOT solve this task and you cannot run the code, so assert ONLY facts you can establish from the spec text alone. Never guess. There are exactly two kinds of safe checks:
+
+  1. LITERAL spec facts — a specific input→output the spec states VERBATIM (a worked example written in the description), and the exact exception TYPE / message the spec says to raise for a named bad input. Copy the values from the spec text; do not derive new ones.
+
+  2. STRUCTURAL INVARIANTS — properties of the output that must hold WITHOUT computing the answer: return type/shape (returns a 3-tuple, a list, a string), length relationships (output length == input length; a transpose swaps row/column counts), membership (the result uses only characters/items from the input), ordering (the result is sorted), idempotence or round-trips (decode(encode(x)) == x), and any defining property the spec names — e.g. "the goal bucket ends holding exactly N liters" → assert THAT field equals N, WITHOUT asserting the move count you would have had to solve for.
+
+FORBIDDEN: never assert a specific output VALUE you had to COMPUTE or SIMULATE yourself — a move/step count, a best-hand ranking, the numeric result of running a program, a search or optimization answer. If the spec does not literally print the expected value, you do not know it: assert an invariant about it instead, or omit the check. Guessing a computed value red-flags CORRECT code, which is worse than no check at all.
 
 HARD RULES:
 - Write the assertions at MODULE TOP LEVEL so they ALWAYS run when the file is executed. Do NOT wrap them in a function, class, or unittest/pytest framework — a test that is defined but never called exits 0 and proves nothing.
-- Above each assertion put a SHORT comment (a few words) naming the spec rule it checks — not the full sentence. Do NOT reproduce the spec as a header/preamble block. If you cannot ground a check in the spec, omit it.
-- Assert only what the SPEC states. Do not invent requirements, and do not encode your own guesses about the API beyond what the spec + file names imply.
+- Above each assertion put a SHORT comment (a few words) naming the spec rule or invariant it checks — not the full sentence. Do NOT reproduce the spec as a header/preamble block.
 - The script must exit non-zero on a failed assertion and zero when all pass. Keep it self-contained and dependency-free (standard library only).
-- Keep the ENTIRE script SHORT: at most ~40 lines. A long script risks being cut off and is not needed — a few sharp assertions beat many.
-- If the spec is too vague to derive even one grounded check, output EXACTLY the single word: NONE
+- Keep the ENTIRE script SHORT: at most ~40 lines. A few sharp, spec-grounded assertions beat many.
+- If the spec gives no literal example and no checkable invariant, output EXACTLY the single word: NONE. Abstaining is correct and expected for search/optimization tasks — a wrong check is worse than none.
 - Output ONLY the script (or NONE). No prose, no markdown fences, no explanation.`;
 
 /**

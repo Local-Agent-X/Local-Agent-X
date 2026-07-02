@@ -44,6 +44,14 @@ export interface DispatchOptions {
   timeoutMs?: number;
   /** Reject Anthropic OAuth tokens — bulk workloads can't use CLI subscriptions. */
   rejectOAuth?: boolean;
+  /**
+   * Base64 PNG images (no `data:` prefix) attached BEFORE the prompt text.
+   * Anthropic-only: sent as base64 image content blocks per the Messages API.
+   * Every other provider ignores this silently — callers doing vision work
+   * must pin `provider: "anthropic"`. Absent/empty → the request body is
+   * byte-identical to before this option existed.
+   */
+  images?: string[];
 }
 
 const DEFAULTS = {
@@ -107,7 +115,7 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
   const timeout = opts.timeoutMs ?? DEFAULTS.timeoutMs;
 
   if (provider === "ollama") return callOllama(opts.prompt, opts.ollamaModel ?? DEFAULTS.ollamaModel, temp, maxTokens, timeout);
-  if (provider === "anthropic") return callAnthropic(opts.prompt, opts.anthropicModel ?? dispatchBackgroundModel("anthropic"), temp, maxTokens, timeout, opts.rejectOAuth ?? false);
+  if (provider === "anthropic") return callAnthropic(opts.prompt, opts.anthropicModel ?? dispatchBackgroundModel("anthropic"), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
   if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? dispatchBackgroundModel("openai"), temp, maxTokens, timeout);
   if (provider === "xai") return callXai(opts.prompt, opts.xaiModel ?? dispatchBackgroundModel("xai"), temp, maxTokens, timeout);
   if (provider === "codex") return callCodex(opts.prompt, opts.codexModel ?? dispatchBackgroundModel("codex"), temp, timeout);
@@ -137,7 +145,17 @@ async function callOllama(prompt: string, model: string, temperature: number, ma
   }
 }
 
-async function callAnthropic(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, rejectOAuth: boolean): Promise<string | null> {
+// Anthropic Messages API user-content shape: a bare string, or content blocks
+// when images ride along (images precede the text so the model reads the
+// question with the pixels already in context).
+type AnthropicUserContent =
+  | string
+  | Array<
+      | { type: "image"; source: { type: "base64"; media_type: "image/png"; data: string } }
+      | { type: "text"; text: string }
+    >;
+
+async function callAnthropic(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, rejectOAuth: boolean, images?: string[]): Promise<string | null> {
   try {
     const resolved = await resolveCredential("anthropic", { rejectOAuth });
     if (!resolved) return null;
@@ -148,10 +166,18 @@ async function callAnthropic(prompt: string, model: string, temperature: number,
     const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": "2023-06-01" };
     if (isOAuth) headers["Authorization"] = `Bearer ${token}`;
     else headers["x-api-key"] = token;
+    // No images → content stays the bare prompt string, so existing call
+    // sites produce the exact request body they always have.
+    const content: AnthropicUserContent = images && images.length > 0
+      ? [
+          ...images.map((data) => ({ type: "image" as const, source: { type: "base64" as const, media_type: "image/png" as const, data } })),
+          { type: "text" as const, text: prompt },
+        ]
+      : prompt;
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers,
-      body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages: [{ role: "user", content: prompt }] }),
+      body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages: [{ role: "user", content }] }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {

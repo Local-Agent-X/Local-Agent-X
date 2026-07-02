@@ -22,6 +22,8 @@ import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { executeToolCalls } from "../tool-executor.js";
+import { readOpMessages } from "./store.js";
+import { opMessageRowToChatParam } from "./chat-runner/message-convert.js";
 import { registerToolsForOp } from "./runtime.js";
 import { unifiedRegistry } from "../tools/registry.js";
 import { enqueueBridgeMedia } from "../bridge-media-queue.js";
@@ -68,6 +70,22 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
         catch { return "{}"; }
       })();
 
+      // Prior-turn history for the resolve phase's intent + dedup guards.
+      // The dispatcher is constructed once per op, but self_edit's intent
+      // gate ("did the user actually ask for this edit") and the
+      // session-repeat dedup need the conversation as of THIS call — so read
+      // the op's persisted messages fresh on each dispatch. Sanctioned: we
+      // are inside canonical-loop and project rows through the canonical
+      // opMessageRowToChatParam adapter (see the SEAL in store.ts). Passing
+      // undefined here — the prior behavior — silently failed both guards
+      // open on every canonical-path tool call. opId is absent only on
+      // non-op callers, which keep the old (guardless) behavior.
+      const priorMessages: ChatCompletionMessageParam[] | undefined = opts.opId
+        ? readOpMessages(opts.opId)
+            .map(opMessageRowToChatParam)
+            .filter((m): m is ChatCompletionMessageParam => m !== null)
+        : undefined;
+
       try {
         const messages = await executeToolCalls(
           [{ id: call.toolCallId, name: call.tool, arguments: argsJson }],
@@ -80,7 +98,7 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
           opts.sessionId,
           opts.onEvent,
           opts.signal,
-          /* priorMessages */ undefined,
+          priorMessages,
           opts.runId,
         );
 

@@ -144,24 +144,29 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
 
     const sessionTools = filterToolsForSession(prepared.tools, sessionId);
 
-    const wiring = await installEventWiring({
-      sessionId, message, attachments, prepared, ctx, emitSse,
-    });
-    onEventInstalled = true;
-    runtimeInstalled = true;
-
-    const decision = await tryAcquireOrReplace(sessionId, wiring.wsChat.abort, `chat:${prepared.provider}`);
+    // Acquire the turn lock BEFORE registering the chat. installEventWiring's
+    // startChat does an unconditional activeChats.set(sessionId, ...); if it
+    // ran first, a turn the lock is about to REFUSE would overwrite the still-
+    // running turn's active-chat entry and then mark it done — the AGENTS badge
+    // (broadcastActiveChats filters !done) would drop while the real turn kept
+    // streaming, and Stop would hit chat.done===true and no-op, leaving the live
+    // turn un-stoppable. So this controller is owned here and reaches startChat
+    // only once the lock is granted. It's the one the agent loop's abortSignal
+    // and the injection canary cancel, so a replace (registry.abortTurn) or a
+    // canary trip actually stops the stream; user-Stop (terminateChat) aborts it
+    // via the lock's abortTurn as well as the active-chat's own controller.
+    const turnAbort = new AbortController();
+    const decision = await tryAcquireOrReplace(sessionId, turnAbort, `chat:${prepared.provider}`);
     if (!decision.allowed) {
       const prev = decision.previous!;
-      wiring.wrappedOnEvent({
-        type: "error",
-        message:
-          `Your previous request is still running (started ${Math.round(prev.elapsedMs / 1000)}s ago, ` +
-          `iteration ${prev.iteration}, last action ${prev.lastToolName || "in progress"}). ` +
-          `Cancel it first or wait for it to finish.`,
-      });
-      wiring.wrappedOnEvent({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
-      doneEmitted = true;
+      // Refused: a committing turn is already live. Surface the details on
+      // whatever transport is live WITHOUT calling startChat, so the running
+      // turn's active-chat entry (and its stoppability) is left untouched.
+      emitTurnError(
+        `Your previous request is still running (started ${Math.round(prev.elapsedMs / 1000)}s ago, ` +
+        `iteration ${prev.iteration}, last action ${prev.lastToolName || "in progress"}). ` +
+        `Cancel it first or wait for it to finish.`,
+      );
       return;
     }
     lockHeld = true;
@@ -185,10 +190,19 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
       }
     }
 
+    // Lock is held — now it's safe to register the chat (startChat) and stream.
+    // Pass turnAbort so the stream signal and the injection canary cancel the
+    // same controller the lock holds.
+    const wiring = await installEventWiring({
+      sessionId, message, attachments, prepared, ctx, emitSse, abortController: turnAbort,
+    });
+    onEventInstalled = true;
+    runtimeInstalled = true;
+
     const result = await runCanonicalChat({
       message, sessionId, prepared, sessionTools, session, ctx, requestRole,
       threatEngine: wiring.threatEngine,
-      abortSignal: wiring.wsChat.abort.signal,
+      abortSignal: turnAbort.signal,
       primaryEventProxy: wiring.primaryEventProxy,
       wrappedOnEvent: wiring.wrappedOnEvent,
       emitSse,

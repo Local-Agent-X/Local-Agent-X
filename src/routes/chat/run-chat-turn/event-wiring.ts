@@ -26,10 +26,18 @@ export interface InstallEventWiringInput {
   prepared: PreparedAgentRequest;
   ctx: ServerContext;
   emitSse: (ev: ServerEvent) => void;
+  /**
+   * The turn's abort controller — owned by the orchestrator and acquired into
+   * the turn lock BEFORE this runs (so a refused turn never reaches startChat).
+   * The canary trip below aborts THIS controller (the one the agent loop's
+   * abortSignal is bound to), not startChat's internal one, so prompt-injection
+   * detection actually cancels the live stream.
+   */
+  abortController: AbortController;
 }
 
 export async function installEventWiring(input: InstallEventWiringInput): Promise<EventWiring> {
-  const { sessionId, message, attachments, prepared, ctx, emitSse } = input;
+  const { sessionId, message, attachments, prepared, ctx, emitSse, abortController } = input;
 
   const wsChat = ctx.chatWs.startChat(sessionId);
   const onEvent = (event: ServerEvent) => { emitSse(event); wsChat.onEvent(event); };
@@ -66,7 +74,7 @@ export async function installEventWiring(input: InstallEventWiringInput): Promis
       canaryBuffer += event.delta; fullResponseText += event.delta;
       if (canaryBuffer.length > 200) canaryBuffer = canaryBuffer.slice(-200);
       const canaryTrip = threatEngine.checkOutput(canaryBuffer) || (fullResponseText.length % 500 < 10 ? threatEngine.checkOutput(fullResponseText) : null);
-      if (canaryTrip) { emitSse({ type: "error", message: "Security alert: prompt injection detected." }); wsChat.abort.abort(); return; }
+      if (canaryTrip) { emitSse({ type: "error", message: "Security alert: prompt injection detected." }); abortController.abort(); return; }
     }
     onEvent(event);
   };

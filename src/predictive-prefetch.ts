@@ -6,6 +6,9 @@
  * then warms a cache of likely-needed memories before the user asks.
  *
  * Persists schedule data to ~/.lax/schedule-profile.json (max 2000 entries).
+ * Persistence is debounced: learnSchedule runs on every message (turn path),
+ * so it only mutates in-memory state and coalesces disk writes into one
+ * deferred save instead of rewriting the full store synchronously per call.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
@@ -52,6 +55,7 @@ interface ScheduleStore {
 const LAX_DIR = getLaxDir();
 const PROFILE_FILE = join(LAX_DIR, "schedule-profile.json");
 const MAX_ENTRIES = 2000;
+const SAVE_DEBOUNCE_MS = 5_000;
 
 const DAY_NAMES: string[] = [
   "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
@@ -111,7 +115,7 @@ function saveStore(store: ScheduleStore): void {
   if (store.entries.length > MAX_ENTRIES) {
     store.entries = store.entries.slice(-MAX_ENTRIES);
   }
-  atomicWrite(PROFILE_FILE, JSON.stringify(store, null, 2));
+  atomicWrite(PROFILE_FILE, JSON.stringify(store));
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -133,9 +137,14 @@ function dayName(dow: number): string {
 export class PredictivePrefetcher {
   private static instance: PredictivePrefetcher | null = null;
   private store: ScheduleStore;
+  private saveTimer: NodeJS.Timeout | null = null;
+  private dirty = false;
 
   private constructor() {
     this.store = loadStore();
+    // Sync writes are safe in an exit handler; without this, buffered
+    // entries inside the debounce window would be lost on clean exit.
+    process.once("exit", () => this.flush());
   }
 
   static getInstance(): PredictivePrefetcher {
@@ -170,6 +179,8 @@ export class PredictivePrefetcher {
 
   /**
    * Record what the user works on at what time to build the probability model.
+   * Runs on every message, so it must not touch disk: it mutates in-memory
+   * state and defers persistence to the debounced save.
    */
   learnSchedule(timestamp: number, topics: string[], entities: string[]): void {
     const date = new Date(timestamp);
@@ -181,7 +192,40 @@ export class PredictivePrefetcher {
       entities: entities.map((e) => e.toLowerCase()),
     };
     this.store.entries.push(entry);
-    saveStore(this.store);
+    if (this.store.entries.length > MAX_ENTRIES) {
+      this.store.entries = this.store.entries.slice(-MAX_ENTRIES);
+    }
+    this.scheduleSave();
+  }
+
+  /** Coalesce writes: one unref'd timer flushes all buffered mutations. */
+  private scheduleSave(): void {
+    this.dirty = true;
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      this.flush();
+    }, SAVE_DEBOUNCE_MS);
+    this.saveTimer.unref?.();
+  }
+
+  /**
+   * Persist any buffered schedule mutations now. Called by the debounce
+   * timer and the process-exit hook; safe to call when nothing is pending.
+   */
+  flush(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    if (!this.dirty) return;
+    this.dirty = false;
+    try {
+      saveStore(this.store);
+    } catch (e) {
+      this.dirty = true; // retry on the next scheduled save
+      console.warn("[predictive-prefetch] failed to persist schedule profile:", e);
+    }
   }
 
   /**
@@ -323,6 +367,6 @@ export class PredictivePrefetcher {
       }
       this.store.cache[key] = related.slice(0, 50);
     }
-    saveStore(this.store);
+    this.scheduleSave();
   }
 }

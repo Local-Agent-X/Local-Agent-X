@@ -24,7 +24,7 @@
  * currentCheckpointId, completedAt, startedAt) are written from `op`
  * as-is — they are owned by the loop, never the control API.
  */
-import { readOp, writeOp } from "../ops/op-store.js";
+import { readOp, writeOp, withOpLock } from "../ops/op-store.js";
 import type { Op } from "../ops/types.js";
 
 export interface PersistOpOptions {
@@ -49,20 +49,25 @@ export interface PersistOpOptions {
 }
 
 export function persistOpKeepingSignals(op: Op, opts: PersistOpOptions = {}): void {
-  const onDisk = readOp(op.id);
-  const preserveLease = opts.preserveLeaseFromDisk !== false;
-  if (onDisk?.canonical) {
-    if (!op.canonical) op.canonical = {};
-    op.canonical.pauseRequestedAt = onDisk.canonical.pauseRequestedAt ?? null;
-    op.canonical.cancelRequestedAt = onDisk.canonical.cancelRequestedAt ?? null;
-    if (!opts.clearRedirect) {
-      op.canonical.redirectInstruction = onDisk.canonical.redirectInstruction ?? null;
-      op.canonical.redirectReceivedAt = onDisk.canonical.redirectReceivedAt ?? null;
+  // The reload→merge→write below is a read-modify-write: without the per-op
+  // lock, a second writer (another server on the same ~/.lax) can slip its
+  // update between our readOp and writeOp and have it silently reverted.
+  withOpLock(op.id, () => {
+    const onDisk = readOp(op.id);
+    const preserveLease = opts.preserveLeaseFromDisk !== false;
+    if (onDisk?.canonical) {
+      if (!op.canonical) op.canonical = {};
+      op.canonical.pauseRequestedAt = onDisk.canonical.pauseRequestedAt ?? null;
+      op.canonical.cancelRequestedAt = onDisk.canonical.cancelRequestedAt ?? null;
+      if (!opts.clearRedirect) {
+        op.canonical.redirectInstruction = onDisk.canonical.redirectInstruction ?? null;
+        op.canonical.redirectReceivedAt = onDisk.canonical.redirectReceivedAt ?? null;
+      }
+      if (preserveLease) {
+        op.canonical.leaseOwner = onDisk.canonical.leaseOwner ?? null;
+        op.canonical.leaseExpiresAt = onDisk.canonical.leaseExpiresAt ?? null;
+      }
     }
-    if (preserveLease) {
-      op.canonical.leaseOwner = onDisk.canonical.leaseOwner ?? null;
-      op.canonical.leaseExpiresAt = onDisk.canonical.leaseExpiresAt ?? null;
-    }
-  }
-  writeOp(op);
+    writeOp(op);
+  });
 }

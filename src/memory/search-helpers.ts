@@ -60,10 +60,21 @@ export function chunkText(
 
 // ── Result converter ──
 
+/**
+ * A search result that still carries its source chunk's DB `id`. The hybrid
+ * rescore in search.ts must classify a merged result as vector-found or
+ * keyword-only by chunk IDENTITY, not by `path:startLine` — chunkConversationPairs
+ * stamps every split part of a long answer with the SAME startLine, so a
+ * keyword-only later part would collide with a vector-found sibling and be
+ * misclassified. Keeping the id here (instead of dropping it) lets the caller
+ * key on the same identity `hybridMergeKey` uses.
+ */
+export type IdentifiedSearchResult = MemorySearchResult & { id?: number };
+
 export function toSearchResult(
   chunk: Chunk & { score: number },
   snippetMaxChars: number
-): MemorySearchResult {
+): IdentifiedSearchResult {
   const entityMatches = chunk.text.match(/@([\w-]+)/g) || [];
   const entities = entityMatches.map((m) => m.slice(1));
 
@@ -73,6 +84,7 @@ export function toSearchResult(
   }
 
   return {
+    id: chunk.id,
     path: chunk.path,
     startLine: chunk.startLine,
     endLine: chunk.endLine,
@@ -105,7 +117,7 @@ export function mergeHybridResults(
   vectorWeight: number,
   textWeight: number,
   snippetMaxChars: number
-): MemorySearchResult[] {
+): IdentifiedSearchResult[] {
   const merged = new Map<
     string,
     { chunk: Chunk; vectorScore: number; textScore: number }
@@ -125,7 +137,7 @@ export function mergeHybridResults(
     }
   }
 
-  const results: MemorySearchResult[] = [];
+  const results: IdentifiedSearchResult[] = [];
   for (const [, entry] of merged) {
     const score = vectorWeight * entry.vectorScore + textWeight * entry.textScore;
     results.push(toSearchResult({ ...entry.chunk, score }, snippetMaxChars));

@@ -1,5 +1,5 @@
 import type { Chunk, MemorySearchResult } from "../types.js";
-import { toSearchResult, mergeHybridResults } from "../search-helpers.js";
+import { toSearchResult, mergeHybridResults, type IdentifiedSearchResult } from "../search-helpers.js";
 import { extractKeywords } from "../utils.js";
 import { createLogger } from "../../logger.js";
 import type { SearchDeps, SearchOptions } from "./types.js";
@@ -69,7 +69,7 @@ export async function searchInIndex(
     }
   }
 
-  let merged: MemorySearchResult[];
+  let merged: IdentifiedSearchResult[];
   if (keywordResults.length > 0 && vectorResults.length > 0) {
     merged = mergeHybridResults(
       keywordResults,
@@ -84,11 +84,22 @@ export async function searchInIndex(
     // dropped as "no relevant memories". Missing from the vector top-K is
     // absent evidence, not zero relevance: rescore keyword-only hits on
     // their raw FTS scale, matching what the no-embedding branch returns.
+    //
+    // "Keyword-only" MUST be decided by chunk IDENTITY (id), not by
+    // `path:startLine` — chunkConversationPairs stamps every split part of a
+    // long answer with the SAME startLine, so a keyword-only later part would
+    // collide with a vector-found sibling on a positional key, be misclassified
+    // as vector-found, denied this rescore, and dropped. That is the very
+    // non-unique key hybridMergeKey was written to reject.
     if (deps.config.textWeight > 0) {
-      const vectorKeys = new Set(vectorResults.map((r) => `${r.path}:${r.startLine}`));
+      const vectorIds = new Set(vectorResults.map((r) => r.id));
       for (const r of merged) {
-        if (!vectorKeys.has(`${r.path}:${r.startLine}`)) {
-          r.score = Math.min(1, r.score / deps.config.textWeight);
+        if (!vectorIds.has(r.id)) {
+          // Cap the rescored keyword-only score at vectorWeight, the ceiling of
+          // a vector-only hit (vectorWeight×score, score≤1). Rescoring up to 1.0
+          // let a keyword-only hit outrank every vector hit, inverting the
+          // configured vectorWeight>textWeight priority for disjoint hits.
+          r.score = Math.min(deps.config.vectorWeight, r.score / deps.config.textWeight);
         }
       }
       merged.sort((a, b) => b.score - a.score);

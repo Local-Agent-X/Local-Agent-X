@@ -16,6 +16,8 @@ import type Database from "better-sqlite3";
 import { DEFAULT_MEMORY_CONFIG } from "../types.js";
 import { searchInIndex } from "./search.js";
 import type { SearchDeps } from "./types.js";
+import { searchKeyword } from "./keyword-search.js";
+import { searchVector } from "./vector-search.js";
 
 vi.mock("./keyword-search.js", () => ({
   searchKeyword: vi.fn(() => [
@@ -75,8 +77,10 @@ describe("hybrid search: keyword-only hits vs minScore (CM-3)", () => {
     const kwHit = results.find((r) => r.snippet.includes("Bookwell"));
     // Pre-fix: merged score = 0.3 × 0.9 = 0.27 < 0.35 → dropped entirely.
     expect(kwHit, "keyword-only hit was filtered out in hybrid mode").toBeDefined();
-    // Rescored on the raw FTS scale, not weight-crushed to 0.27.
-    expect(kwHit!.score).toBeCloseTo(0.9, 5);
+    // Rescored off the weight-crushed 0.27 and lifted above the floor, but
+    // capped at vectorWeight (0.7) so a keyword-only hit can't outrank the
+    // ceiling of a vector-only hit (vectorWeight×score).
+    expect(kwHit!.score).toBeCloseTo(0.7, 5);
   });
 
   it("still weights chunks found by both modalities with the hybrid formula", async () => {
@@ -87,6 +91,62 @@ describe("hybrid search: keyword-only hits vs minScore (CM-3)", () => {
 
     const vecHit = results.find((r) => r.snippet.includes("musings"));
     // Vector-only chunk keeps the existing behavior: vectorWeight × score.
+    expect(vecHit).toBeDefined();
+    expect(vecHit!.score).toBeCloseTo(0.7 * 0.7, 5);
+  });
+});
+
+describe("hybrid search: keyword-only vs vector-found siblings sharing startLine (CM-3/CM-4)", () => {
+  it("rescues a keyword-only split part that shares path AND startLine with a vector-found sibling", async () => {
+    // chunkConversationPairs stamps every split part of one long answer with
+    // the SAME startLine. Here the vector channel found the EARLIER part and
+    // the keyword channel found a LATER part of the SAME conversation — same
+    // path, same startLine, DIFFERENT chunk ids.
+    vi.mocked(searchVector).mockReturnValueOnce([
+      {
+        id: 10,
+        path: "sessions/imported-convo.jsonl",
+        source: "import",
+        startLine: 5,
+        endLine: 5,
+        text: "[assistant] earlier part of the answer, semantically related",
+        hash: "",
+        score: 0.7,
+      },
+    ]);
+    vi.mocked(searchKeyword).mockReturnValueOnce([
+      {
+        id: 11,
+        path: "sessions/imported-convo.jsonl", // SAME path
+        source: "import",
+        startLine: 5, // SAME startLine — the positional-key collision
+        endLine: 5,
+        text: "[assistant] later part naming the Bookwell project exactly",
+        hash: "",
+        score: 0.9, // strong exact keyword match
+      },
+    ]);
+
+    const results = await searchInIndex(makeDeps(), "bookwell", {
+      maxResults: 10,
+      minScore: 0.35,
+    });
+
+    // Pre-fix: vectorKeys keyed on `path:startLine`, so the keyword-only later
+    // part's key ("sessions/imported-convo.jsonl:5") already lived in the set
+    // from its vector-found sibling → misclassified as vector-found → denied
+    // the rescore → stuck at 0.3×0.9 = 0.27 < 0.35 → dropped entirely.
+    const kwHit = results.find((r) => r.snippet.includes("later part"));
+    expect(
+      kwHit,
+      "keyword-only later part sharing a startLine with a vector sibling was dropped"
+    ).toBeDefined();
+    // Rescored on identity (id 11 ∉ {10}) and lifted above the floor, capped
+    // at vectorWeight.
+    expect(kwHit!.score).toBeCloseTo(0.7, 5);
+
+    // The vector-found earlier part is unaffected: vectorWeight × score.
+    const vecHit = results.find((r) => r.snippet.includes("earlier part"));
     expect(vecHit).toBeDefined();
     expect(vecHit!.score).toBeCloseTo(0.7 * 0.7, 5);
   });

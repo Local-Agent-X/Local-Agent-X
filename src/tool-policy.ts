@@ -28,8 +28,20 @@ export type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./tool-po
  * If no rule matches, the default decision applies.
  */
 
-// Track call counts per session per tool
-const sessionCallCounts = new Map<string, Map<string, number>>();
+// Track per-session, per-tool rate-limit windows. Each entry is a fixed time
+// window: `windowStart` is when the current window opened and `count` is how
+// many ALLOWED calls it has admitted so far.
+interface RateWindow { windowStart: number; count: number; }
+const sessionCallCounts = new Map<string, Map<string, RateWindow>>();
+
+// `maxCallsPerSession` is enforced as a rolling fixed window rather than a
+// lifetime cap. A lifetime cap permanently bricks the tool once exceeded —
+// the counter was only ever cleared by resetSession(), which has no production
+// caller, so a long conversation would lose bash forever after the 30th call
+// (and sql/mcp/voice likewise). A time window self-heals while still throttling
+// runaway loops. 60s matches the sibling rateLimit.windowMs used across the
+// tool manifest.
+const RATE_LIMIT_WINDOW_MS = 60_000;
 
 export class ToolPolicy {
   private config: ToolPolicyConfig;
@@ -174,17 +186,26 @@ export class ToolPolicy {
       }
     }
 
-    // Per-session rate limit
+    // Per-session rate limit — enforced as a self-healing fixed time window so
+    // an exhausted limit recovers on the next window instead of locking the
+    // tool out for the life of the process. Denied calls do NOT consume quota,
+    // so a loop hammering an already-blocked tool cannot keep extending its own
+    // lockout.
     if (c.maxCallsPerSession) {
       let sessionMap = sessionCallCounts.get(sessionId);
       if (!sessionMap) {
         sessionMap = new Map();
         sessionCallCounts.set(sessionId, sessionMap);
       }
-      const count = (sessionMap.get(toolName) || 0) + 1;
-      sessionMap.set(toolName, count);
-      if (count > c.maxCallsPerSession) {
-        return { allowed: false, reason: `Tool "${toolName}" exceeded max ${c.maxCallsPerSession} calls per session`, ruleId: rule.id, userHint: USER_HINTS.retryExhausted };
+      const now = Date.now();
+      const win = sessionMap.get(toolName);
+      if (!win || now - win.windowStart >= RATE_LIMIT_WINDOW_MS) {
+        // Fresh window — first call is always admitted.
+        sessionMap.set(toolName, { windowStart: now, count: 1 });
+      } else if (win.count >= c.maxCallsPerSession) {
+        return { allowed: false, reason: `Tool "${toolName}" exceeded max ${c.maxCallsPerSession} calls per ${RATE_LIMIT_WINDOW_MS / 1000}s — retry shortly`, ruleId: rule.id, userHint: USER_HINTS.retryExhausted };
+      } else {
+        win.count++;
       }
     }
 

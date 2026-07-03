@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -397,6 +397,41 @@ describe("Tool policy", () => {
     expect(policy.evaluate("http_request", {}, sid).allowed).toBe(true);
     expect(policy.evaluate("http_request", {}, sid).allowed).toBe(true);
     expect(policy.evaluate("http_request", {}, sid).allowed).toBe(false); // 4th call blocked
+  });
+
+  // Regression (TD-2): the per-session rate limit must self-heal instead of
+  // permanently locking the tool out after the cap is hit, and denied attempts
+  // must NOT extend the lockout. On the pre-fix lifetime counter the tool was
+  // dead for the life of the process (resetSession had no production caller).
+  it("rate limit recovers after the window and denied calls don't extend it", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      const sid = "rate-heal-test";
+      // 3 admitted, 4th blocked (cap = 3, same window).
+      expect(policy.evaluate("http_request", {}, sid).allowed).toBe(true);
+      expect(policy.evaluate("http_request", {}, sid).allowed).toBe(true);
+      expect(policy.evaluate("http_request", {}, sid).allowed).toBe(true);
+      expect(policy.evaluate("http_request", {}, sid).allowed).toBe(false);
+
+      // Hammer it while blocked, still inside the window — must stay denied but
+      // these attempts must not consume quota or push the window forward.
+      vi.setSystemTime(1_030_000); // +30s, still within the 60s window
+      for (let i = 0; i < 20; i++) {
+        expect(policy.evaluate("http_request", {}, sid).allowed).toBe(false);
+      }
+
+      // Advance past the window measured from the ORIGINAL window start — the
+      // tool recovers. (If denied calls had extended the window, this would
+      // still be blocked.)
+      vi.setSystemTime(1_061_000); // +61s from window start
+      expect(policy.evaluate("http_request", {}, sid).allowed).toBe(true);
+      expect(policy.evaluate("http_request", {}, sid).allowed).toBe(true);
+      expect(policy.evaluate("http_request", {}, sid).allowed).toBe(true);
+      expect(policy.evaluate("http_request", {}, sid).allowed).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

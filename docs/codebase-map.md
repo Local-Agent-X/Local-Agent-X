@@ -19,7 +19,7 @@ over 400 LOC (the source-hygiene ceiling).
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/security/` | 63 | 24 | XL |  |
-| `src/ops/` | 56 | 21 | L |  |
+| `src/ops/` | 57 | 21 | L |  |
 | `src/tools/` | 41 | 129 | XL |  |
 | `src/memory/` | 38 | 106 | XL |  |
 | `src/providers/` | 37 | 17 | L |  |

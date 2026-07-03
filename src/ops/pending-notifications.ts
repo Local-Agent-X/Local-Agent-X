@@ -44,6 +44,20 @@ export interface PendingNotification {
   // antecedent), but this flag tells the agent it was already announced so it
   // doesn't re-announce on that turn.
   surfacedViaNudge?: boolean;
+  // Set by the agency completion-queue bridge for SUB-AGENT completions.
+  // For these, `task` holds the sub-agent's NAME, not a user-submitted task.
+  // They are an internal orchestration signal — surfaced to the parent agent
+  // on its next turn via the normal drain, but excluded from:
+  //   (a) completionHistory — the re-delegation dedup guards in
+  //       op_submit_async match on `task`; an agent name in there
+  //       false-blocks legitimate new ops and trips the casual-reply guard;
+  //   (b) the idle nudge — sub-agent completions are not user-facing
+  //       background ops, so no "that op just finished" heads-up.
+  subAgent?: boolean;
+  // Raw sub-agent id (subAgent notifications only) — lets the system-prompt
+  // block point the parent at agent_output(agent_id=...) for the full result
+  // (there is no real op behind a sub-agent notification's opId).
+  agentId?: string;
 }
 
 const queues = new Map<string, PendingNotification[]>();
@@ -65,10 +79,14 @@ export function pushPendingNotification(sessionId: string, n: PendingNotificatio
   q.push(n);
   if (q.length > MAX_PER_SESSION) q.splice(0, q.length - MAX_PER_SESSION);
 
-  let h = completionHistory.get(sessionId);
-  if (!h) { h = []; completionHistory.set(sessionId, h); }
-  h.push(n);
-  if (h.length > MAX_HISTORY_PER_SESSION) h.splice(0, h.length - MAX_HISTORY_PER_SESSION);
+  // Sub-agent completions stay OUT of the dedup history: their `task` is an
+  // agent name, and matching new op tasks against it produces false BLOCKs.
+  if (!n.subAgent) {
+    let h = completionHistory.get(sessionId);
+    if (!h) { h = []; completionHistory.set(sessionId, h); }
+    h.push(n);
+    if (h.length > MAX_HISTORY_PER_SESSION) h.splice(0, h.length - MAX_HISTORY_PER_SESSION);
+  }
 
   prune();
 }
@@ -106,6 +124,9 @@ export function markSurfacedViaNudge(sessionId: string): PendingNotification[] {
   for (const n of q) {
     if (now - n.completedAt >= TTL_MS) continue;
     if (n.surfacedViaNudge) continue;
+    // Sub-agent completions are internal orchestration — never announce them
+    // to the user via a nudge; they surface to the agent on the next drain.
+    if (n.subAgent) continue;
     n.surfacedViaNudge = true;
     newly.push(n);
   }
@@ -162,6 +183,19 @@ export function formatNotificationsForSystemPrompt(notifications: PendingNotific
   if (notifications.length === 0) return "";
   const lines = notifications.map(n => {
     const statusEmoji = n.status === "completed" ? "✓" : n.status === "failed" ? "✗" : "⊘";
+    if (n.subAgent) {
+      // Sub-agent completion (agency completion-queue bridge): `task` holds
+      // the agent's NAME, not a user task — don't label it "Original task",
+      // and point at agent_output (there is no real op behind its opId).
+      const preview = n.summary.slice(0, SUMMARY_PREVIEW_CHARS);
+      const truncatedNote = n.summary.length > SUMMARY_PREVIEW_CHARS
+        ? ` …[truncated — ${n.summary.length} chars total; full result via agent_output(agent_id="${n.agentId ?? n.opId}") if needed]`
+        : "";
+      return (
+        `${statusEmoji} Sub-agent \`${n.task.slice(0, 80)}\` ${n.status}.\n` +
+        `   Result: ${preview}${truncatedNote}`
+      );
+    }
     const filesLine = n.filesChanged.length > 0
       ? ` (changed ${n.filesChanged.length} file${n.filesChanged.length === 1 ? "" : "s"}: ${n.filesChanged.slice(0, 5).join(", ")})`
       : "";

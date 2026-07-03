@@ -78,6 +78,21 @@ export async function searchInIndex(
       deps.config.textWeight,
       deps.config.snippetMaxChars
     );
+    // A chunk found ONLY by FTS merges to textWeight×score, which (with
+    // textWeight 0.3 < minScore 0.35) can mathematically never pass the
+    // score floor — an exact keyword match that missed the vector top-K was
+    // dropped as "no relevant memories". Missing from the vector top-K is
+    // absent evidence, not zero relevance: rescore keyword-only hits on
+    // their raw FTS scale, matching what the no-embedding branch returns.
+    if (deps.config.textWeight > 0) {
+      const vectorKeys = new Set(vectorResults.map((r) => `${r.path}:${r.startLine}`));
+      for (const r of merged) {
+        if (!vectorKeys.has(`${r.path}:${r.startLine}`)) {
+          r.score = Math.min(1, r.score / deps.config.textWeight);
+        }
+      }
+      merged.sort((a, b) => b.score - a.score);
+    }
   } else if (vectorResults.length > 0) {
     merged = vectorResults.map((c) => toSearchResult(c, deps.config.snippetMaxChars));
   } else {

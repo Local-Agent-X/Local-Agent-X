@@ -9,8 +9,8 @@
  * time, immutable) instead of `lastUpdated`.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryIndex } from "../memory/index.js";
@@ -353,6 +353,96 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
 
     expect(core).toMatch(/loves hiking \(@alex\)/);
     expect(core).toMatch(/adopted puppies \(@fido, @rex\)/);
+  });
+});
+
+/**
+ * CM-7 regression: entity reinforcement used naive `msgLower.includes(slug)`,
+ * so a 3-char slug like 'ann' matched inside 'planning' — each false hit
+ * bumped last_updated → hotScore, floating the wrong facts to the top of
+ * <core_memory> for the ~30-day decay half-life. Fix: word-boundary match.
+ */
+describe("entity reinforcement word-boundary matching (CM-7)", () => {
+  it("does NOT reinforce when the slug only appears inside a longer word", async () => {
+    const now = Date.now();
+    const sixtyDaysAgo = now - 60 * DAY_MS;
+    const r = memory.rememberFact("is the design lead @ann", {
+      kind: "observation",
+      confidence: 0.9,
+    });
+    expect(r.ok).toBe(true);
+    const factId = r.fact!.id!;
+    setFactClock(factId, sixtyDaysAgo, sixtyDaysAgo);
+
+    // 'planning' contains 'ann' as a substring but not as a word.
+    const block = await buildContextBlock(memory, {
+      skipDailyLog: true,
+      userMessage: "we are planning the sprint for next week",
+    });
+
+    const after = memory["db"]
+      .prepare("SELECT last_updated FROM facts WHERE id = ?")
+      .get(factId) as { last_updated: number };
+    expect(after.last_updated).toBe(sixtyDaysAgo);
+    expect(block).not.toContain("<known_entities>");
+  });
+
+  it("still reinforces on an exact word match (punctuation-adjacent too)", async () => {
+    const now = Date.now();
+    const sixtyDaysAgo = now - 60 * DAY_MS;
+    const r = memory.rememberFact("is the design lead @ann", {
+      kind: "observation",
+      confidence: 0.9,
+    });
+    expect(r.ok).toBe(true);
+    const factId = r.fact!.id!;
+    setFactClock(factId, sixtyDaysAgo, sixtyDaysAgo);
+
+    const block = await buildContextBlock(memory, {
+      skipDailyLog: true,
+      userMessage: "what did I say about Ann?",
+    });
+
+    const after = memory["db"]
+      .prepare("SELECT last_updated FROM facts WHERE id = ?")
+      .get(factId) as { last_updated: number };
+    expect(after.last_updated).toBeGreaterThan(sixtyDaysAgo);
+    expect(block).toContain("<known_entities>");
+    expect(block).toContain("ann");
+  });
+});
+
+/**
+ * CM-6 regression: appendDailyLog stamped lines with toLocaleTimeString(),
+ * which on ja/zh/ko locales produces e.g. "午後3:42:05". The reader's tag
+ * regex (`[sid] [HH` — leading digit required) then failed, every tagged
+ * line was treated as untagged and kept for EVERY session, and the May-2026
+ * cross-session bleed returned. The writer must emit locale-independent
+ * HH:MM:SS.
+ */
+describe("daily-log session tag is locale-independent (CM-6)", () => {
+  it("filters another session's lines even when the OS locale renders times with non-digit prefixes", async () => {
+    // Simulate a CJK locale: any code path still using toLocaleTimeString()
+    // for the tag gets a non-digit-leading time.
+    const spy = vi
+      .spyOn(Date.prototype, "toLocaleTimeString")
+      .mockReturnValue("午後3:42:05");
+    try {
+      memory.appendDailyLog("User: alpha line from session A", "sess-a");
+      memory.appendDailyLog("User: bravo line from session B", "sess-b");
+
+      // Written tag must be a locale-independent, digit-leading HH:MM:SS.
+      const raw = readFileSync(memory.getDailyLogPath(), "utf-8");
+      expect(raw).toMatch(/\[sess-a\] \[\d{2}:\d{2}:\d{2}\]/);
+      expect(raw).not.toContain("午後");
+
+      // Round-trip: session A's context must not contain session B's line.
+      const block = await buildContextBlock(memory, { sessionId: "sess-a" });
+      expect(block).toContain("alpha line from session A");
+      expect(block).not.toContain("bravo line from session B");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

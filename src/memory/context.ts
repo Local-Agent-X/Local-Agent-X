@@ -147,15 +147,25 @@ export async function buildContextBlock(
   if (opts.userMessage && opts.userMessage.trim().length > 0) {
     const stats = memory.getStats();
     if (stats.totalEntities > 0) {
+      // Most-mentioned first — the old `ORDER BY entity_slug LIMIT 200`
+      // silently ignored every entity past the first 200 alphabetically.
       const entitySlugs = memory["db"]
         .prepare(
-          "SELECT DISTINCT entity_slug FROM entity_mentions ORDER BY entity_slug LIMIT 200"
+          "SELECT entity_slug, COUNT(*) AS mentions FROM entity_mentions GROUP BY entity_slug ORDER BY mentions DESC LIMIT 200"
         )
         .all() as Array<{ entity_slug: string }>;
       const msgLower = opts.userMessage.toLowerCase();
       mentionedEntities = entitySlugs
         .map((e) => e.entity_slug)
-        .filter((slug) => slug && slug.length >= 3 && msgLower.includes(slug.toLowerCase()));
+        .filter((slug) => {
+          if (!slug || slug.length < 3) return false;
+          // Word-boundary match, not naive substring — `includes` reinforced
+          // 'art' via 'start' and 'ann' via 'planning', bumping last_updated
+          // on the wrong facts and corrupting hot-score ranking for the
+          // ~30-day decay half-life.
+          const esc = slug.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          return new RegExp(`\\b${esc}\\b`).test(msgLower);
+        });
       // Reinforce facts attached to mentioned entities; limit per-entity so
       // a single name doesn't flood the prompt or trigger a 100-row update.
       for (const slug of mentionedEntities) {

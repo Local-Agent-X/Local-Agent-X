@@ -92,12 +92,21 @@ export class MemoryIndex extends MemoryFactsBase {
    */
   appendDailyLog(text: string, sessionId?: string, source: MemoryWriteSource = "tool"): void {
     const logPath = this.getDailyLogPath();
-    const timestamp = new Date().toLocaleTimeString();
+    // Locale-independent HH:MM:SS. toLocaleTimeString() on ja/zh/ko locales
+    // yields e.g. "午後3:42:05" — the leading non-digit broke the reader's
+    // `[sid] [HH:MM:SS]` tag regex (context.ts filterDailyLogToSession), so
+    // tagged lines passed as "untagged" and the cross-session bleed returned.
+    const now = new Date();
+    const pad2 = (n: number) => String(n).padStart(2, "0");
+    const timestamp = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
     const sidTag = sessionId ? `[${sessionId}] ` : "";
-    const line = `\n${sidTag}[${timestamp}] ${text}\n`;
-    // Defensive idempotent gate — blocks direct callers that bypassed appendToDailyLogSafely.
-    const gated = runMemoryGate({ content: line, source, target: logPath });
-    appendFileSync(logPath, gated, "utf-8");
+    // Defensive idempotent gate — blocks direct callers that bypassed
+    // appendToDailyLogSafely. Gate the untrusted payload only: the gate's
+    // sanitize step trims edges, so gating the assembled line ate the `\n`
+    // separators — entries concatenated onto one line and the line-anchored
+    // session filter (context.ts) could never match past the first entry.
+    const gated = runMemoryGate({ content: text, source, target: logPath });
+    appendFileSync(logPath, `\n${sidTag}[${timestamp}] ${gated}\n`, "utf-8");
     this.dirty = true;
     this.reindexThroughUniversal("daily-log").catch(() => {});
   }

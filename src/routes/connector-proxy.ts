@@ -30,6 +30,8 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, rmSync
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { Agent, fetch as undiciFetch } from "undici";
+import type { Response as UndiciResponse } from "undici";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeErrorMessage } from "../server-utils.js";
 import { getSecretsStoreSingleton } from "../secrets.js";
@@ -37,12 +39,18 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
 import { type SignedAuthConfig, validateSignedAuth, signRequest } from "./connector-signing.js";
 import { wakeDevServer } from "../tools/dev-server-access.js";
+import { createPinningDispatcher, assertLiteralIpEgressAllowed } from "../tools/web-egress.js";
 
 const logger = createLogger("routes.connector-proxy");
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
+// The sole sanctioned non-https upstream: a loopback dev server the operator
+// started locally. Single source of truth for the parse-time gate AND the
+// connect-time carve-out below (they must not drift — a host the parser calls
+// "local" is exactly the host forwarding lets skip the SSRF-pinning dispatcher).
+const LOCAL_UPSTREAM_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
 // Client headers a manifest may never forward: they carry LAX's own session
 // auth, which must not leak upstream.
 const FORBIDDEN_FORWARD = new Set(["authorization", "cookie"]);
@@ -86,7 +94,7 @@ export function parseManifest(raw: string): { ok: true; manifest: ConnectorManif
   const m = parsed as Record<string, unknown>;
 
   const upstream = typeof m.upstream === "string" ? m.upstream.replace(/\/+$/, "") : "";
-  const isLocal = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(upstream);
+  const isLocal = LOCAL_UPSTREAM_RE.test(upstream);
   if (!/^https:\/\/[^\s/]+$/.test(upstream) && !isLocal) {
     return { ok: false, error: "upstream must be an https:// origin (or http://localhost for local services), no path" };
   }
@@ -171,11 +179,53 @@ async function readRawBody(req: IncomingMessage): Promise<Buffer | null> {
   return Buffer.concat(chunks);
 }
 
-async function forwardWithTimeout(u: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+interface ForwardInit {
+  method: string;
+  headers: Record<string, string>;
+  body?: Uint8Array;
+}
+
+// One long-lived SSRF-pinning dispatcher for all connector traffic. The pin is
+// applied per-CONNECT (resolveAndPinHost runs inside connect.lookup), so a
+// shared pool still revalidates DNS for every new connection; reuse is faster
+// and avoids Agent.close() stalls on unread bodies (see web-egress.ts).
+let sharedDispatcher: Agent | null = null;
+function pinnedDispatcher(): Agent {
+  if (!sharedDispatcher) sharedDispatcher = createPinningDispatcher();
+  return sharedDispatcher;
+}
+
+/** Forward to the upstream with a timeout AND a connect-time SSRF guard.
+ *
+ *  Parse-time validation only sees the manifest STRING, so a public wildcard-DNS
+ *  host like `https://169.254.169.254.nip.io` (or a DNS-rebind) passes it yet
+ *  resolves to a private/metadata IP at connect time — the SSRF this route must
+ *  block. Every non-local (https) upstream is therefore dialed through the
+ *  canonical pinning dispatcher: it resolves the host, rejects the connection if
+ *  ANY A/AAAA record is private/loopback/link-local/CGNAT/ULA, and pins the
+ *  socket to the validated IP (no rebind TOCTOU). A literal-IP upstream never
+ *  reaches the dispatcher's lookup, so it is checked synchronously first.
+ *
+ *  The sanctioned loopback dev carve-out (http://localhost|127.0.0.1) keeps a
+ *  plain fetch — the pinning dispatcher would (correctly) refuse a loopback
+ *  resolve, but these are operator-started local dev servers. */
+export async function forwardWithTimeout(
+  u: string,
+  init: ForwardInit,
+  timeoutMs: number,
+  isLocalUpstream: boolean,
+): Promise<Response | UndiciResponse> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try { return await fetch(u, { ...init, signal: ctrl.signal }); }
-  finally { clearTimeout(timer); }
+  try {
+    if (isLocalUpstream) {
+      return await fetch(u, { ...init, signal: ctrl.signal });
+    }
+    await assertLiteralIpEgressAllowed(u);
+    return await undiciFetch(u, { ...init, signal: ctrl.signal, dispatcher: pinnedDispatcher() });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req, res) => {
@@ -280,6 +330,7 @@ export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req,
       manifest.upstream + upstreamPath + upstreamSearch,
       { method, headers, ...(body !== undefined ? { body: new Uint8Array(body) } : {}) },
       manifest.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      LOCAL_UPSTREAM_RE.test(manifest.upstream),
     );
     const responseBody = Buffer.from(await up.arrayBuffer());
     res.writeHead(up.status, { "Content-Type": up.headers.get("content-type") || "application/json" });

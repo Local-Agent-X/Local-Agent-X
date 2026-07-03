@@ -7,8 +7,53 @@
  * live; auth-gate coverage for /api/connectors lives in
  * server/request-handler.test.ts.
  */
-import { describe, it, expect } from "vitest";
-import { parseManifest, matchAllow } from "./connector-proxy.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock DNS resolution so a public-looking hostname can be made to "resolve" to a
+// private/metadata IP without touching the network — exercising the connect-time
+// SSRF guard's DNS-rebind path (resolveAndPinHost → node:dns).
+vi.mock("node:dns", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:dns")>();
+  return {
+    ...actual,
+    default: actual,
+    promises: { ...actual.promises, resolve4: vi.fn(), resolve6: vi.fn() },
+  };
+});
+
+import { promises as dns } from "node:dns";
+import { parseManifest, matchAllow, forwardWithTimeout } from "./connector-proxy.js";
+
+const resolve4 = dns.resolve4 as unknown as ReturnType<typeof vi.fn>;
+const resolve6 = dns.resolve6 as unknown as ReturnType<typeof vi.fn>;
+
+// undici's fetch wraps a connect.lookup rejection as a generic
+// `TypeError: fetch failed`, stashing the real SSRF reason in `.cause` (which
+// itself nests one more level). Walk the whole cause chain so the assertion
+// sees the connect-time block reason, not the opaque top-level message. On
+// parse-time-only code the request is dialed by a plain fetch that never
+// consults the mocked resolver, so it fails with a bare connect error whose
+// chain carries NO SSRF reason — this assertion FAILS there, as required.
+function causeChain(e: unknown): string {
+  const parts: string[] = [];
+  let cur: unknown = e;
+  for (let i = 0; cur instanceof Error && i < 8; i++) {
+    parts.push(cur.message);
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return parts.join(" <- ");
+}
+
+async function expectSsrfBlocked(u: string): Promise<void> {
+  let thrown: unknown;
+  try {
+    await forwardWithTimeout(u, { method: "GET", headers: {} }, 5000, /* isLocalUpstream */ false);
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown, "expected forwardWithTimeout to reject").toBeInstanceOf(Error);
+  expect(causeChain(thrown)).toMatch(/private|rebinding|reserved|SSRF/i);
+}
 
 const VALID = {
   upstream: "https://api.fastmail.com",
@@ -90,5 +135,47 @@ describe("matchAllow", () => {
     expect(matchAllow(allow, "GET", "/0/public")).toBe(true);
     expect(matchAllow(allow, "GET", "/0/publicX")).toBe(false);
     expect(matchAllow(allow, "GET", "/0/private/Balance")).toBe(false);
+  });
+});
+
+describe("forwardWithTimeout connect-time SSRF guard", () => {
+  beforeEach(() => {
+    resolve4.mockReset();
+    resolve6.mockReset();
+  });
+
+  // The core skeptic break: an upstream that PASSES the parse-time string check
+  // (a public wildcard-DNS host, zero attacker setup) but RESOLVES to the cloud
+  // metadata / private range. Parse-time-only code dials it happily; the pinning
+  // dispatcher must refuse the connection once DNS reveals the private address.
+  it("blocks an https upstream whose hostname resolves to a private/metadata IP", async () => {
+    resolve4.mockResolvedValue(["169.254.169.254"]); // e.g. 169.254.169.254.nip.io
+    resolve6.mockResolvedValue([]);
+
+    await expectSsrfBlocked("https://169-254-169-254.nip.io/latest/meta-data/");
+
+    // Proof the block happened at CONNECT time, after resolving the host —
+    // not by a parse-time string check (the host is not an IP literal).
+    expect(resolve4).toHaveBeenCalledWith("169-254-169-254.nip.io");
+  });
+
+  it("also blocks an https upstream whose hostname resolves to an RFC1918 IP", async () => {
+    resolve4.mockResolvedValue(["10.0.0.5"]);
+    resolve6.mockResolvedValue([]);
+
+    await expectSsrfBlocked("https://internal.attacker-controlled.example/x");
+  });
+
+  // The sanctioned loopback dev carve-out must NOT go through the pinning
+  // dispatcher (a loopback resolve would be refused). It uses a plain fetch, so
+  // the SSRF resolver is never consulted for it.
+  it("does not route the sanctioned localhost dev carve-out through the resolver", async () => {
+    // Unused loopback port → connection refused fast; we only care that the
+    // pinning resolver was never consulted for the local carve-out.
+    await expect(
+      forwardWithTimeout("http://127.0.0.1:1/health", { method: "GET", headers: {} }, 1000, true),
+    ).rejects.toThrow();
+    expect(resolve4).not.toHaveBeenCalled();
+    expect(resolve6).not.toHaveBeenCalled();
   });
 });

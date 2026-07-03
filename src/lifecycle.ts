@@ -100,9 +100,21 @@ export async function initLifecycle(): Promise<void> {
   const parentPid = parentPidRaw ? Number(parentPidRaw) : undefined;
   writePidFile(parentPid);
 
+  // Pidfile cleanup runs on ANY exit (clean, crash-exit, or the graceful
+  // shutdown's process.exit) via this one 'exit' listener. We deliberately do
+  // NOT register SIGINT/SIGTERM handlers here (SV-2): the canonical
+  // graceful-shutdown owner is registerShutdown() in server/lifecycle.ts,
+  // which flushes the memory index, stops dev-servers, closes browsers and
+  // cleans worktrees before exiting. Node fires signal listeners in
+  // registration order, and this module initialises before startServer — so a
+  // synchronous process.exit() here would preempt all of that on Ctrl+C,
+  // orphaning dev-servers/Chrome/worktrees and dropping the last memory push.
+  // The graceful handler's process.exit(0) still triggers this 'exit'
+  // listener, so the pidfile is removed; in the brief boot window before
+  // registerShutdown runs, Node's default signal behaviour terminates the
+  // process and the pidfile goes stale — which acquireDataDirLock/readPidFile
+  // already treat as reclaimable.
   process.on("exit", removePidFile);
-  process.on("SIGINT", () => { removePidFile(); process.exit(130); });
-  process.on("SIGTERM", () => { removePidFile(); process.exit(143); });
 
   if (parentPid && Number.isInteger(parentPid)) {
     logger.info(`[lifecycle] heartbeat bound to parent pid ${parentPid}`);

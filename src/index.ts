@@ -166,6 +166,14 @@ try {
 // BEFORE startServer so we never bind ports while a sibling server is up.
 await initLifecycle();
 
+// SV-2: until registerShutdown (server/lifecycle.ts) takes ownership of
+// graceful shutdown, signals must still terminate the process — the log-flush
+// hooks above are non-exiting listeners, which suppress Node's default
+// terminate. The fallback hard-exits (130/143) during the boot window and is
+// removed by registerShutdown at handoff.
+const { installBootSignalFallback } = await import("./server/lifecycle.js");
+installBootSignalFallback();
+
 logger.info(`
   ╔═══════════════════════════════════╗
   ║      LOCAL AGENT X  v0.1       ║

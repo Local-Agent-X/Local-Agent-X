@@ -100,12 +100,20 @@ export function readLock(): AutopilotLockFile | null {
 }
 
 // Best-effort cleanup on process exit.
+//
+// SV-2 invariant: do NOT register SIGINT/SIGTERM handlers that process.exit()
+// here. This runs at op start — AFTER the canonical graceful shutdown
+// (server/lifecycle.ts registerShutdown) was wired at boot — and Node fires
+// signal listeners synchronously in registration order, so a synchronous exit
+// here would kill the process the moment the graceful handler suspends at its
+// first `await`, skipping the memory push / browser close / worktree cleanup.
+// releaseLock is synchronous, so the signal-agnostic 'exit' event (which the
+// graceful handler's process.exit(0) fires) is sufficient; on an untrappable
+// hard kill the lock self-heals anyway — acquireLock reclaims any lock whose
+// pid is no longer alive.
 let registeredExitHandler = false;
 export function registerExitCleanup(opId: string): void {
   if (registeredExitHandler) return;
   registeredExitHandler = true;
-  const cleanup = () => releaseLock(opId);
-  process.on("exit", cleanup);
-  process.on("SIGINT", () => { cleanup(); process.exit(130); });
-  process.on("SIGTERM", () => { cleanup(); process.exit(143); });
+  process.on("exit", () => releaseLock(opId));
 }

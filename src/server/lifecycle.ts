@@ -28,6 +28,25 @@ export interface LifecycleResult {
   chatWs: ReturnType<typeof setupChatWebSocket>;
 }
 
+// SV-2 boot-window fallback: between initLifecycle (pidfile) and
+// registerShutdown (the graceful owner), the only signal listeners are
+// src/index.ts's non-exiting log-flush hooks — and ANY listener suppresses
+// Node's default terminate. Without a fallback, Ctrl+C/SIGTERM during boot
+// (a wedged rag build, a pending --login OAuth flow) is swallowed: the process
+// survives everything short of SIGKILL, holds ~/.lax/server.pid, and every
+// later launch refuses with exit 75. These exit with the conventional
+// 128+signal codes exactly like the pre-SV-2 hard-exit handlers did;
+// registerShutdown removes them the moment the graceful owner takes over.
+// They live HERE (not src/lifecycle.ts) because this module is the one
+// sanctioned signal-exit owner (see the SV-2 class-lock in lifecycle.test.ts).
+const bootSigint = (): never => process.exit(130);
+const bootSigterm = (): never => process.exit(143);
+
+export function installBootSignalFallback(): void {
+  process.on("SIGINT", bootSigint);
+  process.on("SIGTERM", bootSigterm);
+}
+
 export function createHttpServer(requestHandler: RequestHandler, deps: {
   config: LAXConfig;
   dataDir: string;
@@ -220,7 +239,12 @@ export function registerShutdown(deps: {
   secretsStore: SecretsStore;
 }): void {
   const { getScheduler, cronService, agentSync, memoryIndex, secretsStore } = deps;
-  process.on("SIGINT", async () => {
+  // Guard against re-entry: a second Ctrl+C (or a SIGTERM racing a SIGINT)
+  // must not restart the async cleanup half-way through.
+  let shuttingDown = false;
+  const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     getScheduler()?.stopAll();
     cronService.stop();
     // Kill any running full-stack app backends so they don't orphan past LAX
@@ -242,5 +266,21 @@ export function registerShutdown(deps: {
     secretsStore.destroy();
     try { const { cleanupAllWorktrees } = await import("../agency/worktree.js"); cleanupAllWorktrees(); } catch {}
     process.exit(0);
-  });
+  };
+  // Graceful teardown must run on BOTH interactive Ctrl+C (SIGINT) and
+  // supervisor/`kill` termination (SIGTERM). This is the ONLY module allowed
+  // to call process.exit from a SIGINT/SIGTERM handler (SV-2 invariant,
+  // enforced by lifecycle.test.ts): Node runs signal listeners synchronously
+  // in registration order, so any sibling handler that exits synchronously
+  // would preempt this cleanup the moment it suspends at its first `await`.
+  // Other modules hook the signal-agnostic 'exit' event (fired by the
+  // process.exit(0) above) for their synchronous cleanup instead — see
+  // src/lifecycle.ts (pidfile) and src/autopilot/lock.ts (autopilot lock).
+  // The graceful owner is live — retire the boot-window hard-exit fallback,
+  // which would otherwise preempt the async cleanup exactly like the
+  // pre-SV-2 handlers this module replaced.
+  process.removeListener("SIGINT", bootSigint);
+  process.removeListener("SIGTERM", bootSigterm);
+  process.on("SIGINT", () => { void shutdown(); });
+  process.on("SIGTERM", () => { void shutdown(); });
 }

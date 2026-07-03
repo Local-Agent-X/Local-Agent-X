@@ -54,19 +54,26 @@ describe("detectRefusalText", () => {
     expect(r.isRefusal).toBe(true);
   });
 
-  it("detects 'against my guidelines' phrase", () => {
-    const r = detectRefusalText("That request goes against my guidelines.");
+  // HE-9: policy-mention clauses only count as refusals when the model is also
+  // declining in first person (a bare mention is descriptive, not a refusal).
+  it("detects 'against my guidelines' when the model is declining", () => {
+    const r = detectRefusalText("That request goes against my guidelines, so I won't do it.");
     expect(r.isRefusal).toBe(true);
   });
 
-  it("detects 'against the policies' phrase", () => {
-    const r = detectRefusalText("Doing that runs against the policies I follow.");
+  it("detects 'against the policies' when the model is declining", () => {
+    const r = detectRefusalText("Doing that runs against the policies I follow, so I can't help.");
     expect(r.isRefusal).toBe(true);
   });
 
-  it("detects 'violates my content policy' phrase", () => {
-    const r = detectRefusalText("Doing so violates my content policy.");
+  it("detects 'violates my content policy' when the model is declining", () => {
+    const r = detectRefusalText("Doing so violates my content policy, so I must decline.");
     expect(r.isRefusal).toBe(true);
+  });
+
+  it("does NOT flag a bare descriptive policy mention (no first-person refusal)", () => {
+    expect(detectRefusalText("That request goes against my guidelines.").isRefusal).toBe(false);
+    expect(detectRefusalText("Doing so violates my content policy.").isRefusal).toBe(false);
   });
 
   it("detects 'I cannot in good conscience'", () => {

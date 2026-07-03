@@ -29,14 +29,31 @@ describe("detectRefusalText — leading-anchor matches", () => {
     expect(r.isRefusal).toBe(true);
   });
 
-  it("matches 'against my guidelines' anywhere in head", () => {
-    const r = detectRefusalText("That request goes against my guidelines.");
+  it("matches 'against my guidelines' when paired with first-person declining framing", () => {
+    // HE-9: a policy mention counts as a refusal only when the model is also
+    // declining in first person — otherwise it's describing a policy, not
+    // refusing.
+    const r = detectRefusalText("That request goes against my guidelines, so I won't be able to help.");
     expect(r.isRefusal).toBe(true);
   });
 
-  it("matches 'violates the content policy'", () => {
-    const r = detectRefusalText("That violates the content policy I follow.");
+  it("matches 'violates the content policy' when the model is declining in first person", () => {
+    const r = detectRefusalText("That violates the content policy I follow, so I cannot produce it.");
     expect(r.isRefusal).toBe(true);
+  });
+});
+
+describe("detectRefusalText — descriptive policy mentions are not refusals (HE-9)", () => {
+  it("does not flag a bare 'against my guidelines' clause with no declining framing", () => {
+    const r = detectRefusalText("That request goes against my guidelines.");
+    expect(r.isRefusal).toBe(false);
+  });
+
+  it("does not flag an answer that DESCRIBES what violates the content policy", () => {
+    const r = detectRefusalText(
+      "Content that violates the content policy is removed automatically; you can appeal within 30 days.",
+    );
+    expect(r.isRefusal).toBe(false);
   });
 });
 

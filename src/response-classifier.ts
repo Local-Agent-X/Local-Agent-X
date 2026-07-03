@@ -21,15 +21,38 @@ const logger = createLogger("response-classifier");
 // Conservative on purpose — only fires on short responses that LEAD with a
 // refusal pattern, so a long answer that happens to contain "I'm sorry"
 // in the middle won't be misclassified.
+//
+// First-person refusal openings: the model itself declining. These fire on
+// their own because an answer that merely *describes* a policy cannot produce
+// them.
 const REFUSAL_PATTERNS: RegExp[] = [
   /^i (?:cannot|can'?t|will not|won'?t|am unable to|am not able to|won'?t be able to)\s+(?:help|assist|comply|do that|provide|generate|write|create|produce|engage|continue|fulfill|complete)/i,
   /^i'?m (?:sorry|afraid|unable)[,.]?\s+(?:but\s+)?i\s+(?:cannot|can'?t|won'?t|am not able)/i,
   /^i (?:apologize|must decline|have to decline|need to decline)/i,
   /^(?:sorry|unfortunately)[,.]?\s+(?:but\s+)?i\s+(?:cannot|can'?t|won'?t|am unable|am not able)/i,
   /^i (?:cannot|can'?t) (?:in good conscience|ethically|safely|responsibly)/i,
-  /\bagainst (?:my|the) (?:guidelines|policies|programming|principles|values)\b/i,
-  /\bviolates? (?:my|the) (?:guidelines|policies|content policy|usage policy|terms)\b/i,
 ];
+
+// Policy-mention clauses. On their OWN these are DESCRIPTIVE — a legitimate
+// answer ABOUT a policy ("content that violates the content policy is removed
+// automatically; you can appeal within 30 days") contains them but is not a
+// refusal. They only signal a refusal when the SAME response also carries
+// first-person declining framing (see FIRST_PERSON_DECLINE) — i.e. the model
+// tying the policy to its own refusal ("...so I won't be able to help").
+// Matching a bare policy mention here would wrongly reclassify a completed
+// answer as content_filter and replay the turn (HE-9). "terms" was dropped
+// deliberately — "violates the terms" is almost always descriptive.
+const POLICY_MENTION_PATTERNS: RegExp[] = [
+  /\bagainst (?:my|the) (?:guidelines|policies|programming|principles|values)\b/i,
+  /\bviolates? (?:my|the) (?:guidelines|policies|content policy|usage policy)\b/i,
+];
+
+// First-person declining framing: the model saying IT won't/can't proceed.
+// Deliberately excludes a bare "I'm sorry" (an apology is not a refusal) and
+// all second/third-person constructions ("you can appeal", "content is
+// removed"), so a descriptive policy answer never satisfies it.
+const FIRST_PERSON_DECLINE =
+  /\bi\s+(?:cannot|can'?t|will not|won'?t|am unable to|am not able to|won'?t be able to|must decline|have to decline|need to decline|refuse to|am not going to|do not feel comfortable|don'?t feel comfortable)\b/i;
 
 export interface RefusalDetection {
   isRefusal: boolean;
@@ -49,6 +72,17 @@ export function detectRefusalText(text: string | undefined | null): RefusalDetec
     const m = head.match(re);
     if (m) {
       return { isRefusal: true, pattern: re.source, snippet: m[0].slice(0, 120) };
+    }
+  }
+  // Policy-mention clauses only count as a refusal when the model is also
+  // declining in first person. Without that co-signal the text is describing
+  // a policy, not refusing — flagging it would replay a completed answer.
+  if (FIRST_PERSON_DECLINE.test(head)) {
+    for (const re of POLICY_MENTION_PATTERNS) {
+      const m = head.match(re);
+      if (m) {
+        return { isRefusal: true, pattern: re.source, snippet: m[0].slice(0, 120) };
+      }
     }
   }
   return { isRefusal: false };
@@ -89,8 +123,9 @@ export function classifyCodexResponse(opts: {
   inputTokens?: number;
   outputTokens?: number;
   responseText?: string;        // raw text, used for soft-refusal detection
+  providerModerates?: boolean;  // false = provider does no server-side moderation (local/self-hosted); a zero-token empty is transient, not a filter
 }): ClassificationResult {
-  const { hasText, hasToolCalls, outputTypes = [], status, inputTokens = 0, outputTokens = 0, responseText } = opts;
+  const { hasText, hasToolCalls, outputTypes = [], status, inputTokens = 0, outputTokens = 0, responseText, providerModerates } = opts;
 
   if (hasToolCalls) {
     return { type: "tool_called", explanation: "Model called one or more tools", shouldRetry: false, shouldFallback: false };
@@ -132,8 +167,21 @@ export function classifyCodexResponse(opts: {
     };
   }
 
-  // Zero tokens in AND out usually means content moderation blocked the input silently
+  // Zero tokens in AND out. On a MODERATING provider this usually means content
+  // moderation blocked the input silently. But a non-moderating / local
+  // provider (Ollama, llama.cpp, self-hosted) has no filter to trip — a zero-
+  // token empty there is a transient stream failure, so classify it as a
+  // retryable "empty" instead of a non-retryable content_filter that would
+  // force a needless failover.
   if (inputTokens === 0 && outputTokens === 0) {
+    if (providerModerates === false) {
+      return {
+        type: "empty",
+        explanation: "Zero tokens on a non-moderating provider — transient empty stream, retry",
+        shouldRetry: true, shouldFallback: false,
+        meta: { inputTokens, outputTokens },
+      };
+    }
     return {
       type: "content_filter",
       explanation: "Zero tokens processed — likely content moderation blocked the request before generation",
@@ -225,8 +273,9 @@ export function classifyOpenAIResponse(opts: {
   inputTokens?: number;
   outputTokens?: number;
   responseText?: string;        // raw text, used for soft-refusal detection
+  providerModerates?: boolean;  // false = provider does no server-side moderation (local/self-hosted); a zero-token empty is transient, not a filter
 }): ClassificationResult {
-  const { hasText, hasToolCalls, finishReason, errorMessage, inputTokens = 0, outputTokens = 0, responseText } = opts;
+  const { hasText, hasToolCalls, finishReason, errorMessage, inputTokens = 0, outputTokens = 0, responseText, providerModerates } = opts;
 
   if (errorMessage) {
     if (errorMessage.includes("429") || /rate.?limit/i.test(errorMessage)) {
@@ -263,8 +312,20 @@ export function classifyOpenAIResponse(opts: {
   if (hasToolCalls) return { type: "tool_called", explanation: "Model called a tool", shouldRetry: false, shouldFallback: false };
   if (hasText) return { type: "completed", explanation: "Normal completion", shouldRetry: false, shouldFallback: false };
 
-  // No finish_reason, no content — usually means the stream ended abnormally
+  // No finish_reason, no content — usually means the stream ended abnormally.
+  // Only a MODERATING provider can silently drop a request to zero tokens via a
+  // content filter; on a non-moderating / local provider a zero-token empty is
+  // a transient stream failure, so keep it retryable rather than defaulting to
+  // a non-retryable content_filter (which would replay/failover needlessly).
   if (inputTokens === 0 && outputTokens === 0) {
+    if (providerModerates === false) {
+      return {
+        type: "empty",
+        explanation: "Zero tokens on a non-moderating provider — transient empty stream, retry",
+        shouldRetry: true, shouldFallback: false,
+        meta: { inputTokens, outputTokens },
+      };
+    }
     return {
       type: "content_filter",
       explanation: "Zero tokens — likely content moderation or malformed request",

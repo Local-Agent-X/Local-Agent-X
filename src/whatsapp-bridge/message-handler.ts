@@ -35,6 +35,62 @@ export interface MessageHandlerContext {
   sendVoiceToJid(jid: string, ogg: Buffer): Promise<boolean>;
 }
 
+// Pick a filesystem-safe extension for a downloaded media file. Prefer the
+// document's own filename extension, else the mimetype subtype; strip to
+// [a-z0-9] so the served /uploads/<name> route (which rejects anything outside
+// [a-zA-Z0-9._-]) will hand the file back.
+function mediaExt(mimetype?: string, fileName?: string): string {
+  if (fileName && fileName.includes(".")) {
+    const e = (fileName.split(".").pop() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (e) return e;
+  }
+  const sub = ((mimetype || "").split("/")[1] || "").split(";")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+  return sub || "bin";
+}
+
+/**
+ * Detect image/video/document/sticker messages, download the bytes via Baileys,
+ * save them to ~/.lax/uploads, and return a text description the agent can
+ * reason about (reference URL + local path + any caption). Returns "" when the
+ * message carries no media we know how to forward. Mirrors the Telegram inbound
+ * path (describeNonTextMessage) so a captioned photo no longer forwards a
+ * caption with no hint an image exists, and an uncaptioned photo/doc no longer
+ * gets dead silence.
+ */
+export async function describeInboundMedia(msg: any): Promise<string> {
+  const m = msg?.message || {};
+  let node: any; let kind = ""; let extra = "";
+  if (m.imageMessage) { node = m.imageMessage; kind = "image"; extra = node.mimetype || "image"; }
+  else if (m.videoMessage) { node = m.videoMessage; kind = "video"; extra = `${node.seconds || "?"}s, ${node.mimetype || "video/mp4"}`; }
+  else if (m.documentMessage) { node = m.documentMessage; kind = "document"; extra = `${node.mimetype || "unknown"}, ${node.fileName || "unnamed"}`; }
+  else if (m.stickerMessage) { node = m.stickerMessage; kind = "sticker"; extra = node.mimetype || "image/webp"; }
+  else return "";
+
+  const caption = typeof node.caption === "string" && node.caption ? ` Caption: "${node.caption}".` : "";
+  try {
+    const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
+    const { uploadsDir, getRuntimeConfig } = await import("../config.js");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join, basename } = await import("node:path");
+    const buf = await downloadMediaMessage(msg as any, "buffer", {}) as Buffer;
+    if (!buf || buf.length === 0) throw new Error("empty download");
+    const dir = uploadsDir();
+    mkdirSync(dir, { recursive: true });
+    const fullPath = join(dir, `wa-${kind}-${Date.now()}.${mediaExt(node.mimetype, node.fileName)}`);
+    writeFileSync(fullPath, buf);
+    // Present the served /uploads URL (same convention web/mobile uploads + the
+    // image/video tools use) as the reference the agent passes to tools; a raw
+    // local path can't be fetched by generate_video/generate_image (xAI side)
+    // and trips the attachment-egress gate. Keep the local path for local-only
+    // tools (OCR, video analysis) that read the file directly.
+    const url = `http://127.0.0.1:${getRuntimeConfig().port}/uploads/${basename(fullPath)}`;
+    return `[User sent a ${kind} message via WhatsApp. Reference URL: ${url} — pass THIS to media tools (generate_video / generate_image / view_image); a local path won't work for those. Local copy: ${fullPath} (for OCR / video analysis that read the file directly). Metadata: ${extra}.${caption} If handling this requires a capability you don't have yet (OCR, video analysis), use self_edit to add it — then re-read this file.]`;
+  } catch (e) {
+    logger.error(`[whatsapp] Failed to download ${kind}:`, (e as Error).message);
+    return `[User sent a ${kind} message via WhatsApp but download failed: ${(e as Error).message}. Tell the user you couldn't process it.]`;
+  }
+}
+
 export function createMessagesUpsertHandler(
   ctx: MessageHandlerContext,
   lidLookup: any,
@@ -83,6 +139,15 @@ export function createMessagesUpsertHandler(
         } catch (e) {
           logger.warn(`[whatsapp] voice transcribe failed: ${(e as Error).message}`);
         }
+      }
+
+      // Inbound image/video/document/sticker → download to uploads/ and hand the
+      // model a reference URL (mirrors Telegram). Overrides any bare caption so
+      // the agent is told an image exists; without this an uncaptioned photo/doc
+      // would fall through to the "!sanitizedText → ignore" branch below.
+      if (!audioMsg) {
+        const media = await describeInboundMedia(msg);
+        if (media) text = media;
       }
 
       if (text && (typeof text !== "string" || text.length > 10000)) continue;

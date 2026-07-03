@@ -24,7 +24,9 @@ import {
   getTurnRegistry,
   releaseTurn,
   getActiveTurn,
+  isCurrentTurnWriter,
 } from "../src/session/turn-lock.js";
+import { persistTurnState } from "../src/routes/chat/run-chat-turn/canonical-run.js";
 
 const registry = getTurnRegistry();
 const SESSION = "sess-timeout-test";
@@ -103,6 +105,111 @@ describe("tryAcquireOrReplace — prior turn refuses to release (deadlock guard)
     // No deadlock: the new turn holds the slot and is not aborted.
     expect(newAc.signal.aborted).toBe(false);
     expect(getActiveTurn(SESSION)).not.toBeNull();
+  });
+});
+
+// CM-5: after a force-release the still-alive wedged turn must NOT be able to
+// persist — it would full-rewrite the jsonl from its stale in-memory messages
+// and erase the rescue turn's rows ("agent forgot what I just said").
+describe("write-generation guard — force-released turn becomes a stale writer", () => {
+  it("marks the wedged prior turn stale once the rescue turn acquires the slot", async () => {
+    vi.useFakeTimers();
+
+    const priorAc = new AbortController();
+    expect(registry.acquireTurn(SESSION, priorAc, "stuck")).toBe(true);
+    // While it holds the slot it IS the legitimate writer.
+    expect(isCurrentTurnWriter(SESSION, priorAc.signal)).toBe(true);
+
+    const newAc = new AbortController();
+    const decisionPromise = tryAcquireOrReplace(SESSION, newAc, "rescue");
+    await vi.advanceTimersByTimeAsync(5001); // force-release fires
+    const decision = await decisionPromise;
+    expect(decision.allowed).toBe(true);
+
+    // The rescue turn is now the sole current writer; the wedged turn is stale.
+    expect(isCurrentTurnWriter(SESSION, newAc.signal)).toBe(true);
+    expect(isCurrentTurnWriter(SESSION, priorAc.signal)).toBe(false);
+
+    // Staleness survives the rescue turn's own release — the wedged turn can
+    // outlive it, so the generation record must not be cleared on release.
+    releaseTurn(SESSION);
+    expect(isCurrentTurnWriter(SESSION, priorAc.signal)).toBe(false);
+  });
+
+  it("normal abort-replace: the prior turn stays current through its salvage window", async () => {
+    const priorAc = new AbortController();
+    expect(registry.acquireTurn(SESSION, priorAc, "prior")).toBe(true);
+
+    const newAc = new AbortController();
+    const decisionPromise = tryAcquireOrReplace(SESSION, newAc, "second");
+
+    // The prior handler's salvage/persist runs HERE — after abort, before its
+    // releaseTurn. It must still count as current (interrupted salvage is a
+    // feature, not a clobber: the new turn hasn't acquired yet).
+    expect(priorAc.signal.aborted).toBe(true);
+    expect(isCurrentTurnWriter(SESSION, priorAc.signal)).toBe(true);
+
+    releaseTurn(SESSION);
+    await decisionPromise;
+    expect(isCurrentTurnWriter(SESSION, priorAc.signal)).toBe(false);
+    expect(isCurrentTurnWriter(SESSION, newAc.signal)).toBe(true);
+  });
+
+  it("signals the registry never tagged are allowed (non-lock-managed writers)", () => {
+    const foreign = new AbortController();
+    expect(isCurrentTurnWriter(SESSION, foreign.signal)).toBe(true);
+    expect(isCurrentTurnWriter(undefined, foreign.signal)).toBe(true);
+    expect(isCurrentTurnWriter(SESSION, undefined)).toBe(true);
+  });
+
+  it("persistTurnState from the stale wedged turn is a no-op — the rescue turn's history survives", async () => {
+    vi.useFakeTimers();
+
+    const priorAc = new AbortController();
+    expect(registry.acquireTurn(SESSION, priorAc, "stuck")).toBe(true);
+
+    const newAc = new AbortController();
+    const decisionPromise = tryAcquireOrReplace(SESSION, newAc, "rescue");
+    await vi.advanceTimersByTimeAsync(5001);
+    expect((await decisionPromise).allowed).toBe(true);
+    vi.useRealTimers();
+
+    // The rescue turn has written its rows; the wedged turn now un-wedges
+    // with a STALE in-memory copy that predates them.
+    const staleSession = { messages: [] as unknown[], updatedAt: 0 } as never;
+    const saveSession = vi.fn();
+    const ctx = { saveSession, memoryManager: { persistTurn: vi.fn(async () => {}) } } as never;
+
+    await persistTurnState({
+      canonicalOpId: "",
+      message: "old wedged request",
+      assistantText: "old wedged reply",
+      session: staleSession,
+      ctx,
+      sessionId: SESSION,
+      images: [],
+      interrupted: true,
+      abortSignal: priorAc.signal,
+    });
+
+    // Refused: no rewrite of session.messages, no jsonl save.
+    expect((staleSession as unknown as { messages: unknown[] }).messages).toHaveLength(0);
+    expect(saveSession).not.toHaveBeenCalled();
+
+    // Sanity: the SAME persist from the current (rescue) writer is allowed.
+    await persistTurnState({
+      canonicalOpId: "",
+      message: "rescue request",
+      assistantText: "rescue reply",
+      session: staleSession,
+      ctx,
+      sessionId: SESSION,
+      images: [],
+      interrupted: false,
+      abortSignal: newAc.signal,
+    });
+    expect((staleSession as unknown as { messages: unknown[] }).messages.length).toBeGreaterThan(0);
+    expect(saveSession).toHaveBeenCalledTimes(1);
   });
 });
 

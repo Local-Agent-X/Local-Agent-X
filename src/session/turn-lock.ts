@@ -56,10 +56,23 @@ export interface ActiveTurnSnapshot {
 
 class TurnRegistry {
   private turns = new Map<string, ActiveTurn>();
+  /** Monotonic per-session write generation, bumped on every acquire and
+   *  NEVER cleared on release: a wedged turn that was force-released (the
+   *  tryAcquireOrReplace 5s safety net) can outlive its replacement, so it
+   *  must stay identifiable as stale even after the replacement releases. */
+  private generations = new Map<string, number>();
+  /** Which acquire each turn's abort signal belongs to. Keyed by signal
+   *  because the signal already flows everywhere the turn handler does —
+   *  it lets persistTurnState ask "am I still the latest writer?" with no
+   *  new plumbing. WeakMap so entries die with their controllers. */
+  private writerTags = new WeakMap<AbortSignal, { sessionId: string; generation: number }>();
 
   /** Try to claim the session's turn slot. Returns true if acquired. */
   acquireTurn(sessionId: string, abortController: AbortController, origin?: string): boolean {
     if (this.turns.has(sessionId)) return false;
+    const generation = (this.generations.get(sessionId) ?? 0) + 1;
+    this.generations.set(sessionId, generation);
+    this.writerTags.set(abortController.signal, { sessionId, generation });
     let resolveCompletion: () => void = () => {};
     const completion = new Promise<void>(resolve => { resolveCompletion = resolve; });
     this.turns.set(sessionId, {
@@ -146,6 +159,19 @@ class TurnRegistry {
     return this.turns.get(sessionId)?.completion ?? null;
   }
 
+  /** True iff this signal belongs to the MOST RECENT acquirer of the
+   *  session's turn slot. A wedged turn that was force-released and then
+   *  outlived a replacement's acquire returns false — its persist must not
+   *  full-rewrite history the newer turn already wrote ("agent forgot what
+   *  I just said"). Signals the registry has never tagged (tests, paths
+   *  that don't go through acquireTurn) pass: this guards lock-managed
+   *  writers only, it is not a general write permission. */
+  isCurrentTurnWriter(sessionId: string, signal: AbortSignal): boolean {
+    const tag = this.writerTags.get(signal);
+    if (!tag || tag.sessionId !== sessionId) return true;
+    return tag.generation === this.generations.get(sessionId);
+  }
+
   /** Convenience: list all active turns (for debug/admin UI). */
   listActive(): ActiveTurnSnapshot[] {
     return Array.from(this.turns.keys())
@@ -191,6 +217,13 @@ export function abortTurn(sessionId: string): boolean {
   return registry.abortTurn(sessionId);
 }
 
+/** See TurnRegistry.isCurrentTurnWriter. Undefined session/signal → true
+ *  (writer not lock-managed; only tagged stale writers are refused). */
+export function isCurrentTurnWriter(sessionId: string | undefined, signal: AbortSignal | undefined): boolean {
+  if (!sessionId || !signal) return true;
+  return registry.isCurrentTurnWriter(sessionId, signal);
+}
+
 export interface AcquireDecision {
   allowed: boolean;
   reason: "no-active" | "aborted-non-committing" | "refused-committing";
@@ -233,7 +266,10 @@ export async function tryAcquireOrReplace(
     ]);
   }
   // If the prior turn never released within the timeout, force-release so
-  // the slot can be acquired. This is a safety net for stuck handlers.
+  // the slot can be acquired. This is a safety net for stuck handlers. The
+  // acquire below bumps the session's write generation, so if the wedged
+  // turn later un-wedges its persist is refused (isCurrentTurnWriter) instead
+  // of full-rewriting the history the new turn wrote.
   if (registry.getActiveTurn(sessionId)) {
     registry.releaseTurn(sessionId);
   }

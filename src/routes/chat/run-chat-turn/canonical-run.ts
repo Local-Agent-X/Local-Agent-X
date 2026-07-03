@@ -60,6 +60,7 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
         session, ctx, sessionId,
         images: prepared.images.map((im) => ({ name: im.name, url: im.url })),
         interrupted,
+        abortSignal,
       });
     } catch (e) {
       logger.warn(`[chat] salvage/persist failed (${interrupted ? "interrupted" : "clean"}): ${(e as Error).message}`);
@@ -139,12 +140,28 @@ interface PersistInput {
   /** Turn ended by user-stop / abort rather than a clean done. Salvage the
    *  committed work, mark the boundary, and refresh the stale context cache. */
   interrupted?: boolean;
+  /** This turn's abort signal — the same one its turn-lock acquire was tagged
+   *  with. Used to refuse the persist if a newer turn has since taken the
+   *  session's slot (write-generation check). Optional: direct callers (tests)
+   *  without a lock-managed signal are always allowed. */
+  abortSignal?: AbortSignal;
 }
 
 // Exported for the salvage regression test (an interrupted turn must persist
 // its work + boundary marker instead of erasing the turn).
 export async function persistTurnState(input: PersistInput): Promise<void> {
-  const { canonicalOpId, message, assistantText, session, ctx, sessionId, images, interrupted } = input;
+  const { canonicalOpId, message, assistantText, session, ctx, sessionId, images, interrupted, abortSignal } = input;
+
+  // Write-generation check. A wedged turn that the turn lock force-released
+  // (5s safety net) can un-wedge AFTER a replacement turn has acquired the
+  // slot and written new history; its in-memory session.messages is stale and
+  // the full rewrite below would erase the newer turn's rows ("agent forgot
+  // what I just said"). Only the session slot's latest acquirer may persist.
+  const { isCurrentTurnWriter } = await import("../../../session/turn-lock.js");
+  if (!isCurrentTurnWriter(sessionId, abortSignal)) {
+    logger.warn(`[chat] stale turn superseded by a newer turn — skipping persist to protect current history (sess=${sessionId.slice(0, 16)})`);
+    return;
+  }
 
   const { stripEphemeralMessages: stripCanonical } = await import("../../../providers/sanitize.js");
   type MsgRecordC = Record<string, unknown>;

@@ -86,6 +86,19 @@ export function toSearchResult(
 
 // ── Hybrid merge (BM25 + vector) ──
 
+/**
+ * Identity key for hybrid dedup. Keys on the chunk's DB id when present —
+ * `path:startLine` is NOT unique because chunkConversationPairs assigns the
+ * same startLine to every split part of a long answer, which would merge
+ * distinct chunks (summing their scores and dropping all but the first).
+ * The hash is appended to the positional fallback for the same reason.
+ */
+function hybridMergeKey(chunk: Chunk): string {
+  return chunk.id != null
+    ? `id:${chunk.id}`
+    : `loc:${chunk.path}:${chunk.startLine}:${chunk.hash}`;
+}
+
 export function mergeHybridResults(
   keywordResults: Array<Chunk & { score: number }>,
   vectorResults: Array<Chunk & { score: number }>,
@@ -99,12 +112,11 @@ export function mergeHybridResults(
   >();
 
   for (const r of vectorResults) {
-    const key = `${r.path}:${r.startLine}`;
-    merged.set(key, { chunk: r, vectorScore: r.score, textScore: 0 });
+    merged.set(hybridMergeKey(r), { chunk: r, vectorScore: r.score, textScore: 0 });
   }
 
   for (const r of keywordResults) {
-    const key = `${r.path}:${r.startLine}`;
+    const key = hybridMergeKey(r);
     const existing = merged.get(key);
     if (existing) {
       existing.textScore = r.score;

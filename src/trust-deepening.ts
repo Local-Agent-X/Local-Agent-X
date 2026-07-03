@@ -249,19 +249,22 @@ export class TrustEngine {
   getRelationshipStage(): string {
     const level = this.calculateTrustLevel();
     const days = daysSince(this.store.firstSeen);
-    const convos = this.store.conversationCount;
+    // NB: conversationCount is not wired to any caller, so we deliberately do
+    // NOT surface it here — asserting "N conversations" would inject a false,
+    // self-describing fact (always "0") into the model's context every turn.
+    // `days` is derived from firstSeen and is real, so it stays.
 
     switch (level) {
       case "new":
-        return `We're just getting started — ${days} day${days !== 1 ? "s" : ""} in, ${convos} conversation${convos !== 1 ? "s" : ""}. Still learning your preferences.`;
+        return `We're just getting started — ${days} day${days !== 1 ? "s" : ""} in. Still learning your preferences.`;
       case "familiar":
-        return `Getting comfortable — ${days} days together, ${convos} conversations. Starting to learn your style and workflow.`;
+        return `Getting comfortable — ${days} days together. Starting to learn your style and workflow.`;
       case "trusted":
-        return `Solid working relationship — ${days} days, ${convos} conversations. I know your preferences and can take initiative when it makes sense.`;
+        return `Solid working relationship — ${days} days. I know your preferences and can take initiative when it makes sense.`;
       case "close":
-        return `We go way back — ${days} days, ${convos}+ conversations. I know your style, your preferences, and can anticipate what you need.`;
+        return `We go way back — ${days} days. I know your style, your preferences, and can anticipate what you need.`;
       case "best-friend":
-        return `Ride or die — ${days} days together, ${convos}+ conversations. Full trust, full autonomy, full vibes.`;
+        return `Ride or die — ${days} days together. Full trust, full autonomy, full vibes.`;
     }
   }
 

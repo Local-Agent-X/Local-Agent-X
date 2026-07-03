@@ -38,6 +38,20 @@ export function worktreeSlotAvailable(): boolean {
 }
 
 /**
+ * Release a worktree's registry slot WITHOUT touching disk. For fail/held
+ * paths that deliberately preserve the branch + directory for inspection
+ * (uncommitted surgeon changes live only in the worktree dir): the entry
+ * counts against MAX_CONCURRENT_WORKTREES, so leaking it on every failure
+ * would brick all worktree creation after the cap's worth of failed runs.
+ * No-op if the entry is already gone (e.g. cleanupWorktree ran).
+ */
+export function releaseWorktreeSlot(name: string): void {
+  if (activeWorktrees.delete(name)) {
+    logger.info(`[worktree] released registry slot for ${name} (branch + dir left on disk)`);
+  }
+}
+
+/**
  * Run git with an explicit args array via execFileSync (no shell).
  *
  * The previous implementation used `execSync(\`git ${cmd}\`)` which spawns

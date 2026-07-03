@@ -27,6 +27,7 @@
 import { rmSync } from "node:fs";
 import { type ChildProcess } from "node:child_process";
 import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getMergeDeltaFiles, getMergeDeltaDiff, securitySensitiveChangedFiles } from "./agency/worktree.js";
+import { releaseWorktreeSlot } from "./agency/worktree-core.js";
 import { recordMerge } from "./self-edit-rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
 import { runSurgeon, formatSurgeonOutput } from "./self-edit/surgeon.js";
@@ -331,9 +332,13 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     if (probeDataDir) {
       try { rmSync(probeDataDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
-    // On failure, the worktree+branch are preserved by mergeWorktree (which
-    // is NOT called on the fail paths). On success, mergeWorktree already
-    // cleaned them up.
+    // On failure, the worktree+branch are preserved ON DISK (mergeWorktree is
+    // NOT called on the fail/held paths; on success it already cleaned up).
+    // But the registry slot must be released either way: a leaked entry counts
+    // against MAX_CONCURRENT_WORKTREES forever, so 12 failed/held self_edits
+    // would brick every later self_edit AND applyGitUpdate. No-op when the
+    // entry is already gone (merged) or was never registered (create failed).
+    releaseWorktreeSlot(name);
     releaseGlobalSelfEditLock();
   }
 }

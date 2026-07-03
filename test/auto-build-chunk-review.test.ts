@@ -25,6 +25,7 @@ import { runChunkReview, runChunkReviewWithJudgment } from "../src/auto-build/ch
 import type { JudgmentHook } from "../src/auto-build/chunk-review/judgment-hook.js";
 import { parseChunkReport } from "../src/auto-build/chunk-review/report-parser.js";
 import {
+  gateReportShape,
   gateDoneWhen,
   gateAdditiveDiff,
   gateLaunchReadiness,
@@ -125,6 +126,57 @@ describe("malformed report -> push_back retry, not halt", () => {
     expect(outcome.reasoning).toContain("STATUS:");
   });
 });
+// Regression: gateReportShape validated STRUCTURE (STATUS + DONE_WHEN buckets
+// present → parsed=true) but not the STATUS VALUE. A worker writing a plausible
+// synonym — "STATUS: complete" / "success" — coerced to status="unknown" yet
+// parsed=true, sailing past the shape gate; paired with "DONE_WHEN: met" it also
+// cleared gateDoneWhen (which only halts on blocked/partial) → the chunk
+// committed to main on a status nobody can reason about. A mistyped
+// "STATUS: blocked!" was worse: status="unknown" silently dropped the
+// blocked/partial recovery paths. An unrecognized STATUS token is a shape
+// failure → push_back retry, same as a missing report.
+describe("unrecognized STATUS token -> push_back retry, not silent proceed", () => {
+  it("gateReportShape fires push_back when a parseable report has status=unknown", () => {
+    const r = parseChunkReport(
+      "STATUS: complete\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\n" +
+      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
+      "LAUNCH_READINESS: none\nNOTE: shipped it"
+    );
+    expect(r.parsed).toBe(true);      // structure is fine…
+    expect(r.status).toBe("unknown"); // …but the STATUS token is not recognized
+    const finding = gateReportShape(r)!;
+    expect(finding.action).toBe("push_back");
+    expect(finding.gate).toBe("report-shape");
+    expect(finding.reasoning).toMatch(/done.*blocked.*partial/i);
+  });
+
+  it("still passes a valid STATUS: done", () => {
+    const r = parseChunkReport(
+      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\n" +
+      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
+      "LAUNCH_READINESS: none\nNOTE: ok"
+    );
+    expect(gateReportShape(r)).toBeNull();
+  });
+
+  it("end-to-end: a 'STATUS: complete, DONE_WHEN: met' report does NOT proceed", () => {
+    const f = loadFixture("chunk-clean-proceed.json");
+    const chunk = chunkFromFixture(f);
+    const outcome = runChunkReview({
+      chunk,
+      allChunks: [chunk],
+      plan: emptyPlan(chunk),
+      rawReport:
+        "STATUS: complete\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\n" +
+        "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
+        "LAUNCH_READINESS: none\nNOTE: all good",
+    });
+    expect(outcome.action).toBe("push_back"); // was silently "proceed" before the fix
+    expect(outcome.findings).toHaveLength(1);
+    expect(outcome.findings[0].gate).toBe("report-shape");
+  });
+});
+
 describe("Bookwell fixture: chunk-clean-proceed → proceed", () => {
   it("returns proceed when all gates pass", () => {
     const f = loadFixture("chunk-clean-proceed.json");

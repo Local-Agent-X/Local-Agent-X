@@ -47,26 +47,52 @@ export interface GateFinding {
   reasoning: string;
 }
 
-/** Gate 0 (precondition): the report must parse to a known shape.
+/** Gate 0 (precondition): the report must parse to a known shape AND
+ *  carry a recognized STATUS value.
  *
  *  push_back, not halt: a missing/malformed report is the classic
  *  weak-model dodge (live failure 2026-07-01: the worker did the chunk
  *  work but ended its run with no final report text, halting the whole
  *  build at 0/N). The loop's retry-once machinery respawns with the
- *  reason below; a second shape failure escalates to halt as always. */
+ *  reason below; a second shape failure escalates to halt as always.
+ *
+ *  Two distinct shape failures, both retryable:
+ *   1. No parseable block (STATUS/DONE_WHEN buckets absent) → `parsed` false.
+ *   2. Block present but STATUS is an unrecognized token — the parser
+ *      coerces "complete"/"success"/"blocked!" to `status: "unknown"`. That
+ *      is NOT a known shape: paired with DONE_WHEN: met it would sail past
+ *      every status-based gate and commit on a status nobody can reason
+ *      about, and a mistyped "blocked!"/"partial." silently loses the
+ *      blocked/partial recovery paths (missing-creds, spec-gap) that
+ *      gateDoneWhen gates on status ∈ {blocked, partial}. Demand a canonical
+ *      token; retry-once handles it, a second miss halts. */
 export function gateReportShape(report: ChunkReport): GateFinding | null {
-  if (report.parsed) return null;
-  return {
-    gate: "report-shape",
-    action: "push_back",
-    reasoning:
-      "Your run ended without a parseable report. The LAST message of your run " +
-      "must be EXACTLY the report block — plain column-0 lines starting " +
-      "STATUS: / DONE_WHEN: / CHANGED: / TESTS: / NEW_FAILURES: / " +
-      "PRE_EXISTING_FAILURES: / SPEC_GAPS: / LAUNCH_READINESS: / NOTE: — no " +
-      "bold, no bullets, no code fence, no text after it. Verify what already " +
-      "landed on disk from the previous attempt before redoing work.",
-  };
+  if (!report.parsed) {
+    return {
+      gate: "report-shape",
+      action: "push_back",
+      reasoning:
+        "Your run ended without a parseable report. The LAST message of your run " +
+        "must be EXACTLY the report block — plain column-0 lines starting " +
+        "STATUS: / DONE_WHEN: / CHANGED: / TESTS: / NEW_FAILURES: / " +
+        "PRE_EXISTING_FAILURES: / SPEC_GAPS: / LAUNCH_READINESS: / NOTE: — no " +
+        "bold, no bullets, no code fence, no text after it. Verify what already " +
+        "landed on disk from the previous attempt before redoing work.",
+    };
+  }
+  if (report.status === "unknown") {
+    return {
+      gate: "report-shape",
+      action: "push_back",
+      reasoning:
+        "Your report's STATUS line is not a recognized value. STATUS must be " +
+        "EXACTLY one of `done`, `blocked`, or `partial` (lowercase, no trailing " +
+        "punctuation, no synonyms — \"complete\"/\"success\"/\"finished\" are NOT " +
+        "accepted). The rest of your report looks fine; re-emit the full report " +
+        "block with a valid STATUS token so the review gates can read it.",
+    };
+  }
+  return null;
 }
 
 // Gate 1 (done-when verifier) lives in gate-done-when.ts — the largest single

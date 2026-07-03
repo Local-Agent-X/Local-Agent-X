@@ -29,6 +29,18 @@ function bgEvent(): ServerEvent {
   return { type: "bg_op_started", opId: "op-1", task: "from telegram", provider: "autopilot" };
 }
 
+function registerChat(sessionId: string): { events: ServerEvent[] } {
+  const chat = {
+    sessionId,
+    events: [] as ServerEvent[],
+    abortController: new AbortController(),
+    startedAt: Date.now(),
+    done: false,
+  };
+  activeChats.set(sessionId, chat);
+  return chat;
+}
+
 beforeEach(() => {
   clients.clear();
   activeChats.clear();
@@ -74,5 +86,28 @@ describe("bridge bg_op routing", () => {
 
     // broadcastAll path only — exactly one frame, not one per routing branch.
     expect(a.sent).toHaveLength(1);
+  });
+});
+
+describe("bridge replay-buffer cap (CT-8)", () => {
+  it("trims the replay buffer to the same 500→400 cap manager.onEvent enforces", () => {
+    // A long-running worker at a fast throttle stuffs thousands of bg_op
+    // progress events at one bridge session. Without the cap the replay
+    // buffer grows unbounded and every event is re-sent to each late
+    // subscriber. Pre-fix (a bare chat.events.push) this length is 3600.
+    const chat = registerChat(TG_SESSION);
+
+    for (let i = 0; i < 3600; i++) {
+      driveSessionBroadcaster(TG_SESSION, {
+        type: "bg_op_progress",
+        opId: "op-1",
+        line: `tick ${i}`,
+      });
+    }
+
+    expect(chat.events.length).toBeLessThanOrEqual(500);
+    // And the newest events are the ones retained (trim keeps the tail).
+    const last = chat.events[chat.events.length - 1];
+    expect(last).toMatchObject({ type: "bg_op_progress", line: "tick 3599" });
   });
 });

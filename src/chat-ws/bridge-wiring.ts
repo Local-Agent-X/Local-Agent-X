@@ -13,11 +13,25 @@
 import { setSessionBroadcaster } from "../ops/session-bridge.js";
 import { setIdleNudgeBroadcaster } from "../ops/idle-nudge.js";
 import { activeChats, broadcastAll, broadcastToSession } from "./state.js";
+import type { ActiveChat } from "./state.js";
+import type { ServerEvent } from "../types.js";
+
+// Buffer a replay event with the SAME 500→400 cap manager.onEvent enforces.
+// Bridge-originated streams (bg_op progress, idle-nudge) can run for many
+// minutes at a fast throttle; without the trim they grow the replay buffer
+// unboundedly and every trim is re-sent to each late subscriber. Keep this in
+// lockstep with manager.onEvent's cap.
+function pushCappedEvent(chat: ActiveChat, event: ServerEvent): void {
+  chat.events.push(event);
+  if (chat.events.length > 500) {
+    chat.events = chat.events.slice(-400);
+  }
+}
 
 export function wireBridgeBroadcasters(): void {
   setSessionBroadcaster((sessionId, event) => {
     const chat = activeChats.get(sessionId);
-    if (chat) chat.events.push(event);
+    if (chat) pushCappedEvent(chat, event);
     const isBgOpEvent =
       event.type === "bg_op_queued" ||
       event.type === "bg_op_started" ||
@@ -33,7 +47,7 @@ export function wireBridgeBroadcasters(): void {
 
   setIdleNudgeBroadcaster((sessionId, event) => {
     const chat = activeChats.get(sessionId);
-    if (chat) chat.events.push(event);
+    if (chat) pushCappedEvent(chat, event);
     broadcastToSession(sessionId, event);
   });
 }

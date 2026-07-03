@@ -59,6 +59,10 @@ export function convertUserContent(content: unknown): string | AnthropicContent[
 export function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessage[] {
   const result: AnthropicMessage[] = [];
   const seenToolUseIds = new Set<string>();
+  // Original tool_call id → FIFO queue of emitted tool_use ids. When a duplicate
+  // id is renamed on the assistant side, the matching tool_result (which still
+  // carries the original id) must be renamed to the same value, in order.
+  const pendingResultIds = new Map<string, string[]>();
 
   for (const msg of messages) {
     if (msg.role === "system") continue;
@@ -81,15 +85,20 @@ export function convertMessages(messages: ChatCompletionMessageParam[]): Anthrop
             toolId = `${toolId}_${++_toolCallSeq}`;
           }
           seenToolUseIds.add(toolId);
+          const queue = pendingResultIds.get(tc.id);
+          if (queue) queue.push(toolId);
+          else pendingResultIds.set(tc.id, [toolId]);
           content.push({ type: "tool_use", id: toolId, name: tc.function.name, input });
         }
       }
       if (content.length > 0) result.push({ role: "assistant", content });
     } else if (msg.role === "tool") {
       const m = msg as { tool_call_id: string; content: string };
+      const queue = pendingResultIds.get(m.tool_call_id);
+      const toolUseId = queue && queue.length > 0 ? (queue.shift() as string) : m.tool_call_id;
       result.push({
         role: "user",
-        content: [{ type: "tool_result", tool_use_id: m.tool_call_id, content: m.content }],
+        content: [{ type: "tool_result", tool_use_id: toolUseId, content: m.content }],
       });
     }
   }

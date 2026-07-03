@@ -1,11 +1,15 @@
 /**
  * Op tools — let the chat agent delegate work to the canonical-loop.
  *
- * The 6 tool definitions live in src/ops/tools/:
+ * The 7 tool definitions live in src/ops/tools/:
  *   op-submit-async.ts — op_submit_async — PRIMARY: fire-and-forget. Returns
  *                        opId immediately so the chat agent can keep
  *                        responding. The session bridge surfaces the result
  *                        back into the chat session when the worker finishes.
+ *   op-submit-batch.ts — op_submit_batch — FAN-OUT: N distinct tasks run as
+ *                        parallel ops via a bounded pool (default concurrency
+ *                        4), blocks until all finish, returns one aggregated
+ *                        per-task + roll-up result.
  *   op-wait.ts         — op_wait — Block on a specific opId until it
  *                        completes (or timeout). Use when the agent genuinely
  *                        needs the result before continuing the current turn.
@@ -30,6 +34,7 @@
 
 import type { ToolDefinition } from "../types.js";
 import { opSubmitAsyncTool } from "./tools/op-submit-async.js";
+import { opSubmitBatchTool } from "./tools/op-submit-batch.js";
 import { opWaitTool } from "./tools/op-wait.js";
 import { opSubmitTool } from "./tools/op-submit.js";
 import { opStatusTool } from "./tools/op-status.js";
@@ -37,6 +42,7 @@ import { opKillTool } from "./tools/op-kill.js";
 import { opRedirectTool } from "./tools/op-redirect.js";
 
 export { opSubmitAsyncTool } from "./tools/op-submit-async.js";
+export { opSubmitBatchTool } from "./tools/op-submit-batch.js";
 export { opWaitTool } from "./tools/op-wait.js";
 export { opSubmitTool } from "./tools/op-submit.js";
 export { opStatusTool } from "./tools/op-status.js";
@@ -45,6 +51,7 @@ export { opRedirectTool } from "./tools/op-redirect.js";
 
 export const opTools: ToolDefinition[] = [
   opSubmitAsyncTool,  // listed first so registry order matches "preferred" intent
+  opSubmitBatchTool,  // fan-out launcher: N distinct tasks, bounded-concurrency pool
   opWaitTool,
   opSubmitTool,
   opStatusTool,

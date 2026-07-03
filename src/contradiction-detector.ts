@@ -137,7 +137,7 @@ export class ContradictionDetector {
         `to retire the stale fact, don't just save a new one alongside it.`,
       priority: 9,
       category: "contradiction",
-      confidence: 0.8,
+      confidence: contradiction.confidence,
     }];
   }
 

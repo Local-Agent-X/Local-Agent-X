@@ -106,8 +106,11 @@ export function formatCaptionForInstagram(caption: string): string {
 
 // JavaScript code to inject caption into Instagram's composer
 export function buildCaptionInjector(caption: string): string {
-  // Escape for JS string literal using JSON.stringify (handles all special chars)
-  const escaped = JSON.stringify(caption).slice(1, -1); // strip outer quotes
+  // Escape for a JS string literal using JSON.stringify. Keep its outer double
+  // quotes and embed the whole literal — do NOT strip them and drop the result
+  // into single-quoted literals, because JSON.stringify does not escape ' and a
+  // caption like "Don't miss it" would produce a SyntaxError in the browser.
+  const escaped = JSON.stringify(caption); // a valid double-quoted JS literal
 
   return `
     (function() {
@@ -133,7 +136,7 @@ export function buildCaptionInjector(caption: string): string {
           const nativeSetter = Object.getOwnPropertyDescriptor(
             window.HTMLTextAreaElement.prototype, 'value'
           ).set;
-          nativeSetter.call(el, '${escaped}');
+          nativeSetter.call(el, ${escaped});
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
           return 'Caption inserted via textarea';
@@ -142,7 +145,7 @@ export function buildCaptionInjector(caption: string): string {
           // Clear existing content
           el.innerHTML = '';
           // Insert with line breaks as <br> or paragraphs
-          const lines = '${escaped}'.split('\\n');
+          const lines = ${escaped}.split('\\n');
           // Use execCommand for undo support
           document.execCommand('selectAll', false, null);
           document.execCommand('delete', false, null);

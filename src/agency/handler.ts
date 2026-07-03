@@ -38,8 +38,15 @@ function uid(prefix: string): string {
 
 let singleton: Handler | null = null;
 
+const RETIRE_DELAY_MS = 5 * 60 * 1000; // terminal run stays LIVE this long
+const MAX_RETIRED_RUNS = 100;
+
 export class Handler {
   private agents = new Map<string, FieldAgent>();
+  /** Terminal runs evicted from the live registry, kept (bounded FIFO) so
+   *  agent_output/agent_status stay answerable by run id after the 5-min GC:
+   *  a parent returning later must get the result, not "Agent not found". */
+  private retired = new Map<string, FieldAgent>();
   private messageBus: AgencyMessageBus;
   private updateCallbacks: AgentUpdateCallback[] = [];
   /** Current parent session ID — set by the server before each chat turn */
@@ -170,8 +177,22 @@ export class Handler {
       if (a && (a.status === "succeeded" || a.status === "failed")) {
         this.messageBus.unsubscribe(agentId);
         this.agents.delete(agentId);
+        this.retire(a);
       }
-    }, 5 * 60 * 1000);
+    }, RETIRE_DELAY_MS);
+  }
+
+  /** Keep a terminal run's readable record past the live-map GC. Drops
+   *  run-scoped handles and evicts oldest-first past the cap. */
+  private retire(agent: FieldAgent): void {
+    agent.abortController = undefined;
+    agent.pauseSignal = undefined;
+    agent.streamCallback = undefined;
+    this.retired.set(agent.id, agent);
+    for (const oldest of this.retired.keys()) {
+      if (this.retired.size <= MAX_RETIRED_RUNS) break;
+      this.retired.delete(oldest);
+    }
   }
 
   // -- Redirect -------------------------------------------------------------
@@ -268,7 +289,7 @@ export class Handler {
 
   getAgentStatus(agentId?: string): FieldAgentStatus | FieldAgentStatus[] {
     if (agentId) {
-      const agent = this.agents.get(agentId);
+      const agent = this.agents.get(agentId) ?? this.retired.get(agentId);
       if (!agent) throw new Error(`Agent ${agentId} not found`);
       return this.buildStatus(agent);
     }
@@ -276,7 +297,7 @@ export class Handler {
   }
 
   getAgentOutput(agentId: string): string[] {
-    const agent = this.agents.get(agentId);
+    const agent = this.agents.get(agentId) ?? this.retired.get(agentId);
     if (!agent) throw new Error(`Agent ${agentId} not found`);
     return [...agent.output];
   }

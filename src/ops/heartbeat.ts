@@ -22,7 +22,11 @@ export function decideRecovery(
   failureContext: { committingCallsAlreadyMade: boolean; reason: string },
 ): RecoveryDecision {
   const attempts = op.attemptCount ?? 0;
-  const max = op.retryPolicy.maxRecoveryAttempts;
+  // Ops persisted before the retryPolicy column existed may lack it on disk —
+  // fall back to the per-type table rather than throwing inside the recovery
+  // chokepoint.
+  const policy = op.retryPolicy ?? getRetryPolicy(op.type);
+  const max = policy.maxRecoveryAttempts;
 
   if (attempts >= max) {
     return { shouldRetry: false, reason: `attempts ${attempts}/${max} exhausted`, nextDelayMs: 0 };
@@ -34,7 +38,7 @@ export function decideRecovery(
       nextDelayMs: 0,
     };
   }
-  const backoffArr = op.retryPolicy.backoffMs;
+  const backoffArr = policy.backoffMs;
   const nextDelayMs = backoffArr[Math.min(attempts, backoffArr.length - 1)] ?? 5_000;
   return { shouldRetry: true, reason: `retry ${attempts + 1}/${max} (${failureContext.reason})`, nextDelayMs };
 }

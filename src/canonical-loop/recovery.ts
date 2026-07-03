@@ -34,6 +34,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { readOp } from "../ops/op-store.js";
+import { decideRecovery, isCircuitOpen, recordFailure } from "../ops/heartbeat.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp, IllegalTransitionError } from "./state-machine.js";
 import { isLeaseExpired } from "./lease.js";
@@ -44,6 +45,8 @@ import type { CanonicalLane } from "./types.js";
 export type RecoveryOutcomeKind =
   | "recovered"     // running → queued, op re-enqueued.
   | "cancelled"     // cancelling → cancelled, no requeue.
+  | "exhausted"     // retry policy / circuit breaker refused a relaunch:
+                    // running → failed, no requeue.
   | "no_lease"      // (retained for the type surface) — recoverStaleOp no longer
                     // returns it; a non-terminal no-lease op is now the C3
                     // orphan shape and IS reclaimed. See recoverStaleOp.
@@ -126,6 +129,38 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
     return { ok: true, kind: "cancelled", expiredWorkerId };
   }
 
+  // Bounded recovery (spec §18/§20 + §21.4) — the op's per-type retryPolicy
+  // and the per-type circuit breaker gate the relaunch at this single
+  // chokepoint. Each recovery IS one observed crash of this op: it consumes
+  // one attempt against `retryPolicy.maxRecoveryAttempts` and records one
+  // failure toward the type's rolling-window breaker. Without the cap a
+  // poison op loops lease-expire → recover → relaunch forever, holding a
+  // lane slot on every cycle. `committingCallsAlreadyMade` is false because
+  // replay here is idempotent (see the requeue paragraph below); backoffMs
+  // is intentionally NOT honored at this seam — an in-memory delay timer
+  // would strand the op in `queued` if the process died mid-delay, and the
+  // lease duration already paces recovery cycles.
+  const transitionReason = leaseOwner ? "lease_expired" : "orphaned_no_lease";
+  const circuitAlreadyOpen = isCircuitOpen(op.type);
+  const decision = decideRecovery(op, {
+    committingCallsAlreadyMade: false,
+    reason: transitionReason,
+  });
+  recordFailure(op.type);
+  if (!decision.shouldRetry || circuitAlreadyOpen) {
+    const why = decision.shouldRetry
+      ? `circuit breaker open for op type "${op.type}"`
+      : decision.reason;
+    safeRecoveryTransition(opId, "failed", `recovery_abandoned: ${why}`);
+    return { ok: true, kind: "exhausted", expiredWorkerId };
+  }
+
+  // This relaunch consumes one recovery attempt. Persist the counter BEFORE
+  // the requeue transition (safeRecoveryTransition re-reads from disk) so the
+  // next crash of this op sees the incremented count.
+  op.attemptCount = (op.attemptCount ?? 0) + 1;
+  persistOpKeepingSignals(op, { preserveLeaseFromDisk: false });
+
   // running → queued: re-enqueue for a replacement worker, which reads
   // `op_turns` for the resume turnIdx and hands prior `provider_state` to the
   // adapter (PRD §11). Identical to the expired-lease path — recovery's job is
@@ -134,11 +169,7 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
   // idempotently (checkpoint.ts's `(op_id, turn_idx)` replay guard also absorbs
   // a turn that DID commit before the crash), so this cannot double-execute a
   // committed turn.
-  safeRecoveryTransition(
-    opId,
-    "queued",
-    leaseOwner ? "lease_expired" : "orphaned_no_lease",
-  );
+  safeRecoveryTransition(opId, "queued", transitionReason);
   enqueueOp(opId, op.lane as CanonicalLane);
   pumpScheduler();
   return { ok: true, kind: "recovered", expiredWorkerId };

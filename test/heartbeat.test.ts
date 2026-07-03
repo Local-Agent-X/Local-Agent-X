@@ -155,6 +155,16 @@ describe("decideRecovery", () => {
     expect(decision.nextDelayMs).toBe(5_000);
   });
 
+  it("falls back to the per-type policy when the on-disk op lacks retryPolicy", () => {
+    // Ops persisted before the retryPolicy column existed: decideRecovery must
+    // consult the per-type table instead of throwing inside recovery.
+    const op = mkOp({ type: "send_email", attemptCount: 1 });
+    Reflect.deleteProperty(op, "retryPolicy");
+    const decision = decideRecovery(op, { committingCallsAlreadyMade: false, reason: "x" });
+    expect(decision.shouldRetry).toBe(false); // send_email caps at 1 attempt
+    expect(decision.reason).toContain("1/1 exhausted");
+  });
+
   it("treats undefined attemptCount as 0", () => {
     const op = mkOp();
     delete (op as any).attemptCount;

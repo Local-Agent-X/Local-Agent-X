@@ -56,6 +56,7 @@ import {
   type ProviderStateEnvelope,
 } from "../src/canonical-loop/index.js";
 import { readOp, writeOp, newOpId } from "../src/ops/op-store.js";
+import { isCircuitOpen, recordFailure, resetCircuit } from "../src/ops/heartbeat.js";
 import type { Op } from "../src/ops/types.js";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../src/canonical-loop/adapter-contract.js";
 
@@ -95,6 +96,9 @@ afterEach(async () => {
   }
   tracked.length = 0;
   delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
+  // Recoveries now record circuit-breaker failures per op type (OP-10); clear
+  // the shared "freeform" bucket so tests can't trip each other's breaker.
+  resetCircuit("freeform");
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -754,6 +758,76 @@ describe("scheduler lane caps after recovery", () => {
     expect(evictWorker(op.id)).toBe(true);
     // Idempotent — second evict returns false (no active worker now).
     expect(evictWorker(op.id)).toBe(false);
+  });
+});
+
+// ── Bounded recovery: retry policy + circuit breaker (OP-10) ─────────────
+
+describe("bounded recovery — retry policy + circuit breaker (OP-10)", () => {
+  /** Synthesize the post-crash disk shape: running with an expired lease. */
+  function crash(opId: string, workerId = "w-dead-poison"): void {
+    const fresh = readOp(opId)!;
+    fresh.canonical!.state = "running";
+    fresh.canonical!.leaseOwner = workerId;
+    fresh.canonical!.leaseExpiresAt = new Date(Date.now() - 50).toISOString();
+    writeOp(fresh);
+  }
+
+  it("a poison op is failed (not requeued) once maxRecoveryAttempts is exhausted", () => {
+    const op = mkOp("poison-cap");
+    op.type = `poison-${Date.now()}`; // isolate this test's breaker bucket
+    op.retryPolicy = { maxRecoveryAttempts: 2, backoffMs: [1] };
+    canonicalLoopEntry(op);
+
+    // Crashes 1 + 2: within the attempt budget — recovered, counter advances.
+    crash(op.id);
+    expect(recoverStaleOp(op.id).kind).toBe("recovered");
+    expect(readOp(op.id)?.attemptCount).toBe(1);
+    expect(readOp(op.id)?.canonical?.state).toBe("queued");
+
+    crash(op.id);
+    expect(recoverStaleOp(op.id).kind).toBe("recovered");
+    expect(readOp(op.id)?.attemptCount).toBe(2);
+
+    // Crash 3: budget exhausted — recovery must terminate the loop by
+    // failing the op instead of relaunching it (the OP-10 poison-op loop:
+    // lease-expire → recover → relaunch forever, holding a lane slot).
+    crash(op.id);
+    const r3 = recoverStaleOp(op.id);
+    expect(r3.ok).toBe(true);
+    expect(r3.kind).toBe("exhausted");
+    const final = readOp(op.id);
+    expect(final?.canonical?.state).toBe("failed");
+    expect(final?.attemptCount).toBe(2); // the refusal consumes no attempt
+
+    // The abandonment is announced via state_changed with a recovery reason.
+    const abandoned = readCanonicalEvents(op.id).find(e =>
+      e.type === "state_changed" &&
+      bodyOf<{ to: string; reason: string }>(e).to === "failed" &&
+      bodyOf<{ reason: string }>(e).reason.startsWith("recovery_abandoned"),
+    );
+    expect(abandoned).toBeDefined();
+
+    // Terminal — a later recovery pass no longer touches it.
+    expect(recoverStaleOp(op.id).kind).toBe("not_running");
+    resetCircuit(op.type);
+  });
+
+  it("an already-open circuit for the op's type blocks relaunch even with attempt budget left", () => {
+    const op = mkOp("circuit-block");
+    op.type = `circuit-${Date.now()}`; // isolate this test's breaker bucket
+    canonicalLoopEntry(op);
+
+    // Trip the type's breaker: 5 failures inside the rolling window.
+    for (let i = 0; i < 5; i++) recordFailure(op.type);
+    expect(isCircuitOpen(op.type)).toBe(true);
+
+    crash(op.id, "w-dead-circuit");
+    const r = recoverStaleOp(op.id);
+    expect(r.ok).toBe(true);
+    expect(r.kind).toBe("exhausted");
+    expect(readOp(op.id)?.canonical?.state).toBe("failed");
+    resetCircuit(op.type);
   });
 });
 

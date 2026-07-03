@@ -17,7 +17,7 @@
  *     post-commit op write landed).
  */
 import { randomUUID } from "node:crypto";
-import { readOp, writeOp } from "../ops/op-store.js";
+import { readOp, writeOp, withOpLock } from "../ops/op-store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp, isTerminalCanonicalState, IllegalTransitionError } from "./state-machine.js";
 import { driveTurn } from "./turn-loop.js";
@@ -230,11 +230,18 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       }
 
       if (pauseRequested) {
-        if (reread?.canonical) op.canonical = reread.canonical;
-        if (!op.canonical) op.canonical = {};
-        op.canonical.pauseRequestedAt = null;
-        // Direct write: explicitly clearing a signal column.
-        writeOp(op);
+        // Clear the pause signal atomically (OP-9): another process's opCancel
+        // can land between the reread above and this write. Re-read INSIDE the
+        // per-op lock and keep every column from disk except the one we clear,
+        // so a concurrent cancel/redirect written by another server is not
+        // reverted by our stale in-memory op.
+        withOpLock(op.id, () => {
+          const fresh = readOp(op.id);
+          if (fresh?.canonical) op.canonical = fresh.canonical;
+          if (!op.canonical) op.canonical = {};
+          op.canonical.pauseRequestedAt = null;
+          writeOp(op);
+        });
         transitionOp(op, "paused", "pause_at_turn_boundary");
         releaseReason = "paused";
         break;

@@ -18,13 +18,31 @@
 import { randomUUID } from "node:crypto";
 import type { CanonicalEvent, CanonicalLane, RedirectInstruction } from "./types.js";
 import { readCanonicalEvents } from "./store.js";
-import { readOp, writeOp } from "../ops/op-store.js";
+import { readOp, writeOp, withOpLock } from "../ops/op-store.js";
+import type { Op } from "../ops/types.js";
 import { getBus, eventsChannel, streamChannel, type BusListener } from "./bus.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { enqueueOp, pumpScheduler } from "./scheduler.js";
 import { publishSignal } from "./signals.js";
 import { isTerminalState } from "./terminal-states.js";
+
+/**
+ * Set a signal column on an op atomically (OP-9). Re-reads the op inside the
+ * per-op lock and applies only the caller's mutation, so a signal another
+ * writer (the worker, or another server on a shared ~/.lax) persisted between
+ * this API's validating readOp and its write is preserved — never reverted by
+ * a stale in-memory op. Falls back to the already-loaded op if the re-read
+ * fails (op deleted mid-flight is handled by the caller's earlier checks).
+ */
+function writeSignalColumn(opId: string, loaded: Op, mutate: (c: NonNullable<Op["canonical"]>) => void): void {
+  withOpLock(opId, () => {
+    const base = readOp(opId) ?? loaded;
+    if (!base.canonical) base.canonical = {};
+    mutate(base.canonical);
+    writeOp(base);
+  });
+}
 
 /** Sentinel for `seq` arg of `opEventsSince`: replay from the beginning. */
 export const OP_EVENTS_FROM_BEGINNING = -1;
@@ -212,10 +230,11 @@ export function opPause(opId: string, actor: string): ControlResult {
   if (state === "paused") return { ok: true };
   if (op.canonical?.pauseRequestedAt) return { ok: true };
 
-  if (!op.canonical) op.canonical = {};
   const now = new Date().toISOString();
-  op.canonical.pauseRequestedAt = now;
-  writeOp(op);
+  // OP-9: set the signal on the LATEST disk state under the per-op lock so a
+  // signal another process wrote (cancel/redirect) between our validating
+  // readOp and this write is preserved, not clobbered by our stale op.
+  writeSignalColumn(opId, op, (c) => { c.pauseRequestedAt = now; });
   emit(opId, "pause_requested", { actor });
   publishSignal({ kind: "pause", opId, actor, ts: now });
   return { ok: true };
@@ -286,13 +305,11 @@ export function opCancel(opId: string, actor: string): ControlResult {
   if (state === "cancelling") return { ok: true };
   if (op.canonical?.cancelRequestedAt) return { ok: true };
 
-  if (!op.canonical) op.canonical = {};
   const now = new Date().toISOString();
-  op.canonical.cancelRequestedAt = now;
-  // Direct writeOp on the disk-loaded op preserves all other fields the
-  // worker / state-machine wrote (state, lease, currentTurnIdx, signal
-  // columns owned by other control APIs).
-  writeOp(op);
+  // OP-9: merge the cancel signal onto the LATEST disk state under the per-op
+  // lock. A bare writeOp of the op read at the top would revert a pause/redirect
+  // another process wrote in the meantime (two servers on one ~/.lax).
+  writeSignalColumn(opId, op, (c) => { c.cancelRequestedAt = now; });
   emit(opId, "cancel_requested", { actor });
   publishSignal({ kind: "cancel", opId, actor, ts: now });
   return { ok: true };
@@ -356,11 +373,13 @@ export function opRedirect(opId: string, instruction: string, actor: string): Re
   const now = new Date().toISOString();
   const instructionId = `ri-${randomUUID()}`;
   const next: RedirectInstruction = { instructionId, text: instruction, receivedAt: now };
-  // Latest-wins: overwrite any pending instruction. Direct writeOp
-  // because we are explicitly mutating a signal column owned by this API.
-  op.canonical.redirectInstruction = next;
-  op.canonical.redirectReceivedAt = now;
-  writeOp(op);
+  // OP-9: latest-wins on the redirect column, but merged onto the LATEST disk
+  // state under the per-op lock so a concurrent cancel/pause from another
+  // process is not reverted by our stale op.
+  writeSignalColumn(opId, op, (c) => {
+    c.redirectInstruction = next;
+    c.redirectReceivedAt = now;
+  });
   emit(opId, "redirect_received", { actor, instructionId });
   publishSignal({ kind: "redirect", opId, actor, ts: now, instructionId });
   return { ok: true };

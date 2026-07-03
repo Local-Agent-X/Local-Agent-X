@@ -31,6 +31,10 @@ const require = createRequire(import.meta.url);
 
 const logger = createLogger("whatsapp-bridge");
 
+// Reconnect backoff: base 5s, doubling, capped at 60s, retried FOREVER (broker pattern).
+export const WA_RECONNECT_BASE_MS = 5000;
+export const WA_RECONNECT_MAX_MS = 60_000;
+
 export type { BridgeReply, WhatsAppBridgeConfig } from "./types.js";
 
 export class WhatsAppBridge {
@@ -48,6 +52,7 @@ export class WhatsAppBridge {
   private lastError: string | null = null;
   allowedNumbers: Set<string> = new Set(); // Empty = owner-only (default-deny)
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
 
   constructor(config: WhatsAppBridgeConfig) {
     this.dataDir = config.dataDir;
@@ -56,9 +61,8 @@ export class WhatsAppBridge {
 
     this.allowedNumbers = loadAllowedNumbers(this.dataDir);
 
-    // Prune dedup cache periodically — protects against unbounded growth
-    // on long-lived sessions. 500-entry floor is enough to dedupe the
-    // last ~12-24h of message activity for an active chat.
+    // Prune dedup cache periodically — bounds growth on long-lived sessions;
+    // the 500-entry floor still dedupes ~12-24h of activity for an active chat.
     setInterval(() => {
       if (this.processedMessages.size > 2000) {
         const entries = [...this.processedMessages];
@@ -140,11 +144,10 @@ export class WhatsAppBridge {
     return this.sendToJid(toJid(to), text);
   }
 
-  /** The JID to address PROACTIVE messages to the owner's own (self) chat. On a
-   *  LID account the self-chat is keyed by the @lid JID, not phone@s.whatsapp.net
-   *  — sending to the phone JID lands in a different/undelivered thread, which is
-   *  why proactive restart/update pings and whatsapp_send self-sends weren't
-   *  showing up. Inbound self-chat uses @lid, so we match it. */
+  /** The JID for PROACTIVE messages to the owner's own (self) chat. On a LID account
+   *  the self-chat is keyed by the @lid JID, not phone@s.whatsapp.net — sending to the
+   *  phone JID lands in a different/undelivered thread (why proactive pings + self-sends
+   *  weren't showing up). Inbound self-chat uses @lid, so we match it. */
   ownerSelfJid(): string | null {
     if (this.selfLid) return `${this.selfLid}@lid`;
     if (this.phoneNumber) return `${this.phoneNumber}@s.whatsapp.net`;
@@ -158,8 +161,7 @@ export class WhatsAppBridge {
     return this.sendToJid(jid, text);
   }
 
-  /** Send an OGG/Opus buffer as a WhatsApp voice note (ptt=true so it
-   *  renders as a playable voice bubble, not an attached audio file). */
+  /** Send an OGG/Opus buffer as a WhatsApp voice note (ptt=true → voice bubble). */
   async sendVoiceToJid(jid: string, ogg: Buffer): Promise<boolean> {
     if (!this.sock || this.state !== "connected") return false;
     try {
@@ -240,8 +242,7 @@ export class WhatsAppBridge {
     saveAllowedNumbers(this.dataDir, this.allowedNumbers);
   }
 
-  /** Send directly to a JID. Public so the message-handler module can
-   *  invoke it as part of its context. */
+  /** Send directly to a JID. Public so the message-handler module can invoke it. */
   async sendToJid(jid: string, text: string): Promise<boolean> {
     if (!this.sock || this.state !== "connected") return false;
     const chunks = splitMessage(text, 4000);
@@ -257,9 +258,8 @@ export class WhatsAppBridge {
     return true;
   }
 
-  /** Voice/text reply dispatcher. Public so the message-handler module
-   *  can invoke it. Delegates to the standalone voice-reply helper —
-   *  this method just supplies the bridge's send callbacks. */
+  /** Voice/text reply dispatcher. Public for the message-handler module; delegates to
+   *  the standalone voice-reply helper, supplying the bridge's send callbacks. */
   async dispatchReplyToJid(jid: string, phone: string, reply: BridgeReply): Promise<void> {
     return dispatchReplyToJid(
       { sendToJid: (j, t) => this.sendToJid(j, t), sendVoiceToJid: (j, o) => this.sendVoiceToJid(j, o) },
@@ -267,6 +267,31 @@ export class WhatsAppBridge {
       phone,
       reply,
     );
+  }
+
+  /** Delay for the next reconnect: capped exponential backoff with ±25% jitter. */
+  private reconnectDelayMs(attempt: number): number {
+    const capped = Math.min(WA_RECONNECT_MAX_MS, WA_RECONNECT_BASE_MS * 2 ** (attempt - 1));
+    return Math.round(capped * (0.75 + 0.5 * Math.random()));
+  }
+
+  /** Schedule a reconnect, retrying FOREVER until connected or stopped. A startSocket
+   *  throw (wake-from-sleep DNS error) reschedules instead of leaving a terminal state;
+   *  disconnect()/logout set "disconnected", which the gate below honours (no resurrect). */
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer || this.state === "disconnected") return;
+    this.reconnectAttempt += 1;
+    const delay = this.reconnectDelayMs(this.reconnectAttempt);
+    this.state = "connecting";
+    logger.info(`[whatsapp] Reconnect attempt ${this.reconnectAttempt} in ${delay}ms`);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.startSocket().catch(e => {
+        this.lastError = (e as Error).message;
+        logger.error("[whatsapp] Reconnect failed:", this.lastError);
+        this.scheduleReconnect();
+      });
+    }, delay);
   }
 
   private async startSocket(): Promise<void> {
@@ -303,8 +328,7 @@ export class WhatsAppBridge {
 
     this.sock.ev.on("creds.update", saveCreds);
 
-    // Connection state changes — QR generation, disconnect classification,
-    // reconnect scheduling, connected-state stamping.
+    // Connection state changes — QR, disconnect classification, reconnect, connect.
     this.sock.ev.on("connection.update", (update: any) => {
       const { connection, lastDisconnect, qr } = update;
 
@@ -338,20 +362,14 @@ export class WhatsAppBridge {
           this.lastError = "Connection replaced by another WhatsApp Web session. Close other sessions first, then reconnect.";
           this.sock = null;
         } else {
-          logger.info(`[whatsapp] Disconnected (reason: ${reason}) — reconnecting in 5s...`);
-          this.state = "connecting";
-          this.reconnectTimer = setTimeout(() => {
-            this.startSocket().catch(e => {
-              logger.error("[whatsapp] Reconnect failed:", (e as Error).message);
-              this.state = "disconnected";
-              this.lastError = (e as Error).message;
-            });
-          }, 5000);
+          logger.info(`[whatsapp] Disconnected (reason: ${reason}) — scheduling reconnect...`);
+          this.scheduleReconnect();
         }
       }
 
       if (connection === "open") {
         this.state = "connected";
+        this.reconnectAttempt = 0; // stable session → next drop reconnects fast
         this.qrCode = null;
         this.qrDataUrl = null;
         const me = this.sock?.user;
@@ -364,25 +382,18 @@ export class WhatsAppBridge {
       }
     });
 
-    // Incoming message processing lives in src/whatsapp-bridge/
-    // message-handler.ts. The handler structural-types `this` —
-    // mutations to processedMessages / processingLock propagate.
+    // Incoming message processing — see message-handler.ts (structural-types `this`).
     const handleMessagesUpsert = createMessagesUpsertHandler(this, lidLookup);
 
-    // Register message handler — try all available patterns.
+    // Register ONCE — in Baileys v7 both `ev.on('messages.upsert')` and `ev.process` fire,
+    // so registering both ran downloadMediaMessage + Whisper STT twice per voice note.
     this.sock.ev.on("messages.upsert", handleMessagesUpsert);
-    this.sock.ev.process((events: any) => {
-      if (events["messages.upsert"]) {
-        handleMessagesUpsert(events["messages.upsert"]);
-      }
-    });
   }
 }
 
-// Module-singleton handle to the live bridge so tools (whatsapp_send) and
-// scheduled missions can push PROACTIVE messages. The inbound reply path rides
-// onMessage, but a cron ping has no inbound turn to ride — it needs the bridge
-// object directly. Set once at bootstrap (bootstrap-bridges.ts).
+// Module-singleton handle to the live bridge so tools (whatsapp_send) and scheduled
+// missions can push PROACTIVE messages — a cron ping has no inbound turn to ride
+// onMessage, so it needs the bridge directly. Set once at bootstrap (bootstrap-bridges.ts).
 let _instance: WhatsAppBridge | null = null;
 export function setWhatsAppBridgeInstance(b: WhatsAppBridge | null): void { _instance = b; }
 export function getWhatsAppBridgeInstance(): WhatsAppBridge | null { return _instance; }

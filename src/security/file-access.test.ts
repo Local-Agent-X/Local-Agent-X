@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import {
   mkdtempSync,
   mkdirSync,
@@ -11,7 +11,7 @@ import {
   closeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { evaluateFileAccess, confineToDir, matchesSensitivePath } from "./file-access.js";
+import { evaluateFileAccess, confineToDir, matchesSensitivePath, pathIsWithin } from "./file-access.js";
 import { openValidatedRead, readValidatedFile } from "./validated-io.js";
 import { isSensitivePath } from "../data-lineage-paths.js";
 
@@ -257,11 +257,13 @@ describe("confineToDir — symlink-safe HTTP file-route containment (round-7)", 
   });
 });
 
-// The keyword-in-name patterns (password / credentials / secrets.) must catch
-// secret DATA files but NOT source code whose name merely contains the word —
-// the false positive that was quarantining legitimate coding runs (a Grok split
-// that created server/passwordReset.ts got the whole op bricked read-only).
-describe("sensitive-path keyword patterns exempt source code, not secret data", () => {
+// SC-8: the file-access gate must match credential files by ANCHORED SHAPE (the
+// classifySensitivePath catalog), never by an unanchored password|secret|
+// credential substring. Substrings fire on ordinary non-source files a
+// do-anything harness must read (docs/password-policy.md, config/credentials.yaml)
+// AND on source whose name merely contains the word (passwordReset.ts) — the
+// false positive that quarantined legitimate coding runs.
+describe("sensitive-path gate matches by anchored shape, not keyword substring", () => {
   it("ALLOWS source files whose NAME contains a security keyword", () => {
     for (const p of [
       "/Users/x/proj/server/passwordReset.ts",
@@ -275,22 +277,72 @@ describe("sensitive-path keyword patterns exempt source code, not secret data", 
     }
   });
 
-  it("still BLOCKS genuine secret data files and dirs (same keywords, non-source)", () => {
+  it("ALLOWS ordinary non-source docs/config whose PATH contains a security word (SC-8)", () => {
+    // These were HARD-BLOCKED by the old unanchored /password/, /credentials/,
+    // /secrets\./ scan even though the read-taint classifier (isSensitivePath),
+    // already re-anchored to the catalog, never flags them. Gate now agrees.
     for (const p of [
-      "/Users/x/.aws/credentials",
-      "/Users/x/proj/passwords.txt",
-      "/Users/x/proj/config/secrets.yaml",
-      "/Users/x/proj/secrets.json",
-      "/Users/x/.ssh/id_rsa",
-      "/Users/x/proj/.env",
+      "/Users/x/proj/docs/password-policy.md",
+      "/Users/x/proj/config/credentials.yaml",
+      "/Users/x/proj/handbook/credentials-guide.md",
+      "/Users/x/proj/audit/password_audit.log",
+      "/Users/x/proj/notes/secrets-checklist.md",
     ]) {
-      expect(matchesSensitivePath(p)).not.toBeNull();
+      expect(matchesSensitivePath(p), `gate should allow ${p}`).toBeNull();
+      // Gate and taint classifier must agree: neither treats a policy doc as a
+      // credential file (the drift SC-8 closes).
+      expect(isSensitivePath(p), `taint should not flag ${p}`).toBe(false);
+    }
+  });
+
+  it("still BLOCKS genuine credential files by their cataloged shape", () => {
+    for (const p of [
+      "/Users/x/.aws/credentials",       // dir-scoped
+      "/Users/x/proj/config/secrets.yaml", // basename secrets.yaml
+      "/Users/x/proj/secrets.json",       // basename secrets.json
+      "/Users/x/proj/credentials.json",   // basename credentials.json
+      "/Users/x/.ssh/id_rsa",             // SSH key
+      "/Users/x/proj/.env",               // env secrets
+    ]) {
+      expect(matchesSensitivePath(p), `gate should block ${p}`).not.toBeNull();
     }
   });
 
   it("still BLOCKS a source-extensioned file under a genuine secret DIR", () => {
     // .ssh/ is a hard dir pattern — a .ts under it is not exempted.
     expect(matchesSensitivePath("/Users/x/.ssh/helper.ts")).not.toBeNull();
+  });
+});
+
+// SC-1 / SC-4: containment must survive Windows cross-drive / UNC targets, where
+// path.relative() returns an ABSOLUTE path that does NOT start with "..". The
+// runtime bug is Windows-only (node:path is win32 there), so we exercise the
+// pure predicate through path.win32 from this POSIX host. Pre-fix the predicate
+// was `!relative().startsWith("..")` with no isAbsolute guard, so every cross-
+// drive target read as "inside" — voiding confinement (SC-1) and widening ALLOW
+// (SC-4). Each assertion below FAILS under that pre-fix logic.
+describe("pathIsWithin is drive-aware on Windows (SC-1 / SC-4)", () => {
+  it("treats a different-drive target as OUTSIDE the root", () => {
+    expect(pathIsWithin("C:\\Users\\me\\workspace", "D:\\secret.txt", win32)).toBe(false);
+  });
+
+  it("treats a UNC-share target as OUTSIDE a local-drive root", () => {
+    expect(pathIsWithin("C:\\Users\\me\\workspace", "\\\\server\\share\\secret.txt", win32)).toBe(false);
+  });
+
+  it("still treats a real child on the SAME drive as inside", () => {
+    expect(pathIsWithin("C:\\Users\\me\\workspace", "C:\\Users\\me\\workspace\\app\\x.ts", win32)).toBe(true);
+    expect(pathIsWithin("C:\\Users\\me\\workspace", "C:\\Users\\me\\workspace", win32)).toBe(true);
+  });
+
+  it("still treats a ..-escape on the same drive as outside", () => {
+    expect(pathIsWithin("C:\\Users\\me\\workspace", "C:\\Users\\me\\secret.txt", win32)).toBe(false);
+  });
+
+  it("posix host (default path impl) is unaffected — normal containment holds", () => {
+    expect(pathIsWithin("/a/b", "/a/b/c/d")).toBe(true);
+    expect(pathIsWithin("/a/b", "/a/x")).toBe(false);
+    expect(pathIsWithin("/a/b", "/a/b")).toBe(true);
   });
 });
 

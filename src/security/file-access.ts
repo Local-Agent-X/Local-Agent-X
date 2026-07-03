@@ -7,6 +7,30 @@ import { classifySensitivePath } from "./sensitive-paths.js";
 import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../workspace/paths.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
+// ── Containment predicate (the ONE lexical "is `target` inside `root`") ──
+//
+// path.relative() alone is NOT a containment test on Windows: across drives or
+// UNC shares it returns an ABSOLUTE path (e.g. `relative('C:\\ws','D:\\secret')`
+// → `'D:\\secret'`, `relative('C:\\ws','\\\\srv\\share\\x')` → the UNC path)
+// which does NOT start with '..'. A bare `!rel.startsWith('..')` therefore reads
+// a different-drive target as "inside" every root — voiding confinement (a
+// cross-drive traversal never trips the outer gate) AND widening every ALLOW set
+// (a C:-allowed path treats a D: target as contained). The `isAbsolute(rel)`
+// guard closes both, matching what confineToDir / isUserContentPath already do.
+// `rel === ''` (target === root) counts as inside.
+//
+// `pathImpl` defaults to the platform's node:path (win32 on Windows, posix
+// elsewhere) — the only reason it is injectable is so the Windows cross-drive
+// invariant can be exercised from a POSIX test host via path.win32.
+export function pathIsWithin(
+  root: string,
+  target: string,
+  pathImpl: Pick<typeof import("node:path"), "relative" | "isAbsolute"> = { relative, isAbsolute },
+): boolean {
+  const rel = pathImpl.relative(root, target);
+  return !rel.startsWith("..") && !pathImpl.isAbsolute(rel);
+}
+
 // ── The app's OWN at-rest secret/key/seed files under a `.lax` data dir ──
 //
 // Derived from the ONE canonical enumeration (security/known-secrets.ts) so this
@@ -34,16 +58,14 @@ export function matchesSensitivePath(normalized: string): RegExp | "app-at-rest-
   for (const pattern of SENSITIVE_PATTERNS) {
     if (pattern.test(normalized)) return pattern;
   }
-  // Keyword-in-name patterns catch secret DATA files but NOT source code whose
-  // name happens to contain the word (passwordReset.ts). Skip them for source
-  // files — the agent's own work product is never sensitive by name. Every other
-  // check below (catalog, app-at-rest) still runs, so a genuinely-cataloged
-  // source path is unaffected.
-  if (!SOURCE_CODE_EXT.test(normalized)) {
-    for (const pattern of SOURCE_NAME_KEYWORD_PATTERNS) {
-      if (pattern.test(normalized)) return pattern;
-    }
-  }
+  // No unanchored password|secret|credential keyword scan here. Those substrings
+  // fire on any path segment (docs/password-policy.md, config/credentials.yaml,
+  // audit/secrets.md) — ordinary non-source files a "do-anything" harness must be
+  // able to read — and the source carve-out that used to guard them only covered
+  // known code extensions, not docs/config. The anchored classifySensitivePath
+  // catalog below IS the credential-file test (basename / extension / cred-dir
+  // shape), the SAME leaf the read-taint classifier uses, so the gate and taint
+  // agree on "what is a credential file" and neither hard-blocks a policy doc.
   // The gate = its regexes ∪ the shared credential-file catalog. The catalog
   // (security/sensitive-paths.ts) is the SAME shape-checker the read-taint
   // classifier uses, so the gate is a provable SUPERSET of taint — it can never
@@ -86,30 +108,6 @@ const SENSITIVE_PATTERNS = [
   /[/\\]\.vault-token/i,                      // HashiCorp Vault token
   /[/\\]\.boto$/i,                            // AWS boto config
 ];
-
-// Keyword-in-NAME patterns: they catch secret DATA files (passwords.txt,
-// secrets.yaml, ~/.aws/credentials) and stores, but the SAME word appears in
-// perfectly ordinary SOURCE filenames (passwordReset.ts, credentialsService.ts,
-// secrets.ts). Applied to source code they are the exact unanchored-substring
-// false positive LAX's anchored catalog (sensitive-paths.ts) was built to
-// replace — and here they were quarantining legitimate coding runs. So they run
-// only against NON-source paths (see matchesSensitivePath); genuine secret DATA
-// files aren't source-extensioned, so they stay blocked. The AWS credentials
-// file is additionally covered by the `.aws/` dir pattern above + the catalog.
-const SOURCE_NAME_KEYWORD_PATTERNS = [
-  /[/\\]credentials/i,
-  /[/\\]secrets?\./i,
-  /[/\\]password/i,
-];
-
-// A file with a source-code extension is CODE — the agent's legitimate work
-// product — never a "sensitive file" merely because its name contains a security
-// word. Mirrors the ARI gate's carve-out (ari-kernel/evaluate.ts): one invariant,
-// both gates. The dir/extension/data-basename SENSITIVE_PATTERNS above and the
-// anchored catalog still apply to source paths, so a real secret under .ssh/ or a
-// cataloged credential file is unaffected.
-const SOURCE_CODE_EXT =
-  /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|rb|php|c|cc|cpp|h|hpp|cs|swift|kt|kts|scala|m|mm|vue|svelte)$/i;
 
 // Canonical real path — implementation moved to workspace/paths.ts (the
 // work-root registry there must canonicalize with the SAME resolver the gates
@@ -248,9 +246,13 @@ export function evaluateFileAccess(
     realPath = resolved;
   }
 
-  // Check for directory traversal (.. in path after resolution)
-  const rel = relative(workspace, realPath);
-  if (rel.startsWith("..")) {
+  // Check for directory traversal (target resolved OUTSIDE the workspace).
+  // pathIsWithin (not a bare relative().startsWith("..")) so a Windows
+  // cross-drive / UNC target — where relative() returns an ABSOLUTE path that
+  // doesn't start with ".." — is correctly treated as outside and still runs
+  // the mode-confinement checks below (else confinement was void for any D:\ or
+  // \\server\share path, the primary platform).
+  if (!pathIsWithin(workspace, realPath)) {
     // Canonicalize home the SAME way the target was (realpathDeep above), so the
     // containment checks compare like with like. realPath has every symlink
     // segment resolved; a non-realpath'd home breaks the comparison whenever the
@@ -272,8 +274,8 @@ export function evaluateFileAccess(
           }
         }
         const projectRoot = resolve(workspace, "..");
-        const inProject = !relative(projectRoot, realPath).startsWith("..");
-        const inHome = !relative(homeDir, realPath).startsWith("..");
+        const inProject = pathIsWithin(projectRoot, realPath);
+        const inHome = pathIsWithin(homeDir, realPath);
         const inAllowed = allowedPathCheck(realPath, sessionId);
         if (!inProject && !inHome && !inAllowed) {
           return { allowed: false, reason: "Blocked: cannot write outside home directory even in unrestricted mode", userHint: USER_HINTS.fileSystem };
@@ -295,9 +297,9 @@ export function evaluateFileAccess(
       // split-brain. realpathDeep so a symlinked data dir (e.g. /tmp→/private/tmp)
       // compares like-with-like against the realpath'd target.
       const laxDir = realpathDeep(resolve(getLaxDir()));
-      const inWorkspace = !relative(workspace, realPath).startsWith("..");
-      const inProject = !relative(projectRoot, realPath).startsWith("..");
-      const inLax = !relative(laxDir, realPath).startsWith("..");
+      const inWorkspace = pathIsWithin(workspace, realPath);
+      const inProject = pathIsWithin(projectRoot, realPath);
+      const inLax = pathIsWithin(laxDir, realPath);
       const inExtraAllowed = allowedPathCheck(realPath, sessionId);
 
       if (fileAccessMode === "workspace") {
@@ -310,7 +312,7 @@ export function evaluateFileAccess(
           return { allowed: false, reason: "Blocked: workspace mode — reads restricted to the workspace folder only. Change to 'common' mode in Settings to access Downloads, Documents, etc.", userHint: USER_HINTS.fileSystem };
         }
       } else {
-        const inUserDir = userContentDirs(homeDir).some((d) => !relative(d, realPath).startsWith(".."));
+        const inUserDir = userContentDirs(homeDir).some((d) => pathIsWithin(d, realPath));
         if (!inProject && !inLax && !inUserDir && !inExtraAllowed) {
           return { allowed: false, reason: "Blocked: cannot read files outside project and user directories. Change to 'unrestricted' mode in Settings for full access.", userHint: USER_HINTS.fileSystem };
         }
@@ -360,8 +362,8 @@ export function evaluateFileAccess(
     // Next, Vue, SvelteKit all use src/) — those must NOT be caught. workspace/
     // is the user-app sandbox; everything else under the repo is platform.
     const projectRoot = resolve(workspace, "..");
-    const inWorkspace = !relative(workspace, realPath).startsWith("..");
-    const inPlatform = !relative(projectRoot, realPath).startsWith("..");
+    const inWorkspace = pathIsWithin(workspace, realPath);
+    const inPlatform = pathIsWithin(projectRoot, realPath);
     const touchesSrcOrPublic = /[/\\](src|public)[/\\]/i.test(realPath);
     if (inPlatform && !inWorkspace && touchesSrcOrPublic) {
       return {

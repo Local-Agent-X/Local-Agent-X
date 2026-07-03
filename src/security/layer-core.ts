@@ -10,7 +10,7 @@ import {
   type InlineEvalPolicy,
   type ToolCallContext,
 } from "./types.js";
-import { evaluateFileAccess, realpathDeep } from "./file-access.js";
+import { evaluateFileAccess, realpathDeep, pathIsWithin } from "./file-access.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
 import { kernelClassForTool } from "../ari-kernel/tool-class-map.js";
@@ -83,7 +83,9 @@ export class SecurityLayer {
   private isInAllowedPaths(realPath: string, sessionId?: string): boolean {
     const check = (key: string) => {
       const paths = this.sessionAllowedPaths.get(key);
-      return paths ? [...paths].some(p => !relative(p, realPath).startsWith("..")) : false;
+      // pathIsWithin (not bare relative().startsWith("..")): a C:-allowed path
+      // must not treat a Windows D:\ / UNC target as "inside" (SC-4).
+      return paths ? [...paths].some(p => pathIsWithin(p, realPath)) : false;
     };
     return check(sessionId || "_global") || check("_global");
   }

@@ -234,16 +234,17 @@ function stopChat() {
       body: JSON.stringify({ sessionId: activeChat.id }),
     }).catch(() => {});
   }
-  // Force-end the local stream entry immediately. Without this the
-  // STREAMING badge + inject-mode send button stay lit because we
-  // force-close the WS below and the server's `done` event (which normally
-  // clears the stream) never arrives.
+  // Force-end the local stream entry immediately for instant UI feedback —
+  // the STREAMING badge + inject-mode send button clear now rather than
+  // waiting on the server's cancelled/`done` event to round-trip back over
+  // the (still-open) socket.
   ChatStreamStore.endTurn(activeChat.id, 'Stopped by user');
-  // Close and reconnect WS to kill any in-flight stream
-  if (chatWs) {
-    chatWs.close();
-    setTimeout(connectChatWs, 500);
-  }
+  // Do NOT close chatWs here. The `stop` message above is already
+  // per-session — the server cancels only this session's op. The socket is
+  // shared across every open chat; tearing it down dropped every other
+  // session's live events during the ~500ms reconnect window (healed only by
+  // the 60s watchdog). Closing was an SSE-era leftover from before the
+  // protocol went per-session.
   // Append "stopped" indicator to last message; drop the streaming pin so
   // the message bubble shrinks back to its natural height.
   const msgs = document.querySelectorAll('.msg.assistant');

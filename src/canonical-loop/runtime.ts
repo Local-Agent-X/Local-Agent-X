@@ -11,7 +11,7 @@
  * resetCanonicalRuntime() to drop registrations between tests.
  */
 import type { Op } from "../ops/types.js";
-import type { Adapter, ToolDescriptor } from "./adapter-contract.js";
+import type { Adapter, AdapterReport, ToolDescriptor, TurnInput, TurnResult } from "./adapter-contract.js";
 import { NotConfiguredToolDispatcher, type ToolDispatcher } from "./tool-dispatch.js";
 import type { CanonicalLane } from "./types.js";
 
@@ -93,10 +93,94 @@ export function getToolDispatcher(opId?: string): ToolDispatcher {
   return toolDispatcher;
 }
 
+// ── Lost-registration fail-closed adapter (OP-4) ──────────────────────────
+
+/** Error code emitted by the lost-registration adapter (OP-4). */
+export const LOST_REGISTRATION_ERROR_CODE = "adapter_registration_lost";
+
+/** Human-facing reason finalized onto an op whose adapter registration was
+ *  lost across a process restart. Carries the "resubmit me" instruction. */
+export const LOST_REGISTRATION_REASON =
+  "adapter registration was lost across a process restart — resubmit this op to rebuild its adapter and tools";
+
+/**
+ * Fail-closed adapter for a genuinely restart-recovered op whose in-memory
+ * per-op adapter registration died with the old process and was never
+ * re-created (OP-4). The alternative — silently falling back to the lane
+ * default — hands the op the WRONG adapter and, worse, ZERO tools
+ * (getToolsForOp === [], since the per-op tool registration is gone too), so
+ * the model drops into tool-less "planning mode" and the op looks alive while
+ * doing nothing. Instead this adapter reports one non-retryable error and
+ * returns terminalReason:"error", which commitTurn maps to running -> failed
+ * (checkpoint.ts). The op finalizes with the resubmit reason so its submitter
+ * re-creates it (and its registration) from scratch.
+ */
+function createLostRegistrationAdapter(): Adapter {
+  return {
+    name: "lost-registration",
+    version: "1",
+    async runTurn(_input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
+      report({
+        kind: "error",
+        code: LOST_REGISTRATION_ERROR_CODE,
+        message: LOST_REGISTRATION_REASON,
+        retryable: false,
+      });
+      return {
+        providerState: {
+          adapterName: "lost-registration",
+          adapterVersion: "1",
+          providerPayload: null,
+        },
+        terminalReason: "error",
+      };
+    },
+    async abort(): Promise<void> {
+      /* nothing is in flight — no provider call was ever made */
+    },
+  };
+}
+
+/**
+ * The canonical fail-closed factory (OP-4). Exported so bootstrap can wire it
+ * as the `agent` lane default — an agent-spawn op always registers its own
+ * per-op adapter, so the lane default is only ever reached for an agent op
+ * whose registration was lost (a queued-at-crash op recovered after a restart,
+ * whose attemptCount is still 0 because the OP-6 requeue path consumes no
+ * recovery attempt). Without a lane factory that op would queue forever; with
+ * this one it finalizes running -> failed instead of hanging.
+ */
+export function lostRegistrationAdapterFactory(): Adapter {
+  return createLostRegistrationAdapter();
+}
+
 /** Resolve the adapter factory for `op` (per-op override wins over lane default). */
 export function resolveAdapterFactory(op: Op): AdapterFactory | null {
   const f = opAdapters.get(op.id);
   if (f) return f;
+  // No per-op registration. Two very different situations produce that shape:
+  //
+  //   (a) an op that LEGITIMATELY rides the lane default — a fresh submission,
+  //       or an in-process pause->resume (opResume stays in the SAME process,
+  //       so the lane + per-op registry is fully intact). Serve the lane
+  //       default: it's the right adapter for these ops.
+  //
+  //   (b) a genuine restart-recovery relaunch — the process died and every
+  //       per-op registration was lost with it, and nothing re-created this
+  //       op's. Falling back to the lane default here drives the op on the
+  //       wrong adapter with ZERO tools (OP-4 "planning mode"). Fail closed.
+  //
+  // Discriminator: attemptCount. Only recovery.ts increments it, and only on an
+  // actual restart-recovery relaunch (recovery.ts:197, the running->queued
+  // relaunch). In-process opResume (control-api.ts) never routes through
+  // recovery.ts, so its attemptCount stays 0. So `attemptCount > 0 && no per-op
+  // registration` == lost registration. This intentionally REPLACES the earlier
+  // "op committed a turn on disk" proxy, which also fired for an in-process
+  // resume of a lane-default rider (a committed op_turn exists there too) and so
+  // wrongly killed a still-valid live op — the regression this closes.
+  if ((op.attemptCount ?? 0) > 0) {
+    return lostRegistrationAdapterFactory;
+  }
   const lane = op.lane as CanonicalLane;
   return laneAdapters.get(lane) ?? null;
 }

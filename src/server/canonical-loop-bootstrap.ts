@@ -11,6 +11,9 @@ import {
   sweepStaleCanonicalOps,
   setLaneCapConfigReader,
 } from "../canonical-loop/index.js";
+// Imported straight from runtime.js (not re-exported via index.js) so this
+// bootstrap keeps its light static graph — runtime.ts pulls in nothing heavy.
+import { lostRegistrationAdapterFactory } from "../canonical-loop/runtime.js";
 import type { CanonicalLane } from "../canonical-loop/types.js";
 import { setRenderProbe } from "../canonical-loop/turn-loop/render-verify.js";
 import type { PreviewRuntimeError } from "../canonical-loop/turn-loop/render-verify.js";
@@ -38,6 +41,20 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
     setDefaultAdapterForLane(lane, () => createAnthropicAdapter());
   }
   logger.info(`[canonical-loop] AnthropicAdapter registered for lanes: ${ALL_LANES.join(", ")}`);
+
+  // The `agent` lane is deliberately NOT in ALL_LANES: an agent-spawn op always
+  // registers its own per-op provider adapter (agent-runner/register-adapter.ts),
+  // so a generic Anthropic lane default would be wrong for it. But the lane
+  // default must still be non-empty, or a recovered agent-lane op with no per-op
+  // registration (its registration died with the crashed process) has no factory
+  // and queues forever (OP-4). resolveAdapterFactory already fail-closes a
+  // running-recovery relaunch via attemptCount>0; this catches the remaining
+  // shape — an agent op recovered from `queued` (OP-6 requeue, which consumes no
+  // recovery attempt so attemptCount stays 0) — by making the lane default the
+  // same fail-closed lost-registration adapter, so it finalizes running->failed
+  // with a resubmit reason instead of hanging.
+  setDefaultAdapterForLane("agent", lostRegistrationAdapterFactory);
+  logger.info(`[canonical-loop] lost-registration fail-closed adapter registered for lane: agent`);
 
   // Wire the live runtime-config reader so config-driven lane caps
   // (maxInteractiveSessions) take effect and follow hot-reload. Passing the

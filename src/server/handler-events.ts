@@ -273,7 +273,20 @@ export function registerHandlerEvents(deps: {
       return { result: `[Agent completed but merge had conflicts — ${branchHint}]\n\n${agentOutput}`, success: false };
     } catch (e) {
       if (worktreeInfo) security.removeAllowedPath(worktreeInfo.path, `agent-${agentId}`);
-      try { const { cleanupWorktree } = await import("../agency/worktree.js"); cleanupWorktree(agentId); } catch {}
+      try {
+        const { commitInWorktree, cleanupWorktree } = await import("../agency/worktree.js");
+        // Commit any in-flight edits onto the agent branch BEFORE teardown.
+        // cleanupWorktree runs `git worktree remove --force`, which discards
+        // the working tree — an agent cancelled mid-edit (e.g. a 20-min build
+        // run that timed out) would otherwise lose everything, and the
+        // "preserved" agent/<id> branch would point at base HEAD. Committing
+        // first makes the preserved branch actually carry the WIP.
+        if (worktreeInfo) {
+          try { commitInWorktree(agentId, `Agent ${agentId}: work-in-progress (run aborted)`); }
+          catch (ce) { logger.warn(`[worktree] Failed to preserve WIP for ${agentId}: ${(ce as Error).message}`); }
+        }
+        cleanupWorktree(agentId);
+      } catch {}
       const p = extractAgentOutput(agentSession.messages);
       const msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e);
       return { result: p ? `[${msg}]\n\n${p}` : msg, success: false };

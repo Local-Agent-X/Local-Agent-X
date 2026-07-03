@@ -62,21 +62,46 @@ export function mergeWorktree(agentId: string): { merged: boolean; files: number
       return { merged: true, files: 0 };
     }
 
-    // Merge into the base branch that was current when the worktree was created
+    // Merge into the base branch WITHOUT switching the user's live checkout.
+    // The old path ran `git checkout <base>` in the parent repo root, which
+    // yanked the user onto another branch (or failed spuriously when their
+    // tree was mid-edit) and let two finishing agents race the checkout.
+    // Instead, integrate base INTO the agent branch inside the isolated
+    // worktree — conflicts stay here, never in the user's checkout — which
+    // makes the agent branch a strict descendant of base, then advance base
+    // by a pure fast-forward that cannot conflict.
     try {
-      git(["checkout", wt.baseBranch], wt.repoRoot);
-      git(["merge", wt.branch, "--no-edit"], wt.repoRoot);
+      git(["merge", wt.baseBranch, "--no-edit"], wt.path);
+      const mergedHead = git(["rev-parse", "HEAD"], wt.path);
+
+      const parentBranch = git(["rev-parse", "--abbrev-ref", "HEAD"], wt.repoRoot);
+      if (parentBranch === wt.baseBranch) {
+        // The user is sitting on the base branch. Only reflect the change into
+        // their working tree if it's clean: a --ff-only merge (no switch, no
+        // merge commit) updates just the agent's files. If they have
+        // uncommitted work, don't clobber it — leave the branch for a manual
+        // merge (the worktree merge above already made agent/<id> a clean
+        // fast-forward of base).
+        if (git(["status", "--porcelain"], wt.repoRoot)) {
+          throw new Error("parent working tree has uncommitted changes on the base branch");
+        }
+        git(["merge", "--ff-only", wt.branch], wt.repoRoot);
+      } else {
+        // Base branch is not checked out in the parent repo — advance its ref
+        // directly. There is no working tree pointing at it to disturb.
+        git(["update-ref", `refs/heads/${wt.baseBranch}`, mergedHead], wt.repoRoot);
+      }
       logger.info(`[worktree] Merged ${fileCount} files from ${agentId} into ${wt.baseBranch}`);
       wt.mergedSuccessfully = true;
       cleanupWorktree(agentId);
       return { merged: true, files: fileCount };
     } catch (mergeErr) {
-      // Roll back the merge. If it failed BEFORE git entered merge state (no
-      // MERGE_HEAD — e.g. the checkout was refused, or the merge was rejected
-      // pre-merge), `git merge --abort` itself errors with "no merge to abort";
-      // that's benign, so swallow it and surface the REAL reason instead of
+      // Abort any half-finished worktree-side merge so the preserved agent
+      // branch is left clean for the user to merge manually. If no merge was
+      // in progress (e.g. the parent tree was dirty), `git merge --abort`
+      // errors benignly — swallow it and surface the REAL reason instead of
       // letting the abort's error mask it (the "MERGE_HEAD missing" confusion).
-      try { git("merge --abort", wt.repoRoot); } catch { /* nothing in progress to abort */ }
+      try { git("merge --abort", wt.path); } catch { /* nothing in progress to abort */ }
       const reason = (mergeErr as Error).message;
       logger.warn(`[worktree] Merge failed for ${agentId} — changes preserved on branch ${wt.branch}: ${reason}`);
       // Don't mark as merged — cleanupWorktree will preserve the branch

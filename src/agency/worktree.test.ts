@@ -9,13 +9,13 @@
 
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { resolve, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 
 import { activeWorktrees, MAX_CONCURRENT_WORKTREES, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
-import { createWorktree, createNamedWorktree, cleanupWorktree } from "./worktree-lifecycle.js";
-import { getMergeDeltaFiles, securitySensitiveChangedFiles } from "./worktree-state.js";
+import { createWorktree, createNamedWorktree, cleanupWorktree, mergeWorktree } from "./worktree-lifecycle.js";
+import { getMergeDeltaFiles, securitySensitiveChangedFiles, commitInWorktree } from "./worktree-state.js";
 import { scanWorktreeForStagedSecrets } from "../self-edit/exfil-scan.js";
 
 // Simulate the executor's worktree path rewriting logic (extracted for testability)
@@ -252,6 +252,146 @@ describe("concurrent-worktree cap", () => {
       expect(worktreeSlotAvailable()).toBe(true);
     } finally {
       clearFill(filled);
+    }
+  });
+
+  // Shared helper: a real temp git repo with one commit on `main`.
+  function initRepo(): { repo: string; g: (args: string[], cwd?: string) => string; baseHead: string } {
+    const repo = mkdtempSync(join(tmpdir(), "lax-wt-merge-"));
+    const g = (args: string[], cwd = repo): string =>
+      execFileSync("git", args, { cwd, encoding: "utf-8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } }).trim();
+    g(["init", "-q"]);
+    g(["config", "user.email", "t@t"]);
+    g(["config", "user.name", "t"]);
+    writeFileSync(join(repo, "base.txt"), "base");
+    g(["add", "-A"]);
+    g(["commit", "-qm", "base"]);
+    g(["branch", "-M", "main"]);
+    return { repo, g, baseHead: g(["rev-parse", "HEAD"]) };
+  }
+
+  // OP-8: mergeWorktree must NOT switch or clobber the user's live checkout.
+  // The old path ran `git checkout <base>` in the parent repo root, so an
+  // agent finishing while the user was on another branch mid-edit would yank
+  // them onto the base branch. This asserts the user's checkout is untouched
+  // while the base branch still advances. Fails on the pre-fix code (which
+  // switches HEAD to `main`).
+  it("mergeWorktree advances the base branch without disturbing the user's checkout (OP-8)", () => {
+    const { repo, g, baseHead } = initRepo();
+    const id = "op8-agent";
+    const prevCwd = process.cwd();
+    const env = { ...process.env };
+    try {
+      process.chdir(repo);
+      const wt = createWorktree(id);
+      expect(wt).not.toBeNull();
+
+      // User switches to their own branch and starts editing (uncommitted WIP)
+      // — exactly the mid-edit situation the old checkout-based merge trampled.
+      g(["checkout", "-q", "-b", "user-feature"]);
+      writeFileSync(join(repo, "user-wip.txt"), "uncommitted user work");
+
+      // Agent commits a change on its branch, then the merge runs.
+      writeFileSync(join(wt!.path, "agent.txt"), "agent change");
+      commitInWorktree(id, "agent work");
+      const res = mergeWorktree(id);
+      expect(res.merged).toBe(true);
+
+      // The user's checkout is untouched: still on their branch, WIP intact.
+      expect(g(["rev-parse", "--abbrev-ref", "HEAD"])).toBe("user-feature");
+      expect(existsSync(join(repo, "user-wip.txt"))).toBe(true);
+      // …and the base branch still advanced to include the agent's commit.
+      expect(g(["ls-tree", "--name-only", "main"]).split("\n")).toContain("agent.txt");
+      expect(g(["rev-parse", "main"])).not.toBe(baseHead);
+    } finally {
+      process.chdir(prevCwd);
+      try { cleanupWorktree(id); } catch { /* best-effort */ }
+      activeWorktrees.delete(id);
+      Object.assign(process.env, env);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  // OP-8 happy path: when the user IS sitting on a clean base branch, the
+  // agent's changes should still land in their working tree (a fast-forward),
+  // so the fix doesn't regress the normal merge-back-to-main behavior.
+  it("mergeWorktree fast-forwards the user's checkout when they are clean on base (OP-8)", () => {
+    const { repo, g, baseHead } = initRepo();
+    const id = "op8-ff-agent";
+    const prevCwd = process.cwd();
+    const env = { ...process.env };
+    try {
+      process.chdir(repo);
+      const wt = createWorktree(id);
+      expect(wt).not.toBeNull();
+      writeFileSync(join(wt!.path, "agent.txt"), "agent change");
+      commitInWorktree(id, "agent work");
+      const res = mergeWorktree(id);
+      expect(res.merged).toBe(true);
+      // User is on main and clean → the agent's file appears in their checkout.
+      expect(g(["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+      expect(existsSync(join(repo, "agent.txt"))).toBe(true);
+      expect(g(["rev-parse", "main"])).not.toBe(baseHead);
+    } finally {
+      process.chdir(prevCwd);
+      try { cleanupWorktree(id); } catch { /* best-effort */ }
+      activeWorktrees.delete(id);
+      Object.assign(process.env, env);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  // OP-5: the aborted-run teardown (handler-events catch) must commit the
+  // agent's uncommitted edits onto the agent branch BEFORE cleanupWorktree
+  // runs `git worktree remove --force`. Otherwise 20 minutes of edits are
+  // destroyed and the "preserved" agent/<id> branch points at base HEAD.
+  //
+  // This asserts BOTH halves of the fix: (1) the pre-fix teardown (cleanup
+  // ALONE — what the catch did) demonstrably loses the WIP, leaving the branch
+  // at base HEAD, and (2) the fixed teardown (commitInWorktree THEN cleanup)
+  // preserves it. If someone reverts the wiring back to cleanup-only, half (2)
+  // becomes unreachable behavior — this locks the ordering the catch depends on.
+  it("aborted teardown loses WIP without a pre-commit but preserves it with one (OP-5)", () => {
+    const prevCwd = process.cwd();
+    const env = { ...process.env };
+    // Pre-fix teardown: cleanup with no commit → branch stuck at base HEAD.
+    const a = initRepo();
+    const idA = "op5-nocommit";
+    const branchA = `agent/${idA}`;
+    // Fixed teardown: commit WIP, then cleanup → branch carries the work.
+    const b = initRepo();
+    const idB = "op5-commit";
+    const branchB = `agent/${idB}`;
+    try {
+      process.chdir(a.repo);
+      const wtA = createWorktree(idA);
+      expect(wtA).not.toBeNull();
+      writeFileSync(join(wtA!.path, "wip.txt"), "20 minutes of edits");
+      cleanupWorktree(idA); // pre-fix: no commit first
+      expect(existsSync(wtA!.path)).toBe(false);
+      // The "preserved" branch is empty — the WIP was force-removed and lost.
+      expect(a.g(["rev-parse", branchA])).toBe(a.baseHead);
+      expect(a.g(["ls-tree", "--name-only", branchA]).split("\n")).not.toContain("wip.txt");
+
+      process.chdir(b.repo);
+      const wtB = createWorktree(idB);
+      expect(wtB).not.toBeNull();
+      writeFileSync(join(wtB!.path, "wip.txt"), "20 minutes of edits");
+      commitInWorktree(idB, `Agent ${idB}: work-in-progress (run aborted)`); // the fix
+      cleanupWorktree(idB);
+      expect(existsSync(wtB!.path)).toBe(false);
+      // Now the preserved branch actually carries the WIP, past base HEAD.
+      expect(b.g(["ls-tree", "--name-only", branchB]).split("\n")).toContain("wip.txt");
+      expect(b.g(["rev-parse", branchB])).not.toBe(b.baseHead);
+    } finally {
+      process.chdir(prevCwd);
+      try { a.g(["branch", "-D", branchA]); } catch { /* best-effort */ }
+      try { b.g(["branch", "-D", branchB]); } catch { /* best-effort */ }
+      activeWorktrees.delete(idA);
+      activeWorktrees.delete(idB);
+      Object.assign(process.env, env);
+      rmSync(a.repo, { recursive: true, force: true });
+      rmSync(b.repo, { recursive: true, force: true });
     }
   });
 

@@ -69,9 +69,13 @@ export type ServerEvent =
   | { type: "approval_resolved"; approvalId: string; toolName: string; approved: boolean }
   | { type: "context_status"; percentage: number; level: string; usedTokens: number; maxTokens: number; compacted: boolean }
   | { type: "visual"; kind: "emoji" | "text" | "shape" | "mood"; value: string; durationMs: number }
-  | { type: "bg_op_queued"; opId: string; task: string; provider: string; lane: string; queuePosition: number }
+  // `parentOpId` (optional) carries spawn lineage: the id of the op whose agent
+  // submitted this one (Op.parentOpId). The agents panel uses it to nest a
+  // spawned op under its spawner. Absent when the spawner couldn't be identified
+  // at submit time or on pre-lineage ops — consumers must treat it as optional.
+  | { type: "bg_op_queued"; opId: string; task: string; provider: string; lane: string; queuePosition: number; parentOpId?: string }
   | { type: "bg_op_queue_reordered"; opId: string; queuePosition: number }
-  | { type: "bg_op_started"; opId: string; task: string; provider: string }
+  | { type: "bg_op_started"; opId: string; task: string; provider: string; parentOpId?: string }
   | { type: "bg_op_progress"; opId: string; line: string }
   | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[]; metadata?: Record<string, unknown>; resultUrl?: string }
   | { type: "bg_op_nudge"; opIds: string[]; text: string }

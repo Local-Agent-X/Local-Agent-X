@@ -11,8 +11,8 @@ import { getSetting } from "../../settings.js";
 import { normalizeSecretName } from "../../secrets.js";
 import { buildContextPack } from "../context-pack-builder.js";
 import { getRetryPolicy } from "../heartbeat.js";
-import { newOpId } from "../op-store.js";
-import { readRecentSessionMessages } from "../session-bridge.js";
+import { newOpId, readOp, isInteractiveHostOpType } from "../op-store.js";
+import { readRecentSessionMessages, listOpsForSession } from "../session-bridge.js";
 import type { Op, OpLane, OpVisibility } from "../types.js";
 
 export interface SubmitArgs {
@@ -46,6 +46,29 @@ export async function readSettingsProvider(): Promise<string | null> {
   }
 }
 
+/**
+ * Spawn-lineage parent for an op being submitted: the id of the op whose agent
+ * is executing this submit tool. Recovered from the executor-stamped
+ * `_sessionId` (resolve-tool.ts injectSessionState) — the live interactive-host
+ * op (chat_turn / voice_turn) for that session IS the tool-calling turn that
+ * just invoked op_submit (op-store.isInteractiveHostOpType; the same identity
+ * the self-block guard keys on in op-submit-async.ts). The executing op's id is
+ * NOT threaded into the tool args at this seam — it lives only in the canonical
+ * ToolDispatcher closure (chat-tool-dispatcher.ts `opId`), which is outside this
+ * footprint — so worker→worker spawns (no live host op in the session) return
+ * undefined here. parentOpId stays strictly optional, so absence is a no-op.
+ */
+function resolveParentOpId(sessionId: string): string | undefined {
+  if (!sessionId) return undefined;
+  for (const id of listOpsForSession(sessionId)) {
+    const op = readOp(id);
+    if (op && (op.status === "running" || op.status === "pending") && isInteractiveHostOpType(op.type)) {
+      return op.id;
+    }
+  }
+  return undefined;
+}
+
 export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise<Op> {
   const args = rawArgs as unknown as SubmitArgs;
   const task = String(args.task || "").trim();
@@ -59,6 +82,11 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
   // for when the agent under-specifies the handoff.
   const sessionId = typeof rawArgs._sessionId === "string" ? rawArgs._sessionId : "";
   const parentSessionMessages = sessionId ? readRecentSessionMessages(sessionId) : [];
+
+  // Spawn lineage: stamp the op whose agent is executing this submit tool (the
+  // spawning turn) onto the new op, so the agents panel can later render a
+  // run-lineage tree. Resolved from `_sessionId`; undefined when unavailable.
+  const parentOpId = resolveParentOpId(sessionId);
 
   const contextPack = await buildContextPack({
     description: task,
@@ -98,6 +126,7 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
     status: "pending",
     createdAt: new Date().toISOString(),
     attemptCount: 0,
+    ...(parentOpId ? { parentOpId } : {}),
   };
 }
 

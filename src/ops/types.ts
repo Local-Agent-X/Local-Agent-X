@@ -124,6 +124,16 @@ export interface Op {
   appUrl?: string;
   lastFailureReason?: string;
   lastFailureAt?: string;
+  /**
+   * Spawn lineage: the id of the op whose agent submitted THIS op via
+   * op_submit / op_submit_async (the spawning turn). Distinct from `dependsOn`
+   * below — that's a DAG dependency edge, this is a parent→child spawn edge.
+   * Set at submit time from the executor-stamped session's live interactive-host
+   * op (see ops/tools/shared.ts resolveParentOpId). Strictly optional: absent
+   * when the spawner can't be identified at the submit seam, and on every op
+   * created before this field existed.
+   */
+  parentOpId?: string;
   // Reserved for later steps:
   dependsOn?: string[];
   outputContract?: string[];

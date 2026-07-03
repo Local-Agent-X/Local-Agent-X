@@ -167,6 +167,10 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
             provider: "",
             lane,
             queuePosition: 1,
+            // Spawn lineage: carry the spawning op's id through so the agents
+            // panel can nest this op under its parent. Absent unless set at
+            // submit (ops/tools/shared.ts resolveParentOpId).
+            ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}),
           } as ServerEvent);
           // Subscribe to the op's stream channel so adapter-emitted progress
           // (build_app's tool_progress, etc.) surfaces as bg_op_progress in
@@ -179,6 +183,7 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
             opId: event.opId,
             task,
             provider: "",
+            ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}),
           } as ServerEvent);
         } else if (to === "succeeded" || to === "failed" || to === "cancelled") {
           const status: "completed" | "failed" | "cancelled" = to === "succeeded" ? "completed" : to;

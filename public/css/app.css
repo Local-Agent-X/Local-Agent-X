@@ -961,6 +961,19 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .agent-feed-card.done,.agent-feed-card.completed,.agent-feed-card.succeeded{border-left-color:var(--muted);opacity:.7}
 .agent-feed-card.error,.agent-feed-card.failed{border-left-color:var(--danger);opacity:.85}
 .agent-feed-card.cancelled{border-left-color:var(--muted);opacity:.55}
+/* C8 "calm": a FINISHED (terminal) card folds to a compact one-line row — just
+   its header (icon + name + status). The full body stays in the DOM
+   (display:none, not removed) so updateAgentFeed's targeted writes + the 1s
+   resync keep finding their selectors and a late trailing event never throws.
+   Terminal headers get a pointer + a chevron affordance; clicking toggles the
+   `folded` class (chat-agent-feeds.js). Running/waiting cards (data-terminal="0")
+   are never folded and their header stays inert. */
+.agent-feed-card.folded{padding-top:6px;padding-bottom:6px}
+.agent-feed-card.folded .agent-feed-header{margin-bottom:0}
+.agent-feed-card.folded>:not(.agent-feed-header){display:none}
+.agent-feed-card[data-terminal="1"] .agent-feed-header{cursor:pointer}
+.agent-feed-card[data-terminal="1"] .agent-feed-status::after{content:'\25BE';margin-left:5px;font-size:.7em;opacity:.55}
+.agent-feed-card[data-terminal="1"].folded .agent-feed-status::after{content:'\25B8'}
 .agent-feed-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .agent-feed-icon{font-size:.95rem;flex-shrink:0}
 .agent-feed-name{font-family:var(--mono);font-size:.75rem;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

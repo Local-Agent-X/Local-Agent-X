@@ -171,6 +171,10 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
             // panel can nest this op under its parent. Absent unless set at
             // submit (ops/tools/shared.ts resolveParentOpId).
             ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}),
+            // Op type: carry the real op type through so the agents panel can
+            // pick a per-type icon (app_build/research/self_edit/…) instead of
+            // the hardcoded 'coder' glyph. Absent if op unreadable.
+            ...(op?.type ? { opType: op.type } : {}),
           } as ServerEvent);
           // Subscribe to the op's stream channel so adapter-emitted progress
           // (build_app's tool_progress, etc.) surfaces as bg_op_progress in
@@ -184,6 +188,7 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
             task,
             provider: "",
             ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}),
+            ...(op?.type ? { opType: op.type } : {}),
           } as ServerEvent);
         } else if (to === "succeeded" || to === "failed" || to === "cancelled") {
           const status: "completed" | "failed" | "cancelled" = to === "succeeded" ? "completed" : to;

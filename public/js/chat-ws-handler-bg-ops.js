@@ -12,6 +12,9 @@ function handleBgOpQueued(msg) {
         id: msg.event.opId,
         name: 'Worker: ' + (msg.event.task || '').slice(0, 60),
         role: 'coder',
+        // C8: real op type (app_build/research/self_edit/…) drives the card
+        // icon. `role: 'coder'` stays as the fallback when opType is absent.
+        type: msg.event.opType,
         status: 'queued #' + (msg.event.queuePosition || '?'),
         currentTask: msg.event.task || '',
         output: '⏸ queued (lane: ' + (msg.event.lane || 'build') + ')\n',
@@ -38,7 +41,7 @@ function handleBgOpStarted(msg) {
     // updateAgentFeed is no-op if the card doesn't exist; addAgentFeed
     // is idempotent on existing IDs. So calling both is safe.
     if (typeof updateAgentFeed === 'function') {
-      updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n', sessionId: msg.sessionId, lastActivityMs: Date.now(), parentOpId: msg.event.parentOpId });
+      updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n', sessionId: msg.sessionId, lastActivityMs: Date.now(), parentOpId: msg.event.parentOpId, type: msg.event.opType });
     }
     if (typeof addAgentFeed === 'function') {
       // Friendlier card name. Cron missions arrive with task =
@@ -56,6 +59,8 @@ function handleBgOpStarted(msg) {
         id: msg.event.opId,
         name: 'Worker: ' + displayTask.slice(0, 60),
         role: 'coder',
+        // C8: real op type drives the card icon (fallback: role 'coder').
+        type: msg.event.opType,
         status: 'working',
         currentTask: msg.event.task || '',
         output: '',

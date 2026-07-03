@@ -3,12 +3,61 @@
 // agent record, return the markup. Wired into chat-agent-feeds.js (panel
 // list) and chat-send-http.js (inline agent-spawn/agent-status events).
 
+// Icon lookup for a worker card. Two disjoint key spaces share one table:
+//   • ROLE keys (researcher/writer/coder/…) — used by the inline named-agent
+//     card (renderAgentCard_inline), where `agent.role` is a real specialist.
+//   • OP-TYPE keys (app_build/research/self_edit/…) — used by the right-rail
+//     panel card, which keys off the op's real `type` (threaded through the
+//     bg_op_queued/started events as `opType`). Before this, every panel card
+//     showed the same 'coder' 💻 because role was hardcoded server-side.
+// Op-type glyphs are tasteful monochrome symbols (not loud emoji) to sit
+// quietly in the mission-control rail. Unknown keys fall back to DEFAULT_AGENT_ICON.
+const DEFAULT_AGENT_ICON = '🤖';
 const AGENT_ROLE_ICONS = {
+  // roles (inline specialist cards)
   researcher: '🔍', writer: '✍️', coder: '💻',
   reviewer: '🔎', 'social-media': '📱', analyst: '📊',
   monitor: '👁️', designer: '🎨', ops: '⚙️',
-  communicator: '📨'
+  communicator: '📨',
+  // op types (right-rail panel cards) — monochrome glyphs
+  app_build: '⬡', build_app: '⬡', research: '◎', research_query: '◎',
+  self_edit: '✎', refactor: '⟳', autopilot: '➤', freeform: '✦',
+  agent: '◇', agent_spawn: '◇', scheduled_mission: '◷',
+  // forward-looking placeholders (inert until these op types exist):
+  dream: '☾', idle: '☾'
 };
+
+// Pure: map an op type (or role) to its glyph, with a clean generic default
+// for unknown/absent keys. Keyed by the same AGENT_ROLE_ICONS table so a card
+// can pass `agent.type || agent.role` and get the type's icon when present,
+// the role's icon otherwise, and the default when neither is known.
+function iconForType(type) {
+  return AGENT_ROLE_ICONS[type] || DEFAULT_AGENT_ICON;
+}
+
+// Pure: does this status put a card in a TERMINAL (finished) state? Matches the
+// existing status vocabulary (the .agent-feed-card terminal CSS classes +
+// bg_op_completed's completed/failed/cancelled). Terminal cards fold to a
+// compact one-line row (the "calm" feature); working/waiting/paused/queued
+// cards stay full. Case/space tolerant so a 'queued #3' never reads terminal.
+const TERMINAL_AGENT_STATUSES = {
+  completed: 1, done: 1, succeeded: 1, failed: 1, cancelled: 1, error: 1
+};
+function isTerminalStatus(status) {
+  return !!TERMINAL_AGENT_STATUSES[String(status == null ? '' : status).trim().toLowerCase()];
+}
+
+// Pure: decide a card's folded state AFTER an update, so updateAgentFeed's
+// className rewrite doesn't wipe the fold. A card folds by DEFAULT the moment
+// it FIRST goes terminal; once terminal we preserve whatever fold/expand the
+// user last set — a late trailing event must never pop a finished card open.
+//   nowTerminal  — isTerminalStatus(new status)
+//   prevTerminal — was the card already terminal before this update
+//   prevFolded   — did the card carry the `folded` class before this update
+function foldedAfterUpdate(nowTerminal, prevTerminal, prevFolded) {
+  if (nowTerminal && !prevTerminal) return true; // first terminal render → fold
+  return !!prevFolded;                           // preserve user's / prior state
+}
 
 // ── C6: run-lineage tree build (PURE) ──
 // Input:  the agentFeedsData map ({ id → agent record }).
@@ -127,7 +176,9 @@ function buildAgentFeedTree(dataMap) {
 // never a nested child's. When absent, the returned markup is byte-identical
 // to the pre-nesting flat card (keeps the flat-list path unchanged).
 function renderAgentCard(agent, childrenHtml) {
-  var icon = AGENT_ROLE_ICONS[agent.role] || '🤖';
+  // Icon keys off the op's real TYPE (threaded via bg_op_* opType → the card
+  // record's `type`), falling back to the legacy `role` then a generic default.
+  var icon = iconForType(agent.type || agent.role);
   var status = agent.status || 'working';
   var streamText = agent.streamText || '';
   var output = agent.output || '';
@@ -135,7 +186,16 @@ function renderAgentCard(agent, childrenHtml) {
   var initialToolCount = outputLines.length;
   var latestLine = outputLines.length > 0 ? outputLines[outputLines.length - 1] : '';
   var isPaused = status === 'paused';
-  var isActive = !(status === 'completed' || status === 'failed' || status === 'cancelled');
+  // Terminal cards fold to a one-line row by default (the "calm" feature). The
+  // full body stays in the DOM (CSS hides it) so updateAgentFeed's targeted
+  // writes + the 1s resync never miss their selectors — a late trailing event
+  // must not throw or pop a finished card open. `data-terminal` lets the CSS
+  // show the pointer/chevron affordance and lets updateAgentFeed preserve the
+  // user's manual fold/expand across late re-renders.
+  var terminal = isTerminalStatus(status);
+  var isActive = !terminal;
+  var foldedClass = terminal ? ' folded' : '';
+  var termAttr = terminal ? '1' : '0';
   var safeId = esc(agent.id);
   // Body shape mirrors the main chat layout, smaller, in the right rail:
   //   .worker-text         — worker's reasoning (worker_stream deltas), like
@@ -162,7 +222,7 @@ function renderAgentCard(agent, childrenHtml) {
   var bodyDisplay = isActive ? 'block' : 'none';
   var bodyOpenClass = isActive ? ' open' : '';
   var chevron = isActive ? '▼' : '▶';
-  var cardHtml = '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + '">' +
+  var cardHtml = '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + foldedClass + '" data-terminal="' + termAttr + '">' +
     '<div class="agent-feed-header">' +
       '<span class="agent-feed-icon">' + icon + '</span>' +
       '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +

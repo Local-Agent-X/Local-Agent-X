@@ -104,6 +104,7 @@ function addAgentFeed(agent) {
     // bg_op_queued / bg_op_started so the panel can nest workers under the
     // op that spawned them. Never downgrade a known parent back to none.
     if (agent.parentOpId && !existing.parentOpId) existing.parentOpId = agent.parentOpId;
+    if (agent.type && !existing.type) existing.type = agent.type; // C8 per-type icon: set-once
   } else {
     agentFeedsData[agent.id] = agent;
   }
@@ -140,10 +141,15 @@ function updateAgentFeed(agentId, update) {
     if (update.lastActivityMs) existing.lastActivityMs = update.lastActivityMs;
     // parentOpId (C6 run-lineage): set-once. See addAgentFeed above.
     if (update.parentOpId && !existing.parentOpId) existing.parentOpId = update.parentOpId;
+    if (update.type && !existing.type) existing.type = update.type; // C8 per-type icon: set-once
   }
   var card = document.getElementById('agent-card-' + agentId);
   if (card) {
-    card.className = 'agent-feed-card ' + (existing.status || 'working');
+    // C8: fold survives the className rewrite (foldedAfterUpdate: render sibling).
+    var nowTerminal = isTerminalStatus(existing.status);
+    var folded = foldedAfterUpdate(nowTerminal, card.getAttribute('data-terminal') === '1', card.classList.contains('folded'));
+    card.className = 'agent-feed-card ' + (existing.status || 'working') + (folded ? ' folded' : '');
+    card.setAttribute('data-terminal', nowTerminal ? '1' : '0');
     if (update.streamText) {
       var textEl = card.querySelector('.worker-text');
       if (textEl) {
@@ -327,6 +333,13 @@ document.addEventListener('click', function(e) {
       case 'cancel': onAgentCancel(id); break;
       case 'dismiss': onAgentDismiss(id); break;
     }
+    return;
+  }
+  // C8 "calm": click a TERMINAL card's header to fold/expand, per-card (dismiss above returns first).
+  var header = e.target.closest('.agent-feed-header');
+  if (header) {
+    var foldCard = header.closest('.agent-feed-card');
+    if (foldCard && foldCard.getAttribute('data-terminal') === '1') foldCard.classList.toggle('folded');
     return;
   }
   var toggle = e.target.closest('[data-agent-toggle="tools"]');

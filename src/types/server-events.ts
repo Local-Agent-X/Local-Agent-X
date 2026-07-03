@@ -73,9 +73,15 @@ export type ServerEvent =
   // submitted this one (Op.parentOpId). The agents panel uses it to nest a
   // spawned op under its spawner. Absent when the spawner couldn't be identified
   // at submit time or on pre-lineage ops — consumers must treat it as optional.
-  | { type: "bg_op_queued"; opId: string; task: string; provider: string; lane: string; queuePosition: number; parentOpId?: string }
+  //
+  // `opType` (optional) carries the op's real type (Op.type: e.g. "app_build",
+  // "research", "self_edit", "freeform"). The agents panel keys the per-card
+  // icon off it so distinct agent types get distinct glyphs instead of all
+  // showing the hardcoded 'coder' icon. Absent on pre-lineage/legacy events —
+  // consumers must treat it as optional and fall back to a generic icon.
+  | { type: "bg_op_queued"; opId: string; task: string; provider: string; lane: string; queuePosition: number; parentOpId?: string; opType?: string }
   | { type: "bg_op_queue_reordered"; opId: string; queuePosition: number }
-  | { type: "bg_op_started"; opId: string; task: string; provider: string; parentOpId?: string }
+  | { type: "bg_op_started"; opId: string; task: string; provider: string; parentOpId?: string; opType?: string }
   | { type: "bg_op_progress"; opId: string; line: string }
   | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[]; metadata?: Record<string, unknown>; resultUrl?: string }
   | { type: "bg_op_nudge"; opIds: string[]; text: string }

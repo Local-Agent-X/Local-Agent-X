@@ -13,13 +13,44 @@ export function messageRoleToCanonicalRole(role: ChatCompletionMessageParam["rol
     case "assistant": return "assistant";
     case "tool": return "tool_result";
     case "system":
-      // Canonical messages don't model "system" as a per-row role — system
-      // prompt lives on the adapter. Drop system rows from cleanHistory;
-      // their content is already baked into prepared.systemPrompt by
-      // prepareAgentRequest.
+      // Canonical messages don't model "system" as a per-row role — the
+      // system prompt lives on the adapter. These rows are dropped from the
+      // seeded op_messages, but their CONTENT must not be lost: the
+      // /api/compact summary and truncateHistory's digest both ride
+      // `role:"system"` rows in cleanHistory and are NOT part of
+      // prepared.systemPrompt (build-system-prompt.ts never sees them). The
+      // seed folds them into the system prompt via foldSystemRowsIntoPrompt
+      // before the adapter is registered — without that, pressing Compact
+      // silently loses ALL prior context on the canonical path.
       return null;
     default: return null;
   }
+}
+
+/**
+ * Fold every `role:"system"` row's text out of a prepared history and append
+ * it beneath the existing system prompt. Pure — returns a new string.
+ *
+ * On the canonical path history is replayed from op_messages, which has no
+ * system role (seedOpMessages drops those rows). The /api/compact summary and
+ * truncateHistory's `<prior_conversation>` digest both ride system rows in
+ * cleanHistory, and neither is part of prepared.systemPrompt. Without this
+ * fold that content never reaches the model, so pressing Compact loses ALL
+ * prior context. Rows with no text (or whitespace-only) are skipped so the
+ * prompt isn't padded with empty separators.
+ */
+export function foldSystemRowsIntoPrompt(
+  systemPrompt: string,
+  history: readonly ChatCompletionMessageParam[],
+): string {
+  const systemTexts: string[] = [];
+  for (const msg of history) {
+    if (msg.role !== "system") continue;
+    const text = extractTextContent(msg.content).trim();
+    if (text) systemTexts.push(text);
+  }
+  if (systemTexts.length === 0) return systemPrompt;
+  return [systemPrompt, ...systemTexts].join("\n\n");
 }
 
 type ChatImage = { name: string; url: string };

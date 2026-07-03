@@ -8,11 +8,20 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { PreparedAgentRequest } from "../../agent-request/types.js";
 import type { OpMessageRow } from "../types.js";
 import { appendOpMessage } from "../store.js";
-import { messageRoleToCanonicalRole, extractTextContent } from "./message-convert.js";
+import { messageRoleToCanonicalRole, extractTextContent, foldSystemRowsIntoPrompt } from "./message-convert.js";
 
 export function seedOpMessages(opId: string, prepared: PreparedAgentRequest, currentMessage: string): void {
   let seqInTurn = 0;
   const turnIdx = 0;
+
+  // Canonical op_messages has no system role, so the loop below drops every
+  // `role:"system"` row in cleanHistory. Those rows carry the /api/compact
+  // summary and truncateHistory's digest — real prior context that is NOT in
+  // prepared.systemPrompt. Fold their content into the system prompt now, in
+  // place, so registerAdapterForChat (called right after this seed with the
+  // SAME prepared object) hands the model the compacted/truncated history it
+  // would otherwise lose entirely.
+  prepared.systemPrompt = foldSystemRowsIntoPrompt(prepared.systemPrompt, prepared.cleanHistory);
 
   for (const msg of prepared.cleanHistory) {
     const role = messageRoleToCanonicalRole(msg.role);

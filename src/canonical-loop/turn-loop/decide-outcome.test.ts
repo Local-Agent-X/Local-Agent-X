@@ -48,6 +48,7 @@ vi.mock("./spec-probes.js", () => ({
 }));
 
 import { decideTurnOutcome, recordTerminalOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
+import { publishStreamChunk } from "../event-emitter.js";
 import { recordOpOutcome } from "../../tool-tracker.js";
 import { readOpTurns } from "../store.js";
 import type { ToolCall } from "../contract-types.js";
@@ -147,6 +148,59 @@ describe("decideTurnOutcome — termination is stop-signal driven", () => {
       adapterError: { code: "boom", message: "provider failed" },
     }));
     expect(r.terminalReason).toBe("error");
+  });
+});
+
+describe("decideTurnOutcome — live-UI warnings reach the stream (CL-6)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // Every subscribeOpStream consumer forwards a chunk only when it carries a
+  // non-empty `delta` or `replace:true` — a bare `{text}` is silently dropped.
+  // So the loud-partial warning, the build-verify confirmation, and the
+  // ground-truth sizes note MUST publish `delta`, or they never appear in the
+  // live session (only after a rehydrate) — a partial would look finished.
+  const streamCalls = () =>
+    (publishStreamChunk as unknown as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c) => c[1] as { delta?: string; text?: string; replace?: boolean },
+    );
+
+  it("publishes the loud-partial warning as a forwardable `delta`, not a dropped `{text}`", async () => {
+    const { openStepsTerminationWarning } = await import("../middlewares/open-steps.js");
+    (openStepsTerminationWarning as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce("⚠️ 1 step still open");
+    await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
+    const warn = streamCalls().find((c) => (c.delta ?? c.text)?.includes("1 step still open"));
+    expect(warn).toBeDefined();
+    expect(warn!.delta).toContain("1 step still open");
+    expect(warn!.text).toBeUndefined();
+  });
+
+  it("publishes the ground-truth sizes note as a forwardable `delta`, not a dropped `{text}`", async () => {
+    const { groundTruthSizesNote } = await import("./build-verify.js");
+    (groundTruthSizesNote as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      "Ground-truth size … big.ts — 588 lines",
+    );
+    await decideTurnOutcome(input({ modelSignaledDone: true, assistantText: "Done — big.ts is 294 lines." }));
+    const note = streamCalls().find((c) => (c.delta ?? c.text)?.includes("588 lines"));
+    expect(note).toBeDefined();
+    expect(note!.delta).toContain("588 lines");
+    expect(note!.text).toBeUndefined();
+  });
+
+  it("publishes the build-verify confirmation as a forwardable `delta`, not a dropped `{text}`", async () => {
+    const { opEditedSourceUnverified } = await import("../middlewares/verify-gate.js");
+    (opEditedSourceUnverified as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+    const { runBuildVerifyGate } = await import("./build-verify.js");
+    (runBuildVerifyGate as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      nudge: "", shouldRetry: false, capReached: false, verifiedClean: true,
+      confirmation: "Verified clean: build + type-check pass.",
+    });
+    await decideTurnOutcome(input({
+      toolCalls: [], toolMessages: [], toolSummary: [], modelSignaledDone: true,
+    }));
+    const conf = streamCalls().find((c) => (c.delta ?? c.text)?.includes("Verified clean"));
+    expect(conf).toBeDefined();
+    expect(conf!.delta).toContain("Verified clean");
+    expect(conf!.text).toBeUndefined();
   });
 });
 

@@ -292,19 +292,19 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     }
   }
 
-  // Loud-partial guarantee: when the op truly ends here (every continuation
-  // gate above declined to extend it) but this op's own task list still has
-  // open steps, append a visible warning to the live bubble AND the committed
-  // transcript. We can't force a stuck model to finish — the open-steps
-  // middleware and the earned-done gate already spent their nudges — but a
-  // partial must never LOOK like a finished answer, in chat or in a mission
-  // report.
+  // Loud-partial guarantee: when the op truly ends here but its task list still
+  // has open steps, append a visible warning to the live bubble AND the commit.
+  // We can't force a stuck model to finish — open-steps and earned-done already
+  // spent their nudges — but a partial must never LOOK finished. This and the
+  // two live corrections below publish `delta` (append), NOT `text`: every
+  // subscribeOpStream consumer forwards a chunk only on a non-empty `delta` or
+  // `replace:true`, so a bare `{text}` is dropped and surfaces only on rehydrate.
   let endedPartial = false;
   if (terminalReason === "done") {
     const warning = openStepsTerminationWarning(op.id);
     if (warning) {
       endedPartial = true;
-      publishStreamChunk(op.id, { text: `\n\n${warning}` });
+      publishStreamChunk(op.id, { delta: `\n\n${warning}` });
       allMessages.push({
         messageId: `open-steps-warn-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
         role: "assistant",
@@ -322,7 +322,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // verified-clean edit must never look unverified. Only when the op truly ends
   // here and didn't also end partial.
   if (terminalReason !== null && !endedPartial && buildVerifyConfirmation) {
-    publishStreamChunk(op.id, { text: `\n\n${buildVerifyConfirmation}` });
+    publishStreamChunk(op.id, { delta: `\n\n${buildVerifyConfirmation}` });
     allMessages.push({
       messageId: `build-verify-ok-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
       role: "assistant",
@@ -338,7 +338,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   if (terminalReason !== null && !endedPartial) {
     const sizesNote = groundTruthSizesNote(op.id, assistantText);
     if (sizesNote) {
-      publishStreamChunk(op.id, { text: `\n\n${sizesNote}` });
+      publishStreamChunk(op.id, { delta: `\n\n${sizesNote}` });
       allMessages.push({
         messageId: `ground-truth-sizes-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
         role: "assistant",

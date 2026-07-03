@@ -195,6 +195,9 @@ export async function driveTurn(
     const streak = (adapterThrowStreaks.get(op.id) ?? 0) + 1;
     if (streak <= ADAPTER_ERROR_CAP) {
       adapterThrowStreaks.set(op.id, streak);
+      // Retract this turn's rendered-but-uncommitted partial (replace:true) so
+      // user-view matches the empty committed history the resume-nudge assumes.
+      publishStreamChunk(op.id, { replace: true, text: "" });
       emit(op.id, "error", { code: "adapter_retry", message: `${message} — retrying (${streak}/${ADAPTER_ERROR_CAP})`, retryable: true });
       appendNudgeAsUserMessage(
         op.id,
@@ -336,6 +339,13 @@ export async function driveTurn(
     modelSignaledDone: result.modelStop === "ended",
     adapterError,
   });
+
+  // Cancel-aware bail AFTER decideTurnOutcome, BEFORE commit: a Stop during its
+  // seconds–minutes verify gates flips the op to `cancelling`, which commitTurn
+  // would throw on (illegal cancelling→succeeded) and wedge the op.
+  if (opts.isCancelled?.()) {
+    return { terminalReason: null, toolCount: toolSummary.length, messageCount: 0, cancelled: true };
+  }
 
   commitTurn({
     op,

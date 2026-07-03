@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { setupChatWebSocket } from "../chat-ws/index.js";
 import { runSecurityAudit, printAuditReport } from "../security/security-audit.js";
 import { startAriKernel } from "../ari-kernel/index.js";
-import { runMigrations } from "../db-migrations.js";
 import { EventBus } from "../event-bus.js";
 import { ConfigWatcher } from "../config-hot-reload.js";
 import { loadConfig, setRuntimeConfig } from "../config.js";
@@ -53,7 +52,10 @@ export function createHttpServer(requestHandler: RequestHandler, deps: {
 }): LifecycleResult {
   const { config, dataDir } = deps;
   const server = createServer(requestHandler);
-  runMigrations(dataDir).catch(e => logger.warn("[migrations]", e.message));
+  // Migrations run as an awaited boot phase in startServer() BEFORE listen and
+  // before startConfigWatcher — see server/index.ts. Firing them here
+  // (fire-and-forget) raced the config watcher: a migration rewriting
+  // config.json could be read mid-write by the watcher's loadConfig().
   const chatWs = setupChatWebSocket(server, config.authToken, config.maxUploadBytes);
   installUpgradeReaper(server);
   return { server, chatWs };

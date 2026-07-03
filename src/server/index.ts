@@ -9,6 +9,7 @@ import { createBridgeHandler, bootstrapBridges } from "./bootstrap-bridges.js";
 import { createSessionHelpers } from "./session-helpers.js";
 import { createRequestHandler } from "./request-handler.js";
 import { createHttpServer, setupVoiceWs, wireWsChat, startConfigWatcher, logStartup, registerShutdown, bootstrapCanonicalLoop, startSecurityKernel } from "./lifecycle.js";
+import { runMigrations } from "../db-migrations.js";
 import { registerHandlerEvents } from "./handler-events.js";
 import { startBackgroundJobs } from "./background-jobs.js";
 import { createLogger } from "../logger.js";
@@ -239,6 +240,14 @@ export async function startServer(config: LAXConfig) {
     activeBrowserSessionIdRef,
     activeRuntimeBySession,
   });
+
+  // Config/version migrations must COMPLETE before we bind the socket and
+  // before startConfigWatcher begins reading config.json — otherwise a
+  // migration rewriting config.json races the watcher (and any request
+  // handler) that reads it. Awaited here rather than fired-and-forgotten in
+  // createHttpServer. A migration failure is logged but never blocks boot.
+  const migResult = await phase("runMigrations", () => runMigrations(dataDir));
+  if (migResult.error) bootLogger.warn(`[migrations] ${migResult.error}`);
 
   const { server, chatWs } = phaseSync("createHttpServer", () => createHttpServer(requestHandler, { config, dataDir }));
   chatWsHolder.value = chatWs;

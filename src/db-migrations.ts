@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
+import { atomicWriteFileSync } from "./server-utils.js";
 
 export interface Migration {
   version: number;
@@ -41,7 +42,7 @@ registerBuiltinMigration({
       for (const [key, value] of Object.entries(defaults)) {
         if (cfg[key] === undefined) { cfg[key] = value; changed = true; }
       }
-      if (changed) writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
+      if (changed) atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2));
     } catch {}
   },
 });
@@ -57,7 +58,7 @@ registerBuiltinMigration({
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
       if (!cfg.projectRoot) {
         cfg.projectRoot = process.cwd();
-        writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
+        atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2));
       }
     } catch {}
   },
@@ -87,7 +88,7 @@ function loadVersion(): MigrationVersion {
 function saveVersion(version: MigrationVersion): void {
   const dir = getLaxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileSync(versionFilePath(), JSON.stringify(version, null, 2), { encoding: "utf-8", mode: 0o600 });
+  atomicWriteFileSync(versionFilePath(), JSON.stringify(version, null, 2), { encoding: "utf-8", mode: 0o600 });
 }
 
 export function registerMigration(migration: Migration): void {

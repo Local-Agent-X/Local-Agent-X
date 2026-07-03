@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { RouteHandler } from "../server-context.js";
-import { jsonResponse, readBody, safeParseBody } from "../server-utils.js";
+import { jsonResponse, readBody, safeParseBody, atomicWriteFileSync } from "../server-utils.js";
 import { getThreatDashboard } from "../threat/threat-dashboard.js";
 import { listPolicies, createPolicy, deletePolicy } from "../ari-kernel/policy-editor.js";
 import { listEgressRules, addEgressRule } from "../security/egress-policy.js";
@@ -129,7 +129,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
       } else {
         policy.rules.push({ id: ruleId, tool: tool === "http" ? "http_request" : tool, decision: enabled ? "allow" : "deny", reason: enabled ? "Enabled via settings" : "Disabled via settings", priority: 40 });
       }
-      writeFileSync(policyPath, JSON.stringify(policy, null, 2), { encoding: "utf-8", mode: 0o600 });
+      atomicWriteFileSync(policyPath, JSON.stringify(policy, null, 2), { encoding: "utf-8", mode: 0o600 });
       json(200, { ok: true, tool, enabled });
     } catch (e) {
       json(500, { error: "Failed to update policy: " + (e instanceof Error ? e.message : String(e)) });

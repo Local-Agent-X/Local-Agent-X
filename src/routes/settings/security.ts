@@ -1,8 +1,8 @@
-import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { RouteHandler } from "../../server-context.js";
-import { jsonResponse, safeErrorMessage, corsHeaders } from "../../server-utils.js";
+import { jsonResponse, safeErrorMessage, corsHeaders, atomicWriteFileSync } from "../../server-utils.js";
 import { setBrowserAuthContext } from "../../browser/index.js";
 import { redactCredentials } from "../../security/index.js";
 import { createLogger } from "../../logger.js";
@@ -26,7 +26,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
     try {
       const cfg = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf-8")) : {};
       cfg.authToken = newToken;
-      writeFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+      atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
       ctx.config.authToken = newToken;
       ctx.rbac.rotateOperatorToken(newToken);
       setBrowserAuthContext(newToken, String(ctx.config.port));

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -14,6 +14,11 @@ export type { SyncConfig } from "./constants.js";
 
 const logger = createLogger("sync");
 const execFileAsync = promisify(execFile);
+
+// Every git child this class spawns runs with a 30s timeout, so a lock file
+// older than this cannot belong to a live git we started — it was left by a
+// killed process. Younger locks are left alone (an op may be in flight).
+const STALE_GIT_LOCK_MS = 60_000;
 
 export class AgentSync {
   private config: SyncConfig;
@@ -88,7 +93,42 @@ export class AgentSync {
       }
     }
     try { await this.git("remote", "set-url", "origin", url); } catch {}
+    await this.recoverStrandedGitState();
     return true;
+  }
+
+  // A git child killed mid-flight (e.g. a hard app exit during a heartbeat
+  // pull --rebase) strands .git/index.lock and rebase-merge/ — and nothing
+  // ever cleaned them: the next pull --rebase failed on the lock, the
+  // rebase --abort in push()'s catch failed on the SAME lock, the
+  // --no-rebase fallback failed too, and every future sync was wedged until
+  // the user hand-deleted the lock. Heal here so every push/pull (both go
+  // through init) starts from an operable repo.
+  private async recoverStrandedGitState(): Promise<void> {
+    const gitDir = join(this.syncDir, ".git");
+    if (!existsSync(gitDir)) return;
+    const lock = join(gitDir, "index.lock");
+    if (existsSync(lock)) {
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > STALE_GIT_LOCK_MS) {
+          rmSync(lock, { force: true });
+          logger.warn("[sync] removed stale .git/index.lock left by a killed git process");
+        }
+      } catch { /* lock vanished between stat and rm — already healed */ }
+    }
+    // Stranded rebase: abort restores the pre-rebase branch. If abort itself
+    // fails (rebase state dir is corrupt/partial), remove the state dirs so
+    // git stops refusing every operation with "a rebase is in progress".
+    const rebaseDirs = [join(gitDir, "rebase-merge"), join(gitDir, "rebase-apply")];
+    if (rebaseDirs.some(d => existsSync(d))) {
+      try {
+        await this.git("rebase", "--abort");
+        logger.warn("[sync] aborted a stranded rebase left by a killed git process");
+      } catch {
+        for (const d of rebaseDirs) rmSync(d, { recursive: true, force: true });
+        logger.warn("[sync] removed corrupt stranded rebase state (.git/rebase-*)");
+      }
+    }
   }
 
   async push(): Promise<{ success: boolean; message: string }> {

@@ -23,42 +23,67 @@ function bashTurn(command: string): TurnState {
   });
 }
 
-describe("detectSingleActionStop — arg-aware bash", () => {
-  // The bug: a committing bash step (sleep/npm/git) that summarizes its one
-  // action is real sequential work, not a stall — it must NOT be nudged with
-  // "do not summarize, act", which is what suppressed per-step narration.
-  it.each([
-    "sleep 70 && date",
-    "npm run build",
-    "git commit -m wip",
-  ])("does not fire for committing bash command %j", (cmd) => {
-    expect(detectSingleActionStop(bashTurn(cmd))).toBeNull();
-  });
-
-  // Read-only bash exploration that stalls mid-promise still gets the nudge.
-  it.each([
-    "cat src/index.ts",
-    "grep -rn foo src/",
-  ])("still fires for read-only bash command %j", (cmd) => {
-    const hit = detectSingleActionStop(bashTurn(cmd));
-    expect(hit?.kind).toBe("single-action-stop");
-  });
-
-  it("defaults to non-exploratory when bash args are unparseable", () => {
+describe("detectSingleActionStop — fires only on the ending iteration", () => {
+  // The bug (HE-6): requiring exactly one PENDING exploratory call meant the
+  // detector only ever fired mid-flight — the loop was still running and the
+  // model was about to follow through on its own. A research worker doing one
+  // web_search per iteration with normal "then/next" narration got
+  // "Do not re-explore. Act." injected into a healthy turn.
+  it("does not fire while an exploratory call is still pending", () => {
     const state = turn({
-      assistantText: "Ran step 1. Next, I'll do step 2.",
-      toolCallsThisIteration: [{ name: "bash", arguments: "{not json" }],
+      assistantText: "Searching for the schedule. Then I'll compile the answer.",
+      toolCallsThisIteration: [{ name: "web_search", arguments: JSON.stringify({ query: "schedule" }) }],
+      toolsCalledThisTurn: new Set(["web_search"]),
     });
     expect(detectSingleActionStop(state)).toBeNull();
   });
 
-  // A non-bash exploratory tool is unaffected by the bash gate.
-  it("still fires for a single read tool that stalls", () => {
+  it.each([
+    "cat src/index.ts",
+    "sleep 70 && date",
+    "npm run build",
+  ])("does not fire for a pending bash call %j — mid-flight is never a stall", (cmd) => {
+    expect(detectSingleActionStop(bashTurn(cmd))).toBeNull();
+  });
+
+  it("fires when the turn ends after one exploratory tool with an unmet promise", () => {
     const state = turn({
       assistantText: "Read the file. Next, I'll edit it.",
-      toolCallsThisIteration: [{ name: "read", arguments: JSON.stringify({ path: "x" }) }],
+      toolsCalledThisTurn: new Set(["read"]),
     });
     expect(detectSingleActionStop(state)?.kind).toBe("single-action-stop");
+  });
+
+  it("fires on a sentence-leading continuation cue without a first-person promise", () => {
+    const state = turn({
+      assistantText: "Found the config. Next: update the port.",
+      toolsCalledThisTurn: new Set(["grep"]),
+    });
+    expect(detectSingleActionStop(state)?.kind).toBe("single-action-stop");
+  });
+
+  it("does not fire on a mid-sentence continuation word in descriptive prose", () => {
+    const state = turn({
+      assistantText: "The launch happens next Tuesday at 9am, per the announcement.",
+      toolsCalledThisTurn: new Set(["web_search"]),
+    });
+    expect(detectSingleActionStop(state)).toBeNull();
+  });
+
+  it("does not fire for an ended bash-only turn — command no longer inspectable", () => {
+    const state = turn({
+      assistantText: "Listed the files. Next, I'll pick one.",
+      toolsCalledThisTurn: new Set(["bash"]),
+    });
+    expect(detectSingleActionStop(state)).toBeNull();
+  });
+
+  it("does not fire when the turn used more than one distinct tool", () => {
+    const state = turn({
+      assistantText: "Read the file and searched the repo. Then I verified.",
+      toolsCalledThisTurn: new Set(["read", "grep"]),
+    });
+    expect(detectSingleActionStop(state)).toBeNull();
   });
 });
 

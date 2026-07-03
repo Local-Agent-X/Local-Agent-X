@@ -18,7 +18,6 @@ import {
   COMPLETION_OPENER,
   COMPLETION_PHRASE_AT_SENTENCE_START,
   RETRY_SAFE_EXPLORATORY_TOOLS,
-  isExploratoryBashCommand,
   highestClaimedStep,
   isWaitingOnUser,
 } from "./patterns.js";
@@ -51,34 +50,43 @@ export function detectPlanningOnly(state: TurnState): RetryInstruction | null {
   return { kind: "planning-only", instruction: PLANNING_ONLY_INSTRUCTION };
 }
 
-/** Pull the bash command out of a tool call's JSON arguments and decide if it
- *  was read-only exploration. Unparseable args → committing (safe). */
-function bashCallIsExploratory(argsJson?: string): boolean {
-  if (!argsJson) return false;
-  try {
-    const parsed = JSON.parse(argsJson) as { command?: unknown };
-    return isExploratoryBashCommand(typeof parsed.command === "string" ? parsed.command : "");
-  } catch {
-    return false;
-  }
-}
+// CONTINUATION_CUE alone matches "then/next/after" ANYWHERE — including
+// descriptive prose ("the event happens next Tuesday"), which is normal
+// narration, not a stalled promise. Only a cue that LEADS a sentence
+// ("Next, edit the file", "Then: run the tests") reads as forward intent,
+// so anchor the canonical cue list the same way
+// COMPLETION_PHRASE_AT_SENTENCE_START anchors its phrases.
+const CONTINUATION_CUE_AT_SENTENCE_START = new RegExp(
+  "(?:^|[.!?]\\s+|\\n)\\s*(?:[*_`#>-]\\s*)?" + CONTINUATION_CUE.source,
+  "i",
+);
 
 /**
- * Model ran ONE exploratory read tool, then emitted a continuation promise
- * but didn't follow through. This is the numberblocks-style bug.
+ * The turn ENDED after exactly one exploratory read tool, with text that
+ * promised continuation but never followed through. This is the
+ * numberblocks-style bug.
+ *
+ * Evaluated ONLY on the ending iteration (no tool calls pending): a pending
+ * exploratory call means the loop is still running and the model gets to
+ * follow through on its own. Firing mid-flight injected "Do not re-explore.
+ * Act." into healthy turns — e.g. a research worker doing one web_search
+ * per iteration with normal narration.
  */
 export function detectSingleActionStop(state: TurnState): RetryInstruction | null {
-  if (state.toolCallsThisIteration.length !== 1) return null;
-  const onlyCall = state.toolCallsThisIteration[0];
-  if (!RETRY_SAFE_EXPLORATORY_TOOLS.has(onlyCall.name)) return null;
-  // bash is also a committing tool — only treat it as exploration when the
-  // command is read-only. A committing command that summarizes its one step is
-  // doing real sequential work, not stalling.
-  if (onlyCall.name === "bash" && !bashCallIsExploratory(onlyCall.arguments)) return null;
+  if (state.toolCallsThisIteration.length > 0) return null; // turn still going
+  if (state.toolsCalledThisTurn.size !== 1) return null;
+  const [onlyTool] = state.toolsCalledThisTurn;
+  if (!RETRY_SAFE_EXPLORATORY_TOOLS.has(onlyTool)) return null;
+  // bash is also a committing tool, and on the ending iteration the command
+  // text is no longer in state to prove it was read-only exploration —
+  // default to non-exploratory (the documented safe direction: err toward
+  // leaving the nudge off). detectUncommittedTurn still covers a bash-only
+  // turn that never committed anything.
+  if (onlyTool === "bash") return null;
   if (!state.assistantText) return null;
-  // Needs either a future-promise phrase OR a continuation cue right after
-  // the exploratory tool's summary.
-  if (!PLANNING_FUTURE_PROMISE.test(state.assistantText) && !CONTINUATION_CUE.test(state.assistantText)) {
+  // Needs either a future-promise phrase OR a sentence-leading continuation
+  // cue after the exploratory tool's summary.
+  if (!PLANNING_FUTURE_PROMISE.test(state.assistantText) && !CONTINUATION_CUE_AT_SENTENCE_START.test(state.assistantText)) {
     return null;
   }
   return { kind: "single-action-stop", instruction: SINGLE_ACTION_STOP_INSTRUCTION };

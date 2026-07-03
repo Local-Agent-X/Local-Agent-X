@@ -8,9 +8,6 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { extractUserPrompt } from "../request.js";
 
-const PRIOR_TURNS_MSG_CAP = 20;
-const PRIOR_TURNS_CHAR_CAP = 1500;
-
 /**
  * Three modes for the CLI proxy's prompt:
  *   - `text-only` — no tools, plain text reply
@@ -38,24 +35,34 @@ export interface CliPromptInput {
  * lost (the literal symptom: "open my x account" → "X is open" → "make a
  * post" → "what platform?").
  *
+ * No secondary truncation here. Serialize every prior user/assistant turn
+ * in full, so the CLI transport sees the same history fidelity the HTTP
+ * providers (Grok/Codex) replay. Bounding is delegated to the SINGLE shared
+ * cap all providers go through — upstream truncateHistory(maxKeep=40) — so
+ * the CLI proxy is no longer drastically lossier than every HTTP provider.
+ * (This used to slice the last 20 messages × 1500 chars on top of that,
+ * halving the window and clipping every substantial message.)
+ *
  * Skips tool/system rows: tool messages without their `tool_use` pair are
- * structurally orphan-prone and the model already saw whatever the prior
- * assistant said about the result; system rows are baked into fullSystem
- * upstream. Caps last 20 messages × 1500 chars to bound prompt growth —
- * upstream truncateHistory(maxKeep=40) already capped the array, so this
- * is the second tightener for cost.
+ * structurally orphan-prone, and re-serializing tool_use/tool_result as text
+ * here is the documented echo regression (it trained Claude to parrot
+ * `[called X] / Tool result:` into replies — see buildCliPrompt below). The
+ * correct vehicle for replaying prior structured tool results to Claude is
+ * the warm pool's stream-json input mode (structured message array), which
+ * lives in the transport layer, not this text-prompt assembler. System rows
+ * are baked into fullSystem upstream.
  */
 export function serializePriorTurns(messages: ChatCompletionMessageParam[], lastUserIdx: number): string {
   if (lastUserIdx <= 0) return "";
-  const prior = messages.slice(0, lastUserIdx).slice(-PRIOR_TURNS_MSG_CAP);
+  const prior = messages.slice(0, lastUserIdx);
   const lines: string[] = [];
   for (const msg of prior) {
     if (msg.role === "user") {
       const text = extractTextFromContent(msg.content);
-      if (text) lines.push(`User: ${text.slice(0, PRIOR_TURNS_CHAR_CAP)}`);
+      if (text) lines.push(`User: ${text}`);
     } else if (msg.role === "assistant") {
       const text = extractTextFromContent((msg as { content?: unknown }).content);
-      if (text) lines.push(`Assistant: ${text.slice(0, PRIOR_TURNS_CHAR_CAP)}`);
+      if (text) lines.push(`Assistant: ${text}`);
     }
   }
   if (lines.length === 0) return "";

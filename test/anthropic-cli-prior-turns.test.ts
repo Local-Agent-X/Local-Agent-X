@@ -87,23 +87,27 @@ describe("serializePriorTurns", () => {
     expect(out).toContain("Assistant: the kanban thing");
   });
 
-  it("caps per-message text length", () => {
+  it("preserves full per-message text — no arbitrary char cap (parity with HTTP providers)", () => {
+    // PR-10: the CLI proxy used to slice each message to 1500 chars, clipping
+    // the tail of any substantial paste or answer — a fidelity loss the HTTP
+    // providers (which replay full message content) never applied. Full text
+    // must now survive.
     const longText = "x".repeat(5000);
     const messages: ChatCompletionMessageParam[] = [
       { role: "user", content: longText },
-      { role: "assistant", content: longText },
-      { role: "user", content: "ok" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "next" },
     ];
     const out = serializePriorTurns(messages, findLastUserIdx(messages));
-    // Per-message cap is 1500; with the "User: " / "Assistant: " prefix
-    // each line is ≤ ~1512 chars. Total prior block must not include the
-    // full 5000-char repeats.
-    expect(out.length).toBeLessThan(5000);
-    expect(out).toContain("User: " + "x".repeat(1500));
-    expect(out).not.toContain("x".repeat(1501));
+    // The entire 5000-char message is preserved, not truncated at 1500.
+    expect(out).toContain("User: " + longText);
   });
 
-  it("caps to last 20 messages even if the array has more", () => {
+  it("keeps every prior message — no secondary count cap (defers to upstream truncateHistory)", () => {
+    // PR-10: a 20-message secondary cap here halved the window vs the shared
+    // upstream truncateHistory(maxKeep=40) bound that all providers go
+    // through, making the CLI proxy drastically lossier. serializePriorTurns
+    // must no longer drop older turns on its own.
     const messages: ChatCompletionMessageParam[] = [];
     for (let i = 0; i < 30; i++) {
       messages.push({ role: "user", content: `msg ${i}` });
@@ -111,12 +115,12 @@ describe("serializePriorTurns", () => {
     }
     messages.push({ role: "user", content: "current" });
     const out = serializePriorTurns(messages, findLastUserIdx(messages));
-    // Last 20 of the prior 60 messages → indices 40..59 → msg 20..29 + reply 20..29
-    expect(out).toContain("User: msg 20");
+    // The oldest turn (previously dropped by the 20-message cap) is present…
+    expect(out).toContain("User: msg 0");
+    expect(out).toContain("Assistant: reply 0");
+    // …through the most recent prior turn.
+    expect(out).toContain("User: msg 29");
     expect(out).toContain("Assistant: reply 29");
-    // Earlier messages must be dropped.
-    expect(out).not.toContain("msg 19");
-    expect(out).not.toContain("reply 0");
   });
 
   it("extracts text from multi-part user content (image + text)", () => {

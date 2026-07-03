@@ -120,45 +120,81 @@ function convertMarkdown(text: string, flavor: ChannelConfig["markdownFlavor"]):
   return text;
 }
 
-function convertToTelegramMarkdown(text: string): string {
-  // Placeholder shape uses ONLY letters + digits — Telegram MarkdownV2 has no
-  // letters in its escape set, so the placeholder survives the escape pass
-  // intact. The previous shape (`__CODE_BLOCK_0__`) embedded underscores
-  // which got escaped to `\_\_CODE\_BLOCK\_0\_\_` during the escape pass,
-  // causing the subsequent `replace('__CODE_BLOCK_0__', code)` to MISS the
-  // (now-escaped) form and leak the literal placeholder into the rendered
-  // message — that was the visible `__INLINE_CODE_0__` strings users saw
-  // in Telegram replies.
+// Mask code blocks + inline code so styling/escape regexes never touch code
+// content, then restore verbatim. Placeholder shape uses ONLY letters +
+// digits — Telegram MarkdownV2 has no letters in its escape set, so the
+// placeholder survives the escape pass intact. The previous shape
+// (`__CODE_BLOCK_0__`) embedded underscores which got escaped during the
+// escape pass, causing the restore to MISS the (now-escaped) form and leak
+// the literal placeholder into the rendered message. Restores use a replacer
+// FUNCTION so `$` sequences in code (`echo $$`, `$&`, LaTeX `$$`) stay
+// literal — string-form replace interprets them.
+function maskCode(text: string): { masked: string; restore: (s: string) => string } {
   const codeBlocks: string[] = [];
-  let result = text.replace(/```[\s\S]*?```/g, (match) => {
+  let masked = text.replace(/```[\s\S]*?```/g, (match) => {
     codeBlocks.push(match);
     return `XCODEBLOCKX${codeBlocks.length - 1}XENDX`;
   });
-
   const inlineCode: string[] = [];
-  result = result.replace(/`[^`]+`/g, (match) => {
+  masked = masked.replace(/`[^`]+`/g, (match) => {
     inlineCode.push(match);
     return `XINLINECODEX${inlineCode.length - 1}XENDX`;
   });
+  const restore = (s: string): string => {
+    let out = s;
+    for (let i = 0; i < codeBlocks.length; i++) {
+      out = out.replace(`XCODEBLOCKX${i}XENDX`, () => codeBlocks[i]);
+    }
+    for (let i = 0; i < inlineCode.length; i++) {
+      out = out.replace(`XINLINECODEX${i}XENDX`, () => inlineCode[i]);
+    }
+    return out;
+  };
+  return { masked, restore };
+}
 
-  // Escape Telegram special chars: _ * [ ] ( ) ~ ` > # + - = | { } . !
-  // Backslash MUST be escaped first, otherwise the escapes added below could be
-  // neutralised/combined by a literal `\` already present in the text.
-  result = result.replace(/\\/g, "\\\\").replace(/([_*\[\]()~>#+\-=|{}.!])/g, "\\$1");
+// Escape Telegram MarkdownV2 special chars: _ * [ ] ( ) ~ > # + - = | { } . !
+// Backslash MUST be escaped first, otherwise the escapes added below could be
+// neutralised/combined by a literal `\` already present in the text.
+function escapeTelegramText(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/([_*\[\]()~>#+\-=|{}.!])/g, "\\$1");
+}
 
-  // Restore (unescaped — code spans pass through MarkdownV2 raw).
-  for (let i = 0; i < codeBlocks.length; i++) {
-    result = result.replace(`XCODEBLOCKX${i}XENDX`, codeBlocks[i]);
+function convertToTelegramMarkdown(text: string): string {
+  const { masked, restore } = maskCode(text);
+
+  // Convert the markdown dialect BEFORE escaping — otherwise **bold**,
+  // [link](url) and ## headers get their delimiters backslash-escaped and
+  // render as literal source in Telegram. Each converted span is parked
+  // behind a letters+digits placeholder (payload pre-escaped, delimiters
+  // raw) so the escape pass below can't touch it.
+  const styled: string[] = [];
+  const park = (payload: string): string => {
+    styled.push(payload);
+    return `XSTYLEDX${styled.length - 1}XENDX`;
+  };
+  let result = masked.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label: string, url: string) =>
+    park(`[${escapeTelegramText(label)}](${url.replace(/\\/g, "\\\\")})`));
+  result = result.replace(/\*\*(.+?)\*\*/g, (_m, inner: string) => park(`*${escapeTelegramText(inner)}*`));
+  result = result.replace(/^#{1,6}\s+(.+)$/gm, (_m, inner: string) => park(`*${escapeTelegramText(inner)}*`));
+
+  // Escape the remainder.
+  result = escapeTelegramText(result);
+
+  // Restore styled spans descending — later spans (bold/headers) may wrap
+  // earlier placeholders (links) in their payload. Replacer functions keep
+  // `$` sequences in payloads literal.
+  for (let i = styled.length - 1; i >= 0; i--) {
+    result = result.replace(`XSTYLEDX${i}XENDX`, () => styled[i]);
   }
-  for (let i = 0; i < inlineCode.length; i++) {
-    result = result.replace(`XINLINECODEX${i}XENDX`, inlineCode[i]);
-  }
 
-  return result;
+  // Restore code last (unescaped — code spans pass through MarkdownV2 raw).
+  return restore(result);
 }
 
 function convertToWhatsAppMarkdown(text: string): string {
-  let result = text;
+  const { masked, restore } = maskCode(text);
+  let result = masked;
   // **bold** → *bold*
   result = result.replace(/\*\*(.+?)\*\*/g, "*$1*");
   // ## headers → *HEADER*
@@ -168,13 +204,12 @@ function convertToWhatsAppMarkdown(text: string): string {
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1: $2");
   // Strip remaining markdown syntax
   result = result.replace(/^[-*+]\s/gm, "- ");
-  return result;
+  return restore(result);
 }
 
 function stripAllMarkdown(text: string): string {
-  let result = text;
-  // Remove code block markers but keep content
-  result = result.replace(/```\w*\n?/g, "");
+  const { masked, restore } = maskCode(text);
+  let result = masked;
   // Remove bold/italic markers
   result = result.replace(/\*\*(.+?)\*\*/g, "$1");
   result = result.replace(/\*(.+?)\*/g, "$1");
@@ -183,7 +218,8 @@ function stripAllMarkdown(text: string): string {
   result = result.replace(/^#{1,6}\s+/gm, "");
   // Convert links
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
-  return result;
+  // Restore code untouched, then drop only the fence markers (keep content).
+  return restore(result).replace(/```\w*\n?/g, "");
 }
 
 // ── Feature Stripping ──

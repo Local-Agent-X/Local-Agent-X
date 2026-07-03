@@ -26,6 +26,35 @@ describe("formatForChannel — telegram MarkdownV2", () => {
     expect(out).toContain("const x = 1;");
     expect(out).not.toContain("\\=");
   });
+
+  it("restores code containing $ sequences verbatim (HE-4 regression)", () => {
+    // String-form replace interprets $$, $&, $' in the replacement — code
+    // like `echo $$` was corrupted and $& re-injected the placeholder.
+    const [out] = formatForChannel("run:\n```bash\necho $$ and $& and $' here\n```", "telegram");
+    expect(out).toContain("echo $$ and $& and $' here");
+    expect(out).not.toContain("XCODEBLOCK");
+  });
+
+  it("restores inline code containing $ sequences verbatim (HE-4 regression)", () => {
+    const [out] = formatForChannel("pid is `echo $$` ok", "telegram");
+    expect(out).toContain("`echo $$`");
+    expect(out).not.toContain("XINLINECODE");
+  });
+
+  it("converts **bold** to MarkdownV2 *bold* instead of escaping it (HE-7 regression)", () => {
+    const [out] = formatForChannel("this is **bold** text", "telegram");
+    expect(out).toBe("this is *bold* text");
+  });
+
+  it("keeps [link](url) as a MarkdownV2 link instead of escaping it (HE-7 regression)", () => {
+    const [out] = formatForChannel("see [the docs](https://x.io/a)", "telegram");
+    expect(out).toBe("see [the docs](https://x.io/a)");
+  });
+
+  it("converts ## headers to bold lines with escaped inner text (HE-7 regression)", () => {
+    const [out] = formatForChannel("## Heading v1.2", "telegram");
+    expect(out).toBe("*Heading v1\\.2*");
+  });
 });
 
 describe("formatForChannel — whatsapp", () => {
@@ -42,6 +71,33 @@ describe("formatForChannel — whatsapp", () => {
   it("rewrites markdown links to 'text: url'", () => {
     const [out] = formatForChannel("see [the docs](https://x.io)", "whatsapp");
     expect(out).toBe("see the docs: https://x.io");
+  });
+
+  it("does not treat ** inside code as bold markers (HE-8 regression)", () => {
+    // Pre-fix, the **(.+?)** pass ran over unmasked code and turned
+    // Python x**2 into x*2.
+    const [out] = formatForChannel("```python\ny = x**2 + x**3\n```", "whatsapp");
+    expect(out).toContain("x**2 + x**3");
+  });
+
+  it("leaves inline code untouched by styling passes (HE-8 regression)", () => {
+    const [out] = formatForChannel("square via `x**2` here", "whatsapp");
+    expect(out).toContain("`x**2`");
+  });
+});
+
+describe("formatForChannel — plain (cli)", () => {
+  it("does not strip underscores inside code (HE-8 regression)", () => {
+    // Pre-fix, the _(.+?)_ pass ran over unmasked code and mangled
+    // snake_case / dunder identifiers (__init__ → init).
+    const [out] = formatForChannel("call `__init__` first", "cli");
+    expect(out).toContain("`__init__`");
+  });
+
+  it("keeps fenced code content intact while dropping fence markers", () => {
+    const [out] = formatForChannel("```\na_b = c_d\n```", "cli");
+    expect(out).toContain("a_b = c_d");
+    expect(out).not.toContain("```");
   });
 });
 

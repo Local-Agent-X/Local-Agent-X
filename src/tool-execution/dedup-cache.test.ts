@@ -60,6 +60,13 @@ describe("dedup cache", () => {
     expect(dedupLookup(SCOPE, "process_status", '{"pid":123}')).toBeNull();
   });
 
+  it("does not dedup file mutation tools because repeats must see current file state", () => {
+    for (const tool of ["write", "edit", "edit_lines", "multi_edit", "delete_file"]) {
+      record(tool, '{"path":"app.js"}', SCOPE, `${tool} ok`);
+      expect(dedupLookup(SCOPE, tool, '{"path":"app.js"}'), tool).toBeNull();
+    }
+  });
+
   it("does not record failed results", () => {
     dedupRecord(SCOPE, "email_send", '{"to":"a@b.com"}', {
       msgs: [],

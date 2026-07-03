@@ -6,6 +6,7 @@ import { applyAdditiveSpecAmendment, commitSpecAmendment } from "../loop-effects
 import type { EmitFn } from "./types.js";
 import { safeGet } from "./types.js";
 import { runChunkOnce } from "./run-chunk-once.js";
+import { parsePlanFile } from "../plan-parser.js";
 
 export interface HandlePushBackOptions {
   chunk: ParsedChunk;
@@ -33,7 +34,10 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
     kind: "chunk-review-push-back",
     chunk,
     reviewReason: outcome.reasoning,
-    workerReport: outcome.report.note || JSON.stringify(outcome.report).slice(0, 4000),
+    workerReport:
+      `NOTE: ${outcome.report.note || "(empty)"}\n` +
+      `SPEC_GAPS: ${outcome.report.specGaps || "(empty)"}\n` +
+      `DONE_WHEN: ${outcome.report.doneWhen}`,
     projectDir: opts.projectDir,
   }, { signal: opts.signal });
 
@@ -60,8 +64,22 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
     }
     await safeGet(() => commitSpecAmendment(opts.projectDir, chunk));
     emit({ type: "spec-amended", chunkNumber: chunk.number, totalChunks, message: `advisor amended spec additively before retry` });
+    // The amendment may sharpen the current chunk's Slice/Done when. Reparse
+    // before retry so the worker and review gates use the amended contract,
+    // not the stale object captured at build kickoff.
+    let refreshedPlan: ParsedPlan;
+    let refreshedChunk: ParsedChunk;
+    try {
+      refreshedPlan = parsePlanFile(opts.planPath);
+      refreshedChunk = refreshedPlan.chunks.find((c) => c.number === chunk.number) ?? chunk;
+    } catch (e) {
+      return {
+        finalAction: "halt",
+        finalOutcome: { ...outcome, reasoning: `spec amendment left plan invalid: ${(e as Error).message}` },
+      };
+    }
     const retryOutcome = await runChunkOnce({
-      chunk, totalChunks, planPath: opts.planPath, plan: opts.plan,
+      chunk: refreshedChunk, totalChunks, planPath: opts.planPath, plan: refreshedPlan,
       projectDir: opts.projectDir, preSha: opts.preSha,
       subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
       retryReason: `spec was amended to clarify: ${advice.specAddition.slice(0, 200)}`,

@@ -18,6 +18,7 @@ import {
 
 const edit = (filePath: string): VerifyTurnAction => ({ tool: "edit", filePath });
 const bash = (command: string, status: "ok" | "error"): VerifyTurnAction => ({ tool: "bash", command, status });
+const bashAt = (command: string, cwd: string, status: "ok" | "error"): VerifyTurnAction => ({ tool: "bash", command, cwd, status });
 const del = (filePath: string): VerifyTurnAction => ({ tool: "delete_file", filePath });
 
 describe("isSourceFile — which extensions demand a verify", () => {
@@ -79,6 +80,54 @@ describe("checkVerifyGate — verified clean", () => {
     noteVerifyEvidence([edit("src/b.ts")], s);
     expect(opEditedSourceUnverified(s)).toBe(true);
     expect(checkVerifyGate(s).nudge).toMatch(/haven't run/i);
+  });
+
+  it("does NOT credit a repo typecheck as verification for an edited workspace app", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([
+      edit("C:/Users/manri/Documents/Local Agent X/workspace/apps/fastmail-dashboard/app.js"),
+      bash('cd "C:/Users/manri/local-agent-x" && npx tsc --noEmit', "ok"),
+    ], s);
+
+    expect(checkVerifyGate(s).nudge).toMatch(/haven't run/i);
+    expect(opEditedSourceUnverified(s)).toBe(true);
+  });
+
+  it("credits a verify command that targets the edited workspace app", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([
+      edit("C:/Users/manri/Documents/Local Agent X/workspace/apps/fastmail-dashboard/app.js"),
+      bash('cd "C:/Users/manri/Documents/Local Agent X/workspace/apps/fastmail-dashboard" && npm run build', "ok"),
+    ], s);
+
+    expect(checkVerifyGate(s).nudge).toBeNull();
+    expect(opEditedSourceUnverified(s)).toBe(false);
+  });
+
+  it("credits an HTTP smoke only when it targets the edited app or connector route", () => {
+    const appPath = "C:/Users/manri/Documents/Local Agent X/workspace/apps/fastmail-dashboard/app.js";
+
+    const wrong = createVerifyGateState();
+    noteVerifyEvidence([edit(appPath), bash("curl.exe -f http://127.0.0.1:7007/api/health", "ok")], wrong);
+    expect(checkVerifyGate(wrong).nudge).toMatch(/haven't run/i);
+
+    const appSmoke = createVerifyGateState();
+    noteVerifyEvidence([edit(appPath), bash("curl.exe -f http://127.0.0.1:7007/apps/fastmail-dashboard/index.html", "ok")], appSmoke);
+    expect(checkVerifyGate(appSmoke).nudge).toBeNull();
+
+    const connectorSmoke = createVerifyGateState();
+    noteVerifyEvidence([edit(appPath), bash("curl.exe -f http://127.0.0.1:7007/api/connectors/fastmail/jmap/session", "ok")], connectorSmoke);
+    expect(checkVerifyGate(connectorSmoke).nudge).toBeNull();
+  });
+
+  it("credits executor cwd when it is the edited workspace app", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([
+      edit("C:/Users/manri/Documents/Local Agent X/workspace/apps/fastmail-dashboard/app.js"),
+      bashAt("npm run build", "C:/Users/manri/Documents/Local Agent X/workspace/apps/fastmail-dashboard", "ok"),
+    ], s);
+
+    expect(checkVerifyGate(s).nudge).toBeNull();
   });
 });
 

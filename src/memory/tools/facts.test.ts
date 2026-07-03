@@ -87,4 +87,38 @@ describe("remember multi-fact-blob guard", () => {
     expect(res.content).toMatch(/^Remembered/);
     expect(spy).toHaveBeenCalledTimes(1);
   });
+
+  it("defaults model-authored facts to inference and caps confidence at 0.6", async () => {
+    const spy = vi.spyOn(memory, "rememberFact");
+    const tool = rememberTool();
+    await tool.execute({
+      content: "The deployment policy is probably strict",
+      confidence: 1,
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      "The deployment policy is probably strict",
+      expect.objectContaining({
+        confidence: 0.6,
+        sourceFile: "agent-tool:inference",
+      }),
+    );
+  });
+
+  it("retains direct user statements at full confidence with provenance", async () => {
+    const spy = vi.spyOn(memory, "rememberFact");
+    const tool = rememberTool();
+    await tool.execute({
+      content: "User prefers concise answers",
+      provenance: "user_statement",
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      "User prefers concise answers",
+      expect.objectContaining({
+        confidence: 1,
+        sourceFile: "agent-tool:user-statement",
+      }),
+    );
+  });
 });

@@ -133,6 +133,21 @@ describe("<core_memory> 'still fresh' salience", () => {
  *      facts sort to the top of the same turn's render ("human memory" pattern)
  */
 describe("<core_memory> cap / heading order / reinforcement", () => {
+  it("frames retained memory as fallible context, never operational evidence", async () => {
+    const r = memory.rememberFact("the kernel policy is permanently enforced", {
+      kind: "observation",
+      confidence: 0.6,
+      sourceFile: "agent-tool:inference",
+    });
+    expect(r.ok).toBe(true);
+
+    const block = await buildContextBlock(memory, { skipDailyLog: true });
+    const core = extractCoreMemory(block);
+    expect(core).toMatch(/not proof/i);
+    expect(core).toMatch(/NEVER use it as evidence for current runtime/i);
+    expect(core).toContain("[unverified inference]");
+  });
+
   it("body cap holds under flood — never wildly exceeds MAX_BYTES=3000", async () => {
     const now = Date.now();
     // 50 facts, ~120 char content each, spread across kinds so no single

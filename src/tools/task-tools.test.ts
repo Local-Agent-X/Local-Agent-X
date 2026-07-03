@@ -27,6 +27,7 @@ const tool = (n: string) => taskTools.find((t) => t.name === n)!;
 const create = tool("task_create");
 const update = tool("task_update");
 const get = tool("task_get");
+const list = tool("task_list");
 
 beforeEach(() => { try { if (existsSync(TASKS_FILE)) unlinkSync(TASKS_FILE); } catch { /* ignore */ } });
 afterEach(() => { try { rmSync(DATA_DIR, { recursive: true, force: true }); } catch { /* win locks */ } });
@@ -88,5 +89,22 @@ describe("task_update — upsert on unknown id", () => {
       await update.execute({ id: "preflight-1-2", status: "completed", output: "wrote echo" }),
     ];
     expect(results.every((r) => !r.isError)).toBe(true);
+  });
+});
+
+describe("task_list — session isolation", () => {
+  it("does not leak failed tasks from prior worker sessions", async () => {
+    await create.execute({ description: "old failed step", id: "old", _sessionId: "agent-old" });
+    await update.execute({ id: "old", status: "failed", _sessionId: "agent-old" });
+    await create.execute({ description: "current step", id: "current", _sessionId: "agent-current" });
+    await update.execute({ id: "current", status: "failed", _sessionId: "agent-current" });
+
+    const scoped = await list.execute({ status: "failed", _sessionId: "agent-current" });
+    expect(scoped.content).toContain("current step");
+    expect(scoped.content).not.toContain("old failed step");
+
+    const global = await list.execute({ status: "failed", all_sessions: true, _sessionId: "agent-current" });
+    expect(global.content).toContain("old failed step");
+    expect(global.content).toContain("current step");
   });
 });

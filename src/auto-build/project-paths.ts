@@ -36,6 +36,11 @@ export function projectsDir(): string {
 export function resolveProjectDir(raw: unknown): string | null {
   const s = String(raw || "").trim();
   if (!s) return null;
+  // On Windows, node:path treats "/tmp/x" as absolute on the current drive and
+  // realpathDeep can turn it into "C:\tmp\x". For this resolver, a leading
+  // slash is a POSIX absolute path supplied by the caller, not a request to
+  // reinterpret it on the host drive. Preserve it exactly.
+  if (process.platform === "win32" && /^\/(?!\/)/.test(s)) return s;
   // isAbsolute() is platform-specific — on POSIX it doesn't recognize a
   // Windows drive path like "C:\proj". Accept both so a path absolute on its
   // origin OS passes through unchanged regardless of where this runs.

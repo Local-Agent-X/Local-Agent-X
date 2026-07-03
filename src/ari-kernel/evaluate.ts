@@ -18,6 +18,7 @@ const logger = createLogger("ari-kernel");
 // — the cascade means a PRIOR action already quarantined, and overriding on it
 // would let a benign write CLEAR a genuine quarantine.
 const KERNEL_SENSITIVE_FILE_TRIGGER = /sensitive file|behavioral rule/i;
+const KERNEL_FOREIGN_TAINT_TRIGGER = /shell execution with untrusted input is forbidden/i;
 
 function filePathFromParams(params: Record<string, unknown>): string | null {
   const p = params.path ?? params.file_path ?? params.filePath ?? params.target;
@@ -58,6 +59,7 @@ export async function ariEvaluate(
   action: string,
   params: Record<string, unknown>,
   taintLabels?: string[],
+  retriedAfterForeignTaint = false,
 ): Promise<{ allowed: boolean; reason: string; quarantined?: boolean; userHint?: string }> {
   const firewall = getFirewall();
   if (!firewall) {
@@ -142,14 +144,34 @@ export async function ariEvaluate(
 
     return { allowed: true, reason: "ARI allowed" };
   } catch (e) {
+    const rawDetail = (e as Error).message || String(e);
+    // The embedded ARI Firewall is process-wide, but LAX runs many sessions
+    // concurrently. ARI's run-level taint can therefore come from a background
+    // op and deny a shell call in a completely clean chat. The trusted LAX
+    // session registry is the authority for provenance: when this call carries
+    // no taint labels yet ARI reports its tainted-shell trigger, the taint is
+    // foreign to this session. Rebuild the singleton run and retry once. A
+    // genuinely tainted session never reaches this rescue because it has labels
+    // and is pre-gated in enforce-policy.ts.
+    if (
+      !retriedAfterForeignTaint &&
+      (!taintLabels || taintLabels.length === 0) &&
+      KERNEL_FOREIGN_TAINT_TRIGGER.test(rawDetail) &&
+      refreshAriKernelRun()
+    ) {
+      logger.warn(
+        `[ari] foreign run-level taint detected on clean session — refreshed singleton firewall and retrying once`,
+      );
+      return ariEvaluate(toolName, action, params, taintLabels, true);
+    }
     if (isAriRequired()) {
-      logger.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${(e as Error).message}`);
+      logger.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${rawDetail}`);
       // Surface the underlying error IN the result the model sees. The
       // generic "ARI error" alone sent the agent diagnosing tool-policy.json
       // while the actual cause ("Unknown action 'exec' for tool class
       // 'http'" — a missing ARI_ACTION_MAP entry) sat only in this log.
       // Single-line + capped: zod errors arrive as multi-line JSON arrays.
-      const detail = ((e as Error).message || String(e)).replace(/\s+/g, " ").slice(0, 300);
+      const detail = rawDetail.replace(/\s+/g, " ").slice(0, 300);
       return {
         allowed: false,
         reason: `[ARI kernel] evaluation error, blocked in ariRequired mode: ${detail}`,

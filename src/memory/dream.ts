@@ -287,10 +287,22 @@ What to extract:
 - Project context (deadlines, blockers, why X was chosen over Y)
 - Hardware/tooling/software choices with specific reasons
 
+Epistemic rules (mandatory):
+- A durable fact must be supported by a direct User statement or a successful Tool result in these transcripts.
+- Assistant statements, summaries, recommendations, guesses, and earlier memory are NOT evidence. Do not save them
+  as facts unless independently supported by a User statement or successful Tool result.
+- Preserve modality exactly: "recommended", "proposed", "might", and "should" must never become "implemented",
+  "enforced", "is", "did", or "permanent".
+- Every \`remember\` / \`update_fact\` call must set \`provenance\` to \`user_statement\` or
+  \`tool_observation\`. If neither applies, do not write the fact.
+- Current runtime, security, policy, permission, service, session, and build state is ephemeral. Do not put it in
+  durable memory. Operational outcomes belong in the action/audit ledger.
+
 What NOT to extract:
 - Routine tool calls, debugging chatter, ephemeral state
 - Anything already documented in the memory files above
 - Chat-transcript snippets verbatim (extract the FACT, not the dialogue)
+- Claims whose only source is an Assistant line or another memory file
 
 ## Phase 4 — Output
 

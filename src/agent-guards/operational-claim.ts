@@ -1,0 +1,65 @@
+import { stripCodeBlocks } from "./code-strip.js";
+
+// Claims about what a running system did or why it did it need fresh
+// observation. Conversation history and durable memory can provide a lead,
+// but neither proves current or historical runtime state.
+const OPERATIONAL_SUBJECT =
+  /\b(?:ari|kernel|harness|runtime|system|server|service|session|security|firewall|sandbox|policy|permission|provider|bridge|worker|process|daemon|tool|api|database|deployment|build|ci|moderation)\b/i;
+const OPERATIONAL_ASSERTION =
+  /\b(?:block(?:ed|ing)?|den(?:y|ied|ies)|disable[ds]?|enable[ds]?|restrict(?:ed|ion)?|appl(?:y|ied|ies)|enforc(?:e|ed|es)|flag(?:ged|s)?|log(?:ged|s)?|caught|trigger(?:ed|s)?|caus(?:e|ed|es)|because|due to|reason|permanent(?:ly)?|current(?:ly)?|running|stopp?ed|fail(?:ed|s|ure)|allow(?:ed|s)?|reject(?:ed|s)?)\b/i;
+const EXPLICIT_UNCERTAINTY =
+  /\b(?:I (?:do not|don't) know|I (?:cannot|can't) verify|unverified|not verified|memory (?:only )?(?:says|suggests|indicates)|may|might|could|possibly|one possibility|working hypothesis|inference|appears to|seems to)\b/i;
+
+const NON_DIAGNOSTIC_TOOLS = new Set([
+  "memory_search",
+  "memory_recall",
+  "search_past_sessions",
+  "remember",
+  "update_fact",
+  "forget",
+  "tool_search",
+]);
+
+/** True when a reply makes a definitive operational-state/causality claim. */
+export function looksLikeDefinitiveOperationalClaim(text: string): boolean {
+  const cleaned = stripCodeBlocks(text);
+  if (!cleaned) return false;
+  const sentences = cleaned.split(/(?<=[.!?])\s+|\n+/);
+  return sentences.some((sentence) =>
+    OPERATIONAL_SUBJECT.test(sentence) &&
+    OPERATIONAL_ASSERTION.test(sentence) &&
+    !EXPLICIT_UNCERTAINTY.test(sentence)
+  );
+}
+
+/** Successful read/inspection tools from this op count as fresh evidence. */
+export function hasFreshOperationalEvidence(toolsCalledThisOp: Set<string>): boolean {
+  for (const rawName of toolsCalledThisOp) {
+    const name = rawName.toLowerCase();
+    if (NON_DIAGNOSTIC_TOOLS.has(name) || name.startsWith("memory_")) continue;
+    if (
+      /(?:^|_)(?:read|grep|glob|search|query|inspect|diagnos|audit|log|status|list|fetch)(?:_|$)/.test(name) ||
+      /^(?:bash|shell|browser|http_request|web_search)$/.test(name)
+    ) return true;
+  }
+  return false;
+}
+
+/**
+ * Return a corrective when a model presents memory/speculation as observed
+ * operational truth. The retry may inspect the system or answer honestly with
+ * explicit uncertainty.
+ */
+export function checkUnsupportedOperationalClaim(
+  text: string,
+  toolsCalledThisOp: Set<string>,
+): string | null {
+  if (!looksLikeDefinitiveOperationalClaim(text)) return null;
+  if (hasFreshOperationalEvidence(toolsCalledThisOp)) return null;
+  return (
+    "You made a definitive claim about a system's runtime, policy, security decision, or causal history " +
+    "without fresh diagnostic evidence in this op. Memory and prior assistant messages are leads, not evidence. " +
+    "Inspect logs/state/code with an available read-only tool before asserting the claim. If verification is " +
+    "unavailable, retract the claim and explicitly say what is unknown or only a hypothesis."
+  );
+}

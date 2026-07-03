@@ -122,16 +122,23 @@ const taskUpdate: ToolDefinition = {
 
 const taskList: ToolDefinition = {
   name: "task_list",
-  description: "List all tasks, optionally filtered by status or parent task.",
+  description:
+    "List tasks from the current session, optionally filtered by status or parent task. " +
+    "Set all_sessions=true only when the user explicitly asks for the global task ledger.",
   parameters: {
     type: "object",
     properties: {
       status: { type: "string", enum: ["pending", "in_progress", "completed", "failed"] },
       parent_id: { type: "string", description: "Filter subtasks of a parent" },
+      all_sessions: { type: "boolean", description: "Include every session's tasks (default false)" },
     },
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     let items = [...loadTasks().values()];
+    const sessionId = String(args._sessionId || "").trim();
+    if (sessionId && args.all_sessions !== true) {
+      items = items.filter((t) => t.session_id === sessionId);
+    }
     if (args.status) items = items.filter((t) => t.status === args.status);
     if (args.parent_id) items = items.filter((t) => t.parent_id === args.parent_id);
     if (items.length === 0) return { content: "No tasks found." };
@@ -157,6 +164,10 @@ const taskGet: ToolDefinition = {
     const tasks = loadTasks();
     const task = tasks.get(args.id as string);
     if (!task) return { content: `Task ${args.id} not found`, isError: true };
+    const sessionId = String(args._sessionId || "").trim();
+    if (sessionId && task.session_id && task.session_id !== sessionId) {
+      return { content: `Task ${args.id} not found in this session`, isError: true };
+    }
     const subs = [...tasks.values()].filter((t) => t.parent_id === task.id);
     const detail = [
       `ID:          ${task.id}`,

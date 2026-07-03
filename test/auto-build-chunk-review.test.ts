@@ -328,6 +328,17 @@ describe("Done-when gate edge cases", () => {
     expect(gateDoneWhen(baseChunk, r)!.action).toBe("halt");
   });
 
+  it("routes an explicit blocking spec gap through bounded advisor recovery", () => {
+    const r = parseChunkReport(
+      "STATUS: blocked\nDONE_WHEN: unmet\nCHANGED: none\nTESTS: n/a\nNEW_FAILURES: none\n" +
+      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: Define the role redirect matrix.\n" +
+      "LAUNCH_READINESS: none\nNOTE: stopped instead of guessing"
+    );
+    const finding = gateDoneWhen(baseChunk, r)!;
+    expect(finding.action).toBe("push_back");
+    expect(finding.reasoning).toMatch(/advisor/i);
+  });
+
   it("halts on DONE_WHEN: unmet", () => {
     const r = parseChunkReport(
       "STATUS: done\nDONE_WHEN: unmet\nCHANGED: x.ts\nTESTS: 0/0\nNEW_FAILURES: none\n" +
@@ -465,12 +476,12 @@ describe("Fixture directory smoke test", () => {
   });
 });
 
-describe("Halt reasons carry the worker's own words", () => {
+describe("Review reasons carry the worker's own words", () => {
   // Regression (Jul 2 2026 food-truck run): chunk 2 halted with only
   // "STATUS=blocked; needs user attention" — the actual blocker lived in the
   // worker's NOTE, which existed nowhere durable. Diagnosis required log
   // spelunking across a transient agent session.
-  it("blocked halt includes NOTE and SPEC_GAPS", () => {
+  it("blocked spec-gap recovery includes NOTE and SPEC_GAPS", () => {
     const r = parseChunkReport(
       "STATUS: blocked\nDONE_WHEN: unmet\nCHANGED: none\nTESTS: n/a\n" +
       "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\n" +
@@ -479,7 +490,7 @@ describe("Halt reasons carry the worker's own words", () => {
       "NOTE: write gate rejected leaflet CSS from cdnjs; need self-host guidance"
     );
     const f = gateDoneWhen(chunkFromFixture(loadFixture("chunk-clean-proceed.json")), r)!;
-    expect(f.action).toBe("halt");
+    expect(f.action).toBe("push_back");
     expect(f.reasoning).toContain("write gate rejected leaflet CSS");
     expect(f.reasoning).toContain("self-host leaflet assets");
   });

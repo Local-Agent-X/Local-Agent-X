@@ -254,12 +254,26 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       const body = typeof ctx.result?.content === "string" ? ctx.result.content : "";
       if (body.length > 0) {
         const det = detectSecretsInOutput(body);
-        if (det.matched) {
+        // Memory results routinely contain UUIDs, hashes, tool-call ids, and
+        // other long identifiers from old transcripts. The loose entropy pass
+        // intentionally notices those for outbound scanning, but an
+        // entropy-only hit is not enough evidence that memory_search surfaced a
+        // credential. Treat it like bash output: only a structured credential
+        // taints the session. Other owned sources keep the stricter historical
+        // behavior because arbitrary high-entropy database/email values may be
+        // account secrets.
+        const shouldTaint =
+          det.structured || (det.matched && tc.name !== "memory_search");
+        if (shouldTaint) {
           recordSensitiveRead(sessionId || "default", "secret", `${tc.name}:${det.kinds.join(",")}`, body);
           logger.warn(
             `${tc.name} output contained secret-shaped content (kinds: ${det.kinds.join(", ")}) — session tainted`,
           );
           redactReason = `${tc.name} output contained secret-shaped content (${det.kinds.join(", ")})`;
+        } else if (det.matched) {
+          logger.debug(
+            `${tc.name} output had a high-entropy-only match (kinds: ${det.kinds.join(", ")}) — not tainting (common transcript id/hash false positive)`,
+          );
         }
       }
     }

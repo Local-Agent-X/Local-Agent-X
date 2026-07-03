@@ -93,6 +93,20 @@ export function parsePlanText(text: string): ParsedPlan {
   if (chunks.length === 0) {
     throw new Error("plan parser: no chunks found — expected '### Chunk N — Title' headings");
   }
+  const incomplete = chunks.filter((c) => !c.slice.trim() || !c.doneWhen.trim());
+  if (incomplete.length > 0) {
+    const details = incomplete.map((c) => {
+      const missing = [
+        !c.slice.trim() ? "Slice" : "",
+        !c.doneWhen.trim() ? "Done when" : "",
+      ].filter(Boolean).join(" + ");
+      return `chunk ${c.number} (${missing})`;
+    }).join(", ");
+    throw new Error(
+      `plan parser: incomplete chunk contract — ${details}. ` +
+      `Each chunk needs a non-empty Slice and Done when; refusing to launch a worker with an empty scope or success contract.`
+    );
+  }
 
   return { title, chunks, phaseGatesRawSection, launchReadinessRows };
 }
@@ -180,14 +194,22 @@ interface ChunkFields {
 function parseChunkFields(rawSection: string): ChunkFields {
   const lines = rawSection.split(/\r?\n/).slice(1); // skip the H3 line itself
 
-  const fieldBulletRe = /^[-*]\s+\*\*([A-Za-z][A-Za-z ]+?):\*\*\s*(.*)$/;
+  const fieldBulletRe = /^[-*]\s+\*\*([A-Za-z][A-Za-z -]+?):\*\*\s*(.*)$/;
+  // Legacy plans created before finalize_app_build enforced the canonical
+  // bullet schema used standalone bold headings:
+  //   **Goal**: ...
+  //   **Files**:
+  //   **Done-when**:
+  // Parse that shape rather than launching with blank Slice/Done when. The
+  // strict completeness check above still rejects prose that supplies neither.
+  const fieldHeadingRe = /^\*\*([A-Za-z][A-Za-z -]+?)\*\*\s*:?\s*(.*)$/;
   const fields = new Map<string, string[]>();
   let currentKey: string | null = null;
 
   for (const line of lines) {
-    const m = line.match(fieldBulletRe);
+    const m = line.match(fieldBulletRe) || line.match(fieldHeadingRe);
     if (m) {
-      currentKey = m[1].trim().toLowerCase();
+      currentKey = normalizeFieldKey(m[1]);
       const firstValueLine = m[2];
       if (!fields.has(currentKey)) fields.set(currentKey, []);
       // Even if the first line is empty (multi-line done-when style),
@@ -199,14 +221,23 @@ function parseChunkFields(rawSection: string): ChunkFields {
   }
 
   const get = (k: string) => (fields.get(k) || []).join("\n").trim();
+  const legacySlice = [
+    get("goal"),
+    get("files"),
+    get("files to create"),
+  ].filter(Boolean).join("\n");
 
   return {
     klass: classifyChunkText(get("class")),
-    slice: collapseWhitespace(get("slice")),
+    slice: collapseWhitespace(get("slice") || legacySlice),
     dependsOn: parseDependsOn(get("depends on")),
     scenarios: collapseWhitespace(get("scenarios")),
     doneWhen: get("done when"),
   };
+}
+
+function normalizeFieldKey(key: string): string {
+  return key.trim().toLowerCase().replace(/-/g, " ").replace(/\s+/g, " ");
 }
 
 /**

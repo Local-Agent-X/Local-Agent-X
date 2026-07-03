@@ -58,7 +58,13 @@ import * as state from "../src/auto-build/orchestrator/state.js";
 function makePlan(nChunks: number): string {
   const lines = ["# Test plan", ""];
   for (let n = 1; n <= nChunks; n++) {
-    lines.push(`### Chunk ${n} — Feature ${n}`, `- **Class:** leaf`, "");
+    lines.push(
+      `### Chunk ${n} — Feature ${n}`,
+      `- **Class:** leaf`,
+      `- **Slice:** implement feature ${n}.`,
+      `- **Done when:** feature ${n} works.`,
+      "",
+    );
   }
   return lines.join("\n");
 }

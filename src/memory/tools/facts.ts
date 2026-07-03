@@ -8,6 +8,30 @@ import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
 // tool maps one user-visible verb to one DB action.
 
 const VALID_KINDS: FactKind[] = ["world", "experience", "opinion", "observation"];
+const VALID_PROVENANCE = ["user_statement", "tool_observation", "inference"] as const;
+type FactProvenance = typeof VALID_PROVENANCE[number];
+
+const PROVENANCE_CONFIDENCE_CAP: Record<FactProvenance, number> = {
+  user_statement: 1.0,
+  tool_observation: 0.95,
+  inference: 0.6,
+};
+
+function parseProvenance(value: unknown): FactProvenance {
+  const provenance = String(value || "inference") as FactProvenance;
+  return VALID_PROVENANCE.includes(provenance) ? provenance : "inference";
+}
+
+function groundedConfidence(
+  provenance: FactProvenance,
+  requested: number | undefined,
+): number {
+  return Math.min(requested ?? PROVENANCE_CONFIDENCE_CAP[provenance], PROVENANCE_CONFIDENCE_CAP[provenance]);
+}
+
+function provenanceSource(provenance: FactProvenance): string {
+  return `agent-tool:${provenance.replace("_", "-")}`;
+}
 
 // A single durable fact is one compact line. These tight signals reject a
 // multi-fact dump crammed into one `remember` call (one blob = one
@@ -45,6 +69,10 @@ export function createFactsTools(memory: MemoryIndex) {
         "Optional `kind` (default 'observation'): 'world' for objective facts, 'experience' for things that happened, " +
         "'opinion' for preferences/judgments, 'observation' for general statements. " +
         "Mention entities with @-prefix to index them: 'User's wife is @Sam.' " +
+        "Always set `provenance`: `user_statement` only for something the user directly said, " +
+        "`tool_observation` only for a successful tool result, or `inference` for any interpretation. " +
+        "Inferences are confidence-capped and must preserve uncertainty; never upgrade suggested/recommended " +
+        "language into happened/enforced/current language. " +
         "\n\n" +
         "Don't use for: session task state, ephemeral TODOs, raw conversation excerpts, trivial info, " +
         "scalar identity fields (use memory_set_user_field for Name/Location/Role/Pronouns).",
@@ -59,7 +87,12 @@ export function createFactsTools(memory: MemoryIndex) {
           },
           confidence: {
             type: "number",
-            description: "0.0-1.0 confidence in the fact (default 1.0; use < 1.0 only when uncertain)",
+            description: "0.0-1.0 confidence; capped by provenance (inference max 0.6, tool observation max 0.95)",
+          },
+          provenance: {
+            type: "string",
+            enum: VALID_PROVENANCE,
+            description: "Evidence origin. Defaults to inference, never to verified fact.",
           },
         },
         required: ["content"],
@@ -72,10 +105,12 @@ export function createFactsTools(memory: MemoryIndex) {
         if (kind && !VALID_KINDS.includes(kind)) {
           return { content: `kind must be one of: ${VALID_KINDS.join(", ")}`, isError: true };
         }
-        const confidence = args.confidence != null ? Number(args.confidence) : undefined;
-        if (confidence !== undefined && (isNaN(confidence) || confidence < 0 || confidence > 1)) {
+        const requestedConfidence = args.confidence != null ? Number(args.confidence) : undefined;
+        if (requestedConfidence !== undefined && (isNaN(requestedConfidence) || requestedConfidence < 0 || requestedConfidence > 1)) {
           return { content: "confidence must be a number between 0 and 1", isError: true };
         }
+        const provenance = parseProvenance(args.provenance);
+        const confidence = groundedConfidence(provenance, requestedConfidence);
 
         // One compact statement per call. A multi-fact blob becomes a single
         // un-queryable mega-fact, so refuse it with a non-terminal retry hint
@@ -92,7 +127,11 @@ export function createFactsTools(memory: MemoryIndex) {
 
         try {
           const gated = runMemoryGate({ content, source: "tool", target: "memory:retain" });
-          const result = memory.rememberFact(gated, { kind, confidence });
+          const result = memory.rememberFact(gated, {
+            kind,
+            confidence,
+            sourceFile: provenanceSource(provenance),
+          });
           if (!result.ok) {
             return { content: formatToolError("remember failed", result), isError: true };
           }
@@ -105,7 +144,9 @@ export function createFactsTools(memory: MemoryIndex) {
               isError: true,
             };
           }
-          return { content: `Remembered [${f.kind}, c=${f.confidence}] #${f.id}: ${displayContent(f).slice(0, 80)}` };
+          return {
+            content: `Remembered [${f.kind}, c=${f.confidence}, provenance=${provenance}] #${f.id}: ${displayContent(f).slice(0, 80)}`,
+          };
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {
             return { content: `BLOCKED: ${e.reason}`, isError: true };
@@ -123,6 +164,7 @@ export function createFactsTools(memory: MemoryIndex) {
         "\n\n" +
         "Use when the user corrects a previous statement ('actually my wife is @Sam not @Sammy', " +
         "'we switched from postgres to sqlite', 'the deadline moved to Friday'). " +
+        "Set provenance to the evidence for the replacement; omitted provenance is treated as inference. " +
         "If 0 or multiple facts match the substring, the call refuses — pick a more specific substring.",
       parameters: {
         type: "object",
@@ -131,6 +173,11 @@ export function createFactsTools(memory: MemoryIndex) {
           content: { type: "string", description: "The corrected fact, as one sentence" },
           kind: { type: "string", enum: VALID_KINDS, description: "Optional new kind (defaults to old fact's kind)" },
           confidence: { type: "number", description: "Optional new confidence" },
+          provenance: {
+            type: "string",
+            enum: VALID_PROVENANCE,
+            description: "Evidence origin for the replacement. Defaults to inference.",
+          },
         },
         required: ["query", "content"],
       },
@@ -144,11 +191,20 @@ export function createFactsTools(memory: MemoryIndex) {
         if (kind && !VALID_KINDS.includes(kind)) {
           return { content: `kind must be one of: ${VALID_KINDS.join(", ")}`, isError: true };
         }
-        const confidence = args.confidence != null ? Number(args.confidence) : undefined;
+        const requestedConfidence = args.confidence != null ? Number(args.confidence) : undefined;
+        if (requestedConfidence !== undefined && (isNaN(requestedConfidence) || requestedConfidence < 0 || requestedConfidence > 1)) {
+          return { content: "confidence must be a number between 0 and 1", isError: true };
+        }
+        const provenance = parseProvenance(args.provenance);
+        const confidence = groundedConfidence(provenance, requestedConfidence);
 
         try {
           const gated = runMemoryGate({ content, source: "tool", target: "memory:retain" });
-          const result = memory.updateFact(query, gated, { kind, confidence });
+          const result = memory.updateFact(query, gated, {
+            kind,
+            confidence,
+            sourceFile: provenanceSource(provenance),
+          });
           if (!result.ok) {
             return { content: formatToolError("update_fact failed", result), isError: true };
           }

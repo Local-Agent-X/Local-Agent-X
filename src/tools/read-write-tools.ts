@@ -12,6 +12,7 @@ import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkHardcodedHomePath } from "./portable-path-check.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 import { appUrlHint, servedFileHint } from "./file-hints.js";
+import { connectorManifestWriteRejection } from "./connector-write-guard.js";
 
 export const readTool: ToolDefinition = {
   name: "read",
@@ -111,6 +112,8 @@ export const writeTool: ToolDefinition = {
   async execute(args) {
     const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
     const content = String(args.content);
+    const connectorRejection = connectorManifestWriteRejection(filePath);
+    if (connectorRejection) return err(connectorRejection);
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
     const skipSecretScan = ["css", "svg"].includes(ext);
     const SECRET_PATTERNS = skipSecretScan ? [] : [

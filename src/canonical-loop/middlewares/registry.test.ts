@@ -4,6 +4,7 @@ import { loopDetectionMiddleware } from "./loop-detection.js";
 import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { attributionClaimMiddleware } from "./attribution-claim.js";
+import { operationalClaimMiddleware } from "./operational-claim.js";
 import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
 import { falseRefusalMiddleware } from "./false-refusal.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
@@ -22,6 +23,7 @@ const REQUIRED_GUARDS = [
   hallucinationCheckMiddleware,
   actionClaimMiddleware,
   attributionClaimMiddleware,
+  operationalClaimMiddleware,
   toolSearchNudgeMiddleware,
   falseRefusalMiddleware,
   prematureCompletionMiddleware,

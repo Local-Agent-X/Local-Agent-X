@@ -47,6 +47,10 @@ const RETRACTABLE_REASONS: ReadonlySet<string> = new Set([
   // fires on a turn that DID call a tool — stripRetractedAssistant drops only
   // the assistant text, so the real tool result (e.g. the created deck) is kept.
   "attribution-confabulation",
+  // A definitive runtime/security/policy explanation made without any fresh
+  // diagnostic evidence. The retry either inspects the system or replaces it
+  // with an explicitly uncertain answer.
+  "unsupported-operational-claim",
   // A cleanup/removal sweep declared finished ("Cleanup complete — no tailnet
   // code remains") with no search ever confirming it (cleanup-verify gate). The
   // claim is confirmed-false the moment it's made — the gate only emits this

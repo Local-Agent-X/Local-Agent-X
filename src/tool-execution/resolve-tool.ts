@@ -31,7 +31,7 @@ const SESSION_SCOPED_TOOLS = new Set([
   // completion gate can scope "unfinished work" to this conversation, and an
   // upserted task_update (unknown id → create) is owned by the right session
   // (task-tools.ts).
-  "task_create", "task_update",
+  "task_create", "task_update", "task_list", "task_get",
   "op_submit", "op_submit_async", "op_wait", "op_status",
   "memory_search", "search_past_sessions", "memory_save",
   "self_edit",
@@ -52,6 +52,15 @@ const SESSION_SCOPED_TOOLS = new Set([
 function deriveCallContext(sessionId: string | undefined): CallContext {
   return sessionId?.startsWith("agent-") ? "delegated" : sessionId?.startsWith("cron-") ? "cron" : "local";
 }
+
+const SESSION_REPEAT_SKIP_TOOLS = new Set([
+  "request_secret", "request_secrets",
+  // State-sensitive mutations must re-dispatch. A repeated edit/write is often
+  // the signal that the previous change already landed (old_string gone) or
+  // that a new guard now rejects the path. Returning a prior success is false
+  // progress.
+  "write", "edit", "edit_lines", "multi_edit", "delete_file",
+]);
 
 // Scan back through prior assistant tool_calls for an exact match (name +
 // args). Catches "I'm stuck mid-task, let me redo the last thing I succeeded
@@ -177,7 +186,7 @@ export const resolvePhase: Phase = async (ctx) => {
   // request_secret is exempt: it emits a UI side-effect (secret_request SSE
   // event → modal) so re-running it on retry is the whole point when the
   // user missed the first prompt.
-  const dup = (tc.name === "request_secret" || tc.name === "request_secrets") ? null : findPriorIdenticalResult(tc, priorMessages || []);
+  const dup = SESSION_REPEAT_SKIP_TOOLS.has(tc.name) ? null : findPriorIdenticalResult(tc, priorMessages || []);
   if (dup) {
     const hint = `[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing. If you need fresh data, change the arguments. Otherwise, focus on the user's current question.]\n\n${dup.result}`;
     onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: hint, allowed: true, status: "ok" });

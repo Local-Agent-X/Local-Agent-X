@@ -27,7 +27,7 @@
  * memory system without us doing anything here.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, dirname, basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { isFeatureEnabled, FEATURE_FLAG_ENV } from "./tool.js";
@@ -212,7 +212,7 @@ export const finalizeAppBuildTool: ToolDefinition = {
     const projectDir = resolveProjectDir(args.project_dir);
     if (!projectDir) return { content: "finalize_app_build requires 'project_dir' (bare name resolves to workspace/apps/<name>, or absolute path).", isError: true };
 
-    if (existsSync(projectDir)) {
+    if (existsSync(projectDir) && readdirSync(projectDir).length > 0) {
       // Refuse to overwrite an existing dir — but name the sanctioned way out.
       // A guard error without a recovery path teaches the model to fall back
       // to raw write/edit, which silently skips scenarios/ materialization.

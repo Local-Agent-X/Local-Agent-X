@@ -7,6 +7,7 @@ import { checkHardcodedHomePath } from "./portable-path-check.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 import { createLogger } from "../logger.js";
 import { appUrlHint, servedFileHint } from "./file-hints.js";
+import { connectorManifestWriteRejection } from "./connector-write-guard.js";
 import {
   locateOccurrences,
   suggestNearbyLines,
@@ -83,6 +84,8 @@ function applyStringEdit(content: string, rawOld: string, rawNew: string, replac
 // gate rejects an edit that would turn a syntactically-clean file broken (the
 // file is left untouched), so a bad edit never lands on disk.
 function commitEdit(filePath: string, updated: string, verb: string): ToolResult {
+  const connectorRejection = connectorManifestWriteRejection(filePath);
+  if (connectorRejection) return err(connectorRejection);
   const guard = checkAppWrite(filePath, updated);
   if (!guard.allow) return err(writeGuardRejectionMessage(guard.reason ?? "policy violation"));
   const before = existsSync(filePath) ? readFileSync(filePath, "utf-8") : null;

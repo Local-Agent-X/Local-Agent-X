@@ -163,6 +163,7 @@ function buildActions(
       tool: tc.tool,
       filePath,
       command: typeof args.command === "string" ? args.command : undefined,
+      cwd: typeof args._cwd === "string" ? args._cwd : undefined,
       status: statusById.get(tc.toolCallId),
     };
   });

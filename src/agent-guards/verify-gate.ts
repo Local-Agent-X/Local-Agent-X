@@ -24,6 +24,8 @@ export interface VerifyTurnAction {
   filePath?: string;
   /** command string for bash, when present. */
   command?: string;
+  /** Shell cwd, when the executor injected one. */
+  cwd?: string;
   status?: "ok" | "error" | "cancelled";
 }
 
@@ -103,8 +105,39 @@ const SOURCE_EXT_RE =
 const VERIFY_CMD_RE =
   /\b(tsc|vitest|jest|mocha|pytest|mypy|pyright|ruff|eslint|(?:python[0-9.]*|py)\s+-m\s+(?:unittest|pytest)|cargo\s+(build|test|check|clippy)|go\s+(build|test|vet)|gradle|mvn|(npm|pnpm|yarn|bun)\s+(run\s+)?(build|test|typecheck|type-check|lint|check|tsc))\b/i;
 
+const HTTP_SMOKE_CMD_RE =
+  /\b(curl(?:\.exe)?|wget|Invoke-WebRequest|iwr)\b[\s\S]*(\/apps\/|\/api\/connectors\/)/i;
+
 export function isSourceFile(filePath: string): boolean {
   return SOURCE_EXT_RE.test(filePath);
+}
+
+function normPath(s: string): string {
+  return s.replace(/\\/g, "/").toLowerCase();
+}
+
+function workspaceAppSlug(filePath: string): string | null {
+  const m = normPath(filePath).match(/(?:^|\/)workspace\/apps\/([^/]+)/);
+  return m?.[1] ?? null;
+}
+
+function verifyTargetsEditedApp(command: string, cwd: string | undefined, editedPaths: readonly string[]): boolean {
+  const appSlugs = Array.from(new Set(editedPaths.map(workspaceAppSlug).filter(Boolean))) as string[];
+  if (appSlugs.length === 0) return true;
+
+  const haystack = normPath(`${cwd ?? ""}\n${command}`);
+  if (HTTP_SMOKE_CMD_RE.test(command)) {
+    return appSlugs.some(slug =>
+      haystack.includes(`/apps/${slug}`) ||
+      haystack.includes(`/api/connectors/`),
+    );
+  }
+
+  return appSlugs.some(slug =>
+    haystack.includes(`/workspace/apps/${slug}`) ||
+    haystack.includes(`\\workspace\\apps\\${slug}`.replace(/\\/g, "/")) ||
+    haystack.includes(`/apps/${slug}`),
+  );
 }
 
 /** Fold one turn's actions into the running edit-vs-verify state. Actions are
@@ -132,7 +165,8 @@ export function noteVerifyEvidence(
       a.tool === "bash" &&
       a.command &&
       state.editedSource &&
-      VERIFY_CMD_RE.test(a.command)
+      (VERIFY_CMD_RE.test(a.command) || HTTP_SMOKE_CMD_RE.test(a.command)) &&
+      verifyTargetsEditedApp(a.command, a.cwd, state.editedPaths)
     ) {
       // Exit 0 → ok, non-zero → "error" (shell-tool maps the exit code). A
       // cancelled/unknown status carries no verdict, so it's left untouched.

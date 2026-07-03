@@ -5,7 +5,7 @@
 // bash/sleep/port-binding) and reaps it in afterEach.
 
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, symlinkSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeTool, editTool, editLinesTool, multiEditTool } from "./file-tools.js";
@@ -61,6 +61,46 @@ describe("file-tools served-file note", () => {
     const res = await editTool.execute({ path: file, old_string: "alpha", new_string: "gamma" });
     expect(res.isError).toBeFalsy();
     expect(res.content).not.toMatch(/may be serving this file/);
+  });
+});
+
+describe("file-tools connector manifest guard", () => {
+  it("refuses direct repo connector writes and points at connector_create", async () => {
+    const res = await writeTool.execute({
+      path: join(process.cwd(), "connectors", "fastmail.json"),
+      content: JSON.stringify({ upstream: "https://api.fastmail.com", auth: { type: "bearer", secret: "FASTMAIL" }, allow: ["GET /jmap/session"] }),
+    });
+
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("connector_create");
+    expect(res.content).toContain("/api/connectors");
+  });
+
+  it("refuses direct edits to connector manifests too", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-connector-edit-"));
+    dirs.add(dir);
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(dir);
+      const connectorDir = join(dir, "connectors");
+      writeFileSync(join(dir, "placeholder.txt"), "x", "utf-8");
+      // Avoid writeTool for setup because that is exactly what this regression
+      // is proving should be blocked.
+      mkdirSync(connectorDir, { recursive: true });
+      const file = join(connectorDir, "fastmail.json");
+      writeFileSync(file, '{"allow":["GET /old"]}\n', "utf-8");
+
+      const res = await editTool.execute({
+        path: file,
+        old_string: "GET /old",
+        new_string: "GET /jmap/session",
+      });
+
+      expect(res.isError).toBe(true);
+      expect(res.content).toContain("connector_create");
+    } finally {
+      process.chdir(prevCwd);
+    }
   });
 });
 

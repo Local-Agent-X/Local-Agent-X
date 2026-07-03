@@ -42,6 +42,20 @@ export function gateDoneWhen(chunk: ParsedChunk, report: ChunkReport): GateFindi
         reasoning: MISSING_CREDS_RECOVERY + workerWords(report),
       };
     }
+    // A worker that names a concrete spec gap has done exactly what the
+    // discipline prompt asked: stop rather than guess. Route it through the
+    // bounded push-back advisor, which can amend additively and RETRY the same
+    // chunk. The old halt made the advertised spec-recovery path unreachable.
+    if (report.specGaps.trim()) {
+      return {
+        gate: "done-when",
+        action: "push_back",
+        reasoning:
+          `Chunk reported STATUS=${report.status} with an explicit SPEC_GAPS entry. ` +
+          `Ask the build advisor whether the gap is safely additive; if so amend the spec and retry this chunk, ` +
+          `otherwise halt for a real product decision.${workerWords(report)}`,
+      };
+    }
     return {
       gate: "done-when",
       action: "halt",

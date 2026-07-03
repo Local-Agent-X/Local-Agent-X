@@ -816,6 +816,27 @@ describe("run-sandboxed redacts result content when taint fires", () => {
     expect(ctx.result!.status).toBe("blocked");
     expect(checkEgressTaint(sessionId).blocked).toBe(true);
   });
+
+  it("memory_search output containing only a high-entropy identifier does not taint", async () => {
+    const identifier = "useIframeNavigationApiHandlerFactory7f3a9c1e";
+    const detected = detectSecretsInOutput(identifier);
+    expect(detected.matched).toBe(true);
+    expect(detected.structured).toBe(false);
+
+    const stub: ToolDefinition = {
+      name: "memory_search",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() { return { content: `recalled tool id: ${identifier}`, isError: false }; },
+    };
+    const sessionId = "memsearch-entropy-only-test";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({ name: "memory_search", args: { query: "tool id" }, tool: stub, sessionId });
+    await runSandboxedPhase(ctx);
+    expect(ctx.result!.content).toContain(identifier);
+    expect(ctx.result!.status).not.toBe("blocked");
+    expect(checkEgressTaint(sessionId).blocked).toBe(false);
+  });
 });
 
 describe("content fingerprints + payload-overlap evidence (T1)", () => {

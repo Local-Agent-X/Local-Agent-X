@@ -41,6 +41,7 @@ import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
 import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { attributionClaimMiddleware } from "./attribution-claim.js";
+import { operationalClaimMiddleware } from "./operational-claim.js";
 import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
 import { broadSweepNudgeMiddleware } from "./broad-sweep-nudge.js";
 import { falseRefusalMiddleware } from "./false-refusal.js";
@@ -69,6 +70,10 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     // tool/model/service it never used (action-claim is worker-only + checks
     // action verbs, not attribution). Phrase-gated → model-graded; retractable.
     attributionClaimMiddleware,
+    // All lanes — memory and prior assistant prose are not evidence for
+    // runtime/security/policy causality. Require a fresh diagnostic read or an
+    // explicitly uncertain answer before a definitive claim reaches the user.
+    operationalClaimMiddleware,
     // Interactive + worker — in UNRESTRICTED file mode, a tool-less turn that
     // refuses a file action on a guessed restriction ("outside the sandbox")
     // without ever calling `read` gets a grounding nudge. Runs BEFORE

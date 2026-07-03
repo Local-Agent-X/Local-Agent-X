@@ -34,7 +34,7 @@ afterEach(() => {
 // Minimal plan that satisfies the canonical plan parser (finalize validates
 // plan_md with the same parser run_build_plan uses).
 const VALID_PLAN =
-  "# Plan\n\n## Phase A\n\n### Chunk 1 — Init\n\n- **Class:** trunk\n- **Done when:** boots.";
+  "# Plan\n\n## Phase A\n\n### Chunk 1 — Init\n\n- **Class:** trunk\n- **Slice:** initialize the app.\n- **Done when:** boots.";
 
 describe("start_app_build — feature flag", () => {
   it("is BLOCKED when LAX_AUTO_BUILD_ENABLED is off", async () => {
@@ -114,7 +114,7 @@ describe("finalize_app_build — happy path", () => {
       project_name: "TestApp",
       product_md: "# Product\n\nA test app.",
       constitution_md: "# Constitution\n\n1. No silent failures.",
-      plan_md: "# Plan\n\n## Phase A\n\n### Chunk 1 — Init\n\n- **Class:** trunk → /senior-engineer\n- **Done when:** boots.",
+      plan_md: "# Plan\n\n## Phase A\n\n### Chunk 1 — Init\n\n- **Class:** trunk → /senior-engineer\n- **Slice:** initialize the app.\n- **Done when:** boots.",
       scenarios: [
         { filename: "01-happy-path.scenario.md", content: "# Scenario 1\n\nUser does X." },
         { filename: "02-edge.scenario.md", content: "# Scenario 2\n\nEdge case Y." },
@@ -162,20 +162,30 @@ describe("finalize_app_build — happy path", () => {
     expect(existsSync(join(projectDir, "twins", "email-twin.ts"))).toBe(true);
   });
 
-  it("refuses to overwrite an existing project_dir and names the recovery path", async () => {
+  it("accepts an existing empty project_dir instead of pushing the agent into raw writes", async () => {
     const projectDir = join(baseDir, "already-there");
     mkdirSync(projectDir, { recursive: true });
     const r = await finalizeAppBuildTool.execute({
-      project_dir: projectDir,
-      project_name: "X", product_md: "x", constitution_md: "x", plan_md: "x",
+      project_dir: projectDir, project_name: "X",
+      product_md: "x", constitution_md: "x", plan_md: VALID_PLAN,
+      scenarios: [{ filename: "01-x.md", content: "x" }],
+    });
+    expect(r.isError).toBeFalsy();
+    expect(existsSync(join(projectDir, "spec", "plan.md"))).toBe(true);
+    expect(existsSync(join(projectDir, "scenarios", "01-x.md"))).toBe(true);
+  });
+
+  it("still refuses to overwrite a non-empty project_dir", async () => {
+    const projectDir = join(baseDir, "already-has-work");
+    mkdirSync(projectDir, { recursive: true });
+    mkdirSync(join(projectDir, "src"));
+    const r = await finalizeAppBuildTool.execute({
+      project_dir: projectDir, project_name: "X",
+      product_md: "x", constitution_md: "x", plan_md: VALID_PLAN,
       scenarios: [{ filename: "01-x.md", content: "x" }],
     });
     expect(r.isError).toBe(true);
-    expect(r.content).toContain("already exists");
     expect(r.content).toContain("will not overwrite");
-    // Regression (Jul 2026): a guard error with no recovery path taught the
-    // model to hand-write the artifacts with write/edit, silently dropping
-    // the held-out scenarios/. The error must forbid that fallback.
     expect(r.content).toContain("Do NOT hand-write");
   });
 

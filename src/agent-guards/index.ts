@@ -13,6 +13,11 @@ export { detectUnresolvedErrors, buildReflectionPrompt } from "./reflection.js";
 export { checkApprovalHallucination, checkCreationHallucination, checkWorkerHallucination } from "./hallucination.js";
 export { checkUnmatchedActionClaim } from "./action-claim.js";
 export {
+  checkUnsupportedOperationalClaim,
+  hasFreshOperationalEvidence,
+  looksLikeDefinitiveOperationalClaim,
+} from "./operational-claim.js";
+export {
   checkTaskAnchor,
   createTaskAnchorState,
   type TaskAnchorState,

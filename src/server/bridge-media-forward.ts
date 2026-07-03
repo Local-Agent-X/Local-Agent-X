@@ -15,6 +15,32 @@ const logger = createLogger("server.bridge-media-forward");
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
 /**
+ * When outbound media is blocked (egress/secret/canary) or rejected (oversize),
+ * the turn has already ended and the model's "here's your video!" text has
+ * shipped — but the media hasn't. Send a one-line text notice over the SAME
+ * bridge so the user isn't left waiting on media that will never arrive. Best
+ * effort: a failed notice must not mask the original block.
+ */
+async function notifyMediaBlocked(opts: {
+  channelType: ChannelType;
+  from: string;
+  reason: string;
+  getWhatsappBridge: () => WhatsAppBridge;
+  getTelegramBridge: () => TelegramBridge;
+}): Promise<void> {
+  const text = `Couldn't send the attached media: ${opts.reason}`;
+  try {
+    if (opts.channelType === "whatsapp") {
+      await opts.getWhatsappBridge().sendMessage(opts.from, text);
+    } else if (opts.channelType === "telegram") {
+      await opts.getTelegramBridge().sendMessage(opts.from, text);
+    }
+  } catch (e) {
+    logger.warn(`[bridge] block-notice send failed: ${(e as Error).message}`);
+  }
+}
+
+/**
  * Forward a turn's tool-emitted media to the bridge user. The dispatcher hands
  * media to the bridge-media-queue at dispatch time (keyed by op id); we drain it
  * here. This does NOT re-read op_messages — bridge turns don't persist fresh
@@ -48,10 +74,18 @@ export async function forwardBridgeMedia(opts: {
       if (sentImagePaths.has(abs)) continue;
       sentImagePaths.add(abs);
       const att = checkAttachmentPaths(`bridge:${platform} image forward`, [abs]);
-      if (att) { logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: ${att.message}`); continue; }
+      if (att) {
+        logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: ${att.message}`);
+        await notifyMediaBlocked({ channelType, from, reason: "it was blocked by the outbound security gate", getWhatsappBridge, getTelegramBridge });
+        continue;
+      }
       try {
         const buf = readFileSync(abs);
-        if (buf.length > IMAGE_MAX_BYTES) { logger.warn(`[bridge:${platform}] image ${p} is ${Math.round(buf.length / 1048576)}MB, over the 10MB limit — not sending`); continue; }
+        if (buf.length > IMAGE_MAX_BYTES) {
+          logger.warn(`[bridge:${platform}] image ${p} is ${Math.round(buf.length / 1048576)}MB, over the 10MB limit — not sending`);
+          await notifyMediaBlocked({ channelType, from, reason: `the image is ${Math.round(buf.length / 1048576)}MB, over the 10MB limit`, getWhatsappBridge, getTelegramBridge });
+          continue;
+        }
         images.push(buf);
       } catch (e) { logger.warn(`[bridge:${platform}] image read failed for ${p}: ${(e as Error).message}`); }
     }
@@ -66,10 +100,12 @@ export async function forwardBridgeMedia(opts: {
         const view = img.toString("utf-8");
         if (imageIsTextBearing(img) && !scanForSecrets(view).clean) {
           logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: outbound bytes contain a secret-shaped value`);
+          await notifyMediaBlocked({ channelType, from, reason: "the outbound bytes contained a secret-shaped value", getWhatsappBridge, getTelegramBridge });
           continue;
         }
         if (checkCanariesInPayload(sessionKey, view)) {
           logger.error(`[bridge:${platform}] BLOCKED image forward to ${from}: a session canary token was detected in the outbound image bytes (context exfiltration)`);
+          await notifyMediaBlocked({ channelType, from, reason: "a security tripwire flagged possible context exfiltration", getWhatsappBridge, getTelegramBridge });
           continue;
         }
         if (channelType === "whatsapp") {
@@ -93,12 +129,14 @@ export async function forwardBridgeMedia(opts: {
       const att = checkAttachmentPaths(`bridge:${platform} video forward`, [abs]);
       if (att) {
         logger.error(`[bridge:${platform}] BLOCKED video forward to ${from}: ${att.message}`);
+        await notifyMediaBlocked({ channelType, from, reason: "it was blocked by the outbound security gate", getWhatsappBridge, getTelegramBridge });
         continue;
       }
       try {
         const buf = readFileSync(abs);
         if (buf.length > maxBytes) {
           logger.warn(`[bridge:${platform}] video ${path} is ${Math.round(buf.length / 1048576)}MB, over the ${Math.round(maxBytes / 1048576)}MB limit — not sending`);
+          await notifyMediaBlocked({ channelType, from, reason: `the video is ${Math.round(buf.length / 1048576)}MB, over the ${Math.round(maxBytes / 1048576)}MB limit`, getWhatsappBridge, getTelegramBridge });
           continue;
         }
         logger.info(`[bridge:${platform}] sending video (${Math.round(buf.length / 1048576)}MB) to ${from}`);

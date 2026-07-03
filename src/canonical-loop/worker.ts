@@ -43,7 +43,10 @@ import { hasInjects, opConsumesInjects } from "../agent-loop/inject-queue.js";
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 
-const MAX_TURNS = 64; // Guard against runaway scripts. Real cap is op budget.
+// Fallback turn cap when the op carries no (or an invalid) iteration budget.
+// The real cap is the op budget the entry runner stamped — see maxTurns below;
+// this only guards a budget-less op against a runaway script.
+const DEFAULT_MAX_TURNS = 64;
 
 // Internal registry of live heartbeat timers keyed by workerId. Tests use
 // `_pauseHeartbeat` to simulate a crashed worker (heartbeat stops, lease
@@ -149,13 +152,22 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
     // but died before persisting the denormalized currentTurnIdx.
     const latest = readLatestOpTurn(op.id);
     let turnIdx = (latest?.turnIdx ?? -1) + 1;
+    // Honor the iteration budget the entry runner stamped (chat-runner /
+    // agent-runner both set contextPack.budget.maxIterations). A worker asked
+    // to cap at N must stop at N — not silently run to the fixed floor. Fall
+    // back to DEFAULT_MAX_TURNS only when the budget is missing or nonsensical.
+    const budgetIterations = op.contextPack?.budget?.maxIterations;
+    const maxTurns =
+      typeof budgetIterations === "number" && Number.isFinite(budgetIterations) && budgetIterations > 0
+        ? budgetIterations
+        : DEFAULT_MAX_TURNS;
     let count = 0;
     for (;;) {
-      if (count++ >= MAX_TURNS) {
+      if (count++ >= maxTurns) {
         releaseReason = "max_turns_exceeded";
         emit(op.id, "error", {
           code: "max_turns_exceeded",
-          message: `worker exceeded MAX_TURNS=${MAX_TURNS}`,
+          message: `worker exceeded maxTurns=${maxTurns}`,
           retryable: false,
         });
         // This break skips commitTurn — the normal running → terminal

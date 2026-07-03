@@ -14,6 +14,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
+import { killProcessTree } from "../process-tree-kill.js";
 
 export interface GitRunOptions {
   cwd: string;
@@ -41,7 +42,10 @@ function gitRun(args: string[], opts: GitRunOptions, stdin?: string): Promise<Gi
     let stdout = "";
     let stderr = "";
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; try { proc.kill("SIGTERM"); } catch { /* already dead */ } }, opts.timeoutMs ?? 30_000);
+    // killProcessTree, not proc.kill: on Windows we spawn through cmd.exe
+    // (shell:true below), and proc.kill signals only the wrapper — the real
+    // git kept running holding .git/index.lock, wedging every later git op.
+    const timer = setTimeout(() => { timedOut = true; killProcessTree(proc); }, opts.timeoutMs ?? 30_000);
     const proc = spawn("git", args, {
       cwd: opts.cwd,
       stdio: ["pipe", "pipe", "pipe"],

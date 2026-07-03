@@ -20,6 +20,11 @@ export interface CodexStreamState {
   // Tool calls keyed by item_id (used in streaming events as the lookup key).
   // Each entry stores the compound id (call_id|item_id), name, and arguments.
   toolCalls: Map<string, CodexToolCallAccum>;
+  // Compound ids of tool calls already yielded live (via a *.done or
+  // response.completed event). flushOnAbnormalClose must NOT re-yield these —
+  // a live call left in `toolCalls` would otherwise be dispatched a second
+  // time if the stream drops before response.completed (e.g. email sent twice).
+  consumedToolCallIds: Set<string>;
   usage: { inputTokens: number; outputTokens: number };
   responseId: string | undefined;
   reasoningItems: ReasoningItem[];
@@ -29,6 +34,7 @@ export function createCodexStreamState(): CodexStreamState {
   return {
     fullText: "",
     toolCalls: new Map(),
+    consumedToolCallIds: new Set(),
     usage: { inputTokens: 0, outputTokens: 0 },
     responseId: undefined,
     reasoningItems: [],
@@ -102,6 +108,7 @@ export async function* processCodexEvent(
     const lookupKey = (rawEvent.item_id as string) || event.call_id || "";
     const tc = lookupKey ? state.toolCalls.get(lookupKey) : undefined;
     if (tc && tc.name) {
+      state.consumedToolCallIds.add(tc.id);
       yield { type: "tool_call", id: tc.id, name: tc.name, arguments: tc.arguments };
     } else if (lookupKey) {
       const name = tc?.name || (rawEvent.name as string) || "";
@@ -109,7 +116,9 @@ export async function* processCodexEvent(
       const callId = event.call_id || (rawEvent.call_id as string) || lookupKey;
       const itemId = (rawEvent.item_id as string) || "";
       if (name || args) {
-        yield { type: "tool_call", id: encodeToolCallId(callId, itemId), name, arguments: args };
+        const compoundId = encodeToolCallId(callId, itemId);
+        state.consumedToolCallIds.add(compoundId);
+        yield { type: "tool_call", id: compoundId, name, arguments: args };
       }
     }
     return;
@@ -171,6 +180,7 @@ async function* finalizeCompleted(
             name: item.name || "",
             arguments: item.arguments || "",
           });
+          state.consumedToolCallIds.add(compoundId);
           yield {
             type: "tool_call",
             id: compoundId,
@@ -229,6 +239,12 @@ export async function* flushOnAbnormalClose(
   // produce broken tool calls with undefined fields.
   for (const tc of state.toolCalls.values()) {
     if (!tc.name) continue;
+    // Skip calls already yielded live — re-yielding would dispatch them a
+    // second time (e.g. an email_send that completed before the stream dropped).
+    if (state.consumedToolCallIds.has(tc.id)) {
+      logger.warn(`[codex] Not re-flushing already-dispatched tool call on abnormal close: ${tc.name} (${tc.id})`);
+      continue;
+    }
     let argsOk = false;
     try { JSON.parse(tc.arguments); argsOk = true; } catch { /* partial JSON */ }
     if (argsOk) {

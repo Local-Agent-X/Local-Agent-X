@@ -21,7 +21,7 @@ import { readOp, writeOp } from "../ops/op-store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp, isTerminalCanonicalState, IllegalTransitionError } from "./state-machine.js";
 import { driveTurn } from "./turn-loop.js";
-import { recordTerminalOutcome } from "./turn-loop/decide-outcome.js";
+import { recordTerminalOutcome } from "./turn-loop/record-outcome.js";
 import { seedInitialUserMessage } from "./initial-prompt.js";
 import {
   startCancelTracker,
@@ -38,8 +38,6 @@ import {
 } from "./lease.js";
 import { readLatestOpTurn } from "./store.js";
 import { refreshAriKernelRunIfStuck } from "../ari-kernel/index.js";
-import { getSessionForOp } from "../ops/session-bridge.js";
-import { hasInjects, opConsumesInjects } from "../agent-loop/inject-queue.js";
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 
@@ -206,57 +204,15 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
         break;
       }
 
-      // JARVIS resume-gate: the inject queue is the source of truth for
-      // "is the agent done?". The adapter signaled end_turn, but if the
-      // user typed a follow-up while this turn was running and it's still
-      // sitting in the queue, the agent ISN'T actually done — it just
-      // didn't get to see the new input. Override terminalReason so the
-      // worker loops one more turn; driveTurn will drainInjectsIntoTurn
-      // at the top, append the user's text to op_messages, and the
-      // adapter will see it as a fresh user message on the next call.
-      //
-      // Without this guard, mid-turn injects on long single-turn replies
-      // (e.g. a 298-action tool loop that ends with end_turn) get
-      // stranded forever — the agent finishes, the chat ends, the queue
-      // sits populated until the user types again, and even then their
-      // earlier inject mixes confusingly into a fresh request.
-      //
-      // Middleware resume-gate (P4.C2): a middleware that returned a
-      // `nudge` from afterModelCall/afterToolExecution appended a
-      // synthetic user message at turnIdx+1. Even when the adapter said
-      // terminal=done, the agent isn't done — the nudge must be visible
-      // on a next-turn model call. Override the break for any op type.
-      //
-      // Flush pending I/O before the check. A WS `inject` message that
-      // arrived while driveTurn was returning is sitting in the poll
-      // queue — without yielding here, the guard reads `hasInjects=false`,
-      // the worker exits, and then the inject handler runs against a
-      // terminal op, gets routed to getChatHandler() as a fresh op2, and
-      // op2's persistTurnState races op1's — landing the inject in
-      // session.messages BEFORE the original question on rehydrate.
-      // setImmediate fires after the poll phase, so any queued WS message
-      // (including the inject) has fully run and pushInject has landed
-      // before we check.
-      await new Promise<void>(resolve => setImmediate(resolve));
-      const middlewareNudged = r.middlewareDirective?.kind === "nudge";
-      if (r.terminalReason !== null && opConsumesInjects(op.type)) {
-        const sessionId = getSessionForOp(op.id);
-        if ((sessionId && hasInjects(sessionId)) || middlewareNudged) {
-          // fall through to next iteration so drainInjectsIntoTurn at
-          // the top of driveTurn pulls the user's queued message into
-          // op_messages and the adapter sees it.
-        } else {
-          break;
-        }
-      } else if (r.terminalReason !== null) {
-        if (middlewareNudged) {
-          // Non-chat op with a middleware-injected nudge: keep looping
-          // so the adapter sees the synthetic user message on the next
-          // turn (mirrors legacy `continue` after pushing a nudge user
-          // message in agent-loop/run.ts).
-        } else {
-          break;
-        }
+      // Resume-gate lives upstream in decideTurnOutcome (turn-loop/decide-outcome.ts),
+      // the ONLY place still `running` and session-bound: a mid-turn user inject or a
+      // middleware nudge that must extend the conversation keeps terminalReason=null
+      // there, so a non-null terminalReason here means the op is truly finished. A
+      // worker-side re-check is provably dead — commitTurn already fired the
+      // succeeded/failed transition, whose state_changed synchronously released the
+      // op from its session, so getSessionForOp would return undefined (CL-5).
+      if (r.terminalReason !== null) {
+        break;
       }
 
       // Turn-boundary signal check (PRD §13 precedence: cancel > pause >

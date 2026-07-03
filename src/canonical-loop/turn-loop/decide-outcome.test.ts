@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // decideTurnOutcome drives real side-effecting collaborators (render-verify,
 // open-steps, session-bridge, the event bus). Mock the stateful/external ones
@@ -47,7 +47,8 @@ vi.mock("./spec-probes.js", () => ({
   runSpecProbeGate: vi.fn(async () => ({ nudge: "", shouldRetry: false })),
 }));
 
-import { decideTurnOutcome, recordTerminalOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
+import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
+import { recordTerminalOutcome } from "./record-outcome.js";
 import { publishStreamChunk } from "../event-emitter.js";
 import { recordOpOutcome } from "../../tool-tracker.js";
 import { readOpTurns } from "../store.js";
@@ -201,6 +202,71 @@ describe("decideTurnOutcome — live-UI warnings reach the stream (CL-6)", () =>
     expect(conf).toBeDefined();
     expect(conf!.delta).toContain("Verified clean");
     expect(conf!.text).toBeUndefined();
+  });
+});
+
+describe("decideTurnOutcome — late-inject resume-gate (CL-5)", () => {
+  beforeEach(() => vi.clearAllMocks());
+  // clearAllMocks resets call history but PRESERVES mockReturnValue impls, so
+  // the persistent stubs these tests set would leak into later describes. Restore
+  // the factory defaults after each test.
+  afterEach(async () => {
+    const { opConsumesInjects, hasInjects } = await import("../../agent-loop/inject-queue.js");
+    const { getSessionForOp } = await import("../../ops/session-bridge.js");
+    const { opEditedSourceUnverified } = await import("../middlewares/verify-gate.js");
+    const { runBuildVerifyGate } = await import("./build-verify.js");
+    (opConsumesInjects as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (hasInjects as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (getSessionForOp as unknown as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    (opEditedSourceUnverified as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (runBuildVerifyGate as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      nudge: "", shouldRetry: false, capReached: false,
+    });
+  });
+
+  it("drains a user inject that arrives DURING the async verify gates instead of stranding it", async () => {
+    // The race: the pre-commit inject gate at the top of decideTurnOutcome runs
+    // BEFORE the async build/spec verify gates, whose awaits let a WS `inject`
+    // land mid-turn. The worker-side resume-gate can't catch it — by the time it
+    // runs, commitTurn has already fired the succeeded transition and released
+    // the op from its session, so getSessionForOp returns undefined. So the
+    // END-of-turn re-check inside decideTurnOutcome (still running + session-
+    // bound) is the only place that can keep the turn open to drain it.
+    const { opConsumesInjects, hasInjects } = await import("../../agent-loop/inject-queue.js");
+    const { getSessionForOp } = await import("../../ops/session-bridge.js");
+    const { opEditedSourceUnverified } = await import("../middlewares/verify-gate.js");
+    const { runBuildVerifyGate } = await import("./build-verify.js");
+
+    (opConsumesInjects as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (getSessionForOp as unknown as ReturnType<typeof vi.fn>).mockReturnValue("sess-1");
+    // Queue is EMPTY when the pre-commit inject gate checks it...
+    (hasInjects as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    // ...then a user follow-up lands WHILE the async build-verify gate awaits.
+    (opEditedSourceUnverified as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (runBuildVerifyGate as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      (hasInjects as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      return { nudge: "", shouldRetry: false, capReached: false, verifiedClean: false };
+    });
+
+    const r = await decideTurnOutcome(input({ modelSignaledDone: true }));
+    // Pre-fix: the single pre-commit inject check already passed (queue empty),
+    // so terminalReason stayed "done" and the late inject was lost against a
+    // terminal op. Post-fix: the end-of-turn re-check sees it and keeps the turn
+    // open (null) so the worker loops and drainInjectsIntoTurn pulls it in.
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("still terminates when NO inject is pending at the end-of-turn re-check", async () => {
+    // Guards against a can't-fail assertion: with the queue empty throughout, a
+    // consuming, session-bound op must still terminate normally.
+    const { opConsumesInjects, hasInjects } = await import("../../agent-loop/inject-queue.js");
+    const { getSessionForOp } = await import("../../ops/session-bridge.js");
+    (opConsumesInjects as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (getSessionForOp as unknown as ReturnType<typeof vi.fn>).mockReturnValue("sess-1");
+    (hasInjects as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    const r = await decideTurnOutcome(input({ modelSignaledDone: true }));
+    expect(r.terminalReason).toBe("done");
   });
 });
 

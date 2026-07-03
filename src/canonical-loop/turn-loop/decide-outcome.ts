@@ -37,9 +37,7 @@ import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/ope
 import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
 import { opCleanupUnverified } from "../middlewares/cleanup-verify.js";
 import { opEditedSourceUnverified, opDeletedTestDodge, opEditedSourcePaths } from "../middlewares/verify-gate.js";
-import { readOpTurns } from "../store.js";
-import { resolveOpModel } from "../op-model.js";
-import { classifyOpCategory, recordOpOutcome, type OpOutcome } from "../../tool-tracker.js";
+import { recordTerminalOutcome, type OpOutcome } from "./record-outcome.js";
 import { randomUUID } from "node:crypto";
 
 export interface DecideOutcomeInput {
@@ -292,6 +290,24 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     }
   }
 
+  // Late-inject re-check (CL-5). The pre-commit inject gate at the top ran
+  // BEFORE the async verify gates (render/build/spec/design), each of which
+  // awaits — yielding to the event loop so a user follow-up (pushInject that
+  // landed while the turn was wrapping up) can arrive mid-turn. Re-read the
+  // queue here, the LAST point the op is still `running` and session-bound:
+  // the very next step (commitTurn in turn-loop.ts) fires transitionOp →
+  // succeeded, whose state_changed synchronously runs releaseOpFromSession, so
+  // getSessionForOp returns undefined from then on. Catching a late inject here
+  // keeps terminalReason=null so the worker loops and drainInjectsIntoTurn
+  // pulls it in. The worker-side gate could never see it — by the time the
+  // worker runs, the op is already unbound from its session.
+  if (terminalReason === "done" && opConsumesInjects(op.type)) {
+    const sessionId = getSessionForOp(op.id);
+    if (sessionId && hasInjects(sessionId)) {
+      terminalReason = null;
+    }
+  }
+
   // Loud-partial guarantee: when the op truly ends here but its task list still
   // has open steps, append a visible warning to the live bubble AND the commit.
   // We can't force a stuck model to finish — open-steps and earned-done already
@@ -374,27 +390,4 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   }
 
   return { terminalReason, allMessages };
-}
-
-/**
- * Record the op's terminal outcome under its tool-derived category. The category
- * spans every tool the op touched across all committed turns (plus any extras
- * observed this turn), so an op that ends tool-lessly still classifies right.
- * Shared with the MAX_TURNS truncation path in worker.ts: a force-terminated op
- * transitions straight to failed, skipping this turn-loop, so without recording
- * here it would escape the outcome ledger entirely (the completion metric went
- * blind to every truncated run).
- */
-export function recordTerminalOutcome(
-  op: Op,
-  outcome: OpOutcome,
-  extraToolNames: Iterable<string> = [],
-): void {
-  const opToolNames = new Set<string>();
-  for (const turn of readOpTurns(op.id)) {
-    for (const s of turn.toolCallSummary ?? []) opToolNames.add(s.tool);
-    for (const t of turn.observedTools ?? []) opToolNames.add(t);
-  }
-  for (const t of extraToolNames) opToolNames.add(t);
-  recordOpOutcome(classifyOpCategory(opToolNames), outcome, resolveOpModel(op));
 }

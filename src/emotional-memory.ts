@@ -12,6 +12,7 @@ import { getLaxDir } from "./lax-data-dir.js";
 import type { ModuleSignal } from "./orchestrator/types.js";
 import {
   EMOTION_KEYWORDS,
+  EMOTION_KEYWORD_PATTERNS,
   EMOJI_EMOTION,
   ADAPTATION_HINTS,
 } from "./emotional-lexicon.js";
@@ -86,10 +87,11 @@ class EmotionalMemoryImpl {
       scores[em] = { score: 0, signals: [] };
     }
 
-    // 1) Keyword matching
-    for (const [emotion, keywords] of Object.entries(EMOTION_KEYWORDS) as [Emotion, string[]][]) {
-      for (const kw of keywords) {
-        if (lower.includes(kw)) {
+    // 1) Keyword matching (whole-word: substring matching mislabels technical
+    //    text, e.g. 'rage' ⊂ 'storage', 'again' ⊂ 'against' — see AM-1).
+    for (const [emotion, patterns] of Object.entries(EMOTION_KEYWORD_PATTERNS) as [Emotion, Array<{ kw: string; re: RegExp }>][]) {
+      for (const { kw, re } of patterns) {
+        if (re.test(lower)) {
           scores[emotion].score += 2;
           scores[emotion].signals.push(`keyword:"${kw}"`);
         }

@@ -90,6 +90,24 @@ export const EMOTION_KEYWORDS: Record<Emotion, string[]> = {
   ],
 };
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Word-boundary matchers derived from EMOTION_KEYWORDS. Keyword hits must be
+ * whole words/phrases: plain substring matching mislabels ordinary technical
+ * text ('rage' ⊂ 'storage'/'average', 'again' ⊂ 'against'), which poisons the
+ * emotional record and, downstream, the trust score. Compiled once at load.
+ */
+export const EMOTION_KEYWORD_PATTERNS: Record<Emotion, Array<{ kw: string; re: RegExp }>> =
+  Object.fromEntries(
+    (Object.entries(EMOTION_KEYWORDS) as [Emotion, string[]][]).map(([emotion, kws]) => [
+      emotion,
+      kws.map((kw) => ({ kw, re: new RegExp(`\\b${escapeRegExp(kw)}\\b`) })),
+    ]),
+  ) as Record<Emotion, Array<{ kw: string; re: RegExp }>>;
+
 export const EMOJI_EMOTION: Array<{ pattern: RegExp; emotion: Emotion }> = [
   { pattern: /[😀😁😂🤣😃😄😆😊🥳🎉🎊]/u, emotion: "happy" },
   { pattern: /[😤😠😡🤬💢]/u, emotion: "angry" },

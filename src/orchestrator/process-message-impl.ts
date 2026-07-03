@@ -3,7 +3,7 @@ import type {
   OrchestratorOutput,
   DebugInfo,
 } from "./types.js";
-import { orchestratorState, safeRun, saveState } from "./state.js";
+import { orchestratorState, safeRun, saveState, getSessionCadence } from "./state.js";
 import { saveExample, autoRateLastExample } from "./storage.js";
 import { triageModules } from "./triage.js";
 import { gatherSignals } from "./modules.js";
@@ -16,10 +16,16 @@ import { applyBleedGate, classifyVerdict, getAnchorText } from "./bleed-gate.js"
 export async function processMessageImpl(input: OrchestratorInput): Promise<OrchestratorOutput> {
   const startTime = Date.now();
   orchestratorState.messageCount++;
+  // AM-9: module cadence and signal dedup must be PER-SESSION, not process-global.
+  // Using the shared orchestratorState counter let one session's message tally
+  // drive another session's module schedules and dedup-suppress its first-turn
+  // signals. The per-session cadence (LRU-bounded) is the authority for both.
+  const cadence = getSessionCadence(input.sessionId);
+  cadence.messageCount++;
 
   safeRun("auto-rate", () => autoRateLastExample(input.message), undefined);
 
-  const triage = triageModules(input, orchestratorState.messageCount);
+  const triage = triageModules(input, cadence.messageCount);
   const allActivated = [...triage.always, ...triage.conditional, ...triage.scheduled, ...triage.triggered];
 
   let signals = gatherSignals(input, triage);
@@ -71,7 +77,7 @@ export async function processMessageImpl(input: OrchestratorInput): Promise<Orch
     console.info(`[orchestrator] bleed gate (${reason}) dropped ${dropped} signals (msg="${input.message.slice(0, 40)}")`);
   }
 
-  const merged = mergeSignals(signals, orchestratorState.lastSignalHashes, { sessionId: input.sessionId });
+  const merged = mergeSignals(signals, cadence.lastSignalHashes, { sessionId: input.sessionId });
 
   const fusionConfidence = calculateFusionConfidence(merged.usedSignals);
 
@@ -115,7 +121,7 @@ export async function processMessageImpl(input: OrchestratorInput): Promise<Orch
   }, undefined);
 
   orchestratorState.lastProcessedAt = Date.now();
-  orchestratorState.lastSignalHashes = merged.hashes;
+  cadence.lastSignalHashes = merged.hashes;
   saveState(orchestratorState);
 
   return output;

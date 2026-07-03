@@ -8,13 +8,27 @@
  * that empirically and decide what to keep, demote, or delete.
  */
 
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { ModuleSignal } from "./types.js";
 
 const DIR = join(getLaxDir(), "telemetry");
 const FILE = join(DIR, "signals.jsonl");
+const ROTATED = FILE + ".1";
+
+// Append-only JSONL with no rotation grows without bound (AM-9 symptom b).
+// Past the byte cap we roll the live file to signals.jsonl.1 (single
+// generation, overwriting any prior .1) and start a fresh live file.
+const MAX_BYTES = Number(process.env.LAX_SIGNAL_LOG_MAX_BYTES) || 5_000_000;
+
+function rotateIfNeeded(): void {
+  try {
+    if (statSync(FILE).size >= MAX_BYTES) {
+      renameSync(FILE, ROTATED);
+    }
+  } catch { /* no live file yet, or rotate raced — nothing to roll */ }
+}
 
 export interface SignalRef {
   module: string;
@@ -49,6 +63,7 @@ export function toSignalRef(s: ModuleSignal): SignalRef {
 export function logSignalTrace(trace: Omit<SignalTrace, "ts">): void {
   try {
     ensure();
+    rotateIfNeeded();
     const row: SignalTrace = { ts: new Date().toISOString(), ...trace };
     appendFileSync(FILE, JSON.stringify(row) + "\n", { encoding: "utf-8", mode: 0o600 });
   } catch {}

@@ -171,6 +171,12 @@ class EmotionalMemoryImpl {
       timestamp: Date.now(),
     };
     this.records.push(record);
+    // Bound the in-memory list to the same FIFO cap the disk copy uses.
+    // saveHistory() only trims the slice it writes; without reassigning here
+    // this.records grows unboundedly for the process lifetime (AM-9 symptom c).
+    if (this.records.length > MAX_ENTRIES) {
+      this.records = this.records.slice(this.records.length - MAX_ENTRIES);
+    }
     saveHistory(this.records);
   }
 

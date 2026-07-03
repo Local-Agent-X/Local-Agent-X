@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createLogger } from "../../logger.js";
@@ -21,13 +21,21 @@ export function pullBrainJsonFiles(dataDir: string, syncDir: string, config: Syn
   // locally-newer entries survive a stale-remote pull. Don't delete a
   // local-only file just because it's missing from the remote (a fresh
   // sync repo wouldn't have these yet).
+  //
+  // mtime guard: the heartbeat pulls THEN pushes, so a stale-remote
+  // overwrite of a locally-newer file (e.g. a milestone written but not
+  // yet pushed) would be clobbered here and the loss made permanent by
+  // the follow-up push. Skip the write when the local copy is at least
+  // as new as the remote — same rule pullDir applies to brain dirs.
   for (const file of BRAIN_JSON_FILES) {
     if (MERGED_BRAIN_FILES.has(file)) continue;
     if (!config.syncMissions && MISSION_FILES.has(file)) continue;
     const remote = join(syncDir, file);
     if (!existsSync(remote)) continue;
+    const local = join(dataDir, file);
     try {
-      writeFileSync(join(dataDir, file), readFileSync(remote, "utf-8"), "utf-8");
+      if (existsSync(local) && statSync(local).mtimeMs >= statSync(remote).mtimeMs) continue;
+      writeFileSync(local, readFileSync(remote, "utf-8"), "utf-8");
     } catch (e) {
       logger.warn(`[sync] brain pull skipped ${file}: ${(e as Error).message}`);
     }

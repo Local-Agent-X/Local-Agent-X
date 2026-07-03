@@ -154,6 +154,137 @@ export function buildCleanHistory(
   return truncateHistory(sanitizeHistory(sessionMessages), maxKeep);
 }
 
+// ── CM-2: constraint-preserving auto-summary of the truncated segment ───────
+//
+// The digest below used to slice every old user message to a 150-char
+// first-line snippet and drop tool results entirely, while the
+// constraint-preserving LLM compactor (context-manager) had zero callers on
+// the live chat path — a user constraint stated 45 messages back reached the
+// model as a meaningless fragment. Two layers fix that:
+//
+//  1. The canonical LLM summarizer (`summarizeOldMessages` — the same
+//     primitive the canonical loop's compact-history and /api/compact use) is
+//     wired into this path. truncateHistory is sync and on the per-turn hot
+//     path, so the call runs in the BACKGROUND: the result is cached per
+//     old-segment prefix (hash-verified, so a stale or foreign entry can
+//     never be misapplied) and folded into the digest from the next turn on.
+//  2. The deterministic digest that covers whatever the LLM summary does not
+//     yet cover (first truncated turn, the growth gap between refreshes, LLM
+//     disabled/failed) preserves user turns verbatim up to head+tail bounds —
+//     constraints cluster at the start and END of long specs — keeps a
+//     bounded slice of assistant turns and tool results, and marks every
+//     omission explicitly instead of dropping content silently.
+const USER_KEEP_HEAD = 2000;
+const USER_KEEP_TAIL = 1000;
+const ASSISTANT_DIGEST_MAX = 300;
+const TOOL_DIGEST_MAX = 200;
+// Total budget for the deterministic digest, spent newest-first (older turns
+// are likelier superseded AND likelier already covered by the LLM summary).
+const DIGEST_CHAR_BUDGET = 24_000;
+// Don't re-summarize on every turn — refresh once the uncovered gap has grown
+// past this many messages. Between refreshes the gap is rendered by the
+// deterministic digest above.
+const SUMMARY_REFRESH_MIN_GROWTH = 10;
+const SUMMARY_CACHE_MAX = 32;
+
+interface OldSegmentSummary { covered: number; prefixHash: string; summary: string }
+const summaryCache = new Map<string, OldSegmentSummary>();
+const refreshInFlight = new Map<string, Promise<void>>();
+
+function fnv1a(str: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function messageFingerprint(m: ChatCompletionMessageParam): string {
+  const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
+  return `${m.role}:${c.length}:${c}`;
+}
+
+// Order-sensitive rolling hash over a message prefix. Used both as the cache
+// key (hash of the segment's first message — stable per session, since the
+// old segment only ever GROWS at its end) and as the verification that a
+// cached summary really covers the current prefix before it is reused.
+function hashMessages(msgs: ChatCompletionMessageParam[]): string {
+  let acc = 0x811c9dc5;
+  for (const m of msgs) acc = fnv1a(`${acc.toString(36)}|${messageFingerprint(m)}`);
+  return `${acc.toString(36)}:${msgs.length}`;
+}
+
+function clipUserText(text: string): string {
+  if (text.length <= USER_KEEP_HEAD + USER_KEEP_TAIL) return text;
+  const omitted = text.length - USER_KEEP_HEAD - USER_KEEP_TAIL;
+  return `${text.slice(0, USER_KEEP_HEAD)} … [${omitted} chars omitted] … ${text.slice(-USER_KEEP_TAIL)}`;
+}
+
+function digestLine(m: ChatCompletionMessageParam): string | null {
+  if (m.role === "user" && typeof m.content === "string") {
+    return `<prior_user>${clipUserText(m.content.replace(/\n/g, " "))}</prior_user>`;
+  }
+  if (m.role === "assistant" && typeof m.content === "string") {
+    const flat = m.content.replace(/\s*\n\s*/g, " ").trim();
+    if (!flat) return null; // tool-call-only turn; its tool_result line carries the info
+    return `<prior_assistant>${flat.length > ASSISTANT_DIGEST_MAX ? `${flat.slice(0, ASSISTANT_DIGEST_MAX)}…` : flat}</prior_assistant>`;
+  }
+  if (m.role === "tool" && typeof m.content === "string") {
+    const flat = m.content.replace(/\s*\n\s*/g, " ").trim();
+    if (!flat) return null;
+    return `<prior_tool_result>${flat.length > TOOL_DIGEST_MAX ? `${flat.slice(0, TOOL_DIGEST_MAX)}…` : flat}</prior_tool_result>`;
+  }
+  return null;
+}
+
+// Deterministic digest of a message run, newest-first under a total budget so
+// a mega-session can never re-bloat the window truncation just reclaimed.
+// Anything dropped is announced via an explicit omission marker (and gets
+// covered by the next background LLM refresh).
+function digestLines(msgs: ChatCompletionMessageParam[]): string[] {
+  const lines: string[] = [];
+  let used = 0;
+  let omittedBefore = -1;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const line = digestLine(msgs[i]);
+    if (!line) continue;
+    if (used + line.length > DIGEST_CHAR_BUDGET) { omittedBefore = i; break; }
+    lines.push(line);
+    used += line.length;
+  }
+  lines.reverse();
+  if (omittedBefore >= 0) lines.unshift(`<prior_omitted count="${omittedBefore + 1}"/>`);
+  return lines;
+}
+
+function scheduleSummaryRefresh(key: string, segment: ChatCompletionMessageParam[]): void {
+  // Unit tests must never fire real background LLM calls (same guard as
+  // soak-metrics.ts). The regression test clears these vars and mocks the
+  // summarizer to exercise this path.
+  if (process.env.VITEST || process.env.NODE_ENV === "test") return;
+  if (refreshInFlight.has(key)) return;
+  const snapshot = segment.slice();
+  const task = (async () => {
+    // Dynamic import: keeps providers/sanitize (pure, sync, imported early)
+    // free of a static edge into the context-manager/classifier stack.
+    const { summarizeOldMessages } = await import("../context-manager/compaction.js");
+    const summary = await summarizeOldMessages(snapshot);
+    if (!summary) return; // disabled / timed out / failed → deterministic digest keeps covering
+    if (!summaryCache.has(key) && summaryCache.size >= SUMMARY_CACHE_MAX) {
+      const oldest = summaryCache.keys().next().value;
+      if (oldest !== undefined) summaryCache.delete(oldest);
+    }
+    summaryCache.set(key, { covered: snapshot.length, prefixHash: hashMessages(snapshot), summary });
+  })();
+  refreshInFlight.set(key, task.catch(() => {}).finally(() => { refreshInFlight.delete(key); }));
+}
+
+/** Await all in-flight background summary refreshes. For tests and graceful shutdown. */
+export async function awaitPendingHistorySummaries(): Promise<void> {
+  await Promise.allSettled([...refreshInFlight.values()]);
+}
+
 export function truncateHistory(messages: ChatCompletionMessageParam[], maxKeep: number = 30): ChatCompletionMessageParam[] {
   let preservedLeader: ChatCompletionMessageParam | null = null;
   let body: ChatCompletionMessageParam[] = messages;
@@ -203,16 +334,27 @@ export function truncateHistory(messages: ChatCompletionMessageParam[], maxKeep:
   // mimic that format in its OWN output and leak fake "User: ..." lines into
   // its replies. Wrap in XML tags instead (the system prompt already tells
   // the model XML-tagged blocks are reference context, not output to echo).
-  const summaryLines: string[] = [];
-  for (const m of old) {
-    if (m.role === "user" && typeof m.content === "string") {
-      summaryLines.push(`<prior_user>${m.content.slice(0, 150).replace(/\n/g, " ")}</prior_user>`);
-    } else if (m.role === "assistant" && typeof m.content === "string") {
-      const firstLine = m.content.split("\n").filter((l) => l.trim())[0] || "";
-      summaryLines.push(`<prior_assistant>${firstLine.slice(0, 150)}</prior_assistant>`);
+  //
+  // Fold in the cached LLM summary for whatever prefix of `old` it covers
+  // (hash-verified), render the uncovered remainder deterministically, and
+  // schedule a background refresh once the uncovered gap is worth it.
+  let covered = 0;
+  let llmSummary = "";
+  if (old.length > 0) {
+    const key = hashMessages(old.slice(0, 1));
+    const entry = summaryCache.get(key);
+    if (entry && entry.covered <= old.length && hashMessages(old.slice(0, entry.covered)) === entry.prefixHash) {
+      covered = entry.covered;
+      llmSummary = entry.summary;
+    }
+    if (covered === 0 || old.length - covered >= SUMMARY_REFRESH_MIN_GROWTH) {
+      scheduleSummaryRefresh(key, old);
     }
   }
-  const summary = `<prior_conversation count="${old.length}">\n${summaryLines.join("\n")}\n</prior_conversation>`;
+  const summaryParts: string[] = [];
+  if (llmSummary) summaryParts.push(`<prior_summary messages="${covered}">\n${llmSummary}\n</prior_summary>`);
+  summaryParts.push(...digestLines(old.slice(covered)));
+  const summary = `<prior_conversation count="${old.length}">\n${summaryParts.join("\n")}\n</prior_conversation>`;
 
   const autoSummary: ChatCompletionMessageParam = { role: "system", content: summary } as ChatCompletionMessageParam;
   return preservedLeader ? [preservedLeader, autoSummary, ...recent] : [autoSummary, ...recent];

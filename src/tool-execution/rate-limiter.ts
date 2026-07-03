@@ -47,19 +47,30 @@ export class ToolRateLimiter {
   check(toolName: string, sessionId: string = "default"): RateLimitResult {
     const now = Date.now();
 
+    // A warn/throttle limit that's over cap allows the call but carries a
+    // warning; hold onto the first such result so it isn't silently downgraded
+    // to a bare allow when a later (passing) check returns. A hard block wins
+    // immediately.
+    let warning: RateLimitResult | undefined;
+
     // Check tool-specific limits
     const toolConfig = this.configs.find(c => c.tool === toolName);
     if (toolConfig) {
       const result = this.checkLimit(toolConfig, toolName, sessionId, now);
       if (!result.allowed) return result;
+      if (result.action !== "allow") warning = result;
     }
 
     // Check global limit
     const globalConfig = this.configs.find(c => c.tool === "*");
     if (globalConfig) {
-      return this.checkLimit(globalConfig, "*", sessionId, now);
+      const result = this.checkLimit(globalConfig, "*", sessionId, now);
+      if (!result.allowed) return result;
+      if (result.action !== "allow" && !warning) warning = result;
     }
 
+    // Surface the over-limit warn/throttle instead of dropping it.
+    if (warning) return warning;
     return { allowed: true, action: "allow", remaining: -1, resetInMs: 0 };
   }
 
@@ -89,12 +100,17 @@ export class ToolRateLimiter {
 
     if (remaining <= 0) {
       const allowed = config.action !== "block";
+      const clampedReset = Math.max(0, resetInMs);
+      // Embed the reset horizon so the model can decide wait-vs-pivot instead of
+      // guessing; checkLimit is the sole owner of resetInMs, which was otherwise
+      // computed and thrown away.
+      const resetSec = Math.max(1, Math.ceil(clampedReset / 1000));
       return {
         allowed,
         action: config.action,
         remaining: 0,
-        resetInMs: Math.max(0, resetInMs),
-        reason: `Rate limit exceeded for ${tool}: ${config.maxCalls} calls per ${config.windowMs / 1000}s`,
+        resetInMs: clampedReset,
+        reason: `Rate limit exceeded for ${tool}: ${config.maxCalls} calls per ${config.windowMs / 1000}s; resets in ${resetSec}s`,
         ...(allowed ? {} : { userHint: USER_HINTS.retryExhausted }),
       };
     }

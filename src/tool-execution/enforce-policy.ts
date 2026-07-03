@@ -67,6 +67,36 @@ export const ARI_ACTION_MAP: Record<string, string> = {
   search_past_sessions: "search",
 };
 
+// The static map above is per-tool-NAME, so http_request and browser always
+// read as "get" — a POST or a browser click/evaluate looks passive to the
+// kernel, and a preset that denies http WRITES can never see them. deriveAriAction
+// derives the kernel action from the CALL's args instead:
+//   http_request → by args.method (POST/PUT/PATCH/DELETE → that write verb;
+//                  GET/HEAD/OPTIONS/absent → "get")
+//   browser      → by args.action (click/fill/select/type/evaluate/act → "post"
+//                  = an http write; navigate/read/screenshot/absent → "get")
+// Verified against the real arikernel workspace-assistant preset
+// (packages/arikernel/core/src/presets/policy-spec.json): allow-http-write-clean
+// (prio 100) allows a CLEAN post/put/patch/delete, deny-tainted-http-write
+// (prio 40, wins) denies the SAME verbs under web/rag/email taint — so a clean
+// POST stays allowed and only a tainted POST is denied; all four verbs are valid
+// http actions in HOST_CAPABILITY_MANIFEST. Tools whose action isn't derivable
+// from args fall through to the static ARI_ACTION_MAP.
+const HTTP_WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const BROWSER_WRITE_ACTIONS = new Set(["click", "fill", "select", "type", "evaluate", "act"]);
+
+export function deriveAriAction(toolName: string, args: Record<string, unknown>): string {
+  if (toolName === "http_request") {
+    const method = String(args?.method ?? "GET").toUpperCase();
+    return HTTP_WRITE_METHODS.has(method) ? method.toLowerCase() : "get";
+  }
+  if (toolName === "browser") {
+    const action = String(args?.action ?? "").toLowerCase();
+    return BROWSER_WRITE_ACTIONS.has(action) ? "post" : "get";
+  }
+  return ARI_ACTION_MAP[toolName] || "exec";
+}
+
 async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId } = ctx;
   if (shouldGateInKernel(tc.name)) {
@@ -91,7 +121,7 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     if (shellTaintBlock) {
       return terminate(ctx, { rendered: "raw", content: `User hint: ${USER_HINTS.policy}\n${shellTaintBlock}`, allowed: false });
     }
-    const ariResult = await ariEvaluate(tc.name, ARI_ACTION_MAP[tc.name] || "exec", args, taintLabels);
+    const ariResult = await ariEvaluate(tc.name, deriveAriAction(tc.name, args), args, taintLabels);
     if (!ariResult.allowed) {
       const hint = ariResult.userHint ?? USER_HINTS.policy;
       return terminate(ctx, { rendered: "raw", content: `User hint: ${hint}\n${ariResult.reason}`, allowed: false });
@@ -316,12 +346,22 @@ function circuitBreakerGate(ctx: ToolCallContext): PhaseOutcome {
 function rateLimitGate(ctx: ToolCallContext): PhaseOutcome {
   const { tc, sessionId } = ctx;
   const rate = checkToolRateLimit(tc.name, sessionId);
-  if (rate.allowed) return CONTINUE;
+  if (rate.allowed) {
+    // A warn/throttle limit that's OVER its cap still allows the call, but the
+    // warning must not be silently dropped (as it was — downgraded to a bare
+    // allow): surface the reset-bearing reason so the model can self-throttle
+    // instead of hammering the limit blind.
+    if (rate.action !== "allow" && rate.reason) {
+      ctx.onEvent?.({ type: "tool_progress", toolName: tc.name, toolCallId: tc.id, message: `Rate-limit ${rate.action}: ${rate.reason}` });
+    }
+    return CONTINUE;
+  }
+  const resetSec = Math.ceil(Math.max(0, rate.resetInMs) / 1000);
   const result: ToolResult = {
     content: `BLOCKED by rate limit: ${rate.reason}`,
     isError: true,
     status: "blocked",
-    metadata: { layer: "rate-limit", recovery: "Per-tool rate limit hit. Wait or batch fewer calls; immediate retries will keep being denied.", userHint: rate.userHint ?? USER_HINTS.retryExhausted },
+    metadata: { layer: "rate-limit", recovery: `Per-tool rate limit hit — resets in ${resetSec}s. Wait for the reset window or pivot to another approach / batch fewer calls; immediate retries will keep being denied until then.`, userHint: rate.userHint ?? USER_HINTS.retryExhausted },
   };
   return terminate(ctx, { rendered: "model", result, allowed: false });
 }

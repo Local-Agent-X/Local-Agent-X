@@ -25,9 +25,12 @@ describe("filterStreamDelta — JSON tool-call shape", () => {
     expect(r.suppress).toBe(true);
   });
 
-  it("starts suppression on bare ``` code-fence start", () => {
+  it("does NOT start suppression on a bare ``` code-fence — a legit fenced block must survive", () => {
+    // Suppressing here latched and swallowed the whole code block that
+    // followed. Only ```json / {"tool_calls" opens a tool-call block.
     const r = filterStreamDelta("```", false);
-    expect(r.suppress).toBe(true);
+    expect(r.suppress).toBeUndefined();
+    expect(r.text).toBe("```");
   });
 
   it("does NOT start suppression on inline backticks in prose", () => {

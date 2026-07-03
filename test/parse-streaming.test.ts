@@ -28,14 +28,19 @@ describe("filterStreamDelta — open-marker detection (JSON forms)", () => {
     expect(r.suppress).toBe(true);
   });
 
-  it("bare ``` (trimmed) triggers suppression", () => {
+  it("bare ``` (trimmed) does NOT trigger suppression — it opens a legit code block", () => {
+    // Regression: suppressing on a bare fence swallowed the entire fenced code
+    // block that followed (never re-emitted). Only ```json / {"tool_calls"
+    // opens a tool-call block; a bare fence passes through as text.
     const r = filterStreamDelta("```", false);
-    expect(r.suppress).toBe(true);
+    expect(r.suppress).toBeUndefined();
+    expect(r.text).toBe("```");
   });
 
-  it("bare ``` with surrounding whitespace still triggers (trim path)", () => {
+  it("bare ``` with surrounding whitespace passes through as text", () => {
     const r = filterStreamDelta("  ```  ", false);
-    expect(r.suppress).toBe(true);
+    expect(r.suppress).toBeUndefined();
+    expect(r.text).toBe("  ```  ");
   });
 
   it("normal prose passes through untouched", () => {
@@ -142,6 +147,28 @@ describe("filterStreamDelta — full streaming flow (prose after close resumes)"
   });
 });
 
+describe("filterStreamDelta — legit fenced code block survives (bare-fence regression)", () => {
+  it("a normal ```-delimited code block whose opening fence is its own delta is NOT swallowed", () => {
+    // Pre-fix, the bare "```" delta latched suppression and every following
+    // delta (the code body) was eaten until the closing fence — the block
+    // vanished. It must now stream through intact.
+    const { visible, suppressedAtEnd } = runStream([
+      "Here is the code:\n",
+      "```",
+      "\n",
+      "const x = 1;\n",
+      "console.log(x);\n",
+      "```",
+      "\nThat's it.",
+    ]);
+    expect(visible).toContain("const x = 1;");
+    expect(visible).toContain("console.log(x);");
+    expect(visible).toContain("Here is the code:");
+    expect(visible).toContain("That's it.");
+    expect(suppressedAtEnd).toBe(false);
+  });
+});
+
 describe("filterStreamDelta — suppression staying open across many filler chunks", () => {
   it("blocks every chunk between open and close markers", () => {
     let suppress = false;
@@ -172,7 +199,7 @@ describe("filterStreamDelta — partial-prefix detection limitations (documents 
     expect(r.text).toBe("``");
   });
 
-  it("'```js' (broken json prefix) is NOT suppressed — only literal ```json or bare ``` match", () => {
+  it("'```js' (broken json prefix) is NOT suppressed — only literal ```json matches", () => {
     const r = filterStreamDelta("```js", false);
     expect(r.suppress).toBeUndefined();
     expect(r.text).toBe("```js");

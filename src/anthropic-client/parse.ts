@@ -298,8 +298,13 @@ export function filterStreamDelta(delta: string, alreadySuppressing: boolean): {
     delta.includes("<tool_use>") ||
     delta.includes("<function_calls>")
   ) return { suppress: true };
-  // Bare code-fence start (might precede a JSON tool call)
-  if (delta.trim() === "```") return { suppress: true };
+  // A bare ``` fence is deliberately NOT suppressed. Doing so swallowed
+  // legitimate fenced code blocks: once suppression latches, EVERY following
+  // delta is eaten until the closing fence and the block is never re-emitted,
+  // so a normal ```-delimited code block whose opening fence lands as its own
+  // delta vanished from the chat entirely. Genuine text-form tool calls open
+  // with ```json or {"tool_calls" (both caught above); stripToolCallBlocks is
+  // the post-hoc backstop for any fence/JSON split awkwardly across deltas.
   return { text: delta };
 }
 

@@ -53,7 +53,21 @@ export function canonicalToTransport(
   validToolNames?: ReadonlySet<string>,
 ): TransportMessage[] {
   const out: TransportMessage[] = [];
+  // Image sidecars for tool results are DEFERRED until the consecutive run
+  // of tool_result rows ends. Parallel tool calls produce back-to-back
+  // tool_result rows, and every provider requires all of a turn's tool
+  // results to immediately follow the assistant tool-call turn (Anthropic's
+  // Messages API 400s otherwise). Pushing the sidecar user row between two
+  // tool rows would orphan the second tool_result.
+  let pendingImageSidecars: TransportMessage[] = [];
+  const flushImageSidecars = () => {
+    if (pendingImageSidecars.length > 0) {
+      out.push(...pendingImageSidecars);
+      pendingImageSidecars = [];
+    }
+  };
   for (const m of messages) {
+    if (m.role !== "tool_result") flushImageSidecars();
     const c = m.content as Record<string, unknown> | string | null | undefined;
     if (m.role === "system") {
       out.push({ role: "system", content: extractText(c) });
@@ -102,6 +116,8 @@ export function canonicalToTransport(
       // and emit two transport messages: a `tool` row with the text
       // summary, then a follow-up `user` row carrying the images
       // sidecar so the next turn's adapter feeds them back to the model.
+      // The sidecar is buffered (not pushed) so it lands AFTER all
+      // tool rows of a parallel-call batch — see flushImageSidecars.
       let resultText: string;
       let imagesPayload: Array<{ mime: string; b64: string }> | null = null;
       if (r && typeof r === "object" && Array.isArray((r as { images?: unknown }).images)) {
@@ -119,7 +135,7 @@ export function canonicalToTransport(
         content: resultText,
       });
       if (imagesPayload && imagesPayload.length > 0) {
-        out.push({
+        pendingImageSidecars.push({
           role: "user",
           content: `[Tool returned ${imagesPayload.length} image${imagesPayload.length === 1 ? "" : "s"} — analyze and use them in your reply.]`,
           images: imagesPayload.map((img, i) => ({
@@ -136,6 +152,7 @@ export function canonicalToTransport(
       continue;
     }
   }
+  flushImageSidecars();
   if (pendingRedirect) {
     out.push({ role: "user", content: `[REDIRECT] ${pendingRedirect.text}` });
   }

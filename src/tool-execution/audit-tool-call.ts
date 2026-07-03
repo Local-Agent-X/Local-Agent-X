@@ -107,11 +107,14 @@ function evaluateThreat(ctx: ToolCallContext): void {
   }
 }
 
-function applyBudget(ctx: ToolCallContext): void {
+// Budget applies to error results too: a failing build's multi-MB stderr is
+// exactly where huge dumps are most common, and letting it land in the model
+// window uncut was the original bug (error path used to be exempt). The error
+// envelope (isError/status/metadata) is preserved via spread — only content is
+// truncated-with-disk-preview.
+export function applyBudget(ctx: ToolCallContext): void {
   const result = ctx.result!;
-  if (!result.isError) {
-    ctx.result = { ...result, content: budgetResult(result.content) };
-  }
+  ctx.result = { ...result, content: budgetResult(result.content) };
 }
 
 function firePostHook(ctx: ToolCallContext): void {

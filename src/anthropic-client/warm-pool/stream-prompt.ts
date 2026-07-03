@@ -1,7 +1,9 @@
 // Per-turn driver for an acquired warm process. Writes one user-message
 // JSON-line to stdin, demuxes stdout frames via the process's
 // activeListener, and yields StreamEvents. Releases the process back to
-// the pool on completion (or evicts on hard-kill abort).
+// the pool ONLY once the turn's `result` frame has been consumed; if the
+// consumer bails early (inject / stop), the CLI is still generating and
+// the process is evicted instead of pooled (see the finally block).
 //
 // Wire format mirrors stream-cli.ts so callers can swap paths
 // transparently. Per-prompt protocol (validated by the spike):
@@ -29,6 +31,10 @@ export async function* streamViaWarmPool(
   const wp = await acquire(key);
   let released = false;
   let aborted = false;
+  // True only once the turn's `result` frame has been consumed. Read in the
+  // finally to decide pool-vs-evict: releasing a still-generating process
+  // (finished === false) hands its tail frames to the next acquirer.
+  let finished = false;
   // Two abort modes, distinguished by the AbortSignal's `reason`:
   //   - reason matches /idle|stalled|stop/i → KILL the warm process. The
   //     model is wedged or the user pressed stop; we need to free the
@@ -55,7 +61,6 @@ export async function* streamViaWarmPool(
   try {
     const queue: unknown[] = [];
     let resolveNext: ((v: { done: boolean; frame?: unknown }) => void) | null = null;
-    let finished = false;
 
     wp.activeListener = (frame: unknown) => {
       if (resolveNext) {
@@ -114,6 +119,19 @@ export async function* streamViaWarmPool(
     wp.activeListener = null;
     if (!released) {
       released = true;
+      // If the consumer bailed before the turn's `result` frame arrived
+      // (mid-stream inject / stop, which .return()s this generator), the
+      // CLI is STILL generating the old turn. Returning it to the pool as
+      // reusable would hand the next acquirer this turn's remaining frames —
+      // and the old turn's result frame would terminate the new turn
+      // instantly, so the model appears to ignore the inject. We can't drain
+      // to the result here without blocking the bail (the point of an inject
+      // is to be responsive), so evict the process instead. Correctness over
+      // preserving one warm slot; the next acquire spawns a fresh one.
+      if (!finished && wp.state !== "dead") {
+        killProcessTree(wp.proc, "SIGKILL"); // reap the claude → mcp-bridge subtree
+        wp.state = "dead";
+      }
       release(wp);
     }
     if (opts.signal) opts.signal.removeEventListener("abort", onAbort);

@@ -6,8 +6,14 @@ import {
   renameSync,
 } from "node:fs";
 
-import type { SessionData } from "./types.js";
+import type { ActionEntry, SessionData } from "./types.js";
 import { DATA_FILE, LAX_DIR, MS_PER_DAY, PRUNE_AGE_DAYS } from "./types.js";
+
+// Recurring types (>=3 entries) keep at most this many of their most recent
+// stale entries. The old unbounded keep-rule made homogeneous legacy data
+// immortal: a frozen file of thousands of same-type actions could never
+// shrink, and its tokenized artifacts kept being mined as "patterns".
+export const MAX_STALE_PER_TYPE = 10;
 
 export function ensureDir(): void {
   if (!existsSync(LAX_DIR)) {
@@ -58,11 +64,26 @@ export function autoPrune(data: SessionData): boolean {
   }
 
   const before = data.actions.length;
-  data.actions = data.actions.filter((a) => {
-    if (a.timestamp > cutoff) return true;
-    if ((typeCounts.get(a.type) || 0) >= 3) return true;
-    return false;
-  });
+  const staleKept = new Map<string, number>();
+  const kept: ActionEntry[] = [];
+  // Walk newest-first so the bounded stale allowance goes to the most
+  // recent entries of each recurring type.
+  for (let i = data.actions.length - 1; i >= 0; i--) {
+    const a = data.actions[i];
+    if (a.timestamp > cutoff) {
+      kept.push(a);
+      continue;
+    }
+    if ((typeCounts.get(a.type) || 0) >= 3) {
+      const soFar = staleKept.get(a.type) || 0;
+      if (soFar < MAX_STALE_PER_TYPE) {
+        staleKept.set(a.type, soFar + 1);
+        kept.push(a);
+      }
+    }
+  }
+  kept.reverse();
+  data.actions = kept;
 
   data.lastPrune = now;
 

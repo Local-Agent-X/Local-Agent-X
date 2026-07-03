@@ -5,7 +5,12 @@ import type {
   SessionData,
   SessionInsight,
 } from "./types.js";
-import { DEFAULT_MIN_OCCURRENCES, MAX_ACTIONS } from "./types.js";
+import {
+  DEFAULT_MIN_OCCURRENCES,
+  MAX_ACTIONS,
+  MS_PER_DAY,
+  PRUNE_AGE_DAYS,
+} from "./types.js";
 import { autoPrune, ensureDir, loadData, persistData } from "./persistence.js";
 import {
   detectRepeatedQuestions,
@@ -86,8 +91,11 @@ export class CrossSessionLearner {
   /** Orchestrator signal: the most-recurring cross-session pattern, if any. */
   signalsFor(): ModuleSignal[] {
     const patterns = this.detectPatterns(3);
-    if (patterns.length === 0) return [];
-    const top = patterns[0];
+    // Only surface patterns with recent evidence — a frozen legacy data file
+    // must never be injected as live user behavior.
+    const staleCutoff = Date.now() - PRUNE_AGE_DAYS * MS_PER_DAY;
+    const top = patterns.find((p) => p.lastSeen > staleCutoff);
+    if (!top) return [];
     return [{ source: "cross-session-learning", signal: `Recurring pattern: ${top.description} (seen ${top.occurrences}x)`, priority: 3, category: "pattern", confidence: 1.0 }];
   }
 }

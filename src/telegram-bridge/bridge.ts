@@ -11,6 +11,13 @@ import {
   type TelegramUser,
 } from "./types.js";
 
+/** Exponential poll backoff capped at 60s. Never gives up — the loop retries
+ *  indefinitely (only a 401 is terminal); the exponent is clamped so the delay
+ *  stays a finite number no matter how long the outage lasts. */
+export function pollBackoffDelay(consecutiveErrors: number): number {
+  return Math.min(5000 * 2 ** Math.min(consecutiveErrors - 1, 10), 60000);
+}
+
 export class TelegramBridge {
   private dataDir: string;
   private getToken: () => string | null;
@@ -152,7 +159,6 @@ export class TelegramBridge {
 
   private async pollLoop(token: string): Promise<void> {
     let consecutiveErrors = 0;
-    const MAX_ERRORS = 10;
 
     while (this.polling) {
       try {
@@ -161,22 +167,20 @@ export class TelegramBridge {
         }, this.pollAbort?.signal);
 
         if (!result.ok) {
-          consecutiveErrors++;
+          // 401 is the ONLY terminal poll error: the token is invalid or
+          // revoked and retrying can never recover it. Every other failure
+          // (router reboot, ISP blip, Telegram 5xx, DNS hiccup) is transient,
+          // so we back off and keep polling at the 60s cap indefinitely rather
+          // than permanently bricking the bridge after a few minutes of trouble.
           if (result.error_code === 401) {
             this.state = "error";
             this.lastError = "Bot token is invalid or revoked.";
             this.polling = false;
             return;
           }
-          if (consecutiveErrors >= MAX_ERRORS) {
-            logger.error(`[telegram] ${consecutiveErrors} consecutive errors — stopping. Reconnect from Settings.`);
-            this.state = "error";
-            this.lastError = result.description || "Too many poll errors";
-            this.polling = false;
-            return;
-          }
-          const delay = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 60000);
-          logger.error(`[telegram] Poll error (${consecutiveErrors}/${MAX_ERRORS}): ${result.description}`);
+          consecutiveErrors++;
+          const delay = pollBackoffDelay(consecutiveErrors);
+          logger.error(`[telegram] Poll error (attempt ${consecutiveErrors}, retry in ${Math.round(delay / 1000)}s): ${result.description}`);
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
@@ -189,15 +193,8 @@ export class TelegramBridge {
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
         consecutiveErrors++;
-        if (consecutiveErrors >= MAX_ERRORS) {
-          logger.error(`[telegram] ${consecutiveErrors} consecutive errors — stopping. Reconnect from Settings.`);
-          this.state = "error";
-          this.lastError = (e as Error).message;
-          this.polling = false;
-          return;
-        }
-        const delay = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 60000);
-        logger.error(`[telegram] Poll error (${consecutiveErrors}/${MAX_ERRORS}): ${(e as Error).message}`);
+        const delay = pollBackoffDelay(consecutiveErrors);
+        logger.error(`[telegram] Poll error (attempt ${consecutiveErrors}, retry in ${Math.round(delay / 1000)}s): ${(e as Error).message}`);
         await new Promise(r => setTimeout(r, delay));
       }
     }

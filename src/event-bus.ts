@@ -1,5 +1,9 @@
 // ── Event Bus ── Pub/sub system for decoupling components
 
+import { createLogger } from "./logger.js";
+
+const log = createLogger("event-bus");
+
 type EventName =
   | "tool:start"
   | "tool:end"
@@ -55,14 +59,26 @@ class EventBusImpl {
   }
 
   async emit(event: EventName, data?: unknown): Promise<void> {
-    const tasks: (void | Promise<void>)[] = [];
+    const tasks: Promise<void>[] = [];
+
+    // Listener isolation: a throwing/rejecting handler must never abort
+    // fanout to the other listeners or propagate into the emitter — one
+    // bad agent-result listener would otherwise wedge result delivery
+    // for everyone else. Sync throws are caught here; async rejections
+    // are absorbed by allSettled below. Failures are logged, not rethrown.
+    const invoke = (handler: EventHandler): void => {
+      try {
+        const result = handler(data);
+        if (result instanceof Promise) tasks.push(result);
+      } catch (err) {
+        log.error(`listener for "${event}" threw`, err);
+      }
+    };
 
     // Direct listeners
     const direct = this.handlers.get(event);
     if (direct) {
-      for (const handler of [...direct]) {
-        tasks.push(handler(data));
-      }
+      for (const handler of [...direct]) invoke(handler);
     }
 
     // Wildcard listeners — match "tool:*" against "tool:start", etc.
@@ -70,13 +86,16 @@ class EventBusImpl {
       if (!pattern.endsWith(":*")) continue;
       const prefix = pattern.slice(0, -1); // "tool:"
       if (event.startsWith(prefix) && pattern !== event) {
-        for (const handler of [...handlers]) {
-          tasks.push(handler(data));
-        }
+        for (const handler of [...handlers]) invoke(handler);
       }
     }
 
-    await Promise.all(tasks);
+    const settled = await Promise.allSettled(tasks);
+    for (const outcome of settled) {
+      if (outcome.status === "rejected") {
+        log.error(`listener for "${event}" rejected`, outcome.reason);
+      }
+    }
   }
 
   listenerCount(event: EventName): number {

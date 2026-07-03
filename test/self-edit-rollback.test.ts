@@ -12,7 +12,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -103,6 +104,51 @@ describe("self-edit-rollback", () => {
     const result = revertPendingMergeIfCrashed();
     expect(result).not.toBeNull();
     expect(readLastMerge()!.bootPending).toBe(false);
+  });
+
+  it("crashed-merge guard REFUSES to auto-revert over a dirty working tree", async () => {
+    const { recordMerge, readLastMerge, revertPendingMergeIfCrashed } =
+      await import("../src/self-edit-rollback.js");
+
+    // Build a real repo: commit a tracked file, then a second "merge" commit.
+    const repo = mkdtempSync(join(tmpdir(), "self-edit-rollback-repo-"));
+    const g = (cmd: string) => execSync(cmd, { cwd: repo, encoding: "utf-8" });
+    g("git init -b main");
+    g("git config user.email t@t.t");
+    g("git config user.name t");
+    const keep = join(repo, "keep.txt");
+    writeFileSync(keep, "committed\n");
+    g("git add -A");
+    g('git commit -m base');
+    const preSha = g("git rev-parse HEAD").trim();
+    writeFileSync(keep, "committed\nmerge-line\n");
+    g("git add -A");
+    g('git commit -m merge');
+    const postSha = g("git rev-parse HEAD").trim();
+
+    recordMerge({ preSha, postSha, baseBranch: "main", repoRoot: repo, files: 1, ts: sample.ts });
+
+    // First boot: records the attempt, no revert.
+    expect(revertPendingMergeIfCrashed()).toBeNull();
+    expect(readLastMerge()!.bootAttempts).toBe(1);
+
+    // Operator now has an UNCOMMITTED edit to a tracked file — a `git reset --hard`
+    // would obliterate it. Simulate a false-positive crash guard (e.g. a boot that
+    // failed to bind because of a port conflict, not the merge).
+    writeFileSync(keep, "operator's unsaved work\n");
+
+    const result = revertPendingMergeIfCrashed();
+    expect(result).not.toBeNull();
+    expect(result!.reverted).toBe(false);
+    expect(result!.detail).toMatch(/dirty/i);
+
+    // Data-loss invariant: the uncommitted edit survives, the merge is NOT reverted,
+    // and the record stays pending for a later clean boot / manual revert.
+    expect(readFileSync(keep, "utf-8")).toBe("operator's unsaved work\n");
+    expect(g("git rev-parse HEAD").trim()).toBe(postSha);
+    expect(readLastMerge()!.bootPending).toBe(true);
+
+    rmSync(repo, { recursive: true, force: true });
   });
 
   it("crashed-merge guard is a no-op once boot is confirmed", async () => {

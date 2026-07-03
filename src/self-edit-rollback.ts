@@ -11,6 +11,7 @@
  */
 
 import { writeFileSync, readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { revertBranchTo, runRepoBuild } from "./agency/worktree.js";
@@ -93,6 +94,25 @@ export function readLastMerge(): MergeRecord | null {
   }
 }
 
+/** True only if git POSITIVELY reports uncommitted changes (tracked or staged)
+ *  in the repo working tree. Returns false when cleanliness can't be determined
+ *  (bad repo, git missing): a failed status here means the subsequent
+ *  `git reset --hard` would also fail fast without deleting anything, so we don't
+ *  block the normal revert path on an inconclusive check. */
+function repoWorkingTreeDirty(repoRoot: string): boolean {
+  try {
+    const out = execSync("git status --porcelain", {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return out.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Manual revert: hard-reset the base branch back to the pre-merge SHA. */
 export function revertLastMerge(): { ok: boolean; detail: string } {
   const rec = readLastMerge();
@@ -146,6 +166,25 @@ export function revertPendingMergeIfCrashed(): { reverted: boolean; detail: stri
     if (!rec || !rec.bootPending) return null;
 
     if ((rec.bootAttempts ?? 0) >= 1) {
+      // Refuse to hard-reset over uncommitted work. A boot can fail to bind for
+      // reasons unrelated to the merge (reserved/duplicate port, AV quarantine),
+      // and revertBranchTo() runs `git reset --hard`, which would discard the
+      // operator's uncommitted changes along with the merge on such a false
+      // positive. Leave the record pending so a later CLEAN boot — or a manual
+      // revertLastMerge() after the operator saves their work — still handles it.
+      if (repoWorkingTreeDirty(rec.repoRoot)) {
+        logger.warn(
+          [
+            `─────────────────────────────────────────────`,
+            `self_edit merge ${rec.postSha.slice(0, 8)} did NOT bind on the last boot, but the`,
+            `working tree has UNCOMMITTED changes — AUTO-REVERT SKIPPED to avoid data loss.`,
+            `  merged: ${rec.ts}   files: ${rec.files}   base: ${rec.baseBranch}`,
+            `  If this merge is bad: commit/stash your work, then call revertLastMerge().`,
+            `─────────────────────────────────────────────`,
+          ].join("\n"),
+        );
+        return { reverted: false, detail: "auto-revert skipped: working tree dirty (uncommitted changes preserved)" };
+      }
       logger.warn(
         [
           `─────────────────────────────────────────────`,

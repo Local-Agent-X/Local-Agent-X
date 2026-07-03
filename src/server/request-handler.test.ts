@@ -166,6 +166,20 @@ describe("F1: auth gate over a real HTTP round-trip", () => {
     expect(res.status).not.toBe(401);
   });
 
+  // ── SC-5: only bare /api/health is exempt — subroutes stay gated ──────────
+  // The old `/api/health/` PREFIX exemption leaked provider status and queue
+  // depth / active-op counts to any token-less local process. The exemption is
+  // now an exact-match Set, so the subtree requires auth like any other read.
+  it("/api/health/providers requires a token (SC-5: no /api/health/ prefix exemption)", async () => {
+    const res = await fetch(`${base()}/api/health/providers`);
+    expect(res.status).toBe(401);
+  });
+
+  it("/api/health/workers requires a token (SC-5: queue depth / active-op counts are not public)", async () => {
+    const res = await fetch(`${base()}/api/health/workers`);
+    expect(res.status).toBe(401);
+  });
+
   // ── Browser-openable report HTML route: ?token= auth ────────────────────
   // Regression for the worker-card "Open report" link returning
   // {"error":"Unauthorized"}. A top-level browser navigation can't send an

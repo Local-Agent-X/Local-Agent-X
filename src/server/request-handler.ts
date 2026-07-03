@@ -97,9 +97,12 @@ export function createRequestHandler(deps: {
     // UI always holds the token (apiFetch attaches it), so they need no
     // exemption. Browser OAuth *redirects* land on dedicated callback servers
     // (ports 1455 / 56121), not these /api routes, so gating them is safe.
+    // Only bare `/api/health` (liveness — no sensitive data) is exempt. The
+    // `/api/health/*` subroutes (/providers, /workers) leak provider status and
+    // queue depth / active-op counts, so they must sit behind auth like any
+    // other read — an exact-match Set, never a prefix, keeps the subtree gated.
     const authExempt = new Set(["/api/auth/status", "/api/auth/anthropic/status", "/api/auth/xai/status", "/api/health"]);
-    const authExemptPrefixes = ["/api/health/"];
-    if (url.pathname.startsWith("/api/") && !authExempt.has(url.pathname) && !authExemptPrefixes.some(p => url.pathname.startsWith(p))) {
+    if (url.pathname.startsWith("/api/") && !authExempt.has(url.pathname)) {
       const clientIp = req.socket.remoteAddress || "unknown";
       const headerToken = (req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "";
       // Browser-openable HTML routes can't carry an Authorization header on a

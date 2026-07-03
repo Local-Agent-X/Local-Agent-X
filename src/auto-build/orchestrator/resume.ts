@@ -24,7 +24,7 @@ import { existsSync } from "node:fs";
 import type { ParsedPlan } from "../plan-parser.js";
 import { listAll, unregister } from "./registry.js";
 import * as state from "./state.js";
-import { startOrchestration } from "./manager.js";
+import { startOrchestration, isActiveForProject } from "./manager.js";
 import { parsePlanFile } from "../plan-parser.js";
 import { defaultJudgmentHook } from "../chunk-review/judgment-hook.js";
 import { broadcastToSession } from "../../ops/session-bridge.js";
@@ -33,12 +33,16 @@ import { createLogger } from "../../logger.js";
 
 const logger = createLogger("auto-build.orchestrator.resume");
 
+type ResumeOutcome = "resumed" | "abandoned" | "cleared" | "skipped";
+
 export interface ResumeReport {
   attempted: number;
   resumed: number;
   abandoned: number;
   cleared: number;
-  details: Array<{ projectDir: string; outcome: "resumed" | "abandoned" | "cleared"; reason: string }>;
+  /** Already live in this process — a duplicate resume was correctly skipped. */
+  skipped: number;
+  details: Array<{ projectDir: string; outcome: ResumeOutcome; reason: string }>;
 }
 
 /**
@@ -50,7 +54,7 @@ export interface ResumeReport {
  * operator has explicitly turned off).
  */
 export function autoResumeOrchestrations(): ResumeReport {
-  const report: ResumeReport = { attempted: 0, resumed: 0, abandoned: 0, cleared: 0, details: [] };
+  const report: ResumeReport = { attempted: 0, resumed: 0, abandoned: 0, cleared: 0, skipped: 0, details: [] };
 
   if (!isFeatureEnabled()) {
     logger.info("[resume] feature flag disabled — skipping auto-resume scan");
@@ -65,15 +69,25 @@ export function autoResumeOrchestrations(): ResumeReport {
     if (outcome.outcome === "resumed") report.resumed++;
     else if (outcome.outcome === "abandoned") report.abandoned++;
     else if (outcome.outcome === "cleared") report.cleared++;
+    else if (outcome.outcome === "skipped") report.skipped++;
   }
 
   if (report.attempted > 0) {
-    logger.info(`[resume] scanned ${report.attempted} orchestrators: ${report.resumed} resumed, ${report.abandoned} abandoned, ${report.cleared} cleared`);
+    logger.info(`[resume] scanned ${report.attempted} orchestrators: ${report.resumed} resumed, ${report.abandoned} abandoned, ${report.cleared} cleared, ${report.skipped} skipped`);
   }
   return report;
 }
 
-function tryResumeOne(projectDir: string, sessionId: string): { outcome: "resumed" | "abandoned" | "cleared"; reason: string } {
+function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeOutcome; reason: string } {
+  // Idempotency guard (AB-2): if an orchestration for this project is already
+  // live in-process, a second boot-scan (or double invocation) must NOT start
+  // a duplicate loop — two loops interleave chunk agents and clobber state.
+  // This is the "running orchestrations are detected and skipped" the module
+  // docstring promises.
+  if (isActiveForProject(projectDir)) {
+    return { outcome: "skipped", reason: "orchestration already active in this process" };
+  }
+
   // Project no longer exists → registry is stale.
   if (!existsSync(projectDir)) {
     unregister(projectDir);
@@ -116,14 +130,27 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: "resume
     return { outcome: "abandoned", reason: `plan parse failed: ${(e as Error).message}` };
   }
 
+  // AB-8: resume must stay inside the user's original chunk window. Passing
+  // the raw maxChunks would slide the window (chunks 1-10 dying at 7 would
+  // resume as 7-16). And a crash between the final commit and the complete
+  // event leaves resumeAtChunk past the window — recognize that as done
+  // instead of starting a phantom chunk that halts with "not found".
+  const window = computeResumeWindow(s, plan.chunks);
+  if (window.kind === "complete") {
+    state.write(state.markComplete(s));
+    state.clear(projectDir);
+    unregister(projectDir);
+    return { outcome: "cleared", reason: "all scoped chunks already committed — completed on resume" };
+  }
+
   try {
     const kick = startOrchestration({
       sessionId,
       projectDir,
       planPath,
       plan,
-      startingChunk: s.resumeAtChunk,
-      maxChunks: s.maxChunks ?? undefined,
+      startingChunk: window.startingChunk,
+      maxChunks: window.maxChunks,
       judgmentHook: defaultJudgmentHook,
     });
 
@@ -140,6 +167,48 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: "resume
     unregister(projectDir);
     return { outcome: "abandoned", reason: `resume threw: ${(e as Error).message}` };
   }
+}
+
+export interface ResumeWindow {
+  /** "complete" ⇒ every chunk in the user's scope was already committed. */
+  kind: "resume" | "complete";
+  startingChunk: number;
+  /** Chunks remaining IN SCOPE (undefined ⇒ run to the end of the plan). */
+  maxChunks: number | undefined;
+}
+
+/**
+ * Compute the correct resume window from persisted state + the plan's chunks.
+ *
+ * The loop windows by INDEX (startIdx + maxChunks), so we clamp in index-space
+ * against the user's ORIGINAL scope — [startingChunkOverride, +maxChunks) — not
+ * the raw maxChunks (which would slide the window forward on every resume).
+ *
+ * When resumeAtChunk lands past the scoped window (or off the plan entirely),
+ * every scoped chunk is already committed: return kind:"complete" so the caller
+ * finalizes instead of starting a chunk number that doesn't exist.
+ */
+export function computeResumeWindow(
+  s: state.OrchestratorState,
+  chunks: Array<{ number: number }>,
+): ResumeWindow {
+  const overrideIdx = s.startingChunkOverride != null
+    ? chunks.findIndex(c => c.number === s.startingChunkOverride)
+    : 0;
+  const origStartIdx = overrideIdx >= 0 ? overrideIdx : 0;
+  const windowEndIdx = s.maxChunks != null
+    ? Math.min(origStartIdx + s.maxChunks - 1, chunks.length - 1)
+    : chunks.length - 1;
+  const resumeIdx = chunks.findIndex(c => c.number === s.resumeAtChunk);
+
+  if (resumeIdx === -1 || resumeIdx > windowEndIdx) {
+    return { kind: "complete", startingChunk: s.resumeAtChunk, maxChunks: undefined };
+  }
+  return {
+    kind: "resume",
+    startingChunk: s.resumeAtChunk,
+    maxChunks: s.maxChunks != null ? windowEndIdx - resumeIdx + 1 : undefined,
+  };
 }
 
 /**

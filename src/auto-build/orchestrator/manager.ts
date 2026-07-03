@@ -69,6 +69,19 @@ export interface StartOrchestrationResult {
  * bg_op_progress and bg_op_completed events.
  */
 export function startOrchestration(opts: StartOrchestrationOptions): StartOrchestrationResult {
+  // Idempotency guard (AB-2): at most one live orchestration per project_dir.
+  // Two loops on the same directory interleave chunk agents and clobber each
+  // other's `.lax-build-run.json`. Callers that legitimately continue a run
+  // (build_plan_resume, auto-resume) must let the prior loop reach a terminal
+  // state first — the in-memory entry is deleted only when the loop ends.
+  const existing = findActiveByProjectDir(opts.projectDir);
+  if (existing) {
+    throw new Error(
+      `An orchestration is already running for ${opts.projectDir} (op ${existing.opId}). ` +
+      `Abort it or wait for it to halt before starting another.`,
+    );
+  }
+
   const opId = "op_" + randomBytes(8).toString("hex");
   const initialState = state.makeInitial({
     opId,
@@ -262,6 +275,18 @@ function collectChangedFiles(result: LoopResult): string[] {
 
 export function getActive(opId: string): ActiveOrchestration | undefined {
   return active.get(opId);
+}
+
+function findActiveByProjectDir(projectDir: string): ActiveOrchestration | undefined {
+  for (const o of active.values()) {
+    if (o.projectDir === projectDir) return o;
+  }
+  return undefined;
+}
+
+/** True when an orchestration for this project is live in THIS process. */
+export function isActiveForProject(projectDir: string): boolean {
+  return findActiveByProjectDir(projectDir) !== undefined;
 }
 
 export function listActive(): Array<{ opId: string; projectDir: string; sessionId: string; startedAt: number }> {

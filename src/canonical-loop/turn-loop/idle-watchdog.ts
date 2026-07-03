@@ -45,5 +45,11 @@ export function createIdleWatchdog(opts: IdleWatchdogOptions): IdleWatchdog {
 }
 
 export function readIdleTimeoutMs(): number {
-  return parseInt(process.env.LAX_CANONICAL_IDLE_TIMEOUT_MS ?? "600000", 10);
+  // Guard like readChatWallClockMs (chat-runner.ts): a malformed override
+  // parses to NaN, and setTimeout(cb, NaN) fires immediately while the
+  // re-arm guard (Date.now() - lastReportAt < NaN) is always false — so
+  // every turn would abort as 'stalled' in milliseconds. Require a finite,
+  // positive value or fall back to the 600s default.
+  const raw = parseInt(process.env.LAX_CANONICAL_IDLE_TIMEOUT_MS ?? "600000", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 600000;
 }

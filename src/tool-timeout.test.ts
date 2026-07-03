@@ -49,6 +49,15 @@ describe("getToolTimeout exemptions", () => {
     }
   });
 
+  it("exempts op_wait — its 30-min contract must not be cut off by the 120s fallback (TD-3)", async () => {
+    const { getToolTimeout } = await import("./tool-timeout.js");
+    // op_wait enforces its own timeout_ms (default 30min) with a graceful
+    // "op keeps running, call op_status" branch. Falling to DEFAULT_FALLBACK
+    // killed any wait >2min with a generic timeout and made that branch
+    // unreachable.
+    expect(getToolTimeout("op_wait")).toBe(0);
+  });
+
   it("bounds the network/verification tools generously", async () => {
     const { getToolTimeout } = await import("./tool-timeout.js");
     expect(getToolTimeout("http_request")).toBe(60_000);
@@ -97,6 +106,70 @@ describe("runSandboxedPhase hang → timeout result row", () => {
     expect(ctx.result!.status).toBe("timeout");
     expect(ctx.result!.isError).toBe(true);
     expect(ctx.result!.metadata?.recovery).toContain("process_status");
+  });
+
+  it("preserves _onProgress output as metadata.partial_output on the timeout row (TD-9)", async () => {
+    const { setToolTimeout } = await import("./tool-timeout.js");
+    const { runSandboxedPhase } = await import("./tool-execution/run-sandboxed.js");
+
+    const hangName = "__lax_test_hang_progress_tool";
+    setToolTimeout(hangName, 30); // tiny, non-exempt deadline
+
+    const tool = {
+      name: hangName,
+      description: "streams progress then hangs past the deadline",
+      parameters: { type: "object", properties: {} },
+      execute: (args: Record<string, unknown>) => {
+        // Emit partial work BEFORE hanging — pre-fix this was discarded when
+        // Promise.race orphaned the execute promise.
+        const onProgress = args._onProgress as (m: string) => void;
+        onProgress("step 1: fetched manifest");
+        onProgress("step 2: wrote 3 of 9 files");
+        return resolvesAfter(500).then((s) => ({ content: s }));
+      },
+    };
+
+    const ctx = {
+      tc: { id: "call_3", name: hangName, arguments: "{}" },
+      tool,
+      args: {} as Record<string, unknown>,
+      sessionId: "test-session",
+    } as unknown as Parameters<typeof runSandboxedPhase>[0];
+
+    await runSandboxedPhase(ctx);
+
+    expect(ctx.result!.status).toBe("timeout");
+    const partial = ctx.result!.metadata?.partial_output;
+    expect(typeof partial).toBe("string");
+    expect(partial).toContain("step 1: fetched manifest");
+    expect(partial).toContain("step 2: wrote 3 of 9 files");
+  });
+
+  it("omits partial_output when the hung tool produced no progress", async () => {
+    const { setToolTimeout } = await import("./tool-timeout.js");
+    const { runSandboxedPhase } = await import("./tool-execution/run-sandboxed.js");
+
+    const hangName = "__lax_test_hang_silent_tool";
+    setToolTimeout(hangName, 20);
+
+    const tool = {
+      name: hangName,
+      description: "hangs without any progress",
+      parameters: { type: "object", properties: {} },
+      execute: () => resolvesAfter(500).then((s) => ({ content: s })),
+    };
+
+    const ctx = {
+      tc: { id: "call_4", name: hangName, arguments: "{}" },
+      tool,
+      args: {} as Record<string, unknown>,
+      sessionId: "test-session",
+    } as unknown as Parameters<typeof runSandboxedPhase>[0];
+
+    await runSandboxedPhase(ctx);
+
+    expect(ctx.result!.status).toBe("timeout");
+    expect(ctx.result!.metadata?.partial_output).toBeUndefined();
   });
 
   it("runs an exempt tool (timeout 0) unbounded — no wrap, normal result", async () => {

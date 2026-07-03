@@ -41,7 +41,15 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
   if (!tool) return CONTINUE;
 
+  // Progress messages double as the timeout path's partial-output capture:
+  // withTimeout orphans the execute promise on expiry, so whatever the tool
+  // streamed via _onProgress is the only work product we can still surface
+  // (metadata.partial_output on the [timeout] row). Bounded so a chatty
+  // long-runner can't grow the buffer without limit.
+  const progressLog: string[] = [];
   args._onProgress = (message: string) => {
+    progressLog.push(message);
+    if (progressLog.length > 200) progressLog.shift();
     onEvent?.({ type: "tool_progress", toolName: tc.name, toolCallId: tc.id, message } as ServerEvent);
   };
 
@@ -74,7 +82,8 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   // is exempt (long-runner) — call it directly, never pass 0 to withTimeout.
   // withTimeout sits INSIDE the withRetry thunk so each attempt is bounded
   // independently. NOTE: on timeout the underlying execute promise keeps
-  // running orphaned (no per-tool abort); acceptable — the point is the row.
+  // running orphaned (no per-tool abort); acceptable — the point is the row,
+  // and the progressLog above preserves what it streamed before the deadline.
   const ms = getToolTimeout(tc.name);
   const runOnce = () => (ms > 0 ? withTimeout(tool.execute(args, signal), ms, tc.name) : tool.execute(args, signal));
 
@@ -292,10 +301,15 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       // A hung tool: hand the model a hard [timeout] row so it can't narrate
       // "done" against silence. The execute promise is orphaned (no abort), so
       // tell the model to VERIFY state rather than assume success or failure.
+      // Whatever the tool streamed via _onProgress before the deadline is the
+      // one work product we still hold — surface it as partial_output (tail-
+      // capped) instead of discarding it with the orphaned promise.
+      const partial = progressLog.length > 0 ? progressLog.join("\n").slice(-4_000) : undefined;
       ctx.result = timeout(
         `Tool "${e.toolName}" exceeded its ${e.ms}ms timeout and was abandoned. It may still be running in the background.`,
         {
           duration_ms: e.ms,
+          ...(partial ? { partial_output: partial } : {}),
           recovery:
             `Do NOT assume this succeeded or failed. Verify actual state before continuing: ` +
             `check process_status / process_list for a still-running process, and inspect the ` +

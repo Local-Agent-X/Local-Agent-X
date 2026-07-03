@@ -54,10 +54,36 @@ describe("detectSingleActionStop — fires only on the ending iteration", () => 
     expect(detectSingleActionStop(state)?.kind).toBe("single-action-stop");
   });
 
-  it("fires on a sentence-leading continuation cue without a first-person promise", () => {
+  it("fires on a continuation cue that introduces the model's OWN next action", () => {
     const state = turn({
-      assistantText: "Found the config. Next: update the port.",
+      assistantText: "Found the config. Next, I'll update the port.",
       toolsCalledThisTurn: new Set(["grep"]),
+    });
+    expect(detectSingleActionStop(state)?.kind).toBe("single-action-stop");
+  });
+
+  // HE-6 (class fix): a completed research/web_search deliverable ends with an
+  // ADVISORY tail addressed to the USER ("Next steps: compare quarterly") that
+  // names no first-person self-action. Those are delivered answers, not stalls,
+  // and must not nag — regardless of which past-tense report verb opens the
+  // reply (Researched/Compiled/Analyzed/…), which is why enumerating opener or
+  // action vocabulary kept leaking. We require first-person self-deferral and,
+  // per the module's documented "err toward leaving the nudge off", accept that
+  // a bare imperative continuation ("Next: update the port") no longer fires.
+  it.each([
+    "Researched the top five vendors and their pricing tiers. Next steps: compare quarterly.",
+    "Compiled the vendor findings. Next steps: track pricing quarterly.",
+    "Gathered the competitor data. Next steps: verify pricing quarterly.",
+    "Analyzed the market data across five providers. Next: monitor trends.",
+  ])("does not nag a delivered research recap with an advisory tail: %j", (assistantText) => {
+    const state = turn({ assistantText, toolsCalledThisTurn: new Set(["web_search"]) });
+    expect(detectSingleActionStop(state)).toBeNull();
+  });
+
+  it("still nags a genuine one-tool stall that defers a first-person action", () => {
+    const state = turn({
+      assistantText: "Searched for the API docs. Next, I'll implement the client.",
+      toolsCalledThisTurn: new Set(["web_search"]),
     });
     expect(detectSingleActionStop(state)?.kind).toBe("single-action-stop");
   });

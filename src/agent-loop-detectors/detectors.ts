@@ -61,6 +61,14 @@ const CONTINUATION_CUE_AT_SENTENCE_START = new RegExp(
   "i",
 );
 
+// A first-person self-action commitment following a continuation cue — the
+// signal that separates a genuine self-deferral stall ("Next, I'll edit it")
+// from an advisory tail addressed to the user ("Next steps: compare quarterly",
+// which has no first-person subject). Scanned in the short window right after
+// the cue so a later, unrelated "I" in the reply can't re-trigger it.
+const FIRST_PERSON_INTENT_AFTER_CUE =
+  /\b(?:i(?:'ll|'m| will| am| plan| need| want| plan\s+to| intend| plan\s+on)|let\s+me|we(?:'ll| will))\b/i;
+
 /**
  * The turn ENDED after exactly one exploratory read tool, with text that
  * promised continuation but never followed through. This is the
@@ -84,9 +92,23 @@ export function detectSingleActionStop(state: TurnState): RetryInstruction | nul
   // turn that never committed anything.
   if (onlyTool === "bash") return null;
   if (!state.assistantText) return null;
-  // Needs either a future-promise phrase OR a sentence-leading continuation
-  // cue after the exploratory tool's summary.
-  if (!PLANNING_FUTURE_PROMISE.test(state.assistantText) && !CONTINUATION_CUE_AT_SENTENCE_START.test(state.assistantText)) {
+  const text = state.assistantText;
+  // Fire only on a FIRST-PERSON deferred self-action — the model teeing up
+  // its own next step and stopping ("I'll edit it next", "Next, I'll run the
+  // tests"). PLANNING_FUTURE_PROMISE already captures the first-person forms.
+  //
+  // HE-6 (class fix): a bare sentence-leading continuation cue is NOT enough.
+  // A completed research/web_search deliverable naturally ends with an
+  // ADVISORY tail addressed to the USER ("Next steps: compare quarterly",
+  // "Next: monitor trends") — a delivered result, not a stall. Those have no
+  // first-person subject, so requiring a continuation cue to introduce the
+  // model's OWN action drops the whole false-nag class regardless of which
+  // past-tense report verb (Researched/Compiled/Analyzed/…) opens the reply —
+  // which is why enumerating opener or action vocabulary kept leaking.
+  const cue = CONTINUATION_CUE_AT_SENTENCE_START.exec(text);
+  const cueLeadsToSelfAction = cue !== null
+    && FIRST_PERSON_INTENT_AFTER_CUE.test(text.slice(cue.index, cue.index + 48));
+  if (!PLANNING_FUTURE_PROMISE.test(text) && !cueLeadsToSelfAction) {
     return null;
   }
   return { kind: "single-action-stop", instruction: SINGLE_ACTION_STOP_INSTRUCTION };

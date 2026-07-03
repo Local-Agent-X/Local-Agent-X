@@ -9,7 +9,7 @@ vi.mock("../providers/resolve-provider-context.js", () => ({
   resolveProviderContext: vi.fn(async () => ({ provider: "xai", apiKey: "k", model: "grok-4.3" })),
 }));
 
-import { classifyYesNo } from "./classify-with-llm.js";
+import { classifyYesNo, parseYesNoReason } from "./classify-with-llm.js";
 
 describe("classify-with-llm model selection", () => {
   beforeEach(() => dispatchMock.mockClear());
@@ -30,5 +30,31 @@ describe("classify-with-llm model selection", () => {
       category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, model: "grok-code-fast-1",
     });
     expect(dispatchMock.mock.calls[0][0]).toMatchObject({ xaiModel: "grok-code-fast-1" });
+  });
+});
+
+describe("parseYesNoReason", () => {
+  it("splits verdict from reason across common separators", () => {
+    expect(parseYesNoReason("YES — the build is broken")).toEqual({ verdict: true, reason: "the build is broken" });
+    expect(parseYesNoReason("NO. it holds up fine")).toEqual({ verdict: false, reason: "it holds up fine" });
+    expect(parseYesNoReason("yes: missing a test")).toEqual({ verdict: true, reason: "missing a test" });
+    expect(parseYesNoReason("No - nothing wrong")).toEqual({ verdict: false, reason: "nothing wrong" });
+  });
+
+  it("captures the verdict even with no reason", () => {
+    expect(parseYesNoReason("NO")).toEqual({ verdict: false, reason: "" });
+    expect(parseYesNoReason("  YES  ")).toEqual({ verdict: true, reason: "" });
+  });
+
+  it("collapses whitespace and caps the reason length", () => {
+    expect(parseYesNoReason("YES   the   reason\n has  gaps")).toEqual({ verdict: true, reason: "the reason has gaps" });
+    const long = "YES " + "x".repeat(400);
+    expect(parseYesNoReason(long)!.reason.length).toBe(240);
+  });
+
+  it("returns null when the reply does not start with a verdict", () => {
+    expect(parseYesNoReason("maybe, not sure")).toBeNull();
+    expect(parseYesNoReason("")).toBeNull();
+    expect(parseYesNoReason("the answer is YES")).toBeNull(); // verdict must lead
   });
 });

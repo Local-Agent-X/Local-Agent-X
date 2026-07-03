@@ -34,6 +34,7 @@
  */
 import type { CanonicalMiddleware } from "./types.js";
 import { loopDetectionMiddleware } from "./loop-detection.js";
+import { repeatOutputMiddleware } from "./repeat-output.js";
 import { deadEndMiddleware } from "./dead-end.js";
 import { postCommitMiddleware } from "./post-commit.js";
 import { repeatFailureMiddleware } from "./repeat-failure.js";
@@ -46,6 +47,7 @@ import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
 import { broadSweepNudgeMiddleware } from "./broad-sweep-nudge.js";
 import { falseRefusalMiddleware } from "./false-refusal.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
+import { refuteCompletionMiddleware } from "./refute-completion.js";
 import { openStepsMiddleware } from "./open-steps.js";
 import { browserHandoffMiddleware } from "./browser-handoff.js";
 import { selfCheckMiddleware } from "./self-check.js";
@@ -64,6 +66,11 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     // (house style is the default unless the user asked for a look).
     officeThemeGuardMiddleware,
     loopDetectionMiddleware,
+    // All lanes — content-repetition breaker: the model emitting the same
+    // visible answer turn after turn. Sibling to loop-detection (which watches
+    // tool-call identity and can't see a text loop). Two-strike nudge→abort;
+    // aborts on every lane because repeated identical prose has no legit form.
+    repeatOutputMiddleware,
     hallucinationCheckMiddleware,
     actionClaimMiddleware,
     // Interactive chat — catches a final summary that CREDITS the result with a
@@ -109,6 +116,13 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     // evidence, not the build. Runs after verify-gate so an edited-but-unbuilt
     // worker still gets the build nudge first.
     cleanupVerifyMiddleware,
+    // Worker ops only — a semantic last-resort completion check: when a worker
+    // claims done (text, no tools) AFTER committing work and none of the cheap
+    // deterministic gates above nudged, fire an independent skeptic panel at the
+    // done-claim and nudge once (with the skeptics' reasons) on a majority
+    // refutation. Fail-open + fire-once; sits AFTER the deterministic gates so
+    // the LLM panel only runs when they all passed. Disable: LAX_REFUTE_COMPLETION=0.
+    refuteCompletionMiddleware,
     openStepsMiddleware,
     // Interactive chat only — forces one more turn when a browser-driving turn
     // ends by punting the obstruction back to the user while the page is still

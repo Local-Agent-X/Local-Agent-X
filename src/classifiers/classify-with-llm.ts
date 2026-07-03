@@ -304,6 +304,47 @@ export async function classifyYesNo(args: {
 }
 
 /**
+ * Parse a "YES/NO + brief reason" reply into its verdict and justification.
+ * Pure + exported for direct testing. The reason is everything after the
+ * leading YES/NO token (and any separator), whitespace-collapsed and capped.
+ * Returns null when the reply doesn't start with a YES/NO verdict.
+ */
+export function parseYesNoReason(raw: string): { verdict: boolean; reason: string } | null {
+  const t = (raw ?? "").trim();
+  const m = t.match(/^(YES|NO)\b/i);
+  if (!m) return null;
+  const verdict = m[1].toUpperCase() === "YES";
+  const reason = t
+    .slice(m[0].length)
+    .replace(/^[\s:.\-–—]+/, "") // drop the separator between verdict and reason
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+  return { verdict, reason };
+}
+
+/**
+ * Convenience: yes/no classifier that ALSO captures the model's one-line
+ * reason. Same call shape as classifyYesNo, but the prompt should ask for a
+ * brief reason after the verdict (e.g. "YES or NO followed by a brief reason").
+ * Returns {verdict, reason} or null on failure/unavailability.
+ */
+export async function classifyYesNoWithReason(args: {
+  category: string;
+  systemPrompt: string;
+  userPrompt: string;
+  timeoutMs?: number;
+  model?: string;
+  envDisableVar?: string;
+  signal?: AbortSignal;
+}): Promise<{ verdict: boolean; reason: string } | null> {
+  return classifyWithLLM<{ verdict: boolean; reason: string }>({
+    ...args,
+    parse: parseYesNoReason,
+  });
+}
+
+/**
  * Convenience: classifier that returns parsed JSON. Strips the common
  * markdown-fence wrap models sometimes emit even when told not to.
  */

@@ -34,7 +34,7 @@ const LENSES = [
 
 /** Synthetic verdict returned when there's no diff to scrutinize (fail-open). */
 function emptyVerdict(): RefutationVerdict {
-  return { verdict: "inconclusive", refutedCount: 0, holdsCount: 0, nullCount: 0, voters: 0 };
+  return { verdict: "inconclusive", refutedCount: 0, holdsCount: 0, nullCount: 0, voters: 0, votes: [] };
 }
 
 export async function refuteSelfEditMerge(args: {

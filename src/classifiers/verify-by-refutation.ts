@@ -28,10 +28,18 @@
  * user prompt).
  */
 
-import { classifyYesNo } from "./classify-with-llm.js";
+import { classifyYesNoWithReason } from "./classify-with-llm.js";
 
 const DEFAULT_VOTERS = 3;
 const DEFAULT_TIMEOUT_MS = 4000;
+
+/** One skeptic's ballot: whether it refuted, WHY (its one-line reason), and the
+ *  scrutiny angle it was given. `refuted: null` = the voter was unavailable. */
+export interface RefutationVote {
+	refuted: boolean | null;
+	reason: string;
+	lens?: string;
+}
 
 export interface RefutationVerdict {
 	verdict: "refuted" | "holds" | "inconclusive";
@@ -39,6 +47,31 @@ export interface RefutationVerdict {
 	holdsCount: number;     // voters that said NO (it holds up)
 	nullCount: number;      // voters that were unavailable/unparseable
 	voters: number;         // total voters attempted
+	votes: RefutationVote[]; // per-voter detail incl. the reason each skeptic gave
+}
+
+/**
+ * Pure tally of a set of ballots into a verdict. Strict majority of ATTEMPTED
+ * voters (n = votes.length): n=3 → threshold 2, n=4 → 3. Zero voters (all
+ * unavailable, or none fired) → inconclusive. Exported for direct testing.
+ */
+export function tallyRefutation(votes: RefutationVote[]): RefutationVerdict {
+	const n = votes.length;
+	let refutedCount = 0;
+	let holdsCount = 0;
+	let nullCount = 0;
+	for (const v of votes) {
+		if (v.refuted === true) refutedCount++;
+		else if (v.refuted === false) holdsCount++;
+		else nullCount++;
+	}
+	const threshold = Math.floor(n / 2) + 1;
+	let verdict: RefutationVerdict["verdict"];
+	if (n === 0) verdict = "inconclusive";
+	else if (refutedCount >= threshold) verdict = "refuted";
+	else if (holdsCount >= threshold) verdict = "holds";
+	else verdict = "inconclusive";
+	return { verdict, refutedCount, holdsCount, nullCount, voters: n, votes };
 }
 
 export async function verifyByRefutation(args: {
@@ -70,13 +103,15 @@ export async function verifyByRefutation(args: {
 		);
 	}
 
-	// Fire all voters in parallel. classifyYesNo never throws (it swallows its
-	// own provider/timeout errors and resolves null), so Promise.all won't
-	// reject under normal operation — we keep the tally defensive without
-	// hiding real bugs.
-	const votes = await Promise.all(
-		prompts.map((userPrompt) =>
-			classifyYesNo({
+	// Fire all voters in parallel. classifyYesNoWithReason never throws (it
+	// swallows its own provider/timeout errors and resolves null), so
+	// Promise.all won't reject under normal operation — we keep the tally
+	// defensive without hiding real bugs. Each ballot also carries the voter's
+	// one-line reason (captured from the "YES/NO + brief reason" reply) and its
+	// lens, so a caller gets WHY a subject was refuted, not just how many.
+	const votes: RefutationVote[] = await Promise.all(
+		prompts.map((userPrompt, i) =>
+			classifyYesNoWithReason({
 				category: args.category,
 				systemPrompt: args.systemPrompt,
 				userPrompt,
@@ -84,25 +119,13 @@ export async function verifyByRefutation(args: {
 				model: args.model,
 				envDisableVar: args.envDisableVar,
 				signal: args.signal,
-			}),
+			}).then((r): RefutationVote => ({
+				refuted: r ? r.verdict : null,
+				reason: r?.reason ?? "",
+				lens: args.lenses?.[i],
+			})),
 		),
 	);
 
-	let refutedCount = 0;
-	let holdsCount = 0;
-	let nullCount = 0;
-	for (const vote of votes) {
-		if (vote === true) refutedCount++;
-		else if (vote === false) holdsCount++;
-		else nullCount++;
-	}
-
-	// Strict majority of attempted voters. With n=3 → threshold 2; n=4 → 3.
-	const threshold = Math.floor(n / 2) + 1;
-	let verdict: RefutationVerdict["verdict"];
-	if (refutedCount >= threshold) verdict = "refuted";
-	else if (holdsCount >= threshold) verdict = "holds";
-	else verdict = "inconclusive";
-
-	return { verdict, refutedCount, holdsCount, nullCount, voters: n };
+	return tallyRefutation(votes);
 }

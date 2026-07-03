@@ -9,10 +9,10 @@ import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
 import { getApprovalManager } from "../approval-manager.js";
 import {
-  activeChats,
   broadcastToSession,
   getChatHandler,
   getMessageCountForSession,
+  replayBufferedEvents,
   terminateChat,
 } from "./state.js";
 import { handleIdeRuntimeError } from "./ide-runtime-error.js";
@@ -46,6 +46,11 @@ export function attachMessageRouter(ctx: RouterContext): void {
     } catch {
       return;
     }
+    // CT-7: JSON.parse accepts non-object literals (`null`, `42`, `"x"`) and
+    // arrays. A bare `null` frame parses fine, then `msg.type` throws
+    // TypeError → unhandledRejection (survived only by the global crash
+    // guard, one CRASH line per frame). Require a plain object to dispatch.
+    if (msg === null || typeof msg !== "object" || Array.isArray(msg)) return;
 
     // WebRTC live-screen signaling (rtc_*) — consumed by the per-device session
     // before the chat branches; returns true when it claimed the frame.
@@ -64,12 +69,11 @@ export function attachMessageRouter(ctx: RouterContext): void {
 
     if (type === "subscribe" && sessionId) {
       subscriptions.add(sessionId);
-      const chat = activeChats.get(sessionId);
-      if (chat) {
-        for (const event of chat.events) {
-          ws.send(JSON.stringify({ type: "event", sessionId, event }));
-        }
-      }
+      // CT-3: coalesce buffered stream deltas into one `replace` on replay so
+      // a mid-turn reconnect doesn't append the whole partial onto the partial
+      // the client already holds (duplicated bubble + corrupted persisted
+      // history once promoteLiveToMessages runs).
+      replayBufferedEvents(ws, sessionId);
       // Session snapshot — late subscribers (page reload, leave-and-come-back,
       // WS reconnect after server restart) get the current truth so the
       // renderer can reconcile stale UI:

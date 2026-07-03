@@ -7,6 +7,7 @@
 
 import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";
+import { hasChatHandlerPending } from "../ops/session-bridge.js";
 
 export interface ActiveChat {
   sessionId: string;
@@ -20,6 +21,93 @@ export type ChatHandler = (sessionId: string, message: string, attachments: unkn
 
 // Active chats — keyed by sessionId.
 export const activeChats = new Map<string, ActiveChat>();
+
+// How long a terminated ActiveChat lingers before its buffer is swept.
+// Matches manager.onEvent's natural-`done` sweep (5 min) so a stopped chat
+// and a completed one are reclaimed on the same schedule.
+const CHAT_SWEEP_DELAY_MS = 5 * 60 * 1000;
+
+// ── Prep-window stop deferral (CT-4) ──────────────────────────────────────
+//
+// terminateChat needs an activeChats entry, but the entry is registered
+// ~30-200ms AFTER the chat frame is accepted (lifecycle.wireWsChat marks the
+// handler pending, runChatTurn preps, then installEventWiring → startChat).
+// A Stop landing in that window used to be a silent no-op while the client
+// had already painted [stopped] and closed the socket — loop and UI
+// permanently disagreed. (The inject race in the same window got a
+// pending-flag fix; stop never did.)
+//
+// A deferred stop is applied the instant the turn registers: startChat fires
+// broadcastActiveChats synchronously after activeChats.set, which drains the
+// map. If the prep turn dies BEFORE registering (missing credential, worker
+// redirect, a prepare/route throw — all early exits in
+// run-chat-turn/orchestrator.ts that end the turn with no ActiveChat),
+// lifecycle's finally clears the pending flag and the poll below discards
+// the stop — it must never linger and kill the user's NEXT legitimate turn
+// on the same session.
+
+const PENDING_STOP_POLL_MS = 25;
+// Backstop only (leaked pending counter). Prep is 30-200ms; a stop this old
+// no longer targets the turn the user saw — err on discarding.
+const PENDING_STOP_MAX_WAIT_MS = 30_000;
+
+interface PendingStop {
+  opts: TerminateOptions;
+  recordedAt: number;
+  poll: NodeJS.Timeout;
+}
+
+const pendingStops = new Map<string, PendingStop>();
+
+function recordPendingStop(sessionId: string, opts: TerminateOptions): void {
+  const existing = pendingStops.get(sessionId);
+  if (existing) { existing.opts = opts; return; } // second Stop in the window — keep the first poll
+  const poll = setInterval(() => checkPendingStop(sessionId), PENDING_STOP_POLL_MS);
+  poll.unref();
+  pendingStops.set(sessionId, { opts, recordedAt: Date.now(), poll });
+}
+
+/** Remove and return the pending stop, stopping its poll. */
+function takePendingStop(sessionId: string): PendingStop | undefined {
+  const entry = pendingStops.get(sessionId);
+  if (!entry) return undefined;
+  clearInterval(entry.poll);
+  pendingStops.delete(sessionId);
+  return entry;
+}
+
+function checkPendingStop(sessionId: string): void {
+  const chat = activeChats.get(sessionId);
+  if (chat && !chat.done) {
+    // Registered without a broadcast reaching us first — belt-and-suspenders;
+    // drainPendingStops via startChat's broadcastActiveChats normally wins.
+    const entry = takePendingStop(sessionId);
+    if (entry) terminateChat(sessionId, entry.opts);
+    return;
+  }
+  const entry = pendingStops.get(sessionId);
+  if (!entry) return;
+  // Pending flag dropped with no ActiveChat registered → the prep turn this
+  // stop targeted died on an early exit. Discard; applying it later would
+  // abort the user's next legitimate turn ("stop poisons the retry").
+  if (!hasChatHandlerPending(sessionId) || Date.now() - entry.recordedAt > PENDING_STOP_MAX_WAIT_MS) {
+    takePendingStop(sessionId);
+  }
+}
+
+function drainPendingStops(): void {
+  if (pendingStops.size === 0) return;
+  for (const sessionId of [...pendingStops.keys()]) {
+    const chat = activeChats.get(sessionId);
+    // Only a LIVE entry consumes the stop. A lingering `done` entry from the
+    // PREVIOUS turn (kept ~5 min for replay) must not — terminateChat would
+    // no-op on it and the stop would be lost while the stopped turn is still
+    // mid-prep.
+    if (!chat || chat.done) continue;
+    const entry = takePendingStop(sessionId);
+    if (entry) terminateChat(sessionId, entry.opts);
+  }
+}
 
 // Connected clients — each client subscribes to sessionIds.
 export const clients = new Map<WebSocket, Set<string>>();
@@ -59,7 +147,57 @@ export function broadcastToSession(sessionId: string, event: ServerEvent): void 
   }
 }
 
+/**
+ * Replay a session's buffered events to a late/reconnecting subscriber.
+ *
+ * Stream deltas are COALESCED into a single `replace: true` event rather than
+ * replayed raw (CT-3). The client's applyEvent does `content += delta` for
+ * delta-shaped stream events, so replaying buffered deltas onto a client that
+ * still holds the pre-blip partial (mid-turn WS blip → re-subscribe)
+ * double-counts the streamed text into the live bubble AND into persisted
+ * history when promoteLiveToMessages runs on `done`. One `replace` sets the
+ * client's content to the exact accumulated text regardless of what it
+ * already holds — the same duplication fix handleReconnectOp applies for
+ * finalized op_messages. Live failure 2026-05-19.
+ *
+ * The coalesced stream is sent FIRST so a trailing buffered `error`/`done`
+ * lands after it (`error` appends to content; a `replace` after `error`
+ * would wipe it). Non-stream events replay in order and are idempotent
+ * client-side (tool_* dedupe by call id, done is terminal).
+ */
+export function replayBufferedEvents(ws: WebSocket, sessionId: string): void {
+  const chat = activeChats.get(sessionId);
+  if (!chat) return;
+  let streamed = "";
+  let sawStream = false;
+  const rest: ServerEvent[] = [];
+  for (const event of chat.events) {
+    if (event.type === "stream") {
+      sawStream = true;
+      if ("replace" in event) streamed = event.text;
+      else streamed += event.delta;
+      continue;
+    }
+    rest.push(event);
+  }
+  if (sawStream) {
+    ws.send(JSON.stringify({
+      type: "event",
+      sessionId,
+      event: { type: "stream", replace: true, text: streamed },
+      _replay: true,
+    }));
+  }
+  for (const event of rest) {
+    ws.send(JSON.stringify({ type: "event", sessionId, event }));
+  }
+}
+
 export function broadcastActiveChats(): void {
+  // startChat calls this synchronously right after registering an ActiveChat,
+  // making it the earliest state-side hook to honor a stop that raced the
+  // registration (CT-4).
+  drainPendingStops();
   const activeIds = [...activeChats.keys()].filter(id => !activeChats.get(id)!.done && !isHeadlessSession(id));
   const payload = JSON.stringify({ type: "active_chats", sessionIds: activeIds });
   for (const [ws] of clients) {
@@ -111,7 +249,20 @@ export interface TerminateOptions {
  */
 export function terminateChat(sessionId: string, opts: TerminateOptions): boolean {
   const chat = activeChats.get(sessionId);
-  if (!chat || chat.done) return false;
+  if (!chat || chat.done) {
+    // CT-4: no live entry, but a chat handler is mid-prep for this session —
+    // the turn exists, its ActiveChat just isn't registered yet. Defer the
+    // stop (see the pendingStops block above) instead of silently dropping
+    // it. Still returns false: nothing was live-terminated here.
+    //
+    // Only USER-initiated stops (abort:true) defer. failChat's transport
+    // terminals (abort:false) fire from orchestrator/lifecycle error paths
+    // while the pending flag is still up — deferring those would let a dying
+    // turn's failChat kill a concurrent second turn on the same session.
+    // With no registered entry there is nothing to fail; dropping is correct.
+    if (opts.abort && hasChatHandlerPending(sessionId)) recordPendingStop(sessionId, opts);
+    return false;
+  }
 
   if (opts.abort) {
     chat.abortController.abort();
@@ -119,14 +270,34 @@ export function terminateChat(sessionId: string, opts: TerminateOptions): boolea
     void abortActiveSelfEditSafe(sessionId);
   }
 
+  // CT-5: buffer the terminal events, don't just broadcast them. The replay
+  // buffer is what a late subscriber (reload, reconnect) receives; without
+  // error/done in it, a stopped-then-abandoned session replays bare stream
+  // deltas with no terminal → phantom "streaming" bubble.
   if (opts.errorMessage) {
-    broadcastToSession(sessionId, { type: "error", message: opts.errorMessage });
+    const errorEvent: ServerEvent = { type: "error", message: opts.errorMessage };
+    chat.events.push(errorEvent);
+    broadcastToSession(sessionId, errorEvent);
   }
-  broadcastToSession(sessionId, {
+  const doneEvent: ServerEvent = {
     type: "done",
     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-  });
+  };
+  chat.events.push(doneEvent);
+  broadcastToSession(sessionId, doneEvent);
   chat.done = true;
+  // CT-5: schedule the sweep, mirroring manager.onEvent's natural-done path,
+  // so a stopped chat's ActiveChat + up-to-500-event buffer don't leak
+  // forever. Identity-guarded: if a NEW chat re-registered this sessionId in
+  // the meantime, leave it alone. (Natural done can't double-schedule — the
+  // manager's onEvent drops all events once chat.done is set.)
+  const sweep = setTimeout(() => {
+    if (activeChats.get(sessionId) === chat) {
+      activeChats.delete(sessionId);
+      broadcastActiveChats();
+    }
+  }, CHAT_SWEEP_DELAY_MS);
+  sweep.unref();
   broadcastActiveChats();
   return true;
 }

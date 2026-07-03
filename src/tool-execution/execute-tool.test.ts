@@ -14,10 +14,11 @@
 //     tainted before the egress check runs.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { executeToolCalls } from "./execute-tool.js";
+import { executeToolCalls, dispatchSingleToolCall } from "./execute-tool.js";
+import { _clearDedupCacheForTests, dedupRecord } from "./dedup-cache.js";
 import { setAriRequired } from "../ari-kernel/state.js";
 import { clearSessionTaint, getTaintSummary } from "../data-lineage.js";
-import type { ToolDefinition, ToolResult } from "../types.js";
+import type { ToolDefinition, ToolResult, ServerEvent } from "../types.js";
 
 // A sensitive path knowable from args: basename `id_rsa` is flagged by
 // isSensitivePath regardless of location, so the pre-execute floor-set fires.
@@ -135,5 +136,130 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
     expect(String(webMsg?.content)).toMatch(/BLOCKED by data lineage|tainted/i);
 
     clearSessionTaint(session);
+  });
+});
+
+// TD-4: on a dedup hit, dedupCheckPhase used to push the tool msg + emit
+// tool_end via terminate(), and then the trailing auditPhase pushed a SECOND
+// tool message + second tool_end for the same tool_call_id. The MCP route
+// serialized both; provider replays 400'd on the duplicate id. The invariant:
+// a dedup-hit call yields exactly ONE tool message and ONE tool_end.
+describe("dedup hit emits the tool result exactly once (TD-4)", () => {
+  beforeAll(() => setAriRequired(false));
+  afterAll(() => setAriRequired(true));
+  beforeEach(() => _clearDedupCacheForTests());
+
+  // A stub whose execute() would surface DISTINCT content — so if a dedup
+  // miss let it run, the assertion on the cached content below would fail.
+  // On a genuine hit the phase halts BEFORE sandbox and this never runs.
+  function freshTool(name: string): ToolDefinition {
+    return {
+      name,
+      description: "",
+      parameters: { type: "object", properties: {} },
+      readOnly: true,
+      concurrencySafe: true,
+      execute: async (): Promise<ToolResult> => ({ content: "FRESH-EXECUTION-SHOULD-NOT-APPEAR", isError: false }),
+    } as unknown as ToolDefinition;
+  }
+
+  it("a dedup hit returns one tool message and one tool_end, annotated as deduplicated", async () => {
+    const toolMap = new Map<string, ToolDefinition>([
+      ["fetch_stub", freshTool("fetch_stub")],
+    ]);
+    const session = "td4-dedup-session";
+    const events: ServerEvent[] = [];
+    const onEvent = (e: ServerEvent) => { events.push(e); };
+    const args = JSON.stringify({ q: "same" });
+
+    // Seed the dedup cache directly so this call is a genuine within-turn
+    // repeat. (Exercising the hit path in isolation — the record path that
+    // would populate this in production is a separate concern.)
+    dedupRecord(session, "fetch_stub", args, {
+      msgs: [],
+      allowed: true,
+      result: { content: "cached-payload-42", isError: false },
+      resultContent: "cached-payload-42",
+    });
+
+    const msgs = await executeToolCalls(
+      [{ id: "call-2", name: "fetch_stub", arguments: args }],
+      toolMap, undefined as never, undefined, undefined, undefined, undefined, session, onEvent,
+    );
+
+    // Exactly ONE tool message for call-2 — not the terminate+audit pair that
+    // the pre-fix hit path produced (two msgs + two tool_end under one id).
+    const toolMsgs = msgs.filter(
+      (m) => m.role === "tool" && (m as { tool_call_id?: string }).tool_call_id === "call-2",
+    );
+    expect(toolMsgs).toHaveLength(1);
+    expect(msgs).toHaveLength(1);
+    // The reused CACHED result (not a fresh execution) + the dedup annotation.
+    expect(String(toolMsgs[0].content)).toContain("cached-payload-42");
+    expect(String(toolMsgs[0].content)).toContain("deduplicated");
+    expect(String(toolMsgs[0].content)).not.toContain("FRESH-EXECUTION");
+
+    // Exactly ONE tool_end event for call-2.
+    const ends = events.filter(
+      (e) => e.type === "tool_end" && (e as { toolCallId?: string }).toolCallId === "call-2",
+    );
+    expect(ends).toHaveLength(1);
+  });
+});
+
+// TD-7: dispatchSingleToolCall hardcoded { isError: false, status: "ok" },
+// so blocked/errored calls reported silent success to adopters of the
+// unified entry. It must recover the real status from the rendered header
+// (parseStatusHeader), like the canonical dispatcher does.
+describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () => {
+  beforeAll(() => setAriRequired(false));
+  afterAll(() => setAriRequired(true));
+  beforeEach(() => _clearDedupCacheForTests());
+
+  function resultTool(name: string, result: ToolResult): ToolDefinition {
+    return {
+      name,
+      description: "",
+      parameters: { type: "object", properties: {} },
+      readOnly: true,
+      concurrencySafe: true,
+      execute: async (): Promise<ToolResult> => result,
+    } as unknown as ToolDefinition;
+  }
+
+  it("a blocked tool result surfaces as status 'blocked' / isError true", async () => {
+    const toolMap = new Map<string, ToolDefinition>([
+      ["deny_stub", resultTool("deny_stub", { content: "denied by gate", isError: true, status: "blocked" })],
+    ]);
+    const r = await dispatchSingleToolCall(
+      { id: "x1", name: "deny_stub", args: {} },
+      { toolMap, security: undefined as never },
+    );
+    expect(r.status).toBe("blocked");
+    expect(r.isError).toBe(true);
+  });
+
+  it("an errored tool result surfaces as status 'error' / isError true", async () => {
+    const toolMap = new Map<string, ToolDefinition>([
+      ["err_stub", resultTool("err_stub", { content: "boom", isError: true, status: "error" })],
+    ]);
+    const r = await dispatchSingleToolCall(
+      { id: "x2", name: "err_stub", args: {} },
+      { toolMap, security: undefined as never },
+    );
+    expect(r.status).toBe("error");
+    expect(r.isError).toBe(true);
+  });
+
+  it("a successful tool result still reports ok / isError false", async () => {
+    const toolMap = new Map<string, ToolDefinition>([
+      ["ok_stub", resultTool("ok_stub", { content: "fine", isError: false })],
+    ]);
+    const r = await dispatchSingleToolCall(
+      { id: "x3", name: "ok_stub", args: {} },
+      { toolMap, security: undefined as never },
+    );
+    expect(r.status).toBe("ok");
+    expect(r.isError).toBe(false);
   });
 });

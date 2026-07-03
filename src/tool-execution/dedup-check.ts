@@ -1,12 +1,12 @@
 // Dedup phase — runs after enforcePolicyPhase (so policy denials win)
-// and before requireApprovalPhase. On hit: terminates the chain with the
-// prior result, annotated so the model sees that this was a suppressed
-// repeat call rather than a fresh execution. On miss: no-op; the record
-// phase runs after sandbox to capture the result.
+// and before requireApprovalPhase. On hit: halts the chain with the prior
+// result on ctx.result, annotated so the model sees that this was a
+// suppressed repeat call rather than a fresh execution. On miss: no-op;
+// the record phase runs after sandbox to capture the result.
 
 import { dedupLookup, dedupRecord } from "./dedup-cache.js";
 import type { Phase, ToolCallContext } from "./context.js";
-import { terminate, CONTINUE } from "./context.js";
+import { CONTINUE, HALT } from "./context.js";
 
 function scopeFor(ctx: ToolCallContext): string | undefined {
   // Prefer runId when the call is part of a spawned-agent run (more
@@ -24,18 +24,19 @@ export const dedupCheckPhase: Phase = async (ctx: ToolCallContext) => {
   const annotation =
     `[deduplicated: same args as a prior call this turn — original result reused, no re-execution]`;
 
-  if (hit.result) {
-    const annotated = {
-      ...hit.result,
-      content: `${hit.result.content}\n\n${annotation}`,
-    };
-    return terminate(ctx, { rendered: "model", result: annotated, allowed: hit.allowed });
-  }
-  return terminate(ctx, {
-    rendered: "raw",
-    content: `${hit.resultContent}\n\n${annotation}`,
-    allowed: hit.allowed,
-  });
+  // On a hit we set ctx.result and halt WITHOUT pushing a tool msg or
+  // emitting tool_end here: the orchestrator runs the trailing auditPhase
+  // for the dedup position, and audit's shapeMsg + tool_end is the SINGLE
+  // emitter. Emitting in both places (the old terminate() path) produced
+  // two tool messages + two tool_end events under one tool_call_id — the
+  // MCP route serialized both and provider replays 400'd on the dup id.
+  ctx.allowed = hit.allowed;
+  ctx.result = hit.result
+    ? { ...hit.result, content: `${hit.result.content}\n\n${annotation}` }
+    : hit.allowed
+      ? { content: `${hit.resultContent}\n\n${annotation}` }
+      : { content: `${hit.resultContent}\n\n${annotation}`, isError: true, status: "blocked" };
+  return HALT;
 };
 
 /** Post-sandbox record phase. Reads the executed result off ctx and

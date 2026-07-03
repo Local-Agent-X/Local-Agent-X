@@ -19,6 +19,7 @@ import { captureRollbackPhase } from "./capture-rollback.js";
 import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
 import { auditPhase } from "./audit-tool-call.js";
+import { parseStatusHeader } from "../tools/result-helpers.js";
 import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
 
 async function executeSingleTool(
@@ -51,8 +52,11 @@ async function executeSingleTool(
     // a same-args repeat short-circuits before we re-prompt the user for
     // approval or re-execute side effects. See dedup-cache.ts header for
     // the class of bugs this catches (MCP-loop dupes from Anthropic CLI's
-    // multi-step tool use). On a dedup hit we still run audit so threat +
-    // hooks observe the reused result.
+    // multi-step tool use). On a dedup hit the phase sets ctx.result and
+    // halts WITHOUT emitting; the trailing auditPhase here is the single
+    // emitter of the tool msg + tool_end (threat + hooks still observe
+    // the reused result, and the model never sees two tool messages under
+    // one tool_call_id).
     if ((await dedupCheckPhase(ctx)).kind === "halt") {
       await auditPhase(ctx);
       return ctx.msgs;
@@ -154,7 +158,13 @@ export async function dispatchSingleToolCall(
   );
   const last = msgs[msgs.length - 1];
   const content = typeof last?.content === "string" ? last.content : "";
-  return { content, isError: false, status: "ok" };
+  // Recover the real envelope status from the rendered header (the inverse
+  // of renderToolResultForModel) — the canonical dispatcher does the same.
+  // Hardcoding isError:false here reported blocked/errored/timed-out calls
+  // as "ok" to every adopter of this unified entry. `running` stays
+  // non-error: the START succeeded, work continues async.
+  const status = parseStatusHeader(content);
+  return { content, isError: status !== "ok" && status !== "running", status };
 }
 
 // Read-only tools are implicitly safe to parallelize (they never mutate

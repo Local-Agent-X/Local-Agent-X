@@ -7,8 +7,9 @@
  *   1. GET/HEAD body rejection — RFC 9110 §9.3.1/9.3.2. A body on GET/HEAD
  *      is a data-exfiltration vector (smuggling past URL-only logging).
  *
- *   2. Outbound secret-shape scan — scans pre-resolution body and header
- *      values for hardcoded credentials (model-emitted, possibly from a
+ *   2. Outbound secret-shape scan — scans the pre-resolution URL, body, and
+ *      header values (every method — a GET query string is the classic exfil
+ *      vector) for hardcoded credentials (model-emitted, possibly from a
  *      prompt-injected web page). Blocks unless the destination host is in
  *      the trusted-destinations list (~/.lax/egress-allowlist.json).
  *      {{SECRET_NAME}} placeholders are not secret-shaped so they pass
@@ -77,12 +78,13 @@ export function checkOutboundRequest(args: GuardArgs): GuardBlock | null {
     };
   }
 
-  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return null;
-
-  // GET/HEAD/OPTIONS already short-circuited above, so the URL adds nothing to
-  // scan here — includeUrl=false. The shared helper (security/outbound-payload.ts)
-  // assembles the same body + header-value byte set the exfil analyzer scans.
-  const preScanText = outboundPayloadParts(args, { includeUrl: false });
+  // Scan the FULL wire bytes — URL included — for EVERY method (SC-2). A secret
+  // in a GET query string is the classic exfil vector: without a pre-flight URL
+  // scan the request leaves before the threat tool-chain's post-execution audit
+  // sees it, and a POST URL can carry a query-string secret just like its body.
+  // includeUrl=true keeps this byte set identical to the exfil analyzer's
+  // (security/outbound-payload.ts assembles both).
+  const preScanText = outboundPayloadParts(args, { includeUrl: true });
   if (!preScanText) return null;
 
   const scan = scanForSecrets(preScanText);

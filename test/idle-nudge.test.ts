@@ -33,6 +33,32 @@ describe("recordSessionLastMessage + isLastMessageCasual", () => {
     expect(isLastMessageCasual(s)).toBe(true);
   });
 
+  it("returns false for a SHORT imperative delegation (OP-12: 'now do the mobile version')", () => {
+    // Pre-fix, any message ≤30 chars was casual, so this 26-char task was
+    // hard-blocked from delegating for 10 min after any op completed. A terse
+    // imperative carrying a delegation verb is real work, not an ack.
+    const s = sid("short-task");
+    const msg = "now do the mobile version";
+    expect(msg.length).toBeLessThanOrEqual(30);
+    recordSessionLastMessage(s, msg);
+    expect(isLastMessageCasual(s)).toBe(false);
+  });
+
+  it("returns false for other short imperatives ('fix the login bug', 'add dark mode')", () => {
+    const a = sid("short-fix");
+    recordSessionLastMessage(a, "fix the login bug");
+    expect(isLastMessageCasual(a)).toBe(false);
+    const b = sid("short-add");
+    recordSessionLastMessage(b, "add dark mode");
+    expect(isLastMessageCasual(b)).toBe(false);
+  });
+
+  it("still treats a short message with NO work verb as casual ('sounds good')", () => {
+    const s = sid("short-nowork");
+    recordSessionLastMessage(s, "sounds good");
+    expect(isLastMessageCasual(s)).toBe(true);
+  });
+
   it("returns false for a long substantive message", () => {
     const s = sid("substantive");
     recordSessionLastMessage(s, "Please refactor the worker pool dispatch loop to use a priority queue with proper FIFO within lanes");

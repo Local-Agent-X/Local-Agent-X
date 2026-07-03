@@ -97,7 +97,7 @@ describe("op_submit_async — host-op self-block regression", () => {
     expect(result.content).toMatch(/submitted|queued/);
   });
 
-  it("STILL blocks when a real peer op (non chat_turn) is live for the session", async () => {
+  it("STILL blocks when a NEAR-DUPLICATE real peer op (non chat_turn) is live", async () => {
     const sessionId = `chat-test-${Date.now().toString(36)}-peer`;
     const hostOp = persist(mkOp(newOpId("op_chat_turn"), "chat_turn", "running"));
     const peerOp = persist(mkOp(newOpId("op_freeform"), "freeform", "running"));
@@ -105,12 +105,34 @@ describe("op_submit_async — host-op self-block regression", () => {
     trackOpForSession(peerOp.id, sessionId, peerOp.task);
 
     const result = await opSubmitAsyncTool.execute({
-      task: "another delegation",
+      task: "peer task for freeform", // same work as the live peer op
       lane: "interactive",
       _sessionId: sessionId,
     });
 
     expect(result.content).toMatch(/^BLOCKED/);
+  });
+
+  it("does NOT block a DISTINCT task while an unrelated peer op is live (parallel fan-out)", async () => {
+    // OP-13: the live-peer guard used to serialize a session to one op at a
+    // time — ANY running peer blocked every new submission, so legitimate
+    // fan-out ("research the market" while "build the landing page" runs) was
+    // impossible. The guard now blocks only near-duplicate tasks; the lane caps
+    // bound real concurrency. A distinct task must sail through.
+    const sessionId = `chat-test-${Date.now().toString(36)}-fanout`;
+    const hostOp = persist(mkOp(newOpId("op_chat_turn"), "chat_turn", "running"));
+    const peerOp = persist(mkOp(newOpId("op_freeform"), "freeform", "running"));
+    trackOpForSession(hostOp.id, sessionId, hostOp.task);
+    trackOpForSession(peerOp.id, sessionId, peerOp.task); // task: "peer task for freeform"
+
+    const result = await opSubmitAsyncTool.execute({
+      task: "research the competitor pricing pages and summarize", // unrelated
+      lane: "interactive",
+      _sessionId: sessionId,
+    });
+
+    expect(result.content).not.toMatch(/^BLOCKED/);
+    expect(result.content).toMatch(/submitted|queued/);
   });
 
   it("BLOCKED text contains no literal op_<…>_<…> ids the model can parrot", async () => {
@@ -121,7 +143,7 @@ describe("op_submit_async — host-op self-block regression", () => {
     trackOpForSession(peerOp.id, sessionId, peerOp.task);
 
     const result = await opSubmitAsyncTool.execute({
-      task: "another delegation",
+      task: "peer task for freeform",
       lane: "interactive",
       _sessionId: sessionId,
     });
@@ -143,7 +165,7 @@ describe("op_submit_async — host-op self-block regression", () => {
     trackOpForSession(peerOp.id, sessionId, peerOp.task);
 
     const result = await opSubmitAsyncTool.execute({
-      task: "another delegation",
+      task: "peer task for freeform",
       lane: "interactive",
       _sessionId: sessionId,
     });
@@ -171,7 +193,7 @@ describe("op_submit_async — host-op self-block regression", () => {
     trackOpForSession(peerOp.id, sessionId, peerOp.task);
 
     const result = await opSubmitAsyncTool.execute({
-      task: "another delegation",
+      task: "peer task for freeform",
       lane: "interactive",
       _sessionId: sessionId,
     });

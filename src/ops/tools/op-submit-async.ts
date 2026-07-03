@@ -23,6 +23,22 @@ import {
   SUBMIT_DEDUP_WINDOW_MS,
 } from "./shared.js";
 
+/**
+ * Near-duplicate test between two task strings — same normalization the
+ * completion-history dedup uses (pending-notifications.findRecentCompletionMatching):
+ * lowercase, collapse whitespace, cap length, and treat either string being a
+ * substring of the other as a match. Used to decide whether a LIVE peer op is
+ * the SAME work as this new submission. Distinct tasks (parallel fan-out) fall
+ * through so the guard blocks re-delegation without serializing the session.
+ */
+function tasksNearDuplicate(a: string, b: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120);
+  const x = norm(a);
+  const y = norm(b);
+  if (x.length < 8 || y.length < 8) return false;
+  return x.includes(y) || y.includes(x);
+}
+
 export const opSubmitAsyncTool: ToolDefinition = {
   name: "op_submit_async",
   description:
@@ -35,12 +51,16 @@ export const opSubmitAsyncTool: ToolDefinition = {
 
     const sessionId = String(args._sessionId || "");
     if (sessionId) {
-      // PRIMARY GUARD: any PEER op from this session still RUNNING blocks
-      // new spawns regardless of how much time has passed. Live failure:
-      // agent submitted an op that ran 125+ seconds; the 30s dedup window
-      // expired mid-run, so the agent's retry calls SUCCEEDED in spawning
-      // duplicates. By the time the user noticed they had 4 parallel
-      // research ops on the same topic. Block while live.
+      // PRIMARY GUARD: a live PEER op whose task is a NEAR-DUPLICATE of this
+      // submission blocks the new spawn regardless of how much time has passed.
+      // Live failure: agent submitted an op that ran 125+ seconds; the 30s
+      // dedup window expired mid-run, so the agent's retry calls SUCCEEDED in
+      // spawning duplicates of the SAME research op. Block while live.
+      //
+      // But only near-duplicates — distinct live peers are legitimate parallel
+      // fan-out ("research X" while "build Y" runs), and the lane caps already
+      // bound real concurrency. Blocking ALL live peers serialized every
+      // session to one op at a time and forced heavy work onto the chat turn.
       //
       // EXCLUDE the interactive HOST turn (chat_turn OR voice_turn): the host
       // wrapper is the op running this very tool call (chat-runner.ts:308 /
@@ -53,7 +73,8 @@ export const opSubmitAsyncTool: ToolDefinition = {
       const liveOps = listOpsForSession(sessionId)
         .map(id => readOp(id))
         .filter((o): o is NonNullable<typeof o> => !!o)
-        .filter(o => (o.status === "running" || o.status === "pending") && !isInteractiveHostOpType(o.type));
+        .filter(o => (o.status === "running" || o.status === "pending") && !isInteractiveHostOpType(o.type))
+        .filter(o => tasksNearDuplicate(o.task, task));
       if (liveOps.length > 0) {
         const live = liveOps[0];
         return {

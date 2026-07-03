@@ -54,6 +54,13 @@ export function markSessionExplicitNotify(sessionId: string, userMessage: string
 const lastUserMessages = new Map<string, string>();
 const SHORT_CASUAL_RE = /^(yes|no|ok|okay|sure|thanks|thx|ty|hi|hello|hey|yo|sup|cool|nice|great|thanks!|got it|kk|k|alright)\b/i;
 
+// Real work-intent: an imperative delegation verb (a terse task, not an ack).
+// The length heuristic below alone flagged EVERY message ≤30 chars as casual,
+// so "now do the mobile version" (26 chars) got hard-blocked from delegating.
+// When this matches, the message carries a task and must NOT be treated as
+// casual regardless of length — the length rule only applies when this fails.
+const WORK_INTENT_RE = /\b(do|make|build|create|add|fix|update|change|write|implement|refactor|generate|run|deploy|set\s?up|remove|delete|port|convert|redo|rework|continue|finish|ship|design|wire|integrate|migrate|rename|split|extend|hook\s?up|render)\b/i;
+
 export function recordSessionLastMessage(sessionId: string, userMessage: string): void {
   if (!sessionId || !userMessage) return;
   lastUserMessages.set(sessionId, userMessage);
@@ -63,7 +70,12 @@ export function isLastMessageCasual(sessionId: string): boolean {
   const msg = lastUserMessages.get(sessionId);
   if (!msg) return false;
   const trimmed = msg.trim();
-  return trimmed.length <= 30 || SHORT_CASUAL_RE.test(trimmed);
+  // Explicit greeting/ack prefixes ("ok", "thanks", "yo …") are always casual.
+  if (SHORT_CASUAL_RE.test(trimmed)) return true;
+  // A short message is casual ONLY when it carries no delegation verb — a
+  // terse imperative like "now do the mobile version" is real work, not an
+  // ack, and must be allowed through to delegate.
+  return trimmed.length <= 30 && !WORK_INTENT_RE.test(trimmed);
 }
 
 let broadcaster: ((sessionId: string, event: ServerEvent) => void) | null = null;

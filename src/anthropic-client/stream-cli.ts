@@ -199,12 +199,16 @@ async function* streamViaColdSpawn(options: StreamOptions): AsyncGenerator<Strea
     const progress = startProgressTimer();
     const state = createCliStreamState();
     const validToolNames = new Set((tools ?? []).map(t => t.name));
+    // Streaming decoder, NOT chunk.toString(): toString() decodes each pipe
+    // chunk independently, so a multibyte char (emoji/CJK) split across
+    // chunks becomes U+FFFD on both sides. Same pattern as stream-api.ts.
+    const stdoutDecoder = new TextDecoder();
     let buffer = "";
     let firstResponseHandled = false;
 
     try {
       for await (const chunk of proc.stdout as AsyncIterable<Buffer>) {
-        buffer += chunk.toString();
+        buffer += stdoutDecoder.decode(chunk, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
@@ -222,7 +226,10 @@ async function* streamViaColdSpawn(options: StreamOptions): AsyncGenerator<Strea
           }
         }
       }
-      // Process leftover buffer (last partial line without newline)
+      // Process leftover buffer (last partial line without newline).
+      // Flush the decoder first — it may hold the tail bytes of an
+      // incomplete multibyte sequence from the final chunk.
+      buffer += stdoutDecoder.decode();
       for (const ev of processLeftoverBuffer(buffer, state, validToolNames)) {
         yield ev;
       }

@@ -82,8 +82,12 @@ export function spawnWarmProcess(key: WarmPoolKey, callbacks: SpawnCallbacks): W
     if (wp.stderr.length > 4096) wp.stderr = wp.stderr.slice(-2048);
   });
 
+  // Streaming decoder, NOT chunk.toString(): toString() decodes each pipe
+  // chunk independently, so a multibyte char (emoji/CJK) split across
+  // chunks becomes U+FFFD on both sides. Same pattern as stream-api.ts.
+  const stdoutDecoder = new TextDecoder();
   proc.stdout?.on("data", (chunk: Buffer) => {
-    wp.buffer += chunk.toString();
+    wp.buffer += stdoutDecoder.decode(chunk, { stream: true });
     const lines = wp.buffer.split("\n");
     wp.buffer = lines.pop() || "";
     for (const line of lines) {

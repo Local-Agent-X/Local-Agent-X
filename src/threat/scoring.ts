@@ -31,6 +31,17 @@ export class ThreatScorer {
   private rawLoad = 0;
   private lastEventAt: number | null = null;
   private successfulTurnsSinceLastEvent = 0;
+  /** Latch: a confirmed breach was observed. Unlike the probabilistic load
+   *  model, this cannot be excused by trust budget or decay. */
+  private confirmedBreach = false;
+
+  /** Event types that are PROOF of compromise, not a probabilistic signal.
+   *  A canary token leaving the session is a confirmed prompt-injection
+   *  exfiltration — no starting budget or decay credit should absorb it, so
+   *  these latch the session into restricted mode on the first occurrence. */
+  private static readonly CONFIRMED_BREACH_TYPES: ReadonlySet<string> = new Set([
+    "canary_tripped",
+  ]);
 
   readonly ELEVATED_THRESHOLD = 30;
   readonly HIGH_THRESHOLD = 60;
@@ -64,6 +75,11 @@ export class ThreatScorer {
     // accrued before this signal don't excuse it.
     this.lastEventAt = t;
     this.successfulTurnsSinceLastEvent = 0;
+
+    // A confirmed breach (e.g. a tripped canary) is not a probabilistic
+    // signal the budget model can absorb — latch the session as restricted.
+    if (ThreatScorer.CONFIRMED_BREACH_TYPES.has(type)) this.confirmedBreach = true;
+
     return this.getStatus();
   }
 
@@ -113,19 +129,21 @@ export class ThreatScorer {
     return Math.max(0, this.rawLoad - credit);
   }
 
-  /** Get current threat level — based on effective load (budget + decay). */
+  /** Get current threat level — based on effective load (budget + decay).
+   *  A confirmed breach floors the level at `critical` regardless of load. */
   getStatus(): { score: number; level: ThreatLevel } {
     const s = Math.round(this.effectiveLoad());
     let level: ThreatLevel = "normal";
-    if (s >= this.CRITICAL_THRESHOLD) level = "critical";
+    if (this.confirmedBreach || s >= this.CRITICAL_THRESHOLD) level = "critical";
     else if (s >= this.HIGH_THRESHOLD) level = "high";
     else if (s >= this.ELEVATED_THRESHOLD) level = "elevated";
     return { score: s, level };
   }
 
-  /** Check if we should restrict operations — uses effective load. */
+  /** Check if we should restrict operations — uses effective load, but a
+   *  confirmed breach latches restriction on regardless of trust budget. */
   isRestricted(): boolean {
-    return this.effectiveLoad() >= this.HIGH_THRESHOLD;
+    return this.confirmedBreach || this.effectiveLoad() >= this.HIGH_THRESHOLD;
   }
 
   /** Raw accumulated load before budget/decay credits — for diagnostics. */
@@ -143,6 +161,7 @@ export class ThreatScorer {
     this.rawLoad = 0;
     this.lastEventAt = null;
     this.successfulTurnsSinceLastEvent = 0;
+    this.confirmedBreach = false;
   }
 }
 

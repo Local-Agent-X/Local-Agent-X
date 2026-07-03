@@ -105,6 +105,43 @@ describe("ThreatScorer — reset", () => {
   });
 });
 
+describe("ThreatScorer — confirmed breach latch (canary trip)", () => {
+  it("a single canary trip forces restriction even under the default budget", () => {
+    // Regression for SC-3: canary_tripped (50) < default startingBudget (60),
+    // so the old model gave effectiveLoad 0 → normal → external tools open.
+    const s = new ThreatScorer(); // defaults: budget=60
+    s.record("canary_tripped", THREAT_SCORES.canary_tripped, "leaked canary token");
+    expect(s.isRestricted()).toBe(true);
+    expect(s.getStatus().level).toBe("critical");
+  });
+
+  it("the restriction latches — a subsequent calm turn does not unlock it", () => {
+    let clock = 1_000_000;
+    const s = new ThreatScorer({ now: () => clock }); // default budget/decay
+    s.record("canary_tripped", THREAT_SCORES.canary_tripped, "leak");
+    // Trust regeneration must not excuse a confirmed breach.
+    for (let i = 0; i < 100; i++) s.recordSuccessfulTurn();
+    clock += 100 * 60 * 60 * 1000; // 100 hours of quiet
+    expect(s.isRestricted()).toBe(true);
+  });
+
+  it("reset clears the breach latch", () => {
+    const s = new ThreatScorer();
+    s.record("canary_tripped", THREAT_SCORES.canary_tripped, "leak");
+    expect(s.isRestricted()).toBe(true);
+    s.reset();
+    expect(s.isRestricted()).toBe(false);
+    expect(s.getStatus().level).toBe("normal");
+  });
+
+  it("non-canary sub-budget signals still stay normal (latch is scoped to confirmed breaches)", () => {
+    const s = new ThreatScorer(); // budget=60
+    s.record("sensitive_file_read", THREAT_SCORES.sensitive_file_read, "x");
+    expect(s.isRestricted()).toBe(false);
+    expect(s.getStatus().level).toBe("normal");
+  });
+});
+
 describe("THREAT_SCORES — invariants", () => {
   it("critical-class events are scored higher than medium-class events", () => {
     expect(THREAT_SCORES.credential_in_output).toBeGreaterThan(THREAT_SCORES.shell_command);

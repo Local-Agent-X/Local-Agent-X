@@ -261,7 +261,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
   } finally {
     killProbe(probeProc);
     if (probeDataDir) await rmRetry(probeDataDir, "probe data dir");
-    releaseGlobalSelfEditLock();
+    releaseGlobalSelfEditLock(lock.nonce);
   }
 }
 
@@ -300,7 +300,7 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
   } catch (e) {
     return { ok: false, fromCommit: "", toCommit: "", detail: (e as Error).message };
   } finally {
-    releaseGlobalSelfEditLock();
+    releaseGlobalSelfEditLock(lock.nonce);
   }
 }
 

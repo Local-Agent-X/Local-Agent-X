@@ -264,7 +264,7 @@ export const selfEditTool: ToolDefinition = {
     // one runSelfEditInSandbox takes). Tracked here so the finally releases it
     // only when this call actually acquired it. The sandbox path manages the
     // global lock internally, so we never touch it on that branch.
-    let globalLockHeld = false;
+    let globalLockNonce: string | undefined;
 
     try {
       // Default flow: sandboxed via worktree + 3-gate validation. Skipped when
@@ -298,7 +298,7 @@ export const selfEditTool: ToolDefinition = {
         // retry-loop. isError:false so the breaker doesn't trip.
         return { content: formatGlobalLockBusy(gLock.holder, task), isError: false };
       }
-      globalLockHeld = true;
+      globalLockNonce = gLock.nonce;
       const subprocessCwd = internalCwd || LAX_REPO_ROOT;
 
       // _unsafe is the deliberate gateless escape hatch — it writes straight
@@ -328,7 +328,7 @@ export const selfEditTool: ToolDefinition = {
       onProgress("Running source-code repair…");
       return await runSelfEditBypass(subprocessCwd, fullPrompt, combinedSignal);
     } finally {
-      if (globalLockHeld) releaseGlobalSelfEditLock();
+      if (globalLockNonce) releaseGlobalSelfEditLock(globalLockNonce);
       releaseLock();
     }
   },

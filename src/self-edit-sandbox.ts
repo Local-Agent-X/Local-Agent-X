@@ -339,7 +339,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // would brick every later self_edit AND applyGitUpdate. No-op when the
     // entry is already gone (merged) or was never registered (create failed).
     releaseWorktreeSlot(name);
-    releaseGlobalSelfEditLock();
+    releaseGlobalSelfEditLock(lock.nonce);
   }
 }
 

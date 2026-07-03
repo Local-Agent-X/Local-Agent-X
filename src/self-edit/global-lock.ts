@@ -45,16 +45,25 @@ export interface LockHolder {
   task?: string;
 }
 
-/** Nonce of the lock this process currently holds — set on successful acquire,
- *  cleared when we delete our own lock. Authoritative in-process bookkeeping:
- *  a same-pid lock file whose nonce we are tracking belongs to a genuinely live
- *  run; one we are NOT tracking was leaked (crash between acquire and the
- *  finally-release) and is immediately reclaimable. */
-let currentNonce: string | undefined;
+/** Nonces of the locks this process currently holds — one per LIVE acquire, added
+ *  on successful create and removed when THAT run releases. self_edit runs
+ *  in-process and the `_unsafe` rescue can force-steal a live lock, so two runs
+ *  of THIS pid can overlap: a single scalar can't tell them apart (a force-steal
+ *  would overwrite it and the displaced run would then "own" the stealer's nonce
+ *  and delete its live lock — AB-6). A set of live nonces keeps every concurrent
+ *  run's token distinct: a same-pid lock file whose nonce is in this set belongs
+ *  to a genuinely live run; one that is NOT belongs to a leaked/displaced run and
+ *  is immediately reclaimable. Each run captures ITS nonce (returned from acquire)
+ *  and passes it back to release, so release only unlinks the lock it still owns. */
+const liveNonces = new Set<string>();
 
 export interface LockResult {
   acquired: boolean;
   holder?: LockHolder;
+  /** The per-run nonce for a SUCCESSFUL acquire. The caller must hold onto this
+   *  and pass it to releaseGlobalSelfEditLock(nonce) so only THIS run can unlink
+   *  its own lock — never a later run that reclaimed/force-stole the slot. */
+  nonce?: string;
 }
 
 export interface AcquireOptions {
@@ -74,15 +83,16 @@ function isPidAlive(pid: number): boolean {
 
 /** A lock is reclaimable if its holder is provably not a live run:
  *  - dead holder pid → reclaim;
- *  - OUR pid → the in-process nonce bookkeeping decides. Tracked nonce = the run
- *    is genuinely still going, NEVER reclaim (a worst-case run outlives any TTL,
- *    and reclaiming it puts two self_edits in the shared node_modules at once);
- *    untracked = leaked by a crash-before-release, reclaim immediately;
+ *  - OUR pid → the in-process nonce bookkeeping decides. Nonce in liveNonces = a
+ *    run is genuinely still going, NEVER reclaim (a worst-case run outlives any
+ *    TTL, and reclaiming it puts two self_edits in the shared node_modules at
+ *    once); a nonce we are not tracking (or a legacy lock with none) was leaked
+ *    by a crash-before-release, reclaim immediately;
  *  - another LIVE pid → we can't introspect it, so fall back to the age TTL. */
 function isReclaimable(holder: LockHolder): boolean {
   if (!isPidAlive(holder.pid)) return true;
   if (holder.pid === process.pid) {
-    return currentNonce === undefined || holder.nonce !== currentNonce;
+    return holder.nonce === undefined || !liveNonces.has(holder.nonce);
   }
   const ageMs = Date.now() - Date.parse(holder.startedAt);
   return Number.isFinite(ageMs) && ageMs > STALE_AFTER_MS;
@@ -122,17 +132,17 @@ export function formatGlobalLockBusy(holder: LockHolder | undefined, incomingTas
   );
 }
 
-/** Atomically create the lock file (fails if it already exists). Returns false
- *  on EEXIST, true on success; rethrows anything else. The `wx` flag is the
- *  OS-level exclusive create that closes the check-then-write race. */
-function tryCreateLock(task?: string): boolean {
+/** Atomically create the lock file (fails if it already exists). Returns the new
+ *  run's nonce on success, undefined on EEXIST; rethrows anything else. The `wx`
+ *  flag is the OS-level exclusive create that closes the check-then-write race. */
+function tryCreateLock(task?: string): string | undefined {
   const nonce = randomUUID();
   try {
     writeFileSync(SANDBOX_LOCK, lockPayload(nonce, task), { mode: 0o600, flag: "wx" });
-    currentNonce = nonce;
-    return true;
+    liveNonces.add(nonce);
+    return nonce;
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") return false;
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") return undefined;
     throw e;
   }
 }
@@ -146,7 +156,8 @@ function tryCreateLock(task?: string): boolean {
  */
 export function acquireGlobalSelfEditLock(opts: AcquireOptions = {}): LockResult {
   mkdirSync(getLaxDir(), { recursive: true, mode: 0o700 });
-  if (tryCreateLock(opts.task)) return { acquired: true };
+  let nonce = tryCreateLock(opts.task);
+  if (nonce) return { acquired: true, nonce };
 
   // Lock exists — inspect the holder.
   const holder = readHolder();
@@ -161,7 +172,8 @@ export function acquireGlobalSelfEditLock(opts: AcquireOptions = {}): LockResult
   }
   // Stale / corrupt / force-stolen — reclaim by removing then re-creating.
   try { unlinkSync(SANDBOX_LOCK); } catch { /* raced */ }
-  if (tryCreateLock(opts.task)) return { acquired: true };
+  nonce = tryCreateLock(opts.task);
+  if (nonce) return { acquired: true, nonce };
 
   // Lost the reclaim race to another process that recreated the lock first.
   return { acquired: false, holder: readHolder() };
@@ -178,19 +190,23 @@ export function isSelfEditLockHeldByLiveProcess(): boolean {
   return !!holder && !isReclaimable(holder);
 }
 
-/** Release the lock, but ONLY if we still own it — matched by the per-run nonce,
- *  not just the pid. self_edit runs in-process, so a lock reclaimed or
- *  force-stolen by a later run in THIS server carries the SAME pid as the run it
- *  displaced; a pid-only check would let the displaced run's finally-release
- *  delete the new owner's lock out from under it. */
-export function releaseGlobalSelfEditLock(): void {
+/** Release the lock, but ONLY if THIS run still owns it — matched by the per-run
+ *  `nonce` the caller captured from acquire, not by the pid and not by a shared
+ *  module global. self_edit runs in-process, so a lock reclaimed or force-stolen
+ *  by a LATER run in THIS server carries the SAME pid as the run it displaced;
+ *  keying release on a single global nonce would let a force-steal reassign that
+ *  global to the stealer, so the displaced run's finally-release would match and
+ *  delete the new owner's LIVE lock out from under it (AB-6). Passing each run's
+ *  own captured nonce is what keeps concurrent same-pid runs distinct: release
+ *  unlinks only when the ON-DISK holder's nonce equals this run's nonce. */
+export function releaseGlobalSelfEditLock(nonce?: string): void {
   try {
+    if (nonce !== undefined) liveNonces.delete(nonce);
     if (!existsSync(SANDBOX_LOCK)) return;
     const holder = readHolder();
-    if (!currentNonce || !holder || holder.pid !== process.pid || holder.nonce !== currentNonce) {
-      return; // not ours anymore
+    if (nonce === undefined || !holder || holder.pid !== process.pid || holder.nonce !== nonce) {
+      return; // not ours anymore (reclaimed / force-stolen by a later run)
     }
-    currentNonce = undefined;
     unlinkSync(SANDBOX_LOCK);
   } catch { /* best-effort */ }
 }

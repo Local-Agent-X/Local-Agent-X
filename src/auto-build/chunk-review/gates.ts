@@ -41,7 +41,8 @@ export interface GateFinding {
     | "phase-gate"
     | "launch-readiness"
     | "test-failures"
-    | "spec-gap-judgment";
+    | "spec-gap-judgment"
+    | "build-exec";
   action: ReviewAction;
   /** One-sentence reasoning. Surfaced to the user on halts. */
   reasoning: string;

@@ -18,11 +18,15 @@
  * follow-up — wire an LLM hook when one's available.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { runChunkReview, runChunkReviewWithJudgment } from "../src/auto-build/chunk-review/index.js";
 import type { JudgmentHook } from "../src/auto-build/chunk-review/judgment-hook.js";
+import type { BuildExecRunner } from "../src/auto-build/chunk-review/gate-build-exec.js";
+import { discoverCommands, findStaticEntry } from "../src/auto-build/chunk-review/gate-build-exec.js";
 import { parseChunkReport } from "../src/auto-build/chunk-review/report-parser.js";
 import {
   gateReportShape,
@@ -621,5 +625,113 @@ describe("Missing-credentials recovery (the no-Supabase-keys class)", () => {
     )!;
     expect(f.action).toBe("halt");
     expect(f.reasoning).toContain("silent-deferral");
+  });
+});
+
+// Regression (2026-07-03): the "says it's fixed but isn't" class. Every gate
+// above reasons over STRINGS THE AGENT TYPED. A chunk that writes a perfectly
+// clean report — STATUS: done / DONE_WHEN: met / TESTS: 5/5 / NEW_FAILURES:
+// none — about a build that actually fails (or a browser game that renders a
+// blank canvas) passed every string gate and committed to main. The
+// build-execution gate is the first that OBSERVES behavior; these tests pin
+// that a clean report can no longer proceed past an observed failure.
+describe("build-exec gate: observed failure overrides a clean report", () => {
+  const cleanReport =
+    "STATUS: done\nDONE_WHEN: met\nCHANGED: index.html, game.js\nTESTS: 5/5\n" +
+    "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
+    "LAUNCH_READINESS: none\nNOTE: game builds and plays.";
+
+  const withExec = (chunk: ParsedChunk, exec: BuildExecRunner, hook?: JudgmentHook) =>
+    runChunkReviewWithJudgment(
+      { chunk, allChunks: [chunk], plan: emptyPlan(chunk), rawReport: cleanReport, projectDir: "/tmp/unused-by-stub" },
+      hook,
+      undefined,
+      exec,
+    );
+
+  it("halts a clean report when the build-exec gate observes a real failure", async () => {
+    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
+    // Sanity: mechanically this report is a clean proceed — the bug is that
+    // that USED to be the final verdict.
+    expect(runChunkReview({ chunk, allChunks: [chunk], plan: emptyPlan(chunk), rawReport: cleanReport }).action).toBe("proceed");
+
+    const failingExec: BuildExecRunner = async () => ({
+      gate: "build-exec",
+      action: "halt",
+      reasoning: "`npm run build` exited 1 — the report claimed done but the command actually FAILS.",
+    });
+    const outcome = await withExec(chunk, failingExec);
+    expect(outcome.action).toBe("halt"); // was silently "proceed" before the gate
+    expect(outcome.findings.find(g => g.gate === "build-exec")).toBeDefined();
+    expect(outcome.reasoning).toContain("actually FAILS");
+  });
+
+  it("proceeds when the build-exec gate observes success (gate doesn't just halt everything)", async () => {
+    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
+    const passingExec: BuildExecRunner = async () => null;
+    const outcome = await withExec(chunk, passingExec);
+    expect(outcome.action).toBe("proceed");
+  });
+
+  it("runs BEFORE the LLM hook — a build failure halts even when the hook would proceed", async () => {
+    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
+    let hookCalled = false;
+    const hook: JudgmentHook = async () => { hookCalled = true; return null; };
+    const failingExec: BuildExecRunner = async () => ({
+      gate: "build-exec", action: "halt", reasoning: "built page renders NOTHING — blank screen.",
+    });
+    const outcome = await withExec(chunk, failingExec, hook);
+    expect(outcome.action).toBe("halt");
+    expect(hookCalled).toBe(false); // exec gate short-circuited before the hook
+  });
+
+  it("fails open — a crashing build-exec runner leaves the mechanical proceed intact", async () => {
+    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
+    const throwingExec: BuildExecRunner = async () => { throw new Error("playwright missing"); };
+    const outcome = await withExec(chunk, throwingExec);
+    expect(outcome.action).toBe("proceed");
+  });
+
+  it("does NOT run when the mechanical verdict is already halt", async () => {
+    const f = loadFixture("chunk-06-silent-deferral.json");
+    const chunk = chunkFromFixture(f);
+    let execCalled = false;
+    const trackingExec: BuildExecRunner = async () => { execCalled = true; return null; };
+    const outcome = await runChunkReviewWithJudgment(
+      { chunk, allChunks: [chunk], plan: emptyPlan(chunk), rawReport: f.agentReport, projectDir: "/tmp/unused" },
+      undefined, undefined, trackingExec,
+    );
+    expect(outcome.action).toBe("halt");
+    expect(execCalled).toBe(false);
+  });
+});
+
+describe("build-exec gate: command + entry discovery (pure)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "buildexec-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("prefers build then test from package.json scripts", () => {
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { build: "vite build", test: "vitest run", lint: "eslint" } }));
+    expect(discoverCommands(dir)).toEqual(["npm run build", "npm test"]);
+  });
+
+  it("returns [] when there's no package.json — nothing to execution-verify", () => {
+    expect(discoverCommands(dir)).toEqual([]);
+  });
+
+  it("returns only what exists (build without test)", () => {
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { build: "tsc" } }));
+    expect(discoverCommands(dir)).toEqual(["npm run build"]);
+  });
+
+  it("finds a dist/index.html static entry to smoke", () => {
+    mkdirSync(join(dir, "dist"));
+    writeFileSync(join(dir, "dist", "index.html"), "<canvas></canvas>");
+    expect(findStaticEntry(dir)).toBe(join(dir, "dist", "index.html"));
+  });
+
+  it("returns null when there's no static entry — a server/CLI build has nothing to headless-load", () => {
+    expect(findStaticEntry(dir)).toBeNull();
   });
 });

@@ -26,6 +26,7 @@ import {
   type ReviewAction,
 } from "./gates.js";
 import type { JudgmentHook } from "./judgment-hook.js";
+import { runBuildExecGate, type BuildExecRunner } from "./gate-build-exec.js";
 
 export interface ChunkReviewInput {
   /** The chunk we just ran. */
@@ -109,15 +110,43 @@ export function runChunkReview(input: ChunkReviewInput): ChunkReviewOutcome {
  *
  * `projectDir` is required because the hook reads constitution +
  * CHANGED files from disk. Tests can pass a tmpdir.
+ *
+ * Before the LLM hook, the build-execution gate runs the project's real
+ * build/test command and headless-smokes the built artifact. It is the only
+ * gate that OBSERVES behavior instead of trusting the agent's report — a
+ * chunk that writes `STATUS: done` about a broken build (or a game that
+ * renders a blank canvas) is caught here even though every string-based gate
+ * passed it. It fires only when the mechanical verdict is already "proceed"
+ * and can only elevate proceed → halt (never downgrades a real halt/push_back).
+ * Injectable so tests stub the runner instead of spawning a build.
  */
 export async function runChunkReviewWithJudgment(
   input: ChunkReviewInput & { projectDir: string },
   hook?: JudgmentHook,
   signal?: AbortSignal,
+  buildExec: BuildExecRunner = runBuildExecGate,
 ): Promise<ChunkReviewOutcome> {
   const base = runChunkReview(input);
-  if (!hook) return base;
   if (base.action !== "proceed") return base;
+
+  // Execution-grounded gate first: a build/test that actually FAILS, or an
+  // artifact that loads blank, halts regardless of the LLM hook's opinion.
+  let execFinding: GateFinding | null = null;
+  try {
+    execFinding = await buildExec({ projectDir: input.projectDir, signal });
+  } catch {
+    execFinding = null; // fail open — a gate crash must not wedge the loop
+  }
+  if (execFinding) {
+    return {
+      action: execFinding.action,
+      reasoning: execFinding.reasoning,
+      findings: [...base.findings, execFinding],
+      report: base.report,
+    };
+  }
+
+  if (!hook) return base;
 
   let result;
   try {

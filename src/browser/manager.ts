@@ -128,6 +128,15 @@ export class BrowserManager {
     this.owned.push(newPage);
     const response = await newPage.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
     const status = response?.status() ?? "unknown";
+    // Same HTTP ≥400 guard as navigate() below — reporting "Status: 404" as a
+    // success string let the agent interact with an error page. Close the
+    // failed tab so it doesn't linger in the tab list, then surface via throw.
+    if (typeof status === "number" && status >= 400) {
+      const failedUrl = newPage.url();
+      this.owned = this.owned.filter((p) => p !== newPage);
+      try { await newPage.close(); } catch { /* already closed */ }
+      throw new Error(`Navigation failed: HTTP ${status} (${failedUrl})`);
+    }
     try { await newPage.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
     await newPage.waitForTimeout(1000);
     this.page = newPage;
@@ -155,8 +164,11 @@ export class BrowserManager {
 
     const title = await page.title();
     const redirect = redirectMessage(requestedHost, safeHost(page.url()));
-    const snap = await this.snapshot();
-    return `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}${redirect}\n\n${snap}`;
+    // Deliberately NO snapshot here: handleNavigate appends the canonical
+    // post-action snapshot (auth-wall prefix + external-content wrap).
+    // Snapshotting here too ran a second full DOM extract + iframe traversal
+    // on every navigate whose output was just "page unchanged" noise.
+    return `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
   }
 
   async click(selector: string): Promise<string> {

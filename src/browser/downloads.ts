@@ -33,12 +33,20 @@ export function getRecentDownloads(limit = 5): Array<{ url: string; path: string
   return recentDownloads.slice(-limit);
 }
 
+// Idempotence guard (same pattern as dialog-handler's WeakMap): adoptPage
+// runs on every switch_tab, so without this a page flipped between N times
+// accumulates N listeners — each racing uniqueDownloadPath for the same file
+// (collisions/duplicates) and tripping the MaxListeners warning.
+const installedPages = new WeakSet<Page>();
+
 // Without this handler, Playwright aborts navigation with "Download is
 // starting" and the file lands nowhere. Save to workspace/downloads/ so the
 // file is reachable from agent tools (read, view_image, edit) AND syncs across
 // machines via the workspace git sync. Users are expected to clean up huge
 // files themselves (>100MB will break GitHub sync — agent should warn).
 export function installDownloadHandler(page: Page): void {
+  if (installedPages.has(page)) return;
+  installedPages.add(page);
   page.on("download", async (download: Download) => {
     try {
       const dir = getDownloadsDir();

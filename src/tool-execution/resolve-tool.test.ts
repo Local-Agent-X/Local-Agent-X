@@ -78,3 +78,56 @@ describe("work-rooted session tool anchoring (dispatch → resolver seam)", () =
     expect(searchRoot({ _sessionId: SESSION })).toBe(WORK_ROOT);
   });
 });
+
+// Drive resolvePhase without asserting a specific outcome — the anti-brick gate
+// HALTs, so the work-root helper (which expects "continue") can't be reused.
+async function resolveRaw(name: string, args: Record<string, unknown>, sessionId?: string) {
+  const ctx = createContext({
+    tc: { id: "p1", name, arguments: JSON.stringify(args) },
+    toolMap: new Map(),
+    security: {} as SecurityLayer,
+    sessionId,
+  });
+  const outcome = await resolvePhase(ctx);
+  return { ctx, outcome };
+}
+
+describe("protected-file anti-brick gate keys on the edit family, not a name list (TD-5)", () => {
+  // "src/tool-execution/" is a protected engine-core tree (config/protected-files.json),
+  // resolved against PLATFORM_ROOT independent of cwd — so this asserts a real block.
+  const PROTECTED = "src/tool-execution/resolve-tool.ts";
+
+  it("blocks EVERY write-class file tool — including the multi_edit/edit_lines synonyms", async () => {
+    // Pre-fix the gate was ["write","edit","delete_file"], so multi_edit and
+    // edit_lines slipped through with identical blast radius. All five map to
+    // ARI action "write" and must be blocked.
+    for (const name of ["write", "edit", "multi_edit", "edit_lines", "delete_file"]) {
+      const { ctx, outcome } = await resolveRaw(name, { path: PROTECTED });
+      expect(outcome.kind, name).toBe("halt");
+      expect(ctx.allowed, name).toBe(false);
+      const msg = ctx.msgs.at(-1);
+      expect(String(msg?.content), name).toContain("BLOCKED");
+    }
+  });
+
+  it("does not block reads or edits to non-protected project files", async () => {
+    const read = await resolveRaw("read", { path: PROTECTED });
+    expect(read.outcome.kind).toBe("continue");
+    const userFile = await resolveRaw("multi_edit", { path: "some/user/project/app.ts" });
+    expect(userFile.outcome.kind).toBe("continue");
+    expect(userFile.ctx.allowed).not.toBe(false);
+  });
+});
+
+describe("deriveCallContext yields 'api' for the unattended MCP bridge (TD-6)", () => {
+  it("an mcp- session runs as 'api', not an interactive 'local' session", async () => {
+    const { ctx } = await resolveRaw("read", { path: "notes.txt" }, "mcp-bridge");
+    expect(ctx.callContext).toBe("api");
+  });
+
+  it("known prefixes still map to their own contexts", async () => {
+    expect((await resolveRaw("read", { path: "x" }, "agent-1")).ctx.callContext).toBe("delegated");
+    expect((await resolveRaw("read", { path: "x" }, "cron-1")).ctx.callContext).toBe("cron");
+    expect((await resolveRaw("read", { path: "x" }, "chat-1")).ctx.callContext).toBe("local");
+  });
+});

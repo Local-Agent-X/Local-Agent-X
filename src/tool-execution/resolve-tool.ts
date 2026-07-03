@@ -11,6 +11,7 @@ import { logRetry } from "../retry-telemetry.js";
 import type { CallContext, Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, HALT } from "./context.js";
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
+import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
 
 // Eval scaffolding — see markDryRunSession docstring below.
@@ -50,7 +51,17 @@ const SESSION_SCOPED_TOOLS = new Set([
 ]);
 
 function deriveCallContext(sessionId: string | undefined): CallContext {
-  return sessionId?.startsWith("agent-") ? "delegated" : sessionId?.startsWith("cron-") ? "cron" : "local";
+  if (sessionId?.startsWith("agent-")) return "delegated";
+  if (sessionId?.startsWith("cron-")) return "cron";
+  // Programmatic MCP-bridge calls (routes/mcp.ts defaults sessionId to
+  // "mcp-bridge" when no chat session is attached) are unattended — they must
+  // NOT inherit interactive privileges. "api" keeps the automated-run
+  // guarantees: protected security settings can't be flipped (pre-dispatch)
+  // and ask-tier approvals block instead of passing (require-approval).
+  // A bridge call stamped with a real chat session id (LAX_MCP_SESSION_ID)
+  // doesn't match this prefix and stays with that session's context.
+  if (sessionId?.startsWith("mcp-")) return "api";
+  return "local";
 }
 
 const SESSION_REPEAT_SKIP_TOOLS = new Set([
@@ -206,9 +217,12 @@ export const resolvePhase: Phase = async (ctx) => {
   }
 
   // Protected files: block writes/deletes to core engine files that would
-  // brick the agent. delete_file is in the list because deletion+recreation
+  // brick the agent. Keyed on the write-action file family (ARI_ACTION_MAP:
+  // write/edit/edit_lines/multi_edit/delete_file), not a literal name list —
+  // multi_edit and edit_lines are registered edit synonyms with identical
+  // blast radius, and delete_file is included because deletion+recreation
   // is the same blast radius as a write — both flatten the original content.
-  if (["write", "edit", "delete_file"].includes(tc.name) && ctx.args.path) {
+  if (ARI_ACTION_MAP[tc.name] === "write" && ctx.args.path) {
     try {
       const { isProtectedFile } = await import("../config-loader.js");
       const check = isProtectedFile(String(ctx.args.path));

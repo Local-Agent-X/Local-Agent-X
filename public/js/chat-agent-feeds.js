@@ -81,6 +81,10 @@ function addAgentFeed(agent) {
     if (agent.role && !existing.role) existing.role = agent.role;
     if (agent.resultUrl) existing.resultUrl = agent.resultUrl;
     if (agent.reportPath && !existing.reportPath) existing.reportPath = agent.reportPath;
+    // parentOpId (C6 run-lineage): set-once, like sessionId. Carried on
+    // bg_op_queued / bg_op_started so the panel can nest workers under the
+    // op that spawned them. Never downgrade a known parent back to none.
+    if (agent.parentOpId && !existing.parentOpId) existing.parentOpId = agent.parentOpId;
   } else {
     agentFeedsData[agent.id] = agent;
   }
@@ -115,6 +119,8 @@ function updateAgentFeed(agentId, update) {
     // event (worker_stream, bg_op_progress).
     if (update.sessionId && !existing.sessionId) existing.sessionId = update.sessionId;
     if (update.lastActivityMs) existing.lastActivityMs = update.lastActivityMs;
+    // parentOpId (C6 run-lineage): set-once. See addAgentFeed above.
+    if (update.parentOpId && !existing.parentOpId) existing.parentOpId = update.parentOpId;
   }
   var card = document.getElementById('agent-card-' + agentId);
   if (card) {
@@ -213,6 +219,27 @@ function removeAgentFeed(agentId) {
   _updateAgentCount();
 }
 
+// C6 run-lineage: the PURE tree builder `buildAgentFeedTree(agentFeedsData)`
+// lives in chat-agent-feeds-render.js (the pure-producers sibling, loaded
+// before this file) alongside renderAgentCard / renderAgentFeedGroup — it
+// takes the feeds map and returns the nested render-node tree. See that file
+// (and its unit test chat-agent-feeds-tree.test.ts) for the tree semantics,
+// the synthetic fan-out grouping, and the cycle/leftover guarantees.
+
+// Recursively render one tree node to markup. Card nodes keep their
+// id="agent-card-<id>" so updateAgentFeed's targeted writes + the 1s resync
+// still find them; children ride in a sibling `.agent-feed-children`.
+function _renderAgentFeedNode(node) {
+  if (node.kind === 'group') {
+    var groupChildren = node.children.map(_renderAgentFeedNode).join('');
+    return renderAgentFeedGroup(node.parentOpId, node.count, groupChildren);
+  }
+  var childrenHtml = (node.children && node.children.length)
+    ? node.children.map(_renderAgentFeedNode).join('')
+    : '';
+  return renderAgentCard(agentFeedsData[node.id], childrenHtml);
+}
+
 function _renderAgentFeedsList() {
   var list = document.getElementById('agent-feeds-list');
   if (!list) return;
@@ -220,7 +247,8 @@ function _renderAgentFeedsList() {
   if (ids.length === 0) {
     list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:.72rem">No active agents</div>';
   } else {
-    list.innerHTML = ids.map(function(id) { return renderAgentCard(agentFeedsData[id]); }).join('');
+    var nodes = buildAgentFeedTree(agentFeedsData);
+    list.innerHTML = nodes.map(_renderAgentFeedNode).join('');
     if (typeof Spring !== 'undefined') {
       Spring.staggerIn(Array.from(list.querySelectorAll('.agent-feed-card')), { delay: 50, preset: 'stiff' });
     }

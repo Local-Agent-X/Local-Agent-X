@@ -934,6 +934,16 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 .agent-feeds-toggle:hover{border-color:var(--accent);color:var(--accent)}
 .agent-feeds-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:#222 transparent}
 .agent-feed-card{background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:8px;padding:10px 12px;transition:all .2s}
+/* C6 run-lineage tree: nest cards spawned by an op under it. Structure only
+   (indent + guide rail); flowing-line + icon polish is C7/C8. */
+.agent-feed-branch{display:flex;flex-direction:column;gap:8px}
+.agent-feed-children{display:flex;flex-direction:column;gap:8px;margin-left:12px;padding-left:10px;border-left:1px solid var(--border)}
+.agent-feed-group{border:1px solid var(--border);border-radius:8px;padding:8px;background:rgba(64,240,240,.03);display:flex;flex-direction:column;gap:8px}
+.agent-feed-group>.agent-feed-children{margin-left:0}
+.agent-feed-group-header{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:.66rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;padding:0 2px}
+.agent-feed-group-icon{font-size:.9rem;flex-shrink:0}
+.agent-feed-group-title{color:var(--text);font-weight:600}
+.agent-feed-group-count{margin-left:auto;background:var(--accent);color:var(--bg);border-radius:10px;padding:1px 7px;font-size:.6rem;font-family:var(--mono)}
 .agent-feed-card.working{border-left-color:var(--accent);box-shadow:0 0 12px rgba(64,240,240,.06)}
 .agent-feed-card.waiting{border-left-color:var(--warn)}
 .agent-feed-card.done,.agent-feed-card.completed,.agent-feed-card.succeeded{border-left-color:var(--muted);opacity:.7}

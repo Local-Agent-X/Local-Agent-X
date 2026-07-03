@@ -10,7 +10,123 @@ const AGENT_ROLE_ICONS = {
   communicator: '📨'
 };
 
-function renderAgentCard(agent) {
+// ── C6: run-lineage tree build (PURE) ──
+// Input:  the agentFeedsData map ({ id → agent record }).
+// Output: an ordered array of top-level render nodes:
+//   { kind: 'card',  id, children: [node...] }         — a real worker card
+//                                                         (+ any card-children
+//                                                          nested under it)
+//   { kind: 'group', parentOpId, count, children: [...] } — a SYNTHETIC
+//                                                         fan-out header for ≥2
+//                                                         root cards sharing the
+//                                                         same non-card parentOpId
+// A card whose parentOpId points to another CARD nests under that card. A card
+// whose parentOpId is absent or points to a NON-card (e.g. the chat turn that
+// launched a batch — not itself a card) is a ROOT. Roots that share the same
+// non-card parent (≥2) collapse under one synthetic group; a lone such root
+// stays a plain root (no wrapper).
+//
+// Guarantees (see unit test chat-agent-feeds-tree.test.ts):
+//   - every card appears EXACTLY once (as a root, a child, or — if stranded in
+//     a parentOpId cycle — surfaced as a top-level card by the leftover sweep),
+//     never dropped, never doubled;
+//   - a cycle (A→B→A) can't infinite-loop — a `visited` set breaks it.
+// Pure: reads only its `dataMap` argument, touches no DOM/global — so it is
+// unit-testable by loading this file in a Function factory (happy-dom). Lives
+// here (not in chat-agent-feeds.js) so that file stays under the 400-LOC gate.
+function buildAgentFeedTree(dataMap) {
+  var map = dataMap || {};
+  var ids = Object.keys(map);
+  var isCard = {};
+  var i;
+  for (i = 0; i < ids.length; i++) isCard[ids[i]] = true;
+
+  // childMap: card-parent id → [child id, …], only for parents that ARE cards.
+  var childMap = {};
+  var rootIds = [];
+  for (i = 0; i < ids.length; i++) {
+    var id = ids[i];
+    var rec = map[id] || {};
+    var p = rec.parentOpId;
+    if (p && isCard[p] && p !== id) {
+      (childMap[p] || (childMap[p] = [])).push(id);
+    } else {
+      // No parent, self-parent, or a non-card parent → this is a root.
+      rootIds.push(id);
+    }
+  }
+
+  var visited = {};
+  function buildCardNode(cardId) {
+    if (visited[cardId]) return null;   // cycle / already placed elsewhere
+    visited[cardId] = true;
+    var kids = childMap[cardId] || [];
+    var childNodes = [];
+    for (var k = 0; k < kids.length; k++) {
+      var cn = buildCardNode(kids[k]);
+      if (cn) childNodes.push(cn);
+    }
+    return { kind: 'card', id: cardId, children: childNodes };
+  }
+
+  // Order roots, grouping those that share the same non-card parentOpId.
+  var groupMembers = {};   // non-card parentOpId → [root id, …]
+  var order = [];          // preserves first-seen order of roots/groups
+  for (i = 0; i < rootIds.length; i++) {
+    var rid = rootIds[i];
+    var pp = (map[rid] || {}).parentOpId;
+    if (pp && !isCard[pp]) {
+      if (!groupMembers[pp]) { groupMembers[pp] = []; order.push({ t: 'group', key: pp }); }
+      groupMembers[pp].push(rid);
+    } else {
+      order.push({ t: 'card', key: rid });
+    }
+  }
+
+  var nodes = [];
+  for (i = 0; i < order.length; i++) {
+    var ent = order[i];
+    if (ent.t === 'card') {
+      var node = buildCardNode(ent.key);
+      if (node) nodes.push(node);
+    } else {
+      var members = groupMembers[ent.key];
+      var memberNodes = [];
+      for (var m = 0; m < members.length; m++) {
+        var mn = buildCardNode(members[m]);
+        if (mn) memberNodes.push(mn);
+      }
+      if (memberNodes.length >= 2) {
+        nodes.push({ kind: 'group', parentOpId: ent.key, count: memberNodes.length, children: memberNodes });
+      } else if (memberNodes.length === 1) {
+        // Lone worker with a non-card parent → plain root, no synthetic wrapper.
+        nodes.push(memberNodes[0]);
+      }
+    }
+  }
+
+  // Leftover sweep: any card never visited is stranded in a parentOpId cycle
+  // (e.g. A→B→A, where neither is a root). Surface it as a top-level card so
+  // it still renders exactly once rather than vanishing.
+  for (i = 0; i < ids.length; i++) {
+    if (!visited[ids[i]]) {
+      var orphan = buildCardNode(ids[i]);
+      if (orphan) nodes.push(orphan);
+    }
+  }
+
+  return nodes;
+}
+
+// childrenHtml (optional): pre-rendered markup for cards spawned BY this
+// worker (parentOpId === this card's id), from C6 run-lineage nesting.
+// When present, the card is wrapped in an `.agent-feed-branch` and the
+// children ride in a SIBLING `.agent-feed-children` container — NOT inside
+// `#agent-card-<id>` — so updateAgentFeed's `card.querySelector('.worker-*')`
+// targeted writes and the 1s resync only ever touch THIS card's own body,
+// never a nested child's. When absent, the returned markup is byte-identical
+// to the pre-nesting flat card (keeps the flat-list path unchanged).
+function renderAgentCard(agent, childrenHtml) {
   var icon = AGENT_ROLE_ICONS[agent.role] || '🤖';
   var status = agent.status || 'working';
   var streamText = agent.streamText || '';
@@ -46,7 +162,7 @@ function renderAgentCard(agent) {
   var bodyDisplay = isActive ? 'block' : 'none';
   var bodyOpenClass = isActive ? ' open' : '';
   var chevron = isActive ? '▼' : '▶';
-  return '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + '">' +
+  var cardHtml = '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + '">' +
     '<div class="agent-feed-header">' +
       '<span class="agent-feed-icon">' + icon + '</span>' +
       '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +
@@ -74,6 +190,33 @@ function renderAgentCard(agent) {
       '<button class="agent-ctrl-btn cancel" data-agent-action="cancel" data-agent-id="' + safeId + '">Cancel</button>' +
     '</div>' +
     '<input class="agent-redirect-input" id="agent-redirect-' + safeId + '" data-agent-redirect="' + safeId + '" placeholder="New instructions..." />' +
+  '</div>';
+  // No children → return the flat card unchanged (identical to pre-C6).
+  if (!childrenHtml) return cardHtml;
+  // Children present → wrap card + a sibling `.agent-feed-children` branch,
+  // mirroring org-chart's `.org-branch` / `.org-children`. The card id stays
+  // a direct, clean `#agent-card-<id>` node; nested cards live outside it.
+  return '<div class="agent-feed-branch">' + cardHtml +
+    '<div class="agent-feed-children">' + childrenHtml + '</div>' +
+  '</div>';
+}
+
+// Synthetic "fan-out" group header for the C6 run-lineage tree: when ≥2
+// root worker cards share the same NON-card parentOpId (e.g. the chat turn
+// that launched a batch — which is itself not a worker card), they render
+// nested under one lightweight header so a fan-out reads as one tree
+// (supervisor → workers) instead of a flat list. This is NOT an
+// `.agent-feed-card` and carries no id, so it is never counted by
+// _updateAgentCount and never picked up by updateAgentFeed's targeted
+// DOM writes. `count` = number of direct sibling worker cards.
+function renderAgentFeedGroup(parentOpId, count, childrenHtml) {
+  return '<div class="agent-feed-group">' +
+    '<div class="agent-feed-group-header">' +
+      '<span class="agent-feed-group-icon">🎯</span>' +
+      '<span class="agent-feed-group-title">Fan-out</span>' +
+      '<span class="agent-feed-group-count">' + Number(count || 0) + ' agents</span>' +
+    '</div>' +
+    '<div class="agent-feed-children">' + (childrenHtml || '') + '</div>' +
   '</div>';
 }
 

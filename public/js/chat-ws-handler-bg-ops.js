@@ -15,6 +15,9 @@ function handleBgOpQueued(msg) {
         status: 'queued #' + (msg.event.queuePosition || '?'),
         currentTask: msg.event.task || '',
         output: '⏸ queued (lane: ' + (msg.event.lane || 'build') + ')\n',
+        // C6 run-lineage: the op that spawned this worker (C1 stamps it).
+        // Lets the AGENTS panel nest workers under their spawning op.
+        parentOpId: msg.event.parentOpId,
       });
     }
   } catch(e) { console.warn('[bg_op_queued] sidebar update failed', e); }
@@ -35,7 +38,7 @@ function handleBgOpStarted(msg) {
     // updateAgentFeed is no-op if the card doesn't exist; addAgentFeed
     // is idempotent on existing IDs. So calling both is safe.
     if (typeof updateAgentFeed === 'function') {
-      updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n', sessionId: msg.sessionId, lastActivityMs: Date.now() });
+      updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n', sessionId: msg.sessionId, lastActivityMs: Date.now(), parentOpId: msg.event.parentOpId });
     }
     if (typeof addAgentFeed === 'function') {
       // Friendlier card name. Cron missions arrive with task =
@@ -63,6 +66,9 @@ function handleBgOpStarted(msg) {
         // replay and worker cards fell behind silently.
         sessionId: msg.sessionId,
         lastActivityMs: Date.now(),
+        // C6 run-lineage parent (see handleBgOpQueued). Set-once in the
+        // agent record so re-broadcasts never clobber it.
+        parentOpId: msg.event.parentOpId,
       });
     }
   } catch(e) { console.warn('[bg_op_started] sidebar update failed', e); }

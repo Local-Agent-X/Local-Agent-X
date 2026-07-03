@@ -131,7 +131,7 @@ async function main() {
     );
     assert(uMatch, "found username ref in navigate snapshot");
     const fillResult = await mgr3.fillByRef(Number(uMatch![1]), "test@example.com");
-    assert(!fillResult.toLowerCase().includes("could not"), `fill by ref succeeded: ${fillResult.slice(0, 80)}`);
+    assert(fillResult.ok, `fill by ref succeeded: ${fillResult.text.slice(0, 80)}`);
     await mgr3.close();
 
     console.log("\n[7] second tab stays independent");

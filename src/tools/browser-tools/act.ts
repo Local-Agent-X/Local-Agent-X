@@ -49,7 +49,9 @@ export async function handleAct(
       if (refMatch) {
         const ref = parseInt(refMatch[1]);
         const result = await manager.fillByRef(ref, fillValue);
-        return ok(`Filled ref [${ref}] with "${fillValue}". ${result}`);
+        return result.ok
+          ? ok(`Filled ref [${ref}] with "${fillValue}". ${result.text}`)
+          : err(`Failed to fill ref [${ref}] with "${fillValue}". ${result.text}`);
       }
     }
     // Fallback: try click_text on the field label, then fill
@@ -70,13 +72,17 @@ export async function handleAct(
       if (refMatch) {
         const ref = parseInt(refMatch[1]);
         const result = await manager.clickByRef(ref);
-        return ok(`Clicked ref [${ref}] (matched "${target}"). ${result}`);
+        return result.ok
+          ? ok(`Clicked ref [${ref}] (matched "${target}"). ${result.text}`)
+          : err(`Failed to click ref [${ref}] (matched "${target}"). ${result.text}`);
       }
     }
     // Fallback: try click_text
     try {
       const result = await manager.clickByText(target);
-      return ok(`Clicked text "${target}". ${result}`);
+      return result.ok
+        ? ok(`Clicked text "${target}". ${result.text}`)
+        : err(`Could not click text "${target}". ${result.text}`);
     } catch {
       return err(`Could not find element matching "${target}". Take a snapshot to see available elements.`);
     }

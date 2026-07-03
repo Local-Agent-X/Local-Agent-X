@@ -17,6 +17,18 @@ import {
 import { isBlankish } from "./blankish.js";
 
 /**
+ * Result of a ref/text-targeted interaction. `ok` carries the underlying
+ * ActionResult.ok verdict so the tool layer can route a resolution failure to
+ * an isError result (which feeds the circuit breaker) instead of burying it in
+ * a success-prefixed string. `text` is the human-readable status + snapshot the
+ * agent sees either way.
+ */
+export interface InteractionResult {
+  ok: boolean;
+  text: string;
+}
+
+/**
  * Per-session browser surface. Each session owns its own tabs + observation
  * registry inside the shared Chrome (see runtime.ts), so a mission navigating
  * mid-task can't move the tab or reassign the refs another session is using.
@@ -254,7 +266,7 @@ export class BrowserManager {
     return `Scrolled ${dir}${opts.refId ? "" : ` (${amount}px)`}`;
   }
 
-  async clickByRef(ref: number): Promise<string> {
+  async clickByRef(ref: number): Promise<InteractionResult> {
     const page = await this.getPage();
     let result = await clickRef(page, this.registry, ref);
     if (!result.ok) {
@@ -263,14 +275,14 @@ export class BrowserManager {
     }
     if (!result.ok) {
       const refreshed = ObservationRegistry.format(await this.registry.observe(page));
-      return `${result.message}\n\nCurrent page:\n\n${refreshed}`;
+      return { ok: false, text: `${result.message}\n\nCurrent page:\n\n${refreshed}` };
     }
     await waitForStability(page, { maxWait: 2500 });
     const after = ObservationRegistry.format(await this.registry.observe(page));
-    return `${result.message}\nPage: ${page.url()}\n\n${after}`;
+    return { ok: true, text: `${result.message}\nPage: ${page.url()}\n\n${after}` };
   }
 
-  async fillByRef(ref: number, value: string): Promise<string> {
+  async fillByRef(ref: number, value: string): Promise<InteractionResult> {
     const page = await this.getPage();
     let result = await fillRef(page, this.registry, ref, value);
     if (!result.ok) {
@@ -279,18 +291,18 @@ export class BrowserManager {
     }
     if (!result.ok) {
       const refreshed = ObservationRegistry.format(await this.registry.observe(page));
-      return `${result.message}\n\nCurrent page:\n\n${refreshed}`;
+      return { ok: false, text: `${result.message}\n\nCurrent page:\n\n${refreshed}` };
     }
-    return `${result.message} — ${value.length} chars`;
+    return { ok: true, text: `${result.message} — ${value.length} chars` };
   }
 
-  async clickByText(text: string): Promise<string> {
+  async clickByText(text: string): Promise<InteractionResult> {
     const page = await this.getPage();
     const result = await clickByTextAction(page, text);
-    if (!result.ok) return result.message;
+    if (!result.ok) return { ok: false, text: result.message };
     await waitForStability(page, { maxWait: 2500 });
     const after = ObservationRegistry.format(await this.registry.observe(page));
-    return `${result.message}\nPage: ${page.url()}\n\n${after}`;
+    return { ok: true, text: `${result.message}\nPage: ${page.url()}\n\n${after}` };
   }
 
   async dialogAccept(promptText?: string): Promise<string> {

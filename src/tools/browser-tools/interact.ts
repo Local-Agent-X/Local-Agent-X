@@ -16,7 +16,8 @@ export async function handleClick(
   if (args.ref !== undefined && args.ref !== null) {
     const ref = Number(args.ref);
     if (isNaN(ref)) return err("'ref' must be a number from the snapshot.");
-    return ok(await manager.clickByRef(ref));
+    const result = await manager.clickByRef(ref);
+    return result.ok ? ok(result.text) : err(result.text);
   }
   const selector = String(args.selector || "");
   if (!selector) return err("Provide 'ref' (from snapshot) or 'selector' (CSS) for click.");
@@ -29,7 +30,8 @@ export async function handleClickText(
 ): Promise<ToolResult> {
   const text = String(args.text || "");
   if (!text) return err("'text' parameter is required for click_text action.");
-  return ok(await manager.clickByText(text));
+  const result = await manager.clickByText(text);
+  return result.ok ? ok(result.text) : err(result.text);
 }
 
 export async function handleFill(
@@ -50,7 +52,8 @@ export async function handleFill(
   if (args.ref !== undefined && args.ref !== null) {
     const ref = Number(args.ref);
     if (isNaN(ref)) return err("'ref' must be a number from the snapshot.");
-    return ok(await manager.fillByRef(ref, value));
+    const result = await manager.fillByRef(ref, value);
+    return result.ok ? ok(result.text) : err(result.text);
   }
   const selector = String(args.selector || "");
   if (!selector) return err("Provide 'ref' (from snapshot) or 'selector' (CSS) for fill.");

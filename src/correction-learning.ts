@@ -47,11 +47,20 @@ const MAX_RECORDS = 500;
 
 // Cheap surface markers that a message might be correcting the agent. This is a
 // broad pre-gate; detectCorrection() does the precise extraction via DETECTION_RULES.
-const CORRECTION_KEYWORDS = [
-  "no", "wrong", "incorrect", "not what", "that's not", "actually",
-  "i meant", "you misunderstood", "i said", "nope", "nah",
-  "that's wrong", "fix this", "you got it wrong",
-];
+// Word-boundary anchored: the old substring test on "no" matched "know", "note",
+// "nothing" etc. and fired on nearly every message, forcing a wasted deep-pass
+// per turn. Bare "not" only counts in a contrast shape ("not X, Y" / "not X but
+// Y") that the rules below can actually extract from.
+const CORRECTION_PREGATE = new RegExp(
+  [
+    "\\bno\\b", "\\bnope\\b", "\\bnah\\b", "\\bwrong\\b", "\\bincorrect\\b",
+    "\\bactually\\b", "\\bnot what\\b", "\\bthat['’]?s not\\b", "\\bthat['’]?s wrong\\b",
+    "\\bi meant?\\b", "\\bi (?:already )?(?:said|told you)\\b", "\\byou misunderstood\\b",
+    "\\bfix this\\b", "\\byou got it wrong\\b",
+    "\\bnot\\s+[^,.!?]{1,80}(?:,|\\bbut\\b)",
+  ].join("|"),
+  "i",
+);
 
 // ── Persistence ─────────────────────────────────────────────
 
@@ -100,6 +109,43 @@ interface DetectionRule {
   } | null;
 }
 
+// Hedge openers: "not sure, let us check the logs" is prose, not a correction.
+const HEDGE_FRAGMENT = /^(?:sure|certain|really|quite|exactly|necessarily|yet|only|just|ideal|great|good|bad)\b/i;
+
+const FRAGMENT_STOPWORDS = new Set([
+  "the", "a", "an", "that", "this", "these", "those", "it", "its", "is", "was",
+  "are", "were", "be", "being", "been", "to", "of", "in", "on", "at", "for",
+  "with", "and", "or", "but", "not", "you", "your", "i", "we", "they", "what",
+  "which", "one", "thing",
+]);
+
+/**
+ * A contrast phrase ("not X, Y" / "not X but Y") only counts as a correction
+ * when X refers to something the agent actually said — otherwise the pattern
+ * matches ordinary prose ("not sure, let us check the logs") and pollutes the
+ * store. Requires at least one substantive token of X to appear in the
+ * previous agent message.
+ */
+function contrastExtract(
+  match: RegExpMatchArray,
+  agentMsg: string,
+): { wrongInfo: string; correctInfo: string; confidence: number } | null {
+  const fragment = match[1].replace(/[.!]+$/, "").trim();
+  if (HEDGE_FRAGMENT.test(fragment)) return null;
+  const agent = agentMsg.toLowerCase();
+  if (!agent) return null;
+  const tokens = fragment
+    .toLowerCase()
+    .split(/[^a-z0-9_-]+/)
+    .filter(t => t.length >= 3 && !FRAGMENT_STOPWORDS.has(t));
+  if (tokens.length === 0 || !tokens.some(t => agent.includes(t))) return null;
+  return {
+    wrongInfo: fragment,
+    correctInfo: match[2].replace(/[.!]+$/, "").trim(),
+    confidence: 0.75,
+  };
+}
+
 const DETECTION_RULES: DetectionRule[] = [
   // "no, it's X" / "no it's X"
   {
@@ -113,20 +159,12 @@ const DETECTION_RULES: DetectionRule[] = [
   // "not X, Y" / "not X but Y"
   {
     pattern: /\bnot\s+(.+?)[,]\s*(?:but\s+)?(.+)/i,
-    extract: (match) => ({
-      wrongInfo: match[1].replace(/[.!]+$/, "").trim(),
-      correctInfo: match[2].replace(/[.!]+$/, "").trim(),
-      confidence: 0.75,
-    }),
+    extract: (match, _user, agent) => contrastExtract(match, agent),
   },
   // "not X but Y" (without comma)
   {
     pattern: /\bnot\s+(.+?)\s+but\s+(.+)/i,
-    extract: (match) => ({
-      wrongInfo: match[1].replace(/[.!]+$/, "").trim(),
-      correctInfo: match[2].replace(/[.!]+$/, "").trim(),
-      confidence: 0.75,
-    }),
+    extract: (match, _user, agent) => contrastExtract(match, agent),
   },
   // "I told you X" / "I already said X" / "I already told you X"
   {
@@ -211,8 +249,7 @@ export class CorrectionLearner {
 
   /** Pre-gate: does this message look like it might be correcting the agent? */
   static looksLikeCorrection(message: string): boolean {
-    const lower = message.toLowerCase();
-    return CORRECTION_KEYWORDS.some(kw => lower.includes(kw));
+    return CORRECTION_PREGATE.test(message);
   }
 
   /**

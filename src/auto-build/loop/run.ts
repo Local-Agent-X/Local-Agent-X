@@ -117,6 +117,10 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
       retryReason: undefined,
       judgmentHook: opts.judgmentHook,
       parentSessionId: opts.parentSessionId,
+      // Thread already-committed chunks' distilled learnings into this
+      // chunk's task so the worker inherits SPEC_GAPS / NOTE context
+      // instead of rediscovering the project from zero.
+      priorOutcomes: outcomes,
     });
 
     let finalOutcome = outcome;

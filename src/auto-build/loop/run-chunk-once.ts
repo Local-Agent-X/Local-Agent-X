@@ -1,5 +1,5 @@
 import type { ParsedPlan, ParsedChunk } from "../plan-parser.js";
-import { buildChunkTask, chunkAgentRole } from "../skill-mapper.js";
+import { buildChunkTask, chunkAgentRole, distillSharpenedContext } from "../skill-mapper.js";
 import { runChunkAgent } from "../agents/chunk-runner.js";
 import { runChunkReviewWithJudgment, type ChunkReviewOutcome } from "../chunk-review/index.js";
 import { parseChunkReport } from "../chunk-review/report-parser.js";
@@ -21,6 +21,13 @@ export interface RunChunkOnceOptions {
   retryReason?: string;
   judgmentHook?: JudgmentHook;
   parentSessionId?: string;
+  /**
+   * Outcomes of already-completed chunks, in plan order. Distilled into the
+   * per-chunk "sharpened context" block so each worker inherits earlier
+   * chunks' SPEC_GAPS / NOTE learnings instead of rediscovering the project
+   * from zero. Omitted (or empty) for the first chunk.
+   */
+  priorOutcomes?: Array<{ chunkNumber: number; outcome: ChunkReviewOutcome }>;
 }
 
 /** Minimal chunk-agent result shape this decision needs. */
@@ -65,10 +72,17 @@ export function chunkProcessFailureOutcome(
 }
 
 export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkReviewOutcome> {
+  const sharpenedContext = opts.priorOutcomes && opts.priorOutcomes.length > 0
+    ? distillSharpenedContext(
+        opts.priorOutcomes.map(o => ({ chunkNumber: o.chunkNumber, report: o.outcome.report })),
+      )
+    : undefined;
+
   const task = buildChunkTask({
     chunk: opts.chunk,
     totalChunks: opts.totalChunks,
     planPath: opts.planPath,
+    sharpenedContext,
     retryReason: opts.retryReason,
   });
   const role = chunkAgentRole(opts.chunk.klass);

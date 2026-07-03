@@ -17,8 +17,51 @@
 
 import type { ParsedChunk } from "./plan-parser.js";
 import type { ChunkAgentRole } from "./agents/chunk-runner.js";
+import type { ChunkReport } from "./chunk-review/report-parser.js";
 
 export type Skill = "senior-engineer" | "vibe-code";
+
+/** One earlier chunk's parsed report, paired with its chunk number. */
+export interface PriorChunkReport {
+  chunkNumber: number;
+  report: ChunkReport;
+}
+
+/** Cap per-field carried prose so a rolling context can't bloat the prompt. */
+const MAX_CARRIED_FIELD_CHARS = 400;
+
+/**
+ * Distill earlier chunks' reports into a compact rolling context so each
+ * worker doesn't rediscover the project from zero. Carries the two fields
+ * that matter cross-chunk: SPEC_GAPS (what the plan didn't spell out) and
+ * the free-form NOTE (gray areas / silent fallbacks / "reuse this type"
+ * hints). Structured pass/fail counts stay out — they're per-chunk, not
+ * carryover. Returns "" when nothing's worth threading, so buildChunkTask
+ * omits the block entirely.
+ */
+export function distillSharpenedContext(priors: PriorChunkReport[]): string {
+  const lines: string[] = [];
+  for (const { chunkNumber, report } of priors) {
+    const bits: string[] = [];
+    // The parser normalizes SPEC_GAPS ("none" → "") but leaves the free-form
+    // NOTE body verbatim, so a literal "none" note must be filtered here too.
+    const specGaps = carriedField(report.specGaps);
+    const note = carriedField(report.note);
+    if (specGaps) bits.push(`SPEC_GAPS: ${specGaps}`);
+    if (note) bits.push(`NOTE: ${note}`);
+    if (bits.length) lines.push(`- Chunk ${chunkNumber}: ${bits.join(" — ")}`);
+  }
+  return lines.join("\n");
+}
+
+/** Empty ("", "none", "n/a", em-dash) → ""; otherwise collapse + clip. */
+function carriedField(text: string): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (/^(none|n\/a|-|—)$/i.test(collapsed)) return "";
+  return collapsed.length > MAX_CARRIED_FIELD_CHARS
+    ? collapsed.slice(0, MAX_CARRIED_FIELD_CHARS - 1).trimEnd() + "…"
+    : collapsed;
+}
 
 export function chunkSkill(klass: ParsedChunk["klass"]): Skill {
   switch (klass) {

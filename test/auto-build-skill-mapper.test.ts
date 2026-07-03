@@ -1,6 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { chunkSkill, chunkAgentRole, buildChunkTask } from "../src/auto-build/skill-mapper.js";
+import {
+  chunkSkill,
+  chunkAgentRole,
+  buildChunkTask,
+  distillSharpenedContext,
+} from "../src/auto-build/skill-mapper.js";
+import { parseChunkReport } from "../src/auto-build/chunk-review/report-parser.js";
 import type { ParsedChunk } from "../src/auto-build/plan-parser.js";
+
+const reportWith = (fields: { specGaps?: string; note?: string }) =>
+  parseChunkReport(
+    [
+      "STATUS: done",
+      "DONE_WHEN: met",
+      `SPEC_GAPS: ${fields.specGaps ?? "none"}`,
+      `NOTE: ${fields.note ?? "none"}`,
+    ].join("\n"),
+  );
 
 const baseChunk: ParsedChunk = {
   number: 7,
@@ -97,10 +113,58 @@ describe("buildChunkTask", () => {
     expect(t).not.toContain("Sharpened context");
   });
 
+  it("threads distilled prior-chunk outcomes into the task (AB-9: sharpenedContext must not be dead)", () => {
+    // The regression: prior chunks' SPEC_GAPS / NOTE learnings never reached
+    // the next chunk. distillSharpenedContext turns earlier outcomes into the
+    // rolling context that buildChunkTask inlines.
+    const sharpenedContext = distillSharpenedContext([
+      { chunkNumber: 5, report: reportWith({ note: "Introduced a `BusyBlock` type — reuse it; do not redefine." }) },
+      { chunkNumber: 6, report: reportWith({ specGaps: "Plan omitted the DST rollover case; handled it as UTC." }) },
+    ]);
+    const t = buildChunkTask({ chunk: baseChunk, totalChunks: 31, planPath: "/proj/spec/plan.md", sharpenedContext });
+    expect(t).toContain("Sharpened context from earlier chunks");
+    expect(t).toContain("Chunk 5");
+    expect(t).toContain("reuse it; do not redefine");
+    expect(t).toContain("Chunk 6");
+    expect(t).toContain("DST rollover");
+  });
+
   it("task is much shorter than the old combined prompt (methodology lives in agent def)", () => {
     const t = buildChunkTask({ chunk: baseChunk, totalChunks: 31, planPath: "/proj/spec/plan.md" });
     // The full prompt before migration was 4-5 KB (skill body + discipline + report format).
     // The task-only output should be under 1 KB.
     expect(t.length).toBeLessThan(1500);
+  });
+});
+
+describe("distillSharpenedContext", () => {
+  it("carries SPEC_GAPS and NOTE from each prior chunk, tagged by chunk number", () => {
+    const out = distillSharpenedContext([
+      { chunkNumber: 2, report: reportWith({ specGaps: "auth token TTL unspecified", note: "chose 15m" }) },
+    ]);
+    expect(out).toContain("Chunk 2");
+    expect(out).toContain("SPEC_GAPS: auth token TTL unspecified");
+    expect(out).toContain("NOTE: chose 15m");
+  });
+
+  it("returns empty string when no prior chunk carried anything (first chunk / all 'none')", () => {
+    expect(distillSharpenedContext([])).toBe("");
+    expect(distillSharpenedContext([{ chunkNumber: 1, report: reportWith({}) }])).toBe("");
+  });
+
+  it("skips chunks whose SPEC_GAPS and NOTE are both empty", () => {
+    const out = distillSharpenedContext([
+      { chunkNumber: 3, report: reportWith({}) },
+      { chunkNumber: 4, report: reportWith({ note: "kept it" }) },
+    ]);
+    expect(out).not.toContain("Chunk 3");
+    expect(out).toContain("Chunk 4");
+  });
+
+  it("clips runaway prose so a rolling context can't bloat the prompt", () => {
+    const huge = "x".repeat(2000);
+    const out = distillSharpenedContext([{ chunkNumber: 9, report: reportWith({ note: huge }) }]);
+    expect(out).toContain("…");
+    expect(out.length).toBeLessThan(600);
   });
 });

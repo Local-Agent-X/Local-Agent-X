@@ -10,12 +10,14 @@
  * overhead.
  *
  * Cache strategy:
- *   - Key: sessionId
- *   - Invalidate when the recent-message context hash changes by more than
- *     a small Hamming distance (i.e. user added a new message, but the
- *     conversation hasn't pivoted)
+ *   - Key: sessionId (+provider variant)
+ *   - Invalidate when the CURRENT query's 64-bit SimHash fingerprint drifts
+ *     from the stored one by more than a small Hamming distance — a rephrase
+ *     of the same topic reuses the entry; a pivot to a different topic
+ *     rebuilds so the memories match what the user is now asking about.
  *   - TTL: 45s. Long enough to span quick back-and-forth; short enough that
- *     a paused chat re-warms with fresh memory if the user comes back later.
+ *     the <current_datetime> baked into the context block never drifts far
+ *     and a paused chat re-warms with fresh memory on return.
  *   - Size cap: 32 sessions; LRU eviction on insert.
  *
  * Boundaries:
@@ -30,20 +32,22 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("agent-request.turn-context-cache");
 
-// 30 minutes — aligned with the warm-pool eviction TTL. Real chat has
-// long natural pauses (lunch, meeting, coffee, walking away) and 5 min
-// was killing context just past most "I came back to my desk" returns,
-// so the user paid a 6-10s memory-pipeline rebuild on the FIRST turn
-// after any longer break. 30 min covers normal workday rhythm; on actual
-// session-end the LRU evicts. Staleness within 30 min is rare in practice;
-// when it matters, the agent's memory_search tool fetches fresh data
-// without the cache helping or hurting.
-const TTL_MS = 30 * 60 * 1000;
+// 45 seconds. The context block bakes in <current_datetime> and the memory
+// hits for the CURRENT topic, so a long TTL serves a frozen clock and stale
+// memories. A previous 30-min TTL anchored on the first user message replayed
+// turn 1's memories on turn 4 about a different project. 45s still spans the
+// rapid back-and-forth the cache exists for (measured follow-up gaps in quick
+// chat are well under a minute); anything slower pays the rebuild and gets a
+// correct clock + fresh recall.
+const TTL_MS = 45 * 1000;
 const MAX_ENTRIES = 32;
+// Hamming-distance budget on the 64-bit SimHash of the current query.
+// <= 6 differing bits ≈ a rephrase of the same ask; more = a topic pivot.
+const FINGERPRINT_MATCH_MAX_DISTANCE = 6;
 
 interface CacheEntry {
   sessionId: string;
-  contextHash: string;
+  contextFingerprint: bigint;
   liteMode: boolean;
   skipDailyLog: boolean;
   storedAt: number;
@@ -53,26 +57,41 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-function hashContext(input: TurnContextInput): string {
-  // Anchor the cache hash on the FIRST user message (or empty for a
-  // brand-new session). The earlier strategy hashed `slice(0, 4)` of
-  // session messages, but the first 4 message slots don't stabilize
-  // until turn 4 — so turns 1-3 all paid the full ~6-10s memory-pipeline
-  // cost on every follow-up. Empirically: 3 MISSes then 2 HITs in a
-  // 5-turn session, exactly when users feel slowness least.
-  //
-  // Hashing on the first user message gives stability from turn 2
-  // forward. Topic shifts within the TTL (5 min) are rare in chat
-  // patterns; staleness on shift is handled by TTL expiry, not by
-  // hash drift. On a brand-new session (no prior user message yet),
-  // we use the CURRENT user message as the anchor — this means turn 1
-  // and turn 2 share the same key (turn 1 stores it, turn 2 hits it).
-  const firstUser =
-    input.sessionMessages.find(m => m.role === "user")?.content ??
-    input.userMessage ??
-    "";
-  const anchor = firstUser.slice(0, 200) || "(new-session)";
-  return createHash("sha1").update(anchor).digest("hex").slice(0, 16);
+/**
+ * 64-bit SimHash of the CURRENT user message. Anchoring on the current query
+ * (not the first message of the session — the old bug) means a mid-session
+ * pivot to a different project changes the fingerprint and forces a rebuild,
+ * while a same-topic rephrase lands within the Hamming budget and reuses the
+ * cached context.
+ */
+function fingerprintContext(input: TurnContextInput): bigint {
+  const tokens = (input.userMessage ?? "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(t => t.length > 1);
+  if (tokens.length === 0) return 0n;
+  const votes = new Array<number>(64).fill(0);
+  for (const token of tokens) {
+    const bits = createHash("sha1").update(token).digest().readBigUInt64BE(0);
+    for (let i = 0; i < 64; i++) {
+      votes[i] += (bits >> BigInt(i)) & 1n ? 1 : -1;
+    }
+  }
+  let fp = 0n;
+  for (let i = 0; i < 64; i++) {
+    if (votes[i] > 0) fp |= 1n << BigInt(i);
+  }
+  return fp;
+}
+
+function hammingDistance(a: bigint, b: bigint): number {
+  let x = a ^ b;
+  let d = 0;
+  while (x > 0n) {
+    d += Number(x & 1n);
+    x >>= 1n;
+  }
+  return d;
 }
 
 function evictIfNeeded(): void {
@@ -108,9 +127,9 @@ export async function buildTurnContextCached(
     if (now - cached.storedAt > TTL_MS) {
       cache.delete(sessionKey);
     } else {
-      const incomingHash = hashContext(input);
-      // Exact hash match → reuse. Different hash = topic shifted, refresh.
-      if (cached.contextHash === incomingHash) {
+      const incoming = fingerprintContext(input);
+      // Within the Hamming budget → same topic, reuse. Beyond it = pivot, refresh.
+      if (hammingDistance(cached.contextFingerprint, incoming) <= FINGERPRINT_MATCH_MAX_DISTANCE) {
         cached.hits += 1;
         logger.info(`[turn-context-cache] HIT sess=${input.sessionId} age=${Math.round((now - cached.storedAt) / 100) / 10}s hits=${cached.hits}`);
         return cached.context;
@@ -125,7 +144,7 @@ export async function buildTurnContextCached(
 
   cache.set(sessionKey, {
     sessionId: input.sessionId,
-    contextHash: hashContext(input),
+    contextFingerprint: fingerprintContext(input),
     liteMode: !!input.liteMode,
     skipDailyLog: !!input.skipDailyLog,
     storedAt: now,
@@ -145,9 +164,8 @@ export function clearTurnContextCache(): void {
 /**
  * Drop one session's cached turn-context (both provider variants) so the next
  * turn rebuilds it from current state. Called when a turn is INTERRUPTED: the
- * salvaged history changes what the memory/situational block should contain, so
- * the stale entry (a 30-min TTL can otherwise serve pre-interruption context —
- * the 388s-old HIT seen on 2026-06-27) must be evicted rather than reused.
+ * salvaged history changes what the memory/situational block should contain,
+ * so the stale entry must be evicted rather than reused within its TTL.
  */
 export function invalidateTurnContextCache(sessionId: string): void {
   cache.delete(`${sessionId}::anthropic`);

@@ -102,17 +102,22 @@ const READ_ONLY_BASH_BINS = new Set([
 
 /**
  * Highest step number the user enumerated in an instruction. Counts list
- * markers ("1)", "2.") and "step N" phrasings; returns 0 when fewer than two
- * distinct steps are present (not a multi-step task). Bare numbers that aren't
- * enumeration markers (e.g. the "70" in "sleep 70") are ignored.
+ * markers ("1)", "2.") and "step N" phrasings; returns 0 unless at least two
+ * distinct enumeration markers are present (not a multi-step task). Bare numbers
+ * that aren't enumeration markers (e.g. the "70" in "sleep 70") are ignored, as
+ * are decimals like a version number ("React 18.2 and 19.1" is not steps 18/19)
+ * — a dot terminator immediately followed by another digit is a fractional part,
+ * not a list marker.
  */
 export function countEnumeratedSteps(text: string): number {
   if (!text) return 0;
   const nums = new Set<number>();
-  for (const m of text.matchAll(/(?:^|[\s(])(\d{1,2})[).]/g)) nums.add(Number(m[1]));
+  for (const m of text.matchAll(/(?:^|[\s(])(\d{1,2})[).](?!\d)/g)) nums.add(Number(m[1]));
   for (const m of text.matchAll(/\bstep\s+(\d{1,2})\b/gi)) nums.add(Number(m[1]));
-  const max = nums.size ? Math.max(...nums) : 0;
-  return max >= 2 ? max : 0;
+  // Gate on the COUNT of distinct markers, not the largest value: a single
+  // "option 3)" is one choice, not a 3-step plan, and must not seed a multi-step
+  // nudge budget sized to the number "3".
+  return nums.size >= 2 ? Math.max(...nums) : 0;
 }
 
 /**

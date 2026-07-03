@@ -85,6 +85,18 @@ describe("countEnumeratedSteps", () => {
   it("returns 0 for a single-step request", () => {
     expect(countEnumeratedSteps("1) just do this one thing")).toBe(0);
   });
+
+  it("returns 0 for a single 'option N)' choice even when N >= 2 (no phantom multi-step budget)", () => {
+    expect(countEnumeratedSteps("Please pick option 3) from the menu")).toBe(0);
+    expect(countEnumeratedSteps("go with option 5)")).toBe(0);
+  });
+
+  it("does not treat version-number decimals as enumeration markers", () => {
+    // Regression: "18." / "19." are fractional parts, not steps 18/19 — this
+    // used to return 19 and seed the registry's largest (8-nudge) budget.
+    expect(countEnumeratedSteps("Support React 18.2 and 19.1")).toBe(0);
+    expect(countEnumeratedSteps("update to version 3.4 please")).toBe(0);
+  });
 });
 
 describe("highestClaimedStep", () => {

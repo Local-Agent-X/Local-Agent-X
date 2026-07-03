@@ -20,6 +20,8 @@ export interface CanonicalRunInput {
   abortSignal: AbortSignal;
   primaryEventProxy: (ev: ServerEvent) => void;
   wrappedOnEvent: (ev: ServerEvent) => void;
+  /** SSE-only sink (null on WS). Retained for the orchestrator's call shape;
+   *  terminal error/done now go through `wrappedOnEvent` so WS clients get them. */
   emitSse: (ev: ServerEvent) => void;
   getFullResponseText: () => string;
 }
@@ -32,7 +34,7 @@ export interface CanonicalRunResult {
 export async function runCanonicalChat(input: CanonicalRunInput): Promise<CanonicalRunResult> {
   const {
     message, sessionId, prepared, sessionTools, session, ctx, requestRole,
-    threatEngine, abortSignal, primaryEventProxy, wrappedOnEvent, emitSse,
+    threatEngine, abortSignal, primaryEventProxy, wrappedOnEvent,
     getFullResponseText,
   } = input;
 
@@ -113,8 +115,14 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
     const interrupted = abortSignal.aborted;
     logger.error(`[chat] canonical chat path ${interrupted ? "interrupted (abort)" : "threw"}: ${(e as Error).message}`);
     await salvage(interrupted);
-    if (!interrupted) emitSse({ type: "error", message: `chat: ${(e as Error).message}` });
-    emitSse({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+    // Emit the terminal error/done via wrappedOnEvent, NOT emitSse. On WS
+    // clients sseSink is null, so emitSse is a no-op and both events vanish —
+    // yet we still return doneEmitted:true, which suppresses the orchestrator's
+    // failChat safety net. The ActiveChat is then never marked done and the UI
+    // spins until the 60s watchdog. wrappedOnEvent also drives wsChat.onEvent,
+    // whose `done` handler clears the ActiveChat (mirrors the success path).
+    if (!interrupted) wrappedOnEvent({ type: "error", message: `chat: ${(e as Error).message}` });
+    wrappedOnEvent({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
     return { doneEmitted: true };
   }
 }

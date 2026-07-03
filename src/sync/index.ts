@@ -136,7 +136,7 @@ export class AgentSync {
     this.isSyncing = true;
     try {
       if (!await this.init()) { this.isSyncing = false; return { success: false, message: "Sync token missing from vault — add GITHUB_SYNC_TOKEN in Secrets, or re-paste your token in Settings → Sync." }; }
-      copyToSync(this.dataDir, this.syncDir, this.config);
+      await copyToSync(this.dataDir, this.syncDir, this.config);
       await this.git("add", "-A");
       let porcelain = "";
       try { porcelain = await this.git("status", "--porcelain"); } catch {}

@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 
 import { createLogger } from "../logger.js";
@@ -15,32 +16,38 @@ const logger = createLogger("sync.mirror");
  * additiveOnly=true. Otherwise A pushing its workspace deletes B's
  * machine-only apps from sync-repo, which then propagates to all machines
  * on next pull. That's the bug the tombstone system replaces.
+ *
+ * Async on purpose: the old synchronous readdirSync/readFileSync/writeFileSync
+ * recursion walked the ENTIRE workspace on the event-loop thread inside every
+ * push(). A heartbeat firing mid-turn stalled all HTTP/streaming for the
+ * copy's duration (seconds on a large workspace). Using fs/promises yields the
+ * loop between every stat/read/write, so requests are serviced during the copy.
  */
-export function mirrorDir(src: string, dest: string, additiveOnly = false): void {
-  if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
+export async function mirrorDir(src: string, dest: string, additiveOnly = false): Promise<void> {
+  await mkdir(dest, { recursive: true });
   const srcEntries = new Set<string>();
 
-  for (const entry of readdirSync(src)) {
+  for (const entry of await readdir(src)) {
     const srcPath = join(src, entry);
-    const stat = statSync(srcPath);
-    if (stat.isDirectory()) {
-      if (!SKIP_DIRS.has(entry)) { srcEntries.add(entry); mirrorDir(srcPath, join(dest, entry), additiveOnly); }
-    } else if (stat.isFile()) {
+    const st = await stat(srcPath);
+    if (st.isDirectory()) {
+      if (!SKIP_DIRS.has(entry)) { srcEntries.add(entry); await mirrorDir(srcPath, join(dest, entry), additiveOnly); }
+    } else if (st.isFile()) {
       const ext = extname(entry).toLowerCase();
       const isDoc = /^(PROJECT|CHANGELOG|TODO|README)\.md$/i.test(entry);
-      if ((SYNC_EXTENSIONS.has(ext) || isDoc) && stat.size <= MAX_FILE_SIZE) {
+      if ((SYNC_EXTENSIONS.has(ext) || isDoc) && st.size <= MAX_FILE_SIZE) {
         srcEntries.add(entry);
-        writeFileSync(join(dest, entry), readFileSync(srcPath));
+        await writeFile(join(dest, entry), await readFile(srcPath));
       }
     }
   }
   if (!additiveOnly) {
     // Legacy destructive behavior — only safe for caller-controlled trees
     // where remote-state really IS authoritative. NOT safe for workspace.
-    for (const entry of readdirSync(dest)) {
+    for (const entry of await readdir(dest)) {
       if (!srcEntries.has(entry)) {
         const p = join(dest, entry);
-        if (statSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
+        if ((await stat(p)).isDirectory()) await rm(p, { recursive: true, force: true }); else await unlink(p);
       }
     }
   }

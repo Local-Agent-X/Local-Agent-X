@@ -25,7 +25,7 @@ const MAX_SESSION_SYNC_BYTES = 10 * 1024 * 1024;
 
 // ── Push direction: local → sync repo (with deletion propagation) ──
 
-export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig): void {
+export async function copyToSync(dataDir: string, syncDir: string, config: SyncConfig): Promise<void> {
   const memDir = join(dataDir, "memory");
   const syncMemDir = join(syncDir, "memory");
   if (!existsSync(syncMemDir)) mkdirSync(syncMemDir, { recursive: true });
@@ -112,7 +112,7 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
       // additive-only so local-only apps on other machines aren't
       // obliterated when this machine pushes.
       writeTombstonesForDeletedApps(tombstonePaths(dataDir, syncDir), syncDir);
-      mirrorDir(workspace, join(syncDir, "workspace"), /* additiveOnly */ true);
+      await mirrorDir(workspace, join(syncDir, "workspace"), /* additiveOnly */ true);
     }
   } else if (config.syncProtocols) {
     // Workspace sync is OFF but the user still wants protocols to flow
@@ -124,7 +124,7 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
     if (existsSync(protocolsDir)) {
       const target = join(syncDir, "workspace", "protocols");
       if (!existsSync(target)) mkdirSync(target, { recursive: true });
-      mirrorDir(protocolsDir, target, /* additiveOnly */ true);
+      await mirrorDir(protocolsDir, target, /* additiveOnly */ true);
     }
   }
 
@@ -167,7 +167,7 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
     const src = join(dataDir, dir);
     if (!existsSync(src)) continue;
     try {
-      mirrorDir(src, join(syncDir, dir), /* additiveOnly */ true);
+      await mirrorDir(src, join(syncDir, dir), /* additiveOnly */ true);
     } catch (e) {
       logger.warn(`[sync] brain push skipped dir ${dir}: ${(e as Error).message}`);
     }

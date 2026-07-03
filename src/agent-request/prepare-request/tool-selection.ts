@@ -114,43 +114,36 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   }
   const forceBuildIntent = intentVerdict?.kind === "build_app";
 
-  // Tier first — strong models get the full inventory (no filter, no shrink,
-  // no RAG re-rank), so the LLM cannot fail-discover a tool that exists.
-  // The previous slice → filter → shrink → RAG pipeline ate cycles to keep
-  // the catalogue small for token-cost reasons; with Anthropic prompt
-  // caching (cache_control added in the stream-api adapter), the tool
-  // schemas hit cache after the first turn and the per-turn marginal cost
-  // collapses to ~10% of base. OpenAI/Codex providers cache automatically.
-  // Weak/medium models still need shrinking — 100+ tool catalogs paralyze
-  // them into 0-token responses.
+  // Tier gates how hard we shrink the schema. Weak/medium models are paralyzed
+  // by 100+ tool catalogs (0-token responses), so they get filter → shrink →
+  // RAG. Strong models keep the broad message-relevant set (filter + RAG, no
+  // shrink). NOTHING ships the full uncached inventory any more: the deferred-
+  // tool manifest (build-system-prompt.ts) names every UNLOADED tool so the
+  // model can reach it via tool_search, which removes the reason Anthropic-
+  // strong used to ship every tool every turn "so the LLM cannot fail-discover
+  // a tool that exists." The tools array is the one block Anthropic prompt-
+  // caches (stream-api.ts), so shipping the filtered set instead of the whole
+  // catalogue shrinks the ~66s cold cache-write with it. loaded ∪ manifested =
+  // full catalog, so discoverability is preserved without the full schema cost.
   const { classifyModel, shrinkToolsForTier } = await import("../../model-tiers.js");
   const tier = classifyModel(input.resolvedModel) as Tier;
 
-  // Anthropic strong-tier gets the full inventory (cache_control anchor
-  // in stream-api.ts amortizes the token cost across turns). Everything
-  // else — including OpenAI/Codex strong — goes through filter + RAG so
-  // the build-intent narrowing in filterToolsForMessage actually narrows
-  // and the model isn't tempted to improvise with raw write/edit/bash
-  // when build_app is the right call. (Earlier "128-cap with top-up"
-  // path neutered the narrowing because it padded the filtered set back
-  // up to 128 with the rest of the catalogue.)
   const isAnthropicProvider = input.resolvedProvider === "anthropic";
-  // Strong tool-shy providers (Grok) skip build-intent NARROWING the same way
-  // the Anthropic-strong path does — they reason over the broad eager-audience
-  // ∪ RAG union fine, and build_app stays hard-pinned by tool_choice forcing
-  // (prepare-request) when intent demands it, so dropping the soft narrowing
-  // doesn't reopen the improvise-with-raw-write problem. They stay OUT of the
-  // bare-allAgentTools fast path above (uncached full catalog = real per-turn
-  // cost), so this is a bounded broadening, not the full inventory. Codex/OpenAI
-  // strong keep the narrowing — it's load-bearing for them (comment above).
-  const strongToolShy = tier === "strong" && providerUndercallsTools(input.resolvedProvider);
+  // Strong providers that reason fine over the broad eager ∪ RAG union skip
+  // build-intent NARROWING: tool-shy providers (Grok under-calls tools, and
+  // build_app stays hard-pinned by tool_choice forcing in prepare-request) AND
+  // Anthropic — with the deferred manifest it can no longer fail-discover, so
+  // the old full-inventory special case is gone and it takes the same filtered
+  // path. Codex/OpenAI strong KEEP the narrowing — it's load-bearing (without it
+  // they improvise raw write/edit/bash instead of calling build_app).
+  const strongSkipNarrowing =
+    tier === "strong" &&
+    (providerUndercallsTools(input.resolvedProvider) || isAnthropicProvider);
   let tools: ToolDefinition[];
   if (isBridge) {
     tools = input.bridgeTools;
-  } else if (tier === "strong" && isAnthropicProvider) {
-    tools = input.allAgentTools;
   } else {
-    tools = filterToolsForMessage(input.allAgentTools, input.message, { forceBuildIntent, skipBuildIntent: inMethodology || strongToolShy });
+    tools = filterToolsForMessage(input.allAgentTools, input.message, { forceBuildIntent, skipBuildIntent: inMethodology || strongSkipNarrowing });
     if (tier !== "strong") {
       const before = tools.length;
       tools = shrinkToolsForTier(tools, tier, input.allAgentTools);

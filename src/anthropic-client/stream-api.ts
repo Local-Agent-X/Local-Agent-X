@@ -46,9 +46,10 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // Anthropic prompt caching: mark the LAST tool with cache_control to
     // cache the entire tools array (everything above the marker). First
     // turn pays 1.25× base for cache-write; subsequent turns within the
-    // 5-min TTL pay 0.1× base for cache-read. With the full-inventory
-    // change in prepare-request.ts (strong models ship every tool every
-    // turn), this is what keeps the per-turn marginal cost bounded.
+    // 5-min TTL pay 0.1× base for cache-read. selectTools() now ships the
+    // FILTERED set (not the whole inventory) and the deferred-tool manifest
+    // (build-system-prompt.ts) names the rest, so this cached block — and its
+    // cold-write — is sized to the tools actually loaded this turn.
     anthropicTools[anthropicTools.length - 1].cache_control = { type: "ephemeral" };
     body.tools = anthropicTools;
     if (forcedToolName && anthropicTools.some(t => t.name === forcedToolName)) {

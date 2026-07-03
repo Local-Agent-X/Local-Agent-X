@@ -48,6 +48,11 @@ export interface BuildSystemPromptInput {
   memoryIndex: MemoryIndex;
   integrations: IntegrationRegistry;
   allAgentTools: ToolDefinition[];
+  /** The tools actually LOADED into this turn's API schema (selectTools output).
+   *  The deferred-tool manifest is the complement allAgentTools − loadedTools,
+   *  so the model can see every unloaded tool by name and load it via
+   *  tool_search. Omit → no manifest (back-compat for callers that don't narrow). */
+  loadedTools?: ToolDefinition[];
   systemPromptOverride?: string;
   bridgeContext?: string;
   // Resolved + context — passed in from the orchestrator after build-context
@@ -88,8 +93,17 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
   // cold-start ship task without the proactive memory_search nudge.
   let toolPromptSection = "";
   try {
-    const { buildToolPromptSection } = await import("../../tool-prompt-builder.js");
+    const { buildToolPromptSection, buildDeferredToolManifest } = await import("../../tool-prompt-builder.js");
     toolPromptSection = buildToolPromptSection(input.allAgentTools);
+    // Deferred-tool manifest: name every tool NOT loaded into this turn's
+    // schema so the model can reach it via tool_search instead of fail-
+    // discovering or denying. This is what lets the Anthropic-strong path
+    // (tool-selection.ts) ship a filtered set rather than the whole inventory —
+    // the schema shrinks, the cold cache-write shrinks, and nothing goes
+    // invisible (loaded ∪ manifested = full catalog).
+    if (input.loadedTools) {
+      toolPromptSection += buildDeferredToolManifest(input.allAgentTools, input.loadedTools);
+    }
   } catch { /* best-effort */ }
 
   // Cold-start nudge — applies to BOTH providers, but disproportionately

@@ -181,6 +181,10 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     memoryIndex: input.memoryIndex,
     integrations: input.integrations,
     allAgentTools: input.allAgentTools,
+    // The tools actually loaded this turn — drives the deferred-tool manifest
+    // (allAgentTools − loadedTools) so the model can tool_search anything the
+    // filtered schema omits. This is the discovery half of the lazy-load flip.
+    loadedTools: toolSel.tools,
     systemPromptOverride: input.systemPromptOverride,
     bridgeContext: input.bridgeContext,
     resolvedProvider: resolved.provider,

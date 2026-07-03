@@ -24,6 +24,7 @@ import { insertOpTurn, appendOpMessage, readOpMessages, readOpTurn } from "./sto
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
+import { aggregateOpUsage } from "./op-usage.js";
 import { readOp } from "../ops/op-store.js";
 import { getSessionForOp } from "../ops/session-bridge.js";
 import { appendActionLedger } from "../ops/action-ledger.js";
@@ -162,11 +163,23 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
   }
   persistOpKeepingSignals(op, { clearRedirect });
 
+  // Running per-op token total for a UI cost meter. Computed AFTER insertOpTurn
+  // + persistOpKeepingSignals above, so the turn just committed is already on
+  // disk and folded into the sum (aggregateOpUsage reads ALL persisted op_turns).
+  // Additive OPTIONAL field on the existing turn_committed body — every consumer
+  // reads named fields defensively (session-bridge-observer reads turnIdx/tools,
+  // soak-metrics + event-pump ignore the body), none validates its exact shape.
+  const usage = aggregateOpUsage(op.id);
   emit(op.id, "turn_committed", {
     turnIdx,
     messageCount: persistedMsgs.length,
     toolCount: input.toolCallSummary.length,
     tools: input.toolCallSummary.map((t) => ({ tool: t.tool, status: t.resultStatus })),
+    usage: {
+      inputTokens: usage.usageInputTokens,
+      outputTokens: usage.usageOutputTokens,
+      totalTokens: usage.usageInputTokens + usage.usageOutputTokens,
+    },
   });
 
   // Operational action ledger — the one write site. Denormalizes this turn's

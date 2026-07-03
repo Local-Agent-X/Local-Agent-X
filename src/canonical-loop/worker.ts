@@ -37,6 +37,7 @@ import {
   getLeaseConfig,
 } from "./lease.js";
 import { readLatestOpTurn } from "./store.js";
+import { aggregateOpUsage } from "./op-usage.js";
 import { refreshAriKernelRunIfStuck } from "../ari-kernel/index.js";
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
@@ -213,6 +214,39 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       // op from its session, so getSessionForOp would return undefined (CL-5).
       if (r.terminalReason !== null) {
         break;
+      }
+
+      // Token-budget ceiling. Dormant unless a budget stamps a finite positive
+      // maxTokens (nothing sets it today — the entry runners leave it 0). Mirrors
+      // the max_turns floor above: read the op's cumulative tokens across every
+      // persisted op_turn — driveTurn's commitTurn already inserted this turn's
+      // row (synchronous writeFileSync) before returning, so the sum includes the
+      // turn that just finished and the meter/enforcement never lags a turn — and
+      // if the total meets/exceeds the cap, finalize the SAME way (error + aborted
+      // outcome + running → failed + break).
+      //
+      // Placed AFTER the leaseLost / cancelled / natural-terminal checks, not
+      // before them like the instruction's rough line, because at those earlier
+      // points the op is NOT safely `running`: on leaseLost recovery owns the op
+      // (writing failed here would clobber its re-lease), and on a natural-terminal
+      // turn commitTurn already transitioned the op to succeeded/failed, so a
+      // running → failed here would throw IllegalTransitionError. At this line the
+      // op is provably still `running` and mid-loop, so the transition is legal.
+      const maxTokens = op.contextPack?.budget?.maxTokens;
+      if (typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0) {
+        const usage = aggregateOpUsage(op.id);
+        const totalTokens = usage.usageInputTokens + usage.usageOutputTokens;
+        if (totalTokens >= maxTokens) {
+          releaseReason = "max_tokens_exceeded";
+          emit(op.id, "error", {
+            code: "max_tokens_exceeded",
+            message: `worker exceeded maxTokens=${maxTokens} (used ${totalTokens})`,
+            retryable: false,
+          });
+          recordTerminalOutcome(op, "aborted");
+          transitionOp(op, "failed", "max_tokens_exceeded");
+          break;
+        }
       }
 
       // Turn-boundary signal check (PRD §13 precedence: cancel > pause >

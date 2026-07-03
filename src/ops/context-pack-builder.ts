@@ -71,7 +71,15 @@ export async function buildContextPack(input: BuildPackInput): Promise<ContextPa
 
   const budget: OpBudget = {
     maxIterations: input.budget?.maxIterations ?? 30,
-    maxTokens: input.budget?.maxTokens ?? 80_000,
+    // 0 = OFF. maxTokens is a hard per-op cumulative-token ceiling the worker
+    // now ENFORCES (canonical-loop/worker.ts): a positive value stops the op
+    // with `max_tokens_exceeded`. It was a dead field defaulting to 80_000 while
+    // nothing read it; waking the enforcement would turn that vestige into a live
+    // guillotine (input tokens compound across turns, so a normal multi-turn op
+    // blows past 80k in a few rounds). Default to 0 so the ceiling stays dormant
+    // unless a caller deliberately stamps a budget — matching maxTokens: 0 used
+    // across the op fixtures. Set a real number here (or at the call site) to arm it.
+    maxTokens: input.budget?.maxTokens ?? 0,
     maxWallTimeMs: input.budget?.maxWallTimeMs ?? 15 * 60 * 1000,
     maxSelfEditCalls: input.budget?.maxSelfEditCalls ?? 5,
   };

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { atomicWriteFileSync } from "./server-utils.js";
@@ -61,6 +61,20 @@ registerBuiltinMigration({
         atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2));
       }
     } catch {}
+  },
+});
+
+// v3: Remove the dead tiered-memory store. addMemory/searchTiered/deepRecall
+// had zero callers, so ~/.lax/memory-tiers.json was a permanently-empty file
+// that reclassifyAll rewrote daily and that rode the sync manifest. The code is
+// gone; unlink the stale file left behind on OTA-updated installs.
+registerBuiltinMigration({
+  version: 3,
+  name: "remove-dead-memory-tiers-store",
+  up: () => {
+    const stalePath = join(getLaxDir(), "memory-tiers.json");
+    if (!existsSync(stalePath)) return;
+    unlinkSync(stalePath);
   },
 });
 

@@ -63,7 +63,6 @@ export interface OrchestrationExample {
 
 export interface BackgroundReport {
   compression: { compressed: number; savedBytes: number };
-  tierChanges: { hot: number; warm: number; cold: number; archive: number };
   prefetch: { topics: string[] };
   unspoken: { absences: number; changes: number };
   growth: string;

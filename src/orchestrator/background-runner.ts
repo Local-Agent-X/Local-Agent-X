@@ -3,7 +3,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { NarrativeMemory } from "../narrative-memory.js";
 import { UnspokenDetector } from "../unspoken-detector.js";
 import { GrowthTracker } from "../growth-tracker.js";
-import { MemoryTierManager } from "../memory-tiers.js";
 import { PredictivePrefetcher } from "../predictive-prefetch.js";
 import { MemoryCompressor } from "../memory/cognitive/compression/index.js";
 import type { MemoryIndex } from "../memory/index.js";
@@ -16,7 +15,7 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
 
   // Note: consolidation, retain-from-logs, and reflect are scheduled directly
   // via the JobScheduler in src/server/background-jobs.ts. The orchestrator
-  // owns the orchestrator-internal jobs only (compression, tiers, prefetch,
+  // owns the orchestrator-internal jobs only (compression, prefetch,
   // unspoken, growth, narratives, graph).
 
   const compression = safeRun("memory-compression:bg", () => {
@@ -24,12 +23,6 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
     const report = mc.compressAll(false);
     return { compressed: report.compressed, savedBytes: report.savedTokens };
   }, { compressed: 0, savedBytes: 0 });
-
-  const tierChanges = safeRun("memory-tiers:bg", () => {
-    const tm = MemoryTierManager.getInstance();
-    const report = tm.reclassifyAll();
-    return report.tierCounts;
-  }, { hot: 0, warm: 0, cold: 0, archive: 0 });
 
   const prefetch = safeRun("predictive-prefetch:bg", () => {
     const pp = PredictivePrefetcher.getInstance();
@@ -81,7 +74,6 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
 
   return {
     compression,
-    tierChanges,
     prefetch,
     unspoken,
     growth,

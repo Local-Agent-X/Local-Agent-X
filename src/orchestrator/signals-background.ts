@@ -1,5 +1,4 @@
 import { PredictivePrefetcher } from "../predictive-prefetch.js";
-import { MemoryTierManager } from "../memory-tiers.js";
 import { MemoryCompressor } from "../memory/cognitive/compression/index.js";
 import { MemoryConsolidator } from "../memory/cognitive/consolidation/index.js";
 import type { CognitiveSignal } from "./types.js";
@@ -19,12 +18,6 @@ export const backgroundSignals: CognitiveSignal[] = [
       PredictivePrefetcher.getInstance().learnSchedule(Date.now(), words.slice(0, 10), []);
     },
     health: () => PredictivePrefetcher.getInstance(),
-  },
-
-  {
-    id: "memory-tiers",
-    scope: "profile",
-    health: () => MemoryTierManager.getInstance(),
   },
 
   {

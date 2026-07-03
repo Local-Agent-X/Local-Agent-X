@@ -22,7 +22,7 @@ the block — if you need to change protected core, either:
 | `anthropic-client/`, `codex-client/`, `canonical-loop/adapters/` | provider-specific streaming | Keep provider differences here, not leaking into routes |
 | `canonical-loop/agent-runner/` | `runAgentViaCanonical` entry point | All provider routing goes through the canonical loop |
 | `routes/*.ts` | HTTP surface | Business logic lives in top-level modules, routes just call in |
-| `memory/`, `memory-tiers.ts` | sqlite-vec hybrid memory | Don't add a second memory store |
+| `memory/` | sqlite-vec hybrid memory | Don't add a second memory store |
 
 ## Invariants specific to src/
 

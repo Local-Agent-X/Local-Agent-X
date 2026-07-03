@@ -50,6 +50,17 @@ function laneCap(lane: CanonicalLane): number {
   return STATIC_LANE_CAPS[lane] ?? 1;
 }
 
+// Global stampede ceiling on total in-flight workers across ALL lanes, so a
+// runaway fan-out can't launch past the sum of the per-lane caps (~19). Sits
+// ABOVE the per-lane maxes (interactive 10, agent 5), so normal per-lane usage
+// is NOT throttled — it only bounds a stampede. Config-driven via
+// maxConcurrentAgents; production default is intended to become cores−2
+// auto-scaling (a follow-up) — NOT implemented here.
+const GLOBAL_CAP_FALLBACK = 12;
+function globalCap(): number {
+  return capConfigReader?.()?.maxConcurrentAgents ?? GLOBAL_CAP_FALLBACK;
+}
+
 interface QueuedOp {
   opId: string;
   lane: CanonicalLane;
@@ -79,6 +90,13 @@ export function pumpScheduler(): void {
   try {
     let i = 0;
     while (i < queue.length) {
+      // GLOBAL guard: stop launching once total in-flight workers (running +
+      // mid-construction) hit the global cap, regardless of which lane is next.
+      // This only throttles NEW launches — every in-flight op still completes
+      // and releases via launch()'s finally / evictWorker, so it can't deadlock
+      // even if the cap is somehow below the current in-flight set. Leaves the
+      // remaining ops queued (same as the lane-full path below).
+      if (active.size + launching.size >= globalCap()) break;
       const q = queue[i];
       const cap = laneCap(q.lane);
       const inUse = activeByLane.get(q.lane) ?? 0;

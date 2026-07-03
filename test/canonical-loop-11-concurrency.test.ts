@@ -34,6 +34,7 @@ import {
   setLeaseConfig,
   resetLeaseConfig,
   setLaneCapConfigReader,
+  schedulerSnapshot,
   readCanonicalEvents,
   readLatestOpTurn,
   type CanonicalEvent,
@@ -329,5 +330,64 @@ describe("Issue 11 — different lanes do not block each other", () => {
     // Each op's events are isolated.
     assertSeqMonotonic(buildOp.id, readCanonicalEvents(buildOp.id));
     assertSeqMonotonic(fastOp.id, readCanonicalEvents(fastOp.id));
+  });
+});
+
+// ── Chunk C2: GLOBAL concurrency cap across ALL lanes ────────────────────
+
+describe("global cap throttles total in-flight workers across all lanes", () => {
+  it("with globalCap=2 and 4 ops on DIFFERENT lanes, at most 2 run at once; the rest stay queued and drain as slots free", async () => {
+    // Per-lane caps individually admit every one of these ops (interactive=10,
+    // build=2, background=1, ide=1 — one op each), so WITHOUT the global guard
+    // all four would run at once (the old ~19-way stampede). maxConcurrentAgents=2
+    // caps the TOTAL to 2 concurrent regardless of lane; the other two sit queued
+    // until a slot frees. globalCap (2) is below the number of distinct lanes (4),
+    // which also proves the guard only throttles NEW launches — it can't deadlock:
+    // every op still reaches terminal below.
+    setLaneCapConfigReader(() => ({ maxConcurrentAgents: 2 }) as unknown as LAXConfig);
+
+    const lanes: OpLane[] = ["interactive", "build", "background", "ide"];
+    const ops = lanes.map((lane, i) => mkOp(`gcap${i}`, lane));
+    for (const op of ops) {
+      // Long-ish streams so each op stays `running` long enough to observe the
+      // cap saturate before the first wave completes (~750ms/op).
+      const adapter = new FakeAdapter({
+        script: [scriptLongStreamingTurn({ chunkIntervalMs: 15, maxChunks: 50 })],
+      });
+      registerAdapterForOp(op.id, () => adapter);
+    }
+
+    // Submit all four in one synchronous burst.
+    for (const op of ops) canonicalLoopEntry(op);
+
+    // Sample the scheduler while the first wave streams. activeCount must NEVER
+    // exceed the global cap, and we must actually SEE it saturate at 2 with ops
+    // still queued (proving the cap — not slow starts — is the binding limit).
+    let maxActive = 0;
+    let sawSaturatedWithQueue = false;
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline && !sawSaturatedWithQueue) {
+      const snap = schedulerSnapshot();
+      maxActive = Math.max(maxActive, snap.activeCount);
+      if (snap.activeCount === 2 && snap.queueDepth >= 1) sawSaturatedWithQueue = true;
+      await new Promise(r => setTimeout(r, 3));
+    }
+
+    expect(maxActive, `global cap breached: ${maxActive} active at once`).toBeLessThanOrEqual(2);
+    expect(sawSaturatedWithQueue, "never observed 2 active with ops still queued").toBe(true);
+
+    // Keep sampling until the queue fully drains, asserting the ceiling holds the
+    // whole time (the second wave must not overshoot either).
+    while (schedulerSnapshot().queueDepth > 0 && Date.now() < deadline + 5_000) {
+      maxActive = Math.max(maxActive, schedulerSnapshot().activeCount);
+      await new Promise(r => setTimeout(r, 3));
+    }
+    expect(maxActive, `global cap breached during drain: ${maxActive}`).toBeLessThanOrEqual(2);
+
+    // All four drain to terminal as slots free — no op is stranded by the guard.
+    await Promise.all(ops.map(o => awaitTerminal(o.id, 10_000)));
+    for (const op of ops) {
+      expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+    }
   });
 });

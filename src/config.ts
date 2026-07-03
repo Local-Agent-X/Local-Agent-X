@@ -50,6 +50,13 @@ const configSchema = z.object({
    *  cap. Each is a full agent loop + provider stream + tool subprocesses, so
    *  the heavy local cost scales with this. User-tunable from Settings. */
   maxSubAgents: z.number().int().min(1).max(20).default(5),
+  /** GLOBAL stampede ceiling on total in-flight workers across ALL lanes
+   *  (scheduler.ts pumpScheduler) — caps the ~19 sum-of-per-lane-caps down to
+   *  12. Sits ABOVE the per-lane maxes (interactive 10, agent 5) so normal
+   *  per-lane usage is NOT throttled — it only bounds a runaway fan-out. The
+   *  "start fan-out at 4" policy is enforced later on the fan-out launcher, not
+   *  here. Intended production default is cores−2 auto-scaling (a follow-up). */
+  maxConcurrentAgents: z.number().int().min(1).max(12).default(12),
   systemPrompt: z.string().default(DEFAULT_SYSTEM_PROMPT),
   profile: z.enum(["home", "dev", "enterprise"]).default("home"),
   toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("auto"),

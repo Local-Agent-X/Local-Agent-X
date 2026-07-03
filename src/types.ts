@@ -307,6 +307,9 @@ export interface LAXConfig {
   /** Agent lane concurrency cap — how many sub-agents (agent_spawn) run at
    *  once. See scheduler.ts laneCap(). */
   maxSubAgents: number;
+  /** Global stampede ceiling on total in-flight workers across ALL lanes,
+   *  ABOVE the per-lane maxes (default 12, max 12). See scheduler pumpScheduler(). */
+  maxConcurrentAgents: number;
   systemPrompt: string;
   profile: DeploymentProfile;
   toolApproval: "auto" | "confirm-risky" | "confirm-all";

@@ -3,9 +3,12 @@
  * functions that take a Page (and optionally a BrowserContext) — keeps
  * browser.ts under the file-size cap without hiding the operation semantics.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Page } from "playwright";
 import { MAX_TEXT_LENGTH } from "./launcher.js";
 import { wrapExternalContent } from "../sanitize.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 /** Extract visible text from body or a specific selector. */
 export async function extractTextFrom(page: Page, selector?: string): Promise<string> {
@@ -22,7 +25,17 @@ export async function extractTextFrom(page: Page, selector?: string): Promise<st
   return wrapExternalContent(text, "browser.extract", { url: page.url(), selector: selector || "body" });
 }
 
-/** Capture a base64 screenshot with metadata header. */
+/** Capture a screenshot, persist the full PNG, and return a reference the model
+ *  can actually SEE via `view_image`.
+ *
+ *  The prior implementation base64-encoded the buffer, sliced it to 200 chars,
+ *  and returned that fragment inside a `[base64:…]` marker — then discarded the
+ *  real bytes. Nothing downstream reconstitutes an image from that string (the
+ *  canonical vision path is a ToolResult `_image` envelope / a `view_image`
+ *  read), so every "let me screenshot to check the layout" flow was a silent
+ *  no-op that read as success. We now write the whole PNG to the uploads dir —
+ *  the same folder `view_image` resolves by basename — and hand back its path,
+ *  mirroring preview-tools' render→view_image pattern. */
 export async function screenshotAsBase64(page: Page, engine: string): Promise<string> {
   const buffer = await page.screenshot({ type: "png", fullPage: false });
   // Empty buffers come from Playwright timeout/closed-page paths — silently
@@ -31,10 +44,13 @@ export async function screenshotAsBase64(page: Page, engine: string): Promise<st
   if (!buffer || buffer.length === 0) {
     throw new Error("Screenshot failed: empty buffer (page may have closed or timed out).");
   }
-  const base64 = buffer.toString("base64");
   const title = await page.title();
   const url = page.url();
-  return `Screenshot captured\nURL: ${url}\nTitle: ${title}\nEngine: ${engine}\nSize: ${buffer.length} bytes\n\n[base64:${base64.slice(0, 200)}...]\n\nUse 'extract' action to read the page text content.`;
+  const dir = join(getLaxDir(), "uploads");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `browser-screenshot-${Date.now()}.png`);
+  writeFileSync(file, buffer);
+  return `Screenshot captured\nURL: ${url}\nTitle: ${title}\nEngine: ${engine}\nSize: ${buffer.length} bytes\nSaved: ${file}\n\nUse the 'view_image' tool on that path to SEE the page, or the 'extract' action to read its text content.`;
 }
 
 // page.evaluate has no built-in timeout, so a model script that awaits

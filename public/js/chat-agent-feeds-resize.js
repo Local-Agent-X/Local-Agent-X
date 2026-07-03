@@ -1,0 +1,115 @@
+// ── Agent Feeds: right-rail drag-to-resize + persist ──
+//
+// The Agents panel (#agent-feeds) opens to a user-chosen width (default 320)
+// instead of a hardcoded 320. A thin handle on the panel's LEFT edge (the panel
+// is anchored to the right of the layout, so its left border is the draggable
+// one) lets the user widen / narrow it; the chosen width persists to
+// localStorage under `lax_agent_feeds_width` and is read back as the open
+// target by toggleAgentFeeds (chat-agent-feeds.js) via getAgentFeedsWidth().
+//
+// Why this is a self-contained sibling rather than reusing apps-ide-resize.js:
+// that component's restore() force-applies the saved width to its panels on
+// PAGE LOAD, which suits the always-visible IDE panels but would force this
+// collapsed-by-default panel open on every reload. Here the width is applied
+// only by the toggle (on open), and the toggle must read the persisted width
+// itself. We still mirror apps-ide-resize's conventions (setPointerCapture,
+// .dragging class, a body resize class, and dblclick-to-reset).
+//
+// Loaded alongside chat-agent-feeds.js in app.html. Both are browser global
+// scripts; toggleAgentFeeds only *calls* getAgentFeedsWidth at interaction
+// time (long after all scripts parse), so cross-file load order is not tight.
+
+var AGENT_FEEDS_MIN = 260, AGENT_FEEDS_MAX = 720, AGENT_FEEDS_DEFAULT = 320;
+var AGENT_FEEDS_WIDTH_KEY = 'lax_agent_feeds_width';
+
+// Pure: clamp any candidate width to [MIN,MAX]; non-numeric / non-positive
+// (null storage, garbage, 0) falls back to the default. 0 is never a valid
+// width here — "closed" is a class-driven state, not a zero width.
+function clampAgentFeedsWidth(w) {
+  w = parseInt(w, 10);
+  if (!isFinite(w) || w <= 0) return AGENT_FEEDS_DEFAULT;
+  if (w < AGENT_FEEDS_MIN) return AGENT_FEEDS_MIN;
+  if (w > AGENT_FEEDS_MAX) return AGENT_FEEDS_MAX;
+  return w;
+}
+
+// The persisted open width (falls back to default when unset/invalid).
+function getAgentFeedsWidth() {
+  var raw = null;
+  try { raw = localStorage.getItem(AGENT_FEEDS_WIDTH_KEY); } catch (e) {}
+  return clampAgentFeedsWidth(raw);
+}
+
+// Mobile = the fixed-overlay breakpoint in app.css (@media max-width:768px).
+// AGENT_FEEDS_MOBILE mirrors the overlay width in that block (:1036) — it's
+// only the transient slide-in animation target on mobile; the resting width is
+// handed back to CSS (toggleAgentFeeds clears the inline width on mobile
+// onDone, so the :1036 300px rule drives). The persisted desktop width is NEVER
+// pinned on mobile: it can be up to AGENT_FEEDS_MAX (720) via cross-device
+// shared same-origin localStorage (desktop drag → open on a phone over the
+// broker), and a pinned 720 would cover the whole phone screen with no way back
+// — the resize handle is display:none on mobile, so there's no drag to reset it.
+var AGENT_FEEDS_MOBILE = 300;
+function agentFeedsIsMobile() {
+  try { return !!(window.matchMedia && window.matchMedia('(max-width:768px)').matches); }
+  catch (e) { return false; }
+}
+
+function _applyAgentFeedsWidth(panel, w) {
+  panel.style.width = w + 'px';
+  panel.style.minWidth = w + 'px';
+}
+
+function _initAgentFeedsResize() {
+  var panel = document.getElementById('agent-feeds');
+  if (!panel) return;
+  var handle = panel.querySelector('.agent-feeds-resize-handle');
+  if (!handle) return;
+
+  handle.addEventListener('pointerdown', function(e) {
+    // Only resizable while open. Collapsed == closed (width 0) is a separate
+    // state owned by the toggle; never resize into/out of it.
+    if (panel.classList.contains('collapsed')) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add('dragging');
+    document.body.classList.add('agent-feeds-resizing');
+    panel.style.transition = 'none';
+
+    var startX = e.clientX;
+    var startW = panel.getBoundingClientRect().width;
+
+    function onMove(ev) {
+      // Handle sits on the LEFT of a right-anchored panel: dragging left
+      // (negative dx) grows it, dragging right shrinks it → subtract dx.
+      _applyAgentFeedsWidth(panel, clampAgentFeedsWidth(startW - (ev.clientX - startX)));
+    }
+    function onUp() {
+      handle.releasePointerCapture(e.pointerId);
+      handle.classList.remove('dragging');
+      document.body.classList.remove('agent-feeds-resizing');
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      panel.style.transition = '';
+      var w = parseInt(panel.style.width, 10);
+      if (w > 0) { try { localStorage.setItem(AGENT_FEEDS_WIDTH_KEY, String(w)); } catch (e2) {} }
+    }
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  });
+
+  // Double-click resets to the default width and forgets the saved width.
+  handle.addEventListener('dblclick', function() {
+    if (panel.classList.contains('collapsed')) return;
+    _applyAgentFeedsWidth(panel, AGENT_FEEDS_DEFAULT);
+    try { localStorage.removeItem(AGENT_FEEDS_WIDTH_KEY); } catch (e) {}
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _initAgentFeedsResize);
+} else {
+  _initAgentFeedsResize();
+}

@@ -37,12 +37,31 @@ function toggleAgentFeeds() {
     // + CSS !important is immune to that.
     document.body.classList.add('agents-panel-open');
     panel.style.overflow = 'hidden';
-    Spring.animate(panel, 'width', 320, { from: 0, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.style.overflow = 'visible'; panel.style.transition = ''; } });
+    // Desktop: open to the user's persisted width (default 320), not a hardcoded
+    // 320, and pin width+minWidth inline in onDone so the final state wins over
+    // the CSS .agent-feeds.active fallback in every path — including
+    // reduced-motion (safeAnimate skips onUpdate) and a width < the CSS min-width.
+    // Mobile: the panel is a fixed 300px overlay driven by CSS (:1036). Never pin
+    // the persisted desktop width there — cross-device shared localStorage means
+    // it can be up to 720 and would cover the whole phone screen with no handle
+    // to reset (handle is display:none on mobile). Animate to the mobile width,
+    // then CLEAR the inline width in onDone so the CSS 300px rule drives at rest.
+    var mobile = agentFeedsIsMobile();
+    var openW = mobile ? AGENT_FEEDS_MOBILE : getAgentFeedsWidth();
+    Spring.animate(panel, 'width', openW, { from: 0, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.style.overflow = 'visible'; panel.style.transition = ''; if (mobile) { panel.style.width = ''; panel.style.minWidth = ''; } else { panel.style.width = openW + 'px'; panel.style.minWidth = openW + 'px'; } } });
   } else {
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9664;';
-    Spring.animate(panel, 'width', 0, { from: 320, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.classList.remove('active'); panel.classList.add('collapsed'); document.body.classList.remove('agents-panel-open'); panel.style.transition = ''; } });
+    // Collapse from the current width (mobile overlay = 300, else persisted).
+    Spring.animate(panel, 'width', 0, { from: agentFeedsIsMobile() ? AGENT_FEEDS_MOBILE : getAgentFeedsWidth(), preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.classList.remove('active'); panel.classList.add('collapsed'); document.body.classList.remove('agents-panel-open'); panel.style.transition = ''; panel.style.width = ''; panel.style.minWidth = ''; } });
   }
 }
+
+// Right-rail width (drag-to-resize + persist) lives in the sibling
+// chat-agent-feeds-resize.js, which owns getAgentFeedsWidth() (used above),
+// clampAgentFeedsWidth(), the .agent-feeds-resize-handle pointer wiring, and
+// the lax_agent_feeds_width localStorage key. Split out to keep this file
+// under the 400-LOC source-hygiene ceiling, matching the -render / -actions /
+// -autoopen sibling pattern.
 
 function updateAgentFeeds(agents) {
   if (!agents || !Array.isArray(agents)) return;

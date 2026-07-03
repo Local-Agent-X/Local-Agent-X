@@ -920,9 +920,21 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 /* ── Agent Feeds (Mission Control) ── */
 #page-chat{flex-direction:row}
 #chat-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
-.agent-feeds{width:0;min-width:0;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column}
+.agent-feeds{position:relative;width:0;min-width:0;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column}
 .agent-feeds.collapsed{width:0;min-width:0;border-left:none}
+/* Default/persisted-fallback width (== AGENT_FEEDS_DEFAULT in chat-agent-feeds.js).
+   toggleAgentFeeds sets an inline width for the user's persisted/dragged width,
+   which overrides this; on dblclick-reset the inline width returns here to 320. */
 .agent-feeds.active{width:320px;min-width:320px;overflow:visible}
+/* Drag handle on the panel's LEFT edge (panel is right-anchored). Absolutely
+   positioned because the panel is a column flexbox, so a flex-child handle
+   would be a horizontal bar, not a left-edge gutter. Clipped away when the
+   panel is collapsed (width 0, overflow hidden), and hard-hidden below too. */
+.agent-feeds-resize-handle{position:absolute;left:0;top:0;bottom:0;width:5px;z-index:6;cursor:ew-resize;background:transparent;transition:background .15s;touch-action:none}
+.agent-feeds-resize-handle:hover,.agent-feeds-resize-handle.dragging{background:var(--accent-dim,rgba(64,240,240,.35))}
+.agent-feeds.collapsed .agent-feeds-resize-handle{display:none}
+body.agent-feeds-resizing{cursor:ew-resize;user-select:none}
+body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .agent-feeds-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0}
 .agent-feeds-title{font-family:var(--mono);font-size:.72rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase}
 .agent-count{font-family:var(--mono);font-size:.65rem;background:var(--accent);color:var(--bg);border-radius:10px;padding:1px 7px;min-width:18px;text-align:center}
@@ -1022,6 +1034,8 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
   /* Agent feeds overlay on mobile */
   .agent-feeds{position:fixed;right:0;top:0;bottom:0;z-index:1000;box-shadow:none}
   .agent-feeds.active{box-shadow:-4px 0 20px rgba(0,0,0,.4);width:300px;min-width:300px}
+  /* Resize is a desktop affordance — the mobile fixed overlay isn't draggable. */
+  .agent-feeds-resize-handle{display:none}
 }
 
 @media (max-width:480px) {

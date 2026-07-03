@@ -129,10 +129,13 @@ export function egressGuardGate(ctx: ToolCallContext): PhaseOutcome {
 
 export function dataLineageGate(ctx: ToolCallContext): PhaseOutcome {
   if (!hasCapability(ctx.tc.name, "egress")) return CONTINUE;
-  // Presence-based floor is UNCHANGED: a tainted session blocks egress. We use
-  // the payload-aware variant only to ENRICH the reason with content-overlap
-  // evidence (which tainted bytes are actually in this outbound payload) — it
-  // makes the same block decision as checkEgressTaint.
+  // Completeness-guarded Option B+ (checkEgressTaintWithPayload): a tainted
+  // session still blocks egress UNLESS every active taint entry is fully
+  // fingerprinted (its whole content provably covered) AND this outbound payload
+  // overlaps none of them — then a provably-unrelated payload may pass. Any
+  // content-less or only-head-fingerprinted (incomplete) entry keeps the hard
+  // presence-floor block, so a >cap secret's tail can never egress by evading
+  // the fingerprinted head. The payload text is what the check proves clean.
   const { text } = egressPayload(ctx.tc.name, ctx.args as Record<string, unknown>);
   // `computer` is egress ONLY through typed text (action:"type"). A mouse
   // move/click/scroll carries no data, so the sticky presence floor must not

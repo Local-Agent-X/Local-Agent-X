@@ -886,12 +886,13 @@ describe("content fingerprints + payload-overlap evidence (T1)", () => {
     expect(checkEgressTaint(SESS).blocked).toBe(true);
   });
 
-  it("checkEgressTaintWithPayload blocks on presence even when payload carries NO tainted bytes; evidence []", () => {
+  it("checkEgressTaintWithPayload ALLOWS a fully-fingerprinted read when the payload overlaps nothing (Option B+ friction fix); evidence []", () => {
+    // SECRET_CONTENT is short → fully fingerprinted AND complete → clearable.
     recordSensitiveRead(SESS, "sensitive_file", "/home/u/.ssh/id_rsa", SECRET_CONTENT);
     const res = checkEgressTaintWithPayload(SESS, "totally benign outbound text");
-    // Presence-based floor: still blocked.
-    expect(res.blocked).toBe(true);
-    // But no content overlap → no evidence sources named.
+    // Completeness guard satisfied + no overlap → egress may proceed.
+    expect(res.blocked).toBe(false);
+    // No content overlap → no evidence sources named.
     expect(res.evidence).toEqual([]);
   });
 
@@ -1175,7 +1176,10 @@ describe("declassification — deliberate, audited untaint (T2)", () => {
 
   it("nothing automatic untaints: checkEgressTaint alone never clears the session", () => {
     const sid = "declass-5";
-    recordSensitiveRead(sid, "sensitive_file", "/home/u/.ssh/id_rsa", SECRET_CONTENT);
+    // Content-LESS read → unclearable under the completeness guard, so the floor
+    // holds across repeated payload-aware checks too (this test is about no
+    // AUTO-untaint, not the B+ clearable case).
+    recordSensitiveRead(sid, "sensitive_file", "/home/u/.ssh/id_rsa");
     // Repeated gate checks (incl. payload-aware) must not mutate taint state.
     for (let i = 0; i < 5; i++) {
       expect(checkEgressTaint(sid).blocked).toBe(true);

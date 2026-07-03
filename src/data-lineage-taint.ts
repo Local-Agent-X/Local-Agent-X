@@ -35,12 +35,33 @@ const sessionTaint = new Map<string, TaintEntry[]>();
  */
 export function recordSensitiveRead(sessionId: string, source: TaintSource, target: string, content?: string): void {
   if (!sessionTaint.has(sessionId)) sessionTaint.set(sessionId, []);
-  sessionTaint.get(sessionId)!.push({
+  const entries = sessionTaint.get(sessionId)!;
+  const fp = content ? computeFingerprints(content) : { fingerprints: [], complete: false };
+  // Collapse a content-LESS pre-taint twin. The sensitive-read path sets an
+  // arg-derived floor SYNCHRONOUSLY before the bytes are read (a content-less
+  // entry, so a co-batched egress can't see an empty floor), then re-records the
+  // SAME (source,target) WITH content once the read returns. Left as-is, the
+  // stale content-less twin would keep the whole session UNCLEARABLE under the
+  // completeness guard (a content-less entry never clears), defeating the B+
+  // friction fix for the exact common case it targets. So when this record
+  // carries real fingerprints, drop any content-less entry for the SAME
+  // (source,target): the content-bearing entry fully supersedes it and is at
+  // least as strong (complete → clears only a provably-unrelated payload;
+  // incomplete → still blocks). A prior content-BEARING read of the same target
+  // is NEVER removed — its distinct bytes were seen and must stay provable.
+  if (fp.fingerprints.length > 0) {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.source === source && e.target === target && e.fingerprints.length === 0) entries.splice(i, 1);
+    }
+  }
+  entries.push({
     source,
     target,
     timestamp: Date.now(),
     runId: sessionId,
-    fingerprints: content ? computeFingerprints(content) : [],
+    fingerprints: fp.fingerprints,
+    complete: fp.complete,
   });
 }
 
@@ -101,27 +122,61 @@ export function findTaintInPayload(sessionId: string, payload: string): Array<{ 
 }
 
 /**
- * Payload-aware egress check: the presence-based floor (checkEgressTaint) PLUS
- * content-overlap evidence when the outbound payload is in hand. The BLOCK
- * decision is identical to checkEgressTaint (sticky/presence-based — unchanged);
- * `evidence` only SHARPENS the reason by naming which tainted sources actually
- * have bytes in this payload. Additive: the gate can keep calling
- * checkEgressTaint, or call this when it has the payload text.
+ * Payload-aware egress check — COMPLETENESS-GUARDED Option B+.
+ *
+ * The presence floor (checkEgressTaint) still governs, but when the outbound
+ * payload is in hand this REFINES it: an egress may proceed ONLY when EVERY
+ * active taint entry is provably clearable — it carries fingerprints AND those
+ * fingerprints cover its ENTIRE recorded content (`complete`) — AND none of them
+ * overlap the payload. This narrows the friction of blocking ALL session-wide
+ * egress after any sensitive read (read a short config → send a provably
+ * unrelated note) WITHOUT opening an exfil hole:
+ *
+ *  - Direct overlap (payload carries tainted bytes, raw or any decoded view) →
+ *    always BLOCK and name the source.
+ *  - Any entry that is content-LESS (no fingerprints) or only HEAD-fingerprinted
+ *    (incomplete: content too large to fully cover before the bounded cap) is
+ *    UNCLEARABLE → BLOCK regardless of payload. "No overlap" against an
+ *    incomplete entry proves only that its fingerprinted HEAD is absent, NOT its
+ *    unfingerprinted TAIL, so a >cap secret (SSH/PEM key, multi-key .env, aws
+ *    credentials, kubeconfig) can never egress its tail bytes by evading the
+ *    head window. Security-conservative: cannot PROVE clean of the FULL content
+ *    → BLOCK.
+ *  - Only when EVERY entry is (fingerprinted AND complete) AND none overlap →
+ *    ALLOW (blocked:false).
+ *
+ * This is NOT time/turn auto-untaint — the block only relaxes for a payload we
+ * can prove free of every entry's complete content; declassifySession is
+ * unchanged.
  */
 export function checkEgressTaintWithPayload(
   sessionId: string,
   payload: string,
 ): { blocked: boolean; reason?: string; evidence: Array<{ source: TaintSource; target: string }> } {
   const base = checkEgressTaint(sessionId);
+  // Clean session: nothing tainted, nothing to prove.
   if (!base.blocked) return { ...base, evidence: [] };
+
+  // Direct content-overlap evidence: tainted bytes actually present in the
+  // payload (raw OR any decoded/normalized evasion view). Always blocks.
   const evidence = findTaintInPayload(sessionId, payload);
-  if (evidence.length === 0) return { ...base, evidence };
-  const named = [...new Set(evidence.map(e => `${e.source}:${e.target.slice(0, 40)}`))];
-  return {
-    blocked: true,
-    reason: `${base.reason} Outbound payload contains bytes from tainted source(s): ${named.join(", ")}.`,
-    evidence,
-  };
+  if (evidence.length > 0) {
+    const named = [...new Set(evidence.map(e => `${e.source}:${e.target.slice(0, 40)}`))];
+    return {
+      blocked: true,
+      reason: `${base.reason} Outbound payload contains bytes from tainted source(s): ${named.join(", ")}.`,
+      evidence,
+    };
+  }
+
+  // No overlap. COMPLETENESS GUARD: clear the egress ONLY if EVERY active entry
+  // is fully fingerprinted (proving the payload is free of its WHOLE content).
+  // Any content-less or incompletely-fingerprinted entry keeps the presence
+  // floor — its tail could be in this payload and we couldn't have detected it.
+  const taints = sessionTaint.get(sessionId)!; // non-empty: base.blocked is true
+  const everyEntryClearable = taints.every(t => t.fingerprints.length > 0 && t.complete);
+  if (everyEntryClearable) return { blocked: false, evidence: [] };
+  return { ...base, evidence: [] };
 }
 
 /** Clear taint for a session (e.g., on new chat) */
@@ -319,10 +374,12 @@ export function propagateTaint(fromSessionId: string, toSessionId: string): numb
   const target = sessionTaint.get(toSessionId)!;
   let count = 0;
   for (const t of fromTaints) {
-    // Preserve the child's fingerprints so the parent's evidence path can still
-    // attribute payload bytes to the original source. Re-stamp timestamp to the
-    // propagation moment (audit only); source/target/fingerprints carried as-is.
-    target.push({ source: t.source, target: t.target, timestamp: Date.now(), runId: toSessionId, fingerprints: t.fingerprints });
+    // Preserve the child's fingerprints AND completeness so the parent's egress
+    // check makes the SAME clearable/unclearable decision (an incomplete child
+    // entry stays unclearable in the parent — the hole doesn't reopen across the
+    // propagation seam). Re-stamp timestamp to the propagation moment (audit
+    // only); source/target/fingerprints/complete carried as-is.
+    target.push({ source: t.source, target: t.target, timestamp: Date.now(), runId: toSessionId, fingerprints: t.fingerprints, complete: t.complete });
     count++;
   }
   return count;

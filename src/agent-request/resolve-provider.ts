@@ -5,9 +5,23 @@ import { PROVIDERS, isHttpProvider } from "../providers/registry.js";
 import { loadSettings, getSetting } from "../settings.js";
 import { resolveCredential } from "../auth/resolve.js";
 import type { CredentialSource } from "../auth/auth-provider.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("agent-request.resolve-provider");
 
 const isProviderId = (s: string): s is ProviderId =>
   (PROVIDER_IDS as readonly string[]).includes(s);
+
+/** Emitted when a forced credential fallback abandoned the provider the
+ *  caller/settings actually asked for — a silent downgrade (e.g. a momentary
+ *  `hasCredential()` miss reroutes a Fable-5 chat onto Grok's default model).
+ *  Surfaced on the resolve result so the caller can signal the user rather
+ *  than continue the turn on the wrong model with no indication. */
+export interface ProviderSwitch {
+  from: ProviderId;
+  to: ProviderId;
+  reason: "credential-unavailable";
+}
 
 export async function resolveProvider(
   config: LAXConfig,
@@ -32,6 +46,9 @@ export async function resolveProvider(
    *  USD is fiction; the rest are real per-token API keys. Drives whether the
    *  USD spend cap applies (see cost-tracker `isBillableSource`). */
   authSource?: CredentialSource;
+  /** Set only when a forced credential fallback dropped the requested
+   *  provider (see {@link ProviderSwitch}). Undefined on the happy path. */
+  providerSwitch?: ProviderSwitch;
 }> {
   // Load saved settings (spread because the codepath blanks saved.model below)
   const saved: Record<string, unknown> = { ...loadSettings() };
@@ -48,6 +65,14 @@ export async function resolveProvider(
   let provider: ProviderId | "" = "";
   let providerWasOverridden = false;
   const savedProvider = String(saved.provider || "");
+  // The provider the caller/settings actually asked for — a valid override
+  // wins, else the saved provider. Empty on a fresh install with no
+  // preference. Used below to tell an UNREQUESTED forced fallback (a silent
+  // downgrade worth surfacing) from a legitimate fresh-install default.
+  const requestedProvider: ProviderId | "" =
+    (providerOverride && isProviderId(providerOverride)) ? providerOverride
+      : isProviderId(savedProvider) ? savedProvider
+        : "";
   if (providerOverride && isProviderId(providerOverride) && hasCredsFor(providerOverride)) {
     provider = providerOverride;
     // If the caller-supplied override differs from the saved provider, the
@@ -59,6 +84,10 @@ export async function resolveProvider(
   } else if (isProviderId(savedProvider)) {
     provider = savedProvider;
   }
+  // Distinct from `providerWasOverridden` (an INTENTIONAL caller switch whose
+  // modelOverride is meant for the new provider): a forced fallback means the
+  // requested provider could not be honored at all.
+  let forcedFallback = false;
   if (!provider || !hasCredsFor(provider)) {
     // xAI (OAuth or API key) takes priority — Grok is the default on fresh
     // installs and stays the default when the user has multiple providers
@@ -68,11 +97,29 @@ export async function resolveProvider(
     else if (hasCredsFor("codex") && !config.openaiApiKey) provider = "codex";
     else provider = "xai"; // no creds anywhere → xai fallback so the picker shows Grok
     providerWasOverridden = true;
+    forcedFallback = true;
   }
   // If we fell through to a different provider OR the caller-override forced
   // a switch, the saved model almost certainly belongs to the old provider.
   // Blank it so the downstream default picker picks something valid.
   if (providerWasOverridden) saved.model = "";
+
+  // A forced fallback that abandoned a provider the caller/settings actually
+  // asked for is a SILENT DOWNGRADE: a momentary `hasCredential()` miss can
+  // reroute e.g. a Fable-5 chat onto Grok's default model with no signal, and
+  // any modelOverride chosen for the old provider would otherwise be run
+  // verbatim on the new one. Surface a switch event, warn to the log, and drop
+  // the now-orphaned modelOverride so the new provider's default picker runs.
+  let providerSwitch: ProviderSwitch | undefined;
+  let effectiveModelOverride = modelOverride;
+  if (forcedFallback && requestedProvider && requestedProvider !== provider) {
+    providerSwitch = { from: requestedProvider, to: provider, reason: "credential-unavailable" };
+    effectiveModelOverride = undefined;
+    logger.warn(
+      `provider switch: '${requestedProvider}' unavailable (no usable credential) — ` +
+      `rerouted to '${provider}'. Dropping model override; using ${provider} default.`,
+    );
+  }
 
   // Resolve API key
   let apiKey: string;
@@ -98,7 +145,7 @@ export async function resolveProvider(
   // the registry leaves defaultModel empty (e.g., ollama-cloud where
   // the user picks from the cloud catalog). Caller-supplied modelOverride
   // wins when non-empty (per-job cron model selection).
-  const model = (modelOverride && modelOverride.trim())
+  const model = (effectiveModelOverride && effectiveModelOverride.trim())
     || String(saved.model || "")
     || meta.defaultModel
     || config.model;
@@ -106,5 +153,5 @@ export async function resolveProvider(
   const temperature = typeof saved.temperature === "number" ? saved.temperature : config.temperature;
   const maxIterations = typeof saved.maxIterations === "number" ? saved.maxIterations : config.maxIterations;
 
-  return { provider, apiKey, model, codexApiKey, customBaseURL, temperature, maxIterations, authSource };
+  return { provider, apiKey, model, codexApiKey, customBaseURL, temperature, maxIterations, authSource, providerSwitch };
 }

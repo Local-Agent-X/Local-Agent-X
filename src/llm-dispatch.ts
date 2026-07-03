@@ -15,9 +15,15 @@
  *   - rejectOAuth: refuse an Anthropic OAuth (CLI subscription) token. Bulk
  *     workloads can't drive the CLI subprocess for sequential calls, so an
  *     Anthropic-OAuth user degrades to null rather than hammering it.
+ *
+ * Anthropic subscription credentials (cli sentinel / oauth: / sk-ant-oat) are
+ * NEVER sent over direct HTTP — that path is banned (429 since April 2026).
+ * When accepted (rejectOAuth off), they route through the canonical
+ * streamAnthropicResponse client, which uses the official CLI proxy.
  */
 
 import { resolveCredential } from "./auth/resolve.js";
+import { usesAnthropicSubscriptionAuth } from "./anthropic-models.js";
 import { resolveProviderContext } from "./providers/resolve-provider-context.js";
 import { backgroundModelFor } from "./providers/registry.js";
 import type { ProviderId } from "./providers/provider-ids.js";
@@ -160,12 +166,23 @@ async function callAnthropic(prompt: string, model: string, temperature: number,
     const resolved = await resolveCredential("anthropic", { rejectOAuth });
     if (!resolved) return null;
     const apiKey = resolved.credential;
-    const isOAuth = apiKey.startsWith("oauth:");
-    if (rejectOAuth && (isOAuth || !apiKey.startsWith("sk-ant-api"))) return null;
-    const token = isOAuth ? apiKey.slice(6) : apiKey;
-    const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": "2023-06-01" };
-    if (isOAuth) headers["Authorization"] = `Bearer ${token}`;
-    else headers["x-api-key"] = token;
+    if (usesAnthropicSubscriptionAuth(apiKey)) {
+      // Anthropic banned subscription auth over direct HTTP (April 2026 —
+      // every request 429s). Subscription-style credentials ("cli" sentinel,
+      // oauth: prefix, sk-ant-oat tokens) must go through the canonical
+      // anthropic client, which routes them via the official CLI proxy —
+      // same seam chat and classify-with-llm use. Never Bearer-fetch them.
+      if (rejectOAuth) return null;
+      if (images && images.length > 0) {
+        // The CLI proxy carries text prompts only; the direct HTTP path is
+        // banned for this credential. Degrade rather than send a doomed 429.
+        logger.warn("anthropic subscription auth cannot carry images; degrading to null");
+        return null;
+      }
+      return callAnthropicViaCliProxy(apiKey, prompt, model, temperature, timeoutMs);
+    }
+    if (rejectOAuth && !apiKey.startsWith("sk-ant-api")) return null;
+    const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": apiKey };
     // No images → content stays the bare prompt string, so existing call
     // sites produce the exact request body they always have.
     const content: AnthropicUserContent = images && images.length > 0
@@ -189,6 +206,50 @@ async function callAnthropic(prompt: string, model: string, temperature: number,
   } catch (e) {
     logger.warn(`anthropic call threw: ${(e as Error).message}`);
     return null;
+  }
+}
+
+/** Single-shot completion over the canonical Anthropic client for
+ *  subscription-style credentials. streamAnthropicResponse owns the
+ *  CLI-proxy-vs-direct-HTTP decision, so this can never regress into a
+ *  banned Bearer fetch. Pass the credential UNSTRIPPED — the client's own
+ *  usesAnthropicSubscriptionAuth check needs the oauth:/cli shape intact. */
+async function callAnthropicViaCliProxy(token: string, prompt: string, model: string, temperature: number, timeoutMs: number): Promise<string | null> {
+  const ac = new AbortController();
+  const abortTimer = setTimeout(() => ac.abort(), timeoutMs);
+  let raceTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const { streamAnthropicResponse } = await import("./anthropic-client/index.js");
+    const run = (async () => {
+      let acc = "";
+      for await (const event of streamAnthropicResponse({
+        token, model, temperature,
+        messages: [{ role: "user", content: prompt } as never],
+        systemPrompt: "", tools: [], signal: ac.signal,
+      })) {
+        // A transport error (e.g. CLI "Please run /login") means there is no
+        // valid completion — never return the error text as a response.
+        if (event.type === "error") throw new Error(event.error || "anthropic transport error");
+        if (event.type === "text") acc += event.delta || "";
+      }
+      return acc || null;
+    })().catch((e: Error) => {
+      logger.warn(`anthropic (cli proxy) call threw: ${e.message}`);
+      return null;
+    });
+    // The claude CLI doesn't reliably honor abort signals (cold spawns can
+    // hang 30-60s past abort) — race a wallclock so the documented timeoutMs
+    // holds no matter what the subprocess does.
+    const wallclock = new Promise<null>((resolve) => {
+      raceTimer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    return await Promise.race([run, wallclock]);
+  } catch (e) {
+    logger.warn(`anthropic (cli proxy) call threw: ${(e as Error).message}`);
+    return null;
+  } finally {
+    clearTimeout(abortTimer);
+    if (raceTimer) clearTimeout(raceTimer);
   }
 }
 

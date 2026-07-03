@@ -287,9 +287,15 @@ describe("recoverStaleOp guard rails", () => {
     expect(r.kind).toBe("unknown_op");
   });
 
-  it("returns not_running for queued ops", () => {
-    const op = mkOp("guard-queued");
+  it("still returns not_running for paused ops (queued is now recoverable — see OP-6 block)", () => {
+    const op = mkOp("guard-paused");
     canonicalLoopEntry(op);
+    // Paused ops are deliberately parked by the user; recovery must leave them
+    // alone. (Queued ops used to land here too, but OP-6 makes them
+    // recoverable — see the "queued-crash recovery" describe below.)
+    const fresh = readOp(op.id)!;
+    fresh.canonical!.state = "paused";
+    writeOp(fresh);
     const r = recoverStaleOp(op.id);
     expect(r.ok).toBe(false);
     expect(r.kind).toBe("not_running");
@@ -341,6 +347,116 @@ describe("recoverStaleOp guard rails", () => {
     const r = recoverStaleOp(op.id);
     expect(r.ok).toBe(false);
     expect(r.kind).toBe("not_running");
+    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+  });
+});
+
+// ── OP-6: queued ops orphaned by a crash are recovered ──────────────────
+
+describe("recoverStaleOp reclaims queued ops orphaned by a crash (OP-6)", () => {
+  it("recovers a queued op persisted WITH a stale lease and clears the lease", async () => {
+    const op = mkOp("queued-stale-lease");
+    canonicalLoopEntry(op);
+
+    // The exact crash the finding names: worker.drive() calls acquireLease()
+    // — persisting {leaseOwner, leaseExpiresAt} while canonical.state is STILL
+    // `queued` (worker.ts:83) — and the server dies before the queued→running
+    // transition (worker.ts:121). The lease is now expired (stale).
+    const crashed = readOp(op.id)!;
+    crashed.canonical!.state = "queued";
+    crashed.canonical!.leaseOwner = "w-dead-queued";
+    crashed.canonical!.leaseExpiresAt = new Date(Date.now() - 50).toISOString();
+    writeOp(crashed);
+
+    // Replacement adapter so the re-enqueued op can actually resume.
+    registerAdapterForOp(op.id, () => new FakeAdapter({
+      script: [scriptTurn({ text: "after queued recovery", terminal: "done" })],
+    }));
+
+    const outcome = recoverStaleOp(op.id);
+    expect(outcome.ok).toBe(true);
+    expect(outcome.kind).toBe("recovered");
+    expect(outcome.expiredWorkerId).toBe("w-dead-queued");
+
+    // Synchronously after recovery — BEFORE the replacement worker leases —
+    // the op is back in `queued` with BOTH lease columns cleared, so the
+    // replacement's acquireLease can succeed. Pre-fix this op returned
+    // `not_running` and stayed {queued, leaseOwner:w-dead-queued} forever.
+    const post = readOp(op.id);
+    expect(post?.canonical?.state).toBe("queued");
+    expect(post?.canonical?.leaseOwner ?? null).toBeNull();
+    expect(post?.canonical?.leaseExpiresAt ?? null).toBeNull();
+
+    // The dead worker's death was announced.
+    const leaseLost = readCanonicalEvents(op.id).find(e =>
+      e.type === "lease_lost" && bodyOf<{ reason: string }>(e).reason === "expired",
+    );
+    expect(leaseLost).toBeDefined();
+    expect(bodyOf<{ workerId: string }>(leaseLost!).workerId).toBe("w-dead-queued");
+
+    // And it genuinely resumes rather than merely reporting "recovered".
+    await awaitTerminal(op.id);
+    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+  });
+
+  it("recovers a queued op whose lease is still FRESH (crash inside the lease window is not a live worker)", async () => {
+    const op = mkOp("queued-fresh-lease");
+    canonicalLoopEntry(op);
+
+    // Fast crash-restart INSIDE the lease window: the server died a few ms
+    // after acquireLease, so the lease is still in date at restart. A queued
+    // op never heartbeats (worker.ts transitions queued→running synchronously,
+    // with no await), so this fresh lease is a DEAD worker, not a live one.
+    // A fix that reused the running/cancelling `lease_fresh` skip would strand
+    // this op in `queued` forever (the boot sweep runs exactly once).
+    const crashed = readOp(op.id)!;
+    crashed.canonical!.state = "queued";
+    crashed.canonical!.leaseOwner = "w-dead-fresh";
+    crashed.canonical!.leaseExpiresAt = new Date(Date.now() + 60_000).toISOString();
+    writeOp(crashed);
+    expect(isLeaseExpired(readOp(op.id))).toBe(false); // lease genuinely fresh
+
+    registerAdapterForOp(op.id, () => new FakeAdapter({
+      script: [scriptTurn({ text: "recovered from fresh-lease crash", terminal: "done" })],
+    }));
+
+    const outcome = recoverStaleOp(op.id);
+    expect(outcome.ok).toBe(true);
+    expect(outcome.kind).toBe("recovered"); // NOT lease_fresh
+
+    const post = readOp(op.id);
+    expect(post?.canonical?.state).toBe("queued");
+    expect(post?.canonical?.leaseOwner ?? null).toBeNull();
+    expect(post?.canonical?.leaseExpiresAt ?? null).toBeNull();
+
+    await awaitTerminal(op.id);
+    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+  });
+
+  it("re-enqueues a plain queued op with no lease (server died before launch) — does not consume a recovery attempt", async () => {
+    const op = mkOp("queued-no-lease");
+    canonicalLoopEntry(op);
+
+    // The ordinary shape: persisted `queued`, never leased. The in-memory
+    // scheduler queue is gone after a restart, so without recovery re-enqueuing
+    // it the op stays pending forever — the exact "will start once a slot
+    // opens" lie the finding calls out.
+    const q = readOp(op.id)!;
+    expect(q.canonical?.state).toBe("queued");
+    expect(q.canonical?.leaseOwner ?? null).toBeNull();
+
+    registerAdapterForOp(op.id, () => new FakeAdapter({
+      script: [scriptTurn({ text: "launched after recovery", terminal: "done" })],
+    }));
+
+    const outcome = recoverStaleOp(op.id);
+    expect(outcome.ok).toBe(true);
+    expect(outcome.kind).toBe("recovered");
+
+    // A queued op never ran, so recovery must not bill it a retry attempt.
+    expect(readOp(op.id)?.attemptCount ?? 0).toBe(0);
+
+    await awaitTerminal(op.id);
     expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
   });
 });

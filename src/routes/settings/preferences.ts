@@ -6,6 +6,7 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, atomicWriteFileSync } from "../../server-utils.js";
 import { RUNTIME_SETTINGS, BROADCAST_KEYS, publicSchema, isProtectedSetting } from "../../settings-schema.js";
 import { loadSettings, saveSettings } from "../../settings.js";
+import { getRuntimeConfig } from "../../config.js";
 
 /**
  * True only when the request carries the real app auth token. The authenticated
@@ -54,12 +55,19 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
   // is a single line in settings-schema.ts — no edits here.
   if (method === "POST" && url.pathname === "/api/settings") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+    // Read + write through getRuntimeConfig(), NOT the boot-time ctx.config
+    // reference. The config disk-watcher hot-reloads via setRuntimeConfig(
+    // loadConfig()), which swaps _runtimeConfig to a NEW object; ctx.config
+    // stays pinned to the stale boot object. Persisting ctx.config here would
+    // clobber any hand edit made directly in config.json (and picked up by the
+    // watcher) with the pre-reload snapshot — the split-brain this route caused.
+    const runtimeConfig = getRuntimeConfig();
     // User-owned security controls can only be changed by the authenticated UI
     // (real operator token). The agent's own loopback http_request is auth-
     // exempt by User-Agent and must not be able to flip a kill-switch here —
     // it has to go through the `setting` tool, which asks the user to approve.
     const protectedFields = Object.keys(body).filter((k) => isProtectedSetting(k));
-    if (protectedFields.length > 0 && !hasValidOperatorToken(req, ctx.config.authToken)) {
+    if (protectedFields.length > 0 && !hasValidOperatorToken(req, runtimeConfig.authToken)) {
       json(403, { error: `Security settings (${protectedFields.join(", ")}) can only be changed by the user in Settings → Security. Use the \`setting\` tool, which asks the user to approve.` });
       return true;
     }
@@ -127,12 +135,12 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       if (!(field.field in body)) continue;
       const parsed = field.validate.safeParse(body[field.field]);
       if (!parsed.success) continue;
-      (ctx.config as unknown as Record<string, unknown>)[field.field] = parsed.data;
+      (runtimeConfig as unknown as Record<string, unknown>)[field.field] = parsed.data;
       runtimeChanged = true;
     }
     if (runtimeChanged) {
       const { saveConfig } = await import("../../config.js");
-      saveConfig(ctx.config);
+      saveConfig(runtimeConfig);
     }
 
     json(200, { ok: true }); return true;
@@ -144,8 +152,9 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     // server actually uses, not whatever was last written to settings.json
     // (which could be stale if the runtime value was changed via profile
     // defaults, env vars, or any path that doesn't round-trip through here).
+    const runtimeConfig = getRuntimeConfig();
     for (const field of RUNTIME_SETTINGS) {
-      const live = (ctx.config as unknown as Record<string, unknown>)[field.field];
+      const live = (runtimeConfig as unknown as Record<string, unknown>)[field.field];
       if (live !== undefined) merged[field.field] = live;
     }
     // port + workspace live in config.json (not settings.json / RUNTIME_SETTINGS),

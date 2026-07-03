@@ -18,9 +18,28 @@ export async function indexChunks(
 ): Promise<void> {
   removeFile(virtualPath);
   if (chunks.length === 0) return;
-  try {
-    if (embeddingProvider) await embedChunksWithRetry(db, embeddingProvider, config, chunks);
-  } catch (e) {
+  if (embeddingProvider) {
+    try {
+      await embedChunksWithRetry(db, embeddingProvider, config, chunks);
+    } catch (e) {
+      // Never swallow: an unexpected throw here (not the normal retry-exhaustion
+      // path, which resolves with no vectors) still leaves chunks unembedded.
+      logger.error(`[memory] Embedding step threw for ${virtualPath}:`, (e as Error).message);
+    }
+    // embedChunksWithRetry resolves even when the provider is down (it exhausts
+    // its retries and returns no vectors), so success here does NOT mean the
+    // chunks got embedded. Count what actually came back: any left unembedded
+    // are inserted keyword-searchable and will be re-vectorised by the boot-time
+    // background backfill once the provider returns — but if we log nothing, a
+    // wholesale-failed import (e.g. Ollama down) is silently vector-invisible and
+    // the caller marks it ingested. Surface the gap so it is observable.
+    const unembedded = chunks.reduce((n, c) => n + (c.embedding ? 0 : 1), 0);
+    if (unembedded > 0) {
+      logger.warn(
+        `[memory] ${unembedded}/${chunks.length} chunk(s) for ${virtualPath} indexed WITHOUT embeddings ` +
+        `(vector-invisible until background re-embed) — embedding provider likely unavailable`
+      );
+    }
   }
 
   const now = Date.now();

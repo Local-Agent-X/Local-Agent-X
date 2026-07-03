@@ -52,8 +52,11 @@ interface KeychainResult {
 // Windows DPAPI
 // ═══════════════════════════════════════════════════════════════════
 
-/** Store a key using Windows DPAPI (encrypted to current user's login) */
-function dpapiStore(data: Buffer, filePath: string): void {
+/**
+ * Store a key using Windows DPAPI (encrypted to current user's login).
+ * Exported for keychain-temp-file-perms.test.ts only — not public API.
+ */
+export function dpapiStore(data: Buffer, filePath: string): void {
   const b64 = data.toString("base64");
   // Unique script suffix per call. Multiple SecretsStore instances run
   // concurrently on boot (server + self-edit tool + workers + mcp-client);
@@ -66,7 +69,9 @@ function dpapiStore(data: Buffer, filePath: string): void {
     `$bytes = [Convert]::FromBase64String('${b64}')\n` +
     `$encrypted = [System.Security.Cryptography.ProtectedData]::Protect($bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)\n` +
     `[IO.File]::WriteAllBytes('${filePath.replace(/\\/g, "/")}', $encrypted)\n`;
-  writeFileSync(scriptPath, script, "utf-8");
+  // 0o600: the script embeds the base64 plaintext master key — between
+  // write and unlink it must not be readable at default-umask perms.
+  writeFileSync(scriptPath, script, { encoding: "utf-8", mode: 0o600 });
   try {
     execFileSync("powershell.exe", [
       "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
@@ -77,8 +82,11 @@ function dpapiStore(data: Buffer, filePath: string): void {
   }
 }
 
-/** Retrieve a key using Windows DPAPI */
-function dpapiRetrieve(filePath: string): Buffer {
+/**
+ * Retrieve a key using Windows DPAPI.
+ * Exported for keychain-temp-file-perms.test.ts only — not public API.
+ */
+export function dpapiRetrieve(filePath: string): Buffer {
   // Unique paths per call — see dpapiStore comment. Without this,
   // concurrent SecretsStore boots race on the shared `.retrieve.ps1`
   // + `.b64` filenames; one process's `unlinkSync(outPath)` deletes
@@ -95,7 +103,12 @@ function dpapiRetrieve(filePath: string): Buffer {
     `$encrypted = [IO.File]::ReadAllBytes('${filePath.replace(/\\/g, "/")}')\n` +
     `$decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)\n` +
     `[IO.File]::WriteAllText('${outPath.replace(/\\/g, "/")}', [Convert]::ToBase64String($decrypted))\n`;
-  writeFileSync(scriptPath, script, "utf-8");
+  writeFileSync(scriptPath, script, { encoding: "utf-8", mode: 0o600 });
+  // Pre-create the output file owner-only BEFORE PowerShell writes the
+  // decrypted key into it — WriteAllText truncates in place and keeps the
+  // existing mode, so the plaintext key is never exposed at default-umask
+  // perms between the child's write and our unlink.
+  writeFileSync(outPath, "", { mode: 0o600 });
   try {
     execFileSync("powershell.exe", [
       "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",

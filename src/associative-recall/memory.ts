@@ -34,7 +34,12 @@ export class AssociativeMemory {
 
   recall(trigger: string, context?: Partial<AssociationContext>): AssociativeResult[] {
     const results = recall(this.store, trigger, context);
-    saveStore(this.store);
+    // recall() only mutates the store (bumping lastAccessed on matched
+    // associations) when it finds results. With an empty node set — the state
+    // this store lives in until node creation is wired — every message would
+    // otherwise persist an unchanged store on the pure read path. Persist only
+    // when something actually changed.
+    if (results.length > 0) saveStore(this.store);
     return results;
   }
 

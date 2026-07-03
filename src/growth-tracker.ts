@@ -301,6 +301,12 @@ export class GrowthTracker {
 
   /** Orchestrator signal: a growth summary, when there's enough of one to be worth surfacing. */
   signalsFor(): ModuleSignal[] {
+    // With no tracked skills the store is empty and getGrowthSummary() returns
+    // the "just getting started — haven't tracked any skills yet" placeholder.
+    // That placeholder must NOT be injected as a real signal: doing so surfaced
+    // a useless "haven't tracked any skills yet" nudge every scheduled turn.
+    // Only surface a summary once there is actual growth to report.
+    if (loadStore().skills.length === 0) return [];
     const summary = this.getGrowthSummary();
     if (!summary || summary.length <= 10) return [];
     return [{ source: "growth-tracker", signal: summary, priority: 3, category: "growth", confidence: 1.0 }];

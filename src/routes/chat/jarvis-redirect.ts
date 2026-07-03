@@ -31,12 +31,25 @@ export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boole
     const activeOps = listOpsForSession(sessionId);
     if (activeOps.length === 0) return false;
 
+    // Redirect only to a LIVE background worker — same filter op_kill applies.
+    // The session map also tracks the interactive host turn itself
+    // (chat_turn/voice_turn) and ops that are cancelling/terminal; without
+    // this filter a still-streaming chat turn can be the newest tracked op
+    // and the user's message ("make the header blue") is redirected into the
+    // dying turn and lost.
+    const { readOp, isInteractiveHostOpType } = await import("../../ops/op-store.js");
+    const liveWorkers = activeOps
+      .map(id => readOp(id))
+      .filter((o): o is NonNullable<typeof o> => !!o)
+      .filter(o => (o.status === "running" || o.status === "pending") && !isInteractiveHostOpType(o.type));
+    if (liveWorkers.length === 0) return false;
+
     const { opRedirect } = await import("../../canonical-loop/index.js");
     const { classifyWorkerRedirect } = await import("../../routing/worker-redirect-classifier.js");
 
-    // Pick the most recently submitted op as the redirect target
+    // Pick the most recently submitted live worker as the redirect target
     // (Set iteration preserves insertion order in JS).
-    const targetOpId = activeOps[activeOps.length - 1];
+    const targetOpId = liveWorkers[liveWorkers.length - 1].id;
     const taskHint = getOpTask(targetOpId);
 
     // Feed the classifier the last few main-agent turns. Without this, it

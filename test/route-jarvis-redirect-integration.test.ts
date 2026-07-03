@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import type { ServerEvent } from "../src/types.js";
 
-// Mocks for the three modules tryWorkerRedirect imports dynamically.
+// Mocks for the four modules tryWorkerRedirect imports dynamically.
 const activeOpsBySession = new Map<string, string[]>();
 const tasksByOpId = new Map<string, string>();
+const opsById = new Map<string, { id: string; status: string; type: string }>();
 const redirectedCalls: Array<{ opId: string; instruction: string }> = [];
 let redirectOpReturn = true;
 type ClassifyResult = { redirect: boolean; reason: string } | null;
@@ -14,6 +15,19 @@ vi.mock("../src/ops/session-bridge.js", () => ({
   listOpsForSession: vi.fn((sessionId: string) => activeOpsBySession.get(sessionId) ?? []),
   getOpTask: vi.fn((opId: string) => tasksByOpId.get(opId) ?? "(unknown)"),
 }));
+
+vi.mock("../src/ops/op-store.js", () => ({
+  readOp: vi.fn((opId: string) => opsById.get(opId) ?? null),
+  isInteractiveHostOpType: vi.fn((type: string) => type === "chat_turn" || type === "voice_turn"),
+}));
+
+/** Track an op for a session with a live-worker default shape. */
+function trackOp(sessionId: string, opId: string, status = "running", type = "task"): void {
+  const ids = activeOpsBySession.get(sessionId) ?? [];
+  ids.push(opId);
+  activeOpsBySession.set(sessionId, ids);
+  opsById.set(opId, { id: opId, status, type });
+}
 
 vi.mock("../src/canonical-loop/index.js", () => ({
   opRedirect: vi.fn((opId: string, instruction: string) => {
@@ -36,6 +50,7 @@ function captureSink(): { events: ServerEvent[]; sink: (e: ServerEvent) => void 
 beforeEach(() => {
   activeOpsBySession.clear();
   tasksByOpId.clear();
+  opsById.clear();
   redirectedCalls.length = 0;
   redirectOpReturn = true;
   classifierResult = { redirect: true, reason: "feedback for worker" };
@@ -58,7 +73,8 @@ describe("tryWorkerRedirect — no active workers", () => {
 
 describe("tryWorkerRedirect — classifier says redirect", () => {
   it("redirects to the most-recently-submitted op and emits two SSE events", async () => {
-    activeOpsBySession.set("s1", ["op-old", "op-new"]);
+    trackOp("s1", "op-old");
+    trackOp("s1", "op-new");
     tasksByOpId.set("op-new", "build a landing page");
     classifierResult = { redirect: true, reason: "feedback" };
 
@@ -80,7 +96,7 @@ describe("tryWorkerRedirect — classifier says redirect", () => {
   });
 
   it("falls through (returns false) when redirectOp itself returns false", async () => {
-    activeOpsBySession.set("s1", ["op-x"]);
+    trackOp("s1", "op-x");
     redirectOpReturn = false;
     classifierResult = { redirect: true, reason: "feedback" };
 
@@ -96,7 +112,7 @@ describe("tryWorkerRedirect — classifier says redirect", () => {
   });
 
   it("returns true but emits no events when sseSink is null (WS-only caller)", async () => {
-    activeOpsBySession.set("s1", ["op-x"]);
+    trackOp("s1", "op-x");
     classifierResult = { redirect: true, reason: "feedback" };
 
     const result = await tryWorkerRedirect({
@@ -110,9 +126,78 @@ describe("tryWorkerRedirect — classifier says redirect", () => {
   });
 });
 
+describe("tryWorkerRedirect — live-worker targeting (OP-7)", () => {
+  it("skips a still-streaming chat_turn and redirects to the live worker instead", async () => {
+    trackOp("s1", "op-worker");
+    // The interactive host turn is the NEWEST tracked op — it must never be
+    // the redirect target, or the user's message dies with the turn.
+    trackOp("s1", "op-chat-turn", "running", "chat_turn");
+
+    const { sink } = captureSink();
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "make the header blue",
+      recentSessionMessages: [],
+      sseSink: sink,
+    });
+    expect(result).toBe(true);
+    expect(redirectedCalls).toEqual([{ opId: "op-worker", instruction: "make the header blue" }]);
+  });
+
+  it("returns false without classifying when the only tracked ops are host turns", async () => {
+    trackOp("s1", "op-chat-turn", "running", "chat_turn");
+    trackOp("s1", "op-voice-turn", "running", "voice_turn");
+
+    const { events, sink } = captureSink();
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "make the header blue",
+      recentSessionMessages: [],
+      sseSink: sink,
+    });
+    expect(result).toBe(false);
+    expect(redirectedCalls).toEqual([]);
+    expect(events).toEqual([]);
+    const { classifyWorkerRedirect } = await import("../src/routing/worker-redirect-classifier.js");
+    expect(classifyWorkerRedirect).not.toHaveBeenCalled();
+  });
+
+  it("skips non-live ops (cancelling/terminal/unknown) and targets the newest live worker", async () => {
+    trackOp("s1", "op-live");
+    trackOp("s1", "op-cancelling", "cancelling");
+    trackOp("s1", "op-done", "done");
+    // Tracked in the session map but missing from the op store entirely.
+    activeOpsBySession.get("s1")!.push("op-ghost");
+
+    const { sink } = captureSink();
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "x",
+      recentSessionMessages: [],
+      sseSink: sink,
+    });
+    expect(result).toBe(true);
+    expect(redirectedCalls).toEqual([{ opId: "op-live", instruction: "x" }]);
+  });
+
+  it("still targets a pending (not-yet-running) worker", async () => {
+    trackOp("s1", "op-pending", "pending");
+
+    const { sink } = captureSink();
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "x",
+      recentSessionMessages: [],
+      sseSink: sink,
+    });
+    expect(result).toBe(true);
+    expect(redirectedCalls).toEqual([{ opId: "op-pending", instruction: "x" }]);
+  });
+});
+
 describe("tryWorkerRedirect — classifier says no", () => {
   it("returns false when classifier sets redirect=false", async () => {
-    activeOpsBySession.set("s1", ["op-x"]);
+    trackOp("s1", "op-x");
     classifierResult = { redirect: false, reason: "main agent should answer" };
 
     const { events, sink } = captureSink();
@@ -128,7 +213,7 @@ describe("tryWorkerRedirect — classifier says no", () => {
   });
 
   it("returns false when classifier returns null", async () => {
-    activeOpsBySession.set("s1", ["op-x"]);
+    trackOp("s1", "op-x");
     classifierResult = null;
 
     const { sink } = captureSink();
@@ -144,7 +229,7 @@ describe("tryWorkerRedirect — classifier says no", () => {
 
 describe("tryWorkerRedirect — recentSessionMessages plumbing", () => {
   it("filters down to user/assistant string messages and forwards last 4 turns to classifier", async () => {
-    activeOpsBySession.set("s1", ["op-x"]);
+    trackOp("s1", "op-x");
     classifierResult = { redirect: false, reason: "no" };
 
     const messages = [
@@ -178,7 +263,7 @@ describe("tryWorkerRedirect — recentSessionMessages plumbing", () => {
 
 describe("tryWorkerRedirect — error handling", () => {
   it("returns false (does not throw) when a downstream import throws", async () => {
-    activeOpsBySession.set("s1", ["op-x"]);
+    trackOp("s1", "op-x");
     const { classifyWorkerRedirect } = await import("../src/routing/worker-redirect-classifier.js");
     (classifyWorkerRedirect as unknown as { mockImplementationOnce: (fn: () => Promise<never>) => void })
       .mockImplementationOnce(() => Promise.reject(new Error("classifier blew up")));

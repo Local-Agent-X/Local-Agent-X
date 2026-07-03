@@ -21,9 +21,10 @@
  * cookies, no localStorage shared across scenarios). Headless by default.
  */
 
-import { chromium, type Browser, type Page, type BrowserContext, type ConsoleMessage, type Request } from "playwright";
+import { type Page, type Request } from "playwright";
 import type { ParsedScenario, ScoreStep, ScoreStepStatus } from "./types.js";
 import { chooseStepAction, type StepActionPlan } from "./step-planner.js";
+import { openPageWithConsoleCapture } from "./smoke.js";
 
 const STEP_TIMEOUT_MS = 30_000;
 
@@ -40,21 +41,21 @@ export interface DriverOptions {
 }
 
 export async function driveScenario(opts: DriverOptions): Promise<DriverTrace> {
-  let browser: Browser | null = null;
-  let context: BrowserContext | null = null;
-  let page: Page | null = null;
+  let opened: Awaited<ReturnType<typeof openPageWithConsoleCapture>> | null = null;
   const stepResults: ScoreStep[] = [];
 
   try {
-    browser = await chromium.launch({ headless: true });
-    context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    page = await context.newPage();
+    opened = await openPageWithConsoleCapture();
+    const page = opened.page;
 
     const stepConsoleErrors = new Map<number, string[]>();
     const stepNetworkFailures = new Map<number, string[]>();
     let currentStepIndex = 0;
 
-    page.on("console", (msg: ConsoleMessage) => {
+    // The shared helper collects a flat error list; the scorer needs errors
+    // bucketed per scenario step for the judge, so add a step-keyed listener
+    // on the same page (opened.errors stays a superset we don't read here).
+    page.on("console", (msg) => {
       if (msg.type() === "error") {
         const arr = stepConsoleErrors.get(currentStepIndex) || [];
         arr.push(msg.text().slice(0, 200));
@@ -114,9 +115,7 @@ export async function driveScenario(opts: DriverOptions): Promise<DriverTrace> {
       finalScreenshotBase64: finalScreenshot.toString("base64"),
     };
   } finally {
-    if (page) await page.close().catch(() => {});
-    if (context) await context.close().catch(() => {});
-    if (browser) await browser.close().catch(() => {});
+    if (opened) await opened.close();
   }
 }
 

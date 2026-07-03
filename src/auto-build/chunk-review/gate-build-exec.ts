@@ -25,8 +25,8 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { chromium, type ConsoleMessage } from "playwright";
 import { killProcessTree } from "../../process-tree-kill.js";
+import { smokeUrl } from "../scenario-scorer/smoke.js";
 import type { GateFinding } from "./gates.js";
 
 const BUILD_TIMEOUT_MS = 180_000;
@@ -129,74 +129,6 @@ function runCommand(command: string, projectDir: string, signal?: AbortSignal): 
   });
 }
 
-interface SmokeResult {
-  consoleErrors: string[];
-  /** True when a root/canvas node is present AND has mounted content. */
-  rootMounted: boolean;
-  loadError?: string;
-}
-
-/**
- * Headless-load a static entry and observe: console errors + whether a real
- * mount point rendered anything. Reuses the scenario-scorer's chromium +
- * console-capture pattern (driver.ts). File:// load — no dev server, this runs
- * against the built artifact.
- */
-async function smokeStaticEntry(entryPath: string, signal?: AbortSignal): Promise<SmokeResult> {
-  const consoleErrors: string[] = [];
-  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
-  try {
-    browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    const page = await context.newPage();
-    page.on("console", (msg: ConsoleMessage) => {
-      if (msg.type() === "error") consoleErrors.push(msg.text().slice(0, 200));
-    });
-    page.on("pageerror", (err) => consoleErrors.push(`pageerror: ${err.message.slice(0, 200)}`));
-
-    const fileUrl = "file://" + entryPath.replace(/\\/g, "/");
-    await page.goto(fileUrl, { waitUntil: "load", timeout: SMOKE_LOAD_TIMEOUT_MS });
-    // Let a frame or two of rendering / rAF-driven canvas paint happen.
-    await page.waitForTimeout(500);
-
-    if (signal?.aborted) return { consoleErrors, rootMounted: false, loadError: "aborted" };
-
-    // A game mounts into a canvas, or a framework app into #root/#app/main.
-    // "Mounted" = the node exists AND carries content (canvas has non-zero
-    // size, or the mount root has child nodes / non-trivial text). Evaluated
-    // via a selector-scoped $$eval so the callback stays inside Playwright's
-    // browser-typed context — no DOM lib needed in the Node build (same reason
-    // the scenario-scorer driver uses $$eval, not a raw page.evaluate(document…)).
-    const rootMounted = await page.$$eval(
-      "canvas, #root, #app, main, [data-root], body",
-      (els) => {
-        const nodes = els as unknown as Array<{
-          tagName: string; width?: number; height?: number;
-          childElementCount: number; textContent: string | null;
-        }>;
-        for (const el of nodes) {
-          if (el.tagName.toLowerCase() === "canvas") {
-            if ((el.width || 0) > 0 && (el.height || 0) > 0) return true;
-            continue;
-          }
-          if (el.tagName.toLowerCase() === "body") {
-            if (el.childElementCount > 1 || (el.textContent || "").trim().length > 20) return true;
-            continue;
-          }
-          if (el.childElementCount > 0 || (el.textContent || "").trim().length > 0) return true;
-        }
-        return false;
-      },
-    ).catch(() => false);
-
-    return { consoleErrors, rootMounted };
-  } catch (e) {
-    return { consoleErrors, rootMounted: false, loadError: (e as Error).message.slice(0, 200) };
-  } finally {
-    if (browser) await browser.close().catch(() => {});
-  }
-}
-
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
@@ -241,7 +173,8 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
   const entry = findStaticEntry(projectDir);
   if (!entry) return null; // not a browser build — nothing to smoke
 
-  const smoke = await smokeStaticEntry(entry, signal);
+  const fileUrl = "file://" + entry.replace(/\\/g, "/");
+  const smoke = await smokeUrl(fileUrl, SMOKE_LOAD_TIMEOUT_MS, signal);
   if (smoke.loadError && smoke.loadError !== "aborted") {
     return {
       gate: "build-exec",

@@ -9,7 +9,7 @@ import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
 import { getKernelTaintSources } from "../data-lineage.js";
-import { WORKTREE_PATH_TOOLS } from "../tool-registry.js";
+import { WORKTREE_PATH_TOOLS, hasCapability } from "../tool-registry.js";
 import { taintedShellBlockReason, blockedSelfVerifyGuidance } from "./shell-block-guidance.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit, circuitArgsSig } from "../circuit-breaker.js";
@@ -20,81 +20,42 @@ import { ToolBlocked } from "./errors.js";
 import { join, resolve, relative } from "node:path";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, BLOCK } from "./context.js";
-import { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
+import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
 
 export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
+// ARI action derivation lives in its own module (source-hygiene LOC ceiling);
+// re-exported here so resolve-tool.ts + the ari-action-map / td11 tests keep
+// their `from "./enforce-policy.js"` imports.
+export { ARI_ACTION_MAP, deriveAriAction } from "./ari-action-map.js";
+import { deriveAriAction } from "./ari-action-map.js";
 
-// HOST_CAPABILITY_MANIFEST action names — see ari-kernel.ts. A non-shell
-// tool that falls through to "exec" → lookupHostGrantId returns undefined
-// → firewall.execute throws → ariRequired turns it into a block. Every
-// gated tool must map to a manifest-valid action. Exported for the
-// coverage test (ari-action-map.test.ts) that fails when a kernel-gated
-// tool ships without a mapping — image_search did exactly that
-// (2026-06-10): action fell through to "exec", the http schema rejected
-// it, and every call blocked as "ARI error (ariRequired mode)".
-export const ARI_ACTION_MAP: Record<string, string> = {
-  read: "read", write: "write", edit: "write", edit_lines: "write", multi_edit: "write",
-  web_search: "get", web_fetch: "get", http_request: "get", browser: "get",
-  image_search: "get",
-  bash: "exec",
-  memory_search: "search",
-  // ARI database toolClass declares actions [query, exec, mutate] — "write"
-  // is not in that set, so action="write" tripped deny-by-default at the
-  // policy engine. memory_save is a row insert into the daily-log SQLite
-  // table, which maps cleanly to mutate.
-  memory_save: "mutate",
-  // secret-vault actions are overridden inside ariEvaluate by
-  // secretVaultActionMap; "capture" is just a valid no-op default.
-  browser_capture_to_secret: "capture",
-  browser_fill_from_secret: "fill",
-  clipboard_write_from_secret: "clipboard",
-  // file
-  glob: "read", grep: "read", view_image: "read", send_video: "read", send_image: "read", delete_file: "write",
-  // http — get for read paths, post for mutations
-  calendar_check_availability: "get", calendar_list_events: "get",
-  calendar_create_event: "post",
-  email_read: "get", email_search: "get", email_draft: "post",
-  email_send: "post", email_setup: "post", telegram_send: "post", whatsapp_send: "post",
-  marketplace_search: "get", marketplace_list: "get", marketplace_install: "get",
-  extract_site_assets: "get",
-  youtube_analyze: "get",
-  // shell — subprocess spawns + OS process queries
-  process_start: "exec", process_status: "exec",
-  process_kill: "exec", process_list: "exec",
-  // database — SQL (read-class today; tools self-restrict writes)
-  sql_query: "query", sql_explain: "query", sql_schema: "query",
-  // retrieval — vector/keyword session search
-  search_past_sessions: "search",
-};
-
-// The static map above is per-tool-NAME, so http_request and browser always
-// read as "get" — a POST or a browser click/evaluate looks passive to the
-// kernel, and a preset that denies http WRITES can never see them. deriveAriAction
-// derives the kernel action from the CALL's args instead:
-//   http_request → by args.method (POST/PUT/PATCH/DELETE → that write verb;
-//                  GET/HEAD/OPTIONS/absent → "get")
-//   browser      → by args.action (click/fill/select/type/evaluate/act → "post"
-//                  = an http write; navigate/read/screenshot/absent → "get")
-// Verified against the real arikernel workspace-assistant preset
-// (packages/arikernel/core/src/presets/policy-spec.json): allow-http-write-clean
-// (prio 100) allows a CLEAN post/put/patch/delete, deny-tainted-http-write
-// (prio 40, wins) denies the SAME verbs under web/rag/email taint — so a clean
-// POST stays allowed and only a tainted POST is denied; all four verbs are valid
-// http actions in HOST_CAPABILITY_MANIFEST. Tools whose action isn't derivable
-// from args fall through to the static ARI_ACTION_MAP.
-const HTTP_WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const BROWSER_WRITE_ACTIONS = new Set(["click", "fill", "select", "type", "evaluate", "act"]);
-
-export function deriveAriAction(toolName: string, args: Record<string, unknown>): string {
-  if (toolName === "http_request") {
-    const method = String(args?.method ?? "GET").toUpperCase();
-    return HTTP_WRITE_METHODS.has(method) ? method.toLowerCase() : "get";
+// Side-effect-free "what-else-would-block" probe of the gates a kernel-denied
+// egress request would traverse NEXT in the pre-dispatch chain, so their
+// verdicts join the same aggregate (SC-10). Only the SECURITY layer is probed:
+// SecurityLayer.evaluate is a pure decision function. The threat-engine pack is
+// deliberately NOT probed here — runPreDispatch never passes a threatEngine to
+// assertToolCallAllowed (it is inert in this path), so surfacing a threat block
+// the path won't actually enforce would be a phantom blocker. The data-lineage /
+// canary / egress-guard cohort is probed by egressAggregateGate itself.
+function probeUpstreamEgressBlockers(ctx: ToolCallContext): EgressBlocker[] {
+  const out: EgressBlocker[] = [];
+  const sec = ctx.security?.evaluate({
+    toolName: ctx.tc.name,
+    args: ctx.args,
+    sessionId: ctx.sessionId || "default",
+    callContext: ctx.callContext,
+  });
+  if (sec && !sec.allowed) {
+    out.push({
+      layer: "security",
+      label: "security",
+      reason: sec.reason,
+      recovery:
+        "Adjust the call to stay within the workspace and security boundaries — retrying the same args will be denied again.",
+      userHint: sec.userHint ?? USER_HINTS.policy,
+    });
   }
-  if (toolName === "browser") {
-    const action = String(args?.action ?? "").toLowerCase();
-    return BROWSER_WRITE_ACTIONS.has(action) ? "post" : "get";
-  }
-  return ARI_ACTION_MAP[toolName] || "exec";
+  return out;
 }
 
 async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
@@ -124,6 +85,26 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     const ariResult = await ariEvaluate(tc.name, deriveAriAction(tc.name, args), args, taintLabels);
     if (!ariResult.allowed) {
       const hint = ariResult.userHint ?? USER_HINTS.policy;
+      // SC-10: an egress-class tool denied at the KERNEL (e.g. TD-11 derives a
+      // tainted POST → action="post" → deny-tainted-http-write) must not
+      // short-circuit with ONLY the kernel reason and leave the model chasing
+      // one blocker per turn (fix the taint → retry → hit the host-allowlist →
+      // …). Aggregate the kernel verdict with the downstream egress blockers it
+      // would ALSO hit — security layer + data-lineage + canary + egress-guard —
+      // probed side-effect-free, into ONE response tagged per authoritative
+      // layer. Enforcement is unchanged (still blocks); only the reported reason
+      // becomes the aggregate. Non-egress kernel denials keep the raw message.
+      if (hasCapability(tc.name, "egress")) {
+        const kernelBlocker: EgressBlocker = {
+          layer: "arikernel",
+          label: "ARI kernel",
+          reason: ariResult.reason,
+          recovery:
+            "The kernel policy denies this outbound action (typically an untrusted-input taint on an http/browser write). Declassify the taint or end the session — do not just retry the same call.",
+          userHint: hint,
+        };
+        return egressAggregateGate(ctx, [kernelBlocker, ...probeUpstreamEgressBlockers(ctx)]);
+      }
       return terminate(ctx, { rendered: "raw", content: `User hint: ${hint}\n${ariResult.reason}`, allowed: false });
     }
   } else if (isAriActive() && shouldObserveInKernel(tc.name)) {
@@ -375,11 +356,12 @@ export const enforcePolicyPhase: Phase = async (ctx) => {
 
   outcome = await runPreDispatch(ctx);
   if (outcome.kind !== "continue") return outcome;
-  outcome = dataLineageGate(ctx);
-  if (outcome.kind !== "continue") return outcome;
-  outcome = canaryEgressGate(ctx);
-  if (outcome.kind !== "continue") return outcome;
-  outcome = egressGuardGate(ctx);
+  // SC-10: the data-lineage + canary + egress-guard cohort is enforced as one
+  // aggregated gate — a payload denied by more than one of them reports every
+  // blocker together instead of one-per-turn. (When the KERNEL denied an egress
+  // tool upstream, ariKernelGate already ran this aggregate with the kernel
+  // verdict prepended and short-circuited before here.)
+  outcome = egressAggregateGate(ctx);
   if (outcome.kind !== "continue") return outcome;
 
   outcome = lookupTool(ctx);

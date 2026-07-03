@@ -16,6 +16,32 @@ import { getMiddlewareState } from "./state.js";
 
 const RETRY_COUNTERS_KEY = "post-turn-detector-counters";
 
+/**
+ * True when the most recent genuine user turn carried an image attachment.
+ *
+ * Canonical op_messages store a user image as a `{ text, images: [...] }`
+ * envelope (see turn-loop/build-input.ts:hasImages and
+ * chat-tool-dispatcher.ts) — NOT the OpenAI multi-part `image_url` array
+ * that agent-loop-detectors' `userMessageHasImages()` probes for. That
+ * helper checks `Array.isArray(content)` and so always returns false against
+ * canonical rows, leaving the detector stack's `skipOnImages` exemption dead:
+ * a worker replying "I see X, try Y" to a screenshot reads as a stalled plan
+ * and triggers the planning-only nudge storm. We detect the real envelope
+ * here instead. Synthetic nudges are also `role:"user"` rows
+ * (`content.kind === "nudge"`) but are engine-injected, not a fresh user
+ * turn, so they don't reset the "is the model replying to an image" signal.
+ */
+function latestUserTurnHasImages(rows: Array<{ role: string; content: unknown }>): boolean {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (r.role !== "user") continue;
+    const c = r.content as { kind?: unknown; images?: unknown } | null | undefined;
+    if (c?.kind === "nudge") continue;
+    return Array.isArray(c?.images) && (c.images as unknown[]).length > 0;
+  }
+  return false;
+}
+
 export const postTurnDetectorMiddleware: CanonicalMiddleware = {
   name: "post-turn-detector",
 
@@ -24,7 +50,7 @@ export const postTurnDetectorMiddleware: CanonicalMiddleware = {
   when: isWorkerOp,
 
   async afterModelCall(ctx) {
-    const { runPostTurnDetectors, computeEvidenceCount, userMessageHasImages, createRetryCounters, countEnumeratedSteps } =
+    const { runPostTurnDetectors, computeEvidenceCount, createRetryCounters, countEnumeratedSteps } =
       await import("../../agent-loop-detectors/index.js");
     const counters = getMiddlewareState(ctx.op.id, RETRY_COUNTERS_KEY, createRetryCounters);
 
@@ -86,14 +112,23 @@ export const postTurnDetectorMiddleware: CanonicalMiddleware = {
         arguments: typeof tc.args === "string" ? tc.args : JSON.stringify(tc.args ?? null),
       })),
       toolsCalledThisTurn: ctx.toolsCalledThisOp,
-      hasReasoning: false,
-      completionTokens: 0,
+      // Real per-turn signals threaded by turn-loop (HE-5). Hardcoding
+      // false/0 here made detectReasoningOnly unreachable: a turn that
+      // burned reasoning tokens and stopped got "produced no visible reply"
+      // (empty-response) instead of "continue from partial state, do not
+      // restart" — inviting the from-scratch restart the reasoning
+      // instruction exists to prevent. Absent (older callers) degrades to
+      // the previous behavior.
+      hasReasoning: ctx.hasReasoning ?? false,
+      completionTokens: ctx.completionTokens ?? 0,
       iteration: ctx.turnIdx,
       evidenceCount: ctx.evidenceHistory[ctx.evidenceHistory.length - 1],
       evidenceHistory: [...ctx.evidenceHistory],
-      userMessageHasImages: userMessageHasImages(
-        messagesView as Array<{ role: string; content: unknown }>,
-      ),
+      // Detect images off the REAL op_messages rows (canonical `{images:[]}`
+      // envelope), not the content-stripped messagesView above — that view
+      // zeroes every non-assistant row's content, which silently killed the
+      // detector stack's skipOnImages vision exemption.
+      userMessageHasImages: latestUserTurnHasImages(rows),
       enumeratedSteps,
     };
 

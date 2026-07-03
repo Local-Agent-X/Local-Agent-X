@@ -72,6 +72,18 @@ export interface CanonicalLoopContext {
   /** Tool results this turn produced (after dispatch). Populated before
    *  afterToolExecution fires. */
   toolResults: CanonicalToolResultView[];
+  /** True when the adapter reported reasoning/thinking progress this turn —
+   *  a `heartbeat` adapter_report, which openai-compat and gemini-native emit
+   *  per chain-of-thought delta (see adapter-contract.ts). Set by turn-loop
+   *  for afterModelCall; undefined in phases/paths that don't observe the
+   *  model call. Lets post-turn-detector route a reasoning-burn turn to
+   *  "reasoning-only" instead of "empty-response". */
+  hasReasoning?: boolean;
+  /** Provider-reported output tokens for THIS turn, read from
+   *  providerState.providerPayload.usageOutputTokens (the same key
+   *  op-usage.ts aggregates; all four adapters record it). undefined when
+   *  the adapter surfaced no usage. */
+  completionTokens?: number;
 
   // ── Cross-turn (op-level) tallies — built by host from op_turns ──
   // Contains only tools whose prior-turn toolCallSummary recorded

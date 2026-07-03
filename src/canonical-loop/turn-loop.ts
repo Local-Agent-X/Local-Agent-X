@@ -43,6 +43,7 @@ import { dispatchTools } from "./turn-loop/dispatch-tools.js";
 import { createIdleWatchdog, readIdleTimeoutMs } from "./turn-loop/idle-watchdog.js";
 import { snapshotTouchedApps } from "./turn-loop/snapshot-apps.js";
 import { decideTurnOutcome } from "./turn-loop/decide-outcome.js";
+import { recoverAdapterThrow, clearAdapterThrowStreak } from "./turn-loop/adapter-throw-recovery.js";
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 
@@ -53,8 +54,6 @@ export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 // turn). In-memory by design: a worker crash/recovery resets the count, and
 // op recovery has its own bound (heartbeat.ts retryPolicy). Cleared on any
 // successful model call and when the cap is hit.
-const adapterThrowStreaks = new Map<string, number>();
-const ADAPTER_ERROR_CAP = 2;
 
 export async function driveTurn(
   op: Op,
@@ -110,6 +109,8 @@ export async function driveTurn(
   const finalized: CanonicalMessage[] = [];
   const toolCalls: ToolCall[] = [];
   const observedTools: string[] = [];
+  // `heartbeat` = reasoning model streaming chain-of-thought (adapter-contract.ts).
+  let sawReasoning = false;
   let adapterError: { code: string; message: string } | null = null;
   let middlewareDirective: MiddlewareDirective | null = null;
 
@@ -145,6 +146,7 @@ export async function driveTurn(
   try {
     result = await adapter.runTurn(input, (r: AdapterReport) => {
       watchdog.noteActivity();
+      if (r.kind === "heartbeat") { sawReasoning = true; return; }
       if (r.kind === "stream_chunk") {
         publishStreamChunk(op.id, r.body);
         return;
@@ -176,48 +178,14 @@ export async function driveTurn(
       }
     });
   } catch (e) {
-    // A THROWN adapter error (a provider HTTP/stream timeout the adapter did
-    // NOT convert into a kind:"error" report — e.g. "xai call threw: The
-    // operation was aborted due to timeout") must NOT escape driveTurn:
-    // escaping skips the terminal path below, so the op never finalizes and
-    // the chat "thinking…" spinner hangs forever (live failure 2026-06-19,
-    // Grok stall).
-    //
-    // Recover the way TOOL failures already do (turn-loop/tool-failure-
-    // summary.ts): feed the error back to the model as a synthetic user nudge
-    // and CONTINUE the loop (terminalReason=null) so it resumes from committed
-    // state on the next turn. Bounded by ADAPTER_ERROR_CAP — a hard-down
-    // provider would otherwise spin the whole wall-clock budget. After the cap,
-    // fall through to a terminal "error" (the floor) so the op finalizes and
-    // the spinner clears with a visible reason.
+    // Thrown (unreported) adapter error — see adapter-throw-recovery.ts.
     watchdog.disarm();
-    const message = e instanceof Error ? e.message : String(e);
-    const streak = (adapterThrowStreaks.get(op.id) ?? 0) + 1;
-    if (streak <= ADAPTER_ERROR_CAP) {
-      adapterThrowStreaks.set(op.id, streak);
-      // Retract this turn's rendered-but-uncommitted partial (replace:true) so
-      // user-view matches the empty committed history the resume-nudge assumes.
-      publishStreamChunk(op.id, { replace: true, text: "" });
-      emit(op.id, "error", { code: "adapter_retry", message: `${message} — retrying (${streak}/${ADAPTER_ERROR_CAP})`, retryable: true });
-      appendNudgeAsUserMessage(
-        op.id,
-        turnIdx + 1,
-        `Your previous step did not complete — it hit a transient provider error: ${message}. This is not a mistake on your part. Resume exactly where you left off and finish the task; do not restart from scratch.`,
-      );
-      return { terminalReason: null, toolCount: 0, messageCount: 0, cancelled: false };
-    }
-    adapterThrowStreaks.delete(op.id);
-    emit(op.id, "error", { code: "adapter_error_exhausted", message: `The model provider failed ${ADAPTER_ERROR_CAP + 1} times in a row (last: ${message}). Stopping — retry, or switch to a more reliable model.`, retryable: false });
-    // commitTurn (the normal terminal path) is what transitions running →
-    // failed, and this early return skips it — so fail the op explicitly here,
-    // or it would stay "running" and re-create the very hang this fixes.
-    transitionOp(op, "failed", "adapter_error_exhausted");
-    return { terminalReason: "error", toolCount: 0, messageCount: 0, cancelled: false };
+    return recoverAdapterThrow(op, e, turnIdx);
   }
   watchdog.disarm();
   // A model call that actually returned (success, or a reported kind:"error")
   // breaks the THROWN-error streak — the provider is responding again.
-  adapterThrowStreaks.delete(op.id);
+  clearAdapterThrowStreak(op.id);
   void idleFired; // surfaced via adapterError; reserved for telemetry
   const modelMs = Date.now() - modelStart;
 
@@ -250,6 +218,11 @@ export async function driveTurn(
   // dispatcher's input. buildCanonicalLoopContext already passes it; this
   // is documentation for the next reader.
   afterModelCtx.toolCalls = toolCalls;
+  // Thread this turn's REAL reasoning/usage signals so post-turn-detector can
+  // tell a reasoning-burn turn from a genuinely empty one (HE-5).
+  const usageOut = (result.providerState?.providerPayload as { usageOutputTokens?: unknown } | undefined)?.usageOutputTokens;
+  afterModelCtx.hasReasoning = sawReasoning;
+  afterModelCtx.completionTokens = typeof usageOut === "number" ? usageOut : undefined;
   const afterModelRes = await runMiddlewarePhase(afterModelCtx, "afterModelCall", middlewareStack);
   if (afterModelRes.kind === "abort") {
     middlewareDirective = {

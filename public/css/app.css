@@ -946,10 +946,21 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .agent-feeds-toggle:hover{border-color:var(--accent);color:var(--accent)}
 .agent-feeds-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:#222 transparent}
 .agent-feed-card{background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:8px;padding:10px 12px;transition:all .2s}
-/* C6 run-lineage tree: nest cards spawned by an op under it. Structure only
-   (indent + guide rail); flowing-line + icon polish is C7/C8. */
+/* C6 run-lineage tree: nest cards spawned by an op under it. The connector on
+   .agent-feed-children is a static 1px rail by default; when the subtree has an
+   actively-working descendant it lights up and bright accent pulses FLOW
+   downward (supervisor → workers) — the signature "energy between agents"
+   cue. Gated on .agent-feed-card.working via :has() so a FINISHED subtree stays
+   calm (matches the C8 fold-to-quiet philosophy), and frozen flat under
+   prefers-reduced-motion. Same :has() pattern already used for .tool-card above. */
 .agent-feed-branch{display:flex;flex-direction:column;gap:8px}
-.agent-feed-children{display:flex;flex-direction:column;gap:8px;margin-left:12px;padding-left:10px;border-left:1px solid var(--border)}
+.agent-feed-children{display:flex;flex-direction:column;gap:8px;margin-left:12px;padding-left:10px;position:relative;border-left:1px solid var(--border)}
+/* Flow line overlays the 1px rail; invisible (opacity 0) until the subtree is live. */
+.agent-feed-children::before{content:'';position:absolute;left:-1px;top:0;bottom:0;width:2px;border-radius:2px;opacity:0;transition:opacity .35s ease;pointer-events:none;background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 9px,var(--accent-dim,rgba(64,240,240,.5)) 12px,var(--accent) 15px,var(--accent-dim,rgba(64,240,240,.5)) 18px,transparent 21px,transparent 30px)}
+.agent-feed-branch:has(.agent-feed-card.working)>.agent-feed-children::before,
+.agent-feed-group:has(.agent-feed-card.working)>.agent-feed-children::before{opacity:.85;animation:agent-feed-flow 1.1s linear infinite}
+@keyframes agent-feed-flow{from{background-position:0 0}to{background-position:0 30px}}
+@media (prefers-reduced-motion:reduce){.agent-feed-branch:has(.agent-feed-card.working)>.agent-feed-children::before,.agent-feed-group:has(.agent-feed-card.working)>.agent-feed-children::before{animation:none;opacity:.6;background:var(--accent)}}
 .agent-feed-group{border:1px solid var(--border);border-radius:8px;padding:8px;background:rgba(64,240,240,.03);display:flex;flex-direction:column;gap:8px}
 .agent-feed-group>.agent-feed-children{margin-left:0}
 .agent-feed-group-header{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:.66rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;padding:0 2px}

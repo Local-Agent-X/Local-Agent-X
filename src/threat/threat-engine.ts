@@ -216,11 +216,16 @@ export class ThreatEngine {
       };
     }
 
-    // Score based on classification
-    if (classification.labels.includes("credentials")) {
+    // Score based on classification. Suppressed while already restricted (same
+    // recovery rationale as the blocks/staging above): every scorer.record()
+    // resets the decay clock (lastEventAt + successfulTurnsSinceLastEvent), so a
+    // restricted session that reads its own secret files (e.g. ~/.lax/config.json
+    // during recovery) would perpetually wipe the time+turn credit it needs to
+    // lift the restriction. We still ENFORCE and (below) AUDIT the read.
+    if (!alreadyRestricted && classification.labels.includes("credentials")) {
       this.scorer.record("credential_in_output", THREAT_SCORES.credential_in_output, `Credentials detected in ${toolName} result`);
     }
-    if (classification.labels.includes("secrets")) {
+    if (!alreadyRestricted && classification.labels.includes("secrets")) {
       this.scorer.record("secrets_in_output", THREAT_SCORES.sensitive_data_external, `Secrets detected in ${toolName} result`);
     }
 

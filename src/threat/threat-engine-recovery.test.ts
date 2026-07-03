@@ -46,6 +46,28 @@ describe("ThreatEngine — in-session recovery from restricted mode", () => {
     expect(afterRetry).toBeLessThanOrEqual(afterWork);
   });
 
+  it("a secret/config read while restricted does not reset the recovery clock", () => {
+    const engine = freshEngine();
+    driveRestricted(engine);
+
+    // Accrue recovery credit with successful local work.
+    for (let i = 0; i < 10; i++) {
+      engine.evaluateToolResult("edit", { path: `/tmp/app-${i}.js` }, "ok", true);
+    }
+    const afterWork = engine.scorer.getStatus().score;
+
+    // Recovery legitimately reads the session's own config, whose contents
+    // classify as credentials (SC-9). Pre-fix, scoring this reset lastEventAt and
+    // zeroed the accrued turn credit, so the score CLIMBED and the restriction
+    // could never lift. Post-fix the read is enforced/audited but not scored, so
+    // the recovery progress survives.
+    const configBlob = '{ "provider": "xai", "apiKey": "sk-abcdefghijklmnopqrstuv" }';
+    engine.evaluateToolResult("read", { path: "~/.lax/config.json" }, configBlob, true);
+    const afterConfigRead = engine.scorer.getStatus().score;
+
+    expect(afterConfigRead).toBeLessThanOrEqual(afterWork);
+  });
+
   it("recovers out of restricted mode as legitimate tools keep succeeding", () => {
     const engine = freshEngine();
     driveRestricted(engine);

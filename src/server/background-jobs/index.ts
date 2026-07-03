@@ -22,6 +22,31 @@ export interface BackgroundJobsHandle {
   scheduler: JobScheduler;
 }
 
+/** Idle threshold (ms) below which the LLM-heavy background lane is suppressed. */
+export function readBgIdleThresholdMs(): number {
+  const raw = parseInt(process.env.LAX_BG_IDLE_THRESHOLD_MS ?? "", 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 90_000;
+}
+
+/**
+ * True when a user/agent/worker/cron turn wrote a session within `thresholdMs`.
+ *
+ * dream-check, the memory backfill, and the protocol curator all fire on
+ * wall-clock timers, all hit the same provider key / rate-limit, and all lean
+ * on the shared Ollama embedding CPU. Firing them mid-turn steals that budget
+ * from the foreground. Every turn bumps its session's `updatedAt` on save, so
+ * "a session was written within the threshold" is a sound foreground-busy
+ * proxy — no new activity-tracking wiring required.
+ */
+export function isForegroundBusy(
+  sessionStore: Pick<SessionStore, "list">,
+  thresholdMs: number = readBgIdleThresholdMs(),
+  now: number = Date.now(),
+): boolean {
+  const mostRecent = sessionStore.list().reduce((max, s) => Math.max(max, s.updatedAt), 0);
+  return now - mostRecent < thresholdMs;
+}
+
 export function startBackgroundJobs(deps: {
   config: LAXConfig;
   dataDir: string;
@@ -47,6 +72,10 @@ export function startBackgroundJobs(deps: {
 
   const cronReportsDir = join(dataDir, "cron", "reports");
   if (!existsSync(cronReportsDir)) mkdirSync(cronReportsDir, { recursive: true });
+
+  // Foreground-idle gate shared by every LLM-heavy background job. See
+  // isForegroundBusy() for why these must not contend with a live turn.
+  const foregroundIdle = (): boolean => !isForegroundBusy(sessionStore);
 
   registerCronRunner({
     config, dataDir, memoryIndex, memoryManager, secretsStore, toolPolicy,
@@ -93,6 +122,7 @@ export function startBackgroundJobs(deps: {
     name: "dream-check",
     intervalMs: 2 * 60 * 60 * 1000,
     startupDelayMs: 5 * 60 * 1000,
+    shouldRun: foregroundIdle,
     run: async () => {
       const { triggerDream } = await import("../../memory/dream.js");
       await triggerDream({ force: false }); // shouldDream() gates inside the runner
@@ -103,6 +133,7 @@ export function startBackgroundJobs(deps: {
     name: "protocol-curator",
     intervalMs: 6 * 60 * 60 * 1000, // poll every 6h; shouldCurate() gates actual work to ~daily
     startupDelayMs: 10 * 60 * 1000,
+    shouldRun: foregroundIdle,
     run: async () => {
       try {
         const { shouldCurate, runCurator } = await import("../../protocols/curator.js");
@@ -113,7 +144,10 @@ export function startBackgroundJobs(deps: {
     },
   });
 
-  setTimeout(async () => {
+  const runBackfill = async () => {
+    // Backfill scans every file and re-embeds via Ollama — defer past any live
+    // turn so it doesn't fight the foreground for embedding CPU.
+    if (isForegroundBusy(sessionStore)) { setTimeout(runBackfill, 30_000); return; }
     try {
       const { getUniversalIndex } = await import("../../memory/universal-index.js");
       const ui = getUniversalIndex();
@@ -121,7 +155,8 @@ export function startBackgroundJobs(deps: {
       const report = await ui.backfillAll();
       logger.info(`[memory-backfill] +${report.totalChunksAdded} chunks across ${report.totalFilesScanned} files (${report.durationMs}ms)`);
     } catch (e) { logger.warn("[memory-backfill] failed:", (e as Error).message); }
-  }, 15_000);
+  };
+  setTimeout(runBackfill, 15_000);
   const syncCfg = agentSync.getConfig();
   if (syncCfg.enabled && syncCfg.autoDownload) agentSync.pull().then(r => { if (r.success) logger.info(`[sync] Startup pull: ${r.message}`); }).catch(() => {});
   agentSync.startHeartbeat();

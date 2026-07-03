@@ -26,6 +26,7 @@
 import { invokeDefinition } from "../../agents/invoke.js";
 import type { AgentDefinition } from "../../agents/types.js";
 import { EventBus } from "../../event-bus.js";
+import { Handler } from "../../agency/handler.js";
 import { loadSkillBody } from "../skill-bodies.js";
 
 export type ChunkAgentRole = "chunk-runner-trunk" | "chunk-runner-leaf" | "scenario-fix";
@@ -199,12 +200,20 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
 
   return await new Promise<ChunkAgentResult>((resolve) => {
     let settled = false;
-    const finish = (result: ChunkAgentResult) => {
+    // When we bail early (timeout/abort) the local promise resolves, but the
+    // underlying canonical run keeps executing — still editing the SAME
+    // projectDir and burning tokens indefinitely. Cancelling it aborts the
+    // driver's signal so a subsequent retry can't interleave writes with an
+    // orphaned first run (AB-1). Natural agent-result completion passes
+    // `cancelRun: false` — the run is already terminal, so cancelAgent would
+    // be a redundant no-op.
+    const finish = (result: ChunkAgentResult, cancelRun = false) => {
       if (settled) return;
       settled = true;
       EventBus.off("handler:agent-result", resultHandler);
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", abortListener);
+      if (cancelRun) Handler.getInstance().cancelAgent(agentId);
       resolve(result);
     };
 
@@ -222,11 +231,11 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
     EventBus.on("handler:agent-result", resultHandler);
 
     const timer = setTimeout(() => {
-      finish({ stdout: "", exitCode: 124, durationMs: Date.now() - startedAt, error: `chunk agent timed out after ${timeoutMs}ms` });
+      finish({ stdout: "", exitCode: 124, durationMs: Date.now() - startedAt, error: `chunk agent timed out after ${timeoutMs}ms` }, true);
     }, timeoutMs);
 
     const abortListener = () => {
-      finish({ stdout: "", exitCode: 130, durationMs: Date.now() - startedAt, error: "aborted by caller" });
+      finish({ stdout: "", exitCode: 130, durationMs: Date.now() - startedAt, error: "aborted by caller" }, true);
     };
     if (opts.signal) {
       if (opts.signal.aborted) abortListener();

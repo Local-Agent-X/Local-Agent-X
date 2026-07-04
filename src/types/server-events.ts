@@ -53,6 +53,13 @@ export type ServerEvent =
   | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
   | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string }
   | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean; status?: ToolResultStatus }
+  // Internal onEvent-channel signal: the running per-op token total, relayed
+  // from a canonical turn_committed's usage by the agent-runner so a caller's
+  // onEvent closure (e.g. the agent-run driver in handler-events.ts) can key it
+  // to its agentId and broadcast an `agent-update`. Never emitted onto the WS
+  // as a "usage" type — the driver converts it to the existing agent-update
+  // broadcast. Additive/optional; consumers that don't handle it ignore it.
+  | { type: "usage"; totalTokens: number }
   | { type: "done"; usage: AgentTurn["usage"] }
   // Out-of-band notice that the turn stopped early (middleware abort,
   // wall-clock ceiling, stale evidence, loop detection, etc.). The UI

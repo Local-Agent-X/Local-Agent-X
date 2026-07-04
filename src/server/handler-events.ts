@@ -227,6 +227,15 @@ export function registerHandlerEvents(deps: {
           if (event.type === "tool_progress") {
             eventBus.emit("handler:agent-output", { agentId, output: `[progress] ${event.message}` });
           }
+          // Running per-op token total from a canonical turn_committed (relayed
+          // by the agent-runner). Key it to this run's agentId and broadcast it
+          // on the EXISTING agent-update channel — the client forwards the whole
+          // payload to updateAgentFeed(agentId, msg), so msg.totalTokens lands
+          // on the chunk-runner card's token bar with no client change. Additive:
+          // other agent-update consumers ignore the extra field.
+          if (event.type === "usage" && typeof event.totalTokens === "number") {
+            broadcastAll({ type: "agent-update", agentId, totalTokens: event.totalTokens });
+          }
         },
       });
       if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);

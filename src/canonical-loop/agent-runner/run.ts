@@ -54,6 +54,21 @@ import { collectMessages, mapStopReason } from "./collect-result.js";
 
 const logger = createLogger("canonical-loop.agent-runner");
 
+/**
+ * Pure map: the running per-op token total to relay from a canonical event, or
+ * `null` when the event isn't a turn_committed or carries no usable numeric
+ * total. checkpoint.ts stamps `usage.totalTokens` onto every turn_committed via
+ * aggregateOpUsage(op.id) — the same field session-bridge-observer.ts forwards
+ * for the bg_op path. Extracted so the forward's contract (only turn_committed,
+ * only numeric totals) is unit-testable without the canonical harness.
+ */
+export function usageTotalFromEvent(event: CanonicalEvent): number | null {
+  if (event.type !== "turn_committed") return null;
+  const usage = event.body?.usage as { totalTokens?: number } | undefined;
+  const total = usage?.totalTokens;
+  return typeof total === "number" ? total : null;
+}
+
 export async function runAgentViaCanonical(
   userMessage: string,
   history: ChatCompletionMessageParam[],
@@ -149,6 +164,13 @@ export async function runAgentViaCanonical(
       const message = (b.message as string | undefined) ?? "(no message)";
       errorMessage = `${errorCode}: ${message}`;
     }
+    // Relay the running per-op token total onto the caller's live channel so
+    // an agent_spawn card (keyed by runId) can render a ticking token bar. The
+    // driver's onEvent closure (handler-events.ts) keys it to its agentId and
+    // broadcasts an agent-update. Additive: existing state_changed/error
+    // handling is untouched. No-op when onEvent is absent or no numeric total.
+    const usageTotal = usageTotalFromEvent(event);
+    if (usageTotal !== null) options.onEvent?.({ type: "usage", totalTokens: usageTotal });
   });
 
   // Adapter-emitted text deltas live on a separate bus channel (chat-runner

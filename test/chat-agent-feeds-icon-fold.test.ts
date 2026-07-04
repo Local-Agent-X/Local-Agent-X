@@ -21,17 +21,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 let iconForType: (type: string | undefined) => string;
 let isTerminalStatus: (status: unknown) => boolean;
 let DEFAULT_AGENT_ICON: string;
+let formatTokens: (n: unknown) => string;
+let tokenBarFillPct: (n: unknown) => number;
 
 beforeAll(() => {
   const src = readFileSync(join(here, "../public/js/chat-agent-feeds-render.js"), "utf8");
   // eslint-disable-next-line no-new-func
   const factory = new Function(
-    src + "\nreturn { iconForType, isTerminalStatus, DEFAULT_AGENT_ICON };"
+    src + "\nreturn { iconForType, isTerminalStatus, DEFAULT_AGENT_ICON, formatTokens, tokenBarFillPct };"
   );
   const m = factory();
   iconForType = m.iconForType;
   isTerminalStatus = m.isTerminalStatus;
   DEFAULT_AGENT_ICON = m.DEFAULT_AGENT_ICON;
+  formatTokens = m.formatTokens;
+  tokenBarFillPct = m.tokenBarFillPct;
 });
 
 describe("iconForType (C8 per-type icons)", () => {
@@ -62,6 +66,62 @@ describe("iconForType (C8 per-type icons)", () => {
     expect(iconForType("totally_unknown_type")).toBe(DEFAULT_AGENT_ICON);
     expect(iconForType(undefined)).toBe(DEFAULT_AGENT_ICON);
     expect(iconForType("")).toBe(DEFAULT_AGENT_ICON);
+  });
+
+  it("gives the SUPERVISOR (orchestrator) a distinct glyph — never a worker/leaf icon", () => {
+    const sup = iconForType("orchestrator");
+    // Non-default, and NOT the same as any worker op-type or the leaf-agent glyph.
+    expect(sup).not.toBe(DEFAULT_AGENT_ICON);
+    const workerGlyphs = [
+      iconForType("app_build"), iconForType("research"), iconForType("self_edit"),
+      iconForType("refactor"), iconForType("freeform"), iconForType("scheduled_mission"),
+      iconForType("agent"), iconForType("coder"),
+    ];
+    expect(workerGlyphs).not.toContain(sup);
+  });
+
+  it("aliases `supervisor` to the same glyph as `orchestrator`", () => {
+    expect(iconForType("supervisor")).toBe(iconForType("orchestrator"));
+  });
+});
+
+describe("formatTokens (Part B — token bar label)", () => {
+  it("shows the bare integer under 1000", () => {
+    expect(formatTokens(0)).toBe("0");
+    expect(formatTokens(1)).toBe("1");
+    expect(formatTokens(999)).toBe("999");
+  });
+
+  it("shows one-decimal 'k' at or above 1000", () => {
+    expect(formatTokens(1000)).toBe("1.0k");
+    expect(formatTokens(12100)).toBe("12.1k");
+    expect(formatTokens(50000)).toBe("50.0k");
+  });
+
+  it("is defensive about junk / negative input (never throws, never NaN)", () => {
+    expect(formatTokens(undefined)).toBe("0");
+    expect(formatTokens(null)).toBe("0");
+    expect(formatTokens("nope")).toBe("0");
+    expect(formatTokens(-5)).toBe("0");
+  });
+});
+
+describe("tokenBarFillPct (Part B — token bar fill, soft-capped)", () => {
+  it("is 0 for zero / non-positive / junk input", () => {
+    expect(tokenBarFillPct(0)).toBe(0);
+    expect(tokenBarFillPct(-100)).toBe(0);
+    expect(tokenBarFillPct(undefined)).toBe(0);
+    expect(tokenBarFillPct("nope")).toBe(0);
+  });
+
+  it("scales linearly against the 50k soft reference", () => {
+    expect(tokenBarFillPct(25000)).toBeCloseTo(50, 5);
+    expect(tokenBarFillPct(5000)).toBeCloseTo(10, 5);
+  });
+
+  it("saturates at 100 (a runaway op reads 'full', never overflows)", () => {
+    expect(tokenBarFillPct(50000)).toBe(100);
+    expect(tokenBarFillPct(500000)).toBe(100);
   });
 });
 

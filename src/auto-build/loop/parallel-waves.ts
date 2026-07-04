@@ -272,7 +272,7 @@ async function buildChunkInWorktree(ctx: ParallelWavesContext, d: DispatchedChun
     signal: opts.signal, emit,
     retryReason: undefined,
     judgmentHook: opts.judgmentHook,
-    parentSessionId: opts.parentSessionId,
+    parentSessionId: opts.parentSessionId, parentOpId: opts.parentOpId, // nest card under orchestrator
     priorOutcomes: outcomes,              // learnings from already-merged chunks
     workerIndex: d.workerIndex,           // unique per concurrent build (S5 ports)
   });
@@ -286,7 +286,7 @@ async function buildChunkInWorktree(ctx: ParallelWavesContext, d: DispatchedChun
       planPath: opts.planPath, plan: opts.plan,
       projectDir: d.worktreePath, preSha: preShaVal,
       subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
-      judgmentHook: opts.judgmentHook,
+      judgmentHook: opts.judgmentHook, parentOpId: opts.parentOpId,
       outcome,
     });
     finalOutcome = pb.finalOutcome;
@@ -363,7 +363,7 @@ async function buildChunkOnBaseSerial(ctx: ParallelWavesContext, chunk: ParsedCh
     subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
     retryReason: undefined,
     judgmentHook: opts.judgmentHook,
-    parentSessionId: opts.parentSessionId,
+    parentSessionId: opts.parentSessionId, parentOpId: opts.parentOpId,
     priorOutcomes: outcomes,
   });
 
@@ -375,7 +375,7 @@ async function buildChunkOnBaseSerial(ctx: ParallelWavesContext, chunk: ParsedCh
       planPath: opts.planPath, plan: opts.plan,
       projectDir: opts.projectDir, preSha: preSha.value,
       subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
-      judgmentHook: opts.judgmentHook, outcome,
+      judgmentHook: opts.judgmentHook, parentOpId: opts.parentOpId, outcome,
     });
     finalOutcome = pb.finalOutcome;
     finalAction = pb.finalAction;

@@ -44,6 +44,13 @@ export interface ChunkAgentInvocation {
   projectDir?: string;
   /** Originating chat session — propagated for sidebar attribution. */
   parentSessionId?: string;
+  /** Orchestrator op id — passed to invokeDefinition as the spawn's
+   *  parentAgentId. It rides the `handler:agent-spawn` event to the client,
+   *  which stamps it as the worker card's parentOpId so the panel nests this
+   *  chunk-runner card under the orchestrator card (whose id === this opId).
+   *  Undefined → no parent linkage (parentAgentId null) → card renders as a
+   *  root, unchanged. */
+  parentOpId?: string;
   /** Wall-clock kill deadline. Default: 30 min per chunk. */
   timeoutMs?: number;
   /** Caller cancellation. Maps to the agent's abort signal via Handler. */
@@ -191,6 +198,12 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
 
   const ref = invokeDefinition(def, taskWithCwd, {
     parentSessionId: opts.parentSessionId,
+    // The orchestrator run's op id becomes this worker's spawn parent, so its
+    // AGENTS-panel card nests under the orchestrator card. invokeDefinition
+    // forwards parentAgentId onto the handler:agent-spawn event (invoke.ts:98,
+    // :123), which handler-events.ts broadcasts to the client. undefined =
+    // no parent → the card renders as a root exactly as before.
+    parentAgentId: opts.parentOpId,
     // Register the project dir as this run's sanctioned mutation root —
     // without it the delegated-bash/write gate blocks the worker (live
     // failure 2026-07-01: chunk 1 denied "requires worktree isolation").

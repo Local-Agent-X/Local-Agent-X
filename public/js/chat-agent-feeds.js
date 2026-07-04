@@ -142,13 +142,14 @@ function updateAgentFeed(agentId, update) {
     // parentOpId (C6 run-lineage): set-once. See addAgentFeed above.
     if (update.parentOpId && !existing.parentOpId) existing.parentOpId = update.parentOpId;
     if (update.type && !existing.type) existing.type = update.type; // C8 per-type icon: set-once
+    if (update.totalTokens != null) existing.totalTokens = update.totalTokens; // running token total → card meter (Part B)
   }
   var card = document.getElementById('agent-card-' + agentId);
   if (card) {
     // C8: fold survives the className rewrite (foldedAfterUpdate: render sibling).
     var nowTerminal = isTerminalStatus(existing.status);
     var folded = foldedAfterUpdate(nowTerminal, card.getAttribute('data-terminal') === '1', card.classList.contains('folded'));
-    card.className = 'agent-feed-card ' + (existing.status || 'working') + (folded ? ' folded' : '');
+    card.className = 'agent-feed-card ' + (existing.status || 'working') + (folded ? ' folded' : '') + ((existing.type === 'orchestrator' || existing.type === 'supervisor') ? ' supervisor' : '');
     card.setAttribute('data-terminal', nowTerminal ? '1' : '0');
     if (update.streamText) {
       var textEl = card.querySelector('.worker-text');
@@ -172,10 +173,7 @@ function updateAgentFeed(agentId, update) {
       }
       var countEl = card.querySelector('.worker-tools-count');
       var lines = (existing.output || '').split('\n').filter(function(l) { return l.trim().length > 0; });
-      if (countEl) {
-        // Each non-empty newline-separated chunk = one tool/lifecycle entry.
-        countEl.textContent = String(lines.length);
-      }
+      if (countEl) countEl.textContent = String(lines.length); // one entry per non-empty output line
       // Always-visible single-line preview of the most recent activity.
       // Lives under the worker name so the user has continuous liveness
       // feedback without having to expand the (potentially collapsed)
@@ -185,9 +183,15 @@ function updateAgentFeed(agentId, update) {
       // motion" (because chat-switch re-renders from agentFeedsData via
       // init_chat → _renderAgentFeedsList).
       var latestEl = card.querySelector('.worker-latest');
-      if (latestEl && lines.length > 0) {
-        latestEl.textContent = lines[lines.length - 1];
-      }
+      if (latestEl && lines.length > 0) latestEl.textContent = lines[lines.length - 1];
+    }
+    // Token meter (Part B): running per-op total rides in on bg_op_progress
+    // (observer forwards turn_committed usage) — set label + scale bar fill.
+    if (update.totalTokens != null) {
+      var tokCntEl = card.querySelector('.worker-token-count');
+      if (tokCntEl) tokCntEl.textContent = formatTokens(existing.totalTokens) + ' tok';
+      var tokFillEl = card.querySelector('.worker-token-bar-fill');
+      if (tokFillEl) tokFillEl.style.width = tokenBarFillPct(existing.totalTokens) + '%';
     }
     var statusEl = card.querySelector('.agent-feed-status');
     if (statusEl) {
@@ -374,14 +378,10 @@ setInterval(function() {
     var output = d.output || '';
     var lines = output.split('\n').filter(function(l) { return l.trim().length > 0; });
     var countEl = card.querySelector('.worker-tools-count');
-    if (countEl && countEl.textContent !== String(lines.length)) {
-      countEl.textContent = String(lines.length);
-    }
+    if (countEl && countEl.textContent !== String(lines.length)) countEl.textContent = String(lines.length);
     var latestEl = card.querySelector('.worker-latest');
-    if (latestEl && lines.length > 0) {
-      var latest = lines[lines.length - 1];
-      if (latestEl.textContent !== latest) latestEl.textContent = latest;
-    }
+    var latest = lines.length > 0 ? lines[lines.length - 1] : null;
+    if (latestEl && latest != null && latestEl.textContent !== latest) latestEl.textContent = latest;
     var toolsBody = card.querySelector('.worker-tools-body');
     if (toolsBody && toolsBody.textContent !== output) {
       var atBottomT = (toolsBody.scrollHeight - toolsBody.scrollTop - toolsBody.clientHeight) < 40;

@@ -90,6 +90,38 @@ describe("buildAgentFeedTree (C6 run-lineage)", () => {
     expect(collectCardIds(nodes).sort()).toEqual(["child", "parent"]);
   });
 
+  it("(c3) auto-build: N chunk-runner cards nest UNDER the orchestrator card (not flat, not a synthetic group)", () => {
+    // The make-or-break case for the UI-lineage fix: the orchestrator IS a card
+    // (bg_op_started stamps its id === orch.opId), and each chunk runner's
+    // parentOpId is threaded to EQUAL that orchestrator card id. So they must
+    // nest directly under the orchestrator card — NOT form the synthetic
+    // "Fan-out" group (that path is only for a NON-card shared parent).
+    const orch = "op_orch123";
+    const map: Record<string, { parentOpId?: string }> = {
+      [orch]: {},
+      chunkA: { parentOpId: orch },
+      chunkB: { parentOpId: orch },
+      chunkC: { parentOpId: orch },
+    };
+    const nodes = buildAgentFeedTree(map);
+    // Exactly one top-level node: the orchestrator card as a root.
+    expect(nodes).toHaveLength(1);
+    // No synthetic group anywhere — the parent is a card, so they nest, not group.
+    expect(nodes.some((n) => n.kind === "group")).toBe(false);
+    const root = nodes[0];
+    expect(root.kind).toBe("card");
+    if (root.kind === "card") {
+      expect(root.id).toBe(orch);
+      // All three chunk runners are the orchestrator card's DIRECT children.
+      expect(root.children).toHaveLength(3);
+      expect(root.children.every((c) => c.kind === "card")).toBe(true);
+      expect(root.children.map((c) => (c.kind === "card" ? c.id : "")).sort())
+        .toEqual(["chunkA", "chunkB", "chunkC"]);
+    }
+    // Every card appears exactly once — none dropped, none doubled.
+    expect(collectCardIds(nodes).sort()).toEqual(["chunkA", "chunkB", "chunkC", orch]);
+  });
+
   it("(c2) mixed: a fan-out group AND an independent card-parent chain coexist", () => {
     const map = {
       w1: { parentOpId: "turn-1" },

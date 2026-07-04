@@ -300,10 +300,16 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
         const summary = tools.length > 0
           ? tools.map((t) => (t.status === "error" ? `${t.tool} ✗` : t.tool)).join(", ")
           : "thinking";
+        // Forward the running per-op token total so the AGENTS panel can render
+        // a live per-card token bar. checkpoint.ts stamps usage onto every
+        // turn_committed (aggregateOpUsage across all persisted op_turns); we
+        // relay only the total — additive/optional, absent if unusable.
+        const usage = b.usage as { totalTokens?: number } | undefined;
         broadcastToSession(sessionId, {
           type: "bg_op_progress",
           opId: event.opId,
           line: `✓ turn ${turnIdx} · ${summary}`,
+          ...(typeof usage?.totalTokens === "number" ? { totalTokens: usage.totalTokens } : {}),
         } as ServerEvent);
         return;
       }

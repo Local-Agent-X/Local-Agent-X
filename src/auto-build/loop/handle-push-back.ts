@@ -19,6 +19,10 @@ export interface HandlePushBackOptions {
   signal?: AbortSignal;
   emit: EmitFn;
   judgmentHook?: JudgmentHook;
+  /** Orchestrator op id — threaded onto the retry worker's spawn so a
+   *  respawned chunk's card nests under the orchestrator card too. Undefined
+   *  → retry worker card renders as a root, unchanged. */
+  parentOpId?: string;
   outcome: ChunkReviewOutcome;
 }
 
@@ -84,6 +88,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
       subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
       retryReason: `spec was amended to clarify: ${advice.specAddition.slice(0, 200)}`,
       judgmentHook: opts.judgmentHook,
+      parentOpId: opts.parentOpId,
     });
     return {
       finalOutcome: retryOutcome,
@@ -100,6 +105,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
     subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
     retryReason,
     judgmentHook: opts.judgmentHook,
+    parentOpId: opts.parentOpId,
   });
   const finalAction: ReviewAction = retryOutcome.action === "push_back" ? "halt" : retryOutcome.action;
   if (retryOutcome.action === "push_back") {

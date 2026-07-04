@@ -82,7 +82,11 @@ export type ServerEvent =
   | { type: "bg_op_queued"; opId: string; task: string; provider: string; lane: string; queuePosition: number; parentOpId?: string; opType?: string }
   | { type: "bg_op_queue_reordered"; opId: string; queuePosition: number }
   | { type: "bg_op_started"; opId: string; task: string; provider: string; parentOpId?: string; opType?: string }
-  | { type: "bg_op_progress"; opId: string; line: string }
+  // `totalTokens` (optional) is the running per-op token total, forwarded from
+  // a turn_committed's usage. The agents panel scales a per-card token bar off
+  // it. Additive/optional — absent for progress lines that don't carry usage
+  // (lifecycle markers, errors) and for ops that don't emit canonical turns.
+  | { type: "bg_op_progress"; opId: string; line: string; totalTokens?: number }
   | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[]; metadata?: Record<string, unknown>; resultUrl?: string }
   | { type: "bg_op_nudge"; opIds: string[]; text: string }
   // Antivirus interference detected. Bash tool detected ≥3 powershell

@@ -119,6 +119,10 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     opId,
     task: `Build orchestrator: ${opts.projectDir} (chunks ${opts.startingChunk}-${opts.maxChunks ? opts.startingChunk + opts.maxChunks - 1 : opts.plan.chunks.length})`,
     provider: "build-orchestrator",
+    // Mark this card as the SUPERVISOR / tree root — the agents panel keys a
+    // distinct hub glyph (◈) + a persistent accent border off this opType so
+    // the orchestrator never reads as just another worker card.
+    opType: "orchestrator",
   });
 
   // Run the loop async. Errors caught and emitted as halts; never throw
@@ -148,6 +152,10 @@ async function runOrchestrationLoop(orch: ActiveOrchestration, opts: StartOrches
       judgmentHook: opts.judgmentHook,
       subprocessTimeoutMs: opts.subprocessTimeoutMs,
       parentSessionId: opts.sessionId,
+      // The orchestrator card's id in the AGENTS panel IS orch.opId (it's the
+      // bg_op_started.opId — see broadcastToSession above). Thread it down as
+      // the chunk workers' spawn parent so their cards nest under this card.
+      parentOpId: orch.opId,
       onEvent: (event) => onLoopEvent(orch, event),
     });
 

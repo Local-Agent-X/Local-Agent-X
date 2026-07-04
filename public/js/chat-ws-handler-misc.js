@@ -113,7 +113,12 @@ function handleAppFilesChanged(msg) {
 
 function handleAgentFeedEvent(msg) {
   if (msg.type === 'agent-spawn' && msg.agentId) {
-    if (typeof addAgentFeed === 'function') addAgentFeed({ id: msg.agentId, name: msg.name, role: msg.role, status: msg.status || 'working', currentTask: msg.task });
+    // parentAgentId rides the agent-spawn event (invoke.ts → handler-events.ts).
+    // Stamp it as the card's parentOpId so a child spawned by another card (e.g.
+    // an auto-build chunk runner under its orchestrator, whose card id === that
+    // parent op id) nests under it. null (a chat-spawned agent with no worker
+    // parent) → parentOpId undefined → the card renders as a root, unchanged.
+    if (typeof addAgentFeed === 'function') addAgentFeed({ id: msg.agentId, name: msg.name, role: msg.role, status: msg.status || 'working', currentTask: msg.task, parentOpId: msg.parentAgentId || undefined });
   } else if (msg.type === 'agent-update' && msg.agentId) {
     if (typeof updateAgentFeed === 'function') updateAgentFeed(msg.agentId, msg);
   } else if (msg.type === 'agent-output' && msg.agentId) {

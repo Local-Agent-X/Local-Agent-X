@@ -82,7 +82,12 @@ function handleBgOpStarted(msg) {
 function handleBgOpProgress(msg) {
   try {
     if (typeof updateAgentFeed === 'function') {
-      updateAgentFeed(msg.event.opId, { output: (msg.event.line || '') + '\n', lastActivityMs: Date.now() });
+      // totalTokens (optional): running per-op token total, forwarded from
+      // turn_committed's usage. Drives the card's token bar. Absent for ops
+      // that don't emit canonical turn usage → the bar simply stays empty.
+      var upd = { output: (msg.event.line || '') + '\n', lastActivityMs: Date.now() };
+      if (typeof msg.event.totalTokens === 'number') upd.totalTokens = msg.event.totalTokens;
+      updateAgentFeed(msg.event.opId, upd);
     }
   } catch(e) { console.warn('[bg_op_progress] sidebar update failed', e); }
 }

@@ -40,6 +40,13 @@ export interface LoopOptions {
   /** Chat session that owns this orchestration — propagated to chunk-worker
    *  agents so the UI can thread their activity back to the right chat. */
   parentSessionId?: string;
+  /** Orchestrator run's op id (manager.ts `orch.opId`) — the id the AGENTS-panel
+   *  orchestrator card carries (bg_op_started.opId). Threaded down as each chunk
+   *  worker's spawn PARENT (invokeDefinition parentAgentId) so the panel nests
+   *  the chunk-runner cards UNDER the orchestrator card. Undefined for non-
+   *  orchestrator callers (tests, direct runBuildLoop) → workers render as
+   *  roots, exactly as before. */
+  parentOpId?: string;
   /**
    * Optional LLM judgment hook. When set, fires after the mechanical
    * gates return "proceed" to catch chunk-12-style implicit-spec

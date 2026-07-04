@@ -972,6 +972,14 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .agent-feed-card.done,.agent-feed-card.completed,.agent-feed-card.succeeded{border-left-color:var(--muted);opacity:.7}
 .agent-feed-card.error,.agent-feed-card.failed{border-left-color:var(--danger);opacity:.85}
 .agent-feed-card.cancelled{border-left-color:var(--muted);opacity:.55}
+/* Part A — SUPERVISOR (orchestrator / tree root): a persistent, slightly
+   stronger accent left-border so the root stays visually anchored as the parent
+   even after it goes quiet (workers only light their border while working).
+   Placed AFTER the per-state rules so it wins the same-specificity tie and the
+   accent survives terminal states. Icon (◈) is the primary cue; this is the
+   secondary "root" accent. Class added by renderAgentCard / preserved by
+   updateAgentFeed for opType orchestrator|supervisor. */
+.agent-feed-card.supervisor{border-left-width:4px;border-left-color:var(--accent)}
 /* C8 "calm": a FINISHED (terminal) card folds to a compact one-line row — just
    its header (icon + name + status). The full body stays in the DOM
    (display:none, not removed) so updateAgentFeed's targeted writes + the 1s

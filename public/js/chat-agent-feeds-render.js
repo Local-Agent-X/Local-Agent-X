@@ -23,6 +23,10 @@ const AGENT_ROLE_ICONS = {
   app_build: '⬡', build_app: '⬡', research: '◎', research_query: '◎',
   self_edit: '✎', refactor: '⟳', autopilot: '➤', freeform: '✦',
   agent: '◇', agent_spawn: '◇', scheduled_mission: '◷',
+  // SUPERVISOR / tree-root: the auto-build orchestrator (and any op that spawns
+  // & directs its own workers). ◈ reads as a hub/root and is deliberately
+  // distinct from ◇ (a leaf agent) so the supervisor never looks like a worker.
+  orchestrator: '◈', supervisor: '◈',
   // forward-looking placeholders (inert until these op types exist):
   dream: '☾', idle: '☾'
 };
@@ -33,6 +37,37 @@ const AGENT_ROLE_ICONS = {
 // the role's icon otherwise, and the default when neither is known.
 function iconForType(type) {
   return AGENT_ROLE_ICONS[type] || DEFAULT_AGENT_ICON;
+}
+
+// ── Token meter (PURE) ──
+// The per-op running token total surfaces as a thin bar + a compact label on
+// each worker card. Both helpers are pure so they unit-test headlessly next to
+// iconForType (chat-agent-feeds-icon-fold.test.ts). The bar element is always
+// present in the card markup so updateAgentFeed's targeted writes can fill it
+// live; it simply stays at 0 (label blank) for cards that never report usage.
+//
+// formatTokens — compact human label. <1000 → the bare integer; ≥1000 → one
+//   decimal "k" (12100 → "12.1k"). tabular-nums in the CSS keeps the digits
+//   from reflowing as the count ticks up.
+function formatTokens(n) {
+  var t = Number(n) || 0;
+  if (t < 0) t = 0;
+  if (t < 1000) return String(Math.round(t));
+  return (t / 1000).toFixed(1) + 'k';
+}
+
+// tokenBarFillPct — map a running total to a bar-fill percentage [0..100].
+// Linear against a fixed SOFT reference (TOKEN_BAR_REF): the number label is
+// the source of truth, the bar is only a glanceable cue, so it saturates at the
+// reference rather than overflowing — a runaway op reads "full" instead of
+// blowing out the layout. 50k picked so a typical multi-turn worker fills a
+// meaningful fraction without one big op pinning every bar at 100%.
+var TOKEN_BAR_REF = 50000;
+function tokenBarFillPct(n) {
+  var t = Number(n) || 0;
+  if (t <= 0) return 0;
+  var pct = (t / TOKEN_BAR_REF) * 100;
+  return pct > 100 ? 100 : pct;
 }
 
 // Pure: does this status put a card in a TERMINAL (finished) state? Matches the
@@ -179,6 +214,11 @@ function renderAgentCard(agent, childrenHtml) {
   // Icon keys off the op's real TYPE (threaded via bg_op_* opType → the card
   // record's `type`), falling back to the legacy `role` then a generic default.
   var icon = iconForType(agent.type || agent.role);
+  // SUPERVISOR (Part A): the orchestrator card reads as the tree ROOT — a
+  // persistent accent left-border (workers only light theirs while working),
+  // driven off this class. updateAgentFeed re-appends it on its className
+  // rewrite so the accent survives status changes.
+  var isSupervisor = agent.type === 'orchestrator' || agent.type === 'supervisor';
   var status = agent.status || 'working';
   var streamText = agent.streamText || '';
   var output = agent.output || '';
@@ -222,7 +262,11 @@ function renderAgentCard(agent, childrenHtml) {
   var bodyDisplay = isActive ? 'block' : 'none';
   var bodyOpenClass = isActive ? ' open' : '';
   var chevron = isActive ? '▼' : '▶';
-  var cardHtml = '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + foldedClass + '" data-terminal="' + termAttr + '">' +
+  // Token meter (Part B): blank label until real usage arrives so a card with
+  // no reported tokens shows an empty track, never a misleading "0 tok".
+  var tokTotal = agent.totalTokens;
+  var tokLabel = (tokTotal != null && Number(tokTotal) > 0) ? (formatTokens(tokTotal) + ' tok') : '';
+  var cardHtml = '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + foldedClass + (isSupervisor ? ' supervisor' : '') + '" data-terminal="' + termAttr + '">' +
     '<div class="agent-feed-header">' +
       '<span class="agent-feed-icon">' + icon + '</span>' +
       '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +
@@ -239,6 +283,12 @@ function renderAgentCard(agent, childrenHtml) {
         '<span class="worker-tools-chevron">' + chevron + '</span>' +
       '</div>' +
       '<div class="worker-tools-body" style="display:' + bodyDisplay + ';font-family:var(--mono,monospace);font-size:.68rem;color:var(--muted,#888);padding:.3rem .55rem .45rem;max-height:200px;overflow-y:auto;white-space:pre-wrap">' + esc(output) + '</div>' +
+    '</div>' +
+    '<div class="worker-token-row" style="display:flex;align-items:center;gap:.5rem;padding:.3rem .55rem;border-top:1px solid var(--border,#333)">' +
+      '<div class="worker-token-bar" style="flex:1;height:3px;border-radius:2px;background:var(--border,#333);overflow:hidden">' +
+        '<div class="worker-token-bar-fill" style="height:100%;width:' + tokenBarFillPct(tokTotal) + '%;background:var(--accent,#3a7);border-radius:2px;transition:width .3s ease"></div>' +
+      '</div>' +
+      '<span class="worker-token-count" style="font-variant-numeric:tabular-nums;font-family:var(--mono,monospace);font-size:.62rem;color:var(--muted,#888);white-space:nowrap;min-width:2.5em;text-align:right">' + esc(tokLabel) + '</span>' +
     '</div>' +
     '<div class="agent-feed-result-link" style="display:none;padding:.4rem .55rem;font-size:.75rem;border-top:1px solid var(--border,#333)"></div>' +
     '<div class="agent-feed-controls">' +

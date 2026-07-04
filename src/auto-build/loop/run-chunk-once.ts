@@ -21,6 +21,10 @@ export interface RunChunkOnceOptions {
   retryReason?: string;
   judgmentHook?: JudgmentHook;
   parentSessionId?: string;
+  /** Orchestrator op id — threaded to the chunk worker's spawn as its
+   *  parentAgentId so its AGENTS-panel card nests under the orchestrator card.
+   *  Undefined for non-orchestrator callers → worker card renders as a root. */
+  parentOpId?: string;
   /**
    * Outcomes of already-completed chunks, in plan order. Distilled into the
    * per-chunk "sharpened context" block so each worker inherits earlier
@@ -117,6 +121,7 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     timeoutMs: opts.subprocessTimeoutMs,
     signal: opts.signal,
     parentSessionId: opts.parentSessionId,
+    parentOpId: opts.parentOpId,
   });
 
   opts.emit({

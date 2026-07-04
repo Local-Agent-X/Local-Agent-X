@@ -151,6 +151,7 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
       retryReason: undefined,
       judgmentHook: opts.judgmentHook,
       parentSessionId: opts.parentSessionId,
+      parentOpId: opts.parentOpId,
       // Thread already-committed chunks' distilled learnings into this
       // chunk's task so the worker inherits SPEC_GAPS / NOTE context
       // instead of rediscovering the project from zero.
@@ -167,6 +168,7 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
         projectDir: opts.projectDir, preSha: preSha.value,
         subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
         judgmentHook: opts.judgmentHook,
+        parentOpId: opts.parentOpId,
         outcome,
       });
       finalOutcome = pb.finalOutcome;

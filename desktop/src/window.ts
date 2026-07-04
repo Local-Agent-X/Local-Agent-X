@@ -123,6 +123,11 @@ export function createWindow(): void {
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
     titleBarOverlay: process.platform === "darwin" ? undefined : overlayForTheme(getSetting("theme")),
     backgroundColor: bgForTheme(getSetting("theme")),
+    // Windows/Linux carry a hidden accelerator-only menu (app-menu.ts) so the
+    // in-window titlebar's shortcuts (Ctrl+R, Ctrl+Shift+A/I, …) actually bind.
+    // autoHideMenuBar keeps that menu bar invisible — only the custom titlebar
+    // shows — while its accelerators stay live. Harmless on macOS (native menu).
+    autoHideMenuBar: true,
     show: false,
     webPreferences: {
       preload: join(__dirname, "preload.js"),
@@ -223,7 +228,12 @@ export function createWindow(): void {
   // Disable Ctrl+R / Ctrl+Shift+R / F5 (causes port/localStorage issues), and on
   // Windows/Linux own content-zoom so the overlay stays aligned (see setMainZoom).
   mainWindow.webContents.on("before-input-event", (_e, input) => {
-    if (input.key === "F5" || (input.control && input.key.toLowerCase() === "r")) {
+    // F5 = raw hard-refresh with no safe handler → still blocked (re-fetches the
+    // app URL and dies if the server port rotated). Ctrl+R is NO LONGER swallowed
+    // here: app-menu.ts binds it to a SAFE reload (re-navigate the live tokenized
+    // URL) so the shortcut works without the port/localStorage breakage. Blocking
+    // it here would preventDefault before that accelerator ever fires.
+    if (input.key === "F5") {
       _e.preventDefault();
       return;
     }

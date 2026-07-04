@@ -59,12 +59,10 @@
     }
   }
 
-  // Keyboard accelerators for menu actions Electron doesn't already cover
-  // (zoom/devtools) and window.ts doesn't block (reload). Reuses runAction so a
-  // shortcut and its menu item always do the same thing.
-  document.addEventListener('keydown', function (e) {
-    if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return;
-    var action = { a: 'toggle-agents', b: 'open-in-browser', l: 'copy-app-url' }[e.key.toLowerCase()];
-    if (action) { e.preventDefault(); runAction(action); }
-  });
+  // NOTE: keyboard accelerators are NOT wired here anymore. They live in the
+  // native (hidden) accelerator menu in desktop/src/app-menu.ts so Windows and
+  // macOS bind the exact same keys from one source. A renderer keydown listener
+  // here would double-fire alongside those accelerators (e.g. toggle agents
+  // twice → net no-op), so it was removed. This file now only drives the
+  // click/hover behavior of the visible in-window menu.
 })();

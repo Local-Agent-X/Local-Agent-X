@@ -26,6 +26,10 @@ export interface ToolSelectionInput {
    *  invocation (the marker only rides the first turn). Keeps intent-forcing
    *  suppressed for the whole methodology, not just its kickoff turn. */
   priorMethodology?: boolean;
+  /** Compact last-few-turns digest fed to the intent classifier as context, so
+   *  "build" mid-discovery and "yes, build it" after a spec convo classify
+   *  correctly instead of from the bare message. Built by buildHistoryDigest. */
+  historyDigest?: string;
 }
 
 export interface ToolSelectionResult {
@@ -108,7 +112,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     // defaulting the warm pool on (warm-pool.ts). Reverted to the selected
     // model so verdicts are valid; the warm pool keeps the classify process
     // hot after its first call.
-    try { intentVerdict = await classifyIntent(input.message); }
+    try { intentVerdict = await classifyIntent(input.message, { historyDigest: input.historyDigest }); }
     catch (e) { logger.info(`[intent] classifier threw — skipping: ${(e as Error).message}`); }
     logger.info(`[step] classifyIntent ${Date.now() - t0}ms verdict=${intentVerdict?.kind || "null"}`);
   }

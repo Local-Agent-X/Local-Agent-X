@@ -25,7 +25,7 @@ vi.mock("../src/classifiers/classify-with-llm.js", () => ({
   classifyYesNo: vi.fn(async () => null),
 }));
 
-const { classifyIntent, hasLiteralToolCall, NO_SPAWN_OVERRIDE_RE } =
+const { classifyIntent, hasLiteralToolCall, NO_SPAWN_OVERRIDE_RE, buildHistoryDigest } =
   await import("../src/classifiers/intent-classifier.js");
 
 function script(messageNeedle: string, verdict: unknown) {
@@ -121,6 +121,64 @@ describe("intent-classifier — skip-condition helpers", () => {
     expect(hasLiteralToolCall("build_app({name:'kanban'})")).toBe(true);
     expect(hasLiteralToolCall("just a sentence with no tool call")).toBe(false);
     expect(hasLiteralToolCall("read this article: foo(bar)")).toBe(false);
+  });
+});
+
+describe("buildHistoryDigest — Chunk 3 conversation context", () => {
+  it("returns '' for empty history (classifier runs message-only)", () => {
+    expect(buildHistoryDigest([])).toBe("");
+  });
+
+  it("keeps only the last N user/assistant turns, oldest→newest", () => {
+    const msgs = [
+      { role: "user", content: "turn 1" },
+      { role: "assistant", content: "turn 2" },
+      { role: "user", content: "turn 3" },
+      { role: "assistant", content: "turn 4" },
+    ];
+    const d = buildHistoryDigest(msgs, { maxTurns: 2 });
+    expect(d).toBe("User: turn 3\nAssistant: turn 4");
+  });
+
+  it("skips non-string content (tool-result blocks) and empty turns", () => {
+    const msgs = [
+      { role: "user", content: "real text" },
+      { role: "assistant", content: [{ type: "tool_use", name: "x" }] },
+      { role: "user", content: "   " },
+      { role: "tool", content: "tool output" },
+    ];
+    expect(buildHistoryDigest(msgs)).toBe("User: real text");
+  });
+
+  it("caps total length, preserving the most recent turn", () => {
+    const msgs = [
+      { role: "user", content: "A".repeat(200) },
+      { role: "assistant", content: "B".repeat(200) },
+    ];
+    const d = buildHistoryDigest(msgs, { maxChars: 50 });
+    expect(d.length).toBeLessThanOrEqual(50);
+    expect(d).toContain("B"); // newest survives; oldest trimmed from front
+    expect(d.startsWith("…")).toBe(true);
+  });
+
+  it("digest reaches the classify prompt as labeled context", async () => {
+    const msg = "yes build it";
+    script(msg, { kind: "build_app", mode: "force", reason: "confirming prior spec" });
+    const digest = "User: make me a BMI calculator with metric units\nAssistant: I can build that.";
+    const v = await classifyIntent(msg, { historyDigest: digest });
+    expect(v?.kind).toBe("build_app");
+    expect(v?.mode).toBe("force");
+    expect(__lastUserPrompt).toContain("Recent conversation");
+    expect(__lastUserPrompt).toContain("BMI calculator");
+    // The current message is still the classified subject.
+    expect(__lastUserPrompt).toContain("yes build it");
+  });
+
+  it("omits the context block entirely when no digest is passed", async () => {
+    const msg = "build me a kanban app";
+    script(msg, { kind: "build_app", mode: "force", reason: "kanban is the spec" });
+    await classifyIntent(msg);
+    expect(__lastUserPrompt).not.toContain("Recent conversation");
   });
 });
 

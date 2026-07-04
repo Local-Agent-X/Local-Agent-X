@@ -68,6 +68,10 @@ export interface BuildSystemPromptInput {
   // Forced-intent signal from tool-selection — drives the build_app CLI
   // nudge appended at the end when provider=anthropic.
   forceBuildIntent: boolean;
+  // "force" = fully-specified build ask (hard hand-off directive); "lean" =
+  // thin/one-line build ask (prefer build_app but ask 2-3 questions first).
+  // Only set when forceBuildIntent is true.
+  buildMode?: "force" | "lean";
   intentReason?: string;
 }
 
@@ -188,13 +192,25 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
   // worker's build. The inline-build tools are also stripped from this turn's
   // toolset (tool-selection.ts) as the hard guarantee; this directive explains
   // WHY they're gone so the model hands off cleanly instead of flailing.
-  if (input.forceBuildIntent) {
+  if (input.forceBuildIntent && input.buildMode !== "lean") {
     systemPrompt +=
       `\n\n--- TURN DIRECTIVE ---\n` +
       `Intent classifier identified this turn as a build_app request: ${input.intentReason ?? "(no reason)"}.\n` +
       `Call the build_app tool — that is the ONLY way to build this. The build then runs as a background op (the "side agent") that owns the ENTIRE build: it runs the real toolchain, produces the artifact, and delivers the result to the user itself when done. ` +
       `Do NOT build it yourself this turn — no bash/cargo/compiler, no write/edit of source files, no send_image of a result you produced. Building it twice wastes minutes of compute and confuses the user with a duplicate output. ` +
       `After calling build_app, just briefly tell the user it's building and they'll see it when it's ready.\n` +
+      `--- END TURN DIRECTIVE ---\n`;
+  } else if (input.forceBuildIntent && input.buildMode === "lean") {
+    // Lean build ask: right intent, thin spec. Prefer build_app but DISCOVER
+    // first — a one-line ask ("build me a page for my gym") shipped a generic
+    // page with zero discovery when it hard-forced. No pin fires this turn, so
+    // the model is free to ask before building.
+    systemPrompt +=
+      `\n\n--- TURN DIRECTIVE ---\n` +
+      `The user is asking to build something (${input.intentReason ?? "runnable app/page/tool"}), but the ask is thin — the specifics aren't stated. ` +
+      `If you want to build a runnable app, build_app is the right tool (the build runs as a background op that owns the whole build — don't build it inline with bash/write/edit). ` +
+      `But do NOT build blind: if the spec is one line, first ask 2-3 short clarifying questions (purpose, audience, must-have features), then call build_app once you know what to make. ` +
+      `A generic page nobody asked for is worse than one clarifying question.\n` +
       `--- END TURN DIRECTIVE ---\n`;
   }
 

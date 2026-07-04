@@ -66,7 +66,9 @@ const VALID_MODES: ReadonlySet<IntentMode> = new Set<IntentMode>([
 
 const SYSTEM_PROMPT = `You classify the user's message into an intent KIND and a confidence MODE. Reply with a JSON object: {"kind": "<one of: build_app | agent_spawn | self_edit | free>", "mode": "<force | lean>", "reason": "<short reason>"}
 
-THE DEFAULT IS "free". A non-free kind requires an EXPLICIT ask in the message itself: an action verb applied to a concrete object ("build me a kanban app", "research X and write a summary", "the dark-mode toggle doesn't flip"). Aspirations, questions, discussion, and ambiguous phrasing are all "free". When in doubt, return "free" — acting on the wrong kind is far worse than missing one.
+THE DEFAULT IS "free". A non-free kind requires an EXPLICIT ask: an action verb applied to a concrete object ("build me a kanban app", "research X and write a summary", "the dark-mode toggle doesn't flip"). Aspirations, questions, discussion, and ambiguous phrasing are all "free". When in doubt, return "free" — acting on the wrong kind is far worse than missing one.
+
+CONTEXT (when "Recent conversation" is provided): read it to disambiguate the current message, both ways. (a) A short confirmation ("yes", "yes build it", "go ahead", "do it", "sounds good") right after the assistant proposed or the user described a concrete artifact INHERITS that artifact — classify the current message as that kind, and "force" IF the prior turns already pinned down what to build (so no clarifying question is needed). (b) A bare "build" / "make it" mid-DISCUSSION where nothing concrete has been specified yet is still "free" or lean — context that is only brainstorming does not manufacture a spec. Context can raise confidence to "force" only when it supplies the actual specifics; it never invents an ask the user hasn't made.
 
 MODE — how complete the ask is. Only meaningful for non-free kinds; always use "lean" with kind "free".
 
@@ -170,13 +172,24 @@ Reply with JSON only. No prose, no markdown fences.`;
  */
 export async function classifyIntent(
   message: string,
-  opts?: { signal?: AbortSignal; timeoutMs?: number; model?: string },
+  opts?: { signal?: AbortSignal; timeoutMs?: number; model?: string; historyDigest?: string },
 ): Promise<IntentVerdict | null> {
   const trimmed = (message || "").trim();
   if (!trimmed) return null;
 
+  // Recent conversation, when present, disambiguates the CURRENT message in both
+  // directions: a bare "build" mid-discovery stays "free"/lean instead of cold-
+  // firing, and a "yes, build it" after a spec conversation can confidently
+  // "force" because the spec is already on the table. The current message is
+  // still what's classified — the digest is context, not the subject.
+  const digest = (opts?.historyDigest || "").trim();
+  const contextBlock = digest
+    ? `Recent conversation (context — classify the CURRENT message below, not this):\n${digest}\n\n`
+    : "";
+
   const userPrompt =
-    `User message:\n"${trimmed.slice(0, 1200)}"\n\n` +
+    contextBlock +
+    `Current user message:\n"${trimmed.slice(0, 1200)}"\n\n` +
     `Return JSON only: {"kind": "build_app" | "agent_spawn" | "self_edit" | "free", "mode": "force" | "lean", "reason": "..."}`;
 
   const verdict = await classifyJson<IntentVerdict>({
@@ -204,6 +217,44 @@ export async function classifyIntent(
   });
 
   return verdict;
+}
+
+/**
+ * Build a compact digest of the last few conversation turns for classifier
+ * context. Pure + string-only: takes user/assistant messages with STRING
+ * content (structured tool-result blocks are noise for intent), keeps the last
+ * `maxTurns` (default 3), and caps the whole digest at `maxChars` (default 400)
+ * so it never bloats the classify prompt or its latency. Newest turns win when
+ * the cap bites — they're the most relevant to the current message. Returns ""
+ * when there's nothing usable (the classifier then runs message-only, as before).
+ */
+export function buildHistoryDigest(
+  messages: ReadonlyArray<{ role: string; content: unknown }>,
+  opts?: { maxTurns?: number; maxChars?: number },
+): string {
+  const maxTurns = opts?.maxTurns ?? 3;
+  const maxChars = opts?.maxChars ?? 400;
+
+  const turns: string[] = [];
+  for (let i = messages.length - 1; i >= 0 && turns.length < maxTurns; i--) {
+    const m = messages[i];
+    if (m.role !== "user" && m.role !== "assistant") continue;
+    if (typeof m.content !== "string") continue;
+    const text = m.content.trim();
+    if (!text) continue;
+    // Per-line cap keeps one long paste from eating the whole budget.
+    const line = `${m.role === "user" ? "User" : "Assistant"}: ${text.slice(0, 200)}`;
+    turns.push(line);
+  }
+  if (turns.length === 0) return "";
+
+  turns.reverse(); // chronological order in the prompt
+  let digest = turns.join("\n");
+  if (digest.length > maxChars) {
+    // Trim from the FRONT (oldest) so the most recent turn survives intact.
+    digest = "…" + digest.slice(digest.length - maxChars + 1);
+  }
+  return digest;
 }
 
 // ── Skip-condition helpers ────────────────────────────────────────────────

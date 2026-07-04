@@ -19,6 +19,7 @@ import { createLogger } from "../logger.js";
 import { buildContext, isTrivialToolRequest } from "./prepare-request/build-context.js";
 import { selectTools, type ToolSelectionResult } from "./prepare-request/tool-selection.js";
 import { isSlashCommandExpansion } from "../slash-commands.js";
+import { buildHistoryDigest } from "../classifiers/intent-classifier.js";
 import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
 import { buildSystemPrompt } from "./prepare-request/build-system-prompt.js";
 
@@ -45,6 +46,27 @@ export function shouldForceRecallSearch(opts: {
     opts.knownProjectsFound &&
     providerUndercallsTools(opts.provider) &&
     opts.toolNames.includes(RECALL_TOOL)
+  );
+}
+
+/**
+ * Whether an intent verdict should PIN tool_choice (hard-force the tool) this
+ * turn. Pure so the force/lean rule is one named chokepoint, testable without
+ * the pipeline. Pins ONLY when the verdict is a non-free, non-self_edit kind AND
+ * graded mode="force" (explicit + fully-specified ask). A "lean" verdict — right
+ * kind, thin/one-line ask — deliberately does NOT pin: the tool stays loaded and
+ * the audience is still narrowed, but the model is free to ask 1-3 clarifying
+ * questions first. self_edit is never pinnable (destructive, needs explicit
+ * same-turn permission), regardless of mode.
+ */
+export function shouldPinIntentToolChoice(
+  verdict: { kind: string; mode: string } | null | undefined,
+): boolean {
+  return (
+    !!verdict &&
+    verdict.kind !== "free" &&
+    verdict.kind !== "self_edit" &&
+    verdict.mode === "force"
   );
 }
 
@@ -113,6 +135,11 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     const priorMethodology = cleanHistory.some(
       (m) => m.role === "user" && typeof m.content === "string" && isSlashCommandExpansion(m.content),
     );
+    // Digest the PRIOR turns only (drop the final entry — it's this turn's
+    // message, already classified directly). Gives the classifier the discussion
+    // context that disambiguates "build" / "yes, build it".
+    const priorTurns = cleanHistory.slice(0, -1) as ReadonlyArray<{ role: string; content: unknown }>;
+    const historyDigest = buildHistoryDigest(priorTurns);
     end = stepStart("selectTools");
     toolSel = await selectTools({
       message: input.message,
@@ -122,6 +149,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       resolvedProvider: resolved.provider,
       resolvedModel: resolved.model,
       priorMethodology,
+      historyDigest,
     });
     end();
   }
@@ -196,6 +224,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     memoryNotifications: ctx.notifications,
     memoryCurateBlock,
     forceBuildIntent: toolSel.forceBuildIntent,
+    buildMode: toolSel.intentVerdict?.kind === "build_app" ? toolSel.intentVerdict.mode : undefined,
     intentReason: toolSel.intentVerdict?.reason,
   });
   end();
@@ -222,19 +251,20 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // false-positive (e.g. a workspace-app change misread as a LAX bug) no
   // longer locks the model out of edit/write. build_app/agent_spawn stay
   // forceable — they're reversible and models chronically under-call them.
-  if (
-    toolSel.intentVerdict &&
-    toolSel.intentVerdict.kind !== "free" &&
-    toolSel.intentVerdict.kind !== "self_edit"
-  ) {
-    const forcedName = toolSel.intentVerdict.kind;
+  // Force/lean rule lives in shouldPinIntentToolChoice: a "lean" verdict narrows
+  // + keeps the tool loaded (forceBuildIntent=kind, tool-selection.ts) but does
+  // NOT pin, so the model can ask clarifying questions before executing.
+  if (shouldPinIntentToolChoice(toolSel.intentVerdict)) {
+    const forcedName = toolSel.intentVerdict!.kind;
     const inToolList = toolSel.tools.some(t => t.name === forcedName);
     if (inToolList) {
       toolChoice = { type: "tool", name: forcedName };
-      logger.info(`[intent] forcing ${forcedName} (reason="${toolSel.intentVerdict.reason}")`);
+      logger.info(`[intent] forcing ${forcedName} mode=force (reason="${toolSel.intentVerdict!.reason}")`);
     } else {
       logger.warn(`[intent] classifier picked ${forcedName} but it's not in this turn's tool list — skipping force`);
     }
+  } else if (toolSel.intentVerdict && toolSel.intentVerdict.kind !== "free") {
+    logger.info(`[intent] ${toolSel.intentVerdict.kind} mode=lean — narrowing without pin (reason="${toolSel.intentVerdict.reason}")`);
   }
 
   // Tool-shy recall force. Grok (and any provider that under-calls tools)

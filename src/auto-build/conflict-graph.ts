@@ -137,6 +137,34 @@ function isUndeclared(chunk: ParsedChunk): boolean {
   return !chunk.footprint || chunk.footprint.length === 0;
 }
 
+/**
+ * S4 footprint-subset DIAGNOSTIC. Given a chunk's DECLARED footprint and the
+ * files it ACTUALLY changed (ChunkReport.changed), return the changed paths that
+ * ESCAPE the declared footprint — covered by NO declared path under the EXACT
+ * SAME normalization + directory-segment-containment rule the wave scheduler
+ * uses to decide conflicts (normPath + pathsOverlap, reused here, not
+ * reimplemented). This is how a real parallel conflict sneaks in: the scheduler
+ * parallelized siblings believing their footprints were disjoint, but a chunk
+ * that edits a file it never declared may collide with a sibling that WAS
+ * disjoint on paper.
+ *
+ * Returns [] (never flags) when the footprint is UNDECLARED (undefined/empty):
+ * such a chunk was already serialized ALONE by the conservative rule, so it
+ * declared nothing to "escape" from — an escape verdict would be meaningless.
+ */
+export function footprintEscapes(footprint: string[] | undefined, changed: string[]): string[] {
+  if (!footprint || footprint.length === 0) return [];
+  const declared = footprint.map(normPath).filter(Boolean);
+  if (declared.length === 0) return [];
+  const escapes: string[] = [];
+  for (const raw of changed) {
+    const c = normPath(raw);
+    if (!c) continue; // unparseable/empty changed entry — nothing to flag
+    if (!declared.some((f) => pathsOverlap(c, f))) escapes.push(raw);
+  }
+  return escapes;
+}
+
 function depsSatisfied(chunk: ParsedChunk, satisfied: Set<number>): boolean {
   for (const dep of chunk.dependsOn) {
     if (!satisfied.has(dep)) return false;

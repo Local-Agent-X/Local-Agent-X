@@ -34,6 +34,28 @@ const shared = vi.hoisted(() => ({
   nullNames: new Set<string>(),
   /** workerIndex threaded into each dispatched chunk's runChunkOnce. */
   workerIndices: [] as Array<{ chunk: number; workerIndex: number | undefined }>,
+  /** chunkNumber → ChunkReport.changed list the mocked runChunkOnce reports. */
+  chunkChanged: new Map<number, string[]>(),
+  /** FIFO queue of S4 integration re-gate results; a null/absent entry = PASS. */
+  regateResults: [] as Array<{ gate: string; action: string; reasoning: string } | null>,
+  /** projectDir each re-gate invocation observed — proves it ran on the merged BASE. */
+  regateProjectDirs: [] as string[],
+  /** When set, the mocked build-exec gate THROWS this message (infra-crash path). */
+  regateThrow: null as string | null,
+}));
+
+// Mock the build-exec gate so the S4 integration re-gate is controllable per
+// wave (default: PASS). Same isolation style as the worktree/run-chunk mocks —
+// we assert orchestration (re-gate called on merged base, halt-on-fail, proceed-
+// on-pass) without spawning a real npm build. The per-chunk gate never runs here
+// because run-chunk-once is fully mocked; this only intercepts the re-gate call.
+vi.mock("../src/auto-build/chunk-review/gate-build-exec.js", () => ({
+  runBuildExecGate: vi.fn(async (input: { projectDir: string }) => {
+    shared.calls.push("regate");
+    shared.regateProjectDirs.push(input.projectDir);
+    if (shared.regateThrow) throw new Error(shared.regateThrow); // gate INFRA crash
+    return shared.regateResults.shift() ?? null;
+  }),
 }));
 
 // Mock the worktree lib — the whole point of the isolation.
@@ -66,7 +88,7 @@ vi.mock("../src/auto-build/loop/run-chunk-once.js", () => ({
     await new Promise((r) => setTimeout(r, 15));
     shared.calls.push(`build-end:${opts.chunk.number}`);
     const action = shared.chunkActions.get(opts.chunk.number) ?? "proceed";
-    return makeOutcome(action);
+    return makeOutcome(action, shared.chunkChanged.get(opts.chunk.number) ?? []);
   }),
   chunkProcessFailureOutcome: vi.fn(() => null),
 }));
@@ -75,12 +97,12 @@ const { runBuildLoop } = await import("../src/auto-build/loop.js");
 const { parsePlanText } = await import("../src/auto-build/plan-parser.js");
 const { parseChunkReport } = await import("../src/auto-build/chunk-review/report-parser.js");
 
-function makeOutcome(action: string) {
+function makeOutcome(action: string, changed: string[] = []) {
   return {
     action,
     reasoning: action === "halt" ? "chunk gate halted the build" : `chunk ${action}`,
     findings: action === "halt" ? [{ gate: "build-exec", action: "halt", reasoning: "halt" }] : [],
-    report: parseChunkReport(""),
+    report: { ...parseChunkReport(""), changed },
   };
 }
 
@@ -123,6 +145,10 @@ beforeEach(() => {
   shared.mergeResults.clear();
   shared.nullNames.clear();
   shared.workerIndices.length = 0;
+  shared.chunkChanged.clear();
+  shared.regateResults.length = 0;
+  shared.regateProjectDirs.length = 0;
+  shared.regateThrow = null;
   vi.clearAllMocks();
 
   projectDir = mkdtempSync(join(tmpdir(), "parallel-waves-test-"));
@@ -230,6 +256,125 @@ describe("parallel path — createNamedWorktree null degrades gracefully", () =>
     expect(shared.calls).toContain("create:autobuild-c2");
     expect(shared.calls).toContain("merge:autobuild-c1");
     expect(shared.calls).not.toContain("merge:autobuild-c2");
+  });
+});
+
+// One undeclared-footprint chunk (no **Files:** line). The conflict-graph
+// serializes it wave-alone; S4 must NOT warn (it declared nothing to escape).
+const ONE_UNDECLARED = [
+  "# Test plan",
+  "## Phase A — Foundation",
+  "### Chunk 1 — Undeclared",
+  "- **Class:** leaf → `/vibe-code`",
+  "- **Slice:** a.",
+  "- **Depends on:** —",
+  "- **Done when:** ok.",
+].join("\n");
+
+/** Events carrying a footprint-escape warning (data.footprintEscape set). */
+function footprintWarnings(result: { events: Array<{ chunkNumber: number; data?: Record<string, unknown> }> }) {
+  return result.events.filter((e) => Array.isArray(e.data?.footprintEscape));
+}
+
+describe("parallel path — S4 rule 3: re-gate the MERGED tree", () => {
+  it("(a) runs the build-exec re-gate on the merged BASE after a wave's merges complete", async () => {
+    const result = await run(TWO_DISJOINT, 2);
+
+    expect(result.status).toBe("complete");
+    // The re-gate fired, and AFTER both worktrees merged back (merged-tree gate).
+    const lastMerge = Math.max(shared.calls.indexOf("merge:autobuild-c1"), shared.calls.indexOf("merge:autobuild-c2"));
+    const regateIdx = shared.calls.indexOf("regate");
+    expect(regateIdx).toBeGreaterThan(lastMerge);
+    // It ran on the shared BASE (projectDir), NOT a worktree — that's the whole
+    // point: the COMBINED tree no single worktree ever built.
+    expect(shared.regateProjectDirs).toContain(projectDir);
+    expect(shared.regateProjectDirs.every((d) => !d.startsWith("/fake-worktree/"))).toBe(true);
+  });
+
+  it("(b) a FAILING re-gate HALTS the build — the next wave is NEVER dispatched", async () => {
+    shared.regateResults.push({ gate: "build-exec", action: "halt", reasoning: "combined build exits 1: TS2345" });
+    writeFileSync(join(projectDir, "spec", "plan.md"), TWO_WAVES);
+
+    const result = await run(TWO_WAVES, 2);
+
+    expect(result.status).toBe("halted");
+    // Halt reason names the wave + carries the gate's actual failure output.
+    expect(result.haltReason).toContain("Integration re-gate FAILED after wave 1");
+    expect(result.haltReason).toContain("TS2345");
+    // Wave 0's chunks DID merge (the break is only visible combined)…
+    expect(shared.calls).toContain("merge:autobuild-c1");
+    expect(shared.calls).toContain("merge:autobuild-c2");
+    // …but wave 1 (chunk 3) was never dispatched — same halt discipline as a conflict.
+    expect(shared.calls).not.toContain("create:autobuild-c3");
+    expect(shared.calls).not.toContain("build-start:3");
+    // Exactly one re-gate ran (wave 0's); the halt stopped before wave 1's would.
+    expect(shared.calls.filter((c) => c === "regate").length).toBe(1);
+  });
+
+  it("(c) a PASSING re-gate proceeds to the next wave", async () => {
+    // regateResults empty → every re-gate PASSES.
+    writeFileSync(join(projectDir, "spec", "plan.md"), TWO_WAVES);
+
+    const result = await run(TWO_WAVES, 2);
+
+    expect(result.status).toBe("complete");
+    expect(result.chunksCommitted).toBe(3);
+    // Wave 1 (chunk 3) WAS dispatched after wave 0's re-gate passed.
+    expect(shared.calls).toContain("create:autobuild-c3");
+    expect(shared.calls).toContain("build-start:3");
+    // One re-gate per wave (2 waves).
+    expect(shared.calls.filter((c) => c === "regate").length).toBe(2);
+  });
+
+  it("(f) a THROWN re-gate fails OPEN (build proceeds) but LOUDLY flags the merged tree unverified", async () => {
+    // The gate CRASHES (infra error) rather than returning a finding — distinct
+    // from a normal build failure, which returns a finding and correctly halts.
+    shared.regateThrow = "headless smoke launch failed: ECONNREFUSED";
+
+    const result = await run(TWO_DISJOINT, 2);
+
+    // Fail-open preserved: an infra crash in the gate does NOT wedge/halt the build.
+    expect(result.status).toBe("complete");
+    expect(result.chunksCommitted).toBe(2);
+    // …but it is LOUD, not silent: a warning names the wave, marks the merged
+    // tree UNVERIFIED, and carries the caught error — so the user knows to verify.
+    const crashWarn = result.events.find((e) => e.data?.regateCrashed === true);
+    expect(crashWarn).toBeDefined();
+    expect(crashWarn!.message).toContain("wave 1");
+    expect(crashWarn!.message.toUpperCase()).toContain("UNVERIFIED");
+    expect(crashWarn!.message).toContain("ECONNREFUSED");
+    // No halt event was emitted — the crash surfaced as a warning, not a stop.
+    expect(result.events.some((e) => e.type === "halt")).toBe(false);
+  });
+});
+
+describe("parallel path — S4: footprint-subset diagnostic (warn, not halt)", () => {
+  it("(d) warns when a chunk's changed files ESCAPE its declared footprint, but does NOT halt", async () => {
+    // Chunk 1 declared src/alpha.ts but actually also touched an undeclared file.
+    shared.chunkChanged.set(1, ["src/alpha.ts", "src/rogue/escape.ts"]);
+
+    const result = await run(TWO_DISJOINT, 2);
+
+    // Warn-not-halt: the build still completes.
+    expect(result.status).toBe("complete");
+    const warnings = footprintWarnings(result);
+    const c1 = warnings.find((e) => e.chunkNumber === 1);
+    expect(c1).toBeDefined();
+    expect(c1!.data!.footprintEscape).toContain("src/rogue/escape.ts");
+    // The IN-footprint file did not trigger a warning, and chunk 2 (no escape) has none.
+    expect(c1!.data!.footprintEscape).not.toContain("src/alpha.ts");
+    expect(warnings.some((e) => e.chunkNumber === 2)).toBe(false);
+  });
+
+  it("(e) a chunk with an EMPTY/undeclared footprint never warns (declared nothing to escape)", async () => {
+    // Undeclared footprint, yet it DID change a file — must not warn.
+    shared.chunkChanged.set(1, ["src/whatever.ts"]);
+    writeFileSync(join(projectDir, "spec", "plan.md"), ONE_UNDECLARED);
+
+    const result = await run(ONE_UNDECLARED, 2);
+
+    expect(result.status).toBe("complete");
+    expect(footprintWarnings(result)).toHaveLength(0);
   });
 });
 

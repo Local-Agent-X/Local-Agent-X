@@ -1,17 +1,32 @@
 /**
- * Intent classifier — picks the single forced tool when the user's ask
- * unambiguously maps to one of three high-leverage primitives:
+ * Intent classifier — grades the user's ask into an intent KIND plus a
+ * confidence MODE:
  *
  *   - build_app    — create a NEW standalone app/dashboard/page/tool
  *   - agent_spawn  — delegate a long-running task to a named role
  *   - self_edit    — repair something broken in THIS app (LAX source)
  *   - free         — anything else; the agent picks its own tool
  *
- * Failure mode this fixes: the chat agent narrates tool calls in prose
+ *   - mode "force" — the ask is explicit AND specified enough to execute
+ *                    with no clarifying question; callers may pin
+ *                    tool_choice to the kind.
+ *   - mode "lean"  — right kind, thin or ambiguous ask; callers must NOT
+ *                    pin tool_choice — narrow the tool audience, keep the
+ *                    tool loaded, and let the model decide (it may ask
+ *                    clarifying questions before executing).
+ *
+ * Failure mode KIND fixes: the chat agent narrates tool calls in prose
  * (`[Reading routes/]`, `[Calling http_request...]`) instead of emitting
  * structured tool_use blocks when the system prompt's tool-selection
  * guidance is ignored in ambiguous cases. Forcing tool_choice is the
  * structural fix.
+ *
+ * Failure mode MODE fixes: a bare "build me a page for my gym" classified
+ * the same as a fully-specified build ask, hard-forced build_app, and
+ * shipped a generic HTML page with zero discovery. The cost asymmetry is
+ * lopsided — a missed force is cheap (the model still has the tool), a
+ * wrong force ships an unwanted artifact — so forcing requires an
+ * explicit, specified ask and everything thinner grades "lean".
  *
  * Provider policy (matches classify-with-llm.ts, revised 2026-05-06):
  * the user's CURRENTLY-SELECTED provider/model handles classification.
@@ -27,14 +42,17 @@
 import { classifyJson } from "./classify-with-llm.js";
 
 export type IntentKind = "build_app" | "agent_spawn" | "self_edit" | "free";
+export type IntentMode = "force" | "lean";
 
 export interface IntentVerdict {
   kind: IntentKind;
+  mode: IntentMode;
   reason: string;
 }
 
 interface RawVerdict {
   kind?: string;
+  mode?: string;
   reason?: string;
 }
 
@@ -42,7 +60,18 @@ const VALID_KINDS: ReadonlySet<IntentKind> = new Set<IntentKind>([
   "build_app", "agent_spawn", "self_edit", "free",
 ]);
 
-const SYSTEM_PROMPT = `You decide which tool the assistant should be FORCED to call for this user turn. Reply with a JSON object: {"kind": "<one of: build_app | agent_spawn | self_edit | free>", "reason": "<short reason>"}
+const VALID_MODES: ReadonlySet<IntentMode> = new Set<IntentMode>([
+  "force", "lean",
+]);
+
+const SYSTEM_PROMPT = `You classify the user's message into an intent KIND and a confidence MODE. Reply with a JSON object: {"kind": "<one of: build_app | agent_spawn | self_edit | free>", "mode": "<force | lean>", "reason": "<short reason>"}
+
+THE DEFAULT IS "free". A non-free kind requires an EXPLICIT ask in the message itself: an action verb applied to a concrete object ("build me a kanban app", "research X and write a summary", "the dark-mode toggle doesn't flip"). Aspirations, questions, discussion, and ambiguous phrasing are all "free". When in doubt, return "free" — acting on the wrong kind is far worse than missing one.
+
+MODE — how complete the ask is. Only meaningful for non-free kinds; always use "lean" with kind "free".
+
+- "force" — the ask is explicit AND carries enough specification to execute immediately with no clarifying question. For build_app that means both the artifact AND its purpose/content are stated ("build a BMI calculator with metric units", "make a landing page for my gym with pricing and a signup form"). For agent_spawn the task and deliverable are concrete. For self_edit a specific feature/behavior of THIS app is named as broken.
+- "lean" — the kind is right but the ask is thin or one-line, and a good assistant would ask 1-3 clarifying questions (purpose, audience, must-haves) before executing. Examples: "build me a page for my gym", "make me an app", "build a project management app". The assistant keeps the matching tool available but decides for itself whether to ask first or build.
 
 KINDS:
 
@@ -101,24 +130,29 @@ KINDS:
 
 - free — anything else. Ordinary conversation, status checks, casual questions, ambiguous requests, "how would you build..." (asking for discussion, not the build), "explain", "what is...", short acks, follow-ups, requests that don't unambiguously map to ONE of the three primitives above. When in doubt, choose "free" — forcing the wrong tool is worse than no forcing.
 
-DISTINCTIONS:
+DISTINCTIONS (kind / mode):
 - "create a project" / "new project called X" → free (LAX project container → project_create, NOT a standalone app)
-- "build a project management app" → build_app (concrete runnable artifact, despite the word "project")
-- "create a dashboard for fastmail" → build_app (concrete artifact)
+- "build a project management app" → build_app / lean (explicit artifact verb, but nothing about what it must do)
+- "build me a kanban app" → build_app / force (kanban IS the spec)
+- "create a dashboard that imports our fastmail" → build_app / force (artifact + data source stated)
+- "build me a page for my gym" → build_app / lean (explicit ask, thin spec — purpose/sections unknown)
+- "make me an app" → build_app / lean (explicit but empty spec)
 - "make a power point about my trip" → free (office document — presentation tool)
-- "make a presentation app with slide transitions" → build_app (runnable app, not a .pptx)
+- "make a presentation app with slide transitions" → build_app / force (runnable app, not a .pptx)
 - "explain how you'd build a dashboard for fastmail" → free (discussion)
 - "I want to start a company that does X" → free (venture/aspiration — ask first, no artifact verb)
-- "I want to start a training company, build me the website" → build_app (explicit artifact verb present)
-- "research X for me" → agent_spawn (delegation, do it now)
+- "I want to start a training company, build me the website" → build_app / lean (explicit verb, but site content/audience unstated)
+- "research current AI voice toolkits and write a summary" → agent_spawn / force (task + deliverable concrete)
+- "research X for me" → agent_spawn / lean (delegation, but scope thin)
 - "set up a mission to research X every night" → free (scheduling — mission_schedule_create, not delegation)
 - "remind me daily at 9am to do X" → free (scheduling)
 - "tell me about X" → free (just answer it)
-- "the toggle doesn't work" → self_edit (LAX bug)
+- "the dark-mode toggle doesn't flip when I click it" → self_edit / force (specific LAX feature named)
+- "the toggle doesn't work" → self_edit / lean (LAX bug, but which toggle?)
 - "fix my todo app's toggle" → free (workspace edit, not LAX source — agent uses edit/write)
 - "remove all chats from the sidebar" → free (data mutation — sidebar_clear tool exists)
-- "the sidebar clear button doesn't work" → self_edit (behavior bug in LAX)
-- "the chat UI freezes when I paste an image" → self_edit (LAX feature broken)
+- "the sidebar clear button doesn't work" → self_edit / force (behavior bug in LAX, feature named)
+- "the chat UI freezes when I paste an image" → self_edit / force (LAX feature broken, repro stated)
 - "the TV won't respond to the dashboard" → free (external device, not LAX)
 - "my todo app's reorder is broken" → free (workspace app, agent uses edit/write)
 - "none of the IPs worked" → free (network/external, not LAX)
@@ -143,7 +177,7 @@ export async function classifyIntent(
 
   const userPrompt =
     `User message:\n"${trimmed.slice(0, 1200)}"\n\n` +
-    `Return JSON only: {"kind": "build_app" | "agent_spawn" | "self_edit" | "free", "reason": "..."}`;
+    `Return JSON only: {"kind": "build_app" | "agent_spawn" | "self_edit" | "free", "mode": "force" | "lean", "reason": "..."}`;
 
   const verdict = await classifyJson<IntentVerdict>({
     category: "intent",
@@ -158,8 +192,14 @@ export async function classifyIntent(
       const obj = parsed as RawVerdict;
       const kindRaw = typeof obj.kind === "string" ? obj.kind.trim().toLowerCase() : "";
       if (!VALID_KINDS.has(kindRaw as IntentKind)) return null;
+      const kind = kindRaw as IntentKind;
+      // Fail-soft: a missing/garbled mode must never escalate to forcing,
+      // and "free" carries no mode signal at all.
+      const modeRaw = typeof obj.mode === "string" ? obj.mode.trim().toLowerCase() : "";
+      const mode: IntentMode =
+        kind !== "free" && VALID_MODES.has(modeRaw as IntentMode) ? (modeRaw as IntentMode) : "lean";
       const reason = typeof obj.reason === "string" ? obj.reason.slice(0, 240) : "";
-      return { kind: kindRaw as IntentKind, reason };
+      return { kind, mode, reason };
     },
   });
 

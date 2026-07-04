@@ -1,5 +1,58 @@
-import { describe, it, expect } from "vitest";
-import { mightNeedToolForcing, hasLiteralToolCall } from "./intent-classifier.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// intent-classifier imports classifyJson statically; hoist the mock so the
+// factory sees it at import time (same pattern as refute-claim.test.ts).
+const { classifyJsonMock } = vi.hoisted(() => ({ classifyJsonMock: vi.fn() }));
+vi.mock("./classify-with-llm.js", () => ({ classifyJson: classifyJsonMock }));
+
+import { mightNeedToolForcing, hasLiteralToolCall, classifyIntent } from "./intent-classifier.js";
+
+/** Run classifyIntent with the LLM returning `raw`, exercising the real validate. */
+async function classifyRaw(raw: unknown) {
+  classifyJsonMock.mockImplementation(async (args: { validate: (p: unknown) => unknown }) =>
+    args.validate(raw),
+  );
+  return classifyIntent("build me something");
+}
+
+describe("classifyIntent validate — graded verdict (kind + mode)", () => {
+  // Braces matter: mockReset() returns the mock, and a beforeEach that
+  // returns a function has it invoked as a zero-arg teardown hook.
+  beforeEach(() => {
+    classifyJsonMock.mockReset();
+  });
+
+  it("honors an explicit force mode on a non-free kind", async () => {
+    expect(await classifyRaw({ kind: "build_app", mode: "force", reason: "specified" })).toEqual({
+      kind: "build_app", mode: "force", reason: "specified",
+    });
+  });
+
+  it("fails soft: a missing mode defaults to lean, never force", async () => {
+    expect(await classifyRaw({ kind: "build_app", reason: "thin" })).toEqual({
+      kind: "build_app", mode: "lean", reason: "thin",
+    });
+  });
+
+  it("fails soft: a garbled mode defaults to lean", async () => {
+    expect((await classifyRaw({ kind: "agent_spawn", mode: "maybe?", reason: "" }))?.mode).toBe("lean");
+  });
+
+  it("normalizes mode casing/whitespace", async () => {
+    expect((await classifyRaw({ kind: "self_edit", mode: " Force ", reason: "" }))?.mode).toBe("force");
+  });
+
+  it("free always carries lean, even if the LLM says force", async () => {
+    expect(await classifyRaw({ kind: "free", mode: "force", reason: "chat" })).toEqual({
+      kind: "free", mode: "lean", reason: "chat",
+    });
+  });
+
+  it("still rejects an invalid kind outright", async () => {
+    expect(await classifyRaw({ kind: "build_everything", mode: "force", reason: "" })).toBeNull();
+    expect(await classifyRaw(null)).toBeNull();
+  });
+});
 
 describe("mightNeedToolForcing — pre-gate for the LLM intent classifier", () => {
   it("skips ordinary conversation (returns false → classifier not run)", () => {

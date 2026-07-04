@@ -21,6 +21,7 @@
  *   - Retries a halted chunk a second time.
  */
 
+import { getRuntimeConfig } from "../../config.js";
 import { ensureGitBaseline, getHeadSha } from "../git-helpers.js";
 import { runPreflightProbe } from "./preflight.js";
 import { attemptPhaseGateScoring } from "../loop-phase-gate.js";
@@ -30,6 +31,20 @@ import { haltedResult, safeGet } from "./types.js";
 import { runChunkOnce } from "./run-chunk-once.js";
 import { handlePushBack } from "./handle-push-back.js";
 import { handleAction } from "./handle-action.js";
+import { runParallelWaves } from "./parallel-waves.js";
+
+/**
+ * Resolve the effective parallel-chunk concurrency. An explicit
+ * opts.maxConcurrentChunks (tests / callers) wins; otherwise the config value
+ * is read here. Clamped to [1,12] defensively so an out-of-band override can
+ * never exceed the worktree cap. 1 → the serial loop below (unchanged).
+ */
+function resolveMaxConcurrentChunks(override?: number): number {
+  const raw = override ?? getRuntimeConfig().maxConcurrentChunks;
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(12, n);
+}
 
 export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
   const startedAt = Date.now();
@@ -89,6 +104,25 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
   }
 
   const endIdx = opts.maxChunks ? Math.min(startIdx + opts.maxChunks, totalChunks) : totalChunks;
+
+  // Path selection (S3). maxConcurrentChunks defaults to 1 → the serial loop
+  // below runs UNCHANGED (byte-identical to pre-S3 behaviour). Only >1 takes
+  // the new parallel-worktree wave path, which never runs concurrent chunks in
+  // opts.projectDir (each gets its own isolated worktree). The shared git
+  // baseline + preflight probe above have already run for both paths.
+  const maxConcurrentChunks = resolveMaxConcurrentChunks(opts.maxConcurrentChunks);
+  if (maxConcurrentChunks > 1) {
+    return runParallelWaves({
+      opts,
+      chunks: chunks.slice(startIdx, endIdx),
+      totalChunks,
+      maxConcurrentChunks,
+      emit,
+      events,
+      outcomes,
+    });
+  }
+
   let chunksCommitted = 0;
 
   for (let i = startIdx; i < endIdx; i++) {

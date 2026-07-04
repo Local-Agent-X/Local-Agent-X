@@ -304,12 +304,12 @@ export interface LAXConfig {
   /** Interactive lane concurrency cap — how many chat turns run at once
    *  across all sessions. See scheduler.ts laneCap(). */
   maxInteractiveSessions: number;
-  /** Agent lane concurrency cap — how many sub-agents (agent_spawn) run at
-   *  once. See scheduler.ts laneCap(). */
+  /** Agent lane concurrency cap — how many sub-agents run at once. See scheduler.ts laneCap(). */
   maxSubAgents: number;
-  /** Global stampede ceiling on total in-flight workers across ALL lanes,
-   *  ABOVE the per-lane maxes (default 12, max 12). See scheduler pumpScheduler(). */
+  /** Global stampede ceiling on in-flight workers across ALL lanes (default 12). See scheduler pumpScheduler(). */
   maxConcurrentAgents: number;
+  /** Max auto-build chunks built in parallel per orchestration; default 1 = serial. See config.ts + loop/parallel-waves.ts. */
+  maxConcurrentChunks: number;
   systemPrompt: string;
   profile: DeploymentProfile;
   toolApproval: "auto" | "confirm-risky" | "confirm-all";

@@ -57,6 +57,13 @@ const configSchema = z.object({
    *  "start fan-out at 4" policy is enforced later on the fan-out launcher, not
    *  here. Intended production default is cores−2 auto-scaling (a follow-up). */
   maxConcurrentAgents: z.number().int().min(1).max(12).default(12),
+  /** Max auto-build chunks built in PARALLEL within a single orchestration
+   *  (S3). Default 1 = the serial per-chunk loop, byte-identical to pre-S3
+   *  behaviour. When >1, disjoint chunks in a conflict-graph wave build
+   *  concurrently in isolated git worktrees and merge back STRICTLY SERIALLY.
+   *  Clamped to [1,12]; 12 = agency MAX_CONCURRENT_WORKTREES, and the
+   *  scheduler's agent-lane cap throttles the underlying workers further. */
+  maxConcurrentChunks: z.number().int().min(1).max(12).default(1),
   systemPrompt: z.string().default(DEFAULT_SYSTEM_PROMPT),
   profile: z.enum(["home", "dev", "enterprise"]).default("home"),
   toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("auto"),

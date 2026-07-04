@@ -28,6 +28,21 @@ export interface RunChunkOnceOptions {
    * from zero. Omitted (or empty) for the first chunk.
    */
   priorOutcomes?: Array<{ chunkNumber: number; outcome: ChunkReviewOutcome }>;
+  /**
+   * Parallel-path only (S3): the 0-based index of this chunk within its
+   * concurrently-dispatched batch. Threaded so the per-chunk gate's app launch
+   * (S5's allocatePort) can pick a UNIQUE dev-server port per concurrent build
+   * and avoid a same-port collision. 0 / undefined = the serial single-build
+   * path (byte-identical to today). See loop/parallel-waves.ts.
+   *
+   * NOTE (remaining hop): the port-allocating consumer is
+   * scenario-scorer/phase-gate-runner → launchApp(workerIndex). The parallel
+   * path currently DEFERS per-chunk phase-gate auto-recovery, so no concurrent
+   * launchApp actually fires today; this value is carried to runChunkOnce and
+   * surfaced on the spawn event, and the last hop into runPhaseGateScoring is
+   * left for whoever enables per-chunk phase-gate scoring under concurrency.
+   */
+  workerIndex?: number;
 }
 
 /** Minimal chunk-agent result shape this decision needs. */
@@ -92,6 +107,7 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     chunkNumber: opts.chunk.number,
     totalChunks: opts.totalChunks,
     message: `Invoked agent ${role}${opts.retryReason ? " — retry" : ""}`,
+    ...(opts.workerIndex !== undefined ? { data: { workerIndex: opts.workerIndex } } : {}),
   });
 
   const subResult = await runChunkAgent({

@@ -157,7 +157,17 @@ export function cleanupAllWorktrees(): void {
 
 /**
  * Create an isolated worktree with caller-supplied branch name.
- * Used by autopilot — agency uses createWorktree() above.
+ * Used by autopilot + self-edit + update (which edit the LAX repo itself, so
+ * process.cwd() IS that repo) and by auto-build's parallel path (which builds
+ * the USER's app in a DIFFERENT repo, inside the long-lived LAX server process
+ * where cwd is NOT that repo).
+ *
+ * `repoRoot` (optional) is the repo this worktree is cut from. When given, EVERY
+ * git op that establishes the worktree is anchored to it, and the git-resolved
+ * toplevel is STORED in the registry so all downstream lifecycle ops (merge /
+ * commit / cleanup — which read `wt.repoRoot` or `wt.path`, never process.cwd())
+ * target the SAME repo. When ABSENT the resolution derives from process.cwd()
+ * exactly as before, so the LAX-editing callers are byte-identical.
  *
  * After `git worktree add` the new dir has only git-tracked files. Autopilot
  * needs `npm run build` to work, which requires node_modules and (for ari
@@ -168,26 +178,30 @@ export function cleanupAllWorktrees(): void {
 export function createNamedWorktree(
   name: string,
   branchName: string,
+  repoRoot?: string,
 ): { path: string; branch: string; baseBranch: string } | null {
   if (!worktreeSlotAvailable()) {
     logger.warn(`[worktree] cap reached (${activeWorktrees.size}/${MAX_CONCURRENT_WORKTREES}) — refusing new worktree for ${name}`);
     return null;
   }
   try {
-    const repoRoot = git("rev-parse --show-toplevel");
-    const baseBranch = git("rev-parse --abbrev-ref HEAD", repoRoot);
+    // Resolve the toplevel of the repo this worktree belongs to. `repoRoot`
+    // undefined → cwd (today's behavior); provided → the caller's repo, even
+    // when it's a subdir (git normalizes to the toplevel + strips symlinks).
+    const resolvedRoot = git("rev-parse --show-toplevel", repoRoot);
+    const baseBranch = git("rev-parse --abbrev-ref HEAD", resolvedRoot);
     const wtPath = join(WORKTREE_BASE, name);
 
-    git(["branch", branchName, "HEAD"], repoRoot);
-    git(["worktree", "add", wtPath, branchName], repoRoot);
+    git(["branch", branchName, "HEAD"], resolvedRoot);
+    git(["worktree", "add", wtPath, branchName], resolvedRoot);
 
     // Share node_modules + ari kernel package node_modules with the parent.
     // Autopilot edits source; the build needs deps that aren't tracked.
-    linkDirectoryInto(join(repoRoot, "node_modules"), join(wtPath, "node_modules"));
+    linkDirectoryInto(join(resolvedRoot, "node_modules"), join(wtPath, "node_modules"));
     // ari kernel sub-packages each have their own node_modules from npm
     // workspaces. Link them too if present, so tsup builds can find typescript.
     try {
-      const pkgsDir = join(repoRoot, "packages");
+      const pkgsDir = join(resolvedRoot, "packages");
       if (existsSync(pkgsDir)) {
         for (const pkg of readdirSync(pkgsDir)) {
           const pkgRoot = join(pkgsDir, pkg);
@@ -201,8 +215,8 @@ export function createNamedWorktree(
       logger.warn(`[worktree] Failed to link package node_modules: ${(e as Error).message}`);
     }
 
-    activeWorktrees.set(name, { path: wtPath, branch: branchName, baseBranch, repoRoot, mergedSuccessfully: false });
-    logger.info(`[worktree] Created named worktree ${wtPath} on branch ${branchName} (base: ${baseBranch})`);
+    activeWorktrees.set(name, { path: wtPath, branch: branchName, baseBranch, repoRoot: resolvedRoot, mergedSuccessfully: false });
+    logger.info(`[worktree] Created named worktree ${wtPath} on branch ${branchName} (base: ${baseBranch}, repo: ${resolvedRoot})`);
     return { path: wtPath, branch: branchName, baseBranch };
   } catch (e) {
     logger.warn(`[worktree] Failed to create named worktree ${name}: ${(e as Error).message}`);

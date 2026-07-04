@@ -48,6 +48,14 @@ export interface LoopOptions {
    * Pure no-op when undefined; never downgrades a halt/push_back/amend_spec.
    */
   judgmentHook?: JudgmentHook;
+  /**
+   * Max chunks to build IN PARALLEL within this orchestration (S3). Optional
+   * override for {@link LAXConfig.maxConcurrentChunks}; when omitted, run.ts
+   * reads the config value (default 1). 1 → the serial loop is taken and the
+   * behaviour is byte-identical to pre-S3. >1 → the parallel-worktree wave
+   * path (see loop/parallel-waves.ts). Clamped to [1,12] in run.ts.
+   */
+  maxConcurrentChunks?: number;
 }
 
 export interface LoopResult {

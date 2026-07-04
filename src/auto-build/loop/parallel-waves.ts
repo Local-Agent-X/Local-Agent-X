@@ -1,0 +1,396 @@
+/**
+ * Parallel-wave orchestration for auto-build (S3) — the OPT-IN concurrent path.
+ *
+ * The serial per-chunk loop in run.ts is the default and is UNCHANGED; this
+ * file is only reached when maxConcurrentChunks > 1. It builds disjoint chunks
+ * concurrently in isolated git worktrees, then integrates their work back into
+ * the shared base branch.
+ *
+ * Model:
+ *   waves = planWaves(windowedChunks)        // conflict-graph (S2), pure
+ *   for each wave:                           // waves run STRICTLY in sequence
+ *     for each batch of <= maxConcurrentChunks chunks in the wave:
+ *       1. create one isolated worktree per chunk (createNamedWorktree)
+ *       2. DISPATCH all chunk agents CONCURRENTLY, each with projectDir = its
+ *          own worktree + a unique workerIndex (Promise.all)
+ *       3. MERGE the worktrees back into base ONE AT A TIME (rule 1)
+ * A later-wave chunk that dependsOn an earlier chunk sees that work because we
+ * merge every wave back into base BEFORE creating the next wave's worktrees
+ * (they branch from the freshly-advanced base).
+ *
+ * ── THE TWO NON-NEGOTIABLE CORRECTNESS RULES ────────────────────────────────
+ * (1) BUILDS PARALLEL, MERGE-BACK SERIAL. mergeWorktree() re-reads the base tip
+ *     and fast-forward-advances it; interleaving two merges corrupts the base
+ *     pointer and silently drops commits. So the merge loop is a plain
+ *     sequential `for` that awaits nothing concurrently — NEVER Promise.all.
+ * (2) HALT ON CONFLICT — never auto-resolve. If any mergeWorktree returns
+ *     {merged:false} we STOP the whole build (no next wave), surface a clear
+ *     error naming the chunk + its PRESERVED branch (mergeWorktree already
+ *     aborted the merge and kept the branch), and clean up the other worktrees.
+ *     Silent corruption is the one unacceptable outcome. A textually-clean
+ *     merge that still breaks the combined tree is S4's job, not this chunk's.
+ *
+ * Differences from the serial path (documented, safe):
+ *   - Per-chunk phase-gate auto-scoring recovery (serial run.ts →
+ *     attemptPhaseGateScoring) is NOT run here. It launches a dev-server on an
+ *     allocated port and would need per-chunk workerIndex threaded all the way
+ *     into runPhaseGateScoring; running it concurrently risks port collisions.
+ *     A phase-gate halt is therefore treated as a plain halt (conservative:
+ *     halts the build) instead of being auto-recovered.
+ *   - LAUNCH_READINESS.md is NOT written into each worktree (two concurrent
+ *     chunks appending to that shared, un-declared-in-footprint file would
+ *     collide on merge-back and force a halt). The item is still surfaced via
+ *     the launch-readiness event and kept in the chunk outcome, which is the
+ *     source of truth; the convenience file is skipped in the parallel path.
+ */
+
+import { planWaves } from "../conflict-graph.js";
+import { getHeadSha } from "../git-helpers.js";
+import { appendHalt } from "../failure-recovery.js";
+import { applyAdditiveSpecAmendment, emitLaunchReadiness } from "../loop-effects.js";
+import { createNamedWorktree, mergeWorktree, cleanupWorktree, commitInWorktree } from "../../agency/worktree.js";
+import type { ParsedChunk } from "../plan-parser.js";
+import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
+import { runChunkOnce } from "./run-chunk-once.js";
+import { handlePushBack } from "./handle-push-back.js";
+import { handleAction } from "./handle-action.js";
+import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
+import { haltedResult, safeGet } from "./types.js";
+
+export interface ParallelWavesContext {
+  opts: LoopOptions;
+  /** Windowed chunk slice [startIdx, endIdx) — the chunks this run will build. */
+  chunks: ParsedChunk[];
+  totalChunks: number;
+  /** Already clamped to [1,12] by the caller. */
+  maxConcurrentChunks: number;
+  emit: EmitFn;
+  events: LoopEvent[];
+  /** Shared, mutated in place — the running punch-list of per-chunk outcomes. */
+  outcomes: LoopResult["outcomes"];
+}
+
+/** A chunk that got its own worktree and will build in parallel. */
+interface DispatchedChunk {
+  chunk: ParsedChunk;
+  /** Worktree registry key — same key passed to mergeWorktree/cleanupWorktree. */
+  name: string;
+  branch: string;
+  worktreePath: string;
+  /** Unique 0-based index within the concurrently-dispatched batch (S5 ports). */
+  workerIndex: number;
+}
+
+/** The result of building one dispatched chunk in its worktree. */
+interface BuiltChunk {
+  dispatched: DispatchedChunk;
+  chunk: ParsedChunk;
+  finalOutcome: ChunkReviewOutcome;
+  finalAction: ReviewAction;
+}
+
+type StepResult =
+  | { kind: "halt"; result: LoopResult }
+  | { kind: "advance"; chunksCommitted: number };
+
+/**
+ * Run the whole build via the parallel-wave engine. Returns a LoopResult with
+ * the same shape as the serial path so the caller (run.ts / the orchestrator)
+ * is agnostic to which path ran.
+ */
+export async function runParallelWaves(ctx: ParallelWavesContext): Promise<LoopResult> {
+  const { opts, chunks, totalChunks, maxConcurrentChunks, emit, events, outcomes } = ctx;
+  const waves = planWaves(chunks);
+  let chunksCommitted = 0;
+
+  emit({
+    type: "review-result", chunkNumber: chunks[0].number, totalChunks,
+    message: `Parallel build engaged: ${chunks.length} chunk(s) in ${waves.length} wave(s), up to ${maxConcurrentChunks} concurrent per batch.`,
+  });
+
+  for (const wave of waves) {
+    if (opts.signal?.aborted) {
+      return haltedResult("loop aborted by signal", wave.chunks[0].number, outcomes, events);
+    }
+    if (wave.degraded) {
+      emit({
+        type: "review-result", chunkNumber: wave.chunks[0].number, totalChunks,
+        message: `Wave DEGRADED — a dependency cycle / missing dep was force-broken; chunk ${wave.chunks[0].number} is serialized alone and its dependency ordering is NOT guaranteed.`,
+      });
+    }
+
+    // Cap concurrency at maxConcurrentChunks by processing the wave in batches.
+    // Waves already carry only footprint-disjoint chunks (conflict-graph), so
+    // splitting one into sequential batches is always safe.
+    for (let b = 0; b < wave.chunks.length; b += maxConcurrentChunks) {
+      const batch = wave.chunks.slice(b, b + maxConcurrentChunks);
+      const step = await runBatch(ctx, batch, chunksCommitted);
+      if (step.kind === "halt") return step.result;
+      chunksCommitted = step.chunksCommitted;
+    }
+  }
+
+  const lastChunk = chunks[chunks.length - 1].number;
+  emit({ type: "complete", chunkNumber: lastChunk, totalChunks, message: `Loop complete (parallel): ${chunksCommitted} chunks committed.` });
+  return { status: "complete", lastChunk, chunksCommitted, haltReason: "", outcomes, events };
+}
+
+/**
+ * Build one batch (≤ maxConcurrentChunks disjoint chunks) concurrently, then
+ * merge them back SERIALLY. Enforces both correctness rules.
+ */
+async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksCommittedIn: number): Promise<StepResult> {
+  const { opts, totalChunks, emit, events, outcomes } = ctx;
+  let chunksCommitted = chunksCommittedIn;
+
+  // 1. Create one worktree per chunk. A null return (worktree cap reached — the
+  //    only way to reach null here, since the git repo already exists) does NOT
+  //    crash: that chunk falls back to a SERIAL build on the base tree AFTER the
+  //    parallel work of this batch merges in. workerIndex is assigned only to
+  //    chunks that actually got a worktree, so the concurrent set is 0..k-1.
+  const dispatched: DispatchedChunk[] = [];
+  const degradedToSerial: ParsedChunk[] = [];
+  let workerIndex = 0;
+  for (const chunk of batch) {
+    const name = `autobuild-c${chunk.number}`;
+    const branch = `autobuild/c${chunk.number}`;
+    // Anchor the worktree to the USER's project repo (opts.projectDir), NOT the
+    // LAX server's process.cwd() — the auto-build loop runs in the long-lived
+    // server, so a cwd-derived root would cut the worktree from LAX's own repo.
+    const wt = createNamedWorktree(name, branch, opts.projectDir);
+    if (!wt) {
+      emit({
+        type: "review-result", chunkNumber: chunk.number, totalChunks,
+        message: `Worktree unavailable for chunk ${chunk.number} (worktree cap reached) — will build it serially on base after the parallel batch.`,
+      });
+      degradedToSerial.push(chunk);
+      continue;
+    }
+    dispatched.push({ chunk, name, branch, worktreePath: wt.path, workerIndex: workerIndex++ });
+  }
+
+  // Everything past worktree creation is wrapped so that ANY throw (agent
+  // setup, review, advisor, git) cleans up every worktree this batch created
+  // before propagating — otherwise a rejected Promise.all would leak the
+  // registry slots (a process-global cap of 12) AND the temp dirs, bricking
+  // all future worktree creation until restart. Normal `return`s (halt paths
+  // below) already clean up precisely and do NOT need the finally.
+  try {
+    // 2. DISPATCH all worktree chunks CONCURRENTLY — each in its own worktree.
+    const built = await Promise.all(dispatched.map(d => buildChunkInWorktree(ctx, d)));
+
+    // Record every dispatched chunk's outcome for the punch list (order preserved).
+    for (const r of built) outcomes.push({ chunkNumber: r.chunk.number, outcome: r.finalOutcome, action: r.finalAction });
+
+    // 3. If ANY dispatched chunk did not reach proceed/amend_spec, HALT the build
+    //    BEFORE merging anything (per rule 2: a chunk that doesn't reach proceed
+    //    does NOT merge, and a halt halts the build). Nothing is merged; every
+    //    branch is preserved (cleanupWorktree keeps unmerged branches).
+    const failed = built.find(r => r.finalAction !== "proceed" && r.finalAction !== "amend_spec");
+    if (failed) {
+      for (const d of dispatched) cleanupWorktreeSafe(d.name);
+      const gate = failed.finalOutcome.findings.find(f => f.action === "halt")?.gate || "";
+      emit({ type: "halt", chunkNumber: failed.chunk.number, totalChunks, message: failed.finalOutcome.reasoning });
+      appendHalt(opts.projectDir, { chunk: failed.chunk.number, gate, reason: failed.finalOutcome.reasoning.slice(0, 200) });
+      return {
+        kind: "halt",
+        result: { status: "halted", lastChunk: failed.chunk.number, chunksCommitted, haltReason: failed.finalOutcome.reasoning, outcomes, events },
+      };
+    }
+
+    // 4. All dispatched chunks reached proceed/amend_spec. Commit each inside its
+    //    worktree, then MERGE BACK ONE AT A TIME (rule 1 — strictly sequential).
+    for (const r of built) await commitDispatchedChunk(ctx, r);
+
+    const merged = new Set<string>();
+    for (const r of built) {                       // SERIAL merge loop — never Promise.all.
+      const d = r.dispatched;
+      const res = mergeWorktree(d.name);           // re-reads base tip + fast-forward-advances it
+      merged.add(d.name);
+      if (!res.merged) {
+        // Rule 2: HALT. The conflicting branch is already preserved by
+        // mergeWorktree; clean up only the worktrees we have NOT merged yet.
+        for (const other of dispatched) if (!merged.has(other.name)) cleanupWorktreeSafe(other.name);
+        const reason =
+          `Chunk ${d.chunk.number} could not merge back cleanly — build HALTED to avoid silent corruption. ` +
+          `Its work is preserved on branch '${d.branch}' for manual resolution. ${res.error || ""}`.trim();
+        emit({ type: "halt", chunkNumber: d.chunk.number, totalChunks, message: reason });
+        appendHalt(opts.projectDir, { chunk: d.chunk.number, gate: "worktree-merge", reason: reason.slice(0, 200) });
+        return { kind: "halt", result: { status: "halted", lastChunk: d.chunk.number, chunksCommitted, haltReason: reason, outcomes, events } };
+      }
+      chunksCommitted++;
+      emit({ type: "commit", chunkNumber: d.chunk.number, totalChunks, message: `Merged chunk ${d.chunk.number} back to base (${res.files} file(s) from '${d.branch}').` });
+    }
+  } catch (err) {
+    // A genuine throw escaped the batch — reclaim every worktree it created
+    // (idempotent: cleanupWorktreeSafe no-ops on an already-merged/cleaned
+    // entry) so the slot cap isn't leaked, then rethrow to the crash handler.
+    for (const d of dispatched) cleanupWorktreeSafe(d.name);
+    throw err;
+  }
+
+  // 5. Worktree-cap fallbacks: build them SERIALLY on base now that the batch's
+  //    parallel work is merged in (their footprints are disjoint from it).
+  for (const chunk of degradedToSerial) {
+    const step = await buildChunkOnBaseSerial(ctx, chunk, chunksCommitted);
+    if (step.kind === "halt") return step;
+    chunksCommitted = step.chunksCommitted;
+  }
+
+  return { kind: "advance", chunksCommitted };
+}
+
+/**
+ * Build one chunk inside its own worktree (projectDir = worktree). Mirrors the
+ * serial path's runChunkOnce + push_back handling, but scoped to the worktree
+ * so its build-exec gate builds/tests in isolation. Phase-gate auto-recovery is
+ * intentionally omitted here (see file header). Returns the resolved action.
+ */
+async function buildChunkInWorktree(ctx: ParallelWavesContext, d: DispatchedChunk): Promise<BuiltChunk> {
+  const { opts, totalChunks, emit, outcomes } = ctx;
+
+  const preSha = await safeGet(() => getHeadSha(d.worktreePath));
+  const preShaVal = preSha.ok ? preSha.value : "";
+
+  emit({
+    type: "chunk-start", chunkNumber: d.chunk.number, totalChunks,
+    message: `Starting chunk ${d.chunk.number}/${totalChunks} in worktree ${d.name} (worker ${d.workerIndex}): ${d.chunk.title} (${d.chunk.klass})`,
+  });
+
+  const outcome = await runChunkOnce({
+    chunk: d.chunk, totalChunks,
+    planPath: opts.planPath, plan: opts.plan,
+    projectDir: d.worktreePath,           // isolated worktree, NOT the base tree
+    preSha: preShaVal,
+    subprocessTimeoutMs: opts.subprocessTimeoutMs,
+    signal: opts.signal, emit,
+    retryReason: undefined,
+    judgmentHook: opts.judgmentHook,
+    parentSessionId: opts.parentSessionId,
+    priorOutcomes: outcomes,              // learnings from already-merged chunks
+    workerIndex: d.workerIndex,           // unique per concurrent build (S5 ports)
+  });
+
+  let finalOutcome = outcome;
+  let finalAction = outcome.action;
+
+  if (outcome.action === "push_back") {
+    const pb = await handlePushBack({
+      chunk: d.chunk, totalChunks,
+      planPath: opts.planPath, plan: opts.plan,
+      projectDir: d.worktreePath, preSha: preShaVal,
+      subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
+      judgmentHook: opts.judgmentHook,
+      outcome,
+    });
+    finalOutcome = pb.finalOutcome;
+    finalAction = pb.finalAction;
+  }
+
+  return { dispatched: d, chunk: d.chunk, finalOutcome, finalAction };
+}
+
+/**
+ * Commit a proceed/amend_spec chunk's work INSIDE its worktree so mergeWorktree
+ * can fast-forward it into base. For amend_spec, the additive spec text is
+ * applied into the worktree first and committed together with the code. The
+ * launch-readiness FILE is deliberately not written (see file header); the item
+ * is surfaced as an event only.
+ */
+async function commitDispatchedChunk(ctx: ParallelWavesContext, r: BuiltChunk): Promise<void> {
+  const { totalChunks, emit } = ctx;
+  const d = r.dispatched;
+
+  if (r.finalAction === "amend_spec" && r.finalOutcome.report.specGaps) {
+    const amend = await applyAdditiveSpecAmendment(d.worktreePath, r.chunk, r.finalOutcome.report.specGaps);
+    if (amend.ok) {
+      emit({
+        type: "spec-amended", chunkNumber: r.chunk.number, totalChunks,
+        message: `Spec amended additively in worktree ${d.name}: ${amend.value.appendedTo}`,
+        data: { appendedTo: amend.value.appendedTo, bytes: amend.value.bytesAppended },
+      });
+    }
+  }
+
+  let sha: string | null = null;
+  try {
+    sha = commitInWorktree(d.name, `chunk ${r.chunk.number}: ${r.chunk.title}`);
+  } catch {
+    // commitInWorktree throws only if the worktree vanished; the subsequent
+    // mergeWorktree will surface that as a merge failure and halt.
+  }
+  emit({
+    type: "commit", chunkNumber: r.chunk.number, totalChunks,
+    message: `Committed chunk ${r.chunk.number} in worktree ${d.name}${sha ? ` (sha ${sha.slice(0, 8)})` : " (no file changes)"}`,
+  });
+
+  if (r.finalOutcome.report.launchReadiness) {
+    emit({
+      type: "launch-readiness-emitted", chunkNumber: r.chunk.number, totalChunks,
+      message: `Launch-readiness item recorded (event only in the parallel path).`,
+      data: { item: r.finalOutcome.report.launchReadiness.slice(0, 200) },
+    });
+  }
+}
+
+/**
+ * Worktree-cap fallback: build one chunk SERIALLY on the base tree, reusing the
+ * exact serial-path primitives (runChunkOnce + handlePushBack + handleAction)
+ * so its commit lands linearly on base like the serial loop would.
+ */
+async function buildChunkOnBaseSerial(ctx: ParallelWavesContext, chunk: ParsedChunk, chunksCommittedIn: number): Promise<StepResult> {
+  const { opts, totalChunks, emit, events, outcomes } = ctx;
+  let chunksCommitted = chunksCommittedIn;
+
+  emit({
+    type: "chunk-start", chunkNumber: chunk.number, totalChunks,
+    message: `Starting chunk ${chunk.number}/${totalChunks} SERIALLY on base (worktree cap): ${chunk.title} (${chunk.klass})`,
+  });
+
+  const preSha = await safeGet(() => getHeadSha(opts.projectDir));
+  if (!preSha.ok) {
+    return { kind: "halt", result: haltedResult(`git rev-parse HEAD failed before chunk ${chunk.number}: ${preSha.error}`, chunk.number, outcomes, events) };
+  }
+
+  const outcome = await runChunkOnce({
+    chunk, totalChunks,
+    planPath: opts.planPath, plan: opts.plan,
+    projectDir: opts.projectDir, preSha: preSha.value,
+    subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
+    retryReason: undefined,
+    judgmentHook: opts.judgmentHook,
+    parentSessionId: opts.parentSessionId,
+    priorOutcomes: outcomes,
+  });
+
+  let finalOutcome = outcome;
+  let finalAction = outcome.action;
+  if (outcome.action === "push_back") {
+    const pb = await handlePushBack({
+      chunk, totalChunks,
+      planPath: opts.planPath, plan: opts.plan,
+      projectDir: opts.projectDir, preSha: preSha.value,
+      subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
+      judgmentHook: opts.judgmentHook, outcome,
+    });
+    finalOutcome = pb.finalOutcome;
+    finalAction = pb.finalAction;
+  }
+
+  outcomes.push({ chunkNumber: chunk.number, outcome: finalOutcome, action: finalAction });
+  if (finalOutcome.report.launchReadiness) {
+    emitLaunchReadiness(opts.projectDir, chunk, finalOutcome.report.launchReadiness);
+  }
+
+  const handled = await handleAction({
+    chunk, totalChunks, projectDir: opts.projectDir,
+    finalAction, finalOutcome, chunksCommitted, outcomes, events, emit,
+  });
+  if (handled.kind === "halt") return { kind: "halt", result: handled.result };
+  return { kind: "advance", chunksCommitted: handled.chunksCommitted };
+}
+
+/** cleanupWorktree, guarded — never let a cleanup error mask the real halt. */
+function cleanupWorktreeSafe(name: string): void {
+  try { cleanupWorktree(name); } catch { /* best-effort teardown */ }
+}

@@ -45,14 +45,15 @@
 import { planWaves } from "../conflict-graph.js";
 import { getHeadSha } from "../git-helpers.js";
 import { appendHalt } from "../failure-recovery.js";
-import { applyAdditiveSpecAmendment, emitLaunchReadiness } from "../loop-effects.js";
-import { createNamedWorktree, mergeWorktree, cleanupWorktree, commitInWorktree } from "../../agency/worktree.js";
+import { emitLaunchReadiness } from "../loop-effects.js";
+import { createNamedWorktree, mergeWorktree, cleanupWorktree } from "../../agency/worktree.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
 import { runChunkOnce } from "./run-chunk-once.js";
 import { handlePushBack } from "./handle-push-back.js";
 import { handleAction } from "./handle-action.js";
 import { reGateMergedTree, warnFootprintEscapes } from "./merged-regate.js";
+import { buildChunkInWorktree, commitDispatchedChunk, preserveWorktreeWork } from "./parallel-chunk-build.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
 
@@ -70,7 +71,7 @@ export interface ParallelWavesContext {
 }
 
 /** A chunk that got its own worktree and will build in parallel. */
-interface DispatchedChunk {
+export interface DispatchedChunk {
   chunk: ParsedChunk;
   /** Worktree registry key — same key passed to mergeWorktree/cleanupWorktree. */
   name: string;
@@ -81,7 +82,7 @@ interface DispatchedChunk {
 }
 
 /** The result of building one dispatched chunk in its worktree. */
-interface BuiltChunk {
+export interface BuiltChunk {
   dispatched: DispatchedChunk;
   chunk: ParsedChunk;
   finalOutcome: ChunkReviewOutcome;
@@ -186,16 +187,30 @@ async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksC
     for (const r of built) outcomes.push({ chunkNumber: r.chunk.number, outcome: r.finalOutcome, action: r.finalAction });
 
     // 3. If ANY dispatched chunk did not reach proceed/amend_spec, HALT BEFORE
-    //    merging anything (rule 2). Nothing is merged; every branch is preserved.
+    //    merging anything (rule 2). Nothing is merged — but every dispatched
+    //    chunk's WRITTEN work is committed onto its branch FIRST so the halt is
+    //    recoverable. cleanupWorktree keeps an unmerged branch, yet
+    //    `git worktree remove --force` deletes the working dir with any
+    //    UNCOMMITTED files; on this pre-merge path nothing has been committed
+    //    yet, so without this the "preserved" branch is empty and the agents'
+    //    work — including any succeeded siblings' — is silently destroyed. A
+    //    parallel halt must not lose more than a serial one (which leaves the
+    //    work in the tree). Commit, THEN tear down.
     const failed = built.find(r => r.finalAction !== "proceed" && r.finalAction !== "amend_spec");
     if (failed) {
+      const preserved: string[] = [];
+      for (const d of dispatched) if (preserveWorktreeWork(ctx, d)) preserved.push(d.branch);
       for (const d of dispatched) cleanupWorktreeSafe(d.name);
       const gate = failed.finalOutcome.findings.find(f => f.action === "halt")?.gate || "";
-      emit({ type: "halt", chunkNumber: failed.chunk.number, totalChunks, message: failed.finalOutcome.reasoning });
-      appendHalt(opts.projectDir, { chunk: failed.chunk.number, gate, reason: failed.finalOutcome.reasoning.slice(0, 200) });
+      const recover = preserved.length
+        ? ` Work preserved for recovery on branch(es): ${preserved.join(", ")} — git checkout <branch>.`
+        : "";
+      const reason = failed.finalOutcome.reasoning + recover;
+      emit({ type: "halt", chunkNumber: failed.chunk.number, totalChunks, message: reason });
+      appendHalt(opts.projectDir, { chunk: failed.chunk.number, gate, reason: reason.slice(0, 200) });
       return {
         kind: "halt",
-        result: { status: "halted", lastChunk: failed.chunk.number, chunksCommitted, haltReason: failed.finalOutcome.reasoning, outcomes, events },
+        result: { status: "halted", lastChunk: failed.chunk.number, chunksCommitted, haltReason: reason, outcomes, events },
       };
     }
 
@@ -244,98 +259,6 @@ async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksC
   }
 
   return { kind: "advance", chunksCommitted };
-}
-
-/**
- * Build one chunk inside its own worktree (projectDir = worktree). Mirrors the
- * serial runChunkOnce + push_back handling, scoped to the worktree so its
- * build-exec gate builds/tests in isolation. Phase-gate auto-recovery is
- * intentionally omitted (see file header). Returns the resolved action.
- */
-async function buildChunkInWorktree(ctx: ParallelWavesContext, d: DispatchedChunk): Promise<BuiltChunk> {
-  const { opts, totalChunks, emit, outcomes } = ctx;
-
-  const preSha = await safeGet(() => getHeadSha(d.worktreePath));
-  const preShaVal = preSha.ok ? preSha.value : "";
-
-  emit({
-    type: "chunk-start", chunkNumber: d.chunk.number, totalChunks,
-    message: `Starting chunk ${d.chunk.number}/${totalChunks} in worktree ${d.name} (worker ${d.workerIndex}): ${d.chunk.title} (${d.chunk.klass})`,
-  });
-
-  const outcome = await runChunkOnce({
-    chunk: d.chunk, totalChunks,
-    planPath: opts.planPath, plan: opts.plan,
-    projectDir: d.worktreePath,           // isolated worktree, NOT the base tree
-    preSha: preShaVal,
-    subprocessTimeoutMs: opts.subprocessTimeoutMs,
-    signal: opts.signal, emit,
-    retryReason: undefined,
-    judgmentHook: opts.judgmentHook,
-    parentSessionId: opts.parentSessionId, parentOpId: opts.parentOpId, // nest card under orchestrator
-    priorOutcomes: outcomes,              // learnings from already-merged chunks
-    workerIndex: d.workerIndex,           // unique per concurrent build (S5 ports)
-  });
-
-  let finalOutcome = outcome;
-  let finalAction = outcome.action;
-
-  if (outcome.action === "push_back") {
-    const pb = await handlePushBack({
-      chunk: d.chunk, totalChunks,
-      planPath: opts.planPath, plan: opts.plan,
-      projectDir: d.worktreePath, preSha: preShaVal,
-      subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
-      judgmentHook: opts.judgmentHook, parentOpId: opts.parentOpId,
-      outcome,
-    });
-    finalOutcome = pb.finalOutcome;
-    finalAction = pb.finalAction;
-  }
-
-  return { dispatched: d, chunk: d.chunk, finalOutcome, finalAction };
-}
-
-/**
- * Commit a proceed/amend_spec chunk's work INSIDE its worktree so mergeWorktree
- * can fast-forward it into base. For amend_spec, the additive spec text is
- * applied into the worktree first and committed with the code. The launch-
- * readiness FILE is deliberately not written (see header); surfaced as an event.
- */
-async function commitDispatchedChunk(ctx: ParallelWavesContext, r: BuiltChunk): Promise<void> {
-  const { totalChunks, emit } = ctx;
-  const d = r.dispatched;
-
-  if (r.finalAction === "amend_spec" && r.finalOutcome.report.specGaps) {
-    const amend = await applyAdditiveSpecAmendment(d.worktreePath, r.chunk, r.finalOutcome.report.specGaps);
-    if (amend.ok) {
-      emit({
-        type: "spec-amended", chunkNumber: r.chunk.number, totalChunks,
-        message: `Spec amended additively in worktree ${d.name}: ${amend.value.appendedTo}`,
-        data: { appendedTo: amend.value.appendedTo, bytes: amend.value.bytesAppended },
-      });
-    }
-  }
-
-  let sha: string | null = null;
-  try {
-    sha = commitInWorktree(d.name, `chunk ${r.chunk.number}: ${r.chunk.title}`);
-  } catch {
-    // commitInWorktree throws only if the worktree vanished; the subsequent
-    // mergeWorktree will surface that as a merge failure and halt.
-  }
-  emit({
-    type: "commit", chunkNumber: r.chunk.number, totalChunks,
-    message: `Committed chunk ${r.chunk.number} in worktree ${d.name}${sha ? ` (sha ${sha.slice(0, 8)})` : " (no file changes)"}`,
-  });
-
-  if (r.finalOutcome.report.launchReadiness) {
-    emit({
-      type: "launch-readiness-emitted", chunkNumber: r.chunk.number, totalChunks,
-      message: `Launch-readiness item recorded (event only in the parallel path).`,
-      data: { item: r.finalOutcome.report.launchReadiness.slice(0, 200) },
-    });
-  }
 }
 
 /**

@@ -240,6 +240,34 @@ describe("parallel path — rule 2: HALT on merge conflict, never auto-resolve",
     expect(shared.calls).toContain("cleanup:autobuild-c2");
     expect(shared.calls).not.toContain("create:autobuild-c3");
   });
+
+  it("preserves each dispatched chunk's WRITTEN work onto its branch BEFORE teardown, so a gate halt is recoverable", async () => {
+    // Regression: on a pre-merge gate halt the loop cleaned up worktrees BEFORE
+    // committing, so `git worktree remove --force` destroyed the agents' files
+    // and the "preserved" branch cleanupWorktree keeps was empty. Chunk 2's gate
+    // halts; chunk 1 succeeded. Both are torn down without a merge — but the work
+    // must be committed onto each branch first, so nothing is silently lost.
+    shared.chunkActions.set(2, "halt");
+    writeFileSync(join(projectDir, "spec", "plan.md"), TWO_WAVES);
+
+    const result = await run(TWO_WAVES, 2);
+
+    expect(result.status).toBe("halted");
+    // Nothing merged — but each dispatched chunk's work is committed to its branch.
+    expect(shared.calls.some((c) => c.startsWith("merge:"))).toBe(false);
+    expect(shared.calls).toContain("commit:autobuild-c1");
+    expect(shared.calls).toContain("commit:autobuild-c2");
+    // And that commit lands BEFORE the worktree is removed (order is the whole bug).
+    expect(shared.calls.indexOf("commit:autobuild-c1")).toBeLessThan(
+      shared.calls.indexOf("cleanup:autobuild-c1"),
+    );
+    expect(shared.calls.indexOf("commit:autobuild-c2")).toBeLessThan(
+      shared.calls.indexOf("cleanup:autobuild-c2"),
+    );
+    // The halt reason tells the user how to recover the preserved work.
+    expect(result.haltReason).toContain("autobuild/c1");
+    expect(result.haltReason.toLowerCase()).toContain("recover");
+  });
 });
 
 describe("parallel path — createNamedWorktree null degrades gracefully", () => {

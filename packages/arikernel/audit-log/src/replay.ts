@@ -16,46 +16,62 @@ export interface ReplayIntegrity {
 	sequenceError?: string;
 }
 
+function verifyGlobalEvents(store: AuditStore): {
+	events: AuditEvent[];
+	valid: boolean;
+	brokenAt?: number;
+	anchorValid: boolean;
+} {
+	const events = store.queryAllEvents();
+	const chain = verifyChain(
+		events.map((e) => ({
+			hash: e.hash,
+			previousHash: e.previousHash,
+			data: JSON.stringify({ toolCall: e.toolCall, decision: e.decision, result: e.result }),
+		})),
+		store.getHmacKey(),
+	);
+	let anchorValid = events.length === 0 || events[0].previousHash === genesisHash();
+	for (let i = 1; i < events.length; i++) {
+		if (!events[i].previousHash || events[i].previousHash === genesisHash()) {
+			anchorValid = false;
+			break;
+		}
+	}
+	return {
+		events,
+		valid: chain.valid && anchorValid,
+		brokenAt: chain.brokenAt,
+		anchorValid,
+	};
+}
+
+function runAnchorIsAncestor(
+	allEvents: AuditEvent[],
+	run: RunContext,
+	runEvents: AuditEvent[],
+): boolean {
+	if (runEvents.length === 0 || run.startPreviousHash == null) return true;
+	const firstGlobalIndex = allEvents.findIndex((event) => event.id === runEvents[0].id);
+	const anchorIndex = run.startPreviousHash === genesisHash()
+		? -1
+		: allEvents.findIndex((event) => event.hash === run.startPreviousHash);
+	const anchorKnown = run.startPreviousHash === genesisHash() || anchorIndex >= 0;
+	return anchorKnown && anchorIndex < firstGlobalIndex;
+}
+
 export function replayRun(store: AuditStore, runId: string): ReplayResult | null {
 	const runContext = store.getRunContext(runId);
 	if (!runContext) return null;
 
 	const events = store.queryRun(runId);
-
-	const chainData = events.map((e) => ({
-		hash: e.hash,
-		previousHash: e.previousHash,
-		data: JSON.stringify({ toolCall: e.toolCall, decision: e.decision, result: e.result }),
-	}));
-
-	// Recompute with the same HMAC key the chain was written under. Without the
-	// key, a plain-SHA-256 forgery would NOT reproduce these hashes.
-	const chainResult = verifyChain(chainData, store.getHmacKey());
-
-	const integrity: ReplayIntegrity = { ...chainResult };
-
-	// Reject NULL/empty chain anchors mid-stream. Only the genesis anchor
-	// (previousHash === genesisHash()) is a legitimate root. Any other empty
-	// or NULL previousHash means the chain was truncated or re-rooted.
-	for (let i = 0; i < events.length; i++) {
-		const prev = events[i].previousHash;
-		const isEmptyAnchor = prev == null || prev === "";
-		const isGenesis = prev === genesisHash();
-		if (isEmptyAnchor || (i > 0 && isGenesis)) {
-			integrity.valid = false;
-			if (integrity.brokenAt === undefined) integrity.brokenAt = i;
-			integrity.anchorValid = false;
-			break;
-		}
-	}
-
-	// Verify anchor: first event's previousHash must match the run's start_previous_hash
-	if (runContext.startPreviousHash != null && events.length > 0) {
-		integrity.anchorValid = events[0].previousHash === runContext.startPreviousHash;
-		if (!integrity.anchorValid) {
-			integrity.valid = false;
-		}
-	}
+	const global = verifyGlobalEvents(store);
+	const integrity: ReplayIntegrity = {
+		valid: global.valid,
+		brokenAt: global.brokenAt,
+		anchorValid: global.anchorValid && runAnchorIsAncestor(global.events, runContext, events),
+	};
+	if (!integrity.anchorValid) integrity.valid = false;
 
 	// Verify sequence continuity: starts at 0, no gaps
 	integrity.sequenceValid = true;
@@ -81,23 +97,32 @@ export function verifyDatabaseChain(store: AuditStore): {
 } {
 	const runs = store.listRuns().reverse(); // oldest first
 	const results: Array<{ runId: string; integrity: ReplayIntegrity }> = [];
-	let allValid = true;
+	const global = verifyGlobalEvents(store);
+	const allEvents = global.events;
 
 	for (const run of runs) {
-		const result = replayRun(store, run.runId);
-		if (!result) {
-			results.push({
-				runId: run.runId,
-				integrity: { valid: false, sequenceValid: false },
-			});
-			allValid = false;
-			continue;
+		const events = allEvents.filter((event) => event.runId === run.runId);
+		let sequenceValid = true;
+		for (let i = 0; i < events.length; i++) {
+			if (events[i].sequence !== i) {
+				sequenceValid = false;
+				break;
+			}
 		}
-		results.push({ runId: run.runId, integrity: result.integrity });
-		if (!result.integrity.valid) {
-			allValid = false;
-		}
+		const anchorValid = runAnchorIsAncestor(allEvents, run, events);
+		results.push({
+			runId: run.runId,
+			integrity: {
+				valid: global.valid && sequenceValid && anchorValid,
+				anchorValid,
+				sequenceValid,
+				...(sequenceValid ? {} : { sequenceError: "run sequence is not contiguous" }),
+			},
+		});
 	}
 
-	return { runs: results, valid: allValid };
+	return {
+		runs: results,
+		valid: global.valid && results.every((result) => result.integrity.valid),
+	};
 }

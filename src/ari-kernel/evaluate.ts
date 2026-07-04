@@ -3,10 +3,10 @@
 
 import { createLogger } from "../logger.js";
 import { USER_HINTS } from "../types.js";
-import { getFirewall, isAriRequired } from "./state.js";
+import { isAriRequired } from "./state.js";
 import { kernelClassForTool, isMcpToolName } from "./tool-class-map.js";
 import { lookupHostGrantId } from "./grants.js";
-import { refreshAriKernelRun } from "./lifecycle.js";
+import { ensureAriKernelScope, refreshAriKernelScope } from "./lifecycle.js";
 import { isSensitivePath } from "../data-lineage-paths.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 
@@ -59,9 +59,10 @@ export async function ariEvaluate(
   action: string,
   params: Record<string, unknown>,
   taintLabels?: string[],
+  scopeId?: string,
   retriedAfterForeignTaint = false,
 ): Promise<{ allowed: boolean; reason: string; quarantined?: boolean; userHint?: string }> {
-  const firewall = getFirewall();
+  const firewall = ensureAriKernelScope(scopeId);
   if (!firewall) {
     if (isAriRequired()) {
       return { allowed: false, reason: "[ARI kernel] required but not active — tool call blocked", userHint: USER_HINTS.kernel };
@@ -100,7 +101,7 @@ export async function ariEvaluate(
       action: effectiveAction,
       parameters: params,
     };
-    const grantId = lookupHostGrantId(toolClass, effectiveAction);
+    const grantId = lookupHostGrantId(toolClass, effectiveAction, scopeId);
     if (grantId) execRequest.grantId = grantId;
     if (taintLabels && taintLabels.length > 0) {
       execRequest.taintLabels = taintLabels.map(label => ({
@@ -129,7 +130,7 @@ export async function ariEvaluate(
           `"${filePathFromParams(params)}" (LAX isSensitivePath=false); overriding deny ` +
           `+ refreshing run to clear the bogus quarantine`,
         );
-        refreshAriKernelRun();
+        refreshAriKernelScope(scopeId);
         return {
           allowed: true,
           reason: "ARI sensitive-file false positive on a benign source path — overridden by LAX canonical detector",
@@ -145,24 +146,19 @@ export async function ariEvaluate(
     return { allowed: true, reason: "ARI allowed" };
   } catch (e) {
     const rawDetail = (e as Error).message || String(e);
-    // The embedded ARI Firewall is process-wide, but LAX runs many sessions
-    // concurrently. ARI's run-level taint can therefore come from a background
-    // op and deny a shell call in a completely clean chat. The trusted LAX
-    // session registry is the authority for provenance: when this call carries
-    // no taint labels yet ARI reports its tainted-shell trigger, the taint is
-    // foreign to this session. Rebuild the singleton run and retry once. A
-    // genuinely tainted session never reaches this rescue because it has labels
-    // and is pre-gated in enforce-policy.ts.
+    // Compatibility rescue for the default/ad-hoc scope, where unrelated calls
+    // can still share one firewall. Canonical operations pass an operation scope
+    // and are isolated before reaching this branch.
     if (
       !retriedAfterForeignTaint &&
       (!taintLabels || taintLabels.length === 0) &&
       KERNEL_FOREIGN_TAINT_TRIGGER.test(rawDetail) &&
-      refreshAriKernelRun()
+      refreshAriKernelScope(scopeId)
     ) {
       logger.warn(
-        `[ari] foreign run-level taint detected on clean session — refreshed singleton firewall and retrying once`,
+        `[ari] foreign run-level taint detected on clean call — refreshed ARI scope and retrying once`,
       );
-      return ariEvaluate(toolName, action, params, taintLabels, true);
+      return ariEvaluate(toolName, action, params, taintLabels, scopeId, true);
     }
     if (isAriRequired()) {
       logger.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${rawDetail}`);

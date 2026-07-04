@@ -12,7 +12,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startAriKernel, stopAriKernel, refreshAriKernelRun, refreshAriKernelRunIfStuck } from "./lifecycle.js";
+import {
+  startAriKernel,
+  stopAriKernel,
+  refreshAriKernelRun,
+  refreshAriKernelRunIfStuck,
+  releaseAriKernelScope,
+} from "./lifecycle.js";
 import { getFirewallForTest } from "./state.js";
 import { ariEvaluate } from "./evaluate.js";
 
@@ -29,6 +35,13 @@ function fw(): { isRestricted?: boolean; restrictedAt?: unknown } | null {
 async function tripRestricted(): Promise<void> {
   for (let i = 0; i < 15 && fw()?.isRestricted !== true; i++) {
     await ariEvaluate("bash", "exec", { command: `echo ${i}` }, ["web"]);
+  }
+}
+
+async function tripRestrictedScope(scopeId: string): Promise<void> {
+  const scoped = () => getFirewallForTest(scopeId) as unknown as { isRestricted?: boolean } | null;
+  for (let i = 0; i < 15 && scoped()?.isRestricted !== true; i++) {
+    await ariEvaluate("bash", "exec", { command: `echo ${i}` }, ["web"], scopeId);
   }
 }
 
@@ -90,6 +103,25 @@ describe("ARI run refresh — restricted mode does not survive an op boundary", 
 
     expect(getFirewallForTest()).not.toBe(before);
     expect(fw()?.isRestricted).toBe(false);
+  });
+
+  it("keeps quarantine and sticky run-state isolated by operation", async () => {
+    const opA = "op-isolation-a";
+    const opB = "op-isolation-b";
+    await ariEvaluate("memory_search", "search", { query: "clean" }, [], opB);
+    const beforeB = getFirewallForTest(opB);
+
+    await tripRestrictedScope(opA);
+    expect((getFirewallForTest(opA) as unknown as { isRestricted?: boolean })?.isRestricted).toBe(true);
+    expect((getFirewallForTest(opB) as unknown as { isRestricted?: boolean })?.isRestricted).not.toBe(true);
+
+    const bShell = await ariEvaluate("bash", "exec", { command: "git status" }, [], opB);
+    expect(bShell.allowed).toBe(true);
+    expect(getFirewallForTest(opB)).toBe(beforeB);
+
+    expect(releaseAriKernelScope(opA)).toBe(true);
+    expect(getFirewallForTest(opA)).toBeNull();
+    expect(getFirewallForTest(opB)).toBe(beforeB);
   });
 
   it("recovers when another session's run-level taint reaches a clean shell call", async () => {

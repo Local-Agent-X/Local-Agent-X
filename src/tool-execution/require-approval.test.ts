@@ -26,6 +26,7 @@ function makeCtx(opts: {
   callContext: CallContext;
   args?: Record<string, unknown>;
   onEvent?: (e: ServerEvent) => void;
+  policyApprovalReason?: string;
 }): ToolCallContext {
   return {
     tc: { id: `tc-${opts.name}`, name: opts.name, arguments: "{}" },
@@ -34,6 +35,7 @@ function makeCtx(opts: {
     args: opts.args ?? {},
     onEvent: opts.onEvent,
     approvalContext: "",
+    policyApprovalReason: opts.policyApprovalReason,
     riskLevel: "low",
     allowed: true,
     msgs: [],
@@ -54,6 +56,45 @@ function pinned(profile: Parameters<typeof setSessionProfile>[1]): string {
 }
 
 describe("requireApprovalPhase — unattended runs", () => {
+  it("prompts once when a policy rule requires approval even if the profile allows", async () => {
+    const s = pinned("Power");
+    const events: ServerEvent[] = [];
+    const ctx = makeCtx({
+      name: "browser",
+      sessionId: s,
+      callContext: "local",
+      args: { action: "evaluate", script: "document.title" },
+      policyApprovalReason: "Browser JS evaluation requires review",
+      onEvent: (e) => {
+        events.push(e);
+        if (e.type === "approval_requested") {
+          getApprovalManager().resolveApproval(e.approvalId, true);
+        }
+      },
+    });
+
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
+    expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
+  });
+
+  it("does not bypass a profile hard deny when policy asks for approval", async () => {
+    const s = pinned("Safe");
+    const ctx = makeCtx({
+      name: "delete_file",
+      sessionId: s,
+      callContext: "local",
+      args: { path: "C:/tmp/example.txt" },
+      policyApprovalReason: "Deletion requires review",
+    });
+
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.result?.status).toBe("blocked");
+  });
+
   it("blocks an ask-tier tool in a cron run (no human to approve)", async () => {
     const s = pinned("Normal"); // network-write = ask under Normal
     const ctx = makeCtx({ name: "http_request", sessionId: s, callContext: "cron" });

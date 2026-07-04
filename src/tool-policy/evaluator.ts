@@ -35,7 +35,7 @@ export const RulePackRuleSchema = z.object({
     "default-deny",  // backstop — fail-closed deny
   ]),
   match: z.record(z.unknown()).optional(),
-  decision: z.enum(["allow", "deny"]),
+  decision: z.enum(["allow", "approval-required", "deny"]),
   reason: z.string(),
 });
 
@@ -56,10 +56,20 @@ export interface PolicyEvalCtx {
 
 export interface PackDeny {
   allowed: false;
+  disposition?: "hard-deny";
   ruleId?: string;
   reason: string;
   recovery?: string;
   /** Plain-English user-facing summary; see SecurityDecision.userHint. */
+  userHint?: string;
+}
+
+export interface PackApprovalRequired {
+  allowed: false;
+  disposition: "approval-required";
+  ruleId?: string;
+  reason: string;
+  recovery?: string;
   userHint?: string;
 }
 
@@ -69,7 +79,7 @@ export interface PackAllow {
   reason?: string;
 }
 
-export type PackDecision = PackAllow | PackDeny;
+export type PackDecision = PackAllow | PackDeny | PackApprovalRequired;
 
 /** Sealed pack record. `rules` is the descriptive surface (for introspection
  *  and audit); `evaluate` runs the actual decision against the pack's backing
@@ -85,6 +95,7 @@ export interface RulePack {
 
 export interface EvaluatorDeny {
   allowed: false;
+  disposition: "hard-deny" | "approval-required";
   deniedBy: { packId: string; ruleId?: string };
   reason: string;
   recovery?: string;
@@ -119,6 +130,7 @@ export async function evaluate(
       );
       return {
         allowed: false,
+        disposition: decision.disposition ?? "hard-deny",
         deniedBy: { packId: pack.id, ruleId: decision.ruleId },
         reason: decision.reason,
         recovery: decision.recovery,

@@ -54,6 +54,7 @@ export function delegateToChild<F>(
 			capabilities: childPrincipal.capabilities,
 		},
 		policies: [...ctx.policyEngine.getRules()],
+		auditStore: ctx.auditStore,
 		hooks: ctx.hooks,
 		runStatePolicy: ctx.runState.policy,
 		mode: ctx.mode,

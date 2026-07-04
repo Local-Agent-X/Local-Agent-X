@@ -22,6 +22,8 @@ export interface ToolCallContext {
    *  turns, MCP bridge calls, and other ad-hoc dispatches — the trace
    *  emit-phase short-circuits when absent. */
   readonly runId?: string;
+  /** Canonical operation id used to isolate mutable ARI run state. */
+  readonly operationId?: string;
   readonly onEvent?: (event: ServerEvent) => void;
   readonly signal?: AbortSignal;
   readonly priorMessages?: ChatCompletionMessageParam[];
@@ -31,6 +33,9 @@ export interface ToolCallContext {
   tool?: ToolDefinition;
   riskLevel: "low" | "medium" | "high";
   approvalContext: string;
+  /** Set by policy when a rule permits the exact call only after user
+   * approval. The canonical approval phase owns the prompt. */
+  policyApprovalReason?: string;
 
   startedAt?: number;
   result?: ToolResult;
@@ -70,6 +75,7 @@ export function createContext(input: {
   callerRole?: Role;
   sessionId?: string;
   runId?: string;
+  operationId?: string;
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
   priorMessages?: ChatCompletionMessageParam[];
@@ -84,6 +90,7 @@ export function createContext(input: {
     callerRole: input.callerRole,
     sessionId: input.sessionId,
     runId: input.runId,
+    operationId: input.operationId,
     onEvent: input.onEvent,
     signal: input.signal,
     priorMessages: input.priorMessages,
@@ -91,6 +98,7 @@ export function createContext(input: {
     args: {},
     riskLevel: "low",
     approvalContext: "",
+    policyApprovalReason: undefined,
     allowed: true,
     msgs: [],
   };

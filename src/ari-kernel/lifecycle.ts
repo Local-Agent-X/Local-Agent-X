@@ -1,4 +1,4 @@
-// AriKernel lifecycle — start / stop / status / test accessor.
+// AriKernel lifecycle — shared audit ownership + operation-scoped firewalls.
 //
 // startAriKernel: build firewall, mint host grants, register no-op
 // executors so the kernel doesn't try to perform the action itself.
@@ -8,15 +8,16 @@ import { getPreset } from "@arikernel/core";
 import type { PresetId } from "@arikernel/core";
 import { TokenStore, createFirewall } from "@arikernel/runtime";
 import type { Firewall, FirewallHooks } from "@arikernel/runtime";
+import { AuditStore } from "@arikernel/audit-log";
 
 import { createLogger } from "../logger.js";
 import { getAuditHmacKey } from "../app-runtime/audit-signing.js";
 import {
-  getFirewall, setFirewall,
-  setTokenStore,
-  setHostGrants,
+  DEFAULT_ARI_SCOPE,
+  getFirewall,
+  getAriScope, setAriScope, deleteAriScope, listAriScopes, clearAriScopes,
+  getSharedAuditStore, setSharedAuditStore,
   getCurrentPreset, setCurrentPreset,
-  getAriAuditDbPath, setAriAuditDbPath,
   setAriRequired, isAriRequired,
 } from "./state.js";
 import { HOST_CAPABILITY_MANIFEST, buildPrincipalCapabilities } from "./manifest.js";
@@ -34,7 +35,7 @@ const HOST_PRINCIPAL_NAME = "lax-host";
  * refreshAriKernelRun swap the firewall atomically with no await in between.
  */
 function buildAriFirewall(
-  auditDbPath: string,
+  auditStore: AuditStore,
   preset: string,
 ): { firewall: Firewall; tokenStore: TokenStore; grants: ReturnType<typeof mintHostGrants> } {
   const presetConfig = getPreset(preset as PresetId);
@@ -46,26 +47,16 @@ function buildAriFirewall(
   const hooks: FirewallHooks = {
     onApprovalRequired: async () => true,
   };
-  // Provision the audit-chain HMAC key via the SAME mechanism token signing
-  // uses (per-install <laxDir>/audit-key, 0600, or LAX_AUDIT_KEY override).
-  // Threading it in upgrades the audit hash chain from plain SHA-256 (any file
-  // writer can forge) to HMAC-SHA256 (must extract the in-process key). Honest
-  // limit: a full kernel-process compromise can still read this key from memory.
-  const auditHmacKeyRaw = getAuditHmacKey();
-  const auditHmacKey = Buffer.isBuffer(auditHmacKeyRaw)
-    ? auditHmacKeyRaw
-    : Buffer.from(auditHmacKeyRaw);
   const firewall = createFirewall({
     principal: {
       name: HOST_PRINCIPAL_NAME,
       capabilities: buildPrincipalCapabilities(),
     },
     policies: presetConfig.policies,
-    auditLog: auditDbPath,
+    auditStore,
     mode: "embedded",
     tokenStore,
     hooks,
-    auditHmacKey,
   });
 
   // Manifest-driven grant issuance — the per-call rule engine still evaluates
@@ -113,12 +104,14 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
   setAriRequired(required ?? true);
 
   try {
-    const { firewall, tokenStore, grants } = buildAriFirewall(auditDbPath, resolvedPreset);
-    setTokenStore(tokenStore);
-    setFirewall(firewall);
-    setHostGrants(grants);
-    // Remember the path so a per-op refresh can rebuild an identical firewall.
-    setAriAuditDbPath(auditDbPath);
+    const auditHmacKeyRaw = getAuditHmacKey();
+    const auditHmacKey = Buffer.isBuffer(auditHmacKeyRaw)
+      ? auditHmacKeyRaw
+      : Buffer.from(auditHmacKeyRaw);
+    const auditStore = new AuditStore(auditDbPath, auditHmacKey);
+    const { firewall, tokenStore, grants } = buildAriFirewall(auditStore, resolvedPreset);
+    setSharedAuditStore(auditStore);
+    setAriScope(DEFAULT_ARI_SCOPE, { firewall, tokenStore, grants });
     logger.info(`  [ari] Granted ${grants.size} host capabilities (manifest entries: ${HOST_CAPABILITY_MANIFEST.length})`);
     logger.info(`  [ari] Kernel initialized (in-process, preset: ${resolvedPreset})`);
     return true;
@@ -132,30 +125,47 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
 }
 
 /**
- * Rebuild the singleton firewall to start a FRESH ARI run — the runtime's
+ * Rebuild the default firewall to start a fresh ARI run — the runtime's
  * run-state (restricted mode, quarantine, denied-action counters, run-level
  * taint) is created once per Firewall and has no in-place reset, so a new run
- * means a new Firewall. Build the replacement FIRST, then publish it, then
- * close the old one: no window where getFirewall() is null (which ariRequired
- * would hard-block). Returns false (and keeps the current firewall) if the
- * kernel isn't active or the rebuild throws.
+ * means a new Firewall. Build the replacement first, then publish it, then
+ * close the old scope so evaluation never observes a missing firewall.
  */
 export function refreshAriKernelRun(): boolean {
-  const old = getFirewall();
-  const auditDbPath = getAriAuditDbPath();
-  if (!old || !auditDbPath) return false;
+  return refreshAriKernelScope(DEFAULT_ARI_SCOPE);
+}
+
+export function ensureAriKernelScope(scopeId?: string): Firewall | null {
+  const resolvedScope = scopeId || DEFAULT_ARI_SCOPE;
+  const existing = getAriScope(resolvedScope);
+  if (existing) return existing.firewall;
+  const auditStore = getSharedAuditStore();
+  if (!auditStore) return null;
   try {
-    const { firewall, tokenStore, grants } = buildAriFirewall(auditDbPath, getCurrentPreset());
-    // Atomic swap (synchronous — no await between build and publish).
-    setTokenStore(tokenStore);
-    setFirewall(firewall);
-    setHostGrants(grants);
+    const built = buildAriFirewall(auditStore, getCurrentPreset());
+    setAriScope(resolvedScope, built);
+    logger.info(`  [ari] Scope started: ${resolvedScope}`);
+    return built.firewall;
+  } catch (e) {
+    logger.warn(`  [ari] Scope start failed (${resolvedScope}): ${(e as Error).message}`);
+    return null;
+  }
+}
+
+export function refreshAriKernelScope(scopeId?: string): boolean {
+  const resolvedScope = scopeId || DEFAULT_ARI_SCOPE;
+  const old = getAriScope(resolvedScope);
+  const auditStore = getSharedAuditStore();
+  if (!old || !auditStore) return false;
+  try {
+    const replacement = buildAriFirewall(auditStore, getCurrentPreset());
+    setAriScope(resolvedScope, replacement);
     try {
-      (old as unknown as { close?: () => void }).close?.();
+      old.firewall.close();
     } catch {
-      /* old run's in-flight denials may race close(); the new firewall is live regardless */
+      /* replacement is already live */
     }
-    logger.info(`  [ari] Run refreshed — fresh run-state (restricted/quarantine/denied-action counters cleared)`);
+    logger.info(`  [ari] Scope refreshed (${resolvedScope}) — run-state cleared`);
     return true;
   } catch (e) {
     logger.warn(`  [ari] Run refresh failed, keeping current firewall: ${(e as Error).message}`);
@@ -164,20 +174,22 @@ export function refreshAriKernelRun(): boolean {
 }
 
 /**
- * Op-boundary guard: if the singleton firewall is stuck in restricted or
- * quarantine mode from a PRIOR op, refresh the run so the new op starts clean.
- * The runtime designed those escalations to be per-run; LAX runs one firewall
- * for the whole process, so without this a single tripped guard bricks every
- * later op into read-only until restart. No-op (returns false) when healthy.
+ * Compatibility guard for the default/ad-hoc scope. Canonical operations use
+ * dedicated scopes and do not need cross-op refresh.
  */
 export function refreshAriKernelRunIfStuck(): boolean {
-  const fw = getFirewall() as (Firewall & { isRestricted?: boolean; quarantineInfo?: unknown }) | null;
+  return refreshAriKernelScopeIfStuck(DEFAULT_ARI_SCOPE);
+}
+
+export function refreshAriKernelScopeIfStuck(scopeId?: string): boolean {
+  const resolvedScope = scopeId || DEFAULT_ARI_SCOPE;
+  const fw = getFirewall(resolvedScope) as (Firewall & { isRestricted?: boolean; quarantineInfo?: unknown }) | null;
   if (!fw) return false;
   const restricted = fw.isRestricted === true;
   const quarantined = fw.quarantineInfo != null;
   if (!restricted && !quarantined) return false;
   logger.warn(`  [ari] Firewall in ${restricted ? "restricted" : "quarantine"} mode at op start — refreshing run so a prior op's escalation doesn't brick this one`);
-  return refreshAriKernelRun();
+  return refreshAriKernelScope(resolvedScope);
 }
 
 // Get AriKernel status for the current run.
@@ -194,19 +206,25 @@ export async function ariStatus(): Promise<Record<string, unknown> | null> {
 // Test-only accessor for the live Firewall. Production code MUST NOT
 // read this — use ariEvaluate / ariObserve so the call shape stays
 // uniform across paths.
-export function getFirewallForTest(): Firewall | null {
-  return getFirewall();
+export function getFirewallForTest(scopeId?: string): Firewall | null {
+  return getFirewall(scopeId);
+}
+
+export function releaseAriKernelScope(scopeId?: string): boolean {
+  const resolvedScope = scopeId || DEFAULT_ARI_SCOPE;
+  if (resolvedScope === DEFAULT_ARI_SCOPE) return false;
+  const state = deleteAriScope(resolvedScope);
+  if (!state) return false;
+  try { state.firewall.close(); } catch { /* best effort during op cleanup */ }
+  logger.info(`  [ari] Scope released: ${resolvedScope}`);
+  return true;
 }
 
 export function stopAriKernel(): void {
-  try {
-    const fw = getFirewall();
-    (fw as unknown as { close?: () => void } | null)?.close?.();
-  } catch {
-    /* ignore */
+  for (const [, scope] of listAriScopes()) {
+    try { scope.firewall.close(); } catch { /* ignore */ }
   }
-  setFirewall(null);
-  setTokenStore(null);
-  setHostGrants(new Map());
-  setAriAuditDbPath(null);
+  clearAriScopes();
+  try { getSharedAuditStore()?.close(); } catch { /* ignore */ }
+  setSharedAuditStore(null);
 }

@@ -3,6 +3,7 @@ import { firewallConfigSchema } from "@arikernel/core";
 import type { FirewallHooks } from "./hooks.js";
 import type { PersistentTaintConfig } from "./persistent-taint-registry.js";
 import type { RunStatePolicy } from "./run-state.js";
+import type { AuditStore } from "@arikernel/audit-log";
 
 /**
  * Security mode controls capability token signing requirements.
@@ -62,6 +63,12 @@ export interface FirewallOptions {
 	};
 	policies: string | PolicyRule[];
 	auditLog?: string;
+	/**
+	 * Optional process-owned audit store. Scoped firewalls may share one store
+	 * so concurrent runs append to one hash chain. The firewall will end its
+	 * run on close but will not close an injected store.
+	 */
+	auditStore?: AuditStore;
 	hooks?: FirewallHooks;
 	runStatePolicy?: RunStatePolicy;
 	/** Optional signing key for cryptographically signed capability tokens. */

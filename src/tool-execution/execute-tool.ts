@@ -35,8 +35,9 @@ async function executeSingleTool(
   signal?: AbortSignal,
   priorMessages?: ChatCompletionMessageParam[],
   runId?: string,
+  operationId?: string,
 ): Promise<ChatCompletionMessageParam[]> {
-  const ctx = createContext({ tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, runId, onEvent, signal, priorMessages });
+  const ctx = createContext({ tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, runId, operationId, onEvent, signal, priorMessages });
 
   if ((await resolvePhase(ctx)).kind === "halt") return ctx.msgs;
 
@@ -124,6 +125,7 @@ export interface UnifiedDispatchCtx {
   callerRole?: Role;
   sessionId?: string;
   runId?: string;
+  operationId?: string;
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
   priorMessages?: ChatCompletionMessageParam[];
@@ -155,6 +157,7 @@ export async function dispatchSingleToolCall(
     ctx.signal,
     ctx.priorMessages,
     ctx.runId,
+    ctx.operationId,
   );
   const last = msgs[msgs.length - 1];
   const content = typeof last?.content === "string" ? last.content : "";
@@ -221,6 +224,7 @@ export async function executeToolCalls(
   signal?: AbortSignal,
   priorMessages?: ChatCompletionMessageParam[],
   runId?: string,
+  operationId?: string,
 ): Promise<ChatCompletionMessageParam[]> {
   const results: ChatCompletionMessageParam[] = [];
 
@@ -244,15 +248,15 @@ export async function executeToolCalls(
       }
       if (batch.length > 1) {
         const parallel = await Promise.all(
-          batch.map((b) => executeSingleTool(b, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId)),
+          batch.map((b) => executeSingleTool(b, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId)),
         );
         results.push(...parallel.flat());
       } else {
-        const msgs = await executeSingleTool(batch[0], toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId);
+        const msgs = await executeSingleTool(batch[0], toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId);
         results.push(...msgs);
       }
     } else {
-      const msgs = await executeSingleTool(tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId);
+      const msgs = await executeSingleTool(tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId);
       results.push(...msgs);
     }
     i++;

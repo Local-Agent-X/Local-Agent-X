@@ -48,7 +48,8 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
 
-  if (!decisionRequiresPrompt(decision)) return CONTINUE;
+  const policyRequiresPrompt = !!ctx.policyApprovalReason;
+  if (!policyRequiresPrompt && !decisionRequiresPrompt(decision)) return CONTINUE;
 
   // Unattended run: no human to prompt. The profile says "ask" and nothing
   // authorized it, so block rather than silently run (this is the
@@ -56,8 +57,9 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   if (ctx.callContext !== "local") {
     const result: ToolResult = {
       content:
-        `BLOCKED (unattended): ${ctx.tc.name} needs approval the active autonomy ` +
-        `profile reserves for a human, but no one is watching this ${ctx.callContext} run. ` +
+        `BLOCKED (unattended): ${ctx.tc.name} needs human approval` +
+        `${ctx.policyApprovalReason ? ` because ${ctx.policyApprovalReason}` : " under the active autonomy profile"}, ` +
+        `but no one is watching this ${ctx.callContext} run. ` +
         `Run this under the Autonomous profile (or pin a per-job profile) to allow it.`,
       isError: true,
       status: "blocked",
@@ -73,9 +75,11 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     sessionId: ctx.sessionId || "default",
     context: destructive
       ? `⚠ Irreversible operation (${destructive}) — confirm before running. ${ctx.approvalContext}`
-      : ctx.approvalContext,
+      : ctx.policyApprovalReason
+        ? `Policy approval required: ${ctx.policyApprovalReason}. ${ctx.approvalContext}`
+        : ctx.approvalContext,
     args: ctx.args,
-    alwaysAsk: !!destructive,
+    alwaysAsk: !!destructive || policyRequiresPrompt,
     emit: ctx.onEvent,
   });
   if (approved) return CONTINUE;

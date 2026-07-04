@@ -95,6 +95,28 @@ export function createEventPump(opId: string): EventPump {
       wake();
       return;
     }
+    if (event.type === "iteration_checkpoint") {
+      const b = (event.body ?? {}) as Record<string, unknown>;
+      const maxTurns = typeof b.maxTurns === "number" ? b.maxTurns : null;
+      const continuing = b.continuing === true;
+      if (continuing) return;
+      const checkpoint = maxTurns
+        ? `\n\nI reached the ${maxTurns}-iteration checkpoint. The work so far is saved; say "continue" and I'll pick it up from there.`
+        : `\n\nI reached the iteration checkpoint. The work so far is saved; say "continue" and I'll pick it up from there.`;
+      if (!emittedIterationCheckpoint) {
+        eventQueue.push({ type: "stream", delta: checkpoint });
+        emittedIterationCheckpoint = true;
+      }
+      eventQueue.push({
+        type: "stopped",
+        reason: maxTurns
+          ? `Checkpoint reached after ${maxTurns} iterations. Say "continue" to keep going.`
+          : `Iteration checkpoint reached. Say "continue" to keep going.`,
+        firedBy: "iteration-budget",
+      });
+      wake();
+      return;
+    }
     if (event.type === "turn_committed") {
       // No user-visible event today; reserved hook for future "round N" UI.
       return;

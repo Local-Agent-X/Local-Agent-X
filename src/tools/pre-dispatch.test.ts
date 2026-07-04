@@ -6,6 +6,7 @@ import { SecurityLayer } from "../security/index.js";
 import { assertToolCallAllowed, ToolBlocked, type PreDispatchCtx } from "./pre-dispatch.js";
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
 import type { LAXConfig } from "../types.js";
+import { ToolPolicy } from "../tool-policy.js";
 
 // ── F4 behavioral proof ──────────────────────────────────────────────────
 // The pure SecurityLayer decision for sql_query paths is already unit-tested
@@ -75,6 +76,31 @@ afterAll(() => {
 });
 
 describe("F4: executor pre-dispatch chain routes sql_query through SecurityLayer", () => {
+  it("preserves confirm rules as approval-required instead of silently allowing", async () => {
+    const policy = new ToolPolicy({
+      defaultDecision: "deny",
+      rules: [{
+        id: "confirm-browser-evaluate",
+        tool: "browser",
+        action: "evaluate",
+        decision: "confirm",
+        reason: "Browser JS evaluation requires review",
+      }],
+    });
+
+    try {
+      await assertToolCallAllowed(
+        { id: "confirm-1", name: "browser", args: { action: "evaluate" } },
+        { sessionId: "test", callContext: "local", skipSessionPolicy: true, toolPolicy: policy },
+      );
+      throw new Error("expected ToolBlocked");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ToolBlocked);
+      expect((e as ToolBlocked).disposition).toBe("approval-required");
+      expect((e as ToolBlocked).message).toContain("APPROVAL REQUIRED");
+    }
+  });
+
   it("blocks sql_query whose database path is OUTSIDE the allowed dirs (chain consults SecurityLayer)", async () => {
     const security = makeLayer();
     const dbPath = join(tmpdir(), "lax-predispatch-outside-read.db");

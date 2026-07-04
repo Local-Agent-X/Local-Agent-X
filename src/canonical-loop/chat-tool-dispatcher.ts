@@ -100,6 +100,7 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
           opts.signal,
           priorMessages,
           opts.runId,
+          opts.opId,
         );
 
         // executeToolCalls returns 1+ ChatCompletionMessageParam. The

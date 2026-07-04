@@ -46,14 +46,17 @@ export type ToolBlockedStage =
 
 export class ToolBlocked extends Error {
   readonly stage: ToolBlockedStage;
+  readonly disposition: "hard-deny" | "approval-required";
   readonly reason: string;
   readonly recovery?: string;
   /** Plain-English user-facing summary; see SecurityDecision.userHint. */
   readonly userHint?: string;
-  constructor(details: { stage: ToolBlockedStage; reason: string; recovery?: string; userHint?: string }) {
-    super(`BLOCKED by ${details.stage}: ${details.reason}`);
+  constructor(details: { stage: ToolBlockedStage; disposition?: "hard-deny" | "approval-required"; reason: string; recovery?: string; userHint?: string }) {
+    const disposition = details.disposition ?? "hard-deny";
+    super(`${disposition === "approval-required" ? "APPROVAL REQUIRED by" : "BLOCKED by"} ${details.stage}: ${details.reason}`);
     this.name = "ToolBlocked";
     this.stage = details.stage;
+    this.disposition = disposition;
     this.reason = details.reason;
     this.recovery = details.recovery;
     this.userHint = details.userHint;
@@ -173,6 +176,7 @@ export async function assertToolCallAllowed(
   if (!decision.allowed) {
     throw new ToolBlocked({
       stage: PACK_TO_STAGE[decision.deniedBy.packId] ?? "tool-policy",
+      disposition: decision.disposition,
       reason: decision.reason,
       recovery: decision.recovery,
       userHint: decision.userHint,

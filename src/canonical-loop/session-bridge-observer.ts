@@ -291,6 +291,18 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
         } as ServerEvent);
         return;
       }
+      case "iteration_checkpoint": {
+        const maxTurns = typeof b.maxTurns === "number" ? b.maxTurns : null;
+        const continuing = b.continuing === true;
+        broadcastToSession(sessionId, {
+          type: "bg_op_progress",
+          opId: event.opId,
+          line: continuing
+            ? `Checkpoint saved${maxTurns ? ` after ${maxTurns} turns` : ""}; continuing automatically`
+            : `Checkpoint saved${maxTurns ? ` after ${maxTurns} turns` : ""}; waiting for continuation`,
+        } as ServerEvent);
+        return;
+      }
       case "turn_committed": {
         const turnIdx = (b.turnIdx as number | undefined) ?? 0;
         const tools = (b.tools as { tool: string; status: string }[] | undefined) ?? [];

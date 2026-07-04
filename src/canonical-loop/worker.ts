@@ -38,7 +38,7 @@ import {
 } from "./lease.js";
 import { readLatestOpTurn } from "./store.js";
 import { aggregateOpUsage } from "./op-usage.js";
-import { refreshAriKernelRunIfStuck } from "../ari-kernel/index.js";
+import { ensureAriKernelScope, releaseAriKernelScope } from "../ari-kernel/index.js";
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 
@@ -113,12 +113,9 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   }, cfg.heartbeatIntervalMs);
   HEARTBEATS.set(workerId, hb);
 
-  // Op boundary: give ARI a fresh run if a PRIOR op left the singleton
-  // firewall in restricted/quarantine mode. The runtime's run-state escalations
-  // are per-run by design; LAX runs one firewall for the whole process, so
-  // without this a single tripped guard bricks every later op into read-only
-  // until restart. No-op when the kernel is healthy or inactive.
-  try { refreshAriKernelRunIfStuck(); } catch { /* never let the ARI guard break op start */ }
+  // Operation boundary: each canonical op owns independent ARI run-state while
+  // all scopes append to the same process-owned audit chain.
+  try { ensureAriKernelScope(op.id); } catch { /* the evaluate path still fail-closes */ }
 
   transitionOp(op, "running", "leased");
 
@@ -162,29 +159,25 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
         : DEFAULT_MAX_TURNS;
     let count = 0;
     for (;;) {
-      if (count++ >= maxTurns) {
-        releaseReason = "max_turns_exceeded";
-        emit(op.id, "error", {
-          code: "max_turns_exceeded",
-          message: `worker exceeded maxTurns=${maxTurns}`,
-          retryable: false,
+      if (count >= maxTurns) {
+        const continuing = op.lane !== "interactive";
+        emit(op.id, "iteration_checkpoint", {
+          maxTurns,
+          completedTurns: turnIdx,
+          continuing,
         });
-        // This break skips commitTurn — the normal running → terminal
-        // transition — so the op would stay `running` and the chat UI would
-        // hang on STREAMING with a live cursor forever (live failure
-        // 2026-06-23). Fail the op explicitly, same as the adapter-error-
-        // exhausted floor in turn-loop.ts, so it finalizes and the spinner
-        // clears with a visible reason.
-        //
-        // Skipping commitTurn also skips decide-outcome, so a truncated op used
-        // to escape the outcome ledger entirely — the completion metric went
-        // blind to every run that hit the cap (and they're disproportionately
-        // the bad ones: stalled, looping, or wrapping up over a broken build).
-        // Record it as aborted before failing, so the metric stays honest.
-        recordTerminalOutcome(op, "aborted");
-        transitionOp(op, "failed", "max_turns_exceeded");
-        break;
+        if (!continuing) {
+          releaseReason = "iteration_checkpoint";
+          recordTerminalOutcome(op, "partial");
+          transitionOp(op, "succeeded", "iteration_checkpoint");
+          break;
+        }
+        // Autonomous lanes treat maxIterations as a checkpoint cadence. Keep
+        // the same worker, lease, wall-clock timer, cancellation tracker, and
+        // adapter registrations; only reset the cadence counter.
+        count = 0;
       }
+      count++;
       const r = await driveTurn(op, adapter, turnIdx, {
         isCancelled: () => tracker.cancelled || leaseLost,
       });
@@ -347,6 +340,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
     const stillOwner = releaseLease(op.id, workerId);
     if (stillOwner) {
       emit(op.id, "lease_lost", { workerId, reason: releaseReason });
+      releaseAriKernelScope(op.id);
     }
     // !stillOwner means recovery has taken the lease and already emitted
     // `lease_lost { reason: "expired" }`. Don't double-emit.

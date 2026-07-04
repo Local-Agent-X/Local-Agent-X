@@ -20,6 +20,7 @@ export interface ConstructedFirewall {
 	policyEngine: PolicyEngine;
 	taintTracker: TaintTracker;
 	auditStore: AuditStore;
+	ownsAuditStore: boolean;
 	executorRegistry: ExecutorRegistry;
 	pipeline: Pipeline;
 	issuer: CapabilityIssuer;
@@ -83,7 +84,8 @@ export function constructFirewall(options: FirewallOptions): ConstructedFirewall
 
 	const policyEngine = new PolicyEngine(options.policies);
 	const taintTracker = new TaintTracker();
-	const auditStore = new AuditStore(options.auditLog ?? "./audit.db", options.auditHmacKey);
+	const auditStore = options.auditStore ?? new AuditStore(options.auditLog ?? "./audit.db", options.auditHmacKey);
+	const ownsAuditStore = options.auditStore === undefined;
 	const executorRegistry = new ExecutorRegistry();
 	const tokenStore: ITokenStore = options.tokenStore ?? new TokenStore();
 
@@ -157,6 +159,7 @@ export function constructFirewall(options: FirewallOptions): ConstructedFirewall
 		policyEngine,
 		taintTracker,
 		auditStore,
+		ownsAuditStore,
 		executorRegistry,
 		pipeline,
 		issuer,

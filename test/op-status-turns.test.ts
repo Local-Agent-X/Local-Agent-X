@@ -3,7 +3,7 @@ import { rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { writeOp, newOpId } from "../src/ops/op-store.js";
-import { insertOpTurn } from "../src/canonical-loop/store.js";
+import { appendCanonicalEvent, insertOpTurn } from "../src/canonical-loop/store.js";
 import { opStatusTool } from "../src/ops/tools/op-status.js";
 import type { Op } from "../src/ops/types.js";
 import type { OpTurnRow } from "../src/canonical-loop/types.js";
@@ -79,5 +79,23 @@ describe("op_status — canonical turn activity", () => {
     const res = await opStatusTool.execute({ op_id: id, _sessionId: "sess-empty" });
 
     expect(res.content).toContain("no turn activity recorded yet");
+  });
+
+  it("reports unattended iteration checkpoints as saved and continuing", async () => {
+    const id = newOpId("op_app-build");
+    createdIds.push(id);
+    writeOp(mkOp(id));
+    appendCanonicalEvent(id, "iteration_checkpoint", {
+      maxTurns: 120,
+      completedTurns: 120,
+      continuing: true,
+    });
+
+    const res = await opStatusTool.execute({ op_id: id, _sessionId: "sess-checkpoint" });
+
+    expect(res.content).toContain("iteration checkpoints: 1 saved");
+    expect(res.content).toContain("every 120 turns");
+    expect(res.content).toContain("continued automatically");
+    expect(res.content).not.toContain("max_turns_exceeded");
   });
 });

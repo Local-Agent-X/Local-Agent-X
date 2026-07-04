@@ -277,6 +277,14 @@ export class AuditStore {
 		return rows.map(rowToAuditEvent);
 	}
 
+	/** All audit events in the exact append order of the process-wide chain. */
+	queryAllEvents(): AuditEvent[] {
+		const rows = this.db
+			.prepare("SELECT * FROM events ORDER BY rowid")
+			.all() as Array<Record<string, unknown>>;
+		return rows.map(rowToAuditEvent);
+	}
+
 	getRunContext(runId: string): RunContext | null {
 		const row = this.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId) as
 			| Record<string, unknown>

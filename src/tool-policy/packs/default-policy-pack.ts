@@ -16,7 +16,7 @@ function describeRules(): RulePackRule[] {
     id: r.id,
     kind: r.argMatch ? "action" : "tool",
     match: { tool: r.tool, ...(r.argMatch ? { argMatch: r.argMatch } : {}), ...(r.action ? { action: r.action } : {}) },
-    decision: r.decision === "confirm" ? "allow" : r.decision,
+    decision: r.decision === "confirm" ? "approval-required" : r.decision,
     reason: r.reason,
   }));
 }
@@ -29,6 +29,16 @@ export function makeDefaultPolicyPack(toolPolicy: ToolPolicy | undefined): RuleP
     evaluate(call: PolicyCall, ctx: PolicyEvalCtx): PackDecision {
       if (!toolPolicy) return { allowed: true };
       const d = toolPolicy.evaluate(call.name, call.args, ctx.sessionId);
+      if (d.confirm) {
+        return {
+          allowed: false,
+          disposition: "approval-required",
+          ruleId: d.ruleId,
+          reason: d.reason,
+          recovery: "This policy permits the exact call after user approval.",
+          userHint: d.userHint ?? USER_HINTS.policy,
+        };
+      }
       if (!d.allowed) {
         return {
           allowed: false,

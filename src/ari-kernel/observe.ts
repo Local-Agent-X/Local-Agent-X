@@ -16,7 +16,8 @@
 //     without I/O gating (none applies).
 
 import { createLogger } from "../logger.js";
-import { getFirewall, isAriActive } from "./state.js";
+import { isAriActive } from "./state.js";
+import { ensureAriKernelScope } from "./lifecycle.js";
 
 const logger = createLogger("ari-kernel");
 
@@ -24,7 +25,7 @@ export function ariObserve(
   toolName: string,
   action: string,
   params: Record<string, unknown>,
-  opts: { sessionId?: string } = {},
+  opts: { sessionId?: string; scopeId?: string } = {},
 ): void {
   if (!isAriActive()) return;
 
@@ -45,7 +46,7 @@ export function ariObserve(
   // kernel call throws (DB locked, schema mismatch on hot-reload), fall back
   // to the logger so the trail isn't lost.
   try {
-    const fw = getFirewall();
+    const fw = ensureAriKernelScope(opts.scopeId);
     const qi = fw!.audit({
       toolClass: "internal",
       action,

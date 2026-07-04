@@ -13,8 +13,9 @@
  * Real seam exercised: a genuine worker drives a real adapter whose every turn
  * is a non-terminal tool call (so the loop never terminates on its own) against
  * a live tool dispatcher. With a budget of 3, the worker must stop after exactly
- * 3 turns and finalize the op `failed` with a `max_turns_exceeded` event whose
- * message quotes the budget cap (maxTurns=3), NOT the 64 floor.
+ * 3 turns and finalize the interactive op as a successful checkpoint, not a
+ * technical failure. Autonomous lanes use the same value as checkpoint cadence
+ * and continue in the same worker.
  *
  * On OLD code (budget ignored, cap = 64): the 10-turn non-terminal script
  * exhausts at turn 11 → the adapter's default terminal turn ends the op
@@ -68,7 +69,7 @@ afterEach(async () => {
   delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
 });
 
-function mkOp(maxIterations: number): Op {
+function mkOp(maxIterations: number, lane: Op["lane"] = "interactive"): Op {
   return {
     id: track(newOpId("budget")),
     type: "freeform",
@@ -77,7 +78,7 @@ function mkOp(maxIterations: number): Op {
     contextPack: {
       budget: { maxIterations, maxTokens: 0, maxWallTimeMs: 0, maxSelfEditCalls: 0 },
     } as Op["contextPack"],
-    lane: "interactive",
+    lane,
     retryPolicy: { maxRecoveryAttempts: 3, backoffMs: [5_000] },
     ownerId: "test-iteration-budget",
     visibility: "private",
@@ -126,9 +127,7 @@ describe("worker honors budget.maxIterations (CL-7 regression)", () => {
 
     const after = readOp(op.id);
 
-    // The op hit the cap and finalized `failed` — never ran to the 64 floor and
-    // never fell through to the adapter's default terminal turn (`succeeded`).
-    expect(after?.canonical?.state).toBe("failed");
+    expect(after?.canonical?.state).toBe("succeeded");
 
     // Exactly maxIterations driveTurn calls ran. On the fix count starts at 0,
     // runs turns 0/1/2, then the 4th iteration trips the cap before driveTurn.
@@ -137,11 +136,32 @@ describe("worker honors budget.maxIterations (CL-7 regression)", () => {
     // The reason event quotes the BUDGET cap, proving it honored maxIterations
     // rather than the hardcoded floor.
     const events = readCanonicalEvents(op.id);
-    const capEvent = events.find(e =>
-      e.type === "error" &&
-      (e.body as { code?: string } | undefined)?.code === "max_turns_exceeded",
-    );
+    const capEvent = events.find(e => e.type === "iteration_checkpoint");
     expect(capEvent).toBeDefined();
-    expect((capEvent!.body as { message?: string } | undefined)?.message).toContain("maxTurns=3");
+    expect(capEvent!.body).toMatchObject({ maxTurns: 3, continuing: false });
+  });
+
+  it("uses maxIterations as checkpoint cadence for unattended lanes", async () => {
+    const op = mkOp(3, "background");
+    const script = Array.from({ length: 5 }, (_, i) =>
+      scriptTurn({ toolCalls: [{ toolCallId: `background-tc-${i}`, tool: "search", args: {} }] }),
+    );
+    const fake = new FakeAdapter({ script });
+    registerAdapterForOp(op.id, () => fake);
+    setToolDispatcher({
+      async dispatch(call) {
+        return { toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 0 };
+      },
+    });
+
+    canonicalLoopEntry(op);
+    await awaitTerminal(op.id);
+    await awaitIdle(5_000).catch(() => undefined);
+
+    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+    expect(fake.turnInputs.length).toBeGreaterThan(3);
+    const checkpoints = readCanonicalEvents(op.id).filter(e => e.type === "iteration_checkpoint");
+    expect(checkpoints).toHaveLength(1);
+    expect(checkpoints[0].body).toMatchObject({ maxTurns: 3, continuing: true });
   });
 });

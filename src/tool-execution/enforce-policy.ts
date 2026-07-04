@@ -60,6 +60,7 @@ function probeUpstreamEgressBlockers(ctx: ToolCallContext): EgressBlocker[] {
 
 async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId } = ctx;
+  const ariScopeId = ctx.operationId ?? ctx.runId;
   if (shouldGateInKernel(tc.name)) {
     // Every gated tool goes through the single ARI decision. ariEvaluate
     // fail-closes when the kernel is required but inactive (firewall === null
@@ -82,7 +83,7 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     if (shellTaintBlock) {
       return terminate(ctx, { rendered: "raw", content: `User hint: ${USER_HINTS.policy}\n${shellTaintBlock}`, allowed: false });
     }
-    const ariResult = await ariEvaluate(tc.name, deriveAriAction(tc.name, args), args, taintLabels);
+    const ariResult = await ariEvaluate(tc.name, deriveAriAction(tc.name, args), args, taintLabels, ariScopeId);
     if (!ariResult.allowed) {
       const hint = ariResult.userHint ?? USER_HINTS.policy;
       // SC-10: an egress-class tool denied at the KERNEL (e.g. TD-11 derives a
@@ -109,7 +110,7 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     }
   } else if (isAriActive() && shouldObserveInKernel(tc.name)) {
     // Audit-only path for internal-class tools — never blocks.
-    ariObserve(tc.name, "internal", args, { sessionId });
+    ariObserve(tc.name, "internal", args, { sessionId, scopeId: ariScopeId });
   }
   return CONTINUE;
 }
@@ -171,6 +172,10 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
     );
   } catch (e) {
     if (!(e instanceof ToolBlocked)) throw e;
+    if (e.disposition === "approval-required") {
+      ctx.policyApprovalReason = e.reason;
+      return CONTINUE;
+    }
     const layerMap: Record<typeof e.stage, string> = {
       "session-policy": "session-policy",
       "security": "security",

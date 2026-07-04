@@ -21,14 +21,14 @@ afterEach(() => {
 });
 
 describe("chat event pump — iteration checkpoint UX", () => {
-  it("turns max_turns_exceeded into a friendly checkpoint, not a chat error", async () => {
+  it("surfaces a canonical iteration checkpoint without a chat error", async () => {
     const opId = track(`op_test_iteration_checkpoint_${Date.now()}`);
     const pump = createEventPump(opId);
 
-    emit(opId, "error", {
-      code: "max_turns_exceeded",
-      message: "worker exceeded maxTurns=25",
-      retryable: false,
+    emit(opId, "iteration_checkpoint", {
+      maxTurns: 25,
+      completedTurns: 25,
+      continuing: false,
     });
 
     const pulled = await pump.pull();
@@ -41,8 +41,7 @@ describe("chat event pump — iteration checkpoint UX", () => {
     });
     expect(pulled.events).toContainEqual({
       type: "stopped",
-      reason: "Paused at 25 iterations. Say \"continue\" to keep going.",
-      debug: "max_turns_exceeded: worker exceeded maxTurns=25",
+      reason: "Checkpoint reached after 25 iterations. Say \"continue\" to keep going.",
       firedBy: "iteration-budget",
     });
   });

@@ -5,7 +5,7 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
-import { schedulerSnapshot, readOpTurns } from "../../canonical-loop/index.js";
+import { schedulerSnapshot, readOpTurns, readCanonicalEvents } from "../../canonical-loop/index.js";
 import { readCheckpoint } from "../checkpoint.js";
 import { readEvents } from "../event-log.js";
 import { listOps, readOp } from "../op-store.js";
@@ -92,6 +92,18 @@ export const opStatusTool: ToolDefinition = {
     // them. Surface the turn narrative — the same "turn N · read, edit"
     // activity the sidebar shows — so the agent can answer "what's it doing?"
     const turns = readOpTurns(opId);
+    const iterationCheckpoints = readCanonicalEvents(opId)
+      .filter((event) => event.type === "iteration_checkpoint");
+    const latestIterationCheckpoint = iterationCheckpoints.at(-1);
+    const iterationCheckpointLine = latestIterationCheckpoint
+      ? (() => {
+          const body = (latestIterationCheckpoint.body ?? {}) as Record<string, unknown>;
+          const maxTurns = typeof body.maxTurns === "number" ? body.maxTurns : null;
+          return body.continuing === true
+            ? `iteration checkpoints: ${iterationCheckpoints.length} saved${maxTurns ? ` (every ${maxTurns} turns)` : ""}; worker continued automatically\n`
+            : `iteration checkpoint: work saved${maxTurns ? ` after ${maxTurns} turns` : ""}; ready to continue\n`;
+        })()
+      : "";
     const turnLines = turns.slice(-Math.min(tail, 8)).map(t => {
       const tools = t.toolCallSummary.length === 0
         ? "thinking"
@@ -122,6 +134,7 @@ export const opStatusTool: ToolDefinition = {
         `op ${op.id} [${op.status}]  type=${op.type}  attempts=${op.attemptCount}\n` +
         `task: ${op.task}\n` +
         (checkpoint ? `checkpoint: ${checkpoint.lastSafeBoundary.label} @ ${checkpoint.lastSafeBoundary.timestamp}\n` : "") +
+        iterationCheckpointLine +
         (op.lastFailureReason ? `last failure: ${op.lastFailureReason}\n` : "") +
         (activity || "\n(no turn activity recorded yet)") +
         (finalText ? `\n\nfinal result:\n${finalText}` : ""),

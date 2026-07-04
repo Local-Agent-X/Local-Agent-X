@@ -66,10 +66,10 @@ export function mintHostGrants(
 // that case the pipeline's capability gate is a no-op and passing a
 // grantId would actually fail validateToken (since the action wouldn't be
 // in the grant's capability class action list).
-export function lookupHostGrantId(toolClass: string, action: string): string | undefined {
+export function lookupHostGrantId(toolClass: string, action: string, scopeId?: string): string | undefined {
   const capClass = deriveCapabilityClass(toolClass, action);
   const mapping = CAPABILITY_CLASS_MAP[capClass];
   if (!mapping || mapping.toolClass !== toolClass) return undefined;
   if (!mapping.actions.includes(action.toLowerCase())) return undefined;
-  return getHostGrants().get(capClass);
+  return getHostGrants(scopeId).get(capClass);
 }

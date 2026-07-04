@@ -53,6 +53,7 @@ export class Firewall {
 	private policyEngine: PolicyEngine;
 	private taintTracker: TaintTracker;
 	private auditStore: AuditStore;
+	private readonly ownsAuditStore: boolean;
 	private executorRegistry: ExecutorRegistry;
 	private pipeline: Pipeline;
 	private issuer: CapabilityIssuer;
@@ -72,6 +73,7 @@ export class Firewall {
 		this.policyEngine = c.policyEngine;
 		this.taintTracker = c.taintTracker;
 		this.auditStore = c.auditStore;
+		this.ownsAuditStore = c.ownsAuditStore;
 		this.executorRegistry = c.executorRegistry;
 		this.pipeline = c.pipeline;
 		this.issuer = c.issuer;
@@ -341,7 +343,7 @@ export class Firewall {
 	close(): void {
 		this._persistentTaint?.purgeExpired();
 		this.auditStore.endRun(this.runId);
-		this.auditStore.close();
+		if (this.ownsAuditStore) this.auditStore.close();
 	}
 
 	private _issuanceCtx() {

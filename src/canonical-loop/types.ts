@@ -130,6 +130,7 @@ export type CanonicalEventType =
   | "state_changed"
   | "turn_started"
   | "turn_committed"
+  | "iteration_checkpoint"
   | "tool_started"
   | "tool_finished"
   | "message_appended"

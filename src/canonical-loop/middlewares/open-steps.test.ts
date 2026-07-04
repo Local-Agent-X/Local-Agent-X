@@ -145,6 +145,57 @@ describe("turn-0 plan seed (beforeTurn)", () => {
   });
 });
 
+describe("interactive build plan-seed (reactive, afterModelCall)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSession.mockReturnValue("sess-ibs");
+    mockOpenTasks.mockReturnValue([]); // no declared plan → reach the reactive seed
+  });
+
+  function ictx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
+    return ctx({
+      op: { id: `ibs-${opCounter++}`, lane: "interactive" } as never,
+      committingToolsThisOp: new Set(["write"]),
+      ...over,
+    });
+  }
+
+  it("seeds a plan-and-verify nudge when an interactive turn wrote files but declared done with no plan", async () => {
+    const res = await fire(ictx());
+    expect(res.kind).toBe("nudge");
+    if (res.kind !== "nudge") throw new Error("unreachable");
+    expect(res.reason).toBe("interactive-build-seed");
+    expect(res.message).toContain("task_create");
+    expect(res.message).toContain("verify");
+  });
+
+  it("does NOT fire on a pure chat answer that committed nothing (behaves exactly as today)", async () => {
+    const res = await fire(ictx({ committingToolsThisOp: new Set() }));
+    expect(res.kind).toBe("continue");
+  });
+
+  it("keys on file writes only — a non-file commit (e.g. scheduling) does not trip it", async () => {
+    const res = await fire(ictx({ committingToolsThisOp: new Set(["schedule_task"]) }));
+    expect(res.kind).toBe("continue");
+  });
+
+  it("fires at most once per op", async () => {
+    const c = ictx();
+    expect((await fire(c)).kind).toBe("nudge");
+    expect((await fire(c)).kind).toBe("continue");
+  });
+
+  it("never fires on worker lanes — they get the beforeTurn seed + earned-done instead", async () => {
+    expect((await fire(ictx({ op: { id: "ibs-agent", lane: "agent" } as never }))).kind).toBe("continue");
+    expect((await fire(ictx({ op: { id: "ibs-bg", lane: "background" } as never }))).kind).toBe("continue");
+  });
+
+  it("does not fire when task_create isn't advertised to the op", async () => {
+    const res = await fire(ictx({ toolNames: new Set(["write"]) }));
+    expect(res.kind).toBe("continue");
+  });
+});
+
 describe("openStepsTerminationWarning", () => {
   const okTaskTurn = [{ toolCallSummary: [{ tool: "task_create", resultStatus: "ok" }] }] as never;
 

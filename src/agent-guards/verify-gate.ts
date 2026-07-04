@@ -83,8 +83,10 @@ const MAX_EDITED_PATHS = 200;
 const MAX_FAIL_NUDGES = 2;
 
 /** Tools that change file contents on disk. self_edit is excluded — it runs
- *  its own build subprocess on LAX's own source, so nudging it is noise. */
-const EDIT_TOOLS: ReadonlySet<string> = new Set([
+ *  its own build subprocess on LAX's own source, so nudging it is noise.
+ *  Exported so the open-steps plan-seed keys "the op wrote a file" off the SAME
+ *  definition instead of a second drifting copy. */
+export const EDIT_TOOLS: ReadonlySet<string> = new Set([
   "write", "edit", "edit_lines", "multi_edit",
 ]);
 

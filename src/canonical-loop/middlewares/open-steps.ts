@@ -14,11 +14,13 @@
  * explicitly broke into steps. The system prompt directs task_create for
  * non-trivial multi-step work so the gate has teeth on the models that need it.
  */
-import type { CanonicalMiddleware } from "./types.js";
+import type { CanonicalMiddleware, CanonicalLoopContext, CanonicalMiddlewareResult } from "./types.js";
 import type { Op } from "../../ops/types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { getOpenTasksForSession } from "../../tools/task-tools.js";
 import { readOpTurns } from "../store.js";
+import { getMiddlewareState } from "./state.js";
+import { EDIT_TOOLS } from "../../agent-guards/verify-gate.js";
 
 /**
  * Last open-task set we already nudged about, per session. Keyed by SESSION
@@ -70,7 +72,7 @@ export const openStepsMiddleware: CanonicalMiddleware = {
     if (!sessionId) return { kind: "continue" };
 
     const open = getOpenTasksForSession(sessionId);
-    if (open.length === 0) return { kind: "continue" };
+    if (open.length === 0) return interactiveBuildPlanSeed(ctx);
 
     const signature = open.map((t) => t.id).sort().join(",");
     if (lastNudgedSignature.get(sessionId) === signature) return { kind: "continue" };
@@ -87,6 +89,45 @@ export const openStepsMiddleware: CanonicalMiddleware = {
     return { kind: "nudge", message, reason: "open-steps" };
   },
 };
+
+interface SeedFlag { fired: boolean }
+
+/**
+ * Reactive plan-seed for INTERACTIVE coding turns. The beforeTurn seed above
+ * only fires on unattended lanes, so an interactive "build me X" gets no plan:
+ * a weaker model writes a few files, says "here you go", and stops — the exact
+ * early-stop this whole gate exists to prevent, on the one lane it was excluded
+ * from. When such a turn ends after actually WRITING files (the objective build
+ * signal — a pure chat answer or a one-line reply commits nothing, so it can't
+ * trip this) with no plan on record, push ONE plan-and-verify nudge. Once a plan
+ * exists, the afterModelCall keep-going nudge above drives the remaining steps
+ * and the verify gates check the output — the same machinery the unattended
+ * lanes already get, reached from the interactive side. Fire-once per op; the
+ * per-op turn cap bounds the rest.
+ *
+ * Deliberately gentler than earnedDoneNudge, which is excluded from interactive
+ * on purpose ("never loop a turn out from under the user"): this is a single
+ * push the model can satisfy by confirming — with evidence — that it's done.
+ */
+function interactiveBuildPlanSeed(ctx: CanonicalLoopContext): CanonicalMiddlewareResult {
+  if (ctx.op.lane !== "interactive") return { kind: "continue" };
+  if (!ctx.toolNames.has("task_create")) return { kind: "continue" };
+  const wroteFiles = [...ctx.committingToolsThisOp].some((t) => EDIT_TOOLS.has(t));
+  if (!wroteFiles) return { kind: "continue" };
+
+  const flag = getMiddlewareState<SeedFlag>(ctx.op.id, "interactive-build-seed", () => ({ fired: false }));
+  if (flag.fired) return { kind: "continue" };
+  flag.fired = true;
+
+  const message =
+    "You've written or edited files toward this request but are ending the turn with no plan on record. " +
+    "If a complete version of what was asked still needs work — remaining features, wiring, edge cases, or a " +
+    "check that it actually runs — lay out the remaining steps with task_create (one per step), work through " +
+    "them, and verify the result (build it / run it / open it) before you finish; don't stop while a step is open. " +
+    "If the work is genuinely complete and you've confirmed it runs, say so and how you verified it. If it was a " +
+    "single trivial change, just confirm it's done.";
+  return { kind: "nudge", message, reason: "interactive-build-seed" };
+}
 
 /** True when THIS op successfully called a task_* tool — the precondition both
  *  the loud-partial warning and the earned-done gate share before they nag

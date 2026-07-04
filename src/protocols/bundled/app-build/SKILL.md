@@ -221,13 +221,32 @@ delete the empty `twins/` directory.
 
 Goal: chunk the spec, hand chunks to a coding agent, run scenarios, iterate.
 
-Write `spec/plan.md` — an ordered list of chunks. Two rules:
+Write `spec/plan.md` — an ordered list of chunks. Three rules:
 
 - **Each chunk is a vertical slice.** One feature, end-to-end (data + endpoint
   + UI). Don't build "all the backend" then "all the frontend." Build one
   capability fully, then the next.
 - **Order by dependency, not by layer.** Auth before anything user-specific.
   Read paths before write paths. Happy path before edge cases.
+- **Declare the files each chunk touches.** This is what lets the build loop run
+  non-overlapping chunks *in parallel*: chunks with disjoint file sets build at
+  the same time, chunks that share a file are serialized automatically. List the
+  repo-relative paths the chunk will create or edit — be accurate, not
+  aspirational (an under-declared file that two chunks both touch is caught at
+  merge, but it costs a stall). If you genuinely can't predict the files, omit
+  the list — that chunk just runs on its own, which is always safe; you only give
+  up its parallelism.
+
+Each chunk is a `### Chunk N — Title` heading followed by bullets. The `Files`
+bullet is what enables parallel builds; the rest drive classification and gating:
+
+    ### Chunk 3 — User profile page
+    - **Class:** leaf → /vibe-code
+    - **Slice:** profile route + read-only view of the user's own data
+    - **Depends on:** 1, 2
+    - **Files:** src/routes/profile.tsx, src/api/profile.ts
+    - **Scenarios:** 4
+    - **Done when:** visiting /profile shows the logged-in user's name + avatar
 
 Then run the loop:
 

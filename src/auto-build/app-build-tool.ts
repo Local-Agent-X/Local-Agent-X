@@ -259,8 +259,10 @@ export const finalizeAppBuildTool: ToolDefinition = {
         content:
           `finalize_app_build rejected plan_md: ${(e as Error).message}\n\n` +
           `The build loop parses chunks from '### Chunk N — Title' headings, each with ` +
-          `'- **Class:**' / '- **Slice:**' / '- **Done when:**' bullets (see the /app-build ` +
-          `methodology). Fix the plan format and re-call finalize_app_build with the full payload.`,
+          `'- **Class:**' / '- **Slice:**' / '- **Done when:**' bullets (plus an OPTIONAL ` +
+          `'- **Files:**' bullet listing the repo-relative paths the chunk will create/edit, ` +
+          `comma- or newline-separated) (see the /app-build methodology). Fix the plan format ` +
+          `and re-call finalize_app_build with the full payload.`,
         isError: true,
       };
     }

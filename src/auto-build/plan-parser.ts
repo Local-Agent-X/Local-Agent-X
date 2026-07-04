@@ -9,6 +9,8 @@
  *   ### Chunk 1 — Project skeleton
  *   - **Class:** trunk → `/senior-engineer`
  *   - **Slice:** ...
+ *   - **Files:** src/foo.ts, src/bar.ts   (OPTIONAL — repo-relative paths this chunk
+ *                will create/edit; comma/newline-separated → footprint. Omit if unknown.)
  *   - **Depends on:** —  | 1, 2
  *   - **Scenarios:** —   | 1, 2 (partial)
  *   - **Done when:** ...
@@ -19,8 +21,9 @@
  *   | Item | From chunk | Why deferred | How to verify before launch |
  *
  * Tolerant of: em-dash vs hyphen, mixed-class free-form ("mixed: data
- * layer is trunk, UI is leaf"), missing scenarios/depends-on fields,
- * multi-line done-when with sub-bullets, optional bold markers.
+ * layer is trunk, UI is leaf"), missing scenarios/depends-on/files fields,
+ * multi-line done-when with sub-bullets, optional bold markers. The
+ * **Files:** bullet is optional — legacy plans predate it and still parse.
  *
  * What it does NOT do: validate the plan, judge chunk ordering, infer
  * missing fields. Garbage in → garbage out. Parser stays mechanical.
@@ -43,6 +46,14 @@ export interface ParsedChunk {
   slice: string;
   /** Chunk numbers this depends on. Empty if "—". */
   dependsOn: number[];
+  /**
+   * Repo-relative paths this chunk declares it will create/edit, from an optional
+   * `**Files:**` bullet. Always a concrete array on parsed chunks (`[]` when absent);
+   * optional only so pre-existing `ParsedChunk` literals compile. EMPTY = "undeclared",
+   * NOT "touches nothing": downstream conflict scheduling MUST treat [] conservatively
+   * (serialize, as if it conflicts with everything); only a non-empty footprint parallelizes.
+   */
+  footprint?: string[];
   /** Raw Scenarios: text, e.g. "1, 2 (partial)" or "—". */
   scenarios: string;
   /** Done-when text, multi-line preserved verbatim (sub-bullets included). */
@@ -165,6 +176,7 @@ function extractChunks(text: string): ParsedChunk[] {
       klass: fields.klass,
       slice: fields.slice,
       dependsOn: fields.dependsOn,
+      footprint: fields.footprint,
       scenarios: fields.scenarios,
       doneWhen: fields.doneWhen,
       rawSection,
@@ -179,6 +191,7 @@ interface ChunkFields {
   klass: ChunkClass;
   slice: string;
   dependsOn: number[];
+  footprint: string[];
   scenarios: string;
   doneWhen: string;
 }
@@ -227,10 +240,15 @@ function parseChunkFields(rawSection: string): ChunkFields {
     get("files to create"),
   ].filter(Boolean).join("\n");
 
+  // Captured IN ADDITION to legacySlice: the same **Files:** text still feeds an
+  // empty Slice (back-compat) AND now yields the structured file list.
+  const rawFiles = [get("files"), get("files to create")].filter(Boolean).join("\n");
+
   return {
     klass: classifyChunkText(get("class")),
     slice: collapseWhitespace(get("slice") || legacySlice),
     dependsOn: parseDependsOn(get("depends on")),
+    footprint: parseFootprint(rawFiles),
     scenarios: collapseWhitespace(get("scenarios")),
     doneWhen: get("done when"),
   };
@@ -275,6 +293,27 @@ function parseDependsOn(text: string): number[] {
   const out = new Set<number>();
   for (const n of nums) out.add(Number(n));
   return Array.from(out).sort((a, b) => a - b);
+}
+
+/**
+ * Footprint parser: pull repo-relative paths from a chunk's optional **Files:** /
+ * **Files to create:** bullet. Comma- OR newline-separated; tolerates list markers
+ * (-, *) and inline-code backticks; de-dups, order kept. "—"/"-"/empty → []. Callers
+ * must NOT read [] as "touches nothing" (see ParsedChunk.footprint) — empty serializes.
+ */
+function parseFootprint(text: string): string[] {
+  const trimmed = text.trim();
+  if (!trimmed || /^[—–\-]\s*$/.test(trimmed)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of trimmed.split(/[\n,]/)) {
+    // Strip a leading list marker ("- "/"* ") then inline-code backticks.
+    const path = entry.replace(/^\s*[-*]\s+/, "").replace(/`/g, "").trim();
+    if (!path || /^[—–\-]$/.test(path) || seen.has(path)) continue;
+    seen.add(path);
+    out.push(path);
+  }
+  return out;
 }
 
 function collapseWhitespace(s: string): string {

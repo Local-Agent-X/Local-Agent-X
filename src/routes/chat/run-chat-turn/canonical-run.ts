@@ -41,6 +41,7 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
   const turnStart = Date.now();
   let canonicalOpId = "";
   let salvaged = false;
+  let iterationCheckpoint = false;
 
   // Fold whatever the canonical op COMMITTED (user msg + assistant tool-calls +
   // tool results) into session.messages so a turn that ends — cleanly OR by a
@@ -92,6 +93,9 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
       if (ev.type === "chat_op_started" && typeof ev.opId === "string") {
         canonicalOpId = ev.opId;
       }
+      if (ev.type === "stopped" && ev.firedBy === "iteration-budget") {
+        iterationCheckpoint = true;
+      }
       primaryEventProxy(ev);
     }
     const canonicalElapsed = Date.now() - turnStart;
@@ -107,7 +111,7 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
 
     // The stream can end gracefully even on abort (the loop just stops
     // yielding), so detect interruption here too — not only in catch.
-    await salvage(abortSignal.aborted);
+    await salvage(abortSignal.aborted || iterationCheckpoint);
     return { doneEmitted: true };
   } catch (e) {
     // Abort (user stop) or provider error mid-stream. EITHER way, salvage the
@@ -192,6 +196,12 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
     if (assistantText) {
       newChatMessages.push({ role: "assistant", content: assistantText });
     }
+  }
+  const hasAssistantContent = newChatMessages.some((m) =>
+    m.role === "assistant" && typeof m.content === "string" && m.content.trim().length > 0
+  );
+  if (assistantText && !hasAssistantContent) {
+    newChatMessages.push({ role: "assistant", content: assistantText });
   }
 
   // A stopped turn ends without the model's natural closing reply. Leave a

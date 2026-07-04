@@ -29,6 +29,7 @@ export function createEventPump(opId: string): EventPump {
   const eventQueue: ServerEvent[] = [];
   let waiter: (() => void) | null = null;
   let terminal: TerminalState | null = null;
+  let emittedIterationCheckpoint = false;
 
   const wake = () => {
     if (waiter) {
@@ -69,6 +70,27 @@ export function createEventPump(opId: string): EventPump {
       const b = (event.body ?? {}) as Record<string, unknown>;
       const code = (b.code as string | undefined) ?? "error";
       const message = (b.message as string | undefined) ?? "(no message)";
+      if (code === "max_turns_exceeded") {
+        const maxTurns = message.match(/maxTurns=(\d+)/)?.[1];
+        const checkpoint =
+          maxTurns
+            ? `\n\nI reached the ${maxTurns}-iteration checkpoint, so I stopped here instead of running forever. Say "continue" and I'll pick up from the work already done.`
+            : `\n\nI reached the iteration checkpoint, so I stopped here instead of running forever. Say "continue" and I'll pick up from the work already done.`;
+        if (!emittedIterationCheckpoint) {
+          eventQueue.push({ type: "stream", delta: checkpoint });
+          emittedIterationCheckpoint = true;
+        }
+        eventQueue.push({
+          type: "stopped",
+          reason: maxTurns
+            ? `Paused at ${maxTurns} iterations. Say "continue" to keep going.`
+            : `Paused at the iteration checkpoint. Say "continue" to keep going.`,
+          debug: `${code}: ${message.slice(0, 240)}`,
+          firedBy: "iteration-budget",
+        });
+        wake();
+        return;
+      }
       eventQueue.push({ type: "error", message: `${code}: ${message.slice(0, 240)}` });
       wake();
       return;

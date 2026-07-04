@@ -6,6 +6,18 @@ import {
 import { persistTurnState } from "../src/routes/chat/run-chat-turn/canonical-run.js";
 import { buildCleanHistory } from "../src/providers/sanitize.js";
 
+// Committed-rows path for the checkpoint-text salvage test: a real op id makes
+// persistTurnState read op_messages; these mocks give it committed rows WITHOUT
+// assistant text (a tool-call-only run), the exact case where the streamed
+// checkpoint text used to be dropped. Only tests passing a non-empty
+// canonicalOpId reach these.
+vi.mock("../src/canonical-loop/store.js", () => ({
+  readOpMessages: vi.fn(() => [{ messageId: "msg-user-1" }]),
+}));
+vi.mock("../src/canonical-loop/chat-runner.js", () => ({
+  opMessageRowToChatParam: vi.fn(() => ({ role: "user", content: "run the long browser task" })),
+}));
+
 // Fix C — turn salvage on stop.
 //
 // The bug (2026-06-27): hitting stop interrupted a turn before it committed;
@@ -58,6 +70,52 @@ describe("persistTurnState — interrupted turn is salvaged, not erased", () => 
     const msgs = (session as unknown as { messages: Array<{ role: string; content: string }> }).messages;
     expect(msgs.some((m) => /interrupted/i.test(String(m.content)))).toBe(false);
     expect(msgs.some((m) => m.role === "assistant" && m.content === "4")).toBe(true);
+  });
+
+  it("persists checkpoint assistant text when there are no committed assistant rows", async () => {
+    const session = { messages: [] as unknown[], updatedAt: 0 } as never;
+    const ctx = { saveSession: vi.fn(), memoryManager: { persistTurn: vi.fn(async () => {}) } } as never;
+
+    await persistTurnState({
+      canonicalOpId: "",
+      message: "run the long browser task",
+      assistantText: "I reached the 25-iteration checkpoint. Say \"continue\" and I'll pick up from the work already done.",
+      session,
+      ctx,
+      sessionId: "sess-salvage-checkpoint",
+      images: [],
+      interrupted: true,
+    });
+
+    const msgs = (session as unknown as { messages: Array<{ role: string; content: string }> }).messages;
+    expect(msgs.some((m) => m.role === "assistant" && /25-iteration checkpoint/i.test(m.content))).toBe(true);
+    expect(msgs.some((m) => m.role === "assistant" && /interrupted/i.test(m.content))).toBe(true);
+  });
+
+  it("persists checkpoint text when the op committed rows but none carry assistant text", async () => {
+    // The real regression: canonicalOpId is set, op_messages has committed rows
+    // (mocked above as a user row — a tool-call-only run), so the never-drop
+    // fallback does NOT fire. Before the hasAssistantContent salvage, the
+    // streamed checkpoint text was silently dropped here and the resume turn
+    // lost the assistant's narration entirely.
+    const session = { messages: [] as unknown[], updatedAt: 0 } as never;
+    const ctx = { saveSession: vi.fn(), memoryManager: { persistTurn: vi.fn(async () => {}) } } as never;
+
+    await persistTurnState({
+      canonicalOpId: "op_committed_rows_no_assistant_text",
+      message: "run the long browser task",
+      assistantText: "I reached the 25-iteration checkpoint. Say \"continue\" and I'll pick up from the work already done.",
+      session,
+      ctx,
+      sessionId: "sess-salvage-checkpoint-2",
+      images: [],
+      interrupted: true,
+    });
+
+    const msgs = (session as unknown as { messages: Array<{ role: string; content: string }> }).messages;
+    // Committed row survived AND the checkpoint text was appended, not dropped.
+    expect(msgs.some((m) => m.role === "user" && m.content === "run the long browser task")).toBe(true);
+    expect(msgs.some((m) => m.role === "assistant" && /25-iteration checkpoint/i.test(m.content))).toBe(true);
   });
 });
 

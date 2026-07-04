@@ -1393,4 +1393,30 @@ describe("delegated worktree gate — canonical classification + work-root provi
       sec.removeAllowedPath(root, "agent-wb");
     }
   });
+
+  // isInAllowedPaths must match across a symlinked base: a worktree registered
+  // under its /var spelling has to satisfy the allowed-path set for a target the
+  // gate realpath'd to the /private/var form (the macOS WORKTREE_BASE case that
+  // blocked every parallel-build chunk write). addAllowedPath stores both forms.
+  it("honors a worktree registered under a SYMLINKED base for a realpath'd write target", () => {
+    const realWt = join(WORKSPACE_ROOT, "sym-real-wt");
+    mkdirSync(realWt, { recursive: true });
+    const linkWt = join(WORKSPACE_ROOT, "sym-link-wt");
+    try {
+      symlinkSync(realWt, linkWt, "dir");
+    } catch {
+      return; // symlink creation unavailable — nothing to assert
+    }
+    const sec = new SecurityLayer(WORKSPACE, "common");
+    // Register the worktree via the SYMLINK spelling (the un-realpath'd form the
+    // worktree creator hands us); the write target is spelled the same way but
+    // the gate resolves it to realWt/… before checking containment.
+    sec.addAllowedPath(linkWt, "agent-sym");
+    const d = sec.evaluate({
+      toolName: "write",
+      args: { path: join(linkWt, "app", "layout.tsx"), content: "x" },
+      sessionId: "agent-sym",
+    });
+    expect(d.allowed, d.reason).toBe(true);
+  });
 });

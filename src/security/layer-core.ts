@@ -10,7 +10,7 @@ import {
   type InlineEvalPolicy,
   type ToolCallContext,
 } from "./types.js";
-import { evaluateFileAccess, realpathDeep, pathIsWithin } from "./file-access.js";
+import { evaluateFileAccess, realpathDeep, pathIsWithin, canonicalAllowForms } from "./file-access.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
 import { kernelClassForTool } from "../ari-kernel/tool-class-map.js";
@@ -69,15 +69,15 @@ export class SecurityLayer {
   // fileAccessMode so a permissive file default can't silently open it.
   inlineEvalPolicy: InlineEvalPolicy = "refuse";
 
-  /** Allow an additional path for a specific session (e.g., agent worktree) */
+  /** Allow a path for a session (agent worktree); stored in both lexical + realpathDeep forms (canonicalAllowForms). */
   addAllowedPath(p: string, sessionId?: string): void {
     const key = sessionId || "_global";
     if (!this.sessionAllowedPaths.has(key)) this.sessionAllowedPaths.set(key, new Set());
-    this.sessionAllowedPaths.get(key)!.add(resolve(p));
+    for (const form of canonicalAllowForms(p)) this.sessionAllowedPaths.get(key)!.add(form);
   }
   removeAllowedPath(p: string, sessionId?: string): void {
-    const key = sessionId || "_global";
-    this.sessionAllowedPaths.get(key)?.delete(resolve(p));
+    const set = this.sessionAllowedPaths.get(sessionId || "_global");
+    for (const form of canonicalAllowForms(p)) set?.delete(form);
   }
   /** Check if a path is in the allowed set for a session */
   private isInAllowedPaths(realPath: string, sessionId?: string): boolean {

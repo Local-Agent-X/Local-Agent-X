@@ -11,9 +11,10 @@ import {
   closeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { evaluateFileAccess, confineToDir, matchesSensitivePath, pathIsWithin } from "./file-access.js";
+import { evaluateFileAccess, confineToDir, matchesSensitivePath, pathIsWithin, realpathDeep } from "./file-access.js";
 import { openValidatedRead, readValidatedFile } from "./validated-io.js";
 import { isSensitivePath } from "../data-lineage-paths.js";
+import { SecurityLayer } from "./layer-core.js";
 
 // Hermetic temp root, realpath-resolved so the test's lexical paths and the
 // gate's realpath'd paths agree (collapses the macOS /var → /private/var
@@ -311,6 +312,65 @@ describe("sensitive-path gate matches by anchored shape, not keyword substring",
   it("still BLOCKS a source-extensioned file under a genuine secret DIR", () => {
     // .ssh/ is a hard dir pattern — a .ts under it is not exempted.
     expect(matchesSensitivePath("/Users/x/.ssh/helper.ts")).not.toBeNull();
+  });
+});
+
+// Worktree-egress regression (parallel auto-build chunk agents): the parallel
+// builder creates git worktrees under WORKTREE_BASE = join(os.tmpdir(),
+// "lax-worktrees"). On macOS os.tmpdir() is /var/folders/…/T whose realpath is
+// /private/var/folders/…/T (/var → /private/var symlink). The gate realpath-
+// canonicalizes every write TARGET (realpathDeep, file-access.ts:239), so an
+// allowed worktree stored under only its lexical /var spelling never matched the
+// /private/var target and every chunk-agent write was hard-blocked ("cannot
+// write outside home directory even in unrestricted mode"). addAllowedPath now
+// stores the realpathDeep form too. Built with an EXPLICIT symlink so it is
+// meaningful on Linux (where /var may not be symlinked) as well as macOS.
+describe("worktree under a symlinked base (macOS /var→/private/var) matches the realpath'd target", () => {
+  let realBase: string;  // the canonical on-disk worktree-parent
+  let linkParent: string; // a symlink → realBase's parent (the spelling registered)
+  let linkable = true;
+  const SESSION = "chunk-agent-1";
+
+  beforeAll(() => {
+    // realpath the temp root so ONLY the deliberately-planted symlink below is
+    // the /var→/private/var-style divergence under test (not the tmpdir itself).
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "lax-wt-symlink-")));
+    const realWtParent = join(base, "real-lax-worktrees");
+    realBase = join(realWtParent, "chunk-1");
+    mkdirSync(realBase, { recursive: true });
+    linkParent = join(base, "link-lax-worktrees"); // symlink → realWtParent
+    try {
+      symlinkSync(realWtParent, linkParent, "dir");
+    } catch {
+      linkable = false; // unprivileged host without symlink rights
+    }
+  });
+
+  // The worktree the chunk agent is granted, spelled THROUGH the symlink (the
+  // /var form), and a write target inside it (does not exist yet — a new file).
+  const registeredWorktree = () => join(linkParent, "chunk-1");
+  const writeTarget = () => join(linkParent, "chunk-1", "app", "layout.tsx");
+
+  for (const mode of ["unrestricted", "common", "workspace"] as const) {
+    it(`${mode} mode: ALLOWS a write to the realpath'd target of a symlink-registered worktree`, () => {
+      if (!linkable) return; // OS-specific scenario unavailable — see always-run test below
+      const sec = new SecurityLayer(WORKSPACE, mode);
+      sec.addAllowedPath(registeredWorktree(), SESSION);
+      const d = sec.evaluate({ toolName: "write", args: { path: writeTarget(), content: "x" }, sessionId: SESSION });
+      // Pre-fix: addAllowedPath stored only the /var spelling; the target
+      // realpath'd to /private/var and matched nothing → BLOCKED. Post-fix the
+      // realpathDeep form is stored too, so the write is ALLOWED in every mode.
+      expect(d.allowed, `${mode}: ${d.reason}`).toBe(true);
+    });
+  }
+
+  // Always-run invariant: realpathDeep collapses the symlink so the stored real
+  // form equals the gate's realpath'd target. When symlinks are unavailable this
+  // still asserts realpathDeep is identity on a plain dir (the no-op that proves
+  // non-symlinked allowed paths are unchanged — more precise, never more permissive).
+  it("realpathDeep of the registered (symlinked) worktree equals the canonical worktree", () => {
+    const spelling = linkable ? registeredWorktree() : realBase;
+    expect(realpathDeep(spelling)).toBe(realBase);
   });
 });
 

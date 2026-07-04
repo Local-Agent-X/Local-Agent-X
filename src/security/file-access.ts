@@ -114,7 +114,7 @@ const SENSITIVE_PATTERNS = [
 // use, and importing from here would be a cycle). Re-exported so the many
 // existing consumers (egress guard, shell detectors, layer-core, read-state,
 // validated-io, run-sandboxed) keep their import path.
-export { realpathDeep } from "../workspace/paths.js";
+export { realpathDeep, canonicalAllowForms } from "../workspace/paths.js";
 
 // A work-rooted session (auto-build chunk worker) owns its project's env
 // files: scaffolding <workRoot>/.env.local with placeholders is the sanctioned

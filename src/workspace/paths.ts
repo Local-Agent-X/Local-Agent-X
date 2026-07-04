@@ -33,6 +33,35 @@ export function realpathDeep(target: string): string {
   return target;
 }
 
+// The lexical + fully-symlink-resolved spellings of a path, deduped. The
+// security layer's session allow-set (agent worktrees / project work roots)
+// stores BOTH forms of every allowed path: the gate canonicalizes each write
+// TARGET with realpathDeep before its containment check, so a worktree
+// registered under a SYMLINKED base — the macOS os.tmpdir() case, where
+// /var/folders/… is a symlink to /private/var/folders/… (WORKTREE_BASE lives
+// there) — would otherwise never match its own realpath'd target and every
+// parallel-build chunk-agent write was hard-blocked ("cannot write outside home
+// directory even in unrestricted mode"). Storing both forms makes the allow-set
+// match whichever spelling the target arrives in. realpathDeep of a NON-symlinked
+// path equals its resolve(), so the two collapse to one entry and a non-symlinked
+// allowed path behaves EXACTLY as before: this only ADDS matches for symlink-
+// equivalent paths (the same inode on disk), never for genuinely different paths.
+// realpathDeep tolerates a not-yet-created worktree (canonicalizes the deepest
+// existing ancestor, keeps the absent tail) and only throws on a symlink cycle
+// (ELOOP), swallowed here to the lexical form — a cyclic path is not a real
+// worktree and must not widen the allow set. Lives HERE (path identity is a
+// workspace concern) alongside realpathDeep it wraps, not in the security layer.
+export function canonicalAllowForms(p: string): string[] {
+  const lexical = resolve(p);
+  let real = lexical;
+  try {
+    real = realpathDeep(lexical);
+  } catch {
+    // ELOOP (symlink cycle) — keep only the lexical form.
+  }
+  return real === lexical ? [lexical] : [lexical, real];
+}
+
 // A "/uploads/<file>" reference — the URL form web/mobile attachments carry —
 // resolves to the on-disk uploads dir, NOT a drive-root path. basename() pins it
 // to the flat uploads dir so "/uploads/../auth.json" can't escape. Matched before

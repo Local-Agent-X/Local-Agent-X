@@ -30,8 +30,42 @@ function applyTheme(pref) {
   const effective = getEffectiveTheme(pref);
   document.documentElement.setAttribute('data-theme', effective);
   syncNativeChromeColor();
+  syncNativeTitlebarOverlay();
   const btn = document.getElementById('theme-toggle');
   if (btn) { btn.textContent = THEME_ICONS[pref]; btn.title = 'Theme: ' + THEME_LABELS[pref]; }
+}
+
+// Windows Electron only: repaint the native min/max/X titleBarOverlay to the
+// SAME color as the in-window top bar so the top-right corner never shows a
+// mismatched block. The top bar (#desktop-titlebar / sidebar) is painted from
+// --surface, so we sample the computed --surface here and hand the overlay a
+// concrete hex + a contrasting symbol color. Reporting the real computed value
+// (instead of the desktop wrapper's separately-stored theme) makes the corner
+// match by construction even when the two theme sources have drifted. No-op in
+// a plain browser and on macOS — window.desktop is undefined / the handler
+// early-returns.
+function syncNativeTitlebarOverlay() {
+  try {
+    if (!(window.desktop && window.desktop.reportChromeTint)) return;
+    if (!document.body) return; // pre-DOM call; applyTheme re-runs on DOMContentLoaded
+    const surface = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim();
+    if (!surface) return;
+    // Resolve --surface (may be #hex or rgb()) to r,g,b via a probe element so
+    // luminance + hex are computed from what actually paints.
+    const probe = document.createElement('span');
+    probe.style.cssText = 'position:absolute;visibility:hidden;color:' + surface;
+    document.body.appendChild(probe);
+    const rgb = getComputedStyle(probe).color;
+    probe.remove();
+    const m = rgb.match(/rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+    if (!m) return;
+    const r = +m[1], g = +m[2], b = +m[3];
+    const toHex = (v) => ('0' + v.toString(16)).slice(-2);
+    const hex = '#' + toHex(r) + toHex(g) + toHex(b);
+    const isDark = (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5;
+    const symbolColor = isDark ? '#e0e0e8' : '#1a1a2e';
+    window.desktop.reportChromeTint(hex, symbolColor);
+  } catch {}
 }
 
 function toggleTheme() {

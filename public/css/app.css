@@ -53,7 +53,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh
    default so macOS and a plain browser never render it. */
 #desktop-titlebar{display:none}
 body.platform-win{height:calc(100vh - 32px);margin-top:32px}
-body.platform-win #desktop-titlebar{display:flex;position:fixed;top:0;left:0;right:0;height:32px;z-index:99999;align-items:center;background:var(--bg);-webkit-app-region:drag;font-size:12px;user-select:none}
+body.platform-win #desktop-titlebar{display:flex;position:fixed;top:0;left:0;right:0;height:32px;z-index:99999;align-items:center;background:var(--surface);-webkit-app-region:drag;font-size:12px;user-select:none}
 body.platform-win #sidebar-expand-btn{top:52px !important}
 body.platform-win #agents-toggle{top:52px !important}
 #desktop-titlebar #dtb-favicon{width:16px;height:16px;margin:0 8px;-webkit-app-region:no-drag}
@@ -1083,6 +1083,10 @@ button:focus-visible,.chat-item:focus-visible,.util-btn:focus-visible{outline:2p
 #update-banner .update-dismiss{background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:2px 6px}
 #update-banner .update-dismiss:hover{color:var(--text)}
 [data-theme="light"] #update-banner{background:var(--bg)}
+/* Windows Electron only: match the top strip (in-window titlebar + update
+   banner) to the white sidebar so the whole top bar reads as one white band
+   flush to the window edge, instead of a dark bg strip above the sidebar. */
+body.platform-win #update-banner{background:var(--surface)}
 
 /* ── Feature 2: Sidebar action buttons ── */
 .sidebar-action-btn{flex:1;background:transparent;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:.6rem;padding:4px 6px;border-radius:6px;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:.5px}

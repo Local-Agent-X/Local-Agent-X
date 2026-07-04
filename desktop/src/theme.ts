@@ -20,9 +20,12 @@ export function bgForTheme(theme: DesktopSettings["theme"]): string {
 // stays dark even in light mode.
 export function overlayForTheme(theme: DesktopSettings["theme"]): { color: string; symbolColor: string; height: number } {
   const isDark = theme === "dark" || (theme === "system" && nativeTheme.shouldUseDarkColors);
+  // Light overlay is #ffffff (--surface, the white sidebar) not #f5f5f7
+  // (--bg) so the native min/max/X strip blends into the white top bar
+  // instead of showing a faint grey block in the top-right corner.
   return isDark
     ? { color: "#0a0a0f", symbolColor: "#40f0f0", height: 32 }
-    : { color: "#f5f5f7", symbolColor: "#1a1a2e", height: 32 };
+    : { color: "#ffffff", symbolColor: "#1a1a2e", height: 32 };
 }
 
 // Tells Windows itself which theme our app prefers. Without this set,

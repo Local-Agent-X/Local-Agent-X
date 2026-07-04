@@ -265,16 +265,24 @@ export function setupIPC(): void {
     clipboard.writeText(`http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`);
   });
 
-  // App child windows ping us with their sampled body bg + a contrasting
-  // symbol color so the native min/max/X overlay can be repainted to
-  // match. Eliminates the "LAX-theme top bar over differently-themed app
-  // content" seam — strip and overlay share whatever color the app chose
-  // for itself. No-op on macOS (no titleBarOverlay) and for the main
-  // window (its overlay is theme-driven, not content-driven).
+  // App child windows — AND the main window — ping us with their sampled
+  // surface color + a contrasting symbol color so the native min/max/X
+  // overlay is repainted to match whatever the top bar is actually showing.
+  // The main window used to be excluded here ("its overlay is theme-driven"),
+  // but the overlay color (getSetting("theme"), desktop-settings.json) and the
+  // CSS top bar (data-theme, localStorage/server) resolve from two different
+  // theme sources that can disagree — and when they do the top-right corner
+  // never matches the white/dark top bar. Letting the renderer report its real
+  // computed --surface makes the corner match by construction on any theme.
+  // No-op on macOS (no titleBarOverlay). Height reads the current overlay's so
+  // a zoomed main window doesn't get reset to the base 32px here.
   ipcMain.handle("report-chrome-tint", (event, color: string, symbolColor: string) => {
     if (process.platform === "darwin") return;
     const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win === getMainWindow()) return;
-    try { win.setTitleBarOverlay({ color, symbolColor, height: 32 }); } catch { /* not available */ }
+    if (!win) return;
+    const height = win === getMainWindow()
+      ? Math.max(1, Math.round(32 * win.webContents.getZoomFactor()))
+      : 32;
+    try { win.setTitleBarOverlay({ color, symbolColor, height }); } catch { /* not available */ }
   });
 }

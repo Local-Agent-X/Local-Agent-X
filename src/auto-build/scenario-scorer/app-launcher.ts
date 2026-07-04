@@ -16,6 +16,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { killProcessTree } from "../../process-tree-kill.js";
+import { allocatePort } from "./port-alloc.js";
 import type { ProjectLaunchSpec } from "./types.js";
 
 export interface LaunchedApp {
@@ -23,19 +24,41 @@ export interface LaunchedApp {
   stop: () => Promise<void>;
   stdout: string[];
   stderr: string[];
+  /** The url the server was actually pointed at (allocated port). Poll/score THIS. */
+  url: string;
 }
 
-export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, signal?: AbortSignal): Promise<LaunchedApp> {
+/**
+ * @param workerIndex 0 (default) is the serial single-build path and is
+ *   byte-identical to before: base port, no PORT injected, base url polled.
+ *   A parallel worker N>0 gets a distinct port (base + N): the port is
+ *   injected as `PORT` into the child env and the rewritten url is polled.
+ */
+export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, signal?: AbortSignal, workerIndex = 0): Promise<LaunchedApp> {
   const isWin = process.platform === "win32";
   const stdout: string[] = [];
   const stderr: string[] = [];
 
+  // Which port does THIS worker own? Worker 0 → base port, url unchanged.
+  const { port, url } = allocatePort(launch.readyUrl, workerIndex);
+
   const [bin, ...args] = launch.start.split(/\s+/);
+  const env: NodeJS.ProcessEnv = { ...process.env, BROWSER: "none", FORCE_COLOR: "0" }; // BROWSER=none stops Vite/CRA from launching a tab
+  // Only a parallel worker overrides the port, so worker 0's env stays
+  // byte-identical (no PORT set → the project's own default or an inherited
+  // PORT is untouched). PORT is the framework-agnostic lever: Next/CRA/Remix
+  // and most Node dev servers honor it. LIMITATION: a dev server that ignores
+  // PORT (e.g. Vite without `--port`/config) will NOT move — the project's
+  // `.lax-launch.json` `start` command must honor $PORT (e.g. "vite --port
+  // $PORT") for parallel scoring to be collision-free. Over-allocating a port
+  // the server ignores is a documented gap, not a silent success.
+  if (workerIndex > 0) env.PORT = String(port);
+
   const proc = spawn(bin, args, {
     cwd: projectDir,
     stdio: ["ignore", "pipe", "pipe"],
     shell: isWin, // npm/pnpm on Windows must be invoked through the shell
-    env: { ...process.env, BROWSER: "none", FORCE_COLOR: "0" }, // BROWSER=none stops Vite/CRA from launching a tab
+    env,
   });
 
   proc.stdout?.on("data", c => { stdout.push(c.toString()); if (stdout.length > 200) stdout.shift(); });
@@ -59,14 +82,14 @@ export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, s
       await stop();
       throw new Error(`dev server exited before ready (code=${proc.exitCode}): ${stderr.slice(-3).join("").slice(0, 500)}`);
     }
-    if (await ping(launch.readyUrl)) {
-      return { proc, stop, stdout, stderr };
+    if (await ping(url)) {
+      return { proc, stop, stdout, stderr, url };
     }
     await new Promise(r => setTimeout(r, 500));
   }
 
   await stop();
-  throw new Error(`dev server did not become ready at ${launch.readyUrl} within ${launch.readyTimeoutMs}ms`);
+  throw new Error(`dev server did not become ready at ${url} within ${launch.readyTimeoutMs}ms`);
 }
 
 async function ping(url: string): Promise<boolean> {

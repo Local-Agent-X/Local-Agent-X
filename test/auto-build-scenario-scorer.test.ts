@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseScenarioText } from "../src/auto-build/scenario-scorer/parser.js";
 import { readLaunchSpec, LAUNCH_SPEC_FILENAME } from "../src/auto-build/scenario-scorer/launch-spec.js";
+import { allocatePort, DEFAULT_BASE_PORT } from "../src/auto-build/scenario-scorer/port-alloc.js";
 import {
   parseStepPlannerResponse,
   buildStepPlannerPrompt,
@@ -114,6 +115,67 @@ describe("readLaunchSpec", () => {
     }));
     const spec = readLaunchSpec(dir);
     expect(spec!.readyTimeoutMs).toBe(60000);
+  });
+});
+
+describe("allocatePort", () => {
+  it("worker 0 returns the base port and the original url VERBATIM (back-compat)", () => {
+    const base = "http://localhost:5173";
+    const a = allocatePort(base, 0);
+    expect(a.port).toBe(5173);
+    // Byte-identical string — same reference-equal value, no re-serialization
+    // (no added trailing slash), so the serial path can't observe a change.
+    expect(a.url).toBe(base);
+  });
+
+  it("undefined worker index behaves as worker 0", () => {
+    const base = "http://localhost:5173/app";
+    const a = allocatePort(base);
+    expect(a.port).toBe(5173);
+    expect(a.url).toBe(base);
+  });
+
+  it("negative worker index is treated as the serial path", () => {
+    const base = "http://localhost:5173";
+    expect(allocatePort(base, -1)).toEqual({ port: 5173, url: base });
+  });
+
+  it("worker N>0 gets a distinct port (base + N)", () => {
+    expect(allocatePort("http://localhost:5173", 1).port).toBe(5174);
+    expect(allocatePort("http://localhost:5173", 2).port).toBe(5175);
+    expect(allocatePort("http://localhost:3000", 7).port).toBe(3007);
+  });
+
+  it("url rewrite preserves host + path, changes only the port", () => {
+    expect(allocatePort("http://localhost:5173", 1).url).toBe("http://localhost:5173".replace("5173", "5174"));
+    expect(allocatePort("http://127.0.0.1:5173/app?x=1", 2).url).toBe("http://127.0.0.1:5175/app?x=1");
+    expect(allocatePort("https://localhost:4000/dashboard#top", 3).url).toBe("https://localhost:4003/dashboard#top");
+  });
+
+  it("distinct workers never collide on a port", () => {
+    const ports = [0, 1, 2, 3].map(i => allocatePort("http://localhost:5173", i).port);
+    expect(new Set(ports).size).toBe(ports.length);
+  });
+
+  it("missing base port defaults to 3000", () => {
+    // No explicit port in the url → base defaults to DEFAULT_BASE_PORT.
+    expect(allocatePort("http://localhost", 0).port).toBe(DEFAULT_BASE_PORT);
+    const w1 = allocatePort("http://localhost", 1);
+    expect(w1.port).toBe(DEFAULT_BASE_PORT + 1);
+    expect(w1.url).toBe(`http://localhost:${DEFAULT_BASE_PORT + 1}`);
+    // path preserved when no base port present
+    expect(allocatePort("http://localhost/app", 1).url).toBe(`http://localhost:${DEFAULT_BASE_PORT + 1}/app`);
+  });
+
+  it("garbage base url → sane default port, url left unchanged for a worker", () => {
+    expect(allocatePort("not a url", 0).port).toBe(DEFAULT_BASE_PORT);
+    const w = allocatePort("not a url", 1);
+    expect(w.port).toBe(DEFAULT_BASE_PORT + 1);
+    expect(w.url).toBe("not a url"); // unparseable → can't safely re-point
+  });
+
+  it("is pure/deterministic — same inputs, same output", () => {
+    expect(allocatePort("http://localhost:5173", 2)).toEqual(allocatePort("http://localhost:5173", 2));
   });
 });
 

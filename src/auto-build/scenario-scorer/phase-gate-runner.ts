@@ -37,6 +37,12 @@ export interface PhaseGateRunnerOptions {
   threshold?: number;
   signal?: AbortSignal;
   onProgress?: (msg: string) => void;
+  /**
+   * Parallel-worker slot (Stage 2). Default 0 = serial single-build path,
+   * unchanged. N>0 gives this worker a distinct dev-server port so parallel
+   * chunk-gates don't collide on the launch spec's fixed port.
+   */
+  workerIndex?: number;
 }
 
 export async function runPhaseGateScoring(opts: PhaseGateRunnerOptions): Promise<PhaseGateRunnerOutcome> {
@@ -54,11 +60,17 @@ export async function runPhaseGateScoring(opts: PhaseGateRunnerOptions): Promise
   let app: Awaited<ReturnType<typeof launchApp>> | null = null;
   try {
     opts.onProgress?.(`starting dev server: ${launch.start}`);
-    app = await launchApp(opts.projectDir, launch, opts.signal);
-    opts.onProgress?.(`dev server ready at ${launch.readyUrl}`);
+    app = await launchApp(opts.projectDir, launch, opts.signal, opts.workerIndex ?? 0);
+    opts.onProgress?.(`dev server ready at ${app.url}`);
   } catch (e) {
     return { kind: "error", reason: `dev server failed to start: ${(e as Error).message}` };
   }
+
+  // Score against the port the server was ACTUALLY pointed at. For worker 0
+  // this is the same object (byte-identical serial path); a parallel worker
+  // gets its allocated url so the driver navigates to the right server, never
+  // the fixed base port another worker may hold.
+  const scoringLaunch = app.url === launch.readyUrl ? launch : { ...launch, readyUrl: app.url };
 
   const reports: ScoreReport[] = [];
   try {
@@ -74,7 +86,7 @@ export async function runPhaseGateScoring(opts: PhaseGateRunnerOptions): Promise
       const report = await scoreScenario({
         scenario,
         projectDir: opts.projectDir,
-        launch,
+        launch: scoringLaunch,
         threshold: opts.threshold,
         signal: opts.signal,
       });

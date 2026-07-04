@@ -110,11 +110,59 @@ export async function getMousePosition(): Promise<{ x: number; y: number }> {
 
 // Screen size in the SAME coordinate space move/click/drag use (nut.js/libnut),
 // so the agent centers/positions correctly instead of assuming 1920x1080. Pure
-// geometry query — no Screen-Recording grant needed.
+// geometry query — no Screen-Recording grant needed. PRIMARY monitor only — for
+// the full multi-monitor layout use getScreenGeometry().
 export async function getScreenSize(): Promise<{ width: number; height: number }> {
   assertSupportedOS();
   const { screen } = await nut();
   return { width: await screen.width(), height: await screen.height() };
+}
+
+export type MonitorRect = { index: number; x: number; y: number; width: number; height: number; primary: boolean };
+export type ScreenGeometry = {
+  /** Bounding box of the whole virtual desktop, in the SAME absolute coord
+   *  space move/click/drag write into. Secondary monitors can sit at negative
+   *  x/y relative to the primary's top-left origin. */
+  virtual: { x: number; y: number; width: number; height: number };
+  monitors: MonitorRect[];
+  primary: MonitorRect;
+};
+
+// The multi-monitor layout the agent must aim with. nut.js move/click/drag write
+// VIRTUAL-DESKTOP absolute coordinates on Windows (libnut SetMousePos), the SAME
+// space screen_capture's gdigrab and listMonitors() report — so a button the
+// agent SEES at (x,y) on a screenshot of monitor 2 is reachable by moving to that
+// exact (x,y), even when x/y are negative. getScreenSize() alone reports only the
+// primary monitor's size with a (0,0) origin, so the agent aiming at a second
+// monitor landed the cursor on the primary. This reconciles the two.
+//
+// Canonical source: listMonitors() in screen-capture.ts (the same enumerator the
+// phone remote-control and gdigrab capture paths use). We do NOT re-enumerate.
+// macOS: listMonitors() has no native impl (bogus 1920x1080 fallback), so there
+// use nut.js's real primary size — avfoundation captures only the primary anyway.
+export async function getScreenGeometry(): Promise<ScreenGeometry> {
+  assertSupportedOS();
+  if (process.platform === "win32") {
+    const { listMonitors } = await import("../screen-capture.js");
+    const raw = listMonitors();
+    const monitors: MonitorRect[] = raw.map((m) => ({
+      index: m.index, x: m.x, y: m.y, width: m.width, height: m.height, primary: m.primary,
+    }));
+    const primary = monitors.find((m) => m.primary) ?? monitors[0];
+    const minX = Math.min(...monitors.map((m) => m.x));
+    const minY = Math.min(...monitors.map((m) => m.y));
+    const maxX = Math.max(...monitors.map((m) => m.x + m.width));
+    const maxY = Math.max(...monitors.map((m) => m.y + m.height));
+    return {
+      virtual: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+      monitors,
+      primary,
+    };
+  }
+  // macOS/Linux: single primary from nut.js's real point space.
+  const { width, height } = await getScreenSize();
+  const primary: MonitorRect = { index: 0, x: 0, y: 0, width, height, primary: true };
+  return { virtual: { x: 0, y: 0, width, height }, monitors: [primary], primary };
 }
 
 export async function moveMouse(x: number, y: number, signal?: AbortSignal): Promise<void> {
@@ -234,7 +282,17 @@ export async function pressKeys(keyNames: string[], signal?: AbortSignal): Promi
     releaseKey: (...k: number[]) => Promise<unknown>;
   };
   await kb.pressKey(...keys);
-  await kb.releaseKey(...[...keys].reverse());
+  try {
+    checkAbort(signal);
+  } finally {
+    // ALWAYS release — a thrown abort (or anything) between press and release
+    // must not leave a modifier (cmd/ctrl/shift/alt) latched at the OS level.
+    // A stuck modifier makes every subsequent real keystroke behave as a chord
+    // (Ctrl+key / Shift+key) until the user physically taps that modifier —
+    // the "keyboard keys didn't behave correctly" corruption. Mirrors the
+    // finally-release dragMouse uses for the mouse button.
+    await kb.releaseKey(...[...keys].reverse());
+  }
 }
 
 // User-facing key name → nut.js Key enum member name. Single letters (a-z) and

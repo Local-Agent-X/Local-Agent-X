@@ -15,7 +15,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { collapseFamily } from "./shared/collapse-family.js";
 import {
-  clickMouse, dragMouse, getMousePosition, getScreenSize, moveMouse, pressKeys, typeText,
+  clickMouse, dragMouse, getMousePosition, getScreenGeometry, moveMouse, pressKeys, typeText,
   InputAbortError, InputPermissionError, InputUnsupportedError,
   type MouseButton,
 } from "./input-driver.js";
@@ -184,14 +184,30 @@ const positionTool: ToolDefinition = {
 const screenSizeTool: ToolDefinition = {
   name: "computer_screen_size",
   description:
-    "Get the screen's real width and height in the SAME pixel space move/click/drag use. Call this BEFORE " +
-    "centering or any absolute positioning — NEVER assume 1920x1080; Retina and scaled displays differ, and " +
-    "guessing puts the cursor in the wrong place.",
+    "Get the display layout in the SAME pixel space move/click/drag use. Call this BEFORE centering or any " +
+    "absolute positioning — NEVER assume 1920x1080; Retina/scaled displays differ and guessing puts the cursor " +
+    "in the wrong place. On MULTI-MONITOR setups this returns every monitor's rect: a secondary monitor sits at " +
+    "an OFFSET (often NEGATIVE x/y) from the primary's top-left origin, and those offsets are exactly what " +
+    "move/click expect. When you screen_capture monitor N and see a target, add that monitor's (x,y) offset to " +
+    "the in-image coordinates before moving.",
   parameters: { type: "object", properties: {}, required: [] },
   async execute() {
     try {
-      const { width, height } = await getScreenSize();
-      return { content: `Screen is ${width}x${height}px. Center is (${Math.round(width / 2)}, ${Math.round(height / 2)}).` };
+      const geo = await getScreenGeometry();
+      const p = geo.primary;
+      if (geo.monitors.length <= 1) {
+        return { content: `Screen is ${p.width}x${p.height}px. Center is (${Math.round(p.x + p.width / 2)}, ${Math.round(p.y + p.height / 2)}).` };
+      }
+      const lines = geo.monitors
+        .map((m) => `  monitor ${m.index}${m.primary ? " (primary)" : ""}: ${m.width}x${m.height} at top-left (${m.x}, ${m.y}), center (${Math.round(m.x + m.width / 2)}, ${Math.round(m.y + m.height / 2)})`)
+        .join("\n");
+      const v = geo.virtual;
+      return {
+        content:
+          `${geo.monitors.length} monitors. Coordinates are absolute across the whole virtual desktop ` +
+          `(bounds ${v.width}x${v.height}, top-left (${v.x}, ${v.y})). Secondary monitors are offset from the ` +
+          `primary — use each monitor's own top-left when aiming there:\n${lines}`,
+      };
     } catch (e) { return fail(e); }
   },
 };
@@ -201,9 +217,11 @@ export const computerTool: ToolDefinition = collapseFamily({
   intro:
     "Control the real mouse and keyboard to operate ANY app on the user's desktop (their browser, native " +
     "apps, the OS itself) — not just the in-app browser. Workflow: screen_capture to SEE the screen, then " +
-    "move/click/type/press to ACT, then screen_capture again to verify. Coordinates are absolute pixels from " +
-    "the top-left of the primary display — call action:'screen_size' FIRST to get the real dimensions and " +
-    "center; NEVER assume 1920x1080 (Retina/scaled displays differ, and guessing lands the cursor wrong). " +
+    "move/click/type/press to ACT, then screen_capture again to verify. Coordinates are absolute pixels across " +
+    "the whole virtual desktop — call action:'screen_size' FIRST to get the real dimensions, per-monitor layout, " +
+    "and center; NEVER assume 1920x1080 (Retina/scaled displays differ, and guessing lands the cursor wrong). " +
+    "MULTI-MONITOR: a second monitor is offset (often NEGATIVE x/y) from the primary; add that monitor's top-left " +
+    "offset (from screen_size) to what you see in its screenshot before moving/clicking. " +
     "For web pages where you have a snapshot with refs, prefer the " +
     "`browser` tool — it's more precise than coordinate clicks.",
   actions: {

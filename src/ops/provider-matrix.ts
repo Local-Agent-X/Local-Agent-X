@@ -54,6 +54,38 @@ export function getProvider(id: string): ProviderCapabilities | undefined {
   return REGISTRY.get(id);
 }
 
+// ── Runtime-provider → resource-lock bridge ───────────────────────────────
+
+/**
+ * Runtime provider ids (settings namespace: "local", "anthropic", …) → the
+ * provider-matrix capability id (neutral namespace: "localHttpOllama", …).
+ * Only the local Ollama provider needs a mapping today — it is the one that
+ * declares a resource lock (the single on-box GPU). Everything else resolves
+ * straight through (a caller may already pass a matrix id) and, having no
+ * declared lock, gets none.
+ */
+const RUNTIME_PROVIDER_TO_MATRIX_ID: Record<string, string> = {
+  local: "localHttpOllama",
+};
+
+/**
+ * Resource locks an op should hold when it routes to `providerId` — the single
+ * bridge for the `resourceLocks` capability that `bootstrapProviderMatrix`
+ * populates (e.g. ["gpu:0"] for the local model provider). The canonical-loop
+ * scheduler stamps this onto ops so it can serialize contenders for a singleton
+ * resource. Reads the live matrix entry (no second, drift-prone gpu list);
+ * returns [] for hosted providers and for anything not in the matrix.
+ *
+ * Depends on `bootstrapProviderMatrix()` having run — it does, at server start
+ * (server/index.ts), before any op is submitted; tests that exercise the bridge
+ * bootstrap the matrix explicitly.
+ */
+export function resourceLocksForProvider(providerId: string | undefined): string[] {
+  if (!providerId) return [];
+  const matrixId = RUNTIME_PROVIDER_TO_MATRIX_ID[providerId] ?? providerId;
+  return getProvider(matrixId)?.resourceLocks ?? [];
+}
+
 // ── Bootstrap defaults ────────────────────────────────────────────────────
 
 /** Wire the providers we currently support. Called once at server start. */

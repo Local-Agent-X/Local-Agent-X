@@ -18,6 +18,7 @@
  */
 import type { Op } from "../ops/types.js";
 import { writeOp } from "../ops/op-store.js";
+import { resourceLocksForProvider } from "../ops/provider-matrix.js";
 import { emit } from "./event-emitter.js";
 import { resolveAdapterFactory } from "./runtime.js";
 import { enqueueOp, pumpScheduler } from "./scheduler.js";
@@ -286,6 +287,18 @@ export function canonicalLoopEntry(
   if (op.canonical.redirectReceivedAt === undefined) op.canonical.redirectReceivedAt = null;
   if (op.canonical.currentTurnIdx === undefined) op.canonical.currentTurnIdx = null;
   if (op.canonical.currentCheckpointId === undefined) op.canonical.currentCheckpointId = null;
+
+  // Stamp the singleton-resource locks this op holds while scheduled, derived
+  // from its routed provider (the chat + agent runners set
+  // contextPack.routing.preferredProvider to the resolved provider). A local-GPU
+  // op gets ["gpu:0"] so the scheduler serializes it against other local-GPU ops
+  // on the single GPU; hosted ops get none and are never gated. Only stamp when
+  // the op didn't already carry locks and only when non-empty, so a hosted op's
+  // persisted shape (and every existing lock-free op) is byte-unchanged.
+  if (op.resourceLocks === undefined) {
+    const locks = resourceLocksForProvider(op.contextPack?.routing?.preferredProvider);
+    if (locks.length) op.resourceLocks = locks;
+  }
 
   writeOp(op);
 

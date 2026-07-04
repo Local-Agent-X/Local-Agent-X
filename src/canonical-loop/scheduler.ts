@@ -19,6 +19,7 @@ import type { CanonicalLane } from "./types.js";
 import type { LAXConfig } from "../types.js";
 import { readOp } from "../ops/op-store.js";
 import { resolveAdapterFactory } from "./runtime.js";
+import { anyHeld, acquire, release, resetResourceLocks } from "./resource-locks.js";
 import { runWorker, type WorkerHandle } from "./worker.js";
 
 // Static fallback caps. The `interactive` lane's cap is config-driven
@@ -76,6 +77,14 @@ const active = new Map<string, WorkerHandle>();
 // increments, one decrement, one permanently leaked slot.
 const launching = new Set<string>();
 const activeByLane = new Map<CanonicalLane, number>();
+// Resource locks held by each committed slot, keyed by opId. The source of
+// truth for what to `release` — recorded at the acquire site so a slot's lock
+// can be freed WITHOUT re-reading the op from disk. A recovery that deletes the
+// op dir mid-flight makes `readOp` return null; releasing off the op in that
+// window would silently skip and STRAND the lock forever (a leaked gpu:0 =
+// permanent deadlock of every local-model op). Keying release off this map
+// instead keeps release independent of the disk re-read.
+const activeLocks = new Map<string, string[] | undefined>();
 let pumping = false;
 
 export function enqueueOp(opId: string, lane: CanonicalLane): void {
@@ -105,8 +114,16 @@ export function pumpScheduler(): void {
       if (!op) { queue.splice(i, 1); continue; }
       const factory = resolveAdapterFactory(op);
       if (!factory) { i++; continue; } // No adapter — leave queued.
+      // Resource guard: an op that declares a singleton resource lock already
+      // held by an in-flight op (e.g. two local-GPU ops sharing gpu:0) is
+      // SKIPPED and left in the queue — non-blocking, same shape as the
+      // lane-full path above, so other launchable ops still go. A release
+      // re-pumps and retries it. No-op for every op without resourceLocks.
+      if (anyHeld(op.resourceLocks)) { i++; continue; }
       activeByLane.set(q.lane, inUse + 1);
       launching.add(q.opId);
+      acquire(op.resourceLocks); // hold the resource for THIS committed slot
+      activeLocks.set(op.id, op.resourceLocks); // record for disk-free release
       queue.splice(i, 1);
       void launch(op, factory);
     }
@@ -148,8 +165,18 @@ async function launch(op: Op, factory: () => Adapter | Promise<Adapter>): Promis
     if (stillOurs) active.delete(op.id);
     if (stillOurs || neverRegistered) {
       activeByLane.set(lane, Math.max(0, (activeByLane.get(lane) ?? 1) - 1));
+      // Release the resource lock paired with THIS slot's lane decrement — but
+      // ONLY when the slot was still ours. If a replacement worker took over via
+      // recovery's evictWorker (stillOurs=false, neverRegistered=false), it
+      // already re-acquired the lock (a fresh activeLocks entry under the same
+      // opId) and this stale finally must NOT free it or drop its map entry. The
+      // stillOurs guard decides WHETHER to release; releasing the closure's own
+      // resourceLocks (exactly what THIS launch acquired) keeps acquire/release
+      // balanced regardless of the map.
+      release(op.resourceLocks);
+      activeLocks.delete(op.id);
     }
-    pumpScheduler();
+    pumpScheduler(); // re-pump: an op skipped on this lock (or lane) retries now
   }
 }
 
@@ -167,10 +194,25 @@ export function evictWorker(opId: string): boolean {
   if (!active.has(opId)) return false;
   const op = readOp(opId);
   active.delete(opId);
+  // Release the evicted slot's resource lock from the in-memory activeLocks map,
+  // INDEPENDENT of the op re-read below. If recovery deleted the op dir mid-flight
+  // `readOp` returns null, but the lock must still be freed — sourcing it from the
+  // map (not `op.resourceLocks`) means a null re-read can never strand a gpu:0 and
+  // deadlock every local-model op. Set.delete is idempotent, so a no-lock evict is
+  // a harmless no-op.
+  release(activeLocks.get(opId));
+  activeLocks.delete(opId);
   if (op) {
     const lane = op.lane as CanonicalLane;
     activeByLane.set(lane, Math.max(0, (activeByLane.get(lane) ?? 1) - 1));
   }
+  // Re-pump so an op skipped on the just-released lock (or the freed lane slot)
+  // retries. Recovery's relaunch branches pump again after re-enqueue, but its
+  // terminal branches (cancelling→cancelled, exhausted→failed) do NOT — so an
+  // otherwise-idle system would strand a skipped op without this. pumpScheduler
+  // self-guards with `pumping`, so the extra call is safe. The evicted op is
+  // not yet re-enqueued here, so this can only launch OTHER queued ops.
+  pumpScheduler();
   return true;
 }
 
@@ -202,6 +244,8 @@ export function resetScheduler(): void {
   active.clear();
   launching.clear();
   activeByLane.clear();
+  activeLocks.clear();
+  resetResourceLocks();
   pumping = false;
   capConfigReader = null;
 }

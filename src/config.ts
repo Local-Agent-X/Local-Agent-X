@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { randomBytes } from "node:crypto";
-import type { LAXConfig } from "./types.js";
+import { MIN_MAX_ITERATIONS, type LAXConfig } from "./types.js";
 import { getLaxDir } from "./lax-data-dir.js";
 import {
   deOneDrive,
@@ -242,6 +242,13 @@ export function loadConfig(): LAXConfig {
   if (ariReqEnv !== undefined) raw.ariRequired = ariReqEnv !== "false" && ariReqEnv !== "0";
 
   const config = configSchema.parse(raw);
+
+  // Floor the per-message iteration cap. Clamp — not schema-reject — so legacy
+  // config.json files with the old tiny caps (Settings default was 25) still
+  // parse and boot; they just run with the modern floor. Every raw
+  // config.maxIterations reader (resolve-provider fallback, handler-events,
+  // autopilot) inherits this.
+  if (config.maxIterations < MIN_MAX_ITERATIONS) config.maxIterations = MIN_MAX_ITERATIONS;
 
   // Apply profile defaults for any fields the user hasn't explicitly set
   const profileDefaults = PROFILE_DEFAULTS[config.profile];

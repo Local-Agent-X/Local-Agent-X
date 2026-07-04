@@ -293,6 +293,14 @@ export interface ProfileDefaults {
 
 // ── Config Types ──
 
+/** Floor for the user-tunable per-message iteration cap. Legacy installs saved
+ *  tiny caps (the old Settings input defaulted to 25 with max=100), which cut
+ *  long agentic runs off mid-task. Loaders CLAMP up to this instead of
+ *  rejecting, so old config/settings files still boot; the Settings route
+ *  refuses new writes below it. Purpose-specific internal budgets (voice,
+ *  background jobs, sub-agent ops) are deliberately NOT floored. */
+export const MIN_MAX_ITERATIONS = 120;
+
 export interface LAXConfig {
   port: number;
   authToken: string;

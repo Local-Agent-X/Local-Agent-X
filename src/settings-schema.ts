@@ -20,7 +20,7 @@
  * GET /api/settings/schema for field-name introspection).
  */
 import { z } from "zod";
-import type { LAXConfig } from "./types.js";
+import { MIN_MAX_ITERATIONS, type LAXConfig } from "./types.js";
 
 export interface FlippableSetting {
   /** Field name in the POST body and GET response. */
@@ -70,9 +70,9 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
   },
   {
     field: "maxIterations",
-    validate: z.number().int().min(1).max(300),
+    validate: z.number().int().min(MIN_MAX_ITERATIONS).max(300),
     runtime: true,
-    description: "Max tool calls per chat turn (1-300)",
+    description: `Max tool calls per chat turn (${MIN_MAX_ITERATIONS}-300)`,
   },
   {
     field: "maxSubAgents",

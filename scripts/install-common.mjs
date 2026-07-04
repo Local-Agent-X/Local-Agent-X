@@ -958,7 +958,7 @@ if (!existsSync(settingsFile)) {
   // provider+model, they reflect a real working choice the user made.
   const defaults = {
     temperature: 0.7,
-    maxIterations: 25,
+    maxIterations: 160,
     embeddingProvider: "ollama",
     // Derive from EMBED_MODEL so the seeded value always matches what the
     // install actually pulled. Previously hardcoded to "nomic-embed-text",

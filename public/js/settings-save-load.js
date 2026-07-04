@@ -41,7 +41,7 @@ async function saveSettings() {
   }
   // Save provider + model to server (no API key in settings.json)
   const currentPort = location.port || '7007';
-  const maxIter = parseInt(document.getElementById('cfg-maxiter')?.value || '25', 10);
+  const maxIter = parseInt(document.getElementById('cfg-maxiter')?.value || '160', 10);
   const maxSub = parseInt(document.getElementById('cfg-maxsubagents')?.value || '5', 10);
   const embProvider = document.getElementById('cfg-emb-provider')?.value || 'ollama';
   const embModel = document.getElementById('cfg-emb-model')?.value || '';

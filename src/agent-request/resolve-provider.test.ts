@@ -129,3 +129,36 @@ describe("resolveProvider — provider-switch surfacing (PR-12)", () => {
     expect(res.model).toBe("claude-sonnet-4-6");
   });
 });
+
+describe("resolveProvider — maxIterations floor (120)", () => {
+  // Regression for the "25 turns and it stops" trap: the old Settings panel
+  // defaulted maxIterations to 25 (max=100), so legacy settings.json files cap
+  // long agentic runs absurdly low. settings.json is read schema-less; the
+  // resolver is its only chokepoint on the chat path, so the floor lives here.
+  // 120 is hardcoded on purpose — if someone lowers MIN_MAX_ITERATIONS, this
+  // test should scream.
+  beforeEach(() => {
+    credsPresent.clear();
+    savedSettings = {};
+    credsPresent.add("xai");
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("clamps a legacy saved 25 up to 120", async () => {
+    savedSettings = { provider: "xai", maxIterations: 25 };
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp", undefined, undefined);
+    expect(res.maxIterations).toBe(120);
+  });
+
+  it("clamps a low config fallback up to 120 when nothing is saved", async () => {
+    savedSettings = { provider: "xai" }; // no saved maxIterations → CONFIG's 10
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp", undefined, undefined);
+    expect(res.maxIterations).toBe(120);
+  });
+
+  it("leaves a saved value above the floor untouched", async () => {
+    savedSettings = { provider: "xai", maxIterations: 200 };
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp", undefined, undefined);
+    expect(res.maxIterations).toBe(200);
+  });
+});

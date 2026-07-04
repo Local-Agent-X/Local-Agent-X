@@ -1,4 +1,4 @@
-import type { LAXConfig } from "../types.js";
+import { MIN_MAX_ITERATIONS, type LAXConfig } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
 import { PROVIDERS, isHttpProvider } from "../providers/registry.js";
@@ -151,7 +151,13 @@ export async function resolveProvider(
     || config.model;
 
   const temperature = typeof saved.temperature === "number" ? saved.temperature : config.temperature;
-  const maxIterations = typeof saved.maxIterations === "number" ? saved.maxIterations : config.maxIterations;
+  // settings.json is read schema-less, so legacy saved caps (old UI default 25)
+  // land here raw — clamp to the floor. config.maxIterations is already clamped
+  // at load (config.ts), but Math.max both keeps this seam self-sufficient.
+  const maxIterations = Math.max(
+    MIN_MAX_ITERATIONS,
+    typeof saved.maxIterations === "number" ? saved.maxIterations : config.maxIterations,
+  );
 
   return { provider, apiKey, model, codexApiKey, customBaseURL, temperature, maxIterations, authSource, providerSwitch };
 }

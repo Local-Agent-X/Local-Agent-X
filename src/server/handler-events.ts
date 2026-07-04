@@ -8,6 +8,7 @@ import { ProjectStore, type AgentRun } from "../agent-store/index.js";
 import { looksLikeClarificationRequest, looksLikeUnsubstantiatedCompletion, looksLikeEmptyOrErrorOnly } from "../agents/result-guard.js";
 import { registerAgentRunDriver, type AgentRunDriver } from "../agents/runtime.js";
 import { Handler } from "../agency/handler.js";
+import { formatAgentDisplayName } from "../agency/agent-display-name.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
@@ -23,7 +24,7 @@ const logger = createLogger("server.handler-events");
 interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string; templateId?: string | null }
 interface AgentOutputEvent { agentId: string; output: string }
 interface AgentBlockedEvent { agentId: string; reason: string; role: string }
-interface AgentResultEvent { agentId: string; result: string; success: boolean; tokens?: number }
+interface AgentResultEvent { agentId: string; result: string; success: boolean; tokens?: number; name?: string }
 interface AgentRedirectEvent { agentId: string; [key: string]: unknown }
 interface AgentEscalationEvent {
   from: string;
@@ -312,13 +313,19 @@ export function registerHandlerEvents(deps: {
   };
   registerAgentRunDriver(agentRunDriver);
 
-  eventBus.on("handler:agent-spawn", (d: unknown) => { const evt = d as AgentSpawnEvent; broadcastAll({ type: "agent-spawn", ...evt }); pendingMeta.set(evt.agentId, { name: evt.name, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [], templateId: evt.templateId || null }); });
+  eventBus.on("handler:agent-spawn", (d: unknown) => {
+    const evt = d as AgentSpawnEvent;
+    const displayName = formatAgentDisplayName({ name: evt.name, role: evt.role, task: evt.task });
+    broadcastAll({ type: "agent-spawn", ...evt, name: displayName, displayName, rawName: evt.name });
+    pendingMeta.set(evt.agentId, { name: displayName, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [], templateId: evt.templateId || null });
+  });
   eventBus.on("handler:agent-output", (d: unknown) => { broadcastAll({ type: "agent-output", ...(d as AgentOutputEvent) }); });
   eventBus.on("handler:agent-blocked", (d: unknown) => { const evt = d as AgentBlockedEvent; broadcastAll({ type: "agent-blocked", agentId: evt.agentId, reason: evt.reason, role: evt.role }); });
   eventBus.on("handler:agent-result", (d: unknown) => {
     const evt = d as AgentResultEvent;
-    broadcastAll({ type: "agent-complete", ...evt });
     const m = pendingMeta.get(evt.agentId);
+    const displayName = formatAgentDisplayName({ name: evt.name || m?.name, role: m?.role, task: m?.task });
+    broadcastAll({ type: "agent-complete", ...evt, name: displayName, displayName });
     if (m) {
       // Result-shape guard: catch agents that finished by asking the
       // user to resend the task instead of doing it. Without this, a

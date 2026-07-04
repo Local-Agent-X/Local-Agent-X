@@ -11,6 +11,7 @@ import { appendTraceEvent } from "../agents/run-trace.js";
 import { pushCompletionToParent } from "./handler-completion.js";
 import { pushInject } from "../agent-loop/inject-queue.js";
 import { createLogger } from "../logger.js";
+import { formatAgentDisplayName } from "./agent-display-name.js";
 
 const logger = createLogger("agency.handler");
 import type {
@@ -90,9 +91,14 @@ export class Handler {
   attachExternalRun(config: SpawnConfig): { agentId: string; abortController: AbortController } {
     const agentId = uid("field-agent");
     const ac = new AbortController();
+    const displayName = formatAgentDisplayName({
+      name: config.name,
+      role: config.role,
+      task: config.task,
+    });
     const agent: FieldAgent = {
       id: agentId,
-      name: config.name,
+      name: displayName,
       role: config.role,
       status: "working",
       systemPrompt: config.systemPrompt ?? "",

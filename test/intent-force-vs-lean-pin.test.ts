@@ -10,7 +10,7 @@
  * "pin on any non-free kind" fails here.
  */
 import { describe, it, expect } from "vitest";
-import { shouldPinIntentToolChoice } from "../src/agent-request/prepare-request.js";
+import { shouldPinIntentToolChoice, recordIntentOutcome } from "../src/agent-request/prepare-request.js";
 
 describe("shouldPinIntentToolChoice — pin only on force", () => {
   it("pins a fully-specified (force) build_app ask", () => {
@@ -43,5 +43,26 @@ describe("shouldPinIntentToolChoice — pin only on force", () => {
   it("does not pin a null/absent verdict", () => {
     expect(shouldPinIntentToolChoice(null)).toBe(false);
     expect(shouldPinIntentToolChoice(undefined)).toBe(false);
+  });
+});
+
+describe("recordIntentOutcome — Chunk 4 force/lean tally", () => {
+  // Process-lifetime counter; assert DELTAS off a baseline, not absolutes, so
+  // test ordering doesn't matter.
+  it("counts a pinned turn as forced and reports the running ratio", () => {
+    const before = recordIntentOutcome(false); // seed one lean
+    const after = recordIntentOutcome(true);    // then one force
+    expect(after.forced).toBe(before.forced + 1);
+    expect(after.leaned).toBe(before.leaned);
+    // pinnedPct = forced / (forced+leaned) * 100, rounded.
+    const total = after.forced + after.leaned;
+    expect(after.pinnedPct).toBe(Math.round((after.forced / total) * 100));
+  });
+
+  it("counts a lean turn without incrementing forced", () => {
+    const before = recordIntentOutcome(true);
+    const after = recordIntentOutcome(false);
+    expect(after.leaned).toBe(before.leaned + 1);
+    expect(after.forced).toBe(before.forced);
   });
 });

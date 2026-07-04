@@ -70,6 +70,22 @@ export function shouldPinIntentToolChoice(
   );
 }
 
+// Rolling force/lean tally so the trigger-happy rate is visible in the log
+// without grepping and hand-counting per-turn lines. Only NON-FREE verdicts
+// count — those are the turns the fix is about (free turns never forced). The
+// pinned share is the trigger-happiness metric: before the fix every non-free
+// build/spawn turn pinned; after it, only fully-specified ones should. Process-
+// lifetime, in-memory — a debugging lens, not persisted telemetry.
+const intentTally = { forced: 0, leaned: 0 };
+
+export function recordIntentOutcome(pinned: boolean): { forced: number; leaned: number; pinnedPct: number } {
+  if (pinned) intentTally.forced++;
+  else intentTally.leaned++;
+  const total = intentTally.forced + intentTally.leaned;
+  const pinnedPct = total === 0 ? 0 : Math.round((intentTally.forced / total) * 100);
+  return { forced: intentTally.forced, leaned: intentTally.leaned, pinnedPct };
+}
+
 export async function prepareAgentRequest(input: AgentRequestInput): Promise<PreparedAgentRequest> {
   // Per-step timing logs. Added 2026-05-27 after IDE-mode chat turns wedged
   // somewhere inside this pipeline with zero breadcrumbs: only the entry
@@ -259,12 +275,14 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     const inToolList = toolSel.tools.some(t => t.name === forcedName);
     if (inToolList) {
       toolChoice = { type: "tool", name: forcedName };
-      logger.info(`[intent] forcing ${forcedName} mode=force (reason="${toolSel.intentVerdict!.reason}")`);
+      const t = recordIntentOutcome(true);
+      logger.info(`[intent] forcing ${forcedName} mode=force pinned=${t.forced}/${t.forced + t.leaned} (${t.pinnedPct}%) (reason="${toolSel.intentVerdict!.reason}")`);
     } else {
       logger.warn(`[intent] classifier picked ${forcedName} but it's not in this turn's tool list — skipping force`);
     }
   } else if (toolSel.intentVerdict && toolSel.intentVerdict.kind !== "free") {
-    logger.info(`[intent] ${toolSel.intentVerdict.kind} mode=lean — narrowing without pin (reason="${toolSel.intentVerdict.reason}")`);
+    const t = recordIntentOutcome(false);
+    logger.info(`[intent] ${toolSel.intentVerdict.kind} mode=lean — narrowing without pin, pinned=${t.forced}/${t.forced + t.leaned} (${t.pinnedPct}%) (reason="${toolSel.intentVerdict.reason}")`);
   }
 
   // Tool-shy recall force. Grok (and any provider that under-calls tools)

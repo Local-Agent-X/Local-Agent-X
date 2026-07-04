@@ -261,6 +261,10 @@
         <button class="agent-feeds-toggle" onclick="toggleAgentFeeds()" title="Toggle agent panel">&#9664;</button>
       </div>
       <div id="agent-feeds-list" class="agent-feeds-list"></div>
+      <!-- AMBIENT dock: background dream (☾) + research/cron (◎) agents dock here,
+           in their own quiet bottom corner apart from the active build tree.
+           Populated by renderAmbientRegion; hidden (display:none) while empty. -->
+      <div id="agent-feeds-ambient" class="agent-feeds-ambient" style="display:none"></div>
     </div>
   </div>
 

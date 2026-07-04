@@ -1023,6 +1023,30 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .agent-inline-status{color:var(--muted);font-size:.65rem}
 .agent-inline-progress{color:var(--accent);font-size:.65rem}
 
+/* ── AMBIENT dock — background dream (☾) + research/cron (◎) agents in their
+   OWN quiet corner at the bottom of the panel, apart from the active build
+   tree. Subdued: a top divider off the main list, dimmer surface, compact
+   flat cards. All card styling is CONTAINER-scoped (not a per-card class)
+   because updateAgentFeed rewrites each card's className on every event —
+   any marker class on the card itself would be dropped. Hidden (JS sets
+   display:none) whenever there are no ambient agents. */
+.agent-feeds-ambient{flex-shrink:0;border-top:1px solid var(--border);background:rgba(0,0,0,.2);padding:8px 8px 10px;display:flex;flex-direction:column;gap:6px;max-height:40%;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#222 transparent}
+.agent-feeds-ambient-header{display:flex;align-items:center;gap:8px;padding:0 2px 2px}
+.agent-feeds-ambient-title{font-family:var(--mono);font-size:.6rem;color:var(--muted);letter-spacing:2px;text-transform:uppercase;opacity:.7}
+.agent-feeds-ambient-list{display:flex;flex-direction:column;gap:6px}
+/* Removal path (dismiss / 30-min prune) surgically removes a card node without a
+   full re-render (that would reset sibling cards' scroll/fold) — so once the last
+   ambient card is gone the list is :empty and the whole dock (header included)
+   hides, mirroring the JS display:none set by renderAmbientRegion on render. */
+.agent-feeds-ambient:has(.agent-feeds-ambient-list:empty){display:none}
+/* Compact ambient cards: tighter + dimmer than a worker card, thin left rail. */
+.agent-feeds-ambient .agent-feed-card{padding:6px 10px;border-left-width:2px;background:var(--surface-2);opacity:.92}
+.agent-feeds-ambient .agent-feed-card .agent-feed-header{margin-bottom:0}
+.agent-feeds-ambient .agent-feed-icon{font-size:1rem;opacity:.9}
+/* The ambient "dreaming"/"scanning" activity word (its own class so
+   updateAgentFeed's .agent-feed-status write never overwrites it). */
+.agent-feeds-ambient .ambient-status{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+
 /* ── Mobile hamburger (feature 95) ── */
 #mobile-menu-btn{display:none;position:fixed;top:10px;left:10px;z-index:1100;background:var(--surface);border:1px solid var(--border);color:var(--text);width:36px;height:36px;border-radius:8px;font-size:1.2rem;cursor:pointer;align-items:center;justify-content:center}
 #sidebar-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;display:block}

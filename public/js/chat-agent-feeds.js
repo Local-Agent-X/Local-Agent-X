@@ -272,16 +272,16 @@ function _renderAgentFeedNode(node) {
 function _renderAgentFeedsList() {
   var list = document.getElementById('agent-feeds-list');
   if (!list) return;
-  var ids = Object.keys(agentFeedsData);
-  if (ids.length === 0) {
-    list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:.72rem">No active agents</div>';
+  // Split ambient dream/cron agents into their own dock (below); MAIN keeps only
+  // build/chat/orchestrator cards so the main tree is byte-identical without them.
+  var parts = partitionAmbient(agentFeedsData);
+  if (Object.keys(parts.main).length === 0) {
+    list.innerHTML = Object.keys(parts.ambient).length ? '' : '<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:.72rem">No active agents</div>';
   } else {
-    var nodes = buildAgentFeedTree(agentFeedsData);
-    list.innerHTML = nodes.map(_renderAgentFeedNode).join('');
-    if (typeof Spring !== 'undefined') {
-      Spring.staggerIn(Array.from(list.querySelectorAll('.agent-feed-card')), { delay: 50, preset: 'stiff' });
-    }
+    list.innerHTML = buildAgentFeedTree(parts.main).map(_renderAgentFeedNode).join('');
+    if (typeof Spring !== 'undefined') Spring.staggerIn(Array.from(list.querySelectorAll('.agent-feed-card')), { delay: 50, preset: 'stiff' });
   }
+  var region = document.getElementById('agent-feeds-ambient'); if (region) { var ah = renderAmbientRegion(parts.ambient); region.innerHTML = ah; region.style.display = ah ? '' : 'none'; }
   _updateAgentCount();
 }
 

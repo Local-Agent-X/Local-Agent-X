@@ -23,12 +23,17 @@ let isTerminalStatus: (status: unknown) => boolean;
 let DEFAULT_AGENT_ICON: string;
 let formatTokens: (n: unknown) => string;
 let tokenBarFillPct: (n: unknown) => number;
+type Rec = { type?: string };
+let partitionAmbient: (m: Record<string, Rec> | undefined) => {
+  ambient: Record<string, Rec>;
+  main: Record<string, Rec>;
+};
 
 beforeAll(() => {
   const src = readFileSync(join(here, "../public/js/chat-agent-feeds-render.js"), "utf8");
   // eslint-disable-next-line no-new-func
   const factory = new Function(
-    src + "\nreturn { iconForType, isTerminalStatus, DEFAULT_AGENT_ICON, formatTokens, tokenBarFillPct };"
+    src + "\nreturn { iconForType, isTerminalStatus, DEFAULT_AGENT_ICON, formatTokens, tokenBarFillPct, partitionAmbient };"
   );
   const m = factory();
   iconForType = m.iconForType;
@@ -36,13 +41,14 @@ beforeAll(() => {
   DEFAULT_AGENT_ICON = m.DEFAULT_AGENT_ICON;
   formatTokens = m.formatTokens;
   tokenBarFillPct = m.tokenBarFillPct;
+  partitionAmbient = m.partitionAmbient;
 });
 
 describe("iconForType (C8 per-type icons)", () => {
   it("maps distinct op types to DISTINCT glyphs (the whole point)", () => {
     const icons = [
       iconForType("app_build"),
-      iconForType("research"),
+      iconForType("memory_consolidation"),
       iconForType("self_edit"),
       iconForType("refactor"),
       iconForType("freeform"),
@@ -53,8 +59,21 @@ describe("iconForType (C8 per-type icons)", () => {
     expect(new Set(icons).size).toBe(icons.length);
   });
 
-  it("build_app aliases app_build (model-prompt spelling) to the same glyph", () => {
+  it("gives the AMBIENT agents their distinct glyphs (dream = ☾, research/cron = ◎)", () => {
+    // The whole ambient feature hinges on these two reading at a glance.
+    expect(iconForType("memory_consolidation")).toBe("☾");
+    expect(iconForType("scheduled_mission")).toBe("◎");
+    // …and they're distinct from each other and never the generic fallback.
+    expect(iconForType("memory_consolidation")).not.toBe(iconForType("scheduled_mission"));
+    expect(iconForType("memory_consolidation")).not.toBe(DEFAULT_AGENT_ICON);
+    expect(iconForType("scheduled_mission")).not.toBe(DEFAULT_AGENT_ICON);
+  });
+
+  it("build_app / app_builder alias app_build (model + server spellings) to the same glyph", () => {
     expect(iconForType("build_app")).toBe(iconForType("app_build"));
+    // app_builder is the real opType the worker-runner emits — must not fall back.
+    expect(iconForType("app_builder")).toBe(iconForType("app_build"));
+    expect(iconForType("app_builder")).not.toBe(DEFAULT_AGENT_ICON);
   });
 
   it("still resolves legacy ROLE keys (inline specialist cards)", () => {
@@ -73,7 +92,7 @@ describe("iconForType (C8 per-type icons)", () => {
     // Non-default, and NOT the same as any worker op-type or the leaf-agent glyph.
     expect(sup).not.toBe(DEFAULT_AGENT_ICON);
     const workerGlyphs = [
-      iconForType("app_build"), iconForType("research"), iconForType("self_edit"),
+      iconForType("app_build"), iconForType("memory_consolidation"), iconForType("self_edit"),
       iconForType("refactor"), iconForType("freeform"), iconForType("scheduled_mission"),
       iconForType("agent"), iconForType("coder"),
     ];
@@ -82,6 +101,55 @@ describe("iconForType (C8 per-type icons)", () => {
 
   it("aliases `supervisor` to the same glyph as `orchestrator`", () => {
     expect(iconForType("supervisor")).toBe(iconForType("orchestrator"));
+  });
+});
+
+describe("partitionAmbient (background dream/cron dock split)", () => {
+  it("routes dream (memory_consolidation) + research/cron (scheduled_mission) to AMBIENT", () => {
+    const map = {
+      dreamA: { type: "memory_consolidation" },
+      cronB: { type: "scheduled_mission" },
+    };
+    const { ambient, main } = partitionAmbient(map);
+    expect(Object.keys(ambient).sort()).toEqual(["cronB", "dreamA"]);
+    expect(Object.keys(main)).toEqual([]);
+  });
+
+  it("keeps build / chat / orchestrator cards in MAIN (never ambient)", () => {
+    const map = {
+      w1: { type: "app_build" },
+      w2: { type: "app_builder" },
+      chat: { type: "agent" },
+      orch: { type: "orchestrator" },
+      edit: { type: "self_edit" },
+      typeless: {}, // no type at all → main (the flat build/chat default)
+    };
+    const { ambient, main } = partitionAmbient(map);
+    expect(Object.keys(ambient)).toEqual([]);
+    expect(Object.keys(main).sort()).toEqual(
+      ["chat", "edit", "orch", "typeless", "w1", "w2"].sort()
+    );
+  });
+
+  it("splits a MIXED map disjointly — every record lands in exactly one bucket", () => {
+    const map = {
+      dream: { type: "memory_consolidation" },
+      build: { type: "app_build" },
+      cron: { type: "scheduled_mission" },
+      orch: { type: "orchestrator" },
+    };
+    const { ambient, main } = partitionAmbient(map);
+    expect(Object.keys(ambient).sort()).toEqual(["cron", "dream"]);
+    expect(Object.keys(main).sort()).toEqual(["build", "orch"]);
+    // Disjoint + total: union == input, no overlap, no drops.
+    const union = [...Object.keys(ambient), ...Object.keys(main)].sort();
+    expect(union).toEqual(Object.keys(map).sort());
+    expect(Object.keys(ambient).some((k) => k in main)).toBe(false);
+  });
+
+  it("returns two empty buckets for an empty / missing map (never throws)", () => {
+    expect(partitionAmbient({})).toEqual({ ambient: {}, main: {} });
+    expect(partitionAmbient(undefined)).toEqual({ ambient: {}, main: {} });
   });
 });
 

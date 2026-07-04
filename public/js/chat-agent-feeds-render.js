@@ -20,15 +20,18 @@ const AGENT_ROLE_ICONS = {
   monitor: '👁️', designer: '🎨', ops: '⚙️',
   communicator: '📨',
   // op types (right-rail panel cards) — monochrome glyphs
-  app_build: '⬡', build_app: '⬡', research: '◎', research_query: '◎',
+  app_build: '⬡', build_app: '⬡', app_builder: '⬡',
   self_edit: '✎', refactor: '⟳', autopilot: '➤', freeform: '✦',
-  agent: '◇', agent_spawn: '◇', scheduled_mission: '◷',
+  agent: '◇', agent_spawn: '◇',
+  // AMBIENT background ops (docked in their own quiet corner, see partitionAmbient):
+  // dream = memory_consolidation (☾ crescent), research/cron = scheduled_mission
+  // (◎ scanning lens). Replaces the dead dream/idle/research/research_query keys —
+  // nothing was ever typed those; these are the real op types the server emits.
+  memory_consolidation: '☾', scheduled_mission: '◎',
   // SUPERVISOR / tree-root: the auto-build orchestrator (and any op that spawns
   // & directs its own workers). ◈ reads as a hub/root and is deliberately
   // distinct from ◇ (a leaf agent) so the supervisor never looks like a worker.
-  orchestrator: '◈', supervisor: '◈',
-  // forward-looking placeholders (inert until these op types exist):
-  dream: '☾', idle: '☾'
+  orchestrator: '◈', supervisor: '◈'
 };
 
 // Pure: map an op type (or role) to its glyph, with a clean generic default
@@ -340,4 +343,58 @@ function renderAgentCard_inline(agent) {
     '<span class="agent-inline-status">' + esc(status) + '</span>' +
     (progress ? '<span class="agent-inline-progress">' + esc(progress) + '</span>' : '') +
   '</div>';
+}
+
+// ── AMBIENT background agents (own quiet corner of the panel) ── Dream =
+// memory_consolidation, research/cron = scheduled_mission; dock below the tree.
+const AMBIENT_OP_TYPES = { memory_consolidation: 1, scheduled_mission: 1 };
+function isAmbientType(type) { return !!AMBIENT_OP_TYPES[type]; }
+
+// Pure: split the feeds map into { ambient, main } by op type. MAIN feeds
+// buildAgentFeedTree unchanged (byte-identical when no ambient agents exist).
+function partitionAmbient(dataMap) {
+  var map = dataMap || {}, ambient = {}, main = {}, ids = Object.keys(map);
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i], rec = map[id] || {};
+    if (isAmbientType(rec.type)) ambient[id] = rec; else main[id] = rec;
+  }
+  return { ambient: ambient, main: main };
+}
+
+// Compact ambient "activity" word (dream → dreaming, cron → scanning). Static
+// per type; the card's className-driven dim + dot convey running-vs-finished.
+function ambientStatusLabel(agent) {
+  if (agent.type === 'memory_consolidation') return 'dreaming';
+  if (agent.type === 'scheduled_mission') return 'scanning';
+  return agent.status || 'ambient';
+}
+
+// Compact AMBIENT card — a minimal *variant* of renderAgentCard (not a fork):
+// same iconForType glyph, `agent-card-<id>` id, `.agent-status-dot` + dismiss
+// contract (updateAgentFeed / removeAgentFeed keep working untouched). Label is
+// `.ambient-status` (NOT `.agent-feed-status`) so the status write can't clobber
+// the "dreaming"/"scanning" word; all inside `.agent-feed-header` (fold = no-op).
+function renderAmbientCard(agent) {
+  var icon = iconForType(agent.type || agent.role);
+  var status = agent.status || 'working';
+  var safeId = esc(agent.id);
+  return '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + '" data-terminal="' + (isTerminalStatus(status) ? '1' : '0') + '">' +
+    '<div class="agent-feed-header">' +
+      '<span class="agent-feed-icon">' + icon + '</span>' +
+      '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +
+      '<span class="ambient-status"><span class="agent-status-dot"></span> ' + esc(ambientStatusLabel(agent)) + '</span>' +
+      '<button class="agent-feed-dismiss" title="Dismiss card (does not cancel)" data-agent-action="dismiss" data-agent-id="' + safeId + '">×</button>' +
+    '</div>' +
+  '</div>';
+}
+
+// Pure: full innerHTML for the AMBIENT dock; '' when empty so the caller hides
+// the whole region (no stray header). Ambient cards are flat — they never nest.
+function renderAmbientRegion(ambient) {
+  var map = ambient || {}, ids = Object.keys(map);
+  if (ids.length === 0) return '';
+  var cards = '';
+  for (var i = 0; i < ids.length; i++) cards += renderAmbientCard(map[ids[i]]);
+  return '<div class="agent-feeds-ambient-header"><span class="agent-feeds-ambient-title">Ambient</span></div>' +
+    '<div class="agent-feeds-ambient-list">' + cards + '</div>';
 }

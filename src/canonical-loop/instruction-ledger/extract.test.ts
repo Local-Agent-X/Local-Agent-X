@@ -126,9 +126,19 @@ describe("extractConstraints — LLM failure fails OPEN", () => {
     expect(ledger.prohibitions).toEqual(["workspace-write"]);
   });
 
-  it("keeps the read-before-answer obligation on LLM null (now strong)", async () => {
+  it("keeps the read-before-answer obligation on LLM null, with the named target", async () => {
     const ledger = await extractConstraints("Read parser.ts before you answer.", confirmNull);
+    expect(ledger.obligations).toEqual([{ kind: "read-before-answer", target: "parser" }]);
+  });
+
+  it("read-before-answer has NO target when no concrete file was named", async () => {
+    const ledger = await extractConstraints("Look at the repo before you answer.", confirmNull);
     expect(ledger.obligations).toEqual([{ kind: "read-before-answer" }]);
+  });
+
+  it("extracts the target from an absolute path (basename stem)", async () => {
+    const ledger = await extractConstraints("Read /tmp/proj/src/parser.ts before you decide.", confirmNull);
+    expect(ledger.obligations).toEqual([{ kind: "read-before-answer", target: "parser" }]);
   });
 
   it("keeps the commit-when-done obligation on LLM null (unambiguous cue)", async () => {

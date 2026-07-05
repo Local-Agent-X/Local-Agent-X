@@ -86,6 +86,23 @@ const READ_FIRST_CUES: RegExp[] = [
   new RegExp(String.raw`\bbefore\s+(?:you\s+)?(?:answer(?:ing)?|respond(?:ing)?|repl(?:y|ying)|conclud|decid)${GAP}{0,30}?\b(?:read|look\s+at|check|review|inspect|consult|examine)\b`, "gi"),
 ];
 
+// The file the user named to read ("read parser.ts before you answer" → the
+// token `parser.ts`). Captures a token bearing a filename extension or a path
+// slash, right after a read verb (an optional article/quote between). Returns
+// the basename STEM ("parser") — matched loosely against what the op actually
+// read, mirroring the eval's consultedFile check so the guard and the eval can't
+// drift. Undefined when no concrete file was named (the audit then accepts any
+// read). Exported for direct testing.
+const READ_TARGET_RE =
+  /\b(?:read|look\s+at|check|review|inspect|consult|examine)\s+(?:the\s+|at\s+|into\s+|through\s+)?[`'"]?([A-Za-z0-9._@/-]*(?:\.[A-Za-z0-9]+|\/[A-Za-z0-9._-]+))[`'"]?/i;
+export function extractReadTarget(userMessage: string): string | undefined {
+  const m = userMessage.match(READ_TARGET_RE);
+  if (!m) return undefined;
+  const base = m[1].split(/[\\/]/).pop() ?? "";
+  const stem = base.replace(/\.[A-Za-z0-9]+$/, "");
+  return stem.length >= 3 ? stem : undefined;
+}
+
 // STRONG tier: direct negation-verb adjacency only — the phrasings whose
 // CapabilityClass is unambiguous without a model. This is the entire
 // LLM-failure fallback, so it stays deliberately narrow: "don't commit",
@@ -288,9 +305,17 @@ export async function extractConstraints(
   if (prohibitions.length === 0 && result.obligations.length === 0) {
     return emptyLedger(); // confirm rejected the cues (or nothing was strong)
   }
+  // Enrich a read-before-answer obligation with the file the user named, applied
+  // deterministically to BOTH paths (LLM confirm returns the kind without a
+  // target; the strong tier likewise) so the audit can require THAT file was
+  // read, not just any read.
+  const readTarget = extractReadTarget(userMessage);
+  const obligations = result.obligations.map((o) =>
+    o.kind === "read-before-answer" && readTarget ? { kind: "read-before-answer" as const, target: readTarget } : o,
+  );
   return {
     prohibitions,
-    obligations: [...result.obligations],
+    obligations,
     phrases: gate.cues,
   };
 }

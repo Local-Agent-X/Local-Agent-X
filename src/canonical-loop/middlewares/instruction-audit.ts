@@ -40,6 +40,10 @@ const READ_TOOLS = ["read", "grep", "glob"] as const;
 interface AuditState {
   /** A successful git commit was observed in this op's tool output. */
   commitSeen: boolean;
+  /** Lowercased blob of every read/grep/glob arg + bash command this op — the
+   *  "what did we actually consult" evidence a read-before-answer target is
+   *  matched against. Mirrors the eval's consultedFile check so the two agree. */
+  consulted: string;
   /** Each audit fires at most once per op, independently of the others. */
   obligationFired: boolean;
   readFirstFired: boolean;
@@ -48,6 +52,7 @@ interface AuditState {
 
 const initAuditState = (): AuditState => ({
   commitSeen: false,
+  consulted: "",
   obligationFired: false,
   readFirstFired: false,
   violationFired: false,
@@ -73,6 +78,18 @@ export const instructionAuditMiddleware: CanonicalMiddleware = {
         scratch,
       );
       if (scratch.postCommitNudgePending) state.commitSeen = true;
+    }
+    // Accumulate what this turn consulted, for the read-before-answer target
+    // match (same surfaces as the eval: read/grep/glob args + bash commands).
+    for (const tc of ctx.toolCalls ?? []) {
+      const args = (tc.args ?? {}) as Record<string, unknown>;
+      if ((READ_TOOLS as readonly string[]).includes(tc.tool)) {
+        const { _sessionId, ...rest } = args;
+        void _sessionId;
+        state.consulted += " " + JSON.stringify(rest).toLowerCase();
+      } else if (tc.tool === "bash" && typeof args.command === "string") {
+        state.consulted += " " + args.command.toLowerCase();
+      }
     }
     return { kind: "continue" };
   },
@@ -109,22 +126,27 @@ export const instructionAuditMiddleware: CanonicalMiddleware = {
       };
     }
 
-    // 1b. Read-before-answer obligation: the user asked to consult the repo
-    // before answering, but this final answer arrived with no read/grep/glob
-    // this op. Nudge once to open the file(s) first, then answer. (toolsCalledThisOp
-    // is the ok-only set, so a failed read doesn't count as satisfying it.)
-    const wantsReadFirst = opObligations(ctx.op.id).some(o => o.kind === "read-before-answer");
-    if (wantsReadFirst && !state.readFirstFired &&
-        !READ_TOOLS.some(t => ctx.toolsCalledThisOp.has(t))) {
-      state.readFirstFired = true;
-      return {
-        kind: "nudge",
-        message:
-          "(Instruction audit: the user asked you to READ / consult the repo " +
-          "before answering, but no read, grep, or glob has run this op. Open the " +
-          "relevant file(s) first, then answer from what you actually read.)",
-        reason: INSTRUCTION_OBLIGATION_REASON,
-      };
+    // 1b. Read-before-answer obligation: the user asked to consult a file (or
+    // the repo) before answering. When they named a file, require THAT file was
+    // consulted (its stem appears in what we read) — an unrelated read no longer
+    // satisfies it; when no file was named, any read/grep/glob does. Fires once.
+    const readObl = opObligations(ctx.op.id).find(o => o.kind === "read-before-answer") as
+      | { kind: "read-before-answer"; target?: string }
+      | undefined;
+    if (readObl && !state.readFirstFired) {
+      const satisfied = readObl.target
+        ? state.consulted.includes(readObl.target.toLowerCase())
+        : READ_TOOLS.some(t => ctx.toolsCalledThisOp.has(t));
+      if (!satisfied) {
+        state.readFirstFired = true;
+        return {
+          kind: "nudge",
+          message: readObl.target
+            ? `(Instruction audit: the user asked you to read ${readObl.target} before answering, but nothing this op consulted it. Open ${readObl.target} first, then answer from what you actually read.)`
+            : "(Instruction audit: the user asked you to READ / consult the repo before answering, but no read, grep, or glob has run this op. Open the relevant file(s) first, then answer from what you actually read.)",
+          reason: INSTRUCTION_OBLIGATION_REASON,
+        };
+      }
     }
 
     // 2. Defense-in-depth: a forbidden capability class's tool was attempted

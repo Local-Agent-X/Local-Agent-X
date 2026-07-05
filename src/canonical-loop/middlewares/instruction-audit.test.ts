@@ -104,6 +104,43 @@ describe("instruction-audit middleware", () => {
     expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
   });
 
+  const namedFileObligation = () => ledger({
+    obligations: [{ kind: "read-before-answer", target: "parser" }],
+    phrases: ["read parser.ts before you answer"],
+  });
+
+  it("target-aware: an unrelated read does NOT satisfy a named-file obligation", async () => {
+    const c = ctx();
+    setOpLedger(c.op.id, namedFileObligation());
+    await instructionAuditMiddleware.afterToolExecution!(ctx({
+      op: c.op,
+      toolCalls: [{ toolCallId: "r1", tool: "read", args: { path: "src/other.ts" } }],
+    }));
+    const r = await instructionAuditMiddleware.afterModelCall!(c);
+    expect(r).toMatchObject({ kind: "nudge", reason: INSTRUCTION_OBLIGATION_REASON });
+    expect(r.kind === "nudge" ? r.message : "").toContain("parser");
+  });
+
+  it("target-aware: reading the named file satisfies the obligation", async () => {
+    const c = ctx();
+    setOpLedger(c.op.id, namedFileObligation());
+    await instructionAuditMiddleware.afterToolExecution!(ctx({
+      op: c.op,
+      toolCalls: [{ toolCallId: "r1", tool: "read", args: { path: "src/parser.ts" } }],
+    }));
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
+  it("target-aware: a bash cat of the named file also satisfies it", async () => {
+    const c = ctx();
+    setOpLedger(c.op.id, namedFileObligation());
+    await instructionAuditMiddleware.afterToolExecution!(ctx({
+      op: c.op,
+      toolCalls: [{ toolCallId: "b1", tool: "bash", args: { command: "cat src/parser.ts" } }],
+    }));
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
   it("nudges once when a forbidden capability's tool was attempted", async () => {
     const c = ctx({ attemptedToolsThisOp: new Set(["web_fetch"]) });
     setOpLedger(c.op.id, ledger({ prohibitions: ["egress"], phrases: ["no network"] }));

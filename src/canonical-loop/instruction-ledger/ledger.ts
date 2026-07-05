@@ -21,7 +21,11 @@ import type { CapabilityClass } from "../../tool-registry.js";
 /** Something the user asked the agent to do (or to have done) for this op. */
 export type Obligation =
   | { kind: "commit-when-done" }
-  | { kind: "read-before-answer" };
+  /** `target` is the basename stem of the file the user named ("parser" from
+   *  "read parser.ts before you answer"), matched loosely against what the op
+   *  actually read. Undefined when no concrete file was named → any read
+   *  satisfies it. */
+  | { kind: "read-before-answer"; target?: string };
 
 export interface InstructionLedger {
   /** Capability classes the user forbade for this op. */

@@ -109,6 +109,33 @@ const STRONG_PROHIBITIONS: ReadonlyArray<{ re: RegExp; cls: CapabilityClass }> =
   { re: /\b(?:just|only)\s+tell\s+me\s+(?:what|which|where|why|how|if|whether)\b/gi, cls: "workspace-write" },
 ];
 
+// A prohibition whose object is a PARTITIVE / "leave-the-rest-alone" referent —
+// "don't change any OTHER feature", "don't touch the REST", "don't edit anything
+// ELSE". This is logically NEVER a whole-workspace write ban: the words other /
+// rest / else only mean something if the task IS editing the non-other subset.
+// So a `workspace-write` prohibition from such a phrase is always a spurious
+// over-block (it bricks the very edits the task asked for — the exact "invented
+// constraint blocks an unconstrained op" failure this module warns about). The
+// veto is deliberately NARROW — it fires only on an explicit partitive object,
+// so "don't touch the config" / "don't touch main.ts" (whole-session read-only
+// intents the strong tier deliberately keeps) are untouched. Fail-open-safe:
+// dropping it can at worst miss a nudge, never brick a write task.
+const SCOPED_WRITE_CARVEOUT =
+  /\b(?:don['’]?t|do\s+not|never)\s+(?:edit|modif(?:y|ies)|chang(?:e|es)|touch(?:es)?|writ(?:e|es)|rewrite|remove|delete|alter)\b[^.?!\n]{0,40}?\b(?:other|others|the\s+rest|remaining|(?:any|every)thing\s+else)\b/i;
+
+/** True when the message forbids editing only a "leave-the-rest-alone" subset,
+ *  which can never be a blanket workspace-write ban. Exported for direct tests. */
+export function isScopedWriteCarveout(userMessage: string): boolean {
+  return SCOPED_WRITE_CARVEOUT.test(userMessage);
+}
+
+/** Drop a spurious `workspace-write` prohibition that came from a partitive
+ *  carve-out. Other classes and obligations pass through untouched. */
+function vetoScopedWrite(prohibitions: readonly CapabilityClass[], userMessage: string): CapabilityClass[] {
+  if (!isScopedWriteCarveout(userMessage)) return [...prohibitions];
+  return prohibitions.filter((c) => c !== "workspace-write");
+}
+
 export interface PhraseGateResult {
   /** Literal cue substrings matched in the message; empty = no gate hit. */
   cues: string[];
@@ -139,6 +166,9 @@ export function phraseGate(userMessage: string): PhraseGateResult {
     if (re.test(userMessage) && !strong.prohibitions.includes(cls)) strong.prohibitions.push(cls);
     re.lastIndex = 0; // /g regex reused via .test — reset between calls
   }
+  // A partitive carve-out ("don't change any OTHER feature") is never a blanket
+  // write ban — never let the strong (LLM-outage) tier over-block on one.
+  strong.prohibitions = vetoScopedWrite(strong.prohibitions, userMessage);
   if (OBLIGATION_CUES.some((re) => userMessage.match(re) !== null)) {
     strong.obligations.push({ kind: "commit-when-done" });
   }
@@ -176,6 +206,7 @@ HIGH PRECISION RULES:
 - Include a constraint ONLY when the user EXPLICITLY stated it as an instruction for THIS task.
 - Narration ("I never run the tests"), questions, and negations about outcomes ("don't break the build") are NOT constraints.
 - "I'll test/verify/run/handle it myself" implies the agent should not do that step itself — map to the matching class.
+- "workspace-write" means the user forbade editing files AT ALL (a diagnose/read-only session). A prohibition that only CARVES OUT a subset while the task itself asks for changes is NOT workspace-write — e.g. "remove X but don't change any OTHER feature", "fix the bug but don't touch the tests", "refactor auth but leave the public API alone". If the message asks you to edit/create/remove/rename/refactor anything, do NOT return workspace-write.
 - When in doubt, return empty arrays.`;
 
 async function llmConfirm(
@@ -250,11 +281,15 @@ export async function extractConstraints(
 
   // LLM unavailable/failed → only the unambiguous deterministic tier stands.
   const result = confirmed ?? gate.strong;
-  if (result.prohibitions.length === 0 && result.obligations.length === 0) {
+  // Robust across BOTH paths: even if the model over-confirms workspace-write on
+  // a "leave the rest alone" carve-out, drop it — such a phrase can never mean
+  // "edit nothing", and enforcing it would brick the edits the task requires.
+  const prohibitions = vetoScopedWrite(result.prohibitions, userMessage);
+  if (prohibitions.length === 0 && result.obligations.length === 0) {
     return emptyLedger(); // confirm rejected the cues (or nothing was strong)
   }
   return {
-    prohibitions: [...result.prohibitions],
+    prohibitions,
     obligations: [...result.obligations],
     phrases: gate.cues,
   };

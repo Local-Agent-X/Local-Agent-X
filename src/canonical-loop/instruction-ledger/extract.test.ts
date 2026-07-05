@@ -19,6 +19,7 @@ import {
   extractConstraints,
   phraseGate,
   validateConfirmation,
+  isScopedWriteCarveout,
   type ConfirmConstraintsFn,
 } from "./extract.js";
 
@@ -186,6 +187,55 @@ describe("phraseGate — strong tier stays narrow", () => {
   it("is reusable across calls (no /g lastIndex bleed)", () => {
     expect(phraseGate("don't touch main.ts").strong.prohibitions).toEqual(["workspace-write"]);
     expect(phraseGate("don't touch main.ts").strong.prohibitions).toEqual(["workspace-write"]);
+  });
+});
+
+describe("scoped 'leave-the-rest-alone' carve-outs never become a blanket write ban", () => {
+  // Regression for the instruction-ledger over-block that flag-removal-v2 caught:
+  // "Remove betaSearch … Do not change or remove any OTHER feature" was extracted
+  // as a blanket workspace-write ban, and pre-dispatch then blocked EVERY edit —
+  // bricking the very removal the task asked for.
+  it("isScopedWriteCarveout matches partitive objects, not whole-session read-only intents", () => {
+    expect(isScopedWriteCarveout("Do not change or remove any other feature.")).toBe(true);
+    expect(isScopedWriteCarveout("don't touch the other modules")).toBe(true);
+    expect(isScopedWriteCarveout("leave the rest unchanged — don't edit the rest")).toBe(true);
+    expect(isScopedWriteCarveout("don't modify anything else")).toBe(true);
+    // NOT a carve-out — these are the whole-session read-only intents the strong
+    // tier deliberately keeps.
+    expect(isScopedWriteCarveout("don't touch the config")).toBe(false);
+    expect(isScopedWriteCarveout("don't edit any code")).toBe(false);
+    expect(isScopedWriteCarveout("don't touch main.ts")).toBe(false);
+  });
+
+  it("phraseGate strong tier drops workspace-write on a partitive carve-out", () => {
+    expect(phraseGate("Do not change or remove any other feature.").strong.prohibitions).toEqual([]);
+    expect(phraseGate("Refactor auth, but don't touch the other services.").strong.prohibitions).toEqual([]);
+    // the locked whole-session intents are UNCHANGED
+    expect(phraseGate("don't touch the config").strong.prohibitions).toEqual(["workspace-write"]);
+    expect(phraseGate("don't touch main.ts").strong.prohibitions).toEqual(["workspace-write"]);
+  });
+
+  it("extractConstraints drops workspace-write even when the LLM over-confirms it (v2 prompt)", async () => {
+    const overConfirm = vi.fn<ConfirmConstraintsFn>(async () => ({
+      prohibitions: ["workspace-write"],
+      obligations: [],
+    }));
+    const ledger = await extractConstraints(
+      'Remove betaSearch COMPLETELY — the flag and the entire feature. ' +
+        "Do not change or remove any other feature. Report what you changed.",
+      overConfirm,
+    );
+    expect(ledger.prohibitions).toEqual([]);
+    expect(overConfirm).toHaveBeenCalledTimes(1); // the cue still gated an LLM call
+  });
+
+  it("extractConstraints drops workspace-write on the strong-tier fallback too (LLM null)", async () => {
+    const confirmNull: ConfirmConstraintsFn = async () => null;
+    const ledger = await extractConstraints(
+      "Rename the helper across the repo but don't change any other feature.",
+      confirmNull,
+    );
+    expect(ledger.prohibitions).toEqual([]);
   });
 });
 

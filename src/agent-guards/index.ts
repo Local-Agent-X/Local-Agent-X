@@ -16,6 +16,7 @@ export {
   checkUnsupportedOperationalClaim,
   hasFreshOperationalEvidence,
   looksLikeDefinitiveOperationalClaim,
+  runtimeCausalityEvidence,
 } from "./operational-claim.js";
 export {
   checkUngroundedCodebaseAdvice,
@@ -27,6 +28,11 @@ export {
   CLAIM_GROUNDING_RULES,
   CODEBASE_ADVICE_GROUNDING_REASON,
   CODEBASE_ADVICE_GROUNDING_STATUS,
+  OPERATIONAL_CLAIM_REASON,
+  CLEANUP_VERIFY_REASON,
+  CLEANUP_VERIFY_FALSE_DONE_REASON,
+  SOURCE_VERIFY_REASON,
+  RENDER_VERIFY_REASON,
   claimGroundingRule,
   evaluateClaimGrounding,
   type ClaimGroundingRule,

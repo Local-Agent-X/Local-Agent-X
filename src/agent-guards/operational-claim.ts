@@ -1,4 +1,5 @@
 import { stripCodeBlocks } from "./code-strip.js";
+import { evaluateClaimGrounding, type EvidenceKind } from "./claim-grounding.js";
 
 // Claims about what a running system did or why it did it need fresh
 // observation. Conversation history and durable memory can provide a lead,
@@ -34,15 +35,22 @@ export function looksLikeDefinitiveOperationalClaim(text: string): boolean {
 
 /** Successful read/inspection tools from this op count as fresh evidence. */
 export function hasFreshOperationalEvidence(toolsCalledThisOp: Set<string>): boolean {
+  return runtimeCausalityEvidence(toolsCalledThisOp).includes("diagnostic-read");
+}
+
+/** Evidence adapter for the canonical claim-grounding table. Operational-claim
+ * owns which tools count as fresh diagnostics; claim-grounding owns the policy
+ * that runtime/causality claims require diagnostic-read evidence. */
+export function runtimeCausalityEvidence(toolsCalledThisOp: Set<string>): EvidenceKind[] {
   for (const rawName of toolsCalledThisOp) {
     const name = rawName.toLowerCase();
     if (NON_DIAGNOSTIC_TOOLS.has(name) || name.startsWith("memory_")) continue;
     if (
       /(?:^|_)(?:read|grep|glob|search|query|inspect|diagnos|audit|log|status|list|fetch)(?:_|$)/.test(name) ||
       /^(?:bash|shell|browser|http_request|web_search)$/.test(name)
-    ) return true;
+    ) return ["diagnostic-read"];
   }
-  return false;
+  return [];
 }
 
 /**
@@ -55,11 +63,6 @@ export function checkUnsupportedOperationalClaim(
   toolsCalledThisOp: Set<string>,
 ): string | null {
   if (!looksLikeDefinitiveOperationalClaim(text)) return null;
-  if (hasFreshOperationalEvidence(toolsCalledThisOp)) return null;
-  return (
-    "You made a definitive claim about a system's runtime, policy, security decision, or causal history " +
-    "without fresh diagnostic evidence in this op. Memory and prior assistant messages are leads, not evidence. " +
-    "Inspect logs/state/code with an available read-only tool before asserting the claim. If verification is " +
-    "unavailable, retract the claim and explicitly say what is unknown or only a hypothesis."
-  );
+  const verdict = evaluateClaimGrounding("runtime-causality", runtimeCausalityEvidence(toolsCalledThisOp));
+  return verdict.grounded ? null : verdict.message;
 }

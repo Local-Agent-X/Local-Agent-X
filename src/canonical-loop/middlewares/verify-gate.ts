@@ -28,6 +28,7 @@ import {
   recordExternalVerify,
   guessTestSubject,
   decideDeletedTest,
+  SOURCE_VERIFY_REASON,
   type VerifyGateState,
   type VerifyTurnAction,
 } from "../../agent-guards/index.js";
@@ -201,7 +202,7 @@ export const verifyGateMiddleware: CanonicalMiddleware = {
     if (delNudge) return { kind: "nudge", message: delNudge, reason: "verify-gate-test-deletion" };
 
     const r = checkVerifyGate(state);
-    if (r.nudge) return { kind: "nudge", message: r.nudge, reason: "verify-gate" };
+    if (r.nudge) return { kind: "nudge", message: r.nudge, reason: SOURCE_VERIFY_REASON };
     return { kind: "continue" };
   },
 };

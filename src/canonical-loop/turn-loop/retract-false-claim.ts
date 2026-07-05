@@ -23,6 +23,7 @@
 // approval" is a misplaced permission ask, not superseded work, so it stands.
 
 import type { CommitTurnMessage } from "../checkpoint.js";
+import { OPERATIONAL_CLAIM_REASON, CLEANUP_VERIFY_FALSE_DONE_REASON } from "../../agent-guards/index.js";
 
 const RETRACTABLE_REASONS: ReadonlySet<string> = new Set([
   "worker-hallucination",
@@ -49,16 +50,17 @@ const RETRACTABLE_REASONS: ReadonlySet<string> = new Set([
   "attribution-confabulation",
   // A definitive runtime/security/policy explanation made without any fresh
   // diagnostic evidence. The retry either inspects the system or replaces it
-  // with an explicitly uncertain answer.
-  "unsupported-operational-claim",
+  // with an explicitly uncertain answer. (runtime-causality rule, consequence
+  // "retract" — pinned to this set by claim-grounding-dispatch.test.ts.)
+  OPERATIONAL_CLAIM_REASON,
   // A cleanup/removal sweep declared finished ("Cleanup complete — no tailnet
   // code remains") with no search ever confirming it (cleanup-verify gate). The
   // claim is confirmed-false the moment it's made — the gate only emits this
   // reason when the wrap-up positively asserts done AND no grep came back empty
   // — so retract it; the nudged next turn carries the real, verified state. An
-  // honest "not done / still remain" wrap-up uses the plain "cleanup-verify"
-  // reason and is NOT in this set, so it stands.
-  "cleanup-verify-false-done",
+  // honest "not done / still remain" wrap-up uses the plain CLEANUP_VERIFY_REASON
+  // and is NOT in this set, so it stands.
+  CLEANUP_VERIFY_FALSE_DONE_REASON,
 ]);
 
 export function isRetractableHallucination(reason: string | null | undefined): boolean {

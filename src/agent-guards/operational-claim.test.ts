@@ -3,6 +3,7 @@ import {
   checkUnsupportedOperationalClaim,
   hasFreshOperationalEvidence,
   looksLikeDefinitiveOperationalClaim,
+  runtimeCausalityEvidence,
 } from "./operational-claim.js";
 
 describe("operational claim grounding", () => {
@@ -24,8 +25,21 @@ describe("operational claim grounding", () => {
   it("accepts a fresh diagnostic read", () => {
     const tools = new Set(["read_my_logs"]);
     expect(hasFreshOperationalEvidence(tools)).toBe(true);
+    expect(runtimeCausalityEvidence(tools)).toEqual(["diagnostic-read"]);
     expect(checkUnsupportedOperationalClaim("The server blocked it because the policy rejected the call.", tools))
       .toBeNull();
+  });
+
+  it("maps diagnostic tool families into canonical diagnostic-read evidence", () => {
+    for (const tool of ["read", "grep_logs", "query_state", "inspect_policy", "status", "bash", "browser", "http_request"]) {
+      expect(runtimeCausalityEvidence(new Set([tool])), tool).toEqual(["diagnostic-read"]);
+    }
+  });
+
+  it("does not map memory or tool discovery to diagnostic evidence", () => {
+    for (const tool of ["memory_search", "memory_recall", "tool_search", "search_past_sessions"]) {
+      expect(runtimeCausalityEvidence(new Set([tool])), tool).toEqual([]);
+    }
   });
 
   it("allows an honest uncertainty statement without forcing a tool", () => {

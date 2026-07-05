@@ -3,7 +3,7 @@
  * a search lead, but it may not turn stale memory or prior assistant prose into
  * a definitive explanation of runtime/security/policy state.
  */
-import { checkUnsupportedOperationalClaim } from "../../agent-guards/index.js";
+import { checkUnsupportedOperationalClaim, OPERATIONAL_CLAIM_REASON } from "../../agent-guards/index.js";
 import { getMiddlewareState } from "./state.js";
 import type { CanonicalMiddleware } from "./types.js";
 
@@ -33,6 +33,6 @@ export const operationalClaimMiddleware: CanonicalMiddleware = {
     if (!nudge) return { kind: "continue" };
 
     flag.fired = true;
-    return { kind: "nudge", message: nudge, reason: "unsupported-operational-claim" };
+    return { kind: "nudge", message: nudge, reason: OPERATIONAL_CLAIM_REASON };
   },
 };

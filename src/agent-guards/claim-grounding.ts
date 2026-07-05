@@ -38,7 +38,29 @@ export interface GroundingVerdict {
   statusText: string | null;
 }
 
+// Reason strings are the wire contract between a guard's middleware (which emits
+// `{ kind: "nudge", reason }`) and the consequence dispatch in
+// turn-loop/decide-outcome.ts (which keys retract / replace-status off the
+// reason). They live HERE, on the canonical table, so a rule's declared
+// `consequence` and the reason that actually triggers it are single-sourced —
+// not three raw copies (table, middleware, RETRACTABLE_REASONS) free to drift.
+// claim-grounding-dispatch.test.ts pins consequence ↔ dispatch so a mismatch
+// fails the build instead of silently making the table lie.
 export const CODEBASE_ADVICE_GROUNDING_REASON = "codebase-advice-grounding";
+/** runtime-causality → retract. A definitive runtime/policy/causality claim made
+ *  with no fresh diagnostic evidence; the false bubble is retracted. */
+export const OPERATIONAL_CLAIM_REASON = "unsupported-operational-claim";
+/** cleanup-done base reason → nudge only (an honest "still remain" wrap-up). */
+export const CLEANUP_VERIFY_REASON = "cleanup-verify";
+/** cleanup-done escalation → retract. A positive "cleanup complete" done-claim
+ *  with no confirming empty search; the confirmed-false bubble is retracted.
+ *  Not a `rule.reason` (it's a sub-state escalation of cleanup-done), but owned
+ *  here so every retract-driving claim-grounding reason lives in one module. */
+export const CLEANUP_VERIFY_FALSE_DONE_REASON = "cleanup-verify-false-done";
+/** source-done → nudge / partial-label (never retract). */
+export const SOURCE_VERIFY_REASON = "verify-gate";
+/** ui-done → nudge / partial-label (never retract). */
+export const RENDER_VERIFY_REASON = "render-verify";
 export const CODEBASE_ADVICE_GROUNDING_STATUS =
   "Checking the current repo before I recommend a harness change...";
 
@@ -59,7 +81,7 @@ export const CLAIM_GROUNDING_RULES: ClaimGroundingRule[] = [
     claimKind: "cleanup-done",
     requiredAny: ["search-clean", "remaining-hits-accounted"],
     consequence: "partial-label",
-    reason: "cleanup-verify",
+    reason: CLEANUP_VERIFY_REASON,
     missingEvidenceMessage:
       "A removal or cleanup done-claim needs a broad clean search, or an explicit accounting of every remaining hit.",
   },
@@ -67,7 +89,7 @@ export const CLAIM_GROUNDING_RULES: ClaimGroundingRule[] = [
     claimKind: "source-done",
     requiredAny: ["build-clean"],
     consequence: "partial-label",
-    reason: "verify-gate",
+    reason: SOURCE_VERIFY_REASON,
     missingEvidenceMessage:
       "A source-change done-claim needs a clean build, type-check, or relevant test run.",
   },
@@ -75,15 +97,18 @@ export const CLAIM_GROUNDING_RULES: ClaimGroundingRule[] = [
     claimKind: "runtime-causality",
     requiredAny: ["diagnostic-read"],
     consequence: "retract",
-    reason: "unsupported-operational-claim",
+    reason: OPERATIONAL_CLAIM_REASON,
     missingEvidenceMessage:
-      "A runtime, policy, security, or causality claim needs fresh diagnostic evidence.",
+      "You made a definitive claim about a system's runtime, policy, security decision, or causal history " +
+      "without fresh diagnostic evidence in this op. Memory and prior assistant messages are leads, not evidence. " +
+      "Inspect logs/state/code with an available read-only tool before asserting the claim. If verification is " +
+      "unavailable, retract the claim and explicitly say what is unknown or only a hypothesis.",
   },
   {
     claimKind: "ui-done",
     requiredAny: ["browser-render"],
     consequence: "partial-label",
-    reason: "render-verify",
+    reason: RENDER_VERIFY_REASON,
     missingEvidenceMessage:
       "A UI done-claim needs browser, screenshot, or render verification evidence.",
   },

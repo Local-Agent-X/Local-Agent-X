@@ -23,6 +23,8 @@ import {
   checkCleanupVerify,
   claimsCleanupDone,
   createCleanupVerifyState,
+  CLEANUP_VERIFY_REASON,
+  CLEANUP_VERIFY_FALSE_DONE_REASON,
   type CleanupToolResult,
   type CleanupVerifyState,
 } from "../../agent-guards/index.js";
@@ -88,8 +90,8 @@ export const cleanupVerifyMiddleware: CanonicalMiddleware = {
       // back. An honest "not done / still remain" wrap-up keeps the plain reason
       // and stands.
       const reason = claimsCleanupDone(ctx.assistantContent)
-        ? "cleanup-verify-false-done"
-        : "cleanup-verify";
+        ? CLEANUP_VERIFY_FALSE_DONE_REASON
+        : CLEANUP_VERIFY_REASON;
       return { kind: "nudge", message: r.nudge, reason };
     }
     return { kind: "continue" };

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { resolve, join } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +7,8 @@ import { assertToolCallAllowed, ToolBlocked, type PreDispatchCtx } from "./pre-d
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
 import type { LAXConfig } from "../types.js";
 import { ToolPolicy } from "../tool-policy.js";
+import { setOpLedger } from "../canonical-loop/instruction-ledger/index.js";
+import { _resetOpLedgers } from "../canonical-loop/instruction-ledger/ledger.js";
 
 // ── F4 behavioral proof ──────────────────────────────────────────────────
 // The pure SecurityLayer decision for sql_query paths is already unit-tested
@@ -146,5 +148,85 @@ describe("F4: executor pre-dispatch chain routes sql_query through SecurityLayer
       expect(e).toBeInstanceOf(ToolBlocked);
       expect((e as ToolBlocked).stage).toBe("security");
     }
+  });
+});
+
+// ── Per-op instruction-ledger prohibitions ─────────────────────────────────
+// The gate sits beside the category kill-switches: when the op's ledger
+// records a user prohibition for a capability class, every tool IN that class
+// (classified via hasCapability, so synonyms count) is hard-denied for that
+// op — and NOTHING else changes. The regression half is the fail-open
+// contract: no opId / no ledger / empty ledger must block nothing.
+describe("per-op instruction-ledger capability prohibitions", () => {
+  // No security/toolPolicy/threatEngine: the packs tolerate undefined, so the
+  // ledger gate is the only gate that can fire for these calls.
+  function opCtx(opId?: string): PreDispatchCtx {
+    return { sessionId: "test", callContext: "local", skipSessionPolicy: true, opId };
+  }
+
+  afterEach(() => {
+    _resetOpLedgers();
+  });
+
+  it("blocks workspace-write tools when the op ledger forbids workspace-write", async () => {
+    setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit any code"] });
+    for (const name of ["write", "edit"]) {
+      try {
+        await assertToolCallAllowed(
+          { id: `p-${name}`, name, args: { path: "a.txt", content: "x" } },
+          opCtx("op-1"),
+        );
+        throw new Error("expected ToolBlocked");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ToolBlocked);
+        expect((e as ToolBlocked).stage).toBe("tool-policy");
+        expect((e as ToolBlocked).disposition).toBe("hard-deny");
+        expect((e as ToolBlocked).reason).toContain("The user asked you not to edit or write files");
+      }
+    }
+  });
+
+  it("blocks class synonyms (ari_file), not just canonical names", async () => {
+    setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit any code"] });
+    await expect(
+      assertToolCallAllowed(
+        { id: "p-ari", name: "ari_file", args: { action: "write", path: "a.txt" } },
+        opCtx("op-1"),
+      ),
+    ).rejects.toBeInstanceOf(ToolBlocked);
+  });
+
+  it("still allows tools OUTSIDE the forbidden class (read passes under a workspace-write ban)", async () => {
+    setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit any code"] });
+    await expect(
+      assertToolCallAllowed({ id: "p-read", name: "read", args: { path: "a.txt" } }, opCtx("op-1")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("REGRESSION fail-open: empty ledger blocks nothing", async () => {
+    setOpLedger("op-1", { prohibitions: [], obligations: [], phrases: [] });
+    await expect(
+      assertToolCallAllowed({ id: "p-w", name: "write", args: { path: "a.txt", content: "x" } }, opCtx("op-1")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("REGRESSION fail-open: no ledger recorded for the op blocks nothing", async () => {
+    await expect(
+      assertToolCallAllowed({ id: "p-w", name: "write", args: { path: "a.txt", content: "x" } }, opCtx("op-none")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("REGRESSION fail-open: no opId in ctx blocks nothing, even with a prohibition on record", async () => {
+    setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit any code"] });
+    await expect(
+      assertToolCallAllowed({ id: "p-w", name: "write", args: { path: "a.txt", content: "x" } }, opCtx(undefined)),
+    ).resolves.toBeUndefined();
+  });
+
+  it("scopes prohibitions to THEIR op — another op's ledger doesn't leak", async () => {
+    setOpLedger("op-other", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit any code"] });
+    await expect(
+      assertToolCallAllowed({ id: "p-w", name: "write", args: { path: "a.txt", content: "x" } }, opCtx("op-1")),
+    ).resolves.toBeUndefined();
   });
 });

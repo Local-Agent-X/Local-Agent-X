@@ -24,6 +24,8 @@ import {
   destructiveOperationReason,
 } from "../approval-manager.js";
 import { getRuntimeConfig } from "../config.js";
+import { hasCapability, type CapabilityClass } from "../tool-registry.js";
+import { opForbidsCapability } from "../canonical-loop/instruction-ledger/index.js";
 import { isProtectedSetting } from "../settings-schema.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
@@ -72,6 +74,11 @@ export interface ToolCallShape {
 export interface PreDispatchCtx {
   sessionId: string;
   callContext: "local" | "api" | "delegated" | "cron";
+  /** Canonical op id — keys the per-op instruction ledger (user-stated run
+   *  constraints, e.g. "don't edit any code"). Absent for non-op callers
+   *  (ARI bridge, MCP, ad-hoc dispatches), which skips the op-prohibition
+   *  gate entirely (fail-open). */
+  opId?: string;
   skipSessionPolicy?: boolean;
   security?: SecurityLayer;
   rbac?: { manager: RBACManager; role: Role };
@@ -79,6 +86,17 @@ export interface PreDispatchCtx {
   threatEngine?: ThreatEngine;
   approval?: { onEvent: (event: ServerEvent) => void; context?: string };
 }
+
+/** One entry per capability class the instruction ledger can prohibit.
+ *  `verb` phrases the user's restriction back to the model; `recovery` tells
+ *  it how to proceed without the tool. A class without an entry simply isn't
+ *  op-prohibitable at this gate. */
+const OP_PROHIBITION_GUIDANCE: ReadonlyArray<{ cls: CapabilityClass; verb: string; recovery: string }> = [
+  { cls: "workspace-write", verb: "edit or write files", recovery: "Propose the change in your reply (e.g. as a diff or step-by-step instructions) instead of modifying files." },
+  { cls: "egress", verb: "browse or send data over the network", recovery: "Work from local files and what is already in context; don't retry network tools." },
+  { cls: "shell", verb: "run shell commands", recovery: "Use direct file tools (read/write/edit) if those are allowed, or tell the user the exact command to run themselves." },
+  { cls: "sensitive-read", verb: "read local files or data", recovery: "Answer from what is already in the conversation context; don't retry read tools." },
+];
 
 /** Map pack id → ToolBlocked stage so the existing caller-side stage map
  *  (in tool-executor.ts) keeps working unchanged. */
@@ -143,6 +161,28 @@ export async function assertToolCallAllowed(
       recovery: "Computer control is off (off by default). Tell the user it must be enabled in Settings → Security, and that macOS also needs Accessibility permission. Don't re-enable it on your own just to get past this block.",
       userHint: USER_HINTS.policy,
     });
+  }
+
+  // Per-op user prohibitions — the instruction ledger records capability
+  // classes the USER forbade for this op ("don't edit anything", "no
+  // network"). Sits beside the kill-switches: same shape (cheap, predictable,
+  // user-stated), narrower scope (one op, not the whole install). Keyed on
+  // CAPABILITY CLASS via hasCapability — never literal tool names — so
+  // synonyms (ari_file, process_start, browser_navigate) are gated
+  // identically to canonicals. FAIL-OPEN: no opId (non-op callers) or an
+  // absent/empty ledger fires nothing; unconstrained ops are untouched.
+  if (ctx.opId) {
+    for (const { cls, verb, recovery } of OP_PROHIBITION_GUIDANCE) {
+      if (!opForbidsCapability(ctx.opId, cls)) continue;
+      if (!hasCapability(call.name, cls)) continue;
+      throw new ToolBlocked({
+        stage: "tool-policy",
+        disposition: "hard-deny",
+        reason: `The user asked you not to ${verb} in this request; this ${call.name} call is blocked. Respond without it, or ask the user to lift the restriction.`,
+        recovery,
+        userHint: USER_HINTS.policy,
+      });
+    }
   }
 
   // Per-role gate (not a rule pack — RBAC is a principal property).

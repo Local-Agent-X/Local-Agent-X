@@ -157,13 +157,16 @@ async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
 // Pre-dispatch chain blocks set ctx.result and return BLOCK. Audit still
 // runs (so the block message can be re-examined by threat engine + hooks).
 async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
-  const { tc, args, sessionId, callContext, security, rbac, callerRole, toolPolicy } = ctx;
+  const { tc, args, sessionId, callContext, security, rbac, callerRole, toolPolicy, operationId } = ctx;
   try {
     await assertToolCallAllowed(
       { id: tc.id, name: tc.name, args },
       {
         sessionId: sessionId || "default",
         callContext,
+        // Keys the per-op instruction-ledger prohibition gate; undefined for
+        // non-op dispatches, which keeps that gate fail-open.
+        opId: operationId,
         skipSessionPolicy: true,
         security,
         rbac: rbac && callerRole ? { manager: rbac, role: callerRole } : undefined,

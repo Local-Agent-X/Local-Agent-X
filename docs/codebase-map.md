@@ -12,19 +12,19 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1121 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1128 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/security/` | 63 | 24 | XL |  |
-| `src/ops/` | 60 | 22 | XL |  |
+| `src/ops/` | 61 | 22 | XL |  |
 | `src/tools/` | 42 | 130 | XL |  |
 | `src/memory/` | 37 | 106 | XL |  |
 | `src/providers/` | 37 | 17 | L |  |
-| `src/canonical-loop/` | 30 | 117 | XL |  |
-| `src/agency/` | 25 | 14 | L |  |
+| `src/canonical-loop/` | 30 | 119 | XL |  |
+| `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/classifiers/` | 24 | 11 | L |  |
 | `src/auth/` | 22 | 10 | L |  |
@@ -33,10 +33,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/session/` | 19 | 7 | M |  |
 | `src/orchestrator/` | 18 | 21 | L |  |
 | `src/agent-request/` | 17 | 12 | L |  |
+| `src/agent-guards/` | 15 | 16 | L |  |
 | `src/agents/` | 15 | 13 | L |  |
 | `src/chat-ws/` | 14 | 8 | L |  |
 | `src/app-runtime/` | 13 | 12 | L |  |
-| `src/agent-guards/` | 12 | 14 | L |  |
 | `src/anthropic-client/` | 12 | 18 | L |  |
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/autonomy/` | 11 | 4 | M |  |
@@ -76,7 +76,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/errors/` | 1 | 2 | S |  |
 | `src/manifest-generator/` | 1 | 8 | M |  |
 | `src/tool-execution/` | 1 | 19 | L |  |
-| `src/types/` | 1 | 1 | S |  |
+| `src/types/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)
 
@@ -110,6 +110,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/config-hot-reload.ts` | S |
 | `src/config-loader.ts` | S |
 | `src/config-profiles.ts` | S |
+| `src/config-schema.ts` | S |
 | `src/config.ts` | M |
 | `src/contradiction-detector.ts` | M |
 | `src/contradiction-patterns.ts` | S |

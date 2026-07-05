@@ -4,6 +4,7 @@
 //   - handler.ts          — Handler singleton class + lifecycle
 //   - handler-types.ts    — FieldAgent / FieldAgentStatus / SpawnConfig
 //   - handler-tools.ts    — createHandlerTools() — public ToolDefinition factory
+//   - handler-status.ts   — buildAgentStatus() — FieldAgent → status projection
 
 import { EventBus } from "../event-bus.js";
 import { AgencyMessageBus } from "./message-bus.js";
@@ -27,6 +28,7 @@ export type {
   FieldAgentStatus,
 } from "./handler-types.js";
 export { createHandlerTools } from "./handler-tools.js";
+import { buildAgentStatus } from "./handler-status.js";
 
 // -- Helpers ----------------------------------------------------------------
 
@@ -297,9 +299,9 @@ export class Handler {
     if (agentId) {
       const agent = this.agents.get(agentId) ?? this.retired.get(agentId);
       if (!agent) throw new Error(`Agent ${agentId} not found`);
-      return this.buildStatus(agent);
+      return buildAgentStatus(agent);
     }
-    return [...this.agents.values()].map((a) => this.buildStatus(a));
+    return [...this.agents.values()].map((a) => buildAgentStatus(a));
   }
 
   getAgentOutput(agentId: string): string[] {
@@ -357,30 +359,6 @@ export class Handler {
   }
 
   // -- Private --------------------------------------------------------------
-  private buildStatus(agent: FieldAgent): FieldAgentStatus {
-    const done = agent.status === "succeeded" || agent.status === "failed";
-    // Real progress: count tool calls the run has started. The old heuristic
-    // (output.length * 5) stayed pinned at 0 for canonical-loop runs because
-    // their text streams elsewhere and output[] only fills at finalize. Each
-    // tool_start bumps toolCalls via noteAgentActivity; cap at 90 so an
-    // in-flight run never reads as complete, and a no-tool run that's still
-    // working shows a small floor instead of a dead 0.
-    const calls = agent.toolCalls ?? 0;
-    const working = Math.min(90, calls > 0 ? calls * 8 : 5);
-    return {
-      id: agent.id,
-      name: agent.name,
-      role: agent.role,
-      status: agent.status,
-      currentTask: agent.currentTask,
-      progress: done ? 100 : working,
-      outputLines: agent.output.length,
-      startedAt: agent.startedAt,
-      elapsed: Date.now() - agent.startedAt,
-      tokensUsed: agent.tokensUsed,
-      templateId: agent.templateId,
-    };
-  }
 
   /** Bump the real-progress counter for an externally-driven run. Called by
    *  the canonical-loop driver on each tool_start (server/handler-events.ts).

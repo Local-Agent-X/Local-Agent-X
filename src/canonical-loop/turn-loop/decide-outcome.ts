@@ -29,20 +29,17 @@ import {
 } from "./tool-failure-summary.js";
 import { isSilentToolCall } from "./silent-tool-check.js";
 import { appIdsTouchedByTurn, registerOpAppTouch, runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
-import { runBuildVerifyGate, groundTruthSizesNote } from "./build-verify.js";
+import { runBuildVerifyGate } from "./build-verify.js";
 import { runSpecProbeGate } from "./spec-probes.js";
 import { runDesignVerifyGate } from "./design-verify.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
-import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/open-steps.js";
-import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
-import { opCleanupUnverified } from "../middlewares/cleanup-verify.js";
-import { opEditedSourceUnverified, opDeletedTestDodge, opEditedSourcePaths } from "../middlewares/verify-gate.js";
+import { applyTerminalEpilogue } from "./terminal-epilogue.js";
+import { earnedDoneNudge } from "../middlewares/open-steps.js";
+import { opEditedSourceUnverified, opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import {
   CODEBASE_ADVICE_GROUNDING_REASON,
   CODEBASE_ADVICE_GROUNDING_STATUS,
 } from "../../agent-guards/index.js";
-import { recordTerminalOutcome, type OpOutcome } from "./record-outcome.js";
-import { randomUUID } from "node:crypto";
 
 export interface DecideOutcomeInput {
   op: Op;
@@ -331,86 +328,13 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     }
   }
 
-  // Loud-partial guarantee: when the op truly ends here but its task list still
-  // has open steps, append a visible warning to the live bubble AND the commit.
-  // We can't force a stuck model to finish — open-steps and earned-done already
-  // spent their nudges — but a partial must never LOOK finished. This and the
-  // two live corrections below publish `delta` (append), NOT `text`: every
-  // subscribeOpStream consumer forwards a chunk only on a non-empty `delta` or
-  // `replace:true`, so a bare `{text}` is dropped and surfaces only on rehydrate.
-  let endedPartial = false;
-  if (terminalReason === "done") {
-    const warning = openStepsTerminationWarning(op.id);
-    if (warning) {
-      endedPartial = true;
-      publishStreamChunk(op.id, { delta: `\n\n${warning}` });
-      allMessages.push({
-        messageId: `open-steps-warn-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
-        role: "assistant",
-        content: { text: warning },
-      });
-    }
-  }
-
-  // Reconcile-on-green: the orchestrator build-verify gate above ran the project's
-  // build itself and it PASSED, but the model couldn't self-verify (blocked from
-  // running a build on source paths) and may have wrapped up sounding unsure.
-  // Surface the green verdict as the last word so the committed transcript matches
-  // the outcome label (already recorded clean via recordOrchestratorVerify) — the
-  // inverse of the loud-partial guarantee: a partial must never look done, and a
-  // verified-clean edit must never look unverified. Only when the op truly ends
-  // here and didn't also end partial.
-  if (terminalReason !== null && !endedPartial && buildVerifyConfirmation) {
-    publishStreamChunk(op.id, { delta: `\n\n${buildVerifyConfirmation}` });
-    allMessages.push({
-      messageId: `build-verify-ok-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
-      role: "assistant",
-      content: { text: buildVerifyConfirmation },
-    });
-  }
-
-  // Ground-truth file sizes: the claim-verify guards catch a lie about what a
-  // TOOL did, but not a lie about what a FILE is. When the model's summary quotes
-  // a line count (e.g. "AgentController.ts is 294 lines" when it's 588), state the
-  // real sizes as the authoritative last word so a fabricated count can't stand.
-  // Fires whether or not the model self-verified; silent when no size was quoted.
-  if (terminalReason !== null && !endedPartial) {
-    const sizesNote = groundTruthSizesNote(op.id, assistantText);
-    if (sizesNote) {
-      publishStreamChunk(op.id, { delta: `\n\n${sizesNote}` });
-      allMessages.push({
-        messageId: `ground-truth-sizes-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
-        role: "assistant",
-        content: { text: sizesNote },
-      });
-    }
-  }
-
-  // Record the op outcome on its terminal turn (terminalReason stays non-null
-  // only when every continuation gate above declined to extend it → fires once
-  // per op).
-  //
-  // An op that ends still flagged give-up (browser-handoff computed the verdict;
-  // the model was nudged but never delivered) is NOT clean — record it as partial
-  // so the completion metric stops rounding give-ups up to success. Likewise a
-  // removal/cleanup sweep that ends without a confirming empty search
-  // (cleanup-verify's verdict), a coding op that edited source but never reached
-  // a clean build/type-check (verify-gate's verdict), and an op the test-deletion
-  // judge flagged as a DODGE (a live-code test deleted to go green): "done" over
-  // an unverified edit or a dodged test is a partial, not a clean. All verdicts
-  // default false for ops the gate never evaluated, so they only ever demote a
-  // real unrecovered case.
-  if (terminalReason !== null) {
-    const outcome: OpOutcome =
-      terminalReason === "error" ? "aborted"
-        : endedPartial ? "partial"
-        : opGaveUpUnrecovered(op.id) ? "partial"
-        : opCleanupUnverified(op.id) ? "partial"
-        : opEditedSourceUnverified(op.id) ? "partial"
-        : opDeletedTestDodge(op.id) ? "partial"
-        : "clean";
-    recordTerminalOutcome(op, outcome, [...toolCalls.map(tc => tc.tool), ...observedTools]);
-  }
+  // Terminal epilogue (terminal-epilogue.ts): loud-partial warning,
+  // reconcile-on-green confirmation, ground-truth sizes note, and the
+  // clean/partial/aborted outcome record. Appends to allMessages in place.
+  applyTerminalEpilogue(
+    { op, turnIdx, terminalReason, assistantText, buildVerifyConfirmation, toolCalls, observedTools },
+    allMessages,
+  );
 
   return { terminalReason, allMessages };
 }

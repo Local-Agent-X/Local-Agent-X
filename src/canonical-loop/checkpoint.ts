@@ -142,6 +142,22 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
   op.canonical.currentTurnIdx = turnIdx;
   op.canonical.currentCheckpointId = `${op.id}#${turnIdx}`;
 
+  // Terminal app-URL adoption. An app_build adapter learns the app's REAL
+  // serving URL only at the build terminal (a framework build finalizes to
+  // the /apps/<name>/ dev-server proxy — adapters/app-build-finalize.ts),
+  // long after op creation guessed the flat /index.html URL. The adapter
+  // can't write the op record itself (turn-loop boundary rule), so the
+  // terminal commit adopts the URL it reported in providerPayload.url.
+  // Because transitionOp persists before emitting state_changed, every
+  // completion consumer (the AGENTS-sidebar "Open" link in
+  // session-bridge-observer.ts) reads the corrected appUrl. Double-gated —
+  // only ops stamped with appUrl at creation (app_build) and only a clean
+  // "done" terminal — so chat/voice/agent ops and failed builds are inert.
+  if (input.terminalReason === "done" && op.appUrl) {
+    const url = (input.providerState.providerPayload as { url?: unknown } | null | undefined)?.url;
+    if (typeof url === "string" && url.length > 0) op.appUrl = url;
+  }
+
   // Decide whether to clear the redirect column on disk.
   // - We only clear it if THIS turn applied the same instructionId that's
   //   currently on disk. If a newer opRedirect landed mid-turn, its

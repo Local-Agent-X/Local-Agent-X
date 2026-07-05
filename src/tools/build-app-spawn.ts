@@ -19,6 +19,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, statSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { killProcessTree } from "../process-tree-kill.js";
+import { detectFramework } from "./framework-detect.js";
 import type { ToolResult } from "../types.js";
 
 // 15min hard cap. Earlier value was 300s, which killed legitimate builds:
@@ -91,6 +92,20 @@ function artifactLooksComplete(indexPath: string, cliOutput: string): boolean {
   } catch { return false; }
 }
 
+// A framework project (Next/Vite/…) has no root index.html — its artifact is
+// the scaffold itself, so the flat-HTML integrity check above would misread a
+// successful framework build as "no index.html written" and fail it. The
+// adapter terminal (app-build-finalize.ts) does the real framework
+// verification and registers the dev server; this only keeps the spawn layer
+// from vetoing the build first. Exported for the unit test
+// (test/build-app-spawn-framework-gate.test.ts) — runCliBuild needs a real
+// CLI binary, so the gate is pinned directly.
+export function frameworkScaffoldPresent(appDir: string): boolean {
+  const det = detectFramework(appDir);
+  if (det.framework === "static" || det.framework === "unknown") return false;
+  return existsSync(resolve(appDir, "package.json"));
+}
+
 async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
   const { prompt, appDir, appUrl, signal, onEvent, model } = input;
   const indexPath = resolve(appDir, "index.html");
@@ -116,7 +131,7 @@ async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
       onEvent,
     });
     const output = stdout.trim();
-    if (artifactLooksComplete(indexPath, output)) {
+    if (artifactLooksComplete(indexPath, output) || frameworkScaffoldPresent(appDir)) {
       return { content: `App built with Codex CLI!\n\nOpen: ${appUrl}\n\n${output.slice(-500)}` };
     }
     return {
@@ -138,7 +153,7 @@ async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
     // checks — without this gate, a crash mid-write produced a half-file
     // that the agent reported as a successful build, leading the user to
     // a blank page.
-    if (artifactLooksComplete(indexPath, "")) {
+    if (artifactLooksComplete(indexPath, "") || frameworkScaffoldPresent(appDir)) {
       return { content: `App built (with warnings)!\n\nOpen: ${appUrl}\n\n${errMsg.slice(0, 300)}` };
     }
     return { content: `Codex CLI build failed: ${errMsg.slice(0, 500)}`, isError: true };
@@ -179,13 +194,13 @@ async function buildWithClaude(input: BuildSpawnInput): Promise<ToolResult> {
     });
     const summary = finalText.value || stdout.trim();
     const indexPath = resolve(appDir, "index.html");
-    if (artifactLooksComplete(indexPath, summary)) {
+    if (artifactLooksComplete(indexPath, summary) || frameworkScaffoldPresent(appDir)) {
       return { content: `App built with Claude CLI!\n\nOpen: ${appUrl}\n\n${summary.slice(-500)}` };
     }
     return { content: `Claude CLI finished but index.html missing or appears truncated/incomplete.\n${summary.slice(-1000)}`, isError: true };
   } catch (e) {
     const errMsg = (e as Error).message || "unknown";
-    if (artifactLooksComplete(resolve(appDir, "index.html"), "")) {
+    if (artifactLooksComplete(resolve(appDir, "index.html"), "") || frameworkScaffoldPresent(appDir)) {
       return { content: `App built (with warnings)!\n\nOpen: ${appUrl}\n\n${errMsg.slice(0, 300)}` };
     }
     return { content: `Claude CLI build failed: ${errMsg.slice(0, 500)}`, isError: true };

@@ -30,6 +30,8 @@ import type { ProviderStateEnvelope } from "../contract-types.js";
 import { verifyWriteLanded } from "../../tools/verify.js";
 import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors, formatStartupErrors, scanAppForUnverifiedNativeParity, formatUnverifiedNativeParity, scanAppForFakedFrontend, formatFakedFrontend } from "../../tools/app-build-verify.js";
 import type { AppTier } from "../../tools/app-tier.js";
+import { detectFramework } from "../../tools/framework-detect.js";
+import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
 import { createAnthropicAdapter } from "./anthropic.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
@@ -63,6 +65,10 @@ export interface AppBuildAdapterOptions {
    *  subprocesses. Production passes nothing — the default runner calls
    *  through to src/tools/build-app-spawn.ts. */
   cliRunner?: CliBuildRunner;
+  /** Test seam: override the framework-finalize deps (registerDevServer etc.)
+   *  so unit tests don't touch real dev-server records or ports. Production
+   *  passes nothing — defaults resolve to src/tools/dev-server.ts. */
+  finalizeDeps?: FinalizeFrameworkDeps;
   /** Test seam: override provider-adapter construction for in-canonical
    *  strategy tests. Production passes nothing. */
   providerAdapterFactory?: (provider: string, opts: ProviderAdapterFactoryOptions) => Promise<Adapter>;
@@ -146,6 +152,11 @@ class AppBuildVerifyAdapter implements Adapter {
       // those scans would misread as a missing-file or cross-origin smell).
       return result;
     }
+    // On-disk truth supersedes the prompt-classified tier: a real framework
+    // scaffold (Next/Vite/…) has no static HTML entry, so the scans below
+    // would falsely reject it — same reasoning as the frontend-spa skip.
+    const detected = detectFramework(this.appDir).framework;
+    if (detected !== "static" && detected !== "unknown") return result;
     const { errors } = scanAppForStartupErrors(this.appDir);
     const { violations } = scanAppForBlockedFetch(this.appDir);
     const { violations: parity } = scanAppForUnverifiedNativeParity(this.appDir);
@@ -223,18 +234,46 @@ class CliBuildAdapter implements Adapter {
       return { providerState: this.buildProviderState({ aborted: true }), terminalReason: "error" };
     }
 
-    const content = result.content ?? "";
+    let content = result.content ?? "";
     const urlMatch = content.match(/APP_READY:\s*(\S+)/);
-    const url = urlMatch ? urlMatch[1] : this.opts.appUrl;
+    let url = urlMatch ? urlMatch[1] : this.opts.appUrl;
 
-    const indexPath = resolve(this.opts.appDir, "index.html");
-    const verified = verifyWriteLanded(indexPath);
-    if (!verified.ok) {
-      report({ kind: "error", code: "artifact_missing", message: verified.reason, retryable: false });
+    // Framework project (Next/Vite/…)? Its artifact is the scaffold, not a
+    // root index.html, and its ready URL is the /apps/<name>/ dev-server
+    // proxy — so the framework path replaces BOTH the artifact gate and the
+    // URL. Static/unknown keeps the exact index.html completion below.
+    const finalized = await finalizeFrameworkBuild(
+      {
+        appDir: this.opts.appDir,
+        appName: this.opts.appName,
+        laxPort: process.env.LAX_PORT ?? "7007",
+        registerServer: !result.isError,
+      },
+      this.opts.finalizeDeps ?? {},
+    );
+    if (finalized.handled && !finalized.ok) {
+      report({ kind: "error", code: finalized.code, message: finalized.message, retryable: false });
       return {
-        providerState: this.buildProviderState({ error: verified.reason, stopReason: "artifact_missing" }),
+        providerState: this.buildProviderState({ error: finalized.message, stopReason: finalized.code }),
         terminalReason: "error",
       };
+    }
+    if (finalized.handled) {
+      // The proxy URL is authoritative — the CLI was told the flat-HTML
+      // appUrl, so rewrite every mention of it ("Open: …", APP_READY targets)
+      // or the surfaced links 404 on the very build this branch fixes.
+      url = finalized.url;
+      content = content.split(this.opts.appUrl).join(url).replace(/APP_READY:\s*\S+/g, `APP_READY: ${url}`);
+    } else {
+      const indexPath = resolve(this.opts.appDir, "index.html");
+      const verified = verifyWriteLanded(indexPath);
+      if (!verified.ok) {
+        report({ kind: "error", code: "artifact_missing", message: verified.reason, retryable: false });
+        return {
+          providerState: this.buildProviderState({ error: verified.reason, stopReason: "artifact_missing" }),
+          terminalReason: "error",
+        };
+      }
     }
 
     const finalText = content.length > 0
@@ -259,7 +298,12 @@ class CliBuildAdapter implements Adapter {
     }
 
     return {
-      providerState: this.buildProviderState({ url, stopReason: "app_ready", provider: subprocessProvider }),
+      providerState: this.buildProviderState({
+        url,
+        stopReason: "app_ready",
+        provider: subprocessProvider,
+        ...(finalized.handled ? { framework: finalized.framework } : {}),
+      }),
       terminalReason: "done",
     };
   }

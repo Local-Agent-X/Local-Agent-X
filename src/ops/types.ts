@@ -120,6 +120,10 @@ export interface Op {
    * APP_READY marker out of model output — which the in-canonical build path
    * (the provider model owns the final message) doesn't reliably emit, so
    * grok-built apps never got a link while the cli-subprocess path did.
+   * Stamped at creation with the flat /index.html guess; a "done" terminal
+   * commit adopts the adapter's finalized URL (framework builds resolve to
+   * the /apps/<name>/ dev-server proxy) — see commitTurn in
+   * canonical-loop/checkpoint.ts.
    */
   appUrl?: string;
   lastFailureReason?: string;

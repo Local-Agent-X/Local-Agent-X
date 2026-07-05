@@ -24,7 +24,7 @@
  * Records live under ~/.lax/dev-servers/<appId>.json — server-side only, never
  * under workspace/apps/<id>/ where the static route would serve them to apps.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync, appendFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { workspacePath } from "../config.js";
@@ -176,6 +176,18 @@ export function readDevServerRecord(appId: string): DevServerRecord | null {
 function writeRecord(rec: DevServerRecord): void {
   mkdirSync(recordsDir(), { recursive: true });
   writeFileSync(recordPath(rec.appId), JSON.stringify(rec, null, 2) + "\n");
+}
+
+/** Every persisted dev-server record. Lets a caller allocating a new dev port
+ *  avoid the ports idle-but-registered servers will reclaim on their next
+ *  lazy start — a live-port probe alone can't see those. */
+export function listDevServerRecords(): DevServerRecord[] {
+  let files: string[];
+  try { files = readdirSync(recordsDir()); } catch { return []; }
+  return files
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => readDevServerRecord(f.slice(0, -".json".length)))
+    .filter((r): r is DevServerRecord => r !== null);
 }
 
 /** The dev connector points at the app's own localhost backend; the allow-list

@@ -159,6 +159,31 @@ describe("CLI adapter terminal — framework (Next) completion [regression]", ()
     expect(payload.framework).toBe("nextjs");
   });
 
+  it("an empty appUrl skips the base-URL rewrite instead of corrupting the content [regression]", async () => {
+    // Old behavior this pins against: content.split("") splits into every
+    // character, so the join inserted the proxy URL between each one — the
+    // finalized message became thousands of interleaved URL copies.
+    const appName = "no-base-next";
+    const appDir = makeNextAppDir(appName);
+    const proxyUrl = `http://127.0.0.1:7007/apps/${appName}/`;
+    const cliRunner: CliBuildRunner = async () => ({
+      content: "App built with Claude CLI!\n\nAPP_READY: http://localhost:3000",
+    });
+    const { deps } = fakeFinalizeDeps();
+    const adapter = await makeAdapter({ appName, appDir, appUrl: "", cliRunner, finalizeDeps: deps });
+    const { reports, report } = collectReports();
+    const result = await adapter.runTurn(emptyTurnInput(), report);
+    expect(result.terminalReason).toBe("done");
+    const finalized = reports.find(r => r.kind === "message_finalized");
+    const text = finalized?.kind === "message_finalized"
+      ? (finalized.message.content as { text: string }).text
+      : "";
+    // Prose survives contiguously — under the bug no two characters stayed adjacent.
+    expect(text).toContain("App built with Claude CLI!");
+    expect(text).toContain(`APP_READY: ${proxyUrl}`);
+    expect(text).not.toContain("localhost:3000");
+  });
+
   it("an incomplete framework scaffold (next.config.js, no package.json) fails artifact_missing — never a false APP_READY", async () => {
     const appDir = makeEmptyAppDir();
     writeFileSync(join(appDir, "next.config.js"), "export default {};\n");

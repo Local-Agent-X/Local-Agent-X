@@ -184,6 +184,20 @@ describe("finalizeFrameworkBuild — dev-port allocation", () => {
     expect(r).toMatchObject({ handled: true, ok: true, url: `http://127.0.0.1:${laxPort}/apps/stitch/` });
   });
 
+  it("every port busy → the probe walk stops at MAX_PORT_PROBES and hands back the last candidate", async () => {
+    // Pathological all-ports-busy box: the walk must not spin forever on
+    // portBound execs. Each of the 20 probes fails and advances the port,
+    // so past the cap pickDevPort returns base+20 unconditionally — the
+    // genuine collision surfaces via the dev server's startup verification.
+    const dir = makeDir("cap");
+    writeNextScaffold(dir);
+    const { deps, calls } = fakeDeps({ bound: () => true });
+    await finalizeFrameworkBuild(input(dir), deps);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].port).toBe(DEFAULT_BASE_PORT + 20);
+    expect(calls[0].command).toContain(`--port ${DEFAULT_BASE_PORT + 20}`);
+  });
+
   it("a rebuild reuses its own record's port even when the probe reports it bound", async () => {
     // registerDevServer restarts the record's session, so its port isn't a
     // collision — grabbing a fresh port per rebuild would leak one per build.

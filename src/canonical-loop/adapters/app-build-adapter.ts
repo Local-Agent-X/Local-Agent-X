@@ -263,7 +263,10 @@ class CliBuildAdapter implements Adapter {
       // appUrl, so rewrite every mention of it ("Open: …", APP_READY targets)
       // or the surfaced links 404 on the very build this branch fixes.
       url = finalized.url;
-      content = content.split(this.opts.appUrl).join(url).replace(/APP_READY:\s*\S+/g, `APP_READY: ${url}`);
+      // Empty appUrl guard: "".split("") splits into every character, so the
+      // join would insert the url between each one — skip the base rewrite.
+      if (this.opts.appUrl) content = content.split(this.opts.appUrl).join(url);
+      content = content.replace(/APP_READY:\s*\S+/g, `APP_READY: ${url}`);
     } else {
       const indexPath = resolve(this.opts.appDir, "index.html");
       const verified = verifyWriteLanded(indexPath);

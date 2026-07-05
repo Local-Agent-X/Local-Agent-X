@@ -21,6 +21,7 @@ import { clearBuildVerifyStateForOp } from "./turn-loop/build-verify.js";
 import { clearDesignVerifyStateForOp } from "./turn-loop/design-verify.js";
 import { clearSpecProbeStateForOp } from "./turn-loop/spec-probes.js";
 import { clearEarnedDoneStateForOp } from "./middlewares/open-steps.js";
+import { clearOpLedger } from "./instruction-ledger/ledger.js";
 import type { Op, OpStatus } from "../ops/types.js";
 import type { CanonicalEvent, CanonicalState } from "./types.js";
 
@@ -108,6 +109,7 @@ export function transitionOp(
     clearDesignVerifyStateForOp(op.id);
     clearSpecProbeStateForOp(op.id);
     clearEarnedDoneStateForOp(op.id);
+    clearOpLedger(op.id);
   }
   // Loop-side write — preserve control-API signal columns from disk so a
   // concurrent opPause/opCancel/etc. is not clobbered. `clearLeaseFromOp`

@@ -89,6 +89,27 @@ function init_settings() {
   if (typeof loadMcpServers === 'function') loadMcpServers();
   waCheckStatus();
   tgCheckStatus();
+  mobileInitTabVisibility();
+}
+
+// The Mobile (phone pairing) tab is an UNRELEASED feature — hidden from ALL
+// users by default. It's revealed only when the local dev flag is set, so the
+// owner can flip it on to test and off again without shipping it to anyone.
+//   Reveal:  open the app with ?mobileui=1   (persists in localStorage)
+//   Hide:    open with ?mobileui=0           (or clear the key)
+// Not a security boundary — /api/account is operator-token gated regardless;
+// this only keeps the tab out of sight until the feature ships.
+function mobileInitTabVisibility() {
+  const pill = document.getElementById('tab-pill-mobile');
+  if (!pill) return;
+  try {
+    const q = new URLSearchParams(location.search).get('mobileui');
+    if (q === '1') localStorage.setItem('lax_mobile_ui', '1');
+    else if (q === '0') localStorage.removeItem('lax_mobile_ui');
+  } catch {}
+  let show = false;
+  try { show = localStorage.getItem('lax_mobile_ui') === '1'; } catch {}
+  pill.style.display = show ? '' : 'none';
 }
 
 function switchTab(id) {

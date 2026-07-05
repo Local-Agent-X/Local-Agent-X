@@ -79,9 +79,15 @@ export const instructionAuditMiddleware: CanonicalMiddleware = {
       );
       if (scratch.postCommitNudgePending) state.commitSeen = true;
     }
-    // Accumulate what this turn consulted, for the read-before-answer target
-    // match (same surfaces as the eval: read/grep/glob args + bash commands).
+    // Accumulate what this turn SUCCESSFULLY consulted (ok results only, like the
+    // no-target fallback's success-only toolsCalledThisOp), for the
+    // read-before-answer target match. A read that FAILED — wrong path, missing
+    // file, permission — must not satisfy "read parser.ts before you answer".
+    const okIds = new Set(
+      ctx.toolResults.filter(tr => tr.status === "ok").map(tr => tr.toolCallId),
+    );
     for (const tc of ctx.toolCalls ?? []) {
+      if (!okIds.has(tc.toolCallId)) continue;
       const args = (tc.args ?? {}) as Record<string, unknown>;
       if ((READ_TOOLS as readonly string[]).includes(tc.tool)) {
         const { _sessionId, ...rest } = args;

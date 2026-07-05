@@ -269,3 +269,27 @@ describe("validateConfirmation", () => {
     });
   });
 });
+
+describe("scoped-write carve-out — does not erase an independent read-only ban", () => {
+  const confirmNull: ConfirmConstraintsFn = async () => null;
+
+  it("keeps a real read-only ban that co-occurs with a scoped carve-out", async () => {
+    // "just tell me what's wrong" is an independent blanket read-only signal —
+    // the "don't change anything else" carve-out must NOT erase it.
+    const ledger = await extractConstraints(
+      "Don't change anything else; just tell me what's wrong.",
+      confirmNull,
+    );
+    expect(ledger.prohibitions).toContain("workspace-write");
+  });
+
+  it("still vetoes a carve-out that is the SOLE workspace-write source (no over-block)", async () => {
+    // An edit task with only a partitive exception: the carve-out is spurious and
+    // must drop so the required edits aren't bricked — even if the LLM over-confirms.
+    const ledger = await extractConstraints(
+      "Remove all tailnet refs but don't change any other feature.",
+      async () => ({ prohibitions: ["workspace-write"], obligations: [] }),
+    );
+    expect(ledger.prohibitions).not.toContain("workspace-write");
+  });
+});

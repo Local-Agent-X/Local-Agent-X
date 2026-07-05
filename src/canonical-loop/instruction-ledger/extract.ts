@@ -146,10 +146,31 @@ export function isScopedWriteCarveout(userMessage: string): boolean {
   return SCOPED_WRITE_CARVEOUT.test(userMessage);
 }
 
+// The strong-tier regexes that imply workspace-write — reused to detect an
+// INDEPENDENT read-only ban once the carve-out phrase is removed.
+const WS_WRITE_STRONG = STRONG_PROHIBITIONS.filter((s) => s.cls === "workspace-write");
+
+/** True when, ignoring the carve-out phrase, the message still carries a strong
+ *  workspace-write cue of its own (e.g. "just tell me what's wrong"). */
+function hasIndependentWorkspaceWriteCue(message: string): boolean {
+  return WS_WRITE_STRONG.some((s) => {
+    s.re.lastIndex = 0; // /g regex reused via .test — reset between calls
+    return s.re.test(message);
+  });
+}
+
 /** Drop a spurious `workspace-write` prohibition that came from a partitive
- *  carve-out. Other classes and obligations pass through untouched. */
+ *  carve-out ("don't change anything ELSE") — but ONLY when the carve-out is its
+ *  sole source. If a separate, unambiguous read-only cue stands beside it
+ *  ("just tell me what's wrong; don't change anything else"), the ban is real and
+ *  is kept. Strip-and-recheck is the only attribution available: the LLM returns
+ *  a bare class with no source phrase, and the carve-out text also matches the
+ *  don't-change strong regex, so per-phrase attribution isn't possible. Other
+ *  classes and obligations pass through untouched. */
 function vetoScopedWrite(prohibitions: readonly CapabilityClass[], userMessage: string): CapabilityClass[] {
   if (!isScopedWriteCarveout(userMessage)) return [...prohibitions];
+  const withoutCarveout = userMessage.replace(SCOPED_WRITE_CARVEOUT, " ");
+  if (hasIndependentWorkspaceWriteCue(withoutCarveout)) return [...prohibitions];
   return prohibitions.filter((c) => c !== "workspace-write");
 }
 

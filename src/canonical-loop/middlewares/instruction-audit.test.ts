@@ -115,20 +115,36 @@ describe("instruction-audit middleware", () => {
     await instructionAuditMiddleware.afterToolExecution!(ctx({
       op: c.op,
       toolCalls: [{ toolCallId: "r1", tool: "read", args: { path: "src/other.ts" } }],
+      toolResults: [{ toolCallId: "r1", toolName: "read", content: "…", status: "ok" }],
     }));
     const r = await instructionAuditMiddleware.afterModelCall!(c);
     expect(r).toMatchObject({ kind: "nudge", reason: INSTRUCTION_OBLIGATION_REASON });
     expect(r.kind === "nudge" ? r.message : "").toContain("parser");
   });
 
-  it("target-aware: reading the named file satisfies the obligation", async () => {
+  it("target-aware: an OK read of the named file satisfies the obligation", async () => {
     const c = ctx();
     setOpLedger(c.op.id, namedFileObligation());
     await instructionAuditMiddleware.afterToolExecution!(ctx({
       op: c.op,
       toolCalls: [{ toolCallId: "r1", tool: "read", args: { path: "src/parser.ts" } }],
+      toolResults: [{ toolCallId: "r1", toolName: "read", content: "export function…", status: "ok" }],
     }));
     expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
+  it("target-aware: a FAILED read of the named file does NOT satisfy it (success-only)", async () => {
+    const c = ctx();
+    setOpLedger(c.op.id, namedFileObligation());
+    // The arg mentions parser, but the read errored (wrong path / missing file),
+    // so nothing was actually consulted — it must not count.
+    await instructionAuditMiddleware.afterToolExecution!(ctx({
+      op: c.op,
+      toolCalls: [{ toolCallId: "r1", tool: "read", args: { path: "src/parser.ts" } }],
+      toolResults: [{ toolCallId: "r1", toolName: "read", content: "File not found", status: "error" }],
+    }));
+    const r = await instructionAuditMiddleware.afterModelCall!(c);
+    expect(r).toMatchObject({ kind: "nudge", reason: INSTRUCTION_OBLIGATION_REASON });
   });
 
   it("target-aware: a bash cat of the named file also satisfies it", async () => {
@@ -137,6 +153,7 @@ describe("instruction-audit middleware", () => {
     await instructionAuditMiddleware.afterToolExecution!(ctx({
       op: c.op,
       toolCalls: [{ toolCallId: "b1", tool: "bash", args: { command: "cat src/parser.ts" } }],
+      toolResults: [{ toolCallId: "b1", toolName: "bash", content: "export function…", status: "ok" }],
     }));
     expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
   });

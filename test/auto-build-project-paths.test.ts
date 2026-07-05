@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { join } from "node:path";
 import { resolveProjectDir, projectsDir } from "../src/auto-build/project-paths.js";
+import { realpathDeep } from "../src/workspace/paths.js";
 import { setRuntimeConfig } from "../src/config.js";
 import type { LAXConfig } from "../src/types.js";
 
@@ -24,7 +25,10 @@ describe("resolveProjectDir", () => {
     const resolved = resolveProjectDir("petbook");
     expect(resolved).not.toBeNull();
     expect(resolved!.replace(/\\/g, "/")).toMatch(/workspace\/apps\/petbook$/);
-    expect(resolved!).toBe(join(projectsDir(), "petbook"));
+    // resolveProjectDir canonicalizes through realpathDeep (symlink-safe), which
+    // projectsDir() does not, so compare against the realpath'd target — on
+    // macOS /tmp is a symlink to /private/tmp and the raw join would differ.
+    expect(resolved!).toBe(realpathDeep(join(projectsDir(), "petbook")));
   });
 
   it("resolves into the WORKSPACE ROOT, not the source repo (regression)", () => {
@@ -39,14 +43,23 @@ describe("resolveProjectDir", () => {
     expect(projectsDir().replace(/\\/g, "/")).toMatch(/\/lax-test-projects\/workspace\/apps$/);
   });
 
-  it("returns absolute paths unchanged (windows)", () => {
+  // A Windows drive-absolute path is only meaningful on win32 — on POSIX there
+  // is no drive to canonicalize, so realpathDeep would (correctly) re-root it
+  // against cwd. Assert the semantics that matter (stays drive-absolute, is NOT
+  // redirected into workspace/apps) on the only OS where the input is valid.
+  it.skipIf(process.platform !== "win32")("keeps a Windows drive-absolute path absolute, not redirected to workspace/apps", () => {
     const win = "C:\\Users\\alice\\some-project";
-    expect(resolveProjectDir(win)).toBe(win);
+    const r = resolveProjectDir(win)!;
+    expect(r).toMatch(/^[a-zA-Z]:[\\/]/);
+    expect(r.replace(/\\/g, "/")).not.toMatch(/workspace\/apps/);
   });
 
-  it("returns absolute paths unchanged (posix)", () => {
+  it("canonicalizes an absolute POSIX path (realpath), not redirected to workspace/apps", () => {
     const posix = "/tmp/some-project";
-    expect(resolveProjectDir(posix)).toBe(posix);
+    // Absolute → routed through realpathDeep (symlink-canonical), NOT treated as
+    // a bare name (→ workspace/apps) or a relative path (→ cwd). On macOS /tmp
+    // resolves to /private/tmp, so assert against realpathDeep, not the raw input.
+    expect(resolveProjectDir(posix)).toBe(realpathDeep(posix));
   });
 
   it("resolves a relative path against cwd (legacy fallback)", () => {

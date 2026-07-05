@@ -5,7 +5,8 @@
 // exercises the same fallback branch as the EACCES this targets.
 import { describe, it, expect, afterEach } from "vitest";
 import { createServer, type Server } from "node:http";
-import { listenOnFreePort, isTerminalRefreshError } from "../src/auth/xai";
+import { listenOnFreePort } from "../src/auth/xai-login";
+import { isTerminalRefreshError } from "../src/auth/xai";
 
 const open: Server[] = [];
 const mk = (): Server => { const s = createServer(); open.push(s); return s; };

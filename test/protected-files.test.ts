@@ -50,9 +50,20 @@ describe("isProtectedFile — directory subtree protection", () => {
     expect(isProtectedFile("src/ari-kernel/grants.ts").protected).toBe(true);
   });
 
-  it("protects exact core files regardless of leading path", () => {
+  it("protects exact core files repo-relative and via an in-tree absolute path", () => {
     expect(isProtectedFile("src/index.ts").protected).toBe(true);
-    expect(isProtectedFile("/abs/repo/src/types.ts").protected).toBe(true);
+    // An ABSOLUTE path is only protected when it falls INSIDE the platform tree
+    // (join(REPO_ROOT, …) does exactly that). A bare "/abs/repo/…" prefix is a
+    // DIFFERENT project and is deliberately NOT protected — see the anchor test
+    // below.
+    expect(isProtectedFile(join(REPO_ROOT, "src/types.ts")).protected).toBe(true);
+  });
+
+  it("does NOT protect an identically-named file in a DIFFERENT project tree", () => {
+    // Security anchor (the old suffix match's false positive): a path outside
+    // PLATFORM_ROOT is another project's file, even when its repo-relative shape
+    // matches a protected entry. Guarding it would block edits to user projects.
+    expect(isProtectedFile("/some/other/repo/src/types.ts").protected).toBe(false);
   });
 
   it("does NOT protect a sibling whose name only shares a guarded prefix", () => {

@@ -1,17 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Stub classify-with-llm so each voter's verdict is deterministic — no
-// provider creds, no network. The mock dequeues one scripted return per call
-// (in firing order) and records every call's args so the test can confirm
-// per-voter prompt variation reached the classifier.
+// provider creds, no network. verifyByRefutation calls classifyYesNoWithReason
+// (verdict + one-line reason), so the mock returns {verdict, reason} for a
+// scripted boolean and null for an unavailable voter. It dequeues one scripted
+// return per call (in firing order) and records every call's args so the test
+// can confirm per-voter prompt variation reached the classifier.
 let __scriptedVotes: Array<boolean | null> = [];
 const __calls: Array<{ category: string; systemPrompt: string; userPrompt: string }> = [];
 
 vi.mock("../src/classifiers/classify-with-llm.js", () => ({
-	classifyYesNo: vi.fn(async (args: { category: string; systemPrompt: string; userPrompt: string }) => {
+	classifyYesNoWithReason: vi.fn(async (args: { category: string; systemPrompt: string; userPrompt: string }) => {
 		__calls.push({ category: args.category, systemPrompt: args.systemPrompt, userPrompt: args.userPrompt });
 		// Pop the next scripted vote in call order; default null if exhausted.
-		return __scriptedVotes.length > 0 ? __scriptedVotes.shift()! : null;
+		const next = __scriptedVotes.length > 0 ? __scriptedVotes.shift()! : null;
+		// null = voter unavailable; a boolean = a real ballot carrying a reason.
+		return next === null ? null : { verdict: next, reason: `scripted:${next}` };
 	}),
 }));
 

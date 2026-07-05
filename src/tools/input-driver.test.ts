@@ -32,11 +32,16 @@ vi.mock("@nut-tree-fork/nut-js", () => ({
 const listMonitors = vi.fn();
 vi.mock("../screen-capture.js", () => ({ listMonitors: () => listMonitors() }));
 
-import { pressKeys, getScreenGeometry } from "./input-driver.js";
+import { pressKeys, getScreenGeometry, InputUnsupportedError } from "./input-driver.js";
 
 const onWindows = process.platform === "win32";
+const onDarwin = process.platform === "darwin";
+// Computer control is only wired for macOS + Windows; every real behavior below
+// hits assertSupportedOS() first, which throws on Linux (the CI runner). Scope
+// the behavior tests to a supported OS and cover the Linux guard separately.
+const supported = onWindows || onDarwin;
 
-describe("pressKeys always releases the chord (no stuck modifier)", () => {
+describe.skipIf(!supported)("pressKeys always releases the chord (no stuck modifier)", () => {
   beforeEach(() => {
     pressKey.mockClear();
     releaseKey.mockClear();
@@ -80,10 +85,26 @@ describe("getScreenGeometry reports multi-monitor offsets", () => {
     expect(geo.monitors.find((m) => m.index === 1)!.x).toBe(-1920);
   });
 
-  it.skipIf(onWindows)("non-Windows: single primary from nut.js size", async () => {
+  // darwin is the only non-Windows OS that supports computer control; on Linux
+  // getScreenGeometry throws InputUnsupportedError (covered below), so this
+  // single-primary path is macOS-only, not merely "not Windows".
+  it.skipIf(!onDarwin)("macOS: single primary from nut.js size", async () => {
     const geo = await getScreenGeometry();
     expect(geo.monitors).toHaveLength(1);
     expect(geo.virtual).toEqual({ x: 0, y: 0, width: 1408, height: 881 });
     expect(geo.primary.primary).toBe(true);
+  });
+});
+
+// On an unsupported OS (e.g. the Linux CI runner) every entry point must refuse
+// up front rather than attempt native input — this is the guard the behavior
+// tests above rely on to be scoped correctly.
+describe.skipIf(supported)("unsupported OS refuses computer control", () => {
+  it("pressKeys throws InputUnsupportedError", async () => {
+    await expect(pressKeys(["ctrl", "a"])).rejects.toThrow(InputUnsupportedError);
+  });
+
+  it("getScreenGeometry throws InputUnsupportedError", async () => {
+    await expect(getScreenGeometry()).rejects.toThrow(InputUnsupportedError);
   });
 });

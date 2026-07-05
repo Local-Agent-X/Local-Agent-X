@@ -41,13 +41,13 @@ for a in "$@"; do
   prev="$a"
 done
 if [ -z "$script" ]; then echo ok; exit 0; fi
-mode=$(stat -f '%Lp' "$script" 2>/dev/null || stat -c '%a' "$script")
+mode=$(stat -c '%a' "$script" 2>/dev/null || stat -f '%Lp' "$script")
 echo "ps1 $mode" >> "$STUB_LOG"
 case "$script" in
   *.retrieve.ps1)
     out="\${script%.retrieve.ps1}.b64"
     if [ -e "$out" ]; then
-      omode=$(stat -f '%Lp' "$out" 2>/dev/null || stat -c '%a' "$out")
+      omode=$(stat -c '%a' "$out" 2>/dev/null || stat -f '%Lp' "$out")
       echo "b64 $omode" >> "$STUB_LOG"
     else
       echo "b64 missing" >> "$STUB_LOG"

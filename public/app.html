@@ -290,6 +290,7 @@
       <button class="tab-pill" onclick="switchTab('image')">Media</button>
       <button class="tab-pill" onclick="switchTab('security')">Security</button>
       <button class="tab-pill" onclick="switchTab('whatsapp')">Communication</button>
+      <button class="tab-pill" onclick="switchTab('mobile')">Mobile</button>
       <button class="tab-pill" onclick="switchTab('integrations')">Tools &amp; Integrations</button>
       <button class="tab-pill" onclick="switchTab('sync')">Sync</button>
     </div>
@@ -727,6 +728,29 @@
             <div>4. Click <strong style="color:var(--text)">Connect</strong></div>
             <div>5. <strong style="color:var(--warn)">Immediately message your bot</strong> — the first person to message it becomes the owner. Nobody else will be able to use it after that.</div>
             <div style="margin-top:6px;color:var(--accent)">Works on multiple devices simultaneously — no conflicts.</div>
+          </div>
+        </div>
+      </div>
+      <!-- Mobile app / phone pairing -->
+      <div id="stab-mobile" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">Mobile App</div>
+          <div class="section-desc">Pair the AgentXOS phone app with this desktop. Sign in to your agentxos account, then scan the QR code with your phone — it connects over the internet, no same-network requirement.</div>
+          <div id="mobile-pair-wrap" style="margin:16px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden;min-height:420px">
+            <!-- account.html (device-code login + pairing QR) is embedded lazily on
+                 first open of this tab — see switchTab('mobile') in settings.js.
+                 Same-origin, so the page polls /api/account/status with its own token. -->
+          </div>
+          <div style="margin-top:10px;font-size:.75rem;color:var(--muted)">
+            Prefer a separate window? <a href="#" id="mobile-pair-open" style="color:var(--accent)">Open the pairing page ↗</a>
+          </div>
+          <div class="section-title" style="margin-top:16px">How It Works</div>
+          <div style="font-size:.78rem;color:var(--muted);line-height:1.9">
+            <div>1. Install the <strong style="color:var(--text)">AgentXOS</strong> app on your phone</div>
+            <div>2. Above, <strong style="color:var(--text)">sign in</strong> to your agentxos account</div>
+            <div>3. A <strong style="color:var(--text)">QR code</strong> appears — open the phone app and scan it</div>
+            <div>4. The phone pairs to this desktop and can reach your agent, apps, and voice</div>
+            <div style="margin-top:6px;color:var(--accent)">Pairing persists across restarts — no re-scan needed.</div>
           </div>
         </div>
       </div>
@@ -1322,7 +1346,7 @@
 <script src="/js/settings-import-export.js?v=v1"></script>
 <script src="/js/settings-uploads.js?v=v1"></script>
 <script src="/js/settings-voice-engines.js?v=v1"></script>
-<script src="/js/settings.js?v=vc1"></script>
+<script src="/js/settings.js?v=vc2"></script>
 <script src="/js/voice-picker-catalog.js?v=v3"></script>
 <!-- voice-picker split: core defines the `let` cache vars + _esc that
      the other two read from shared script scope, so it must load first. -->

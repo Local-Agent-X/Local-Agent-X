@@ -99,7 +99,26 @@ function switchTab(id) {
   if (id === 'image' && typeof refreshVoiceSetup === 'function') refreshVoiceSetup();
   if (id === 'image' && typeof loadUploadsStats === 'function') loadUploadsStats();
   if (id === 'usage' && typeof loadUsage === 'function') loadUsage();
+  if (id === 'mobile') ensureMobilePairFrame();
   if (window.MemoryBrain) { if (id === 'memory') window.MemoryBrain.ensure(); else window.MemoryBrain.pause(); }
+}
+
+// Embed the pairing page (account.html — device-code login + QR) inside the
+// Mobile settings tab. Lazy: only built on first open, so its status polling
+// doesn't run while the tab is unseen. Same-origin, so the token is passed via
+// the iframe URL and account.html drives /api/account itself — no logic dupe.
+function ensureMobilePairFrame() {
+  const wrap = document.getElementById('mobile-pair-wrap');
+  if (!wrap || wrap.querySelector('iframe')) return;
+  const tok = new URLSearchParams(location.search).get('token') || localStorage.getItem('lax_token') || '';
+  const src = '/account.html?token=' + encodeURIComponent(tok);
+  const frame = document.createElement('iframe');
+  frame.src = src;
+  frame.title = 'Phone pairing';
+  frame.style.cssText = 'width:100%;height:520px;border:0;display:block';
+  wrap.appendChild(frame);
+  const link = document.getElementById('mobile-pair-open');
+  if (link) link.onclick = (e) => { e.preventDefault(); window.open(src, '_blank', 'noopener'); };
 }
 
 function toggleSwitch(el) { el.classList.toggle('on'); }

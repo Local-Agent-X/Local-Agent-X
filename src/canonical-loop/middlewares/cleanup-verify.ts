@@ -31,15 +31,18 @@ import {
  *  carries the pattern it searched — the gate tracks cleanliness per pattern. */
 function buildCleanupEvidence(ctx: CanonicalLoopContext): CleanupToolResult[] {
   const patternById = new Map<string, string>();
+  const commandById = new Map<string, string>();
   for (const tc of ctx.toolCalls) {
     const args = (tc.args ?? {}) as Record<string, unknown>;
     if (typeof args.pattern === "string") patternById.set(tc.toolCallId, args.pattern);
+    if (typeof args.command === "string") commandById.set(tc.toolCallId, args.command);
   }
   return ctx.toolResults.map(tr => ({
     toolName: tr.toolName,
     content: tr.content,
     status: tr.status,
     pattern: patternById.get(tr.toolCallId),
+    command: commandById.get(tr.toolCallId),
   }));
 }
 

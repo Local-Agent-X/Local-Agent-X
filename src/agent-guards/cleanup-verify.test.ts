@@ -3,9 +3,11 @@ import {
   looksLikeCleanupSweep,
   isEmptyGrepResult,
   claimsCleanupDone,
+  shellSearchPattern,
   noteCleanupEvidence,
   checkCleanupVerify,
   createCleanupVerifyState,
+  CLEANUP_VERIFY_MAX_NUDGES,
   type CleanupToolResult,
 } from "./cleanup-verify.js";
 
@@ -72,12 +74,13 @@ describe("claimsCleanupDone — only positive, un-negated completion claims", ()
 });
 
 describe("checkCleanupVerify + noteCleanupEvidence", () => {
-  it("nudges once when a cleanup wraps up with no clean search in evidence", () => {
+  it("nudges repeatedly, bounded, when a cleanup wraps up with no clean search in evidence", () => {
     const s = createCleanupVerifyState();
-    const r = checkCleanupVerify(s);
-    expect(r.nudge).toBeTruthy();
-    expect(s.unverified).toBe(true);
-    // fire-once
+    for (let i = 1; i <= CLEANUP_VERIFY_MAX_NUDGES; i++) {
+      const r = checkCleanupVerify(s);
+      expect(r.nudge).toContain(`${i}/${CLEANUP_VERIFY_MAX_NUDGES}`);
+      expect(s.unverified).toBe(true);
+    }
     expect(checkCleanupVerify(s).nudge).toBeNull();
     expect(s.unverified).toBe(true);
   });
@@ -99,11 +102,28 @@ describe("checkCleanupVerify + noteCleanupEvidence", () => {
     expect(s.unverified).toBe(true);
   });
 
-  it("ignores an errored grep and a non-grep empty-looking result", () => {
+  it("keeps nudging after a re-grep still returns matches, until bounded cap", () => {
+    const s = createCleanupVerifyState();
+    for (let i = 1; i <= CLEANUP_VERIFY_MAX_NUDGES; i++) {
+      noteCleanupEvidence([
+        { toolName: "grep", pattern: "tailnet|tailscale", content: `src/still-${i}.ts`, status: "ok" },
+      ], s);
+      const r = checkCleanupVerify(s);
+      expect(r.nudge).toContain(`${i}/${CLEANUP_VERIFY_MAX_NUDGES}`);
+      expect(s.unverified).toBe(true);
+    }
+    noteCleanupEvidence([
+      { toolName: "grep", pattern: "tailnet|tailscale", content: "src/still-final.ts", status: "ok" },
+    ], s);
+    expect(checkCleanupVerify(s).nudge).toBeNull();
+    expect(s.unverified).toBe(true);
+  });
+
+  it("ignores an errored grep and non-search bash empty-looking output", () => {
     const s = createCleanupVerifyState();
     noteCleanupEvidence([
       { toolName: "grep", content: "No matches found.", status: "error" },
-      { toolName: "bash", content: "No matches found.", status: "ok" },
+      { toolName: "bash", command: "echo 'No matches found.'", content: "No matches found.", status: "ok" },
     ], s);
     expect(s.confirmedClean).toBe(false);
   });
@@ -113,6 +133,50 @@ describe("checkCleanupVerify + noteCleanupEvidence", () => {
     expect(checkCleanupVerify(s).nudge).toBeTruthy(); // nudged, unverified
     noteCleanupEvidence([{ toolName: "grep", content: "No matches found.", status: "ok" }], s);
     checkCleanupVerify(s); // re-evaluate at the next wrap-up
+    expect(s.unverified).toBe(false);
+  });
+});
+
+describe("shell search evidence", () => {
+  it("extracts patterns from repository content searches", () => {
+    expect(shellSearchPattern('rg -n "tailnet|tailscale" app/src')).toBe("tailnet|tailscale");
+    expect(shellSearchPattern('rg --glob "!node_modules" -n "tailnet|tailscale" app/src')).toBe("tailnet|tailscale");
+    expect(shellSearchPattern("git grep -n 'oldName' -- src")).toBe("oldName");
+    expect(shellSearchPattern("grep -R legacy .")).toBe("legacy");
+  });
+
+  it("does not treat arbitrary shell greps as cleanup evidence", () => {
+    expect(shellSearchPattern("ps aux | grep tailnet")).toBeNull();
+    expect(shellSearchPattern("pgrep -f tailnet")).toBeNull();
+    expect(shellSearchPattern("grep tailnet README.md")).toBeNull();
+  });
+
+  it("counts shell rg hits as outstanding cleanup evidence", () => {
+    const s = createCleanupVerifyState();
+    noteCleanupEvidence([
+      {
+        toolName: "bash",
+        command: 'rg -n "tailnet|tailscale" app/src',
+        content: "[ok, exit_code=0, duration_ms=10]\napp/src/a.ts:1:tailnet",
+        status: "ok",
+      },
+    ], s);
+    expect(s.confirmedClean).toBe(false);
+    expect(checkCleanupVerify(s).nudge).toContain("STILL returned matches");
+  });
+
+  it("treats shell rg exit 1 with no output as clean search evidence", () => {
+    const s = createCleanupVerifyState();
+    noteCleanupEvidence([
+      {
+        toolName: "bash",
+        command: 'rg -n "tailnet|tailscale" app/src',
+        content: "[error, exit_code=1, duration_ms=10]\nExit code: 1",
+        status: "error",
+      },
+    ], s);
+    expect(s.confirmedClean).toBe(true);
+    expect(checkCleanupVerify(s).nudge).toBeNull();
     expect(s.unverified).toBe(false);
   });
 });

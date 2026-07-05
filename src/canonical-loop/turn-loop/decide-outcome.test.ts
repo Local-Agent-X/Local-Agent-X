@@ -385,6 +385,31 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
     expect(r.terminalReason).toBeNull();
   });
 
+  it("replaces ungrounded codebase advice with a visible checking-status while the nudge continues", async () => {
+    const r = await decideTurnOutcome(input({
+      toolCalls: [], toolMessages: [], toolSummary: [],
+      middlewareDirective: {
+        kind: "nudge",
+        reason: "codebase-advice-grounding",
+        firedBy: "codebase-advice",
+        message: "read the repo first",
+      },
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: "We should add a verifier middleware next." } }],
+    }));
+    expect(publishStreamChunk).toHaveBeenCalledWith(
+      op.id,
+      { replace: true, text: "Checking the current repo before I recommend a harness change..." },
+    );
+    expect(r.allMessages).toEqual([
+      {
+        messageId: "am1",
+        role: "assistant",
+        content: { text: "Checking the current repo before I recommend a harness change..." },
+      },
+    ]);
+    expect(r.terminalReason).toBeNull();
+  });
+
   it("does NOT record on a non-terminal wrap-up turn", async () => {
     const { recordOpOutcome } = await import("../../tool-tracker.js");
     await decideTurnOutcome(input({ modelSignaledDone: false }));

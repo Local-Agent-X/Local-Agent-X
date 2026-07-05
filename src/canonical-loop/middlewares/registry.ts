@@ -43,6 +43,7 @@ import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { attributionClaimMiddleware } from "./attribution-claim.js";
 import { operationalClaimMiddleware } from "./operational-claim.js";
+import { codebaseAdviceMiddleware } from "./codebase-advice.js";
 import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
 import { broadSweepNudgeMiddleware } from "./broad-sweep-nudge.js";
 import { falseRefusalMiddleware } from "./false-refusal.js";
@@ -81,6 +82,11 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     // runtime/security/policy causality. Require a fresh diagnostic read or an
     // explicitly uncertain answer before a definitive claim reaches the user.
     operationalClaimMiddleware,
+    // All lanes — when the user asks for repo/harness implementation direction,
+    // docs and memory are not enough. Require current code inspection before a
+    // concrete "we should implement/change/wire X" recommendation reaches the
+    // user.
+    codebaseAdviceMiddleware,
     // Interactive + worker — in UNRESTRICTED file mode, a tool-less turn that
     // refuses a file action on a guessed restriction ("outside the sandbox")
     // without ever calling `read` gets a grounding nudge. Runs BEFORE

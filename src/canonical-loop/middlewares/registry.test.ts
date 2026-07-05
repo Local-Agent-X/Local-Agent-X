@@ -5,6 +5,7 @@ import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { attributionClaimMiddleware } from "./attribution-claim.js";
 import { operationalClaimMiddleware } from "./operational-claim.js";
+import { codebaseAdviceMiddleware } from "./codebase-advice.js";
 import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
 import { falseRefusalMiddleware } from "./false-refusal.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
@@ -24,6 +25,7 @@ const REQUIRED_GUARDS = [
   actionClaimMiddleware,
   attributionClaimMiddleware,
   operationalClaimMiddleware,
+  codebaseAdviceMiddleware,
   toolSearchNudgeMiddleware,
   falseRefusalMiddleware,
   prematureCompletionMiddleware,
@@ -44,5 +46,14 @@ describe("default middleware stack completeness", () => {
     const j = stack.indexOf(toolSearchNudgeMiddleware);
     expect(i).toBeGreaterThanOrEqual(0);
     expect(i).toBeLessThan(j);
+  });
+
+  it("codebase-advice runs after operational-claim and before broad action nudges", () => {
+    const operational = stack.indexOf(operationalClaimMiddleware);
+    const advice = stack.indexOf(codebaseAdviceMiddleware);
+    const toolSearch = stack.indexOf(toolSearchNudgeMiddleware);
+    expect(operational).toBeGreaterThanOrEqual(0);
+    expect(advice).toBeGreaterThan(operational);
+    expect(advice).toBeLessThan(toolSearch);
   });
 });

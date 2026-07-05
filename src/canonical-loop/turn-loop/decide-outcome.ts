@@ -37,6 +37,10 @@ import { openStepsTerminationWarning, earnedDoneNudge } from "../middlewares/ope
 import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
 import { opCleanupUnverified } from "../middlewares/cleanup-verify.js";
 import { opEditedSourceUnverified, opDeletedTestDodge, opEditedSourcePaths } from "../middlewares/verify-gate.js";
+import {
+  CODEBASE_ADVICE_GROUNDING_REASON,
+  CODEBASE_ADVICE_GROUNDING_STATUS,
+} from "../../agent-guards/index.js";
 import { recordTerminalOutcome, type OpOutcome } from "./record-outcome.js";
 import { randomUUID } from "node:crypto";
 
@@ -69,6 +73,17 @@ export interface DecideOutcomeResult {
   allMessages: CommitTurnMessage[];
 }
 
+function replaceAssistantText(messages: CommitTurnMessage[], text: string): CommitTurnMessage[] {
+  return messages.map(m => {
+    if (m.role !== "assistant") return m;
+    const content = m.content;
+    if (content && typeof content === "object" && !Array.isArray(content)) {
+      return { ...m, content: { ...(content as Record<string, unknown>), text } };
+    }
+    return { ...m, content: { text } };
+  });
+}
+
 /**
  * Decide the turn's terminal reason + assemble its commit-message list.
  * Async because the render-verify gate may await the preview iframe.
@@ -88,8 +103,13 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const retractFalseClaim =
     middlewareDirective?.kind === "nudge" &&
     isRetractableHallucination(middlewareDirective.reason);
+  const replaceWithGroundingStatus =
+    middlewareDirective?.kind === "nudge" &&
+    middlewareDirective.reason === CODEBASE_ADVICE_GROUNDING_REASON;
   if (retractFalseClaim) {
     publishStreamChunk(op.id, { replace: true, text: "" });
+  } else if (replaceWithGroundingStatus) {
+    publishStreamChunk(op.id, { replace: true, text: CODEBASE_ADVICE_GROUNDING_STATUS });
   }
 
   let allMessages: CommitTurnMessage[] = [];
@@ -98,6 +118,9 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   }
   for (const tm of toolMessages) allMessages.push(tm);
   if (retractFalseClaim) allMessages = stripRetractedAssistant(allMessages);
+  if (replaceWithGroundingStatus) {
+    allMessages = replaceAssistantText(allMessages, CODEBASE_ADVICE_GROUNDING_STATUS);
+  }
 
   // A middleware abort forces the turn to terminal=error so the worker
   // breaks the drive loop.

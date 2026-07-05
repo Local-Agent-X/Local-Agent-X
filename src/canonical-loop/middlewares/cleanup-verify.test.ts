@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { cleanupVerifyMiddleware, opCleanupUnverified } from "./cleanup-verify.js";
 import { _resetMiddlewareStates } from "./state.js";
+import { CLEANUP_VERIFY_MAX_NUDGES } from "../../agent-guards/index.js";
 import type { CanonicalLoopContext } from "./types.js";
 
 let _op = 0;
@@ -30,6 +31,15 @@ function grepTurn(op: string, content: string, status: "ok" | "error" = "ok") {
   );
 }
 
+function bashSearchTurn(op: string, command: string, content: string, status: "ok" | "error" = "ok") {
+  return cleanupVerifyMiddleware.afterToolExecution!(
+    ctxFor(op, {
+      toolCalls: [{ toolCallId: "b1", tool: "bash", args: { command } }],
+      toolResults: [{ toolCallId: "b1", toolName: "bash", content, status }],
+    } as Partial<CanonicalLoopContext>),
+  );
+}
+
 function wrapUp(op: string, task = CLEANUP_TASK, text = "Done — all tailnet references removed.") {
   return cleanupVerifyMiddleware.afterModelCall!(
     ctxFor(op, { userMessage: task, toolCalls: [], assistantContent: text }),
@@ -37,13 +47,30 @@ function wrapUp(op: string, task = CLEANUP_TASK, text = "Done — all tailnet re
 }
 
 describe("cleanupVerifyMiddleware", () => {
-  it("nudges once when a cleanup wraps up with no clean search; a done-claim is retractable", async () => {
+  it("nudges repeatedly, bounded, when a cleanup wraps up with no clean search; a done-claim is retractable", async () => {
     _resetMiddlewareStates();
     const op = opId();
-    const r = await wrapUp(op); // default text positively claims done
-    expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify-false-done" });
+    for (let i = 1; i <= CLEANUP_VERIFY_MAX_NUDGES; i++) {
+      const r = await wrapUp(op); // default text positively claims done
+      expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify-false-done" });
+      expect(r.kind === "nudge" ? r.message : "").toContain(`${i}/${CLEANUP_VERIFY_MAX_NUDGES}`);
+      expect(opCleanupUnverified(op)).toBe(true);
+    }
+    expect((await wrapUp(op)).kind).toBe("continue");
     expect(opCleanupUnverified(op)).toBe(true);
-    // fire-once
+  });
+
+  it("keeps nudging when the model re-greps but matches still remain", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    for (let i = 1; i <= CLEANUP_VERIFY_MAX_NUDGES; i++) {
+      await grepTurn(op, `src/still-${i}.ts`);
+      const r = await wrapUp(op);
+      expect(r.kind).toBe("nudge");
+      expect(r.kind === "nudge" ? r.message : "").toContain(`${i}/${CLEANUP_VERIFY_MAX_NUDGES}`);
+      expect(opCleanupUnverified(op)).toBe(true);
+    }
+    await grepTurn(op, "src/still-final.ts");
     expect((await wrapUp(op)).kind).toBe("continue");
     expect(opCleanupUnverified(op)).toBe(true);
   });
@@ -69,6 +96,34 @@ describe("cleanupVerifyMiddleware", () => {
     await grepTurn(op, "src/a.ts\nsrc/b.ts");
     expect((await wrapUp(op)).kind).toBe("nudge");
     expect(opCleanupUnverified(op)).toBe(true);
+  });
+
+  it("counts bash rg hits as unresolved cleanup evidence", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    await bashSearchTurn(
+      op,
+      'rg -n "tailnet|tailscale" app/src',
+      "[ok, exit_code=0, duration_ms=10]\napp/src/a.ts:1:tailnet",
+      "ok",
+    );
+    const r = await wrapUp(op);
+    expect(r.kind).toBe("nudge");
+    expect(r.kind === "nudge" ? r.message : "").toContain("STILL returned matches");
+    expect(opCleanupUnverified(op)).toBe(true);
+  });
+
+  it("counts bash rg exit 1 with no output as clean evidence", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    await bashSearchTurn(
+      op,
+      'rg -n "tailnet|tailscale" app/src',
+      "[error, exit_code=1, duration_ms=10]\nExit code: 1",
+      "error",
+    );
+    expect((await wrapUp(op)).kind).toBe("continue");
+    expect(opCleanupUnverified(op)).toBe(false);
   });
 
   it("recovery: a clean grep after the nudge clears the verdict", async () => {

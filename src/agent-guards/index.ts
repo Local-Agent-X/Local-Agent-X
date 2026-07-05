@@ -18,6 +18,24 @@ export {
   looksLikeDefinitiveOperationalClaim,
 } from "./operational-claim.js";
 export {
+  checkUngroundedCodebaseAdvice,
+  hasFreshCodebaseEvidence,
+  looksLikeCodebaseAdviceRequest,
+  looksLikeImplementationAdvice,
+} from "./codebase-advice.js";
+export {
+  CLAIM_GROUNDING_RULES,
+  CODEBASE_ADVICE_GROUNDING_REASON,
+  CODEBASE_ADVICE_GROUNDING_STATUS,
+  claimGroundingRule,
+  evaluateClaimGrounding,
+  type ClaimGroundingRule,
+  type ClaimKind,
+  type EvidenceKind,
+  type GroundingConsequence,
+  type GroundingVerdict,
+} from "./claim-grounding.js";
+export {
   checkTaskAnchor,
   createTaskAnchorState,
   type TaskAnchorState,
@@ -66,6 +84,7 @@ export {
   noteCleanupEvidence,
   checkCleanupVerify,
   createCleanupVerifyState,
+  CLEANUP_VERIFY_MAX_NUDGES,
   type CleanupVerifyState,
   type CleanupToolResult,
 } from "./cleanup-verify.js";

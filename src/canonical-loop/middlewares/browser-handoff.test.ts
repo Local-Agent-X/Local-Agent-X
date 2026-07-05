@@ -1,8 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import type { CanonicalLoopContext } from "./types.js";
 import { browserHandoffMiddleware, opGaveUpUnrecovered } from "./browser-handoff.js";
 import { classifyGaveUp } from "../../classifiers/give-up-classify.js";
 import { recordGaveUpNudge } from "../../tool-tracker.js";
+import { setOpLedger } from "../instruction-ledger/index.js";
+import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
 
 vi.mock("../../classifiers/give-up-classify.js", () => ({
   classifyGaveUp: vi.fn(async () => null),
@@ -193,5 +195,24 @@ describe("browser-handoff gate", () => {
         "Options:\n1. Switch to web_fetch.\n2. Use a different news site.\n3. Tell me to stop.\n\nWhich way?",
     }));
     expect(res.kind).toBe("nudge");
+  });
+});
+
+describe("instruction-ledger gating (user forbade egress)", () => {
+  afterEach(() => _resetOpLedgers());
+
+  it("suppresses the keep-driving nudge but still stores the give-up verdict for the label", async () => {
+    mockClassify.mockResolvedValueOnce(true);
+    const c = ctx({ assistantContent: "I'm blocked by the overlay." });
+    setOpLedger(c.op.id, { prohibitions: ["egress"], obligations: [], phrases: ["no web access"] });
+    expect((await fire(c)).kind).toBe("continue");    // nudge suppressed
+    expect(opGaveUpUnrecovered(c.op.id)).toBe(true);  // give-up LABEL path preserved
+  });
+
+  it("still nudges when only an unrelated capability is forbidden", async () => {
+    mockClassify.mockResolvedValueOnce(true);
+    const c = ctx({ assistantContent: "I'm blocked by the overlay." });
+    setOpLedger(c.op.id, { prohibitions: ["workspace-write"], obligations: [], phrases: ["read-only"] });
+    expect((await fire(c)).kind).toBe("nudge");
   });
 });

@@ -36,6 +36,7 @@
  */
 import type { CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
+import { opForbidsCapability } from "../instruction-ledger/index.js";
 import { classifyGaveUp } from "../../classifiers/give-up-classify.js";
 import { recordGaveUpNudge, classifyOpCategory } from "../../tool-tracker.js";
 import { createLogger } from "../../logger.js";
@@ -143,6 +144,12 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
     // RESEARCH_TOOLS. Only a drive op has an open page/desktop where "keep
     // driving" is the right push; nudging an exhausted research op just loops.
     if (!driveAttempted) return { kind: "continue" };
+
+    // The nudge pushes MORE browsing — never against an explicit user
+    // prohibition on network egress. Only the nudge is suppressed: the give-up
+    // verdict stored above still feeds the outcome label, which must stay
+    // honest. Fail-open: no ledger entry, no suppression.
+    if (opForbidsCapability(ctx.op.id, "egress")) return { kind: "continue" };
 
     const flag = getMiddlewareState<FiredFlag>(
       ctx.op.id,

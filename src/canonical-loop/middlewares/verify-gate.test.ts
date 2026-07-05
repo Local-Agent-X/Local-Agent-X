@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the LLM judge BEFORE importing the middleware so the deleted-test path is
 // deterministic (no provider call). The verdict is injected per test.
@@ -8,9 +8,12 @@ vi.mock("../../classifiers/test-deletion-classify.js", () => ({
   classifyTestDeletion: (...args: Parameters<ClassifyTestDeletion>) => classifyTestDeletionMock(...args),
 }));
 
-const { verifyGateMiddleware, opDeletedTestDodge } = await import("./verify-gate.js");
+const { verifyGateMiddleware, opDeletedTestDodge, opEditedSourceUnverified } = await import("./verify-gate.js");
 const { _resetMiddlewareStates } = await import("./state.js");
 import type { CanonicalLoopContext } from "./types.js";
+import { setOpLedger } from "../instruction-ledger/index.js";
+import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
+import type { CapabilityClass } from "../../tool-registry.js";
 
 let _op = 0;
 function opId(): string { return `op-vg-test-${++_op}`; }
@@ -188,5 +191,39 @@ describe("verify-gate — deleted-test judge (dodge vs legit cleanup)", () => {
     await wrapUp(op);
     await wrapUp(op);
     expect(classifyTestDeletionMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("verify-gate — instruction-ledger gating", () => {
+  afterEach(() => _resetOpLedgers());
+
+  function forbid(op: string, ...prohibitions: CapabilityClass[]): void {
+    setOpLedger(op, { prohibitions, obligations: [], phrases: ["I'll verify myself"] });
+  }
+
+  it("suppresses the nudge when the user forbade running commands — but the label stays honest", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    forbid(op, "shell");
+    await editTurn(op, "src/parser.ts");
+    expect((await wrapUp(op)).kind).toBe("continue");
+    // afterToolExecution accrual is untouched → the outcome label still demotes.
+    expect(opEditedSourceUnverified(op)).toBe(true);
+  });
+
+  it("suppresses the nudge when the user forbade edits", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    forbid(op, "workspace-write");
+    await editTurn(op, "src/parser.ts");
+    expect((await wrapUp(op)).kind).toBe("continue");
+  });
+
+  it("still nudges when only an unrelated capability is forbidden (fail-open otherwise)", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    forbid(op, "egress");
+    await editTurn(op, "src/parser.ts");
+    expect((await wrapUp(op)).kind).toBe("nudge");
   });
 });

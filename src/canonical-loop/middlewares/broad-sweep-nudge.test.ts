@@ -1,6 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { broadSweepNudgeMiddleware, looksLikeBroadSweep } from "./broad-sweep-nudge.js";
 import type { CanonicalLoopContext } from "./types.js";
+import { setOpLedger } from "../instruction-ledger/index.js";
+import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
 
 let _op = 0;
 function opId(): string { return `op-bsn-test-${++_op}`; }
@@ -75,5 +77,21 @@ describe("broadSweepNudgeMiddleware", () => {
     const op = opId();
     expect(run(op, { task: SWEEPS[0], toolCalls: 0 })).toMatchObject({ kind: "nudge" });
     expect(run(op, { task: SWEEPS[0], toolCalls: 0 })).toEqual({ kind: "continue" });
+  });
+});
+
+describe("instruction-ledger gating", () => {
+  afterEach(() => _resetOpLedgers());
+
+  it("suppresses the enumerate-and-fix nudge when the user forbade workspace writes", () => {
+    const op = opId();
+    setOpLedger(op, { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't change anything"] });
+    expect(run(op, { task: SWEEPS[0], toolCalls: 0 })).toEqual({ kind: "continue" });
+  });
+
+  it("still nudges when only an unrelated capability is forbidden", () => {
+    const op = opId();
+    setOpLedger(op, { prohibitions: ["egress"], obligations: [], phrases: ["stay offline"] });
+    expect(run(op, { task: SWEEPS[0], toolCalls: 0 })).toMatchObject({ kind: "nudge" });
   });
 });

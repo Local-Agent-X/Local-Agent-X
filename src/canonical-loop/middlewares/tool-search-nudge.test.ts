@@ -1,6 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { toolSearchNudgeMiddleware, looksLikeCapabilityDenial } from "./tool-search-nudge.js";
 import type { CanonicalLoopContext } from "./types.js";
+import { setOpLedger } from "../instruction-ledger/index.js";
+import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
+import type { CapabilityClass } from "../../tool-registry.js";
 
 let _op = 0;
 function opId(): string { return `op-tsn-test-${++_op}`; }
@@ -91,5 +94,32 @@ describe("tool-search-nudge middleware", () => {
     const op = opId();
     expect((await run(op, { content: "I can't do that — no tool for it." })).kind).toBe("nudge");
     expect((await run(op, { content: "Still can't, I have no such tool." })).kind).toBe("continue");
+  });
+});
+
+describe("instruction-ledger gating (targeted suppression)", () => {
+  afterEach(() => _resetOpLedgers());
+
+  function forbid(op: string, ...prohibitions: CapabilityClass[]): void {
+    setOpLedger(op, { prohibitions, obligations: [], phrases: ["no browsing"] });
+  }
+
+  it("suppresses the nudge when the denial is about a capability the user forbade", async () => {
+    const op = opId();
+    forbid(op, "egress");
+    const r = await run(op, { content: "I can't browse the web to fetch that page." });
+    expect(r.kind).toBe("continue");
+  });
+
+  it("still nudges when the denial is about a DIFFERENT capability than the forbidden one", async () => {
+    const op = opId();
+    forbid(op, "egress");
+    const r = await run(op, { content: "Sorry, I can't move the mouse." });
+    expect(r.kind).toBe("nudge");
+  });
+
+  it("still nudges with no ledger at all (fail-open)", async () => {
+    const r = await run(opId(), { content: "I can't browse the web to fetch that page." });
+    expect(r.kind).toBe("nudge");
   });
 });

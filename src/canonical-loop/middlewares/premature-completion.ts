@@ -11,6 +11,7 @@
  */
 import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
+import { opForbidsCapability } from "../instruction-ledger/index.js";
 
 interface FiredFlag { fired: boolean }
 
@@ -22,6 +23,10 @@ export const prematureCompletionMiddleware: CanonicalMiddleware = {
   when: isWorkerOp,
 
   afterModelCall(ctx) {
+    // This guard purely pushes committing ACTION — never against an explicit
+    // user prohibition ("read-only", "don't change anything"). Fail-open: an
+    // op with no ledger entry is never suppressed.
+    if (opForbidsCapability(ctx.op.id, "workspace-write")) return { kind: "continue" };
     if (ctx.toolCalls.length > 0) return { kind: "continue" };
     if (ctx.assistantContent.trim().length === 0) return { kind: "continue" };
     if (ctx.committingToolsThisOp.size > 0) return { kind: "continue" };

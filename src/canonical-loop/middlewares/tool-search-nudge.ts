@@ -17,6 +17,8 @@
  */
 import { type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
+import { opForbidsCapability } from "../instruction-ledger/index.js";
+import type { CapabilityClass } from "../../tool-registry.js";
 
 interface FiredFlag { fired: boolean }
 
@@ -59,6 +61,24 @@ export function looksLikeCapabilityDenial(text: string): boolean {
   return norm.length <= 160 && NEGATION.test(norm) && CAPABILITY_CUE.test(norm);
 }
 
+// What capability a denial is ABOUT — matched against the reply text. Only
+// consulted for classes the op's instruction ledger actually forbids, so with
+// no user constraint (the common case) none of these are ever tested.
+const CAPABILITY_TOPIC_CUES: Record<CapabilityClass, RegExp> = {
+  "egress": /\b(?:brows\w*|web|internet|online|network|url|http|website|site|fetch\w*|download\w*)\b/i,
+  "workspace-write": /\b(?:writ\w*|edit\w*|modif\w*|creat\w*|delet\w*|sav\w*)\b/i,
+  "shell": /\b(?:shell|terminal|bash|command|script|execut\w*)\b/i,
+  "sensitive-read": /\b(?:credential|secret|password|keychain|token|api\s*key)\b/i,
+};
+
+/** True when the denial reads as the model HONORING a user prohibition (the
+ *  declined capability is one the ledger forbids) — not as a missed tool. */
+function denialHonorsProhibition(opId: string, text: string): boolean {
+  return (Object.keys(CAPABILITY_TOPIC_CUES) as CapabilityClass[]).some(
+    (cls) => opForbidsCapability(opId, cls) && CAPABILITY_TOPIC_CUES[cls].test(text),
+  );
+}
+
 export const toolSearchNudgeMiddleware: CanonicalMiddleware = {
   name: "tool-search-nudge",
 
@@ -66,6 +86,10 @@ export const toolSearchNudgeMiddleware: CanonicalMiddleware = {
     if (ctx.toolCalls.length > 0) return { kind: "continue" };          // it tried a tool
     if (ctx.toolsCalledThisOp.has("tool_search")) return { kind: "continue" }; // already searched
     if (!looksLikeCapabilityDenial(ctx.assistantContent)) return { kind: "continue" };
+    // TARGETED suppression: "I can't browse" after the user forbade egress is
+    // compliance, not a capability gap — don't push it to search for a tool the
+    // user banned. Denials about NON-forbidden capabilities still nudge.
+    if (denialHonorsProhibition(ctx.op.id, ctx.assistantContent)) return { kind: "continue" };
 
     const flag = getMiddlewareState<FiredFlag>(
       ctx.op.id,

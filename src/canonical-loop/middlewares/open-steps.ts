@@ -21,6 +21,7 @@ import { getOpenTasksForSession } from "../../tools/task-tools.js";
 import { readOpTurns } from "../store.js";
 import { getMiddlewareState } from "./state.js";
 import { EDIT_TOOLS } from "../../agent-guards/verify-gate.js";
+import { opForbidsCapability } from "../instruction-ledger/index.js";
 
 /**
  * Last open-task set we already nudged about, per session. Keyed by SESSION
@@ -35,6 +36,11 @@ const lastNudgedSignature = new Map<string, string>();
 
 export const openStepsMiddleware: CanonicalMiddleware = {
   name: "open-steps",
+
+  // Both hooks push plan-and-KEEP-WORKING — never against an explicit user
+  // prohibition on changing the workspace ("read-only", "don't edit anything").
+  // Fail-open: an op with no ledger entry is never suppressed.
+  when: (ctx) => !opForbidsCapability(ctx.op.id, "workspace-write"),
 
   /**
    * Turn-0 plan seed. Worker runs are unattended, so a model that skips
@@ -152,6 +158,10 @@ function opTouchedTaskLedger(opId: string): boolean {
  * warning can't displace the real report regardless of length.
  */
 export function openStepsTerminationWarning(opId: string): string | null {
+  // Called from decide-outcome, not through the phase — so the `when` predicate
+  // above doesn't cover it. Same suppression: never nag about unworked steps
+  // when the user forbade doing the work.
+  if (opForbidsCapability(opId, "workspace-write")) return null;
   const sessionId = getSessionForOp(opId);
   if (!sessionId) return null;
   const open = getOpenTasksForSession(sessionId);
@@ -182,6 +192,10 @@ export function openStepsTerminationWarning(opId: string): string | null {
 const earnedDoneFired = new Set<string>();
 
 export function earnedDoneNudge(op: Op): string | null {
+  // Called from decide-outcome, not through the phase — so the `when` predicate
+  // above doesn't cover it. Same suppression as the hooks: never force another
+  // work turn when the user forbade doing the work.
+  if (opForbidsCapability(op.id, "workspace-write")) return null;
   if (op.lane === "interactive") return null;
   if (earnedDoneFired.has(op.id)) return null;
   const sessionId = getSessionForOp(op.id);

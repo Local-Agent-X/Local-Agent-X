@@ -34,6 +34,7 @@ import {
 } from "../../agent-guards/index.js";
 import { classifyTestDeletion } from "../../classifiers/test-deletion-classify.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
+import { opForbidsCapability } from "../instruction-ledger/index.js";
 
 /**
  * Outcome-label verdict (read by decide-outcome): the op edited source and never
@@ -184,6 +185,16 @@ export const verifyGateMiddleware: CanonicalMiddleware = {
   },
 
   async afterModelCall(ctx) {
+    // The verify NUDGE pushes "run the build/tests" — never against an explicit
+    // user prohibition on running commands or editing ("don't run anything,
+    // I'll verify myself"). Only the nudge is suppressed: the evidence accrual
+    // in afterToolExecution above still runs, so the outcome LABEL
+    // (opEditedSourceUnverified) stays honest. Fail-open: no ledger entry, no
+    // suppression.
+    if (
+      opForbidsCapability(ctx.op.id, "shell") ||
+      opForbidsCapability(ctx.op.id, "workspace-write")
+    ) return { kind: "continue" };
     // Only evaluate at wrap-up: model ended the turn with text and no tool
     // calls. Mirrors premature-completion's wrap-up detection.
     if (ctx.toolCalls.length > 0) return { kind: "continue" };

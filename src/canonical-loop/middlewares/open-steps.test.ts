@@ -22,6 +22,8 @@ import type { Op } from "../../ops/types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { getOpenTasksForSession } from "../../tools/task-tools.js";
 import { readOpTurns } from "../store.js";
+import { setOpLedger } from "../instruction-ledger/index.js";
+import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
 
 const mockSession = vi.mocked(getSessionForOp);
 const mockOpenTasks = vi.mocked(getOpenTasksForSession);
@@ -286,5 +288,41 @@ describe("earnedDoneNudge — unattended earned-done gate", () => {
     expect(earnedDoneNudge(op("op-recycle", "agent"))).toBeNull();
     clearEarnedDoneStateForOp("op-recycle");
     expect(earnedDoneNudge(op("op-recycle", "agent"))).not.toBeNull();
+  });
+});
+
+describe("instruction-ledger gating (user forbade workspace writes)", () => {
+  const okTaskTurn = [{ toolCallSummary: [{ tool: "task_create", resultStatus: "ok" }] }] as never;
+
+  function forbidWrites(opId: string): void {
+    setOpLedger(opId, { prohibitions: ["workspace-write"], obligations: [], phrases: ["read-only"] });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetEarnedDoneState();
+    _resetOpLedgers();
+    mockSession.mockReturnValue("sess-ledger");
+    mockOpenTasks.mockReturnValue([{ id: "1", description: "Step one" }]);
+    mockOpTurns.mockReturnValue(okTaskTurn);
+  });
+
+  it("`when` suppresses both hooks when workspace-write is forbidden; fail-open without a ledger", () => {
+    const c = ctx();
+    expect(openStepsMiddleware.when!(c)).toBe(true); // no ledger → run normally
+    forbidWrites(c.op.id);
+    expect(openStepsMiddleware.when!(c)).toBe(false);
+  });
+
+  it("earnedDoneNudge is null when workspace-write is forbidden, fires without", () => {
+    forbidWrites("op-ed-forbid");
+    expect(earnedDoneNudge({ id: "op-ed-forbid", lane: "agent" } as unknown as Op)).toBeNull();
+    expect(earnedDoneNudge({ id: "op-ed-free", lane: "agent" } as unknown as Op)).not.toBeNull();
+  });
+
+  it("openStepsTerminationWarning is null when workspace-write is forbidden, warns without", () => {
+    forbidWrites("op-warn-forbid");
+    expect(openStepsTerminationWarning("op-warn-forbid")).toBeNull();
+    expect(openStepsTerminationWarning("op-warn-free")).not.toBeNull();
   });
 });

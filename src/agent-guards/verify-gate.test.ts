@@ -8,6 +8,7 @@ import {
   isSourceFile,
   guessTestSubject,
   decideDeletedTest,
+  sourceDoneEvidence,
   type VerifyTurnAction,
 } from "./verify-gate.js";
 
@@ -307,6 +308,24 @@ describe("recordExternalVerify — the orchestrator's own build verdict", () => 
     const s = createVerifyGateState();
     recordExternalVerify(s, true);
     expect(s.verifiedSinceEdit).toBe(false);
+  });
+});
+
+describe("sourceDoneEvidence — adapter into canonical claim grounding", () => {
+  it("maps a clean verify after source edits to build-clean evidence", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts"), bash("tsc --noEmit", "ok")], s);
+    expect(sourceDoneEvidence(s)).toEqual(["build-clean"]);
+  });
+
+  it("does not produce build-clean evidence for missing or failed verification", () => {
+    const never = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts")], never);
+    expect(sourceDoneEvidence(never)).toEqual([]);
+
+    const failed = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts"), bash("tsc --noEmit", "error")], failed);
+    expect(sourceDoneEvidence(failed)).toEqual([]);
   });
 });
 

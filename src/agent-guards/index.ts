@@ -61,6 +61,7 @@ export {
   createVerifyGateState,
   opEditedSourceUnverified,
   recordExternalVerify,
+  sourceDoneEvidence,
   isSourceFile,
   guessTestSubject,
   decideDeletedTest,

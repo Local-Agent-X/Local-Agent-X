@@ -16,6 +16,7 @@
 // dodge-vs-legit-cleanup judgment itself is an async LLM call in the middleware.
 
 import { isTestFile } from "./build-command.js";
+import { evaluateClaimGrounding, type EvidenceKind } from "./claim-grounding.js";
 
 /** Normalized view of one tool call + its dispatch outcome for a turn. */
 export interface VerifyTurnAction {
@@ -210,6 +211,13 @@ export function recordExternalVerify(state: VerifyGateState, passed: boolean): v
   state.verifyFailedSinceEdit = !passed;
 }
 
+/** Evidence adapter for the canonical claim-grounding table. The verify-gate
+ * owns detection of edits and build/test commands; claim-grounding owns the
+ * policy that a source done-claim needs build-clean evidence. */
+export function sourceDoneEvidence(state: VerifyGateState): EvidenceKind[] {
+  return state.editedSource && state.verifiedSinceEdit ? ["build-clean"] : [];
+}
+
 const NUDGE_NEVER_VERIFIED =
   "You edited source files this run but haven't run the project's build, " +
   "type-check, or tests since the last change. Compiling or saving is not " +
@@ -279,7 +287,10 @@ export function decideDeletedTest(
 export function checkVerifyGate(state: VerifyGateState): { nudge: string | null } {
   // The deleted-test tripwire is handled in the middleware (it needs an async
   // LLM judge to tell a dodge from legit cleanup); this stays edit/verify-only.
-  if (!state.editedSource || state.verifiedSinceEdit) return { nudge: null };
+  if (!state.editedSource) return { nudge: null };
+
+  const verdict = evaluateClaimGrounding("source-done", sourceDoneEvidence(state));
+  if (verdict.grounded) return { nudge: null };
 
   if (state.verifyFailedSinceEdit) {
     if (state.failNudges >= MAX_FAIL_NUDGES) return { nudge: null };
@@ -298,5 +309,5 @@ export function checkVerifyGate(state: VerifyGateState): { nudge: string | null 
  *  never reached a clean verify — whether it never ran one or ran one that
  *  failed. "Done" over an unverified edit is a partial, not a clean. */
 export function opEditedSourceUnverified(state: VerifyGateState): boolean {
-  return state.editedSource && !state.verifiedSinceEdit;
+  return state.editedSource && !evaluateClaimGrounding("source-done", sourceDoneEvidence(state)).grounded;
 }

@@ -79,29 +79,32 @@ export const cleanupVerifyMiddleware: CanonicalMiddleware = {
     if (ctx.assistantContent.trim().length === 0) return { kind: "continue" };
     if (!looksLikeCleanupSweep(ctx.userMessage)) return { kind: "continue" };
 
-    // Ledger gate (same as the six persistence guards): this nudge pushes the
-    // model to "finish the remaining hits, then re-grep" — i.e. keep editing. If
-    // the user forbade edits for this run ("don't touch anything, just tell me
-    // which refs remain"), suppress it rather than push the exact forbidden work.
-    // Evidence accrual (afterToolExecution) + the outcome label are left intact.
-    if (opForbidsCapability(ctx.op.id, "workspace-write")) return { kind: "continue" };
-
     const state = getMiddlewareState<CleanupVerifyState>(
       ctx.op.id, "cleanup-verify", createCleanupVerifyState,
     );
+    // Compute the verdict FIRST. checkCleanupVerify sets state.unverified, which
+    // the terminal-outcome label reads (opCleanupUnverified in terminal-epilogue).
+    // Doing this BEFORE the ledger gate below keeps the label honest even when we
+    // suppress the nudge: a read-only cleanup that claims done without a
+    // confirming search still records `partial`, never a rounded-up `clean`.
     const r = checkCleanupVerify(state);
-    if (r.nudge) {
-      // When the wrap-up positively claims the cleanup is finished but no search
-      // confirmed it, that bubble is a confirmed-false claim the next turn
-      // supersedes — flag it for retraction (decide-outcome strips it) so the
-      // user never reads a "Cleanup complete" that the loop is about to walk
-      // back. An honest "not done / still remain" wrap-up keeps the plain reason
-      // and stands.
-      const reason = claimsCleanupDone(ctx.assistantContent)
-        ? CLEANUP_VERIFY_FALSE_DONE_REASON
-        : CLEANUP_VERIFY_REASON;
-      return { kind: "nudge", message: r.nudge, reason };
-    }
-    return { kind: "continue" };
+    if (!r.nudge) return { kind: "continue" };
+
+    // When the wrap-up positively claims the cleanup is finished but no search
+    // confirmed it, that bubble is a confirmed-false claim the next turn
+    // supersedes — flag it for retraction (decide-outcome strips it) so the user
+    // never reads a "Cleanup complete" that the loop is about to walk back. An
+    // honest "not done / still remain" wrap-up keeps the plain reason and stands.
+    const reason = claimsCleanupDone(ctx.assistantContent)
+      ? CLEANUP_VERIFY_FALSE_DONE_REASON
+      : CLEANUP_VERIFY_REASON;
+
+    // Ledger gate (same as the six persistence guards): the "finish the hits,
+    // then re-grep" nudge pushes exactly the edits a workspace-write ban forbids,
+    // so suppress the NUDGE — but the honest verdict above already stands, so the
+    // outcome label is unaffected by the suppression.
+    if (opForbidsCapability(ctx.op.id, "workspace-write")) return { kind: "continue" };
+
+    return { kind: "nudge", message: r.nudge, reason };
   },
 };

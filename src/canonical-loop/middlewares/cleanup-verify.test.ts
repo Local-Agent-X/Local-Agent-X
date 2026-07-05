@@ -136,16 +136,19 @@ describe("cleanupVerifyMiddleware", () => {
     expect(opCleanupUnverified(op)).toBe(false);
   });
 
-  it("suppresses the nudge when the user forbade edits (ledger workspace-write)", async () => {
+  it("suppresses the nudge under a workspace-write ban but keeps the label honest", async () => {
     _resetMiddlewareStates();
     const op = opId();
     // "don't edit, just tell me which tailnet refs remain" — the cleanup nudge
     // ("finish the hits, then re-grep") would push exactly the forbidden edits.
     setOpLedger(op, { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit, just tell me"] });
-    // Identical wrap-up that nudges without the constraint now stays quiet.
+    // The edit-pushing nudge is suppressed...
     expect((await wrapUp(op)).kind).toBe("continue");
+    // ...but the outcome label still records the cleanup as unverified — a
+    // read-only cleanup done-claim must NOT round up to `clean` (P2b).
+    expect(opCleanupUnverified(op)).toBe(true);
     clearOpLedger(op);
-    // Sanity: with the ledger cleared, the same op/state would nudge again.
+    // Sanity: with the ledger cleared, the same unresolved state nudges again.
     expect((await wrapUp(op)).kind).toBe("nudge");
   });
 

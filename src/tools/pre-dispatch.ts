@@ -26,6 +26,7 @@ import {
 import { getRuntimeConfig } from "../config.js";
 import { hasCapability, type CapabilityClass } from "../tool-registry.js";
 import { opForbidsCapability } from "../canonical-loop/instruction-ledger/index.js";
+import { shellCommandWritesFiles } from "../security/shell-write-detector.js";
 import { isProtectedSetting } from "../settings-schema.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
@@ -182,6 +183,26 @@ export async function assertToolCallAllowed(
         recovery,
         userHint: USER_HINTS.policy,
       });
+    }
+
+    // Shell escape hatch for a workspace-write ban: bash/process_start are
+    // SHELL-class, so the capability loop above never catches a shell command
+    // that WRITES files (`sed -i`, `cat > f`, a heredoc, `cp`, `rm`…). When the
+    // user forbade workspace writes, block a mutating shell command too —
+    // read-only shell (grep/ls/cat) stays allowed. Best-effort: a bespoke
+    // interpreter one-liner can still slip past static analysis; the post-hoc
+    // mutation gates catch that.
+    if (opForbidsCapability(ctx.opId, "workspace-write") && hasCapability(call.name, "shell")) {
+      const cmd = (call.args as { command?: unknown } | undefined)?.command;
+      if (typeof cmd === "string" && shellCommandWritesFiles(cmd)) {
+        throw new ToolBlocked({
+          stage: "tool-policy",
+          disposition: "hard-deny",
+          reason: `The user asked you not to edit or create files in this request, and this shell command writes to the filesystem — so it is blocked. Read-only shell (grep, ls, cat) is fine; to change a file, either keep the command read-only or tell the user the exact command to run themselves.`,
+          recovery: "Run the command read-only, or report the change for the user to apply.",
+          userHint: USER_HINTS.policy,
+        });
+      }
     }
   }
 

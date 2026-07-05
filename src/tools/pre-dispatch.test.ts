@@ -203,6 +203,35 @@ describe("per-op instruction-ledger capability prohibitions", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("blocks a MUTATING shell command under a workspace-write ban (closes the bash escape)", async () => {
+    setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit anything"] });
+    for (const command of ["sed -i 's/a/b/' src/x.ts", "echo x > src/x.ts", "rm src/x.ts", "cp a.ts b.ts"]) {
+      try {
+        await assertToolCallAllowed({ id: "p-bash", name: "bash", args: { command } }, opCtx("op-1"));
+        throw new Error(`expected ToolBlocked for: ${command}`);
+      } catch (e) {
+        expect(e).toBeInstanceOf(ToolBlocked);
+        expect((e as ToolBlocked).reason).toContain("writes to the filesystem");
+      }
+    }
+  });
+
+  it("allows READ-ONLY shell under a workspace-write ban (grep/ls/cat, benign redirect)", async () => {
+    setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit anything"] });
+    for (const command of ["grep -rn tailnet src", "ls -la", "cat src/x.ts", "echo hi > /dev/null 2>&1"]) {
+      await expect(
+        assertToolCallAllowed({ id: "p-bash", name: "bash", args: { command } }, opCtx("op-1")),
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  it("REGRESSION fail-open: a mutating shell command is allowed with no workspace-write ban", async () => {
+    setOpLedger("op-1", { prohibitions: [], obligations: [], phrases: [] });
+    await expect(
+      assertToolCallAllowed({ id: "p-bash", name: "bash", args: { command: "sed -i s/a/b/ x.ts" } }, opCtx("op-1")),
+    ).resolves.toBeUndefined();
+  });
+
   it("REGRESSION fail-open: empty ledger blocks nothing", async () => {
     setOpLedger("op-1", { prohibitions: [], obligations: [], phrases: [] });
     await expect(

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { cleanupVerifyMiddleware, opCleanupUnverified } from "./cleanup-verify.js";
 import { _resetMiddlewareStates } from "./state.js";
+import { setOpLedger, clearOpLedger } from "../instruction-ledger/index.js";
 import { CLEANUP_VERIFY_MAX_NUDGES } from "../../agent-guards/index.js";
 import type { CanonicalLoopContext } from "./types.js";
 
@@ -133,6 +134,19 @@ describe("cleanupVerifyMiddleware", () => {
     await grepTurn(op, "No matches found.");
     await wrapUp(op);                              // re-evaluate
     expect(opCleanupUnverified(op)).toBe(false);
+  });
+
+  it("suppresses the nudge when the user forbade edits (ledger workspace-write)", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    // "don't edit, just tell me which tailnet refs remain" — the cleanup nudge
+    // ("finish the hits, then re-grep") would push exactly the forbidden edits.
+    setOpLedger(op, { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit, just tell me"] });
+    // Identical wrap-up that nudges without the constraint now stays quiet.
+    expect((await wrapUp(op)).kind).toBe("continue");
+    clearOpLedger(op);
+    // Sanity: with the ledger cleared, the same op/state would nudge again.
+    expect((await wrapUp(op)).kind).toBe("nudge");
   });
 
   it("stays quiet on a non-cleanup task", async () => {

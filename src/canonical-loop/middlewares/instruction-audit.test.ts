@@ -85,6 +85,25 @@ describe("instruction-audit middleware", () => {
     expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
   });
 
+  const readFirstObligation = () => ledger({
+    obligations: [{ kind: "read-before-answer" }],
+    phrases: ["read parser.ts before you answer"],
+  });
+
+  it("nudges when read-before-answer is unmet (no read this op), fires once", async () => {
+    const c = ctx();
+    setOpLedger(c.op.id, readFirstObligation());
+    const result = await instructionAuditMiddleware.afterModelCall!(c);
+    expect(result).toMatchObject({ kind: "nudge", reason: INSTRUCTION_OBLIGATION_REASON });
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
+  it("continues when a read/grep/glob consulted the repo before answering", async () => {
+    const c = ctx({ toolsCalledThisOp: new Set(["read"]) });
+    setOpLedger(c.op.id, readFirstObligation());
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
   it("nudges once when a forbidden capability's tool was attempted", async () => {
     const c = ctx({ attemptedToolsThisOp: new Set(["web_fetch"]) });
     setOpLedger(c.op.id, ledger({ prohibitions: ["egress"], phrases: ["no network"] }));

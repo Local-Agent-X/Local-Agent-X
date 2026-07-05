@@ -6,7 +6,8 @@
  * run constraints in the per-op instruction ledger:
  *
  *   1. Unmet obligation — the user said "commit when done" but no git commit
- *      was observed this op → nudge once (reason "instruction-obligation-unmet").
+ *      was observed this op, OR "read X before you answer" but no read/grep/glob
+ *      ran this op → nudge once (reason "instruction-obligation-unmet").
  *   2. Defense-in-depth violation — a tool belonging to a capability class the
  *      user forbade was attempted this op. The pre-dispatch layer should have
  *      blocked it; if one leaked through, surface it once at wrap-up
@@ -33,17 +34,22 @@ import type { CanonicalMiddleware } from "./types.js";
 export const INSTRUCTION_OBLIGATION_REASON = "instruction-obligation-unmet";
 export const INSTRUCTION_VIOLATION_REASON = "instruction-violation";
 
+/** Repo-consulting tools that satisfy a "read before you answer" obligation. */
+const READ_TOOLS = ["read", "grep", "glob"] as const;
+
 interface AuditState {
   /** A successful git commit was observed in this op's tool output. */
   commitSeen: boolean;
-  /** Each audit fires at most once per op, independently of the other. */
+  /** Each audit fires at most once per op, independently of the others. */
   obligationFired: boolean;
+  readFirstFired: boolean;
   violationFired: boolean;
 }
 
 const initAuditState = (): AuditState => ({
   commitSeen: false,
   obligationFired: false,
+  readFirstFired: false,
   violationFired: false,
 });
 
@@ -99,6 +105,24 @@ export const instructionAuditMiddleware: CanonicalMiddleware = {
           "git commit has been observed this op. Commit your changes now " +
           "(git add + git commit), then wrap up. If there is genuinely nothing " +
           "to commit, state that explicitly in one sentence.)",
+        reason: INSTRUCTION_OBLIGATION_REASON,
+      };
+    }
+
+    // 1b. Read-before-answer obligation: the user asked to consult the repo
+    // before answering, but this final answer arrived with no read/grep/glob
+    // this op. Nudge once to open the file(s) first, then answer. (toolsCalledThisOp
+    // is the ok-only set, so a failed read doesn't count as satisfying it.)
+    const wantsReadFirst = opObligations(ctx.op.id).some(o => o.kind === "read-before-answer");
+    if (wantsReadFirst && !state.readFirstFired &&
+        !READ_TOOLS.some(t => ctx.toolsCalledThisOp.has(t))) {
+      state.readFirstFired = true;
+      return {
+        kind: "nudge",
+        message:
+          "(Instruction audit: the user asked you to READ / consult the repo " +
+          "before answering, but no read, grep, or glob has run this op. Open the " +
+          "relevant file(s) first, then answer from what you actually read.)",
         reason: INSTRUCTION_OBLIGATION_REASON,
       };
     }

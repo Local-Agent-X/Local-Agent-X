@@ -28,6 +28,7 @@ import {
   type CleanupToolResult,
   type CleanupVerifyState,
 } from "../../agent-guards/index.js";
+import { opForbidsCapability } from "../instruction-ledger/index.js";
 
 /** Pair this turn's tool results with their calls (by id) so a grep result
  *  carries the pattern it searched — the gate tracks cleanliness per pattern. */
@@ -77,6 +78,13 @@ export const cleanupVerifyMiddleware: CanonicalMiddleware = {
     if (ctx.toolCalls.length > 0) return { kind: "continue" };
     if (ctx.assistantContent.trim().length === 0) return { kind: "continue" };
     if (!looksLikeCleanupSweep(ctx.userMessage)) return { kind: "continue" };
+
+    // Ledger gate (same as the six persistence guards): this nudge pushes the
+    // model to "finish the remaining hits, then re-grep" — i.e. keep editing. If
+    // the user forbade edits for this run ("don't touch anything, just tell me
+    // which refs remain"), suppress it rather than push the exact forbidden work.
+    // Evidence accrual (afterToolExecution) + the outcome label are left intact.
+    if (opForbidsCapability(ctx.op.id, "workspace-write")) return { kind: "continue" };
 
     const state = getMiddlewareState<CleanupVerifyState>(
       ctx.op.id, "cleanup-verify", createCleanupVerifyState,

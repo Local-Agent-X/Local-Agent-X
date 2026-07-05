@@ -72,6 +72,20 @@ const OBLIGATION_CUES: RegExp[] = [
   /\bcheck\s+(?:it|this|them)\s+in\s+when\s+(?:you['’]?re\s+|you\s+are\s+)?done\b/gi,
 ];
 
+// "Read/look at/check X before you answer" — a consult-before-answering
+// obligation. Unambiguous as an instruction (both orderings), so it also joins
+// the strong tier: an obligation nudge is low-risk to over-fire, and it must not
+// vanish on an LLM outage any more than commit-when-done does.
+// The gap tolerates a dot ONLY as a filename extension (`.ts`, `.json` — a dot
+// followed by a word char), never a sentence-ending period — so "read parser.ts
+// before you answer" spans the filename while "read the docs. Before lunch…"
+// still can't cross the sentence boundary.
+const GAP = String.raw`(?:[^.?!\n]|\.\w)`;
+const READ_FIRST_CUES: RegExp[] = [
+  new RegExp(String.raw`\b(?:read|look\s+at|check|review|inspect|consult|examine)\b${GAP}{0,45}?\bbefore\b${GAP}{0,25}?(?:answer|respond|repl(?:y|ying)|tell(?:ing)?\s+me|conclud|decid)`, "gi"),
+  new RegExp(String.raw`\bbefore\s+(?:you\s+)?(?:answer(?:ing)?|respond(?:ing)?|repl(?:y|ying)|conclud|decid)${GAP}{0,30}?\b(?:read|look\s+at|check|review|inspect|consult|examine)\b`, "gi"),
+];
+
 // STRONG tier: direct negation-verb adjacency only — the phrasings whose
 // CapabilityClass is unambiguous without a model. This is the entire
 // LLM-failure fallback, so it stays deliberately narrow: "don't commit",
@@ -82,6 +96,17 @@ const STRONG_PROHIBITIONS: ReadonlyArray<{ re: RegExp; cls: CapabilityClass }> =
   { re: /\b(?:don['’]?t|do\s+not|never)\s+(?:browse|open\s+(?:the\s+|a\s+)?browser|go\s+online|use\s+the\s+(?:web|internet))\b/gi, cls: "egress" },
   { re: /\b(?:don['’]?t|do\s+not|never)\s+(?:install\b|run\s+(?:any(?:thing)?|commands?|shell|bash|scripts?)\b)/gi, cls: "shell" },
   { re: /\b(?:don['’]?t|do\s+not|never)\s+read\s+(?:my\s+|the\s+)?(?:secrets?|credentials?|\.?env\b|passwords?|keys?)/gi, cls: "sensitive-read" },
+  // Unambiguous standalone "don't act / diagnose-only" forms — promoted to the
+  // strong tier so the most important constraint survives an LLM outage. Kept
+  // narrow on purpose: "don't do anything" can't read as description, and
+  // "just tell me WHAT/WHY/HOW…" is diagnostic (it excludes the temporal
+  // "just tell me WHEN you're done", which means notify, not read-only). Bare
+  // "read-only" and "I'll do it myself" are deliberately NOT here — their
+  // class/scope is genuinely ambiguous ("the filesystem is read-only") and a
+  // wrong strong guess would over-block, which the no-over-block invariant forbids;
+  // they stay LLM-gated, and fail-open (no enforcement) is the safe degrade.
+  { re: /\b(?:don['’]?t|do\s+not)\s+do\s+anything\b/gi, cls: "workspace-write" },
+  { re: /\b(?:just|only)\s+tell\s+me\s+(?:what|which|where|why|how|if|whether)\b/gi, cls: "workspace-write" },
 ];
 
 export interface PhraseGateResult {
@@ -107,6 +132,7 @@ export function phraseGate(userMessage: string): PhraseGateResult {
   collect(PROHIBITION_CUE);
   for (const re of STANDALONE_CUES) collect(re);
   for (const re of OBLIGATION_CUES) collect(re);
+  for (const re of READ_FIRST_CUES) collect(re);
 
   const strong: ConfirmedConstraints = { prohibitions: [], obligations: [] };
   for (const { re, cls } of STRONG_PROHIBITIONS) {
@@ -115,6 +141,9 @@ export function phraseGate(userMessage: string): PhraseGateResult {
   }
   if (OBLIGATION_CUES.some((re) => userMessage.match(re) !== null)) {
     strong.obligations.push({ kind: "commit-when-done" });
+  }
+  if (READ_FIRST_CUES.some((re) => userMessage.match(re) !== null)) {
+    strong.obligations.push({ kind: "read-before-answer" });
   }
   return { cues, strong };
 }
@@ -139,7 +168,9 @@ prohibitions — capability classes the user FORBADE for this task. Allowed valu
 - "shell": forbade running shell/bash commands or installing anything
 - "sensitive-read": forbade reading certain files/secrets/credentials
 
-obligations — allowed value only "commit-when-done": the user asked to commit / check the work in when done.
+obligations — allowed values only:
+- "commit-when-done": the user asked to commit / check the work in when done.
+- "read-before-answer": the user asked to read/consult a specific file or the repo BEFORE answering or deciding.
 
 HIGH PRECISION RULES:
 - Include a constraint ONLY when the user EXPLICITLY stated it as an instruction for THIS task.
@@ -182,9 +213,9 @@ export function validateConfirmation(parsed: unknown): ConfirmedConstraints | nu
       prohibitions.push(p as CapabilityClass);
     }
   }
-  const obligations: Obligation[] = obj.obligations.some((o) => o === "commit-when-done")
-    ? [{ kind: "commit-when-done" }]
-    : [];
+  const obligations: Obligation[] = [];
+  if (obj.obligations.some((o) => o === "commit-when-done")) obligations.push({ kind: "commit-when-done" });
+  if (obj.obligations.some((o) => o === "read-before-answer")) obligations.push({ kind: "read-before-answer" });
   return { prohibitions, obligations };
 }
 

@@ -64,7 +64,6 @@ Append to `scenarios.mjs`:
   id: "my-case",
   kind: "positive",                          // or "negative" (+ mustPass: true)
   complianceClass: "what constraint it exercises",
-  expectRedUntilEnforcement: true,           // positive scenarios, pre-enforcement
   files: { "src/a.ts": "…" },                // the starting project
   setup: (dir) => initGit(dir),              // optional (git scenarios)
   prompt: (dir) => `In ${dir}, do X…`,       // absolute dir → real tool paths

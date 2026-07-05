@@ -103,10 +103,11 @@ describe("extractConstraints — LLM failure fails OPEN", () => {
   const confirmNull: ConfirmConstraintsFn = async () => null;
 
   it("returns an empty ledger on LLM null when the cue has no strong implication", async () => {
-    // Gate hits ("just tell me", "don't … commit") but neither is in the
-    // strong tier, so an unavailable LLM must not constrain anything.
+    // Gate hits ("don't … commit", "read-only") but neither is in the strong
+    // tier (their class/scope is the LLM's call), so an unavailable LLM must not
+    // constrain anything.
     const ledger = await extractConstraints(
-      "Just tell me what's wrong, and don't commit anything yet.",
+      "Don't commit anything yet, and keep it read-only.",
       confirmNull,
     );
     expect(ledger).toEqual({ prohibitions: [], obligations: [], phrases: [] });
@@ -117,6 +118,16 @@ describe("extractConstraints — LLM failure fails OPEN", () => {
     expect(ledger.prohibitions).toEqual(["workspace-write"]);
     expect(ledger.obligations).toEqual([]);
     expect(ledger.phrases.length).toBeGreaterThan(0);
+  });
+
+  it("keeps \"don't do anything\" as workspace-write on LLM null (now strong)", async () => {
+    const ledger = await extractConstraints("Don't do anything, just diagnose it.", confirmNull);
+    expect(ledger.prohibitions).toEqual(["workspace-write"]);
+  });
+
+  it("keeps the read-before-answer obligation on LLM null (now strong)", async () => {
+    const ledger = await extractConstraints("Read parser.ts before you answer.", confirmNull);
+    expect(ledger.obligations).toEqual([{ kind: "read-before-answer" }]);
   });
 
   it("keeps the commit-when-done obligation on LLM null (unambiguous cue)", async () => {
@@ -152,6 +163,24 @@ describe("phraseGate — strong tier stays narrow", () => {
     expect(phraseGate("the volume is read-only").strong.prohibitions).toEqual([]);
     // no negation at all → no gate, no strong
     expect(phraseGate("never mind, all good").strong.prohibitions).toEqual([]);
+  });
+
+  it("promotes only the UNAMBIGUOUS standalone diagnose-only forms to strong", () => {
+    expect(phraseGate("Don't do anything, just look.").strong.prohibitions).toEqual(["workspace-write"]);
+    expect(phraseGate("Just tell me what's wrong.").strong.prohibitions).toEqual(["workspace-write"]);
+    // temporal "tell me WHEN done" is a notify request, NOT read-only → must not fire
+    expect(phraseGate("Just tell me when you're done.").strong.prohibitions).toEqual([]);
+    // bare "read-only" / "I'll do it myself" stay LLM-only (class genuinely ambiguous)
+    expect(phraseGate("Keep it read-only please.").strong.prohibitions).toEqual([]);
+    expect(phraseGate("I'll verify it myself.").strong.prohibitions).toEqual([]);
+  });
+
+  it("promotes read-before-answer to a strong obligation in both orderings", () => {
+    expect(phraseGate("Read parser.ts before you answer.").strong.obligations)
+      .toEqual([{ kind: "read-before-answer" }]);
+    expect(phraseGate("Before you answer, look at the config.").strong.obligations)
+      .toEqual([{ kind: "read-before-answer" }]);
+    expect(phraseGate("Answer me quickly.").strong.obligations).toEqual([]);
   });
 
   it("is reusable across calls (no /g lastIndex bleed)", () => {

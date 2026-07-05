@@ -103,9 +103,12 @@ describe("scenario shape — the runner's contract", () => {
       expect(typeof s.check).toBe("function");
     }
   });
-  it("positives are flagged expected-red; the negative is mustPass (fail-open gate)", () => {
+  it("positives gate the exit code as compliance checks; the negative is the fail-open mustPass", () => {
+    // Enforcement has shipped, so every scenario is required. Only the negative
+    // carries mustPass (fail-open gate); positives are compliance checks whose
+    // reds fail the run without the mustPass tag.
     for (const s of scenarios) {
-      if (s.kind === "positive") expect(s.expectRedUntilEnforcement).toBe(true);
+      if (s.kind === "positive") expect(s.mustPass).toBeFalsy();
       else expect(s.mustPass).toBe(true);
     }
   });

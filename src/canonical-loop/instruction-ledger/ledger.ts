@@ -18,8 +18,10 @@
  */
 import type { CapabilityClass } from "../../tool-registry.js";
 
-/** Something the user asked to happen at op end. */
-export type Obligation = { kind: "commit-when-done" };
+/** Something the user asked the agent to do (or to have done) for this op. */
+export type Obligation =
+  | { kind: "commit-when-done" }
+  | { kind: "read-before-answer" };
 
 export interface InstructionLedger {
   /** Capability classes the user forbade for this op. */

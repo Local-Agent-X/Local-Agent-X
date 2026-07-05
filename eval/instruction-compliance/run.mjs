@@ -61,8 +61,7 @@ for (const s of chosen) {
     try { scored = s.check(dir, run); }
     catch (e) { scored = { checks: [{ name: "check threw", pass: false, detail: e.message }], taskPass: false }; }
     const verdict = run.err ? "ERR" : scored.taskPass ? "PASS" : "FAIL";
-    const expected = !scored.taskPass && s.expectRedUntilEnforcement ? "(expected red until enforcement lands)" : "";
-    console.log(`  ${verdict.padEnd(4)} ${s.id}${REPEAT > 1 ? ` #${i + 1}` : ""}  ${run.secs}s  ${run.tools.length} tools  ${[run.err, expected].filter(Boolean).join(" ")}`);
+    console.log(`  ${verdict.padEnd(4)} ${s.id}${REPEAT > 1 ? ` #${i + 1}` : ""}  ${run.secs}s  ${run.tools.length} tools  ${run.err ?? ""}`);
     for (const c of scored.checks) console.log(`         ${c.pass ? "✓" : "✗"} ${c.name}${c.pass ? "" : ` — ${c.detail}`}`);
     runs.push({
       i, verdict, ...scored, secs: run.secs, err: run.err,
@@ -75,7 +74,7 @@ for (const s of chosen) {
     await sleep(1500);
   }
   const pass = runs.filter((r) => r.taskPass).length;
-  results.push({ id: s.id, kind: s.kind, complianceClass: s.complianceClass, mustPass: !!s.mustPass, expectRedUntilEnforcement: !!s.expectRedUntilEnforcement, n: REPEAT, pass, runs });
+  results.push({ id: s.id, kind: s.kind, complianceClass: s.complianceClass, mustPass: !!s.mustPass, n: REPEAT, pass, runs });
 }
 
 // ── Summary ──
@@ -83,7 +82,7 @@ console.log(`\n${"═".repeat(66)}\nSUMMARY — compliance pass RATE (n=${REPEAT
 let tPass = 0, tN = 0;
 for (const r of results) {
   tPass += r.pass; tN += r.n;
-  const tag = r.mustPass ? "MUST-PASS" : r.expectRedUntilEnforcement && r.pass < r.n ? "red expected until enforcement" : "";
+  const tag = r.pass < r.n ? (r.mustPass ? "OVER-BLOCK" : "REGRESSION") : (r.mustPass ? "must-pass" : "");
   console.log(`  ${r.id.padEnd(22)} [${r.kind}] ${r.complianceClass}`);
   console.log(`     pass ${r.pass}/${r.n}${tag ? `   ${tag}` : ""}`);
 }
@@ -95,12 +94,19 @@ writeFileSync(out, JSON.stringify({ when: stamp, model, repeat: REPEAT, results 
 console.log(`\n  full results → ${out}`);
 console.log(`  NOTE: throwaway 'icomp-*' sessions are now in your sidebar — safe to bulk-delete.`);
 
-// Exit code gates ONLY on the fail-open invariant: a mustPass (negative)
-// scenario going red means enforcement over-blocked an unconstrained task.
-// Positive reds are the expected eval-first state and never fail the run.
+// The obedience axis has shipped, so EVERY scenario is now required (the
+// eval-first "positive reds are expected" phase is over). Two failure kinds,
+// reported distinctly:
+//   • must-pass (negative) red  → enforcement OVER-blocked an unconstrained task
+//     (the fail-open invariant broke).
+//   • positive red              → a compliance guard REGRESSED (obedience not
+//     enforced). Either fails the run.
 const overBlocked = results.filter((r) => r.mustPass && r.pass < r.n);
+const complianceReds = results.filter((r) => !r.mustPass && r.pass < r.n);
 if (overBlocked.length > 0) {
-  console.error(`\n  FAIL-OPEN REGRESSION: must-pass scenario(s) red: ${overBlocked.map((r) => r.id).join(", ")}`);
-  process.exit(1);
+  console.error(`\n  FAIL-OPEN REGRESSION (over-blocked an unconstrained task): ${overBlocked.map((r) => r.id).join(", ")}`);
 }
-process.exit(0);
+if (complianceReds.length > 0) {
+  console.error(`  COMPLIANCE REGRESSION (obedience not enforced): ${complianceReds.map((r) => r.id).join(", ")}`);
+}
+process.exit(overBlocked.length + complianceReds.length > 0 ? 1 : 0);

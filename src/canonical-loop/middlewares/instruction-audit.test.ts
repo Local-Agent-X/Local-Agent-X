@@ -1,0 +1,118 @@
+import { describe, expect, it } from "vitest";
+import type { CanonicalLoopContext } from "./types.js";
+import type { InstructionLedger } from "../instruction-ledger/index.js";
+import { setOpLedger } from "../instruction-ledger/index.js";
+import {
+  INSTRUCTION_OBLIGATION_REASON,
+  INSTRUCTION_VIOLATION_REASON,
+  instructionAuditMiddleware,
+} from "./instruction-audit.js";
+
+let counter = 0;
+function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
+  return {
+    op: { id: `instruction-audit-${counter++}`, type: "chat_turn", lane: "interactive" },
+    turnIdx: 0,
+    toolCalls: [],
+    toolResults: [],
+    assistantContent: "All done — the change is in place.",
+    toolsCalledThisOp: new Set(),
+    committingToolsThisOp: new Set(),
+    attemptedToolsThisOp: new Set(),
+    ...over,
+  } as CanonicalLoopContext;
+}
+
+function ledger(over: Partial<InstructionLedger> = {}): InstructionLedger {
+  return { prohibitions: [], obligations: [], phrases: [], ...over };
+}
+
+const commitObligation = () => ledger({
+  obligations: [{ kind: "commit-when-done" }],
+  phrases: ["commit when you're done"],
+});
+
+describe("instruction-audit middleware", () => {
+  it("nudges at wrap-up when commit-when-done is unmet, and fires only once", async () => {
+    const c = ctx();
+    setOpLedger(c.op.id, commitObligation());
+    const result = await instructionAuditMiddleware.afterModelCall!(c);
+    expect(result).toMatchObject({
+      kind: "nudge",
+      reason: INSTRUCTION_OBLIGATION_REASON,
+    });
+    // Fire-once: the same op is not re-nudged at the next wrap-up.
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
+  it("continues when a git commit was observed this op", async () => {
+    const c = ctx();
+    setOpLedger(c.op.id, commitObligation());
+    // A prior turn's bash result carried git's commit-success signature.
+    await instructionAuditMiddleware.afterToolExecution!(ctx({
+      op: c.op,
+      toolResults: [{
+        toolName: "bash",
+        toolCallId: "call-1",
+        content: "[main abc1234] ship the feature\n 2 files changed, 10 insertions(+)",
+        status: "ok",
+      }],
+    }));
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
+  it("fails open when no ledger is set for the op", async () => {
+    expect(await instructionAuditMiddleware.afterModelCall!(ctx())).toEqual({ kind: "continue" });
+  });
+
+  it("fails open when the ledger records no constraints", async () => {
+    const c = ctx();
+    setOpLedger(c.op.id, ledger());
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
+  it("skips non-wrap-up turns even with an unmet obligation", async () => {
+    const c = ctx({
+      toolCalls: [{ toolCallId: "call-1", tool: "bash", args: {} }],
+    });
+    setOpLedger(c.op.id, commitObligation());
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
+  it("skips empty final turns", async () => {
+    const c = ctx({ assistantContent: "   " });
+    setOpLedger(c.op.id, commitObligation());
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
+  it("nudges once when a forbidden capability's tool was attempted", async () => {
+    const c = ctx({ attemptedToolsThisOp: new Set(["web_fetch"]) });
+    setOpLedger(c.op.id, ledger({ prohibitions: ["egress"], phrases: ["no network"] }));
+    const result = await instructionAuditMiddleware.afterModelCall!(c);
+    expect(result).toMatchObject({
+      kind: "nudge",
+      reason: INSTRUCTION_VIOLATION_REASON,
+    });
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
+  it("does not flag attempted tools outside the forbidden classes", async () => {
+    const c = ctx({ attemptedToolsThisOp: new Set(["read", "grep"]) });
+    setOpLedger(c.op.id, ledger({ prohibitions: ["egress"], phrases: ["no network"] }));
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+
+  it("surfaces the violation on the wrap-up after the obligation nudge", async () => {
+    const c = ctx({ attemptedToolsThisOp: new Set(["email_send"]) });
+    setOpLedger(c.op.id, ledger({
+      prohibitions: ["egress"],
+      obligations: [{ kind: "commit-when-done" }],
+      phrases: ["no network", "commit when done"],
+    }));
+    const first = await instructionAuditMiddleware.afterModelCall!(c);
+    expect(first).toMatchObject({ kind: "nudge", reason: INSTRUCTION_OBLIGATION_REASON });
+    const second = await instructionAuditMiddleware.afterModelCall!(c);
+    expect(second).toMatchObject({ kind: "nudge", reason: INSTRUCTION_VIOLATION_REASON });
+    expect(await instructionAuditMiddleware.afterModelCall!(c)).toEqual({ kind: "continue" });
+  });
+});

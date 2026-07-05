@@ -10,6 +10,10 @@ import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
 import { falseRefusalMiddleware } from "./false-refusal.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { repeatFailureMiddleware } from "./repeat-failure.js";
+import { cleanupVerifyMiddleware } from "./cleanup-verify.js";
+import { refuteCompletionMiddleware } from "./refute-completion.js";
+import { instructionLedgerMiddleware } from "./instruction-ledger.js";
+import { instructionAuditMiddleware } from "./instruction-audit.js";
 
 // CLASS LOCK for the model-behavior guards. Each of these is a safety/quality
 // guard that catches a distinct LLM failure mode (looping, fabricated actions,
@@ -30,6 +34,8 @@ const REQUIRED_GUARDS = [
   falseRefusalMiddleware,
   prematureCompletionMiddleware,
   repeatFailureMiddleware,
+  instructionLedgerMiddleware,
+  instructionAuditMiddleware,
 ];
 
 describe("default middleware stack completeness", () => {
@@ -46,6 +52,22 @@ describe("default middleware stack completeness", () => {
     const j = stack.indexOf(toolSearchNudgeMiddleware);
     expect(i).toBeGreaterThanOrEqual(0);
     expect(i).toBeLessThan(j);
+  });
+
+  it("instruction-ledger runs near the top, before the persistence guards (turn-0 ledger population must precede every guard that reads it)", () => {
+    const ledger = stack.indexOf(instructionLedgerMiddleware);
+    const loopDetect = stack.indexOf(loopDetectionMiddleware);
+    expect(ledger).toBeGreaterThanOrEqual(0);
+    expect(ledger).toBeLessThan(loopDetect);
+  });
+
+  it("instruction-audit runs in the wrap-up band: after cleanup-verify, before refute-completion's LLM panel", () => {
+    const audit = stack.indexOf(instructionAuditMiddleware);
+    const cleanup = stack.indexOf(cleanupVerifyMiddleware);
+    const refute = stack.indexOf(refuteCompletionMiddleware);
+    expect(cleanup).toBeGreaterThanOrEqual(0);
+    expect(audit).toBeGreaterThan(cleanup);
+    expect(audit).toBeLessThan(refute);
   });
 
   it("codebase-advice runs after operational-claim and before broad action nudges", () => {

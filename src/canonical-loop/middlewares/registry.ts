@@ -58,6 +58,8 @@ import { forceToolUseMiddleware } from "./force-tool-use.js";
 import { autoBuildAppMiddleware } from "./auto-build-app.js";
 import { verifyGateMiddleware } from "./verify-gate.js";
 import { cleanupVerifyMiddleware } from "./cleanup-verify.js";
+import { instructionLedgerMiddleware } from "./instruction-ledger.js";
+import { instructionAuditMiddleware } from "./instruction-audit.js";
 
 export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
   return [
@@ -66,6 +68,12 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     // Strips an uninvited per-call `theme` from office tools before dispatch
     // (house style is the default unless the user asked for a look).
     officeThemeGuardMiddleware,
+    // Turn 0 beforeTurn only — parses the kickoff message into the per-op
+    // instruction ledger (explicit user run constraints) so the persistence
+    // guards below and pre-dispatch capability gating can read it from the
+    // very first dispatch. Fail-open: an extractor fault records an EMPTY
+    // ledger, which constrains nothing.
+    instructionLedgerMiddleware,
     loopDetectionMiddleware,
     // All lanes — content-repetition breaker: the model emitting the same
     // visible answer turn after turn. Sibling to loop-detection (which watches
@@ -122,6 +130,13 @@ export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
     // evidence, not the build. Runs after verify-gate so an edited-but-unbuilt
     // worker still gets the build nudge first.
     cleanupVerifyMiddleware,
+    // All lanes — wrap-up audit of the final answer against the instruction
+    // ledger: an unmet obligation ("commit when done" with no commit seen) or
+    // a forbidden-capability tool that leaked past pre-dispatch gating each
+    // nudge once. A deterministic ledger check, so it runs with the other
+    // wrap-up gates BEFORE refute-completion's LLM panel. Fail-open: no ledger
+    // or no matching constraint → continue.
+    instructionAuditMiddleware,
     // Worker ops only — a semantic last-resort completion check: when a worker
     // claims done (text, no tools) AFTER committing work and none of the cheap
     // deterministic gates above nudged, fire an independent skeptic panel at the

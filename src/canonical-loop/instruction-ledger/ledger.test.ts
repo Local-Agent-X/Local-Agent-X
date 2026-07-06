@@ -41,6 +41,7 @@ vi.mock("../turn-loop/render-verify.js", () => ({ clearRenderVerifyStateForOp: v
 vi.mock("../turn-loop/build-verify.js", () => ({ clearBuildVerifyStateForOp: vi.fn() }));
 vi.mock("../turn-loop/design-verify.js", () => ({ clearDesignVerifyStateForOp: vi.fn() }));
 vi.mock("../turn-loop/spec-probes.js", () => ({ clearSpecProbeStateForOp: vi.fn() }));
+vi.mock("../turn-loop/spec-audit.js", () => ({ clearSpecAuditStateForOp: vi.fn() }));
 
 afterEach(() => _resetOpLedgers());
 

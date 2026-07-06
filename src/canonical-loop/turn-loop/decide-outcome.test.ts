@@ -46,6 +46,9 @@ vi.mock("./build-verify.js", () => ({
 vi.mock("./spec-probes.js", () => ({
   runSpecProbeGate: vi.fn(async () => ({ nudge: "", shouldRetry: false })),
 }));
+vi.mock("./spec-audit.js", () => ({
+  runSpecAuditGate: vi.fn(async () => ({ nudge: "", shouldRetry: false })),
+}));
 
 import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
 import { recordTerminalOutcome } from "./record-outcome.js";

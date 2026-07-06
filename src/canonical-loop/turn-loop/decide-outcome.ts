@@ -31,6 +31,7 @@ import { isSilentToolCall } from "./silent-tool-check.js";
 import { appIdsTouchedByTurn, registerOpAppTouch, runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { runBuildVerifyGate } from "./build-verify.js";
 import { runSpecProbeGate } from "./spec-probes.js";
+import { runSpecAuditGate } from "./spec-audit.js";
 import { runDesignVerifyGate } from "./design-verify.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
@@ -276,6 +277,21 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // and must never demote the outcome label.
   if (terminalReason === "done" && opEditedSourcePaths(op.id).length > 0) {
     const gate = await runSpecProbeGate(op);
+    if (gate.shouldRetry) {
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);
+      terminalReason = null;
+    }
+  }
+
+  // Spec-audit gate (the completeness gate). The executable gates above prove
+  // the code compiles and behaves; none of them re-reads the REQUEST, so
+  // explicitly requested work can be missing from a green build (a live
+  // user-facing string a cleanup was told to remove). One fresh-context call:
+  // the same active model re-reads the original request against the op's
+  // actual diff, conversation hidden. Nudge-only, fires at most once per op,
+  // never demotes the label. Contract lives in spec-audit.ts.
+  if (terminalReason === "done" && opEditedSourcePaths(op.id).length > 0) {
+    const gate = await runSpecAuditGate(op);
     if (gate.shouldRetry) {
       appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);
       terminalReason = null;

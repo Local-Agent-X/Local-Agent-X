@@ -265,6 +265,22 @@ export function appendOpMessage(row: OpMessageRow): void {
   }
 }
 
+/**
+ * Text of the op's FIRST user message — the original task request. The one
+ * source for every prompter/gate that anchors to "what the user asked for"
+ * (spec-probes, spec-audit, situational-awareness). Non-text content → "".
+ */
+export function firstUserMessageText(opId: string): string {
+  const first = readOpMessages(opId).find((m) => m.role === "user");
+  if (!first) return "";
+  const c = first.content;
+  if (typeof c === "string") return c;
+  if (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string") {
+    return (c as { text: string }).text;
+  }
+  return "";
+}
+
 export function readOpMessages(opId: string): OpMessageRow[] {
   const path = opMessagesPath(opId);
   if (!existsSync(path)) return [];

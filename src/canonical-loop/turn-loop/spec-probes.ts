@@ -28,7 +28,7 @@ import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { opEditedSourcePaths } from "../middlewares/verify-gate.js";
-import { readOpMessages } from "../store.js";
+import { firstUserMessageText } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { generateOracleProbe, type OracleProbe, type ProbeLanguage } from "../../classifiers/oracle-probe-gen.js";
@@ -136,19 +136,6 @@ async function defaultExec(probe: OracleProbe, solutionDir: string, signal?: Abo
   } finally {
     try { unlinkSync(probePath); } catch { /* best-effort — a dotfile that outlives a crash is harmless */ }
   }
-}
-
-/** The op's first user message — the task spec the probe author anchors to.
- *  Mirrors situational-awareness.firstUserMessageText. */
-function firstUserRequest(opId: string): string {
-  const first = readOpMessages(opId).find((m) => m.role === "user");
-  if (!first) return "";
-  const c = first.content;
-  if (typeof c === "string") return c;
-  if (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string") {
-    return (c as { text: string }).text;
-  }
-  return "";
 }
 
 // Declaration lines that define a module's public surface — Python defs/classes,
@@ -265,7 +252,7 @@ export async function runSpecProbeGate(op: Op, opts: SpecProbeOptions = {}): Pro
   } else {
     const generate = opts.generate ?? generateOracleProbe;
     probe = await generate({
-      userRequest: firstUserRequest(op.id),
+      userRequest: firstUserMessageText(op.id),
       fileList: abs.map((p) => basename(p)),
       apiSurface: extractApiSurface(abs),
       signal: opts.signal,

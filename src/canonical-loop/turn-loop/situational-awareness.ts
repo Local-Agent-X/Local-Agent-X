@@ -27,7 +27,7 @@
  * have" line would be pure duplication.
  */
 import type { Op } from "../../ops/types.js";
-import { readOpTurns, readOpMessages } from "../store.js";
+import { readOpTurns, firstUserMessageText } from "../store.js";
 import type { OpTurnRow } from "../types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { recentActions, type LedgerAction } from "../../ops/action-ledger.js";
@@ -201,24 +201,10 @@ function recentActionsLine(recent: LedgerAction[]): string | null {
   return `Recent actions (across this conversation): ${parts.join(", ")}`;
 }
 
-function firstUserMessageText(opId: string): string {
-  const msgs = readOpMessages(opId);
-  const firstUser = msgs.find(m => m.role === "user");
-  return firstUser ? extractText(firstUser.content) : "";
-}
-
 function goalLine(firstUserText: string): string | null {
   const text = firstUserText.trim();
   if (!text) return null;
   const oneLine = text.replace(/\s+/g, " ");
   const clipped = oneLine.length > GOAL_MAX_CHARS ? oneLine.slice(0, GOAL_MAX_CHARS) + "…" : oneLine;
   return `Original request: "${clipped}"`;
-}
-
-function extractText(c: unknown): string {
-  if (typeof c === "string") return c;
-  if (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string") {
-    return (c as { text: string }).text;
-  }
-  return "";
 }

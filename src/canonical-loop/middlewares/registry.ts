@@ -6,7 +6,7 @@
  * canonical safety stack fires in the same sequence the three legacy loops
  * use:
  *
- *   beforeTurn:           mid-turn-stale, force-tool-use (codex), open-steps
+ *   beforeTurn:           mid-turn-stale, open-steps
  *                         (turn-0 plan seed on agent/background lanes)
  *   afterModelCall:       loop-detection, hallucination-check, action-claim,
  *                         tool-search-nudge (all lanes — forces a tool_search
@@ -54,7 +54,6 @@ import { browserHandoffMiddleware } from "./browser-handoff.js";
 import { selfCheckMiddleware } from "./self-check.js";
 import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
 import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
-import { forceToolUseMiddleware } from "./force-tool-use.js";
 import { autoBuildAppMiddleware } from "./auto-build-app.js";
 import { verifyGateMiddleware } from "./verify-gate.js";
 import { cleanupVerifyMiddleware } from "./cleanup-verify.js";
@@ -64,7 +63,6 @@ import { instructionAuditMiddleware } from "./instruction-audit.js";
 export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {
   return [
     midTurnStaleMiddleware,
-    forceToolUseMiddleware,
     // Strips an uninvited per-call `theme` from office tools before dispatch
     // (house style is the default unless the user asked for a look).
     officeThemeGuardMiddleware,

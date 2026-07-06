@@ -140,11 +140,3 @@ export interface CanonicalMiddleware {
     | CanonicalMiddlewareResult
     | Promise<CanonicalMiddlewareResult>;
 }
-
-/** Side-channel for `force-tool-use`. The canonical adapter contract v1 has
- *  no `toolChoice` field on TurnInput, so the middleware writes its intent
- *  to op.canonical.toolChoice and adapters that opt-in read it from there.
- *  Today no adapter reads it — port is parity-by-shim, same as agent-loop's
- *  legacy state of the same middleware (its "forward-compatible shim" note
- *  in src/agent-loop/middlewares/force-tool-use.ts). */
-export const TOOL_CHOICE_OP_FIELD = "toolChoice" as const;

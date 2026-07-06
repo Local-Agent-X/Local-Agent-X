@@ -34,7 +34,6 @@ import { prematureCompletionMiddleware } from "../src/canonical-loop/middlewares
 import { selfCheckMiddleware } from "../src/canonical-loop/middlewares/self-check.js";
 import { midTurnStaleMiddleware } from "../src/canonical-loop/middlewares/mid-turn-stale.js";
 import { postTurnDetectorMiddleware } from "../src/canonical-loop/middlewares/post-turn-detector.js";
-import { forceToolUseMiddleware } from "../src/canonical-loop/middlewares/force-tool-use.js";
 import { autoBuildAppMiddleware } from "../src/canonical-loop/middlewares/auto-build-app.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
@@ -545,32 +544,6 @@ describe("post-turn-detector middleware", () => {
       op, turnIdx: 0, assistantContent: "4.",
     }));
     expect((r as { kind: string }).kind).toBe("continue");
-  });
-});
-
-// ── force-tool-use ───────────────────────────────────────────────────────
-
-describe("force-tool-use middleware", () => {
-  it("only registers for codex provider", () => {
-    expect(forceToolUseMiddleware.when?.(mkCtx({ op: mkOp("ftu-c"), provider: "codex" }))).toBe(true);
-    expect(forceToolUseMiddleware.when?.(mkCtx({ op: mkOp("ftu-a"), provider: "anthropic" }))).toBe(false);
-  });
-
-  it("sets toolChoice=required on turn 0 for build intents", () => {
-    const op = mkOp("ftu-build");
-    forceToolUseMiddleware.beforeTurn!(mkCtx({
-      op, turnIdx: 0, provider: "codex", userMessage: "build me an app",
-    }));
-    expect((op.canonical as { toolChoice?: string })?.toolChoice).toBe("required");
-  });
-
-  it("resets to auto on turn > 0", () => {
-    const op = mkOp("ftu-reset");
-    op.canonical = { toolChoice: "required" } as typeof op.canonical;
-    forceToolUseMiddleware.beforeTurn!(mkCtx({
-      op, turnIdx: 1, provider: "codex", userMessage: "build me an app",
-    }));
-    expect((op.canonical as { toolChoice?: string })?.toolChoice).toBe("auto");
   });
 });
 

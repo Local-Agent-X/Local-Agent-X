@@ -24,7 +24,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/memory/` | 37 | 106 | XL |  |
 | `src/providers/` | 37 | 17 | L |  |
 | `src/canonical-loop/` | 31 | 125 | XL |  |
-| `src/classifiers/` | 26 | 11 | L |  |
+| `src/classifiers/` | 29 | 11 | L |  |
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/auth/` | 22 | 10 | L |  |
@@ -114,6 +114,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/config.ts` | M |
 | `src/contradiction-detector.ts` | M |
 | `src/contradiction-patterns.ts` | S |
+| `src/correction-learning-detect.ts` | S |
 | `src/correction-learning.ts` | M |
 | `src/cost-tracker.ts` | M |
 | `src/crash-analytics.ts` | S |

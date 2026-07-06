@@ -73,6 +73,11 @@ const exitPlanMode: ToolDefinition = {
  * resolveApproval); decline/timeout keeps the mode on, and the manager's
  * decline-suppression auto-declines an immediate identical re-issue.
  */
+/** Sessions with a plan-approval card currently awaiting the user. One card
+ *  per session, period — a model retry (rephrased summary, impatient re-call)
+ *  must NOT stack a second card while the first is undecided. */
+const pendingPlanApproval = new Set<string>();
+
 async function exitEnforcedPlanMode(sid: string, args: Record<string, unknown>): Promise<ToolResult> {
   const emit = args._onEvent as ((event: ServerEvent) => void) | undefined;
   if (!emit) {
@@ -83,6 +88,10 @@ async function exitEnforcedPlanMode(sid: string, args: Record<string, unknown>):
   if (!summary) {
     return { content: 'Enforced plan mode is on. To request approval, call exit_plan_mode again WITH a `summary` of your plan — that summary is exactly what the user is shown to approve. Keep it concrete: what you will change and where.' };
   }
+  if (pendingPlanApproval.has(sid)) {
+    return { content: 'A plan-approval card is ALREADY awaiting the user\'s decision for this session. Do not call exit_plan_mode again — end your turn and wait for the user to approve, deny, or reply.' };
+  }
+  pendingPlanApproval.add(sid);
   const approved = await getApprovalManager().requestApproval({
     toolName: 'exit_plan_mode',
     toolCallId: (args._toolCallId as string) || `plan-exit-${sid}`,
@@ -91,7 +100,7 @@ async function exitEnforcedPlanMode(sid: string, args: Record<string, unknown>):
     args: { summary },
     alwaysAsk: true, // ending a standing user mandate must never auto-approve from cache
     emit,
-  });
+  }).finally(() => pendingPlanApproval.delete(sid));
   if (!approved) {
     return { content: 'The user did NOT approve the plan (declined or timed out) — plan mode stays on. Do not re-issue this call; revise the plan from their feedback or ask what they want changed.' };
   }

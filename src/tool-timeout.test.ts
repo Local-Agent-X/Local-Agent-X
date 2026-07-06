@@ -58,6 +58,16 @@ describe("getToolTimeout exemptions", () => {
     expect(getToolTimeout("op_wait")).toBe(0);
   });
 
+  it("exempts human-input waiters — their wait is bounded by the card/modal, not the fallback", async () => {
+    const { getToolTimeout } = await import("./tool-timeout.js");
+    // The 120s fallback killed a pending plan-approval card at 2min (the
+    // ApprovalManager's own 5-min timeout never got a chance), the model saw
+    // an error and retried, and the user faced duplicate cards.
+    for (const name of ["exit_plan_mode", "request_secret", "request_secrets"]) {
+      expect(getToolTimeout(name)).toBe(0);
+    }
+  });
+
   it("bounds the network/verification tools generously", async () => {
     const { getToolTimeout } = await import("./tool-timeout.js");
     expect(getToolTimeout("http_request")).toBe(60_000);

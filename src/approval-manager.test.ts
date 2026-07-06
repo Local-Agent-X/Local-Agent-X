@@ -550,3 +550,51 @@ describe("ApprovalManager — clearSession", () => {
     await expect(p3).resolves.toBe(false);
   });
 });
+
+describe("ApprovalManager — denyPendingForSession (user answered in words, not clicks)", () => {
+  it("denies every pending card for THE session only, emitting approval_resolved", async () => {
+    const mgr = getApprovalManager();
+    const mine = sid("deny-msg");
+    const other = sid("deny-msg-other");
+
+    const { emit: e1, cap: c1 } = captureEmit();
+    const p1 = mgr.requestApproval({ toolName: "exit_plan_mode", toolCallId: "t1", sessionId: mine, context: "plan", args: { summary: "do X" }, alwaysAsk: true, emit: e1 });
+    const { emit: e2, cap: c2 } = captureEmit();
+    const p2 = mgr.requestApproval({ toolName: "bash", toolCallId: "t2", sessionId: other, context: "", args: { command: "git push" }, emit: e2 });
+    expect(c1.lastApprovalId).toBeTruthy();
+    expect(c2.lastApprovalId).toBeTruthy();
+
+    expect(mgr.denyPendingForSession(mine)).toBe(1);
+    await expect(p1).resolves.toBe(false);
+    expect(c1.events.some((e) => e.type === "approval_resolved" && e.approved === false)).toBe(true);
+
+    // The other session's card is untouched and still resolvable.
+    expect(mgr.resolveApproval(c2.lastApprovalId!, true)).toBe(true);
+    await expect(p2).resolves.toBe(true);
+  });
+
+  it("does NOT set decline-suppression: an identical re-raise gets a fresh card", async () => {
+    const mgr = getApprovalManager();
+    const sessionId = sid("deny-msg-reraise");
+
+    const { emit: e1 } = captureEmit();
+    const p1 = mgr.requestApproval({ toolName: "exit_plan_mode", toolCallId: "t1", sessionId, context: "plan", args: { summary: "do X" }, alwaysAsk: true, emit: e1 });
+    mgr.denyPendingForSession(sessionId);
+    await expect(p1).resolves.toBe(false);
+    // Let the promise's .then bookkeeping (declined-map write) run first.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Same tool + same args again — a Deny CLICK would auto-decline this
+    // re-issue; a deny-by-message must not.
+    const { emit: e2, cap: c2 } = captureEmit();
+    const p2 = mgr.requestApproval({ toolName: "exit_plan_mode", toolCallId: "t2", sessionId, context: "plan", args: { summary: "do X" }, alwaysAsk: true, emit: e2 });
+    expect(c2.lastApprovalId).toBeTruthy(); // fresh card, not silent auto-deny
+    mgr.resolveApproval(c2.lastApprovalId!, true);
+    await expect(p2).resolves.toBe(true);
+  });
+
+  it("returns 0 when nothing is pending", () => {
+    expect(getApprovalManager().denyPendingForSession(sid("deny-none"))).toBe(0);
+  });
+});

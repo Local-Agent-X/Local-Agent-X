@@ -70,6 +70,10 @@ class ApprovalManager {
   // call is auto-declined without a new card until the entry is cleared (next
   // user turn) or ages past DECLINE_SUPPRESS_MS.
   private declined = new Map<string, number>();
+  // exactKeys denied by a NEW USER MESSAGE (not a Deny click). These skip
+  // decline-suppression: the user answered in words, and the model may
+  // legitimately re-raise the card after reading them ("yes, go ahead").
+  private denyWithoutSuppress = new Set<string>();
   private nextId = 1;
 
   private gcDeclined(now: number): void {
@@ -148,10 +152,34 @@ class ApprovalManager {
     this.inflight.set(ekey, promise);
     void promise.then((approved) => {
       this.inflight.delete(ekey);
-      if (!approved) this.declined.set(ekey, Date.now());
+      if (!approved && !this.denyWithoutSuppress.delete(ekey)) this.declined.set(ekey, Date.now());
       else this.declined.delete(ekey);
     });
     return promise;
+  }
+
+  /**
+   * A new USER MESSAGE arrived while cards were pending — the user chose to
+   * answer in words instead of clicking, so every pending card for the
+   * session resolves as DENIED and the model reads the message. Deliberately
+   * skips decline-suppression (see denyWithoutSuppress): after reading the
+   * reply the model may re-raise the same request and must get a fresh card.
+   * Returns how many cards were denied.
+   */
+  denyPendingForSession(sessionId: string): number {
+    let denied = 0;
+    for (const [id, p] of this.pending) {
+      if (p.sessionId !== sessionId) continue;
+      clearTimeout(p.timer);
+      this.pending.delete(id);
+      this.denyWithoutSuppress.add(exactKey(p.sessionId, p.toolName, p.args));
+      try {
+        p.emit({ type: "approval_resolved", approvalId: id, toolName: p.toolName, approved: false });
+      } catch { /* a dead emitter must not block the resolution */ }
+      p.resolve(false);
+      denied++;
+    }
+    return denied;
   }
 
   /** Clear decline-suppression for a session. Called at each user-turn start

@@ -72,6 +72,36 @@ describe("enforced plan mode (user's Plan toggle)", () => {
     expect(events.some((e) => e.type === "plan_mode_changed" && e.enforced === false)).toBe(true);
   });
 
+  it("a RE-CALL while a card is pending returns wait-guidance instead of a second card", async () => {
+    setEnforcedPlanMode("s1", true);
+    const events: ServerEvent[] = [];
+    const emit = (e: ServerEvent) => events.push(e);
+    const pending = exit.execute({ _sessionId: "s1", summary: "plan v1", _onEvent: emit });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Model retries with a REPHRASED summary — different args would defeat the
+    // manager's exact-args coalescing, so the tool-level guard must catch it.
+    const retry = await exit.execute({ _sessionId: "s1", summary: "plan v1, slightly reworded", _onEvent: emit });
+    expect(retry.content).toContain("ALREADY awaiting");
+    expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
+
+    const card = events.find((e) => e.type === "approval_requested") as Extract<ServerEvent, { type: "approval_requested" }>;
+    getApprovalManager().resolveApproval(card.approvalId, false);
+    await pending;
+  });
+
+  it("a new USER MESSAGE (denyPendingForSession) resolves the wait as denied and keeps the mode", async () => {
+    setEnforcedPlanMode("s1", true);
+    const events: ServerEvent[] = [];
+    const pending = exit.execute({ _sessionId: "s1", summary: "a plan", _onEvent: (e: ServerEvent) => events.push(e) });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(getApprovalManager().denyPendingForSession("s1")).toBe(1);
+    const res = await pending;
+    expect(res.content).toContain("did NOT approve");
+    expect(isEnforcedPlanMode("s1")).toBe(true);
+  });
+
   it("DECLINED plan keeps the mode standing", async () => {
     setEnforcedPlanMode("s1", true);
     const events: ServerEvent[] = [];

@@ -164,6 +164,13 @@ export function attachMessageRouter(ctx: RouterContext): void {
           logger.warn(`[ws-chat] inject dropped sess=${sessionId} — no live ops and no chat handler`);
           return;
         }
+        // A mid-turn user message while approval cards are pending = the user
+        // answered in words, not clicks. Deny the cards FIRST (no suppression;
+        // model may re-raise after reading) — this also unblocks a tool call
+        // parked on the card, so the inject below actually gets drained
+        // instead of sitting behind an indefinite approval wait.
+        const denied = getApprovalManager().denyPendingForSession(sessionId);
+        if (denied > 0) logger.info(`[ws-chat] user message denied ${denied} pending approval(s) sess=${sessionId}`);
         const injectId = pushInject(sessionId, text, clientInjectId);
         logger.info(`[ws-chat] inject queued sess=${sessionId} len=${text.length} id=${injectId.slice(0, 8)} liveOps=${liveOps.length} pending=${hasPending}`);
         broadcastToSession(sessionId, { type: "inject_queued", injectId });

@@ -182,6 +182,10 @@ function newChat(projectId) {
   // No canned greeting — agent generates a real first reply when the user
   // sends their first message (see system-prompt.md "First-turn identity ask").
   saveChats(); renderSidebar();
+  // Re-render the status bar against the new activeChat (mirrors selectChat)
+  // — otherwise the Plan chip keeps its stale no-chat disabled state until
+  // the next 10s tick even though clicking would work.
+  try { if (typeof window.updateStatusBar === 'function') window.updateStatusBar(true); } catch {}
   navigate('chat');
   if (window.renderMessages) renderMessages();
   // New chat is never streaming — reset UI

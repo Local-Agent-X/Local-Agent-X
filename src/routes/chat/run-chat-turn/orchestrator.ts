@@ -54,10 +54,14 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
 
   message = await expandSlash(message, sessionId);
 
-  // Fresh user turn → drop any decline-suppression from the prior turn's tool
-  // loop, so a deliberate re-request ("yes, delete it") prompts normally.
+  // Fresh user turn → a message while cards were pending means the user
+  // answered in words, not clicks: deny those cards (without suppression, so
+  // the model can re-raise after reading the reply). Then drop any
+  // decline-suppression from the prior turn's tool loop, so a deliberate
+  // re-request ("yes, delete it") prompts normally.
   try {
     const { getApprovalManager } = await import("../../../approval-manager.js");
+    getApprovalManager().denyPendingForSession(sessionId);
     getApprovalManager().clearDeclines(sessionId);
   } catch {}
 

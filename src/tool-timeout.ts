@@ -38,6 +38,14 @@ export const DEFAULT_TIMEOUTS: Record<string, number> = {
   agent_create: 0,
   delegate: 0,
   swarm_create: 0,
+  // Human-input waiters: these block on a UI card/modal the USER has to
+  // click, and their wait is already bounded by that surface's own timeout
+  // (ApprovalManager: 5min; secret modal: its own). The generic fallback
+  // killed the wait first — the plan-approval card "failed" at 2min, the
+  // model retried, and the user saw duplicate cards.
+  exit_plan_mode: 0,
+  request_secret: 0,
+  request_secrets: 0,
 };
 
 // Generous fallback for UNLISTED tools: the timeout exists to catch a hang,

@@ -177,15 +177,19 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
     if (workRoot) args._cwd = workRoot;
   }
 
-  // Inject onEvent for tools that need to stream events.
+  // Inject onEvent for tools that need to stream events. exit_plan_mode
+  // needs it to raise the plan-approval card under enforced plan mode (plus
+  // the tool-call id so the card resolves against the right call).
   if (
     tc.name === "request_secret" ||
     tc.name === "request_secrets" ||
     tc.name === "browser" ||
     tc.name === "voice_visual" ||
-    tc.name === "build_app"
+    tc.name === "build_app" ||
+    tc.name === "exit_plan_mode"
   ) {
     args._onEvent = ctx.onEvent;
+    args._toolCallId = tc.id;
   }
   return CONTINUE;
 }

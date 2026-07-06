@@ -188,7 +188,7 @@ export async function assertToolCallAllowed(
         throw new ToolBlocked({
           stage: "tool-policy",
           disposition: "hard-deny",
-          reason: `Enforced plan mode is on for this session; this ${call.name} call would ${verb} and is blocked. Present your plan and ask the user to approve it — only the user can turn plan mode off (the Plan toggle).`,
+          reason: `Enforced plan mode is on for this session; this ${call.name} call would ${verb} and is blocked. Finish your research, then call exit_plan_mode with a \`summary\` of your plan — the user is shown an approval card, and only their approval (or the Plan toggle) ends plan mode.`,
           recovery,
           userHint: USER_HINTS.planModeEnforced,
         });

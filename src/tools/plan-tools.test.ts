@@ -1,10 +1,13 @@
 // Plan-mode tools vs the ENFORCED session flag: the model may enter/exit its
 // own soft plan mode, but while the user's Plan toggle is on, exit_plan_mode
-// must refuse and isPlanMode must read true regardless of the soft flag —
-// otherwise the model could lift the user's standing mandate itself.
+// must not exit directly — it raises an ApprovalManager card carrying the
+// model's plan summary, and only the USER's approval (or the Plan toggle)
+// ends the mode. Decline/timeout keeps the mandate standing.
 import { describe, it, expect, afterEach } from "vitest";
 import { planTools, isPlanMode, clearSoftPlanMode } from "./plan-tools.js";
-import { setEnforcedPlanMode, _resetEnforcedPlanMode } from "../canonical-loop/instruction-ledger/plan-mode.js";
+import { setEnforcedPlanMode, isEnforcedPlanMode, _resetEnforcedPlanMode } from "../canonical-loop/instruction-ledger/plan-mode.js";
+import { getApprovalManager } from "../approval-manager.js";
+import type { ServerEvent } from "../types.js";
 
 const enter = planTools.find((t) => t.name === "enter_plan_mode")!;
 const exit = planTools.find((t) => t.name === "exit_plan_mode")!;
@@ -30,20 +33,59 @@ describe("enforced plan mode (user's Plan toggle)", () => {
     expect(isPlanMode("s1")).toBe(true);
   });
 
-  it("exit_plan_mode REFUSES while enforced — the model cannot lift the mandate", async () => {
+  it("exit with no interactive channel (no _onEvent) refuses and keeps the mode", async () => {
     setEnforcedPlanMode("s1", true);
-    const res = await exit.execute({ _sessionId: "s1" });
-    expect(res.content).toContain("only the user can turn it off");
-    expect(isPlanMode("s1")).toBe(true);
+    const res = await exit.execute({ _sessionId: "s1", summary: "a plan" });
+    expect(res.content).toContain("no interactive user");
+    expect(isEnforcedPlanMode("s1")).toBe(true);
   });
 
-  it("exit_plan_mode while enforced does not clobber the soft flag either", async () => {
-    await enter.execute({ _sessionId: "s1" });
+  it("exit with no summary asks for one instead of raising a card", async () => {
     setEnforcedPlanMode("s1", true);
-    await exit.execute({ _sessionId: "s1" });
-    // User lifts enforcement (the approval event, which also clears soft):
-    setEnforcedPlanMode("s1", false);
-    clearSoftPlanMode("s1");
-    expect(isPlanMode("s1")).toBe(false);
+    const events: ServerEvent[] = [];
+    const res = await exit.execute({ _sessionId: "s1", _onEvent: (e: ServerEvent) => events.push(e) });
+    expect(res.content).toContain("WITH a `summary`");
+    expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(0);
+    expect(isEnforcedPlanMode("s1")).toBe(true);
+  });
+
+  it("APPROVED plan ends the mode: card carries the summary, plan_mode_changed is emitted", async () => {
+    setEnforcedPlanMode("s1", true);
+    const events: ServerEvent[] = [];
+    const pending = exit.execute({
+      _sessionId: "s1",
+      summary: "Refactor the parser into two modules",
+      _onEvent: (e: ServerEvent) => events.push(e),
+    });
+    // The card is up and shows the concrete plan, not a bare mode flip.
+    await new Promise((r) => setTimeout(r, 10));
+    const card = events.find((e) => e.type === "approval_requested") as Extract<ServerEvent, { type: "approval_requested" }>;
+    expect(card).toBeDefined();
+    expect(card.context).toContain("Refactor the parser into two modules");
+    expect(isEnforcedPlanMode("s1")).toBe(true); // still on while the card is pending
+
+    getApprovalManager().resolveApproval(card.approvalId, true);
+    const res = await pending;
+    expect(res.content).toContain("Plan approved");
+    expect(isEnforcedPlanMode("s1")).toBe(false);
+    expect(isPlanMode("s1")).toBe(false); // soft flag cleared with the approval too
+    expect(events.some((e) => e.type === "plan_mode_changed" && e.enforced === false)).toBe(true);
+  });
+
+  it("DECLINED plan keeps the mode standing", async () => {
+    setEnforcedPlanMode("s1", true);
+    const events: ServerEvent[] = [];
+    const pending = exit.execute({
+      _sessionId: "s1",
+      summary: "Delete the tests",
+      _onEvent: (e: ServerEvent) => events.push(e),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    const card = events.find((e) => e.type === "approval_requested") as Extract<ServerEvent, { type: "approval_requested" }>;
+    getApprovalManager().resolveApproval(card.approvalId, false);
+    const res = await pending;
+    expect(res.content).toContain("did NOT approve");
+    expect(isEnforcedPlanMode("s1")).toBe(true);
+    expect(events.some((e) => e.type === "plan_mode_changed")).toBe(false);
   });
 });

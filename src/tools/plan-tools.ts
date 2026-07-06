@@ -1,5 +1,6 @@
-import type { ToolDefinition, ToolResult } from '../types.js';
-import { isEnforcedPlanMode } from '../canonical-loop/instruction-ledger/index.js';
+import type { ServerEvent, ToolDefinition, ToolResult } from '../types.js';
+import { isEnforcedPlanMode, setEnforcedPlanMode } from '../canonical-loop/instruction-ledger/index.js';
+import { getApprovalManager } from '../approval-manager.js';
 
 // Session-scoped plan mode — each session tracks its own state. This set is
 // the SOFT mode the model enters/exits itself; the ENFORCED mode (user's Plan
@@ -53,19 +54,51 @@ const enterPlanMode: ToolDefinition = {
 
 const exitPlanMode: ToolDefinition = {
   name: 'exit_plan_mode',
-  description: 'Exit plan mode and restore full tool access. Optionally summarize what you learned.',
-  parameters: { type: 'object', properties: { summary: { type: 'string', description: 'What you learned or planned' } }, required: [] },
+  description: 'Exit plan mode and restore full tool access. Optionally summarize what you learned. If ENFORCED plan mode is on (the user\'s Plan toggle), this instead shows the user an approval card carrying your `summary` — the plan they are approving — and only their approval ends plan mode.',
+  parameters: { type: 'object', properties: { summary: { type: 'string', description: 'What you learned or planned. Under enforced plan mode this is REQUIRED: it is the plan the user is asked to approve.' } }, required: [] },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const sid = (args._sessionId as string) || 'default';
-    if (isEnforcedPlanMode(sid)) {
-      // The user's Plan toggle is the only thing that lifts enforced mode —
-      // an agent-initiated exit would defeat the point of the mandate.
-      return { content: 'Enforced plan mode is on for this session — only the user can turn it off (the Plan toggle next to the composer). Present your plan and ask the user to approve it; do not retry this call.' };
-    }
+    if (isEnforcedPlanMode(sid)) return exitEnforcedPlanMode(sid, args);
     planModeSessions.delete(sid);
     const summary = typeof args.summary === 'string' ? `\n\nSummary: ${args.summary}` : '';
     return { content: `Plan mode deactivated. Full tool access restored.${summary}` };
   },
 };
+
+/**
+ * Enforced plan mode exit — the approval is the USER's, not the model's. The
+ * model's `summary` becomes the approval card's context so the user approves a
+ * concrete plan, not a bare mode flip. Approval resolves through the same
+ * ApprovalManager card the other consent prompts use (WS approval_response →
+ * resolveApproval); decline/timeout keeps the mode on, and the manager's
+ * decline-suppression auto-declines an immediate identical re-issue.
+ */
+async function exitEnforcedPlanMode(sid: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const emit = args._onEvent as ((event: ServerEvent) => void) | undefined;
+  if (!emit) {
+    // No interactive channel (headless/cron dispatch) — nobody can click a card.
+    return { content: 'Enforced plan mode is on for this session and there is no interactive user to approve ending it. Present your plan in your reply; the user lifts plan mode with the Plan toggle.' };
+  }
+  const summary = typeof args.summary === 'string' ? args.summary.trim() : '';
+  if (!summary) {
+    return { content: 'Enforced plan mode is on. To request approval, call exit_plan_mode again WITH a `summary` of your plan — that summary is exactly what the user is shown to approve. Keep it concrete: what you will change and where.' };
+  }
+  const approved = await getApprovalManager().requestApproval({
+    toolName: 'exit_plan_mode',
+    toolCallId: (args._toolCallId as string) || `plan-exit-${sid}`,
+    sessionId: sid,
+    context: `Approve this plan to end plan mode and allow changes:\n\n${summary}`,
+    args: { summary },
+    alwaysAsk: true, // ending a standing user mandate must never auto-approve from cache
+    emit,
+  });
+  if (!approved) {
+    return { content: 'The user did NOT approve the plan (declined or timed out) — plan mode stays on. Do not re-issue this call; revise the plan from their feedback or ask what they want changed.' };
+  }
+  setEnforcedPlanMode(sid, false);
+  planModeSessions.delete(sid);
+  emit({ type: 'plan_mode_changed', enforced: false });
+  return { content: 'Plan approved by the user — plan mode is off and full tool access is restored. Proceed with the approved plan; stay within its scope.' };
+}
 
 export const planTools: ToolDefinition[] = [enterPlanMode, exitPlanMode];

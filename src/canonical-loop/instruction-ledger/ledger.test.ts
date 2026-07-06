@@ -42,6 +42,8 @@ vi.mock("../turn-loop/build-verify.js", () => ({ clearBuildVerifyStateForOp: vi.
 vi.mock("../turn-loop/design-verify.js", () => ({ clearDesignVerifyStateForOp: vi.fn() }));
 vi.mock("../turn-loop/spec-probes.js", () => ({ clearSpecProbeStateForOp: vi.fn() }));
 vi.mock("../turn-loop/spec-audit.js", () => ({ clearSpecAuditStateForOp: vi.fn() }));
+vi.mock("../../ops/session-bridge.js", () => ({ getSessionForOp: vi.fn(() => undefined) }));
+vi.mock("../../hooks/hook-engine.js", () => ({ getHookEngine: () => ({ fireDetached: vi.fn() }) }));
 
 afterEach(() => _resetOpLedgers());
 

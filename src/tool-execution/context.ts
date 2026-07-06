@@ -36,6 +36,10 @@ export interface ToolCallContext {
   /** Set by policy when a rule permits the exact call only after user
    * approval. The canonical approval phase owns the prompt. */
   policyApprovalReason?: string;
+  /** Set by the PreToolUse hook phase when a user hook rewrote the args.
+   * enforcePolicyPhase consumes it: applies the rewrite to `args`, then
+   * re-runs the security + validation gates on the rewritten call. */
+  hookRewrittenArgs?: Record<string, unknown>;
 
   startedAt?: number;
   result?: ToolResult;

@@ -23,6 +23,8 @@ import { clearSpecProbeStateForOp } from "./turn-loop/spec-probes.js";
 import { clearSpecAuditStateForOp } from "./turn-loop/spec-audit.js";
 import { clearEarnedDoneStateForOp } from "./middlewares/open-steps.js";
 import { clearOpLedger } from "./instruction-ledger/ledger.js";
+import { getSessionForOp } from "../ops/session-bridge.js";
+import { getHookEngine } from "../hooks/hook-engine.js";
 import type { Op, OpStatus } from "../ops/types.js";
 import type { CanonicalEvent, CanonicalState } from "./types.js";
 
@@ -112,6 +114,17 @@ export function transitionOp(
     clearSpecAuditStateForOp(op.id);
     clearEarnedDoneStateForOp(op.id);
     clearOpLedger(op.id);
+    // User-configured Stop hooks (~/.lax/hooks.json): the op reached a terminal
+    // state — the LAX analog of "the agent finished". Fully detached: a Stop
+    // hook observes (notify, log, kick a CI run), it can never block or delay
+    // the transition. Fired before the state_changed emit below, so the
+    // session binding is still readable here.
+    getHookEngine().fireDetached({
+      event: "Stop",
+      opId: op.id,
+      opStatus: to,
+      sessionId: getSessionForOp(op.id),
+    });
   }
   // Loop-side write — preserve control-API signal columns from disk so a
   // concurrent opPause/opCancel/etc. is not clobbered. `clearLeaseFromOp`

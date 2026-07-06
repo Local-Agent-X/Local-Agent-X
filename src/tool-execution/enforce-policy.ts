@@ -23,6 +23,10 @@ import { terminate, CONTINUE, BLOCK } from "./context.js";
 import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
 
 export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
+// Tool lookup + arg validation live in arg-validation.ts (LOC ceiling);
+// re-exported so the corrections tests keep their enforce-policy imports.
+export { formatUnknownToolCorrection, collectArgViolations } from "./arg-validation.js";
+import { lookupTool, validateArgs } from "./arg-validation.js";
 // ARI action derivation lives in its own module (source-hygiene LOC ceiling);
 // re-exported here so resolve-tool.ts + the ari-action-map / td11 tests keep
 // their `from "./enforce-policy.js"` imports.
@@ -209,107 +213,19 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
   return CONTINUE;
 }
 
-// Cap on how many tool names a corrective lists inline. The op's surface is
-// already tier-capped upstream (shrinkToolsForTier), so weak models naturally
-// get a short list and strong models a longer one; this only guards the extreme.
-const AVAILABLE_TOOLS_CAP = 50;
-
-/**
- * Structured corrective for a hallucinated / mistyped tool name. A bare
- * "Unknown tool: X" leaves a weak model guessing — listing the exact names it
- * CAN call lets it self-correct in one turn instead of re-hallucinating. The
- * available set is the op's own (already-tier-capped) surface, so the message
- * self-scales to the model's tier. Pure + exported for unit testing.
- */
-export function formatUnknownToolCorrection(toolName: string, available: string[]): string {
-  const names = [...available].sort();
-  const head = `Unknown tool "${toolName}" — not one of your available tools. `;
-  const tail = "If you need a capability that isn't listed, call tool_search to load it.";
-  if (names.length === 0) return head + tail;
-  const list = names.length <= AVAILABLE_TOOLS_CAP
-    ? names.join(", ")
-    : names.slice(0, AVAILABLE_TOOLS_CAP).join(", ") + `, …(+${names.length - AVAILABLE_TOOLS_CAP} more)`;
-  return head + `Use one of these exact names: ${list}. ` + tail;
-}
-
-function lookupTool(ctx: ToolCallContext): PhaseOutcome {
-  const tool = ctx.toolMap.get(ctx.tc.name);
-  if (!tool) {
-    ctx.allowed = false;
-    ctx.result = {
-      content: formatUnknownToolCorrection(ctx.tc.name, [...ctx.toolMap.keys()]),
-      isError: true,
-      status: "error",
-      metadata: { recovery: "Tool name typo or hallucinated name. Use one of the listed tool names exactly, or tool_search to load a capability that isn't listed." },
-    };
-    return BLOCK;
-  }
-  ctx.tool = tool;
-  return CONTINUE;
-}
-
-/**
- * Collect per-field schema violations (required[], top-level type, enum) for a
- * tool call's args. Pure + exported so the structured-corrective contract — the
- * specific failing field, not a bare "invalid arguments" — is unit-testable.
- */
-export function collectArgViolations(
-  args: Record<string, unknown>,
-  schema: { properties?: Record<string, { type?: string; enum?: unknown[] }>; required?: string[] } | undefined,
-): string[] {
-  const errs: string[] = [];
-  if (!schema?.properties) return errs;
-  for (const req of schema.required || []) {
-    if (!(req in args)) errs.push(`missing required field "${req}"`);
-  }
-  for (const [key, propSchema] of Object.entries(schema.properties)) {
-    if (!(key in args)) continue;
-    const val = args[key];
-    if (propSchema.type === "string" && typeof val !== "string") errs.push(`"${key}" must be a string (got ${typeof val})`);
-    else if (propSchema.type === "number" && typeof val !== "number") errs.push(`"${key}" must be a number (got ${typeof val})`);
-    else if (propSchema.type === "boolean" && typeof val !== "boolean") errs.push(`"${key}" must be a boolean (got ${typeof val})`);
-    else if (propSchema.type === "array" && !Array.isArray(val)) errs.push(`"${key}" must be an array (got ${typeof val})`);
-    if (propSchema.enum && !propSchema.enum.includes(val)) errs.push(`"${key}" must be one of [${propSchema.enum.map(v => JSON.stringify(v)).join(", ")}] (got ${JSON.stringify(val)})`);
-  }
-  return errs;
-}
-
-// Weak models emit malformed args. Lightweight required[] + type checks on
-// top-level fields; safe scalar coercion ("5" → 5) before validation.
-async function validateArgs(ctx: ToolCallContext): Promise<PhaseOutcome> {
-  const { tc, tool, sessionId } = ctx;
-  if (!tool) return CONTINUE;
-  const schema = tool.parameters as { type?: string; properties?: Record<string, { type?: string; enum?: unknown[] }>; required?: string[] } | undefined;
-
-  if (schema && typeof ctx.args === "object" && ctx.args && !("_raw" in ctx.args)) {
-    try {
-      const { coerceArgs } = await import("./arg-repair.js");
-      const coerce = coerceArgs(ctx.args as Record<string, unknown>, schema);
-      if (coerce.fixes.length > 0) {
-        ctx.args = coerce.coerced;
-        logRetry({ kind: "tool-arg-invalid", sessionId, tool: tc.name, detail: { phase: "coerce", fixes: coerce.fixes } });
-      }
-    } catch {}
-  }
-
-  const errs = collectArgViolations(ctx.args as Record<string, unknown>, schema);
-  if (errs.length === 0) return CONTINUE;
-
-  const result: ToolResult = {
-    content: `Invalid arguments for ${tc.name}: ${errs.join("; ")}. Fix and retry.`,
-    isError: true,
-    status: "error",
-    metadata: { recovery: "Schema validation failed — fix the listed fields and retry. This is NOT a policy denial; the tool itself is available." },
-  };
-  return terminate(ctx, { rendered: "model", result, allowed: false });
-}
-
 async function preToolUseHook(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId, callContext } = ctx;
   const hookEngine = getHookEngine();
   if (!hookEngine.hasHooks) return CONTINUE;
   const preHook = await hookEngine.fire({ event: "PreToolUse", toolName: tc.name, toolArgs: args, sessionId, callContext });
-  if (preHook.continue) return CONTINUE;
+  if (preHook.continue) {
+    // A hook rewrote the args. Stash the rewrite — enforcePolicyPhase applies
+    // it and re-runs the full security + validation chain on the NEW args, so
+    // a rewrite can never smuggle a payload past a gate that only saw the
+    // original call.
+    if (preHook.rewriteArgs) ctx.hookRewrittenArgs = preHook.rewriteArgs;
+    return CONTINUE;
+  }
   const result: ToolResult = {
     content: `BLOCKED by hook: ${preHook.reason || "PreToolUse hook returned false"}`,
     isError: true,
@@ -355,7 +271,12 @@ function rateLimitGate(ctx: ToolCallContext): PhaseOutcome {
   return terminate(ctx, { rendered: "model", result, allowed: false });
 }
 
-export const enforcePolicyPhase: Phase = async (ctx) => {
+/** Every gate that must judge the FINAL args, in order. Split out of
+ *  enforcePolicyPhase so a PreToolUse hook rewrite can be re-screened by the
+ *  exact same chain it already passed with the original args. The gates are
+ *  evaluations (no committing side effects), so a second pass is safe; the
+ *  counting gates (circuit breaker, rate limit) stay outside and run once. */
+async function securityAndValidationGates(ctx: ToolCallContext): Promise<PhaseOutcome> {
   let outcome = await ariKernelGate(ctx);
   if (outcome.kind !== "continue") return outcome;
   outcome = sessionPolicyGate(ctx);
@@ -374,11 +295,25 @@ export const enforcePolicyPhase: Phase = async (ctx) => {
 
   outcome = lookupTool(ctx);
   if (outcome.kind !== "continue") return outcome;
-  outcome = await validateArgs(ctx);
+  return validateArgs(ctx);
+}
+
+export const enforcePolicyPhase: Phase = async (ctx) => {
+  let outcome = await securityAndValidationGates(ctx);
   if (outcome.kind !== "continue") return outcome;
 
   outcome = await preToolUseHook(ctx);
   if (outcome.kind !== "continue") return outcome;
+  if (ctx.hookRewrittenArgs) {
+    ctx.args = ctx.hookRewrittenArgs;
+    ctx.hookRewrittenArgs = undefined;
+    // Hooks are NOT re-fired on the second pass (the rewrite came from them;
+    // re-firing would loop), but every security/validation gate re-judges the
+    // rewritten args from scratch.
+    outcome = await securityAndValidationGates(ctx);
+    if (outcome.kind !== "continue") return outcome;
+  }
+
   outcome = circuitBreakerGate(ctx);
   if (outcome.kind !== "continue") return outcome;
   return rateLimitGate(ctx);

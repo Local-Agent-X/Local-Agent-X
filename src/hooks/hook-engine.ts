@@ -36,6 +36,43 @@ function scrubEnv(): Record<string, string> {
   return clean;
 }
 
+/**
+ * A structured directive a PreToolUse hook can emit instead of relying on
+ * exit-code semantics alone: JSON on stdout (command hooks) or in the response
+ * body (http hooks) with any of `continue` / `reason` / `rewriteArgs`.
+ * Returns null when the output isn't such a directive — the caller then falls
+ * back to the legacy exit-code/status contract. Strict on purpose: the output
+ * must BE a JSON object carrying at least one recognized key, so ordinary
+ * command output (test logs, JSON data that happens to be printed) is never
+ * misread as a control message.
+ */
+export function parseHookDirective(output: string): {
+  continue?: boolean;
+  reason?: string;
+  rewriteArgs?: Record<string, unknown>;
+} | null {
+  const s = output.trim();
+  if (!s.startsWith("{")) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(s);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const o = parsed as Record<string, unknown>;
+  const directive: { continue?: boolean; reason?: string; rewriteArgs?: Record<string, unknown> } = {};
+  if (typeof o.continue === "boolean") directive.continue = o.continue;
+  if (typeof o.reason === "string") directive.reason = o.reason;
+  if (o.rewriteArgs && typeof o.rewriteArgs === "object" && !Array.isArray(o.rewriteArgs)) {
+    directive.rewriteArgs = o.rewriteArgs as Record<string, unknown>;
+  }
+  if (directive.continue === undefined && directive.reason === undefined && directive.rewriteArgs === undefined) {
+    return null;
+  }
+  return directive;
+}
+
 export class HookEngine {
   private hooks: HookDefinition[] = [];
   private security: SecurityEvaluator | null = null;
@@ -68,17 +105,21 @@ export class HookEngine {
     });
   }
 
-  /** Fire hooks synchronously — used for PreToolUse (can block). */
+  /** Fire hooks synchronously — used for PreToolUse (can block or rewrite).
+   *  Rewrites CHAIN: each subsequent sync hook sees the args as rewritten by
+   *  the hooks before it, and the final rewrite (if any differs from the
+   *  original) is returned for the dispatcher to re-screen and apply. */
   async fire(ctx: HookEventContext): Promise<HookResult> {
     const matching = this.getHooks(ctx.event, ctx.toolName);
     if (matching.length === 0) return { continue: true };
 
+    let effectiveArgs = ctx.toolArgs;
     for (const hook of matching) {
       if (hook.async) { this.runHookDetached(hook, ctx); continue; }
       const start = Date.now();
       let result: HookResult;
       try {
-        result = await this.runHook(hook, ctx);
+        result = await this.runHook(hook, { ...ctx, toolArgs: effectiveArgs });
       } catch (e) {
         result = { continue: true, output: `Hook error: ${(e as Error).message}` };
       }
@@ -86,8 +127,15 @@ export class HookEngine {
       const label = hook.name || `${hook.type}:${hook.event}`;
       logger.info(`[hooks] ${label} → ${result.continue ? "continue" : "BLOCKED"} (${result.durationMs}ms)`);
       if (!result.continue) return result;
+      if (result.rewriteArgs && ctx.event === "PreToolUse") {
+        logger.info(`[hooks] ${label} rewrote args for ${ctx.toolName}`);
+        effectiveArgs = result.rewriteArgs;
+      }
     }
-    return { continue: true };
+    return {
+      continue: true,
+      ...(effectiveArgs !== ctx.toolArgs ? { rewriteArgs: effectiveArgs } : {}),
+    };
   }
 
   /** Fire hooks fully detached — used for PostToolUse/PostToolUseFailure (never block). */
@@ -105,7 +153,8 @@ export class HookEngine {
       .catch((e) => logger.warn(`[hooks] async hook error: ${(e as Error).message}`));
   }
 
-  private runHook(hook: HookDefinition, ctx: HookEventContext): Promise<HookResult> {
+  /** Protected so tests can subclass with a scripted hook runner. */
+  protected runHook(hook: HookDefinition, ctx: HookEventContext): Promise<HookResult> {
     if (hook.type === "command") return this.runCommand(hook, ctx);
     if (hook.type === "http") return this.runHttp(hook, ctx);
     return Promise.resolve({ continue: true });
@@ -132,14 +181,20 @@ export class HookEngine {
 
     const timeout = (hook.timeout ?? 30) * 1000;
 
-    // Scrubbed env + hook-specific context vars
+    // Scrubbed env + hook-specific context vars. Args are exposed to COMMAND
+    // hooks only (a local script the user wrote, running with a scrubbed env)
+    // so a rewriting hook can read what it is rewriting; http hooks keep the
+    // existing no-raw-args rule.
     const hookEnv = {
       ...scrubEnv(),
       HOOK_TOOL_NAME: ctx.toolName || "",
+      HOOK_TOOL_ARGS: ctx.toolArgs ? JSON.stringify(ctx.toolArgs).slice(0, 8000) : "",
       HOOK_TOOL_RESULT: (ctx.toolResult || "").slice(0, 1000),
       HOOK_TOOL_ERROR: (ctx.toolError || "").slice(0, 500),
       HOOK_SESSION_ID: ctx.sessionId || "",
       HOOK_EVENT: ctx.event,
+      HOOK_OP_ID: ctx.opId || "",
+      HOOK_OP_STATUS: ctx.opStatus || "",
     };
 
     // Platform-appropriate shell
@@ -153,11 +208,16 @@ export class HookEngine {
           return;
         }
         const output = (stdout || "").trim() + (stderr ? `\n${stderr.trim()}` : "");
-        const shouldContinue = ctx.event !== "PreToolUse" || !error;
+        // A JSON directive on stdout refines the exit-code contract: explicit
+        // continue/reason win over the exit code, and a rewrite is honored
+        // only on a continuing PreToolUse hook.
+        const directive = ctx.event === "PreToolUse" ? parseHookDirective(stdout || "") : null;
+        const shouldContinue = directive?.continue ?? (ctx.event !== "PreToolUse" || !error);
         resolve({
           continue: shouldContinue,
-          reason: shouldContinue ? undefined : `Hook blocked: ${output || "non-zero exit"}`,
+          reason: shouldContinue ? undefined : (directive?.reason ?? `Hook blocked: ${output || "non-zero exit"}`),
           output,
+          ...(shouldContinue && directive?.rewriteArgs ? { rewriteArgs: directive.rewriteArgs } : {}),
         });
       });
       child.stdin?.end();
@@ -191,15 +251,22 @@ export class HookEngine {
           // Only include result/error, never raw args (may contain sensitive data)
           ...(ctx.toolResult ? { toolResult: ctx.toolResult.slice(0, 2000) } : {}),
           ...(ctx.toolError ? { toolError: ctx.toolError.slice(0, 500) } : {}),
+          ...(ctx.opId ? { opId: ctx.opId } : {}),
+          ...(ctx.opStatus ? { opStatus: ctx.opStatus } : {}),
         }),
         signal: AbortSignal.timeout(timeout),
       });
       const body = await res.text();
-      const shouldContinue = ctx.event !== "PreToolUse" || res.ok;
+      // A JSON directive in the response body refines the status-code contract
+      // (same shape as command-hook stdout). Note: http hooks never see the raw
+      // args, so their rewrites are limited to what the event metadata supports.
+      const directive = ctx.event === "PreToolUse" ? parseHookDirective(body) : null;
+      const shouldContinue = directive?.continue ?? (ctx.event !== "PreToolUse" || res.ok);
       return {
         continue: shouldContinue,
-        reason: shouldContinue ? undefined : `Webhook returned ${res.status}`,
+        reason: shouldContinue ? undefined : (directive?.reason ?? `Webhook returned ${res.status}`),
         output: body.slice(0, 500),
+        ...(shouldContinue && directive?.rewriteArgs ? { rewriteArgs: directive.rewriteArgs } : {}),
       };
     } catch (e) {
       return { continue: true, output: `Webhook failed: ${(e as Error).message}` };

@@ -9,9 +9,10 @@
 // ── Hook Events (only events that are actually wired) ──
 
 export type HookEvent =
-  | "PreToolUse"         // Before a tool executes — can block it
+  | "PreToolUse"         // Before a tool executes — can block it or rewrite its args
   | "PostToolUse"        // After a tool succeeds (runs after threat engine + budgeting)
-  | "PostToolUseFailure"; // After a tool fails
+  | "PostToolUseFailure" // After a tool fails
+  | "Stop";              // When an op reaches a terminal state (fire-and-forget)
 
 // ── Hook Definition ──
 
@@ -45,6 +46,15 @@ export interface HookResult {
   output?: string;
   /** How long the hook took (ms) */
   durationMs?: number;
+  /**
+   * Replacement tool args (PreToolUse only) — a sync hook may emit a JSON
+   * directive `{"rewriteArgs": {...}}` on stdout / in its response body to
+   * modify the call instead of only vetoing it. The dispatcher re-runs the
+   * full security + validation gate chain on the rewritten args before they
+   * execute (see enforce-policy.ts), so a rewrite can never skip a screen the
+   * original args passed.
+   */
+  rewriteArgs?: Record<string, unknown>;
 }
 
 // ── Hook Config (loaded from ~/.lax/hooks.json) ──
@@ -64,4 +74,8 @@ export interface HookEventContext {
   sessionId?: string;
   /** Execution context — "local" | "api" | "delegated" | "cron". Passed to security evaluation. */
   callContext?: string;
+  /** Stop event only: the op that reached a terminal state. */
+  opId?: string;
+  /** Stop event only: the terminal status ("succeeded" | "failed" | ...). */
+  opStatus?: string;
 }

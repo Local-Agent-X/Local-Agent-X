@@ -366,7 +366,23 @@ describe("egressGuardGate — attachment TOCTOU (C3-9: symlink + byte scan)", ()
     }, sessionId);
   }
 
-  it("blocks a symlink whose REALPATH is a sensitive target (innocent .txt → .ssh/id_rsa)", () => {
+  // Windows denies symlink creation to unprivileged processes (needs Developer
+  // Mode or admin) — probe the capability instead of keying on platform, so the
+  // test still runs on a Windows box that CAN symlink.
+  const canSymlink = (() => {
+    const probeDir = mkdtempSync(join(tmpdir(), "lax-symlink-probe-"));
+    try {
+      writeFileSync(join(probeDir, "t"), "x");
+      symlinkSync(join(probeDir, "t"), join(probeDir, "l"));
+      return true;
+    } catch {
+      return false;
+    } finally {
+      rmSync(probeDir, { recursive: true, force: true });
+    }
+  })();
+
+  it.skipIf(!canSymlink)("blocks a symlink whose REALPATH is a sensitive target (innocent .txt → .ssh/id_rsa)", () => {
     // Lay down a private-key-shaped file under a .ssh-named dir, then point an
     // innocent-looking /tmp/notes.txt at it. The lexical predicate would PASS on
     // "notes.txt"; the realpath-based check must catch the .ssh/id_rsa target.

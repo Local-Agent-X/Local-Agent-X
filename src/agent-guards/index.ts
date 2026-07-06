@@ -43,12 +43,6 @@ export {
   type GroundingVerdict,
 } from "./claim-grounding.js";
 export {
-  checkTaskAnchor,
-  createTaskAnchorState,
-  type TaskAnchorState,
-} from "./task-anchor.js";
-export { checkActedAndAsked } from "./acted-and-asked.js";
-export {
   checkToolLoops,
   noteToolResults,
   createLoopState,

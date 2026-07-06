@@ -126,6 +126,67 @@ describe("shellCommandWritesFiles", () => {
     });
   });
 
+  // Regression for the non-argv0 interpreter escape a skeptic found on the
+  // per-segment (argv[0]-only) arm: an interpreter reached through a builtin
+  // (`command`), a wrapper (`nice`/`timeout`/`xargs`), an env prefix (`V=1`), a
+  // command substitution (`$( )` / backtick), or a subshell/brace group sat in a
+  // NON-argv0 slot and slipped the write ban. commandHasInlineInterpreterEval
+  // scans the whole command (quote-aware, reusing INTERP_EVAL_FLAGS) so the
+  // interpreter+eval-flag pair is refused wherever it hides.
+  describe("inline interpreter eval is refused in a NON-argv0 position", () => {
+    it("DENIES the `command` builtin prefix", () => {
+      expect(shellCommandWritesFiles(`command python -c "import os;os.remove('x')"`)).toBe(true);
+    });
+
+    it("DENIES a `nice` wrapper", () => {
+      expect(shellCommandWritesFiles(`nice python -c "open('f','w')"`)).toBe(true);
+    });
+
+    it("DENIES a `timeout` wrapper", () => {
+      expect(shellCommandWritesFiles(`timeout 5 python -c "open('f','w')"`)).toBe(true);
+    });
+
+    it("DENIES an `xargs` wrapper", () => {
+      expect(shellCommandWritesFiles(`xargs python -c "open('f','w')"`)).toBe(true);
+    });
+
+    it("DENIES an env-var prefix", () => {
+      expect(shellCommandWritesFiles(`V=1 python -c "open('f','w')"`)).toBe(true);
+    });
+
+    it("DENIES a `$( )` command substitution assignment", () => {
+      expect(shellCommandWritesFiles(`x=$(python -c "open('f','w')")`)).toBe(true);
+    });
+
+    it("DENIES a `$( )` command substitution inside an echo", () => {
+      expect(shellCommandWritesFiles(`echo $(node -e "require('fs').rmSync('x')")`)).toBe(true);
+    });
+
+    it("DENIES a backtick command substitution", () => {
+      expect(shellCommandWritesFiles("x=`python -c \"open('f','w')\"`")).toBe(true);
+    });
+
+    it("DENIES a subshell", () => {
+      expect(shellCommandWritesFiles(`(python -c "open('f','w')")`)).toBe(true);
+    });
+
+    it("DENIES a brace group", () => {
+      expect(shellCommandWritesFiles(`{ python -c "open('f','w')"; }`)).toBe(true);
+    });
+
+    it("does NOT over-block a quoted interpreter literal or a real script run", () => {
+      for (const cmd of [
+        `echo "python -c foo"`,            // interpreter is inside a quoted literal
+        "python script.py",                // real script file, no eval flag
+        `grep -r "node -e" src`,           // 'node -e' is a quoted search pattern
+        "ls; pwd",                         // two read-only commands
+        `git commit -m "run python -c later"`, // interpreter named in a quoted message
+      ]) {
+        expect(shellCommandWritesFiles(cmd), cmd).toBe(false);
+      }
+    });
+  });
+
   // Regression for the python-spelling gap past 2d3c22cf: the INTERP_EVAL_FLAGS
   // table is keyed on "python"/"python3", so `pythonw`/`python2`/`python3.12`/
   // `python.exe` bypassed the form refusal. execBasename now collapses the whole

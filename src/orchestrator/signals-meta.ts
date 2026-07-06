@@ -70,7 +70,14 @@ export const metaSignals: CognitiveSignal[] = [
         const cl = CorrectionLearner.getInstance();
         const correction = cl.detectCorrection(input.message, input.agentPreviousMessage);
         if (correction) {
-          cl.recordCorrection(correction);
+          // Fire-and-forget: the record() facet is sync, but the persist is now
+          // gated behind an LLM confirm (regex is paraphrase-blind on the one
+          // path that writes durable memory). recordCorrectionMaybe never
+          // throws and fails open (LLM null/timeout → persist), so a floating
+          // promise is safe; we swallow only to avoid an unhandled rejection.
+          void cl
+            .recordCorrectionMaybe(correction, input.message, input.agentPreviousMessage)
+            .catch(() => {});
         }
       }
     },

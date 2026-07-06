@@ -112,3 +112,108 @@ describe("detectCorrection contrast rules", () => {
     expect(result!.confidence).toBe(0.8);
   });
 });
+
+/**
+ * The persist gate (AM-?): recordCorrectionMaybe() is the ONLY path that writes
+ * durable memory, and its regex detector is paraphrase-blind. An LLM confirm now
+ * vetoes false positives before the write. Fail-open on null/timeout/disabled —
+ * losing a real correction is worse than an occasional false one.
+ */
+describe("recordCorrectionMaybe — LLM-confirmed persist", () => {
+  function candidate(): import("../src/correction-learning.js").CorrectionEvent {
+    const c = CorrectionLearner.getInstance().detectCorrection(
+      "No, it's port 3000",
+      "The server runs on port 8080.",
+    );
+    expect(c).not.toBeNull();
+    return c!;
+  }
+
+  it("persists when the confirm returns true", async () => {
+    const cl = CorrectionLearner.getInstance();
+    const before = cl.getCorrectionHistory().length;
+    const persisted = await cl.recordCorrectionMaybe(
+      candidate(),
+      "No, it's port 3000",
+      "The server runs on port 8080.",
+      async () => true,
+    );
+    expect(persisted).toBe(true);
+    expect(cl.getCorrectionHistory().length).toBe(before + 1);
+  });
+
+  it("does NOT persist when the confirm returns false (the fix)", async () => {
+    const cl = CorrectionLearner.getInstance();
+    const before = cl.getCorrectionHistory().length;
+    const persisted = await cl.recordCorrectionMaybe(
+      candidate(),
+      "No, it's port 3000",
+      "The server runs on port 8080.",
+      async () => false,
+    );
+    expect(persisted).toBe(false);
+    expect(cl.getCorrectionHistory().length).toBe(before);
+  });
+
+  it("persists when the confirm returns null (fail-open parity regression)", async () => {
+    const cl = CorrectionLearner.getInstance();
+    const before = cl.getCorrectionHistory().length;
+    const persisted = await cl.recordCorrectionMaybe(
+      candidate(),
+      "No, it's port 3000",
+      "The server runs on port 8080.",
+      async () => null,
+    );
+    expect(persisted).toBe(true);
+    expect(cl.getCorrectionHistory().length).toBe(before + 1);
+  });
+
+  it("persists when the confirm THROWS (fail-open, treated as null)", async () => {
+    const cl = CorrectionLearner.getInstance();
+    const before = cl.getCorrectionHistory().length;
+    const persisted = await cl.recordCorrectionMaybe(
+      candidate(),
+      "No, it's port 3000",
+      "The server runs on port 8080.",
+      async () => { throw new Error("provider down"); },
+    );
+    expect(persisted).toBe(true);
+    expect(cl.getCorrectionHistory().length).toBe(before + 1);
+  });
+
+  it("a false-positive 'no …' shape with confirm=false stays out of durable memory", async () => {
+    // The past bare-"no" over-fire: a genuine disagreement SHAPE the regex still
+    // detects, but the user isn't overriding the agent — the LLM says NO, so it
+    // must never become a persisted lesson.
+    const cl = CorrectionLearner.getInstance();
+    const fp = cl.detectCorrection(
+      "No, keep going — that plan looks great",
+      "I'll refactor the dispatcher next.",
+    );
+    // If the detector produced a candidate at all, a false confirm must suppress it.
+    if (fp) {
+      const before = cl.getCorrectionHistory().length;
+      const persisted = await cl.recordCorrectionMaybe(
+        fp,
+        "No, keep going — that plan looks great",
+        "I'll refactor the dispatcher next.",
+        async () => false,
+      );
+      expect(persisted).toBe(false);
+      expect(cl.getCorrectionHistory().length).toBe(before);
+    }
+  });
+
+  it("the common path: pre-gate miss means no candidate, so no confirm and no persist", async () => {
+    // A message the pre-gate rejects never reaches detectCorrection/persist —
+    // the zero-LLM common path. We assert the gate rejects it; the caller
+    // (signals-meta) only builds a candidate when detection returns non-null.
+    expect(CorrectionLearner.looksLikeCorrection("Thanks, that worked perfectly")).toBe(false);
+    const cl = CorrectionLearner.getInstance();
+    const detected = cl.detectCorrection(
+      "Thanks, that worked perfectly",
+      "The server runs on port 8080.",
+    );
+    expect(detected).toBeNull();
+  });
+});

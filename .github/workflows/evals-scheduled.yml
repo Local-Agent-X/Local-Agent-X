@@ -115,6 +115,19 @@ jobs:
           mkdir -p eval-results
           node eval/op-outcomes/run.mjs --all --repeat 1 2>&1 | tee eval-results/op-outcomes.txt
 
+      # Instruction-compliance battery — drives the live model at explicit-
+      # constraint tasks and scores obedience from the deterministic tool trace
+      # (no LLM judge). Like the evals above it needs the booted dev server +
+      # real tokens, is non-deterministic, and MUST NOT gate merges, so it runs
+      # only here (workflow_dispatch) behind continue-on-error. Its runner reads
+      # homedir()/.lax/config.json directly (LAX_DATA_DIR points there), so the
+      # booted server's config is where the eval looks for it.
+      - name: Instruction-compliance eval
+        continue-on-error: true
+        run: |
+          mkdir -p eval-results
+          npm run eval:instruction-compliance 2>&1 | tee eval-results/instruction-compliance.txt
+
       # Render the outcome report into the GitHub job summary so it's visible
       # without downloading the artifact. Non-blocking: these evals are
       # non-deterministic, so the report informs but never gates the workflow.
@@ -139,6 +152,7 @@ jobs:
           path: |
             eval-results/
             eval/op-outcomes/results-*.json
+            eval/instruction-compliance/results-*.json
           if-no-files-found: warn
           retention-days: 30
 

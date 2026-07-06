@@ -91,13 +91,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Non-blocking for now: a handful of pre-existing tests assume POSIX
-      # (8.3 short-path realpath, /etc paths) and fail only under Windows CI,
-      # not on a real Windows dev box. Runs for signal; tracked to flip back
-      # to blocking once that portability debt is cleared.
-      - name: Unit tests (vitest)
+      # BLOCKING on Windows — LAX is Windows-primary, so a Windows-only
+      # regression must fail the gate, not merge green. The suite already
+      # self-skips its POSIX-only CASES at runtime via it.skipIf(process.platform
+      # === "win32") (e.g. keychain-temp-file-perms.test.ts, the backtick/$-sign
+      # blocks in security.test.ts, the POSIX process-tree-kill cases), so those
+      # do not fail here.
+      #
+      # POSIX-portability skip-list. Keep EXPLICIT: name every excluded file
+      # with why. It is intentionally EMPTY today — no whole test FILE has been
+      # confirmed to fail red on a clean windows-latest runner; the known
+      # POSIX-only assertions all self-skip via it.skipIf. If a file-level
+      # Windows-only failure surfaces, exclude it by appending a forwarded
+      # vitest arg here, e.g.:
+      #     run: npm run test:unit -- --exclude 'test/<file>.test.ts'
+      #   # <file>: <one-line reason it is genuinely POSIX-only, not a real bug>
+      # rather than reinstating continue-on-error (which hides ALL Windows
+      # regressions — the exact class this lane exists to catch).
+      #
+      # TODO(peter): confirm the skip-list. If the first blocking run reveals
+      # file-level reds that are genuinely POSIX-only (not real Windows
+      # regressions), add each to the forwarded --exclude args above.
+      - name: Unit tests (vitest, blocking)
         if: matrix.os == 'windows-latest'
-        continue-on-error: true
         run: npm run test:unit
 
       - name: Unit tests + coverage floor (vitest)

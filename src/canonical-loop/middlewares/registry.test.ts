@@ -79,3 +79,45 @@ describe("default middleware stack completeness", () => {
     expect(advice).toBeLessThan(toolSearch);
   });
 });
+
+// EXACT-ORDER LOCK — the whole-stack behavior-preservation guard for the
+// declarative-ordering refactor. The dispatcher (host.ts:runMiddlewarePhase)
+// walks this array in index order and short-circuits on the first firing
+// middleware, so the emitted sequence IS the behavior. This freezes the exact
+// order by name; any reorder (even one position) fails here. Do NOT edit this
+// list to make it pass — a diff means the refactor changed observable order.
+const EXPECTED_ORDER = [
+  "mid-turn-stale",
+  "office-theme-guard",
+  "instruction-ledger",
+  "loop-detection",
+  "repeat-output",
+  "hallucination-check",
+  "action-claim",
+  "attribution-claim",
+  "operational-claim",
+  "codebase-advice",
+  "false-refusal",
+  "tool-search-nudge",
+  "broad-sweep-nudge",
+  "premature-completion",
+  "verify-gate",
+  "cleanup-verify",
+  "instruction-audit",
+  "refute-completion",
+  "open-steps",
+  "browser-handoff",
+  "self-check",
+  "post-turn-detector",
+  "auto-build-app",
+  "post-commit",
+  "dead-end",
+  "repeat-failure",
+];
+
+describe("default middleware stack exact order", () => {
+  it("emits the frozen ordered sequence of middleware names", () => {
+    const stack = getDefaultMiddlewareStack();
+    expect(stack.map(m => m.name)).toEqual(EXPECTED_ORDER);
+  });
+});

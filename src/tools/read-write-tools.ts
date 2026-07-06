@@ -14,6 +14,22 @@ import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-gua
 import { appUrlHint, servedFileHint } from "./file-hints.js";
 import { connectorManifestWriteRejection } from "./connector-write-guard.js";
 
+/**
+ * Skip injection screening only for the agent's own generated CODE under
+ * workspace/apps/ (its prompt strings false-positive constantly). The carve-out
+ * is path AND extension: a .md/.txt/.json/.html data file that landed there —
+ * possibly written from external content — is still screened, so the apps dir
+ * can't be used to launder an injection past the read screener. Exported for
+ * direct testing.
+ */
+export function isScreenExemptAgentCode(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/");
+  return (
+    normalized.includes("workspace/apps/") &&
+    /\.(ts|tsx|js|jsx|mjs|cjs|css|svelte|vue)$/i.test(normalized)
+  );
+}
+
 export const readTool: ToolDefinition = {
   name: "read",
   description:
@@ -76,8 +92,7 @@ export const readTool: ToolDefinition = {
       if (total > 10000 && shown < total) {
         header = `⚠ LARGE FILE (${total} lines). Do NOT read this file line-by-line. Use bash with python -c to process it instead.\n` + header;
       }
-      const isAgentCode = filePath.replace(/\\/g, "/").includes("workspace/apps/");
-      const injections = isAgentCode ? [] : detectInjection(numbered);
+      const injections = isScreenExemptAgentCode(filePath) ? [] : detectInjection(numbered);
       let warning = "";
       if (injections.length > 0) {
         const maxScore = Math.max(...injections.map(i => i.score));

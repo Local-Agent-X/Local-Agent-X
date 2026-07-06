@@ -14,6 +14,7 @@ export { checkApprovalHallucination, checkCreationHallucination, checkWorkerHall
 export { checkUnmatchedActionClaim } from "./action-claim.js";
 export {
   checkUnsupportedOperationalClaim,
+  findDefinitiveOperationalClaimSentence,
   hasFreshOperationalEvidence,
   looksLikeDefinitiveOperationalClaim,
   runtimeCausalityEvidence,

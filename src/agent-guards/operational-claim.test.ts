@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   checkUnsupportedOperationalClaim,
+  findDefinitiveOperationalClaimSentence,
   hasFreshOperationalEvidence,
   looksLikeDefinitiveOperationalClaim,
   runtimeCausalityEvidence,
@@ -53,5 +54,20 @@ describe("operational claim grounding", () => {
     expect(looksLikeDefinitiveOperationalClaim(
       "The function returns early because the array is empty.",
     )).toBe(false);
+  });
+
+  it("returns the exact flagged sentence for the downstream LLM confirm", () => {
+    const text =
+      "Let me walk through it. The firewall blocked the request. Everything else looked normal.";
+    expect(findDefinitiveOperationalClaimSentence(text)).toBe("The firewall blocked the request.");
+    expect(findDefinitiveOperationalClaimSentence("No operational content here.")).toBeNull();
+  });
+
+  it("prefilter is knowingly negation-blind — the middleware's LLM confirm owns that verdict", () => {
+    // Locked contract: the regex tier still flags a negated sentence; the
+    // suppression of this false positive happens at the confirm gate, not here.
+    const text = "The firewall did NOT block the request.";
+    expect(looksLikeDefinitiveOperationalClaim(text)).toBe(true);
+    expect(findDefinitiveOperationalClaimSentence(text)).toBe(text);
   });
 });

@@ -21,16 +21,31 @@ const NON_DIAGNOSTIC_TOOLS = new Set([
   "tool_search",
 ]);
 
+/**
+ * First sentence that reads as a definitive operational-state/causality claim,
+ * or null. This regex pass is a PREFILTER — it is negation- and
+ * paraphrase-blind by construction ("the firewall did NOT block it" matches).
+ * The middleware hands the flagged sentence to an LLM confirm before the
+ * retract-grade consequence is allowed; exporting the sentence (not just a
+ * boolean) is what makes that confirm precise.
+ */
+export function findDefinitiveOperationalClaimSentence(text: string): string | null {
+  const cleaned = stripCodeBlocks(text);
+  if (!cleaned) return null;
+  const sentences = cleaned.split(/(?<=[.!?])\s+|\n+/);
+  for (const sentence of sentences) {
+    if (
+      OPERATIONAL_SUBJECT.test(sentence) &&
+      OPERATIONAL_ASSERTION.test(sentence) &&
+      !EXPLICIT_UNCERTAINTY.test(sentence)
+    ) return sentence;
+  }
+  return null;
+}
+
 /** True when a reply makes a definitive operational-state/causality claim. */
 export function looksLikeDefinitiveOperationalClaim(text: string): boolean {
-  const cleaned = stripCodeBlocks(text);
-  if (!cleaned) return false;
-  const sentences = cleaned.split(/(?<=[.!?])\s+|\n+/);
-  return sentences.some((sentence) =>
-    OPERATIONAL_SUBJECT.test(sentence) &&
-    OPERATIONAL_ASSERTION.test(sentence) &&
-    !EXPLICIT_UNCERTAINTY.test(sentence)
-  );
+  return findDefinitiveOperationalClaimSentence(text) !== null;
 }
 
 /** Successful read/inspection tools from this op count as fresh evidence. */

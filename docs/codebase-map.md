@@ -12,30 +12,30 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1141 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1135 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/security/` | 63 | 25 | XL |  |
-| `src/ops/` | 62 | 22 | XL |  |
-| `src/tools/` | 45 | 131 | XL |  |
+| `src/ops/` | 61 | 22 | XL |  |
+| `src/tools/` | 43 | 130 | XL |  |
 | `src/memory/` | 37 | 106 | XL |  |
 | `src/providers/` | 37 | 17 | L |  |
-| `src/canonical-loop/` | 33 | 127 | XL |  |
-| `src/classifiers/` | 26 | 12 | L |  |
+| `src/canonical-loop/` | 31 | 125 | XL |  |
+| `src/classifiers/` | 26 | 11 | L |  |
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
-| `src/workspace/` | 23 | 2 | M |  |
 | `src/auth/` | 22 | 10 | L |  |
+| `src/workspace/` | 22 | 2 | M |  |
 | `src/threat/` | 20 | 12 | L |  |
 | `src/session/` | 19 | 7 | M |  |
 | `src/orchestrator/` | 18 | 21 | L |  |
 | `src/agent-request/` | 17 | 12 | L |  |
 | `src/agent-guards/` | 16 | 16 | L |  |
 | `src/agents/` | 15 | 13 | L |  |
-| `src/chat-ws/` | 14 | 9 | L |  |
+| `src/chat-ws/` | 14 | 8 | L |  |
 | `src/app-runtime/` | 13 | 12 | L |  |
 | `src/anthropic-client/` | 12 | 18 | L |  |
 | `src/voice/` | 12 | 65 | XL |  |
@@ -61,12 +61,12 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/routing/` | 5 | 7 | M |  |
 | `src/util/` | 5 | 1 | S |  |
 | `src/auto-build/` | 4 | 47 | XL |  |
-| `src/hooks/` | 4 | 3 | M |  |
 | `src/server/` *(entrypoint)* | 4 | 27 | XL |  |
 | `src/tool-policy/` | 4 | 19 | L |  |
 | `src/broker-transport/` | 3 | 27 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
+| `src/hooks/` | 3 | 3 | M |  |
 | `src/context/` | 2 | 2 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
@@ -75,7 +75,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/cross-session-learning/` | 1 | 7 | M |  |
 | `src/errors/` | 1 | 2 | S |  |
 | `src/manifest-generator/` | 1 | 8 | M |  |
-| `src/tool-execution/` | 1 | 20 | L |  |
+| `src/tool-execution/` | 1 | 19 | L |  |
 | `src/types/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)

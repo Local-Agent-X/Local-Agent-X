@@ -24,6 +24,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { setOpLedger, opForbidsCapability } from "./index.js";
 import { _resetOpLedgers } from "./ledger.js";
+import { extractConstraints } from "./extract.js";
 import { prematureCompletionMiddleware } from "../middlewares/premature-completion.js";
 import type { CanonicalLoopContext } from "../middlewares/types.js";
 
@@ -88,5 +89,21 @@ describe("instruction-ledger cross-seam contract (pre-dispatch gate ↔ persiste
 
     // Consumer B — the workspace-write-guarded persistence nudge still fires.
     expect((await runPersistenceGuard(toollessDoneCtx(opId))).kind).toBe("nudge");
+  });
+
+  it("an LLM-confirmed ban beside a carve-out reaches BOTH consumers (veto-override regression)", async () => {
+    // Before the fix, the extract-layer regex veto erased this LLM-confirmed
+    // workspace-write BEFORE the ledger write, so NEITHER consumer ever saw the
+    // ban — a write allowed against an explicit read-only instruction, silent at
+    // both layers. Pins the full path: extract → ledger → both consumers.
+    const opId = "op-seam-veto-override";
+    const ledger = await extractConstraints(
+      "Read-only session, don't touch anything else.",
+      async () => ({ prohibitions: ["workspace-write"], obligations: [] }),
+    );
+    setOpLedger(opId, ledger);
+
+    expect(opForbidsCapability(opId, "workspace-write")).toBe(true);
+    expect((await runPersistenceGuard(toollessDoneCtx(opId))).kind).toBe("continue");
   });
 });

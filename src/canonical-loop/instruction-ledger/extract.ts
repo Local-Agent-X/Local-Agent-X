@@ -58,12 +58,31 @@ const PROHIBITION_CUE = new RegExp(
   "gi",
 );
 
-// Read-only-intent phrasings that don't name a verb.
+// Verbless prohibition phrasings. GATE-ONLY on purpose: every entry routes the
+// message to the LLM confirm, and NONE contributes to the strong tier — on an
+// LLM outage these cues yield nothing (fail-open), because their class/scope is
+// genuinely ambiguous without a model ("the volume is read-only" describes,
+// "no changes to report" narrates). Widening THIS list costs at most a spare
+// LLM call the confirm stage can reject; widening STRONG_PROHIBITIONS — the
+// LLM-outage determinism floor — is what's forbidden.
 const STANDALONE_CUES: RegExp[] = [
-  /\bread-?only\b/gi,
+  // read-only intent
+  /\bread[- ]?only\b/gi,
   /\b(?:just|only)\s+tell\s+me\b/gi,
+  /\bjust\s+(?:look|review|analy[sz]e)\b/gi,
+  /\b(?:look|review|analysis)\s+only\b/gi,
   /\b(?:don['’]?t|do\s+not)\s+do\s+anything\b/gi,
   /\bI['’]?ll\s+(?:verify|test|run|handle)\b[^.?!\n]{0,20}?\bmyself\b/gi,
+  // keep-as-is: "leave <x> as it is / as they are / alone / untouched",
+  // "keep <x> as is", bare hyphenated "as-is". The leave/keep patterns require
+  // the trailing anchor so "leave a comment" / "keep it simple" don't gate.
+  /\bleave\b[^.?!\n]{0,40}?\b(?:as\s+(?:it\s+is|they\s+are)|alone|untouched)\b/gi,
+  /\bkeep\b[^.?!\n]{0,40}?\bas[- ]is\b/gi,
+  /\bas-is\b/gi,
+  // hands-off
+  /\bhands[- ]off\b/gi,
+  /\b(?:no|zero)\s+changes\b/gi,
+  /\bnothing\s+(?:gets|is|should\s+be|will\s+be)\s+(?:modified|changed|edited)\b/gi,
 ];
 
 // End-of-op obligation cues. Both are unambiguous → also the strong tier.
@@ -163,10 +182,12 @@ function hasIndependentWorkspaceWriteCue(message: string): boolean {
  *  carve-out ("don't change anything ELSE") — but ONLY when the carve-out is its
  *  sole source. If a separate, unambiguous read-only cue stands beside it
  *  ("just tell me what's wrong; don't change anything else"), the ban is real and
- *  is kept. Strip-and-recheck is the only attribution available: the LLM returns
- *  a bare class with no source phrase, and the carve-out text also matches the
- *  don't-change strong regex, so per-phrase attribution isn't possible. Other
- *  classes and obligations pass through untouched. */
+ *  is kept. Strip-and-recheck is the only attribution a regex has: the carve-out
+ *  text also matches the don't-change strong pattern, so per-phrase attribution
+ *  isn't possible. DETERMINISTIC TIER ONLY — called from phraseGate on the
+ *  strong prohibitions, never on an LLM-confirmed result: the model saw the full
+ *  message, carve-out included, and judges it itself (see extractConstraints).
+ *  Other classes and obligations pass through untouched. */
 function vetoScopedWrite(prohibitions: readonly CapabilityClass[], userMessage: string): CapabilityClass[] {
   if (!isScopedWriteCarveout(userMessage)) return [...prohibitions];
   const withoutCarveout = userMessage.replace(SCOPED_WRITE_CARVEOUT, " ");
@@ -244,7 +265,7 @@ HIGH PRECISION RULES:
 - Include a constraint ONLY when the user EXPLICITLY stated it as an instruction for THIS task.
 - Narration ("I never run the tests"), questions, and negations about outcomes ("don't break the build") are NOT constraints.
 - "I'll test/verify/run/handle it myself" implies the agent should not do that step itself — map to the matching class.
-- "workspace-write" means the user forbade editing files AT ALL (a diagnose/read-only session). A prohibition that only CARVES OUT a subset while the task itself asks for changes is NOT workspace-write — e.g. "remove X but don't change any OTHER feature", "fix the bug but don't touch the tests", "refactor auth but leave the public API alone". If the message asks you to edit/create/remove/rename/refactor anything, do NOT return workspace-write.
+- "workspace-write" means the user forbade editing files AT ALL (a diagnose/read-only session). A prohibition that only CARVES OUT a subset while the task itself asks for changes is NOT workspace-write — e.g. "remove X but don't change any OTHER feature", "fix the bug but don't touch the tests", "refactor auth but leave the public API alone". If the message asks you to edit/create/remove/rename/refactor anything, do NOT return workspace-write. Conversely, a genuine read-only session that ALSO contains a carve-out phrase ("read-only session, don't touch anything else") IS workspace-write — the carve-out doesn't cancel an explicit read-only instruction.
 - When in doubt, return empty arrays.`;
 
 async function llmConfirm(
@@ -319,10 +340,15 @@ export async function extractConstraints(
 
   // LLM unavailable/failed → only the unambiguous deterministic tier stands.
   const result = confirmed ?? gate.strong;
-  // Robust across BOTH paths: even if the model over-confirms workspace-write on
-  // a "leave the rest alone" carve-out, drop it — such a phrase can never mean
-  // "edit nothing", and enforcing it would brick the edits the task requires.
-  const prohibitions = vetoScopedWrite(result.prohibitions, userMessage);
+  // The carve-out veto applies ONLY to the deterministic tier (phraseGate
+  // already vetoed gate.strong): a per-phrase regex can't tell a spurious
+  // carve-out ban from a real one standing beside it. The LLM CAN — it saw the
+  // full message, carve-out included, and SYSTEM_PROMPT explicitly weighs
+  // partitive carve-outs — so a workspace-write it still returns is a verdict
+  // that a REAL ban co-occurs ("read-only session, don't touch anything else").
+  // Re-running the regex veto here would erase that verdict, silently dropping
+  // a ban the user actually stated (the audited veto-override bug).
+  const prohibitions = [...result.prohibitions];
   if (prohibitions.length === 0 && result.obligations.length === 0) {
     return emptyLedger(); // confirm rejected the cues (or nothing was strong)
   }

@@ -225,18 +225,19 @@ describe("scoped 'leave-the-rest-alone' carve-outs never become a blanket write 
     expect(phraseGate("don't touch main.ts").strong.prohibitions).toEqual(["workspace-write"]);
   });
 
-  it("extractConstraints drops workspace-write even when the LLM over-confirms it (v2 prompt)", async () => {
-    const overConfirm = vi.fn<ConfirmConstraintsFn>(async () => ({
-      prohibitions: ["workspace-write"],
-      obligations: [],
-    }));
+  it("extractConstraints vetoes the flag-removal-v2 carve-out on the deterministic path (LLM null)", async () => {
+    // The regex veto now guards ONLY the gate/strong-derived tier. On the LLM
+    // path the carve-out defense is SYSTEM_PROMPT's carve-out rule — a class
+    // the model still confirms is trusted (see the veto-override regression
+    // suite below), because the model saw the full message and the regex can't
+    // tell a spurious carve-out ban from a real one standing beside it.
+    const confirmNull: ConfirmConstraintsFn = async () => null;
     const ledger = await extractConstraints(
       'Remove betaSearch COMPLETELY — the flag and the entire feature. ' +
         "Do not change or remove any other feature. Report what you changed.",
-      overConfirm,
+      confirmNull,
     );
     expect(ledger.prohibitions).toEqual([]);
-    expect(overConfirm).toHaveBeenCalledTimes(1); // the cue still gated an LLM call
   });
 
   it("extractConstraints drops workspace-write on the strong-tier fallback too (LLM null)", async () => {
@@ -283,13 +284,93 @@ describe("scoped-write carve-out — does not erase an independent read-only ban
     expect(ledger.prohibitions).toContain("workspace-write");
   });
 
-  it("still vetoes a carve-out that is the SOLE workspace-write source (no over-block)", async () => {
-    // An edit task with only a partitive exception: the carve-out is spurious and
-    // must drop so the required edits aren't bricked — even if the LLM over-confirms.
+  it("still vetoes a carve-out that is the SOLE workspace-write source on the deterministic path", async () => {
+    // An edit task with only a partitive exception, LLM unavailable: the
+    // gate-derived ban is spurious and must drop so the required edits aren't
+    // bricked — today's behavior, unchanged by the veto-override fix.
     const ledger = await extractConstraints(
       "Remove all tailnet refs but don't change any other feature.",
-      async () => ({ prohibitions: ["workspace-write"], obligations: [] }),
+      confirmNull,
     );
     expect(ledger.prohibitions).not.toContain("workspace-write");
+  });
+});
+
+describe("veto-override regression — the regex veto must not erase an LLM-confirmed ban", () => {
+  // THE audited bug: when a partitive carve-out ("don't touch anything else")
+  // co-occurred with a REAL ban the LLM confirmed, the entry-point regex veto
+  // re-ran on the confirmed result and erased the model's verdict — the ban the
+  // user actually stated was silently dropped. The veto is deterministic-tier
+  // only now; the LLM saw the whole message, carve-out included.
+  it("keeps a workspace-write the LLM explicitly confirmed despite a co-occurring carve-out", async () => {
+    const confirmWs = vi.fn<ConfirmConstraintsFn>(async () => ({
+      prohibitions: ["workspace-write"],
+      obligations: [],
+    }));
+    const ledger = await extractConstraints(
+      "Read-only session, don't touch anything else.",
+      confirmWs,
+    );
+    expect(ledger.prohibitions).toContain("workspace-write");
+    expect(confirmWs).toHaveBeenCalledTimes(1);
+  });
+
+  it("same phrase, LLM null → the veto still applies to the gate-derived ban", async () => {
+    // Deterministic path unchanged: without a model, "read-only" isn't strong,
+    // the carve-out-derived don't-touch ban is vetoed, and the extractor fails
+    // open — exactly today's LLM-outage behavior.
+    const ledger = await extractConstraints(
+      "Read-only session, don't touch anything else.",
+      async () => null,
+    );
+    expect(ledger.prohibitions).toEqual([]);
+  });
+});
+
+describe("gate-only recall cues — audited miss classes now reach the LLM confirm", () => {
+  // Each phrase class the audit found silently dropped (gate miss → empty
+  // ledger → ban never even reached the confirm stage). These cues are
+  // GATE-ONLY: the confirmer must be CALLED with the full message, and on LLM
+  // null they contribute nothing deterministic — STRONG_PROHIBITIONS is the
+  // unchanged LLM-outage floor.
+  const cases: Array<[string, string]> = [
+    ["read only (spaced)", "This session is read only, report what you find."],
+    ["look only", "Look only please, I want your take on the auth flow."],
+    ["review only", "This pass is review only."],
+    ["analysis only", "Analysis only for now."],
+    ["just look", "Just look at the failing assertion and report back."],
+    ["just review", "Just review the diff for me."],
+    ["just analyze", "Just analyze the crash dump."],
+    ["leave … as it is", "Leave the config as it is."],
+    ["leave … as they are", "Leave the fixtures as they are."],
+    ["leave … alone", "Leave the tests alone while you investigate."],
+    ["leave … untouched", "Leave the migrations untouched."],
+    ["keep … as is", "Keep the public API as is."],
+    ["as-is", "The formatting stays as-is."],
+    ["hands off", "Hands off the database schema."],
+    ["no changes", "No changes to the public API, understood?"],
+    ["zero changes", "Zero changes outside src/parser."],
+    ["nothing gets modified", "Nothing gets modified in this session."],
+    ["nothing gets changed", "Nothing gets changed until I say so."],
+    ["nothing gets edited", "Nothing gets edited here."],
+  ];
+
+  it.each(cases)("%s gates and the confirmer sees the message", async (_name, msg) => {
+    const confirm = vi.fn(confirmNone);
+    await extractConstraints(msg, confirm);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0][0]).toBe(msg);
+    expect(confirm.mock.calls[0][1].length).toBeGreaterThan(0);
+  });
+
+  it.each(cases)("%s contributes NOTHING deterministic (gate-only, never strong)", (_name, msg) => {
+    expect(phraseGate(msg).strong.prohibitions).toEqual([]);
+  });
+
+  it("a benign edit request still gates out with zero confirm calls", async () => {
+    const confirm = vi.fn(confirmNone);
+    const ledger = await extractConstraints("please update the config file", confirm);
+    expect(ledger).toEqual({ prohibitions: [], obligations: [], phrases: [] });
+    expect(confirm).not.toHaveBeenCalled();
   });
 });

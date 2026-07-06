@@ -266,8 +266,10 @@ function updateStatusBar(force) {
     : planOn
       ? 'Plan mode is ON — the agent cannot change files. Click to approve changes and turn it off.'
       : 'Turn on plan mode — the agent researches and proposes, but cannot change files until you approve.';
+  // Fixed footprint in BOTH states — the label never changes, only the color,
+  // so toggling can't reflow the status bar or shrink the chat area.
   const planChip = `<button id="plan-mode-chip" onclick="togglePlanMode()" ${planReady ? '' : 'disabled'} title="${planTitle}"
-    style="cursor:${planReady ? 'pointer' : 'not-allowed'};opacity:${planReady ? '1' : '.45'};font-family:var(--mono);font-size:.68rem;padding:2px 10px;border-radius:10px;border:1px solid ${planOn ? 'var(--warn,#fbbf24)' : 'var(--border)'};background:${planOn ? 'rgba(251,191,36,.15)' : 'transparent'};color:${planOn ? 'var(--warn,#fbbf24)' : 'var(--muted)'}">${planOn ? '&#9998; Plan mode ON' : 'Plan'}</button>`;
+    style="cursor:${planReady ? 'pointer' : 'not-allowed'};opacity:${planReady ? '1' : '.45'};white-space:nowrap;line-height:1;font-family:var(--mono);font-size:.68rem;padding:2px 10px;border-radius:10px;border:1px solid ${planOn ? 'var(--warn,#fbbf24)' : 'var(--border)'};background:${planOn ? 'rgba(251,191,36,.15)' : 'transparent'};color:${planOn ? 'var(--warn,#fbbf24)' : 'var(--muted)'};font-weight:${planOn ? '700' : '400'}">Plan</button>`;
 
   bar.innerHTML = `
     ${planChip}

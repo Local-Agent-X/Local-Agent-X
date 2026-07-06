@@ -120,6 +120,11 @@ const SENSITIVE_READ_TOOLS: ReadonlySet<string> = new Set([
 const WORKSPACE_WRITE_TOOLS: ReadonlySet<string> = new Set([
   "write", "edit",  // canonical
   "ari_file",        // kernel file write bridge (action: 'write')
+  // Registered edit/delete synonyms with identical blast radius (the same
+  // family resolve-tool's protected-files gate keys on via ARI_ACTION_MAP:
+  // "write"). Left out, a workspace-write ban blocked `edit` but not
+  // `edit_lines` — the class fails open under a different spelling.
+  "edit_lines", "multi_edit", "delete_file",
 ]);
 
 // Shell = subprocess spawn / arbitrary command execution.

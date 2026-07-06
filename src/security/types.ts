@@ -42,4 +42,5 @@ export const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
 export const WORKTREE_REQUIRED_TOOLS = new Set([
   "write", "edit", "bash",
   "ari_file", "ari_shell", "process_start",
+  "edit_lines", "multi_edit", "delete_file", // registered edit/delete synonyms — same blast radius as write/edit
 ]);

@@ -205,6 +205,9 @@ export const USER_HINTS = {
   /** Plan mode is on — only read-only tools allowed. */
   planMode:
     "I'm in plan mode and can only read right now — say \"exit plan mode\" when you want me to start making changes.",
+  /** ENFORCED plan mode — only the user's Plan toggle lifts it, not the model. */
+  planModeEnforced:
+    "Plan mode is on — I can research and propose changes, but the Plan toggle has to be turned off before I can make any.",
   /** Threat engine fired on tool result — needs `/approve` to continue. */
   threatConsent:
     "Something tripped a safety check — type `/approve <one-line reason>` if this is a legitimate request, or tell me a different approach.",

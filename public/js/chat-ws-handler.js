@@ -33,6 +33,13 @@ function handleChatWsMessage(e) {
   }
 
   if (msg.type === 'event' && msg.sessionId && msg.event) {
+    // Enforced plan mode flipped (Plan toggle echo) — mirror to the chip.
+    if (msg.event.type === 'plan_mode_changed') {
+      window._laxPlanMode = window._laxPlanMode || {};
+      window._laxPlanMode[msg.sessionId] = !!msg.event.enforced;
+      try { if (typeof updateStatusBar === 'function') updateStatusBar(true); } catch {}
+      return;
+    }
     // Bump per-op activity from the envelope's _opId/_seq so the watchdog
     // stays honest for any event carrying canonical tags — not just the
     // ones applyEvent mutates state for.
@@ -121,6 +128,14 @@ function reconcileSessionSnapshot(msg) {
   try {
     const sessionId = msg.sessionId;
     const liveSet = new Set(msg.liveOpIds || []);
+
+    // Server is source of truth for enforced plan mode — reconcile on every
+    // (re)connect so the chip survives page reloads and server restarts.
+    if (typeof msg.planMode === 'boolean') {
+      window._laxPlanMode = window._laxPlanMode || {};
+      window._laxPlanMode[sessionId] = msg.planMode;
+      try { if (typeof updateStatusBar === 'function') updateStatusBar(true); } catch {}
+    }
 
     if (typeof agentFeedsData !== 'undefined') {
       for (const opId of Object.keys(agentFeedsData)) {

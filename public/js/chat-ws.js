@@ -295,6 +295,24 @@ window.sendApprovalResponse = function(approvalId, approved, rememberForSession)
   try { ChatStreamStore.resolveApprovalLocal(approvalId, approved); } catch {}
 };
 
+// Enforced plan mode toggle — session-scoped. Turning it OFF is the approval
+// event that lets the agent make changes again. State lives server-side; the
+// local mirror (window._laxPlanMode) is optimistic and reconciled by the
+// server's plan_mode_changed echo + session_snapshot on (re)connect.
+window.togglePlanMode = function() {
+  if (!activeChat) return;
+  const sid = activeChat.id;
+  window._laxPlanMode = window._laxPlanMode || {};
+  const enabled = !window._laxPlanMode[sid];
+  try {
+    if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+      chatWs.send(JSON.stringify({ type: 'plan_mode', sessionId: sid, enabled }));
+      window._laxPlanMode[sid] = enabled;
+      if (typeof updateStatusBar === 'function') updateStatusBar(true);
+    }
+  } catch {}
+};
+
 Object.defineProperty(window, 'chatWs', {
   get() { return chatWs; }
 });

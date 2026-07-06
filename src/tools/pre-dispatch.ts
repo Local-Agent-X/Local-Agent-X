@@ -25,7 +25,7 @@ import {
 } from "../approval-manager.js";
 import { getRuntimeConfig } from "../config.js";
 import { hasCapability, type CapabilityClass } from "../tool-registry.js";
-import { opForbidsCapability } from "../canonical-loop/instruction-ledger/index.js";
+import { opForbidsCapability, planModeForbidsCapability } from "../canonical-loop/instruction-ledger/index.js";
 import { shellCommandWritesFiles } from "../security/shell-write-detector.js";
 import { isProtectedSetting } from "../settings-schema.js";
 import type { ServerEvent } from "../types.js";
@@ -166,16 +166,33 @@ export async function assertToolCallAllowed(
 
   // Per-op user prohibitions — the instruction ledger records capability
   // classes the USER forbade for this op ("don't edit anything", "no
-  // network"). Sits beside the kill-switches: same shape (cheap, predictable,
-  // user-stated), narrower scope (one op, not the whole install). Keyed on
-  // CAPABILITY CLASS via hasCapability — never literal tool names — so
-  // synonyms (ari_file, process_start, browser_navigate) are gated
-  // identically to canonicals. FAIL-OPEN: no opId (non-op callers) or an
-  // absent/empty ledger fires nothing; unconstrained ops are untouched.
-  if (ctx.opId) {
+  // network") — plus the session's ENFORCED PLAN MODE, a standing mandate the
+  // user flips via the Plan toggle that forbids the mutation classes until
+  // they approve. Sits beside the kill-switches: same shape (cheap,
+  // predictable, user-stated), narrower scope. Keyed on CAPABILITY CLASS via
+  // hasCapability — never literal tool names — so synonyms (ari_file,
+  // process_start, browser_navigate) are gated identically to canonicals.
+  // FAIL-OPEN: no opId + plan mode off, or an absent/empty ledger, fires
+  // nothing; unconstrained ops are untouched.
+  const opForbids = (cls: CapabilityClass): boolean =>
+    ctx.opId !== undefined && opForbidsCapability(ctx.opId, cls);
+  const capForbidden = (cls: CapabilityClass): boolean =>
+    opForbids(cls) || planModeForbidsCapability(ctx.sessionId, cls);
+  {
     for (const { cls, verb, recovery } of OP_PROHIBITION_GUIDANCE) {
-      if (!opForbidsCapability(ctx.opId, cls)) continue;
+      if (!capForbidden(cls)) continue;
       if (!hasCapability(call.name, cls)) continue;
+      // Plan mode gets its own wording — only the user's toggle lifts it, so
+      // "ask the user to lift the restriction" would be misleading half-advice.
+      if (!opForbids(cls)) {
+        throw new ToolBlocked({
+          stage: "tool-policy",
+          disposition: "hard-deny",
+          reason: `Enforced plan mode is on for this session; this ${call.name} call would ${verb} and is blocked. Present your plan and ask the user to approve it — only the user can turn plan mode off (the Plan toggle).`,
+          recovery,
+          userHint: USER_HINTS.planModeEnforced,
+        });
+      }
       throw new ToolBlocked({
         stage: "tool-policy",
         disposition: "hard-deny",
@@ -187,20 +204,23 @@ export async function assertToolCallAllowed(
 
     // Shell escape hatch for a workspace-write ban: bash/process_start are
     // SHELL-class, so the capability loop above never catches a shell command
-    // that WRITES files (`sed -i`, `cat > f`, a heredoc, `cp`, `rm`…). When the
-    // user forbade workspace writes, block a mutating shell command too —
-    // read-only shell (grep/ls/cat) stays allowed. Best-effort: a bespoke
-    // interpreter one-liner can still slip past static analysis; the post-hoc
-    // mutation gates catch that.
-    if (opForbidsCapability(ctx.opId, "workspace-write") && hasCapability(call.name, "shell")) {
+    // that WRITES files (`sed -i`, `cat > f`, a heredoc, `cp`, `rm`…). When
+    // workspace writes are forbidden (user-stated OR enforced plan mode),
+    // block a mutating shell command too — read-only shell (grep/ls/cat)
+    // stays allowed. Best-effort: a bespoke interpreter one-liner can still
+    // slip past static analysis; the post-hoc mutation gates catch that.
+    if (capForbidden("workspace-write") && hasCapability(call.name, "shell")) {
       const cmd = (call.args as { command?: unknown } | undefined)?.command;
       if (typeof cmd === "string" && shellCommandWritesFiles(cmd)) {
+        const cause = opForbids("workspace-write")
+          ? "The user asked you not to edit or create files in this request"
+          : "Enforced plan mode is on for this session";
         throw new ToolBlocked({
           stage: "tool-policy",
           disposition: "hard-deny",
-          reason: `The user asked you not to edit or create files in this request, and this shell command writes to the filesystem — so it is blocked. Read-only shell (grep, ls, cat) is fine; to change a file, either keep the command read-only or tell the user the exact command to run themselves.`,
+          reason: `${cause}, and this shell command writes to the filesystem — so it is blocked. Read-only shell (grep, ls, cat) is fine; to change a file, either keep the command read-only or tell the user the exact command to run themselves.`,
           recovery: "Run the command read-only, or report the change for the user to apply.",
-          userHint: USER_HINTS.policy,
+          userHint: opForbids("workspace-write") ? USER_HINTS.policy : USER_HINTS.planModeEnforced,
         });
       }
     }

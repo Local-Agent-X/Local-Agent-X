@@ -17,7 +17,7 @@
  */
 import { type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
-import { opForbidsCapability } from "../instruction-ledger/index.js";
+import { capabilityForbiddenForOp } from "../instruction-ledger/index.js";
 import type { CapabilityClass } from "../../tool-registry.js";
 
 interface FiredFlag { fired: boolean }
@@ -72,10 +72,14 @@ const CAPABILITY_TOPIC_CUES: Record<CapabilityClass, RegExp> = {
 };
 
 /** True when the denial reads as the model HONORING a user prohibition (the
- *  declined capability is one the ledger forbids) — not as a missed tool. */
-function denialHonorsProhibition(opId: string, text: string): boolean {
+ *  declined capability is one the ledger — or enforced plan mode — forbids),
+ *  not as a missed tool. */
+function denialHonorsProhibition(
+  op: { id: string; canonical?: { sessionId?: string | null } },
+  text: string,
+): boolean {
   return (Object.keys(CAPABILITY_TOPIC_CUES) as CapabilityClass[]).some(
-    (cls) => opForbidsCapability(opId, cls) && CAPABILITY_TOPIC_CUES[cls].test(text),
+    (cls) => capabilityForbiddenForOp(op, cls) && CAPABILITY_TOPIC_CUES[cls].test(text),
   );
 }
 
@@ -89,7 +93,7 @@ export const toolSearchNudgeMiddleware: CanonicalMiddleware = {
     // TARGETED suppression: "I can't browse" after the user forbade egress is
     // compliance, not a capability gap — don't push it to search for a tool the
     // user banned. Denials about NON-forbidden capabilities still nudge.
-    if (denialHonorsProhibition(ctx.op.id, ctx.assistantContent)) return { kind: "continue" };
+    if (denialHonorsProhibition(ctx.op, ctx.assistantContent)) return { kind: "continue" };
 
     const flag = getMiddlewareState<FiredFlag>(
       ctx.op.id,

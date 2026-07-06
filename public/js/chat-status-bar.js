@@ -255,7 +255,19 @@ function updateStatusBar(force) {
     projectOpts += `<option value="${esc(p.id)}"${sel}>${esc(p.name)}</option>`;
   }
 
+  // Enforced plan mode chip — session-scoped, server is source of truth
+  // (mirrored into window._laxPlanMode by chat-ws-handler). While on, the
+  // agent can research and propose but every file mutation is hard-blocked
+  // until the user clicks the chip again (the approval event).
+  const planOn = !!(window._laxPlanMode && window.activeChat && window._laxPlanMode[window.activeChat.id]);
+  const planChip = `<button id="plan-mode-chip" onclick="togglePlanMode()" title="${planOn
+    ? 'Plan mode is ON — the agent cannot change files. Click to approve changes and turn it off.'
+    : 'Turn on plan mode — the agent researches and proposes, but cannot change files until you approve.'}"
+    style="cursor:pointer;font-family:var(--mono);font-size:.68rem;padding:2px 10px;border-radius:10px;border:1px solid ${planOn ? 'var(--warn,#fbbf24)' : 'var(--border)'};background:${planOn ? 'rgba(251,191,36,.15)' : 'transparent'};color:${planOn ? 'var(--warn,#fbbf24)' : 'var(--muted)'}">${planOn ? '&#9998; Plan mode ON' : 'Plan'}</button>`;
+
   bar.innerHTML = `
+    ${planChip}
+    <span style="color:var(--border)">|</span>
     <select id="project-quick-select" class="status-select" onchange="quickSwitchProject(this.value)" title="Project scope for this chat — controls which agents this chat can spawn">${projectOpts}</select>
     <span style="color:var(--border)">|</span>
     <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>

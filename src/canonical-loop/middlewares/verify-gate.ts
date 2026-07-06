@@ -34,7 +34,7 @@ import {
 } from "../../agent-guards/index.js";
 import { classifyTestDeletion } from "../../classifiers/test-deletion-classify.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
-import { opForbidsCapability } from "../instruction-ledger/index.js";
+import { capabilityForbiddenForOp } from "../instruction-ledger/index.js";
 
 /**
  * Outcome-label verdict (read by decide-outcome): the op edited source and never
@@ -192,8 +192,8 @@ export const verifyGateMiddleware: CanonicalMiddleware = {
     // (opEditedSourceUnverified) stays honest. Fail-open: no ledger entry, no
     // suppression.
     if (
-      opForbidsCapability(ctx.op.id, "shell") ||
-      opForbidsCapability(ctx.op.id, "workspace-write")
+      capabilityForbiddenForOp(ctx.op, "shell") ||
+      capabilityForbiddenForOp(ctx.op, "workspace-write")
     ) return { kind: "continue" };
     // Only evaluate at wrap-up: model ended the turn with text and no tool
     // calls. Mirrors premature-completion's wrap-up detection.

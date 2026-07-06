@@ -124,6 +124,10 @@ export type ServerEvent =
   // pulls it into a turn iteration so the UI can drop the "queued" styling.
   | { type: "inject_queued"; injectId: string }
   | { type: "inject_consumed"; injectId: string }
+  // Enforced plan mode flipped for this session (user's Plan toggle over WS).
+  // enforced:false is the user's approval event — the standing mutation ban
+  // is lifted. The UI mirrors the flag onto the composer's Plan chip.
+  | { type: "plan_mode_changed"; enforced: boolean }
   // Out-of-band UI hint emitted by tools that want to surface a structured
   // affordance (op id, kill button, blocked reason) WITHOUT putting that
   // info in the model-visible result text. Originally added so BLOCKED

@@ -15,7 +15,7 @@
  */
 import { type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
-import { opForbidsCapability } from "../instruction-ledger/index.js";
+import { capabilityForbiddenForOp } from "../instruction-ledger/index.js";
 
 interface FiredFlag { fired: boolean }
 
@@ -42,7 +42,7 @@ export const broadSweepNudgeMiddleware: CanonicalMiddleware = {
     // The nudge pushes enumerate-and-FIX — never against an explicit user
     // prohibition on changing the workspace. Fail-open: no ledger entry, no
     // suppression.
-    if (opForbidsCapability(ctx.op.id, "workspace-write")) return { kind: "continue" };
+    if (capabilityForbiddenForOp(ctx.op, "workspace-write")) return { kind: "continue" };
     if (ctx.toolCalls.length > 0) return { kind: "continue" };           // still acting
     if (ctx.toolsCalledThisOp.has("grep") || ctx.toolsCalledThisOp.has("glob"))
       return { kind: "continue" };                                       // already enumerated

@@ -7,8 +7,9 @@ import { assertToolCallAllowed, ToolBlocked, type PreDispatchCtx } from "./pre-d
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
 import type { LAXConfig } from "../types.js";
 import { ToolPolicy } from "../tool-policy.js";
-import { setOpLedger } from "../canonical-loop/instruction-ledger/index.js";
+import { setOpLedger, setEnforcedPlanMode } from "../canonical-loop/instruction-ledger/index.js";
 import { _resetOpLedgers } from "../canonical-loop/instruction-ledger/ledger.js";
+import { _resetEnforcedPlanMode } from "../canonical-loop/instruction-ledger/plan-mode.js";
 
 // ── F4 behavioral proof ──────────────────────────────────────────────────
 // The pure SecurityLayer decision for sql_query paths is already unit-tested
@@ -257,5 +258,104 @@ describe("per-op instruction-ledger capability prohibitions", () => {
     await expect(
       assertToolCallAllowed({ id: "p-w", name: "write", args: { path: "a.txt", content: "x" } }, opCtx("op-1")),
     ).resolves.toBeUndefined();
+  });
+
+  it("blocks the registered edit/delete SYNONYMS under a workspace-write ban (class-hole regression)", async () => {
+    // edit_lines / multi_edit / delete_file are the same blast radius as
+    // write/edit; before they were enrolled in WORKSPACE_WRITE_TOOLS a ban
+    // blocked `edit` but let `edit_lines` through.
+    setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit any code"] });
+    for (const name of ["edit_lines", "multi_edit", "delete_file"]) {
+      await expect(
+        assertToolCallAllowed({ id: `p-${name}`, name, args: { path: "a.txt" } }, opCtx("op-1")),
+      ).rejects.toBeInstanceOf(ToolBlocked);
+    }
+  });
+});
+
+// ── Enforced plan mode — session-scoped standing mutation ban ───────────────
+// Same gate as the per-op prohibitions above, different SOURCE: the user's
+// Plan toggle sets a session-wide standing forbid the model cannot lift.
+// Applies with or without an opId (delegated/kernel dispatches included), and
+// the user's toggle-off (the approval event) unblocks the very next call.
+describe("enforced plan mode at pre-dispatch", () => {
+  function planCtx(sessionId: string, opId?: string): PreDispatchCtx {
+    return { sessionId, callContext: "local", skipSessionPolicy: true, opId };
+  }
+
+  afterEach(() => {
+    _resetEnforcedPlanMode();
+    _resetOpLedgers();
+  });
+
+  it("hard-denies workspace-write tools (canonical AND synonyms) while enforced", async () => {
+    setEnforcedPlanMode("plan-sess", true);
+    for (const name of ["write", "edit", "edit_lines", "multi_edit", "delete_file", "ari_file"]) {
+      try {
+        await assertToolCallAllowed({ id: `pm-${name}`, name, args: { path: "a.txt", content: "x" } }, planCtx("plan-sess", "op-1"));
+        throw new Error(`expected ToolBlocked for ${name}`);
+      } catch (e) {
+        expect(e).toBeInstanceOf(ToolBlocked);
+        expect((e as ToolBlocked).disposition).toBe("hard-deny");
+        expect((e as ToolBlocked).reason).toContain("Enforced plan mode");
+      }
+    }
+  });
+
+  it("applies WITHOUT an opId too — non-op dispatch paths can't sidestep the mode", async () => {
+    setEnforcedPlanMode("plan-sess", true);
+    await expect(
+      assertToolCallAllowed({ id: "pm-noop", name: "write", args: { path: "a.txt", content: "x" } }, planCtx("plan-sess")),
+    ).rejects.toBeInstanceOf(ToolBlocked);
+  });
+
+  it("blocks a MUTATING shell command but allows read-only shell", async () => {
+    setEnforcedPlanMode("plan-sess", true);
+    try {
+      await assertToolCallAllowed({ id: "pm-sh", name: "bash", args: { command: "sed -i 's/a/b/' x.ts" } }, planCtx("plan-sess", "op-1"));
+      throw new Error("expected ToolBlocked");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ToolBlocked);
+      expect((e as ToolBlocked).reason).toContain("Enforced plan mode");
+    }
+    await expect(
+      assertToolCallAllowed({ id: "pm-sh-ro", name: "bash", args: { command: "grep -rn foo src" } }, planCtx("plan-sess", "op-1")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("research stays allowed: read passes while enforced", async () => {
+    setEnforcedPlanMode("plan-sess", true);
+    await expect(
+      assertToolCallAllowed({ id: "pm-read", name: "read", args: { path: "a.txt" } }, planCtx("plan-sess", "op-1")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("the approval event (toggle off) unblocks the next call immediately, mid-op", async () => {
+    setEnforcedPlanMode("plan-sess", true);
+    await expect(
+      assertToolCallAllowed({ id: "pm-w1", name: "write", args: { path: "a.txt", content: "x" } }, planCtx("plan-sess", "op-1")),
+    ).rejects.toBeInstanceOf(ToolBlocked);
+    setEnforcedPlanMode("plan-sess", false);
+    await expect(
+      assertToolCallAllowed({ id: "pm-w2", name: "write", args: { path: "a.txt", content: "x" } }, planCtx("plan-sess", "op-1")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("is scoped to ITS session — other sessions are untouched", async () => {
+    setEnforcedPlanMode("plan-sess", true);
+    await expect(
+      assertToolCallAllowed({ id: "pm-other", name: "write", args: { path: "a.txt", content: "x" } }, planCtx("other-sess", "op-2")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("a user-stated op prohibition keeps its own wording (plan mode doesn't rewrite it)", async () => {
+    setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit"] });
+    setEnforcedPlanMode("plan-sess", true);
+    try {
+      await assertToolCallAllowed({ id: "pm-both", name: "write", args: { path: "a.txt", content: "x" } }, planCtx("plan-sess", "op-1"));
+      throw new Error("expected ToolBlocked");
+    } catch (e) {
+      expect((e as ToolBlocked).reason).toContain("The user asked you not to");
+    }
   });
 });

@@ -8,3 +8,10 @@ export {
   opHasConstraints,
 } from "./ledger.js";
 export type { InstructionLedger, Obligation } from "./ledger.js";
+export {
+  PLAN_MODE_PROHIBITIONS,
+  setEnforcedPlanMode,
+  isEnforcedPlanMode,
+  planModeForbidsCapability,
+  capabilityForbiddenForOp,
+} from "./plan-mode.js";

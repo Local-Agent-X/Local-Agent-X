@@ -75,6 +75,17 @@ describe("capability-class membership (single source of truth)", () => {
     expect(() => validateCapabilitySets()).not.toThrow();
   });
 
+  it("workspace-write class covers canonical AND the registered edit/delete synonyms", () => {
+    // edit_lines / multi_edit / delete_file share write/edit's blast radius
+    // (the same family resolve-tool's protected-files gate keys on). Left out
+    // of the class, a workspace-write ban (op ledger or enforced plan mode)
+    // blocked `edit` but not `edit_lines` — fail-open under another spelling.
+    for (const t of ["write", "edit", "ari_file", "edit_lines", "multi_edit", "delete_file"]) {
+      expect(hasCapability(t, "workspace-write")).toBe(true);
+    }
+    expect(hasCapability("read", "workspace-write")).toBe(false);
+  });
+
   it("worktree path tools + WORKTREE_REQUIRED include ari_file", () => {
     expect(WORKTREE_PATH_TOOLS.has("ari_file")).toBe(true);
     for (const t of ["read", "write", "edit", "glob", "grep"]) expect(WORKTREE_PATH_TOOLS.has(t)).toBe(true);

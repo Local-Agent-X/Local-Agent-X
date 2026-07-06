@@ -28,7 +28,7 @@ import {
   type CleanupToolResult,
   type CleanupVerifyState,
 } from "../../agent-guards/index.js";
-import { opForbidsCapability } from "../instruction-ledger/index.js";
+import { capabilityForbiddenForOp } from "../instruction-ledger/index.js";
 
 /** Pair this turn's tool results with their calls (by id) so a grep result
  *  carries the pattern it searched — the gate tracks cleanliness per pattern. */
@@ -103,7 +103,7 @@ export const cleanupVerifyMiddleware: CanonicalMiddleware = {
     // then re-grep" nudge pushes exactly the edits a workspace-write ban forbids,
     // so suppress the NUDGE — but the honest verdict above already stands, so the
     // outcome label is unaffected by the suppression.
-    if (opForbidsCapability(ctx.op.id, "workspace-write")) return { kind: "continue" };
+    if (capabilityForbiddenForOp(ctx.op, "workspace-write")) return { kind: "continue" };
 
     return { kind: "nudge", message: r.nudge, reason };
   },

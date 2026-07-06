@@ -1,11 +1,21 @@
 import type { ToolDefinition, ToolResult } from '../types.js';
+import { isEnforcedPlanMode } from '../canonical-loop/instruction-ledger/index.js';
 
-// Session-scoped plan mode — each session tracks its own state
+// Session-scoped plan mode — each session tracks its own state. This set is
+// the SOFT mode the model enters/exits itself; the ENFORCED mode (user's Plan
+// toggle, only the user can lift it) lives in the instruction ledger and is
+// OR'd in below so both flavors share the read-only gate + messaging.
 const planModeSessions = new Set<string>();
 
 export function isPlanMode(sessionId?: string): boolean {
   if (!sessionId) return planModeSessions.size > 0; // legacy fallback
-  return planModeSessions.has(sessionId);
+  return planModeSessions.has(sessionId) || isEnforcedPlanMode(sessionId);
+}
+
+/** User turned enforced plan mode off — drop any model-set soft flag too, so
+ *  the approval actually restores full access in one step. */
+export function clearSoftPlanMode(sessionId: string): void {
+  planModeSessions.delete(sessionId);
 }
 
 export const READ_ONLY_TOOLS = new Set([
@@ -47,6 +57,11 @@ const exitPlanMode: ToolDefinition = {
   parameters: { type: 'object', properties: { summary: { type: 'string', description: 'What you learned or planned' } }, required: [] },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const sid = (args._sessionId as string) || 'default';
+    if (isEnforcedPlanMode(sid)) {
+      // The user's Plan toggle is the only thing that lifts enforced mode —
+      // an agent-initiated exit would defeat the point of the mandate.
+      return { content: 'Enforced plan mode is on for this session — only the user can turn it off (the Plan toggle next to the composer). Present your plan and ask the user to approve it; do not retry this call.' };
+    }
     planModeSessions.delete(sid);
     const summary = typeof args.summary === 'string' ? `\n\nSummary: ${args.summary}` : '';
     return { content: `Plan mode deactivated. Full tool access restored.${summary}` };

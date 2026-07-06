@@ -13,6 +13,7 @@
 import {
   detectInlineInterpreterEval,
   detectScriptWrite,
+  splitShellSegments,
   stripQuotedSpans,
   tokenizeCommand,
 } from "./shell-detectors.js";
@@ -45,7 +46,7 @@ export function shellCommandWritesFiles(command: string): boolean {
   // enumerate every mutating call (`os.remove('x')`, `fs.rmSync`,
   // `open(f,'r+')`, `m='w'; open(p,m)`…). Under a write ban the body is
   // un-analyzable, so the FORM counts as write-capable wholesale — reuse
-  // detectInlineInterpreterEval (per pipe segment, like shell-policy) with a
+  // detectInlineInterpreterEval (per shell segment, like shell-policy) with a
   // hard "refuse" policy: the ban implies refusal even when the global
   // inline-eval policy is permissive, so a permissive default can't reopen
   // this escape. Intentional over-block: `python -c "print(1)"` is refused
@@ -53,7 +54,12 @@ export function shellCommandWritesFiles(command: string): boolean {
   // tool or a script file the path guard can see. process.cwd() is the
   // best-effort workspace anchor for the rename-escape arm (this gate has no
   // per-op workspace); the known-interpreter arm doesn't use it at all.
-  for (const segment of command.split("|")) {
+  // splitShellSegments splits on ALL command separators (`|`, `;`, `&&`, `||`,
+  // `&`, newlines), not just `|` — otherwise a chained interpreter
+  // (`echo hi; python -c "…"`, `true && python -c "…"`, `cd x && node -e "…"`,
+  // a newline-chained pair) sat at a non-leading command position that a
+  // `|`-only split never isolated, and slipped the ban.
+  for (const segment of splitShellSegments(command)) {
     if (detectInlineInterpreterEval(tokenizeCommand(segment), "refuse", process.cwd())) {
       return true;
     }

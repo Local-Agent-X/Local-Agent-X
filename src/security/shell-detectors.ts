@@ -1,8 +1,8 @@
 // Detector functions for the shell-command policy: obfuscation, script-write,
 // argv-aware interpreter escapes, network-client argv[0], and inline-network
-// scans, plus the tokenizer/quote helpers they share. The rule tables they
-// match against live in shell-rules.ts; the engine that sequences them lives in
-// shell-policy.ts.
+// scans. The lexing primitives they share (tokenizer/quote/segment/basename)
+// live in shell-lex.ts; the rule tables they match against live in
+// shell-rules.ts; the engine that sequences them lives in shell-policy.ts.
 
 import { isAbsolute, relative, resolve, join } from "node:path";
 import { homedir } from "node:os";
@@ -13,8 +13,14 @@ import {
   INTERP_EVAL_FLAGS,
   RENAME_ESCAPE_EVAL_FLAGS,
 } from "./shell-rules.js";
+import { execBasename, tokenizeCommand } from "./shell-lex.js";
 import { realpathDeep } from "./file-access.js";
 import type { InlineEvalPolicy } from "./types.js";
+
+// Re-export the lexing primitives that this module's consumers (shell-policy,
+// shell-write-detector) import from here, so the split into shell-lex.ts
+// changes no downstream import path.
+export { splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
 
 export function detectObfuscation(command: string): string | null {
   // Hex-encoded sequences (e.g., \x72\x6d = "rm")
@@ -125,60 +131,6 @@ export function detectScriptWrite(command: string): string | null {
   //    (small one-liners don't trip the silent-noop bug). Heredocs are the
   //    real problem because they swallow newlines + multi-line content.
   return null;
-}
-
-// Remove the contents of single- and double-quoted spans (and the quotes)
-// so shell separators that are literal inside an argument — e.g. the `;` in
-// `python -c "a; b"` — aren't mistaken for command chaining.
-export function stripQuotedSpans(command: string): string {
-  let out = "";
-  let quote: string | null = null;
-  for (const c of command) {
-    if (quote) {
-      if (c === quote) quote = null;
-    } else if (c === '"' || c === "'") {
-      quote = c;
-    } else {
-      out += c;
-    }
-  }
-  return out;
-}
-
-// Split a command segment into whitespace-delimited tokens, treating a
-// single- or double-quoted span as one opaque token (so the inline script body
-// in `perl -e 'use Socket; ...'` is a single token, not the chain-breaking
-// words inside it). Quote characters are stripped from the emitted token. Good
-// enough for argv[0]/flag inspection — full shell word-splitting is not needed.
-export function tokenizeCommand(segment: string): string[] {
-  const tokens: string[] = [];
-  let cur = "";
-  let quote: string | null = null;
-  let inToken = false;
-  for (const c of segment) {
-    if (quote) {
-      if (c === quote) quote = null;
-      else cur += c;
-      inToken = true;
-    } else if (c === '"' || c === "'") {
-      quote = c;
-      inToken = true;
-    } else if (/\s/.test(c)) {
-      if (inToken) { tokens.push(cur); cur = ""; inToken = false; }
-    } else {
-      cur += c;
-      inToken = true;
-    }
-  }
-  if (inToken) tokens.push(cur);
-  return tokens;
-}
-
-// The basename of an executable token, lowercased, with any path prefix and a
-// trailing Windows .exe removed. `/usr/bin/perl` → "perl", `Ruby.EXE` → "ruby".
-function execBasename(token: string): string {
-  const base = token.replace(/^.*[\\/]/, "").toLowerCase();
-  return base.replace(/\.exe$/, "");
 }
 
 // ── C3-13: argv-aware interpreter-escape detection ──

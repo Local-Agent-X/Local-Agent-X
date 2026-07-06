@@ -90,4 +90,53 @@ describe("shellCommandWritesFiles", () => {
       }
     });
   });
+
+  // Regression for the chained-interpreter escape past 2d3c22cf: that arm split
+  // the command on `|` ONLY, so an inline-eval sitting after `;`, `&&`, `||`,
+  // `&`, or a newline was never isolated as a command position and slipped the
+  // ban. splitShellSegments now splits on every command separator (quote-aware,
+  // so a separator LITERAL inside a quoted arg is not a split point).
+  describe("chained interpreter eval is refused past a non-pipe separator", () => {
+    it("DENIES a `;`-chained python -c", () => {
+      expect(shellCommandWritesFiles(`echo hi; python -c "import os; os.remove('x')"`)).toBe(true);
+    });
+
+    it("DENIES a `&&`-chained python -c", () => {
+      expect(shellCommandWritesFiles(`true && python -c "import os;os.remove('x')"`)).toBe(true);
+    });
+
+    it("DENIES a `&&`-chained node -e after a cd", () => {
+      expect(shellCommandWritesFiles(`cd src && node -e "require('fs').rmSync('x')"`)).toBe(true);
+    });
+
+    it("DENIES a newline-chained python -c", () => {
+      expect(shellCommandWritesFiles(`echo hi\npython -c "import os; os.remove('x')"`)).toBe(true);
+    });
+
+    it("does NOT split on a separator literal inside a quoted arg", () => {
+      for (const cmd of [
+        `echo "a; b"`,          // `;` is inside the quoted string — one segment, read-only echo
+        `git commit -m "x; y"`, // `;` inside the commit message — still a commit, no workspace write
+        "grep -r foo src",
+        "ls; pwd",              // two read-only commands, neither is inline-eval
+        "cat a.txt && cat b.txt",
+      ]) {
+        expect(shellCommandWritesFiles(cmd), cmd).toBe(false);
+      }
+    });
+  });
+
+  // Regression for the python-spelling gap past 2d3c22cf: the INTERP_EVAL_FLAGS
+  // table is keyed on "python"/"python3", so `pythonw`/`python2`/`python3.12`/
+  // `python.exe` bypassed the form refusal. execBasename now collapses the whole
+  // python family to "python" so every spelling matches.
+  describe("python-family spellings all hit the inline-eval form refusal", () => {
+    it("DENIES pythonw -c", () => {
+      expect(shellCommandWritesFiles(`pythonw -c "open('f','w')"`)).toBe(true);
+    });
+
+    it("DENIES python3.12 -c", () => {
+      expect(shellCommandWritesFiles(`python3.12 -c "open('f','w')"`)).toBe(true);
+    });
+  });
 });

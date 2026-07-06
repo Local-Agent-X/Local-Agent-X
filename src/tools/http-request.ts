@@ -4,6 +4,7 @@ import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
 import type { SecretsStore } from "../secrets.js";
 import { ok, err } from "./result-helpers.js";
+import { capWithSpill } from "./result-spill.js";
 import { checkOutboundRequest } from "./http-egress-guard.js";
 import {
   EgressRedirectBlocked,
@@ -198,10 +199,11 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
 
         const MAX_CHARS = 100_000;
         const fullBytes = body.length;
-        const truncated = fullBytes > MAX_CHARS;
-        if (truncated) {
-          body = body.slice(0, MAX_CHARS) + `\n\n[Truncated at ${MAX_CHARS} chars]`;
-        }
+        // Spill-on-cap: the full body lands on disk and the note tells the model
+        // how to keep reading past the cut (screened per chunk by `read`).
+        const capped = capWithSpill(body, MAX_CHARS);
+        const truncated = capped.truncated;
+        body = capped.body;
 
         const wrapped = wrapExternalContent(body, "http_request", {
           url,

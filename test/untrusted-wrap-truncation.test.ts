@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { wrapExternalContent, closeUnterminatedExternalBlocks } from "../src/sanitize.js";
 import { budgetResult } from "../src/tool-execution/audit-tool-call.js";
 import { isScreenExemptAgentCode } from "../src/tools/read-write-tools.js";
+import { capWithSpill, RESULT_SPILL_DIR } from "../src/tools/result-spill.js";
 
 // The class under guard: the screener/wrapper must cover exactly what the model
 // sees. A layer that truncates AFTER wrapping used to cut off the closing
@@ -45,6 +47,28 @@ describe("budgetResult — wrap-aware truncation", () => {
   it("leaves small results byte-identical", () => {
     const wrapped = wrapExternalContent("small body", "web_fetch");
     expect(budgetResult(wrapped, 50_000)).toBe(wrapped);
+  });
+});
+
+describe("capWithSpill — hitting the cap means continue-from-disk, never lost tail", () => {
+  it("spills the FULL body to disk and points the model at it", () => {
+    const tail = "THE ANSWER IS HIDDEN PAST THE CAP: 42";
+    const body = "y".repeat(60_000) + tail;
+    const { body: capped, truncated } = capWithSpill(body, 50_000);
+    expect(truncated).toBe(true);
+    expect(capped).not.toContain(tail); // context window got the capped view…
+    const path = capped.match(/saved to (\S+\.txt)/)?.[1];
+    expect(path).toBeTruthy();
+    expect(path).toContain(RESULT_SPILL_DIR);
+    expect(readFileSync(path!, "utf-8")).toContain(tail); // …but the tail is readable on disk
+    expect(capped).toMatch(/grep|offset\/limit/i); // continuation guidance present
+    expect(capped).toMatch(/untrusted external content/i);
+  });
+
+  it("is a no-op under the cap", () => {
+    const { body, truncated } = capWithSpill("small", 50_000);
+    expect(body).toBe("small");
+    expect(truncated).toBe(false);
   });
 });
 

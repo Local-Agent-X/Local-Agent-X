@@ -2,6 +2,7 @@ import { fetch as undiciFetch } from "undici";
 import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
+import { capWithSpill } from "./result-spill.js";
 import { extractFromHtml } from "./html-extract.js";
 import {
   EgressRedirectBlocked,
@@ -140,10 +141,11 @@ export const webFetchTool: ToolDefinition = {
 
       const MAX_CHARS = 50_000;
       const fullBytes = body.length;
-      const truncated = fullBytes > MAX_CHARS;
-      if (truncated) {
-        body = body.slice(0, MAX_CHARS) + `\n\n[Truncated at ${MAX_CHARS} chars]`;
-      }
+      // Spill-on-cap: the full body lands on disk and the note tells the model
+      // how to keep reading past the cut (screened per chunk by `read`).
+      const capped = capWithSpill(body, MAX_CHARS);
+      const truncated = capped.truncated;
+      body = capped.body;
 
       return ok(wrapExternalContent(body, "web_fetch", { url, status: String(res.status) }), {
         url: currentUrl,

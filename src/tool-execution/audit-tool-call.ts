@@ -9,10 +9,7 @@ import { renderToolResultForModel, statusOf } from "../tools/result-helpers.js";
 import { closeUnterminatedExternalBlocks } from "../sanitize.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { logToolUsage } from "../tool-usage-telemetry.js";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
+import { spillFullResult } from "../tools/result-spill.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
 
@@ -20,34 +17,32 @@ interface ToolResultWithImage extends ToolResult {
   _image?: { path: string; question: string; mime: string; b64: string };
 }
 
-const RESULT_BUDGET_DIR = join(tmpdir(), "lax-results");
 const DEFAULT_MAX_RESULT_SIZE = 50_000;
 
 // Large tool results get saved to disk with a preview returned to context —
-// keeps huge file reads or web fetches from blowing up the model window.
-// Wrap-aware: an external-content wrap (wrapExternalContent) carries its
-// closing boundary AND the "do not follow instructions" caveat at the END —
-// exactly what a tail-cut removes — so every truncated preview is re-closed
-// via closeUnterminatedExternalBlocks before it reaches the model.
-// Exported for direct testing.
+// keeps huge file reads or web fetches from blowing up the model window. The
+// spill (full content on disk, path in the note) means hitting the budget is
+// "continue reading from disk", never "the tail is gone" — continuation reads
+// go through `read`, which screens each slice. Wrap-aware: an external-content
+// wrap (wrapExternalContent) carries its closing boundary AND the "do not
+// follow instructions" caveat at the END — exactly what a tail-cut removes —
+// so every truncated preview is re-closed via closeUnterminatedExternalBlocks
+// before it reaches the model. Exported for direct testing.
 export function budgetResult(content: string, maxSize: number = DEFAULT_MAX_RESULT_SIZE): string {
   if (content.length <= maxSize) return content;
-  try {
-    mkdirSync(RESULT_BUDGET_DIR, { recursive: true });
-    const hash = createHash("sha256").update(content).digest("hex").slice(0, 12);
-    const path = join(RESULT_BUDGET_DIR, `${hash}.txt`);
-    writeFileSync(path, content, "utf-8");
+  const path = spillFullResult(content);
+  if (path) {
     const preview = content.slice(0, maxSize - 200);
     const lastNewline = preview.lastIndexOf("\n");
     const cleanPreview = lastNewline > 0 ? preview.slice(0, lastNewline) : preview;
     return closeUnterminatedExternalBlocks(
-      `${cleanPreview}\n\n... [truncated — full result (${content.length} chars) saved to ${path}]`,
-    );
-  } catch {
-    return closeUnterminatedExternalBlocks(
-      content.slice(0, maxSize) + `\n\n... [truncated at ${maxSize} chars]`,
+      `${cleanPreview}\n\n... [truncated — full result (${content.length} chars) saved to ${path}. ` +
+      `To read past this point: grep that file for what you need, or read it with offset/limit.]`,
     );
   }
+  return closeUnterminatedExternalBlocks(
+    content.slice(0, maxSize) + `\n\n... [truncated at ${maxSize} chars]`,
+  );
 }
 
 // Two semantically different blocks flow through here. An exfil/sink block is a

@@ -98,6 +98,33 @@ function connectorBootstrapScript(connectorToken: string): string {
   );
 }
 
+/** Holding page shown while a frontend dev server is still cold-starting (its
+ *  boot outran the proxy's inline retry budget). Polls the same app URL and
+ *  swaps itself for the live app the instant the dev server binds — so opening
+ *  an app never dumps a raw error at the user, it just says "starting…". */
+function devServerStartingPage(appId: string): string {
+  const label = appId.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  return (
+    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<title>${label} — starting…</title><style>` +
+    `html,body{height:100%;margin:0}body{display:flex;flex-direction:column;align-items:center;` +
+    `justify-content:center;font-family:system-ui,sans-serif;background:#0b0f14;color:#cfe;gap:1rem}` +
+    `.spin{width:34px;height:34px;border:3px solid #1e2a38;border-top-color:#3ad;border-radius:50%;` +
+    `animation:s 0.8s linear infinite}@keyframes s{to{transform:rotate(360deg)}}` +
+    `small{color:#7893}</style></head><body>` +
+    `<div class="spin"></div><div>Starting <b>${label}</b>…</div>` +
+    `<small>The dev server is booting (npm install + build). This can take up to a minute on first open.</small>` +
+    `<script>` +
+    // Poll the app URL itself; when it answers 200 with HTML (not this 503 page),
+    // reload into the live app.
+    `var u=location.href;function ping(){fetch(u,{cache:'no-store',headers:{'x-lax-startpoll':'1'}})` +
+    `.then(function(r){if(r.status===200){location.reload();}else{setTimeout(ping,1500);}})` +
+    `.catch(function(){setTimeout(ping,1500);});}setTimeout(ping,1500);` +
+    `</script></body></html>`
+  );
+}
+
 function injectHead(html: string, snippet: string): string {
   if (html.includes("<head>")) return html.replace("<head>", "<head>" + snippet);
   if (html.includes("<body>")) return html.replace("<body>", "<body>" + snippet);
@@ -155,6 +182,14 @@ export function proxyFrontendDevServer(
     }
   }
   headers.host = `localhost:${port}`;
+  // Force IDENTITY encoding upstream. We buffer HTML documents and inject the
+  // connector bootstrap into the body — if we let the browser's `Accept-Encoding:
+  // gzip, br` reach the dev server, Next/Vite returns a COMPRESSED body that we'd
+  // then `.toString("utf-8")` (garbage) and forward with the `Content-Encoding`
+  // header still set, so the browser tries to gunzip corrupted bytes and HANGS
+  // (the "open pops a JSON viewer / closes" symptom). Asking for identity means
+  // the buffered body is real text we can safely modify and re-send uncompressed.
+  headers["accept-encoding"] = "identity";
 
   const deadline = Date.now() + (opts.coldStartWaitMs ?? COLD_START_WAIT_MS);
 
@@ -182,6 +217,10 @@ export function proxyFrontendDevServer(
               (tunneled ? liveReloadScript(appId) + (opts.publicDir ? phoneErrorPipeScript(opts.publicDir, appId) : "") : "");
             const html = injectHead(Buffer.concat(chunks).toString("utf-8"), inject);
             delete out["content-length"];
+            // We asked for identity, but strip content-encoding defensively: the
+            // body we're sending is modified, uncompressed text, so any inherited
+            // encoding header would make the browser mis-decode it and hang.
+            delete out["content-encoding"];
             out["Content-Security-Policy"] = DEV_FRONTEND_CSP;
             out["Cache-Control"] = "no-cache, must-revalidate";
             out["X-Content-Type-Options"] = "nosniff";
@@ -206,8 +245,25 @@ export function proxyFrontendDevServer(
       }
       logger.warn(`[dev-proxy] ✗ ${url.pathname}: ${(e as Error).message}`);
       if (!res.headersSent) {
-        res.writeHead(502, { "Content-Type": "text/plain" });
-        res.end("Frontend dev server unreachable — it may still be starting. Reload in a moment.");
+        // Cold start can outlast the retry budget: `npm install && next dev` on a
+        // fresh restart takes far longer than COLD_START_WAIT_MS. A bare 502
+        // text/plain gets rendered by the desktop's window.open as a raw error
+        // popup (the app "opens then closes"). For a top-level HTML navigation,
+        // serve a self-reloading holding page instead so the user sees "starting"
+        // and the tab becomes the app the moment the dev server binds. Non-HTML
+        // requests (an asset fetch, a subresource) still get the plain 502.
+        const wantsHtml = String(req.headers.accept || "").includes("text/html");
+        if (wantsHtml) {
+          res.writeHead(503, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Retry-After": "3",
+          });
+          res.end(devServerStartingPage(appId));
+        } else {
+          res.writeHead(502, { "Content-Type": "text/plain" });
+          res.end("Frontend dev server unreachable — it may still be starting. Reload in a moment.");
+        }
       } else if (!res.writableEnded) {
         res.end();
       }

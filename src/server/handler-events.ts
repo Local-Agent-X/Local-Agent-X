@@ -36,6 +36,26 @@ interface AgentEscalationEvent {
   issueId?: string;
 }
 
+// Worker execution rules appended to every spawned agent's system prompt.
+// Exported (pure) so tests can assert the composed invariants. The final-
+// report rule keeps the supervisor-side delegation promise: the parent
+// surfaces only a ~180-char preview of the result (ops/pending-notifications
+// SUMMARY_PREVIEW_CHARS), so the outcome must lead, not trail.
+export function buildExecutionRules(platformLine: string, maxIterations: number, requiresWorktree: boolean): string {
+  return (
+    `\n\nEXECUTION RULES:\n` +
+    `- Platform: ${platformLine}\n` +
+    `- You have ~${Math.max(40, maxIterations)} tool calls max. Each should do real work.\n` +
+    `- After every tool call, briefly check the result matched expectations. If not, change approach — don't repeat the same call.\n` +
+    `- If a tool fails twice with the same args, switch tools or arguments.\n` +
+    `- Browser work: navigate → snapshot → click/fill by ref. Use new_tab + switch_tab for multi-site goals. Never start at sso./auth./login. subdomains — go to the main domain.\n` +
+    `- Login safety: if Sign In doesn't advance on FIRST try, pause — don't retry (lockouts). Never read or output password field values.\n` +
+    `- Forms: emit multiple fill calls in one turn, then snapshot once. Don't re-observe between independent field fills.\n` +
+    (requiresWorktree ? `- Save results to workspace/ as you go. For large files use python -c one-liners, not read.\n` : `- Save exports/screenshots/notes to workspace/. Don't edit repo source.\n`) +
+    `- Final report: lead with the concrete outcome — what you did or found, and where — in the first sentence. Your parent surfaces only a short preview of your report, so a buried result reads as no result. Details and evidence after.\n`
+  );
+}
+
 export function registerHandlerEvents(deps: {
   config: LAXConfig;
   dataDir: string;
@@ -185,16 +205,7 @@ export function registerHandlerEvents(deps: {
           ? "Windows with Git Bash. bash runs POSIX sh — use POSIX syntax, forward-slash paths (C:/Users/...), and quote any path containing spaces."
           : "Windows. bash runs PowerShell — use PowerShell syntax (Get-ChildItem, Select-Object) and Windows paths.";
       }
-      const executionRules =
-        `\n\nEXECUTION RULES:\n` +
-        `- Platform: ${platformLine}\n` +
-        `- You have ~${Math.max(40, config.maxIterations)} tool calls max. Each should do real work.\n` +
-        `- After every tool call, briefly check the result matched expectations. If not, change approach — don't repeat the same call.\n` +
-        `- If a tool fails twice with the same args, switch tools or arguments.\n` +
-        `- Browser work: navigate → snapshot → click/fill by ref. Use new_tab + switch_tab for multi-site goals. Never start at sso./auth./login. subdomains — go to the main domain.\n` +
-        `- Login safety: if Sign In doesn't advance on FIRST try, pause — don't retry (lockouts). Never read or output password field values.\n` +
-        `- Forms: emit multiple fill calls in one turn, then snapshot once. Don't re-observe between independent field fills.\n` +
-        (requiresWorktree ? `- Save results to workspace/ as you go. For large files use python -c one-liners, not read.\n` : `- Save exports/screenshots/notes to workspace/. Don't edit repo source.\n`);
+      const executionRules = buildExecutionRules(platformLine, config.maxIterations, requiresWorktree);
       // Wall-clock ceiling threaded into canonical via wallClockMs — the
       // runner issues opCancel on expiry so the state machine transitions
       // running → cancelling → cancelled cleanly. Replaces the caller-side

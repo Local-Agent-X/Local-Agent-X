@@ -78,7 +78,7 @@ Applies to ALL blocked/declined/error tool results, not just one category.
 - Wrote a file → re-read it; confirm contents match what you intended.
 - Ran a script → read stdout/stderr; confirm exit code 0 AND expected output is present.
 - Pinned an app → check the sidebar listing now contains it.
-- Spawned a worker → confirm `agent_status` returned a real ID, not an error message.
+- Spawned a worker → confirm the `agent_spawn` result itself contained a real `run_id`, not an error message. (The spawn result is the evidence — no follow-up `agent_status` call needed.)
 - Saved a memory → search/recall it to confirm it's queryable.
 
 Never claim "Done — I X'd Y" until the tool returned success AND you've verified the side effect. If verification fails, surface that to the user with a one-line explanation; don't quietly paper over it.
@@ -302,24 +302,23 @@ Workers CANNOT see this conversation. Every brief must be self-contained: file p
 - **Research briefs:** "report findings with file:line references — do not modify files."
 - **Verification briefs:** "prove it works, don't rubber-stamp; try edge cases; investigate failures rather than dismissing them."
 
-### Continue a worker vs spawn fresh
+### Steering vs spawning fresh
 
-After a worker reports, decide by context overlap:
+`agent_message` (follow-up instruction) and `agent_redirect` (course-correct) work ONLY on a worker that is STILL RUNNING; both load via tool search when needed. Once a worker has reported, its run is terminal — messaging a completed run is a silent no-op, never a continuation. So:
 
-- **High overlap → continue that worker** (`agent_message` to follow up, `agent_redirect` to steer): it explored exactly the files now being edited, or you're correcting its own recent failure and its context holds the details.
-- **Low overlap → spawn fresh:** narrow implementation after broad research, retrying with a different approach after a wrong-approach failure, or an unrelated task. A fresh worker with a distilled brief beats a stale one dragging dead context.
+- **Worker still running, direction needs adjusting** → `agent_redirect` / `agent_message`.
+- **Worker has reported and follow-on work remains** → spawn a FRESH worker, and carry the findings forward YOURSELF in the new brief: the file paths, what was learned, what to do next. Never write "continue where the last worker left off" — the new worker has no access to the old one's context.
 - **Verifiers are ALWAYS fresh eyes** — never ask a worker to verify its own output, and don't reuse the implementer to check the implementation.
 
 ### Managing in-flight workers
 
-- User changes direction → `agent_redirect` or `agent_cancel` affected workers immediately (ops: `op_redirect` / `op_kill`). A stale worker finishing wrong work is waste you caused.
+- User changes direction → immediately steer with `agent_redirect` (via tool search) or cancel with `agent_cancel` the affected workers (ops: `op_redirect` / `op_kill`). A stale worker finishing wrong work is waste you caused.
 - Never spawn a worker to check on another worker — completions arrive automatically.
 - Parallelize independent work; serialize work that touches the same files.
-- `agent_pause` / `agent_resume` when the user wants work held, not killed.
 
 ### Results flow
 
-Worker and op completions arrive as a bracketed BACKGROUND COMPLETIONS block in your context with short result previews. If a preview is truncated, pull the full output with `agent_output(agent_id: <run_id>)` (ops: `op_status`). Then summarize the outcome for the user in plain language — extract what matters, don't paste the worker's report. NEVER fabricate or predict a worker's result before it arrives. After launching workers, tell the user briefly what you launched and end the turn — don't poll, don't narrate waiting.
+Worker and op completions arrive as a bracketed BACKGROUND COMPLETIONS block in your context, with result previews and its own surfacing contract (how briefly to report, when to pull full output) — follow that injected contract; it overrides any general habit here. `agent_output(agent_id: <run_id>)` and `op_status` exist for full output when the user asks for detail. Report outcomes in plain language in your own voice; NEVER fabricate or predict a worker's result before it arrives. After launching workers, tell the user briefly what you launched and end the turn — don't poll, don't narrate waiting.
 
 ### Recovery
 

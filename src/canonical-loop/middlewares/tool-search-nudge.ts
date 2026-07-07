@@ -14,9 +14,23 @@
  *   - capability-denial phrasing → excludes normal answers AND ethical refusals
  *   - already searched this op   → respect a real "searched, found nothing"
  *   - fire-once per op           → no loops
+ *
+ * Gate → confirm → fail-open (same shape as operational-claim.ts). The regex is
+ * a cheap, paraphrase-blind PREFILTER, and its fire is the HIGHEST-stakes of the
+ * middleware set: it runs in interactive chat and triggers a RETRACT of the
+ * "I can't" text next turn (retract-false-claim). A regex hit alone is not
+ * allowed to pull that trigger. When it fires, an LLM classifies the declining
+ * text three ways — (a) genuine "I lack a tool/capability" gap → nudge, (b) an
+ * ethical/safety refusal → suppress, (c) not a refusal at all (regex false
+ * positive) → suppress. Only (a) proceeds. This replaces the brittle
+ * hardcoded ETHICAL_REFUSAL carve-out with the classifier's judgment. Confirm
+ * null / timeout / disabled (LAX_LLM_TOOL_SEARCH=0) → fall back to today's
+ * deterministic regex behavior exactly (the ETHICAL_REFUSAL regex carve-out is
+ * kept as the floor), so a downed classifier costs nothing.
  */
 import { type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
+import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
 import { capabilityForbiddenForOp } from "../instruction-ledger/index.js";
 import type { CapabilityClass } from "../../tool-registry.js";
 
@@ -83,33 +97,96 @@ function denialHonorsProhibition(
   );
 }
 
-export const toolSearchNudgeMiddleware: CanonicalMiddleware = {
-  name: "tool-search-nudge",
+// Three-way verdict on the declining text. "gap" is the only one that nudges.
+type DenialClass = "gap" | "ethical" | "not-a-refusal";
 
-  afterModelCall(ctx) {
-    if (ctx.toolCalls.length > 0) return { kind: "continue" };          // it tried a tool
-    if (ctx.toolsCalledThisOp.has("tool_search")) return { kind: "continue" }; // already searched
-    if (!looksLikeCapabilityDenial(ctx.assistantContent)) return { kind: "continue" };
-    // TARGETED suppression: "I can't browse" after the user forbade egress is
-    // compliance, not a capability gap — don't push it to search for a tool the
-    // user banned. Denials about NON-forbidden capabilities still nudge.
-    if (denialHonorsProhibition(ctx.op, ctx.assistantContent)) return { kind: "continue" };
+const CONFIRM_SYSTEM_PROMPT = `A regex prefilter flagged an AI assistant's reply as possibly declining a request because it "lacks a tool or capability". You classify what the reply is actually doing before a tool-search nudge (and a retraction of the "I can't" text) fires.
 
-    const flag = getMiddlewareState<FiredFlag>(
-      ctx.op.id,
-      "tool-search-nudge",
-      () => ({ fired: false }),
-    );
-    if (flag.fired) return { kind: "continue" };
-    flag.fired = true;
+Reply with EXACTLY one of these three tokens on the first line, then a brief reason:
+- GAP — the assistant is declining because it believes it has NO tool/function/capability/access to do a mechanical action the user wants (e.g. "I don't have a tool to move the mouse", "I can't browse the web", "no capability to run that"). This is a missed-tool gap: the assistant WOULD do it but thinks it can't.
+- ETHICAL — the assistant is UNWILLING on safety/ethics/policy grounds, not because it lacks a tool (e.g. "I won't help with that", "I'm not comfortable", "that would be harmful", "against my guidelines"). It could act but chooses not to.
+- NORMAL — the reply is NOT a refusal at all. It answers the question, reports a result, negates a premise in passing, or otherwise does not decline a capability (regex false positive).
 
-    const message =
-      "Stop — before telling the user that isn't possible: your tool list is NOT " +
-      "exhaustive. Most tools load on demand and aren't shown up front. Call " +
-      "`tool_search` describing what you're trying to do (e.g. \"control the mouse " +
-      "and keyboard\", \"move the cursor and click\") and use whatever it returns. " +
-      "Only say you can't AFTER a search comes back with nothing relevant.";
+Judge intent, not surface words: a safety refusal dressed as "I can't" is ETHICAL, not GAP. Reply with one line: the token, then a short reason.`;
 
-    return { kind: "nudge", message, reason: "tool-search-recovery" };
-  },
-};
+/** Confirm fn: classifies the declining text. Returns the verdict or null when
+ *  the classifier is unavailable/times out (caller falls back to the regex floor). */
+export type ConfirmDenialFn = (decliningText: string) => Promise<DenialClass | null>;
+
+function parseDenialClass(raw: string): DenialClass | null {
+  const m = (raw ?? "").trim().match(/^\s*(GAP|ETHICAL|NORMAL)\b/i);
+  if (!m) return null;
+  const tok = m[1].toUpperCase();
+  if (tok === "GAP") return "gap";
+  if (tok === "ETHICAL") return "ethical";
+  return "not-a-refusal";
+}
+
+async function llmConfirm(decliningText: string): Promise<DenialClass | null> {
+  return classifyWithLLM<DenialClass>({
+    category: "tool-search-denial-confirm",
+    systemPrompt: CONFIRM_SYSTEM_PROMPT,
+    userPrompt:
+      `Assistant reply:\n"${decliningText.slice(0, 1500)}"\n\n` +
+      `Is this a missed-tool capability GAP, an ETHICAL/safety refusal, or a NORMAL (non-refusal) reply? Reply GAP, ETHICAL, or NORMAL + one-line reason.`,
+    parse: parseDenialClass,
+    timeoutMs: 4000,
+    envDisableVar: "LAX_LLM_TOOL_SEARCH",
+  });
+}
+
+/**
+ * Factory with an injectable confirm so tests can pin the gate without a live
+ * provider. The registry uses the default instance exported below.
+ */
+export function createToolSearchNudgeMiddleware(
+  confirm: ConfirmDenialFn = llmConfirm,
+): CanonicalMiddleware {
+  return {
+    name: "tool-search-nudge",
+
+    async afterModelCall(ctx) {
+      if (ctx.toolCalls.length > 0) return { kind: "continue" };          // it tried a tool
+      if (ctx.toolsCalledThisOp.has("tool_search")) return { kind: "continue" }; // already searched
+      if (!looksLikeCapabilityDenial(ctx.assistantContent)) return { kind: "continue" };
+      // TARGETED suppression: "I can't browse" after the user forbade egress is
+      // compliance, not a capability gap — don't push it to search for a tool the
+      // user banned. Denials about NON-forbidden capabilities still nudge.
+      if (denialHonorsProhibition(ctx.op, ctx.assistantContent)) return { kind: "continue" };
+
+      const flag = getMiddlewareState<FiredFlag>(
+        ctx.op.id,
+        "tool-search-nudge",
+        () => ({ fired: false }),
+      );
+      if (flag.fired) return { kind: "continue" };
+
+      // Retract-grade consequence — get the LLM's read on WHY the reply
+      // declined. Only an explicit "gap" verdict proceeds; "ethical" and
+      // "not-a-refusal" suppress (this is where the brittle ETHICAL_REFUSAL
+      // carve-out now lives). A null/timeout/disabled verdict falls back to the
+      // deterministic regex fire — the regex ETHICAL carve-out already ran
+      // inside looksLikeCapabilityDenial, so that floor stays honored.
+      let verdict: DenialClass | null = null;
+      try {
+        verdict = await confirm(ctx.assistantContent);
+      } catch {
+        verdict = null; // fail open — treated exactly like an LLM timeout
+      }
+      if (verdict === "ethical" || verdict === "not-a-refusal") return { kind: "continue" };
+
+      flag.fired = true;
+
+      const message =
+        "Stop — before telling the user that isn't possible: your tool list is NOT " +
+        "exhaustive. Most tools load on demand and aren't shown up front. Call " +
+        "`tool_search` describing what you're trying to do (e.g. \"control the mouse " +
+        "and keyboard\", \"move the cursor and click\") and use whatever it returns. " +
+        "Only say you can't AFTER a search comes back with nothing relevant.";
+
+      return { kind: "nudge", message, reason: "tool-search-recovery" };
+    },
+  };
+}
+
+export const toolSearchNudgeMiddleware: CanonicalMiddleware = createToolSearchNudgeMiddleware();

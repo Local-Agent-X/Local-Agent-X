@@ -1,5 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { toolSearchNudgeMiddleware, looksLikeCapabilityDenial } from "./tool-search-nudge.js";
+import {
+  toolSearchNudgeMiddleware,
+  createToolSearchNudgeMiddleware,
+  looksLikeCapabilityDenial,
+  type ConfirmDenialFn,
+} from "./tool-search-nudge.js";
 import type { CanonicalLoopContext } from "./types.js";
 import { setOpLedger } from "../instruction-ledger/index.js";
 import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
@@ -20,8 +25,24 @@ function ctxFor(
   } as unknown as CanonicalLoopContext;
 }
 
+// Default instance uses the real llmConfirm; in the test env there is no
+// provider, so classifyWithLLM returns null and the middleware falls back to
+// the deterministic regex fire (fail-open). That is exactly the null-confirm
+// regression path, so the pre-existing middleware suite exercises it unchanged.
 const run = (op: string, opts: Parameters<typeof ctxFor>[1]) =>
   toolSearchNudgeMiddleware.afterModelCall!(ctxFor(op, opts));
+
+// Pin the confirm verdict for the LLM-gated paths.
+const runWith = (
+  confirm: ConfirmDenialFn,
+  op: string,
+  opts: Parameters<typeof ctxFor>[1],
+) => createToolSearchNudgeMiddleware(confirm).afterModelCall!(ctxFor(op, opts));
+
+const CONFIRM_GAP: ConfirmDenialFn = async () => "gap";
+const CONFIRM_ETHICAL: ConfirmDenialFn = async () => "ethical";
+const CONFIRM_NORMAL: ConfirmDenialFn = async () => "not-a-refusal";
+const CONFIRM_NULL: ConfirmDenialFn = async () => null;
 
 describe("looksLikeCapabilityDenial", () => {
   it("fires on capability denials", () => {
@@ -94,6 +115,55 @@ describe("tool-search-nudge middleware", () => {
     const op = opId();
     expect((await run(op, { content: "I can't do that — no tool for it." })).kind).toBe("nudge");
     expect((await run(op, { content: "Still can't, I have no such tool." })).kind).toBe("continue");
+  });
+});
+
+describe("LLM confirm gate (three-way denial classifier)", () => {
+  it("nudges when confirm returns a capability GAP", async () => {
+    const r = await runWith(CONFIRM_GAP, opId(), {
+      content: "I don't have a tool to move the mouse.",
+    });
+    expect(r.kind).toBe("nudge");
+    expect((r as { reason: string }).reason).toBe("tool-search-recovery");
+  });
+
+  it("SUPPRESSES when confirm returns an ethical refusal, even if the ETHICAL regex carve-out was slipped", async () => {
+    // A safety refusal dressed as "I can't <verb>" — the regex ETHICAL_REFUSAL
+    // carve-out does NOT catch it (no "won't"/"not comfortable"/…), so it
+    // passes looksLikeCapabilityDenial and would have been pushed to
+    // tool_search under the old hardcoded list. The LLM sees the safety intent
+    // and vetoes. This is the fragile-carve-out fix: the classifier, not the
+    // hardcoded regex list, is what stops an ethical refusal from nudging.
+    const content = "I can't create malware for you to attack that server.";
+    expect(looksLikeCapabilityDenial(content)).toBe(true); // slips the regex carve-out
+    const r = await runWith(CONFIRM_ETHICAL, opId(), { content });
+    expect(r.kind).toBe("continue");
+  });
+
+  it("SUPPRESSES a regex false positive when confirm returns not-a-refusal", async () => {
+    const r = await runWith(CONFIRM_NORMAL, opId(), {
+      content: "I can't see any obvious errors — the run to launch the app looks clean.",
+    });
+    expect(r.kind).toBe("continue");
+  });
+
+  it("falls back to the regex fire when confirm is null (fail-open)", async () => {
+    // Null verdict → deterministic floor: fires on a denial the regex accepts…
+    const gap = await runWith(CONFIRM_NULL, opId(), {
+      content: "I don't have a tool to move the mouse.",
+    });
+    expect(gap.kind).toBe("nudge");
+    // …and still respects the regex ETHICAL carve-out (never reaches confirm).
+    const ethical = await runWith(CONFIRM_NULL, opId(), {
+      content: "I won't help with that request.",
+    });
+    expect(ethical.kind).toBe("continue");
+  });
+
+  it("fires at most once per op even under the confirm gate", async () => {
+    const op = opId();
+    expect((await runWith(CONFIRM_GAP, op, { content: "No tool for mouse control." })).kind).toBe("nudge");
+    expect((await runWith(CONFIRM_GAP, op, { content: "Still no such tool." })).kind).toBe("continue");
   });
 });
 

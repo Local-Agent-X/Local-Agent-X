@@ -1,9 +1,22 @@
-import { describe, it, expect } from "vitest";
-import { cleanupVerifyMiddleware, opCleanupUnverified } from "./cleanup-verify.js";
+import { describe, it, expect, vi } from "vitest";
+import {
+  cleanupVerifyMiddleware,
+  createCleanupVerifyMiddleware,
+  opCleanupUnverified,
+} from "./cleanup-verify.js";
 import { _resetMiddlewareStates } from "./state.js";
 import { setOpLedger, clearOpLedger } from "../instruction-ledger/index.js";
 import { CLEANUP_VERIFY_MAX_NUDGES } from "../../agent-guards/index.js";
-import type { CanonicalLoopContext } from "./types.js";
+import type { CanonicalLoopContext, CanonicalMiddleware } from "./types.js";
+
+// The default instance's confirm routes through classifyYesNo. Unit tests must
+// never reach a live provider: mocked to null = "classifier unavailable", which
+// fails open to the deterministic regex verdict — exactly today's behavior, so
+// the pre-existing tests below pin the same contract they always did (a
+// regex-flagged done-claim still retracts).
+vi.mock("../../classifiers/classify-with-llm.js", () => ({
+  classifyYesNo: vi.fn(async () => null),
+}));
 
 let _op = 0;
 function opId(): string { return `op-cv-test-${++_op}`; }
@@ -175,5 +188,100 @@ describe("cleanupVerifyMiddleware", () => {
   it("defaults to verified-enough for an op the gate never evaluated", () => {
     _resetMiddlewareStates();
     expect(opCleanupUnverified("never-seen-op")).toBe(false);
+  });
+});
+
+describe("LLM confirm gates the FALSE-DONE retract (regex is the prefilter)", () => {
+  // Drive an injected-confirm instance through the same wrap-up path. The
+  // default text ("all tailnet references removed") trips claimsCleanupDone, so
+  // the retract branch is exercised; no clean grep ran, so a nudge is due.
+  function wrapUpWith(
+    mw: CanonicalMiddleware,
+    op: string,
+    text = "Done — all tailnet references removed.",
+  ) {
+    return mw.afterModelCall!(
+      ctxFor(op, { userMessage: CLEANUP_TASK, toolCalls: [], assistantContent: text }),
+    );
+  }
+
+  it("confirmed-false downgrades to the non-retract reason (still nudges, no retract)", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const mw = createCleanupVerifyMiddleware(async () => false);
+    const r = await wrapUpWith(mw, op);
+    // The re-grep nudge is still warranted — only the RETRACT is suppressed.
+    expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify" });
+    expect(opCleanupUnverified(op)).toBe(true);
+  });
+
+  it("confirmed-true retracts exactly as today", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const mw = createCleanupVerifyMiddleware(async () => true);
+    const r = await wrapUpWith(mw, op);
+    expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify-false-done" });
+    expect(opCleanupUnverified(op)).toBe(true);
+  });
+
+  it("fails open: null confirm (timeout/disabled) retracts exactly as today", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const mw = createCleanupVerifyMiddleware(async () => null);
+    const r = await wrapUpWith(mw, op);
+    expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify-false-done" });
+  });
+
+  it("fails open: a confirm that throws retracts exactly as today", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const mw = createCleanupVerifyMiddleware(async () => { throw new Error("provider down"); });
+    const r = await wrapUpWith(mw, op);
+    expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify-false-done" });
+  });
+
+  it("paraphrase-blindness fix: 'we got everything that mattered' with confirm=false is NOT retracted", async () => {
+    // The regex prefilter DOES flag this ('all ... done'-shaped), yet it isn't a
+    // clean-sweep done-claim; before the confirm gate that retracted a bubble the
+    // model never meant as final. Confirm=false keeps the honest, non-retract reason.
+    _resetMiddlewareStates();
+    const op = opId();
+    const mw = createCleanupVerifyMiddleware(async () => false);
+    const r = await wrapUpWith(mw, op, "All set — we got everything that mattered.");
+    expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify" });
+  });
+
+  it("never calls the confirm when the wrap-up isn't a done-claim (honest 'not done')", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const confirm = vi.fn(async () => true);
+    const mw = createCleanupVerifyMiddleware(confirm);
+    const r = await wrapUpWith(mw, op, "Not done yet — references still remain in app/src.");
+    expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify" });
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("hands the confirm the full wrap-up text", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const seen: string[] = [];
+    const mw = createCleanupVerifyMiddleware(async (text) => { seen.push(text); return false; });
+    const reply = "Done — all tailnet references removed.";
+    await wrapUpWith(mw, op, reply);
+    expect(seen).toEqual([reply]);
+  });
+
+  it("a suppressed retract does not burn the per-op nudge budget — later wrap-ups still nudge to the cap", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const mw = createCleanupVerifyMiddleware(async () => false);
+    // Every wrap-up still nudges (plain reason) up to the bounded cap; the
+    // suppressed retract never consumes an extra slot beyond the normal count.
+    for (let i = 1; i <= CLEANUP_VERIFY_MAX_NUDGES; i++) {
+      const r = await wrapUpWith(mw, op);
+      expect(r).toMatchObject({ kind: "nudge", reason: "cleanup-verify" });
+      expect(r.kind === "nudge" ? r.message : "").toContain(`${i}/${CLEANUP_VERIFY_MAX_NUDGES}`);
+    }
+    expect((await wrapUpWith(mw, op)).kind).toBe("continue");
   });
 });

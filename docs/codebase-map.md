@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1145 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 59 live · 1 with no live importer · 1149 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -80,7 +80,12 @@ over 400 LOC (the source-hygiene ceiling).
 
 ## No live importer (dead / superseded candidates)
 
-_None — every directory has at least one live importer._
+Zero non-test importers. Likely superseded; confirm before tracing into them.
+See ARCHITECTURE.md's "Looks canonical, isn't" table for the curated verdicts.
+
+| Directory | Files | Size |
+|---|--:|:--:|
+| `src/language-intel/` | 4 | M |
 
 ## Top-level `src/` files
 

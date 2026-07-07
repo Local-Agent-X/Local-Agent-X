@@ -1,7 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   renderPerBuildContext,
   renderBuilderPrompt,
+  readUpdateContextFiles,
+  UPDATE_CONTEXT_FILE_CAP,
   type BuilderPromptInput,
 } from "./render-builder-prompt.js";
 
@@ -83,5 +88,50 @@ describe("renderBuilderPrompt — legacy path carries the same design seam", () 
     const out = renderBuilderPrompt(inputFor("a fintech trading dashboard"));
     expect(out).toContain("DESIGN DIRECTION — Fintech & Trust");
     expect(out).toContain("UNIVERSAL DESIGN RULES");
+  });
+});
+
+describe("readUpdateContextFiles — full-fidelity update context", () => {
+  const tempDirs: string[] = [];
+  function makeAppDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "update-ctx-test-"));
+    tempDirs.push(dir);
+    return dir;
+  }
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      try { rmSync(tempDirs.pop()!, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  });
+
+  it("seeds a 15KB index.html WHOLE — the old 3KB slice cut a real game off inside its stylesheet [regression]", () => {
+    const dir = makeAppDir();
+    // Same shape as the live failure: big <style> block first, game logic last.
+    const logic = "function updatePlayer(dt) { /* the code the fixer must see */ }";
+    const html = `<!doctype html><style>${"a".repeat(14_000)}</style><script>${logic}</script>`;
+    writeFileSync(join(dir, "index.html"), html);
+    const blocks = readUpdateContextFiles(dir);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toContain("=== index.html (complete) ===");
+    expect(blocks[0]).toContain(logic);
+    expect(blocks[0]).not.toContain("TRUNCATED");
+  });
+
+  it("truncates past the cap LOUDLY — says how much is missing and orders a full read", () => {
+    const dir = makeAppDir();
+    writeFileSync(join(dir, "index.html"), "x".repeat(UPDATE_CONTEXT_FILE_CAP + 5_000));
+    const blocks = readUpdateContextFiles(dir);
+    expect(blocks[0]).toContain(`TRUNCATED — showing first ${UPDATE_CONTEXT_FILE_CAP}`);
+    expect(blocks[0]).toContain("READ the full file");
+  });
+});
+
+describe("renderPerBuildContext — update repair rules", () => {
+  it("an UPDATE carries read-first + rewrite authority; a CREATE does not", () => {
+    const update = renderPerBuildContext({ ...inputFor("fix the broken renderer"), isUpdate: true });
+    expect(update).toContain("READ it in full");
+    expect(update).toContain("REWRITE the affected file");
+    const create = renderPerBuildContext(inputFor("a maze game"));
+    expect(create).not.toContain("REWRITE the affected file");
   });
 });

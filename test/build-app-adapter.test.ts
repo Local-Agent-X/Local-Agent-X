@@ -27,6 +27,13 @@ import {
   APP_BUILD_ADAPTER_NAME,
   type CliBuildRunner,
 } from "../src/canonical-loop/adapters/app-build-adapter.js";
+import type { AppSmokeGateRunner } from "../src/canonical-loop/adapters/app-build-verify-adapter.js";
+
+// The verify wrapper headless-smokes static apps at the done terminal; unit
+// tests stub it (the real gate launches chromium and the bare fixture page
+// wouldn't satisfy the mount heuristic). Its own contract is tested in
+// test/app-build-smoke-gate.test.ts.
+const passSmoke: AppSmokeGateRunner = async () => ({ verdict: "pass" });
 
 // The adapter now verifies <appDir>/index.html exists before declaring
 // APP_READY (gap-fix in 3aef2fe3). Tests that assert successful adapter
@@ -79,6 +86,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       prompt: "PROMPT-CODEX",
       systemPrompt: "PERSONA",
       cliRunner,
+      smokeGate: passSmoke,
     });
     const { report } = collectReports();
     const result = await adapter.runTurn(emptyTurnInput(), report);
@@ -104,6 +112,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       prompt: "PROMPT-CLAUDE",
       systemPrompt: "PERSONA",
       cliRunner,
+      smokeGate: passSmoke,
     });
     const { report } = collectReports();
     await adapter.runTurn(emptyTurnInput(), report);
@@ -125,11 +134,15 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       prompt: "P",
       systemPrompt: "P",
       cliRunner,
+      smokeGate: passSmoke,
     });
     const { reports, report } = collectReports();
     await adapter.runTurn(emptyTurnInput(), report);
     const chunks = reports.filter(r => r.kind === "stream_chunk");
-    expect(chunks.length).toBe(2);
+    // Two forwarded tool_progress lines; the verify gate appends its own
+    // "[verify] …" note after them.
+    const forwarded = chunks.filter(c => !(c as { body: { delta: string } }).body.delta.startsWith("[verify]"));
+    expect(forwarded.length).toBe(2);
     const finalized = reports.find(r => r.kind === "message_finalized");
     expect(finalized).toBeDefined();
   });
@@ -147,6 +160,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       prompt: "P",
       systemPrompt: "P",
       cliRunner,
+      smokeGate: passSmoke,
     });
     const { report } = collectReports();
     const result = await adapter.runTurn(emptyTurnInput(), report);
@@ -172,6 +186,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       prompt: "P",
       systemPrompt: "P",
       cliRunner,
+      smokeGate: passSmoke,
     });
     const { reports, report } = collectReports();
     const result = await adapter.runTurn(emptyTurnInput(), report);
@@ -193,6 +208,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       prompt: "P",
       systemPrompt: "P",
       cliRunner,
+      smokeGate: passSmoke,
     });
     const { reports, report } = collectReports();
     const result = await adapter.runTurn(emptyTurnInput(), report);
@@ -216,6 +232,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       prompt: "P",
       systemPrompt: "P",
       cliRunner,
+      smokeGate: passSmoke,
     });
     await adapter.abort();
     const { reports, report } = collectReports();
@@ -253,6 +270,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
       prompt: "P",
       systemPrompt: "P",
       cliRunner,
+      smokeGate: passSmoke,
     });
 
     const { reports, report } = collectReports();
@@ -293,6 +311,7 @@ describe("createAppBuildAdapter — in-canonical-sub-agent strategy", () => {
         factoryCalls.push({ provider, systemPrompt: opts.systemPrompt });
         return stubAdapter;
       },
+      smokeGate: passSmoke,
     });
     // The provider adapter is wrapped by the post-build verify gate, so the
     // returned adapter delegates to (rather than IS) the stub — name forwards.
@@ -328,6 +347,7 @@ describe("createAppBuildAdapter — in-canonical-sub-agent strategy", () => {
       systemPrompt: "P",
       cliRunner,
       providerAdapterFactory: async () => stubAdapter,
+      smokeGate: passSmoke,
     });
     const { report } = collectReports();
     await adapter.runTurn(emptyTurnInput(), report);

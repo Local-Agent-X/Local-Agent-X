@@ -87,6 +87,14 @@ export interface SmokeResult {
   rootMounted: boolean;
   /** Set when navigation itself failed (page never opened). */
   loadError?: string;
+  /** Set when a screenshot was requested AND captured. */
+  screenshotPath?: string;
+}
+
+export interface SmokeOptions {
+  /** Capture a PNG of the settled page to this path (Playwright creates the
+   *  directory). Best-effort — a capture failure never fails the smoke. */
+  screenshotPath?: string;
 }
 
 /**
@@ -94,17 +102,24 @@ export interface SmokeResult {
  * rAF/canvas paint, then report console errors + whether it mounted. Works
  * for both `file://` built artifacts and a running dev-server `http://` URL.
  */
-export async function smokeUrl(url: string, loadTimeoutMs = 30_000, signal?: AbortSignal): Promise<SmokeResult> {
+export async function smokeUrl(url: string, loadTimeoutMs = 30_000, signal?: AbortSignal, opts?: SmokeOptions): Promise<SmokeResult> {
   if (signal?.aborted) return { consoleErrors: [], rootMounted: false, loadError: "aborted" };
   const opened = await openPageWithConsoleCapture();
+  const capture = async (): Promise<string | undefined> => {
+    if (!opts?.screenshotPath) return undefined;
+    try {
+      await opened.page.screenshot({ path: opts.screenshotPath, type: "png", fullPage: false });
+      return opts.screenshotPath;
+    } catch { return undefined; }
+  };
   try {
     await opened.page.goto(url, { waitUntil: "load", timeout: loadTimeoutMs });
     await opened.page.waitForTimeout(500);
     if (signal?.aborted) return { consoleErrors: opened.errors, rootMounted: false, loadError: "aborted" };
     const rootMounted = await pageMounted(opened.page);
-    return { consoleErrors: opened.errors, rootMounted };
+    return { consoleErrors: opened.errors, rootMounted, screenshotPath: await capture() };
   } catch (e) {
-    return { consoleErrors: opened.errors, rootMounted: false, loadError: (e as Error).message.slice(0, 200) };
+    return { consoleErrors: opened.errors, rootMounted: false, loadError: (e as Error).message.slice(0, 200), screenshotPath: await capture() };
   } finally {
     await opened.close();
   }

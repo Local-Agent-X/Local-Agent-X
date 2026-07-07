@@ -30,6 +30,7 @@ import {
 } from "./render-builder-prompt.js";
 import { AgentTemplateStore, type AgentExecStrategy } from "../agent-store/index.js";
 import { seedAppTemplate } from "./app-tools/app-template.js";
+import { renderPriorBuildContext } from "./build-session-context.js";
 import { buildContextPack } from "../ops/context-pack-builder.js";
 import { newOpId } from "../ops/op-store.js";
 import { getRetryPolicy } from "../ops/heartbeat.js";
@@ -248,7 +249,13 @@ export const buildAppTool: ToolDefinition = {
     const realBuildTier = tier === "compiled-native" || tier === "frontend-spa";
     if (!isUpdate && !realBuildTier) seedAppTemplate(appDir, appName);
 
-    const contextFiles = isUpdate ? readUpdateContextFiles(appDir) : [];
+    // Updates carry the prior session's spine (original brief + last build's
+    // final report) ahead of the file snapshot — the fixer remembers building
+    // the app instead of re-diagnosing cold every time.
+    const priorBlock = isUpdate ? renderPriorBuildContext(appUrl, APP_BUILD_OP_TYPE) : null;
+    const contextFiles = isUpdate
+      ? [...(priorBlock ? [priorBlock] : []), ...readUpdateContextFiles(appDir)]
+      : [];
     const assetFiles = listAssetsDir(appDir);
 
     const perBuildContext = renderPerBuildContext({

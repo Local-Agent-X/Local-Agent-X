@@ -28,10 +28,9 @@ import { resolve } from "node:path";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { ProviderStateEnvelope } from "../contract-types.js";
 import { verifyWriteLanded } from "../../tools/verify.js";
-import { scanAppForBlockedFetch, formatBlockedFetchError, scanAppForStartupErrors, formatStartupErrors, scanAppForUnverifiedNativeParity, formatUnverifiedNativeParity, scanAppForFakedFrontend, formatFakedFrontend } from "../../tools/app-build-verify.js";
 import type { AppTier } from "../../tools/app-tier.js";
-import { detectFramework } from "../../tools/framework-detect.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
+import { AppBuildVerifyAdapter, type AppSmokeGateRunner } from "./app-build-verify-adapter.js";
 import { createAnthropicAdapter } from "./anthropic.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
@@ -72,6 +71,9 @@ export interface AppBuildAdapterOptions {
   /** Test seam: override provider-adapter construction for in-canonical
    *  strategy tests. Production passes nothing. */
   providerAdapterFactory?: (provider: string, opts: ProviderAdapterFactoryOptions) => Promise<Adapter>;
+  /** Test seam: override the headless smoke gate so unit tests don't launch
+   *  a real browser. Production passes nothing. */
+  smokeGate?: AppSmokeGateRunner;
 }
 
 export interface ProviderAdapterFactoryOptions {
@@ -117,63 +119,7 @@ export async function createAppBuildAdapter(opts: AppBuildAdapterOptions): Promi
         sessionId: opts.sessionId,
         model: opts.model,
       });
-  return new AppBuildVerifyAdapter(inner, opts.appDir, opts.tier);
-}
-
-/**
- * Wraps the real build adapter (either strategy) and gates a clean completion:
- * when the inner adapter reports the turn `done`, scan the app for raw
- * cross-origin fetch (CSP-blocked at runtime) and convert a hit into a build
- * failure, so a silently-broken app never ships as APP_READY. Teaching alone is
- * a request a strong-priored model can override; this gate is enforced on every
- * model and strategy. Non-terminal turns and error terminals pass through
- * untouched. See app-build-verify.ts.
- */
-class AppBuildVerifyAdapter implements Adapter {
-  constructor(private readonly inner: Adapter, private readonly appDir: string, private readonly tier?: AppTier) {}
-  get name(): string { return this.inner.name; }
-  get version(): string { return this.inner.version; }
-
-  async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
-    const result = await this.inner.runTurn(input, report);
-    if (result.terminalReason !== "done") return result;
-    // A frontend-spa build that shipped a static page instead of a real project
-    // FAKED it — the invariant that closes the live-Vite-fake class. Tier-gated
-    // so it's inert on every other build. A startup error (no HTML entry) on a
-    // real-built SPA is expected pre-dev-server, so the faked check supersedes it.
-    if (this.tier === "frontend-spa") {
-      const fake = scanAppForFakedFrontend(this.appDir);
-      if (fake.faked) {
-        report({ kind: "error", code: "faked_frontend_build", message: formatFakedFrontend(fake.reason), retryable: false });
-        return { ...result, terminalReason: "error" };
-      }
-      // Real project present — skip the static-HTML startup/fetch scans below
-      // (a Vite app's index.html legitimately points at /src/main.jsx, which
-      // those scans would misread as a missing-file or cross-origin smell).
-      return result;
-    }
-    // On-disk truth supersedes the prompt-classified tier: a real framework
-    // scaffold (Next/Vite/…) has no static HTML entry, so the scans below
-    // would falsely reject it — same reasoning as the frontend-spa skip.
-    const detected = detectFramework(this.appDir).framework;
-    if (detected !== "static" && detected !== "unknown") return result;
-    const { errors } = scanAppForStartupErrors(this.appDir);
-    const { violations } = scanAppForBlockedFetch(this.appDir);
-    const { violations: parity } = scanAppForUnverifiedNativeParity(this.appDir);
-    if (errors.length === 0 && violations.length === 0 && parity.length === 0) return result;
-    // Startup errors first — a blank-on-load app is the more fundamental break.
-    const parts: string[] = [];
-    if (errors.length > 0) parts.push(formatStartupErrors(errors));
-    if (violations.length > 0) parts.push(formatBlockedFetchError(violations));
-    if (parity.length > 0) parts.push(formatUnverifiedNativeParity(parity));
-    const code = errors.length > 0 ? "app_startup_error"
-      : violations.length > 0 ? "blocked_external_fetch"
-      : "unverified_native_parity";
-    report({ kind: "error", code, message: parts.join("\n\n"), retryable: false });
-    return { ...result, terminalReason: "error" };
-  }
-
-  abort(reason?: unknown): Promise<void> { return this.inner.abort(reason); }
+  return new AppBuildVerifyAdapter(inner, opts.appDir, opts.tier, opts.smokeGate);
 }
 
 class CliBuildAdapter implements Adapter {

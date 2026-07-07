@@ -165,6 +165,17 @@ export function renderPerBuildContext(input: BuilderPromptInput): string {
     ? ""
     : "- An index.html starter + AGENTS.md have been seeded — READ both, then EDIT index.html rather than rewriting it from scratch. Keep the inline-only CSP rule.\n";
 
+  // Update builds get repair rules the create path doesn't need: the context
+  // block may be partial (see readUpdateContextFiles), and a fixer that only
+  // patches what it can see ships differently-broken code. Rewrite authority
+  // is explicit because the edit-in-place framing otherwise reads as "minimal
+  // patches only" — the wrong contract when the diagnosis is a broken approach
+  // (e.g. hand-rolled 3D projection math that can't be patched correct).
+  const updateRules = isUpdate
+    ? "- Before changing ANY file, READ it in full with your read tool — the context block above may be truncated, and patching code you haven't seen ships broken fixes.\n" +
+      "- Diagnose the root cause before editing. If the current approach is fundamentally wrong (broken math, unsalvageable rendering technique, dead-end architecture), REWRITE the affected file or subsystem using a sound, proven approach. You are NOT limited to minimal patches — a correct rewrite beats a bandage on a broken design.\n"
+    : "";
+
   return `You are building a web app in the directory: ${appDir}
 App name: ${appName}
 Task: ${isUpdate ? "UPDATE existing app" : "CREATE new app"}
@@ -181,7 +192,7 @@ Instructions: ${prompt}
 RULES:
 - Write ALL files to ${appDir}/ (use absolute paths)
 - The main entry point MUST be index.html
-${starterLine}- Create PROJECT.md with app description and status
+${starterLine}${updateRules}- Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in ${appDir}/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
 - Make it look polished — use modern CSS, good colors, responsive design
@@ -283,16 +294,40 @@ export function listAssetsDir(appDir: string): string[] {
 }
 
 /**
+ * Per-file cap for update context seeded verbatim into the build prompt.
+ * Small enough that three maxed files stay under ~100KB (fine for every
+ * hosted provider and the local-model default context), large enough that a
+ * typical single-file app (10-20KB) is seeded WHOLE. The old 3KB slice cut
+ * a 15KB game off inside its stylesheet, so the update build patched logic
+ * it had never seen — the truncation was silent and the fixer had no idea.
+ */
+export const UPDATE_CONTEXT_FILE_CAP = 32_000;
+
+/**
  * Read the standard update-context files (PROJECT.md, TODO.md, index.html)
- * from an existing app dir, formatted as `=== FILE ===\n<contents>` blocks
- * truncated at 3KB each. Returns [] if no files exist.
+ * from an existing app dir, formatted as `=== FILE ===\n<contents>` blocks.
+ * Files at or under {@link UPDATE_CONTEXT_FILE_CAP} are included in full.
+ * Larger files are truncated LOUDLY: the block says how much is missing and
+ * orders a full read before editing — a silent fragment is the failure mode
+ * this replaces. Returns [] if no files exist.
  */
 export function readUpdateContextFiles(appDir: string): string[] {
   const blocks: string[] = [];
   for (const f of ["PROJECT.md", "TODO.md", "index.html"]) {
     const p = join(appDir, f);
     if (existsSync(p)) {
-      try { blocks.push(`=== ${f} ===\n${readFileSync(p, "utf-8").slice(0, 3000)}`); } catch { /* skip */ }
+      try {
+        const content = readFileSync(p, "utf-8");
+        if (content.length <= UPDATE_CONTEXT_FILE_CAP) {
+          blocks.push(`=== ${f} (complete) ===\n${content}`);
+        } else {
+          blocks.push(
+            `=== ${f} (TRUNCATED — showing first ${UPDATE_CONTEXT_FILE_CAP} of ${content.length} chars) ===\n` +
+            `${content.slice(0, UPDATE_CONTEXT_FILE_CAP)}\n` +
+            `[…TRUNCATED. You have NOT seen the rest of this file. READ the full file with your read tool before editing it — never patch code you haven't seen.]`,
+          );
+        }
+      } catch { /* skip */ }
     }
   }
   return blocks;

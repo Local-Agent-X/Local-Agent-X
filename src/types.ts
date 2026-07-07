@@ -47,6 +47,16 @@ export interface ToolDefinition {
  *   blocked  — refused by policy/safety. Retrying the same call WILL fail.
  *              The model should pivot. Recommend a `recovery` hint in
  *              metadata (e.g. "use http_request instead of bash curl").
+ *   declined — the user was asked for approval and said no to THIS call.
+ *              Distinct from blocked: the tool works and policy doesn't
+ *              forbid it forever — a human just refused this specific
+ *              action. The model should adjust the approach or ask the
+ *              user; it must not immediately retry the identical call and
+ *              must NEVER conclude the tool is broken. If the user then
+ *              says to proceed, requesting approval again is legitimate.
+ *              Produced ONLY by the
+ *              user-decline branch of the approval phase (an absent human
+ *              in an unattended run is `blocked`, not `declined`).
  *   timeout  — runtime deadline expired. Distinct from error because work
  *              may have partially landed; metadata.partial_output captures
  *              what was produced before the kill.
@@ -56,7 +66,7 @@ export interface ToolDefinition {
  * 95% of tools just call `ok(s)` / `err(s)` and never see this enum.
  * Tools that need the new states opt in by setting `status`.
  */
-export type ToolResultStatus = "ok" | "error" | "blocked" | "timeout" | "running";
+export type ToolResultStatus = "ok" | "error" | "blocked" | "declined" | "timeout" | "running";
 
 export interface ToolResult {
   /**
@@ -189,9 +199,18 @@ export const USER_HINTS = {
   /** Delegated agent + source-code write/edit/bash without a sandbox. */
   worktreeIsolation:
     "A delegated agent can't run shell commands against source code without an isolated sandbox. If you were trying to run the project's build or type-check to verify your edits, you don't need to — the harness runs it automatically when the turn ends and hands back any real errors. Make your edits with the file tools and finish; verification is handled.",
-  /** Tool-policy default-deny, rate cap by policy, blocked args, host allowlist, hook, RBAC, declined approval, context-restricted tool. */
+  /** Tool-policy default-deny, rate cap by policy, blocked args, host allowlist, hook, RBAC, context-restricted tool. */
   policy:
     "That action isn't permitted by the current policy — tell me what you'd like instead, or relax the rule in ~/.lax/tool-policy.json.",
+  /** User declined the approval prompt for this specific call. */
+  declined:
+    "You declined this action — the agent will adjust its approach instead of retrying it.",
+  /** Approval card expired unanswered (or the session tore down first). */
+  approvalTimeout:
+    "That action was waiting for your approval and the request expired — say the word if you want it to go ahead.",
+  /** Pending approval dismissed because the user replied in chat instead of clicking. */
+  approvalSuperseded:
+    "You replied instead of clicking the approval card, so I'm reading your message — I can ask again if you want that action to proceed.",
   /** Security-kernel (ARI) block: missing tool mapping/grant, kernel inactive in
    *  ariRequired mode, kernel evaluation error. NOT fixable in user settings —
    *  pointing the agent at tool-policy.json here sent it diagnosing the wrong

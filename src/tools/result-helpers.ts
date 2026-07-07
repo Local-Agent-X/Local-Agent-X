@@ -5,7 +5,7 @@ import { withPrompt } from "../tool-prompt-builder.js";
  * Tool-result builders.
  *
  * 95% of tools should use only `ok(s)` and `err(s)` — same as before.
- * The four non-default statuses (`blocked`, `timeout`, `running`) are
+ * The non-default statuses (`blocked`, `declined`, `timeout`, `running`) are
  * available as helpers but most authors never need them. The envelope
  * stays a single optional discriminator on top of the legacy shape.
  *
@@ -26,6 +26,17 @@ export function err(content: string, metadata?: Record<string, unknown>): ToolRe
 /** Refused by policy/safety — retrying won't help. Pass `recovery` in metadata. */
 export function blocked(content: string, metadata?: Record<string, unknown>): ToolResult {
   return { content, isError: true, status: "blocked", metadata };
+}
+
+/**
+ * The user was asked for approval and said no to THIS call. Not a policy
+ * block: the tool works, and the same tool may be approved next time. The
+ * model should adjust or ask — not immediately retry the identical call
+ * (though it may request approval again if the user says to proceed).
+ * Produced ONLY by the user-decline branch of the approval phase.
+ */
+export function declined(content: string, metadata?: Record<string, unknown>): ToolResult {
+  return { content, isError: true, status: "declined", metadata };
 }
 
 /** Runtime deadline expired. Partial work may have landed; metadata.partial_output captures it. */
@@ -60,7 +71,7 @@ export function statusOf(r: ToolResult): ToolResultStatus {
  */
 export function parseStatusHeader(rendered: string): ToolResultStatus {
   if (typeof rendered !== "string") return "ok";
-  const m = rendered.match(/^\[(ok|error|blocked|timeout|running)(?:[,\s\]])/);
+  const m = rendered.match(/^\[(ok|error|blocked|declined|timeout|running)(?:[,\s\]])/);
   return (m?.[1] as ToolResultStatus | undefined) ?? "ok";
 }
 

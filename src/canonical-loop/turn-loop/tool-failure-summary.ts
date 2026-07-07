@@ -24,7 +24,13 @@ import { isMutationTool } from "../../tool-mutation-check.js";
 type ToolSummaryEntry = { tool: string; toolCallId?: string };
 
 export interface ToolFailureSummary {
-  failures: { tool: string; reason: string }[];
+  /**
+   * `declined: true` marks a user-declined approval (status "declined") —
+   * still a failure (the call didn't run, the model must not claim done),
+   * but the nudge wording differs: a human said no to that specific call,
+   * so "retry with the recovery hint" is exactly the wrong instruction.
+   */
+  failures: { tool: string; reason: string; declined?: boolean }[];
   /**
    * True when at least one mutation tool (write / edit / build_app / browser
    * action / http_request / etc — see isMutationTool) succeeded in this
@@ -44,7 +50,7 @@ export function collectToolFailures(
   toolMessages: CommitTurnMessage[],
   toolSummary: ToolSummaryEntry[],
 ): ToolFailureSummary {
-  const failures: { tool: string; reason: string }[] = [];
+  const failures: ToolFailureSummary["failures"] = [];
   let hadSuccessfulMutation = false;
   for (let i = 0; i < toolMessages.length; i++) {
     const text = extractToolResultText(toolMessages[i].content);
@@ -58,7 +64,9 @@ export function collectToolFailures(
     // Strip the rendered status header + collapse multi-line content so the
     // nudge stays short; full failure is still in the tool_result row.
     const firstLine = text.replace(/^\[[^\]]*\]\n?/, "").split("\n")[0].slice(0, 200);
-    failures.push({ tool: toolName, reason: firstLine });
+    failures.push(status === "declined"
+      ? { tool: toolName, reason: firstLine, declined: true }
+      : { tool: toolName, reason: firstLine });
   }
   return { failures, hadSuccessfulMutation };
 }
@@ -75,13 +83,26 @@ export function shouldNudgeForFailures(summary: ToolFailureSummary): boolean {
 
 export function formatFailureNudgeForModel(summary: ToolFailureSummary): string {
   if (summary.failures.length === 0) return "";
+  const n = summary.failures.length;
+  const noun = n === 1 ? "call" : "calls";
+  // When EVERY failure is a user decline, "retry with the recovery hints" is
+  // exactly the wrong instruction — the header must not urge retrying.
+  const allDeclined = summary.failures.every((f) => f.declined);
   const lines = [
-    `[automatic check] ${summary.failures.length} tool ${summary.failures.length === 1 ? "call" : "calls"} in your last turn returned a non-ok status. Do NOT claim the task is done until you've either retried successfully (use the recovery hints already in the tool_result) or honestly reported what's still broken to the user.`,
+    allDeclined
+      ? `[automatic check] ${n} tool ${noun} in your last turn ${n === 1 ? "was" : "were"} declined by the user. Do NOT claim the task is done, and do NOT retry the declined ${noun} as-is — adjust your approach or ask the user what they'd prefer.`
+      : `[automatic check] ${n} tool ${noun} in your last turn returned a non-ok status. Do NOT claim the task is done until you've either retried successfully (use the recovery hints already in the tool_result) or honestly reported what's still broken to the user.`,
     "",
     "Failed calls:",
   ];
   for (const f of summary.failures) {
-    lines.push(`• ${f.tool} — ${f.reason}`);
+    lines.push(f.declined ? `• ${f.tool} — declined by the user: ${f.reason}` : `• ${f.tool} — ${f.reason}`);
+  }
+  if (summary.failures.some((f) => f.declined)) {
+    lines.push(
+      "",
+      "Note: a call marked \"declined by the user\" means the user said no to that specific action — the tool is NOT broken and this is not a policy block. Do not immediately repeat that call; adjust your approach or ask the user what they'd prefer. If the user then tells you to proceed, you may request approval again.",
+    );
   }
   return lines.join("\n");
 }

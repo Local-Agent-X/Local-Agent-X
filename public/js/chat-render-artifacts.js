@@ -128,7 +128,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
           // status discriminator carries that. Reuse the existing
           // allowed(green)/blocked(red) dot styles — failure maps to red.
           const failed = endEvt.status === 'error' || endEvt.status === 'timeout';
-          const ok = endEvt.allowed !== false && !failed && endEvt.status !== 'blocked';
+          const ok = endEvt.allowed !== false && !failed && endEvt.status !== 'blocked' && endEvt.status !== 'declined';
           card.querySelector('.indicator').className = 'indicator ' + (ok ? 'allowed' : 'blocked');
           // Clean the agent-safety scaffolding off the tool-detail text but
           // leave the raw result in place for attachMediaPreview's URL scan —
@@ -145,7 +145,8 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
             .slice(0, 200);
           const fallback = failed
             ? (endEvt.status === 'timeout' ? '✗ Timed out' : '✗ Failed')
-            : (endEvt.status === 'blocked' || endEvt.allowed === false ? '⚠ Blocked' : '✓ Done');
+            : (endEvt.status === 'declined' ? '✋ Declined'
+              : (endEvt.status === 'blocked' || endEvt.allowed === false ? '⚠ Blocked' : '✓ Done'));
           card.querySelector('.tool-detail').textContent = detailText || fallback;
           attachMediaPreview(card, te.name, rawResult);
         }

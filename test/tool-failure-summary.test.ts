@@ -33,6 +33,17 @@ describe("collectToolFailures", () => {
     expect(r.failures[2].tool).toBe("http_request");
   });
 
+  it("counts declined as a failure and tags it (user said no ≠ tool broken)", () => {
+    const r = collectToolFailures(
+      [tm("[declined]\nDECLINED by user: bash. Do not retry the same call — adjust your approach or ask the user.")],
+      [{ tool: "bash" }],
+    );
+    expect(r.failures).toHaveLength(1);
+    expect(r.failures[0].tool).toBe("bash");
+    expect(r.failures[0].declined).toBe(true);
+    expect(shouldNudgeForFailures(r)).toBe(true);
+  });
+
   it("excludes running (async-started) results", () => {
     const r = collectToolFailures(
       [tm("[running, session_id=s1] started; poll process_status")],
@@ -134,6 +145,53 @@ describe("formatFailureNudgeForModel", () => {
     expect(msg).toMatch(/bash/);
     expect(msg).toMatch(/old_string found 2 times/);
     expect(msg).toMatch(/PowerShell quoting/);
+  });
+
+  it("gives declined failures distinct wording: adjust or ask, don't immediately repeat", () => {
+    const msg = formatFailureNudgeForModel({
+      failures: [{ tool: "bash", reason: "DECLINED by user: bash", declined: true }],
+      hadSuccessfulMutation: false,
+    });
+    expect(msg).toMatch(/declined by the user/);
+    expect(msg).toMatch(/Do not immediately repeat that call/);
+    expect(msg).toMatch(/tool is NOT broken/);
+    expect(msg).toMatch(/adjust your approach or ask the user/);
+    // The designed re-raise flow stays open: "proceed" in chat → re-request.
+    expect(msg).toMatch(/you may request approval again/);
+  });
+
+  it("an all-declined failure set gets a header that does NOT urge retrying", () => {
+    const msg = formatFailureNudgeForModel({
+      failures: [
+        { tool: "bash", reason: "DECLINED by user: bash", declined: true },
+        { tool: "delete_file", reason: "DECLINED by user: delete_file", declined: true },
+      ],
+      hadSuccessfulMutation: false,
+    });
+    expect(msg).toMatch(/declined by the user/);
+    expect(msg).not.toMatch(/retried successfully/);
+    expect(msg).not.toMatch(/recovery hints/);
+    expect(msg).toMatch(/do NOT retry the declined calls as-is/);
+  });
+
+  it("a mixed declined+error set keeps the retry-oriented header (errors ARE retryable)", () => {
+    const msg = formatFailureNudgeForModel({
+      failures: [
+        { tool: "edit", reason: "old_string not found" },
+        { tool: "bash", reason: "DECLINED by user: bash", declined: true },
+      ],
+      hadSuccessfulMutation: false,
+    });
+    expect(msg).toMatch(/retried successfully/);
+    expect(msg).toMatch(/declined by the user/);
+  });
+
+  it("does NOT add the declined note for ordinary errors", () => {
+    const msg = formatFailureNudgeForModel({
+      failures: [{ tool: "edit", reason: "old_string not found" }],
+      hadSuccessfulMutation: false,
+    });
+    expect(msg).not.toMatch(/declined/i);
   });
 
   it("uses singular wording for one failure", () => {

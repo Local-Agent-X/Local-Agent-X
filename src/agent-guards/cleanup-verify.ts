@@ -110,7 +110,7 @@ export function isEmptyGrepResult(content: string): boolean {
   return /^\s*No matches found\.?\s*$/i.test(content);
 }
 
-const STATUS_EXIT_RE = /^\[(?:ok|error|blocked|timeout|running)\b[^\]]*\bexit_code=(\d+)/m;
+const STATUS_EXIT_RE = /^\[(?:ok|error|blocked|declined|timeout|running)\b[^\]]*\bexit_code=(\d+)/m;
 
 function exitCode(content: string): number | null {
   const m = content.match(STATUS_EXIT_RE);
@@ -118,7 +118,7 @@ function exitCode(content: string): number | null {
 }
 
 function stripStatusHeader(content: string): string {
-  return content.replace(/^\[(?:ok|error|blocked|timeout|running)[^\]]*\]\n?/, "").trim();
+  return content.replace(/^\[(?:ok|error|blocked|declined|timeout|running)[^\]]*\]\n?/, "").trim();
 }
 
 const SHELL_SEARCH_RE =

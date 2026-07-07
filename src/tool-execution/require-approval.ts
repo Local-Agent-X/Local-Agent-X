@@ -7,6 +7,7 @@
 
 import { USER_HINTS, type ToolResult } from "../types.js";
 import {
+  type ApprovalDenyReason,
   getApprovalManager,
   getToolDecision,
   getRiskDecision,
@@ -69,7 +70,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   }
   if (!ctx.onEvent) return CONTINUE;
 
-  const approved = await getApprovalManager().requestApproval({
+  const outcome = await getApprovalManager().requestApprovalDetailed({
     toolName: ctx.tc.name,
     toolCallId: ctx.tc.id,
     sessionId: ctx.sessionId || "default",
@@ -82,13 +83,51 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     alwaysAsk: !!destructive || policyRequiresPrompt,
     emit: ctx.onEvent,
   });
-  if (approved) return CONTINUE;
+  if (outcome.approved) return CONTINUE;
 
-  const result: ToolResult = {
-    content: `BLOCKED by user: declined approval for ${ctx.tc.name}`,
-    isError: true,
-    status: "blocked",
-    metadata: { layer: "approval", userHint: USER_HINTS.policy },
-  };
+  // The denial reason decides the status — only an actual human "no" is
+  // `declined`. A timed-out or torn-down card was never answered, and a card
+  // superseded by a chat reply means "read the message"; both stay `blocked`
+  // (absent/deferred human ≠ human said no). Profile-deny and unattended
+  // branches above are also `blocked`. Exhaustive on purpose: an unknown or
+  // missing reason must NEVER fabricate "declined by user" — the default is
+  // a neutral blocked result (no producer emits undefined today; this guards
+  // the next resolution path someone adds).
+  const result: ToolResult = buildDenialResult(ctx.tc.name, outcome.reason);
   return terminate(ctx, { rendered: "model", result, allowed: false });
 };
+
+function buildDenialResult(toolName: string, reason: ApprovalDenyReason | undefined): ToolResult {
+  switch (reason) {
+    case "declined":
+      // A human said no to THIS call — `declined`, not `blocked`. The tool
+      // works and policy doesn't forbid it forever.
+      return {
+        content: `DECLINED by user: ${toolName}. Do not immediately retry the same call — adjust your approach or ask the user. If the user then tells you to proceed, you may request approval again.`,
+        isError: true,
+        status: "declined",
+        metadata: { layer: "approval", userHint: USER_HINTS.declined },
+      };
+    case "timeout":
+      return {
+        content: `Approval request timed out for ${toolName} — nobody answered. Do not assume consent; proceed with other work or ask the user.`,
+        isError: true,
+        status: "blocked",
+        metadata: { layer: "approval", userHint: USER_HINTS.approvalTimeout },
+      };
+    case "superseded":
+      return {
+        content: `Approval request for ${toolName} was dismissed because the user replied in chat instead of clicking. Re-read their latest message; if they said to proceed, you may request approval again.`,
+        isError: true,
+        status: "blocked",
+        metadata: { layer: "approval", userHint: USER_HINTS.approvalSuperseded },
+      };
+    default:
+      return {
+        content: `Approval for ${toolName} was not granted — no explicit user decision was recorded. Do not assume consent; adjust your approach or ask the user.`,
+        isError: true,
+        status: "blocked",
+        metadata: { layer: "approval", userHint: USER_HINTS.approvalTimeout },
+      };
+  }
+}

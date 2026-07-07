@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { requireApprovalPhase } from "./require-approval.js";
 import type { ToolCallContext, CallContext } from "./context.js";
 import { setSessionProfile, clearSessionProfile, inheritSessionProfile } from "../autonomy/profile-store.js";
@@ -167,6 +167,193 @@ describe("requireApprovalPhase — unattended runs", () => {
 
     expect(events.some((e) => e.type === "approval_requested")).toBe(true);
     expect(outcome.kind).toBe("continue");
+  });
+});
+
+describe("requireApprovalPhase — user decline is 'declined', not 'blocked'", () => {
+  // Regression: the user-decline branch used to return status "blocked",
+  // collapsing "a human said no to this call" into "policy forbids this" —
+  // the model would conclude the tool was dead instead of adjusting.
+  it("a declined approval yields status 'declined' with no-retry guidance", async () => {
+    const s = pinned("Normal"); // http_request = ask under Normal
+    const ctx = makeCtx({
+      name: "http_request",
+      sessionId: s,
+      callContext: "local",
+      onEvent: (e) => {
+        if (e.type === "approval_requested") {
+          getApprovalManager().resolveApproval(e.approvalId, false);
+        }
+      },
+    });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.allowed).toBe(false);
+    expect(ctx.result?.status).toBe("declined");
+    expect(ctx.result?.isError).toBe(true);
+    expect(ctx.result?.metadata?.layer).toBe("approval");
+    expect(String(ctx.result?.content)).toContain("DECLINED by user");
+    expect(String(ctx.result?.content)).toContain("Do not immediately retry the same call");
+    expect(String(ctx.result?.content)).toContain("you may request approval again");
+  });
+
+  // Regression (skeptic Finding A): requestApproval resolves false on THREE
+  // paths — only the Deny click is a human "no". A timed-out card must not
+  // report "DECLINED by user".
+  it("an approval TIMEOUT yields 'blocked' with timeout wording, not 'declined'", async () => {
+    vi.useFakeTimers();
+    try {
+      const s = pinned("Normal");
+      const ctx = makeCtx({
+        name: "http_request",
+        sessionId: s,
+        callContext: "local",
+        onEvent: () => { /* nobody answers the card */ },
+      });
+      const pending = requireApprovalPhase(ctx);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 1); // real requestApproval deadline
+      const outcome = await pending;
+
+      expect(outcome.kind).toBe("halt");
+      expect(ctx.result?.status).toBe("blocked");
+      expect(ctx.result?.isError).toBe(true);
+      expect(String(ctx.result?.content)).toContain("timed out");
+      expect(String(ctx.result?.content)).toContain("Do not assume consent");
+      expect(String(ctx.result?.content)).not.toContain("DECLINED by user");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Regression (skeptic round 2): the suppression map used to store only a
+  // timestamp, so a re-issue of a TIMED-OUT call inside the 60s suppression
+  // window replayed a fabricated "DECLINED by user". The map now stores the
+  // reason and the short-circuit replays it.
+  it("re-issuing a call that TIMED OUT (within suppression window) replays timeout, NOT 'declined'", async () => {
+    vi.useFakeTimers();
+    try {
+      const s = pinned("Normal");
+      const events: string[] = [];
+      const mk = () => makeCtx({
+        name: "http_request",
+        sessionId: s,
+        callContext: "local",
+        onEvent: (e) => { events.push(e.type); /* nobody answers */ },
+      });
+
+      const first = mk();
+      const p1 = requireApprovalPhase(first);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 1);
+      await p1;
+      expect(first.result?.status).toBe("blocked");
+      expect(String(first.result?.content)).toContain("timed out");
+
+      // Identical re-issue moments later — suppression short-circuits (no
+      // new card) and MUST keep telling the truth.
+      const cardsBefore = events.filter((t) => t === "approval_requested").length;
+      const second = mk();
+      await requireApprovalPhase(second);
+      expect(events.filter((t) => t === "approval_requested").length).toBe(cardsBefore);
+      expect(second.result?.status).toBe("blocked");
+      expect(String(second.result?.content)).toContain("timed out");
+      expect(String(second.result?.content)).not.toContain("DECLINED by user");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-issuing a call the user DECLINED (within suppression window) is still 'declined'", async () => {
+    const s = pinned("Normal");
+    const events: string[] = [];
+    const mk = () => makeCtx({
+      name: "http_request",
+      sessionId: s,
+      callContext: "local",
+      onEvent: (e) => {
+        events.push(e.type);
+        if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, false);
+      },
+    });
+
+    const first = mk();
+    await requireApprovalPhase(first);
+    expect(first.result?.status).toBe("declined");
+
+    const cardsBefore = events.filter((t) => t === "approval_requested").length;
+    const second = mk();
+    await requireApprovalPhase(second);
+    // Suppressed silently — no second card — and still an honest decline.
+    expect(events.filter((t) => t === "approval_requested").length).toBe(cardsBefore);
+    expect(second.result?.status).toBe("declined");
+    expect(String(second.result?.content)).toContain("DECLINED by user");
+  });
+
+  it("clearSession teardown leaves NO suppression: an immediate re-request gets a fresh card", async () => {
+    const s = pinned("Normal");
+    const first = makeCtx({
+      name: "http_request",
+      sessionId: s,
+      callContext: "local",
+      onEvent: (e) => {
+        // Session tears down while the card is pending.
+        if (e.type === "approval_requested") getApprovalManager().clearSession(s);
+      },
+    });
+    await requireApprovalPhase(first);
+    expect(first.result?.status).toBe("blocked");
+    expect(String(first.result?.content)).not.toContain("DECLINED by user");
+
+    // A successor request on the same key must get a FRESH card (no leaked
+    // 60s suppression), and approving it must work.
+    setSessionProfile(s, "Normal");
+    let sawCard = false;
+    const second = makeCtx({
+      name: "http_request",
+      sessionId: s,
+      callContext: "local",
+      onEvent: (e) => {
+        if (e.type === "approval_requested") {
+          sawCard = true;
+          getApprovalManager().resolveApproval(e.approvalId, true);
+        }
+      },
+    });
+    const outcome = await requireApprovalPhase(second);
+    expect(sawCard).toBe(true);
+    expect(outcome.kind).toBe("continue");
+  });
+
+  it("a card SUPERSEDED by a chat reply (denyPendingForSession) yields 'blocked' with re-read wording", async () => {
+    const s = pinned("Normal");
+    const ctx = makeCtx({
+      name: "http_request",
+      sessionId: s,
+      callContext: "local",
+      onEvent: (e) => {
+        if (e.type === "approval_requested") {
+          // The user typed a message instead of clicking the card.
+          getApprovalManager().denyPendingForSession(s);
+        }
+      },
+    });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.result?.status).toBe("blocked");
+    expect(String(ctx.result?.content)).toContain("replied in chat");
+    expect(String(ctx.result?.content)).toContain("Re-read their latest message");
+    expect(String(ctx.result?.content)).not.toContain("DECLINED by user");
+  });
+
+  it("profile deny and unattended block STAY 'blocked' (absent human ≠ human said no)", async () => {
+    const denied = makeCtx({ name: "delete_file", sessionId: pinned("Safe"), callContext: "local", args: { path: "C:/tmp/x.txt" } });
+    await requireApprovalPhase(denied);
+    expect(denied.result?.status).toBe("blocked");
+
+    const unattended = makeCtx({ name: "http_request", sessionId: pinned("Normal"), callContext: "cron" });
+    await requireApprovalPhase(unattended);
+    expect(unattended.result?.status).toBe("blocked");
   });
 });
 

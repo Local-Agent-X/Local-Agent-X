@@ -239,6 +239,22 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     expect(r.isError).toBe(true);
   });
 
+  // Seam: a declined envelope rendered by renderToolResultForModel, parsed
+  // back at the dispatch boundary (parseStatusHeader) — must land as
+  // error-not-ok while keeping its distinct 'declined' status.
+  it("a declined tool result surfaces as status 'declined' / isError true", async () => {
+    const toolMap = new Map<string, ToolDefinition>([
+      ["decline_stub", resultTool("decline_stub", { content: "DECLINED by user: decline_stub. Do not retry the same call — adjust your approach or ask the user.", isError: true, status: "declined" })],
+    ]);
+    const r = await dispatchSingleToolCall(
+      { id: "x1d", name: "decline_stub", args: {} },
+      { toolMap, security: undefined as never },
+    );
+    expect(r.status).toBe("declined");
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("[declined");
+  });
+
   it("an errored tool result surfaces as status 'error' / isError true", async () => {
     const toolMap = new Map<string, ToolDefinition>([
       ["err_stub", resultTool("err_stub", { content: "boom", isError: true, status: "error" })],

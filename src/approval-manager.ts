@@ -48,8 +48,31 @@ export {
 
 const APPROVAL_TIMEOUT_MS = 5 * 60_000; // 5 min — long enough to read + decide
 
+/**
+ * WHY a denial carries a reason: `requestApproval` resolves false on three
+ * different paths, and they demand different model behavior —
+ *   declined   — the user clicked Deny (or a recent decline is being
+ *                re-applied by suppression). A human said no to THIS call.
+ *   timeout    — nobody answered before the deadline (or the session tore
+ *                down with the card still pending), including a suppressed
+ *                re-issue of a call that recently timed out. Absent human ≠
+ *                human said no — the model must not report "declined by user".
+ *   superseded — the user replied in chat instead of clicking
+ *                (denyPendingForSession). The model should read the message;
+ *                it may legitimately re-raise the request afterwards.
+ *                Superseded NEVER seeds the suppression map — a fresh card
+ *                after re-reading the reply is the designed flow.
+ */
+export type ApprovalDenyReason = "declined" | "timeout" | "superseded";
+
+export interface ApprovalOutcome {
+  approved: boolean;
+  /** Set on every approved:false resolution. */
+  reason?: ApprovalDenyReason;
+}
+
 interface PendingApproval {
-  resolve: (approved: boolean) => void;
+  resolve: (outcome: ApprovalOutcome) => void;
   timer: ReturnType<typeof setTimeout>;
   sessionId: string;
   toolName: string;
@@ -65,28 +88,45 @@ class ApprovalManager {
   // exactKey → the in-flight approval promise, so a duplicate identical call
   // (e.g. the model emitting delete_file(x) twice in one parallel turn) shares
   // ONE card instead of stacking a second.
-  private inflight = new Map<string, Promise<boolean>>();
-  // exactKey → timestamp of the last decline/timeout. A re-issue of the same
-  // call is auto-declined without a new card until the entry is cleared (next
-  // user turn) or ages past DECLINE_SUPPRESS_MS.
-  private declined = new Map<string, number>();
-  // exactKeys denied by a NEW USER MESSAGE (not a Deny click). These skip
-  // decline-suppression: the user answered in words, and the model may
-  // legitimately re-raise the card after reading them ("yes, go ahead").
-  private denyWithoutSuppress = new Set<string>();
+  private inflight = new Map<string, Promise<ApprovalOutcome>>();
+  // exactKey → last decline/timeout, WITH the reason it happened. A re-issue
+  // of the same call is auto-denied without a new card until the entry is
+  // cleared (next user turn) or ages past DECLINE_SUPPRESS_MS — and the
+  // short-circuit replays the STORED reason, so a re-issue after a timeout
+  // reports "timeout", never a fabricated "declined by user". Entries are
+  // written SYNCHRONOUSLY at each resolve site (not in a promise .then):
+  // a microtask write could land after clearSession's sweep and leak a
+  // 60s suppression into a successor session sharing the exactKey (the
+  // sessionId||"default" fallback makes that collision real).
+  // Seeded ONLY by: Deny click ("declined") and the card timeout
+  // ("timeout"); the suppression short-circuit replays stored entries but
+  // never writes. denyPendingForSession ("superseded") and clearSession
+  // teardown deliberately never seed it.
+  private suppressed = new Map<string, { ts: number; reason: ApprovalDenyReason }>();
   private nextId = 1;
 
-  private gcDeclined(now: number): void {
-    for (const [k, ts] of this.declined) {
-      if (now - ts > DECLINE_SUPPRESS_MS) this.declined.delete(k);
+  private gcSuppressed(now: number): void {
+    for (const [k, v] of this.suppressed) {
+      if (now - v.ts > DECLINE_SUPPRESS_MS) this.suppressed.delete(k);
     }
   }
 
   /**
    * Request approval. Returns a promise that resolves to true (approved) or false (denied/timeout).
    * If session has already auto-approved this tool, resolves immediately.
+   * Boolean adapter over `requestApprovalDetailed` — kept because most call
+   * sites (plan-tools, pre-dispatch) only need the yes/no; callers that must
+   * distinguish WHY a request failed (user decline vs timeout vs superseded)
+   * use the detailed variant.
    */
-  async requestApproval(opts: {
+  async requestApproval(opts: Parameters<ApprovalManager["requestApprovalDetailed"]>[0]): Promise<boolean> {
+    return (await this.requestApprovalDetailed(opts)).approved;
+  }
+
+  /**
+   * Request approval and learn WHY it was denied (see ApprovalDenyReason).
+   */
+  async requestApprovalDetailed(opts: {
     toolName: string;
     toolCallId: string;
     sessionId: string;
@@ -100,14 +140,14 @@ class ApprovalManager {
      *  read and write. Used for irreversible/destructive operations. */
     alwaysAsk?: boolean;
     emit: (event: ServerEvent) => void;
-  }): Promise<boolean> {
+  }): Promise<ApprovalOutcome> {
     // Session-scoped auto-approval short-circuit. Key is composite
     // (toolName, argsFingerprint) so a prior grant for one binary/host/dir
     // does not cover unrelated calls under the same tool. Destructive ops
     // (alwaysAsk) never short-circuit.
     if (!opts.alwaysAsk) {
       const auto = this.sessionAutoApprove.get(opts.sessionId);
-      if (auto?.has(cacheKey(opts.toolName, opts.args))) return true;
+      if (auto?.has(cacheKey(opts.toolName, opts.args))) return { approved: true };
     }
 
     // Decline suppression + in-flight coalescing, keyed on EXACT args. Stops
@@ -118,21 +158,24 @@ class ApprovalManager {
     // identical call already awaiting a decision rides the same card.
     const ekey = exactKey(opts.sessionId, opts.toolName, opts.args);
     const now = Date.now();
-    this.gcDeclined(now);
-    const declinedAt = this.declined.get(ekey);
-    if (declinedAt !== undefined && now - declinedAt < DECLINE_SUPPRESS_MS) {
-      return false;
+    this.gcSuppressed(now);
+    const hit = this.suppressed.get(ekey);
+    if (hit !== undefined && now - hit.ts < DECLINE_SUPPRESS_MS) {
+      // Replay the STORED reason: a re-issue after a Deny click is still a
+      // human "no", but a re-issue after a timeout is still "nobody answered".
+      return { approved: false, reason: hit.reason };
     }
     const existing = this.inflight.get(ekey);
     if (existing) return existing;
 
     const id = `apr-${this.nextId++}-${Date.now()}`;
 
-    const promise = new Promise<boolean>((resolve) => {
+    const promise = new Promise<ApprovalOutcome>((resolve) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(id)) {
+          this.suppressed.set(ekey, { ts: Date.now(), reason: "timeout" });
           opts.emit({ type: "approval_timeout", approvalId: id, toolName: opts.toolName, toolCallId: opts.toolCallId });
-          resolve(false);
+          resolve({ approved: false, reason: "timeout" });
         }
       }, APPROVAL_TIMEOUT_MS);
 
@@ -150,11 +193,9 @@ class ApprovalManager {
     });
 
     this.inflight.set(ekey, promise);
-    void promise.then((approved) => {
-      this.inflight.delete(ekey);
-      if (!approved && !this.denyWithoutSuppress.delete(ekey)) this.declined.set(ekey, Date.now());
-      else this.declined.delete(ekey);
-    });
+    // Suppression is written synchronously at each resolve site; this hook
+    // only releases the coalescing slot.
+    void promise.then(() => this.inflight.delete(ekey));
     return promise;
   }
 
@@ -162,8 +203,10 @@ class ApprovalManager {
    * A new USER MESSAGE arrived while cards were pending — the user chose to
    * answer in words instead of clicking, so every pending card for the
    * session resolves as DENIED and the model reads the message. Deliberately
-   * skips decline-suppression (see denyWithoutSuppress): after reading the
-   * reply the model may re-raise the same request and must get a fresh card.
+   * never seeds the suppression map: after reading the reply the model may
+   * re-raise the same request and must get a fresh card. (It also CLEARS any
+   * existing suppression for the key, preserving the pre-reason behavior
+   * where a words-answer reset the gate.)
    * Returns how many cards were denied.
    */
   denyPendingForSession(sessionId: string): number {
@@ -172,11 +215,11 @@ class ApprovalManager {
       if (p.sessionId !== sessionId) continue;
       clearTimeout(p.timer);
       this.pending.delete(id);
-      this.denyWithoutSuppress.add(exactKey(p.sessionId, p.toolName, p.args));
+      this.suppressed.delete(exactKey(p.sessionId, p.toolName, p.args));
       try {
         p.emit({ type: "approval_resolved", approvalId: id, toolName: p.toolName, approved: false });
       } catch { /* a dead emitter must not block the resolution */ }
-      p.resolve(false);
+      p.resolve({ approved: false, reason: "superseded" });
       denied++;
     }
     return denied;
@@ -186,8 +229,8 @@ class ApprovalManager {
    *  so a deliberate re-request after the model gave up still prompts. */
   clearDeclines(sessionId: string): void {
     const prefix = `${sessionId}::`;
-    for (const k of this.declined.keys()) {
-      if (k.startsWith(prefix)) this.declined.delete(k);
+    for (const k of this.suppressed.keys()) {
+      if (k.startsWith(prefix)) this.suppressed.delete(k);
     }
   }
 
@@ -212,7 +255,17 @@ class ApprovalManager {
       p.emit({ type: "approval_resolved", approvalId: id, toolName: p.toolName, approved });
     } catch { /* a dead emitter must not block the resolution */ }
 
-    p.resolve(approved);
+    // A Deny click is the ONE path that means "the user said no to this call".
+    // Suppression is written HERE, synchronously, so the stored reason can
+    // never be a stale microtask racing a session sweep.
+    const ekey = exactKey(p.sessionId, p.toolName, p.args);
+    if (approved) {
+      this.suppressed.delete(ekey);
+      p.resolve({ approved: true });
+    } else {
+      this.suppressed.set(ekey, { ts: Date.now(), reason: "declined" });
+      p.resolve({ approved: false, reason: "declined" });
+    }
     return true;
   }
 
@@ -220,11 +273,15 @@ class ApprovalManager {
   clearSession(sessionId: string): void {
     this.sessionAutoApprove.delete(sessionId);
     this.clearDeclines(sessionId);
-    // Deny any still-pending approvals for this session
+    // Deny any still-pending approvals for this session. Teardown is
+    // timeout-equivalent: the card was never answered — nobody said no.
+    // Deliberately does NOT seed suppression: the session is gone, and a
+    // leftover entry could shadow a successor session that lands on the
+    // same exactKey (the sessionId||"default" fallback).
     for (const [id, p] of this.pending) {
       if (p.sessionId === sessionId) {
         clearTimeout(p.timer);
-        p.resolve(false);
+        p.resolve({ approved: false, reason: "timeout" });
         this.pending.delete(id);
       }
     }

@@ -111,6 +111,7 @@ const EXPECTED_ORDER = [
   "post-turn-detector",
   "auto-build-app",
   "post-commit",
+  "post-edit-diagnostics",
   "dead-end",
   "repeat-failure",
 ];

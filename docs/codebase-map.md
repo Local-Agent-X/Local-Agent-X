@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1150 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1151 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -21,19 +21,19 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ops/` | 64 | 22 | XL |  |
 | `src/security/` | 64 | 26 | XL |  |
 | `src/tools/` | 48 | 134 | XL |  |
-| `src/canonical-loop/` | 37 | 129 | XL |  |
+| `src/canonical-loop/` | 37 | 130 | XL |  |
 | `src/memory/` | 37 | 106 | XL |  |
 | `src/providers/` | 37 | 17 | L |  |
 | `src/classifiers/` | 30 | 12 | L |  |
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
-| `src/workspace/` | 24 | 2 | M |  |
+| `src/workspace/` | 25 | 2 | M |  |
 | `src/auth/` | 22 | 10 | L |  |
 | `src/threat/` | 20 | 12 | L |  |
 | `src/session/` | 19 | 7 | M |  |
 | `src/orchestrator/` | 18 | 21 | L |  |
+| `src/agent-guards/` | 17 | 14 | L |  |
 | `src/agent-request/` | 17 | 12 | L |  |
-| `src/agent-guards/` | 16 | 14 | L |  |
 | `src/agents/` | 15 | 13 | L |  |
 | `src/chat-ws/` | 14 | 9 | L |  |
 | `src/app-runtime/` | 13 | 12 | L |  |
@@ -69,12 +69,12 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context/` | 3 | 2 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
+| `src/language-intel/` | 2 | 4 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
 | `src/anticipatory-care/` | 1 | 6 | M |  |
 | `src/associative-recall/` | 1 | 7 | M |  |
 | `src/cross-session-learning/` | 1 | 7 | M |  |
 | `src/errors/` | 1 | 2 | S |  |
-| `src/language-intel/` | 1 | 4 | M |  |
 | `src/manifest-generator/` | 1 | 8 | M |  |
 | `src/tool-execution/` | 1 | 20 | L |  |
 | `src/types/` | 1 | 2 | M |  |

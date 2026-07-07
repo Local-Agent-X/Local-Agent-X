@@ -69,6 +69,7 @@ import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
 import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
 import { autoBuildAppMiddleware } from "./auto-build-app.js";
 import { verifyGateMiddleware } from "./verify-gate.js";
+import { postEditDiagnosticsMiddleware } from "./post-edit-diagnostics.js";
 import { cleanupVerifyMiddleware } from "./cleanup-verify.js";
 import { instructionLedgerMiddleware } from "./instruction-ledger.js";
 import { instructionAuditMiddleware } from "./instruction-audit.js";
@@ -174,6 +175,13 @@ const DEFAULT_STACK: StackEntry[] = [
   { order: 220, mw: postTurnDetectorMiddleware },
   { order: 230, mw: autoBuildAppMiddleware },
   { order: 240, mw: postCommitMiddleware },
+  // All lanes — after a turn's dispatch edited TS/JS source, diff language-intel
+  // diagnostics against the op's per-file baseline and inject only the NEW
+  // errors as same-turn feedback, so the model fixes "your edit broke X" now
+  // instead of at build time. Sits after post-commit (a landed commit's wrap-up
+  // nudge wins first) and before dead-end. Fail-open; disable with
+  // LAX_POST_EDIT_DIAGNOSTICS=0.
+  { order: 245, mw: postEditDiagnosticsMiddleware },
   { order: 250, mw: deadEndMiddleware },
   // All lanes (incl. interactive) — same-tool same-error spiral breaker.
   { order: 260, mw: repeatFailureMiddleware },

@@ -378,6 +378,7 @@ export const buildAppTool: ToolDefinition = {
         `App build queued — op ${op.id} (strategy=${strategy}, provider=${provider}, lane=build).\n` +
         `This op owns the ENTIRE build and will deliver the result to the user itself when done. ` +
         `Do NOT build it yourself this turn (no bash/cargo, no write/edit of source, no send_image) — that duplicates the work. ` +
+        `Do NOT open the app in the browser tool to "check" it — the build op already loads, clicks, and screenshots the app HEADLESSLY before reporting done (the [verify] lines are the receipt); a browser call just pops a pointless Chrome window at the user. ` +
         `Just briefly tell the user it's building; they'll see it when APP_READY emits.\n` +
         `Cancel: op_kill(op_id="${op.id}")`,
       metadata: {

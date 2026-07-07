@@ -12,13 +12,15 @@
  * never a build failure) is covered by the launch-throw path in runAppSmokeGate.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Adapter, AdapterReport, TurnInput } from "../src/canonical-loop/adapter-contract.js";
 import {
   AppBuildVerifyAdapter,
+  VERIFY_EVIDENCE_MARKER,
   type AppSmokeGateOutcome,
+  type AppVisionJudge,
 } from "../src/canonical-loop/adapters/app-build-verify-adapter.js";
 
 const tempDirs: string[] = [];
@@ -27,6 +29,23 @@ function makeStaticAppDir(): string {
   tempDirs.push(dir);
   writeFileSync(join(dir, "index.html"), "<!doctype html><html><body><canvas width='960' height='640'></canvas></body></html>");
   return dir;
+}
+/** Drop real evidence PNG stubs so existsSync-gated image attachment fires. */
+function seedScreenshots(appDir: string): { shot1: string; shot2: string } {
+  const dir = join(appDir, ".lax-build");
+  mkdirSync(dir, { recursive: true });
+  const shot1 = join(dir, "smoke.png");
+  const shot2 = join(dir, "smoke-2.png");
+  writeFileSync(shot1, "png-bytes-1");
+  writeFileSync(shot2, "png-bytes-2");
+  return { shot1, shot2 };
+}
+function evidenceMessageFrom(reports: AdapterReport[]): { text: string; images?: Array<{ name: string; filePath: string }> } | null {
+  const fin = reports.find((r): r is Extract<AdapterReport, { kind: "message_finalized" }> =>
+    r.kind === "message_finalized" &&
+    (r.message.content as { text?: string })?.text?.startsWith(VERIFY_EVIDENCE_MARKER) === true);
+  if (!fin) return null;
+  return fin.message.content as { text: string; images?: Array<{ name: string; filePath: string }> };
 }
 afterEach(() => {
   while (tempDirs.length > 0) {
@@ -92,6 +111,24 @@ describe("AppBuildVerifyAdapter — see-before-done smoke gate", () => {
     expect(chunk && (chunk as { body: { delta: string } }).body.delta).toContain("smoke passed");
   });
 
+  it("a failed smoke ALSO emits a marker evidence user-message carrying the screenshots [regression]", async () => {
+    const appDir = makeStaticAppDir();
+    const { shot1, shot2 } = seedScreenshots(appDir);
+    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async () => ({
+      verdict: "fail",
+      detail: "clicking its primary action threw 3 console error(s)",
+      screenshotPath: shot1,
+      interactionScreenshotPath: shot2,
+    }));
+    const { reports, report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("error");
+    const evidence = evidenceMessageFrom(reports);
+    expect(evidence).not.toBeNull();
+    expect(evidence!.text).toContain("primary action threw 3 console error(s)");
+    expect(evidence!.images?.map(i => i.filePath)).toEqual([shot1, shot2]);
+  });
+
   it("an error terminal from the inner adapter passes through without running the gate", async () => {
     const errorInner: Adapter = {
       ...doneInner,
@@ -109,5 +146,60 @@ describe("AppBuildVerifyAdapter — see-before-done smoke gate", () => {
     const result = await adapter.runTurn(turnInput(), report);
     expect(result.terminalReason).toBe("error");
     expect(gateRan).toBe(false);
+  });
+});
+
+describe("AppBuildVerifyAdapter — vision judge tier", () => {
+  function judgedAdapter(judge: AppVisionJudge, brief = "a 3D maze escape game") {
+    const appDir = makeStaticAppDir();
+    const { shot1, shot2 } = seedScreenshots(appDir);
+    const adapter = new AppBuildVerifyAdapter(
+      doneInner, appDir, undefined,
+      async () => ({ verdict: "pass", screenshotPath: shot1, interactionScreenshotPath: shot2 }),
+      { brief, judge },
+    );
+    return { adapter, shot1, shot2 };
+  }
+
+  it("a judge rejection flips done into error with the judge's reason AND screenshot evidence [regression]", async () => {
+    const { adapter, shot1, shot2 } = judgedAdapter(async () => ({ ok: false, reason: "black screen after Start — nothing resembling a maze" }));
+    const { reports, report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("error");
+    const err = reports.find(r => r.kind === "error");
+    expect(err).toMatchObject({ code: "app_vision_rejected" });
+    expect((err as { message: string }).message).toContain("black screen after Start");
+    const evidence = evidenceMessageFrom(reports);
+    expect(evidence!.images?.map(i => i.filePath)).toEqual([shot1, shot2]);
+  });
+
+  it("judge sees BOTH screenshots and the brief", async () => {
+    const calls: Array<{ paths: string[]; brief: string }> = [];
+    const { adapter, shot1, shot2 } = judgedAdapter(async (paths, brief) => {
+      calls.push({ paths, brief });
+      return { ok: true, reason: "looks like a maze" };
+    });
+    const { report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("done");
+    expect(calls).toEqual([{ paths: [shot1, shot2], brief: "a 3D maze escape game" }]);
+  });
+
+  it("no verdict available (null) keeps done — a lost free check never fails a build", async () => {
+    const { adapter } = judgedAdapter(async () => null);
+    const { reports, report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("done");
+    const chunks = reports.filter(r => r.kind === "stream_chunk").map(r => (r as { body: { delta: string } }).body.delta).join("");
+    expect(chunks).toContain("vision judge unavailable");
+  });
+
+  it("no brief → judge never runs (it can't answer 'what was asked' without the ask)", async () => {
+    let judgeRan = false;
+    const { adapter } = judgedAdapter(async () => { judgeRan = true; return { ok: false, reason: "x" }; }, "");
+    const { report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("done");
+    expect(judgeRan).toBe(false);
   });
 });

@@ -30,7 +30,11 @@ import {
 } from "./render-builder-prompt.js";
 import { AgentTemplateStore, type AgentExecStrategy } from "../agent-store/index.js";
 import { seedAppTemplate } from "./app-tools/app-template.js";
-import { renderPriorBuildContext } from "./build-session-context.js";
+import {
+  gatherPriorBuildSessions,
+  renderPriorBuildBlock,
+  evidenceImagesFromPriorSessions,
+} from "./build-session-context.js";
 import { buildContextPack } from "../ops/context-pack-builder.js";
 import { newOpId } from "../ops/op-store.js";
 import { getRetryPolicy } from "../ops/heartbeat.js";
@@ -250,9 +254,15 @@ export const buildAppTool: ToolDefinition = {
     if (!isUpdate && !realBuildTier) seedAppTemplate(appDir, appName);
 
     // Updates carry the prior session's spine (original brief + last build's
-    // final report) ahead of the file snapshot — the fixer remembers building
-    // the app instead of re-diagnosing cold every time.
-    const priorBlock = isUpdate ? renderPriorBuildContext(appUrl, APP_BUILD_OP_TYPE) : null;
+    // final report + any verify-gate rejection) ahead of the file snapshot —
+    // the fixer remembers building the app instead of re-diagnosing cold.
+    const priorSessions = isUpdate ? gatherPriorBuildSessions(appUrl, APP_BUILD_OP_TYPE) : [];
+    const priorBlock = renderPriorBuildBlock(priorSessions);
+    // Screenshot evidence from a gate-rejected prior build rides the seeded
+    // message as image refs — the in-canonical fixer SEES the broken render
+    // instead of imagining it from prose. filePath refs keep op_messages
+    // small; the Anthropic-CLI strategy gets the on-disk path hint instead.
+    const evidenceImages = evidenceImagesFromPriorSessions(priorSessions);
     const contextFiles = isUpdate
       ? [...(priorBlock ? [priorBlock] : []), ...readUpdateContextFiles(appDir)]
       : [];
@@ -317,7 +327,10 @@ export const buildAppTool: ToolDefinition = {
       turnIdx: 0,
       seqInTurn: 0,
       role: "user",
-      content: { text: perBuildContext },
+      content: {
+        text: perBuildContext,
+        ...(evidenceImages.length > 0 ? { images: evidenceImages } : {}),
+      },
       createdAt: new Date().toISOString(),
     });
 
@@ -351,6 +364,7 @@ export const buildAppTool: ToolDefinition = {
       appDir,
       appUrl,
       prompt: cliPrompt,
+      brief: prompt,
       systemPrompt: personaPrompt,
       sessionId: sessionId || undefined,
       model: buildModel,

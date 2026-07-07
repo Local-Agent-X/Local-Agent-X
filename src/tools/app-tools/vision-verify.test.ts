@@ -124,6 +124,22 @@ describe("visionVerdictForScreenshot — dispatch request mapping", () => {
     // Both jobs ride the SAME single dispatch — the prompt asks for the design rubric too.
     expect(opts.prompt).toContain("Design assessment");
   });
+
+  it("carries multiple screenshots in ONE dispatch and frames them as before/after the primary action", async () => {
+    const spy = dispatchReturning('{"ok": true, "reason": "fine"}');
+    await visionVerdictForScreenshot([PNG, PNG + "2"], "a maze game", { dispatch: spy });
+    const opts = spy.mock.calls[0][0];
+    expect(opts.images).toEqual([PNG, PNG + "2"]);
+    expect(opts.prompt).toContain("AFTER clicking its primary action");
+    expect(opts.prompt).toContain("a maze game");
+  });
+
+  it("an array of only blank screenshots degrades to null without dispatching", async () => {
+    const spy = dispatchReturning('{"ok": true, "reason": "fine"}');
+    const verdict = await visionVerdictForScreenshot(["  ", ""], "a maze game", { dispatch: spy });
+    expect(verdict).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+  });
 });
 
 describe("visionVerdictForScreenshot — graded design rubric", () => {

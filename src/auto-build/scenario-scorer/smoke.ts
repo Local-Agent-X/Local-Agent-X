@@ -89,12 +89,34 @@ export interface SmokeResult {
   loadError?: string;
   /** Set when a screenshot was requested AND captured. */
   screenshotPath?: string;
+  /** Present when `interact` was requested AND the initial load was clean. */
+  interaction?: SmokeInteraction;
+}
+
+/**
+ * Second smoke phase: click the page's primary action and re-observe. A page
+ * whose breakage hides behind its Start button passes the load-time checks —
+ * this phase is what walks through that door.
+ */
+export interface SmokeInteraction {
+  /** False when no clickable primary action existed (a static page is not a failure). */
+  clicked: boolean;
+  /** Console + page errors that arrived AFTER the click only. */
+  consoleErrors: string[];
+  rootMounted: boolean;
+  /** Set when a post-interaction screenshot was requested AND captured. */
+  screenshotPath?: string;
 }
 
 export interface SmokeOptions {
   /** Capture a PNG of the settled page to this path (Playwright creates the
    *  directory). Best-effort — a capture failure never fails the smoke. */
   screenshotPath?: string;
+  /** After a CLEAN initial load, click the primary action (semantic button
+   *  role — <button>, [role=button], input[type=submit|button]), wait a beat
+   *  for rAF/canvas paint, and re-observe. Skipped when the initial load
+   *  already failed — phase 2 evidence would just repeat phase 1's. */
+  interact?: { screenshotPath?: string };
 }
 
 /**
@@ -117,10 +139,56 @@ export async function smokeUrl(url: string, loadTimeoutMs = 30_000, signal?: Abo
     await opened.page.waitForTimeout(500);
     if (signal?.aborted) return { consoleErrors: opened.errors, rootMounted: false, loadError: "aborted" };
     const rootMounted = await pageMounted(opened.page);
-    return { consoleErrors: opened.errors, rootMounted, screenshotPath: await capture() };
+    // Snapshot phase-1 errors BEFORE any interaction — opened.errors is live,
+    // and post-click errors must land in interaction.consoleErrors, not here.
+    const result: SmokeResult = {
+      consoleErrors: opened.errors.slice(),
+      rootMounted,
+      screenshotPath: await capture(),
+    };
+    if (opts?.interact && rootMounted && result.consoleErrors.length === 0 && !signal?.aborted) {
+      result.interaction = await clickPrimaryAndResmoke(opened, opts.interact);
+    }
+    return result;
   } catch (e) {
     return { consoleErrors: opened.errors, rootMounted: false, loadError: (e as Error).message.slice(0, 200), screenshotPath: await capture() };
   } finally {
     await opened.close();
   }
+}
+
+/** Post-click settle window — same rAF/canvas-paint reasoning as the 500ms
+ *  load settle, a touch longer because a Start click typically boots a render
+ *  loop rather than just painting static DOM. */
+const INTERACT_SETTLE_MS = 800;
+const CLICK_TIMEOUT_MS = 5_000;
+
+async function clickPrimaryAndResmoke(
+  opened: OpenedPage,
+  opts: { screenshotPath?: string },
+): Promise<SmokeInteraction> {
+  const { page, errors } = opened;
+  const preClickErrorCount = errors.length;
+  try {
+    // getByRole("button") is the same semantic-locator family the scenario
+    // driver resolves steps with: <button>, [role=button], input submit/button.
+    await page.getByRole("button").first().click({ timeout: CLICK_TIMEOUT_MS });
+  } catch {
+    // No button, or it isn't clickable (hidden, detached). Not a failure —
+    // plenty of legitimate apps have no primary action on their first screen.
+    return { clicked: false, consoleErrors: [], rootMounted: true };
+  }
+  await page.waitForTimeout(INTERACT_SETTLE_MS);
+  const interaction: SmokeInteraction = {
+    clicked: true,
+    consoleErrors: errors.slice(preClickErrorCount),
+    rootMounted: await pageMounted(page),
+  };
+  if (opts.screenshotPath) {
+    try {
+      await page.screenshot({ path: opts.screenshotPath, type: "png", fullPage: false });
+      interaction.screenshotPath = opts.screenshotPath;
+    } catch { /* best-effort — a capture failure never fails the smoke */ }
+  }
+  return interaction;
 }

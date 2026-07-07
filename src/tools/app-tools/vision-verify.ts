@@ -31,23 +31,29 @@ export interface VisionVerdict {
 export type VisionDispatchFn = (opts: DispatchOptions) => Promise<string | null>;
 
 /**
- * Judge a PNG screenshot (base64, no `data:` prefix) of a freshly built app.
- * Returns null when no verdict could be obtained (no Anthropic credential,
- * dispatch failure, unparseable reply) — the caller treats null as "skip".
- * Never throws.
+ * Judge one or more PNG screenshots (base64, no `data:` prefix) of a freshly
+ * built app. A single screenshot is the load-time render; two screenshots are
+ * before/after the app's primary action was clicked (the smoke gate's
+ * interact-then-re-smoke tier). Returns null when no verdict could be
+ * obtained (no Anthropic credential, dispatch failure, unparseable reply) —
+ * the caller treats null as "skip". Never throws.
  */
 export async function visionVerdictForScreenshot(
-  pngB64: string,
+  pngB64: string | string[],
   appDescription: string,
   deps: { dispatch?: VisionDispatchFn } = {},
 ): Promise<VisionVerdict | null> {
-  if (typeof pngB64 !== "string" || !pngB64.trim()) return null;
+  const shots = (Array.isArray(pngB64) ? pngB64 : [pngB64])
+    .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+  if (shots.length === 0) return null;
 
   // One dispatch does both jobs: a broken-check (biased toward ok:true — a wrong
   // "broken" verdict wastes a build retry, a wrong "ok" only loses a free check)
   // AND a graded design assessment.
   const prompt = [
-    `You are judging a screenshot of a just-built web app. The app is described as: "${appDescription}".`,
+    shots.length > 1
+      ? `You are judging ${shots.length} screenshots of a just-built web app: the first is the app as it loaded, the next was taken AFTER clicking its primary action (e.g. a Start button). The app is described as: "${appDescription}". Judge the post-interaction state with the same rigor — an app that renders garbage after its Start button is broken.`
+      : `You are judging a screenshot of a just-built web app. The app is described as: "${appDescription}".`,
     "",
     'Respond with strict JSON only, no prose: {"ok": boolean, "reason": string, "design": {"score": integer, "issues": [string]}}',
     "",
@@ -68,7 +74,7 @@ export async function visionVerdictForScreenshot(
       prompt,
       provider: "anthropic",
       anthropicModel: dispatchBackgroundModel("anthropic"),
-      images: [pngB64],
+      images: shots,
       temperature: 0,
       maxTokens: 200,
     });

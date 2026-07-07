@@ -15,13 +15,16 @@
  * the bottom; the store-touching gatherer on top.
  */
 
+import { existsSync } from "node:fs";
 import { listOps } from "../ops/op-store.js";
 import { readOpMessages, firstUserMessageText } from "../canonical-loop/index.js";
+import { VERIFY_EVIDENCE_MARKER } from "../canonical-loop/adapters/app-build-verify-adapter.js";
 
 /** Most recent prior builds included. Newest last (chronological read). */
 const MAX_PRIOR_OPS = 3;
 const BRIEF_CAP = 1_500;
 const REPORT_CAP = 2_000;
+const GATE_CAP = 1_500;
 
 export interface PriorBuildEntry {
   createdAt: string;
@@ -32,6 +35,13 @@ export interface PriorBuildEntry {
   brief: string;
   /** The builder's final assistant message (its closing report). */
   finalReport: string;
+  /** The verify gate's rejection (smoke / vision judge), when the build was
+   *  flipped to failed AT the terminal — the ground truth the final report's
+   *  APP_READY claim contradicts. */
+  gateFailure?: string;
+  /** Screenshot evidence the gate attached to its rejection. filePath refs
+   *  only — bytes are read at request time by the transports. */
+  evidence?: Array<{ name: string; filePath: string }>;
 }
 
 /**
@@ -50,16 +60,67 @@ export function gatherPriorBuildSessions(appUrl: string, opType: string): PriorB
   const entries: PriorBuildEntry[] = [];
   for (const op of prior) {
     const brief = extractBuildBrief(firstUserMessageText(op.id));
-    const finalReport = lastAssistantText(op.id);
-    if (!brief && !finalReport) continue;
+    const rows = readOpMessages(op.id);
+    const finalReport = lastAssistantText(rows);
+    const gate = lastVerifyEvidence(rows);
+    if (!brief && !finalReport && !gate) continue;
     entries.push({
       createdAt: op.createdAt,
       status: op.status,
       brief: brief.slice(0, BRIEF_CAP),
       finalReport: finalReport.slice(0, REPORT_CAP),
+      ...(gate ? { gateFailure: gate.detail.slice(0, GATE_CAP), evidence: gate.evidence } : {}),
     });
   }
   return entries;
+}
+
+/**
+ * The verify gate's failure evidence row: a user message the gate appended at
+ * the failed terminal, marker-prefixed, optionally carrying screenshot image
+ * refs. Newest wins when a poison op somehow failed the gate more than once.
+ */
+function lastVerifyEvidence(
+  rows: ReturnType<typeof readOpMessages>,
+): { detail: string; evidence: Array<{ name: string; filePath: string }> } | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row.role !== "user") continue;
+    const c = row.content as { text?: unknown; images?: unknown } | null;
+    const text = c && typeof c === "object" && typeof c.text === "string" ? c.text : "";
+    if (!text.startsWith(VERIFY_EVIDENCE_MARKER)) continue;
+    const evidence: Array<{ name: string; filePath: string }> = [];
+    if (Array.isArray(c?.images)) {
+      for (const img of c.images) {
+        const o = img as { name?: unknown; filePath?: unknown };
+        if (typeof o?.name === "string" && typeof o?.filePath === "string") {
+          evidence.push({ name: o.name, filePath: o.filePath });
+        }
+      }
+    }
+    return { detail: text.slice(VERIFY_EVIDENCE_MARKER.length).trim(), evidence };
+  }
+  return null;
+}
+
+/**
+ * Screenshot evidence for the NEXT build's seeded user message: the newest
+ * prior entry that carries gate evidence, filtered to files still on disk
+ * (the gate rewrites .lax-build/smoke*.png per run — a pruned or moved app
+ * dir simply attaches nothing). Shape matches the canonical user-image
+ * envelope; url stays empty because transports read bytes from filePath.
+ */
+export function evidenceImagesFromPriorSessions(
+  entries: PriorBuildEntry[],
+): Array<{ url: string; name: string; filePath: string }> {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const evidence = entries[i].evidence;
+    if (!evidence || evidence.length === 0) continue;
+    return evidence
+      .filter((e) => existsSync(e.filePath))
+      .map((e) => ({ url: "", name: e.name, filePath: e.filePath }));
+  }
+  return [];
 }
 
 /**
@@ -72,8 +133,7 @@ export function extractBuildBrief(seededText: string): string {
   return (m ? m[1] : seededText).trim();
 }
 
-function lastAssistantText(opId: string): string {
-  const rows = readOpMessages(opId);
+function lastAssistantText(rows: ReturnType<typeof readOpMessages>): string {
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
     if (row.role !== "assistant") continue;
@@ -100,6 +160,7 @@ export function renderPriorBuildBlock(entries: PriorBuildEntry[]): string | null
     const tag = e.status === "failed" ? " (BUILD FAILED — do not repeat this approach)" : "";
     const lines = [`[${day}] brief: ${e.brief || "(unavailable)"}`];
     if (e.finalReport) lines.push(`[${day}] builder's final report${tag}: ${e.finalReport}`);
+    if (e.gateFailure) lines.push(`[${day}] verify gate REJECTED that build (this is the ground truth, not the report above): ${e.gateFailure}`);
     return lines.join("\n");
   });
   return (
@@ -108,9 +169,4 @@ export function renderPriorBuildBlock(entries: PriorBuildEntry[]): string | null
     `treat past "final report" claims as UNVERIFIED — if the user is asking for a fix, ` +
     `something in them was wrong.\n\n${parts.join("\n\n")}`
   );
-}
-
-/** One-call convenience for build-app.ts: gather + render. */
-export function renderPriorBuildContext(appUrl: string, opType: string): string | null {
-  return renderPriorBuildBlock(gatherPriorBuildSessions(appUrl, opType));
 }

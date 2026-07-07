@@ -30,7 +30,7 @@ import type { ProviderStateEnvelope } from "../contract-types.js";
 import { verifyWriteLanded } from "../../tools/verify.js";
 import type { AppTier } from "../../tools/app-tier.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
-import { AppBuildVerifyAdapter, type AppSmokeGateRunner } from "./app-build-verify-adapter.js";
+import { AppBuildVerifyAdapter, type AppSmokeGateRunner, type AppVisionJudge } from "./app-build-verify-adapter.js";
 import { createAnthropicAdapter } from "./anthropic.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
@@ -54,6 +54,9 @@ export interface AppBuildAdapterOptions {
    *  (cli-subprocess strategy). Ignored on the in-canonical path, which
    *  reads its per-build user message from op_messages. */
   prompt: string;
+  /** The user's RAW build brief (pre-render) — what the verify gate's vision
+   *  judge compares the final render against. Omitted → judge skipped. */
+  brief?: string;
   /** Persona prompt for the in-canonical-sub-agent strategy (renderPersonaPrompt). */
   systemPrompt: string;
   sessionId?: string;
@@ -74,6 +77,9 @@ export interface AppBuildAdapterOptions {
   /** Test seam: override the headless smoke gate so unit tests don't launch
    *  a real browser. Production passes nothing. */
   smokeGate?: AppSmokeGateRunner;
+  /** Test seam: override the verify gate's vision judge so unit tests never
+   *  dispatch a model call. Production passes nothing. */
+  visionJudge?: AppVisionJudge;
 }
 
 export interface ProviderAdapterFactoryOptions {
@@ -119,7 +125,10 @@ export async function createAppBuildAdapter(opts: AppBuildAdapterOptions): Promi
         sessionId: opts.sessionId,
         model: opts.model,
       });
-  return new AppBuildVerifyAdapter(inner, opts.appDir, opts.tier, opts.smokeGate);
+  return new AppBuildVerifyAdapter(inner, opts.appDir, opts.tier, opts.smokeGate, {
+    brief: opts.brief,
+    judge: opts.visionJudge,
+  });
 }
 
 class CliBuildAdapter implements Adapter {

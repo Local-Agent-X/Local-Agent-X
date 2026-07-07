@@ -985,8 +985,9 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
    (display:none, not removed) so updateAgentFeed's targeted writes + the 1s
    resync keep finding their selectors and a late trailing event never throws.
    Terminal headers get a pointer + a chevron affordance; clicking toggles the
-   `folded` class (chat-agent-feeds.js). Running/waiting cards (data-terminal="0")
-   are never folded and their header stays inert. */
+   `folded` class (chat-agent-feeds.js). Running/waiting MAIN cards
+   (data-terminal="0") are never folded and their header stays inert; AMBIENT
+   cards (.ambient) fold/expand at any status — see the ambient dock below. */
 .agent-feed-card.folded{padding-top:6px;padding-bottom:6px}
 .agent-feed-card.folded .agent-feed-header{margin-bottom:0}
 .agent-feed-card.folded>:not(.agent-feed-header){display:none}
@@ -1046,6 +1047,16 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 /* The ambient "dreaming"/"scanning" activity word (its own class so
    updateAgentFeed's .agent-feed-status write never overwrites it). */
 .agent-feeds-ambient .ambient-status{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+/* Ambient cards fold/expand on header-click at ANY status (their body —
+   worker-latest + activity trace + mission report link — is the only window
+   into a cron/dream op). The `.ambient` marker class survives updateAgentFeed's
+   className rewrite (chat-agent-feeds.js re-appends it). Chevron rides on the
+   activity word: ▸ folded / ▾ expanded, mirroring the terminal-card affordance. */
+.agent-feed-card.ambient .agent-feed-header{cursor:pointer}
+.agent-feed-card.ambient .ambient-status::after{content:'\25BE';margin-left:5px;font-size:.7em;opacity:.55}
+.agent-feed-card.ambient.folded .ambient-status::after{content:'\25B8'}
+.agent-feed-card.ambient .agent-feed-header{margin-bottom:6px}
+.agent-feed-card.ambient.folded .agent-feed-header{margin-bottom:0}
 
 /* ── Mobile hamburger (feature 95) ── */
 #mobile-menu-btn{display:none;position:fixed;top:10px;left:10px;z-index:1100;background:var(--surface);border:1px solid var(--border);color:var(--text);width:36px;height:36px;border-radius:8px;font-size:1.2rem;cursor:pointer;align-items:center;justify-content:center}

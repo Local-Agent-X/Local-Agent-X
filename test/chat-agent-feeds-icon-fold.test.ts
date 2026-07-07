@@ -30,7 +30,12 @@ let partitionAmbient: (m: Record<string, Rec> | undefined) => {
 };
 
 beforeAll(() => {
-  const src = readFileSync(join(here, "../public/js/chat-agent-feeds-render.js"), "utf8");
+  // partitionAmbient moved to the -ambient sibling (400-LOC split); load both
+  // sources in one scope, mirroring the classic-script global environment.
+  const src =
+    readFileSync(join(here, "../public/js/chat-agent-feeds-render.js"), "utf8") +
+    "\n" +
+    readFileSync(join(here, "../public/js/chat-agent-feeds-ambient.js"), "utf8");
   // eslint-disable-next-line no-new-func
   const factory = new Function(
     src + "\nreturn { iconForType, isTerminalStatus, DEFAULT_AGENT_ICON, formatTokens, tokenBarFillPct, partitionAmbient };"

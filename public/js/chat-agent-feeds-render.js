@@ -97,6 +97,27 @@ function foldedAfterUpdate(nowTerminal, prevTerminal, prevFolded) {
   return !!prevFolded;                           // preserve user's / prior state
 }
 
+// Result-link markup for a URL-producing op (build_app URL, cron report, …).
+// Single chokepoint shared by updateAgentFeed's live write, renderAgentCard,
+// and renderAmbientCard — so the link renders identically live and across
+// full re-renders (chat-switch used to silently drop it).
+//
+// /api/* and loopback URLs need the auth token appended — Electron child
+// windows (and external browser tabs) don't carry the parent's Authorization
+// header, so a bare /api/cron/.../reports/latest 401's. The server accepts
+// ?token=<bearer> as an equivalent to Authorization: Bearer. Live failure
+// 2026-05-19: user clicked the worker's report link and got "Unauthorized".
+// Label shows the BARE url (no token leakage); href gets the authed variant.
+// esc() on the href guards against any agent-controlled string reaching it.
+function resultLinkHtml(rawUrl) {
+  var needsAuth = rawUrl.indexOf('/api/') === 0 || rawUrl.indexOf('http://127.0.0.1') === 0 || rawUrl.indexOf('http://localhost') === 0;
+  var token = (typeof AUTH_TOKEN !== 'undefined' && AUTH_TOKEN) ? AUTH_TOKEN : (localStorage.getItem('lax_token') || '');
+  var authedUrl = (needsAuth && token && rawUrl.indexOf('token=') === -1)
+    ? rawUrl + (rawUrl.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(token)
+    : rawUrl;
+  return '<a href="' + esc(authedUrl) + '" target="_blank" rel="noopener" style="color:var(--accent,#3a7);text-decoration:none">↗ Open: ' + esc(rawUrl) + '</a>';
+}
+
 // ── C6: run-lineage tree build (PURE) ──
 // Input:  the agentFeedsData map ({ id → agent record }).
 // Output: an ordered array of top-level render nodes:
@@ -293,7 +314,7 @@ function renderAgentCard(agent, childrenHtml) {
       '</div>' +
       '<span class="worker-token-count" style="font-variant-numeric:tabular-nums;font-family:var(--mono,monospace);font-size:.62rem;color:var(--muted,#888);white-space:nowrap;min-width:2.5em;text-align:right">' + esc(tokLabel) + '</span>' +
     '</div>' +
-    '<div class="agent-feed-result-link" style="display:none;padding:.4rem .55rem;font-size:.75rem;border-top:1px solid var(--border,#333)"></div>' +
+    '<div class="agent-feed-result-link" style="display:' + (agent.resultUrl ? 'block' : 'none') + ';padding:.4rem .55rem;font-size:.75rem;border-top:1px solid var(--border,#333)">' + (agent.resultUrl ? resultLinkHtml(agent.resultUrl) : '') + '</div>' +
     '<div class="agent-feed-controls">' +
       (isPaused
         ? '<button class="agent-ctrl-btn" data-agent-action="resume" data-agent-id="' + safeId + '">Resume</button>'
@@ -345,56 +366,7 @@ function renderAgentCard_inline(agent) {
   '</div>';
 }
 
-// ── AMBIENT background agents (own quiet corner of the panel) ── Dream =
-// memory_consolidation, research/cron = scheduled_mission; dock below the tree.
-const AMBIENT_OP_TYPES = { memory_consolidation: 1, scheduled_mission: 1 };
-function isAmbientType(type) { return !!AMBIENT_OP_TYPES[type]; }
-
-// Pure: split the feeds map into { ambient, main } by op type. MAIN feeds
-// buildAgentFeedTree unchanged (byte-identical when no ambient agents exist).
-function partitionAmbient(dataMap) {
-  var map = dataMap || {}, ambient = {}, main = {}, ids = Object.keys(map);
-  for (var i = 0; i < ids.length; i++) {
-    var id = ids[i], rec = map[id] || {};
-    if (isAmbientType(rec.type)) ambient[id] = rec; else main[id] = rec;
-  }
-  return { ambient: ambient, main: main };
-}
-
-// Compact ambient "activity" word (dream → dreaming, cron → scanning). Static
-// per type; the card's className-driven dim + dot convey running-vs-finished.
-function ambientStatusLabel(agent) {
-  if (agent.type === 'memory_consolidation') return 'dreaming';
-  if (agent.type === 'scheduled_mission') return 'scanning';
-  return agent.status || 'ambient';
-}
-
-// Compact AMBIENT card — a minimal *variant* of renderAgentCard (not a fork):
-// same iconForType glyph, `agent-card-<id>` id, `.agent-status-dot` + dismiss
-// contract (updateAgentFeed / removeAgentFeed keep working untouched). Label is
-// `.ambient-status` (NOT `.agent-feed-status`) so the status write can't clobber
-// the "dreaming"/"scanning" word; all inside `.agent-feed-header` (fold = no-op).
-function renderAmbientCard(agent) {
-  var icon = iconForType(agent.type || agent.role);
-  var status = agent.status || 'working';
-  var safeId = esc(agent.id);
-  return '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + '" data-terminal="' + (isTerminalStatus(status) ? '1' : '0') + '">' +
-    '<div class="agent-feed-header">' +
-      '<span class="agent-feed-icon">' + icon + '</span>' +
-      '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +
-      '<span class="ambient-status"><span class="agent-status-dot"></span> ' + esc(ambientStatusLabel(agent)) + '</span>' +
-      '<button class="agent-feed-dismiss" title="Dismiss card (does not cancel)" data-agent-action="dismiss" data-agent-id="' + safeId + '">×</button>' +
-    '</div>' +
-  '</div>';
-}
-
-// Pure: full innerHTML for the AMBIENT dock; '' when empty so the caller hides
-// the whole region (no stray header). Ambient cards are flat — they never nest.
-function renderAmbientRegion(ambient) {
-  var map = ambient || {}, ids = Object.keys(map);
-  if (ids.length === 0) return '';
-  var cards = '';
-  for (var i = 0; i < ids.length; i++) cards += renderAmbientCard(map[ids[i]]);
-  return '<div class="agent-feeds-ambient-header"><span class="agent-feeds-ambient-title">Ambient</span></div>' +
-    '<div class="agent-feeds-ambient-list">' + cards + '</div>';
-}
+// ── AMBIENT background agents moved to chat-agent-feeds-ambient.js ──
+// (AMBIENT_OP_TYPES / isAmbientType / partitionAmbient / ambientStatusLabel /
+// renderAmbientCard / renderAmbientRegion) — split out when this file hit the
+// 400-LOC gate. Load order: that script rides right after this one in app.html.

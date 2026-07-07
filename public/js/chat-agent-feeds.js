@@ -21,6 +21,11 @@
 // State (agentFeedsOpen / agentFeedsData / agentFeedsAutoOpen) is declared
 // in chat-agent-feeds-autoopen.js, which loads before this file.
 
+// Ambient cards the user has expanded (id → 1). Session-scoped, never
+// persisted; read by renderAmbientRegion so a user-opened card survives the
+// full innerHTML rebuilds _renderAgentFeedsList does on every add/update.
+var ambientExpanded = {};
+
 function toggleAgentFeeds() {
   var panel = document.getElementById('agent-feeds');
   if (!panel) return;
@@ -149,7 +154,12 @@ function updateAgentFeed(agentId, update) {
     // C8: fold survives the className rewrite (foldedAfterUpdate: render sibling).
     var nowTerminal = isTerminalStatus(existing.status);
     var folded = foldedAfterUpdate(nowTerminal, card.getAttribute('data-terminal') === '1', card.classList.contains('folded'));
-    card.className = 'agent-feed-card ' + (existing.status || 'working') + (folded ? ' folded' : '') + ((existing.type === 'orchestrator' || existing.type === 'supervisor') ? ' supervisor' : '');
+    // `ambient` must survive the rewrite — it's what lets the header-click
+    // fold toggle work at any status. Keep ambientExpanded in sync when
+    // first-terminal auto-folds the card, so the next dock rebuild agrees.
+    var ambient = isAmbientType(existing.type);
+    if (ambient && folded) delete ambientExpanded[agentId];
+    card.className = 'agent-feed-card ' + (existing.status || 'working') + (folded ? ' folded' : '') + (ambient ? ' ambient' : '') + ((existing.type === 'orchestrator' || existing.type === 'supervisor') ? ' supervisor' : '');
     card.setAttribute('data-terminal', nowTerminal ? '1' : '0');
     if (update.streamText) {
       var textEl = card.querySelector('.worker-text');
@@ -198,27 +208,14 @@ function updateAgentFeed(agentId, update) {
       statusEl.innerHTML = '<span class="agent-status-dot"></span> ' + esc(existing.status || 'working');
     }
     // Build_app and other URL-producing ops set resultUrl on completion.
-    // Render as a clickable "Open" link below the worker activity. esc()
-    // on the href guards against any agent-controlled string reaching href.
-    //
-    // /api/* URLs need the auth token appended — Electron child windows
-    // (and external browser tabs) don't carry the parent's Authorization
-    // header, so a bare /api/cron/.../reports/latest 401's. The server
-    // accepts ?token=<bearer> as an equivalent to Authorization: Bearer.
-    // Live failure 2026-05-19: user clicked the worker's report link
-    // and got {"error":"Unauthorized"}.
+    // Render as a clickable "Open" link below the worker activity. The
+    // markup (incl. the ?token= auth append for /api/* URLs) is built by
+    // resultLinkHtml in chat-agent-feeds-render.js — one chokepoint shared
+    // with the render-time paths, so live write and re-render stay identical.
     if (update.resultUrl) {
       var linkEl = card.querySelector('.agent-feed-result-link');
       if (linkEl) {
-        var rawUrl = update.resultUrl;
-        var needsAuth = rawUrl.indexOf('/api/') === 0 || rawUrl.indexOf('http://127.0.0.1') === 0 || rawUrl.indexOf('http://localhost') === 0;
-        var token = (typeof AUTH_TOKEN !== 'undefined' && AUTH_TOKEN) ? AUTH_TOKEN : (localStorage.getItem('lax_token') || '');
-        var authedUrl = (needsAuth && token && rawUrl.indexOf('token=') === -1)
-          ? rawUrl + (rawUrl.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(token)
-          : rawUrl;
-        // Show the bare URL to the user (no token leakage in the label),
-        // but link to the authed variant so the click actually loads.
-        linkEl.innerHTML = '<a href="' + esc(authedUrl) + '" target="_blank" rel="noopener" style="color:var(--accent,#3a7);text-decoration:none">↗ Open: ' + esc(rawUrl) + '</a>';
+        linkEl.innerHTML = resultLinkHtml(update.resultUrl);
         linkEl.style.display = 'block';
       }
     }
@@ -281,7 +278,7 @@ function _renderAgentFeedsList() {
     list.innerHTML = buildAgentFeedTree(parts.main).map(_renderAgentFeedNode).join('');
     if (typeof Spring !== 'undefined') Spring.staggerIn(Array.from(list.querySelectorAll('.agent-feed-card')), { delay: 50, preset: 'stiff' });
   }
-  var region = document.getElementById('agent-feeds-ambient'); if (region) { var ah = renderAmbientRegion(parts.ambient); region.innerHTML = ah; region.style.display = ah ? '' : 'none'; }
+  var region = document.getElementById('agent-feeds-ambient'); if (region) { var ah = renderAmbientRegion(parts.ambient, ambientExpanded); region.innerHTML = ah; region.style.display = ah ? '' : 'none'; }
   _updateAgentCount();
 }
 
@@ -307,63 +304,10 @@ function _updateAgentCount() {
 // belt-and-suspenders tick than chase the exact race. 1s cadence is
 // cheap (textContent writes only, no innerHTML rebuilds) and matches
 // the user's "I see motion every second or two" expectation.
-// Inline agent-card click → open the panel and scroll the matching card into
-// view. Delegated, since sanitizeHtml() strips inline on*= handlers from the
-// inline card markup. The id rides in data-agent-id (set in
-// renderAgentCard_inline) and is read back from dataset here.
-document.addEventListener('click', function(e) {
-  var card = e.target.closest ? e.target.closest('.agent-inline-card') : null;
-  if (!card) return;
-  toggleAgentFeeds();
-  var id = card.dataset.agentId;
-  if (!id) return;
-  var target = document.getElementById('agent-card-' + id);
-  if (target) target.scrollIntoView({ behavior: 'smooth' });
-});
-
-// Worker-card controls are delegated so the markup carries no inline on*=
-// handlers — the id rides in data-agent-id rather than being interpolated into
-// a handler's JS string (which an entity-encoded id could break out of).
-document.addEventListener('click', function(e) {
-  if (!e.target.closest) return;
-  var btn = e.target.closest('[data-agent-action]');
-  if (btn) {
-    var id = btn.dataset.agentId;
-    switch (btn.dataset.agentAction) {
-      case 'resume': onAgentResume(id); break;
-      case 'pause': onAgentPause(id); break;
-      case 'redirect': onAgentRedirect(id); break;
-      case 'stayinline': onAgentStayInline(id); break;
-      case 'cancel': onAgentCancel(id); break;
-      case 'dismiss': onAgentDismiss(id); break;
-    }
-    return;
-  }
-  // C8 "calm": click a TERMINAL card's header to fold/expand, per-card (dismiss above returns first).
-  var header = e.target.closest('.agent-feed-header');
-  if (header) {
-    var foldCard = header.closest('.agent-feed-card');
-    if (foldCard && foldCard.getAttribute('data-terminal') === '1') foldCard.classList.toggle('folded');
-    return;
-  }
-  var toggle = e.target.closest('[data-agent-toggle="tools"]');
-  if (toggle) {
-    var group = toggle.parentElement;
-    var body = group.querySelector('.worker-tools-body');
-    var open = group.classList.toggle('open');
-    if (body) body.style.display = open ? 'block' : 'none';
-    var chev = toggle.querySelector('.worker-tools-chevron');
-    if (chev) chev.textContent = open ? '▼' : '▶';
-  }
-});
-document.addEventListener('keydown', function(e) {
-  if (e.key !== 'Enter' || !e.target.closest) return;
-  var input = e.target.closest('[data-agent-redirect]');
-  if (!input) return;
-  sendAgentRedirect(input.dataset.agentRedirect, input.value);
-  input.value = '';
-  input.classList.remove('visible');
-});
+// Delegated card click/keydown handlers (inline-card scroll, control buttons,
+// header fold, redirect input) live in chat-agent-feeds-actions.js with the
+// on*Agent handlers they dispatch to — moved when this file hit the 400-LOC
+// source-hygiene ceiling.
 
 setInterval(function() {
   var ids = Object.keys(agentFeedsData);

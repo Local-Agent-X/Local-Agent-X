@@ -77,6 +77,40 @@ describe("writeTool — write-time syntax gate", () => {
   });
 });
 
+// The USER-authorized escape hatch: when the user explicitly wants a change
+// they know breaks the file, allow_syntax_errors:true lands it — but the
+// parse error must still surface as a note (authorized ≠ silent), and the
+// rejection message must advertise the flag so the model can relay the option.
+describe("allow_syntax_errors override", () => {
+  const BROKEN_EDIT = { old_string: "return a + b;", new_string: "return a + ;" };
+
+  it("editTool LANDS a breaking edit with allow_syntax_errors:true AND notes the errors", async () => {
+    const file = join(dir, "math.ts");
+    writeFileSync(file, CLEAN_TS);
+    const r = await editTool.execute({ path: file, ...BROKEN_EDIT, allow_syntax_errors: true });
+    expect(r.isError).toBeFalsy();
+    expect(readFileSync(file, "utf-8")).toContain("return a + ;");
+    expect(String(r.metadata?.recovery ?? "")).toContain("user-authorized override");
+  });
+
+  it("still REJECTS by default, and the rejection advertises the flag", async () => {
+    const file = join(dir, "math.ts");
+    writeFileSync(file, CLEAN_TS);
+    const r = await editTool.execute({ path: file, ...BROKEN_EDIT });
+    expect(r.isError).toBe(true);
+    expect(String(r.content)).toContain("allow_syntax_errors");
+    expect(readFileSync(file, "utf-8")).toBe(CLEAN_TS);
+  });
+
+  it("writeTool LANDS a broken new .ts with allow_syntax_errors:true", async () => {
+    const file = join(dir, "broken-new.ts");
+    const r = await writeTool.execute({ path: file, content: "export const x = ;\n", allow_syntax_errors: true });
+    expect(r.isError).toBeFalsy();
+    expect(readFileSync(file, "utf-8")).toBe("export const x = ;\n");
+    expect(String(r.metadata?.recovery ?? "")).toContain("user-authorized override");
+  });
+});
+
 // A machine-specific home path is a NON-FATAL portability nudge, not a reject:
 // the file must still land (an absolute home path can be intentional), and the
 // model must get a recovery note pointing at process.cwd()/os.homedir(). This is

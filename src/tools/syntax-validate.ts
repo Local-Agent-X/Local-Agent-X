@@ -106,6 +106,9 @@ export function syntaxRejectionMessage(filePath: string, issue: string): string 
     `currently parses clean, corrupting ${filePath}:\n\n${issue}\n\n` +
     `The file is UNCHANGED on disk. Re-read the region, fix your replacement ` +
     `text (watch for an unbalanced brace/paren/bracket, a missing comma, or a ` +
-    `truncated string or expression), and try the edit again.`
+    `truncated string or expression), and try the edit again.\n\n` +
+    `If the USER explicitly asked for this change knowing it breaks the file ` +
+    `(intentional breakage, mid-refactor state, test fixture), retry with ` +
+    `allow_syntax_errors:true. Never set it on your own initiative.`
   );
 }

@@ -93,19 +93,25 @@ function applyStringEdit(content: string, rawOld: string, rawNew: string, replac
 // Guard + write-time syntax gate + write, shared by every edit-family tool. The
 // gate rejects an edit that would turn a syntactically-clean file broken (the
 // file is left untouched), so a bad edit never lands on disk.
-function commitEdit(filePath: string, updated: string, verb: string): ToolResult {
+// allowSyntaxErrors is the USER-authorized escape hatch (a reliability rail,
+// not a security one): the gate stops landing the write but still surfaces the
+// parse error as a note, so authorized breakage is never silent breakage.
+function commitEdit(filePath: string, updated: string, verb: string, allowSyntaxErrors = false): ToolResult {
   const connectorRejection = connectorManifestWriteRejection(filePath);
   if (connectorRejection) return err(connectorRejection);
   const guard = checkAppWrite(filePath, updated);
   if (!guard.allow) return err(writeGuardRejectionMessage(guard.reason ?? "policy violation"));
   const before = existsSync(filePath) ? readFileSync(filePath, "utf-8") : null;
   const verdict = checkEditSyntax(filePath, before, updated);
-  if (verdict.reject) return err(syntaxRejectionMessage(filePath, verdict.issue as string));
+  if (verdict.reject && !allowSyntaxErrors) return err(syntaxRejectionMessage(filePath, verdict.issue as string));
   writeFileSync(filePath, updated, "utf-8");
   // Non-fatal portability nudge (the file already landed): a machine-specific
   // home path baked into portable source is the "works on my machine" bug.
   const portability = checkHardcodedHomePath(filePath, before, updated);
-  const note = [verdict.issue, portability].filter(Boolean).join("\n\n");
+  const syntaxNote = verdict.reject
+    ? `Wrote WITH syntax errors (user-authorized override):\n${verdict.issue}`
+    : verdict.issue;
+  const note = [syntaxNote, portability].filter(Boolean).join("\n\n");
   return ok(
     `${verb} ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
     note ? { recovery: note } : undefined,
@@ -123,6 +129,7 @@ export const editTool: ToolDefinition = {
       old_string: { type: "string", description: "String to find and replace. Whitespace-tolerant, but content must match." },
       new_string: { type: "string", description: "Replacement string" },
       replace_all: { type: "boolean", description: "Replace every occurrence instead of requiring a unique match. Default false." },
+      allow_syntax_errors: { type: "boolean", description: "Land the edit even if it introduces syntax errors into a clean file. ONLY when the user explicitly asked for a change they know breaks the file. Default false." },
     },
     required: ["path", "old_string", "new_string"],
   },
@@ -135,7 +142,7 @@ export const editTool: ToolDefinition = {
       const res = applyStringEdit(content, String(args.old_string), String(args.new_string), Boolean(args.replace_all));
       if (!res.ok) return err(`${res.message} (${filePath})`, res.recovery ? { recovery: res.recovery } : undefined);
       if (res.tolerant) logger.info(`[edit] whitespace-tolerant match used for ${filePath} (exact old_string missed; relative indentation preserved)`);
-      return commitEdit(filePath, res.updated, "Edited");
+      return commitEdit(filePath, res.updated, "Edited", Boolean(args.allow_syntax_errors));
     } catch (e) {
       return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
     }
@@ -154,6 +161,7 @@ export const editLinesTool: ToolDefinition = {
       end_line: { type: "number", description: "1-based inclusive last line to replace. Omit to insert rather than replace." },
       new_string: { type: "string", description: "Replacement / inserted text. May span multiple lines; no trailing newline needed." },
       insert: { type: "string", enum: ["before", "after"], description: "Where to insert relative to start_line when end_line is omitted. Default after." },
+      allow_syntax_errors: { type: "boolean", description: "Land the edit even if it introduces syntax errors into a clean file. ONLY when the user explicitly asked for a change they know breaks the file. Default false." },
     },
     required: ["path", "start_line", "new_string"],
   },
@@ -187,7 +195,7 @@ export const editLinesTool: ToolDefinition = {
         verb = `Inserted ${newLines.length} line(s) into`;
       }
       const joined = out.join("\n");
-      return commitEdit(filePath, crlf ? joined.replace(/\n/g, "\r\n") : joined, verb);
+      return commitEdit(filePath, crlf ? joined.replace(/\n/g, "\r\n") : joined, verb, Boolean(args.allow_syntax_errors));
     } catch (e) {
       return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
     }
@@ -215,6 +223,7 @@ export const multiEditTool: ToolDefinition = {
           required: ["old_string", "new_string"],
         },
       },
+      allow_syntax_errors: { type: "boolean", description: "Land the edits even if they introduce syntax errors into a clean file. ONLY when the user explicitly asked for a change they know breaks the file. Default false." },
     },
     required: ["path", "edits"],
   },
@@ -240,7 +249,7 @@ export const multiEditTool: ToolDefinition = {
         content = res.updated;
       }
       if (tolerantUsed) logger.info(`[multi_edit] whitespace-tolerant match used for ${tolerantUsed}/${edits.length} edits in ${filePath}`);
-      return commitEdit(filePath, content, `Applied ${edits.length} edit(s) to`);
+      return commitEdit(filePath, content, `Applied ${edits.length} edit(s) to`, Boolean(args.allow_syntax_errors));
     } catch (e) {
       return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
     }
@@ -267,6 +276,7 @@ export const bulkReplaceTool: ToolDefinition = {
       old_string: { type: "string", description: "Exact string to find (CRLF/LF tolerant)" },
       new_string: { type: "string", description: "Replacement string" },
       dry_run: { type: "boolean", description: "Report per-file match counts without writing. Default false." },
+      allow_syntax_errors: { type: "boolean", description: "Land replacements even if they introduce syntax errors into clean files. ONLY when the user explicitly asked for a change they know breaks files. Default false." },
     },
     required: ["path", "old_string", "new_string"],
   },
@@ -311,7 +321,7 @@ export const bulkReplaceTool: ToolDefinition = {
       const count = content.split(effOld).length - 1;
       if (count === 0) continue;
       if (!dryRun) {
-        const res = commitEdit(file, content.split(effOld).join(effNew), "Bulk-replaced in");
+        const res = commitEdit(file, content.split(effOld).join(effNew), "Bulk-replaced in", Boolean(args.allow_syntax_errors));
         if (res.isError) { failed.push(`${relative(root, file)}: ${res.content}`); continue; }
       }
       changed.push({ file: relative(root, file) || file, count });

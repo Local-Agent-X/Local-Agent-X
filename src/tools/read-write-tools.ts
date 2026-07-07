@@ -121,6 +121,7 @@ export const writeTool: ToolDefinition = {
     properties: {
       path: { type: "string", description: "File path to write" },
       content: { type: "string", description: "Content to write" },
+      allow_syntax_errors: { type: "boolean", description: "Land the write even if the content has syntax errors (or breaks a clean file). ONLY when the user explicitly asked for content they know doesn't parse. Default false." },
     },
     required: ["path", "content"],
   },
@@ -175,7 +176,8 @@ export const writeTool: ToolDefinition = {
       // (see checkEditSyntax). A new file uses a clean (null) baseline, so a
       // broken new .ts/.json is refused too.
       const verdict = checkEditSyntax(filePath, before, toWrite);
-      if (verdict.reject) return err(syntaxRejectionMessage(filePath, verdict.issue as string));
+      const allowSyntaxErrors = Boolean(args.allow_syntax_errors);
+      if (verdict.reject && !allowSyntaxErrors) return err(syntaxRejectionMessage(filePath, verdict.issue as string));
       // O_NOFOLLOW write: a symlink pre-planted at filePath is rejected (ELOOP)
       // instead of redirecting the write to overwrite a file outside the
       // workspace (R4-19 write leg). The pre-dispatch gate already realpath-
@@ -184,7 +186,10 @@ export const writeTool: ToolDefinition = {
       // Non-fatal portability nudge (the file already landed): a machine-specific
       // home path baked into portable source is the "works on my machine" bug.
       const portability = checkHardcodedHomePath(filePath, before, toWrite);
-      const note = [verdict.issue, portability].filter(Boolean).join("\n\n");
+      const syntaxNote = verdict.reject
+        ? `Wrote WITH syntax errors (user-authorized override):\n${verdict.issue}`
+        : verdict.issue;
+      const note = [syntaxNote, portability].filter(Boolean).join("\n\n");
       return ok(
         `Wrote ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
         note ? { recovery: note } : undefined,

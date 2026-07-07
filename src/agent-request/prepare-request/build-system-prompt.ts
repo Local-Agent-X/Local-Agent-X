@@ -12,6 +12,7 @@ import { createLogger } from "../../logger.js";
 import { providerRiderFor } from "./provider-riders.js";
 import type { FileAccessMode } from "../../security/types.js";
 import { loadFileAccessMode } from "../../security/security-config.js";
+import { harnessNotice } from "../../context/builder.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -33,11 +34,11 @@ const COLD_START_VERBS = /\b(build|create|make|deploy|publish|launch|set\s+up|pu
 export function fileAccessGroundingBlock(mode: FileAccessMode): string {
   switch (mode) {
     case "unrestricted":
-      return "\n\n[FILE ACCESS: UNRESTRICTED] You can read ANY file on this computer. A read fails ONLY if the file does not exist or is a blocked credential/key file — nothing else. Do not refuse a read on any other grounds: call the tool and report the real result.";
+      return harnessNotice("FILE ACCESS", "Mode: UNRESTRICTED. You can read ANY file on this computer. A read fails ONLY if the file does not exist or is a blocked credential/key file — nothing else. Do not refuse a read on any other grounds: call the tool and report the real result.");
     case "common":
-      return "\n\n[FILE ACCESS: COMMON] You can read the workspace, the project, ~/.lax, and the user's content folders (Documents, Downloads, Desktop, Pictures, Videos, Music). Paths outside those are blocked; credential/key files are always blocked. Attempt the read; if it is genuinely outside the allowed roots, say so in one line and mention the user can switch to Unrestricted in Settings — don't claim you are simply unable.";
+      return harnessNotice("FILE ACCESS", "Mode: COMMON. You can read the workspace, the project, ~/.lax, and the user's content folders (Documents, Downloads, Desktop, Pictures, Videos, Music). Paths outside those are blocked; credential/key files are always blocked. Attempt the read; if it is genuinely outside the allowed roots, say so in one line and mention the user can switch to Unrestricted in Settings — don't claim you are simply unable.");
     case "workspace":
-      return "\n\n[FILE ACCESS: WORKSPACE-ONLY] Reads are limited to the workspace folder and ~/.lax. Reads elsewhere are blocked BY POLICY, not by a missing tool. Attempt the read; if it is blocked, say so in one line and tell the user they can switch to Common or Unrestricted in Settings — don't claim you are unable.";
+      return harnessNotice("FILE ACCESS", "Mode: WORKSPACE-ONLY. Reads are limited to the workspace folder and ~/.lax. Reads elsewhere are blocked BY POLICY, not by a missing tool. Attempt the read; if it is blocked, say so in one line and tell the user they can switch to Common or Unrestricted in Settings — don't claim you are unable.");
   }
 }
 
@@ -82,7 +83,7 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
   let notificationHint = "";
   if (input.memoryNotifications.length > 0) {
     const topNotifs = input.memoryNotifications.sort((a, b) => b.priority - a.priority).slice(0, 2);
-    notificationHint = "\n\n[Naturally weave into your response: " + topNotifs.map(n => n.message).join(" | ") + "]";
+    notificationHint = harnessNotice("MEMORY NOTIFICATION", "Naturally weave into your response: " + topNotifs.map(n => n.message).join(" | "));
   }
 
   // Per-tool usage guidance. Built over allAgentTools (NOT the filtered
@@ -116,7 +117,7 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
   // to ship/build/deploy class messages so we don't burn tokens nudging the
   // agent on simple chats.
   if (COLD_START_VERBS.test(input.message)) {
-    toolPromptSection += "\n\n[COLD-START HINT] This message looks like the start of a project/deploy/build task. BEFORE writing code, run memory_search on the project name, domain, or business name in case there's prior context (URLs, prior decisions, brand assets, user preferences) from earlier sessions. Cold-starting without checking memory first is a real failure mode — the agent reinvents stuff that was already discussed and ships thinner output. 1-2 memory_search calls = cheap; missing context = expensive iteration.";
+    toolPromptSection += harnessNotice("COLD-START HINT", "This message looks like the start of a project/deploy/build task. BEFORE writing code, run memory_search on the project name, domain, or business name in case there's prior context (URLs, prior decisions, brand assets, user preferences) from earlier sessions. Cold-starting without checking memory first is a real failure mode — the agent reinvents stuff that was already discussed and ships thinner output. 1-2 memory_search calls = cheap; missing context = expensive iteration.");
   }
 
   // Drain pending background-op completions for this session so the agent
@@ -193,25 +194,21 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
   // toolset (tool-selection.ts) as the hard guarantee; this directive explains
   // WHY they're gone so the model hands off cleanly instead of flailing.
   if (input.forceBuildIntent && input.buildMode !== "lean") {
-    systemPrompt +=
-      `\n\n--- TURN DIRECTIVE ---\n` +
+    systemPrompt += harnessNotice("TURN DIRECTIVE",
       `Intent classifier identified this turn as a build_app request: ${input.intentReason ?? "(no reason)"}.\n` +
       `Call the build_app tool — that is the ONLY way to build this. The build then runs as a background op (the "side agent") that owns the ENTIRE build: it runs the real toolchain, produces the artifact, and delivers the result to the user itself when done. ` +
       `Do NOT build it yourself this turn — no bash/cargo/compiler, no write/edit of source files, no send_image of a result you produced. Building it twice wastes minutes of compute and confuses the user with a duplicate output. ` +
-      `After calling build_app, just briefly tell the user it's building and they'll see it when it's ready.\n` +
-      `--- END TURN DIRECTIVE ---\n`;
+      `After calling build_app, just briefly tell the user it's building and they'll see it when it's ready.`);
   } else if (input.forceBuildIntent && input.buildMode === "lean") {
     // Lean build ask: right intent, thin spec. Prefer build_app but DISCOVER
     // first — a one-line ask ("build me a page for my gym") shipped a generic
     // page with zero discovery when it hard-forced. No pin fires this turn, so
     // the model is free to ask before building.
-    systemPrompt +=
-      `\n\n--- TURN DIRECTIVE ---\n` +
+    systemPrompt += harnessNotice("TURN DIRECTIVE",
       `The user is asking to build something (${input.intentReason ?? "runnable app/page/tool"}), but the ask is thin — the specifics aren't stated. ` +
       `If you want to build a runnable app, build_app is the right tool (the build runs as a background op that owns the whole build — don't build it inline with bash/write/edit). ` +
       `But do NOT build blind: if the spec is one line, first ask 2-3 short clarifying questions (purpose, audience, must-have features), then call build_app once you know what to make. ` +
-      `A generic page nobody asked for is worse than one clarifying question.\n` +
-      `--- END TURN DIRECTIVE ---\n`;
+      `A generic page nobody asked for is worse than one clarifying question.`);
   }
 
   return systemPrompt;

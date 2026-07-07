@@ -59,15 +59,15 @@ async function main(): Promise<void> {
     const { fileAccessGroundingBlock } = await import("../../src/agent-request/prepare-request/build-system-prompt.js");
     const unrestricted = fileAccessGroundingBlock("unrestricted");
     check("fix2-block", "unrestricted block says you can read ANY file",
-      unrestricted.includes("[FILE ACCESS: UNRESTRICTED]") && unrestricted.includes("ANY file"));
+      unrestricted.includes("[HARNESS NOTE: FILE ACCESS]") && unrestricted.includes("Mode: UNRESTRICTED.") && unrestricted.includes("ANY file"));
     const workspace = fileAccessGroundingBlock("workspace");
     check("fix2-block", "workspace block says reads are blocked BY POLICY, not a missing tool",
-      workspace.includes("[FILE ACCESS: WORKSPACE-ONLY]") &&
+      workspace.includes("[HARNESS NOTE: FILE ACCESS]") && workspace.includes("Mode: WORKSPACE-ONLY.") &&
       workspace.includes("BY POLICY") && /not by a missing tool/i.test(workspace) &&
       workspace.includes("Settings"));
     const common = fileAccessGroundingBlock("common");
     check("fix2-block", "common block names the user content folders + points at Settings",
-      common.includes("[FILE ACCESS: COMMON]") && common.includes("Documents") && common.includes("Settings"));
+      common.includes("[HARNESS NOTE: FILE ACCESS]") && common.includes("Mode: COMMON.") && common.includes("Documents") && common.includes("Settings"));
 
     // The live read-mode → block composition build-system-prompt.ts performs.
     const { loadFileAccessMode } = await import("../../src/security/security-config.js");

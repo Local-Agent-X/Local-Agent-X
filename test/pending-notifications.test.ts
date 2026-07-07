@@ -360,9 +360,12 @@ describe("formatNotificationsForSystemPrompt", () => {
     expect(out).toContain("3 ops finished");
   });
 
-  it("includes the [end background completions] marker", () => {
+  it("wraps the block in the unified harness-notice format", () => {
     const out = formatNotificationsForSystemPrompt([mkNote()]);
-    expect(out).toContain("[end background completions]");
+    expect(out).toContain("[HARNESS NOTE: BACKGROUND COMPLETIONS]");
+    expect(out).toContain("[END HARNESS NOTE]");
+    expect(out).not.toContain("[end background completions]");
+    expect(out).not.toContain("[BACKGROUND COMPLETIONS —");
   });
 
   it("does NOT add truncation note when summary is exactly the 180-char preview length", () => {

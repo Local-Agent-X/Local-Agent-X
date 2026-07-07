@@ -31,6 +31,8 @@
  *     where user never replies — keeps the queue small)
  */
 
+import { harnessNotice } from "../context/builder.js";
+
 export interface PendingNotification {
   opId: string;
   status: "completed" | "failed" | "cancelled";
@@ -212,8 +214,8 @@ export function formatNotificationsForSystemPrompt(notifications: PendingNotific
       `   Preview: ${preview}${truncatedNote}${nudgedNote}`
     );
   });
-  return (
-    `\n\n[BACKGROUND COMPLETIONS — ${notifications.length} op${notifications.length === 1 ? "" : "s"} finished while the user was idle]\n` +
+  return harnessNotice("BACKGROUND COMPLETIONS",
+    `${notifications.length} op${notifications.length === 1 ? "" : "s"} finished while the user was idle.\n` +
     `Worker ops you (or auto-delegate) submitted earlier have finished. The work IS DONE.\n\n` +
     `**HOW TO SURFACE — STRICT FORMAT (this is a hard contract, not a suggestion):**\n` +
     `- **One short sentence acknowledging it's done** + **one short sentence offering the next action**. That is the entire mention. Two sentences max.\n` +
@@ -228,8 +230,7 @@ export function formatNotificationsForSystemPrompt(notifications: PendingNotific
     `- **Do NOT redo the work yourself.** If the result looks off, ask the user before re-running.\n` +
     `- **Short user messages ("yo", "hey", "ok", "thx") are NOT requests to re-run work.** They're just the user reconnecting. Acknowledge briefly + offer to surface the completed result.\n` +
     `- **"failed" can be a misclassification** — if the preview describes concrete changes, trust the work happened; mention "failed" only if the preview shows nothing landed.\n\n` +
-    lines.join("\n\n") +
-    `\n\n[end background completions]\n`
+    lines.join("\n\n")
   );
 }
 

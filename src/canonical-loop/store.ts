@@ -162,9 +162,13 @@ export function readCanonicalEventsSince(opId: string, seq: number): CanonicalEv
 // ── op_turns — append-only, PK (op_id, turn_idx) ─────────────────────────
 
 /**
- * Insert a new `op_turns` row. Returns false if `(op_id, turn_idx)` already
- * exists (idempotent replay path — PRD §11). Otherwise writes the row and
- * returns true.
+ * Insert a new `op_turns` row. Returns false ONLY when `(op_id, turn_idx)`
+ * already exists (the idempotent replay path — PRD §11). On a genuine write
+ * failure (disk-full / EACCES / EISDIR) it THROWS rather than returning false:
+ * a swallowed insert would leave `false` overloaded ("already committed" vs
+ * "never landed"), letting commitTurn transition an op to `succeeded` with no
+ * op_turns row on disk. Callers (commitTurn) let the throw propagate to the
+ * worker's terminal-finalize catch, which closes the op as `failed`.
  */
 export function insertOpTurn(row: OpTurnRow): boolean {
   const path = opTurnPath(row.opId, row.turnIdx);
@@ -177,8 +181,10 @@ export function insertOpTurn(row: OpTurnRow): boolean {
     renameSync(tmp, path);
     return true;
   } catch (e) {
+    // Do NOT collapse into `return false` — that is the "already exists"
+    // signal. Log (preserved) and re-throw so the failure surfaces.
     logger.warn(`[store] insertOpTurn failed for ${row.opId}#${row.turnIdx}: ${(e as Error).message}`);
-    return false;
+    throw e;
   }
 }
 
@@ -254,6 +260,13 @@ export function readOpTurn(opId: string, turnIdx: number): OpTurnRow | null {
 // callers — canonical-run.ts:persistTurnState and bootstrap-bridges.ts —
 // both call readOpMessages() then opMessageRowToChatParam() per row.
 
+/**
+ * Append one op_messages row. THROWS on a genuine write failure (disk-full /
+ * EACCES / EISDIR) instead of swallowing it: a silently-dropped message would
+ * let commitTurn report the turn as `succeeded` while a message is missing on
+ * disk (transcript hole). The throw propagates to the worker's terminal
+ * catch, which finalizes the op as `failed` rather than lying about success.
+ */
 export function appendOpMessage(row: OpMessageRow): void {
   const path = opMessagesPath(row.opId);
   if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -261,7 +274,10 @@ export function appendOpMessage(row: OpMessageRow): void {
   try {
     appendFileSync(path, line, { encoding: "utf-8", mode: 0o600 });
   } catch (e) {
+    // Log (preserved) then re-throw so the failed write surfaces to the
+    // commit boundary — never swallow it into a false success.
     logger.warn(`[store] appendOpMessage failed for ${row.opId}: ${(e as Error).message}`);
+    throw e;
   }
 }
 

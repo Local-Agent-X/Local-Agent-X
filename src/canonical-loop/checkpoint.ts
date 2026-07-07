@@ -2,11 +2,11 @@
  * Atomic post-turn checkpoint commit (PRD §11).
  *
  * One commitTurn call performs the post-turn boundary work:
- *   1. Append op_messages rows for every finalized message (assistant +
+ *   1. Insert the op_turns row FIRST (idempotent on PK `(op_id, turn_idx)` —
+ *      replay safety per PRD §11 "Idempotency"). This row is the crash guard.
+ *   2. Append op_messages rows for every finalized message (assistant +
  *      tool_result), assigning a contiguous seqInTurn.
- *   2. Emit `message_appended` for each persisted message.
- *   3. Insert the op_turns row (idempotent on PK `(op_id, turn_idx)` —
- *      replay safety per PRD §11 "Idempotency").
+ *   3. Emit `message_appended` for each persisted message.
  *   4. Update `ops.current_turn_idx` and `ops.current_checkpoint_id` and
  *      persist the op via writeOp.
  *   5. Emit `turn_committed`.
@@ -14,10 +14,16 @@
  *      paired `state_changed` event).
  *
  * v1 lives on the filesystem so true SQL-style atomicity is best-effort —
- * each underlying write is an atomic tmp+rename or append, and the order
- * above is the recoverable order: a crash mid-commit leaves the loop with
- * either no checkpoint (re-driven from prior provider_state) or a fully
- * persisted checkpoint (op_turns row present).
+ * each underlying write is an atomic tmp+rename or append. The op_turns row
+ * is written BEFORE the op_messages so the recoverable disk shapes are only:
+ * (a) no op_turns row — the turn re-drives cleanly from the prior
+ * provider_state; or (b) op_turns row present — the re-drive hits the
+ * idempotent guard and appends no messages. There is no window where
+ * op_messages exist without their op_turns row, so a mid-commit crash can
+ * never orphan messages and duplicate the transcript on re-drive. Underlying
+ * writes now THROW on failure (store.ts) rather than swallow, so a failed
+ * write surfaces to the worker's terminal catch instead of letting the op
+ * report `succeeded` with data missing on disk.
  */
 import { randomUUID } from "node:crypto";
 import { insertOpTurn, appendOpMessage, readOpMessages, readOpTurn } from "./store.js";
@@ -102,26 +108,6 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
   // (op_id, turn_idx, seq_in_turn) unique across input + output messages.
   const seqBase = readOpMessages(op.id).filter(m => m.turnIdx === turnIdx).length;
 
-  for (let i = 0; i < input.messages.length; i++) {
-    const m = input.messages[i];
-    const row: OpMessageRow = {
-      messageId: m.messageId ?? `msg-${randomUUID()}`,
-      opId: op.id,
-      turnIdx,
-      seqInTurn: seqBase + i,
-      role: m.role,
-      content: m.content,
-      createdAt: new Date().toISOString(),
-    };
-    appendOpMessage(row);
-    persistedMsgs.push(row);
-    emit(op.id, "message_appended", {
-      turnIdx,
-      role: row.role,
-      messageId: row.messageId,
-    });
-  }
-
   const redirectConsumed = input.redirectConsumed === true;
 
   const turnRow: OpTurnRow = {
@@ -136,7 +122,44 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
     ...(input.modelMs !== undefined ? { modelMs: input.modelMs } : {}),
     ...(input.toolDispatchMs !== undefined ? { toolDispatchMs: input.toolDispatchMs } : {}),
   };
+
+  // CRASH-SAFETY ORDER (fix): write the op_turns row FIRST, then append
+  // op_messages. The op_turns row IS the idempotency guard (the readOpTurn
+  // guard at the top of commitTurn). Committing it before the messages means
+  // a crash between the two writes leaves either (a) no op_turns row — the
+  // whole turn re-drives cleanly from the prior provider_state — or (b) an
+  // op_turns row present, so the re-drive hits the idempotent-replay path
+  // above and appends NO messages. Either way there is no window where
+  // op_messages rows exist without their op_turns row, which is exactly the
+  // window that used to orphan messages and duplicate the transcript on
+  // re-drive. insertOpTurn now THROWS on a real write failure (store.ts), so
+  // a failed insert propagates to the worker's terminal catch instead of
+  // letting the commit proceed to a `succeeded` transition with no row.
   const inserted = insertOpTurn(turnRow);
+
+  for (let i = 0; i < input.messages.length; i++) {
+    const m = input.messages[i];
+    const row: OpMessageRow = {
+      messageId: m.messageId ?? `msg-${randomUUID()}`,
+      opId: op.id,
+      turnIdx,
+      seqInTurn: seqBase + i,
+      role: m.role,
+      content: m.content,
+      createdAt: new Date().toISOString(),
+    };
+    // appendOpMessage THROWS on a real write failure (store.ts). The op_turns
+    // row is already durable, so a throw here propagates to the worker's
+    // terminal catch (op → failed) and the guard above prevents any re-drive
+    // from re-appending — no duplicate transcript on the next attempt.
+    appendOpMessage(row);
+    persistedMsgs.push(row);
+    emit(op.id, "message_appended", {
+      turnIdx,
+      role: row.role,
+      messageId: row.messageId,
+    });
+  }
 
   if (!op.canonical) op.canonical = {};
   op.canonical.currentTurnIdx = turnIdx;

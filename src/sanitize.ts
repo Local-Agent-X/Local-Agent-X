@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { MAX_INJECTION_SCAN_LENGTH } from "./safe-regex.js";
 import {
   isSecretShaped,
   knownSecretValues,
@@ -141,7 +142,12 @@ export function normalizeHomoglyphs(text: string): string {
  */
 export function detectInjection(text: string): Array<{ label: string; score: number; match: string }> {
   const results: Array<{ label: string; score: number; match: string }> = [];
-  const normalized = normalizeHomoglyphs(stripControlChars(text));
+  // Scan everything the caller hands us — callers cap their own content
+  // (web_fetch 50k, http_request 100k, browser 8k) so this is the exact text
+  // the agent receives. MAX_INJECTION_SCAN_LENGTH is only a stall backstop for a
+  // pathological input a caller failed to bound; it sits above every real cap.
+  const scanned = text.length > MAX_INJECTION_SCAN_LENGTH ? text.slice(0, MAX_INJECTION_SCAN_LENGTH) : text;
+  const normalized = normalizeHomoglyphs(stripControlChars(scanned));
   // Scan a leetspeak-normalized view too so digit-substituted directives match
   // the same patterns. When no leet chars are present deleet() returns the input
   // unchanged, so behavior on ordinary content is identical to before.
@@ -317,9 +323,14 @@ export interface MemoryTaintResult {
  *   malicious webpage → agent reads it → memory_save → permanent instruction hijack
  */
 export function checkMemoryTaint(content: string): MemoryTaintResult {
+  // Inspect the full content the caller is about to persist — a poisoning
+  // directive anywhere in it must block the write, not just one in the first N KB.
+  // MAX_INJECTION_SCAN_LENGTH is only a stall backstop for a pathological unbounded
+  // input; it sits above every real caller's content cap.
+  const scanned = content.length > MAX_INJECTION_SCAN_LENGTH ? content.slice(0, MAX_INJECTION_SCAN_LENGTH) : content;
   // FIRST: normalize unicode tricks that could bypass pattern matching
   // This closes the homoglyph/invisible-char bypass the audit identified
-  const normalized = normalizeHomoglyphs(stripControlChars(content)).normalize('NFKC');
+  const normalized = normalizeHomoglyphs(stripControlChars(scanned)).normalize('NFKC');
   // Leetspeak-normalized second view — same rationale as detectInjection: a
   // poisoning directive hidden in leet ("y0ur 0wn 1n57ruc75") must not slip the
   // memory gate. Identical to `normalized` when no leet chars are present.

@@ -15,6 +15,27 @@ import { checkRegexSafety } from "@arikernel/policy-engine";
 export { checkRegexSafety };
 
 /**
+ * Max input length (chars) a single arbitrary regex may scan via `safeRegexTest`.
+ * A pathological megabyte input can turn even a linear sweep into a stall, so
+ * user-pattern tests cap what they inspect. This is a generic-regex guard — the
+ * injection scanners use MAX_INJECTION_SCAN_LENGTH instead (they must inspect
+ * everything the agent receives, not a prefix of it).
+ */
+export const MAX_REGEX_SCAN_LENGTH = 10_000;
+
+/**
+ * ReDoS backstop for the injection scanners (sanitize.ts). Unlike
+ * MAX_REGEX_SCAN_LENGTH this is NOT a functional cap: it sits above every
+ * caller's own content cap (web_fetch 50k, http_request 100k, browser 8k), so
+ * in practice the scanners inspect the entire delivered content — a directive
+ * anywhere in what the agent sees is caught. It only bites a pathological input
+ * a caller failed to bound, purely to stop the event loop stalling. The
+ * injection patterns use bounded quantifiers, so scanning up to this length is
+ * linear.
+ */
+export const MAX_INJECTION_SCAN_LENGTH = 500_000;
+
+/**
  * Test a regex with a timeout guard.
  * If the regex takes longer than `timeoutMs` to execute, returns false
  * and logs a warning. Prevents ReDoS from blocking the event loop.
@@ -26,7 +47,7 @@ export { checkRegexSafety };
 export function safeRegexTest(
   pattern: RegExp,
   input: string,
-  maxInputLength: number = 10_000
+  maxInputLength: number = MAX_REGEX_SCAN_LENGTH
 ): boolean {
   // Truncate input to prevent quadratic-time regex on very long strings
   const truncated = input.length > maxInputLength ? input.slice(0, maxInputLength) : input;

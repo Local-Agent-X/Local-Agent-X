@@ -123,3 +123,4 @@ bench/**/runs/
 # Rolling OTA source asset, built locally by scripts/build-rolling-source.mjs
 # (the workflow builds it ephemerally in CI; a local run must never be committed)
 rolling-dist/
+docs/harness-mechanisms-backlog.md

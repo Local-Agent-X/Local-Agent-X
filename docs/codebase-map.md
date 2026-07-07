@@ -12,18 +12,18 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1142 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1144 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 63 | 22 | XL |  |
+| `src/ops/` | 64 | 22 | XL |  |
 | `src/security/` | 63 | 26 | XL |  |
-| `src/tools/` | 46 | 132 | XL |  |
+| `src/tools/` | 47 | 133 | XL |  |
+| `src/canonical-loop/` | 37 | 128 | XL |  |
 | `src/memory/` | 37 | 106 | XL |  |
 | `src/providers/` | 37 | 17 | L |  |
-| `src/canonical-loop/` | 33 | 127 | XL |  |
 | `src/classifiers/` | 30 | 12 | L |  |
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
@@ -55,12 +55,12 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/ari-kernel/` | 6 | 12 | L |  |
 | `src/sandbox/` | 6 | 6 | L |  |
+| `src/auto-build/` | 5 | 47 | XL |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
 | `src/mcp-client/` | 5 | 6 | L |  |
 | `src/routes/` | 5 | 80 | XL |  |
 | `src/routing/` | 5 | 7 | M |  |
 | `src/util/` | 5 | 1 | S |  |
-| `src/auto-build/` | 4 | 47 | XL |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/server/` *(entrypoint)* | 4 | 27 | XL |  |
 | `src/tool-policy/` | 4 | 19 | L |  |

@@ -21,10 +21,15 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from
 import { join, dirname } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
+import type { ToolDispatchStatus } from "../canonical-loop/types.js";
 
 const logger = createLogger("ops.action-ledger");
 
-export type ActionStatus = "ok" | "error" | "cancelled";
+/** Mirrors the dispatch boundary's status union — the ledger is a denormalized
+ *  read-index over op_turns' {tool, resultStatus}, so it carries the same
+ *  flavors (blocked/declined/timeout are distinct from error). Old JSONL rows
+ *  with only ok/error/cancelled remain valid — the union only widened. */
+export type ActionStatus = ToolDispatchStatus;
 
 export interface LedgerAction {
   tool: string;

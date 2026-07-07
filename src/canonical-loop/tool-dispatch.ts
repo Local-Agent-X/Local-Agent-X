@@ -12,12 +12,25 @@
  * Boundary: this module has no DB handle, no event-writer, no child_process.
  */
 import type { ToolCall } from "./contract-types.js";
+import type { ToolDispatchStatus } from "./types.js";
+import type { ToolResultStatus } from "../types.js";
 
 export interface ToolDispatchResult {
   toolCallId: string;
-  status: "ok" | "error" | "cancelled";
+  status: ToolDispatchStatus;
   result: unknown;
   durationMs: number;
+}
+
+/**
+ * Envelope → dispatch-boundary status. The only collapse the boundary makes:
+ * `running` → "ok", because the START succeeded and the work continues async
+ * (committedWork proof must not change). Every failure flavor (error, blocked,
+ * declined, timeout) passes through so the ledger / telemetry / checkpoints
+ * can tell a policy block from a timeout from a user decline.
+ */
+export function envelopeStatusToDispatchStatus(status: ToolResultStatus): ToolDispatchStatus {
+  return status === "running" ? "ok" : status;
 }
 
 export interface ToolDispatcher {

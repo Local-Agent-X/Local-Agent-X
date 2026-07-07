@@ -26,6 +26,7 @@
 import type { Op } from "../../ops/types.js";
 import type { ServerEvent } from "../../types.js";
 import type { CanonicalMessage, ToolCall, ToolDescriptor } from "../contract-types.js";
+import type { ToolDispatchStatus } from "../types.js";
 
 /**
  * Lightweight, provider-agnostic representation of one tool result a turn's
@@ -38,8 +39,10 @@ export interface CanonicalToolResultView {
   /** Best-effort string projection of the tool result for regex inspection. */
   content: string;
   /** Dispatch outcome from toolCallSummary — lets middlewares key on real
-   *  failures instead of sniffing error-shaped text. */
-  status?: "ok" | "error" | "cancelled";
+   *  failures instead of sniffing error-shaped text. Carries the envelope
+   *  flavor (blocked/declined/timeout are distinct from error); middlewares
+   *  that only care ok-vs-failure use isDispatchFailure from ../types.js. */
+  status?: ToolDispatchStatus;
 }
 
 /**

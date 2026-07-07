@@ -27,7 +27,9 @@ export interface VerifyTurnAction {
   command?: string;
   /** Shell cwd, when the executor injected one. */
   cwd?: string;
-  status?: "ok" | "error" | "cancelled";
+  /** Dispatch status. Mirrors the canonical ToolDispatchStatus union (kept as
+   *  a local literal so this pure guard doesn't reach up into canonical-loop). */
+  status?: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled";
 }
 
 export interface VerifyGateState {
@@ -171,12 +173,14 @@ export function noteVerifyEvidence(
       (VERIFY_CMD_RE.test(a.command) || HTTP_SMOKE_CMD_RE.test(a.command)) &&
       verifyTargetsEditedApp(a.command, a.cwd, state.editedPaths)
     ) {
-      // Exit 0 → ok, non-zero → "error" (shell-tool maps the exit code). A
-      // cancelled/unknown status carries no verdict, so it's left untouched.
+      // Exit 0 → ok; any failure flavor (error / blocked / declined / timeout
+      // — all of which arrived as "error" before the dispatch boundary carried
+      // the envelope flavor) → failed verify. A cancelled/unknown status
+      // carries no verdict, so it's left untouched.
       if (a.status === "ok") {
         state.verifiedSinceEdit = true;
         state.verifyFailedSinceEdit = false;
-      } else if (a.status === "error") {
+      } else if (a.status !== undefined && a.status !== "cancelled") {
         state.verifyFailedSinceEdit = true;
         state.verifiedSinceEdit = false;
       }

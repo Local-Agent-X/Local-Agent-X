@@ -23,7 +23,7 @@ import { evaluateClaimGrounding, type EvidenceKind } from "./claim-grounding.js"
 export interface CleanupToolResult {
   toolName: string;
   content: string;
-  status?: "ok" | "error" | "cancelled";
+  status?: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled";
   /** Shell command, when the evidence came through bash instead of the native
    *  grep tool. Used only for recognizing repository content searches. */
   command?: string;
@@ -189,7 +189,13 @@ function isEmptyShellSearchResult(r: CleanupToolResult): boolean {
     // so an ok no-output shell search is not cleanup proof.
     return false;
   }
-  return r.status === "error" && exitCode(r.content) === 1 && /^(?:Exit code:\s*1)?$/i.test(body);
+  return isFailedStatus(r.status) && exitCode(r.content) === 1 && /^(?:Exit code:\s*1)?$/i.test(body);
+}
+
+/** Any failure flavor. Pre-widening these all arrived collapsed as "error",
+ *  so keying on the set (not the literal) preserves the gate's behavior. */
+function isFailedStatus(status: CleanupToolResult["status"]): boolean {
+  return status !== undefined && status !== "ok" && status !== "cancelled";
 }
 
 // A wrap-up that ASSERTS the cleanup is finished ("Cleanup complete", "all
@@ -226,7 +232,7 @@ export function noteCleanupEvidence(
     const isNativeGrep = r.toolName === "grep";
     const isShellSearch = isShellSearchResult(r);
     if (!isNativeGrep && !isShellSearch) continue;
-    if (isNativeGrep && r.status === "error") continue;
+    if (isNativeGrep && isFailedStatus(r.status)) continue;
     if (isShellSearch && r.status === "cancelled") continue;
     state.searchedAny = true;
     const key = normalizeGrepPattern(isShellSearch ? shellSearchPattern(r.command) ?? r.pattern : r.pattern);

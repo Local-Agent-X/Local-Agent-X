@@ -7,7 +7,7 @@ function opId(): string { return `op-rf-test-${++_op}`; }
 
 function ctxFor(
   op: string,
-  results: Array<{ toolName: string; content: string; status: "ok" | "error" }>,
+  results: Array<{ toolName: string; content: string; status: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled" }>,
 ): CanonicalLoopContext {
   return {
     op: { id: op },
@@ -61,5 +61,24 @@ describe("repeat-failure breaker", () => {
     const op = opId();
     const r = await run(op, [fail(), fail(), fail()]);
     expect(r.kind).toBe("nudge");
+  });
+
+  // Regression (dispatch-status widening): blocked/declined/timeout used to
+  // arrive collapsed as "error". Now that the flavor survives the boundary,
+  // they must STILL count toward the streak — on pre-fix code they reset it.
+  it("widened failure flavors (blocked) count toward the streak", async () => {
+    const op = opId();
+    const b = { toolName: "bash", content: "Refused by policy.", status: "blocked" as const };
+    expect((await run(op, [b])).kind).toBe("continue");
+    expect((await run(op, [b])).kind).toBe("continue");
+    expect((await run(op, [b])).kind).toBe("nudge");
+  });
+
+  it("a cancelled result resets the streak (not a failure)", async () => {
+    const op = opId();
+    await run(op, [fail()]);
+    await run(op, [fail()]);
+    await run(op, [{ toolName: "presentation_edit", content: "cancelled", status: "cancelled" as const }]);
+    expect((await run(op, [fail()])).kind).toBe("continue"); // restarted at 1
   });
 });

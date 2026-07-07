@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { composeDigest, goalRestateAfterTurn } from "./situational-awareness.js";
 import type { LedgerAction } from "../../ops/action-ledger.js";
 
-function acts(...pairs: Array<[string, "ok" | "error" | "cancelled"]>): LedgerAction[] {
+function acts(...pairs: Array<[string, LedgerAction["status"]]>): LedgerAction[] {
   return pairs.map(([tool, status]) => ({ tool, status }));
 }
 
@@ -31,6 +31,22 @@ describe("composeDigest", () => {
       firstUserText: "",
     });
     expect(d).toContain("edit✓, bash✗, web_search⊘");
+  });
+
+  // Regression (dispatch-status widening): the digest stays binary — every
+  // failure flavor renders ✗, ⊘ stays reserved for cancelled. New labels must
+  // not leak into this ephemeral line.
+  it("renders widened failure flavors as plain ✗", () => {
+    const d = composeDigest({
+      turnIdx: 2,
+      totalTokens: 0,
+      recent: acts(["bash", "blocked"], ["edit", "declined"], ["web_fetch", "timeout"]),
+      firstUserText: "",
+    });
+    expect(d).toContain("bash✗, edit✗, web_fetch✗");
+    expect(d).not.toContain("blocked");
+    expect(d).not.toContain("declined");
+    expect(d).not.toContain("timeout");
   });
 
   it("renders the token total in the pace line", () => {

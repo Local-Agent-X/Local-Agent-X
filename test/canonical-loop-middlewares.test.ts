@@ -600,7 +600,7 @@ describe("auto-build-app middleware", () => {
 // ── host: toolsCalledThisOp success-only semantics ──────────────────────
 
 describe("buildCanonicalLoopContext — toolsCalledThisOp", () => {
-  function commitTurn(op: Op, turnIdx: number, summary: Array<{ tool: string; resultStatus: "ok" | "error" | "cancelled" }>): void {
+  function commitTurn(op: Op, turnIdx: number, summary: Array<{ tool: string; resultStatus: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled" }>): void {
     insertOpTurn({
       opId: op.id,
       turnIdx,
@@ -624,6 +624,8 @@ describe("buildCanonicalLoopContext — toolsCalledThisOp", () => {
       { tool: "read", resultStatus: "ok" },
       { tool: "agent_spawn", resultStatus: "error" },     // failed spawn — must NOT count
       { tool: "bash", resultStatus: "cancelled" },        // cancelled — must NOT count
+      { tool: "browser", resultStatus: "blocked" },       // widened flavor — must NOT count
+      { tool: "http_request", resultStatus: "timeout" },  // widened flavor — must NOT count
       { tool: "write", resultStatus: "ok" },
     ]);
 

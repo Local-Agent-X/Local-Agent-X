@@ -195,7 +195,10 @@ function paceLine(turnIdx: number, totalTokens: number): string {
 function recentActionsLine(recent: LedgerAction[]): string | null {
   if (recent.length === 0) return null;
   const parts = recent.map(a => {
-    const mark = a.status === "ok" ? "✓" : a.status === "error" ? "✗" : "⊘";
+    // Deliberately binary-ish: every failure flavor (error/blocked/declined/
+    // timeout) renders ✗ — this ephemeral digest line is orientation, not a
+    // place to leak envelope taxonomy. ⊘ stays reserved for cancelled.
+    const mark = a.status === "ok" ? "✓" : a.status === "cancelled" ? "⊘" : "✗";
     return `${a.tool}${mark}`;
   });
   return `Recent actions (across this conversation): ${parts.join(", ")}`;

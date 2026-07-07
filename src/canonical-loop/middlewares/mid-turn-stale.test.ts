@@ -22,7 +22,7 @@ function ctxFor(
 
 const browserOk = () => ({ toolName: "browser", content: "clicked", status: "ok" as const, toolCallId: "tc" });
 
-function recordTurn(op: string, results: Array<{ toolName: string; content: string; status: "ok" | "error" | "cancelled"; toolCallId: string }>) {
+function recordTurn(op: string, results: Array<{ toolName: string; content: string; status: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled"; toolCallId: string }>) {
   return midTurnStaleMiddleware.afterToolExecution!(ctxFor(op, { toolResults: results }));
 }
 
@@ -60,6 +60,19 @@ describe("mid-turn-stale — monotonous-action branch", () => {
     await recordTurn(op, [browserOk()]);
     const r = await midTurnStaleMiddleware.beforeTurn!(ctxFor(op, { evidenceHistory: [3, 5, 7] }));
     expect(r.kind).toBe("continue");
+  });
+
+  // Regression (dispatch-status widening): a blocked browser call used to
+  // arrive as "error" and never counted as a success — the widened flavor
+  // must not sneak into okTools and keep the monotony streak alive.
+  it("widened failure flavors don't count as successful turns", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    await recordTurn(op, [browserOk()]);
+    await recordTurn(op, [{ toolName: "browser", content: "Refused by policy.", status: "blocked", toolCallId: "tc3" }]);
+    await recordTurn(op, [browserOk()]);
+    const r = await midTurnStaleMiddleware.beforeTurn!(ctxFor(op, { evidenceHistory: [3, 5, 7] }));
+    expect(r.kind).toBe("continue"); // streak broken by the failed (blocked) turn
   });
 
   it("does not fire before MIN_ITERATION turns", async () => {

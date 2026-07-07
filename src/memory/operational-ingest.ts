@@ -19,6 +19,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { actionLogDir, readAllEntriesSince, type ActionLedgerEntry } from "../ops/action-ledger.js";
+import { isDispatchFailure } from "../canonical-loop/types.js";
 import type { MemoryIndex } from "./index.js";
 import { createLogger } from "../logger.js";
 
@@ -73,7 +74,7 @@ export function ingestOperationalOutcomes(memory: MemoryIndex): OperationalInges
   // op's task + a representative timestamp.
   const byOp = new Map<string, { task: string; date: string; opType: string; tools: Set<string> }>();
   for (const e of entries) {
-    const failed = e.actions.filter(a => a.status === "error").map(a => a.tool);
+    const failed = e.actions.filter(a => isDispatchFailure(a.status)).map(a => a.tool);
     if (failed.length === 0) continue;
     let g = byOp.get(e.opId);
     if (!g) {

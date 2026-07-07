@@ -6,6 +6,7 @@
  * schema.ts. Everything in this file is additive — no legacy types change.
  */
 import type { OpLane } from "../ops/types.js";
+import type { ToolResultStatus } from "../types.js";
 
 // ── Canonical state machine (PRD §10) ─────────────────────────────────────
 
@@ -97,10 +98,31 @@ export interface OpTurnRow {
   toolDispatchMs?: number;
 }
 
+/**
+ * Dispatch-boundary status — the tool-result envelope's flavor as recorded by
+ * the canonical dispatcher, plus "cancelled" (op-cancel bookkeeping, never
+ * produced by the envelope itself). Derived from ToolResultStatus so the
+ * 6-state envelope (src/types.ts) stays the single source of truth; "running"
+ * is excluded because the boundary maps it to "ok" (the START succeeded —
+ * committedWork semantics, see chat-tool-dispatcher.ts).
+ */
+export type ToolDispatchStatus = Exclude<ToolResultStatus, "running"> | "cancelled";
+
+/**
+ * True for the statuses that meant "error" before the boundary carried the
+ * envelope flavor (error | blocked | declined | timeout). Failure-side
+ * consumers that used to string-match "error" key on this instead, so the
+ * widened union cannot silently flip their ok-vs-failure decisions.
+ * "cancelled" is deliberately NOT a failure here — it never was one.
+ */
+export function isDispatchFailure(status: string | undefined): boolean {
+  return status === "error" || status === "blocked" || status === "declined" || status === "timeout";
+}
+
 export interface ToolCallSummary {
   tool: string;
   argsHash: string;
-  resultStatus: "ok" | "error" | "cancelled";
+  resultStatus: ToolDispatchStatus;
   durationMs: number;
 }
 

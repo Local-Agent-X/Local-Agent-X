@@ -65,7 +65,9 @@ export type {
   RedirectInstruction,
   StateChangedBody,
   ToolCallSummary,
+  ToolDispatchStatus,
 } from "./types.js";
+export { isDispatchFailure } from "./types.js";
 
 // ── Issue 03 runtime surface ──────────────────────────────────────────────
 
@@ -97,6 +99,7 @@ export {
   type ToolDispatchResult,
   NotConfiguredToolDispatcher,
   functionToolDispatcher,
+  envelopeStatusToDispatchStatus,
 } from "./tool-dispatch.js";
 
 export {

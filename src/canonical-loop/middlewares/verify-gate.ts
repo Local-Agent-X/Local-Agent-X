@@ -152,7 +152,7 @@ export function recordOrchestratorVerify(opId: string, passed: boolean): void {
 
 function buildActions(
   toolCalls: { toolCallId: string; tool: string; args: unknown }[],
-  toolResults: { toolCallId: string; status?: "ok" | "error" | "cancelled" }[],
+  toolResults: { toolCallId: string; status?: VerifyTurnAction["status"] }[],
 ): VerifyTurnAction[] {
   const statusById = new Map(toolResults.map(tr => [tr.toolCallId, tr.status]));
   return toolCalls.map(tc => {

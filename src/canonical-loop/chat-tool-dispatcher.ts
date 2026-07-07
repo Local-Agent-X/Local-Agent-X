@@ -13,7 +13,8 @@
  * terminates, the chat runner calls `unregisterToolDispatcherForOp(opId)`
  * so the closure GC'd.
  */
-import type { ToolDispatcher, ToolDispatchResult } from "./tool-dispatch.js";
+import { envelopeStatusToDispatchStatus, type ToolDispatcher, type ToolDispatchResult } from "./tool-dispatch.js";
+import { parseStatusHeader } from "../tools/result-helpers.js";
 import type { ToolCall } from "./contract-types.js";
 import type { ToolDefinition, ServerEvent } from "../types.js";
 import type { SecurityLayer } from "../security/index.js";
@@ -146,15 +147,14 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
           }
         }
 
-        // The canonical ToolDispatchResult.status is a narrow 3-value enum
-        // (ok | error | cancelled). Recover the underlying envelope status
-        // from the rendered header so failures, blocks, and timeouts don't
-        // get reported as "ok" in the canonical summary. `running` maps to
-        // "ok" because the START succeeded — the work continues async.
-        const { parseStatusHeader } = await import("../tools/result-helpers.js");
+        // Recover the underlying envelope status from the rendered header and
+        // carry the FLAVOR through the dispatch boundary — a policy block, a
+        // user decline, and a timeout are different signals to the ledger /
+        // telemetry / checkpoints. The only collapse is `running` → "ok":
+        // the START succeeded, the work continues async.
         const envStatus = parseStatusHeader(content);
         const canonicalStatus: ToolDispatchResult["status"] =
-          envStatus === "ok" || envStatus === "running" ? "ok" : "error";
+          envelopeStatusToDispatchStatus(envStatus);
 
         // Video/large media rides a file path on the tool message (set by
         // shapeMsg). Carry it onto the result envelope so bridge handlers can

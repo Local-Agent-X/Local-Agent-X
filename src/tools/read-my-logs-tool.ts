@@ -12,6 +12,7 @@
 
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { readSessionActions } from "../ops/action-ledger.js";
+import { isDispatchFailure } from "../canonical-loop/types.js";
 
 function ok(content: string): ToolResult { return { content }; }
 
@@ -44,7 +45,7 @@ export function createReadMyLogsTool(getSessionId?: () => string): ToolDefinitio
 
       let entries = readSessionActions(sessionId, { limit });
       if (onlyFailures) {
-        entries = entries.filter(e => e.actions.some(a => a.status === "error"));
+        entries = entries.filter(e => e.actions.some(a => isDispatchFailure(a.status)));
       }
       if (entries.length === 0) {
         return ok(
@@ -56,7 +57,7 @@ export function createReadMyLogsTool(getSessionId?: () => string): ToolDefinitio
 
       const lines = entries.map(e => {
         const acts = e.actions
-          .map(a => `${a.tool}${a.status === "ok" ? "✓" : a.status === "error" ? "✗" : "⊘"}`)
+          .map(a => `${a.tool}${a.status === "ok" ? "✓" : a.status === "cancelled" ? "⊘" : "✗"}`)
           .join(", ");
         const when = e.ts.replace("T", " ").slice(0, 16);
         const surface = e.opType === "chat_turn" ? "" : ` (${e.opType})`;

@@ -15,6 +15,7 @@
  */
 import type { CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
+import { isDispatchFailure } from "../types.js";
 
 const NUDGE_AT = 3;
 const ABORT_AT = 5;
@@ -41,8 +42,14 @@ export const repeatFailureMiddleware: CanonicalMiddleware = {
   afterToolExecution(ctx) {
     const state = getMiddlewareState<RepeatFailureState>(ctx.op.id, "repeat-failure", createState);
     for (const tr of ctx.toolResults) {
-      if (tr.status !== "error") {
+      if (!isDispatchFailure(tr.status)) {
         // Any success breaks the streak — the model changed something real.
+        // Failure = error|blocked|declined|timeout (all of these arrived as
+        // "error" before the boundary carried the envelope flavor, and a
+        // model re-slamming a blocked/declined/timed-out call is exactly as
+        // stuck). The signature keys on tool+content, so a blocked-then-
+        // timeout sequence still counts as DIFFERENT failures — dedup
+        // behavior is unchanged by the widening.
         state.sig = "";
         state.count = 0;
         continue;

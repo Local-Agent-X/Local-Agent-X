@@ -23,6 +23,7 @@
  *   - lease_acquired / lease_lost — internal lifecycle, not user-visible.
  */
 import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession, proactiveSpeakToSession } from "../ops/session-bridge.js";
+import { isDispatchFailure } from "./types.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 
@@ -310,7 +311,7 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
         // each flagged if it errored — instead of an opaque message count.
         // Bare "turn N" with no tools means a pure text/reasoning turn.
         const summary = tools.length > 0
-          ? tools.map((t) => (t.status === "error" ? `${t.tool} ✗` : t.tool)).join(", ")
+          ? tools.map((t) => (isDispatchFailure(t.status) ? `${t.tool} ✗` : t.tool)).join(", ")
           : "thinking";
         // Forward the running per-op token total so the AGENTS panel can render
         // a live per-card token bar. checkpoint.ts stamps usage onto every

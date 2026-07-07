@@ -22,6 +22,7 @@
  */
 import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
+import { isDispatchFailure } from "../types.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.mid-turn-stale");
@@ -140,7 +141,8 @@ export const midTurnStaleMiddleware: CanonicalMiddleware = {
     );
     const okTools = new Set<string>();
     for (const tr of ctx.toolResults) {
-      if (tr.status === "error" || tr.status === "cancelled") continue;
+      // Failed (any flavor) or cancelled results don't count as successes.
+      if (tr.status === "cancelled" || isDispatchFailure(tr.status)) continue;
       okTools.add(tr.toolName);
     }
     let dominant = "";

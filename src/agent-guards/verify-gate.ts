@@ -90,7 +90,7 @@ const MAX_FAIL_NUDGES = 2;
  *  Exported so the open-steps plan-seed keys "the op wrote a file" off the SAME
  *  definition instead of a second drifting copy. */
 export const EDIT_TOOLS: ReadonlySet<string> = new Set([
-  "write", "edit", "edit_lines", "multi_edit",
+  "write", "edit", "edit_lines", "multi_edit", "bulk_replace",
 ]);
 
 /** Extensions that have a meaningful compile / type-check / test step. Pure

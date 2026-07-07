@@ -37,7 +37,7 @@ const DEDUP_SKIP: ReadonlySet<string> = new Set([
   // first one should usually fail with "old_string not found" or trip the
   // current write guard. Replaying the previous "Edited/Wrote" result makes
   // the model believe new work happened when nothing executed.
-  "write", "edit", "edit_lines", "multi_edit", "delete_file",
+  "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "delete_file",
   // tool_search results depend on the deferred-tool catalog which can
   // shift as a turn progresses (registered via prior tool runs).
   "tool_search",

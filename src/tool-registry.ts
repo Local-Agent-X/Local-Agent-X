@@ -124,7 +124,7 @@ const WORKSPACE_WRITE_TOOLS: ReadonlySet<string> = new Set([
   // family resolve-tool's protected-files gate keys on via ARI_ACTION_MAP:
   // "write"). Left out, a workspace-write ban blocked `edit` but not
   // `edit_lines` — the class fails open under a different spelling.
-  "edit_lines", "multi_edit", "delete_file",
+  "edit_lines", "multi_edit", "bulk_replace", "delete_file",
 ]);
 
 // Shell = subprocess spawn / arbitrary command execution.

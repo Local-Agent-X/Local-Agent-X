@@ -127,7 +127,7 @@ export type OpOutcome = "clean" | "partial" | "aborted";
 const CATEGORY_TOOLS: ReadonlyArray<readonly [OpCategory, readonly string[]]> = [
   ["browser", ["browser"]],
   ["computer", ["computer", "computer_click", "computer_type", "computer_press", "computer_move", "computer_drag", "computer_position", "screen_capture"]],
-  ["coding", ["write", "edit", "edit_lines", "multi_edit", "bash", "build_app", "delete_file"]],
+  ["coding", ["write", "edit", "edit_lines", "multi_edit", "bulk_replace", "bash", "build_app", "delete_file"]],
   ["connector", ["email_send", "email_draft", "telegram_send", "whatsapp_send", "connector_create", "send_image", "send_video"]],
   ["research", ["web_search", "web_fetch", "http_request", "image_search", "youtube_analyze"]],
 ];

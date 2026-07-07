@@ -52,7 +52,7 @@ export interface ToolSelectionResult {
 // Read-only tools (read/glob/grep) stay — they can't build. build_app is never
 // stripped (tool_choice forcing pins it).
 const INLINE_BUILD_TOOLS = new Set([
-  "write", "edit", "edit_lines", "multi_edit", "bash",
+  "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "bash",
   "process_start", "process_status", "process_kill",
   "send_image", "connector_create", "app_serve_backend", "self_edit",
 ]);

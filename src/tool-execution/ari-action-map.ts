@@ -13,7 +13,7 @@
 // (2026-06-10): action fell through to "exec", the http schema rejected
 // it, and every call blocked as "ARI error (ariRequired mode)".
 export const ARI_ACTION_MAP: Record<string, string> = {
-  read: "read", write: "write", edit: "write", edit_lines: "write", multi_edit: "write",
+  read: "read", write: "write", edit: "write", edit_lines: "write", multi_edit: "write", bulk_replace: "write",
   web_search: "get", web_fetch: "get", http_request: "get", browser: "get",
   image_search: "get",
   bash: "exec",

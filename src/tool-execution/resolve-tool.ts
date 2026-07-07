@@ -47,7 +47,7 @@ const SESSION_SCOPED_TOOLS = new Set([
   // relative paths there. Without the stamp the work-root registry is dead
   // code — the resolver never learns which session is calling (live failure
   // 2026-07-02: worker's relative read resolved to the workspace parent).
-  "read", "write", "edit", "multi_edit", "edit_lines", "delete_file", "glob", "grep",
+  "read", "write", "edit", "multi_edit", "edit_lines", "bulk_replace", "delete_file", "glob", "grep",
 ]);
 
 function deriveCallContext(sessionId: string | undefined): CallContext {
@@ -70,7 +70,7 @@ const SESSION_REPEAT_SKIP_TOOLS = new Set([
   // the signal that the previous change already landed (old_string gone) or
   // that a new guard now rejects the path. Returning a prior success is false
   // progress.
-  "write", "edit", "edit_lines", "multi_edit", "delete_file",
+  "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "delete_file",
 ]);
 
 // Scan back through prior assistant tool_calls for an exact match (name +

@@ -1,39 +1,42 @@
 /**
  * Build-terminal verify gate for app_build ops — wraps the real build adapter
- * (either strategy) and gates a clean completion. Two layers, both enforced on
+ * (either strategy) and gates a clean completion. Layers, all enforced on
  * every model and strategy at this one chokepoint (teaching alone is a request
  * a strong-priored model can override):
  *
  *   1. Static scans (app-build-verify.ts): faked frontend, startup errors,
- *      raw cross-origin fetch, unverified native parity.
- *   2. Headless smoke (see-before-done): actually LOAD the built page and
- *      observe it. An app with wrong-but-exception-free logic (broken canvas
- *      math, blank mount, console explosion) passes every static scan and
- *      used to ship as APP_READY on the builder's own say-so — this is the
- *      layer that observes behavior instead of trusting attestation. A
- *      render-evidence PNG lands in .lax-build/smoke.png either way.
- *   3. Interact-then-re-smoke: a clean initial load clicks the page's primary
- *      action (semantic button role) and re-runs the console/mount checks —
- *      the maze-escape-3d class hid its breakage BEHIND the Start button, so
- *      the start screen alone proved nothing. Post-click evidence lands in
- *      .lax-build/smoke-2.png.
- *   4. Vision judge: both screenshots + the build brief go to the screenshot
+ *      raw cross-origin fetch, unverified native parity. Static builds only —
+ *      a framework scaffold has no flat HTML entry to scan.
+ *   2. Headless smoke (see-before-done): actually LOAD the built app and
+ *      observe it. Static builds load file://index.html in "strict" mode
+ *      (any console error fails); framework/full-stack builds load their
+ *      LIVE dev-server proxy URL in "hard-signals" mode (uncaught errors /
+ *      mount fail; dev-server console chatter rides to the judge instead).
+ *      Render evidence lands in .lax-build/smoke.png.
+ *   3. Interact-then-re-smoke: a clean load clicks the page's primary action
+ *      (semantic button role) and re-runs the checks — the maze-escape-3d
+ *      class hid its breakage BEHIND the Start button, so the start screen
+ *      alone proved nothing. Post-click evidence: .lax-build/smoke-2.png.
+ *   4. Vision judge: the screenshots + the build brief go to the screenshot
  *      judge (vision-verify.ts — the render probe's judge, background model on
  *      the existing Anthropic credential, no new key). One question: does this
  *      look like what was asked, or garbage? A rejection fails the build with
  *      the judge's reason. No verdict available (no vision-capable credential
  *      — CLI OAuth can't carry image bytes) → the check skips, never fails.
  *
- * A smoke that can't run (missing chromium binary on this machine) SKIPS with
- * a warning — an environment problem is never a build verdict.
+ * A smoke that can't run (missing chromium binary) SKIPS with a warning — an
+ * environment problem is never a build verdict. A dev server that never
+ * becomes ready FAILS — a live server is the framework tiers' whole promise.
  *
  * Every gate failure also emits a canonical USER message carrying the failure
  * text AND the screenshot(s) as image refs (VERIFY_EVIDENCE_MARKER). That row
  * is durable in op_messages; build-session-context reads it on the next
  * update build so the fixer gets the pixels, not just prose.
+ *
+ * Runner + judge + URL resolver live in app-build-smoke-gate.ts (400-LOC cap).
  */
-import { existsSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import {
   scanAppForBlockedFetch, formatBlockedFetchError,
@@ -43,123 +46,31 @@ import {
 } from "../../tools/app-build-verify.js";
 import type { AppTier } from "../../tools/app-tier.js";
 import { detectFramework } from "../../tools/framework-detect.js";
-import { smokeUrl } from "../../auto-build/scenario-scorer/smoke.js";
+import {
+  runAppSmokeGate,
+  runAppVisionJudge,
+  resolveDevServerProxyUrl,
+  type AppSmokeGateRunner,
+  type AppSmokeGateSpec,
+  type AppVisionJudge,
+  type DevServerUrlResolver,
+} from "./app-build-smoke-gate.js";
 
-const SMOKE_LOAD_TIMEOUT_MS = 30_000;
+export {
+  runAppSmokeGate,
+  runAppVisionJudge,
+  resolveDevServerProxyUrl,
+  type AppSmokeGateRunner,
+  type AppSmokeGateSpec,
+  type AppSmokeGateOutcome,
+  type AppVisionJudge,
+  type DevServerUrlResolver,
+} from "./app-build-smoke-gate.js";
 
 /** First line of the evidence user-message a failed gate appends to
  *  op_messages. build-session-context keys off it to thread the failure —
  *  text and screenshots — into the next update build's context. */
 export const VERIFY_EVIDENCE_MARKER = "=== BUILD VERIFY EVIDENCE ===";
-
-export interface AppSmokeGateOutcome {
-  verdict: "pass" | "fail" | "skipped";
-  /** fail → actionable error for the fixer; skipped → why the gate couldn't run. */
-  detail?: string;
-  /** Render-evidence PNG of the initial load, when captured. */
-  screenshotPath?: string;
-  /** Render-evidence PNG taken after clicking the primary action, when captured. */
-  interactionScreenshotPath?: string;
-}
-
-/** Injectable so adapter tests don't launch a real browser. */
-export type AppSmokeGateRunner = (appDir: string) => Promise<AppSmokeGateOutcome>;
-
-/** Injectable vision judge: screenshot PNG paths + the build brief → verdict,
- *  or null when no verdict could be obtained (treated as "skip the check"). */
-export type AppVisionJudge = (
-  screenshotPaths: string[],
-  brief: string,
-) => Promise<{ ok: boolean; reason: string } | null>;
-
-/**
- * Default judge: read the evidence PNGs and ask the shared screenshot judge
- * (the same one the render-verify probe uses) whether the render matches the
- * brief. Lazy import keeps the dispatch/provider graph out of this adapter's
- * static imports. Never throws; unreadable shots or no credential → null.
- */
-export const runAppVisionJudge: AppVisionJudge = async (screenshotPaths, brief) => {
-  const shots: string[] = [];
-  for (const p of screenshotPaths) {
-    try { shots.push(readFileSync(p).toString("base64")); } catch { /* missing shot — judge what we have */ }
-  }
-  if (shots.length === 0) return null;
-  const { visionVerdictForScreenshot } = await import("../../tools/app-tools/vision-verify.js");
-  const verdict = await visionVerdictForScreenshot(shots, brief);
-  return verdict ? { ok: verdict.ok, reason: verdict.reason } : null;
-};
-
-/**
- * Load the built index.html headlessly (file:// like the chunk-review
- * build-exec gate — no server dependency, no favicon-fetch noise) and judge:
- * load error / console errors / nothing mounted → fail with a message the
- * next build attempt can act on.
- */
-export const runAppSmokeGate: AppSmokeGateRunner = async (appDir) => {
-  const entry = resolve(appDir, "index.html");
-  const fileUrl = "file://" + entry.replace(/\\/g, "/");
-  const screenshotPath = join(appDir, ".lax-build", "smoke.png");
-  const interactionScreenshotPath = join(appDir, ".lax-build", "smoke-2.png");
-  let smoke;
-  try {
-    smoke = await smokeUrl(fileUrl, SMOKE_LOAD_TIMEOUT_MS, undefined, {
-      screenshotPath,
-      interact: { screenshotPath: interactionScreenshotPath },
-    });
-  } catch (e) {
-    return { verdict: "skipped", detail: `headless smoke unavailable: ${(e as Error).message.slice(0, 200)}` };
-  }
-  const evidence = smoke.screenshotPath
-    ? ` A screenshot of what the app actually rendered is saved at ${smoke.screenshotPath} — read/view it before claiming a fix.`
-    : "";
-  if (smoke.loadError) {
-    return {
-      verdict: "fail", screenshotPath: smoke.screenshotPath,
-      detail: `The built page failed to load headlessly (${smoke.loadError}). It was reported APP_READY but does not open.${evidence}`,
-    };
-  }
-  if (smoke.consoleErrors.length > 0) {
-    return {
-      verdict: "fail", screenshotPath: smoke.screenshotPath,
-      detail:
-        `The built page throws ${smoke.consoleErrors.length} console error(s) on load — it was reported APP_READY but is broken at runtime. ` +
-        `First: "${smoke.consoleErrors[0]}".${evidence}`,
-    };
-  }
-  if (!smoke.rootMounted) {
-    return {
-      verdict: "fail", screenshotPath: smoke.screenshotPath,
-      detail:
-        `The built page loads with no console errors but renders NOTHING — no canvas painted and no mount root has content. ` +
-        `It was reported APP_READY but shows an empty page.${evidence}`,
-    };
-  }
-  // Phase 2: the initial screen was clean — walk through it. The maze-escape-3d
-  // class passed everything above because its breakage lived behind Start.
-  const i = smoke.interaction;
-  if (i?.clicked) {
-    const evidence2 = i.screenshotPath
-      ? ` Screenshots: before the click at ${smoke.screenshotPath}, after it at ${i.screenshotPath} — read/view them before claiming a fix.`
-      : evidence;
-    if (i.consoleErrors.length > 0) {
-      return {
-        verdict: "fail", screenshotPath: smoke.screenshotPath, interactionScreenshotPath: i.screenshotPath,
-        detail:
-          `The built page loads clean, but clicking its primary action threw ${i.consoleErrors.length} console error(s) — ` +
-          `it breaks the moment the user interacts. First: "${i.consoleErrors[0]}".${evidence2}`,
-      };
-    }
-    if (!i.rootMounted) {
-      return {
-        verdict: "fail", screenshotPath: smoke.screenshotPath, interactionScreenshotPath: i.screenshotPath,
-        detail:
-          `The built page loads clean, but clicking its primary action left the page EMPTY — no canvas painted and no mount ` +
-          `root has content after the interaction.${evidence2}`,
-      };
-    }
-  }
-  return { verdict: "pass", screenshotPath: smoke.screenshotPath, interactionScreenshotPath: i?.screenshotPath };
-};
 
 export interface AppBuildVerifyOptions {
   /** The user's raw build brief — what the vision judge compares the render
@@ -168,11 +79,15 @@ export interface AppBuildVerifyOptions {
   brief?: string;
   /** Test seam: override the vision judge so unit tests never dispatch. */
   judge?: AppVisionJudge;
+  /** Test seam: override the dev-server URL lookup so unit tests never read
+   *  real dev-server records. */
+  urlResolver?: DevServerUrlResolver;
 }
 
 export class AppBuildVerifyAdapter implements Adapter {
   private readonly judge: AppVisionJudge;
   private readonly brief: string;
+  private readonly urlResolver: DevServerUrlResolver;
   constructor(
     private readonly inner: Adapter,
     private readonly appDir: string,
@@ -182,6 +97,7 @@ export class AppBuildVerifyAdapter implements Adapter {
   ) {
     this.judge = opts.judge ?? runAppVisionJudge;
     this.brief = opts.brief ?? "";
+    this.urlResolver = opts.urlResolver ?? resolveDevServerProxyUrl;
   }
   get name(): string { return this.inner.name; }
   get version(): string { return this.inner.version; }
@@ -230,16 +146,18 @@ export class AppBuildVerifyAdapter implements Adapter {
         report({ kind: "error", code: "faked_frontend_build", message: formatFakedFrontend(fake.reason), retryable: false });
         return { ...result, terminalReason: "error" };
       }
-      // Real project present — skip the static-HTML startup/fetch scans below
-      // (a Vite app's index.html legitimately points at /src/main.jsx, which
-      // those scans would misread as a missing-file or cross-origin smell).
-      return result;
+      // Real project present — the static-HTML scans below would misread it
+      // (a Vite index.html legitimately points at /src/main.jsx). Smoke the
+      // LIVE dev server instead of a flat file.
+      return this.smokeAndJudge(input, report, result, "hard-signals");
     }
     // On-disk truth supersedes the prompt-classified tier: a real framework
     // scaffold (Next/Vite/…) has no static HTML entry, so the scans below
-    // would falsely reject it — same reasoning as the frontend-spa skip.
+    // would falsely reject it — same reasoning as the frontend-spa branch.
     const detected = detectFramework(this.appDir).framework;
-    if (detected !== "static" && detected !== "unknown") return result;
+    if (detected !== "static" && detected !== "unknown") {
+      return this.smokeAndJudge(input, report, result, "hard-signals");
+    }
     const { errors } = scanAppForStartupErrors(this.appDir);
     const { violations } = scanAppForBlockedFetch(this.appDir);
     const { violations: parity } = scanAppForUnverifiedNativeParity(this.appDir);
@@ -255,8 +173,31 @@ export class AppBuildVerifyAdapter implements Adapter {
       report({ kind: "error", code, message: parts.join("\n\n"), retryable: false });
       return { ...result, terminalReason: "error" };
     }
-    // Static scans clean — now observe the page actually running.
-    const smoke = await this.smokeGate(this.appDir);
+    return this.smokeAndJudge(input, report, result, "strict");
+  }
+
+  /** Layers 2–4 for one build: smoke (static file:// strict, or live
+   *  dev-server hard-signals), then the vision judge over the evidence. */
+  private async smokeAndJudge(
+    input: TurnInput,
+    report: (r: AdapterReport) => void,
+    result: TurnResult,
+    mode: AppSmokeGateSpec["mode"],
+  ): Promise<TurnResult> {
+    let url: string | undefined;
+    if (mode === "hard-signals") {
+      const appName = basename(this.appDir);
+      const resolved = await this.urlResolver(appName);
+      if (!resolved) {
+        // No dev-server record → nothing to load. The tier gates (real
+        // scaffold + app_serve_* port verification) own server liveness;
+        // the smoke gate won't invent a verdict about a URL it can't find.
+        report({ kind: "stream_chunk", body: { delta: `[verify] smoke gate skipped: no dev-server record for "${appName}" — no live URL to smoke\n` } });
+        return result;
+      }
+      url = resolved;
+    }
+    const smoke = await this.smokeGate({ appDir: this.appDir, url, mode });
     const shots = [smoke.screenshotPath, smoke.interactionScreenshotPath];
     if (smoke.verdict === "fail") {
       const detail = smoke.detail ?? "smoke failed";
@@ -268,13 +209,14 @@ export class AppBuildVerifyAdapter implements Adapter {
       report({ kind: "stream_chunk", body: { delta: `[verify] smoke gate skipped: ${smoke.detail}\n` } });
       return result;
     }
-    report({ kind: "stream_chunk", body: { delta: `[verify] smoke passed — page loaded, mounted, 0 console errors${smoke.interactionScreenshotPath ? ", survived its primary action" : ""}${smoke.screenshotPath ? ` (evidence: ${smoke.screenshotPath})` : ""}\n` } });
+    report({ kind: "stream_chunk", body: { delta: `[verify] smoke passed — ${url ?? "page"} loaded, mounted, no ${mode === "strict" ? "console" : "uncaught"} errors${smoke.interactionScreenshotPath ? ", survived its primary action" : ""}${smoke.screenshotPath ? ` (evidence: ${smoke.screenshotPath})` : ""}\n` } });
     // Behavior is clean — last question is appearance: does the render look
     // like what was ASKED? Deterministic checks can't see wrong-but-quiet
     // rendering (the black-screen maze that throws nothing).
     const judgeShots = shots.filter((p): p is string => typeof p === "string");
     if (this.brief && judgeShots.length > 0) {
-      const verdict = await this.judge(judgeShots, this.brief);
+      const judgeBrief = smoke.judgeNotes ? `${this.brief}\n\n(${smoke.judgeNotes})` : this.brief;
+      const verdict = await this.judge(judgeShots, judgeBrief);
       if (verdict === null) {
         report({ kind: "stream_chunk", body: { delta: `[verify] vision judge unavailable (no vision-capable credential) — skipped\n` } });
       } else if (!verdict.ok) {

@@ -23,6 +23,9 @@ export interface OpenedPage {
   page: Page;
   /** Console errors + uncaught page errors, in arrival order. */
   errors: string[];
+  /** Uncaught page errors ONLY (subset of `errors`) — the hard signal a
+   *  framework-tier gate keys on while tolerating dev-server console noise. */
+  pageErrors: string[];
   close: () => Promise<void>;
 }
 
@@ -34,20 +37,25 @@ export interface OpenedPage {
  */
 export async function openPageWithConsoleCapture(): Promise<OpenedPage> {
   const errors: string[] = [];
+  const pageErrors: string[] = [];
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   page.on("console", (msg: ConsoleMessage) => {
     if (msg.type() === "error") errors.push(msg.text().slice(0, 200));
   });
-  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message.slice(0, 200)}`));
+  page.on("pageerror", (err) => {
+    const entry = `pageerror: ${err.message.slice(0, 200)}`;
+    errors.push(entry);
+    pageErrors.push(entry);
+  });
 
   const close = async () => {
     await page.close().catch(() => {});
     await context.close().catch(() => {});
     await browser.close().catch(() => {});
   };
-  return { browser, context, page, errors, close };
+  return { browser, context, page, errors, pageErrors, close };
 }
 
 /**
@@ -83,6 +91,8 @@ export async function pageMounted(page: Page): Promise<boolean> {
 
 export interface SmokeResult {
   consoleErrors: string[];
+  /** Uncaught page errors ONLY (subset of consoleErrors). */
+  pageErrors: string[];
   /** True when a root/canvas node mounted with content. */
   rootMounted: boolean;
   /** Set when navigation itself failed (page never opened). */
@@ -103,6 +113,8 @@ export interface SmokeInteraction {
   clicked: boolean;
   /** Console + page errors that arrived AFTER the click only. */
   consoleErrors: string[];
+  /** Uncaught page errors that arrived AFTER the click only (subset of consoleErrors). */
+  pageErrors: string[];
   rootMounted: boolean;
   /** Set when a post-interaction screenshot was requested AND captured. */
   screenshotPath?: string;
@@ -125,7 +137,7 @@ export interface SmokeOptions {
  * for both `file://` built artifacts and a running dev-server `http://` URL.
  */
 export async function smokeUrl(url: string, loadTimeoutMs = 30_000, signal?: AbortSignal, opts?: SmokeOptions): Promise<SmokeResult> {
-  if (signal?.aborted) return { consoleErrors: [], rootMounted: false, loadError: "aborted" };
+  if (signal?.aborted) return { consoleErrors: [], pageErrors: [], rootMounted: false, loadError: "aborted" };
   const opened = await openPageWithConsoleCapture();
   const capture = async (): Promise<string | undefined> => {
     if (!opts?.screenshotPath) return undefined;
@@ -137,21 +149,26 @@ export async function smokeUrl(url: string, loadTimeoutMs = 30_000, signal?: Abo
   try {
     await opened.page.goto(url, { waitUntil: "load", timeout: loadTimeoutMs });
     await opened.page.waitForTimeout(500);
-    if (signal?.aborted) return { consoleErrors: opened.errors, rootMounted: false, loadError: "aborted" };
+    if (signal?.aborted) return { consoleErrors: opened.errors, pageErrors: opened.pageErrors, rootMounted: false, loadError: "aborted" };
     const rootMounted = await pageMounted(opened.page);
     // Snapshot phase-1 errors BEFORE any interaction — opened.errors is live,
     // and post-click errors must land in interaction.consoleErrors, not here.
     const result: SmokeResult = {
       consoleErrors: opened.errors.slice(),
+      pageErrors: opened.pageErrors.slice(),
       rootMounted,
       screenshotPath: await capture(),
     };
-    if (opts?.interact && rootMounted && result.consoleErrors.length === 0 && !signal?.aborted) {
+    // Interact whenever the HARD signals are clean (mounted, no uncaught
+    // errors). Console chatter doesn't block the click: strict-mode callers
+    // fail on it before ever reading the interaction, and hard-signals
+    // callers tolerate it by design.
+    if (opts?.interact && rootMounted && result.pageErrors.length === 0 && !signal?.aborted) {
       result.interaction = await clickPrimaryAndResmoke(opened, opts.interact);
     }
     return result;
   } catch (e) {
-    return { consoleErrors: opened.errors, rootMounted: false, loadError: (e as Error).message.slice(0, 200), screenshotPath: await capture() };
+    return { consoleErrors: opened.errors, pageErrors: opened.pageErrors, rootMounted: false, loadError: (e as Error).message.slice(0, 200), screenshotPath: await capture() };
   } finally {
     await opened.close();
   }
@@ -167,8 +184,9 @@ async function clickPrimaryAndResmoke(
   opened: OpenedPage,
   opts: { screenshotPath?: string },
 ): Promise<SmokeInteraction> {
-  const { page, errors } = opened;
+  const { page, errors, pageErrors } = opened;
   const preClickErrorCount = errors.length;
+  const preClickPageErrorCount = pageErrors.length;
   try {
     // getByRole("button") is the same semantic-locator family the scenario
     // driver resolves steps with: <button>, [role=button], input submit/button.
@@ -176,12 +194,13 @@ async function clickPrimaryAndResmoke(
   } catch {
     // No button, or it isn't clickable (hidden, detached). Not a failure —
     // plenty of legitimate apps have no primary action on their first screen.
-    return { clicked: false, consoleErrors: [], rootMounted: true };
+    return { clicked: false, consoleErrors: [], pageErrors: [], rootMounted: true };
   }
   await page.waitForTimeout(INTERACT_SETTLE_MS);
   const interaction: SmokeInteraction = {
     clicked: true,
     consoleErrors: errors.slice(preClickErrorCount),
+    pageErrors: pageErrors.slice(preClickPageErrorCount),
     rootMounted: await pageMounted(page),
   };
   if (opts.screenshotPath) {

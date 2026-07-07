@@ -74,9 +74,9 @@ function collect(): { reports: AdapterReport[]; report: (r: AdapterReport) => vo
 
 async function runWith(outcome: AppSmokeGateOutcome) {
   const appDir = makeStaticAppDir();
-  const gateCalls: string[] = [];
-  const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async (dir) => {
-    gateCalls.push(dir);
+  const gateCalls: Array<{ appDir: string; url?: string; mode: string }> = [];
+  const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async (spec) => {
+    gateCalls.push(spec);
     return outcome;
   });
   const { reports, report } = collect();
@@ -90,7 +90,7 @@ describe("AppBuildVerifyAdapter — see-before-done smoke gate", () => {
       verdict: "fail",
       detail: "page renders NOTHING — no canvas painted",
     });
-    expect(gateCalls).toEqual([appDir]);
+    expect(gateCalls).toEqual([{ appDir, url: undefined, mode: "strict" }]);
     expect(result.terminalReason).toBe("error");
     const err = reports.find(r => r.kind === "error");
     expect(err).toMatchObject({ code: "app_smoke_failed" });
@@ -114,7 +114,7 @@ describe("AppBuildVerifyAdapter — see-before-done smoke gate", () => {
   it("a failed smoke ALSO emits a marker evidence user-message carrying the screenshots [regression]", async () => {
     const appDir = makeStaticAppDir();
     const { shot1, shot2 } = seedScreenshots(appDir);
-    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async () => ({
+    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async (): Promise<AppSmokeGateOutcome> => ({
       verdict: "fail",
       detail: "clicking its primary action threw 3 console error(s)",
       screenshotPath: shot1,
@@ -201,5 +201,93 @@ describe("AppBuildVerifyAdapter — vision judge tier", () => {
     const result = await adapter.runTurn(turnInput(), report);
     expect(result.terminalReason).toBe("done");
     expect(judgeRan).toBe(false);
+  });
+
+  it("hard-signal console chatter (judgeNotes) rides into the judge's brief", async () => {
+    const appDir = makeStaticAppDir();
+    const { shot1 } = seedScreenshots(appDir);
+    const briefs: string[] = [];
+    const adapter = new AppBuildVerifyAdapter(
+      doneInner, appDir, undefined,
+      async () => ({ verdict: "pass" as const, screenshotPath: shot1, judgeNotes: "The page logged 2 console error(s)" }),
+      { brief: "a maze game", judge: async (_paths, brief) => { briefs.push(brief); return { ok: true, reason: "fine" }; } },
+    );
+    const { report } = collect();
+    await adapter.runTurn(turnInput(), report);
+    expect(briefs[0]).toContain("a maze game");
+    expect(briefs[0]).toContain("The page logged 2 console error(s)");
+  });
+});
+
+describe("AppBuildVerifyAdapter — framework tiers smoke the LIVE dev server", () => {
+  function makeViteAppDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "smoke-gate-vite-"));
+    tempDirs.push(dir);
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x", devDependencies: { vite: "^5" } }));
+    writeFileSync(join(dir, "vite.config.js"), "export default {}");
+    return dir;
+  }
+
+  it("a detected framework build smokes its dev-server URL in hard-signals mode [regression: used to skip the smoke tier]", async () => {
+    const appDir = makeViteAppDir();
+    const gateCalls: Array<{ appDir: string; url?: string; mode: string }> = [];
+    const adapter = new AppBuildVerifyAdapter(
+      doneInner, appDir, undefined,
+      async (spec) => { gateCalls.push(spec); return { verdict: "pass" as const }; },
+      { urlResolver: async (appName) => `http://127.0.0.1:7007/apps/${appName}/` },
+    );
+    const { report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("done");
+    expect(gateCalls).toEqual([{
+      appDir,
+      url: `http://127.0.0.1:7007/apps/${appDir.split(/[\\/]/).pop()}/`,
+      mode: "hard-signals",
+    }]);
+  });
+
+  it("frontend-spa tier with a REAL scaffold smokes the dev server (the faked-check still fires first on fakes)", async () => {
+    const appDir = makeViteAppDir();
+    const gateCalls: Array<{ mode: string; url?: string }> = [];
+    const adapter = new AppBuildVerifyAdapter(
+      doneInner, appDir, "frontend-spa",
+      async (spec) => { gateCalls.push({ mode: spec.mode, url: spec.url }); return { verdict: "pass" as const }; },
+      { urlResolver: async () => "http://127.0.0.1:7007/apps/x/" },
+    );
+    const { report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("done");
+    expect(gateCalls).toEqual([{ mode: "hard-signals", url: "http://127.0.0.1:7007/apps/x/" }]);
+  });
+
+  it("no dev-server record → gate skips with a warning, never a verdict", async () => {
+    const appDir = makeViteAppDir();
+    let gateRan = false;
+    const adapter = new AppBuildVerifyAdapter(
+      doneInner, appDir, undefined,
+      async () => { gateRan = true; return { verdict: "pass" as const }; },
+      { urlResolver: async () => null },
+    );
+    const { reports, report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("done");
+    expect(gateRan).toBe(false);
+    const chunks = reports.filter(r => r.kind === "stream_chunk").map(r => (r as { body: { delta: string } }).body.delta).join("");
+    expect(chunks).toContain("no dev-server record");
+  });
+
+  it("a dev-server smoke failure flips done to error with evidence, same as static", async () => {
+    const appDir = makeViteAppDir();
+    const adapter = new AppBuildVerifyAdapter(
+      doneInner, appDir, undefined,
+      async () => ({ verdict: "fail" as const, detail: "dev server never became ready at http://127.0.0.1:7007/apps/x/ (last: HTTP 503)" }),
+      { urlResolver: async () => "http://127.0.0.1:7007/apps/x/" },
+    );
+    const { reports, report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("error");
+    const err = reports.find(r => r.kind === "error");
+    expect(err).toMatchObject({ code: "app_smoke_failed" });
+    expect((err as { message: string }).message).toContain("never became ready");
   });
 });

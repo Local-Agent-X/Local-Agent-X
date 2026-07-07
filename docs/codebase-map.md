@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 59 live · 1 with no live importer · 1149 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1150 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 64 | 22 | XL |  |
 | `src/security/` | 64 | 26 | XL |  |
-| `src/tools/` | 48 | 133 | XL |  |
+| `src/tools/` | 48 | 134 | XL |  |
 | `src/canonical-loop/` | 37 | 129 | XL |  |
 | `src/memory/` | 37 | 106 | XL |  |
 | `src/providers/` | 37 | 17 | L |  |
@@ -74,18 +74,14 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/associative-recall/` | 1 | 7 | M |  |
 | `src/cross-session-learning/` | 1 | 7 | M |  |
 | `src/errors/` | 1 | 2 | S |  |
+| `src/language-intel/` | 1 | 4 | M |  |
 | `src/manifest-generator/` | 1 | 8 | M |  |
 | `src/tool-execution/` | 1 | 20 | L |  |
 | `src/types/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)
 
-Zero non-test importers. Likely superseded; confirm before tracing into them.
-See ARCHITECTURE.md's "Looks canonical, isn't" table for the curated verdicts.
-
-| Directory | Files | Size |
-|---|--:|:--:|
-| `src/language-intel/` | 4 | M |
+_None — every directory has at least one live importer._
 
 ## Top-level `src/` files
 

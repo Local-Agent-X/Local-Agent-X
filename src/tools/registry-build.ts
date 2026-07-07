@@ -16,6 +16,7 @@ import { extractSiteAssetsTool } from "./asset-tools.js";
 import { youtubeAnalyzeTool } from "./youtube-tool.js";
 import { globTool } from "./glob-tool.js";
 import { grepTool } from "./grep-tool.js";
+import { structuralSearchTool } from "./structural-search-tool.js";
 import { connectorCreateTool } from "./connector-tools.js";
 import { webSearchTool } from "./web-search-tool.js";
 import { imageSearchTool } from "./image-search-tool.js";
@@ -48,7 +49,7 @@ const _toolSearchTool = createToolSearchTool(unifiedRegistry);
 
 export const allTools: ToolDefinition[] = applyPrompts([
   readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool, bashTool, webFetchTool,
-  globTool, grepTool, webSearchTool, imageSearchTool, _toolSearchTool,
+  globTool, grepTool, structuralSearchTool, webSearchTool, imageSearchTool, _toolSearchTool,
   selfEditTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   buildPlanStatusTool, buildPlanResumeTool,
   viewImageTool, sendVideoTool, sendImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,

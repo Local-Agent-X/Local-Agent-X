@@ -29,6 +29,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // vs main-chat. Read-only discovery (ARI action "read"), spiral-guarded.
   glob:        ["main-chat", "spawned-agent", "build-intent"],
   grep:        ["main-chat", "spawned-agent", "build-intent"],
+  // structural_search is grep's symbol-accurate sibling — same read-only
+  // discovery surface, same audiences.
+  structural_search: ["main-chat", "spawned-agent", "build-intent"],
 
   // Web & search
   web_fetch:   ["main-chat", "spawned-agent", "operator", "build-intent"],

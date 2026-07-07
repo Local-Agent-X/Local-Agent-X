@@ -49,6 +49,59 @@ interface PostEditDiagState {
    *  post-edit fire this op. Cleared with the rest of the per-op middleware
    *  state on op-terminal (clearMiddlewareStateForOp). */
   baselines: Map<string, Set<string>>;
+  /** Resolved file path → INTRODUCED (non-baseline) errors present at the
+   *  file's most recent check. Set/cleared on every post-baseline fire for
+   *  the file, so it always reflects the last look the language service got.
+   *  Known staleness: a file fixed INDIRECTLY (by editing a different file)
+   *  isn't rechecked until it is edited again, so its entry can linger; the
+   *  consumers tolerate that — a real clean verify outranks this state in
+   *  checkVerifyGate, and the build-verify fail-fast is retry-bounded. */
+  outstanding: Map<string, FileDiagnostic[]>;
+  /** Resolved file path → TOTAL error count (baseline errors included) at the
+   *  file's most recent check. Feeds opEditedFilesLspClean: pre-existing red
+   *  honestly defeats "clean" even though it's never re-reported as new. */
+  lastErrorCounts: Map<string, number>;
+}
+
+function createPostEditDiagState(): PostEditDiagState {
+  return { baselines: new Map(), outstanding: new Map(), lastErrorCounts: new Map() };
+}
+
+// ── Read-only queries over the per-op state (no duplication elsewhere) ──────
+// Timing contract for consumers: this state is written ONLY by this module's
+// afterToolExecution hook (registry order 245). The readers run at done-claim
+// time — verify-gate's afterModelCall wrap-up check (a turn with ZERO tool
+// calls, so no afterToolExecution fires that turn) and the orchestrator
+// build-verify gate (between turns) — so every read observes state written by
+// a PRIOR turn's dispatch; there is no same-turn read/write race.
+
+/** All introduced-and-still-unresolved errors across the op's edited files,
+ *  per each file's most recent language-service check. */
+export function opOutstandingIntroducedErrors(opId: string): FileDiagnostic[] {
+  const state = getMiddlewareState<PostEditDiagState>(
+    opId, "post-edit-diagnostics", createPostEditDiagState,
+  );
+  return [...state.outstanding.values()].flat();
+}
+
+/** True when the op has introduced type errors it has not resolved. */
+export function opHasOutstandingIntroducedErrors(opId: string): boolean {
+  return opOutstandingIntroducedErrors(opId).length > 0;
+}
+
+/** True when every edited-and-checked TS/JS file was fully error-free
+ *  (pre-existing errors included) at its most recent check. False when the op
+ *  never had a file diagnosed — absence of evidence is not clean. WEAK
+ *  positive evidence by design (see "lsp-clean" in claim-grounding.ts). */
+export function opEditedFilesLspClean(opId: string): boolean {
+  const state = getMiddlewareState<PostEditDiagState>(
+    opId, "post-edit-diagnostics", createPostEditDiagState,
+  );
+  if (state.lastErrorCounts.size === 0) return false;
+  for (const count of state.lastErrorCounts.values()) {
+    if (count > 0) return false;
+  }
+  return true;
 }
 
 /** Identity of a diagnostic for baseline matching: code + whitespace-normalized
@@ -113,7 +166,7 @@ export const postEditDiagnosticsMiddleware: CanonicalMiddleware = {
       const state = getMiddlewareState<PostEditDiagState>(
         ctx.op.id,
         "post-edit-diagnostics",
-        () => ({ baselines: new Map() }),
+        createPostEditDiagState,
       );
 
       const all = await getLanguageIntel().getDiagnostics(files);
@@ -134,12 +187,17 @@ export const postEditDiagnosticsMiddleware: CanonicalMiddleware = {
           // (see module docstring for why a true pre-edit state is unknowable).
           if (state.baselines.size < MAX_TRACKED_FILES) {
             state.baselines.set(file, new Set(errors.map(diagKey)));
+            state.lastErrorCounts.set(file, errors.length);
           }
           continue;
         }
-        for (const d of errors) {
-          if (!baseline.has(diagKey(d))) fresh.push(d);
-        }
+        const freshForFile = errors.filter((d) => !baseline.has(diagKey(d)));
+        // Refresh the read-only-query maps: this check is now the file's most
+        // recent language-service verdict (total red count + introduced set).
+        state.lastErrorCounts.set(file, errors.length);
+        if (freshForFile.length > 0) state.outstanding.set(file, freshForFile);
+        else state.outstanding.delete(file);
+        fresh.push(...freshForFile);
       }
 
       if (fresh.length === 0) return { kind: "continue" };

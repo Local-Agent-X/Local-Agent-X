@@ -30,7 +30,12 @@ vi.mock("../../language-intel/index.js", async (importOriginal) => {
   };
 });
 
-const { postEditDiagnosticsMiddleware } = await import("./post-edit-diagnostics.js");
+const {
+  postEditDiagnosticsMiddleware,
+  opOutstandingIntroducedErrors,
+  opHasOutstandingIntroducedErrors,
+  opEditedFilesLspClean,
+} = await import("./post-edit-diagnostics.js");
 const { _resetMiddlewareStates } = await import("./state.js");
 // The spread in the mock factory keeps disposeLanguageIntel the real one.
 const { disposeLanguageIntel } = await import("../../language-intel/index.js");
@@ -200,5 +205,61 @@ describe("post-edit-diagnostics", () => {
 
   it("runs on ALL lanes (no `when`) — edits arrive via interactive chat too", () => {
     expect(postEditDiagnosticsMiddleware.when).toBeUndefined();
+  });
+});
+
+// Read-only accessors over the per-op state — the signal source for the
+// verify-gate nudge tone and the build-verify fail-fast. Written only by
+// afterToolExecution; the queries never mutate the diff/baseline behavior.
+describe("post-edit-diagnostics — read-only state queries", () => {
+  it("tracks outstanding INTRODUCED errors across turns and clears them once fixed", { timeout: 60_000 }, async () => {
+    const op = opId();
+    const bPath = join(dir, "b.ts");
+
+    // Turn 1: pre-existing red only → baseline; nothing INTRODUCED, and the
+    // baseline error honestly defeats lsp-clean.
+    writeFixture(bPath, B_RED_ONE);
+    await editTurn(op, bPath);
+    expect(opHasOutstandingIntroducedErrors(op)).toBe(false);
+    expect(opOutstandingIntroducedErrors(op)).toEqual([]);
+    expect(opEditedFilesLspClean(op)).toBe(false);
+
+    // Turn 2: a NEW error (TS2322) → outstanding, with the diagnostic itself
+    // available as the gate's failure evidence.
+    writeFixture(bPath, B_RED_TWO);
+    await editTurn(op, bPath);
+    expect(opHasOutstandingIntroducedErrors(op)).toBe(true);
+    const outstanding = opOutstandingIntroducedErrors(op);
+    expect(outstanding.length).toBeGreaterThan(0);
+    expect(String(outstanding[0].code)).toContain("2322");
+    expect(outstanding[0].file).toBe(bPath);
+    expect(opEditedFilesLspClean(op)).toBe(false);
+
+    // Turn 3: the introduced error is fixed (baseline-only red remains) —
+    // outstanding clears; lsp-clean stays false on the pre-existing error.
+    writeFixture(bPath, B_RED_ONE);
+    await editTurn(op, bPath);
+    expect(opHasOutstandingIntroducedErrors(op)).toBe(false);
+    expect(opEditedFilesLspClean(op)).toBe(false);
+  });
+
+  it("lsp-clean: true only when every checked edited file is fully error-free", { timeout: 60_000 }, async () => {
+    const op = opId();
+    const aPath = join(dir, "a.ts");
+    await editTurn(op, aPath); // first sighting, clean baseline
+    expect(opEditedFilesLspClean(op)).toBe(true);
+    expect(opHasOutstandingIntroducedErrors(op)).toBe(false);
+
+    writeFixture(aPath, A_TS + "export const extra = greetUser(\"x\");\n");
+    await editTurn(op, aPath); // still clean after a later edit
+    expect(opEditedFilesLspClean(op)).toBe(true);
+  });
+
+  it("an op with no diagnosed files reads as neither outstanding nor clean", () => {
+    const op = opId();
+    expect(opHasOutstandingIntroducedErrors(op)).toBe(false);
+    expect(opOutstandingIntroducedErrors(op)).toEqual([]);
+    // Absence of evidence is not clean — the weak positive needs a real check.
+    expect(opEditedFilesLspClean(op)).toBe(false);
   });
 });

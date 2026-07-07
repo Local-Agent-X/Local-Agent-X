@@ -8,6 +8,16 @@ vi.mock("../../classifiers/test-deletion-classify.js", () => ({
   classifyTestDeletion: (...args: Parameters<ClassifyTestDeletion>) => classifyTestDeletionMock(...args),
 }));
 
+// Mock the post-edit-diagnostics accessors (the language-service signal seam)
+// the same way: default false/false = no signal, so every pre-existing test
+// below doubles as the regression pin that the no-signal behavior is unchanged.
+const opHasOutstandingMock = vi.fn(() => false);
+const opLspCleanMock = vi.fn(() => false);
+vi.mock("./post-edit-diagnostics.js", () => ({
+  opHasOutstandingIntroducedErrors: () => opHasOutstandingMock(),
+  opEditedFilesLspClean: () => opLspCleanMock(),
+}));
+
 const { verifyGateMiddleware, opDeletedTestDodge, opEditedSourceUnverified } = await import("./verify-gate.js");
 const { _resetMiddlewareStates } = await import("./state.js");
 import type { CanonicalLoopContext } from "./types.js";
@@ -131,6 +141,51 @@ describe("verify-gate", () => {
     // ("rename X→Y", "fix this bug") most often comes in as an interactive chat
     // turn, where the user trusts the "done" claim. See the module docstring.
     expect(verifyGateMiddleware.when).toBeUndefined();
+  });
+});
+
+describe("verify-gate — language-service signal from post-edit-diagnostics", () => {
+  // Timing under test: these accessors read per-op state that post-edit-
+  // diagnostics wrote in a PRIOR turn's afterToolExecution; the wrap-up turn
+  // itself has zero tool calls, so there is no same-turn write to race.
+  beforeEach(() => {
+    opHasOutstandingMock.mockReturnValue(false);
+    opLspCleanMock.mockReturnValue(false);
+  });
+  afterEach(() => {
+    opHasOutstandingMock.mockReturnValue(false);
+    opLspCleanMock.mockReturnValue(false);
+  });
+
+  it("outstanding introduced errors → the SHARP nudge (verify-gate reason)", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    opHasOutstandingMock.mockReturnValue(true);
+    await editTurn(op, "src/parser.ts");
+    const r = await wrapUp(op);
+    expect(r.kind).toBe("nudge");
+    expect((r as { reason: string }).reason).toBe("verify-gate");
+    expect((r as { message: string }).message).toMatch(/INTRODUCED type errors/i);
+  });
+
+  it("lsp-clean → the gentle nudge with the acknowledging clause", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    opLspCleanMock.mockReturnValue(true);
+    await editTurn(op, "src/parser.ts");
+    const r = await wrapUp(op);
+    expect(r.kind).toBe("nudge");
+    expect((r as { message: string }).message).toMatch(/type-clean isn't run-clean/i);
+    // Weak positive evidence only — the outcome label still demotes.
+    expect(opEditedSourceUnverified(op)).toBe(true);
+  });
+
+  it("lsp-clean never suppresses the nudge or substitutes for a build", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    opLspCleanMock.mockReturnValue(true);
+    await editTurn(op, "src/parser.ts");
+    expect((await wrapUp(op)).kind).toBe("nudge"); // still nudges (softer tone)
   });
 });
 

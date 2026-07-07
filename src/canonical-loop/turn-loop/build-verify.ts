@@ -18,6 +18,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { detectBuildCommand, detectTestCommand, type FsProbe } from "../../agent-guards/index.js";
 import { opEditedSourcePaths, recordOrchestratorVerify } from "../middlewares/verify-gate.js";
+import { opOutstandingIntroducedErrors } from "../middlewares/post-edit-diagnostics.js";
+import type { FileDiagnostic } from "../../language-intel/index.js";
 import { projectRoot } from "../../workspace/paths.js";
 import { bashTool } from "../../tools/shell-tool.js";
 import { statusOf } from "../../tools/result-helpers.js";
@@ -165,6 +167,25 @@ function formatBuildErrorsForAgent(command: string, cwd: string, output: string,
   );
 }
 
+/** Fail-fast counterpart to formatBuildErrorsForAgent: the post-edit language
+ *  service already knows the op INTRODUCED type errors that are still
+ *  unresolved, so the gate reports THOSE as its failure evidence instead of
+ *  spawning a build that would only rediscover them. Same shape/tone as the
+ *  build-red block so the model's fix loop is identical either way. */
+function formatOutstandingLspErrorsForAgent(diags: readonly FileDiagnostic[]): string {
+  const lines = diags.map((d) => `${d.file}:${d.line}:${d.column} — TS${d.code}: ${d.message}`);
+  return (
+    `STOP — your edits INTRODUCED type errors that are still unresolved.\n\n` +
+    `The language service reports errors on files you edited that were NOT present ` +
+    `before your changes:\n\n` +
+    "```\n" + truncateHead(lines.join("\n"), NUDGE_BODY_LIMIT) + "\n```\n\n" +
+    `Do NOT report this done, complete, or working while these stand. Fix every error ` +
+    `above, then run the project's build/type-check to confirm it's clean. An error in ` +
+    `a file you did NOT edit means you changed something it depends on — fix the root ` +
+    `cause, not just the file you were looking at.`
+  );
+}
+
 /** Test-failure counterpart: the edit type-checks, but a test the op TOUCHED is
  *  red. A type-clean change whose own test fails is not done — and the model
  *  couldn't run the test itself (blocked on source paths), so surface it. */
@@ -303,18 +324,9 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
   const editedPaths = raw.map((p) => (isAbsolute(p) ? p : resolve(projectRoot(), p)));
   if (editedPaths.length === 0) return NO_RETRY;
 
-  const probe = opts.probe ?? realProbe;
-  const detected = detectBuildCommand(editedPaths, probe);
-  if (!detected) {
-    logger.debug(`op=${op.id} edited source but no buildable project found in ${editedPaths.length} path(s) — can't self-verify`);
-    return NO_RETRY;
-  }
-
-  const exec = opts.exec ?? defaultExec;
-
   // Red-path result: record the partial verdict, then loop (under cap) or stop
-  // looping. Shared by the type-check and the edited-test failure branches so a
-  // single retry counter governs both.
+  // looping. Shared by the LSP fail-fast, the type-check, and the edited-test
+  // failure branches so a single retry counter governs all three.
   const redResult = (nudge: string): BuildVerifyGateResult => {
     recordOrchestratorVerify(op.id, false);
     if (getBuildVerifyRetries(op.id) >= MAX_RETRIES) {
@@ -323,6 +335,27 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
     bumpBuildVerifyRetries(op.id);
     return { nudge, shouldRetry: true, capReached: false, verifiedClean: false, confirmation: "" };
   };
+
+  // Fail-fast (cheap strong negative first): post-edit diagnostics already
+  // know the op INTRODUCED type errors it never resolved, so fail the gate
+  // with that list instead of spawning the build to rediscover them. Sits
+  // BEFORE command detection on purpose — the evidence needs no buildable
+  // manifest. The inverse signal (lsp-clean) has NO effect here: a clean
+  // language service never skips or weakens the build below.
+  const outstanding = opOutstandingIntroducedErrors(op.id);
+  if (outstanding.length > 0) {
+    logger.info(`op=${op.id} has ${outstanding.length} outstanding introduced type error(s) — failing the gate without spawning the build (retry ${getBuildVerifyRetries(op.id)})`);
+    return redResult(formatOutstandingLspErrorsForAgent(outstanding));
+  }
+
+  const probe = opts.probe ?? realProbe;
+  const detected = detectBuildCommand(editedPaths, probe);
+  if (!detected) {
+    logger.debug(`op=${op.id} edited source but no buildable project found in ${editedPaths.length} path(s) — can't self-verify`);
+    return NO_RETRY;
+  }
+
+  const exec = opts.exec ?? defaultExec;
 
   // 1. Type-check (fast, side-effect-free). The broken-reference class fails here.
   const build = await exec(detected.command, detected.cwd);

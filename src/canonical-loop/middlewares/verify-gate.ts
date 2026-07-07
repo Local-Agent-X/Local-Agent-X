@@ -32,6 +32,10 @@ import {
   type VerifyGateState,
   type VerifyTurnAction,
 } from "../../agent-guards/index.js";
+import {
+  opEditedFilesLspClean,
+  opHasOutstandingIntroducedErrors,
+} from "./post-edit-diagnostics.js";
 import { classifyTestDeletion } from "../../classifiers/test-deletion-classify.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { capabilityForbiddenForOp } from "../instruction-ledger/index.js";
@@ -212,7 +216,17 @@ export const verifyGateMiddleware: CanonicalMiddleware = {
     const delNudge = await evaluateDeletedTests(ctx, state);
     if (delNudge) return { kind: "nudge", message: delNudge, reason: "verify-gate-test-deletion" };
 
-    const r = checkVerifyGate(state);
+    // Language-service signal from post-edit-diagnostics' per-op state.
+    // Timing: that middleware (order 245) writes the state in its
+    // afterToolExecution hook; this is a wrap-up afterModelCall on a turn with
+    // ZERO tool calls (guarded above), so no afterToolExecution fires this
+    // turn — the state read here was written by a PRIOR turn's dispatch.
+    // Outstanding introduced errors sharpen the nudge; lsp-clean only softens
+    // its tone and never substitutes for the build (see checkVerifyGate).
+    const r = checkVerifyGate(state, {
+      outstanding: opHasOutstandingIntroducedErrors(ctx.op.id),
+      clean: opEditedFilesLspClean(ctx.op.id),
+    });
     if (r.nudge) return { kind: "nudge", message: r.nudge, reason: SOURCE_VERIFY_REASON };
     return { kind: "continue" };
   },

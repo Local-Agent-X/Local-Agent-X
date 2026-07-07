@@ -208,6 +208,77 @@ describe("checkVerifyGate — verified but FAILED (the ship-broken-and-claim-don
   });
 });
 
+// Language-service signal (fed by the middleware from post-edit-diagnostics'
+// per-op state): outstanding INTRODUCED type errors are strong negative
+// evidence (sharp path, same tier as a failed verify); lsp-clean is weak
+// positive evidence (softens the gentle nudge's tone, never replaces a build).
+describe("checkVerifyGate — language-service signal", () => {
+  it("outstanding introduced errors → SHARP nudge naming introduced type errors", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts")], s);
+    const r = checkVerifyGate(s, { outstanding: true, clean: false });
+    expect(r.nudge).toMatch(/STOP/);
+    expect(r.nudge).toMatch(/INTRODUCED type errors/i);
+    expect(r.nudge).not.toMatch(/haven't run/i); // not the gentle path
+  });
+
+  it("outstanding path shares the bounded fail-nudge cap with the failed-verify path", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts")], s);
+    const lsp = { outstanding: true, clean: false };
+    expect(checkVerifyGate(s, lsp).nudge).toMatch(/STOP/);
+    expect(checkVerifyGate(s, lsp).nudge).toMatch(/STOP/);
+    expect(checkVerifyGate(s, lsp).nudge).toBeNull(); // MAX_FAIL_NUDGES reached
+  });
+
+  it("a verify that RAN and FAILED keeps its own message over the LSP wording", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts"), bash("tsc --noEmit", "error")], s);
+    const r = checkVerifyGate(s, { outstanding: true, clean: false });
+    expect(r.nudge).toMatch(/build\/type-check\/test run FAILED/);
+    expect(r.nudge).not.toMatch(/language service/i);
+  });
+
+  it("a grounded clean verify silences even a (stale) outstanding flag", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts"), bash("tsc --noEmit", "ok")], s);
+    expect(checkVerifyGate(s, { outstanding: true, clean: false }).nudge).toBeNull();
+  });
+
+  it("lsp-clean + nothing else verified → GENTLE nudge with the acknowledging clause", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts")], s);
+    const r = checkVerifyGate(s, { outstanding: false, clean: true });
+    expect(r.nudge).toMatch(/types check clean, but run the build\/tests/i);
+    expect(r.nudge).toMatch(/type-clean isn't run-clean/i);
+    expect(r.nudge).not.toMatch(/STOP/); // still the gentle tier...
+    // ...and still fire-once: the weak positive never re-opens the nag.
+    expect(checkVerifyGate(s, { outstanding: false, clean: true }).nudge).toBeNull();
+  });
+
+  it("lsp-clean never grounds the claim — the outcome label still demotes", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts")], s);
+    checkVerifyGate(s, { outstanding: false, clean: true });
+    expect(opEditedSourceUnverified(s)).toBe(true); // partial until a real build
+  });
+
+  it("both booleans false → byte-identical to the no-signal behavior", () => {
+    const withSignal = createVerifyGateState();
+    const withoutSignal = createVerifyGateState();
+    noteVerifyEvidence([edit("src/chat/useChat.ts")], withSignal);
+    noteVerifyEvidence([edit("src/chat/useChat.ts")], withoutSignal);
+    const a = checkVerifyGate(withSignal, { outstanding: false, clean: false });
+    const b = checkVerifyGate(withoutSignal);
+    expect(a.nudge).toBe(b.nudge); // exact same message, not just same shape
+    // Pin the pre-existing expectation unchanged: gentle wording, no ack clause.
+    expect(b.nudge).toMatch(/haven't run/i);
+    expect(b.nudge).not.toMatch(/types check clean/i);
+    expect(checkVerifyGate(withSignal, { outstanding: false, clean: false }).nudge).toBeNull();
+    expect(checkVerifyGate(withoutSignal).nudge).toBeNull();
+  });
+});
+
 describe("test-deletion tripwire — detection (noteVerifyEvidence)", () => {
   it("records a test file deleted via delete_file", () => {
     const s = createVerifyGateState();

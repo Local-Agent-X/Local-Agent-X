@@ -11,6 +11,14 @@ vi.mock("../middlewares/verify-gate.js", () => ({
   recordOrchestratorVerify: vi.fn(),
 }));
 
+// Same isolation for the LSP fail-fast seam: the default (no outstanding
+// introduced errors) makes every pre-existing test below double as the
+// regression pin that the normal build path is unchanged when the language
+// service has nothing outstanding.
+vi.mock("../middlewares/post-edit-diagnostics.js", () => ({
+  opOutstandingIntroducedErrors: vi.fn(() => [] as import("../../language-intel/index.js").FileDiagnostic[]),
+}));
+
 import {
   runBuildVerifyGate,
   getBuildVerifyRetries,
@@ -19,6 +27,8 @@ import {
   groundTruthSizesNote,
 } from "./build-verify.js";
 import { recordOrchestratorVerify, opEditedSourcePaths } from "../middlewares/verify-gate.js";
+import { opOutstandingIntroducedErrors } from "../middlewares/post-edit-diagnostics.js";
+import type { FileDiagnostic } from "../../language-intel/index.js";
 import type { FsProbe } from "../../agent-guards/index.js";
 import type { Op } from "../../ops/types.js";
 
@@ -148,6 +158,69 @@ describe("runBuildVerifyGate", () => {
     expect(r.nudge).toContain("TS2339");
     expect(exec).toHaveBeenCalledTimes(1); // type-check only; test pass skipped while red
     expect(exec).not.toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", "/proj");
+  });
+});
+
+// LSP fail-fast: when post-edit diagnostics already know the op INTRODUCED
+// type errors it never resolved, the gate fails with THAT list instead of
+// spawning the build — cheap strong negative first. lsp-clean has no inverse
+// power: it never skips or weakens the build (pinned by the default-[] mock
+// leaving every other test's build path untouched).
+describe("runBuildVerifyGate — outstanding introduced type errors (LSP fail-fast)", () => {
+  const OUTSTANDING: FileDiagnostic[] = [
+    { file: "/proj/src/a.ts", line: 3, column: 5, message: "Type 'string' is not assignable to type 'number'.", code: 2322, severity: "error" },
+  ];
+
+  beforeEach(() => {
+    _resetBuildVerifyState();
+    vi.clearAllMocks();
+  });
+
+  it("fails fast with the diagnostics as evidence — build NOT spawned, verdict recorded red", async () => {
+    vi.mocked(opOutstandingIntroducedErrors).mockReturnValueOnce(OUTSTANDING);
+    const exec = vi.fn(GREEN); // even a would-be-green build must not run
+    const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
+    expect(exec).not.toHaveBeenCalled();
+    expect(r.shouldRetry).toBe(true);
+    expect(r.capReached).toBe(false);
+    expect(r.verifiedClean).toBe(false);
+    expect(r.nudge).toContain("INTRODUCED type errors");
+    expect(r.nudge).toContain("/proj/src/a.ts:3:5");
+    expect(r.nudge).toContain("TS2322");
+    expect(r.nudge).toContain("not assignable");
+    expect(recordOrchestratorVerify).toHaveBeenCalledWith("op-bv", false);
+    expect(getBuildVerifyRetries("op-bv")).toBe(1);
+  });
+
+  it("shares the retry cap with the build path — past MAX_RETRIES it stops looping", async () => {
+    vi.mocked(opOutstandingIntroducedErrors).mockReturnValue(OUTSTANDING);
+    const exec = vi.fn(GREEN);
+    const run = () => runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
+    expect((await run()).shouldRetry).toBe(true);  // retry 1
+    expect((await run()).shouldRetry).toBe(true);  // retry 2
+    const third = await run();                     // cap
+    expect(third.shouldRetry).toBe(false);
+    expect(third.capReached).toBe(true);
+    expect(third.nudge).toContain("TS2322"); // errors still surfaced
+    expect(exec).not.toHaveBeenCalled();
+    vi.mocked(opOutstandingIntroducedErrors).mockReturnValue([]);
+  });
+
+  it("fires even when no buildable project is detectable — the evidence needs no manifest", async () => {
+    vi.mocked(opOutstandingIntroducedErrors).mockReturnValueOnce(OUTSTANDING);
+    const empty: FsProbe = { exists: () => false, readJson: () => null };
+    const r = await runBuildVerifyGate(op, { editedPaths: ["/nowhere/a.ts"], probe: empty, exec: vi.fn(GREEN) });
+    expect(r.shouldRetry).toBe(true);
+    expect(r.nudge).toContain("TS2322");
+  });
+
+  it("no outstanding errors → the build path is invoked exactly as before", async () => {
+    vi.mocked(opOutstandingIntroducedErrors).mockReturnValueOnce([]);
+    const exec = vi.fn(GREEN);
+    const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", "/proj");
+    expect(r.verifiedClean).toBe(true);
+    expect(recordOrchestratorVerify).toHaveBeenCalledWith("op-bv", true);
   });
 });
 

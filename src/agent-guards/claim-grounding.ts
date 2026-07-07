@@ -11,7 +11,15 @@ export type EvidenceKind =
   | "remaining-hits-accounted"
   | "build-clean"
   | "diagnostic-read"
-  | "browser-render";
+  | "browser-render"
+  /** Post-edit language-service diagnostics are clean on EVERY edited TS/JS
+   *  file (post-edit-diagnostics' per-op state). Deliberate weighting: WEAK
+   *  positive evidence — type-clean is not run-clean, so this is never
+   *  sufficient alone to ground a source-done claim. No rule's `requiredAny`
+   *  lists it (pinned by claim-grounding.test.ts); the build/test run
+   *  ("build-clean") remains the grounding evidence. Its only effect is to
+   *  soften the verify-gate nudge tone (agent-guards/verify-gate.ts). */
+  | "lsp-clean";
 
 export type GroundingConsequence =
   | "nudge"

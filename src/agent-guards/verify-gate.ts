@@ -222,6 +222,22 @@ export function sourceDoneEvidence(state: VerifyGateState): EvidenceKind[] {
   return state.editedSource && state.verifiedSinceEdit ? ["build-clean"] : [];
 }
 
+/** Language-service signal at wrap-up, fed by the canonical middleware from
+ *  post-edit-diagnostics' per-op state (src/canonical-loop/middlewares/
+ *  post-edit-diagnostics.ts). Deliberate weighting, mirroring the "lsp-clean"
+ *  EvidenceKind comment in claim-grounding.ts:
+ *  - `outstanding` (introduced type errors unresolved on edited files) is
+ *    STRONG negative evidence — same tier as a verify that ran and FAILED.
+ *  - `clean` (every edited TS/JS file's diagnostics clean) is WEAK positive
+ *    evidence — it only softens the gentle nudge's tone and NEVER substitutes
+ *    for a build/test run or grounds a source-done claim. */
+export interface LspSignal {
+  outstanding: boolean;
+  clean: boolean;
+}
+
+const NO_LSP_SIGNAL: LspSignal = { outstanding: false, clean: false };
+
 const NUDGE_NEVER_VERIFIED =
   "You edited source files this run but haven't run the project's build, " +
   "type-check, or tests since the last change. Compiling or saving is not " +
@@ -230,6 +246,32 @@ const NUDGE_NEVER_VERIFIED =
   "`tsc --noEmit`, `python -m unittest`, `pytest`, `cargo test`, `go test`) and fix anything it " +
   "surfaces. If you genuinely can't run it from here, say so explicitly " +
   "instead of reporting the work as done.";
+
+/** The gentle nudge with the lsp-clean acknowledging clause: same ask, softer
+ *  tone — the language service says the edited files type-check, which is
+ *  honest partial credit, but type-clean isn't run-clean so the build/test
+ *  demand stands in full. */
+const NUDGE_NEVER_VERIFIED_LSP_CLEAN =
+  "Your edited files' types check clean, but run the build/tests — type-clean " +
+  "isn't run-clean. You edited source files this run and no build, type-check, " +
+  "or test has run since the last change: run the project's build/type-check/tests " +
+  "(e.g. the build or test script in package.json, `tsc --noEmit`, `pytest`, " +
+  "`cargo test`, `go test`) and fix anything it surfaces. If you genuinely can't " +
+  "run it from here, say so explicitly instead of reporting the work as done.";
+
+/** Sharp path for outstanding INTRODUCED type errors: the post-edit language
+ *  service already showed the model these errors when its edits created them,
+ *  and they are still unresolved at wrap-up — equivalent to a verify that ran
+ *  and failed, so it shares NUDGE_BUILD_RED's tier (and fail-nudge bound). */
+const NUDGE_LSP_RED =
+  "STOP: your edits this run INTRODUCED type errors that are still unresolved — " +
+  "the language service reports new compile/type errors on files you edited that " +
+  "were not present before your changes (they were shown to you when they " +
+  "appeared). Do NOT report this as done, complete, or working while they stand. " +
+  "Fix every one of those introduced type errors, then run the project's " +
+  "build/type-check to confirm it's clean. If you genuinely cannot fix them from " +
+  "here, say so plainly and report exactly which errors remain — never claim " +
+  "success over type errors your own edits introduced.";
 
 const NUDGE_BUILD_RED =
   "STOP: your last build/type-check/test run FAILED — it exited with errors and " +
@@ -287,8 +329,18 @@ export function decideDeletedTest(
 /** Evaluate at wrap-up. Two tiers: a gentle one-shot nudge when source changed
  *  but nothing verified it, and a stronger (re-fireable, bounded) nudge when a
  *  verify actually RAN and FAILED — the model has the errors and is wrapping up
- *  over them anyway, the exact ship-broken-and-claim-done failure. */
-export function checkVerifyGate(state: VerifyGateState): { nudge: string | null } {
+ *  over them anyway, the exact ship-broken-and-claim-done failure.
+ *
+ *  The optional language-service signal (fed by the middleware) refines both
+ *  tiers WITHOUT changing their structure: outstanding introduced type errors
+ *  join the sharp path (same fail-nudge bound as a failed verify — the model
+ *  HAS the error list); lsp-clean only swaps the gentle nudge's wording for
+ *  the acknowledging variant. A grounded clean verify still silences
+ *  everything — real build evidence outranks the (possibly stale) LSP state. */
+export function checkVerifyGate(
+  state: VerifyGateState,
+  lsp: LspSignal = NO_LSP_SIGNAL,
+): { nudge: string | null } {
   // The deleted-test tripwire is handled in the middleware (it needs an async
   // LLM judge to tell a dodge from legit cleanup); this stays edit/verify-only.
   if (!state.editedSource) return { nudge: null };
@@ -296,15 +348,18 @@ export function checkVerifyGate(state: VerifyGateState): { nudge: string | null 
   const verdict = evaluateClaimGrounding("source-done", sourceDoneEvidence(state));
   if (verdict.grounded) return { nudge: null };
 
-  if (state.verifyFailedSinceEdit) {
+  // Sharp tier: a verify that ran and failed speaks with the exact command's
+  // voice, so it wins over the LSP wording; outstanding introduced type errors
+  // are its equivalent when no verify ran. Both share one bounded counter.
+  if (state.verifyFailedSinceEdit || lsp.outstanding) {
     if (state.failNudges >= MAX_FAIL_NUDGES) return { nudge: null };
     state.failNudges += 1;
-    return { nudge: NUDGE_BUILD_RED };
+    return { nudge: state.verifyFailedSinceEdit ? NUDGE_BUILD_RED : NUDGE_LSP_RED };
   }
 
   if (!state.firedNoVerify) {
     state.firedNoVerify = true;
-    return { nudge: NUDGE_NEVER_VERIFIED };
+    return { nudge: lsp.clean ? NUDGE_NEVER_VERIFIED_LSP_CLEAN : NUDGE_NEVER_VERIFIED };
   }
   return { nudge: null };
 }

@@ -8,10 +8,12 @@ import { join } from "node:path";
 import type { Page } from "playwright";
 import { MAX_TEXT_LENGTH } from "./launcher.js";
 import { wrapExternalContent } from "../sanitize.js";
+import { capBody, findInBody } from "../tools/paginate-body.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
-/** Extract visible text from body or a specific selector. */
-export async function extractTextFrom(page: Page, selector?: string): Promise<string> {
+/** Extract visible text from body or a specific selector. `find` narrows to the
+ *  matching lines (case-insensitive) instead of returning the whole extract. */
+export async function extractTextFrom(page: Page, selector?: string, find?: string): Promise<string> {
   let text: string;
   if (selector) {
     const el = await page.$(selector);
@@ -19,10 +21,11 @@ export async function extractTextFrom(page: Page, selector?: string): Promise<st
   } else {
     text = await page.innerText("body");
   }
-  if (text.length > MAX_TEXT_LENGTH) {
-    text = text.slice(0, MAX_TEXT_LENGTH) + `\n\n[Truncated at ${MAX_TEXT_LENGTH} chars]`;
-  }
-  return wrapExternalContent(text, "browser.extract", { url: page.url(), selector: selector || "body" });
+  const query = find?.trim();
+  const out = query
+    ? findInBody(text, query).text
+    : capBody(text, MAX_TEXT_LENGTH, "pass find:<text> to search the page, or a narrower selector");
+  return wrapExternalContent(out, "browser.extract", { url: page.url(), selector: selector || "body" });
 }
 
 /** Capture a screenshot, persist the full PNG, and return a reference the model

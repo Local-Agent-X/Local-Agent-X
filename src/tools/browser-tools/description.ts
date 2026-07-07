@@ -22,7 +22,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- click_text: Click element by visible text (set 'text'). Good for popups/modals.\n" +
   "- fill: Fill input by ref (set 'ref' + 'value') or CSS selector (set 'selector' + 'value').\n" +
   "- select: Choose dropdown option by CSS selector + value.\n" +
-  "- extract: Get visible text from the page or a specific element.\n" +
+  "- extract: Get visible text from the page or a specific element. On a large page, pass 'find' to get only the matching lines instead of the whole page.\n" +
   "- screenshot: Capture the current page.\n" +
   "- evaluate: Run JavaScript in the page.\n" +
   "- act: Natural language action — 'click the login button', 'fill email with test@test.com'. Figures out the right element from a snapshot automatically.\n" +
@@ -88,6 +88,10 @@ export const BROWSER_TOOL_PARAMETERS = {
     script: {
       type: "string",
       description: "JavaScript code to evaluate in the page (required for 'evaluate')",
+    },
+    find: {
+      type: "string",
+      description: "For 'extract': return only page lines matching this text (case-insensitive) plus context, instead of the whole page. Prefer this when you know what you're looking for on a large page.",
     },
   },
   required: ["action"],

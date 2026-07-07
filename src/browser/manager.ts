@@ -327,8 +327,8 @@ export class BrowserManager {
     return handleNextDialog(page, "dismiss");
   }
 
-  async extractText(selector?: string): Promise<string> {
-    return extractTextFrom(await this.getPage(), selector);
+  async extractText(selector?: string, find?: string): Promise<string> {
+    return extractTextFrom(await this.getPage(), selector, find);
   }
 
   async screenshot(): Promise<string> {

@@ -1,6 +1,7 @@
 import { fetch as undiciFetch } from "undici";
 import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
+import { findInBody } from "./paginate-body.js";
 import { ok, err } from "./result-helpers.js";
 import { capWithSpill } from "./result-spill.js";
 import { extractFromHtml } from "./html-extract.js";
@@ -43,6 +44,10 @@ export const webFetchTool: ToolDefinition = {
     type: "object",
     properties: {
       url: { type: "string", description: "URL to fetch" },
+      find: {
+        type: "string",
+        description: "Return only the lines of the page matching this text (case-insensitive) plus surrounding context, instead of the whole page. Prefer this over reading the whole page when you know what you're looking for.",
+      },
     },
     required: ["url"],
   },
@@ -139,8 +144,21 @@ export const webFetchTool: ToolDefinition = {
           : extracted.content;
       }
 
-      const MAX_CHARS = 50_000;
       const fullBytes = body.length;
+      const find = typeof args.find === "string" ? args.find.trim() : "";
+      if (find) {
+        const found = findInBody(body, find);
+        return ok(wrapExternalContent(found.text, "web_fetch", { url, status: String(res.status) }), {
+          url: currentUrl,
+          status: res.status,
+          duration_ms: durationMs,
+          bytes: fullBytes,
+          find,
+          match_count: found.matchCount,
+        });
+      }
+
+      const MAX_CHARS = 50_000;
       // Spill-on-cap: the full body lands on disk and the note tells the model
       // how to keep reading past the cut (screened per chunk by `read`).
       const capped = capWithSpill(body, MAX_CHARS);

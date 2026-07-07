@@ -6,7 +6,6 @@
 
 import type { ToolResult } from "../../types.js";
 import type { BrowserManager } from "../../browser/index.js";
-import { wrapExternalContent } from "../../sanitize.js";
 import { closeBrowser } from "../../browser/index.js";
 import { scanEvaluateScript } from "../../browser/guards.js";
 import { ok, err, appendPostActionSnapshot } from "./shared.js";
@@ -16,8 +15,9 @@ export async function handleExtract(
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const selector = args.selector ? String(args.selector) : undefined;
-  const raw = await manager.extractText(selector);
-  return ok(wrapExternalContent(raw, "browser.extract"));
+  const find = args.find ? String(args.find) : undefined;
+  // extractText already wraps in the untrusted-content boundary — don't re-wrap.
+  return ok(await manager.extractText(selector, find));
 }
 
 export async function handleScreenshot(manager: BrowserManager): Promise<ToolResult> {

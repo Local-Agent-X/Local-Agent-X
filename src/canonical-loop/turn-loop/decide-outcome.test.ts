@@ -459,3 +459,25 @@ describe("recordTerminalOutcome — the MAX_TURNS / truncation path", () => {
     expect(arg.has("browser")).toBe(true);
   });
 });
+
+describe("completion-gate table — single ordering source", () => {
+  // The gate chain in decideTurnOutcome is now one explicit ordered table
+  // (COMPLETION_GATES). This pins its documented sequence so a reorder or an
+  // inserted/dropped gate is a loud test failure, not a silent termination
+  // change. The order is load-bearing: build must clear before the spec probe,
+  // and the late-inject re-check must run AFTER the awaiting gates (CL-5).
+  it("evaluates the gates in the exact documented order", async () => {
+    const { COMPLETION_GATE_ORDER, COMPLETION_GATES } = await import("./decide-outcome-gates.js");
+    expect(COMPLETION_GATE_ORDER).toEqual([
+      "render-verify",
+      "build-verify",
+      "spec-probe",
+      "spec-audit",
+      "design-verify",
+      "earned-done",
+      "late-inject",
+    ]);
+    // The name list is derived from the table itself — they can never drift.
+    expect(COMPLETION_GATES.map((g) => g.name)).toEqual([...COMPLETION_GATE_ORDER]);
+  });
+});

@@ -19,7 +19,7 @@ over 400 LOC (the source-hygiene ceiling).
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 64 | 22 | XL |  |
-| `src/security/` | 63 | 26 | XL |  |
+| `src/security/` | 64 | 26 | XL |  |
 | `src/tools/` | 48 | 133 | XL |  |
 | `src/canonical-loop/` | 37 | 129 | XL |  |
 | `src/memory/` | 37 | 106 | XL |  |
@@ -27,7 +27,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/classifiers/` | 30 | 12 | L |  |
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
-| `src/workspace/` | 23 | 2 | M |  |
+| `src/workspace/` | 24 | 2 | M |  |
 | `src/auth/` | 22 | 10 | L |  |
 | `src/threat/` | 20 | 12 | L |  |
 | `src/session/` | 19 | 7 | M |  |

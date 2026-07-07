@@ -1,10 +1,13 @@
 import { basename, dirname, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { realpathDeep } from "../workspace/paths.js";
 
 const CONNECTOR_FILE_RE = /^[a-z0-9][a-z0-9_-]*\.json$/;
 
+// realpathDeep both sides: a symlinked prefix (macOS /var → /private/var, a
+// junctioned workspace) must not make the manifest dir and cwd compare unequal.
 function norm(p: string): string {
-  return resolve(p).replace(/\\/g, "/").toLowerCase();
+  return realpathDeep(resolve(p)).replace(/\\/g, "/").toLowerCase();
 }
 
 function isConnectorManifestDir(dir: string): boolean {

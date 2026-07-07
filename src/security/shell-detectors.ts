@@ -122,10 +122,10 @@ export function detectScriptWrite(command: string): string | null {
   }
   // 3. sed -i / awk inplace editing files in-place
   if (/\bsed\s+(-[a-zA-Z]*i[a-zA-Z]*|-(-in-place))\b/i.test(command)) {
-    return "Use the write/edit tools instead — bash exit 0 ≠ work done.";
+    return "Use the edit tool (one file) or bulk_replace (same replacement across many files) instead — bash exit 0 ≠ work done. This gate applies in every file-access mode and location; the target path is not the issue.";
   }
   if (/\bawk\b[^|]*\binplace\b/i.test(command)) {
-    return "Use the write/edit tools instead — bash exit 0 ≠ work done.";
+    return "Use the edit tool (one file) or bulk_replace (same replacement across many files) instead — bash exit 0 ≠ work done. This gate applies in every file-access mode and location; the target path is not the issue.";
   }
   // 4. Plain redirect of `echo`/`printf` to a writable file path is allowed
   //    (small one-liners don't trip the silent-noop bug). Heredocs are the

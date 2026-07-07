@@ -69,6 +69,21 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyEntry> = {
       { id: "allow-multi-edit", decision: "allow", reason: "Batched file edit (path-checked by SecurityLayer)", priority: 50 },
     ],
   },
+  // bulk_replace is the tool-native alternative to `bash sed -i` over a tree —
+  // same edit family, same pathArgs action:"edit" on the declared root. Its
+  // targets are discovered at runtime UNDER that gated root; the tool itself
+  // re-screens each file (no symlink follow, validated-inode read,
+  // sensitive-pattern skip), so the root gate + per-file screen together cover
+  // what the argMatch rules cover for the single-file tools.
+  bulk_replace: {
+    kernel: "file", risk: "workspace-write",
+    pathArgs: [{ arg: "path", action: "edit" }],
+    rules: [
+      { id: "deny-bulk-replace-system", decision: "deny", reason: "Blocked: cannot edit system files", priority: 90, argMatch: { path: "C:\\Windows*" } },
+      { id: "deny-bulk-replace-node-modules", decision: "deny", reason: "Blocked: do not edit directly in node_modules", priority: 80, argMatch: { path: "*node_modules*" } },
+      { id: "allow-bulk-replace", decision: "allow", reason: "Multi-file find/replace (root path-checked by SecurityLayer; per-file screen in-tool)", priority: 50 },
+    ],
+  },
   // delete_file is the path-bounded alternative to `bash rm` — single file
   // per call, directories refused, workspace-bounded by SecurityLayer.
   delete_file: { kernel: "file", risk: "destructive", pathArgs: [{ arg: "path", action: "delete_file" }], rules: [{ id: "allow-delete-file", decision: "allow", reason: "Single-file delete (path-checked by SecurityLayer, directories refused)", priority: 50 }] },

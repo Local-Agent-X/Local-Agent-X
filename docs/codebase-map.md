@@ -66,8 +66,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/tool-policy/` | 4 | 19 | L |  |
 | `src/broker-transport/` | 3 | 27 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
+| `src/context/` | 3 | 2 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
-| `src/context/` | 2 | 2 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
 | `src/anticipatory-care/` | 1 | 6 | M |  |
@@ -92,7 +92,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/anthropic-models.ts` | S |
 | `src/api-docs.ts` | M |
 | `src/approval-decision.ts` | M |
-| `src/approval-manager.ts` | S |
+| `src/approval-manager.ts` | M |
 | `src/approval-preview.ts` | S |
 | `src/audio-agent.ts` | S |
 | `src/auto-retry.ts` | S |

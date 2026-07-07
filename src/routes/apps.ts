@@ -1,15 +1,12 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
 import { confineToDir } from "../security/file-access.js";
 import { renderApp } from "../app-renderer/index.js";
-import type { AppDefinition } from "../app-runtime/index.js";
 import { loadSettings, reloadSettings, saveSettings } from "../settings.js";
-import { readDevServerRecord, registerDevServer } from "../tools/dev-server.js";
-
-/** Default launcher glyph for an app with no explicit icon and no sidebar pin. */
-const DEFAULT_APP_ICON = "📦";
+import { readDevServerRecord, registerDevServer, listDevServerRecords } from "../tools/dev-server.js";
+import { buildAppList } from "./apps-list.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.apps");
@@ -22,53 +19,14 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
   if (method === "GET" && appPath === "/api/apps") {
     const port = ctx.config.port || 7007;
     const wsAppsDir = resolve(ctx.config.workspace, "apps");
-    // Icon precedence (so apps carry an icon without a pin): AppDefinition.icon
-    // → a `.icon` sidecar the builder writes per app → a sidebar pin's emoji → 📦.
     const pins = (loadSettings().sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
-    const pinIcon = (id: string, name: string): string => {
-      const bySlug = pins.find(p => new RegExp(`/apps/${id}(?:[/?#]|$)`).test(p.url || ""));
-      const byName = pins.find(p => p.name.toLowerCase() === name.toLowerCase());
-      return (bySlug?.icon || byName?.icon || "").trim();
-    };
-    const sidecarIcon = (id: string): string => {
-      const p = join(wsAppsDir, id, ".icon");
-      try { return existsSync(p) ? readFileSync(p, "utf-8").trim() : ""; } catch { return ""; }
-    };
-    const iconFor = (id: string, name: string, defIcon?: string): string =>
-      (defIcon || "").trim() || sidecarIcon(id) || pinIcon(id, name) || DEFAULT_APP_ICON;
-    // hasBackend: this app has a registered Tier-1.5 dev server, so the UI can
-    // show a "Restart backend" control. Cheap (one file stat per app).
-    const registered = appReg.list().map((d: AppDefinition) => ({
-      id: d.id, name: d.name, description: d.description,
-      icon: iconFor(d.id, d.name, d.icon),
-      components: d.components.length, layout: d.layout.type,
-      url: `http://127.0.0.1:${port}/apps/${d.id}`,
-      updatedAt: d.updatedAt, status: d.status, version: d.version,
-      visibility: d.permissions?.visibility || "team",
-      hasBackend: !!readDevServerRecord(d.id),
-    }));
-    // Also scan workspace/apps/ for HTML apps not in the registry
-    const registeredIds = new Set(registered.map(a => a.id));
-    if (existsSync(wsAppsDir)) {
-      try {
-        for (const d of readdirSync(wsAppsDir, { withFileTypes: true })) {
-          if (!d.isDirectory() || d.name === "_audit" || registeredIds.has(d.name)) continue;
-          const indexPath = join(wsAppsDir, d.name, "index.html");
-          if (!existsSync(indexPath)) continue;
-          const st = statSync(indexPath);
-          const wsName = d.name.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-          registered.push({
-            id: d.name, name: wsName,
-            icon: iconFor(d.name, wsName),
-            description: "HTML app", components: 1, layout: "custom",
-            url: `http://127.0.0.1:${port}/apps/${d.name}/index.html`,
-            updatedAt: st.mtimeMs, status: "active", version: 1, visibility: "team",
-            hasBackend: !!readDevServerRecord(d.name),
-          });
-        }
-      } catch (e) { logger.warn("[apps] workspace scan error:", (e as Error).message); }
-    }
-    json(200, registered);
+    const list = buildAppList({
+      listRegistry: () => appReg.list(),
+      hasDevServer: (id) => !!readDevServerRecord(id),
+      listDevServers: () => listDevServerRecords(),
+      pins, wsAppsDir, port, now: () => Date.now(),
+    });
+    json(200, list);
     return true;
   }
 

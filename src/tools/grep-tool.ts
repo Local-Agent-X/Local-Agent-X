@@ -88,17 +88,63 @@ function buildRgArgs(args: Record<string, unknown>): string[] {
   return rg;
 }
 
-function runRg(args: Record<string, unknown>, limit: number, signal?: AbortSignal): Promise<ToolResult> {
+/** execFile's error, as Node actually shapes it: `code` is the exit code
+ *  (number) for a spawn that ran, or an errno string (ENOENT, maxBuffer). */
+type ExecError = Error & { code?: number | string | null };
+
+/** Injectable exec seam (tests stub it; production uses node's execFile). */
+export type ExecFileLike = (
+  file: string,
+  args: readonly string[],
+  options: { maxBuffer: number; signal?: AbortSignal },
+  callback: (error: ExecError | null, stdout: string, stderr: string) => void,
+) => { stdin?: { end(): void } | null };
+
+/** Thin adapter pinning node's execFile to the one overload the seam uses. */
+const defaultExec: ExecFileLike = (file, args, options, callback) =>
+  execFile(file, [...args], options, callback);
+
+/** Exported for tests — the tool routes searches through this. */
+export function runRg(
+  args: Record<string, unknown>,
+  limit: number,
+  signal?: AbortSignal,
+  exec: ExecFileLike = defaultExec,
+): Promise<ToolResult> {
   const rgArgs = buildRgArgs(args);
   return new Promise((resolve, reject) => {
-    const child = execFile(ripgrepBin(), rgArgs, { maxBuffer: 10 * 1024 * 1024, signal }, (error, stdout) => {
+    const child = exec(ripgrepBin(), rgArgs, { maxBuffer: 10 * 1024 * 1024, signal }, (error, stdout, stderr) => {
       if (signal?.aborted) return resolve(err("Aborted"));
-      // ENOENT = rg not found in PATH — reject so fallback kicks in
-      if (error && (error as NodeJS.ErrnoException).code === "ENOENT") return reject(error);
+      // Error discrimination (rg's documented exit codes): 1 = no matches
+      // (not a failure); ENOENT = rg not installed (reject → Node fallback);
+      // maxBuffer overflow = usable-but-truncated output; anything else
+      // (exit 2 = bad regex / unreadable path, other errnos) is a real error —
+      // never round it down to "No matches found."
+      const code = error?.code;
+      const truncated = code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
       const out = (stdout || "").trim();
+      const snippet = (stderr || "").trim().split("\n")[0]?.slice(0, 300) ?? "";
+      if (error && code === "ENOENT") return reject(error);
+      // rg exits 2 whenever ANY error occurred during the search — even when
+      // it found and printed real matches (e.g. one unreadable subdirectory in
+      // an otherwise-searchable tree). Partial results are results: return
+      // them with a warning. Only exit 2 with EMPTY stdout is a hard failure.
+      const partial = code === 2 && out !== "";
+      if (error && code !== 1 && !truncated && !partial) {
+        return resolve(err(
+          `grep failed: ripgrep exited with ${String(code ?? error.message)}` +
+          (snippet ? ` — ${snippet}` : ""),
+        ));
+      }
       // rg exits with code 1 when no matches — that's not an error
       if (!out) return resolve(ok("No matches found."));
-      resolve(ok(truncate(out.split("\n"), limit)));
+      const body = truncate(out.split("\n"), limit);
+      const warning = truncated
+        ? "\nWARNING: output exceeded the buffer cap — this list is TRUNCATED; narrow the path or use a more specific pattern."
+        : partial
+          ? `\nWARNING: some paths could not be searched${snippet ? ` (${snippet})` : ""} — results may be incomplete.`
+          : "";
+      resolve(ok(body + warning));
     });
     child.stdin?.end();
   });

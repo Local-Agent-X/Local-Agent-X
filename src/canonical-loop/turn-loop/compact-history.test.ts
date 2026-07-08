@@ -245,6 +245,7 @@ describe("compactHistory — anchored sizing", () => {
       "claude-opus-4-8",
       { anchorTokens: 77_000, estimateFrom: 2 },
       "cli",
+      0,
     );
   });
 
@@ -252,14 +253,23 @@ describe("compactHistory — anchored sizing", () => {
     mockStatus.mockReturnValue(status(10, false));
     const msgs = [u("u1", "seed"), a("a1", "r1")]; // no turnIdx on rows
     await compactHistory(msgs, "claude-opus-4-8", { turnIdx: 0, contextTokens: 77_000 });
-    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined, "cli");
+    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined, "cli", 0);
   });
 
   it("passes no anchor when no usage was recorded", async () => {
     mockStatus.mockReturnValue(status(10, false));
     const msgs = [at(u("u1", "seed"), 0, 0), at(a("a1", "r1"), 0, 1)];
     await compactHistory(msgs, "claude-opus-4-8");
-    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined, "cli");
+    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined, "cli", 0);
+  });
+
+  // Baseline floor is threaded to getContextStatus as the 5th arg so the pure-
+  // estimate branch can account for the system prompt + tool manifest.
+  it("threads the baseline token floor to getContextStatus", async () => {
+    mockStatus.mockReturnValue(status(10, false));
+    const msgs = [at(u("u1", "seed"), 0, 0), at(a("a1", "r1"), 0, 1)];
+    await compactHistory(msgs, "claude-opus-4-8", null, "op1", 147_000);
+    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined, "cli", 147_000);
   });
 });
 

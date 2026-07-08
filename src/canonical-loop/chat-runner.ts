@@ -44,7 +44,11 @@ import {
   unregisterToolDispatcherForOp,
   registerToolsForOp,
   unregisterToolsForOp,
+  registerOpBaselineTokens,
+  unregisterOpBaselineTokens,
 } from "./runtime.js";
+import { estimateTokens } from "../context-manager/token-estimation.js";
+import { isAnthropicModel } from "../context-manager/effective-window.js";
 import { enableDefaultMiddlewareStack, getActiveMiddlewareStack } from "./middlewares/host.js";
 import { opCancel } from "./control-api.js";
 import { bridgeOpCancelToToolSignal } from "./cancel-handler.js";
@@ -202,6 +206,32 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   }));
   registerToolsForOp(op.id, toolDescriptors);
 
+  // Baseline token cost of everything the adapter sends OUTSIDE the message
+  // history — the system prompt (which also carries injected memory + the
+  // deferred-tool name manifest) plus the loaded tool schemas. Static for the
+  // op's life, so compute once here; the compaction gate adds it as a floor
+  // when it has no real-usage anchor, so chat sizing reflects the real ~147k+
+  // request instead of just the conversation. See build-input.ts / status.ts.
+  //
+  // Scoped to Anthropic models: that's where the tight ~200k CLI window makes
+  // the baseline decisive. Codex/Gemini thresholds (25/35/55) were calibrated
+  // against the baseline-BLIND estimate, so feeding them the real baseline
+  // without re-tuning would over-compact — a separate follow-up. Non-Anthropic
+  // ops simply register nothing → getOpBaselineTokens returns 0 → unchanged.
+  //
+  // estimateTokens (chars/3.5) over-counts JSON schemas somewhat vs the real
+  // tokenizer — deliberately kept (same estimator as message sizing) because it
+  // errs high, the SAFE direction: over-count compacts a touch early, never
+  // under-sizes into an over-window "prompt too long". The window is baseline-
+  // dominated regardless (~147k/200k), so precise tool-token accuracy only
+  // shifts conversation headroom; the real relief is shrinking the manifest.
+  if (isAnthropicModel(ctx.prepared.model)) {
+    registerOpBaselineTokens(
+      op.id,
+      estimateTokens(ctx.prepared.systemPrompt) + estimateTokens(JSON.stringify(toolDescriptors)),
+    );
+  }
+
   // 5. Subscribe BEFORE submitting so we don't miss the synchronous
   //    `state_changed: queued` event that canonicalLoopEntry emits.
   const pump = createEventPump(op.id);
@@ -223,6 +253,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     if (externalAbortListener && ctx.signal) ctx.signal.removeEventListener("abort", externalAbortListener);
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
+    unregisterOpBaselineTokens(op.id);
     return;
   }
 
@@ -249,5 +280,6 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     if (externalAbortListener && ctx.signal) ctx.signal.removeEventListener("abort", externalAbortListener);
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
+    unregisterOpBaselineTokens(op.id);
   }
 }

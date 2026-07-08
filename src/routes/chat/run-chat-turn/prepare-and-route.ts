@@ -49,11 +49,17 @@ export async function emitContextStatus(
   emitSse: (ev: ServerEvent) => void,
 ): Promise<void> {
   try {
-    const { getContextStatus, resolveAnthropicTransport } = await import("../../../context-manager/index.js");
+    const { getContextStatus, resolveAnthropicTransport, estimateTokens, isAnthropicModel } = await import("../../../context-manager/index.js");
     // Size the reported window against the transport the turn will actually run
     // on — the Anthropic CLI/OAuth path serves a smaller effective window, so
-    // the % the UI shows must reflect that or it reads far below reality.
-    const status = getContextStatus(prepared.cleanHistory, prepared.model, undefined, resolveAnthropicTransport());
+    // the % the UI shows must reflect that or it reads far below reality. Add
+    // the baseline (system prompt + tool manifest) the request carries outside
+    // the conversation, so the % isn't ~147k short of the real request size.
+    // Anthropic-scoped to match the compaction gate (chat-runner registration).
+    const baselineTokens = process.env.LAX_CONTEXT_BASELINE === "0" || !isAnthropicModel(prepared.model)
+      ? 0
+      : estimateTokens(prepared.systemPrompt) + estimateTokens(JSON.stringify(prepared.tools));
+    const status = getContextStatus(prepared.cleanHistory, prepared.model, undefined, resolveAnthropicTransport(), baselineTokens);
     const ev = {
       type: "context_status" as const,
       percentage: status.percentage,

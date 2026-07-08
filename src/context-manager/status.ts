@@ -23,10 +23,19 @@ export function getContextStatus(
   // Transport the context will be SENT on. Anthropic's CLI/OAuth path serves a
   // smaller effective window than the API-rated one, so its thresholds must
   // size against that. Omitted → nominal window (historical behavior).
-  transport?: AnthropicTransport
+  transport?: AnthropicTransport,
+  // The request's BASELINE token cost — system prompt + tool-schema manifest
+  // (+ memory) that the adapter sends as separate params, so it never appears
+  // in `messages`. Added to the estimate ONLY on the pure-estimate branch: a
+  // real-usage anchor's token count already includes the baseline (it is the
+  // provider's true input count), so adding it there would double-count.
+  // Omitted/0 → historical behavior.
+  baselineTokens = 0
 ): ContextStatus {
   const maxTokens = effectiveContextWindow(model, transport);
-  const usedTokens = anchor ? anchoredTotalTokens(messages, anchor) : totalTokens(messages);
+  const usedTokens = anchor
+    ? anchoredTotalTokens(messages, anchor)
+    : totalTokens(messages) + baselineTokens;
   const percentage = Math.round((usedTokens / maxTokens) * 100);
 
   let level: ContextStatus["level"] = "ok";

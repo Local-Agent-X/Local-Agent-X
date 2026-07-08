@@ -8,7 +8,7 @@ import type { RedirectInstruction } from "../types.js";
 import type { Op } from "../../ops/types.js";
 import { readLatestOpTurn, readOpMessages } from "../store.js";
 import { lastTurnUsage } from "../op-usage.js";
-import { getToolsForOp } from "../runtime.js";
+import { getToolsForOp, getOpBaselineTokens } from "../runtime.js";
 import { readOp } from "../../ops/op-store.js";
 import { resolveOpModel } from "../op-model.js";
 import { buildSituationalAwareness } from "./situational-awareness.js";
@@ -39,7 +39,15 @@ export async function buildTurnInput(
   const model = resolveOpModel(op);
   let viewCompacted = false;
   if (model) {
-    const compacted = await compactHistory(messages, model, lastTurnUsage(op.id), op.id);
+    // Baseline floor: the system prompt + tool manifest (+ memory) the adapter
+    // sends outside `messages` — invisible to the pure token estimate. Feeding
+    // it in makes the chat path size against the REAL request, so compaction
+    // fires before the ~147k baseline + conversation overruns the window
+    // instead of dying on a raw "prompt too long". Registered at submit for
+    // Anthropic chat ops only; agent/background/non-Anthropic ops register none
+    // → 0 → sizing unchanged. Kill-switch: LAX_CONTEXT_BASELINE=0.
+    const baselineTokens = process.env.LAX_CONTEXT_BASELINE === "0" ? 0 : getOpBaselineTokens(op.id);
+    const compacted = await compactHistory(messages, model, lastTurnUsage(op.id), op.id, baselineTokens);
     messages = compacted.messages;
     viewCompacted = compacted.compacted;
   }

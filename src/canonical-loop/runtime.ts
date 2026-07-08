@@ -21,6 +21,7 @@ const opAdapters = new Map<string, AdapterFactory>();
 const laneAdapters = new Map<CanonicalLane, AdapterFactory>();
 const opDispatchers = new Map<string, ToolDispatcher>();
 const opTools = new Map<string, ToolDescriptor[]>();
+const opBaselineTokens = new Map<string, number>();
 let toolDispatcher: ToolDispatcher = new NotConfiguredToolDispatcher();
 
 /** Register a factory that produces the adapter for a specific op_id. */
@@ -71,6 +72,31 @@ export function unregisterToolsForOp(opId: string): void {
 /** Resolve tools for an op. Returns [] when nothing is registered. */
 export function getToolsForOp(opId: string): ToolDescriptor[] {
   return opTools.get(opId) ?? [];
+}
+
+/**
+ * Register the op's BASELINE token cost — the system prompt + tool-schema
+ * manifest (+ injected memory, which lives inside the system prompt). This is
+ * sent as separate request params by the adapter, so it is INVISIBLE to the
+ * conversation-estimate sizing in compact-history / getContextStatus. Recording
+ * it once at submit (both inputs are static for the op's life) lets the
+ * compaction gate add it as a floor when there is no real-usage anchor to size
+ * against — the anchor already includes the baseline, the pure estimate does
+ * not. Without this, sizing undercounts the real request by ~147k on the chat
+ * path and thresholds fire far too late. Lifetime mirrors the tool registry.
+ */
+export function registerOpBaselineTokens(opId: string, tokens: number): void {
+  opBaselineTokens.set(opId, tokens);
+}
+
+export function unregisterOpBaselineTokens(opId: string): void {
+  opBaselineTokens.delete(opId);
+}
+
+/** Resolve the op's baseline token cost. Returns 0 when nothing is registered
+ * (agent/background ops don't register one → sizing unchanged for them). */
+export function getOpBaselineTokens(opId: string): number {
+  return opBaselineTokens.get(opId) ?? 0;
 }
 
 /** Inject the global tool dispatcher used when no per-op dispatcher is registered. */
@@ -191,5 +217,6 @@ export function resetCanonicalRuntime(): void {
   laneAdapters.clear();
   opDispatchers.clear();
   opTools.clear();
+  opBaselineTokens.clear();
   toolDispatcher = new NotConfiguredToolDispatcher();
 }

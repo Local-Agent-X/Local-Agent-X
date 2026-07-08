@@ -244,6 +244,10 @@ export async function compactHistory(
   usage?: LastTurnUsage | null,
   // Threads the circuit breaker (above). Absent → breaker bypassed.
   opId?: string,
+  // Baseline token cost (system prompt + tool manifest + memory) the adapter
+  // sends outside `messages`. Added to the estimate when there is no anchor, so
+  // chat sizing accounts for the ~147k the pure estimate can't see. 0 → off.
+  baselineTokens = 0,
 ): Promise<CompactHistoryResult> {
   const breaker = opId ? breakers.get(opId) : undefined;
   if (breaker?.tripped) {
@@ -266,7 +270,7 @@ export async function compactHistory(
   if (usage && !usageAnchor) {
     logger.debug(`anchor at turn ${usage.turnIdx} not mappable onto the current view; sizing by pure estimate`);
   }
-  const status = getContextStatus(toChatParams(messages), model, usageAnchor ?? undefined, resolveAnthropicTransport());
+  const status = getContextStatus(toChatParams(messages), model, usageAnchor ?? undefined, resolveAnthropicTransport(), baselineTokens);
   if (!status.shouldCompact) return { messages, compacted: false };
 
   let keepLast = 6;

@@ -51,3 +51,42 @@ describe("getContextStatus — transport-aware effective window", () => {
 		expect(s.maxTokens).toBe(1_000_000);
 	});
 });
+
+describe("getContextStatus — baseline floor", () => {
+	// A tiny conversation the estimate reads as ~0% — but the real request also
+	// carries a ~150k baseline (system prompt + tool manifest) the estimate can't
+	// see. Feeding it in flips the sizing from "ok" to "critical" on the 200k
+	// CLI window, which is the whole point: compaction can fire before the real
+	// request overruns instead of dying on a raw "prompt too long".
+	const smallConversation: ChatCompletionMessageParam[] = [
+		{ role: "user", content: "b".repeat(14_000) }, // ~4k tokens
+	];
+
+	it("adds the baseline to the estimate on the pure-estimate branch", () => {
+		const without = getContextStatus(smallConversation, "claude-opus-4-8", undefined, "cli");
+		expect(without.shouldCompact).toBe(false);
+
+		const withBaseline = getContextStatus(smallConversation, "claude-opus-4-8", undefined, "cli", 150_000);
+		expect(withBaseline.usedTokens).toBe(without.usedTokens + 150_000);
+		expect(withBaseline.percentage).toBe(77); // (4004 + 150k) / 200k
+		expect(withBaseline.shouldCompact).toBe(true);
+		expect(withBaseline.level).toBe("compact");
+	});
+
+	// A present anchor's token count ALREADY includes the baseline (it's the
+	// provider's real input count), so the floor must be ignored there — else it
+	// double-counts and over-compacts.
+	it("ignores the baseline when a real-usage anchor is present (no double-count)", () => {
+		const anchor = { anchorTokens: 120_000, estimateFrom: 1 };
+		const withFloor = getContextStatus(smallConversation, "claude-opus-4-8", anchor, "cli", 150_000);
+		const noFloor = getContextStatus(smallConversation, "claude-opus-4-8", anchor, "cli", 0);
+		expect(withFloor).toEqual(noFloor);
+		expect(withFloor.usedTokens).toBe(120_000); // anchor + 0 appended (estimateFrom past end)
+	});
+
+	// Omitted/0 baseline → byte-identical to the historical behavior.
+	it("is byte-identical when the baseline is omitted", () => {
+		expect(getContextStatus(smallConversation, "claude-opus-4-8", undefined, "cli", 0))
+			.toEqual(getContextStatus(smallConversation, "claude-opus-4-8", undefined, "cli"));
+	});
+});

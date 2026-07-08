@@ -37,6 +37,19 @@ export interface ProviderStateEnvelope {
   adapterName: string;
   adapterVersion: string;
   providerPayload: unknown;
+  /**
+   * True when the message view SENT for this turn's request was ephemerally
+   * compacted (compact-history.ts). Compaction never persists to op_messages,
+   * so this turn's recorded usage reflects the compacted view — NOT the full
+   * replay the next turn rebuilds. lastTurnUsage (op-usage.ts) refuses to
+   * anchor context sizing on such a turn. Stamped by turn-loop at commit as
+   * an EXPLICIT boolean on EVERY committed turn, never by adapters; persisted
+   * with the op_turn row so resumed ops keep the refusal across a process
+   * restart. Absence is therefore an era marker: the row predates reliable
+   * recording (pre-stamp compactions, pre-2026-06-26 observedTools gaps) and
+   * is refused as an anchor too.
+   */
+  viewCompacted?: boolean;
 }
 
 // ── Redirect instruction (PRD §13) ────────────────────────────────────────

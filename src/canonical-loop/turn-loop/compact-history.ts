@@ -11,9 +11,14 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { CanonicalMessage } from "../contract-types.js";
+import type { LastTurnUsage } from "../op-usage.js";
 import { getContextStatus } from "../../context-manager/status.js";
+import type { TokenAnchor } from "../../context-manager/token-estimation.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import { extractText, extractToolResultText } from "./content-extract.js";
+import { createLogger } from "../../logger.js";
+
+const logger = createLogger("canonical-loop.compact-history");
 
 // Project canonical rows to the OpenAI-ish shape the context-manager helpers
 // read. Lossy by design, but never EMPTY: token counting and the summarizer
@@ -73,19 +78,87 @@ export function safeSplitIndex(messages: CanonicalMessage[], keepLast: number): 
   return idx;
 }
 
+// Map a real-usage reading (from op_turns) onto the current message view: find
+// the first row appended AFTER the anchoring response, so everything before it
+// is covered by the provider's own token count and only the tail is estimated.
+// Rows are ordered by (turnIdx, seqInTurn); within the anchor turn the response
+// is the assistant row, so post-response rows are everything after it. A
+// tool-only turn finalizes NO assistant row — there its tool_results (and
+// anything appended after them, e.g. nudges) are the post-response tail.
+// Honesty rule: if the view can't be mapped reliably — a row without turnIdx
+// (synthetic/reshaped view), a compaction summary row, or rows that don't
+// cleanly split around the anchor turn — return null and let the caller use
+// the pure estimate for the whole view. Never guess a slice point.
+export function locateAnchor(
+  messages: CanonicalMessage[],
+  usage: LastTurnUsage,
+): TokenAnchor | null {
+  for (const m of messages) {
+    if (typeof m.turnIdx !== "number") return null;
+    if (m.messageId.startsWith("compact-summary-")) return null;
+  }
+
+  let lastAssistant = -1; // last assistant row of the anchor turn (the response)
+  let firstToolResult = -1; // first tool_result of the anchor turn (tool-only turns)
+  let firstLater = messages.length; // first row of any later turn
+  for (let i = 0; i < messages.length; i++) {
+    const t = messages[i].turnIdx as number;
+    if (t === usage.turnIdx) {
+      if (messages[i].role === "assistant") lastAssistant = i;
+      if (messages[i].role === "tool_result" && firstToolResult === -1) firstToolResult = i;
+    } else if (t > usage.turnIdx && i < firstLater) {
+      firstLater = i;
+    }
+  }
+
+  let estimateFrom: number;
+  if (lastAssistant >= 0) estimateFrom = lastAssistant + 1;
+  else if (firstToolResult >= 0) estimateFrom = firstToolResult;
+  else estimateFrom = firstLater;
+
+  // The anchored/estimated split must be a clean suffix: no later-turn row
+  // before it, no earlier-turn row after it. Anything else means the view was
+  // reordered or collapsed across the boundary — not mappable.
+  for (let i = 0; i < messages.length; i++) {
+    const t = messages[i].turnIdx as number;
+    if (i < estimateFrom && t > usage.turnIdx) return null;
+    if (i >= estimateFrom && t < usage.turnIdx) return null;
+  }
+
+  return { anchorTokens: usage.contextTokens, estimateFrom };
+}
+
+export interface CompactHistoryResult {
+  messages: CanonicalMessage[];
+  /**
+   * True only when the view was actually RESHAPED (summary swapped in). The
+   * caller stamps this onto the committed provider_state so the next turn
+   * knows this turn's recorded usage describes the compacted view — anchoring
+   * on it against the full replay would freeze compaction one turn later.
+   */
+  compacted: boolean;
+}
+
 export async function compactHistory(
   messages: CanonicalMessage[],
   model: string,
-): Promise<CanonicalMessage[]> {
-  const status = getContextStatus(toChatParams(messages), model);
-  if (!status.shouldCompact) return messages;
+  // Real usage of the op's last recorded turn (op-usage.ts lastTurnUsage).
+  // Absent/unmappable → pure estimate, the historical behavior.
+  usage?: LastTurnUsage | null,
+): Promise<CompactHistoryResult> {
+  const usageAnchor = usage ? locateAnchor(messages, usage) : null;
+  if (usage && !usageAnchor) {
+    logger.debug(`anchor at turn ${usage.turnIdx} not mappable onto the current view; sizing by pure estimate`);
+  }
+  const status = getContextStatus(toChatParams(messages), model, usageAnchor ?? undefined);
+  if (!status.shouldCompact) return { messages, compacted: false };
 
   let keepLast = 6;
   if (status.percentage >= 95) keepLast = 4;
   if (status.percentage >= 99) keepLast = 2;
 
   const splitIdx = safeSplitIndex(messages, keepLast);
-  if (splitIdx <= 0) return messages;
+  if (splitIdx <= 0) return { messages, compacted: false };
 
   const head = messages.slice(0, splitIdx);
   const recent = messages.slice(splitIdx);
@@ -94,7 +167,7 @@ export async function compactHistory(
   // Disabled (LAX_LLM_COMPACTION), timed out, or failed: keep the full history
   // rather than silently truncating. An over-window call surfaces as a provider
   // error, which is honest; a silent drop corrupts the conversation.
-  if (!summary) return messages;
+  if (!summary) return { messages, compacted: false };
 
   const anchor = recent[0];
   const block =
@@ -117,14 +190,14 @@ export async function compactHistory(
         ? { ...(anchor.content as Record<string, unknown>), text: merged }
         : { text: merged },
     };
-    return [mergedAnchor, ...recent.slice(1)];
+    return { messages: [mergedAnchor, ...recent.slice(1)], compacted: true };
   }
   const summaryRow: CanonicalMessage = {
     messageId: `compact-summary-${anchor.messageId}`,
     role: "user",
     content: { text: block },
   };
-  return [summaryRow, ...recent];
+  return { messages: [summaryRow, ...recent], compacted: true };
 }
 
 function hasImages(content: unknown): boolean {

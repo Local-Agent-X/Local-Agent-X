@@ -50,6 +50,7 @@ vi.mock("./turn-loop/decide-outcome.js", () => ({
 import { driveTurn } from "./turn-loop.js";
 import { publishStreamChunk } from "./event-emitter.js";
 import { commitTurn } from "./checkpoint.js";
+import { buildTurnInput } from "./turn-loop/build-input.js";
 import type { Adapter } from "./adapter-contract.js";
 import type { Op } from "../ops/types.js";
 
@@ -104,5 +105,26 @@ describe("driveTurn — thrown adapter error retries (CL-8)", () => {
       expect.any(String),
       { replace: true, text: "" },
     );
+  });
+});
+
+describe("driveTurn — compacted-view marker reaches the committed provider_state", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("stamps viewCompacted onto the envelope when buildTurnInput compacted the view", async () => {
+    vi.mocked(buildTurnInput).mockResolvedValueOnce({ viewCompacted: true } as never);
+    await driveTurn(freshOp(), okAdapter(), 0, { isCancelled: () => false });
+    expect(commitTurn).toHaveBeenCalledTimes(1);
+    const committed = vi.mocked(commitTurn).mock.calls[0][0];
+    // Marker present AND the adapter's own payload preserved.
+    expect(committed.providerState).toEqual({ v: 1, viewCompacted: true });
+  });
+
+  it("stamps an explicit false on uncompacted turns — the era marker", async () => {
+    await driveTurn(freshOp(), okAdapter(), 0, { isCancelled: () => false });
+    const committed = vi.mocked(commitTurn).mock.calls[0][0];
+    // Every committed turn carries the boolean; absence must only ever mean
+    // "pre-stamp-era row" to lastTurnUsage's refusal logic.
+    expect(committed.providerState).toEqual({ v: 1, viewCompacted: false });
   });
 });

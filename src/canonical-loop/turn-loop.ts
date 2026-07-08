@@ -289,7 +289,18 @@ export async function driveTurn(
     }
   }
 
-  const providerState: ProviderStateEnvelope = result.providerState;
+  // Stamp the compacted-view marker from buildTurnInput onto the envelope
+  // being committed — an EXPLICIT boolean on every turn, not just true on
+  // compacted ones. The stamp doubles as an era marker: rows without the
+  // boolean predate reliable recording (pre-stamp compactions, pre-2026-06-26
+  // observedTools gaps) and lastTurnUsage refuses to anchor on them. Adapters
+  // never set it; without the stamp the next turn would anchor context sizing
+  // on usage that measured the compacted view against the full replay
+  // (see ProviderStateEnvelope.viewCompacted).
+  const providerState: ProviderStateEnvelope = {
+    ...result.providerState,
+    viewCompacted: input.viewCompacted === true,
+  };
   const middlewareAborted = middlewareDirective?.kind === "abort";
 
   // Decide terminal reason + assemble the commit-message list, running the

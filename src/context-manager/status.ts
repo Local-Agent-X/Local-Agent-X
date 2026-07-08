@@ -1,7 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 import { isCodexModel, lookupContextWindow } from "./model-windows.js";
-import { totalTokens } from "./token-estimation.js";
+import { anchoredTotalTokens, totalTokens, type TokenAnchor } from "./token-estimation.js";
 
 export interface ContextStatus {
   usedTokens: number;
@@ -14,10 +14,14 @@ export interface ContextStatus {
 
 export function getContextStatus(
   messages: ChatCompletionMessageParam[],
-  model: string
+  model: string,
+  // When the caller knows the last response's REAL usage, size the context
+  // from that anchor plus an estimate of only the messages appended since.
+  // Omitted → pure estimate, byte-identical to the historical behavior.
+  anchor?: TokenAnchor
 ): ContextStatus {
   const maxTokens = lookupContextWindow(model);
-  const usedTokens = totalTokens(messages);
+  const usedTokens = anchor ? anchoredTotalTokens(messages, anchor) : totalTokens(messages);
   const percentage = Math.round((usedTokens / maxTokens) * 100);
 
   let level: ContextStatus["level"] = "ok";

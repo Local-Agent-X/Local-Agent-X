@@ -54,6 +54,14 @@ export interface TurnInput {
   pendingRedirect?: RedirectInstruction;
   providerState?: ProviderStateEnvelope;
   tools: ToolDescriptor[];
+  /**
+   * True when `messages` is an ephemerally COMPACTED view of op_messages
+   * (compact-history.ts swapped older turns for a summary). Additive v1
+   * metadata: adapters ignore it; turn-loop copies it onto the committed
+   * provider_state so context sizing never anchors on a compacted turn's
+   * usage (its token counts describe the summary view, not the full replay).
+   */
+  viewCompacted?: boolean;
 }
 
 export type AdapterReport =

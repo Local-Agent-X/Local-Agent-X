@@ -37,3 +37,31 @@ export function messageTokens(msg: ChatCompletionMessageParam): number {
 export function totalTokens(messages: ChatCompletionMessageParam[]): number {
   return messages.reduce((sum, msg) => sum + messageTokens(msg), 0);
 }
+
+/**
+ * Anchor for anchored counting: a REAL usage total reported by the provider
+ * (input + cache-read + cache-creation + output of the last response) plus the
+ * index of the first message that response did not cover.
+ */
+export interface TokenAnchor {
+  /** Real context size as of the anchoring response, in provider tokens. */
+  anchorTokens: number;
+  /** Messages[estimateFrom..] were appended after that response — estimated. */
+  estimateFrom: number;
+}
+
+/**
+ * Anchored total: the anchor's real usage plus the chars/3.5 estimate of only
+ * the messages appended since. Far more accurate than a pure estimate — the
+ * bulk of the context is counted by the provider, not guessed.
+ */
+export function anchoredTotalTokens(
+  messages: ChatCompletionMessageParam[],
+  anchor: TokenAnchor
+): number {
+  let sum = anchor.anchorTokens;
+  for (let i = Math.max(0, anchor.estimateFrom); i < messages.length; i++) {
+    sum += messageTokens(messages[i]);
+  }
+  return sum;
+}

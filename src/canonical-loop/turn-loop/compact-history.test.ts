@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../../context-manager/status.js", () => ({ getContextStatus: vi.fn() }));
 vi.mock("../../context-manager/compaction.js", () => ({ summarizeOldMessages: vi.fn() }));
 
-import { compactHistory, safeSplitIndex, toChatParams } from "./compact-history.js";
+import { compactHistory, locateAnchor, safeSplitIndex, toChatParams } from "./compact-history.js";
 import { getContextStatus } from "../../context-manager/status.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import type { CanonicalMessage } from "../contract-types.js";
@@ -16,6 +16,10 @@ const a = (id: string, text: string, toolCalls?: unknown[]): CanonicalMessage =>
   ({ messageId: id, role: "assistant", content: toolCalls ? { text, toolCalls } : { text } });
 const tr = (id: string, toolCallId: string, result: string): CanonicalMessage =>
   ({ messageId: id, role: "tool_result", content: { toolCallId, result } });
+
+// Stamp a row with the (turnIdx, seqInTurn) it was finalized at.
+const at = (m: CanonicalMessage, turnIdx: number, seqInTurn = 0): CanonicalMessage =>
+  ({ ...m, turnIdx, seqInTurn });
 
 const status = (percentage: number, shouldCompact: boolean) =>
   ({ usedTokens: 1, maxTokens: 1, percentage, level: "compact" as const, shouldCompact, forceCompact: false });
@@ -82,7 +86,8 @@ describe("compactHistory", () => {
     mockStatus.mockReturnValue(status(10, false));
     const msgs = [u("1", "hi"), a("2", "yo"), u("3", "more")];
     const out = await compactHistory(msgs, "claude-opus-4-8");
-    expect(out).toBe(msgs);
+    expect(out.messages).toBe(msgs);
+    expect(out.compacted).toBe(false);
     expect(mockSummarize).not.toHaveBeenCalled();
   });
 
@@ -95,7 +100,8 @@ describe("compactHistory", () => {
     ];
     const out = await compactHistory(msgs, "claude-sonnet-4-6");
     expect(mockSummarize).toHaveBeenCalled();
-    expect(out).toBe(msgs);
+    expect(out.messages).toBe(msgs);
+    expect(out.compacted).toBe(false);
   });
 
   it("replaces the head with a summary and never orphans a tool_result", async () => {
@@ -106,7 +112,8 @@ describe("compactHistory", () => {
       u("u2", "second ask"), a("a2", "", [{ id: "t2", name: "read", arguments: "{}" }]), tr("r2", "t2", "res2"),
       u("u3", "latest ask"), a("a3", "working"),
     ];
-    const out = await compactHistory(msgs, "claude-sonnet-4-6");
+    const { messages: out, compacted } = await compactHistory(msgs, "claude-sonnet-4-6");
+    expect(compacted).toBe(true);
 
     // boundary is assistant a2 (index 4), so the summary lands on a fresh leading
     // user row (keeps the provider "first message is user" invariant); the
@@ -147,7 +154,8 @@ describe("compactHistory", () => {
       u("u1", "first"), a("a1", "r1"), u("u2", "second"), a("a2", "r2"),
       u("u3", "third ask"), a("a3", "r3"), u("u4", "fourth ask"), a("a4", "r4"),
     ];
-    const out = await compactHistory(msgs, "claude-sonnet-4-6");
+    const { messages: out, compacted } = await compactHistory(msgs, "claude-sonnet-4-6");
+    expect(compacted).toBe(true);
 
     // boundary is user u3 (index 4): summary folds into it, no synthetic row added.
     expect(out[0].role).toBe("user");
@@ -156,5 +164,89 @@ describe("compactHistory", () => {
     expect(text).toContain("DECISIONS: ship it");
     expect(text).toContain("third ask");
     expect(out.find(m => m.messageId === "u1")).toBeUndefined();
+  });
+});
+
+describe("locateAnchor — mapping real usage onto the message view", () => {
+  it("anchors after the assistant response; later rows are the estimated tail", () => {
+    const msgs = [
+      at(u("u1", "seed"), 0, 0),
+      at(a("a0", "r0"), 0, 1),
+      at(u("u2", "next"), 1, 0),
+      at(a("a1", "r1"), 1, 1),          // ← anchoring response
+      at(tr("r1", "t1", "res"), 1, 2),  // appended after it
+      at(u("n1", "nudge"), 2, 0),
+    ];
+    const anchor = locateAnchor(msgs, { turnIdx: 1, contextTokens: 42_000 });
+    expect(anchor).toEqual({ anchorTokens: 42_000, estimateFrom: 4 });
+  });
+
+  it("tool-only anchor turn (no assistant row): its tool_results are the appended tail", () => {
+    const msgs = [
+      at(u("u1", "go"), 0, 0),
+      at(tr("r1", "t1", "res1"), 0, 1),
+      at(tr("r2", "t2", "res2"), 0, 2),
+    ];
+    const anchor = locateAnchor(msgs, { turnIdx: 0, contextTokens: 9_000 });
+    expect(anchor).toEqual({ anchorTokens: 9_000, estimateFrom: 1 });
+  });
+
+  it("anchor covers everything when nothing was appended since the response", () => {
+    const msgs = [at(u("u1", "q"), 0, 0), at(a("a1", "r"), 0, 1)];
+    const anchor = locateAnchor(msgs, { turnIdx: 0, contextTokens: 5_000 });
+    expect(anchor).toEqual({ anchorTokens: 5_000, estimateFrom: 2 });
+  });
+
+  it("refuses to map when a row is missing turnIdx", () => {
+    const msgs = [at(u("u1", "q"), 0, 0), a("a1", "r")]; // a1 has no turnIdx
+    expect(locateAnchor(msgs, { turnIdx: 0, contextTokens: 5_000 })).toBeNull();
+  });
+
+  it("refuses to map when a compaction summary row reshaped the view", () => {
+    const msgs = [
+      at({ messageId: "compact-summary-a1", role: "user", content: { text: "[summary]" } }, 0, 0),
+      at(a("a1", "r"), 0, 1),
+    ];
+    expect(locateAnchor(msgs, { turnIdx: 0, contextTokens: 5_000 })).toBeNull();
+  });
+
+  it("refuses to map when rows don't split cleanly around the anchor turn", () => {
+    const msgs = [
+      at(u("u2", "later"), 2, 0), // later-turn row BEFORE the anchor turn's rows
+      at(a("a1", "r1"), 1, 1),
+      at(tr("r1", "t1", "res"), 1, 2),
+    ];
+    expect(locateAnchor(msgs, { turnIdx: 1, contextTokens: 5_000 })).toBeNull();
+  });
+});
+
+describe("compactHistory — anchored sizing", () => {
+  it("sizes via the mapped anchor when last-turn usage is provided", async () => {
+    mockStatus.mockReturnValue(status(10, false));
+    const msgs = [
+      at(u("u1", "seed"), 0, 0),
+      at(a("a1", "r1"), 0, 1),
+      at(tr("r1", "t1", "res"), 0, 2),
+    ];
+    await compactHistory(msgs, "claude-opus-4-8", { turnIdx: 0, contextTokens: 77_000 });
+    expect(mockStatus).toHaveBeenCalledWith(
+      expect.any(Array),
+      "claude-opus-4-8",
+      { anchorTokens: 77_000, estimateFrom: 2 },
+    );
+  });
+
+  it("falls back to the pure estimate when the anchor can't map onto the view", async () => {
+    mockStatus.mockReturnValue(status(10, false));
+    const msgs = [u("u1", "seed"), a("a1", "r1")]; // no turnIdx on rows
+    await compactHistory(msgs, "claude-opus-4-8", { turnIdx: 0, contextTokens: 77_000 });
+    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined);
+  });
+
+  it("passes no anchor when no usage was recorded", async () => {
+    mockStatus.mockReturnValue(status(10, false));
+    const msgs = [at(u("u1", "seed"), 0, 0), at(a("a1", "r1"), 0, 1)];
+    await compactHistory(msgs, "claude-opus-4-8");
+    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined);
   });
 });

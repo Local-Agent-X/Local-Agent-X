@@ -7,6 +7,7 @@ import type { CanonicalMessage } from "../contract-types.js";
 import type { RedirectInstruction } from "../types.js";
 import type { Op } from "../../ops/types.js";
 import { readLatestOpTurn, readOpMessages } from "../store.js";
+import { lastTurnUsage } from "../op-usage.js";
 import { getToolsForOp } from "../runtime.js";
 import { readOp } from "../../ops/op-store.js";
 import { resolveOpModel } from "../op-model.js";
@@ -33,8 +34,15 @@ export async function buildTurnInput(
   // adapter sees it. Ephemeral (never persisted to op_messages), recomputed each
   // turn, and a no-op under threshold. Runs on every lane — long background /
   // agent ops are exactly where the full-replay history overruns the window.
+  // Sizing is anchored on the last turn's REAL provider usage when available
+  // (lastTurnUsage never throws; null → pure estimate inside compactHistory).
   const model = resolveOpModel(op);
-  if (model) messages = await compactHistory(messages, model);
+  let viewCompacted = false;
+  if (model) {
+    const compacted = await compactHistory(messages, model, lastTurnUsage(op.id));
+    messages = compacted.messages;
+    viewCompacted = compacted.compacted;
+  }
   const prior = readLatestOpTurn(op.id);
   // Tools come from the per-op registry (chat-runner registers them on
   // submit; legacy worker-pool ops don't register and get []). Without
@@ -48,6 +56,10 @@ export async function buildTurnInput(
     tools: getToolsForOp(op.id),
   };
   if (pendingRedirect) input.pendingRedirect = pendingRedirect;
+  // Compacted-view marker: turn-loop copies this onto the committed
+  // provider_state so the NEXT turn's context sizing knows this turn's usage
+  // describes the summary view, not the full replay (see types.ts).
+  if (viewCompacted) input.viewCompacted = true;
 
   // Ephemeral situational-awareness digest — goal/constraint re-anchoring +
   // the durable open-plan, recomputed each turn and prepended to the last user

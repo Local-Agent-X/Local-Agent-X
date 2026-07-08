@@ -105,6 +105,10 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     let currentToolArgs = "";
     let inputTokens = 0;
     let outputTokens = 0;
+    // Cache fields stay undefined when the API doesn't report them — "absent"
+    // and "0" are different downstream (context anchoring refuses absent).
+    let cacheReadTokens: number | undefined;
+    let cacheCreateTokens: number | undefined;
     let stopReason: string | undefined;
     let sawText = false, sawToolCall = false;
     let responseText = "";
@@ -129,7 +133,16 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
           const eventType = parsed.type as string;
           if (eventType === "message_start") {
             const usage = (parsed.message as Record<string, unknown>)?.usage as Record<string, number>;
-            if (usage) inputTokens = usage.input_tokens || 0;
+            if (usage) {
+              inputTokens = usage.input_tokens || 0;
+              // input_tokens EXCLUDES the cached prefix; the cache read/write
+              // counts arrive here. Without them the turn's recorded usage
+              // undercounts context by the whole cached prefix (tools array +
+              // prior turns) — the CLI path (stream-cli/stream-parse.ts)
+              // already forwards both.
+              if (typeof usage.cache_read_input_tokens === "number") cacheReadTokens = usage.cache_read_input_tokens;
+              if (typeof usage.cache_creation_input_tokens === "number") cacheCreateTokens = usage.cache_creation_input_tokens;
+            }
           } else if (eventType === "content_block_start") {
             const block = parsed.content_block as Record<string, unknown>;
             if (block?.type === "tool_use") {
@@ -149,7 +162,13 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
             }
           } else if (eventType === "message_delta") {
             const usage = parsed.usage as Record<string, number>;
-            if (usage) outputTokens = usage.output_tokens || 0;
+            if (usage) {
+              outputTokens = usage.output_tokens || 0;
+              // Some API versions restate cache counts on the final delta —
+              // last-wins keeps whichever frame carried them.
+              if (typeof usage.cache_read_input_tokens === "number") cacheReadTokens = usage.cache_read_input_tokens;
+              if (typeof usage.cache_creation_input_tokens === "number") cacheCreateTokens = usage.cache_creation_input_tokens;
+            }
             const delta = parsed.delta as Record<string, unknown>;
             if (delta?.stop_reason) stopReason = delta.stop_reason as string;
           }
@@ -162,7 +181,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       hasText: sawText, hasToolCalls: sawToolCall, stopReason, inputTokens, outputTokens, responseText,
     });
     logClassification("anthropic", resolvedModel, classification);
-    yield { type: "done", usage: { inputTokens, outputTokens }, stopReason, classification };
+    yield { type: "done", usage: { inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens }, stopReason, classification };
   } catch (e) {
     yield { type: "error", error: `Anthropic error: ${(e as Error).message?.slice(0, 300)}` };
   } finally {

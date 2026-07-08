@@ -3,11 +3,25 @@
 // diagnostics). Callers depend on these shapes only, never on the TypeScript
 // compiler API (or any future language backend) directly.
 
+/** The ONE definition of the TS-family extensions language-intel handles —
+ *  ts-provider's supports() and ts-project's hosted-file check both read this,
+ *  so they can never drift apart. Includes .mjs/.cjs: the TS language service
+ *  hosts them under allowJs (set in ts-project's DEFAULT_OPTIONS for the
+ *  no-tsconfig path; tsconfig-owned projects rely on their own config).
+ *  agent-guards/verify-gate.ts's deliberately-broader SOURCE_EXT_RE
+ *  cross-references this constant but stays separate (it spans many
+ *  languages). */
+export const TS_FAMILY_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/i;
+
 /** A position in a source file. Line and column are 1-based. */
 export interface SymbolLocation {
   file: string;
   line: number;
   column: number;
+  /** Set by findSymbolPositions results: whether the identifier at this
+   *  position is a declaration NAME or another occurrence. Optional — query
+   *  inputs don't carry it. */
+  kind?: "declaration" | "occurrence";
 }
 
 /** One reference (or definition) site for a symbol. 1-based line/column. */

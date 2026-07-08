@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { tmpdir } from "node:os";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLanguageIntel, disposeLanguageIntel } from "./index.js";
 
@@ -63,7 +63,7 @@ describe("language-intel", () => {
     const aFile = join(dir, "a.ts");
 
     // Declaration first: "export function " is 16 chars → column 17.
-    expect(positions[0]).toEqual({ file: aFile, line: 2, column: 17 });
+    expect(positions[0]).toEqual({ file: aFile, line: 2, column: 17, kind: "declaration" });
 
     // The comment (L1) and string-literal (L3) mentions are not AST
     // identifiers and must not appear.
@@ -120,6 +120,50 @@ describe("language-intel", () => {
     const defs = await intel.findDefinition(posOf(join(dir, "b.ts"), 3, "greetUser"));
     expect(defs.length).toBeGreaterThan(0);
     expect(defs[0]).toMatchObject({ file: join(dir, "a.ts"), line: 2, column: 17, isDefinition: true });
+  });
+
+  it("supports the full TS family — .mts and .mjs included (one shared extension set)", () => {
+    const intel = getLanguageIntel();
+    for (const f of ["x.ts", "x.tsx", "x.js", "x.jsx", "x.mts", "x.cts", "x.mjs", "x.cjs"]) {
+      expect(intel.supports(f)).toBe(true);
+    }
+  });
+
+  it("a tsconfig.json APPEARING after a no-tsconfig query takes effect (no cache-key collision)", async () => {
+    const intel = getLanguageIntel();
+    // Isolated tree with NO tsconfig above it (fresh mkdtemp, not the fixture).
+    const loose = realpathSync(mkdtempSync(join(tmpdir(), "language-intel-loose-")));
+    try {
+      const cPath = join(loose, "c.ts");
+      // Implicit-any parameter: an error under the DEFAULT options (strict),
+      // but fine once a strict:false tsconfig governs the directory.
+      writeFileSync(cPath, "export function id(x) {\n  return x;\n}\n");
+      const before = await intel.getDiagnostics([cPath]);
+      expect(before.some((d) => d.code === 7006)).toBe(true);
+
+      writeFileSync(join(loose, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: false } }));
+      expect(await intel.getDiagnostics([cPath])).toEqual([]);
+    } finally {
+      rmSync(loose, { recursive: true, force: true });
+    }
+  });
+
+  it("an EDITED tsconfig.json takes effect on the next query (mtime staleness, not eviction)", async () => {
+    const intel = getLanguageIntel();
+    const sub = join(dir, "cfg-edit");
+    mkdirSync(sub);
+    const cfgPath = join(sub, "tsconfig.json");
+    writeFileSync(cfgPath, JSON.stringify({ compilerOptions: { strict: true } }));
+    const cPath = join(sub, "c.ts");
+    writeFileSync(cPath, "export function id(x) {\n  return x;\n}\n");
+
+    const before = await intel.getDiagnostics([cPath]);
+    expect(before.some((d) => d.code === 7006)).toBe(true);
+
+    writeFileSync(cfgPath, JSON.stringify({ compilerOptions: { strict: false } }));
+    const bumped = new Date(Date.now() + 5_000);
+    utimesSync(cfgPath, bumped, bumped); // guarantee an mtime delta on coarse filesystems
+    expect(await intel.getDiagnostics([cPath])).toEqual([]);
   });
 
   it("unsupported extensions answer empty from the facade", async () => {

@@ -95,9 +95,11 @@ export const EDIT_TOOLS: ReadonlySet<string> = new Set([
 
 /** Extensions that have a meaningful compile / type-check / test step. Pure
  *  data files (.json/.md/.css/.html/.yaml) are intentionally excluded — editing
- *  only those shouldn't demand a build. */
+ *  only those shouldn't demand a build. Deliberately BROADER than language-intel's
+ *  TS_FAMILY_EXT_RE (src/language-intel/types.ts) — this spans many languages —
+ *  but the TS-family subset here must stay a superset of that constant. */
 const SOURCE_EXT_RE =
-  /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|rb|php|c|cc|cpp|h|hpp|cs|swift|kt|kts|scala|m|mm)$/i;
+  /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|py|go|rs|java|rb|php|c|cc|cpp|h|hpp|cs|swift|kt|kts|scala|m|mm)$/i;
 
 /** Shell commands that constitute a real verification pass. Conservative: a
  *  false positive only SUPPRESSES the nudge, which is the safe direction.

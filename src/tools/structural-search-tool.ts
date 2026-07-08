@@ -47,12 +47,50 @@ function formatHits(hits: ReferenceHit[], root: string): string[] {
 // Same spawn shape as grep-tool's runRg; --fixed-strings because `symbol` is
 // a bare identifier, never a pattern. Rejects on ENOENT so the caller can
 // produce an actionable "rg missing" error.
-function runWordFallback(symbol: string, root: string, limit: number, signal?: AbortSignal): Promise<ToolResult> {
+
+/** execFile's error, as Node actually shapes it: `code` is the exit code
+ *  (number) for a spawn that ran, or an errno string (ENOENT, maxBuffer). */
+type ExecError = Error & { code?: number | string | null };
+
+/** Injectable exec seam (tests stub it; production uses node's execFile). */
+export type ExecFileLike = (
+  file: string,
+  args: readonly string[],
+  options: { maxBuffer: number; signal?: AbortSignal },
+  callback: (error: ExecError | null, stdout: string, stderr: string) => void,
+) => { stdin?: { end(): void } | null };
+
+/** Thin adapter pinning node's execFile to the one overload the seam uses. */
+const defaultExec: ExecFileLike = (file, args, options, callback) =>
+  execFile(file, [...args], options, callback);
+
+/** Exported for tests — the tool routes non-TS/JS roots through this. */
+export function runWordFallback(
+  symbol: string,
+  root: string,
+  limit: number,
+  signal?: AbortSignal,
+  exec: ExecFileLike = defaultExec,
+): Promise<ToolResult> {
   const rgArgs = ["-n", "--word-regexp", "--fixed-strings", "--no-heading", "--color", "never", symbol, root];
   return new Promise((resolve, reject) => {
-    const child = execFile(ripgrepBin(), rgArgs, { maxBuffer: 10 * 1024 * 1024, signal }, (error, stdout) => {
+    const child = exec(ripgrepBin(), rgArgs, { maxBuffer: 10 * 1024 * 1024, signal }, (error, stdout, stderr) => {
       if (signal?.aborted) return resolve(err("Aborted"));
-      if (error && (error as NodeJS.ErrnoException).code === "ENOENT") return reject(error);
+      // Error discrimination (rg's documented exit codes): 1 = no matches
+      // (not a failure); ENOENT = rg not installed (reject → actionable
+      // message upstream); maxBuffer overflow = usable-but-truncated output;
+      // anything else (exit 2 = real failure, other errnos) is a real error —
+      // never round it down to "No matches".
+      const code = error?.code;
+      const truncated = code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+      if (error && code === "ENOENT") return reject(error);
+      if (error && code !== 1 && !truncated) {
+        const snippet = (stderr || "").trim().split("\n")[0]?.slice(0, 300) ?? "";
+        return resolve(err(
+          `structural_search text fallback failed: ripgrep exited with ${String(code ?? error.message)}` +
+          (snippet ? ` — ${snippet}` : ""),
+        ));
+      }
       const out = (stdout || "").trim();
       // rg exits 1 on no matches — an empty result, not an error.
       if (!out) {
@@ -64,7 +102,10 @@ function runWordFallback(symbol: string, root: string, limit: number, signal?: A
         return `${relative(root, m[1]) || m[1]}:${m[2]}:  ${m[3].trim()}`;
       });
       const header = `structural_search "${symbol}" under ${root} — text fallback (word-boundary), ${lines.length} hit(s):`;
-      resolve(ok(`${header}\n${truncate(lines, limit)}`));
+      const warning = truncated
+        ? `\nWARNING: output exceeded the buffer cap — this list is TRUNCATED; narrow the path or use a more specific symbol.`
+        : "";
+      resolve(ok(`${header}\n${truncate(lines, limit)}${warning}`));
     });
     child.stdin?.end();
   });
@@ -112,13 +153,25 @@ export const structuralSearchTool: ToolDefinition = {
     const intel = getLanguageIntel();
     const positions = await intel.findSymbolPositions(root, symbol, { limit: POSITION_PROBE_LIMIT });
     if (positions.length > 0) {
-      const origin = positions[0]; // declaration-first ordering (see language-intel facade)
+      // Declaration-first, module-level-first ordering (see ts-provider).
+      const origin = positions[0];
+      // Same-name ambiguity disclosure: the anchor is a CHOICE among the
+      // candidate declarations, so say so instead of silently picking one.
+      const declarations = positions.filter((p) => p.kind === "declaration");
+      let note = "";
+      if (declarations.length > 1 && origin === declarations[0]) {
+        const relOf = (p: { file: string; line: number }) => `${relative(root, p.file) || p.file}:${p.line}`;
+        const others = declarations.slice(1, 5).map(relOf).join(", ");
+        note =
+          `\nnote: ${declarations.length} same-named declarations found; anchored on ${relOf(origin)} — ` +
+          `pass a narrower path to disambiguate (others: ${others})`;
+      }
       const hits = mode === "definition" ? await intel.findDefinition(origin) : await intel.findReferences(origin);
       if (hits.length === 0) {
-        return ok(`No ${mode} for "${symbol}" found under ${root} (language service, TS/JS).`);
+        return ok(`No ${mode} for "${symbol}" found under ${root} (language service, TS/JS).${note}`);
       }
       const lines = formatHits(hits, root);
-      const header = `structural_search ${mode} of "${symbol}" under ${root} — ${lines.length} hit(s):`;
+      const header = `structural_search ${mode} of "${symbol}" under ${root} — ${lines.length} hit(s):${note}`;
       return ok(`${header}\n${truncate(lines, limit)}`);
     }
 

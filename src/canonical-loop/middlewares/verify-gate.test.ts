@@ -14,7 +14,9 @@ vi.mock("../../classifiers/test-deletion-classify.js", () => ({
 const opHasOutstandingMock = vi.fn(() => false);
 const opLspCleanMock = vi.fn(() => false);
 vi.mock("./post-edit-diagnostics.js", () => ({
-  opHasOutstandingIntroducedErrors: () => opHasOutstandingMock(),
+  // The outstanding accessor is async (it re-verifies against the language
+  // service before answering); the mock mirrors that contract.
+  opHasOutstandingIntroducedErrors: async () => opHasOutstandingMock(),
   opEditedFilesLspClean: () => opLspCleanMock(),
 }));
 

@@ -52,10 +52,10 @@ interface PostEditDiagState {
   /** Resolved file path → INTRODUCED (non-baseline) errors present at the
    *  file's most recent check. Set/cleared on every post-baseline fire for
    *  the file, so it always reflects the last look the language service got.
-   *  Known staleness: a file fixed INDIRECTLY (by editing a different file)
-   *  isn't rechecked until it is edited again, so its entry can linger; the
-   *  consumers tolerate that — a real clean verify outranks this state in
-   *  checkVerifyGate, and the build-verify fail-fast is retry-bounded. */
+   *  An error fixed INDIRECTLY (by editing a different file, or via bash)
+   *  isn't observed by the edit hook, so the read path re-verifies: the
+   *  accessors below re-run getDiagnostics on files with entries and prune
+   *  what no longer reproduces before answering — no phantom red gates. */
   outstanding: Map<string, FileDiagnostic[]>;
   /** Resolved file path → TOTAL error count (baseline errors included) at the
    *  file's most recent check. Feeds opEditedFilesLspClean: pre-existing red
@@ -68,25 +68,69 @@ function createPostEditDiagState(): PostEditDiagState {
 }
 
 // ── Read-only queries over the per-op state (no duplication elsewhere) ──────
-// Timing contract for consumers: this state is written ONLY by this module's
-// afterToolExecution hook (registry order 245). The readers run at done-claim
-// time — verify-gate's afterModelCall wrap-up check (a turn with ZERO tool
-// calls, so no afterToolExecution fires that turn) and the orchestrator
-// build-verify gate (between turns) — so every read observes state written by
-// a PRIOR turn's dispatch; there is no same-turn read/write race.
+// Timing contract for consumers: this state is written by this module's
+// afterToolExecution hook (registry order 245) and pruned by the re-verifying
+// accessors below. The readers run at done-claim time — verify-gate's
+// afterModelCall wrap-up check (a turn with ZERO tool calls, so no
+// afterToolExecution fires that turn) and the orchestrator build-verify gate
+// (between turns) — so there is no same-turn read/write race with the hook.
+
+/** Re-verify the recorded outstanding entries against a FRESH language-service
+ *  pass over exactly the files that hold entries (services are warm — measured
+ *  18-35ms/file). An error fixed indirectly (edit to another file, or a bash
+ *  write) no longer reproduces, so its entry is pruned and the pruning sticks
+ *  in the stored state. Kept entries are refreshed to the current diagnostic
+ *  (line/col shift with edits; identity is diagKey). */
+async function reverifyOutstanding(state: PostEditDiagState): Promise<void> {
+  const files = [...state.outstanding.keys()];
+  const all = await getLanguageIntel().getDiagnostics(files);
+  const currentByFile = new Map<string, FileDiagnostic[]>();
+  for (const d of all) {
+    if (d.severity !== "error") continue;
+    const bucket = currentByFile.get(d.file);
+    if (bucket) bucket.push(d);
+    else currentByFile.set(d.file, [d]);
+  }
+  for (const file of files) {
+    const current = currentByFile.get(file) ?? [];
+    const currentByKey = new Map(current.map((d) => [diagKey(d), d]));
+    const kept: FileDiagnostic[] = [];
+    for (const recorded of state.outstanding.get(file) ?? []) {
+      const match = currentByKey.get(diagKey(recorded));
+      if (match !== undefined && !kept.includes(match)) kept.push(match);
+    }
+    if (kept.length > 0) state.outstanding.set(file, kept);
+    else state.outstanding.delete(file);
+    // This re-check is now the file's most recent verdict — keep the
+    // lsp-clean signal coherent with it.
+    state.lastErrorCounts.set(file, current.length);
+  }
+}
 
 /** All introduced-and-still-unresolved errors across the op's edited files,
- *  per each file's most recent language-service check. */
-export function opOutstandingIntroducedErrors(opId: string): FileDiagnostic[] {
+ *  RE-VERIFIED against the language service before answering (see
+ *  reverifyOutstanding). Fail-open: a language-intel fault answers [] — this
+ *  signal drives gates and must never phantom-red on a fault. */
+export async function opOutstandingIntroducedErrors(opId: string): Promise<FileDiagnostic[]> {
   const state = getMiddlewareState<PostEditDiagState>(
     opId, "post-edit-diagnostics", createPostEditDiagState,
   );
+  if (state.outstanding.size === 0) return [];
+  try {
+    await reverifyOutstanding(state);
+  } catch (err) {
+    logger.warn(
+      `fail-open: outstanding re-verify failed — answering no outstanding errors: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
   return [...state.outstanding.values()].flat();
 }
 
-/** True when the op has introduced type errors it has not resolved. */
-export function opHasOutstandingIntroducedErrors(opId: string): boolean {
-  return opOutstandingIntroducedErrors(opId).length > 0;
+/** True when the op has introduced type errors it has not resolved, per a
+ *  fresh re-verify (never stale per-file state). */
+export async function opHasOutstandingIntroducedErrors(opId: string): Promise<boolean> {
+  return (await opOutstandingIntroducedErrors(opId)).length > 0;
 }
 
 /** True when every edited-and-checked TS/JS file was fully error-free

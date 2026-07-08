@@ -20,14 +20,14 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
+import { TS_FAMILY_EXT_RE } from "./types.js";
 
 const MAX_PROJECTS = 4;
 const IDLE_DISPOSE_MS = 5 * 60_000;
 
-/** Extensions the TS service hosts. Mirrors ts-provider's supports(). */
-const SCRIPT_EXT_RE = /\.(ts|tsx|js|jsx|mts|cts)$/i;
-
-/** Compiler options used when no tsconfig.json governs the file. */
+/** Compiler options used when no tsconfig.json governs the file. allowJs keeps
+ *  plain .js/.mjs/.cjs hosted on this default-options path; tsconfig-owned
+ *  projects rely on their own config for that instead. */
 const DEFAULT_OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ES2022,
   module: ts.ModuleKind.NodeNext,
@@ -108,7 +108,7 @@ export class TsProject {
   ensureFile(file: string): boolean {
     const abs = resolve(file);
     if (this.fileNames.has(abs)) return true;
-    if (!SCRIPT_EXT_RE.test(abs) || !existsSync(abs)) return false;
+    if (!TS_FAMILY_EXT_RE.test(abs) || !existsSync(abs)) return false;
     this.fileNames.add(abs);
     this.projectVersion++;
     return true;
@@ -149,6 +149,12 @@ interface ProjectSlot {
   project: TsProject;
   lastUsed: number;
   idleTimer: NodeJS.Timeout | null;
+  /** The tsconfig this slot was built from (null = default options). */
+  configPath: string | null;
+  /** The tsconfig's fs mtimeMs at creation (-1 when configPath is null).
+   *  acquire() compares it to disk so a tsconfig edit recreates the service
+   *  deterministically instead of waiting on idle eviction. */
+  configMtimeMs: number;
 }
 
 const projects = new Map<string, ProjectSlot>();
@@ -175,12 +181,34 @@ function createProject(configPath: string | null, fallbackDir: string): TsProjec
   return new TsProject(rootDir, parsed.options, parsed.fileNames);
 }
 
+/** True when the slot's recorded tsconfig state no longer matches reality:
+ *  a different tsconfig now governs the lookup, or the recorded tsconfig was
+ *  edited or deleted since the service was built. */
+function slotIsStale(slot: ProjectSlot, configPath: string | null): boolean {
+  if (slot.configPath !== configPath) return true;
+  return configPath !== null && mtimeOf(configPath) !== slot.configMtimeMs;
+}
+
 function acquire(configPath: string | null, fallbackDir: string): TsProject {
-  const key = configPath !== null ? dirname(resolve(configPath)) : resolve(fallbackDir);
+  // Namespaced keys: a no-tsconfig project keyed by directory must never
+  // collide with the project created once a tsconfig.json appears there.
+  const key =
+    configPath !== null ? `cfg:${dirname(resolve(configPath))}` : `dir:${resolve(fallbackDir)}`;
   let slot = projects.get(key);
+  if (slot !== undefined && slotIsStale(slot, configPath !== null ? resolve(configPath) : null)) {
+    disposeProject(key);
+    slot = undefined;
+  }
   if (slot === undefined) {
     evictOverCap();
-    slot = { project: createProject(configPath, fallbackDir), lastUsed: 0, idleTimer: null };
+    const resolvedConfig = configPath !== null ? resolve(configPath) : null;
+    slot = {
+      project: createProject(configPath, fallbackDir),
+      lastUsed: 0,
+      idleTimer: null,
+      configPath: resolvedConfig,
+      configMtimeMs: resolvedConfig !== null ? mtimeOf(resolvedConfig) : -1,
+    };
     projects.set(key, slot);
   }
   touch(key, slot);

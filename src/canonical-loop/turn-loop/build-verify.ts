@@ -338,11 +338,13 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
 
   // Fail-fast (cheap strong negative first): post-edit diagnostics already
   // know the op INTRODUCED type errors it never resolved, so fail the gate
-  // with that list instead of spawning the build to rediscover them. Sits
+  // with that list instead of spawning the build to rediscover them. The
+  // accessor RE-VERIFIES against the live language service, so an error fixed
+  // indirectly (different file, or bash) never phantom-reds this gate. Sits
   // BEFORE command detection on purpose — the evidence needs no buildable
   // manifest. The inverse signal (lsp-clean) has NO effect here: a clean
   // language service never skips or weakens the build below.
-  const outstanding = opOutstandingIntroducedErrors(op.id);
+  const outstanding = await opOutstandingIntroducedErrors(op.id);
   if (outstanding.length > 0) {
     logger.info(`op=${op.id} has ${outstanding.length} outstanding introduced type error(s) — failing the gate without spawning the build (retry ${getBuildVerifyRetries(op.id)})`);
     return redResult(formatOutstandingLspErrorsForAgent(outstanding));

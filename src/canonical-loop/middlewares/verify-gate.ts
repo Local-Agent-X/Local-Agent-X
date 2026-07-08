@@ -220,11 +220,13 @@ export const verifyGateMiddleware: CanonicalMiddleware = {
     // Timing: that middleware (order 245) writes the state in its
     // afterToolExecution hook; this is a wrap-up afterModelCall on a turn with
     // ZERO tool calls (guarded above), so no afterToolExecution fires this
-    // turn — the state read here was written by a PRIOR turn's dispatch.
-    // Outstanding introduced errors sharpen the nudge; lsp-clean only softens
-    // its tone and never substitutes for the build (see checkVerifyGate).
+    // turn. The outstanding accessor RE-VERIFIES against the live language
+    // service before answering, so an error fixed indirectly (different file,
+    // or bash) never fires the sharp nudge on stale state. Outstanding
+    // introduced errors sharpen the nudge; lsp-clean only softens its tone
+    // and never substitutes for the build (see checkVerifyGate).
     const r = checkVerifyGate(state, {
-      outstanding: opHasOutstandingIntroducedErrors(ctx.op.id),
+      outstanding: await opHasOutstandingIntroducedErrors(ctx.op.id),
       clean: opEditedFilesLspClean(ctx.op.id),
     });
     if (r.nudge) return { kind: "nudge", message: r.nudge, reason: SOURCE_VERIFY_REASON };

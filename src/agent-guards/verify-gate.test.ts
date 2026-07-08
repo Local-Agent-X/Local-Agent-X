@@ -31,6 +31,12 @@ describe("isSourceFile — which extensions demand a verify", () => {
       expect(isSourceFile(p)).toBe(false);
     }
   });
+
+  it("covers the whole TS family — .mts/.cts/.mjs/.cjs count as source (no drift vs language-intel)", () => {
+    for (const p of ["a.mts", "b.cts", "c.mjs", "d.cjs"]) {
+      expect(isSourceFile(p)).toBe(true);
+    }
+  });
 });
 
 describe("checkVerifyGate — edited but never verified", () => {

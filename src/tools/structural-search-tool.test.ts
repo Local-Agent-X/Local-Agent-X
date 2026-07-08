@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { disposeLanguageIntel } from "../language-intel/index.js";
-import { structuralSearchTool } from "./structural-search-tool.js";
+import { structuralSearchTool, runWordFallback, type ExecFileLike } from "./structural-search-tool.js";
 import { ripgrepBin } from "./grep-tool.js";
 
 // Fixture mirrors language-intel's: `greetUser` declared in a.ts, used in
@@ -94,6 +94,98 @@ describe("structural_search — language-intel path (TS/JS)", () => {
     expect(res.content).toContain("noSuchSymbolAnywhere");
     expect(res.content).toContain(dir);
     expect(res.content).toMatch(/No matches|No references/);
+  });
+});
+
+describe("structural_search — same-name ambiguity disclosure", () => {
+  it("anchors on the module-level declaration (not an earlier-file parameter) and lists the others", async () => {
+    tsFixture();
+    // 'aa.ts' sorts BEFORE 'zz.ts' in the alphabetical walk; its parameter
+    // `formatThing` must not win the anchor over zz.ts's exported function.
+    writeFileSync(join(dir, "aa.ts"), [
+      "export function wrap(formatThing: string): string {",
+      "  return formatThing;",
+      "}",
+      "",
+    ].join("\n"));
+    writeFileSync(join(dir, "zz.ts"), [
+      "export function formatThing(x: string): string {",
+      "  return x;",
+      "}",
+      'export const used = formatThing("y");',
+      "",
+    ].join("\n"));
+    const res = await structuralSearchTool.execute({ symbol: "formatThing", path: dir });
+    expect(res.isError).toBeUndefined();
+    // Anchored on the exported declaration → its references, [def] in zz.ts.
+    expect(res.content).toContain("[def] zz.ts:1:");
+    // The ambiguity is disclosed, naming the anchor and the other site.
+    expect(res.content).toContain("note: 2 same-named declarations found");
+    expect(res.content).toContain("anchored on zz.ts:1");
+    expect(res.content).toContain("aa.ts:1");
+  });
+
+  it("a single declaration produces no ambiguity note", async () => {
+    tsFixture();
+    const res = await structuralSearchTool.execute({ symbol: "greetUser", path: dir });
+    expect(res.content).not.toContain("same-named declarations");
+  });
+});
+
+// ── runWordFallback error discrimination (stubbed exec seam) ──
+type ExecErr = Error & { code?: number | string };
+
+function stubExec(error: ExecErr | null, stdout: string, stderr = ""): ExecFileLike {
+  return (_file, _args, _opts, cb) => {
+    queueMicrotask(() => cb(error, stdout, stderr));
+    return { stdin: null };
+  };
+}
+
+describe("runWordFallback — rg exit/error discrimination", () => {
+  const withCode = (msg: string, code: number | string): ExecErr =>
+    Object.assign(new Error(msg), { code });
+
+  it("no error with output → normal hit list", async () => {
+    const r = await runWordFallback("sym", "/root", 50, undefined, stubExec(null, "/root/x.py:1:sym here"));
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("x.py:1:");
+  });
+
+  it("exit 1 (rg's documented no-match) → clean no-matches result, not an error", async () => {
+    const r = await runWordFallback("sym", "/root", 50, undefined, stubExec(withCode("exit 1", 1), ""));
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toMatch(/No matches/);
+  });
+
+  it("exit 2 (real rg failure) → err() naming the exit code and a stderr snippet", async () => {
+    const r = await runWordFallback(
+      "sym", "/root", 50, undefined,
+      stubExec(withCode("exit 2", 2), "", "rg: error parsing glob 'x['"),
+    );
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("2");
+    expect(r.content).toContain("error parsing glob");
+  });
+
+  it("maxBuffer overflow → returns the truncated results WITH an explicit truncation warning", async () => {
+    const r = await runWordFallback(
+      "sym", "/root", 50, undefined,
+      stubExec(
+        withCode("maxBuffer length exceeded", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"),
+        "/root/x.py:1:sym one\n/root/y.py:2:sym two",
+      ),
+    );
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("x.py:1:");
+    expect(r.content).toContain("y.py:2:");
+    expect(r.content).toMatch(/TRUNCATED/);
+  });
+
+  it("ENOENT (rg missing) → rejects so the caller can say 'install ripgrep'", async () => {
+    await expect(
+      runWordFallback("sym", "/root", 50, undefined, stubExec(withCode("spawn rg ENOENT", "ENOENT"), "")),
+    ).rejects.toThrow(/ENOENT/);
   });
 });
 

@@ -9,9 +9,9 @@ import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
 import type { FileDiagnostic, LanguageIntelProvider, ReferenceHit, SymbolLocation } from "./types.js";
+import { TS_FAMILY_EXT_RE } from "./types.js";
 import { TsProject, disposeAllProjects, getProjectForFile } from "./ts-project.js";
 
-const SUPPORTED_RE = /\.(ts|tsx|js|jsx|mts|cts)$/i;
 const DECLARATION_FILE_RE = /\.d\.(ts|mts|cts)$/i;
 /** findSymbolPositions skips files above this size — a bundle or generated
  *  blob, not something worth an AST walk. */
@@ -101,6 +101,27 @@ function isDeclarationName(node: ts.Identifier): boolean {
   );
 }
 
+/** Is this declaration NAME a MODULE-LEVEL declaration (function/class/
+ *  interface/type/enum/const at the top of a file)? Ranks ahead of
+ *  parameters/locals/members so a same-named parameter in an alphabetically
+ *  earlier file can't outrank the real exported declaration. */
+function isTopLevelDeclarationName(node: ts.Identifier): boolean {
+  const p = node.parent;
+  if (
+    ts.isFunctionDeclaration(p) || ts.isClassDeclaration(p) ||
+    ts.isInterfaceDeclaration(p) || ts.isTypeAliasDeclaration(p) ||
+    ts.isEnumDeclaration(p)
+  ) {
+    return ts.isSourceFile(p.parent);
+  }
+  if (ts.isVariableDeclaration(p)) {
+    // VariableDeclaration → VariableDeclarationList → VariableStatement → SourceFile
+    const stmt = p.parent.parent;
+    return ts.isVariableStatement(stmt) && ts.isSourceFile(stmt.parent);
+  }
+  return false;
+}
+
 /** Yield supported source files under `dir` (sorted for determinism),
  *  skipping node_modules, dot-directories, .d.ts, and oversized files.
  *  Unreadable directories are skipped by design — a permission hole in one
@@ -123,7 +144,7 @@ function* walkScriptFiles(dir: string): Generator<string> {
     if (st.isDirectory()) {
       if (name === "node_modules" || name.startsWith(".")) continue;
       yield* walkScriptFiles(full);
-    } else if (SUPPORTED_RE.test(name) && !DECLARATION_FILE_RE.test(name) && st.size <= MAX_SCAN_BYTES) {
+    } else if (TS_FAMILY_EXT_RE.test(name) && !DECLARATION_FILE_RE.test(name) && st.size <= MAX_SCAN_BYTES) {
       yield full;
     }
   }
@@ -132,7 +153,8 @@ function* walkScriptFiles(dir: string): Generator<string> {
 function collectSymbolHits(
   file: string,
   symbolName: string,
-  declarations: SymbolLocation[],
+  topLevelDeclarations: SymbolLocation[],
+  otherDeclarations: SymbolLocation[],
   occurrences: SymbolLocation[],
   limit: number,
 ): void {
@@ -144,11 +166,14 @@ function collectSymbolHits(
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && node.text === symbolName) {
       const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
-      const hit: SymbolLocation = { file, line: line + 1, column: character + 1 };
       if (isDeclarationName(node)) {
-        if (declarations.length < limit) declarations.push(hit);
+        const hit: SymbolLocation = { file, line: line + 1, column: character + 1, kind: "declaration" };
+        // Two-tier ranking: module-level declarations outrank parameters/
+        // locals/members, whatever the alphabetical walk order was.
+        const bucket = isTopLevelDeclarationName(node) ? topLevelDeclarations : otherDeclarations;
+        if (bucket.length < limit) bucket.push(hit);
       } else if (occurrences.length < limit) {
-        occurrences.push(hit);
+        occurrences.push({ file, line: line + 1, column: character + 1, kind: "occurrence" });
       }
     }
     ts.forEachChild(node, visit);
@@ -158,7 +183,7 @@ function collectSymbolHits(
 
 export class TsLanguageIntelProvider implements LanguageIntelProvider {
   supports(file: string): boolean {
-    return SUPPORTED_RE.test(file);
+    return TS_FAMILY_EXT_RE.test(file);
   }
 
   async findReferences(loc: SymbolLocation): Promise<ReferenceHit[]> {
@@ -216,13 +241,17 @@ export class TsLanguageIntelProvider implements LanguageIntelProvider {
     opts?: { limit?: number },
   ): Promise<SymbolLocation[]> {
     const limit = Math.max(1, opts?.limit ?? DEFAULT_SYMBOL_LIMIT);
-    const declarations: SymbolLocation[] = [];
+    const topLevelDeclarations: SymbolLocation[] = [];
+    const otherDeclarations: SymbolLocation[] = [];
     const occurrences: SymbolLocation[] = [];
     for (const file of walkScriptFiles(resolve(root))) {
-      if (declarations.length >= limit) break;
-      collectSymbolHits(file, symbolName, declarations, occurrences, limit);
+      // Early-exit only once the TOP tier is full: a limit's worth of
+      // parameters/locals must not stop the walk before a later file's
+      // module-level declaration is seen.
+      if (topLevelDeclarations.length >= limit) break;
+      collectSymbolHits(file, symbolName, topLevelDeclarations, otherDeclarations, occurrences, limit);
     }
-    return [...declarations, ...occurrences].slice(0, limit);
+    return [...topLevelDeclarations, ...otherDeclarations, ...occurrences].slice(0, limit);
   }
 
   dispose(): void {

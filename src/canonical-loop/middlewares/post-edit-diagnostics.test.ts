@@ -220,16 +220,16 @@ describe("post-edit-diagnostics — read-only state queries", () => {
     // baseline error honestly defeats lsp-clean.
     writeFixture(bPath, B_RED_ONE);
     await editTurn(op, bPath);
-    expect(opHasOutstandingIntroducedErrors(op)).toBe(false);
-    expect(opOutstandingIntroducedErrors(op)).toEqual([]);
+    expect(await opHasOutstandingIntroducedErrors(op)).toBe(false);
+    expect(await opOutstandingIntroducedErrors(op)).toEqual([]);
     expect(opEditedFilesLspClean(op)).toBe(false);
 
     // Turn 2: a NEW error (TS2322) → outstanding, with the diagnostic itself
     // available as the gate's failure evidence.
     writeFixture(bPath, B_RED_TWO);
     await editTurn(op, bPath);
-    expect(opHasOutstandingIntroducedErrors(op)).toBe(true);
-    const outstanding = opOutstandingIntroducedErrors(op);
+    expect(await opHasOutstandingIntroducedErrors(op)).toBe(true);
+    const outstanding = await opOutstandingIntroducedErrors(op);
     expect(outstanding.length).toBeGreaterThan(0);
     expect(String(outstanding[0].code)).toContain("2322");
     expect(outstanding[0].file).toBe(bPath);
@@ -239,8 +239,47 @@ describe("post-edit-diagnostics — read-only state queries", () => {
     // outstanding clears; lsp-clean stays false on the pre-existing error.
     writeFixture(bPath, B_RED_ONE);
     await editTurn(op, bPath);
-    expect(opHasOutstandingIntroducedErrors(op)).toBe(false);
+    expect(await opHasOutstandingIntroducedErrors(op)).toBe(false);
     expect(opEditedFilesLspClean(op)).toBe(false);
+  });
+
+  it("re-verifies on read: an error fixed by editing a DIFFERENT file prunes without re-editing the red file", { timeout: 60_000 }, async () => {
+    const op = opId();
+    const bPath = join(dir, "b.ts");
+
+    // Turn 1: b.ts is clean → baseline capture.
+    writeFixture(bPath, 'import { greetUser } from "./a.js";\n\nexport const g = greetUser("x");\n');
+    await editTurn(op, bPath);
+
+    // Turn 2: b.ts imports a symbol a.ts doesn't export → INTRODUCED error.
+    writeFixture(bPath, 'import { greetUser, helper } from "./a.js";\n\nexport const g = greetUser(helper());\n');
+    await editTurn(op, bPath);
+    expect(await opHasOutstandingIntroducedErrors(op)).toBe(true);
+
+    // Turn 3: fix it by editing a.ts ONLY (b.ts never re-edited) — the stale
+    // per-file entry for b.ts must be pruned by the read path itself.
+    writeFixture(join(dir, "a.ts"), A_TS + "export function helper(): string {\n  return \"h\";\n}\n");
+    await editTurn(op, join(dir, "a.ts"));
+    expect(await opHasOutstandingIntroducedErrors(op)).toBe(false);
+    expect(await opOutstandingIntroducedErrors(op)).toEqual([]);
+    // The pruning sticks in the stored state, not just the answer.
+    expect(await opOutstandingIntroducedErrors(op)).toEqual([]);
+  });
+
+  it("fail-open on read: a language-intel fault answers NO outstanding errors (never phantom-red)", { timeout: 60_000 }, async () => {
+    const op = opId();
+    const bPath = join(dir, "b.ts");
+    writeFixture(bPath, B_RED_ONE);
+    await editTurn(op, bPath);
+    writeFixture(bPath, B_RED_TWO);
+    await editTurn(op, bPath); // outstanding now holds the introduced TS2322
+    intelOverride = {
+      getDiagnostics: async () => {
+        throw new Error("intel down");
+      },
+    };
+    expect(await opHasOutstandingIntroducedErrors(op)).toBe(false);
+    expect(await opOutstandingIntroducedErrors(op)).toEqual([]);
   });
 
   it("lsp-clean: true only when every checked edited file is fully error-free", { timeout: 60_000 }, async () => {
@@ -248,17 +287,17 @@ describe("post-edit-diagnostics — read-only state queries", () => {
     const aPath = join(dir, "a.ts");
     await editTurn(op, aPath); // first sighting, clean baseline
     expect(opEditedFilesLspClean(op)).toBe(true);
-    expect(opHasOutstandingIntroducedErrors(op)).toBe(false);
+    expect(await opHasOutstandingIntroducedErrors(op)).toBe(false);
 
     writeFixture(aPath, A_TS + "export const extra = greetUser(\"x\");\n");
     await editTurn(op, aPath); // still clean after a later edit
     expect(opEditedFilesLspClean(op)).toBe(true);
   });
 
-  it("an op with no diagnosed files reads as neither outstanding nor clean", () => {
+  it("an op with no diagnosed files reads as neither outstanding nor clean", async () => {
     const op = opId();
-    expect(opHasOutstandingIntroducedErrors(op)).toBe(false);
-    expect(opOutstandingIntroducedErrors(op)).toEqual([]);
+    expect(await opHasOutstandingIntroducedErrors(op)).toBe(false);
+    expect(await opOutstandingIntroducedErrors(op)).toEqual([]);
     // Absence of evidence is not clean — the weak positive needs a real check.
     expect(opEditedFilesLspClean(op)).toBe(false);
   });

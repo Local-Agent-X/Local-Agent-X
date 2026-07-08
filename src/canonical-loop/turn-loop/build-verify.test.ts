@@ -16,7 +16,7 @@ vi.mock("../middlewares/verify-gate.js", () => ({
 // regression pin that the normal build path is unchanged when the language
 // service has nothing outstanding.
 vi.mock("../middlewares/post-edit-diagnostics.js", () => ({
-  opOutstandingIntroducedErrors: vi.fn(() => [] as import("../../language-intel/index.js").FileDiagnostic[]),
+  opOutstandingIntroducedErrors: vi.fn(async () => [] as import("../../language-intel/index.js").FileDiagnostic[]),
 }));
 
 import {
@@ -177,7 +177,7 @@ describe("runBuildVerifyGate — outstanding introduced type errors (LSP fail-fa
   });
 
   it("fails fast with the diagnostics as evidence — build NOT spawned, verdict recorded red", async () => {
-    vi.mocked(opOutstandingIntroducedErrors).mockReturnValueOnce(OUTSTANDING);
+    vi.mocked(opOutstandingIntroducedErrors).mockResolvedValueOnce(OUTSTANDING);
     const exec = vi.fn(GREEN); // even a would-be-green build must not run
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
     expect(exec).not.toHaveBeenCalled();
@@ -193,7 +193,7 @@ describe("runBuildVerifyGate — outstanding introduced type errors (LSP fail-fa
   });
 
   it("shares the retry cap with the build path — past MAX_RETRIES it stops looping", async () => {
-    vi.mocked(opOutstandingIntroducedErrors).mockReturnValue(OUTSTANDING);
+    vi.mocked(opOutstandingIntroducedErrors).mockResolvedValue(OUTSTANDING);
     const exec = vi.fn(GREEN);
     const run = () => runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
     expect((await run()).shouldRetry).toBe(true);  // retry 1
@@ -203,11 +203,11 @@ describe("runBuildVerifyGate — outstanding introduced type errors (LSP fail-fa
     expect(third.capReached).toBe(true);
     expect(third.nudge).toContain("TS2322"); // errors still surfaced
     expect(exec).not.toHaveBeenCalled();
-    vi.mocked(opOutstandingIntroducedErrors).mockReturnValue([]);
+    vi.mocked(opOutstandingIntroducedErrors).mockResolvedValue([]);
   });
 
   it("fires even when no buildable project is detectable — the evidence needs no manifest", async () => {
-    vi.mocked(opOutstandingIntroducedErrors).mockReturnValueOnce(OUTSTANDING);
+    vi.mocked(opOutstandingIntroducedErrors).mockResolvedValueOnce(OUTSTANDING);
     const empty: FsProbe = { exists: () => false, readJson: () => null };
     const r = await runBuildVerifyGate(op, { editedPaths: ["/nowhere/a.ts"], probe: empty, exec: vi.fn(GREEN) });
     expect(r.shouldRetry).toBe(true);
@@ -215,12 +215,29 @@ describe("runBuildVerifyGate — outstanding introduced type errors (LSP fail-fa
   });
 
   it("no outstanding errors → the build path is invoked exactly as before", async () => {
-    vi.mocked(opOutstandingIntroducedErrors).mockReturnValueOnce([]);
+    vi.mocked(opOutstandingIntroducedErrors).mockResolvedValueOnce([]);
     const exec = vi.fn(GREEN);
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
     expect(exec).toHaveBeenCalledWith("npm run typecheck", "/proj");
     expect(r.verifiedClean).toBe(true);
     expect(recordOrchestratorVerify).toHaveBeenCalledWith("op-bv", true);
+  });
+
+  it("stale-then-pruned: once the re-verifying accessor prunes the phantom entry, the gate proceeds to the normal build path", async () => {
+    // First call: the entry still reproduces → fail-fast red.
+    vi.mocked(opOutstandingIntroducedErrors).mockResolvedValueOnce(OUTSTANDING);
+    // Second call: the error was fixed indirectly; the accessor's re-verify
+    // pruned it → the gate must NOT phantom-red and instead run the build.
+    vi.mocked(opOutstandingIntroducedErrors).mockResolvedValueOnce([]);
+    const exec = vi.fn(GREEN);
+    const first = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
+    expect(first.shouldRetry).toBe(true);
+    expect(exec).not.toHaveBeenCalled();
+    const second = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", "/proj");
+    expect(second.shouldRetry).toBe(false);
+    expect(second.verifiedClean).toBe(true);
+    expect(recordOrchestratorVerify).toHaveBeenLastCalledWith("op-bv", true);
   });
 });
 

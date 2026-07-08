@@ -21,12 +21,16 @@
  * could time out and fall back to "quick-html", which is precisely the silent
  * faking we're trying to kill. Predictable, explainable, no fallback-to-fake.
  *
- * Bias: CONSERVATIVE toward quick-html. The product default is fast HTML apps,
- * so full-stack fires only on high-precision signals (named frameworks, servers,
- * real DB engines) — never on soft words like "dashboard", "database", or "db"
- * that a plain HTML app legitimately uses. False negatives (a real backend ask
- * read as quick-html) are acceptable and recoverable; false positives (a simple
- * dashboard shoved into the heavy path) hurt the common case, so we avoid them.
+ * Bias: quick-html stays the lane for genuinely trivial single-screen static
+ * tools (a calculator, a tracker, a landing page) — instant, can't-fail, no
+ * install. Escaping to a real-build tier fires only on HIGH-PRECISION signals:
+ * a named framework or backend engine, OR plain-English real-app phrasing a
+ * static page can't honestly be (login/signup, multi-page, "web app"). Soft
+ * words a plain HTML app legitimately uses — "dashboard", "database", "db",
+ * "app" alone — never escape on their own. The asymmetry is deliberate: a real
+ * app read as quick-html ships a faked static page (the failure this fixes), but
+ * a trivial tool read as frontend-spa pays a real build+verify tax, so the
+ * real-app signals stay tight to avoid over-routing the simple case.
  */
 
 export type AppTier = "quick-html" | "full-stack" | "frontend-spa" | "compiled-native";
@@ -89,18 +93,47 @@ const FULL_STACK_RE = new RegExp(
   "i",
 );
 
+// Real-APP phrasing — a plain-English request for a real multi-screen app that
+// names NO framework. This is the routing fix for the common case: a normal
+// person asks for "an app for my car wash with login and a dashboard" and never
+// types "vite" or "react", so the framework-keyword-only FRONTEND_SPA_RE misses
+// it and it falls to quick-html — a login+dashboard app crammed into one static
+// page. HIGH PRECISION, and checked AFTER full-stack so a named backend engine
+// (postgres/express/…) still wins full-stack: only real-app SIGNALS a static
+// page can't honestly be, never the soft words a plain HTML app legitimately
+// uses ("dashboard", "tracker", "tool", "app" alone, "landing page"). Three
+// buckets: real authentication, explicit multi-view, explicit app-platform
+// framing. "SPA" as a bare token is deliberately omitted — it collides with the
+// word "spa" (a salon/spa booking app is not a single-page-app signal).
+const REAL_APP_RE = new RegExp(
+  [
+    // authentication — a real login/signup implies state, routing, a real app
+    "\\b(?:log\\s?in|sign\\s?in|sign\\s?up|sign-in|sign-up|authentication|user\\s+accounts?|user\\s+auth)\\b",
+    // explicit multi-view — needs routing, not a single static page
+    "\\b(?:multi[-\\s]?page|multi[-\\s]?screen|multiple\\s+(?:pages|screens|views)|several\\s+(?:pages|screens))\\b",
+    // explicit app-platform framing (bare "SPA" omitted — collides with "spa")
+    "\\b(?:web\\s?app|single[-\\s]?page\\s+app|SaaS|PWA|progressive\\s+web\\s+app)\\b",
+  ].join("|"),
+  "i",
+);
+
 /**
  * Classify a build brief into one of the four app tiers. Precedence:
- * compiled-native (most specific) → frontend-spa → full-stack → quick-html.
- * frontend-spa is checked before full-stack so "full-stack react app" (which
- * needs a frontend dev server AND can add a backend) lands on the SPA path that
- * skips the static seed; its prompt covers adding app_serve_backend too.
+ * compiled-native (most specific) → frontend-spa (framework named) → full-stack
+ * (backend engine named) → frontend-spa (plain-English real-app phrasing) →
+ * quick-html. frontend-spa's framework-keyword gate is checked before full-stack
+ * so "full-stack react app" lands on the SPA path (skips the static seed, covers
+ * adding a backend). The real-app-phrasing gate is checked AFTER full-stack so a
+ * named backend engine still wins full-stack; it catches real apps described in
+ * plain words (login/multi-page/web-app) that name no framework — the case that
+ * used to fall through to a faked static page.
  */
 export function classifyAppTier(prompt: string): AppTier {
   const text = prompt || "";
   if (COMPILED_NATIVE_RE.test(text)) return "compiled-native";
   if (FRONTEND_SPA_RE.test(text)) return "frontend-spa";
   if (FULL_STACK_RE.test(text)) return "full-stack";
+  if (REAL_APP_RE.test(text)) return "frontend-spa";
   return "quick-html";
 }
 

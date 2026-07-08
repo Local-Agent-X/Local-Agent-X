@@ -66,6 +66,34 @@ describe("classifyAppTier — quick-html (the conservative default)", () => {
   });
 });
 
+describe("classifyAppTier — real-app phrasing (no framework named → frontend-spa)", () => {
+  it.each([
+    "an app for my mobile car wash with a landing page, dashboard, and login",  // the motivating case
+    "a web app to manage salon bookings with user login",
+    "a multi-page site with signup",
+    "build me a SaaS for tracking invoices",
+    "a progressive web app for my gym",
+  ])("routes plain-English real-app %j to frontend-spa", (prompt) => {
+    expect(classifyAppTier(prompt)).toBe("frontend-spa");
+  });
+
+  it("a named backend engine still wins full-stack over real-app phrasing", () => {
+    // "login" is a real-app signal, but "postgres" means a real backend — the
+    // real-app gate is checked AFTER full-stack precisely so this stays full-stack.
+    expect(classifyAppTier("a car wash app with login backed by postgres")).toBe("full-stack");
+  });
+
+  it.each([
+    "build a calculator that converts USD to crypto",
+    "a landing page for my coffee brand",
+    "a spa booking page for my salon",   // 'spa' must NOT match the SPA app-platform signal
+    "a habit tracker",
+    "a dashboard that shows my fastmail inbox",
+  ])("keeps genuinely-trivial static %j on quick-html", (prompt) => {
+    expect(classifyAppTier(prompt)).toBe("quick-html");
+  });
+});
+
 describe("classifyAppTier — precedence", () => {
   it("compiled-native wins over full-stack signals (a rust web server)", () => {
     expect(classifyAppTier("a rust backend server with an api")).toBe("compiled-native");

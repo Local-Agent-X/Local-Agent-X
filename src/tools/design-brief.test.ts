@@ -53,20 +53,33 @@ describe("selectDesignBrief — neutral fallback", () => {
 });
 
 describe("selectDesignBrief — brief content", () => {
-  it("names the archetype and carries domain-appropriate guidance (fintech)", () => {
+  it("names the archetype and carries the exact token direction (fintech)", () => {
     const { archetypeName, brief } = selectDesignBrief("fintech dashboard for traders");
     expect(archetypeName).toBe("Fintech & Trust");
     expect(brief).toContain("Fintech & Trust");
     expect(brief).toMatch(/trust/i);
-    // Every brief carries the full direction (style, palette, typography, motion, layout).
     expect(brief).toMatch(/Typography:/);
     expect(brief).toMatch(/Layout & hierarchy:/);
+  });
+
+  it("is a MANDATE with EXACT committed values, not replaceable mood prose", () => {
+    // The regression this file exists to prevent: vague guidance with an
+    // "example, may replace" hex produced generic output. Every brief must now
+    // demand exact values and carry a real palette (multiple hexes).
+    for (const p of ["fintech app", "analytics dashboard", "online store", "landing page", "a plain tool"]) {
+      const { brief } = selectDesignBrief(p);
+      expect(brief).toMatch(/EXACT values; do not substitute/);
+      // A real palette: at least three concrete hex values, not one "example".
+      const hexes = brief.match(/#[0-9a-fA-F]{6}\b/g) ?? [];
+      expect(hexes.length).toBeGreaterThanOrEqual(3);
+      // The old hedge must be gone.
+      expect(brief).not.toMatch(/illustrative|may replace|never a mandate|Example (accent|anchor|CTA|statement):/i);
+    }
   });
 
   it("carries product-forward guidance for a storefront", () => {
     const { brief } = selectDesignBrief("online store for handmade candles");
     expect(brief).toMatch(/product/i);
-    expect(brief.length).toBeGreaterThan(0);
   });
 
   it("carries work-forward guidance for a portfolio", () => {

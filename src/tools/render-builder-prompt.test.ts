@@ -28,19 +28,19 @@ describe("renderPerBuildContext — design-brief seam", () => {
   it("flows fintech archetype guidance for a fintech trading dashboard prompt", () => {
     const out = renderPerBuildContext(inputFor("a fintech trading dashboard"));
     // Archetype-specific header + a phrase unique to the fintech brief.
-    expect(out).toContain("DESIGN DIRECTION — Fintech & Trust");
-    expect(out).toContain("gain/loss semantics");
+    expect(out).toContain("DESIGN SYSTEM — Fintech & Trust");
+    expect(out).toContain("gain/loss");
     // Prove specificity: the fintech render must NOT carry the portfolio brief.
-    expect(out).not.toContain("DESIGN DIRECTION — Creative Portfolio");
+    expect(out).not.toContain("DESIGN SYSTEM — Creative Portfolio");
   });
 
   it("flows creative-portfolio guidance for a photographer portfolio prompt", () => {
     const out = renderPerBuildContext(inputFor("photographer portfolio"));
-    expect(out).toContain("DESIGN DIRECTION — Creative Portfolio");
+    expect(out).toContain("DESIGN SYSTEM — Creative Portfolio");
     // A layout phrase distinctive to the portfolio archetype.
     expect(out).toContain("masonry grid");
     // Different archetype than the fintech case above — specificity actually flows.
-    expect(out).not.toContain("DESIGN DIRECTION — Fintech & Trust");
+    expect(out).not.toContain("DESIGN SYSTEM — Fintech & Trust");
   });
 
   it("includes the universal anti-pattern constraints on every build", () => {
@@ -65,13 +65,13 @@ describe("renderPerBuildContext — design-brief seam", () => {
       ...inputFor("add a payments checkout page"),
       isUpdate: true,
     });
-    expect(update).not.toContain("DESIGN DIRECTION");
+    expect(update).not.toContain("DESIGN SYSTEM —");
     expect(update).toContain("prefers-reduced-motion");
     expect(update).toContain("4.5:1");
 
     // Same-ish fintech description on a CREATE still gets the archetype brief.
     const create = renderPerBuildContext(inputFor("a fintech payments checkout app"));
-    expect(create).toContain("DESIGN DIRECTION — Fintech & Trust");
+    expect(create).toContain("DESIGN SYSTEM — Fintech & Trust");
   });
 
   it("still emits the APP_READY sentinel after the design guidance", () => {
@@ -86,7 +86,7 @@ describe("renderPerBuildContext — design-brief seam", () => {
 describe("renderBuilderPrompt — legacy path carries the same design seam", () => {
   it("includes the archetype brief and anti-patterns for the CLI-subprocess prompt", () => {
     const out = renderBuilderPrompt(inputFor("a fintech trading dashboard"));
-    expect(out).toContain("DESIGN DIRECTION — Fintech & Trust");
+    expect(out).toContain("DESIGN SYSTEM — Fintech & Trust");
     expect(out).toContain("UNIVERSAL DESIGN RULES");
   });
 });

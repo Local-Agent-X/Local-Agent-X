@@ -48,6 +48,7 @@ const SESSION_SCOPED_TOOLS = new Set([
   // code — the resolver never learns which session is calling (live failure
   // 2026-07-02: worker's relative read resolved to the workspace parent).
   "read", "write", "edit", "multi_edit", "edit_lines", "bulk_replace", "delete_file", "glob", "grep",
+  "structural_search", // searchRoot(args) is session-anchored like grep's
 ]);
 
 function deriveCallContext(sessionId: string | undefined): CallContext {

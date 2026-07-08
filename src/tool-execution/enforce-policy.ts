@@ -141,7 +141,7 @@ async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
       const rawPath = String(args.path);
       const isAbsolute = rawPath.startsWith("/") || rawPath.includes(":");
       if (isAbsolute) {
-        if (["glob", "grep"].includes(tc.name)) {
+        if (["glob", "grep", "structural_search"].includes(tc.name)) {
           const resolved = resolve(rawPath);
           if (relative(wtPath, resolved).startsWith("..")) {
             args.path = wtPath;
@@ -151,7 +151,7 @@ async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
         args.path = join(wtPath, rawPath);
       }
     }
-    if (["glob", "grep"].includes(tc.name) && !args.path) {
+    if (["glob", "grep", "structural_search"].includes(tc.name) && !args.path) {
       args.path = wtPath;
     }
     if (tc.name === "bash") args._cwd = wtPath;

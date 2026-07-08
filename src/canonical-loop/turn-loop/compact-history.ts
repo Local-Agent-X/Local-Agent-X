@@ -181,10 +181,16 @@ function recordBreakerFailure(opId: string): void {
     b.tripped = true;
     // Surface the error state honestly, ONCE, at trip time. Later skips log at
     // debug only — the state is readable via compactionBreakerState().
+    // A null from summarizeOldMessages doesn't distinguish a summarize FAILURE
+    // (provider error, timeout) from summarization being UNAVAILABLE (no provider
+    // configured — classify-with-llm returns null fast when
+    // resolveProviderContext() is null), so the message covers both.
     logger.error(
-      `compaction circuit breaker tripped for op ${opId} after ${b.failures} consecutive failed ` +
-      `summarize attempts; no further compaction attempts this session. Context stays ` +
-      `unsummarized — over-window provider errors may follow.`,
+      `compaction circuit breaker tripped for op ${opId} after ${b.failures} consecutive ` +
+      `summarize attempts returned nothing — summarization unavailable or failing ` +
+      `(provider error, timeout, or no provider configured). No further compaction ` +
+      `attempts this session; context stays unsummarized — over-window provider ` +
+      `errors may follow.`,
     );
   }
 }

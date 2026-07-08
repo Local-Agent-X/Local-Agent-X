@@ -36,7 +36,7 @@ const RECORDS_SEEN: ReadonlySet<string> = new Set(["read", "write", "edit", "edi
 // returned content): a file read / pattern list. Their content scan is
 // deliberately omitted to preserve canonical read/glob/grep behavior — output
 // secret-scanning applies only to data-returning sensitive-read sinks.
-const PATH_GATED_READS: ReadonlySet<string> = new Set(["read", "glob", "grep"]);
+const PATH_GATED_READS: ReadonlySet<string> = new Set(["read", "glob", "grep", "structural_search"]);
 
 export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;

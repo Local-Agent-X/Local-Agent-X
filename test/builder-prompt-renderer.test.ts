@@ -3,9 +3,18 @@
  * of docs/migration/build-app-to-canonical-op.md.
  *
  * The renderer is the single source of truth for both the legacy CLI-subprocess
- * path (today) and the canonical-op path (Phase 2). These tests guard the
- * byte-identical legacy output so the subprocess receives the exact same
- * prompt it did before the extraction.
+ * path (today) and the canonical-op path (Phase 2).
+ *
+ * History: the byte-parity-vs-extraction guarantee was originally pinned by a
+ * hand-maintained inline mirror of the template. That mirror had to be
+ * re-synced for every intentional prompt change (37351ab0) and then silently
+ * missed one (668abc25 added the update repair rules; the mirror didn't) —
+ * the exact drift it existed to catch. The byte-level pin now lives in file
+ * snapshots (one machine-maintained source of truth): any renderer change
+ * fails these tests until reviewed and accepted with `vitest -u`, and the
+ * accepted diff shows exactly what the subprocess prompt now says. The
+ * compose contract (full prompt = per-build context + website-rules tail) is
+ * asserted against the real module exports.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -20,59 +29,6 @@ import {
   compiledRuleLines,
   type BuilderPromptInput,
 } from "../src/tools/render-builder-prompt.js";
-import { selectDesignBrief, DESIGN_ANTI_PATTERNS } from "../src/tools/design-brief.js";
-
-// Mirrors the renderer's inline template. Keep this in sync only if the
-// renderer changes intentionally — divergence here means we've changed the
-// prompt the subprocess receives.
-// The design-brief block (archetype brief on CREATE + universal anti-patterns
-// on every build) is part of the intentional shape now; the mirror calls the
-// real design-brief module so it can't drift from its content.
-function legacyTemplate(input: BuilderPromptInput): string {
-  const { appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles } = input;
-  const isWebsite = looksLikeWebsiteRequest(prompt);
-  const design = isUpdate ? null : selectDesignBrief(prompt);
-  const context = contextFiles.length > 0
-    ? `\n\nExisting app context:\n${contextFiles.join("\n\n")}`
-    : "";
-  const assetManifest = assetFiles.length > 0
-    ? `\n\nLOCAL ASSETS AVAILABLE (use these in <img src="..."> — relative to index.html):\n${assetFiles.map(p => `  - ${p}`).join("\n")}\n`
-    : (isWebsite
-        ? `\n\nNO LOCAL ASSETS YET. If the user mentioned a source URL or attached photos, the parent agent should have extracted them into assets/ before invoking you. Do NOT use placeholder.com or stock CDNs — instead, build a bold typography-driven hero with CSS gradients and ask in PROJECT.md for the photos to be added.\n`
-        : "");
-  const websiteRules = isWebsite ? WEBSITE_RULES_FRAGMENT : "";
-  const starterLine = isUpdate
-    ? ""
-    : "- An index.html starter + AGENTS.md have been seeded — READ both, then EDIT index.html rather than rewriting it from scratch. Keep the inline-only CSP rule.\n";
-  return `You are building a web app in the directory: ${appDir}
-App name: ${appName}
-Task: ${isUpdate ? "UPDATE existing app" : "CREATE new app"}
-
-Environment:
-- Files in this folder are served at: ${appUrl}
-- The preview iframe enforces this CSP: script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self'.
-- External CDNs (Tailwind, jsdelivr, unpkg, Google Fonts) are blocked at the network layer. Inline or self-host.
-- Need real data from an external API? You CANNOT fetch it cross-origin here (connect-src 'self' blocks it) and you must NOT edit core LAX. Call the connector_create tool to define a connector (name, upstream, auth none/bearer/header/signed, allow-list of exact "METHOD /path" entries), then have the app call the same-origin proxy /api/connectors/<name>/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. The server holds the secret and forwards. An honest empty/error state until it returns is fine; faked data is not.
-- After write/edit, the preview reloads automatically; runtime errors are forwarded back to you in the next turn.
-${context}${assetManifest}
-Instructions: ${prompt}
-
-RULES:
-- Write ALL files to ${appDir}/ (use absolute paths)
-- The main entry point MUST be index.html
-${starterLine}- Create PROJECT.md with app description and status
-- Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in ${appDir}/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
-- For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look polished — use modern CSS, good colors, responsive design
-${NATIVE_BUILD_RULE_LINES.join("\n")}
-- The app will be served at ${appUrl}
-- Do NOT ask questions — just build it based on the instructions
-
-${design ? `${design.brief}\n\n` : ""}${DESIGN_ANTI_PATTERNS}
-
-- After writing files, output: APP_READY: ${appUrl}
-${websiteRules}`;
-}
 
 const SAMPLE_CREATE: BuilderPromptInput = {
   appName: "todo-app",
@@ -130,23 +86,29 @@ describe("looksLikeWebsiteRequest", () => {
   });
 });
 
-describe("renderBuilderPrompt — byte-identical legacy compose", () => {
-  it("create + no assets + non-website matches legacy literally", () => {
-    expect(renderBuilderPrompt(SAMPLE_CREATE)).toBe(legacyTemplate(SAMPLE_CREATE));
+describe("renderBuilderPrompt — compose contract + byte-level snapshot pin", () => {
+  const CASES: Array<[string, BuilderPromptInput]> = [
+    ["create + no assets + non-website", SAMPLE_CREATE],
+    ["update + context files + non-website", SAMPLE_UPDATE],
+    ["website + assets", SAMPLE_WEBSITE_WITH_ASSETS],
+    ["website + no assets (includes the 'no assets yet' callout)", SAMPLE_WEBSITE_NO_ASSETS],
+  ];
+
+  // Compose contract, asserted against the real module exports: the legacy
+  // single-prompt render is exactly the per-build context plus the trailing
+  // website-rules slot ("\n" + fragment-or-empty, matching the old inline
+  // template's `\n${websiteRules}` placement).
+  it.each(CASES)("%s: full prompt = per-build context + website-rules tail", (_name, input) => {
+    const tail = looksLikeWebsiteRequest(input.prompt) ? WEBSITE_RULES_FRAGMENT : "";
+    expect(renderBuilderPrompt(input)).toBe(renderPerBuildContext(input) + "\n" + tail);
   });
 
-  it("update + context files + non-website matches legacy literally", () => {
-    expect(renderBuilderPrompt(SAMPLE_UPDATE)).toBe(legacyTemplate(SAMPLE_UPDATE));
-  });
-
-  it("website + assets matches legacy literally", () => {
-    expect(renderBuilderPrompt(SAMPLE_WEBSITE_WITH_ASSETS))
-      .toBe(legacyTemplate(SAMPLE_WEBSITE_WITH_ASSETS));
-  });
-
-  it("website + no assets matches legacy literally (includes the 'no assets yet' callout)", () => {
-    expect(renderBuilderPrompt(SAMPLE_WEBSITE_NO_ASSETS))
-      .toBe(legacyTemplate(SAMPLE_WEBSITE_NO_ASSETS));
+  // Byte-level pin. Maintenance contract: an INTENTIONAL prompt change fails
+  // this until you review the new output and accept it with `vitest -u` —
+  // the snapshot diff in review shows exactly what the subprocess prompt now
+  // says. There is no hand-maintained copy left to silently drift.
+  it.each(CASES)("%s: full prompt is snapshot-pinned", (_name, input) => {
+    expect(renderBuilderPrompt(input)).toMatchSnapshot();
   });
 
   it("website rendering ends with the WEBSITE_RULES_FRAGMENT", () => {
@@ -160,21 +122,21 @@ describe("renderBuilderPrompt — byte-identical legacy compose", () => {
   });
 });
 
-describe("renderPerBuildContext — matches the per-build prefix of the legacy template", () => {
-  it("create case: per-build is the legacy template trimmed of its trailing website-rules slot", () => {
-    const fullLegacy = legacyTemplate(SAMPLE_CREATE);
-    // Legacy non-website tail is just "\n" (the literal `\n${websiteRules}` with
+describe("renderPerBuildContext — the per-build prefix of the full prompt", () => {
+  it("create case: per-build is the full prompt trimmed of its trailing website-rules slot", () => {
+    const full = renderBuilderPrompt(SAMPLE_CREATE);
+    // Non-website tail is just "\n" (the `\n${websiteRules}` slot with
     // websiteRules=""). Per-build is everything before that final newline.
-    expect(fullLegacy.endsWith("\n")).toBe(true);
-    expect(renderPerBuildContext(SAMPLE_CREATE)).toBe(fullLegacy.slice(0, -1));
+    expect(full.endsWith("\n")).toBe(true);
+    expect(renderPerBuildContext(SAMPLE_CREATE)).toBe(full.slice(0, -1));
   });
 
-  it("website case: per-build is the legacy template trimmed of '\\n' + WEBSITE_RULES_FRAGMENT", () => {
-    const fullLegacy = legacyTemplate(SAMPLE_WEBSITE_WITH_ASSETS);
+  it("website case: per-build is the full prompt trimmed of '\\n' + WEBSITE_RULES_FRAGMENT", () => {
+    const full = renderBuilderPrompt(SAMPLE_WEBSITE_WITH_ASSETS);
     const expectedTail = "\n" + WEBSITE_RULES_FRAGMENT;
-    expect(fullLegacy.endsWith(expectedTail)).toBe(true);
+    expect(full.endsWith(expectedTail)).toBe(true);
     expect(renderPerBuildContext(SAMPLE_WEBSITE_WITH_ASSETS))
-      .toBe(fullLegacy.slice(0, fullLegacy.length - expectedTail.length));
+      .toBe(full.slice(0, full.length - expectedTail.length));
   });
 
   it("includes the per-build appDir/appName/instructions", () => {
@@ -191,6 +153,16 @@ describe("renderPerBuildContext — matches the per-build prefix of the legacy t
     expect(out).toContain("Task: UPDATE existing app");
     expect(out).toContain("=== PROJECT.md ===");
     expect(out).toContain("=== TODO.md ===");
+  });
+
+  it("update prompt carries the repair rules (read-in-full + rewrite authority); create doesn't", () => {
+    // 668abc25 added these to close the exception-free-but-broken build class;
+    // the old hand-maintained mirror missed them — pin them semantically too,
+    // not just via the snapshot.
+    const out = renderPerBuildContext(SAMPLE_UPDATE);
+    expect(out).toContain("READ it in full");
+    expect(out).toContain("Diagnose the root cause before editing");
+    expect(renderPerBuildContext(SAMPLE_CREATE)).not.toContain("Diagnose the root cause");
   });
 
   it("website + asset list renders the LOCAL ASSETS manifest", () => {

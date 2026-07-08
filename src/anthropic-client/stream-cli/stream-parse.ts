@@ -185,13 +185,6 @@ export function* processStreamLine(
     // The terminal `result` frame restates the turn's stop_reason at top
     // level — authoritative even if the message_delta frame was missed.
     if (typeof ev.stop_reason === "string") state.stopReason = ev.stop_reason;
-    // DEBUG: inspect the raw `usage` shape so we can see whether the
-    // CLI surfaces cache_read_input_tokens / cache_creation_input_tokens
-    // (or similar) under OAuth subscription auth. Remove once the
-    // soak file shows non-null cache fields on Anthropic chats.
-    try {
-      logger.info(`[claude] usage-keys=${Object.keys(state.usage).join(",")} usage-json=${JSON.stringify(state.usage).slice(0, 500)}`);
-    } catch { /* ignore */ }
     logger.info(`[claude] Done: ${result.slice(0, 100).replace(/\n/g, "\\n")}...`);
 
     // Parse tool calls from full response ONLY if we didn't already emit

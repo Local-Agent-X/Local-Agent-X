@@ -113,6 +113,7 @@ const SENSITIVE_READ_TOOLS: ReadonlySet<string> = new Set([
   "read", "bash", "sql_query",                       // canonical (was run-sandboxed's list)
   "ari_file",                                         // kernel file read bridge
   "email_read", "memory_search", "grep", "glob",      // surface mailbox / memory / file content
+  "structural_search",                                 // grep's symbol-accurate sibling — same file-content surface
   "ari_retrieval", "ari_database", "ari_sqlite",      // kernel retrieval / db read bridges
 ]);
 
@@ -174,7 +175,7 @@ export function hasCapability(name: string, cls: CapabilityClass): boolean {
 
 /** Tool names that take a `path` arg and must be subject to worktree containment. */
 export const WORKTREE_PATH_TOOLS: ReadonlySet<string> = new Set([
-  ...WORKSPACE_WRITE_TOOLS, "read", "glob", "grep",
+  ...WORKSPACE_WRITE_TOOLS, "read", "glob", "grep", "structural_search",
 ]);
 
 /**

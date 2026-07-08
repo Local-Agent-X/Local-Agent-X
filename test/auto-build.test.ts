@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -89,7 +89,11 @@ describe("run_build_plan — arg validation", () => {
 
   beforeEach(() => {
     process.env[FEATURE_FLAG_ENV] = "1";
-    tmp = mkdtempSync(join(tmpdir(), "auto-build-test-"));
+    // realpathSync: on macOS tmpdir() is /var/... — a symlink to /private/var/...
+    // The tool canonicalizes project_dir via realpathDeep (the establishment
+    // chokepoint in auto-build/project-paths.ts), so compare against the same
+    // canonical spelling.
+    tmp = realpathSync(mkdtempSync(join(tmpdir(), "auto-build-test-")));
   });
 
   afterEach(() => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../context-manager/status.js", () => ({ getContextStatus: vi.fn() }));
 vi.mock("../../context-manager/compaction.js", () => ({ summarizeOldMessages: vi.fn() }));
@@ -6,7 +6,7 @@ vi.mock("../../context-manager/compaction.js", () => ({ summarizeOldMessages: vi
 const loggerMock = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock("../../logger.js", () => ({ createLogger: () => loggerMock }));
 
-import { compactHistory, compactionBreakerState, locateAnchor, safeSplitIndex, toChatParams } from "./compact-history.js";
+import { compactHistory, locateAnchor, safeSplitIndex, toChatParams } from "./compact-history.js";
 import { getContextStatus } from "../../context-manager/status.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import type { CanonicalMessage } from "../contract-types.js";
@@ -259,109 +259,6 @@ describe("compactHistory — anchored sizing", () => {
   });
 });
 
-describe("compactHistory — circuit breaker", () => {
-  // Enough history to compact: keepLast=4 at 96%, split lands on u3 (idx 4).
-  const compactable = () => [
-    u("u1", "q1"), a("a1", "r1"), u("u2", "q2"), a("a2", "r2"),
-    u("u3", "q3"), a("a3", "r3"), u("u4", "q4"), a("a4", "r4"),
-  ];
-  const MODEL = "claude-sonnet-4-6";
-
-  afterEach(() => { vi.unstubAllEnvs(); });
-
-  it("trips after 3 consecutive failed attempts: 4th call makes NO summarize attempt, error logged once", async () => {
-    const opId = "op-breaker-trip";
-    mockStatus.mockReturnValue(status(96, true));
-    mockSummarize.mockResolvedValue(null);
-
-    for (let i = 0; i < 3; i++) await compactHistory(compactable(), MODEL, null, opId);
-    expect(mockSummarize).toHaveBeenCalledTimes(3);
-    expect(compactionBreakerState(opId)).toEqual({ failures: 3, tripped: true });
-    expect(loggerMock.error).toHaveBeenCalledTimes(1);
-    expect(loggerMock.error.mock.calls[0][0]).toContain(opId);
-
-    // Tripped: skips the attempt entirely, returns the view unmodified, no new error log.
-    const msgs = compactable();
-    const out = await compactHistory(msgs, MODEL, null, opId);
-    expect(mockSummarize).toHaveBeenCalledTimes(3);
-    expect(out.messages).toBe(msgs);
-    expect(out.compacted).toBe(false);
-    expect(loggerMock.error).toHaveBeenCalledTimes(1);
-    expect(loggerMock.debug).toHaveBeenCalled();
-  });
-
-  it("a success resets the consecutive-failure count", async () => {
-    const opId = "op-breaker-reset";
-    mockStatus.mockReturnValue(status(96, true));
-
-    mockSummarize.mockResolvedValueOnce(null);
-    await compactHistory(compactable(), MODEL, null, opId);
-    expect(compactionBreakerState(opId)).toEqual({ failures: 1, tripped: false });
-
-    mockSummarize.mockResolvedValueOnce("SUMMARY");
-    const ok = await compactHistory(compactable(), MODEL, null, opId);
-    expect(ok.compacted).toBe(true);
-    expect(compactionBreakerState(opId)).toBeUndefined();
-
-    // Later failures start from 0: two more nulls do NOT trip.
-    mockSummarize.mockResolvedValue(null);
-    await compactHistory(compactable(), MODEL, null, opId);
-    await compactHistory(compactable(), MODEL, null, opId);
-    expect(compactionBreakerState(opId)).toEqual({ failures: 2, tripped: false });
-    expect(loggerMock.error).not.toHaveBeenCalled();
-    expect(mockSummarize).toHaveBeenCalledTimes(4);
-  });
-
-  it("kill-switch-disabled nulls never count — breaker never trips under env off", async () => {
-    const opId = "op-breaker-killswitch";
-    vi.stubEnv("LAX_LLM_COMPACTION", "0");
-    mockStatus.mockReturnValue(status(96, true));
-    mockSummarize.mockResolvedValue(null);
-
-    for (let i = 0; i < 5; i++) await compactHistory(compactable(), MODEL, null, opId);
-    // Every call still attempts (well, reaches the summarizer seam) — nothing counted.
-    expect(mockSummarize).toHaveBeenCalledTimes(5);
-    expect(compactionBreakerState(opId)).toBeUndefined();
-    expect(loggerMock.error).not.toHaveBeenCalled();
-  });
-
-  it("structural no-ops never touch the counter", async () => {
-    const opId = "op-breaker-noop";
-    mockStatus.mockReturnValue(status(96, true));
-    mockSummarize.mockResolvedValue(null);
-    await compactHistory(compactable(), MODEL, null, opId);
-    await compactHistory(compactable(), MODEL, null, opId);
-    expect(compactionBreakerState(opId)).toEqual({ failures: 2, tripped: false });
-
-    // Under threshold: no attempt, counter unchanged.
-    mockStatus.mockReturnValue(status(10, false));
-    await compactHistory(compactable(), MODEL, null, opId);
-    expect(compactionBreakerState(opId)).toEqual({ failures: 2, tripped: false });
-
-    // Over threshold but no safe split point (too little history): unchanged too.
-    mockStatus.mockReturnValue(status(96, true));
-    await compactHistory([u("u1", "q1"), a("a1", "r1")], MODEL, null, opId);
-    expect(compactionBreakerState(opId)).toEqual({ failures: 2, tripped: false });
-    expect(mockSummarize).toHaveBeenCalledTimes(2);
-  });
-
-  it("breakers are per-op: op A tripped, op B still attempts", async () => {
-    mockStatus.mockReturnValue(status(96, true));
-    mockSummarize.mockResolvedValue(null);
-    for (let i = 0; i < 3; i++) await compactHistory(compactable(), MODEL, null, "op-A");
-    expect(compactionBreakerState("op-A")?.tripped).toBe(true);
-
-    const calls = mockSummarize.mock.calls.length;
-    await compactHistory(compactable(), MODEL, null, "op-B");
-    expect(mockSummarize.mock.calls.length).toBe(calls + 1);
-    expect(compactionBreakerState("op-B")).toEqual({ failures: 1, tripped: false });
-  });
-
-  it("no opId → breaker bypassed, attempts keep happening", async () => {
-    mockStatus.mockReturnValue(status(96, true));
-    mockSummarize.mockResolvedValue(null);
-    for (let i = 0; i < 5; i++) await compactHistory(compactable(), MODEL);
-    expect(mockSummarize).toHaveBeenCalledTimes(5);
-    expect(loggerMock.error).not.toHaveBeenCalled();
-  });
-});
+// The circuit-breaker suite (trip, reset, cool-down probes) lives in
+// compact-history.breaker.test.ts — split out to keep both files under the
+// repo's file-size limit.

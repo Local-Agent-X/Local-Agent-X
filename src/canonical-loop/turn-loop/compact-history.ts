@@ -132,8 +132,15 @@ export function locateAnchor(
 // A session whose context is irrecoverably over the summarizer's own limits
 // fails the summarize call every turn, forever — each retry burns a 30s LLM
 // call for nothing. After TRIP_THRESHOLD consecutive failed attempts for an op
-// the breaker trips and compactHistory stops attempting for the rest of the
-// session (rest of the op). Any successful compaction resets the count.
+// the breaker trips and compactHistory skips the attempt on later calls — but
+// not forever: a transient provider outage must not disable summarization for
+// a long-lived op's whole life. While tripped, every PROBE_INTERVAL-th
+// otherwise-skipped call runs the normal full path once as a recovery probe.
+// A probe whose summarize attempt succeeds fully resets the breaker (entry
+// deleted — a later failure streak needs TRIP_THRESHOLD fresh failures to
+// re-trip); an enabled-null re-trips immediately (no 3-strike grace, no
+// re-logged error — debug only) and starts the next skip window. Any
+// successful compaction resets the count.
 //
 // What counts as a FAILED attempt: we decided to compact (over threshold, safe
 // split point) and summarizeOldMessages returned null WHILE ENABLED. The
@@ -146,11 +153,15 @@ export function locateAnchor(
 // (direct/test callers) bypass the breaker entirely — stateless as before.
 
 const TRIP_THRESHOLD = 3;
+// While tripped, every PROBE_INTERVAL-th otherwise-skipped call re-attempts.
+const PROBE_INTERVAL = 10;
 const MAX_TRACKED_OPS = 500;
 
 interface BreakerEntry {
   failures: number;
   tripped: boolean;
+  /** Calls short-circuited since the trip (or since the last consumed probe). */
+  skipsSinceTrip: number;
   touchedAt: number;
 }
 
@@ -167,7 +178,7 @@ function getBreaker(opId: string): BreakerEntry {
       }
       if (oldestKey !== undefined) breakers.delete(oldestKey);
     }
-    b = { failures: 0, tripped: false, touchedAt: Date.now() };
+    b = { failures: 0, tripped: false, skipsSinceTrip: 0, touchedAt: Date.now() };
     breakers.set(opId, b);
   }
   b.touchedAt = Date.now();
@@ -177,7 +188,15 @@ function getBreaker(opId: string): BreakerEntry {
 function recordBreakerFailure(opId: string): void {
   const b = getBreaker(opId);
   b.failures += 1;
-  if (b.failures >= TRIP_THRESHOLD && !b.tripped) {
+  if (b.tripped) {
+    // A recovery probe failed: stay tripped and start the next skip window
+    // immediately — no 3-strike grace. The trip was already surfaced at error
+    // once; probes stay quiet.
+    b.skipsSinceTrip = 0;
+    logger.debug(`compaction breaker probe failed for op ${opId}; staying tripped`);
+    return;
+  }
+  if (b.failures >= TRIP_THRESHOLD) {
     b.tripped = true;
     // Surface the error state honestly, ONCE, at trip time. Later skips log at
     // debug only — the state is readable via compactionBreakerState().
@@ -188,9 +207,9 @@ function recordBreakerFailure(opId: string): void {
     logger.error(
       `compaction circuit breaker tripped for op ${opId} after ${b.failures} consecutive ` +
       `summarize attempts returned nothing — summarization unavailable or failing ` +
-      `(provider error, timeout, or no provider configured). No further compaction ` +
-      `attempts this session; context stays unsummarized — over-window provider ` +
-      `errors may follow.`,
+      `(provider error, timeout, or no provider configured). Compaction now skips, ` +
+      `re-probing every ${PROBE_INTERVAL}th call; context stays unsummarized ` +
+      `meanwhile — over-window provider errors may follow.`,
     );
   }
 }
@@ -198,9 +217,11 @@ function recordBreakerFailure(opId: string): void {
 /** Readonly view of an op's breaker state, for telemetry/doctor. */
 export function compactionBreakerState(
   opId: string,
-): Readonly<{ failures: number; tripped: boolean }> | undefined {
+): Readonly<{ failures: number; tripped: boolean; skipsSinceTrip: number }> | undefined {
   const b = breakers.get(opId);
-  return b ? { failures: b.failures, tripped: b.tripped } : undefined;
+  return b
+    ? { failures: b.failures, tripped: b.tripped, skipsSinceTrip: b.skipsSinceTrip }
+    : undefined;
 }
 
 export interface CompactHistoryResult {
@@ -223,9 +244,22 @@ export async function compactHistory(
   // Threads the circuit breaker (above). Absent → breaker bypassed.
   opId?: string,
 ): Promise<CompactHistoryResult> {
-  if (opId && breakers.get(opId)?.tripped) {
-    logger.debug(`compaction breaker open for op ${opId}; skipping summarize attempt`);
-    return { messages, compacted: false };
+  const breaker = opId ? breakers.get(opId) : undefined;
+  if (breaker?.tripped) {
+    breaker.touchedAt = Date.now();
+    if (breaker.skipsSinceTrip + 1 < PROBE_INTERVAL) {
+      breaker.skipsSinceTrip += 1;
+      logger.debug(`compaction breaker open for op ${opId}; skipping summarize attempt`);
+      return { messages, compacted: false };
+    }
+    // Every PROBE_INTERVAL-th otherwise-skipped call falls through as a recovery
+    // probe. The probe window is consumed only where a summarize attempt actually
+    // resolves (a probe failure resets skipsSinceTrip; a success deletes the
+    // entry): a probe that turns out structurally unneeded (under threshold, no
+    // safe split) or kill-switch-disabled leaves the counter parked one shy of
+    // the interval, so the NEXT eligible call probes instead of waiting out a
+    // fresh window — the probe only counts once summarize actually ran.
+    logger.debug(`compaction breaker probing for op ${opId} after ${breaker.skipsSinceTrip} skipped calls`);
   }
   const usageAnchor = usage ? locateAnchor(messages, usage) : null;
   if (usage && !usageAnchor) {
@@ -256,8 +290,14 @@ export async function compactHistory(
     if (opId && process.env.LAX_LLM_COMPACTION !== "0") recordBreakerFailure(opId);
     return { messages, compacted: false };
   }
-  // Successful compaction resets the consecutive-failure count.
-  if (opId) breakers.delete(opId);
+  // Successful compaction resets the consecutive-failure count. When the op was
+  // tripped this is a probe recovering — surface that once at info.
+  if (opId) {
+    if (breaker?.tripped) {
+      logger.info(`compaction summarization recovered for op ${opId}; circuit breaker reset`);
+    }
+    breakers.delete(opId);
+  }
 
   const anchor = recent[0];
   const block =

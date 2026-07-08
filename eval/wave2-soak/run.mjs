@@ -137,16 +137,50 @@ async function driveChat(message, sessionId) {
 
 // ── scenario helpers ─────────────────────────────────────────────────────────
 
-const WORDS = "harness context anchor estimate ledger seam refute worktree canonical breaker snapshot manifest cursor drain gate probe stub nudge sweep clamp stamp".split(" ");
+// Natural prose, NOT random word-salad. A wall of shuffled keywords reads as
+// adversarial nonsense and trips Claude's AUP refusals — last run that killed
+// 3/4 anchor sessions at t0. These are benign project-status sentences; the
+// model acknowledges them instead of refusing, while still consuming the
+// context volume that drives compaction (the point of the filler). Selection
+// stays deterministic per seed so a run is reproducible.
+const SENTENCES = [
+  "The team reviewed the quarterly roadmap and agreed to prioritize the onboarding flow before the end of the month.",
+  "Customer feedback from the last release pointed to slow load times on the dashboard, which we traced to an unindexed query.",
+  "We decided to move the nightly export job to run after midnight so it no longer competes with the backup window.",
+  "The design review raised concerns about color contrast on the settings page, and we scheduled a follow-up with the accessibility group.",
+  "Support tickets dropped noticeably once we shipped the clearer error messages on the payment form.",
+  "During the retrospective, the group noted that shorter planning meetings left more time for focused work.",
+  "The new caching layer reduced average response time, though we still see occasional spikes under heavy load.",
+  "Marketing asked for a simple way to preview campaigns before sending, so we sketched a lightweight draft mode.",
+  "Our documentation now includes a getting-started guide, and early readers said it made setup much less confusing.",
+  "The mobile app crash rate improved after we upgraded the networking library and added better retry handling.",
+  "Finance requested a monthly summary of usage by team, which we can generate from the existing billing records.",
+  "We agreed that any change touching the shared configuration should be reviewed by at least one other engineer.",
+  "The onboarding survey suggests most new users understand the core features within the first day.",
+  "A small group tested the beta and reported that the search results felt more relevant than before.",
+  "We postponed the data migration until the reporting tool is ready, to avoid two disruptive changes in one week.",
+  "The support team put together a short FAQ covering the questions that came up most often after launch.",
+  "Engineering spent part of the week reducing flaky tests, and the continuous integration runs are steadier now.",
+  "Product and design walked through the new empty states so first-time screens feel welcoming rather than blank.",
+  "We turned on request logging in the staging environment to understand where the slower endpoints spend their time.",
+  "The sales team asked for an export button on the contacts page, which is a small addition to the existing view.",
+  "After the incident, we added an alert so the on-call engineer hears about queue backups long before customers do.",
+  "The weekly metrics show steady growth in active teams, with the biggest gains coming from the referral program.",
+  "We simplified the signup form to three fields, and the completion rate went up without hurting data quality.",
+  "The infrastructure review recommended right-sizing a few oversized instances to bring the monthly bill down.",
+];
 function filler(chars, seed) {
-  let s = seed * 2654435761 >>> 0, outParts = [];
-  let len = 0;
+  let s = (seed * 2654435761) >>> 0;
+  const out = [];
+  let len = 0, inPara = 0;
   while (len < chars) {
     s = (s * 1103515245 + 12345) >>> 0;
-    const w = WORDS[s % WORDS.length];
-    outParts.push(w); len += w.length + 1;
+    const sentence = SENTENCES[s % SENTENCES.length];
+    out.push(sentence);
+    len += sentence.length + 1;
+    if (++inPara >= 4) { out.push("\n\n"); inPara = 0; }
   }
-  return outParts.join(" ");
+  return out.join(" ");
 }
 
 const results = { tag: RUN_TAG, startedAt: new Date().toISOString(), soakDir: SOAK_DIR, sessions: [] };

@@ -1433,3 +1433,42 @@ describe("delegated worktree gate — canonical classification + work-root provi
     expect(d.allowed, d.reason).toBe(true);
   });
 });
+
+// The bash self-brick guard: protected-files (resolve-tool.ts) gates the
+// write/edit/delete_file TOOLS, but bash was ungated — `rm -rf <repo>/src/...`
+// could delete the engine's own core even in unrestricted mode. Now
+// evaluateShellCommandAndPaths refuses shell mutations of protected engine
+// paths, MODE-INDEPENDENTLY, via the same isProtectedFile authority.
+describe("bash self-brick guard — protected engine source", () => {
+  // PLATFORM_ROOT (config-loader) is <repo>; this test file sits at
+  // <repo>/src/security, so the engine's absolute paths derive from here.
+  const REPO = resolve(import.meta.dirname, "..", "..");
+  const eng = (rel: string) => join(REPO, rel);
+  // Unrestricted on purpose: the guard must hold even at maximum access.
+  const ctx = { workspace: WORKSPACE, fileAccessMode: "unrestricted" as const, allowedPathCheck: () => true };
+  const run = (cmd: string) => evaluateShellCommandAndPaths(cmd, ctx);
+
+  it("BLOCKS shell delete/overwrite of the engine core (the self-brick vectors)", () => {
+    for (const cmd of [
+      `rm -rf ${eng("src/security")}`,
+      `rm -f ${eng("src/index.ts")}`,
+      `echo x > ${eng("src/server/bootstrap-services.ts")}`,
+      `mv /tmp/evil.ts ${eng("src/canonical-loop/turn-loop.ts")}`,
+      `truncate -s0 ${eng("config/protected-files.json")}`,
+    ]) {
+      expect(run(cmd).allowed, cmd).toBe(false);
+    }
+  });
+
+  it("ALLOWS reading engine source and copying it OUT (source read, non-engine dest)", () => {
+    expect(run(`cat ${eng("src/security/file-access.ts")}`).allowed).toBe(true);
+    expect(run(`cp ${eng("src/index.ts")} /tmp/backup.ts`).allowed).toBe(true);
+  });
+
+  it("does NOT false-block a user app whose files mirror engine paths", () => {
+    // A workspace app legitimately has src/index.ts — deleting it via its real
+    // (workspace) path must be allowed; only the ENGINE tree is protected.
+    expect(run(`rm -rf ${join(WORKSPACE, "apps", "myapp", "src")}`).allowed).toBe(true);
+    expect(run(`rm -f ${join(WORKSPACE, "apps", "myapp", "src", "index.ts")}`).allowed).toBe(true);
+  });
+});

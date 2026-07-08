@@ -5,6 +5,7 @@ import { USER_HINTS } from "../types.js";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
+import { isProtectedFile } from "../config-loader.js";
 
 // ── Best-effort shell file-access confinement (defense in depth) ──
 //
@@ -97,7 +98,86 @@ export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuar
   // canonical seam; the redundant secondary scan in process-session runs AFTER it.
   const cmdDecision = evaluateShellCommand(command, ctx.inlineEvalPolicy ?? "refuse", ctx.workspace, ctx.fileAccessMode);
   if (!cmdDecision.allowed) return cmdDecision;
+  // ALWAYS-ON (mode-independent) self-brick guard: refuse a shell command that
+  // would DELETE or OVERWRITE the platform's own protected engine source. The
+  // dedicated write/edit/delete_file tools are already gated by protected-files
+  // (resolve-tool.ts), but bash was NOT — so `rm -rf <repo>/src/security` bricked
+  // the engine even in unrestricted mode. Same authority (isProtectedFile), so
+  // the two can't drift.
+  const engine = detectProtectedEngineMutation(command);
+  if (engine) return { allowed: false, reason: engine, userHint: USER_HINTS.secrets };
   return evaluateShellPaths(command, ctx);
+}
+
+// Shell verbs whose ABSOLUTE path operand(s) mutate the file at that path.
+// For rm/shred/unlink/truncate/tee every non-flag operand is a target; for
+// cp/mv/ln only the LAST operand (the destination) is written — reading engine
+// source as a copy SOURCE is not a brick, so those aren't flagged.
+const MUTATOR_ALL_OPERANDS = new Set(["rm", "shred", "unlink", "truncate", "tee"]);
+const MUTATOR_DEST_ONLY = new Set(["cp", "mv", "ln", "install"]);
+
+/**
+ * If a shell command would delete or overwrite a protected engine file, return
+ * a block reason; else null. Only ABSOLUTE (and ~-expanded) operands are checked
+ * — a relative operand resolves under the agent's workspace/worktree cwd, which
+ * is a different tree from the engine (isProtectedFile would only be reachable
+ * via the platform root, and anchoring a relative token there would false-block
+ * ordinary user-app files like apps/foo/src/index.ts). isProtectedFile returns
+ * not-protected for any absolute path outside the engine tree, so this never
+ * fires on the user's own files.
+ */
+export function detectProtectedEngineMutation(command: string): string | null {
+  const home = homedir();
+  const absOperand = (tok: string): string | null => {
+    let t = stripQuotes(tok);
+    if (!t) return null;
+    if (t === "~") t = home;
+    else if (t.startsWith("~/") || t.startsWith("~\\")) t = join(home, t.slice(2));
+    return isAbsolute(t) ? t : null;
+  };
+  const hit = (abs: string, verb: string): string | null => {
+    const p = isProtectedFile(abs);
+    return p.protected
+      ? `Blocked: '${verb}' would delete or overwrite a protected engine file (${p.reason}). This is the platform's own core — use the self_edit path, not the shell.`
+      : null;
+  };
+
+  for (const segment of command.split("|")) {
+    const words = segment.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) continue;
+    const verb = (stripQuotes(words[0]).split(/[\\/]/).pop() || "").toLowerCase();
+
+    // Redirect write targets (`>f`, `>>f`, `2>f`, and `> f` / `>> f`) — an
+    // overwrite of the engine regardless of the verb.
+    for (let i = 1; i < words.length; i++) {
+      const m = words[i].match(/^\d*(>>|>)(.*)$/);
+      if (!m) continue;
+      let target = m[2];
+      if (!target && i + 1 < words.length) target = words[++i];
+      const abs = target ? absOperand(target) : null;
+      if (abs) { const r = hit(abs, "redirect"); if (r) return r; }
+    }
+
+    if (MUTATOR_ALL_OPERANDS.has(verb)) {
+      for (let i = 1; i < words.length; i++) {
+        if (words[i].startsWith("-") || /^\d*(>>|>|<)/.test(words[i])) continue;
+        const abs = absOperand(words[i]);
+        if (abs) { const r = hit(abs, verb); if (r) return r; }
+      }
+    } else if (MUTATOR_DEST_ONLY.has(verb)) {
+      const operands = words.slice(1).filter((w) => !w.startsWith("-") && !/^\d*(>>|>|<)/.test(w));
+      const dest = operands[operands.length - 1];
+      const abs = dest ? absOperand(dest) : null;
+      if (abs) { const r = hit(abs, verb); if (r) return r; }
+    } else if (verb === "dd") {
+      for (const w of words) {
+        if (!w.startsWith("of=")) continue;
+        const abs = absOperand(w.slice(3));
+        if (abs) { const r = hit(abs, "dd"); if (r) return r; }
+      }
+    }
+  }
+  return null;
 }
 
 // Pull the file-path-shaped arguments out of a command. Conservative by intent:

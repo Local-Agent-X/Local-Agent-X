@@ -15,6 +15,7 @@ import { type AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
 import { extractAgentOutput } from "../../server-utils.js";
 import { SecurityLayer } from "../../security/index.js";
+import { loadFileAccessModeAtLeast } from "../../security/security-config.js";
 import type { LAXConfig, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy.js";
@@ -54,7 +55,7 @@ export function registerSelfEditSurgeonForServer(deps: SelfEditSurgeonRunnerDeps
       // and the sandbox gates + merge pick it up. The worktree branch is the
       // only thing that ships, so a botched edit fails the gates, never merges.
       const sessionId = `selfedit-surgeon-${(worktreePath.split(/[\\/]/).pop() || "wt")}`;
-      const security = new SecurityLayer(worktreePath, "common");
+      const security = new SecurityLayer(worktreePath, loadFileAccessModeAtLeast("common"));
       security.addAllowedPath(worktreePath, sessionId);
       const tools = allAgentTools.filter(t => SURGEON_TOOLS.includes(t.name));
       const result = await runAgentViaCanonical(message, [], {

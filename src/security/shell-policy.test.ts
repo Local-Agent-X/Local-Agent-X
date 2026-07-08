@@ -91,3 +91,47 @@ describe("evaluateShellCommand — & is fd-redirect, not backgrounding", () => {
     expect(evaluateShellCommand('echo "${SECRET}"').allowed).toBe(false);                // ${} expansion
   });
 });
+
+// Destructive `rm` is MODE-AWARE. The reported bug: the user set file access to
+// unrestricted, asked LAX to clear junk from ~/Downloads, and it refused every
+// `rm -r/-f` as "outside workspace" — the old blanket denylist entry fired
+// regardless of mode. Now unrestricted lets rm delete the user's own files, and
+// only the catastrophic floor (/, ~, system dirs) is refused; workspace/common
+// (and the fail-safe undefined default) still refuse destructive rm outright.
+describe("evaluateShellCommand — mode-aware rm", () => {
+  const home = (process.env.HOME || process.env.USERPROFILE || "") as string;
+  const U = (cmd: string) => evaluateShellCommand(cmd, undefined, undefined, "unrestricted");
+
+  it("unrestricted: ALLOWS deleting the user's own files (the reported case)", () => {
+    expect(U(`rm -rf ${home}/Downloads/Install.Local.Agent.X.Mac.Installer.dmg`).allowed).toBe(true);
+    expect(U(`rm -rf ${home}/Downloads/*.dmg`).allowed).toBe(true);
+    expect(U(`rm -f ~/Downloads/old.zip`).allowed).toBe(true);
+    expect(U(`rm -rf ~/Downloads`).allowed).toBe(true);        // the folder itself is user data
+    expect(U(`rm -rf /tmp/scratch`).allowed).toBe(true);
+    expect(U(`rm -rf ./build`).allowed).toBe(true);            // relative → never catastrophic
+  });
+
+  it("unrestricted: STILL refuses catastrophic roots (the floor)", () => {
+    for (const cmd of [`rm -rf /`, `rm -rf /*`, `rm -rf ~`, `rm -rf ~/*`, `rm -rf ${home}`]) {
+      expect(U(cmd).allowed, cmd).toBe(false);
+    }
+  });
+
+  it("unrestricted: STILL refuses system directories even as subpaths", () => {
+    for (const cmd of [`rm -rf /etc/passwd`, `rm -rf /usr/bin`, `rm -rf /bin`, `rm -rf /System`, `rm -rf /Library`]) {
+      expect(U(cmd).allowed, cmd).toBe(false);
+    }
+  });
+
+  it("workspace/common/undefined: refuses destructive rm outright, pointing at delete_file", () => {
+    for (const mode of ["workspace", "common", undefined] as const) {
+      const r = evaluateShellCommand(`rm -rf ${home}/Downloads/x.dmg`, undefined, undefined, mode);
+      expect(r.allowed, String(mode)).toBe(false);
+      expect(r.reason).toMatch(/delete_file/);
+    }
+  });
+
+  it("non-destructive rm (no -r/-f) is untouched", () => {
+    expect(evaluateShellCommand(`rm ${home}/Downloads/one.txt`, undefined, undefined, "unrestricted").allowed).toBe(true);
+  });
+});

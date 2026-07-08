@@ -95,7 +95,7 @@ export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuar
   // policy (NOT the file-access mode) and resolve the rename-escape path against
   // the workspace tree. Unset policy → "refuse" (fail safe). This is the
   // canonical seam; the redundant secondary scan in process-session runs AFTER it.
-  const cmdDecision = evaluateShellCommand(command, ctx.inlineEvalPolicy ?? "refuse", ctx.workspace);
+  const cmdDecision = evaluateShellCommand(command, ctx.inlineEvalPolicy ?? "refuse", ctx.workspace, ctx.fileAccessMode);
   if (!cmdDecision.allowed) return cmdDecision;
   return evaluateShellPaths(command, ctx);
 }

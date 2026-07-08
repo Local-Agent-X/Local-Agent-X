@@ -1,8 +1,10 @@
+import { homedir } from "node:os";
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
-import type { InlineEvalPolicy } from "./types.js";
+import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
 import { countTopLevelPipes } from "../tools/shell-translate.js";
-import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS } from "./shell-rules.js";
+import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
+import { detectCatastrophicRm } from "./catastrophic-paths.js";
 import {
   detectObfuscation,
   detectSecretPlaceholder,
@@ -33,6 +35,7 @@ export function evaluateShellCommand(
   command: string,
   inlineEval?: InlineEvalPolicy,
   workspace?: string,
+  fileAccessMode?: FileAccessMode,
 ): SecurityDecision {
   // Obfuscation detection
   try {
@@ -165,6 +168,30 @@ export function evaluateShellCommand(
       reason: `Blocked: too many pipes (${pipeCount}). Maximum 5 pipes allowed per command.`,
       userHint: USER_HINTS.commandShell,
     };
+  }
+
+  // Destructive rm (-r/-f), MODE-AWARE. In unrestricted mode the user has
+  // granted full-filesystem access, so deleting their OWN files (Downloads,
+  // Documents, projects, /tmp) via the shell must work — only the catastrophic
+  // floor (rm -rf /, ~, system dirs → catastrophic-paths.ts) is held. In
+  // workspace/common mode, OR when the mode wasn't threaded through (undefined →
+  // fail SAFE), refuse outright and point at the recoverable delete_file tool.
+  // This is the split-out of the old blanket BLOCKED_COMMANDS rm rule that
+  // fired regardless of mode (the "can't delete my Downloads even on
+  // unrestricted" bug).
+  if (RM_DESTRUCTIVE_FLAGS.test(command)) {
+    if (fileAccessMode === "unrestricted") {
+      const catastrophic = detectCatastrophicRm(command, homedir());
+      if (catastrophic) {
+        return { allowed: false, reason: catastrophic, userHint: USER_HINTS.commandShell };
+      }
+    } else {
+      return {
+        allowed: false,
+        reason: "Blocked: `rm -r`/`rm -f` is refused in the current file-access mode. Use the delete_file tool (single file, moved to trash, recoverable), or switch file access to 'unrestricted' in Settings to allow bulk shell deletes of your own files.",
+        userHint: USER_HINTS.commandShell,
+      };
+    }
   }
 
   // Check every segment of a piped command against blocked patterns

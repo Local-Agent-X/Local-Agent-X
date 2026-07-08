@@ -12,6 +12,7 @@ import type { Operation, OperationPhase } from "./operation-types.js";
 import type { AutopilotConfig } from "./types.js";
 import type { ToolDefinition, LAXConfig } from "../types.js";
 import { SecurityLayer } from "../security/index.js";
+import { loadFileAccessModeAtLeast } from "../security/security-config.js";
 import { extractAgentOutput } from "../server-utils.js";
 import { registerAutopilotSession, unregisterAutopilotSession, getSelfEditCount } from "./registry.js";
 import { buildAutopilotNudge, type NudgeContext } from "./nudge.js";
@@ -71,9 +72,11 @@ export async function runAutopilotRound(
   const start = Date.now();
 
   // Scope security to the worktree only. Same pattern as handler-events.ts:120.
-  // file-access mode "common" + the explicit allowed path means agent can read
-  // common locations (incl. main repo) but writes are limited to the worktree.
-  const security = new SecurityLayer(opts.autopilot.worktreePath, "common");
+  // File-access mode HONORS the user's global setting (floored at "common", so
+  // the agent can always read common locations incl. the main repo, and more if
+  // the user chose unrestricted); the explicit allowed path keeps WRITES limited
+  // to the worktree regardless of mode.
+  const security = new SecurityLayer(opts.autopilot.worktreePath, loadFileAccessModeAtLeast("common"));
   security.addAllowedPath(opts.autopilot.worktreePath, sessionId);
 
   registerAutopilotSession(sessionId, opts.opId, opts.autopilot.worktreePath, opts.autopilot.maxSelfEditCalls);

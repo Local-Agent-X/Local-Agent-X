@@ -1359,6 +1359,19 @@ describe("delegated worktree gate — canonical classification + work-root provi
     expect(d.allowed).toBe(true);
   });
 
+  it("allows delegated delete_file of user-content without isolation", () => {
+    const sec = makeLayer();
+    const d = delegated(sec, "delete_file", { path: join(WORKSPACE, "apps", "proj", "old.html") }, "agent-del");
+    expect(d.allowed).toBe(true);
+  });
+
+  it("still denies delegated delete_file of repo SOURCE without isolation", () => {
+    const sec = makeLayer();
+    const d = delegated(sec, "delete_file", { path: join(WORKSPACE_ROOT, "src", "index.ts") }, "agent-del-src");
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toContain("worktree isolation");
+  });
+
   it("classifies a symlink/junction spelling of the workspace consistently", () => {
     // Configured workspace is a LINK; the write path uses the TARGET
     // spelling. Same physical dir — must classify as user content.

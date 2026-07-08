@@ -3,9 +3,16 @@
 // network-client basename sets. Consumed by shell-detectors.ts and
 // shell-policy.ts; no logic lives here.
 
+// Destructive `rm` (a -f or -r flag; catches split flags like `rm -a -f`).
+// NOT in BLOCKED_COMMANDS: it is handled explicitly and MODE-AWARE by
+// evaluateShellCommand — blocked outright in workspace/common mode, but in
+// unrestricted mode allowed on the user's own files with only the catastrophic
+// floor (catastrophic-paths.ts) held. A blanket denylist entry here would
+// re-block it regardless of mode, which is exactly the bug this splits out.
+export const RM_DESTRUCTIVE_FLAGS = /\brm\s+.*(-[a-zA-Z]*f|-[a-zA-Z]*r)\b/i;
+
 // Commands that should never be executed, even without metacharacters
 export const BLOCKED_COMMANDS = [
-  /\brm\s+.*(-[a-zA-Z]*f|-[a-zA-Z]*r)\b/i,  // rm with -f or -r flags (catches split flags like `rm -a -f`)
   /\bsudo\b/i,
   /\bchmod\s+777\b/i,
   /\bmkfs\b/i,

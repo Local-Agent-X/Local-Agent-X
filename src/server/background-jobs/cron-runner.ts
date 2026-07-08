@@ -5,6 +5,7 @@ import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
 import { stripEphemeralMessages } from "../../providers/sanitize.js";
 import { extractAgentOutput } from "../../server-utils.js";
 import { SecurityLayer } from "../../security/index.js";
+import { loadFileAccessModeAtLeast } from "../../security/security-config.js";
 import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
 import type { MemoryIndex, MemoryManager } from "../../memory/index.js";
 import type { SecretsStore } from "../../secrets.js";
@@ -60,10 +61,12 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     const missionStartMs = Date.now();
     // Confine scheduled jobs to the SAME workspace the rest of the app uses
     // (config.workspace — the single source of truth, which tracks a Settings
-    // workspace move), at the tightest "workspace only" mode since cron runs
-    // unattended. Previously this read LAX_WORKSPACE ?? ~/.lax/workspace, so a
-    // user who moved their workspace had cron jobs pointed at the wrong folder.
-    const cronSecurity = new SecurityLayer(config.workspace, "workspace");
+    // workspace move). Previously this read LAX_WORKSPACE ?? ~/.lax/workspace, so
+    // a user who moved their workspace had cron jobs pointed at the wrong folder.
+    // File-access mode HONORS the user's global setting (floored at "workspace")
+    // instead of a hardcoded literal — so if the user chose unrestricted, a
+    // scheduled delete of ~/Downloads works like it does interactively.
+    const cronSecurity = new SecurityLayer(config.workspace, loadFileAccessModeAtLeast("workspace"));
     const sessionId = `cron-${jobId}-${Date.now()}`;
     const cleanedPrompt = stripSaveInstructions(stripCronPreamble(prompt));
     const jobMeta = cronService.get(jobId);

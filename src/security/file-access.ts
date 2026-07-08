@@ -4,6 +4,7 @@ import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
 import { isAppAtRestSecretBasename } from "./known-secrets.js";
 import { classifySensitivePath } from "./sensitive-paths.js";
+import { SYSTEM_DIR_PATTERNS } from "./catastrophic-paths.js";
 import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../workspace/paths.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
@@ -263,12 +264,12 @@ export function evaluateFileAccess(
 
     // Unrestricted mode: allow reads/writes anywhere (except core protected files and system dirs)
     if (fileAccessMode === "unrestricted") {
-      // Hard-block writes to system directories — even unrestricted mode can't touch these
+      // Hard-block writes to system directories — even unrestricted mode can't
+      // touch these. SYSTEM_DIR_PATTERNS is the SHARED authority (also the shell
+      // rm catastrophic floor) so "system directory" means the same thing for
+      // writes and deletes.
       if (action === "write" || action === "edit") {
-        const SYSTEM_DIRS = process.platform === "win32"
-          ? [/^[A-Z]:\\Windows\\/i, /^[A-Z]:\\Program Files/i, /^[A-Z]:\\ProgramData\\/i, /^[A-Z]:\\System/i]
-          : [/^\/etc\//, /^\/sys\//, /^\/proc\//, /^\/boot\//, /^\/usr\/(?:bin|sbin|lib)\//, /^\/sbin\//, /^\/bin\//, /^\/dev\//];
-        for (const sysDir of SYSTEM_DIRS) {
+        for (const sysDir of SYSTEM_DIR_PATTERNS) {
           if (sysDir.test(realPath)) {
             return { allowed: false, reason: `Blocked: cannot write to system directory even in unrestricted mode`, userHint: USER_HINTS.fileSystem };
           }

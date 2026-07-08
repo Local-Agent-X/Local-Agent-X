@@ -49,6 +49,7 @@ import {
 import { createAppBuildAdapter } from "../canonical-loop/adapters/app-build-adapter.js";
 import { makeChatToolDispatcher } from "../canonical-loop/chat-tool-dispatcher.js";
 import { SecurityLayer } from "../security/index.js";
+import { loadFileAccessModeAtLeast } from "../security/security-config.js";
 import type { Op, OpVisibility } from "../ops/types.js";
 import { readTool, writeTool, editTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
@@ -347,7 +348,7 @@ export const buildAppTool: ToolDefinition = {
       // relative `workspace/apps/<name>/index.html` write resolve to a phantom
       // doubled path and get blocked. Writes stay confined to appDir via
       // addAllowedPath; only the relative-path anchor is corrected.
-      const security = new SecurityLayer(workspaceRoot(), "common");
+      const security = new SecurityLayer(workspaceRoot(), loadFileAccessModeAtLeast("common"));
       security.addAllowedPath(appDir, sessionId || op.id);
       registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
         tools: builderTools,

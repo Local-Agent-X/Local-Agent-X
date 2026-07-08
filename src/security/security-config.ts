@@ -116,6 +116,22 @@ export function loadFileAccessMode(): FileAccessMode {
   return "unrestricted";
 }
 
+const MODE_RANK: Record<FileAccessMode, number> = { workspace: 0, common: 1, unrestricted: 2 };
+
+// The user's configured file-access mode, but never BELOW `floor`. The subsystem
+// agents (cron, build-app, autopilot round, self-edit surgeon) use this instead
+// of a hardcoded literal so they HONOR a broader user setting — the "one
+// canonical switch" principle: if the user sets unrestricted, a scheduled or
+// autopilot delete of ~/Downloads works too — while never dropping below the
+// minimum a subsystem needs to function (build-app must read user assets →
+// "common" floor; cron floors at "workspace"). Writes stay confined by each
+// caller's addAllowedPath(worktree/appDir) regardless of the mode, so widening
+// the mode only widens READ/DELETE reach, never where the agent may write.
+export function loadFileAccessModeAtLeast(floor: FileAccessMode): FileAccessMode {
+  const mode = loadFileAccessMode();
+  return MODE_RANK[mode] >= MODE_RANK[floor] ? mode : floor;
+}
+
 // Inline-eval interpreter-escape policy (R4-11/R4-13). Loaded SEPARATELY from
 // loadFileAccessMode on purpose: the inline-interpreter escape hatch (a regex
 // can't soundly vet a Turing-complete `python -c` body) must stay closed

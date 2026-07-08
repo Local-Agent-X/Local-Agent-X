@@ -190,17 +190,14 @@ export class SecurityLayer {
     // Delegated agents using write/edit/bash must have worktree isolation
     // IF they're modifying repo SOURCE code. Writes to user-content
     // territory (workspace/, ~/Documents, ~/Desktop, anywhere outside the
-    // repo) don't need isolation — the sandbox's purpose is to protect
-    // the agent's own running code from mid-task mutation, NOT to prevent
-    // workers from producing user-facing artifacts. The old blanket
-    // "delegated + write/edit/bash → require worktree" rule killed every
-    // content-creation worker on machines where worktree provisioning
-    // wasn't wired up (e.g., the polish-the-pptx case).
+    // repo) don't need isolation — the sandbox protects the agent's own running
+    // code from mid-task mutation, NOT the workers producing user-facing
+    // artifacts. The old blanket rule killed every content-creation worker where
+    // worktree provisioning wasn't wired up (the polish-the-pptx case).
     //
     // For bash we keep the blanket requirement: arbitrary shell can write
-    // anywhere unpredictably, no static analysis can tell us where. If a
-    // worker needs bash, it needs a worktree. write/edit are the tools
-    // we can reason about via their explicit `path` arg.
+    // anywhere unpredictably. write/edit/delete_file we can reason about via
+    // their explicit `path` arg.
     if (callCtx === "delegated" && WORKTREE_REQUIRED_TOOLS.has(toolName)) {
       const sessionKey = ctx.sessionId;
       const hasWorktree = this.sessionAllowedPaths.has(sessionKey) && this.sessionAllowedPaths.get(sessionKey)!.size > 0;
@@ -212,8 +209,10 @@ export class SecurityLayer {
         const ariFileAction = toolName === "ari_file" ? String(args.action || "read") : null;
         const ariFileExempt = ariFileAction === "read" ||
           (ariFileAction === "write" && this.isUserContentPath(String(args.path || "")));
+        // delete_file shares edit's `path` arg + blast radius → a user-content
+        // delete skips the worktree too (else all delegated deletes were refused).
         const isContentWrite =
-          ((toolName === "write" || toolName === "edit") &&
+          ((toolName === "write" || toolName === "edit" || toolName === "delete_file") &&
             this.isUserContentPath(String(args.path || ""))) ||
           ariFileExempt;
         if (!isContentWrite) {

@@ -131,7 +131,11 @@ describe("CLI adapter terminal — framework (Next) completion [regression]", ()
       content: `App built with Claude CLI!\n\nOpen: ${flatUrl}\n\nAPP_READY: http://localhost:3000`,
     });
     const { deps, calls } = fakeFinalizeDeps();
-    const adapter = await makeAdapter({ appName, appDir, appUrl: flatUrl, cliRunner, finalizeDeps: deps });
+    // urlResolver simulates the record CliBuildAdapter's finalize persists — in
+    // production the real resolver finds it, so the verify gate smokes it rather
+    // than re-registering. Without this seam the real resolver sees no record
+    // (the fake deps don't hit the store) and the gate would register a 2nd time.
+    const adapter = await makeAdapter({ appName, appDir, appUrl: flatUrl, cliRunner, finalizeDeps: deps, urlResolver: async () => proxyUrl });
 
     const { reports, report } = collectReports();
     const result = await adapter.runTurn(emptyTurnInput(), report);

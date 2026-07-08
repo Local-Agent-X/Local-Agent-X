@@ -260,20 +260,82 @@ describe("AppBuildVerifyAdapter — framework tiers smoke the LIVE dev server", 
     expect(gateCalls).toEqual([{ mode: "hard-signals", url: "http://127.0.0.1:7007/apps/x/" }]);
   });
 
-  it("no dev-server record → gate skips with a warning, never a verdict", async () => {
+  // The in-canonical path never registers a dev server (only CliBuildAdapter
+  // does), so a framework build there arrives with no record. The gate must NOT
+  // skip — that's how the black page shipped. It registers the
+  // detected framework's server and smokes the live URL.
+  it("no dev-server record → registers the framework's server and smokes it, never skips", async () => {
+    const appDir = makeViteAppDir();
+    const gateCalls: Array<{ url?: string; mode: string }> = [];
+    const registered: Array<{ appId: string; kind?: string }> = [];
+    const adapter = new AppBuildVerifyAdapter(
+      doneInner, appDir, undefined,
+      async (spec) => { gateCalls.push({ url: spec.url, mode: spec.mode }); return { verdict: "pass" as const }; },
+      {
+        urlResolver: async () => null,
+        finalizeDeps: {
+          registerDevServer: (input) => { registered.push({ appId: input.appId, kind: input.kind }); return { ok: true, connector: "dev-x", sessionId: "s1", port: input.port, cwd: input.cwd ?? appDir, restarted: false, kind: "frontend" }; },
+          listDevServerRecords: () => [],
+          portBound: () => false,
+        },
+      },
+    );
+    const { report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    const name = appDir.split(/[\\/]/).pop();
+    expect(result.terminalReason).toBe("done");
+    expect(registered).toEqual([{ appId: name, kind: "frontend" }]);
+    expect(gateCalls).toEqual([{ url: `http://127.0.0.1:7007/apps/${name}/`, mode: "hard-signals" }]);
+  });
+
+  // No record AND registration can't produce a servable URL → the build has
+  // nothing live at /apps/<id>/ and renders blank. That's a FAIL, not a silent
+  // pass — the exact hole the in-canonical black-page build fell through.
+  it("no dev-server record and registration fails → flips done to error, never a silent pass", async () => {
     const appDir = makeViteAppDir();
     let gateRan = false;
     const adapter = new AppBuildVerifyAdapter(
       doneInner, appDir, undefined,
       async () => { gateRan = true; return { verdict: "pass" as const }; },
-      { urlResolver: async () => null },
+      {
+        urlResolver: async () => null,
+        finalizeDeps: {
+          registerDevServer: () => ({ ok: false, error: "port bind failed" }),
+          listDevServerRecords: () => [],
+          portBound: () => false,
+        },
+      },
     );
     const { reports, report } = collect();
     const result = await adapter.runTurn(turnInput(), report);
-    expect(result.terminalReason).toBe("done");
+    expect(result.terminalReason).toBe("error");
     expect(gateRan).toBe(false);
-    const chunks = reports.filter(r => r.kind === "stream_chunk").map(r => (r as { body: { delta: string } }).body.delta).join("");
-    expect(chunks).toContain("no dev-server record");
+    const err = reports.find(r => r.kind === "error");
+    expect(err).toMatchObject({ code: "app_smoke_failed" });
+    expect((err as { message: string }).message).toContain("no servable dev server");
+  });
+
+  // A Next app carrying a serving vite.config is the hybrid: one
+  // config is dead and the page is blank. The gate rejects it BEFORE smoking.
+  it("a two-framework hybrid (Next + serving vite.config) flips done to error, never smokes", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "smoke-gate-hybrid-"));
+    tempDirs.push(appDir);
+    writeFileSync(join(appDir, "package.json"), JSON.stringify({ dependencies: { next: "latest", vite: "latest" } }));
+    writeFileSync(join(appDir, "next.config.js"), "export default { basePath: '/apps/x' };");
+    writeFileSync(join(appDir, "vite.config.js"), "export default { base: '/apps/x/', server: { port: 5178 } };");
+    let gateRan = false;
+    const adapter = new AppBuildVerifyAdapter(
+      doneInner, appDir, "frontend-spa",
+      async () => { gateRan = true; return { verdict: "pass" as const }; },
+      { urlResolver: async () => "http://127.0.0.1:7007/apps/x/" },
+    );
+    const { reports, report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("error");
+    expect(gateRan).toBe(false);
+    const err = reports.find(r => r.kind === "error");
+    expect(err).toMatchObject({ code: "framework_hybrid" });
+    expect((err as { message: string }).message).toContain("Pick exactly one framework");
   });
 
   it("a dev-server smoke failure flips done to error with evidence, same as static", async () => {

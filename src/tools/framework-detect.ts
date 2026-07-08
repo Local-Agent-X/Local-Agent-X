@@ -74,6 +74,35 @@ function make(
   return { framework, evidence, devCommand: (port) => (cmd ? cmd(port) : null) };
 }
 
+// Prompt-text → intended framework. detectFramework sniffs the tree that
+// exists on disk; this reads the ASK, before any file is written, so the
+// builder prompt can hand the agent the recipe that matches the requested
+// framework (Next → next.config basePath) instead of always teaching Vite —
+// the mismatch that leaks a Vite config into a Next app (the hybrid). A named
+// metaframework outranks a bare "vite" (a "Next.js app built with Vite" is a
+// Next app), so those are checked first. "unknown" when nothing is named — the
+// caller picks its own default (Vite+React for LAX's frontend-spa tier).
+const PROMPT_FRAMEWORK_SIGNALS: ReadonlyArray<readonly [RegExp, DetectedFramework]> = [
+  [/\bnext\.?js\b/i, "nextjs"],
+  [/\bnuxt(?:\.?js)?\b/i, "nuxt"],
+  [/\bsvelte\s?kit\b/i, "sveltekit"],
+  [/\bastro\b/i, "astro"],
+  [/\bremix\b/i, "remix"],
+  [/\bvite\b/i, "vite"],
+];
+
+/**
+ * Infer the framework a build PROMPT is asking for from its text, or "unknown"
+ * when none is named. Pure string match — no disk, never throws.
+ */
+export function inferFrameworkFromPrompt(prompt: string): DetectedFramework {
+  if (!prompt) return "unknown";
+  for (const [re, framework] of PROMPT_FRAMEWORK_SIGNALS) {
+    if (re.test(prompt)) return framework;
+  }
+  return "unknown";
+}
+
 /**
  * Sniff appDir and return the framework, the evidence that proved it, and the
  * dev command for a given port (null for static/unknown). Never throws.

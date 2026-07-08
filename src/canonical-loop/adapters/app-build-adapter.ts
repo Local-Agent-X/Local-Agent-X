@@ -30,7 +30,7 @@ import type { ProviderStateEnvelope } from "../contract-types.js";
 import { verifyWriteLanded } from "../../tools/verify.js";
 import type { AppTier } from "../../tools/app-tier.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
-import { AppBuildVerifyAdapter, type AppSmokeGateRunner, type AppVisionJudge } from "./app-build-verify-adapter.js";
+import { AppBuildVerifyAdapter, type AppSmokeGateRunner, type AppVisionJudge, type DevServerUrlResolver } from "./app-build-verify-adapter.js";
 import { createAnthropicAdapter } from "./anthropic.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
@@ -80,6 +80,10 @@ export interface AppBuildAdapterOptions {
   /** Test seam: override the verify gate's vision judge so unit tests never
    *  dispatch a model call. Production passes nothing. */
   visionJudge?: AppVisionJudge;
+  /** Test seam: override the verify gate's dev-server URL lookup so unit tests
+   *  simulate the persisted record without touching the real store. Production
+   *  passes nothing (defaults to resolveDevServerProxyUrl). */
+  urlResolver?: DevServerUrlResolver;
 }
 
 export interface ProviderAdapterFactoryOptions {
@@ -128,6 +132,8 @@ export async function createAppBuildAdapter(opts: AppBuildAdapterOptions): Promi
   return new AppBuildVerifyAdapter(inner, opts.appDir, opts.tier, opts.smokeGate, {
     brief: opts.brief,
     judge: opts.visionJudge,
+    finalizeDeps: opts.finalizeDeps,
+    urlResolver: opts.urlResolver,
   });
 }
 

@@ -287,6 +287,56 @@ export function scanAppForFakedFrontend(appDir: string): { faked: boolean; reaso
   return { faked: false, reason: "" };
 }
 
+// ── A frontend app that scaffolds TWO frameworks at once — a Next app carrying
+// a Vite config (or vice-versa). detectFramework picks ONE to serve, leaving the
+// other's base-path/HMR config dead, so assets 404 and the page renders blank —
+// the exact hybrid a "Next.js" brief + a Vite-only scaffold recipe produced.
+// Precise on purpose: a Next project legitimately ships a vite.config for
+// vitest, so a bare vite.config alongside Next is NOT flagged — only one
+// CONFIGURED to serve the app (a `base` or `server` key) is, since that's a
+// second dev server competing to own /apps/<id>/. Pure read-only.
+const CONFIG_EXT_LIST = ["js", "mjs", "ts"] as const;
+const VITE_SERVE_CONFIG_RE = /\b(?:base|server)\s*:/;
+
+function firstExisting(appDir: string, base: string): string | null {
+  for (const ext of CONFIG_EXT_LIST) {
+    const name = `${base}.${ext}`;
+    if (existsSync(join(appDir, name))) return name;
+  }
+  return null;
+}
+
+export function scanAppForFrameworkHybrid(appDir: string): { hybrid: boolean; reason: string } {
+  let pkg = "";
+  try { pkg = readFileSync(join(appDir, "package.json"), "utf8"); } catch { return { hybrid: false, reason: "" }; }
+  const nextConfig = firstExisting(appDir, "next.config");
+  const hasNext = /"next"\s*:/.test(pkg) || nextConfig !== null;
+  if (!hasNext) return { hybrid: false, reason: "" };
+  const viteConfig = firstExisting(appDir, "vite.config");
+  if (!viteConfig) return { hybrid: false, reason: "" };
+  let viteText = "";
+  try { viteText = readFileSync(join(appDir, viteConfig), "utf8"); } catch { return { hybrid: false, reason: "" }; }
+  // A vite.config that only defines `test:` (vitest) is not a second server.
+  if (!VITE_SERVE_CONFIG_RE.test(viteText)) return { hybrid: false, reason: "" };
+  const nextEvidence = nextConfig ? nextConfig : `a "next" dependency`;
+  return {
+    hybrid: true,
+    reason: `it scaffolds BOTH Next.js (${nextEvidence}) and Vite (${viteConfig} with a base/server config) — two frameworks in one app`,
+  };
+}
+
+/** Actionable build-failure message for a two-framework hybrid. */
+export function formatFrameworkHybrid(reason: string): string {
+  return (
+    "Build rejected: " + reason + ". Only ONE dev server serves /apps/<id>/, so the other framework's " +
+    "base-path/HMR config is dead and the app renders a blank page.\n\n" +
+    "Pick exactly one framework and delete the other's config and deps: keep Next.js (next.config.js with " +
+    "`basePath`/`assetPrefix` set to /apps/<id>) and remove vite.config.js + vite deps, OR keep Vite " +
+    "(vite.config.js with `base` + `hmr.clientPort`) and remove next + next.config.js. Then re-run " +
+    "app_serve_frontend and emit APP_READY."
+  );
+}
+
 /** Actionable build-failure message: the static-fake was rejected; build it for real. */
 export function formatFakedFrontend(reason: string): string {
   return (

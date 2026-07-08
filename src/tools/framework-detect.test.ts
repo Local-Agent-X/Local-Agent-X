@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detectFramework, type DetectedFramework } from "./framework-detect.js";
+import { detectFramework, inferFrameworkFromPrompt, type DetectedFramework } from "./framework-detect.js";
 import { resolveServeCommand } from "./dev-server-tools.js";
 
 let dir: string;
@@ -214,5 +214,36 @@ describe("resolveServeCommand — explicit command vs auto-detect", () => {
     if (r.ok) return;
     expect(r.error).toContain("could not identify");
     expect(r.error).toContain("command");
+  });
+});
+
+describe("inferFrameworkFromPrompt — prompt text → intended framework", () => {
+  const cases: Array<[string, DetectedFramework]> = [
+    ["Build a polished Next.js app for organizing recipes", "nextjs"],
+    ["make me a nextjs dashboard", "nextjs"],
+    ["a Nuxt.js storefront", "nuxt"],
+    ["scaffold a SvelteKit blog", "sveltekit"],
+    ["svelte kit portfolio", "sveltekit"],
+    ["an Astro docs site", "astro"],
+    ["a Remix todo app", "remix"],
+    ["a Vite + React SPA", "vite"],
+  ];
+  for (const [prompt, expected] of cases) {
+    it(`"${prompt}" → ${expected}`, () => {
+      expect(inferFrameworkFromPrompt(prompt)).toBe(expected);
+    });
+  }
+
+  it("no framework named → unknown (caller defaults to Vite)", () => {
+    expect(inferFrameworkFromPrompt("Build me a single-page todo app with local storage")).toBe("unknown");
+    expect(inferFrameworkFromPrompt("")).toBe("unknown");
+  });
+
+  it("a named metaframework outranks a bare 'vite' mention (Next app built with Vite is a Next app)", () => {
+    expect(inferFrameworkFromPrompt("a Next.js app, bundled with Vite under the hood")).toBe("nextjs");
+  });
+
+  it("does not fire on the bare word 'next' (next steps / next page)", () => {
+    expect(inferFrameworkFromPrompt("add a 'next page' button and describe next steps")).toBe("unknown");
   });
 });

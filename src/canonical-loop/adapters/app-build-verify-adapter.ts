@@ -43,9 +43,11 @@ import {
   scanAppForStartupErrors, formatStartupErrors,
   scanAppForUnverifiedNativeParity, formatUnverifiedNativeParity,
   scanAppForFakedFrontend, formatFakedFrontend,
+  scanAppForFrameworkHybrid, formatFrameworkHybrid,
 } from "../../tools/app-build-verify.js";
 import type { AppTier } from "../../tools/app-tier.js";
 import { detectFramework } from "../../tools/framework-detect.js";
+import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
 import {
   runAppSmokeGate,
   runAppVisionJudge,
@@ -82,12 +84,18 @@ export interface AppBuildVerifyOptions {
   /** Test seam: override the dev-server URL lookup so unit tests never read
    *  real dev-server records. */
   urlResolver?: DevServerUrlResolver;
+  /** Test seam: framework-finalize deps (registerDevServer etc.) forwarded to
+   *  finalizeFrameworkBuild when the smoke gate must register a dev server the
+   *  in-canonical path never did. Production passes nothing (defaults resolve
+   *  to the real dev-server module). */
+  finalizeDeps?: FinalizeFrameworkDeps;
 }
 
 export class AppBuildVerifyAdapter implements Adapter {
   private readonly judge: AppVisionJudge;
   private readonly brief: string;
   private readonly urlResolver: DevServerUrlResolver;
+  private readonly finalizeDeps: FinalizeFrameworkDeps;
   constructor(
     private readonly inner: Adapter,
     private readonly appDir: string,
@@ -98,6 +106,7 @@ export class AppBuildVerifyAdapter implements Adapter {
     this.judge = opts.judge ?? runAppVisionJudge;
     this.brief = opts.brief ?? "";
     this.urlResolver = opts.urlResolver ?? resolveDevServerProxyUrl;
+    this.finalizeDeps = opts.finalizeDeps ?? {};
   }
   get name(): string { return this.inner.name; }
   get version(): string { return this.inner.version; }
@@ -136,6 +145,15 @@ export class AppBuildVerifyAdapter implements Adapter {
   async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
     const result = await this.inner.runTurn(input, report);
     if (result.terminalReason !== "done") return result;
+    // A two-framework hybrid (Next + a serving vite.config, or vice-versa) ships
+    // one dead config and a blank page — detectFramework serves ONE, the other's
+    // base/HMR config is inert. Reject before smoking, whichever tier this is:
+    // the scan is cheap and inert on any app without a "next" signal.
+    const hybrid = scanAppForFrameworkHybrid(this.appDir);
+    if (hybrid.hybrid) {
+      report({ kind: "error", code: "framework_hybrid", message: formatFrameworkHybrid(hybrid.reason), retryable: false });
+      return { ...result, terminalReason: "error" };
+    }
     // A frontend-spa build that shipped a static page instead of a real project
     // FAKED it — the invariant that closes the live-Vite-fake class. Tier-gated
     // so it's inert on every other build. A startup error (no HTML entry) on a
@@ -187,13 +205,27 @@ export class AppBuildVerifyAdapter implements Adapter {
     let url: string | undefined;
     if (mode === "hard-signals") {
       const appName = basename(this.appDir);
-      const resolved = await this.urlResolver(appName);
+      let resolved = await this.urlResolver(appName);
       if (!resolved) {
-        // No dev-server record → nothing to load. The tier gates (real
-        // scaffold + app_serve_* port verification) own server liveness;
-        // the smoke gate won't invent a verdict about a URL it can't find.
-        report({ kind: "stream_chunk", body: { delta: `[verify] smoke gate skipped: no dev-server record for "${appName}" — no live URL to smoke\n` } });
-        return result;
+        // No dev-server record. The cli-subprocess path registers one in
+        // finalizeFrameworkBuild, but the in-canonical path never does unless
+        // the model itself called app_serve_frontend — and a model that never
+        // served is exactly the empty-node_modules / black-page failure. So
+        // register the detected framework's dev server NOW and smoke it for
+        // real, instead of skipping the one gate that catches a blank page.
+        resolved = await this.registerFrameworkServer(appName, report);
+      }
+      if (!resolved) {
+        // Still no servable dev server: a framework build with nothing to serve
+        // at /apps/<id>/ renders blank. That's a build failure, not a skip —
+        // the tier's whole promise is a live server (see file header).
+        const detail =
+          `This build reported ready but has no servable dev server for "${appName}" — no framework project ` +
+          `was scaffolded that LAX can serve at /apps/${appName}/, so the app renders a blank page. Scaffold a ` +
+          `REAL project (package.json + the framework config + src/) and start it with app_serve_frontend, or ` +
+          `if this is a static app, ship a plain index.html instead.`;
+        report({ kind: "error", code: "app_smoke_failed", message: detail, retryable: false });
+        return { ...result, terminalReason: "error" };
       }
       url = resolved;
     }
@@ -232,6 +264,30 @@ export class AppBuildVerifyAdapter implements Adapter {
       }
     }
     return result;
+  }
+
+  /** Register the detected framework's dev server (the in-canonical path never
+   *  does — only CliBuildAdapter calls finalizeFrameworkBuild) so the live smoke
+   *  has a URL to load. Returns the proxy URL, or undefined when there's nothing
+   *  to serve (static/unknown → {handled:false}) or registration failed. */
+  private async registerFrameworkServer(
+    appName: string, report: (r: AdapterReport) => void,
+  ): Promise<string | null> {
+    const finalized = await finalizeFrameworkBuild(
+      {
+        appDir: this.appDir,
+        appName,
+        laxPort: process.env.LAX_PORT ?? "7007",
+        registerServer: true,
+      },
+      this.finalizeDeps,
+    );
+    if (!finalized.handled) return null;  // static/unknown — no framework to serve
+    if (!finalized.ok) {
+      report({ kind: "stream_chunk", body: { delta: `[verify] dev-server registration failed: ${finalized.message}\n` } });
+      return null;
+    }
+    return finalized.url;
   }
 
   abort(reason?: unknown): Promise<void> { return this.inner.abort(reason); }

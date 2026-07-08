@@ -27,6 +27,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { insertOpTurn, appendOpMessage, readOpMessages, readOpTurn } from "./store.js";
+import { recordSessionBaselineObservation } from "./session-baseline.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
@@ -103,10 +104,14 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
 
   const persistedMsgs: OpMessageRow[] = [];
 
+  // The op's messages BEFORE this turn's output is appended = the conversation
+  // this turn's REQUEST carried (its prompt). Captured here for the session
+  // baseline observation below; also reused for the seqInTurn offset.
+  const promptMessages = readOpMessages(op.id);
   // Offset seqInTurn past any pre-existing rows for this turn (e.g. the
   // turn-0 user seed appended by seedInitialUserMessage). Keeps
   // (op_id, turn_idx, seq_in_turn) unique across input + output messages.
-  const seqBase = readOpMessages(op.id).filter(m => m.turnIdx === turnIdx).length;
+  const seqBase = promptMessages.filter(m => m.turnIdx === turnIdx).length;
 
   const redirectConsumed = input.redirectConsumed === true;
 
@@ -136,6 +141,22 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
   // a failed insert propagates to the worker's terminal catch instead of
   // letting the commit proceed to a `succeeded` transition with no row.
   const inserted = insertOpTurn(turnRow);
+
+  // Observe the REAL request baseline (system + tools + memory + CLI subprocess
+  // wrapping) from this turn's usage, for the next op's turn-0 sizing. Only on a
+  // real insert (never a replay), and the observer itself no-ops on tool /
+  // compacted / non-anthropic turns. Cheap and non-throwing.
+  if (inserted) {
+    try {
+      recordSessionBaselineObservation(
+        op.canonical?.sessionId,
+        op.type,
+        input.providerState,
+        input.observedTools,
+        promptMessages,
+      );
+    } catch { /* sizing hint only — never break the commit */ }
+  }
 
   for (let i = 0; i < input.messages.length; i++) {
     const m = input.messages[i];

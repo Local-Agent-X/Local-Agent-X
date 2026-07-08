@@ -13,6 +13,8 @@ import { readOp } from "../../ops/op-store.js";
 import { resolveOpModel } from "../op-model.js";
 import { buildSituationalAwareness } from "./situational-awareness.js";
 import { compactHistory } from "./compact-history.js";
+import { getSessionBaselineTokens } from "../session-baseline.js";
+import { isAnthropicModel } from "../../context-manager/effective-window.js";
 
 export async function buildTurnInput(
   op: Op,
@@ -39,14 +41,22 @@ export async function buildTurnInput(
   const model = resolveOpModel(op);
   let viewCompacted = false;
   if (model) {
-    // Baseline floor: the system prompt + tool manifest (+ memory) the adapter
-    // sends outside `messages` — invisible to the pure token estimate. Feeding
-    // it in makes the chat path size against the REAL request, so compaction
-    // fires before the ~147k baseline + conversation overruns the window
-    // instead of dying on a raw "prompt too long". Registered at submit for
-    // Anthropic chat ops only; agent/background/non-Anthropic ops register none
-    // → 0 → sizing unchanged. Kill-switch: LAX_CONTEXT_BASELINE=0.
-    const baselineTokens = process.env.LAX_CONTEXT_BASELINE === "0" ? 0 : getOpBaselineTokens(op.id);
+    // Baseline floor: the system prompt + tool manifest (+ memory + the CLI
+    // subprocess's own system/MCP wrapping) the adapter sends OUTSIDE `messages`
+    // — invisible to the pure token estimate. Feeding it in makes the chat path
+    // size against the REAL request, so compaction fires before baseline +
+    // conversation overruns the window instead of dying on "prompt too long".
+    // The value is the session's REAL observed baseline (O(1) cache, seeded from
+    // clean tool-less turns at commit); string estimate as first-message
+    // fallback. Passed unconditionally: getContextStatus adds it ONLY on the
+    // pure-estimate branch, so a mapped anchor (which already includes the
+    // baseline) ignores it — and an UNMAPPABLE anchor still gets the floor.
+    // Kill-switch: LAX_CONTEXT_BASELINE=0.
+    // Scoped to chat_turn ops: the session baseline cache holds only the
+    // interactive-chat tool surface, and the observed death is on that path.
+    const baselineTokens = (process.env.LAX_CONTEXT_BASELINE !== "0" && op.type === "chat_turn" && isAnthropicModel(model))
+      ? (getSessionBaselineTokens(op.canonical?.sessionId) ?? getOpBaselineTokens(op.id))
+      : 0;
     const compacted = await compactHistory(messages, model, lastTurnUsage(op.id), op.id, baselineTokens);
     messages = compacted.messages;
     viewCompacted = compacted.compacted;

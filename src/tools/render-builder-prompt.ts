@@ -11,6 +11,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { AppTier } from "./app-tier.js";
 import { inferFrameworkFromPrompt, type DetectedFramework } from "./framework-detect.js";
+import { frontendScaffoldRecipeLines } from "./framework-scaffold.js";
 import { selectDesignBrief, DESIGN_ANTI_PATTERNS } from "./design-brief.js";
 
 const WEBSITE_NOUN_IN_PROMPT_RE =
@@ -73,53 +74,15 @@ export function fullStackRuleLines(appName: string, appDir: string): string[] {
     `- Start it with ONE call: app_serve_backend({ app_id: "${appName}", command: "<your stack's install + run>", port: <the port it listens on> }) — e.g. Node: "cd server && npm install && npm run dev"; Python: "cd server && pip install -r requirements.txt && python app.py". The command runs from the APP ROOT (${appDir}). app_serve_backend starts it, VERIFIES it actually binds the port, keeps it alive (restart on open, stop on delete), and wires the connector. Do NOT start a dev server with bash — it blocks and times out.`,
     `- index.html (the served frontend) reaches the backend through that connector, NOT a direct localhost fetch — a direct http://localhost fetch breaks the moment the app is opened from the phone, where "localhost" is the phone and not this machine. Fetch the same-origin proxy /api/connectors/dev-${appName}/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.`,
     `- After you EDIT backend source (anything under ${appDir}/server), the running dev server keeps the OLD code until it restarts. Re-run the SAME app_serve_backend({ app_id: "${appName}", command, port }) call — it does a clean restart so your changes take effect. Don't tell the user the backend is fixed without restarting it.`,
-    `- FRONTEND WITH A BUILD STEP (Vite / Next / a React/Vue/Svelte SPA with HMR), not a single static index.html? Build it under ${appDir} with EXACTLY ONE framework (a Next app must not carry a vite.config, and vice-versa — two frameworks leave one config dead and the page blank), then set the base path so assets resolve under /apps/${appName}/ — Vite: \`base: '/apps/${appName}/', server: { port: <P>, host: true, hmr: { clientPort: <P>, host: 'localhost' } }\`; Next: \`basePath: '/apps/${appName}', assetPrefix: '/apps/${appName}'\` in next.config.js (no vite.config, Next owns its own HMR). Start it with app_serve_frontend({ app_id: "${appName}", command: "npm install && npm run dev", port: <P> }). LAX reverse-proxies /apps/${appName}/ to it — so the app URL serves the live dev server. Hot-reload works on desktop; the phone shows the result on reload. Without the base config, assets and hot-reload 404. (A plain static frontend does NOT need this — just write index.html.)`,
+    `- FRONTEND WITH A BUILD STEP (Vite / Next / a React/Vue/Svelte SPA with HMR), not a single static index.html? Scaffold it with the framework's OFFICIAL creator (Vite: \`npm create vite@latest client -- --template react-ts\`; Next: \`npx create-next-app@latest client --ts --app --no-tailwind --skip-install --yes\`) — never hand-write the skeleton. Use EXACTLY ONE framework (a Next app must not carry a vite.config, and vice-versa — two frameworks leave one config dead and the page blank), then set the base path so assets resolve under /apps/${appName}/ — Vite: \`base: '/apps/${appName}/', server: { port: <P>, host: true, hmr: { clientPort: <P>, host: 'localhost' } }\`; Next: \`basePath: '/apps/${appName}', assetPrefix: '/apps/${appName}'\` in next.config (no vite.config, Next owns its own HMR). Start it with app_serve_frontend({ app_id: "${appName}", command: "npm install && npm run dev", port: <P> }). LAX reverse-proxies /apps/${appName}/ to it — so the app URL serves the live dev server. Hot-reload works on desktop; the phone shows the result on reload. Without the base config, assets and hot-reload 404. (A plain static frontend does NOT need this — just write index.html.)`,
     "- The backend is real and persistent — never hardcode sample rows in the frontend to simulate it. Show an honest empty/error state until the real API returns.",
   ];
 }
 
-// Which frameworks LAX ships a bundler for. The base path that makes assets
-// resolve under the /apps/<id>/ proxy lives in a DIFFERENT config key per
-// framework, so the recipe is framework-SPECIFIC. Three buckets, not six full
-// recipes: full recipes for the two common stacks (Vite default, Next), and for
-// the rarer metaframeworks a line that names THEIR OWN base-path key — the point
-// is not to hand-write (and have to maintain) config we can't verify, but to
-// avoid the real bug: mis-teaching a Nuxt/SvelteKit/Astro request the Vite
-// recipe. `framework` is the prompt intent (inferFrameworkFromPrompt); anything
-// not named falls back to Vite + React, LAX's lightest, most reliable SPA stack.
-// Metaframeworks LAX can serve: display label + the framework's OWN base-path
-// config key (each differs — SvelteKit's takes NO trailing slash). Naming only
-// the relevant key beats a full hand-written config block we'd have to verify
-// and maintain, and — the actual bug this closes — beats defaulting these to the
-// Vite recipe.
-const META_FRAMEWORKS: Partial<Record<DetectedFramework, { label: string; basePath: (n: string) => string }>> = {
-  nuxt: { label: "Nuxt", basePath: (n) => `\`app.baseURL: '/apps/${n}/'\` in nuxt.config` },
-  sveltekit: { label: "SvelteKit", basePath: (n) => `\`kit.paths.base: '/apps/${n}'\` in svelte.config.js (no trailing slash)` },
-  astro: { label: "Astro", basePath: (n) => `\`base: '/apps/${n}/'\` in astro.config` },
-  remix: { label: "Remix", basePath: (n) => `the vite \`base: '/apps/${n}/'\`` },
-};
-
-export function frontendScaffoldRecipeLines(appName: string, framework: DetectedFramework): string[] {
-  const oneFramework =
-    "- Use EXACTLY ONE framework. Do NOT scaffold a second framework's config alongside it (e.g. a Next app must not carry a standalone vite.config.js). Two competing configs leave one dead and the page blank.";
-  if (framework === "nextjs") {
-    return [
-      `- The request named Next.js — build Next.js: package.json (next, react, react-dom), next.config.js, and the app/ router under src/app/ (layout.jsx + page.jsx). In next.config.js set the base path to "/apps/${appName}" via \`basePath: '/apps/${appName}', assetPrefix: '/apps/${appName}'\` so assets resolve under the proxy. Next owns its own HMR — do NOT add a vite.config or an hmr.clientPort.`,
-      oneFramework,
-    ];
-  }
-  const meta = META_FRAMEWORKS[framework];
-  if (meta) {
-    return [
-      `- The request named ${meta.label} — scaffold a real ${meta.label} project (package.json with its deps, its config file, and source). Set the framework's OWN base path so assets resolve under /apps/${appName}/: ${meta.basePath(appName)}. ${meta.label} owns its own bundler — do NOT add a second standalone vite.config.`,
-      oneFramework,
-    ];
-  }
-  return [
-    `- Use Vite + React (LAX's default SPA stack): package.json (vite, @vitejs/plugin-react, react, react-dom), vite.config.js, index.html with <script type="module" src="/src/main.jsx">, and src/main.jsx + src/App.jsx. In vite.config.js set the base path to "/apps/${appName}/" AND the HMR client port to the dev port — \`base: '/apps/${appName}/', server: { port: <P>, host: true, hmr: { clientPort: <P>, host: 'localhost' } }\`. Without this, assets and hot-reload 404.`,
-    oneFramework,
-  ];
-}
+// The framework scaffold registry + recipe live in framework-scaffold.ts (to
+// keep this file under the 400-LOC source-hygiene cap). Re-exported here so
+// existing importers (tests, verify) keep their ./render-builder-prompt path.
+export { frontendScaffoldRecipeLines };
 
 export function frontendSpaRuleLines(
   appName: string, appDir: string, framework: DetectedFramework = "unknown",
@@ -128,7 +91,7 @@ export function frontendSpaRuleLines(
     "",
     "FRONTEND-SPA MODE — this is a REAL build-step frontend (Vite / Next / a React/Vue/Svelte SPA with HMR), NOT a static HTML page. Writing a static index.html that merely LOOKS like or DESCRIBES the framework is the exact failure this mode exists to prevent — do not do it.",
     ...shellPathQuotingLines(appDir),
-    `- Scaffold a REAL project under ${appDir}: a package.json with the framework's real deps, the framework config file, and source under src/. There is NO seeded starter — create these files.`,
+    `- The app dir ${appDir} is EMPTY (no seeded starter). Do NOT hand-author the skeleton — scaffold it with the framework's official creator, then layer your app code on the working baseline it produces.`,
     ...frontendScaffoldRecipeLines(appName, framework),
     `- Start it with app_serve_frontend({ app_id: "${appName}", command: "npm install && npm run dev", port: <P> }). LAX reverse-proxies /apps/${appName}/ to the live dev server (HMR on desktop). app_serve_frontend VERIFIES the dev server actually bound its port — if it reports a failure, FIX the project; do NOT fall back to a static page.`,
     "- The deliverable is the live DEV server — nothing else. Once app_serve_frontend reports it's up, you are DONE. Do NOT run any extra tooling: no production build (`npm run build` / `vite build` / `next build`), no lint (`npm run lint` / eslint), no typecheck, no tests. The proxy serves the dev server, not a dist/ bundle, and these steps add nothing but a chance to error on a bleeding-edge version and derail you. Skip them entirely. (Don't even add eslint/test deps unless asked.)",

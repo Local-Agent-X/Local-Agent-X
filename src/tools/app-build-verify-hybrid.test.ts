@@ -110,4 +110,25 @@ describe("frontendScaffoldRecipeLines — framework-aware, never both", () => {
     const astro = frontendScaffoldRecipeLines("recipe-box", "astro").join("\n");
     expect(astro).toContain("Astro");
   });
+
+  // The creator-first contract: every recipe hands the agent the framework's
+  // OFFICIAL non-interactive creator, never an instruction to hand-write the
+  // skeleton (the source of stale versions + the bg-white / hybrid failures).
+  it("each framework emits its official non-interactive creator command", () => {
+    expect(frontendScaffoldRecipeLines("x", "vite").join("\n")).toContain("npm create vite@latest . -- --template react-ts");
+    expect(frontendScaffoldRecipeLines("x", "unknown").join("\n")).toContain("npm create vite@latest .");
+    expect(frontendScaffoldRecipeLines("x", "nextjs").join("\n")).toContain("npx create-next-app@latest .");
+    expect(frontendScaffoldRecipeLines("x", "nuxt").join("\n")).toContain("npx nuxi@latest init .");
+    expect(frontendScaffoldRecipeLines("x", "sveltekit").join("\n")).toContain("npx sv create .");
+    expect(frontendScaffoldRecipeLines("x", "astro").join("\n")).toContain("npm create astro@latest .");
+  });
+
+  it("never tells the agent to hand-author the skeleton files", () => {
+    for (const fw of ["vite", "unknown", "nextjs", "nuxt", "sveltekit", "astro"] as const) {
+      const lines = frontendScaffoldRecipeLines("x", fw).join("\n");
+      expect(lines).toContain("do NOT hand-write");
+      // No recipe should enumerate a hand-written package.json dep list anymore.
+      expect(lines).not.toContain("package.json (vite, @vitejs/plugin-react");
+    }
+  });
 });

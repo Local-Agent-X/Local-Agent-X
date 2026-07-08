@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../context-manager/status.js", () => ({ getContextStatus: vi.fn() }));
 vi.mock("../../context-manager/compaction.js", () => ({ summarizeOldMessages: vi.fn() }));
+// Pin the transport so the getContextStatus call signature is deterministic
+// (the real resolver reads auth state / the box's saved credentials).
+vi.mock("../../context-manager/resolve-transport.js", () => ({ resolveAnthropicTransport: () => "cli" }));
 
 const loggerMock = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock("../../logger.js", () => ({ createLogger: () => loggerMock }));
@@ -241,6 +244,7 @@ describe("compactHistory — anchored sizing", () => {
       expect.any(Array),
       "claude-opus-4-8",
       { anchorTokens: 77_000, estimateFrom: 2 },
+      "cli",
     );
   });
 
@@ -248,14 +252,14 @@ describe("compactHistory — anchored sizing", () => {
     mockStatus.mockReturnValue(status(10, false));
     const msgs = [u("u1", "seed"), a("a1", "r1")]; // no turnIdx on rows
     await compactHistory(msgs, "claude-opus-4-8", { turnIdx: 0, contextTokens: 77_000 });
-    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined);
+    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined, "cli");
   });
 
   it("passes no anchor when no usage was recorded", async () => {
     mockStatus.mockReturnValue(status(10, false));
     const msgs = [at(u("u1", "seed"), 0, 0), at(a("a1", "r1"), 0, 1)];
     await compactHistory(msgs, "claude-opus-4-8");
-    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined);
+    expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined, "cli");
   });
 });
 

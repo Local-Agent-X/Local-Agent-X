@@ -49,8 +49,11 @@ export async function emitContextStatus(
   emitSse: (ev: ServerEvent) => void,
 ): Promise<void> {
   try {
-    const { getContextStatus } = await import("../../../context-manager/index.js");
-    const status = getContextStatus(prepared.cleanHistory, prepared.model);
+    const { getContextStatus, resolveAnthropicTransport } = await import("../../../context-manager/index.js");
+    // Size the reported window against the transport the turn will actually run
+    // on — the Anthropic CLI/OAuth path serves a smaller effective window, so
+    // the % the UI shows must reflect that or it reads far below reality.
+    const status = getContextStatus(prepared.cleanHistory, prepared.model, undefined, resolveAnthropicTransport());
     const ev = {
       type: "context_status" as const,
       percentage: status.percentage,

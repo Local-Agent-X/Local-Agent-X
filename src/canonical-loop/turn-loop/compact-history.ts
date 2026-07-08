@@ -13,6 +13,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { CanonicalMessage } from "../contract-types.js";
 import type { LastTurnUsage } from "../op-usage.js";
 import { getContextStatus } from "../../context-manager/status.js";
+import { resolveAnthropicTransport } from "../../context-manager/resolve-transport.js";
 import type { TokenAnchor } from "../../context-manager/token-estimation.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import { extractText, extractToolResultText } from "./content-extract.js";
@@ -265,7 +266,7 @@ export async function compactHistory(
   if (usage && !usageAnchor) {
     logger.debug(`anchor at turn ${usage.turnIdx} not mappable onto the current view; sizing by pure estimate`);
   }
-  const status = getContextStatus(toChatParams(messages), model, usageAnchor ?? undefined);
+  const status = getContextStatus(toChatParams(messages), model, usageAnchor ?? undefined, resolveAnthropicTransport());
   if (!status.shouldCompact) return { messages, compacted: false };
 
   let keepLast = 6;

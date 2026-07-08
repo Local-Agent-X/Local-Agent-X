@@ -1,6 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
-import { isCodexModel, lookupContextWindow } from "./model-windows.js";
+import { effectiveContextWindow, type AnthropicTransport } from "./effective-window.js";
+import { isCodexModel } from "./model-windows.js";
 import { anchoredTotalTokens, totalTokens, type TokenAnchor } from "./token-estimation.js";
 
 export interface ContextStatus {
@@ -18,9 +19,13 @@ export function getContextStatus(
   // When the caller knows the last response's REAL usage, size the context
   // from that anchor plus an estimate of only the messages appended since.
   // Omitted → pure estimate, byte-identical to the historical behavior.
-  anchor?: TokenAnchor
+  anchor?: TokenAnchor,
+  // Transport the context will be SENT on. Anthropic's CLI/OAuth path serves a
+  // smaller effective window than the API-rated one, so its thresholds must
+  // size against that. Omitted → nominal window (historical behavior).
+  transport?: AnthropicTransport
 ): ContextStatus {
-  const maxTokens = lookupContextWindow(model);
+  const maxTokens = effectiveContextWindow(model, transport);
   const usedTokens = anchor ? anchoredTotalTokens(messages, anchor) : totalTokens(messages);
   const percentage = Math.round((usedTokens / maxTokens) * 100);
 

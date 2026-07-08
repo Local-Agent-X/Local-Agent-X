@@ -2,6 +2,7 @@ import { MIN_MAX_ITERATIONS, type LAXConfig } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
 import { PROVIDERS, isHttpProvider } from "../providers/registry.js";
+import { rerouteToCredentialedProvider } from "../providers/credential-reroute.js";
 import { loadSettings, getSetting } from "../settings.js";
 import { resolveCredential } from "../auth/resolve.js";
 import type { CredentialSource } from "../auth/auth-provider.js";
@@ -86,19 +87,14 @@ export async function resolveProvider(
   }
   // Distinct from `providerWasOverridden` (an INTENTIONAL caller switch whose
   // modelOverride is meant for the new provider): a forced fallback means the
-  // requested provider could not be honored at all.
-  let forcedFallback = false;
-  if (!provider || !hasCredsFor(provider)) {
-    // xAI (OAuth or API key) takes priority — Grok is the default on fresh
-    // installs and stays the default when the user has multiple providers
-    // configured but hasn't explicitly picked one in settings.json.
-    if (hasCredsFor("xai")) provider = "xai";
-    else if (hasCredsFor("anthropic")) provider = "anthropic";
-    else if (hasCredsFor("codex") && !config.openaiApiKey) provider = "codex";
-    else provider = "xai"; // no creds anywhere → xai fallback so the picker shows Grok
-    providerWasOverridden = true;
-    forcedFallback = true;
-  }
+  // requested provider could not be honored at all. The fallback chain itself
+  // is shared with the classifier context seam — see credential-reroute.ts.
+  const reroute = rerouteToCredentialedProvider(provider, hasCredsFor, {
+    allowCodexFallback: !config.openaiApiKey,
+  });
+  const forcedFallback = reroute.rerouted;
+  if (forcedFallback) providerWasOverridden = true;
+  provider = reroute.provider;
   // If we fell through to a different provider OR the caller-override forced
   // a switch, the saved model almost certainly belongs to the old provider.
   // Blank it so the downstream default picker picks something valid.

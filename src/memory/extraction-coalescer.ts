@@ -18,7 +18,9 @@
  *      write-clock (write-safely.ts) whether a "tool"-source memory write
  *      landed since this session's cursor. If yes, the agent already curated
  *      memory itself: skip and advance the cursor. The cursor advances on
- *      success or skip, never on a throwing run (next request retries).
+ *      success or skip, never on a throwing run or an "unavailable" outcome
+ *      (classifier can't run at all — signal and cursor survive; the next
+ *      curate turn retries).
  *
  * State is in-memory only — the cursor does not survive a process restart.
  * Worst case after restart is one benign extra or skipped run per session;
@@ -83,7 +85,10 @@ export function requestEndOfTurnExtraction(ctx: EndOfTurnContext): void {
   // Trigger gate — cost control. Sessions without a curate signal never
   // reach the LLM. The signal is consumed by the run itself, which resets
   // curate-nudge state (see end-of-turn-write.ts).
-  if (!hasCurateSignal(ctx.sessionId)) return;
+  if (!hasCurateSignal(ctx.sessionId)) {
+    logger.debug(`[coalescer] no curate signal sess=${ctx.sessionId} — not enqueued`);
+    return;
+  }
 
   const s = getState(ctx.sessionId);
   if (s.inProgress) {
@@ -122,7 +127,17 @@ async function runOne(s: SessionExtractionState, ctx: EndOfTurnContext): Promise
     return;
   }
   try {
-    await runEndOfTurnMemoryWrite(ctx);
+    const outcome = await runEndOfTurnMemoryWrite(ctx);
+    if (outcome === "unavailable") {
+      // Classifier couldn't run at all (env-disabled / no credentialed
+      // provider). The run did NOT consume the curate signal; hold the cursor
+      // too so the next curate turn retries the delta once a provider is
+      // back. A retry while still unavailable costs ~1ms (no LLM call).
+      logger.debug(
+        `[coalescer] classifier unavailable sess=${ctx.sessionId} — cursor and curate signal held for retry`,
+      );
+      return;
+    }
     s.cursorTick = tickAtStart;
   } catch (e) {
     // Cursor deliberately NOT advanced — the next request retries the delta.

@@ -104,10 +104,16 @@ const MODEL_FALLBACKS: Record<string, string> = {
 export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | null> {
   const logger = createLogger(`classifier.${opts.category}`);
 
-  if (opts.envDisableVar && process.env[opts.envDisableVar] === "0") return null;
+  if (opts.envDisableVar && process.env[opts.envDisableVar] === "0") {
+    logger.debug(`disabled via ${opts.envDisableVar}=0 — returning null`);
+    return null;
+  }
 
   const ctx = await resolveProviderContext();
-  if (!ctx) return null;
+  if (!ctx) {
+    logger.debug(`no provider context (no credentialed provider) — returning null`);
+    return null;
+  }
   const { provider, apiKey } = ctx;
   // Model precedence: explicit per-call override > tier request > the cheaper
   // floor. "active" = the user's selected chat model (a probe author wants the

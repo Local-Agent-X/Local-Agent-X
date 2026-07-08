@@ -15,9 +15,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { MemoryIndex } from "./index-core.js";
-import type { EndOfTurnContext } from "./end-of-turn-write.js";
+import type { EndOfTurnContext, EndOfTurnWriteOutcome } from "./end-of-turn-write.js";
 
-const runMock = vi.fn<(ctx: EndOfTurnContext) => Promise<void>>(async () => {});
+const runMock = vi.fn<(ctx: EndOfTurnContext) => Promise<EndOfTurnWriteOutcome | void>>(
+  async () => "completed",
+);
 vi.mock("./end-of-turn-write.js", () => ({
   runEndOfTurnMemoryWrite: (ctx: EndOfTurnContext) => runMock(ctx),
 }));
@@ -122,6 +124,46 @@ describe("cursor semantics", () => {
     await vi.waitFor(() => expect(runMock).toHaveBeenCalledTimes(3));
     await drainPendingExtractions(500);
     expect(_internals.states.get("sess-1")?.cursorTick).toBe(6);
+  });
+
+  it("holds cursor on an 'unavailable' run, then advances when a later run completes", async () => {
+    globalTick = 3;
+    requestEndOfTurnExtraction(makeCtx());
+    await drainPendingExtractions(500);
+    expect(_internals.states.get("sess-1")?.cursorTick).toBe(3);
+
+    // Classifier can't run at all (env-disabled / no credentialed provider).
+    globalTick = 6;
+    runMock.mockImplementationOnce(async () => "unavailable");
+    requestEndOfTurnExtraction(makeCtx());
+    await vi.waitFor(() => expect(runMock).toHaveBeenCalledTimes(2));
+    await drainPendingExtractions(500);
+    // Cursor held — unavailable is NOT success; the delta stays retryable.
+    expect(_internals.states.get("sess-1")?.cursorTick).toBe(3);
+    expect(_internals.states.get("sess-1")?.inProgress).toBe(false); // no wedge
+
+    // Provider back: the next curate turn retries and the cursor advances.
+    requestEndOfTurnExtraction(makeCtx());
+    await vi.waitFor(() => expect(runMock).toHaveBeenCalledTimes(3));
+    await drainPendingExtractions(500);
+    expect(_internals.states.get("sess-1")?.cursorTick).toBe(6);
+  });
+
+  it("an 'unavailable' in-flight run still processes its trailing stashed run", async () => {
+    let release!: () => void;
+    runMock.mockImplementationOnce(
+      () => new Promise<EndOfTurnWriteOutcome>((res) => { release = () => res("unavailable"); }),
+    );
+    requestEndOfTurnExtraction(makeCtx({ userMessage: "in-flight-unavailable" }));
+    await vi.waitFor(() => expect(runMock).toHaveBeenCalledTimes(1));
+    requestEndOfTurnExtraction(makeCtx({ userMessage: "stashed" }));
+
+    release();
+    await drainPendingExtractions(500);
+    // Stash-one-trailing semantics intact across the unavailable outcome.
+    expect(runMock).toHaveBeenCalledTimes(2);
+    expect(runMock.mock.calls[1][0].userMessage).toBe("stashed");
+    expect(_internals.states.get("sess-1")?.inProgress).toBe(false);
   });
 
   it("skips WITHOUT an LLM call and advances when a tool-source write landed since the cursor", async () => {

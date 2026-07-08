@@ -27,6 +27,7 @@ import { createLogger } from "../logger.js";
 import { redactKnownSecrets } from "../sanitize.js";
 import { resetSession as resetCurateNudge } from "./curate-nudge.js";
 import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
+import { resolveProviderContext } from "../providers/resolve-provider-context.js";
 import { PERSONALITY_FILES, dedupeProfileMarkdown } from "./personality.js";
 import { writeMemorySafely, MemoryWriteBlocked, MAX_PROFILE_CHARS } from "./write-safely.js";
 import type { MemoryIndex } from "./index-core.js";
@@ -34,6 +35,10 @@ import type { MemoryIndex } from "./index-core.js";
 const logger = createLogger("memory.end-of-turn-write");
 
 const TIMEOUT_MS = 8000; // generous — runs in background, no user blocking
+
+/** Env kill switch — checked here (before the curate signal is consumed) AND
+ *  passed to classifyWithLLM as its envDisableVar. Keep the two in sync. */
+const ENV_DISABLE_VAR = "LAX_MEMORY_END_OF_TURN";
 
 const WRITE_DECISION_PROMPT = `You decide whether the user/agent exchange just finished revealed something durable about the USER (preferences, workflow rules, communication style, identity) that belongs in their narrative profile (USER.md).
 
@@ -63,19 +68,47 @@ export interface EndOfTurnContext {
 }
 
 /**
- * Fire-and-forget. Caller does NOT await this — it should run in the
+ * Outcome of one end-of-turn pass, surfaced to the extraction coalescer:
+ *   - "completed"   — the pass ran (a decision came back, or it failed after
+ *                     the classifier was reachable). The curate signal was
+ *                     consumed; the coalescer advances its cursor.
+ *   - "unavailable" — the classifier could not run AT ALL (env-disabled, or
+ *                     no credentialed provider). The curate signal was NOT
+ *                     consumed and the coalescer must NOT advance its cursor,
+ *                     so the next curate turn retries once a provider is back.
+ */
+export type EndOfTurnWriteOutcome = "completed" | "unavailable";
+
+/**
+ * Fire-and-forget. Caller does NOT await this for the turn — it runs in the
  * background after the user has already received the assistant's reply.
  *
- * Returns nothing (void promise). All errors swallowed (logged) — the
- * memory pass failing silently is correct UX; we don't want to surface
- * post-turn errors to the user who already got their answer.
+ * Returns an {@link EndOfTurnWriteOutcome} for the coalescer's cursor/retry
+ * bookkeeping. All errors swallowed (logged) — the memory pass failing
+ * silently is correct UX; we don't want to surface post-turn errors to the
+ * user who already got their answer.
  */
-export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<void> {
-  if (!ctx.sessionId || !ctx.userMessage || !ctx.assistantReply) return;
+export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<EndOfTurnWriteOutcome> {
+  if (!ctx.sessionId || !ctx.userMessage || !ctx.assistantReply) return "completed";
 
-  // Always reset the curate-nudge per-session counter at end-of-turn — the
-  // in-prompt nudge is being phased out in favor of this pass, but resetting
-  // keeps the safety net from double-firing during the transition.
+  // Availability gate BEFORE the curate signal is consumed. The signal
+  // (curate-nudge session state) is the trigger for this whole pass; consuming
+  // it and then discovering the classifier can't run would permanently destroy
+  // the extraction trigger while e.g. settings.json points at a provider with
+  // no credential. Unavailable → signal and coalescer cursor survive for retry.
+  if (process.env[ENV_DISABLE_VAR] === "0") {
+    logger.debug(`[end-of-turn] disabled via ${ENV_DISABLE_VAR}=0 — signal preserved sess=${ctx.sessionId}`);
+    return "unavailable";
+  }
+  const providerCtx = await resolveProviderContext();
+  if (!providerCtx) {
+    logger.debug(`[end-of-turn] no credentialed provider — signal preserved for retry sess=${ctx.sessionId}`);
+    return "unavailable";
+  }
+
+  // Reset the curate-nudge per-session counter (consumes the curate signal) —
+  // the in-prompt nudge is being phased out in favor of this pass, but
+  // resetting keeps the safety net from double-firing during the transition.
   try { resetCurateNudge(ctx.sessionId); } catch {}
 
   // Sanitize before sending to the classifier — the user's message and
@@ -97,9 +130,16 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<vo
     parse: parseWriteDecision,
     timeoutMs: TIMEOUT_MS,
     maxResponseChars: 1500,
-    envDisableVar: "LAX_MEMORY_END_OF_TURN",
+    envDisableVar: ENV_DISABLE_VAR,
   });
-  if (!decision || !decision.write) return;
+  if (!decision) {
+    // Classifier was reachable but returned no decision (timeout, transport
+    // error, unparseable reply). The signal was already consumed — this is a
+    // transient failure, not unavailability; don't hold the cursor for it.
+    logger.debug(`[end-of-turn] classifier returned no decision sess=${ctx.sessionId}`);
+    return "completed";
+  }
+  if (!decision.write) return "completed";
 
   // Execute the write server-side via the same memory_update_profile path
   // the model would have used. Don't go through the tool registry — call
@@ -122,6 +162,7 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<vo
   } catch (e) {
     logger.warn(`[end-of-turn] write failed: ${(e as Error).message}`);
   }
+  return "completed";
 }
 
 export type ApplyWriteResult =

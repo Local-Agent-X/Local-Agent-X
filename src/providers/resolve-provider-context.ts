@@ -14,11 +14,16 @@
  * specific to full agent turns) into a throwaway classification call.
  *
  * Scope, deliberately narrow:
- *   - Reads ONLY the user's explicitly-selected provider from settings.json.
- *     No auto-detect fallback across providers — a classifier must run on the
- *     same provider the user is chatting on, never silently fan out to
- *     Anthropic on a Codex turn (that was the dark-mode-freeze bug; see
- *     classify-with-llm.ts).
+ *   - Resolves the provider chat EFFECTIVELY runs on: the user's explicitly-
+ *     selected provider from settings.json when it has a usable credential,
+ *     else the SAME credential-unavailable reroute the chat resolver applies
+ *     (shared chain in credential-reroute.ts). The invariant is "classifiers
+ *     run on the provider chat effectively runs on (post-reroute)" — never a
+ *     cross-provider fan-out AWAY from the chat provider (that was the
+ *     dark-mode-freeze bug; see classify-with-llm.ts), but also never a dead
+ *     classifier fleet when chat itself has rerouted off a stale settings
+ *     value (e.g. provider "codex" with no Codex credential while an
+ *     Anthropic credential exists — chat self-healed, classifiers didn't).
  *   - Resolves the credential through the canonical `resolveCredential` auth
  *     seam, so OAuth / env / SecretsStore quirks live in one place.
  *   - Does NOT decide a default model. Model selection is caller policy:
@@ -32,7 +37,13 @@
  */
 import { loadSettings } from "../settings.js";
 import { resolveCredential } from "../auth/resolve.js";
+import { getSecretsStoreSingleton } from "../secrets.js";
+import { createLogger } from "../logger.js";
 import { PROVIDER_IDS, type ProviderId } from "./provider-ids.js";
+import { PROVIDERS } from "./registry.js";
+import { rerouteToCredentialedProvider } from "./credential-reroute.js";
+
+const logger = createLogger("providers.resolve-provider-context");
 
 export interface ProviderContext {
   /** Lower-cased provider id from settings.json (e.g. "anthropic", "codex"). */
@@ -78,6 +89,53 @@ export async function resolveProviderContext(): Promise<ProviderContext | null> 
     /* fall through to the no-credential return below */
   }
 
+  if (apiKey) return { provider, apiKey, model };
+
+  // Selected provider has no usable credential. Chat self-heals this class
+  // via the shared reroute chain (credential-reroute.ts) — apply the same
+  // chain here so classifiers resolve the provider chat EFFECTIVELY runs on
+  // instead of silently dying on the raw settings value. Still returns null
+  // when NO provider is credentialed.
+  return resolveReroutedContext(provider);
+}
+
+async function resolveReroutedContext(selected: string): Promise<ProviderContext | null> {
+  const store = getSecretsStoreSingleton();
+  if (!store) return null; // can't probe credentials before the vault boots
+  const requested: ProviderId | "" = isProviderId(selected) ? selected : "";
+  const { provider: effective } = rerouteToCredentialedProvider(requested, (p) =>
+    PROVIDERS[p].auth.hasCredential({ secretsStore: store }),
+  );
+  if (effective === selected) return null; // nothing new to try
+
+  let apiKey = "";
+  try {
+    const r = await resolveCredential(effective);
+    apiKey = r?.credential || "";
+  } catch {
+    /* fall through — no usable credential on the fallback either */
+  }
   if (!apiKey) return null;
-  return { provider, apiKey, model };
+  logReroute(selected, effective);
+  // The settings model belongs to the SELECTED provider — blank it so callers
+  // apply the effective provider's own default (mirrors the chat reroute,
+  // which drops the orphaned model the same way).
+  return { provider: effective, apiKey, model: "" };
+}
+
+// Reroute logging: the chat path warns per resolve, but this seam fires on
+// every classifier call — info ONCE per process per (from→to) pair, debug
+// thereafter, so a dead settings provider doesn't spam the log.
+const loggedReroutes = new Set<string>();
+function logReroute(from: string, to: string): void {
+  const key = `${from}→${to}`;
+  const line =
+    `provider switch: '${from}' unavailable (no usable credential) — ` +
+    `classifier context rerouted to '${to}'.`;
+  if (loggedReroutes.has(key)) {
+    logger.debug(line);
+    return;
+  }
+  loggedReroutes.add(key);
+  logger.info(line);
 }

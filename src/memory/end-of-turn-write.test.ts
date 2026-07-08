@@ -33,11 +33,22 @@ vi.mock("./write-safely.js", async () => {
 // Mock the classifier so runEndOfTurnMemoryWrite tests can script the
 // decision without an LLM call. __nextDecision is scripted per-test.
 let __nextDecision: unknown = null;
+const classifyMock = vi.fn(async () => __nextDecision);
 vi.mock("../classifiers/classify-with-llm.js", () => ({
-  classifyWithLLM: vi.fn(async () => __nextDecision),
+  classifyWithLLM: classifyMock,
+}));
+
+// Mock provider availability — runEndOfTurnMemoryWrite gates on it BEFORE
+// consuming the curate signal. null = no credentialed provider.
+let __providerCtx: { provider: string; apiKey: string; model: string } | null = {
+  provider: "anthropic", apiKey: "k", model: "",
+};
+vi.mock("../providers/resolve-provider-context.js", () => ({
+  resolveProviderContext: vi.fn(async () => __providerCtx),
 }));
 
 const { applyWrite, runEndOfTurnMemoryWrite } = await import("./end-of-turn-write.js");
+const { boostNudgePriority, hasCurateSignal } = await import("./curate-nudge.js");
 const { MemoryWriteBlocked, MAX_PROFILE_CHARS } = await import("./write-safely.js");
 const { PERSONALITY_FILES } = await import("./personality.js");
 
@@ -53,7 +64,9 @@ beforeEach(() => {
   mkdirSync(join(tempDir, "memory"), { recursive: true });
   memory = { getMemoryDir: () => join(tempDir, "memory") };
   writeMemorySafelyMock.mockReset();
+  classifyMock.mockClear();
   __nextDecision = null;
+  __providerCtx = { provider: "anthropic", apiKey: "k", model: "" };
 });
 
 afterEach(() => {
@@ -220,5 +233,75 @@ describe("runEndOfTurnMemoryWrite — caller emits distinct WARN lines per varia
     // does NOT carry the "BLOCKED" phrase the gated line uses.
     expect(skipLine).not.toMatch(/BLOCKED/);
     expect(skipLine).toMatch(new RegExp(String(MAX_PROFILE_CHARS))); // reason carried through
+  });
+});
+
+describe("runEndOfTurnMemoryWrite — availability gating (unavailable ≠ success)", () => {
+  function ctxFor(sessionId: string) {
+    return {
+      sessionId,
+      userMessage: "always sort my reports by date",
+      assistantReply: "got it",
+      memory: memory as unknown as Parameters<typeof runEndOfTurnMemoryWrite>[0]["memory"],
+    };
+  }
+
+  it("no credentialed provider → 'unavailable': signal NOT consumed, classifier NOT called; a later run with a provider extracts with the survived signal", async () => {
+    const sess = "sess-avail-1";
+    boostNudgePriority(sess, "explicit-remember");
+    expect(hasCurateSignal(sess)).toBe(true);
+
+    // Phase 1 — settings point at a dead provider (the soak config class).
+    __providerCtx = null;
+    const outcome = await runEndOfTurnMemoryWrite(ctxFor(sess));
+    expect(outcome).toBe("unavailable");
+    expect(classifyMock).not.toHaveBeenCalled();
+    // The trigger signal survives — it was NOT consumed by an impossible run.
+    expect(hasCurateSignal(sess)).toBe(true);
+
+    // Phase 2 — provider comes back: the survived signal drives a real pass.
+    __providerCtx = { provider: "anthropic", apiKey: "k", model: "" };
+    __nextDecision = appendDecision();
+    writeMemorySafelyMock.mockReturnValueOnce(undefined);
+    const outcome2 = await runEndOfTurnMemoryWrite(ctxFor(sess));
+    expect(outcome2).toBe("completed");
+    expect(classifyMock).toHaveBeenCalledTimes(1);
+    expect(writeMemorySafelyMock).toHaveBeenCalledTimes(1);
+    // Signal consumed by the run that actually happened.
+    expect(hasCurateSignal(sess)).toBe(false);
+  });
+
+  it("env kill switch → 'unavailable' and the signal is preserved", async () => {
+    const sess = "sess-avail-2";
+    boostNudgePriority(sess, "preference-stated");
+    process.env.LAX_MEMORY_END_OF_TURN = "0";
+    try {
+      const outcome = await runEndOfTurnMemoryWrite(ctxFor(sess));
+      expect(outcome).toBe("unavailable");
+      expect(classifyMock).not.toHaveBeenCalled();
+      expect(hasCurateSignal(sess)).toBe(true);
+    } finally {
+      delete process.env.LAX_MEMORY_END_OF_TURN;
+    }
+  });
+
+  it("credentialed path pinned: a decision (even write=false) completes and consumes the signal", async () => {
+    const sess = "sess-avail-3";
+    boostNudgePriority(sess, "correction-detected");
+    __nextDecision = { write: false };
+    const outcome = await runEndOfTurnMemoryWrite(ctxFor(sess));
+    expect(outcome).toBe("completed");
+    expect(hasCurateSignal(sess)).toBe(false);
+    expect(writeMemorySafelyMock).not.toHaveBeenCalled();
+  });
+
+  it("null decision after a reachable classifier is 'completed' (transient failure, not unavailability)", async () => {
+    const sess = "sess-avail-4";
+    boostNudgePriority(sess, "explicit-remember");
+    __nextDecision = null; // timeout / parse failure
+    const outcome = await runEndOfTurnMemoryWrite(ctxFor(sess));
+    expect(outcome).toBe("completed");
+    expect(classifyMock).toHaveBeenCalledTimes(1);
+    expect(hasCurateSignal(sess)).toBe(false); // consumed — pre-existing semantics
   });
 });

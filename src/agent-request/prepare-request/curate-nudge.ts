@@ -80,7 +80,10 @@ export async function detectAndBoostCurate(input: CurateNudgeInput): Promise<str
           boostNudgePriority(input.sessionId, classification.kind);
           logger.info(`[chat] curate-classifier boosted ${classification.kind} (conf=${classification.confidence.toFixed(2)}, why=${classification.why}, provider=${input.resolvedProvider}) sess=${input.sessionId}`);
         }
-      } catch { /* classifier unavailable — fall back to cadence */ }
+      } catch (e) {
+        // Classifier unavailable/failed — fall back to cadence, but say so.
+        logger.debug(`[chat] curate-classifier failed (falling back to cadence): ${(e as Error).message}`);
+      }
     }
     if (process.env.LAX_MEMORY_INPROMPT_NUDGE === "1") {
       const nudge = checkAndConsumeNudge(input.sessionId);

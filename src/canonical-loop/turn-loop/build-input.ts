@@ -39,7 +39,7 @@ export async function buildTurnInput(
   const model = resolveOpModel(op);
   let viewCompacted = false;
   if (model) {
-    const compacted = await compactHistory(messages, model, lastTurnUsage(op.id));
+    const compacted = await compactHistory(messages, model, lastTurnUsage(op.id), op.id);
     messages = compacted.messages;
     viewCompacted = compacted.compacted;
   }

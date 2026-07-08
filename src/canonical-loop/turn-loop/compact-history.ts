@@ -128,6 +128,75 @@ export function locateAnchor(
   return { anchorTokens: usage.contextTokens, estimateFrom };
 }
 
+// ─── Compaction circuit breaker ──────────────────────────────────────────────
+// A session whose context is irrecoverably over the summarizer's own limits
+// fails the summarize call every turn, forever — each retry burns a 30s LLM
+// call for nothing. After TRIP_THRESHOLD consecutive failed attempts for an op
+// the breaker trips and compactHistory stops attempting for the rest of the
+// session (rest of the op). Any successful compaction resets the count.
+//
+// What counts as a FAILED attempt: we decided to compact (over threshold, safe
+// split point) and summarizeOldMessages returned null WHILE ENABLED. The
+// LAX_LLM_COMPACTION=0 kill switch (classify-with-llm.ts) is an intentional
+// off-switch, not an error loop — it never counts. A structural no-op (under
+// threshold, or no safe split) never touches the counter either way.
+//
+// State is per-op, in-memory, bounded (mirrors memory/extraction-coalescer.ts):
+// cap entries, evict the oldest-touched when full. Callers without an opId
+// (direct/test callers) bypass the breaker entirely — stateless as before.
+
+const TRIP_THRESHOLD = 3;
+const MAX_TRACKED_OPS = 500;
+
+interface BreakerEntry {
+  failures: number;
+  tripped: boolean;
+  touchedAt: number;
+}
+
+const breakers = new Map<string, BreakerEntry>();
+
+function getBreaker(opId: string): BreakerEntry {
+  let b = breakers.get(opId);
+  if (!b) {
+    if (breakers.size >= MAX_TRACKED_OPS) {
+      let oldestKey: string | undefined;
+      let oldestAt = Infinity;
+      for (const [key, e] of breakers) {
+        if (e.touchedAt < oldestAt) { oldestAt = e.touchedAt; oldestKey = key; }
+      }
+      if (oldestKey !== undefined) breakers.delete(oldestKey);
+    }
+    b = { failures: 0, tripped: false, touchedAt: Date.now() };
+    breakers.set(opId, b);
+  }
+  b.touchedAt = Date.now();
+  return b;
+}
+
+function recordBreakerFailure(opId: string): void {
+  const b = getBreaker(opId);
+  b.failures += 1;
+  if (b.failures >= TRIP_THRESHOLD && !b.tripped) {
+    b.tripped = true;
+    // Surface the error state honestly, ONCE, at trip time. Later skips log at
+    // debug only — the state is readable via compactionBreakerState().
+    logger.error(
+      `compaction circuit breaker tripped for op ${opId} after ${b.failures} consecutive failed ` +
+      `summarize attempts; no further compaction attempts this session. Context stays ` +
+      `unsummarized — over-window provider errors may follow.`,
+    );
+  }
+}
+
+/** Readonly view of an op's breaker state, for telemetry/doctor. */
+export function compactionBreakerState(
+  opId: string,
+): Readonly<{ failures: number; tripped: boolean }> | undefined {
+  const b = breakers.get(opId);
+  return b ? { failures: b.failures, tripped: b.tripped } : undefined;
+}
+
 export interface CompactHistoryResult {
   messages: CanonicalMessage[];
   /**
@@ -145,7 +214,13 @@ export async function compactHistory(
   // Real usage of the op's last recorded turn (op-usage.ts lastTurnUsage).
   // Absent/unmappable → pure estimate, the historical behavior.
   usage?: LastTurnUsage | null,
+  // Threads the circuit breaker (above). Absent → breaker bypassed.
+  opId?: string,
 ): Promise<CompactHistoryResult> {
+  if (opId && breakers.get(opId)?.tripped) {
+    logger.debug(`compaction breaker open for op ${opId}; skipping summarize attempt`);
+    return { messages, compacted: false };
+  }
   const usageAnchor = usage ? locateAnchor(messages, usage) : null;
   if (usage && !usageAnchor) {
     logger.debug(`anchor at turn ${usage.turnIdx} not mappable onto the current view; sizing by pure estimate`);
@@ -167,7 +242,16 @@ export async function compactHistory(
   // Disabled (LAX_LLM_COMPACTION), timed out, or failed: keep the full history
   // rather than silently truncating. An over-window call surfaces as a provider
   // error, which is honest; a silent drop corrupts the conversation.
-  if (!summary) return { messages, compacted: false };
+  //
+  // summarizeOldMessages can't tell us WHY it returned null, so the kill-switch
+  // exclusion reads the env at the counting site (same check classify-with-llm.ts
+  // makes): disabled-by-switch is intentional, not a failed attempt.
+  if (!summary) {
+    if (opId && process.env.LAX_LLM_COMPACTION !== "0") recordBreakerFailure(opId);
+    return { messages, compacted: false };
+  }
+  // Successful compaction resets the consecutive-failure count.
+  if (opId) breakers.delete(opId);
 
   const anchor = recent[0];
   const block =

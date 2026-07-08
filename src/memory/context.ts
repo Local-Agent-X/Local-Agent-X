@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import type { MemoryIndex } from "./index-core.js";
+import { relativeAge, memoryStaleCaveat } from "./relative-age.js";
 import { ensurePersonalityFiles, readPersonalityFile } from "./personality.js";
 import { readProjectBrief } from "./project-brief.js";
 import type { FactKind } from "./types.js";
@@ -303,13 +304,27 @@ export async function autoSearchContext(
     const { mmrRerank } = await import("./mmr.js");
     const results = mmrRerank(candidates, 3, 0.7);
 
+    // Age is expressed RELATIVE to now (e.g. "47 days ago"), not as a raw
+    // stamp — models reason about staleness far better from relative age.
+    // The clock is the chunk's DB `updated_at` (when THIS snippet's content
+    // last changed), NOT the source file's mtime: nightly consolidation
+    // appends bump a whole entity page's mtime while its old facts stay old,
+    // and virtual paths (session-live/…, import/…) have no file to stat.
+    // indexChunksIdempotent only re-stamps changed chunks, so unchanged
+    // content keeps its original clock. Snippets older than ~1 day also get
+    // a caveat that any file/line citations inside may have drifted. `now`
+    // is captured once so every entry is scored against a single clock.
+    const now = Date.now();
     const relevant = results
       .map((r) => {
-        const dateStr = r.metadata?.date ? `, ${r.metadata.date}` : "";
+        const ageStr = r.updatedAt !== undefined
+          ? `, ${relativeAge(r.updatedAt, now)}`
+          : (r.metadata?.date ? `, ${r.metadata.date}` : "");
+        const caveat = r.updatedAt !== undefined ? memoryStaleCaveat(r.updatedAt, now) : "";
         const topic = r.metadata?.topic ? `, topic: ${r.metadata.topic}` : "";
         const entities = r.entities?.length ? `, about: ${r.entities.join(",")}` : "";
         const score = `, relevance ${r.score.toFixed(2)}`;
-        return `[${r.source}${entities}${topic}${dateStr}${score}]\n${r.snippet.slice(0, 300)}`;
+        return `[${r.source}${entities}${topic}${ageStr}${score}]${caveat}\n${r.snippet.slice(0, 300)}`;
       })
       .join("\n\n");
 

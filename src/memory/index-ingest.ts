@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import type Database from "better-sqlite3";
 import type { Chunk, EmbeddingProvider, MemoryConfig } from "./types.js";
 import { embedChunksWithRetry } from "./index-embedding.js";
@@ -108,6 +109,26 @@ export async function indexChunksIdempotent(
   }
 
   const now = Date.now();
+
+  // Lane-seam stamp. For a REAL on-disk file, record files.hash in the sync
+  // lane's own "<mtimeMs>:<size>" format (what listMemoryFiles computes) so
+  // the next search-triggered syncIndex sees the untouched file as unchanged
+  // and skips it. The previous opaque "idempotent:<ts>" stamp could NEVER
+  // match, so every idempotent-indexed file was perpetually full-reindexed by
+  // every sync pass — churn (re-chunk + re-embed) AND, because indexFile
+  // re-chunks with different geometry (1600-char windows vs sections), a
+  // clock re-stamp that made 90-day-old facts read "just now". Virtual paths
+  // (import/…, session-live/…) have no file to stat and keep the old stamp.
+  let fileHash = `idempotent:${now}`;
+  let fileMtime = now;
+  let fileSize = 0;
+  try {
+    const st = statSync(virtualPath);
+    fileHash = `${st.mtimeMs}:${st.size}`;
+    fileMtime = st.mtimeMs;
+    fileSize = st.size;
+  } catch { /* virtual path — keep the opaque idempotent stamp */ }
+
   try {
     const txn = db.transaction(() => {
       const delChunk = db.prepare("DELETE FROM chunks WHERE id = ?");
@@ -141,7 +162,7 @@ export async function indexChunksIdempotent(
 
       db.prepare(
         "INSERT OR REPLACE INTO files (path, source, hash, mtime, size) VALUES (?, ?, ?, ?, ?)"
-      ).run(virtualPath, source, `idempotent:${now}`, now, 0);
+      ).run(virtualPath, source, fileHash, fileMtime, fileSize);
     });
     txn();
   } catch (e) {

@@ -168,6 +168,16 @@ export interface MemorySearchResult {
   entities?: string[];
   kind?: FactKind;
   metadata?: ChunkMetadata;
+  /**
+   * Epoch-ms of the chunk's `updated_at` — when THIS snippet's content last
+   * changed. The staleness signal for prompt formatting (relative age +
+   * stale caveat). Deliberately NOT the source file's mtime: nightly
+   * consolidation appends bump the whole file's mtime while old facts in it
+   * stay old, and virtual paths (session-live/…, import/…) have no file at
+   * all. indexChunksIdempotent only re-stamps CHANGED chunks, so this is a
+   * true per-snippet clock.
+   */
+  updatedAt?: number;
 }
 
 export interface ChunkMetadata {
@@ -188,6 +198,8 @@ export interface Chunk {
   hash: string;
   embedding?: number[];
   metadata?: ChunkMetadata;
+  /** Epoch-ms `updated_at` from the chunks table (see MemorySearchResult.updatedAt). */
+  updatedAt?: number;
 }
 
 export interface FileRecord {

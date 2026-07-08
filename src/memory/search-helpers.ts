@@ -93,6 +93,7 @@ export function toSearchResult(
     source: chunk.source as MemorySearchResult["source"],
     entities: entities.length > 0 ? entities : undefined,
     metadata,
+    updatedAt: chunk.updatedAt,
   };
 }
 

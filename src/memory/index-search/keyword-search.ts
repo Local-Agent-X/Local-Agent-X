@@ -17,7 +17,7 @@ export function searchKeyword(
     // session_id IS NULL = profile-level chunks (entity, MIND, daily-log,
     // personality) — always allowed. Otherwise must match the active session.
     const sessionWhere = sessionFilter ? `AND (c.session_id IS NULL OR c.session_id = ?)` : "";
-    const sql = `SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text, c.metadata,
+    const sql = `SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text, c.metadata, c.updated_at,
                 bm25(chunks_fts) as rank
          FROM chunks_fts f
          JOIN chunks c ON c.id = f.rowid
@@ -38,6 +38,7 @@ export function searchKeyword(
       end_line: number;
       text: string;
       metadata: string | null;
+      updated_at: number;
       rank: number;
     }>;
 
@@ -52,6 +53,7 @@ export function searchKeyword(
         text: r.text,
         hash: "",
         metadata: r.metadata ? JSON.parse(r.metadata) : undefined,
+        updatedAt: r.updated_at,
         score: bm25RankToScore(r.rank),
       }));
   } catch {

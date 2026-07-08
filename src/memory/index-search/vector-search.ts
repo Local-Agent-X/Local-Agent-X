@@ -30,7 +30,7 @@ export function searchVector(
   for (let offset = 0; offset < totalCount; offset += BATCH_SIZE) {
     const batch = db
       .prepare(
-        `SELECT id, path, source, start_line, end_line, text, embedding, metadata
+        `SELECT id, path, source, start_line, end_line, text, embedding, metadata, updated_at
          FROM chunks WHERE embedding IS NOT NULL ${sourceFilter} ${sessionWhere}
          LIMIT ? OFFSET ?`
       )
@@ -43,6 +43,7 @@ export function searchVector(
       text: string;
       embedding: string;
       metadata: string | null;
+      updated_at: number;
     }>;
 
     for (const row of batch) {
@@ -66,6 +67,7 @@ export function searchVector(
           text: row.text,
           hash: "",
           metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+          updatedAt: row.updated_at,
           score: similarity,
         });
 

@@ -99,6 +99,38 @@ async function indexFile(
   hasVec: boolean,
   file: FileRecord
 ): Promise<void> {
+  // Clock preservation. This lane drops and reinserts EVERY chunk of a
+  // changed file, so without this snapshot any file touch (consolidation's
+  // nightly appendFileSync on entity pages, most commonly) would re-stamp
+  // 90-day-old facts with updated_at = now — and updated_at is the staleness
+  // clock the recall formatter renders as relative age. Snapshot the prior
+  // chunks before the wipe; on reinsert a chunk keeps its original clock when
+  //   (a) its content_hash matches a prior chunk exactly (unchanged content), or
+  //   (b) its text CONTAINS a prior chunk's text — the append case. A small
+  //       entity page is a single chunk (well under chunkTokens), so a nightly
+  //       append merges old+new into one chunk with a NEW hash; without the
+  //       containment rule the 90-day-old fact inside would read "just now".
+  // Ties/multiple matches keep the OLDEST clock — never freshen by accident;
+  // a mixed old+new chunk is aged by its oldest content so the stale caveat
+  // stays honest. Genuinely new or edited content gets Date.now().
+  const priorChunks: Array<{ hash: string | null; text: string; updated_at: number }> = [];
+  try {
+    const rows = db
+      .prepare("SELECT content_hash, text, updated_at FROM chunks WHERE path = ?")
+      .all(file.path) as Array<{ content_hash: string | null; text: string | null; updated_at: number }>;
+    for (const r of rows) {
+      priorChunks.push({ hash: r.content_hash, text: (r.text ?? "").trim(), updated_at: r.updated_at });
+    }
+  } catch {}
+  const preservedClock = (newHash: string, newText: string): number | undefined => {
+    let clock: number | undefined;
+    for (const p of priorChunks) {
+      const match = p.hash === newHash || (p.text.length > 0 && newText.includes(p.text));
+      if (match && (clock === undefined || p.updated_at < clock)) clock = p.updated_at;
+    }
+    return clock;
+  };
+
   removeFile(db, hasFts, hasVec, file.path);
 
   let chunks: Chunk[];
@@ -172,7 +204,7 @@ async function indexFile(
         chunk.hash,
         chunk.hash,
         chunk.embedding ? JSON.stringify(chunk.embedding) : null,
-        now,
+        preservedClock(chunk.hash, chunk.text) ?? now,
         chunk.metadata ? JSON.stringify(chunk.metadata) : null,
         chunk.metadata?.session_id ?? null
       );

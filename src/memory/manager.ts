@@ -17,6 +17,7 @@ import { buildContextBlock, autoSearchContext } from "./context.js";
 import { autoExtractAndSave } from "./auto-extract.js";
 import { findKnownProjectsInMessage, buildKnownProjectsNudge } from "./known-projects.js";
 import { appendToDailyLogSafely } from "./write-safely.js";
+import { requestEndOfTurnExtraction } from "./extraction-coalescer.js";
 import { getSessionProject } from "../session/project.js";
 import { createLogger } from "../logger.js";
 
@@ -212,6 +213,22 @@ export class MemoryManager {
       }
     } catch (e) {
       logger.warn("appendDailyLog failed:", (e as Error).message);
+    }
+    // Fire-and-forget end-of-turn profile pass. The coalescer gates it on a
+    // curate signal, serializes runs per session (latest request wins), and
+    // skips when the main agent already wrote memory via tools this delta.
+    // ctx is self-contained — the background run outlives the turn lock.
+    if (input.sessionId) {
+      try {
+        requestEndOfTurnExtraction({
+          sessionId: input.sessionId,
+          userMessage: input.userMessage,
+          assistantReply: input.agentResponse,
+          memory: this.index,
+        });
+      } catch (e) {
+        logger.warn("end-of-turn extraction enqueue failed:", (e as Error).message);
+      }
     }
   }
 

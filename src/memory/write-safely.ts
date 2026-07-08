@@ -83,6 +83,34 @@ export class MemoryWriteBlocked extends Error {
 const DEFAULT_THRESHOLD = 0.3;
 const auditMode = (): boolean => process.env.LAX_MEMORY_WRITE_AUDIT === "1";
 
+// ── Write clock ──
+//
+// In-memory monotonic clock over memory writes that actually landed, tracked
+// per source. Post-turn machinery (extraction-coalescer) asks "has a
+// main-agent ('tool') write happened since tick X?" to avoid re-curating a
+// profile the agent just curated itself. Blocked writes (MemoryWriteBlocked)
+// never tick — only content that reached disk counts. Process-local; resets
+// on restart (a stale cursor after restart is benign — one extra or skipped
+// end-of-turn pass, self-correcting).
+
+let writeTick = 0;
+const lastTickBySource = new Map<MemoryWriteSource, number>();
+
+function noteWrite(source: MemoryWriteSource): void {
+  writeTick += 1;
+  lastTickBySource.set(source, writeTick);
+}
+
+/** Current global write-clock tick (0 = no memory writes this process). */
+export function getMemoryWriteTick(): number {
+  return writeTick;
+}
+
+/** Tick of the last landed write from `source` (0 = none this process). */
+export function getLastWriteTick(source: MemoryWriteSource): number {
+  return lastTickBySource.get(source) ?? 0;
+}
+
 /** Write content to a memory file after the full safety chain. */
 export function writeMemorySafely(params: MemoryWriteParams): void {
   const sanitized = applyGateChain({
@@ -94,6 +122,7 @@ export function writeMemorySafely(params: MemoryWriteParams): void {
   const mode = params.mode ?? "overwrite";
   if (mode === "append") {
     appendFileSync(params.target, sanitized, "utf-8");
+    noteWrite(params.source);
     return;
   }
 
@@ -112,6 +141,7 @@ export function writeMemorySafely(params: MemoryWriteParams): void {
 
   snapshotBeforeOverwrite(params.target, sanitized);
   atomicWriteFileSync(params.target, sanitized);
+  noteWrite(params.source);
 }
 
 // ── Overwrite history ──
@@ -162,6 +192,7 @@ export function appendToDailyLogSafely(opts: {
     threshold: opts.threshold,
   });
   opts.memory.appendDailyLog(sanitized, opts.sessionId);
+  noteWrite(opts.source);
 }
 
 /**

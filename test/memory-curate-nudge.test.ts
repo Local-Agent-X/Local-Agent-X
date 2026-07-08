@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   boostNudgePriority,
   checkAndConsumeNudge,
+  hasCurateSignal,
   resetSession,
   _internals,
 } from "../src/memory/curate-nudge.js";
@@ -106,6 +107,31 @@ describe("curate-nudge — session isolation", () => {
     checkAndConsumeNudge(SESSION_A); // A fires
     // B was at NUDGE_INTERVAL-1 — its next turn should fire it
     expect(checkAndConsumeNudge(SESSION_B)).not.toBeNull();
+  });
+});
+
+describe("curate-nudge — hasCurateSignal (end-of-turn extraction gate)", () => {
+  it("is false for an unknown session and never creates state", () => {
+    expect(hasCurateSignal("never-seen-session")).toBe(false);
+    expect(_internals.sessions.has("never-seen-session")).toBe(false);
+  });
+
+  it("is false for a session with only routine turns (no boost, no fired nudge)", () => {
+    checkAndConsumeNudge(SESSION_A); // one routine turn, below cadence
+    expect(hasCurateSignal(SESSION_A)).toBe(false);
+  });
+
+  it("turns true after a boost, and back false after resetSession (consumed)", () => {
+    boostNudgePriority(SESSION_A, "preference-stated");
+    expect(hasCurateSignal(SESSION_A)).toBe(true);
+    resetSession(SESSION_A); // what the end-of-turn pass does after a run
+    expect(hasCurateSignal(SESSION_A)).toBe(false);
+  });
+
+  it("stays true after a cadence nudge fires (lastNudgeAt), until reset", () => {
+    for (let i = 0; i < _internals.NUDGE_INTERVAL; i++) checkAndConsumeNudge(SESSION_A);
+    // Triggers were cleared by the fire, but the fired nudge itself is a signal.
+    expect(hasCurateSignal(SESSION_A)).toBe(true);
   });
 });
 

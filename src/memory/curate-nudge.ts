@@ -141,6 +141,19 @@ export function checkAndConsumeNudge(sessionId: string, opts?: {
 }
 
 /**
+ * Read-only: did this session accumulate a memory signal — an opportunistic
+ * boost (regex or classifier) or a fired cadence nudge — since its state was
+ * last reset? This is the trigger gate for the end-of-turn write pass (see
+ * end-of-turn-write.ts header), which resets the session state after each
+ * run, making the signal consume-on-extraction. Never creates session state.
+ */
+export function hasCurateSignal(sessionId: string): boolean {
+  const s = sessions.get(sessionId);
+  if (!s) return false;
+  return s.pendingTriggers.size > 0 || s.lastNudgeAt > 0;
+}
+
+/**
  * Reset session state — used when a session is closed/reset. Optional;
  * the LRU eviction handles this implicitly for forgotten sessions.
  */

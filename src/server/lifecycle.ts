@@ -264,6 +264,12 @@ export function registerShutdown(deps: {
     EventBus.removeAllListeners();
     await agentSync.push().catch(() => {});
     await closeAllBrowsers();
+    // Drain any in-flight end-of-turn memory extraction before the index
+    // closes under it. Bounded — shutdown must never hang on a slow LLM call.
+    try {
+      const { drainPendingExtractions } = await import("../memory/extraction-coalescer.js");
+      await drainPendingExtractions(3000);
+    } catch { /* best-effort — never block shutdown */ }
     memoryIndex.close();
     secretsStore.destroy();
     try { const { cleanupAllWorktrees } = await import("../agency/worktree.js"); cleanupAllWorktrees(); } catch {}

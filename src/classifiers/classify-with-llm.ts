@@ -33,6 +33,7 @@
  */
 
 import { createLogger } from "../logger.js";
+import { stripCodeFences } from "./strip-code-fences.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
 import { backgroundModelFor } from "../providers/registry.js";
 import type { ProviderId } from "../providers/provider-ids.js";
@@ -369,11 +370,7 @@ export async function classifyJson<T>(args: {
   return classifyWithLLM<T>({
     ...args,
     parse: (raw) => {
-      const cleaned = raw
-        .trim()
-        .replace(/^```(?:json)?\s*/i, "")
-        .replace(/\s*```\s*$/i, "")
-        .trim();
+      const cleaned = stripCodeFences(raw);
       try {
         const obj = JSON.parse(cleaned);
         if (args.validate) return args.validate(obj);

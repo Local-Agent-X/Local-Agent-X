@@ -27,6 +27,7 @@ import { createLogger } from "../logger.js";
 import { redactKnownSecrets } from "../sanitize.js";
 import { resetSession as resetCurateNudge } from "./curate-nudge.js";
 import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
+import { stripCodeFences } from "../classifiers/strip-code-fences.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
 import { PERSONALITY_FILES, dedupeProfileMarkdown } from "./personality.js";
 import { writeMemorySafely, MemoryWriteBlocked, MAX_PROFILE_CHARS } from "./write-safely.js";
@@ -172,16 +173,27 @@ export type ApplyWriteResult =
 
 // ── Decision parsing + apply ──
 
-export interface WriteDecision {
+export interface WriteDecisionPayload {
   write: true;
   action: "append" | "replace_section";
   section_heading: string | null;
   content: string;
 }
 
+/**
+ * A parsed decision is either "write this" or an explicit "nothing to write".
+ * `{"write": false}` is the classifier's most common (and perfectly valid)
+ * verdict — parsing it to null used to make classifyWithLLM log it as
+ * `parse failed: "```json…"` on every routine turn, drowning out real
+ * parse failures. null now means only: the reply was garbage.
+ */
+export type WriteDecision = { write: false } | WriteDecisionPayload;
+
 export function parseWriteDecision(raw: string): WriteDecision | null {
   if (!raw) return null;
-  let cleaned = raw.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+  // Canonical fence unwrap — opus & co. fence the JSON despite the prompt.
+  // Handles raw JSON, ```json / bare ``` fences, and prose around the block.
+  const cleaned = stripCodeFences(raw);
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
@@ -189,6 +201,7 @@ export function parseWriteDecision(raw: string): WriteDecision | null {
   try { parsed = JSON.parse(cleaned.slice(start, end + 1)); } catch { return null; }
   if (!parsed || typeof parsed !== "object") return null;
   const obj = parsed as Record<string, unknown>;
+  if (obj.write === false) return { write: false };
   if (obj.write !== true) return null;
   // Legacy classifiers may still emit `file: "user"` or `file: "mind"`. Accept
   // "user" or absent (default), reject anything else — "mind" is retired.
@@ -204,7 +217,7 @@ export function parseWriteDecision(raw: string): WriteDecision | null {
   return { write: true, action, section_heading, content };
 }
 
-export async function applyWrite(d: WriteDecision, memory: MemoryIndex): Promise<ApplyWriteResult> {
+export async function applyWrite(d: WriteDecisionPayload, memory: MemoryIndex): Promise<ApplyWriteResult> {
   // Mirrors memory_update_profile's write path with the same char caps.
   // End-of-turn only writes USER.md — facts go through the agent's `remember`
   // tool during the turn, not this classifier.

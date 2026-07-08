@@ -35,23 +35,89 @@ describe("end-of-turn parseWriteDecision — happy path", () => {
     expect(r).toBeNull();
   });
 
-  it("parses write=false correctly", () => {
+  it("parses write=false as a valid no-write decision — NOT a parse failure", () => {
     const raw = `{"write": false}`;
     const r = parseWriteDecision(raw);
-    expect(r).toBeNull(); // null = no write to perform
+    expect(r).toEqual({ write: false });
   });
 
   it("strips ```json``` code fences", () => {
     const raw = "```json\n{\"write\": true, \"action\": \"append\", \"section_heading\": null, \"content\": \"x\"}\n```";
     const r = parseWriteDecision(raw);
     expect(r).not.toBeNull();
-    expect(r?.content).toBe("x");
+    expect(r?.write && r.content).toBe("x");
   });
 
   it("tolerates leading prose before the JSON", () => {
     const raw = "Here's my decision:\n{\"write\": true, \"action\": \"append\", \"section_heading\": null, \"content\": \"x\"}";
     const r = parseWriteDecision(raw);
     expect(r).not.toBeNull();
+  });
+});
+
+describe("end-of-turn parseWriteDecision — fenced model output (live opus shapes)", () => {
+  // The realistic payload shape the classifier prompt asks for.
+  const decision = {
+    write: true,
+    action: "append",
+    section_heading: null,
+    content: "User prefers Meta Business Suite over per-app dashboards for analytics across Meta properties.",
+  };
+
+  it("parses the exact live failure shape: ```json-fenced {\"write\": false} is a decision, not garbage", () => {
+    // claude-opus-4-8 fences the JSON despite the prompt; write=false is its
+    // most common verdict. This used to return null → logged as
+    // `parse failed: "```json…` and conflated with real parse failures.
+    const raw = '```json\n{"write": false}\n```';
+    expect(parseWriteDecision(raw)).toEqual({ write: false });
+  });
+
+  it("parses a ```json-fenced pretty-printed write decision", () => {
+    const raw = "```json\n" + JSON.stringify(decision, null, 2) + "\n```";
+    const r = parseWriteDecision(raw);
+    expect(r).toEqual(decision);
+  });
+
+  it("parses a fenced decision with no language tag", () => {
+    const raw = "```\n" + JSON.stringify(decision) + "\n```";
+    expect(parseWriteDecision(raw)).toEqual(decision);
+  });
+
+  it("parses a single fenced block surrounded by prose", () => {
+    const raw =
+      "Looking at the exchange, this reveals a durable preference.\n\n" +
+      "```json\n" + JSON.stringify(decision) + "\n```\n\n" +
+      "That captures the generalized rule.";
+    expect(parseWriteDecision(raw)).toEqual(decision);
+  });
+
+  it("parses a fenced replace_section decision with heading", () => {
+    const rs = {
+      write: true,
+      action: "replace_section",
+      section_heading: "Analytics workflow",
+      content: "For Instagram analytics use Meta Business Suite and toggle the asset dropdown to Instagram.",
+    };
+    const raw = "```json\n" + JSON.stringify(rs, null, 2) + "\n```";
+    expect(parseWriteDecision(raw)).toEqual(rs);
+  });
+
+  it("preserves backticks inside content when the reply is fenced", () => {
+    // The old global ``` strip deleted backtick runs INSIDE the payload too.
+    const bt = { ...decision, content: "Verifies with `npm run build`, never bare `tsc`." };
+    const raw = "```json\n" + JSON.stringify(bt) + "\n```";
+    const r = parseWriteDecision(raw);
+    expect(r?.write && r.content).toBe("Verifies with `npm run build`, never bare `tsc`.");
+  });
+
+  it("recovers a decision from an unterminated fence (reply truncated after the JSON)", () => {
+    const raw = "```json\n" + JSON.stringify(decision);
+    expect(parseWriteDecision(raw)).toEqual(decision);
+  });
+
+  it("still rejects a fenced block that isn't a decision", () => {
+    expect(parseWriteDecision("```json\nnot json at all\n```")).toBeNull();
+    expect(parseWriteDecision("```\n[1, 2, 3]\n```")).toBeNull();
   });
 });
 

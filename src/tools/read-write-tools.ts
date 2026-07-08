@@ -106,6 +106,9 @@ export const readTool: ToolDefinition = {
         total_lines: total,
         lines_shown: shown,
         truncated: shown < total || undefined,
+        // A screened view (warning prepended) is a PARTIAL sight of the file:
+        // the read-dedup layer must never stub it away on a re-read.
+        screened: injections.length > 0 || undefined,
       });
     } catch (e) {
       return err(`Failed to read ${filePath}: ${(e as Error).message}`, { path: filePath });

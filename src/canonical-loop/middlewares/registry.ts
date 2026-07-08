@@ -70,6 +70,7 @@ import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
 import { autoBuildAppMiddleware } from "./auto-build-app.js";
 import { verifyGateMiddleware } from "./verify-gate.js";
 import { postEditDiagnosticsMiddleware } from "./post-edit-diagnostics.js";
+import { externalChangeDiffMiddleware } from "./external-change-diff.js";
 import { cleanupVerifyMiddleware } from "./cleanup-verify.js";
 import { instructionLedgerMiddleware } from "./instruction-ledger.js";
 import { instructionAuditMiddleware } from "./instruction-audit.js";
@@ -182,6 +183,13 @@ const DEFAULT_STACK: StackEntry[] = [
   // nudge wins first) and before dead-end. Fail-open; disable with
   // LAX_POST_EDIT_DIAGNOSTICS=0.
   { order: 245, mw: postEditDiagnosticsMiddleware },
+  // All lanes — each turn after tool dispatch, sweep the session's read files
+  // for EXTERNAL on-disk changes (an editor save, another agent, a build) and
+  // inject compact unified diffs against the session's cached snapshots, so
+  // the model updates its mental model without a full re-read. Sits after
+  // post-edit-diagnostics (a turn's own introduced-error feedback wins first)
+  // and before dead-end. Fail-open; disable with LAX_EXTERNAL_CHANGE_DIFF=0.
+  { order: 247, mw: externalChangeDiffMiddleware },
   { order: 250, mw: deadEndMiddleware },
   // All lanes (incl. interactive) — same-tool same-error spiral breaker.
   { order: 260, mw: repeatFailureMiddleware },

@@ -12,22 +12,22 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1153 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1154 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 64 | 22 | XL |  |
+| `src/ops/` | 65 | 22 | XL |  |
 | `src/security/` | 64 | 26 | XL |  |
-| `src/tools/` | 48 | 134 | XL |  |
-| `src/canonical-loop/` | 37 | 130 | XL |  |
+| `src/tools/` | 49 | 134 | XL |  |
+| `src/canonical-loop/` | 37 | 131 | XL |  |
 | `src/memory/` | 37 | 108 | XL |  |
 | `src/providers/` | 37 | 17 | L |  |
 | `src/classifiers/` | 30 | 12 | L |  |
+| `src/workspace/` | 26 | 2 | M |  |
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
-| `src/workspace/` | 25 | 2 | M |  |
 | `src/auth/` | 22 | 10 | L |  |
 | `src/threat/` | 20 | 12 | L |  |
 | `src/session/` | 19 | 7 | M |  |

@@ -112,6 +112,7 @@ const EXPECTED_ORDER = [
   "auto-build-app",
   "post-commit",
   "post-edit-diagnostics",
+  "external-change-diff",
   "dead-end",
   "repeat-failure",
 ];

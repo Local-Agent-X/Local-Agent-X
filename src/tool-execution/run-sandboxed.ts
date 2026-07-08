@@ -17,10 +17,11 @@ import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
 import { isRetryable, isRetryableTool } from "../resilience-policy.js";
 import { getToolTimeout, withTimeout, ToolTimeoutError } from "../tool-timeout.js";
-import { timeout, blocked } from "../tools/result-helpers.js";
+import { timeout, blocked, ok } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
+import { isAbsolute } from "node:path";
 import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/file-access.js";
-import { checkFreshness, recordFileSeen } from "../tools/read-state.js";
+import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
 
 const logger = createLogger("tool-execution");
 
@@ -69,6 +70,29 @@ export const runSandboxedPhase: Phase = async (ctx) => {
           ? `Refusing to edit ${resolved}: this session hasn't read it. Read the file first so your edit targets its current contents.`
           : `Refusing to edit ${resolved}: it changed on disk since this session last read it. Re-read it — your old_string or line numbers may be stale.`,
         { recovery: `Call read with path="${args.path}", then retry this edit.`, layer: "stale-read-guard" },
+      );
+      return CONTINUE;
+    }
+  }
+
+  // Read-dedup: a full re-read of a file whose CURRENT disk bytes this session
+  // provably already holds (hash-verified — mtime is only a prefilter) returns
+  // a one-line stub instead of re-shipping the content. Partial/screened views
+  // never dedup, an explicit offset/limit is the model's force-re-read lever,
+  // and relative paths are exempt (their resolution can be work-root-dependent,
+  // so only the session-independent absolute form is safe to stub). Runs before
+  // execute and before accounting, like the freshness guard: a served stub is
+  // guidance, not a tool run.
+  if (tc.name === "read" && typeof args.path === "string" && args.path &&
+      args.offset === undefined && args.limit === undefined && isAbsolute(args.path)) {
+    let resolved: string | null = null;
+    try { resolved = resolveAgentPath(args.path); } catch { /* let the tool handle it */ }
+    if (resolved && unchangedSinceSeen(sessionId, resolved)) {
+      ctx.result = ok(
+        `Unchanged since this session last read it: ${resolved} (content-hash verified). ` +
+        `Your existing view of this file is still current, so the re-read was skipped. ` +
+        `To force a full re-read anyway, pass an explicit offset (e.g. offset=1).`,
+        { path: resolved, unchanged: true },
       );
       return CONTINUE;
     }
@@ -339,7 +363,11 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   const durationMs = Date.now() - startedAt;
   const succeeded = !result.isError;
   if (succeeded && typeof args.path === "string" && args.path && RECORDS_SEEN.has(tc.name)) {
-    try { recordFileSeen(sessionId, resolveAgentPath(args.path)); } catch { /* freshness is best-effort */ }
+    // Reads record HOW the file was seen (partial/range views never dedup);
+    // writes/edits pass no view — the session knows the whole resulting file,
+    // and re-recording refreshes the diff snapshot to the post-edit bytes.
+    const view = tc.name === "read" ? seenViewFromReadResult(args, result.metadata) : undefined;
+    try { recordFileSeen(sessionId, resolveAgentPath(args.path), view); } catch { /* freshness is best-effort */ }
   }
   try { recordToolStat(tc.name, sessionId || "default", succeeded, durationMs, result.isError ? result.content?.slice(0, 200) : undefined); } catch { /* tracker should never break the call */ }
   try { recordRateLimit(tc.name, sessionId); } catch { /* same */ }

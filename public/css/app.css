@@ -276,6 +276,15 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 .msg-attachments img:hover{transform:scale(1.03);border-color:var(--accent)}
 .att-badge{padding:6px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--border);font-size:.75rem;font-family:var(--mono);color:var(--muted);display:flex;align-items:center;gap:6px}
 .tool-card{margin:4px 0;border-radius:6px;border:1px solid var(--border);overflow:hidden;font-size:.78rem;transition:opacity .2s}
+/* Live chain-of-thought block, above the answer. Muted + collapsible so the
+   reasoning is visible while it streams but never competes with the answer.
+   Raw thoughts render as pre-wrapped plain text (set via textContent). */
+.reasoning-block{margin:2px 0 8px;border-left:2px solid var(--border);padding:2px 0 2px 10px}
+.reasoning-summary{font-size:.72rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;list-style:none;user-select:none}
+.reasoning-summary::-webkit-details-marker{display:none}
+.reasoning-summary::before{content:'▸ ';font-size:.65rem}
+.reasoning-block[open] .reasoning-summary::before{content:'▾ '}
+.reasoning-body{margin-top:4px;font-size:.76rem;line-height:1.45;color:var(--muted);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto;opacity:.9}
 /* Inline notice rendered when the agent's turn stops early (middleware
    abort, ceiling, stale evidence). Small, muted, italic — distinct from
    message body text and never persisted into chat history. The full

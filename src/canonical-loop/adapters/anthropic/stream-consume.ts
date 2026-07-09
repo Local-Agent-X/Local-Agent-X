@@ -81,6 +81,10 @@ export async function streamConsume(
         report({ kind: "stream_chunk", body: { delta: ev.delta } });
         continue;
       }
+      if (ev.type === "thinking") {
+        if (ev.delta.length > 0) report({ kind: "reasoning_chunk", delta: ev.delta });
+        continue;
+      }
       if (ev.type === "tool_call") {
         out.toolCallIds.push(ev.id);
         report({

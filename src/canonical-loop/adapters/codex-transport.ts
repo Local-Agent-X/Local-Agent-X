@@ -21,7 +21,11 @@ export interface CodexTransportRequest extends AnthropicTransportRequest {
 }
 
 export interface CodexTransport {
-  stream(req: CodexTransportRequest): AsyncIterable<TransportEvent & { responseId?: string }>;
+  // `thinking` carries the live reasoning-summary delta — same convention the
+  // openai-compat and gemini transports use; the adapter maps it to the
+  // canonical `reasoning_chunk` report. Not in the shared TransportEvent
+  // contract, so it's unioned in here.
+  stream(req: CodexTransportRequest): AsyncIterable<(TransportEvent | { type: "thinking"; delta: string }) & { responseId?: string }>;
 }
 
 export function defaultCodexTransport(): CodexTransport {
@@ -94,6 +98,9 @@ export function defaultCodexTransport(): CodexTransport {
             case "text":
               if (chunk.delta) yield { type: "text" as const, delta: chunk.delta };
               break;
+            case "thinking":
+              if (chunk.delta) yield { type: "thinking" as const, delta: chunk.delta };
+              break;
             case "tool_call":
               yield {
                 type: "tool_call" as const,
@@ -127,7 +134,9 @@ export function defaultCodexTransport(): CodexTransport {
                 retryable: false,
               };
               break;
-            // "reasoning" is Codex-specific; not in TransportEvent contract.
+            // The end-of-turn "reasoning" item (encrypted replay payload) is
+            // Codex-specific and handled elsewhere; only the live summary
+            // (mapped to "thinking" above) reaches the UI.
           }
         }
       } catch (e) {

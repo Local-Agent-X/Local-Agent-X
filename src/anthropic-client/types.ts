@@ -1,7 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 export interface StreamEvent {
-  type: "text" | "tool_call" | "mcp_activity" | "done" | "error";
+  type: "text" | "thinking" | "tool_call" | "mcp_activity" | "done" | "error";
   delta?: string;
   id?: string;
   name?: string;

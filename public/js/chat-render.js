@@ -80,9 +80,12 @@ function renderMessage(msg, ctx) {
     // path so the agent's pin-bottom and tool-card logic doesn't apply.
     return appendStaticWorkerBubble(msg._opId, msg.content || '', msg._taskHint, msg._workerStatus);
   }
-  if (msg.role === 'assistant' && (msg.content || msg._tools || msg._chips || msg._approvals || msg._stopNote)) {
+  if (msg.role === 'assistant' && (msg.content || msg._tools || msg._chips || msg._approvals || msg._stopNote || msg._reasoning)) {
     const node = addMessageEl('assistant', msg.content || '', null, msg.timestamp);
     const lastBody = node ? node.querySelector('.msg-body') : null;
+    // Persisted "Thinking" block — collapsed by default so the finished answer
+    // reads clean, but there to expand later.
+    if (lastBody && msg._reasoning) prependReasoningBlock(lastBody, msg._reasoning, false);
     _renderAssistantToolArtifacts(lastBody || node, {
       toolEvents: msg._tools || [],
       chips: msg._chips || [],

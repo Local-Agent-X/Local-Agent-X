@@ -27,6 +27,19 @@
 // Mirrors the DOM shape addMessageEl produces for an assistant message plus
 // the streaming-class + thinking-dots + tool-card routing that the per-event
 // dispatcher (chat-ws-handler-chat-events.js) writes into the same bubble.
+// Prepend a collapsible "Thinking" block holding the model's chain-of-thought.
+// textContent (not innerHTML) — raw model thoughts are untrusted text, never
+// markup. `open` starts it expanded (live stream) or collapsed (finalized row).
+function prependReasoningBlock(bodyEl, reasoning, open) {
+  if (!bodyEl || !reasoning) return;
+  const details = document.createElement('details');
+  details.className = 'reasoning-block';
+  details.open = !!open;
+  details.innerHTML = '<summary class="reasoning-summary">Thinking</summary><div class="reasoning-body"></div>';
+  details.querySelector('.reasoning-body').textContent = reasoning;
+  bodyEl.insertBefore(details, bodyEl.firstChild);
+}
+
 function _buildLiveAssistantInto(parent, store) {
   if (!parent) return null;
   const content = store ? (store.content || '') : '';
@@ -43,6 +56,10 @@ function _buildLiveAssistantInto(parent, store) {
   if (bodyEl && !content) {
     bodyEl.innerHTML = thinkingHTML();
   }
+  // Live chain-of-thought block, above the answer. Open while streaming so the
+  // reasoning is visible as it flows in (collapsed on the finalized render).
+  const reasoning = store ? (store.reasoning || '') : '';
+  if (bodyEl && reasoning) prependReasoningBlock(bodyEl, reasoning, true);
   const toolEvents = store ? (store.toolEvents || []) : [];
   _renderAssistantToolArtifacts(bodyEl || div, {
     toolEvents,

@@ -15,8 +15,13 @@ export interface CodexTool {
 
 export interface CodexStreamEvent {
   type: string;
-  // response.output_text.delta
+  // response.output_text.delta / response.reasoning_summary_text.delta
   delta?: string;
+  // response.reasoning_summary_text.done carries the full summary text; keyed
+  // for dedup by item_id + summary_index.
+  text?: string;
+  item_id?: string;
+  summary_index?: number;
   // response.function_call_arguments.delta
   name?: string;
   call_id?: string;
@@ -54,6 +59,10 @@ export interface CodexResponse {
 export type CodexStreamYield =
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
+  // Live reasoning-summary delta (Responses API `reasoning: { summary }`).
+  // Distinct from the end-of-turn `reasoning` item below, which carries the
+  // encrypted reasoning payload replayed for context-chaining, not UI text.
+  | { type: "reasoning_summary"; delta: string }
   | { type: "reasoning"; item: ReasoningItem }
   | {
       type: "done";

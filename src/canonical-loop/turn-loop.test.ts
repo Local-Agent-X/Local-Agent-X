@@ -108,6 +108,26 @@ describe("driveTurn — thrown adapter error retries (CL-8)", () => {
   });
 });
 
+describe("driveTurn — reasoning_chunk reports publish a reasoning-marked stream chunk", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("maps a reasoning_chunk to publishStreamChunk({reasoning:true, delta}), distinct from text", async () => {
+    const reasoningAdapter = {
+      runTurn: vi.fn(async (_input: unknown, report: (r: unknown) => void) => {
+        report({ kind: "reasoning_chunk", delta: "let me think" });
+        report({ kind: "stream_chunk", body: { delta: "the answer" } });
+        return { providerState: { v: 1 }, terminalReason: "done", modelStop: "ended" };
+      }),
+      abort: vi.fn(),
+    } as unknown as Adapter;
+    await driveTurn(freshOp(), reasoningAdapter, 0, { isCancelled: () => false });
+    // Reasoning rides the ephemeral stream bus with a marker the pump keys on,
+    // and the answer text stays on its own (unmarked) lane.
+    expect(publishStreamChunk).toHaveBeenCalledWith(expect.any(String), { reasoning: true, delta: "let me think" });
+    expect(publishStreamChunk).toHaveBeenCalledWith(expect.any(String), { delta: "the answer" });
+  });
+});
+
 describe("driveTurn — compacted-view marker reaches the committed provider_state", () => {
   beforeEach(() => vi.clearAllMocks());
 

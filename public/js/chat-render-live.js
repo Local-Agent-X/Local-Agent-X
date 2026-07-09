@@ -45,6 +45,12 @@ function preserveOpenState(oldNode, fresh) {
       if (chev) chev.textContent = '▼';
     }
   }
+  // The reasoning block is a native <details> (open attribute, not .open
+  // class). Carry the user's collapse across the per-frame swap — otherwise a
+  // block they closed re-opens on the next reasoning delta.
+  const oldR = oldNode.querySelector('.reasoning-block');
+  const newR = fresh.querySelector('.reasoning-block');
+  if (oldR && newR) newR.open = oldR.open;
 }
 
 // The swap also rebuilds .activity-group-body (its own overflow-y scroller),
@@ -174,6 +180,7 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   // (it bails once isStreaming flips false).
   const store = {
     content: finalizedMsg.content || '',
+    reasoning: finalizedMsg._reasoning || '',
     toolEvents: finalizedMsg._tools || [],
     chips: finalizedMsg._chips || [],
     progressByTool: finalizedMsg._progressByTool || {},
@@ -182,6 +189,9 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   };
   const tmp = document.createElement('div');
   const fresh = _buildLiveAssistantInto(tmp, store);
+  // The finalized row's reasoning defaults to collapsed (the live build opens
+  // it); this is the terminal paint, so tuck it away.
+  if (fresh) { const rb = fresh.querySelector('.reasoning-block'); if (rb) rb.open = false; }
   if (!fresh) return false;
   preserveOpenState(oldNode, fresh);
   const activityScroll = captureActivityScroll(oldNode);

@@ -56,6 +56,11 @@ export class CodexCliAdapter extends BaseAdapter {
           case "text":
             if (evt.delta) yield { type: "text", delta: evt.delta };
             break;
+          case "reasoning_summary":
+            // Live reasoning-summary delta → the standard `thinking` chunk the
+            // canonical layer maps to a `reasoning_chunk` report.
+            if (evt.delta) yield { type: "thinking", delta: evt.delta };
+            break;
           case "tool_call":
             yield {
               type: "tool_call",

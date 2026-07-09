@@ -35,6 +35,11 @@
     return {
       sessionId,
       content: '',
+      // Model chain-of-thought for the current turn, streamed on the
+      // `reasoning` event lane. Kept separate from `content` so it renders in
+      // a collapsible "Thinking" block and never pollutes the answer bubble or
+      // persisted history. Cleared at turn start and on promote-to-message.
+      reasoning: '',
       // Set when a tool event lands; the next stream delta is then the
       // first text of a NEW model turn, so we open a paragraph break before
       // it. Without this, turn N's trailing text and turn N+1's opening text
@@ -96,6 +101,7 @@
   function startTurn(sessionId, anchorIdx) {
     const e = ensure(sessionId);
     e.content = '';
+    e.reasoning = '';
     e.toolsSinceText = false;
     e.toolEvents = [];
     e.chips = [];
@@ -132,6 +138,9 @@
       timestamp: Date.now(),
       _tools: toolEvents.length ? [...toolEvents] : undefined,
     };
+    // Carry the turn's reasoning onto the finalized row so the "Thinking" block
+    // survives past the live stream — collapsed, available to expand later.
+    if (e.reasoning) msg._reasoning = e.reasoning;
     if (e.chips.length) msg._chips = [...e.chips];
     if (Object.keys(e.progressByTool).length) msg._progressByTool = { ...e.progressByTool };
     if (e.approvals.length) msg._approvals = e.approvals.map(a => ({ ...a }));
@@ -157,6 +166,7 @@
     // index 0, duplicating the assistant message at the top of the chat. Mirror
     // exactly what startTurn resets so a subsequent turn starts clean too.
     e.content = '';
+    e.reasoning = '';
     e.toolEvents = [];
     e.chips = [];
     e.approvals = [];
@@ -191,6 +201,13 @@
           e.content += event.delta;
           e.toolsSinceText = false;
         }
+        e.lastActivityMs = now;
+        break;
+      case 'reasoning':
+        // Live chain-of-thought — accumulate on its own lane so the renderer
+        // shows a collapsible "Thinking" block. Never touches `content`, so it
+        // stays out of the answer bubble and the persisted message.
+        if (typeof event.delta === 'string') e.reasoning += event.delta;
         e.lastActivityMs = now;
         break;
       case 'tool_start':

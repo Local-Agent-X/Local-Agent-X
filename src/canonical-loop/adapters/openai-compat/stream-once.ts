@@ -71,19 +71,16 @@ export async function streamOnce(
       }
       if (ev.type === "thinking") {
         // Reasoning-model chain-of-thought (Cerebras `delta.reasoning`,
-        // DeepSeek-style `reasoning_content`). Accumulate silently so
-        // we have something to show if the model burns its budget on
-        // reasoning and never emits a final `content` answer. Streaming
-        // this live to chat would dump raw thoughts into the bubble,
-        // which is bad UX — surface only as a final fallback below.
-        //
-        // Still ping the orchestrator so its idle watchdog knows the model
-        // is alive. Reasoning models can think for minutes before the first
-        // `content`/tool_call; without this the silent accumulation reads as
-        // a stall and the turn gets killed mid-thought.
+        // DeepSeek-style `reasoning_content`). Stream it live on the
+        // reasoning lane so the UI shows a "Thinking" affordance instead of
+        // a silent spinner, and accumulate it so the reasoning-only fallback
+        // below still has text if the model burns its budget on reasoning and
+        // never emits a `content` answer. reasoning_chunk also resets the
+        // orchestrator's idle watchdog, so a minutes-long think-only turn
+        // isn't killed as "stalled".
         if (ev.delta) {
           out.assembledThinking += ev.delta;
-          report({ kind: "heartbeat" });
+          report({ kind: "reasoning_chunk", delta: ev.delta });
         }
         continue;
       }

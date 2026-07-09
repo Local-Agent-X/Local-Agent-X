@@ -28,6 +28,12 @@ export interface CodexStreamState {
   usage: { inputTokens: number; outputTokens: number };
   responseId: string | undefined;
   reasoningItems: ReasoningItem[];
+  // Summary keys (item_id:summary_index) that already streamed live deltas, so
+  // the terminal `.done` event doesn't re-emit the same text. The ChatGPT Codex
+  // backend sends only `.done` (no deltas) — those keys are never added, so the
+  // full text emits once from `.done`; a true-streaming Responses API adds the
+  // key on the first delta and the `.done` is suppressed.
+  reasoningSummaryStreamed: Set<string>;
 }
 
 export function createCodexStreamState(): CodexStreamState {
@@ -38,6 +44,7 @@ export function createCodexStreamState(): CodexStreamState {
     usage: { inputTokens: 0, outputTokens: 0 },
     responseId: undefined,
     reasoningItems: [],
+    reasoningSummaryStreamed: new Set(),
   };
 }
 
@@ -50,6 +57,31 @@ export async function* processCodexEvent(
   if (event.type === "response.output_text.delta" && event.delta) {
     state.fullText += event.delta;
     yield { type: "text", delta: event.delta };
+    return;
+  }
+
+  // Reasoning-summary output (requested via `reasoning: { summary: "auto" }`),
+  // surfaced so the UI renders a "Thinking" block. Two delivery shapes:
+  //   • True-streaming Responses API: incremental `.delta` events, then `.done`.
+  //   • ChatGPT Codex backend (chatgpt.com/backend-api/codex): no deltas — the
+  //     whole summary arrives once in `.done` (`.text`).
+  // Emit deltas live; on `.done` emit the full text only if no delta streamed
+  // for that summary (keyed by item_id:summary_index), so the two shapes never
+  // double up. A new summary part gets a blank-line separator.
+  if (event.type === "response.reasoning_summary_text.delta" && event.delta) {
+    state.reasoningSummaryStreamed.add(`${event.item_id ?? ""}:${event.summary_index ?? 0}`);
+    yield { type: "reasoning_summary", delta: event.delta };
+    return;
+  }
+  if (event.type === "response.reasoning_summary_text.done") {
+    const key = `${event.item_id ?? ""}:${event.summary_index ?? 0}`;
+    if (!state.reasoningSummaryStreamed.has(key) && typeof event.text === "string" && event.text.length > 0) {
+      yield { type: "reasoning_summary", delta: event.text };
+    }
+    return;
+  }
+  if (event.type === "response.reasoning_summary_part.added") {
+    yield { type: "reasoning_summary", delta: "\n\n" };
     return;
   }
 

@@ -182,9 +182,14 @@ export async function runAgentViaCanonical(
   // sidebar sits silent during a spawned agent's reply (P4.C4 finding).
   const offStream = options.onEvent
     ? subscribeOpStream(op.id, (chunk) => {
-        const c = chunk as { delta?: string; replace?: boolean; text?: string } | null;
+        const c = chunk as { delta?: string; replace?: boolean; text?: string; reasoning?: boolean } | null;
         if (c?.replace === true) {
           options.onEvent!({ type: "stream", replace: true, text: c.text ?? "" });
+          return;
+        }
+        if (c?.reasoning === true) {
+          const rd = c.delta;
+          if (typeof rd === "string" && rd.length > 0) options.onEvent!({ type: "reasoning", delta: rd });
           return;
         }
         const delta = c?.delta;

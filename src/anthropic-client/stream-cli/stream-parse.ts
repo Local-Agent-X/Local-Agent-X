@@ -75,6 +75,13 @@ export function* processStreamLine(
     if (inner.type === "message_delta" && typeof delta?.stop_reason === "string") {
       state.stopReason = delta.stop_reason;
     }
+    // Extended-thinking summary deltas from the `claude` CLI's stream-json —
+    // reasoning, surfaced on the thinking lane. signature/redacted blocks carry
+    // no readable text and are skipped.
+    if (inner.type === "content_block_delta" && delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
+      yield { type: "thinking", delta: delta.thinking };
+      return;
+    }
     if (inner.type === "content_block_delta" && delta?.type === "text_delta" && typeof delta.text === "string") {
       state.firstResponseSeen = true;
       // Track prevText so the later full-block assistant event doesn't

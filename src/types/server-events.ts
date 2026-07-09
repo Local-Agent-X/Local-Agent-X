@@ -50,6 +50,13 @@ export type ServerEvent =
    *  in openai-compat). Client swaps the bubble's text with `text` instead
    *  of appending. `delta` is omitted on this variant. */
   | { type: "stream"; replace: true; text: string }
+  /** Model-native chain-of-thought, normalized across providers (Grok/Cerebras/
+   *  DeepSeek `reasoning`, Anthropic thinking blocks). Streamed live to a
+   *  collapsible "Thinking" affordance ABOVE the answer bubble — never appended
+   *  to message body and never persisted, so the reasoning stays out of chat
+   *  history. Silent for models that don't emit reasoning; the tool-lifecycle
+   *  events carry visibility for those. Clients that don't handle it ignore it. */
+  | { type: "reasoning"; delta: string }
   | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
   | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string }
   | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean; status?: ToolResultStatus }

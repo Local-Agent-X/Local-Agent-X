@@ -142,6 +142,11 @@ export class CodexAdapter implements Adapter {
             report({ kind: "stream_chunk", body: { delta: (ev as { delta: string }).delta } });
             continue;
           }
+          if (ev.type === "thinking") {
+            const d = (ev as { delta?: string }).delta;
+            if (d) report({ kind: "reasoning_chunk", delta: d });
+            continue;
+          }
           if (ev.type === "tool_call") {
             const tc = ev as { id: string; name: string; arguments: string };
             toolCallIds.push(tc.id);

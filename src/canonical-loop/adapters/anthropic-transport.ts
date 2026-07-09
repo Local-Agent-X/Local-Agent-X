@@ -81,6 +81,12 @@ export function defaultAnthropicTransport(): AnthropicTransport {
           if (req.signal.aborted) return;
           if (ev.type === "text" && ev.delta) {
             yield { type: "text", delta: ev.delta };
+          } else if (ev.type === "thinking" && ev.delta) {
+            // Reasoning summary → thinking lane. Active only on the HTTP API
+            // path (stream-api.ts sets display:"summarized"); the CLI/OAuth
+            // warm-pool path emits thinking blocks with EMPTY text, so this is
+            // dormant there until/unless the `claude` CLI exposes reasoning text.
+            yield { type: "thinking", delta: ev.delta };
           } else if (ev.type === "tool_call") {
             yield {
               type: "tool_call",

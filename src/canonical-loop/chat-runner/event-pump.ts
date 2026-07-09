@@ -40,7 +40,7 @@ export function createEventPump(opId: string): EventPump {
   };
 
   const offStream = subscribeOpStream(opId, (chunk) => {
-    const c = chunk as { delta?: string; replace?: boolean; text?: string } | null;
+    const c = chunk as { delta?: string; replace?: boolean; text?: string; reasoning?: boolean } | null;
     // Adapter-initiated text replacement (e.g. tool-call-from-text
     // extractor stripping JSON that was already streamed). Forward to
     // the client as a stream event with replace:true so it swaps the
@@ -48,6 +48,15 @@ export function createEventPump(opId: string): EventPump {
     if (c?.replace === true) {
       eventQueue.push({ type: "stream", replace: true, text: c.text ?? "" });
       wake();
+      return;
+    }
+    // Live chain-of-thought — a separate rendering lane from answer text.
+    if (c?.reasoning === true) {
+      const rd = c.delta;
+      if (typeof rd === "string" && rd.length > 0) {
+        eventQueue.push({ type: "reasoning", delta: rd });
+        wake();
+      }
       return;
     }
     const delta = c?.delta;

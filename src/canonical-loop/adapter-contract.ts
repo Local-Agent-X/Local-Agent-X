@@ -67,14 +67,20 @@ export interface TurnInput {
 export type AdapterReport =
   | { kind: "stream_chunk"; body: unknown }
   /**
+   * A chunk of the model's chain-of-thought. Normalized across providers
+   * (Grok/Cerebras `delta.reasoning`, DeepSeek `reasoning_content`, Anthropic
+   * thinking blocks) into one report kind so the loop publishes a single
+   * canonical `reasoning` ServerEvent regardless of provider. The orchestrator
+   * resets its idle watchdog on every report, so streaming reasoning also keeps
+   * a long think-only turn (grok-4 family, o-series) from being killed as
+   * "stalled". Consumers that only care about visible answer text ignore it.
+   */
+  | { kind: "reasoning_chunk"; delta: string }
+  /**
    * Liveness ping with no UI payload. Emitted while the adapter is making
-   * progress the user shouldn't see yet — chiefly a reasoning model
-   * streaming chain-of-thought into `reasoning_content`, which we
-   * accumulate silently rather than render. The orchestrator resets its
-   * idle watchdog on every report, so without this a long reasoning turn
-   * (grok-4 family, o-series, etc.) emits nothing for minutes and gets
-   * killed as "stalled" despite working. Consumers that only care about
-   * visible output ignore it.
+   * progress the user shouldn't see and that isn't reasoning either — the
+   * orchestrator resets its idle watchdog on every report, so this keeps a
+   * quiet stretch from reading as a stall. Consumers ignore it.
    */
   | { kind: "heartbeat" }
   /**

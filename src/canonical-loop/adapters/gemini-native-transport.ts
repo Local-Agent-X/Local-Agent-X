@@ -35,7 +35,7 @@ export interface GeminiNativeRequest {
 // Gemini streams a "thought" part during reasoning; the adapter maps this to a
 // heartbeat (keeps the idle watchdog alive) rather than rendering it. Distinct
 // from the shared TransportEvent so the shared union stays provider-agnostic.
-export type GeminiTransportEvent = TransportEvent | { type: "thinking" };
+export type GeminiTransportEvent = TransportEvent | { type: "thinking"; delta?: string };
 
 export interface GeminiNativeTransport {
   stream(req: GeminiNativeRequest): AsyncIterable<GeminiTransportEvent>;
@@ -192,7 +192,7 @@ export function defaultGeminiNativeTransport(): GeminiNativeTransport {
         try { obj = JSON.parse(json); } catch { return; }
         const cand = obj.candidates?.[0];
         for (const part of cand?.content?.parts ?? []) {
-          if ((part as { thought?: boolean }).thought) { yield { type: "thinking" }; continue; }
+          if ((part as { thought?: boolean }).thought) { const tt = (part as { text?: unknown }).text; yield { type: "thinking", delta: typeof tt === "string" ? tt : undefined }; continue; }
           if (typeof (part as { text?: unknown }).text === "string") {
             const t = (part as { text: string }).text;
             if (t.length > 0) yield { type: "text", delta: t };

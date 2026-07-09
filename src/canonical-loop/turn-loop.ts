@@ -147,6 +147,14 @@ export async function driveTurn(
     result = await adapter.runTurn(input, (r: AdapterReport) => {
       watchdog.noteActivity();
       if (r.kind === "heartbeat") { sawReasoning = true; return; }
+      if (r.kind === "reasoning_chunk") {
+        // Live chain-of-thought. Rides the same ephemeral stream bus as text
+        // (bus-only, never persisted) with a `reasoning` marker so the pump
+        // maps it to a `reasoning` ServerEvent instead of answer text.
+        sawReasoning = true;
+        publishStreamChunk(op.id, { reasoning: true, delta: r.delta });
+        return;
+      }
       if (r.kind === "stream_chunk") {
         publishStreamChunk(op.id, r.body);
         return;

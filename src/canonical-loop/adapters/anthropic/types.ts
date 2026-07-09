@@ -70,6 +70,10 @@ export interface TransportTool {
 
 export type TransportEvent =
   | { type: "text"; delta: string }
+  // Live reasoning-summary delta (Anthropic extended-thinking blocks; the
+  // openai-compat and gemini transports also use this shape). The adapter maps
+  // it to the canonical `reasoning_chunk` report.
+  | { type: "thinking"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
   | { type: "tool_observed"; name: string }
   | { type: "error"; code: string; message: string; retryable?: boolean }

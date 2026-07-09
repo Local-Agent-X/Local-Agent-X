@@ -34,8 +34,11 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // Fable 5 and Opus 4.7/4.8 reject `temperature`/`budget_tokens` with a
     // 400. Legacy models keep the enabled+budget+temperature shape (the API
     // requires temperature: 1 when enabled thinking is on).
+    // `display: "summarized"` is required to get readable reasoning — on Opus
+    // 4.8 / Sonnet 5 / Fable 5 the default is "omitted", which streams thinking
+    // blocks with EMPTY text. Without it the "Thinking" UI block would be blank.
     ...(adaptive
-      ? { thinking: { type: "adaptive" } }
+      ? { thinking: { type: "adaptive", display: "summarized" } }
       : { thinking: { type: "enabled", budget_tokens: 3000 }, temperature: 1 }),
   };
 
@@ -153,6 +156,10 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
           } else if (eventType === "content_block_delta") {
             const delta = parsed.delta as Record<string, unknown>;
             if (delta?.type === "text_delta") { sawText = true; const t = delta.text as string; responseText += t; yield { type: "text", delta: t }; }
+            // Extended-thinking summary deltas — reasoning, not answer text.
+            // `signature_delta` (block signature) and redacted_thinking carry no
+            // readable text and are intentionally ignored.
+            else if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") { yield { type: "thinking", delta: delta.thinking as string }; }
             else if (delta?.type === "input_json_delta") currentToolArgs += delta.partial_json as string;
           } else if (eventType === "content_block_stop") {
             if (currentToolId) {

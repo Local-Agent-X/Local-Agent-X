@@ -97,7 +97,7 @@ export class GeminiNativeAdapter implements Adapter {
             try { this.aborter?.abort(); } catch { /* already aborted */ }
             break;
           }
-          if (ev.type === "thinking") { report({ kind: "heartbeat" }); continue; }
+          if (ev.type === "thinking") { if (ev.delta) report({ kind: "reasoning_chunk", delta: ev.delta }); continue; }
           if (ev.type === "text") {
             if (ev.delta.length === 0) continue;
             assembledText += ev.delta;

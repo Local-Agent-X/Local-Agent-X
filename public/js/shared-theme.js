@@ -3,6 +3,15 @@ const THEME_CYCLE = ['dark', 'light', 'system'];
 const THEME_ICONS = { dark: '☀', light: '🌙', system: '💻' };
 const THEME_LABELS = { dark: 'Dark', light: 'Light', system: 'System' };
 
+// Accent palettes — the "Theme" axis, independent of the light/dark Mode axis.
+// Each name maps to an `html[data-palette="…"]` block in app.css that overrides
+// the accent tokens (with a light-mode variant for contrast).
+const PALETTES = ['aurora', 'forge', 'phosphor', 'nebula', 'cobalt', 'bloom', 'graphite'];
+function applyPalette(name) {
+  if (!PALETTES.includes(name)) name = 'aurora';
+  document.documentElement.setAttribute('data-palette', name);
+}
+
 function getEffectiveTheme(pref) {
   if (pref === 'system') return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   return pref;
@@ -68,26 +77,44 @@ function syncNativeTitlebarOverlay() {
   } catch {}
 }
 
-function toggleTheme() {
-  const saved = localStorage.getItem('lax_theme') || 'dark';
-  const idx = THEME_CYCLE.indexOf(saved);
-  const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length];
-  localStorage.setItem('lax_theme', next);
-  applyTheme(next);
-  // When running in the Electron shell, mirror the choice to the desktop
-  // so the BrowserWindow's underlying paint colour follows the theme
-  // (otherwise the top strip behind the traffic lights stays dark in light
-  // mode). Safe to call in browser — `window.desktop` is undefined there.
-  try { window.desktop?.setSetting?.('theme', next); } catch {}
-  // Push to server so the choice survives a refresh — without this, the
-  // async /api/settings fetch on next load would overwrite localStorage
-  // with the stale server-side default.
+// Persist a partial settings patch to the server so choices survive a refresh
+// (the async /api/settings fetch on next load would otherwise overwrite
+// localStorage with the stale server default). No-op-safe in a plain browser.
+function persistSetting(patch) {
   const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('lax_token') || '');
   fetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
-    body: JSON.stringify({ theme: next }),
+    body: JSON.stringify(patch),
   }).catch(() => {});
+}
+
+// Set a specific Mode (brightness) preference. The sidebar toggle cycles these;
+// the Appearance tab sets them directly.
+function setThemePref(pref) {
+  if (!THEME_CYCLE.includes(pref)) return;
+  localStorage.setItem('lax_theme', pref);
+  applyTheme(pref);
+  // Mirror to the Electron shell so the window's native paint follows the theme
+  // (otherwise the strip behind the traffic lights stays dark in light mode).
+  try { window.desktop?.setSetting?.('theme', pref); } catch {}
+  persistSetting({ theme: pref });
+  if (typeof refreshAppearanceUI === 'function') refreshAppearanceUI();
+}
+
+// Set the accent Palette (the "Theme" axis). Applies in both light and dark.
+function setPalette(name) {
+  if (!PALETTES.includes(name)) return;
+  localStorage.setItem('lax_palette', name);
+  applyPalette(name);
+  persistSetting({ palette: name });
+  if (typeof refreshAppearanceUI === 'function') refreshAppearanceUI();
+}
+
+function toggleTheme() {
+  const saved = localStorage.getItem('lax_theme') || 'dark';
+  const idx = THEME_CYCLE.indexOf(saved);
+  setThemePref(THEME_CYCLE[(idx + 1) % THEME_CYCLE.length]);
 }
 
 // Apply saved theme on load — check server-side setting first, then localStorage
@@ -100,9 +127,15 @@ function toggleTheme() {
         localStorage.setItem('lax_theme', settings.theme);
         applyTheme(settings.theme);
       }
+      if (settings && settings.palette) {
+        localStorage.setItem('lax_palette', settings.palette);
+        applyPalette(settings.palette);
+      }
+      if (typeof refreshAppearanceUI === 'function') refreshAppearanceUI();
     }).catch(() => {});
-  // Apply local default immediately (server override arrives async)
+  // Apply local defaults immediately (server override arrives async)
   applyTheme(localStorage.getItem('lax_theme') || 'dark');
+  applyPalette(localStorage.getItem('lax_palette') || 'aurora');
   // Listen for OS theme changes when in system mode
   window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
     if (localStorage.getItem('lax_theme') === 'system') applyTheme('system');

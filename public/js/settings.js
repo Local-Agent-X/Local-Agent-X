@@ -116,13 +116,51 @@ function switchTab(id) {
   document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-pill').forEach(el => el.classList.remove('active'));
   const pane = document.getElementById('stab-' + id); if (pane) pane.classList.add('active');
-  if (event?.target) event.target.classList.add('active');
+  // Highlight the pill: prefer the clicked element, else find it by data-tab so
+  // programmatic switchTab() calls (e.g. from the command palette) still light up.
+  const pill = (event?.target?.classList?.contains('tab-pill') ? event.target : null)
+    || document.querySelector('.tab-pill[data-tab="' + id + '"]');
+  if (pill) pill.classList.add('active');
   if (id === 'image' && typeof refreshVoiceSetup === 'function') refreshVoiceSetup();
   if (id === 'image' && typeof loadUploadsStats === 'function') loadUploadsStats();
   if (id === 'usage' && typeof loadUsage === 'function') loadUsage();
+  if (id === 'secrets' && typeof loadSecrets === 'function') loadSecrets();
+  if (id === 'protocols' && typeof protocolLoad === 'function') protocolLoad();
+  if (id === 'appearance' && typeof refreshAppearanceUI === 'function') refreshAppearanceUI();
   if (id === 'mobile') ensureMobilePairFrame();
   if (window.MemoryBrain) { if (id === 'memory') window.MemoryBrain.ensure(); else window.MemoryBrain.pause(); }
 }
+
+// ── Settings pop-out modal ──
+// Settings is no longer a route/page — it's a centered overlay dialog opened
+// from the sidebar gear, the command palette, or Ctrl+,. Pass an optional tab
+// id to jump straight to a section (e.g. openSettings('secrets')).
+function openSettings(tab) {
+  const ov = document.getElementById('settings-modal-overlay');
+  if (!ov) return;
+  if (tab) switchTab(tab);
+  ov.classList.add('visible'); // CSS handles the (cheap) enter transition
+}
+function closeSettings() {
+  const ov = document.getElementById('settings-modal-overlay');
+  if (ov) ov.classList.remove('visible');
+}
+window.openSettings = openSettings;
+window.closeSettings = closeSettings;
+
+// Reflect the saved Mode + Palette as the active states in the Appearance tab.
+// Called by shared-theme.js after any change, on switchTab('appearance'), and
+// once on load (defined here since it touches the settings DOM).
+function refreshAppearanceUI() {
+  const mode = localStorage.getItem('lax_theme') || 'dark';
+  const palette = localStorage.getItem('lax_palette') || 'aurora';
+  document.querySelectorAll('#mode-seg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  document.querySelectorAll('.theme-card').forEach(c => c.classList.toggle('active', c.dataset.palette === palette));
+  const rt = document.getElementById('tog-rain');
+  if (rt) rt.classList.toggle('on', !!(window.phraseRain && window.phraseRain.isOn && window.phraseRain.isOn()));
+}
+window.refreshAppearanceUI = refreshAppearanceUI;
+document.addEventListener('DOMContentLoaded', refreshAppearanceUI);
 
 // Embed the pairing page (account.html — device-code login + QR) inside the
 // Mobile settings tab. Lazy: only built on first open, so its status polling

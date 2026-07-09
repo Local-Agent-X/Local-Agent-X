@@ -7,7 +7,7 @@
 // controllable iframe tabs), the update-banner, and the boot sequence.
 
 // ── Routing ──
-const ROUTES = ['chat', 'settings', 'secrets', 'protocols', 'missions', 'apps', 'agents'];
+const ROUTES = ['chat', 'missions', 'apps', 'agents'];
 var _sidebarPins = []; // Dynamic pinned pages (var for cross-script WebSocket access)
 
 function navigate(route) {

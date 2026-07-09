@@ -25,6 +25,9 @@
     'This message will self-destruct'
   ];
 
+  // Single source of truth — also consumed by the phrase-rain background.
+  window.THINKING_PHRASES = PHRASES;
+
   function pick(exclude) {
     var p = PHRASES[Math.floor(Math.random() * PHRASES.length)];
     if (exclude && p === exclude && PHRASES.length > 1) return pick(exclude);

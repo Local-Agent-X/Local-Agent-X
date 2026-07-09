@@ -153,18 +153,12 @@
   <div id="utility-bar" role="toolbar" aria-label="Navigation">
     <button class="util-btn" data-route="apps" onclick="navigate('apps')" aria-label="Apps" title="Apps"><span class="util-icon">&#9638;</span></button>
     <button class="util-btn" data-route="agents" onclick="navigate('agents')" aria-label="Agents" title="Agents"><span class="util-icon">&#129302;</span></button>
-    <button class="util-btn" data-route="protocols" onclick="navigate('protocols')" aria-label="Protocols" title="Protocols"><span class="util-icon">&#129504;</span></button>
     <button class="util-btn" data-route="missions" onclick="navigate('missions')" aria-label="Missions" title="Missions"><span class="util-icon">&#9889;</span></button>
-    <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault" title="Secrets"><span class="util-icon">&#128273;</span></button>
-    <button class="util-btn" data-route="settings" onclick="navigate('settings')" aria-label="Settings" title="Settings"><span class="util-icon">&#9881;</span></button>
+    <button class="util-btn" onclick="openSettings()" aria-label="Settings" title="Settings"><span class="util-icon">&#9881;</span></button>
     <button class="util-btn" onclick="toggleNotifPanel()" aria-label="Notifications" title="Notifications" style="position:relative"><span class="util-icon">&#128276;</span><span id="notif-badge" class="notif-badge" style="display:none"></span></button>
+    <button id="theme-toggle" class="util-btn" onclick="toggleTheme()" title="Toggle theme (dark/light/system)" aria-label="Toggle theme">&#9728;</button>
   </div>
-
-  <div id="sidebar-footer">
-    <span id="auth-dot" role="status" aria-label="Connection status"></span>
-    <span id="auth-label">checking...</span>
-    <button id="theme-toggle" onclick="toggleTheme()" title="Toggle theme (dark/light/system)" aria-label="Toggle theme">☀</button>
-  </div>
+  <div id="sidebar-resizer" title="Drag to resize · double-click to reset" aria-hidden="true"></div>
 </div>
 
 <!-- ═══ MAIN CONTENT (swaps based on route) ═══ -->
@@ -269,32 +263,35 @@
   </div>
 
   <!-- ══ SETTINGS PAGE ══ -->
-  <div id="page-settings" class="page">
-    <div class="page-header">
-      <h2>SETTINGS</h2>
-      <div style="flex:1"></div>
-      <span id="save-status" style="font-family:var(--mono);font-size:.68rem;color:var(--muted)"></span>
-      <!-- Settings import/export -->
-      <button class="action-btn secondary" style="padding:7px 14px;font-size:.78rem" onclick="exportSettings()" aria-label="Export settings as JSON" title="Export settings">Export</button>
-      <button class="action-btn secondary" style="padding:7px 14px;font-size:.78rem" onclick="importSettings()" aria-label="Import settings from JSON" title="Import settings">Import</button>
-      <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="saveSettings()">SAVE</button>
-    </div>
-    <div style="padding:0 24px 8px">
-      <input id="settings-search" type="search" class="field-input" placeholder="Search settings..." oninput="searchSettings(this.value)" style="font-size:.75rem;padding:6px 12px;width:100%;max-width:300px">
-    </div>
-    <div class="settings-tabs">
-      <button class="tab-pill active" onclick="switchTab('general')">Account</button>
-      <button class="tab-pill" onclick="switchTab('ai')">AI & Models</button>
-      <button class="tab-pill" onclick="switchTab('usage')">Usage</button>
-      <button class="tab-pill" onclick="switchTab('memory')">Memory</button>
-      <button class="tab-pill" onclick="switchTab('image')">Media</button>
-      <button class="tab-pill" onclick="switchTab('security')">Security</button>
-      <button class="tab-pill" onclick="switchTab('whatsapp')">Communication</button>
-      <button id="tab-pill-mobile" class="tab-pill" onclick="switchTab('mobile')" style="display:none">Mobile</button>
-      <button class="tab-pill" onclick="switchTab('integrations')">Tools &amp; Integrations</button>
-      <button class="tab-pill" onclick="switchTab('sync')">Sync</button>
-    </div>
-    <div class="settings-content">
+  <div id="settings-modal-overlay" class="settings-overlay" onclick="if(event.target===this)closeSettings()">
+    <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Settings">
+      <nav class="settings-nav" aria-label="Settings sections">
+        <div class="settings-nav-title">SETTINGS</div>
+        <input id="settings-search" type="search" class="field-input settings-nav-search" placeholder="Search settings…" oninput="searchSettings(this.value)">
+        <button class="tab-pill active" data-tab="general" onclick="switchTab('general')">Account</button>
+        <button class="tab-pill" data-tab="appearance" onclick="switchTab('appearance')">Appearance</button>
+        <button class="tab-pill" data-tab="ai" onclick="switchTab('ai')">AI &amp; Models</button>
+        <button class="tab-pill" data-tab="usage" onclick="switchTab('usage')">Usage</button>
+        <button class="tab-pill" data-tab="memory" onclick="switchTab('memory')">Memory</button>
+        <button class="tab-pill" data-tab="image" onclick="switchTab('image')">Media</button>
+        <button class="tab-pill" data-tab="security" onclick="switchTab('security')">Security</button>
+        <button class="tab-pill" data-tab="secrets" onclick="switchTab('secrets')">Secrets</button>
+        <button class="tab-pill" data-tab="protocols" onclick="switchTab('protocols')">Protocols</button>
+        <button class="tab-pill" data-tab="whatsapp" onclick="switchTab('whatsapp')">Communication</button>
+        <button id="tab-pill-mobile" class="tab-pill" data-tab="mobile" onclick="switchTab('mobile')" style="display:none">Mobile</button>
+        <button class="tab-pill" data-tab="integrations" onclick="switchTab('integrations')">Tools &amp; Integrations</button>
+        <button class="tab-pill" data-tab="sync" onclick="switchTab('sync')">Sync</button>
+      </nav>
+      <div class="settings-main">
+        <div class="settings-main-header">
+          <span id="save-status" style="font-family:var(--mono);font-size:.68rem;color:var(--muted)"></span>
+          <div style="flex:1"></div>
+          <button class="action-btn secondary" style="padding:7px 14px;font-size:.78rem" onclick="exportSettings()" aria-label="Export settings as JSON" title="Export settings">Export</button>
+          <button class="action-btn secondary" style="padding:7px 14px;font-size:.78rem" onclick="importSettings()" aria-label="Import settings from JSON" title="Import settings">Import</button>
+          <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="saveSettings()">SAVE</button>
+          <button class="settings-modal-close" onclick="closeSettings()" aria-label="Close settings" title="Close">&times;</button>
+        </div>
+        <div class="settings-content">
       <!-- General -->
       <div id="stab-general" class="tab-pane active">
         <div class="section-card">
@@ -864,49 +861,108 @@
           <div id="sync-result" style="font-size:.72rem;color:var(--muted);margin-top:10px;font-family:var(--mono)"></div>
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- ══ SECRETS PAGE ══ -->
-  <div id="page-secrets" class="page">
-    <div class="page-header">
-      <h2>SECRETS VAULT</h2>
-      <span class="page-subtitle" id="secret-count">0 stored</span>
-      <div style="flex:1"></div>
-      <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="openSecretModal()">+ New Secret</button>
-    </div>
-    <div class="drill-container">
-      <div id="secrets-list-view" class="drill-list-view">
-        <div id="secrets-list" class="drill-grid"></div>
-      </div>
-      <div id="secret-detail-view" class="drill-detail-view">
-        <button class="drill-back" onclick="backToSecretsList()">&larr; All secrets</button>
-        <div style="padding:18px 20px;border:1px solid var(--border);border-radius:10px;background:var(--surface);max-width:680px">
-          <h2 id="detail-name" style="font-family:var(--mono);font-size:.95rem;color:var(--accent);margin-bottom:4px"></h2>
-          <div id="detail-service" style="font-size:.75rem;color:var(--muted);margin-bottom:8px"></div>
-          <div id="detail-meta" style="font-size:.72rem;color:var(--muted);margin-bottom:14px"></div>
-          <div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Usage:</div>
-          <code id="detail-usage" style="display:block;font-family:var(--mono);font-size:.8rem;color:var(--accent);padding:8px;background:var(--bg);border-radius:6px;margin-bottom:14px"></code>
-          <div class="btn-row"><button class="action-btn primary" onclick="openSecretUpdateModal()">Update Value</button><button class="action-btn danger" onclick="deleteSecretItem()">Delete</button></div>
+      <!-- Appearance (Mode × Palette) -->
+      <div id="stab-appearance" class="tab-pane">
+        <div class="section-card">
+          <div class="appearance-row">
+            <div>
+              <div class="section-title">Mode</div>
+              <div class="section-desc">Overall brightness. System follows your OS.</div>
+            </div>
+            <div class="seg-control" id="mode-seg">
+              <button class="seg-btn" data-mode="light" onclick="setThemePref('light')">&#9728; Light</button>
+              <button class="seg-btn" data-mode="dark" onclick="setThemePref('dark')">&#9789; Dark</button>
+              <button class="seg-btn" data-mode="system" onclick="setThemePref('system')">&#128421; System</button>
+            </div>
+          </div>
+          <div class="section-title">Theme</div>
+          <div class="section-desc">Accent palette applied across the whole app — works in both light and dark.</div>
+          <div class="theme-grid" id="theme-grid">
+            <button class="theme-card" data-palette="aurora" onclick="setPalette('aurora')"><div class="theme-card-preview" style="--ps:#0f0f18;--ps-l:#eef1f5;--pv:#40f0f0;--pv-l:#0066cc"><span class="tcp-bar" style="width:62%"></span><span class="tcp-bar dim" style="width:46%"></span><span class="tcp-chip"></span></div><div class="theme-card-body"><div class="theme-card-name">Aurora</div><div class="theme-card-desc">Cyan on deep space — the classic</div></div></button>
+            <button class="theme-card" data-palette="forge" onclick="setPalette('forge')"><div class="theme-card-preview" style="--ps:#1a120b;--ps-l:#fff6ec;--pv:#f0872e;--pv-l:#c85a12"><span class="tcp-bar" style="width:62%"></span><span class="tcp-bar dim" style="width:46%"></span><span class="tcp-chip"></span></div><div class="theme-card-body"><div class="theme-card-name">Forge</div><div class="theme-card-desc">Warm amber and bronze</div></div></button>
+            <button class="theme-card" data-palette="phosphor" onclick="setPalette('phosphor')"><div class="theme-card-preview" style="--ps:#0a120a;--ps-l:#eef7ee;--pv:#22e06a;--pv-l:#12a04e"><span class="tcp-bar" style="width:62%"></span><span class="tcp-bar dim" style="width:46%"></span><span class="tcp-chip"></span></div><div class="theme-card-body"><div class="theme-card-name">Phosphor</div><div class="theme-card-desc">Neon green — terminal vibes</div></div></button>
+            <button class="theme-card" data-palette="nebula" onclick="setPalette('nebula')"><div class="theme-card-preview" style="--ps:#120f1e;--ps-l:#efeaf8;--pv:#a78bfa;--pv-l:#6d4bd8"><span class="tcp-bar" style="width:62%"></span><span class="tcp-bar dim" style="width:46%"></span><span class="tcp-chip"></span></div><div class="theme-card-body"><div class="theme-card-name">Nebula</div><div class="theme-card-desc">Soft purple, cool and calm</div></div></button>
+            <button class="theme-card" data-palette="cobalt" onclick="setPalette('cobalt')"><div class="theme-card-preview" style="--ps:#0f131c;--ps-l:#eaeef4;--pv:#5b8def;--pv-l:#2f6bd8"><span class="tcp-bar" style="width:62%"></span><span class="tcp-bar dim" style="width:46%"></span><span class="tcp-chip"></span></div><div class="theme-card-body"><div class="theme-card-name">Cobalt</div><div class="theme-card-desc">Cool developer blue</div></div></button>
+            <button class="theme-card" data-palette="bloom" onclick="setPalette('bloom')"><div class="theme-card-preview" style="--ps:#1a0f18;--ps-l:#f5e6ef;--pv:#f65b9c;--pv-l:#d21e6e"><span class="tcp-bar" style="width:62%"></span><span class="tcp-bar dim" style="width:46%"></span><span class="tcp-chip"></span></div><div class="theme-card-body"><div class="theme-card-name">Bloom</div><div class="theme-card-desc">Magenta pop</div></div></button>
+            <button class="theme-card" data-palette="graphite" onclick="setPalette('graphite')"><div class="theme-card-preview" style="--ps:#141417;--ps-l:#ececef;--pv:#9aa0b5;--pv-l:#4a4f63"><span class="tcp-bar" style="width:62%"></span><span class="tcp-bar dim" style="width:46%"></span><span class="tcp-chip"></span></div><div class="theme-card-body"><div class="theme-card-name">Graphite</div><div class="theme-card-desc">Grayscale — minimal and focused</div></div></button>
+          </div>
+          <div class="appearance-row" style="margin-top:22px;margin-bottom:0">
+            <div>
+              <div class="section-title">Animated background</div>
+              <div class="section-desc">Rain the agent's covert-ops phrases in the current accent color. Off by default.</div>
+            </div>
+            <div class="toggle" id="tog-rain" onclick="toggleRain(this)" role="switch" aria-label="Animated phrase-rain background"></div>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div id="secret-create-modal-overlay" class="app-modal-overlay" onclick="if(event.target===this)closeSecretModal()">
-      <div class="app-modal">
-        <div class="app-modal-header">
-          <h3 id="secret-modal-title">New Secret</h3>
-          <button class="app-modal-close" onclick="closeSecretModal()" title="Close">×</button>
+      <!-- Secrets (moved from standalone page) -->
+      <div id="stab-secrets" class="tab-pane">
+        <div class="page-header" style="padding:0 0 16px">
+          <h2>SECRETS VAULT</h2>
+          <span class="page-subtitle" id="secret-count">0 stored</span>
+          <div style="flex:1"></div>
+          <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="openSecretModal()">+ New Secret</button>
         </div>
-        <p style="font-size:.75rem;color:var(--muted);margin-bottom:16px">Encrypted at rest. Reference in agent tools as <code style="color:var(--accent)">{{NAME}}</code>.</p>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div class="field"><label class="field-label">Name</label><input class="field-input" id="new-secret-name" placeholder="GITHUB_TOKEN"/></div>
-          <div class="field"><label class="field-label">Service <span style="color:var(--muted);font-weight:400">(optional)</span></label><input class="field-input" id="new-secret-service" placeholder="GitHub"/></div>
+        <div class="drill-container">
+          <div id="secrets-list-view" class="drill-list-view">
+            <div id="secrets-list" class="drill-grid"></div>
+          </div>
+          <div id="secret-detail-view" class="drill-detail-view">
+            <button class="drill-back" onclick="backToSecretsList()">&larr; All secrets</button>
+            <div style="padding:18px 20px;border:1px solid var(--border);border-radius:10px;background:var(--surface);max-width:680px">
+              <h2 id="detail-name" style="font-family:var(--mono);font-size:.95rem;color:var(--accent);margin-bottom:4px"></h2>
+              <div id="detail-service" style="font-size:.75rem;color:var(--muted);margin-bottom:8px"></div>
+              <div id="detail-meta" style="font-size:.72rem;color:var(--muted);margin-bottom:14px"></div>
+              <div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Usage:</div>
+              <code id="detail-usage" style="display:block;font-family:var(--mono);font-size:.8rem;color:var(--accent);padding:8px;background:var(--bg);border-radius:6px;margin-bottom:14px"></code>
+              <div class="btn-row"><button class="action-btn primary" onclick="openSecretUpdateModal()">Update Value</button><button class="action-btn danger" onclick="deleteSecretItem()">Delete</button></div>
+            </div>
+          </div>
         </div>
-        <div class="field"><label class="field-label">Value</label><input class="field-input" id="new-secret-value" type="password" placeholder="ghp_xxx" autocomplete="off"/></div>
-        <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
-          <button class="action-btn secondary" onclick="closeSecretModal()">Cancel</button>
-          <button class="action-btn primary" id="secret-modal-submit" onclick="saveSecret()">Add Secret</button>
+
+        <div id="secret-create-modal-overlay" class="app-modal-overlay" onclick="if(event.target===this)closeSecretModal()">
+          <div class="app-modal">
+            <div class="app-modal-header">
+              <h3 id="secret-modal-title">New Secret</h3>
+              <button class="app-modal-close" onclick="closeSecretModal()" title="Close">×</button>
+            </div>
+            <p style="font-size:.75rem;color:var(--muted);margin-bottom:16px">Encrypted at rest. Reference in agent tools as <code style="color:var(--accent)">{{NAME}}</code>.</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="field"><label class="field-label">Name</label><input class="field-input" id="new-secret-name" placeholder="GITHUB_TOKEN"/></div>
+              <div class="field"><label class="field-label">Service <span style="color:var(--muted);font-weight:400">(optional)</span></label><input class="field-input" id="new-secret-service" placeholder="GitHub"/></div>
+            </div>
+            <div class="field"><label class="field-label">Value</label><input class="field-input" id="new-secret-value" type="password" placeholder="ghp_xxx" autocomplete="off"/></div>
+            <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
+              <button class="action-btn secondary" onclick="closeSecretModal()">Cancel</button>
+              <button class="action-btn primary" id="secret-modal-submit" onclick="saveSecret()">Add Secret</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Protocols (moved from standalone page) -->
+      <div id="stab-protocols" class="tab-pane">
+        <div class="page-header" style="padding:0 0 16px">
+          <h2>PROTOCOLS</h2>
+          <div style="flex:1"></div>
+          <span class="page-subtitle" id="protocol-count"></span>
+        </div>
+        <div class="drill-container">
+          <div id="protocols-list-view" class="drill-list-view">
+            <div class="drill-toolbar">
+              <input id="protocol-search" class="drill-search" type="search" placeholder="Search protocols…" autocomplete="off" oninput="protocolFilter()"/>
+              <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="protocolStartNew()">+ New Protocol</button>
+            </div>
+            <div id="protocol-tree"></div>
+          </div>
+          <div id="protocol-detail-wrap" class="drill-detail-view">
+            <button class="drill-back" onclick="backToProtocolsList()">&larr; All protocols</button>
+            <div id="protocol-view" class="protocol-view"></div>
+          </div>
+        </div>
+      </div>
         </div>
       </div>
     </div>
@@ -1024,27 +1080,6 @@
           <button class="action-btn secondary" onclick="closeMissionModal()">Cancel</button>
           <button class="action-btn primary" onclick="addCronJob()">Schedule Mission</button>
         </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="page-protocols" class="page">
-    <div class="page-header">
-      <h2>PROTOCOLS</h2>
-      <div style="flex:1"></div>
-      <span class="page-subtitle" id="protocol-count"></span>
-    </div>
-    <div class="drill-container">
-      <div id="protocols-list-view" class="drill-list-view">
-        <div class="drill-toolbar">
-          <input id="protocol-search" class="drill-search" type="search" placeholder="Search protocols…" autocomplete="off" oninput="protocolFilter()"/>
-          <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="protocolStartNew()">+ New Protocol</button>
-        </div>
-        <div id="protocol-tree"></div>
-      </div>
-      <div id="protocol-detail-wrap" class="drill-detail-view">
-        <button class="drill-back" onclick="backToProtocolsList()">&larr; All protocols</button>
-        <div id="protocol-view" class="protocol-view"></div>
       </div>
     </div>
   </div>
@@ -1307,6 +1342,7 @@
 <script src="/js/chat-ws.js?v=v2"></script>
 <script src="/js/chat-render-artifacts.js?v=v2"></script>
 <script src="/js/thinking-phrases.js?v=v1"></script>
+<script src="/js/phrase-rain.js?v=v1"></script>
 <script src="/js/chat-render-window.js?v=v1"></script>
 <script src="/js/chat-render.js?v=v4"></script>
 <script src="/js/chat-render-live.js?v=v1"></script>

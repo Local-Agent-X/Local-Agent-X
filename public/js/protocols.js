@@ -11,7 +11,7 @@ let searchQuery = "";
 const SOURCE_ORDER = { custom: 0, imported: 1, bundled: 2, builtin: 3 };
 
 function init_protocols() { protocolLoad(); }
-if (document.getElementById('page-protocols')?.classList.contains('active')) { protocolLoad(); }
+if (document.getElementById('stab-protocols')?.classList.contains('active')) { protocolLoad(); }
 
 async function protocolLoad() {
   const tree = document.getElementById('protocol-tree');

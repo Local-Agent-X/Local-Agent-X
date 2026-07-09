@@ -7,8 +7,9 @@ let commandPaletteOpen = false;
 function getCommands() {
   const cmds = [
     { id: 'new-chat', label: 'New Chat', shortcut: '', action: () => newChat() },
-    { id: 'settings', label: 'Open Settings', shortcut: '', action: () => navigate('settings') },
-    { id: 'secrets', label: 'Open Secrets Vault', shortcut: '', action: () => navigate('secrets') },
+    { id: 'settings', label: 'Open Settings', shortcut: '', action: () => openSettings() },
+    { id: 'secrets', label: 'Open Secrets Vault', shortcut: '', action: () => openSettings('secrets') },
+    { id: 'protocols', label: 'Open Protocols', shortcut: '', action: () => openSettings('protocols') },
     { id: 'cron', label: 'Open Cron Jobs', shortcut: '', action: () => navigate('cron') },
     { id: 'chat', label: 'Go to Chat', shortcut: '', action: () => navigate('chat') },
     { id: 'theme-toggle', label: 'Toggle Theme', shortcut: '', action: () => toggleTheme() },
@@ -159,7 +160,7 @@ document.addEventListener('keydown', (e) => {
   // Ctrl+, — Settings
   if ((e.ctrlKey || e.metaKey) && e.key === ',') {
     e.preventDefault();
-    if (typeof navigate === 'function') navigate('settings');
+    if (typeof openSettings === 'function') openSettings();
     return;
   }
 
@@ -182,6 +183,8 @@ document.addEventListener('keydown', (e) => {
 
   // Escape — Close modals/overlays
   if (e.key === 'Escape') {
+    const setOv = document.getElementById('settings-modal-overlay');
+    if (setOv && setOv.classList.contains('visible')) { closeSettings(); return; }
     const so = document.getElementById('shortcuts-overlay');
     if (so && so.style.display === 'flex') { so.style.display = 'none'; return; }
     const np = document.getElementById('notif-panel');

@@ -132,7 +132,10 @@ function classifyModelTier(model) {
   if (/claude-opus-4|claude-sonnet-4-[6-9]|claude-haiku-4-5/.test(m)) return 'strong';
   if (/^o[34]($|-|\.)/.test(m)) return 'strong';
   if (/gemini-(2\.5|3)/.test(m)) return 'strong';
-  // grok-4 intentionally medium — thinner tool-use RLHF than OpenAI/Anthropic
+  // grok-4.x (4.5/4.3/4.20): full catalog. Earlier this was forced to medium on a
+  // thin-tool-use-RLHF theory; the tighter cap made it worse (cut real tool calls),
+  // so model-tiers.ts flipped it to strong. Keep in sync with that.
+  if (/^grok-4(\b|-|$)/.test(m)) return 'strong';
   return 'medium';
 }
 

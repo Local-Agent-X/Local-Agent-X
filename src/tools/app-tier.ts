@@ -75,14 +75,18 @@ const FRONTEND_SPA_RE = new RegExp(
   "i",
 );
 
-// Real-BACKEND signals. HIGH PRECISION only — every entry here genuinely implies
-// a server process the static HTML path can't honestly provide. Deliberately
-// omits "dashboard", "database", "db", "api" (bare) — all of which a plain HTML
-// app uses. The frontend build-tool signals moved to FRONTEND_SPA_RE above.
-const FULL_STACK_RE = new RegExp(
+// Real-BACKEND signals, HIGH PRECISION only — split into HARD and SOFT so a
+// NEGATED mention ("no backend", "client-side") can't fake a backend into being.
+//
+// HARD: a named server/db engine, explicit "full-stack", an API server — an
+// unambiguous server process the static path can't honestly provide. These win
+// full-stack even alongside a "no backend" (a self-contradictory prompt that
+// names Postgres still needs Postgres). Deliberately omits bare "dashboard",
+// "database", "db", "api" — all of which a plain HTML app uses.
+const FULL_STACK_HARD_RE = new RegExp(
   [
-    // backend servers / frameworks
-    "\\b(?:express|fastify|nest\\.?js|koa|hapi|django|flask|fastapi|rails|laravel|spring\\s?boot|node\\s+server|backend|back-?end|server-?side|api\\s+server|rest\\s+api|graphql|web\\s?socket\\s+server)\\b",
+    // backend servers / frameworks (named)
+    "\\b(?:express|fastify|nest\\.?js|koa|hapi|django|flask|fastapi|rails|laravel|spring\\s?boot|node\\s+server|api\\s+server|rest\\s+api|graphql|web\\s?socket\\s+server)\\b",
     // explicit full-stack phrasing
     "\\bfull[-\\s]?stack\\b",
     // real database engines / ORMs (named — not the bare word "database")
@@ -92,6 +96,25 @@ const FULL_STACK_RE = new RegExp(
   ].join("|"),
   "i",
 );
+
+// SOFT: a bare "backend" / "server-side" mention. Real when unqualified ("build
+// me a backend"), but a client-only app that says "no backend" / "client-side"
+// used to trip this and get mis-routed to full-stack — the exact failure where a
+// React SPA request became a faked static page. Suppressed when NEGATED_BACKEND_RE
+// fires.
+const FULL_STACK_SOFT_RE = /\b(?:back-?end|server-?side)\b/i;
+
+// Negation / client-only framing that means "there is NO backend" — so a SOFT
+// backend mention in the same prompt is describing what the app does NOT have.
+const NEGATED_BACKEND_RE =
+  /\b(?:no|without(?:\s+a)?|not\s+a)\s+(?:back-?end|server)\b|\bclient[-\s]?side\b|\bserverless\b|\bno[-\s]?server\b/i;
+
+/** True when the brief genuinely implies a real backend: a HARD signal always,
+ *  or a SOFT signal that isn't negated by client-only framing. */
+function impliesFullStack(text: string): boolean {
+  if (FULL_STACK_HARD_RE.test(text)) return true;
+  return FULL_STACK_SOFT_RE.test(text) && !NEGATED_BACKEND_RE.test(text);
+}
 
 // Real-APP phrasing — a plain-English request for a real multi-screen app that
 // names NO framework. This is the routing fix for the common case: a normal
@@ -132,7 +155,7 @@ export function classifyAppTier(prompt: string): AppTier {
   const text = prompt || "";
   if (COMPILED_NATIVE_RE.test(text)) return "compiled-native";
   if (FRONTEND_SPA_RE.test(text)) return "frontend-spa";
-  if (FULL_STACK_RE.test(text)) return "full-stack";
+  if (impliesFullStack(text)) return "full-stack";
   if (REAL_APP_RE.test(text)) return "frontend-spa";
   return "quick-html";
 }

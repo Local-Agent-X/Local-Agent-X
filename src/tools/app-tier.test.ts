@@ -45,6 +45,31 @@ describe("classifyAppTier — full-stack (real backend, no build-step frontend)"
   ])("flags %j as full-stack", (prompt) => {
     expect(classifyAppTier(prompt)).toBe("full-stack");
   });
+
+  it("a bare unqualified 'backend' still implies full-stack", () => {
+    expect(classifyAppTier("build me a backend with a few endpoints")).toBe("full-stack");
+    expect(classifyAppTier("a server-side rendered notes app")).toBe("full-stack");
+  });
+});
+
+describe("classifyAppTier — negated backend does NOT fake a full-stack app", () => {
+  // The regression: a client-only React SPA whose brief says "no backend" tripped
+  // the bare 'backend' word and routed to full-stack → the model shipped a faked
+  // static index.html instead of a real Vite build.
+  it.each([
+    "Build a React web app — a finance tracker, all client-side (no backend; localStorage)",
+    "a web app for budgeting, client-side only, no backend",
+    "a client-side todo web app without a server",
+    "a serverless single-page web app for notes",
+  ])("routes %j to frontend-spa, not full-stack", (prompt) => {
+    expect(classifyAppTier(prompt)).toBe("frontend-spa");
+  });
+
+  it("a NAMED engine still wins full-stack even when the brief also says 'no backend'", () => {
+    // Self-contradictory, but an explicit Postgres genuinely needs a server.
+    expect(classifyAppTier("a client-side app, no backend, data in postgres")).toBe("full-stack");
+    expect(classifyAppTier("no backend really — just an express server with two routes")).toBe("full-stack");
+  });
 });
 
 describe("classifyAppTier — quick-html (the conservative default)", () => {

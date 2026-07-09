@@ -70,9 +70,17 @@ export interface DevServerRecord {
   kind?: DevServerKind;
 }
 
+/** Env the frontend dev server needs so the harness-owned vite.config points
+ *  HMR at the actual dev port (the /apps proxy can't carry the HMR websocket,
+ *  so the browser connects ws://localhost:<port> directly). Backend spawns get
+ *  nothing extra. */
+function frontendEnv(kind: DevServerKind, port: number): Record<string, string> | undefined {
+  return kind === "frontend" ? { LAX_DEV_PORT: String(port) } : undefined;
+}
+
 /** Test seam: swap process control so unit tests never spawn a real server. */
 export interface DevServerDeps {
-  start?: (command: string, cwd?: string) => { session: { sessionId: string } } | { error: string };
+  start?: (command: string, cwd?: string, env?: Record<string, string>) => { session: { sessionId: string } } | { error: string };
   isAlive?: (sessionId: string) => boolean;
   kill?: (sessionId: string) => void;
   /** Is something actually listening on the dev port? Verified alongside the
@@ -86,7 +94,7 @@ export interface DevServerDeps {
 
 function deps(d: DevServerDeps): Required<DevServerDeps> {
   return {
-    start: d.start ?? ((command, cwd) => startSession(command, cwd)),
+    start: d.start ?? ((command, cwd, env) => startSession(command, cwd, env)),
     isAlive: d.isAlive ?? ((sid) => { const s = SESSIONS.get(sid); return !!s && !s.exitedAt; }),
     kill: d.kill ?? ((sid) => { const s = SESSIONS.get(sid); if (s) killSession(s); }),
     portBound: d.portBound ?? ((port) => pidsOnPort(port).length > 0),
@@ -236,7 +244,7 @@ export function registerDevServer(
   // proxied transparently at /apps/<id>/, so it needs no connector manifest.
   if (kind === "backend") saveConnectorManifest(connector, devConnectorManifest(port));
 
-  const started = dd.start(command, cwd);
+  const started = dd.start(command, cwd, frontendEnv(kind, port));
   if ("error" in started) return { ok: false, error: started.error };
 
   const sessionId = started.session.sessionId;
@@ -270,7 +278,7 @@ export function ensureDevServerRunning(appId: string, d: DevServerDeps = {}): En
   if (alive && dd.portBound(rec.port)) return { status: "running", record: rec };
   if (alive) { logger.info(`[dev-server] ${appId}: session ${rec.sessionId} alive but port ${rec.port} dead — restarting`); dd.kill(rec.sessionId!); }
 
-  const started = dd.start(rec.command, rec.cwd || undefined);
+  const started = dd.start(rec.command, rec.cwd || undefined, frontendEnv(rec.kind ?? "backend", rec.port));
   if ("error" in started) { logger.warn(`[dev-server] ${appId}: restart failed: ${started.error}`); return { status: "error", error: started.error }; }
   const updated: DevServerRecord = { ...rec, sessionId: started.session.sessionId };
   writeRecord(updated);

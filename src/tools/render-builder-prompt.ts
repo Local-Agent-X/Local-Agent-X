@@ -11,7 +11,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { AppTier } from "./app-tier.js";
 import { inferFrameworkFromPrompt, type DetectedFramework } from "./framework-detect.js";
-import { frontendScaffoldRecipeLines } from "./framework-scaffold.js";
+import { frontendScaffoldRecipeLines, harnessOwnsScaffold } from "./framework-scaffold.js";
 import { selectDesignBrief, DESIGN_ANTI_PATTERNS } from "./design-brief.js";
 
 const WEBSITE_NOUN_IN_PROMPT_RE =
@@ -87,12 +87,28 @@ export { frontendScaffoldRecipeLines };
 export function frontendSpaRuleLines(
   appName: string, appDir: string, framework: DetectedFramework = "unknown",
 ): string[] {
-  return [
+  const intro = [
     "",
     "FRONTEND-SPA MODE — this is a REAL build-step frontend (Vite / Next / a React/Vue/Svelte SPA with HMR), NOT a static HTML page. Writing a static index.html that merely LOOKS like or DESCRIBES the framework is the exact failure this mode exists to prevent — do not do it.",
     ...shellPathQuotingLines(appDir),
-    `- The app dir ${appDir} is EMPTY (no seeded starter). Do NOT hand-author the skeleton — scaffold it with the framework's official creator, then layer your app code on the working baseline it produces.`,
-    ...frontendScaffoldRecipeLines(appName, framework),
+  ];
+  // When the harness owns the baseline (the Vite default), it has ALREADY run
+  // the creator + Tailwind and locked the config files — telling the model to
+  // scaffold here would just earn a write rejection. Steer it to add src/ code
+  // instead. Non-owned frameworks keep the advised-creator recipe.
+  const setup = harnessOwnsScaffold(framework)
+    ? [
+        `- A working Vite + React + TypeScript + Tailwind v4 baseline has ALREADY been scaffolded for you in ${appDir} (package.json, vite.config.ts, tsconfig*, src/main.tsx, src/index.css). Do NOT run a creator and do NOT recreate the skeleton — build the app by ADDING and editing files under src/.`,
+        "- package.json, vite.config.ts and tsconfig*.json are LOCKED — write/edit calls to them are rejected. The base path (/apps/<id>/) and HMR are already set in vite.config.ts; leave them alone. Need a dependency? Run `npm install <pkg>` (that updates the locked package.json for you).",
+        "- Tailwind v4 is already wired (`@tailwindcss/vite` + `@import \"tailwindcss\"` in src/index.css). Style with Tailwind utility classes — do NOT add a Tailwind CDN or a second CSS framework.",
+      ]
+    : [
+        `- The app dir ${appDir} is EMPTY (no seeded starter). Do NOT hand-author the skeleton — scaffold it with the framework's official creator, then layer your app code on the working baseline it produces.`,
+        ...frontendScaffoldRecipeLines(appName, framework),
+      ];
+  return [
+    ...intro,
+    ...setup,
     `- Start it with app_serve_frontend({ app_id: "${appName}", command: "npm install && npm run dev", port: <P> }). LAX reverse-proxies /apps/${appName}/ to the live dev server (HMR on desktop). app_serve_frontend VERIFIES the dev server actually bound its port — if it reports a failure, FIX the project; do NOT fall back to a static page.`,
     "- The deliverable is the live DEV server — nothing else. Once app_serve_frontend reports it's up, you are DONE. Do NOT run any extra tooling: no production build (`npm run build` / `vite build` / `next build`), no lint (`npm run lint` / eslint), no typecheck, no tests. The proxy serves the dev server, not a dist/ bundle, and these steps add nothing but a chance to error on a bleeding-edge version and derail you. Skip them entirely. (Don't even add eslint/test deps unless asked.)",
     "- You are NOT done until app_serve_frontend reports the dev server is up. A hand-written page imitating the app does not count. If the app ALSO needs a backend API, additionally call app_serve_backend.",

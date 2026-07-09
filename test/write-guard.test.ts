@@ -4,7 +4,10 @@
  * viewport meta) at the write/edit tool boundary so the build agent learns
  * within the same turn rather than waiting for a downstream CSP refusal.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { checkAppWrite, writeGuardRejectionMessage } from "../src/tools/app-tools/write-guard.js";
 
 const BLOCKED_CDNS = [
@@ -108,6 +111,62 @@ describe("write-guard — Windows backslash paths are detected", () => {
     const r = checkAppWrite("C:\\abs\\workspace\\apps\\demo\\index.html", content);
     expect(r.allow).toBe(false);
     expect(r.reason).toContain("fonts.googleapis.com");
+  });
+});
+
+describe("write-guard — harness-owned baseline lock (manifest-driven)", () => {
+  // The lock keys off a per-app scaffold manifest, NOT a global filename rule,
+  // so the two concerns (content policy vs baseline protection) stay decoupled:
+  // a manifest-less app (full-stack, static, main-chat editing an unscaffolded
+  // app) is untouched; a scaffolded app's config files are locked.
+  let root: string;
+  const rel = "workspace/apps";
+
+  function appFile(app: string, rest: string): string {
+    return join(root, rel, app, rest);
+  }
+  function scaffold(app: string, ownedPaths: string[]): void {
+    const dir = join(root, rel, app, ".lax");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "scaffold.json"), JSON.stringify({ framework: "vite", ownedPaths }));
+  }
+
+  const OWNED = ["package.json", "package-lock.json", "vite.config.ts", "tsconfig.json"];
+
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), "wg-scaffold-")); });
+  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it("REJECTS a package.json write in a scaffolded app", () => {
+    scaffold("shopper", OWNED);
+    const r = checkAppWrite(appFile("shopper", "package.json"), `{ "name": "x" }`);
+    expect(r.allow).toBe(false);
+    expect(r.message).toMatch(/locked/i);
+    expect(r.message).toMatch(/src\//);
+  });
+
+  it("REJECTS vite.config.ts and tsconfig.json in a scaffolded app", () => {
+    scaffold("shopper", OWNED);
+    expect(checkAppWrite(appFile("shopper", "vite.config.ts"), "export default {}").allow).toBe(false);
+    expect(checkAppWrite(appFile("shopper", "tsconfig.json"), "{}").allow).toBe(false);
+  });
+
+  it("ALLOWS a src/ write in a scaffolded app (model's own code)", () => {
+    scaffold("shopper", OWNED);
+    const r = checkAppWrite(appFile("shopper", "src/App.tsx"), "export default function App(){return null}");
+    expect(r.allow).toBe(true);
+  });
+
+  it("ALLOWS a package.json write in a manifest-LESS app (full-stack authors its own)", () => {
+    mkdirSync(join(root, rel, "backend"), { recursive: true });
+    const r = checkAppWrite(appFile("backend", "package.json"), `{ "name": "api" }`);
+    expect(r.allow).toBe(true);
+  });
+
+  it("does not block on a corrupt manifest", () => {
+    const dir = join(root, rel, "broken", ".lax");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "scaffold.json"), "{ not json");
+    expect(checkAppWrite(appFile("broken", "package.json"), "{}").allow).toBe(true);
   });
 });
 

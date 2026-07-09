@@ -27,16 +27,16 @@ RULES:
 - The app will be served at http://127.0.0.1:7007/apps/todo-app/index.html
 - Do NOT ask questions — just build it based on the instructions
 
-DESIGN DIRECTION — Modern Web App:
-• Style: Clean, contemporary, content-first. Confident whitespace and a clear visual center of gravity; polish through restraint rather than ornament.
-• Palette & color mood: One neutral base (off-white or near-black surfaces) plus a single saturated accent used sparingly for primary actions. Example accent: #2563eb. Avoid decorative gradients.
-• Typography: One modern sans for UI and headings; a comfortable reading size (16px+ body) with a clear type scale between headings and body.
-• Motion & effects: Subtle: gentle fades and short position shifts on load and interaction, well inside the 150–300ms window.
-• Layout & hierarchy: Header → primary content → supporting sections → footer. Card or list groupings with generous gutters; a single clear primary action per view.
+DESIGN SYSTEM — Modern Web App. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:
+Palette (exact CSS variables): --bg #ffffff · --muted-bg #f8fafc · --surface #ffffff · --text #111827 · --text-muted #6b7280 · --border #e5e7eb · --accent #2563eb · --accent-hover #1d4ed8
+Typography: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif. Scale: h1 28px/700/-0.02em · h2 20px/600/-0.01em · body 16px/400/1.6 · label 13px/500. Self-host Inter or fall back to system-ui.
+Radius: 8px controls / 12px cards. Shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 16px rgba(0,0,0,.05). Spacing: 4px base (4/8/12/16/24/32/48).
+Attitude: Clean, contemporary, content-first — polish through restraint, one clear center of gravity per view.
+Layout & hierarchy: Header → primary content → supporting sections → footer. Card/list groupings with generous gutters; one clear primary action per view.
 
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
-• NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Derive color from the product's actual mood; a flat, deliberate palette beats a decorative gradient.
+• NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Use the archetype's exact palette; a flat, deliberate color beats a decorative gradient.
 • MOTION RESTRAINT: animate at most 1–2 elements per view — a single focal moment, not everything at once. No autoplaying, looping, or attention-competing motion.
 • MICRO-INTERACTIONS: hover/press/focus transitions land in 150–300ms with an ease curve; nothing slower feels laggy, nothing instant feels cheap.
 • KEYBOARD FOCUS: every interactive element has a clearly VISIBLE focus state (never \`outline: none\` without a replacement). Tab order must be logical.
@@ -87,7 +87,7 @@ RULES:
 
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
-• NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Derive color from the product's actual mood; a flat, deliberate palette beats a decorative gradient.
+• NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Use the archetype's exact palette; a flat, deliberate color beats a decorative gradient.
 • MOTION RESTRAINT: animate at most 1–2 elements per view — a single focal moment, not everything at once. No autoplaying, looping, or attention-competing motion.
 • MICRO-INTERACTIONS: hover/press/focus transitions land in 150–300ms with an ease curve; nothing slower feels laggy, nothing instant feels cheap.
 • KEYBOARD FOCUS: every interactive element has a clearly VISIBLE focus state (never \`outline: none\` without a replacement). Tab order must be logical.
@@ -133,16 +133,16 @@ RULES:
 - The app will be served at http://127.0.0.1:7007/apps/initech/index.html
 - Do NOT ask questions — just build it based on the instructions
 
-DESIGN DIRECTION — Marketing Landing Page:
-• Style: Persuasive and momentum-building — a single clear narrative that guides the eye straight to one conversion goal.
-• Palette & color mood: Bold, brand-led accent with strong figure/ground contrast for CTAs; confident but not garish. Example CTA: #7c3aed (flat, not a purple→pink gradient).
-• Typography: Big, benefit-led headlines with a strong type scale; short, skimmable body; unmissable CTA labels.
-• Motion & effects: One or two scroll-triggered reveals to build momentum; a single subtle emphasis on the primary CTA. Nothing that distracts from converting.
-• Layout & hierarchy: Hero with headline + sub + primary CTA → proof/benefits → features → testimonial/logos → repeated CTA. One dominant action throughout.
+DESIGN SYSTEM — Marketing Landing Page. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:
+Palette (exact): --bg #ffffff · --ink #0f0f1a · --text #18181b · --text-muted #52525b · --border #e4e4e7 · --accent #7c3aed · --accent-hover #6d28d9. Dark hero sections use --ink bg with #fafafa text (flat, never a purple→pink gradient).
+Typography: 'Sora', 'Inter', system-ui, sans-serif. Scale: h1 clamp(40px,6vw,72px)/800/-0.03em · sub 18px/400/1.6 · body 17px/400/1.6 · CTA 16px/600. Big benefit-led headlines, skimmable body.
+Radius: 10px cards / 999px pill CTAs. Shadow: CTA 0 8px 24px rgba(124,58,237,.3). Spacing: 4px base; generous 80–96px section padding.
+Attitude: Persuasive and momentum-building — one clear narrative that guides the eye straight to a single conversion goal.
+Layout & hierarchy: Hero (headline + sub + primary CTA) → proof/benefits → features → testimonial/logos → repeated CTA. One dominant action throughout.
 
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
-• NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Derive color from the product's actual mood; a flat, deliberate palette beats a decorative gradient.
+• NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Use the archetype's exact palette; a flat, deliberate color beats a decorative gradient.
 • MOTION RESTRAINT: animate at most 1–2 elements per view — a single focal moment, not everything at once. No autoplaying, looping, or attention-competing motion.
 • MICRO-INTERACTIONS: hover/press/focus transitions land in 150–300ms with an ease curve; nothing slower feels laggy, nothing instant feels cheap.
 • KEYBOARD FOCUS: every interactive element has a clearly VISIBLE focus state (never \`outline: none\` without a replacement). Tab order must be logical.
@@ -193,16 +193,16 @@ RULES:
 - The app will be served at http://127.0.0.1:7007/apps/biz/index.html
 - Do NOT ask questions — just build it based on the instructions
 
-DESIGN DIRECTION — Marketing Landing Page:
-• Style: Persuasive and momentum-building — a single clear narrative that guides the eye straight to one conversion goal.
-• Palette & color mood: Bold, brand-led accent with strong figure/ground contrast for CTAs; confident but not garish. Example CTA: #7c3aed (flat, not a purple→pink gradient).
-• Typography: Big, benefit-led headlines with a strong type scale; short, skimmable body; unmissable CTA labels.
-• Motion & effects: One or two scroll-triggered reveals to build momentum; a single subtle emphasis on the primary CTA. Nothing that distracts from converting.
-• Layout & hierarchy: Hero with headline + sub + primary CTA → proof/benefits → features → testimonial/logos → repeated CTA. One dominant action throughout.
+DESIGN SYSTEM — Marketing Landing Page. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:
+Palette (exact): --bg #ffffff · --ink #0f0f1a · --text #18181b · --text-muted #52525b · --border #e4e4e7 · --accent #7c3aed · --accent-hover #6d28d9. Dark hero sections use --ink bg with #fafafa text (flat, never a purple→pink gradient).
+Typography: 'Sora', 'Inter', system-ui, sans-serif. Scale: h1 clamp(40px,6vw,72px)/800/-0.03em · sub 18px/400/1.6 · body 17px/400/1.6 · CTA 16px/600. Big benefit-led headlines, skimmable body.
+Radius: 10px cards / 999px pill CTAs. Shadow: CTA 0 8px 24px rgba(124,58,237,.3). Spacing: 4px base; generous 80–96px section padding.
+Attitude: Persuasive and momentum-building — one clear narrative that guides the eye straight to a single conversion goal.
+Layout & hierarchy: Hero (headline + sub + primary CTA) → proof/benefits → features → testimonial/logos → repeated CTA. One dominant action throughout.
 
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
-• NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Derive color from the product's actual mood; a flat, deliberate palette beats a decorative gradient.
+• NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Use the archetype's exact palette; a flat, deliberate color beats a decorative gradient.
 • MOTION RESTRAINT: animate at most 1–2 elements per view — a single focal moment, not everything at once. No autoplaying, looping, or attention-competing motion.
 • MICRO-INTERACTIONS: hover/press/focus transitions land in 150–300ms with an ease curve; nothing slower feels laggy, nothing instant feels cheap.
 • KEYBOARD FOCUS: every interactive element has a clearly VISIBLE focus state (never \`outline: none\` without a replacement). Tab order must be logical.

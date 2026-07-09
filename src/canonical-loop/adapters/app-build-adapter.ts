@@ -84,7 +84,15 @@ export interface AppBuildAdapterOptions {
    *  simulate the persisted record without touching the real store. Production
    *  passes nothing (defaults to resolveDevServerProxyUrl). */
   urlResolver?: DevServerUrlResolver;
+  /** Test seam: override the deterministic pre-turn-0 framework scaffold so unit
+   *  tests never spawn a real `npm create`. Production passes nothing — the
+   *  default calls through to src/tools/build-app-spawn.ts. */
+  scaffoldRunner?: ScaffoldRunner;
 }
+
+/** Runs the harness-owned framework baseline before the first turn. Returns
+ *  once the scaffold exists (or immediately, for a non-owned framework). */
+export type ScaffoldRunner = (appDir: string, appName: string, brief: string) => Promise<void>;
 
 export interface ProviderAdapterFactoryOptions {
   systemPrompt: string;
@@ -122,6 +130,15 @@ const CODEX_INCREMENTAL_NOTE =
   "\n\nOUTPUT LIMIT: on this provider a single tool call's output is capped — emitting a whole large file in one `write` or `edit` gets truncated. Build the file up in steps: `write` a compact index.html first (structure + base styles), then add styles, scripts, and sections with separate `edit` calls. Keep each tool call's content modest (a few KB).";
 
 export async function createAppBuildAdapter(opts: AppBuildAdapterOptions): Promise<Adapter> {
+  // The frontend-spa baseline is stood up by the harness BEFORE the first turn,
+  // for both strategies — the CLI subprocess and the in-canonical sub-agent then
+  // open onto a working Vite+Tailwind project they can only add src/ code to,
+  // instead of hand-writing (and clobbering) the skeleton. Runs at op-lease time
+  // (the factory is awaited before runTurn), off the chat turn. Idempotent, so a
+  // retry re-lease is a cheap no-op.
+  if (opts.tier === "frontend-spa") {
+    await (opts.scaffoldRunner ?? defaultScaffoldRunner)(opts.appDir, opts.appName, opts.brief ?? opts.prompt ?? "");
+  }
   const inner = opts.strategy === "cli-subprocess"
     ? new CliBuildAdapter(opts)
     : await (opts.providerAdapterFactory ?? defaultProviderAdapterFactory)(opts.provider, {
@@ -290,6 +307,12 @@ class CliBuildAdapter implements Adapter {
     };
   }
 }
+
+const defaultScaffoldRunner: ScaffoldRunner = async (appDir, appName, brief) => {
+  const { runFrameworkScaffold } = await import("../../tools/framework-scaffold-run.js");
+  const { inferFrameworkFromPrompt } = await import("../../tools/framework-detect.js");
+  await runFrameworkScaffold(appDir, appName, inferFrameworkFromPrompt(brief));
+};
 
 const defaultCliRunner: CliBuildRunner = async (input) => {
   const { runCliBuild } = await import("../../tools/build-app-spawn.js");

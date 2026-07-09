@@ -149,7 +149,7 @@ export const writeTool: ToolDefinition = {
       }
     }
     const guard = checkAppWrite(filePath, content);
-    if (!guard.allow) return err(writeGuardRejectionMessage(guard.reason ?? "policy violation"));
+    if (!guard.allow) return err(guard.message ?? writeGuardRejectionMessage(guard.reason ?? "policy violation"));
     try {
       mkdirSync(dirname(filePath), { recursive: true });
       // Preserve the file's existing line-ending style on overwrite. The

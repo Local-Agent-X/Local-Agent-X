@@ -322,7 +322,10 @@ describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", 
     const out = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "frontend-spa" });
     expect(out).toContain("FRONTEND-SPA MODE");
     expect(out).toContain("app_serve_frontend");
-    expect(out).toContain(`base path to "/apps/todo-app/"`);   // the proxy-resolving config
+    // Harness owns the Vite baseline (no framework named → the default): the
+    // model is told it's already scaffolded + locked, not to run a creator.
+    expect(out).toContain("ALREADY been scaffolded");
+    expect(out).toContain("LOCKED");
     // The live-Vite-fake failure: a static page that imitates the framework.
     expect(out).toContain("NOT a static HTML page");
     // The class both GPT-5.5 (vite build) and Grok (npm run lint) tripped on:

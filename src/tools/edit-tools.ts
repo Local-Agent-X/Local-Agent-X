@@ -100,7 +100,7 @@ function commitEdit(filePath: string, updated: string, verb: string, allowSyntax
   const connectorRejection = connectorManifestWriteRejection(filePath);
   if (connectorRejection) return err(connectorRejection);
   const guard = checkAppWrite(filePath, updated);
-  if (!guard.allow) return err(writeGuardRejectionMessage(guard.reason ?? "policy violation"));
+  if (!guard.allow) return err(guard.message ?? writeGuardRejectionMessage(guard.reason ?? "policy violation"));
   const before = existsSync(filePath) ? readFileSync(filePath, "utf-8") : null;
   const verdict = checkEditSyntax(filePath, before, updated);
   if (verdict.reject && !allowSyntaxErrors) return err(syntaxRejectionMessage(filePath, verdict.issue as string));

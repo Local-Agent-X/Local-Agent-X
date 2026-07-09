@@ -68,6 +68,95 @@ function scaffoldFor(framework: DetectedFramework): FrameworkScaffold {
 	return SCAFFOLDS[framework] ?? SCAFFOLDS.vite;
 }
 
+/** App-relative path of the scaffold manifest the harness drops when it OWNS a
+ *  build's baseline. Its presence + `ownedPaths` are what the write-guard keys
+ *  the config-file lock on — one source of truth, read by both the runner
+ *  (build-app-spawn) and the guard (write-guard). */
+export const SCAFFOLD_MANIFEST_REL = ".lax/scaffold.json";
+
+export interface ScaffoldManifest {
+	framework: DetectedFramework;
+	/** App-relative paths the harness generated and owns; the write-guard rejects
+	 *  model writes/edits to these so the model can only add code under src/. */
+	ownedPaths: string[];
+}
+
+export interface ScaffoldPlan {
+	/** Shell commands run IN ORDER in the (empty) app dir. Fixed + trusted —
+	 *  no interpolated user input, so no shell-injection surface. */
+	commands: string[];
+	/** Files written (OVERWRITING the creator's output) after the commands run —
+	 *  the LAX-canonical vite.config + a Tailwind-v4 stylesheet entry. */
+	files: { path: string; content: string }[];
+	manifest: ScaffoldManifest;
+}
+
+// create-vite react-ts + a Tailwind-v4 install produce these; the harness owns
+// them (writes them itself, then locks them) so the model can't downgrade the
+// deps or leak a second framework's config into them.
+const VITE_OWNED_PATHS = [
+	"package.json",
+	"package-lock.json",
+	"vite.config.ts",
+	"tsconfig.json",
+	"tsconfig.app.json",
+	"tsconfig.node.json",
+];
+
+/**
+ * True when the harness runs the creator + owns the baseline for this framework,
+ * rather than merely ADVISING the model to scaffold it. Scoped to the frontend-
+ * spa default (Vite) — the proven clobber-and-serve failure. A named
+ * metaframework (Next/Nuxt/…) keeps the advised-recipe path until its baseline
+ * is owned too; extending this is adding a plan, not rearchitecting.
+ */
+export function harnessOwnsScaffold(framework: DetectedFramework): boolean {
+	return framework === "vite" || framework === "unknown" || framework === "static";
+}
+
+/** The deterministic Vite + React + TS + Tailwind-v4 baseline the harness runs
+ *  and owns. Pure — command/file STRINGS only; execution lives in
+ *  build-app-spawn.ts (the audited subprocess boundary). */
+export function viteScaffoldPlan(appName: string): ScaffoldPlan {
+	return {
+		commands: [
+			"npm create vite@latest . -- --template react-ts",
+			"npm install",
+			"npm install tailwindcss @tailwindcss/vite",
+		],
+		files: [
+			{ path: "vite.config.ts", content: viteConfigText(appName) },
+			{ path: "src/index.css", content: `@import "tailwindcss";\n` },
+		],
+		manifest: { framework: "vite", ownedPaths: VITE_OWNED_PATHS },
+	};
+}
+
+function viteConfigText(appName: string): string {
+	return `import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+// LAX reverse-proxies this app at /apps/${appName}/, so \`base\` makes asset URLs
+// resolve there (without it they 404 — the "serve failure"). LAX_DEV_PORT is
+// injected by app_serve_frontend; the HMR client must target the dev port
+// directly because the proxy can't carry the HMR websocket. Omitting it (model
+// runs vite by hand) falls back to Vite's default — assets still serve, only
+// live hot-reload is lost.
+const devPort = Number(process.env.LAX_DEV_PORT) || undefined
+
+export default defineConfig({
+  base: '/apps/${appName}/',
+  plugins: [react(), tailwindcss()],
+  server: {
+    host: true,
+    strictPort: true,
+    ...(devPort ? { port: devPort, hmr: { clientPort: devPort, host: 'localhost' } } : {}),
+  },
+})
+`;
+}
+
 /**
  * The scaffold RULES lines for a build prompt: run the framework's official
  * creator (never hand-write the skeleton), then apply the LAX base-path patch,

@@ -43,6 +43,22 @@ describe("instructionLedgerMiddleware", () => {
     expect(getOpLedger(c.op.id)?.prohibitions).toContain("workspace-write");
   });
 
+  it("app_build op: SKIPS extraction (synthetic per-build context is not a user constraint)", async () => {
+    let called = false;
+    const spyExtract = (msg: string) => { called = true; return offlineExtract(msg); };
+    const mw = createInstructionLedgerMiddleware(spyExtract);
+    // This message WOULD yield a workspace-write ban on a normal op — but on an
+    // app_build op it's the harness-authored per-build context, so it's ignored.
+    const c = ctx({
+      op: { id: "op-appbuild-x", type: "app_build", lane: "build" } as never,
+      userMessage: "You are building a web app. You must NOT edit core LAX; leave the locked files alone; do not edit the baseline.",
+    });
+    const r = await mw.beforeTurn!(c);
+    expect(r.kind).toBe("continue");
+    expect(called).toBe(false); // extractor never ran
+    expect(getOpLedger(c.op.id)).toEqual({ prohibitions: [], obligations: [], phrases: [] });
+  });
+
   it("turn 0: records the EMPTY ledger for an unconstrained message", async () => {
     const mw = createInstructionLedgerMiddleware(offlineExtract);
     const c = ctx(); // "Fix the bug…" — no constraint cues

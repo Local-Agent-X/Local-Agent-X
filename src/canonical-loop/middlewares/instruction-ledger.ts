@@ -8,6 +8,15 @@
  * FAIL-OPEN: if extraction throws, the EMPTY ledger is recorded — an
  * unconstrained op must never be blocked or nudged by this path (and the
  * ledger accessors themselves default permissive when no entry exists).
+ *
+ * NOT for synthetic op contexts: an app_build op's turn-0 message is the
+ * harness-authored per-build context (env rules, "you must NOT edit core LAX",
+ * "leave the locked baseline alone", "do NOT recreate the skeleton") — NOT a
+ * user instruction. Running the constraint extractor on it made the LLM confirm
+ * a phantom `workspace-write` ban that blocked the build sub-agent from writing
+ * a single line of app code. The user's REAL constraints live on the parent
+ * chat op (a different op), which is unaffected — so app_build ops skip
+ * extraction entirely and stay unconstrained.
  */
 import { setOpLedger } from "../instruction-ledger/index.js";
 import type { InstructionLedger } from "../instruction-ledger/index.js";
@@ -18,6 +27,12 @@ import { getMiddlewareState } from "./state.js";
 import type { CanonicalMiddleware } from "./types.js";
 
 interface FiredFlag { fired: boolean }
+
+// Op types whose turn-0 message is a harness-authored synthetic context, NOT a
+// user instruction — constraint extraction on them only yields false positives.
+// Matches build-app.ts's APP_BUILD_OP_TYPE (kept as a literal to avoid a
+// middleware→build-app import cycle; the ledger-skip test pins the value).
+const SYNTHETIC_CONTEXT_OP_TYPES: ReadonlySet<string> = new Set(["app_build"]);
 
 type ExtractFn = (userMessage: string) => Promise<InstructionLedger>;
 
@@ -35,6 +50,13 @@ export function createInstructionLedgerMiddleware(
 
     async beforeTurn(ctx) {
       if (ctx.turnIdx !== 0) return { kind: "continue" };
+
+      // Synthetic-context ops (app_build) carry harness directives, not user
+      // constraints — record an empty ledger and never run the extractor.
+      if (SYNTHETIC_CONTEXT_OP_TYPES.has(ctx.op.type)) {
+        setOpLedger(ctx.op.id, emptyLedger());
+        return { kind: "continue" };
+      }
 
       const flag = getMiddlewareState<FiredFlag>(
         ctx.op.id,

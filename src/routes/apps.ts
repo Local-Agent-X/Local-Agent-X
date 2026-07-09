@@ -230,10 +230,15 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
   // apps-bundle.ts to keep this file under the LOC cap.
   if (method === "GET" && appPath.match(/^\/api\/apps\/[a-zA-Z0-9_-]+\/bundle$/)) {
     const id = appPath.split("/")[3];
-    const { buildAppBundle } = await import("./apps-bundle.js");
-    const bundle = buildAppBundle(appReg, ctx.config.workspace, id, ctx.config.port || 7007);
-    if (!bundle) { json(404, { error: "App not found" }); return true; }
-    json(200, bundle); return true;
+    // A client-only SPA is built to a fresh static dist/ on demand (and rebuilt
+    // when the app was updated) so it runs offline on the phone; a full-stack /
+    // SSR app that genuinely needs the desktop is blocked with a clear reason
+    // rather than shipping a broken offline copy. See apps-bundle-prepare.ts.
+    const { prepareOfflineBundle } = await import("./apps-bundle-prepare.js");
+    const result = await prepareOfflineBundle(appReg, ctx.config.workspace, id, ctx.config.port || 7007);
+    if (result.status === "not_found") { json(404, { error: "App not found" }); return true; }
+    if (result.status === "blocked") { json(422, { error: result.reason, offlineCapable: false }); return true; }
+    json(200, result.bundle); return true;
   }
 
   // App audit log

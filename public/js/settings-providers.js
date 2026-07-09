@@ -101,12 +101,13 @@ const PROVIDER_MODELS = {
     { value: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
   ],
   xai: [
-    { value: 'grok-4', label: 'Grok 4 (frontier)' },
-    { value: 'grok-4-fast', label: 'Grok 4 Fast (cheap, 2M context)' },
-    { value: 'grok-4-heavy', label: 'Grok 4 Heavy (multi-agent, top tier)' },
+    { value: 'grok-4.5', label: 'Grok 4.5 (frontier, default)' },
+    { value: 'grok-4.3', label: 'Grok 4.3 (general, 131k context)' },
+    { value: 'grok-4.20-0309-reasoning', label: 'Grok 4.20 (reasoning)' },
+    { value: 'grok-4.20-0309-non-reasoning', label: 'Grok 4.20 (non-reasoning, fast)' },
+    { value: 'grok-4.20-multi-agent-0309', label: 'Grok 4.20 (multi-agent)' },
     { value: 'grok-code-fast-1', label: 'Grok Code Fast 1 (coding)' },
-    { value: 'grok-3-mini', label: 'Grok 3 Mini' },
-    { value: 'grok-3', label: 'Grok 3' },
+    { value: 'grok-build-0.1', label: 'Grok Build 0.1 (coding)' },
   ],
   openai: [
     { value: 'gpt-4o', label: 'GPT-4o (default)' },

@@ -13,7 +13,7 @@ export const configSchema = z.object({
   authToken: z.string().default(""),
   workspace: z.string().min(1).default("./workspace"),
   openaiApiKey: z.string().optional(),
-  model: z.string().default("grok-4"),
+  model: z.string().default("grok-4.5"),
   maxIterations: z.number().int().min(1).max(300).default(160),
   temperature: z.number().min(0).max(2).default(0.7),
   /** Max chat turns the canonical-loop runs at once across all sessions

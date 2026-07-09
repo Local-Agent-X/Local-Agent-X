@@ -78,6 +78,7 @@ const PRICING: Record<string, ModelPricing> = {
   "o3-pro": { input: 20, output: 80 },
   "o4-mini": { input: 1.10, output: 4.40 },
   // xAI (grok-4.3 + 4.20 family all $1.25/$2.50, cached $0.20 — x.ai/api)
+  "grok-4.5": { input: 2.00, output: 6.00 }, // x.ai/api — smartest model, 500k ctx
   "grok-4.3": { input: 1.25, output: 2.50 },
   "grok-4.20-0309-reasoning": { input: 1.25, output: 2.50 },
   "grok-4.20-0309-non-reasoning": { input: 1.25, output: 2.50 },

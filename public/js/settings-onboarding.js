@@ -352,7 +352,7 @@ function finishOnboarding() {
   // Also save server-side so it survives port changes.
   apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
   if (_onboardProvider) {
-    const defaults = { codex: 'gpt-5.5', anthropic: 'claude-opus-4-8', xai: 'grok-3-mini', gemini: 'gemini-2.0-flash', local: '', custom: '', 'ollama-cloud': '' };
+    const defaults = { codex: 'gpt-5.5', anthropic: 'claude-opus-4-8', xai: 'grok-4.5', gemini: 'gemini-2.0-flash', local: '', custom: '', 'ollama-cloud': '' };
     const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     s.provider = _onboardProvider;
     if (defaults[_onboardProvider]) s.model = defaults[_onboardProvider];

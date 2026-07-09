@@ -5,7 +5,8 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "gpt-4o": 128_000,
   "gpt-4o-mini": 128_000,
   "o3-pro": 128_000,
-  // xAI Grok 4.x — 131k window
+  // xAI Grok 4.x — 131k window (grok-4.5 ships a 500k window)
+  "grok-4.5": 500_000,
   "grok-4.3": 131_072,
   "grok-4.20-0309-reasoning": 131_072,
   "grok-4.20-0309-non-reasoning": 131_072,

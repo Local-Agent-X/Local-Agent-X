@@ -88,7 +88,7 @@ export interface BaseURLContext {
 
 const REASONING_OPENAI_FAMILY = /^o[134]|gpt-5/i;
 // xAI models that accept the `reasoning_effort` request param: grok-4 family
-// (grok-4.3, grok-4.20-*reasoning, grok-4.20-multi-agent) + grok-3-mini. The
+// (grok-4.5, grok-4.3, grok-4.20-*reasoning, grok-4.20-multi-agent) + grok-3-mini. The
 // explicit `-non-reasoning` variant (grok-4.20-0309-non-reasoning) is excluded —
 // sending reasoning_effort to it is ignored or rejected. grok-code-fast is also
 // excluded: it reasons internally but does NOT accept the param, and sending it
@@ -107,6 +107,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     id: "xai",
     label: "xAI Grok",
     models: [
+      "grok-4.5",
       "grok-4.3",
       "grok-4.20-0309-reasoning",
       "grok-4.20-0309-non-reasoning",
@@ -118,7 +119,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "grok-code-fast-1",
       "grok-build-0.1",
     ],
-    defaultModel: "grok-4.3",
+    defaultModel: "grok-4.5",
     // Non-reasoning variant: no chain-of-thought to burn time on, and it
     // sidesteps the reasoning-stream watchdog interaction entirely.
     backgroundModel: "grok-4.20-0309-non-reasoning",

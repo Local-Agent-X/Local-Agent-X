@@ -82,6 +82,15 @@ function ownedBaselineRejection(filePath: string): string | null {
   );
 }
 
+/** True when filePath is a harness-owned scaffold baseline file locked by an
+ *  app's scaffold manifest. The shell guard (security/shell-path-guard.ts) calls
+ *  this so a bash redirect/cp/mv/rm can't do what the write/edit lock forbids —
+ *  same manifest is the single source of truth, so the two enforcement points
+ *  can't drift. */
+export function isLockedBaselinePath(filePath: string): boolean {
+  return ownedBaselineRejection(filePath) !== null;
+}
+
 export function checkAppWrite(filePath: string, content: string): WriteGuardResult {
   if (!isUnderAppsDir(filePath)) return { allow: true };
 

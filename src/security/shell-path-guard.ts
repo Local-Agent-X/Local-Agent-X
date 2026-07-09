@@ -6,6 +6,7 @@ import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
 import { isProtectedFile } from "../config-loader.js";
+import { isLockedBaselinePath } from "../tools/app-tools/write-guard.js";
 
 // ── Best-effort shell file-access confinement (defense in depth) ──
 //
@@ -106,6 +107,12 @@ export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuar
   // the two can't drift.
   const engine = detectProtectedEngineMutation(command);
   if (engine) return { allowed: false, reason: engine, userHint: USER_HINTS.secrets };
+  // ALWAYS-ON (mode-independent) scaffold-baseline lock: the write/edit tools
+  // reject clobbering a harness-generated app skeleton (write-guard.ts), but
+  // bash could redirect/cp/mv/rm over the same file and walk past it. Same
+  // manifest is the authority, so the two can't drift.
+  const baseline = detectLockedBaselineMutation(command, ctx.workspace);
+  if (baseline) return { allowed: false, reason: baseline, userHint: USER_HINTS.commandShell };
   return evaluateShellPaths(command, ctx);
 }
 
@@ -175,6 +182,83 @@ export function detectProtectedEngineMutation(command: string): string | null {
         const abs = absOperand(w.slice(3));
         if (abs) { const r = hit(abs, "dd"); if (r) return r; }
       }
+    }
+  }
+  return null;
+}
+
+/**
+ * Shell twin of the write/edit baseline lock. Returns a block reason if a shell
+ * command would overwrite or delete a file that an app's scaffold manifest marks
+ * as harness-owned (package.json / vite.config / tsconfig); else null.
+ * `isLockedBaselinePath` reads that per-app manifest, so a manifest-less app
+ * (full-stack / static / non-scaffolded) is never touched — the lock stays
+ * scoped exactly as the write-guard scopes it.
+ *
+ * Best-effort, same class as detectProtectedEngineMutation: it resolves absolute
+ * targets and relative targets anchored by an `apps/<id>/…` shape (including a
+ * leading `cd <dir> &&`), then asks the manifest. It does NOT catch a bare
+ * relative write whose app cwd is only known at runtime, an `npm pkg set`, or an
+ * `npm create --force` re-scaffold — those are conceded here (the write/edit
+ * lock already covers the common vector, and the sound wall is OS-level
+ * confinement, per this file's header). FP-safe by construction: it only fires
+ * when the resolved path genuinely lands on a manifest-listed baseline file.
+ */
+export function detectLockedBaselineMutation(command: string, workspace: string): string | null {
+  const cdMatch = command.match(/^\s*cd\s+(['"]?[^'"\s&|;]+['"]?)\s*&&/);
+  const cdDir = cdMatch ? stripQuotes(cdMatch[1]) : "";
+
+  const resolved = (rawTarget: string): string[] => {
+    const t = stripQuotes(rawTarget);
+    if (!t || BENIGN_PATHS.has(t.toLowerCase())) return [];
+    const out: string[] = [];
+    if (isAbsolute(t)) out.push(t);
+    // A relative target lands in the app tree only if it (or `cd <dir>/` + it)
+    // carries an `apps/<id>/…` tail; re-anchor that tail under the workspace.
+    const combined = (cdDir ? `${cdDir}/${t}` : t).replace(/\\/g, "/");
+    const tail = combined.match(/(?:^|\/)(apps\/[^/]+\/.+)$/);
+    if (tail) out.push(join(workspace, tail[1]));
+    return out;
+  };
+
+  const check = (rawTarget: string, verb: string): string | null => {
+    for (const abs of resolved(rawTarget)) {
+      if (isLockedBaselinePath(abs)) {
+        return (
+          `Blocked: '${verb}' would overwrite a harness-locked project baseline file ` +
+          `(package.json / vite.config / tsconfig). Add your app code under src/, and change ` +
+          `dependencies with \`npm install <pkg>\` — the shell can't do what the write/edit lock forbids.`
+        );
+      }
+    }
+    return null;
+  };
+
+  for (const segment of command.split("|")) {
+    const words = segment.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) continue;
+    const verb = (stripQuotes(words[0]).split(/[\\/]/).pop() || "").toLowerCase();
+
+    // Redirect write targets (`>f`, `>> f`, `> f`) — overwrite regardless of verb.
+    for (let i = 1; i < words.length; i++) {
+      const m = words[i].match(/^\d*(>>|>)(.*)$/);
+      if (!m) continue;
+      let target = m[2];
+      if (!target && i + 1 < words.length) target = words[++i];
+      if (target) { const r = check(target, "redirect"); if (r) return r; }
+    }
+
+    if (MUTATOR_ALL_OPERANDS.has(verb)) {
+      // rm/shred/unlink/truncate/tee — every non-flag operand is a target.
+      for (let i = 1; i < words.length; i++) {
+        if (words[i].startsWith("-") || /^\d*(>>|>|<)/.test(words[i])) continue;
+        const r = check(words[i], verb); if (r) return r;
+      }
+    } else if (MUTATOR_DEST_ONLY.has(verb)) {
+      // cp/mv/ln/install — only the last operand (destination) is written.
+      const operands = words.slice(1).filter((w) => !w.startsWith("-") && !/^\d*(>>|>|<)/.test(w));
+      const dest = operands[operands.length - 1];
+      if (dest) { const r = check(dest, verb); if (r) return r; }
     }
   }
   return null;

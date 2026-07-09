@@ -47,6 +47,7 @@ import {
 } from "../../tools/app-build-verify.js";
 import type { AppTier } from "../../tools/app-tier.js";
 import { detectFramework } from "../../tools/framework-detect.js";
+import { getDesignSpec } from "../turn-loop/design-verify.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
 import {
   runAppSmokeGate,
@@ -248,7 +249,7 @@ export class AppBuildVerifyAdapter implements Adapter {
     const judgeShots = shots.filter((p): p is string => typeof p === "string");
     if (this.brief && judgeShots.length > 0) {
       const judgeBrief = smoke.judgeNotes ? `${this.brief}\n\n(${smoke.judgeNotes})` : this.brief;
-      const verdict = await this.judge(judgeShots, judgeBrief);
+      const verdict = await this.judge(judgeShots, judgeBrief, getDesignSpec(input.opId));
       if (verdict === null) {
         report({ kind: "stream_chunk", body: { delta: `[verify] vision judge unavailable (no vision-capable credential) — skipped\n` } });
       } else if (!verdict.ok) {

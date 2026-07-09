@@ -77,7 +77,8 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
     }));
     if (result.screenshotB64) {
       const { visionVerdictForScreenshot } = await import("../tools/app-tools/vision-verify.js");
-      const verdict = await visionVerdictForScreenshot(result.screenshotB64, appDescription);
+      const { getDesignSpec } = await import("../canonical-loop/turn-loop/design-verify.js");
+      const verdict = await visionVerdictForScreenshot(result.screenshotB64, appDescription, {}, getDesignSpec(opId));
       if (verdict && !verdict.ok) {
         errors.push({ kind: "blank", message: `Screenshot looks broken: ${verdict.reason}`, ts: Date.now() });
       } else if (verdict && verdict.ok && verdict.design) {

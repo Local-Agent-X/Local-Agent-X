@@ -58,6 +58,8 @@ import { connectorCreateTool } from "./connector-tools.js";
 import { processStartTool, processStatusTool, processKillTool } from "./process-tools-defs.js";
 import { appServeBackendTool, appServeFrontendTool } from "./dev-server-tools.js";
 import { classifyAppTier, tierLabel, type AppTier } from "./app-tier.js";
+import { selectDesignBrief } from "./design-brief.js";
+import { recordDesignSpec } from "../canonical-loop/turn-loop/design-verify.js";
 
 /** Tool defs the in-canonical-sub-agent strategy hands to the agent. Mirrors
  *  the app-builder template's allowedTools verbatim. */
@@ -314,6 +316,10 @@ export const buildAppTool: ToolDefinition = {
     };
 
     if (sessionId) trackOpForSession(op.id, sessionId, op.task);
+
+    // Stash the mandated design spec so the vision judges score token adherence
+    // (feeds the design-verify refine nudge). Create-only, like the prompt brief.
+    if (!isUpdate) recordDesignSpec(op.id, selectDesignBrief(prompt).brief);
 
     const personaPrompt = renderPersonaPrompt();
 

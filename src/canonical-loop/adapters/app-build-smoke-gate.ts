@@ -57,6 +57,7 @@ export type AppSmokeGateRunner = (spec: AppSmokeGateSpec) => Promise<AppSmokeGat
 export type AppVisionJudge = (
   screenshotPaths: string[],
   brief: string,
+  designSpec?: string,
 ) => Promise<{ ok: boolean; reason: string } | null>;
 
 /** Injectable dev-server URL lookup: app name → the live proxy URL to smoke,
@@ -81,14 +82,14 @@ export const resolveDevServerProxyUrl: DevServerUrlResolver = async (appName) =>
  * brief. Lazy import keeps the dispatch/provider graph out of this module's
  * static imports. Never throws; unreadable shots or no credential → null.
  */
-export const runAppVisionJudge: AppVisionJudge = async (screenshotPaths, brief) => {
+export const runAppVisionJudge: AppVisionJudge = async (screenshotPaths, brief, designSpec) => {
   const shots: string[] = [];
   for (const p of screenshotPaths) {
     try { shots.push(readFileSync(p).toString("base64")); } catch { /* missing shot — judge what we have */ }
   }
   if (shots.length === 0) return null;
   const { visionVerdictForScreenshot } = await import("../../tools/app-tools/vision-verify.js");
-  const verdict = await visionVerdictForScreenshot(shots, brief);
+  const verdict = await visionVerdictForScreenshot(shots, brief, {}, designSpec);
   return verdict ? { ok: verdict.ok, reason: verdict.reason } : null;
 };
 

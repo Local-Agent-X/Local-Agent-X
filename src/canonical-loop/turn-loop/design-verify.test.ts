@@ -5,6 +5,8 @@ import {
   getDesignVerifyRetries,
   clearDesignVerifyStateForOp,
   formatDesignNudgeForAgent,
+  recordDesignSpec,
+  getDesignSpec,
   _resetDesignVerifyState,
 } from "./design-verify.js";
 import { runRenderVerifyGate, _resetRenderVerifyState } from "./render-verify.js";
@@ -15,6 +17,22 @@ const op = (id: string) => ({ id }) as unknown as Op;
 beforeEach(() => {
   _resetDesignVerifyState();
   _resetRenderVerifyState();
+});
+
+describe("design-spec stash — feeds the vision judges' token-adherence scoring", () => {
+  it("stores and returns the op's mandated spec", () => {
+    recordDesignSpec("op-spec", "Palette (exact): --accent #2563eb");
+    expect(getDesignSpec("op-spec")).toContain("#2563eb");
+  });
+  it("ignores an empty spec (no partial builds get a phantom entry)", () => {
+    recordDesignSpec("op-empty", "");
+    expect(getDesignSpec("op-empty")).toBeUndefined();
+  });
+  it("is cleared on op terminal alongside the rest of the design state", () => {
+    recordDesignSpec("op-clear", "spec");
+    clearDesignVerifyStateForOp("op-clear");
+    expect(getDesignSpec("op-clear")).toBeUndefined();
+  });
 });
 
 describe("runDesignVerifyGate — threshold", () => {

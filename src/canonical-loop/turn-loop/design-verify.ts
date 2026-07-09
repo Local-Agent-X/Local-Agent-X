@@ -38,9 +38,25 @@ const MAX_ISSUES = 8;
 // re-records it.
 const VERDICTS = new Map<string, DesignScore>();
 const RETRIES = new Map<string, number>();
+// The exact mandated design spec for the op (selectDesignBrief().brief), stashed
+// by build_app at op-create so BOTH vision-judge paths (the render probe and the
+// app-build terminal gate) can score the render against the SAME required tokens
+// — turning a generic "looks unstyled" score into "used the wrong palette/font".
+const DESIGN_SPECS = new Map<string, string>();
 
 export function recordDesignVerdict(opId: string, design: DesignScore): void {
   VERDICTS.set(opId, design);
+}
+
+/** Stash the op's mandated design spec (exact palette/fonts/spacing). */
+export function recordDesignSpec(opId: string, spec: string): void {
+  if (spec) DESIGN_SPECS.set(opId, spec);
+}
+
+/** The op's mandated design spec, or undefined — read by the vision judges so
+ *  the design score measures adherence to THESE tokens, not generic polish. */
+export function getDesignSpec(opId: string): string | undefined {
+  return DESIGN_SPECS.get(opId);
 }
 
 function drainDesignVerdict(opId: string): DesignScore | undefined {
@@ -62,12 +78,14 @@ function bumpDesignVerifyRetries(opId: string): number {
 export function clearDesignVerifyStateForOp(opId: string): void {
   VERDICTS.delete(opId);
   RETRIES.delete(opId);
+  DESIGN_SPECS.delete(opId);
 }
 
 /** Test-only — drop all per-op design-verify state. */
 export function _resetDesignVerifyState(): void {
   VERDICTS.clear();
   RETRIES.clear();
+  DESIGN_SPECS.clear();
 }
 
 // Terse, factual nudge — data plus context, no pep-talk (frontier models do worse

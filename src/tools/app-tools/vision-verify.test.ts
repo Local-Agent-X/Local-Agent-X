@@ -68,6 +68,26 @@ describe("visionVerdictForScreenshot — verdict parsing", () => {
   });
 });
 
+describe("visionVerdictForScreenshot — mandated design spec", () => {
+  it("injects the exact spec + token-adherence instruction into the judge prompt", async () => {
+    let seen = "";
+    const dispatch = vi.fn(async (opts: DispatchOptions) => { seen = opts.prompt; return '{"ok":true,"reason":"ok","design":{"score":2,"issues":["accent is red, spec mandates #2563eb"]}}'; });
+    const spec = "Palette (exact): --accent #2563eb · font: Inter";
+    const v = await visionVerdictForScreenshot(PNG, "a todo app", { dispatch }, spec);
+    expect(seen).toContain("MANDATED DESIGN SYSTEM");
+    expect(seen).toContain("--accent #2563eb");
+    expect(seen).toContain("Weight adherence to this spec HEAVILY");
+    expect(v?.design?.score).toBe(2);
+  });
+
+  it("omits the mandated-spec section when no spec is given (generic scoring)", async () => {
+    let seen = "";
+    const dispatch = vi.fn(async (opts: DispatchOptions) => { seen = opts.prompt; return '{"ok":true,"reason":"ok"}'; });
+    await visionVerdictForScreenshot(PNG, "a todo app", { dispatch });
+    expect(seen).not.toContain("MANDATED DESIGN SYSTEM");
+  });
+});
+
 describe("visionVerdictForScreenshot — degradation", () => {
   it("returns null when dispatch returns null (no provider/credential)", async () => {
     const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {

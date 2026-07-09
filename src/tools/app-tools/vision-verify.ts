@@ -42,6 +42,7 @@ export async function visionVerdictForScreenshot(
   pngB64: string | string[],
   appDescription: string,
   deps: { dispatch?: VisionDispatchFn } = {},
+  designSpec?: string,
 ): Promise<VisionVerdict | null> {
   const shots = (Array.isArray(pngB64) ? pngB64 : [pngB64])
     .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
@@ -65,6 +66,18 @@ export async function visionVerdictForScreenshot(
     "2) Design assessment (the `design` field), independent of the broken-check:",
     "Rate `score` from 0 to 5 as an integer, where 5 is polished and intentional and 0 is crude or unstyled. Judge only what is visible against general design and accessibility principles: legible text contrast, a clear visual hierarchy, comfortable and deliberate spacing, real iconography rather than emoji standing in for UI controls, and a layout that reads as designed rather than a default template or an overflowing/broken responsive grid.",
     "List each concrete, visible problem in `issues` as one short phrase (for example: low text contrast, emoji used as icons, generic unstyled look, no visual hierarchy or cramped spacing, content overflow or broken responsive layout). Use an empty list when nothing is wrong.",
+    // When the build MANDATED an exact design system, adherence to it is the
+    // heaviest factor in the score — a render that ignores the required palette
+    // or font is off-spec however tidy it looks. The judge names the specific
+    // deviation so the design-verify refine nudge is actionable, not vague.
+    ...(designSpec
+      ? [
+          "",
+          "3) MANDATED DESIGN SYSTEM — the build was REQUIRED to implement these EXACT values:",
+          designSpec,
+          "Weight adherence to this spec HEAVILY in the design `score`: a render that ignores the required palette, substitutes a different font, or drops the specified spacing/radius is off-spec and scores low even if it looks otherwise clean. For each visible deviation add a concrete `issues` entry naming the mismatch (e.g. \"accent is red, spec mandates #2563eb\", \"used a serif; spec mandates the sans stack\", \"flat cards, spec mandates the elevation shadow\").",
+        ]
+      : []),
   ].join("\n");
 
   const call = deps.dispatch ?? dispatch;

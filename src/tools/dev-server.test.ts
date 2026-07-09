@@ -201,10 +201,17 @@ describe("ensureDevServerRunning — lazy start-on-access", () => {
 describe("startup-failure capture (survives session eviction)", () => {
   it("formatStartupFailure surfaces the exit code + captured stderr tail", () => {
     const crashed = formatStartupFailure("notes", "s1", 5180, {
-      status: "crashed", code: 127, output: "sh: vite: command not found",
+      status: "crashed", code: 127, signal: null, output: "sh: vite: command not found",
     });
     expect(crashed).toMatch(/exited \(code 127\)/);
     expect(crashed).toMatch(/vite: command not found/);
+
+    // A signal death (the "code null" gremlin) names the signal, not "code null".
+    const signalled = formatStartupFailure("notes", "s1", 5180, {
+      status: "crashed", code: null, signal: "SIGKILL", output: "",
+    });
+    expect(signalled).toMatch(/killed by SIGKILL/);
+    expect(signalled).not.toMatch(/code null/);
 
     const timedOut = formatStartupFailure("notes", "s1", 5180, { status: "timeout", output: "" });
     expect(timedOut).toMatch(/did NOT bind port 5180/);

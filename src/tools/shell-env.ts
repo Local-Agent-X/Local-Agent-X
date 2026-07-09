@@ -4,6 +4,12 @@ import { createRequire } from "node:module";
 import { homedir, platform } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import type { ServerEvent } from "../types.js";
+// Host-process (Electron/CoreFoundation/IPC) contamination scrub — the
+// __CFBundleIdentifier that SIGSEGVs a child's process.title set on macOS, etc.
+// Lives in its own module (LOC cap); re-exported so existing shell-env importers
+// keep working, and used locally in buildSanitizedEnv below.
+import { isHostContaminationEnvKey, stripHostContaminationEnv } from "./env-contamination.js";
+export { isHostContaminationEnvKey, stripHostContaminationEnv };
 
 // ── Windows shell resolution ──────────────────────────────────────────────
 //
@@ -315,6 +321,9 @@ export function buildSanitizedEnv(extra?: Record<string, string>): Record<string
   const sanitizedEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (!value) continue;
+    // Host contamination is stripped BEFORE the allowlist — these must never
+    // reach a child even though they're not credential-shaped (see env-contamination.ts).
+    if (isHostContaminationEnvKey(key)) continue;
     if (SAFE_ENV_KEYS.has(key)) {
       sanitizedEnv[key] = value;
       continue;

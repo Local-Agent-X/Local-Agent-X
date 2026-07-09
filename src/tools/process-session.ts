@@ -34,6 +34,11 @@ export interface ProcessSession {
   startedAt: number;
   exitedAt: number | null;
   exitCode: number | null;
+  /** The POSIX signal that terminated the process, when it exited via a signal
+   *  rather than a normal code (Node reports code=null, signal="SIGKILL" etc.).
+   *  Load-bearing for diagnosing "code null" dev-server deaths: SIGKILL means our
+   *  own killProcessGroup did it; anything else (SIGTERM/SIGSEGV/…) is external. */
+  exitSignal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
   truncated: boolean;
@@ -170,6 +175,7 @@ export function startSession(
     startedAt: Date.now(),
     exitedAt: null,
     exitCode: null,
+    exitSignal: null,
     stdout: "",
     stderr: "",
     truncated: false,
@@ -205,10 +211,17 @@ export function startSession(
     session.exitedAt = Date.now();
     session.stderr += `\n[spawn error] ${e.message}`;
   });
-  child.on("exit", (code) => {
+  child.on("exit", (code, signal) => {
     session.exitCode = code;
+    session.exitSignal = signal;
     session.exitedAt = Date.now();
     session.child = null;
+    // A signal death (code null) is the dev-server "code null" gremlin: log the
+    // signal + age so a SIGKILL (our killProcessGroup) is distinguishable from an
+    // external SIGTERM/SIGSEGV at the source, not just in the persisted failure.
+    if (code === null && signal) {
+      logger.warn(`session ${sessionId} killed by ${signal} after ${Date.now() - session.startedAt}ms: ${command.slice(0, 80)}`);
+    }
   });
 
   return { session };
@@ -221,6 +234,11 @@ export function startSession(
  */
 export function killSession(session: ProcessSession): void {
   if (session.exitedAt !== null) return;
+  // Trace the caller: dev-server "code null" deaths are a SIGKILL from here, and
+  // the stack tells us WHICH path (lazy-restart kill, idle sweep, shutdown, a
+  // duplicate-start race) fired it — the missing datum in the persisted failure.
+  const caller = (new Error().stack || "").split("\n").slice(2, 5).map((l) => l.trim()).join(" ← ");
+  logger.info(`killSession ${session.sessionId} (age ${Date.now() - session.startedAt}ms) from: ${caller}`);
   const pid = session.child?.pid;
   if (pid) killProcessGroup(pid, session.child ?? undefined);
   else session.child?.kill("SIGKILL");

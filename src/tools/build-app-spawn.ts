@@ -20,6 +20,7 @@ import { existsSync, statSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { killProcessTree } from "../process-tree-kill.js";
 import { detectFramework } from "./framework-detect.js";
+import { hardenChildEnv } from "./env-contamination.js";
 import type { ToolResult } from "../types.js";
 
 // 15min hard cap. Earlier value was 300s, which killed legitimate builds:
@@ -224,7 +225,10 @@ function runSpawn(args: SpawnArgs): Promise<string> {
       cwd: args.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
-      env: args.env ?? process.env,
+      // hardenChildEnv: strip host __CFBundleIdentifier + guard process.title, so
+      // a spawned build/agent node child can't SIGSEGV on macOS (env scrub alone
+      // is insufficient — see env-contamination.ts).
+      env: hardenChildEnv(args.env ?? process.env),
     });
     proc.stdin?.write(args.stdin);
     proc.stdin?.end();

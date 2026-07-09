@@ -17,10 +17,17 @@ import { SESSIONS, sleep, tailLines, pidsOnPort } from "./process-session.js";
 
 export type BackendOutcome =
   | { status: "listening" }
-  | { status: "crashed"; code: number | null; output: string }
+  | { status: "crashed"; code: number | null; signal: NodeJS.Signals | null; output: string }
   | { status: "timeout"; output: string };
 
 const BACKEND_POLL_MS = 400;
+
+/** Human descriptor for how a process died — a signal name when killed by one
+ *  (the "code null" case), else the numeric exit code. One formatter so the
+ *  tool messages and the persisted diagnostic can't drift. */
+export function exitDescriptor(code: number | null, signal: NodeJS.Signals | null): string {
+  return signal ? `killed by ${signal}` : `code ${code}`;
+}
 
 /** Tail of a session's captured output (stderr preferred), for a failure report. */
 function sessionOutput(sessionId: string, lines = 20): string {
@@ -38,7 +45,7 @@ export async function waitForBackend(sessionId: string, port: number, timeoutMs:
     await sleep(BACKEND_POLL_MS);
     const s = SESSIONS.get(sessionId);
     if (s && s.exitedAt) {
-      return { status: "crashed", code: s.exitCode, output: tailLines(s.stderr || s.stdout || "", 20).trim() };
+      return { status: "crashed", code: s.exitCode, signal: s.exitSignal, output: tailLines(s.stderr || s.stdout || "", 20).trim() };
     }
     if (pidsOnPort(port).length > 0) return { status: "listening" };
   }

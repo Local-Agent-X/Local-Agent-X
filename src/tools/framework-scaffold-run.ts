@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { killProcessTree } from "../process-tree-kill.js";
+import { hardenChildEnv } from "./env-contamination.js";
 import type { DetectedFramework } from "./framework-detect.js";
 import {
   harnessOwnsScaffold,
@@ -73,7 +74,10 @@ function runScaffoldCommand(
     const proc = spawn(command, {
       cwd,
       shell: true,
-      env: { ...process.env, NO_COLOR: "1" },
+      // hardenChildEnv: strip __CFBundleIdentifier + guard process.title so a
+      // node-based scaffolder can't SIGSEGV under the macOS app-bundle context
+      // (env scrub alone is insufficient — see env-contamination.ts).
+      env: { ...hardenChildEnv(process.env), NO_COLOR: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let errOut = "";

@@ -106,11 +106,19 @@ const COLD_START_POLL_MS = 300;
 // Dev-relaxed CSP, applied ONLY to a proxied frontend-dev document — never the
 // static-app path. Vite's dev runtime needs 'unsafe-eval' (module eval) and its
 // HMR client needs a ws:/wss: connect-src to reach the dev server on localhost.
+// script-src/img-src ALSO allow the localhost dev origin: this proxied document
+// (served from 127.0.0.1:<lax>) references vite's assets by ABSOLUTE URL
+// (http://localhost:<devport>/@vite/client, /src/main.tsx, favicon.svg — vite
+// emits the full origin). Without the dev origin in script-src/img-src those are
+// cross-origin to the LAX page and CSP-blocked → the white screen that showed in
+// the brief cold window before the redirect path takes over. connect-src already
+// allows it; these two directives just have to match.
+const DEV_ORIGIN = "http://127.0.0.1:* http://localhost:*";
 const DEV_FRONTEND_CSP =
   "default-src 'self'; " +
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+  `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${DEV_ORIGIN}; ` +
   "style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data: blob:; " +
+  `img-src 'self' data: blob: ${DEV_ORIGIN}; ` +
   "font-src 'self' data:; " +
   "connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* wss://127.0.0.1:* wss://localhost:*; " +
   "object-src 'none'; base-uri 'self'";

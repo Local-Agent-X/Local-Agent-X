@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { buildSanitizedEnv, mergePathDirs } from "./shell-env.js";
+import { withNodeTitleGuard, hardenChildEnv } from "./env-contamination.js";
 
 // buildSanitizedEnv reads process.env; each test sets a var, asserts, restores.
 const TOUCHED: string[] = [];
@@ -60,6 +61,68 @@ describe("buildSanitizedEnv credential scrubbing (R6-A1)", () => {
     const env = buildSanitizedEnv();
     expect(env.LANG).toBe("en_US.UTF-8");
     expect(env.OPENAI_API_KEY).toBeUndefined();
+  });
+});
+
+describe("buildSanitizedEnv host-contamination scrub (macOS app-bundle SIGSEGV)", () => {
+  it("strips __CFBundleIdentifier so a child node's process.title set can't SIGSEGV", () => {
+    // The exact contamination the Electron desktop injects: a child (vite v8 /
+    // next / webpack) that sets process.title crashes in libuv →
+    // CFBundleGetInfoDictionary against this inherited bundle. Must not pass through.
+    setEnv("__CFBundleIdentifier", "com.localagentx.desktop");
+    setEnv("__CF_USER_TEXT_ENCODING", "0x1F5:0x0:0x0");
+    const env = buildSanitizedEnv();
+    expect(env.__CFBundleIdentifier).toBeUndefined();
+    expect(env.__CF_USER_TEXT_ENCODING).toBeUndefined();
+  });
+
+  it("strips the Electron fork IPC channel vars", () => {
+    setEnv("NODE_CHANNEL_FD", "3");
+    setEnv("NODE_CHANNEL_SERIALIZATION_MODE", "json");
+    setEnv("ELECTRON_RUN_AS_NODE", "1");
+    const env = buildSanitizedEnv();
+    expect(env.NODE_CHANNEL_FD).toBeUndefined();
+    expect(env.NODE_CHANNEL_SERIALIZATION_MODE).toBeUndefined();
+    expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+  });
+
+  it("keeps NODE_ENV / NODE_PATH — the prefix strip is scoped to NODE_CHANNEL_*, not all NODE_", () => {
+    setEnv("NODE_ENV", "development");
+    const env = buildSanitizedEnv();
+    expect(env.NODE_ENV).toBe("development");
+  });
+});
+
+describe("withNodeTitleGuard — process.title SIGSEGV guard (macOS)", () => {
+  const isMac = process.platform === "darwin";
+
+  it.runIf(isMac)("injects a --require preload via NODE_OPTIONS on macOS", () => {
+    const env = withNodeTitleGuard({});
+    expect(env.NODE_OPTIONS).toMatch(/--require .*no-process-title\.cjs/);
+  });
+
+  it.runIf(isMac)("appends to an existing NODE_OPTIONS without clobbering it", () => {
+    const env = withNodeTitleGuard({ NODE_OPTIONS: "--max-old-space-size=2048" });
+    expect(env.NODE_OPTIONS).toContain("--max-old-space-size=2048");
+    expect(env.NODE_OPTIONS).toMatch(/--require .*no-process-title\.cjs/);
+  });
+
+  it.runIf(isMac)("is idempotent — a second pass does not double-add the flag", () => {
+    const once = withNodeTitleGuard({});
+    const twice = withNodeTitleGuard(once);
+    expect(twice.NODE_OPTIONS).toBe(once.NODE_OPTIONS);
+  });
+
+  it.skipIf(isMac)("is a no-op off macOS", () => {
+    const env = withNodeTitleGuard({ FOO: "bar" });
+    expect(env.NODE_OPTIONS).toBeUndefined();
+  });
+
+  it.runIf(isMac)("hardenChildEnv both strips contamination and guards process.title", () => {
+    const env = hardenChildEnv({ __CFBundleIdentifier: "com.localagentx.desktop", KEEP: "1" });
+    expect(env.__CFBundleIdentifier).toBeUndefined();
+    expect(env.KEEP).toBe("1");
+    expect(env.NODE_OPTIONS).toMatch(/no-process-title\.cjs/);
   });
 });
 

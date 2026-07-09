@@ -12,7 +12,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { workspacePath } from "../config.js";
 import { registerDevServer, stopDevServer } from "./dev-server.js";
 import { stripRedundantInstall } from "./dev-server-command.js";
-import { waitForBackend } from "./dev-server-readiness.js";
+import { waitForBackend, exitDescriptor } from "./dev-server-readiness.js";
 import { detectFramework, type DetectedFramework } from "./framework-detect.js";
 
 /** How long to wait for a freshly-started backend to bind its port (or crash). */
@@ -54,7 +54,7 @@ export const appServeBackendTool: ToolDefinition = {
       stopDevServer(appId, {}, { forget: true });   // definitively dead — don't auto-retry it
       return {
         content:
-          `Backend for "${appId}" exited (code ${outcome.code}) — the command failed, so the app has no working backend.\n` +
+          `Backend for "${appId}" exited (${exitDescriptor(outcome.code, outcome.signal)}) — the command failed, so the app has no working backend.\n` +
           `Command: ${command} (runs from the app root ${res.cwd}).\n` +
           `Common cause: a native dependency pinned to an OLD version that can't compile against this Node — use Node's built-in node:sqlite (no install), or depend on "better-sqlite3": "latest" (recent versions ship a prebuilt binary; an old "^9.x" pin does not). Fix it and call app_serve_backend again.\n` +
           (outcome.output ? `Output:\n${outcome.output}` : "(no output captured)"),
@@ -158,7 +158,7 @@ export const appServeFrontendTool: ToolDefinition = {
       stopDevServer(appId, {}, { forget: true });
       return {
         content:
-          `Frontend dev server for "${appId}" exited (code ${outcome.code}) — the command failed, so /apps/${appId}/ has nothing to proxy.\n` +
+          `Frontend dev server for "${appId}" exited (${exitDescriptor(outcome.code, outcome.signal)}) — the command failed, so /apps/${appId}/ has nothing to proxy.\n` +
           `Command: ${command} (runs from ${res.cwd}). Fix it and call app_serve_frontend again.\n` +
           (outcome.output ? `Output:\n${outcome.output}` : "(no output captured)"),
         isError: true,

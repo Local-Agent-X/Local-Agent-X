@@ -17,6 +17,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { killProcessTree } from "../../process-tree-kill.js";
 import { allocatePort } from "./port-alloc.js";
+import { hardenChildEnv } from "../../tools/env-contamination.js";
 import type { ProjectLaunchSpec } from "./types.js";
 
 export interface LaunchedApp {
@@ -43,7 +44,11 @@ export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, s
   const { port, url } = allocatePort(launch.readyUrl, workerIndex);
 
   const [bin, ...args] = launch.start.split(/\s+/);
-  const env: NodeJS.ProcessEnv = { ...process.env, BROWSER: "none", FORCE_COLOR: "0" }; // BROWSER=none stops Vite/CRA from launching a tab
+  // BROWSER=none stops Vite/CRA from launching a tab. hardenChildEnv strips
+  // __CFBundleIdentifier AND guards process.title so the launched dev server
+  // (vite sets process.title) can't SIGSEGV under the macOS app-bundle context
+  // (env scrub alone is insufficient — see env-contamination.ts).
+  const env: NodeJS.ProcessEnv = { ...hardenChildEnv(process.env), BROWSER: "none", FORCE_COLOR: "0" };
   // Only a parallel worker overrides the port, so worker 0's env stays
   // byte-identical (no PORT set → the project's own default or an inherited
   // PORT is untouched). PORT is the framework-agnostic lever: Next/CRA/Remix

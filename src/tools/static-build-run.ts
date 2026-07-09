@@ -15,6 +15,7 @@ import { resolve } from "node:path";
 import { killProcessTree } from "../process-tree-kill.js";
 import type { DetectedFramework } from "./framework-detect.js";
 import { staticBuildCommand } from "./app-run-target.js";
+import { hardenChildEnv } from "./env-contamination.js";
 
 // A production bundle (esbuild/rollup over the whole tree) is quick relative to
 // a cold install, but a large app on a slow box can still take a minute; 4 min
@@ -68,7 +69,10 @@ function runBuildCommand(
 		const proc = spawn(command, {
 			cwd,
 			shell: true,
-			env: { ...process.env, NO_COLOR: "1" },
+			// hardenChildEnv: strip __CFBundleIdentifier + inject the process.title
+			// crash guard so `vite build` can't SIGSEGV under the macOS app-bundle
+			// context (env scrub alone is insufficient — see env-contamination.ts).
+			env: { ...hardenChildEnv(process.env), NO_COLOR: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let errOut = "";

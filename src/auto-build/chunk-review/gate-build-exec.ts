@@ -26,6 +26,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { killProcessTree } from "../../process-tree-kill.js";
+import { hardenChildEnv } from "../../tools/env-contamination.js";
 import { smokeUrl } from "../scenario-scorer/smoke.js";
 import type { GateFinding } from "./gates.js";
 
@@ -96,7 +97,10 @@ function runCommand(command: string, projectDir: string, signal?: AbortSignal): 
       cwd: projectDir,
       stdio: ["ignore", "pipe", "pipe"],
       shell: isWin, // npm on Windows must go through the shell
-      env: { ...process.env, FORCE_COLOR: "0", CI: "1" },
+      // hardenChildEnv: strip __CFBundleIdentifier + guard process.title so a
+      // `vite build` / dev server here can't SIGSEGV under the macOS app-bundle
+      // context (env scrub alone is insufficient — see env-contamination.ts).
+      env: { ...hardenChildEnv(process.env), FORCE_COLOR: "0", CI: "1" },
     });
 
     let output = "";

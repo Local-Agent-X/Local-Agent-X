@@ -30,7 +30,8 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { workspacePath } from "../config.js";
 import { SESSIONS, startSession, killSession, pidsOnPort } from "./process-session.js";
 import { stripRedundantInstall } from "./dev-server-command.js";
-import { waitForBackend, type BackendOutcome } from "./dev-server-readiness.js";
+import { withNodeTitleGuard } from "./env-contamination.js";
+import { waitForBackend, exitDescriptor, type BackendOutcome } from "./dev-server-readiness.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tools.dev-server");
@@ -71,12 +72,17 @@ export interface DevServerRecord {
   kind?: DevServerKind;
 }
 
-/** Env the frontend dev server needs so the harness-owned vite.config points
- *  HMR at the actual dev port (the /apps proxy can't carry the HMR websocket,
- *  so the browser connects ws://localhost:<port> directly). Backend spawns get
- *  nothing extra. */
+/** Env a dev-server child needs. A frontend gets LAX_DEV_PORT so the harness-owned
+ *  vite.config points HMR at the actual dev port (the /apps proxy can't carry the
+ *  HMR websocket, so the browser connects ws://localhost:<port> directly). BOTH
+ *  kinds get the macOS process.title crash guard (withNodeTitleGuard): a node dev
+ *  server spawned under the desktop's app-bundle responsibility context SIGSEGVs
+ *  the instant it sets process.title — the "code null / no output" death this
+ *  module fought for days. Returns undefined only when there's nothing to add. */
 function frontendEnv(kind: DevServerKind, port: number): Record<string, string> | undefined {
-  return kind === "frontend" ? { LAX_DEV_PORT: String(port) } : undefined;
+  const base: Record<string, string> = kind === "frontend" ? { LAX_DEV_PORT: String(port) } : {};
+  const env = withNodeTitleGuard(base) as Record<string, string>;
+  return Object.keys(env).length ? env : undefined;
 }
 
 /** Test seam: swap process control so unit tests never spawn a real server. */
@@ -138,7 +144,7 @@ export function formatStartupFailure(appId: string, sessionId: string, port: num
   const head = `lazy restart of dev server "${appId}" (session ${sessionId}) FAILED`;
   const body =
     outcome.status === "crashed"
-      ? `process exited (code ${outcome.code}) without binding port ${port}`
+      ? `process exited (${exitDescriptor(outcome.code, outcome.signal)}) without binding port ${port}`
       : `process did NOT bind port ${port} within ${LAZY_RESTART_VERIFY_MS / 1000}s`;
   const out = outcome.status === "listening" ? "" : outcome.output;
   return `${head}: ${body}` + (out ? `\n--- output (tail) ---\n${out}` : "\n(no output captured)");

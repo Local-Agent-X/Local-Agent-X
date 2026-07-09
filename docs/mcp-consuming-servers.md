@@ -2,7 +2,7 @@
 
 LAX can consume any [Model Context Protocol](https://modelcontextprotocol.io/) server as a tool source. Each MCP server is a subprocess that exposes tools (and optionally resources/prompts); LAX's agent can call those tools alongside its native tool surface.
 
-This doc covers the *consumption* side — LAX as MCP client. For exposing LAX's tools to other MCP clients (Cursor, Cline, Claude Desktop), see the separate `mcp-server-exposure.md` once that ships.
+This doc covers the *consumption* side — LAX as MCP client. For exposing LAX's tools to external MCP clients, see the separate `mcp-server-exposure.md` once that ships.
 
 ## Quick start — adding a server
 

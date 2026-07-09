@@ -1,5 +1,5 @@
 // ── App IDE — click-to-edit element picker ──
-// Lovable/v0-style: toggle a picker, click any element in the preview
+// Toggle a picker, click any element in the preview
 // iframe, and a description of it gets dropped into the chat input so the
 // user can describe what to change about it.
 //

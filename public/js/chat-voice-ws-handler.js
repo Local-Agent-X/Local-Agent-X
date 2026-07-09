@@ -41,7 +41,11 @@ function handleVoiceWsMessage(e) {
       window.LAX_VOICE_RUNTIME = { engine: msg.engine || null, tts: msg.tts || null, stt: msg.stt || null };
       try { renderVoiceEngineBadge(window.LAX_VOICE_RUNTIME); } catch (badgeErr) { console.warn('[voice] badge render failed:', badgeErr); }
       break;
-    case 'vad_speech_start': isListening = true; updateVoiceUI();
+    case 'vad_speech_start':
+      // Drop any orphaned live-partial bubble from a prior utterance that never
+      // got a `final` (e.g. an empty/rejected transcript) before this one builds.
+      if (!dictateMode && voicePartialEl) { try { voicePartialEl.remove(); } catch {} voicePartialEl = null; }
+      isListening = true; updateVoiceUI();
       window.VoiceSphere && VoiceSphere.setState('listening'); break;
     case 'vad_speech_end':   isListening = false; updateVoiceUI();
       window.VoiceSphere && VoiceSphere.setState('thinking'); break;
@@ -53,21 +57,29 @@ function handleVoiceWsMessage(e) {
         appendDictatedText(msg.text);
         break;
       }
-      // Voice mode: commit the user's utterance straight into the thread. No
-      // live partial preview — the agent turn is already triggered server-side
-      // off the same final, so a preview bubble only adds a perceived
-      // transcribe-then-send step without saving any time.
+      // Voice mode: commit the user's utterance into the thread. If a live
+      // partial bubble is already on screen (streamed from Sherpa partials),
+      // finalize it in place with the corrected Whisper text — no flash of a
+      // second bubble. Otherwise create it now. The agent turn is triggered
+      // server-side off this same final either way; the preview just makes the
+      // STT wait feel responsive instead of dead-air.
       const empty = document.getElementById('empty');
       if (empty) empty.remove();
-      if (typeof addMessageEl === 'function') {
-        const userEl = addMessageEl('user', msg.text);
-        // Pin the just-spoken utterance near the top so it stays readable —
-        // the user checks here whether their speech transcribed correctly.
-        // The reply streams (and is spoken) below it instead of autoscroll
-        // shoving the utterance off the top.
-        if (userEl && typeof userEl.scrollIntoView === 'function') {
-          userEl.scrollIntoView({ block: 'start' });
-        }
+      let userEl = voicePartialEl;
+      if (userEl) {
+        userEl.classList.remove('voice-partial');
+        const body = userEl.querySelector('.msg-body');
+        if (body) body.textContent = msg.text;
+        voicePartialEl = null;
+      } else if (typeof addMessageEl === 'function') {
+        userEl = addMessageEl('user', msg.text);
+      }
+      // Pin the just-spoken utterance near the top so it stays readable — the
+      // user checks here whether their speech transcribed correctly. The reply
+      // streams (and is spoken) below it instead of autoscroll shoving the
+      // utterance off the top.
+      if (userEl && typeof userEl.scrollIntoView === 'function') {
+        userEl.scrollIntoView({ block: 'start' });
       }
       if (typeof activeChat !== 'undefined' && activeChat) {
         activeChat.messages.push({ role: 'user', content: msg.text });
@@ -76,14 +88,37 @@ function handleVoiceWsMessage(e) {
       break;
     }
     case 'partial': {
-      // Streaming Sherpa partial — only rendered in dictate mode (ghost preview
-      // row below the textarea; `final` commits it to the textarea). Voice mode
-      // shows nothing live — words land as the committed user message on final.
-      if (!dictateMode || !msg.text) break;
-      const preview = document.getElementById('dictate-preview');
-      if (preview) {
-        preview.textContent = msg.text;
-        preview.style.display = 'block';
+      if (!msg.text) break;
+      // Dictate mode: ghost preview row below the textarea; `final` commits it
+      // to the textarea.
+      if (dictateMode) {
+        const preview = document.getElementById('dictate-preview');
+        if (preview) {
+          preview.textContent = msg.text;
+          preview.style.display = 'block';
+        }
+        break;
+      }
+      // Voice mode: live transcription preview. Stream the recognized words
+      // into a dimmed user bubble so the wait for the final Whisper commit
+      // feels responsive (masks STT latency — it does NOT change when the agent
+      // turn fires; that's still server-side off the `final`). The bubble is
+      // finalized in place by the `final` case, or dropped on the next
+      // vad_speech_start if no final arrives.
+      const empty = document.getElementById('empty');
+      if (empty) empty.remove();
+      if (!voicePartialEl) {
+        if (typeof addMessageEl !== 'function') break;
+        voicePartialEl = addMessageEl('user', msg.text);
+        if (voicePartialEl) {
+          voicePartialEl.classList.add('voice-partial');
+          if (typeof voicePartialEl.scrollIntoView === 'function') {
+            voicePartialEl.scrollIntoView({ block: 'start' });
+          }
+        }
+      } else {
+        const body = voicePartialEl.querySelector('.msg-body');
+        if (body) body.textContent = msg.text;
       }
       break;
     }

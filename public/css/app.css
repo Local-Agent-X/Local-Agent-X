@@ -266,6 +266,11 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 .msg{max-width:800px;width:100%}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
 .msg.user{display:flex;justify-content:flex-end}
+/* Live voice transcription preview: a dimmed, still-being-recognized user
+   bubble. Solidifies (class removed) when the `final` transcript commits. */
+.msg.voice-partial{opacity:.55}
+.msg.voice-partial .msg-body{font-style:italic}
+.msg.voice-partial .msg-body::after{content:'';display:inline-block;width:.4em;height:1em;margin-left:2px;vertical-align:-.15em;background:var(--accent);border-radius:1px;animation:dot-pulse 1s ease-in-out infinite}
 .msg.assistant{}
 .msg-label{display:none}
 .msg-footer{display:flex;align-items:center;gap:8px;margin-top:4px}

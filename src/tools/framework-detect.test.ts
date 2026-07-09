@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { detectFramework, inferFrameworkFromPrompt, type DetectedFramework } from "./framework-detect.js";
-import { resolveServeCommand } from "./dev-server-tools.js";
+import { resolveServeCommand, stripRedundantInstall } from "./dev-server-tools.js";
 
 let dir: string;
 
@@ -165,6 +165,33 @@ describe("detectFramework — devCommand port injection", () => {
     expect(detectFramework(dir).devCommand(4124)).toBe(
       "npm install && npx vite dev --port 4124 --host 127.0.0.1 --strictPort",
     );
+  });
+});
+
+describe("stripRedundantInstall — drop the crash-prone install when deps exist", () => {
+  it("strips a leading `npm install &&` when node_modules is present", () => {
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+    expect(stripRedundantInstall("npm install && npx vite --port 3002 --host 127.0.0.1 --strictPort", dir))
+      .toBe("npx vite --port 3002 --host 127.0.0.1 --strictPort");
+    expect(stripRedundantInstall("npm install && npm run dev", dir)).toBe("npm run dev");
+    expect(stripRedundantInstall("npm ci && npm run dev", dir)).toBe("npm run dev");
+    expect(stripRedundantInstall("pnpm install && pnpm dev", dir)).toBe("pnpm dev");
+  });
+
+  it("KEEPS the install when node_modules is absent (a real install is still needed)", () => {
+    expect(stripRedundantInstall("npm install && npm run dev", dir)).toBe("npm install && npm run dev");
+  });
+
+  it("leaves a command with no install prefix untouched", () => {
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+    expect(stripRedundantInstall("npx vite --port 3002", dir)).toBe("npx vite --port 3002");
+  });
+
+  it("resolveServeCommand strips the redundant install once deps are installed", () => {
+    writeFileSync(join(dir, "vite.config.js"), "export default {}\n");
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+    const r = resolveServeCommand(dir, undefined, 3002);
+    expect(r.ok && r.command).toBe("npx vite --port 3002 --host 127.0.0.1 --strictPort");
   });
 });
 

@@ -8,6 +8,8 @@
  * actually binds its port (or crashes) — so a dead/never-bound server is reported
  * as a failure with an actionable fix, never shipped as "ready".
  */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { workspacePath } from "../config.js";
 import { registerDevServer, stopDevServer } from "./dev-server.js";
@@ -83,10 +85,28 @@ export type ResolvedServeCommand =
   | { ok: true; command: string; detected: DetectedFramework | null; evidence: string | null }
   | { ok: false; error: string };
 
+// A leading `npm install && …` (or ci / i / yarn / pnpm equivalent) in a dev
+// command. Harness-scaffolded apps already have node_modules (the scaffold ran
+// install directly, unsandboxed), so re-running install on every serve — and on
+// every lazy-restart — is pure overhead that, under the guarded sandbox + the
+// restart storm, SEGFAULTS and takes the dev server down before Vite ever binds.
+const LEADING_INSTALL_RE = /^\s*(?:npm|pnpm|yarn)\s+(?:install|ci|i)\b[^&|]*&&\s*/i;
+
+/** Drop a redundant leading install step when the deps are already present, so
+ *  the dev server just runs its bind step (npx vite / npm run dev). No-op when
+ *  node_modules is absent (a real install is still needed) or the command has no
+ *  install prefix. */
+export function stripRedundantInstall(command: string, appDir: string): string {
+  if (!existsSync(join(appDir, "node_modules"))) return command;
+  return command.replace(LEADING_INSTALL_RE, "");
+}
+
 /**
  * Decide what command app_serve_frontend runs: an explicit `command` always
  * wins; when omitted, sniff the app directory (framework-detect.ts) and use
- * the detected framework's dev command. Pure — unit-testable without spawning.
+ * the detected framework's dev command. A redundant leading install is stripped
+ * when deps are already installed (see stripRedundantInstall). Pure —
+ * unit-testable without spawning.
  */
 export function resolveServeCommand(
   appDir: string,
@@ -94,7 +114,7 @@ export function resolveServeCommand(
   port: number,
 ): ResolvedServeCommand {
   const explicit = (command ?? "").trim();
-  if (explicit) return { ok: true, command: explicit, detected: null, evidence: null };
+  if (explicit) return { ok: true, command: stripRedundantInstall(explicit, appDir), detected: null, evidence: null };
 
   const det = detectFramework(appDir);
   if (det.framework === "static") {
@@ -115,7 +135,7 @@ export function resolveServeCommand(
         `(${det.evidence}) — pass \`command\` explicitly, e.g. 'npm install && npm run dev'.`,
     };
   }
-  return { ok: true, command: cmd, detected: det.framework, evidence: det.evidence };
+  return { ok: true, command: stripRedundantInstall(cmd, appDir), detected: det.framework, evidence: det.evidence };
 }
 
 export const appServeFrontendTool: ToolDefinition = {

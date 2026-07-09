@@ -107,6 +107,48 @@ describe("buildAppBundle — workspace HTML app", () => {
   });
 });
 
+describe("buildAppBundle — static-build app (dist/)", () => {
+  it("bundles the built dist/ (not the Vite SOURCE index.html), rooted so /apps/<id>/ asset URLs resolve on the phone", async () => {
+    const { writeRunTargetManifest } = await import("../tools/app-run-target.js");
+    const appDir = join(workspace, "apps", "spa-bundle");
+    // A Vite app keeps a SOURCE index.html at its root (points at /src/main.tsx)
+    // AND builds to dist/. The bundle must take dist/, never the source.
+    mkdirSync(join(appDir, "dist", "assets"), { recursive: true });
+    writeFileSync(join(appDir, "index.html"), "<html><body><script type=module src=/src/main.tsx></script></body></html>");
+    writeFileSync(join(appDir, "dist", "index.html"), "<html><head><title>Built SPA</title></head><body><script type=module src=/apps/spa-bundle/assets/app.js></script></body></html>");
+    writeFileSync(join(appDir, "dist", "assets", "app.js"), "console.log('built');");
+    writeRunTargetManifest(appDir, { mode: "static-build", distDir: "dist", framework: "vite" });
+
+    const reg = freshRegistry();
+    const bundle = buildAppBundle(reg, workspace, "spa-bundle", 7007);
+    expect(bundle).not.toBeNull();
+    if (!bundle) return;
+    expect(bundle.entry).toBe("index.html");
+    // Paths are relative to dist/ (index.html, assets/app.js) — the phone serves
+    // each at /apps/<id>/<path>, matching the build's baked base.
+    const paths = bundle.files.map((f) => f.path).sort();
+    expect(paths).toEqual(["assets/app.js", "index.html"]);
+    // It's the BUILT index (has a <title>), not the source (points at /src).
+    const entry = bundle.files.find((f) => f.path === "index.html");
+    expect(entry?.content).toContain("Built SPA");
+    expect(entry?.content).not.toContain("/src/main.tsx");
+  });
+
+  it("a marker whose dist/ was cleaned falls through to the source HTML path (never returns the marker's ghost)", async () => {
+    const { writeRunTargetManifest } = await import("../tools/app-run-target.js");
+    const appDir = join(workspace, "apps", "spa-nodist");
+    mkdirSync(appDir, { recursive: true });
+    writeFileSync(join(appDir, "index.html"), "<html><body>source fallback</body></html>");
+    writeRunTargetManifest(appDir, { mode: "static-build", distDir: "dist", framework: "vite" });
+
+    const reg = freshRegistry();
+    const bundle = buildAppBundle(reg, workspace, "spa-nodist", 7007);
+    // staticBuildDistDir returns null (no dist/) → the workspace-HTML branch serves the source.
+    expect(bundle).not.toBeNull();
+    expect(bundle?.files.find((f) => f.path === "index.html")?.content).toContain("source fallback");
+  });
+});
+
 describe("updateComponentValues — replayed-action idempotency", () => {
   it("applies a tagged action once; a re-send is a no-op (no duplicate, no version bump)", () => {
     const reg = freshRegistry();

@@ -13,7 +13,7 @@ import { describe, it, expect } from "vitest";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { AddressInfo } from "node:net";
 import { gzipSync } from "node:zlib";
-import { proxyFrontendDevServer } from "./dev-server-proxy.js";
+import { proxyFrontendDevServer, decideFrontendServe } from "./dev-server-proxy.js";
 
 /** Drive the proxy against a DEAD upstream port with a near-zero cold-start
  *  budget, capturing the response the proxy writes. */
@@ -119,6 +119,28 @@ function runProxyThroughGzipUpstream(): Promise<{
     });
   });
 }
+
+describe("decideFrontendServe — desktop-native redirect vs proxy", () => {
+  const base = { port: 5178, pathAndQuery: "/apps/spa/assets/x.js?token=abc" };
+
+  it("desktop + warm → redirect straight to the dev server's own origin (native HMR, no proxy)", () => {
+    const d = decideFrontendServe({ ...base, warm: true, tunneled: false });
+    expect(d).toEqual({ mode: "redirect", location: "http://localhost:5178/apps/spa/assets/x.js?token=abc" });
+  });
+
+  it("phone (broker tunnel) → proxy even when warm — it can't reach localhost:<port>", () => {
+    expect(decideFrontendServe({ ...base, warm: true, tunneled: true })).toEqual({ mode: "proxy" });
+  });
+
+  it("cold server → proxy (the cold-start holding page lives on the proxy path)", () => {
+    expect(decideFrontendServe({ ...base, warm: false, tunneled: false })).toEqual({ mode: "proxy" });
+  });
+
+  it("preserves the exact path + query on the redirect so subresource URLs and base match", () => {
+    const d = decideFrontendServe({ warm: true, tunneled: false, port: 4321, pathAndQuery: "/apps/moneymap-opus/" });
+    expect(d).toEqual({ mode: "redirect", location: "http://localhost:4321/apps/moneymap-opus/" });
+  });
+});
 
 describe("proxyFrontendDevServer — response body encoding", () => {
   it("forces identity upstream and serves decodable HTML (no ERR_CONTENT_DECODING_FAILED)", async () => {

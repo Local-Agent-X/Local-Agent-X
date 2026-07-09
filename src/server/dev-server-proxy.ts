@@ -62,6 +62,33 @@ function liveReloadScript(appId: string): string {
   );
 }
 
+/** How to serve one `/apps/<id>/…` request for an app that has a live frontend
+ *  dev server. Pure decision, split out so the branch is unit-testable without
+ *  standing up a real dev server + the process-session machinery. */
+export type FrontendServeDecision =
+  | { mode: "redirect"; location: string }
+  | { mode: "proxy" };
+
+/**
+ * Desktop → a WARM dev server: redirect the browser straight to the server's own
+ * origin (`http://localhost:<port>/apps/<id>/…`) so Vite serves everything with
+ * native HMR and zero proxy — the "npm run dev in a browser tab" experience.
+ * The phone (broker tunnel) can't reach localhost:<port>, and a COLD server needs
+ * the proxy's cold-start holding page, so both fall back to the transparent proxy.
+ */
+export function decideFrontendServe(opts: {
+  warm: boolean;
+  tunneled: boolean;
+  port: number;
+  /** The request's `pathname + search`, forwarded verbatim to the native origin. */
+  pathAndQuery: string;
+}): FrontendServeDecision {
+  if (opts.warm && !opts.tunneled) {
+    return { mode: "redirect", location: `http://localhost:${opts.port}${opts.pathAndQuery}` };
+  }
+  return { mode: "proxy" };
+}
+
 // Hop-by-hop headers must not be forwarded across a proxy boundary (RFC 7230).
 const HOP_BY_HOP = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",

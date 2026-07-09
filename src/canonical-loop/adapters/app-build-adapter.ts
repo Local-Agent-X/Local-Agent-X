@@ -226,6 +226,13 @@ class CliBuildAdapter implements Adapter {
         appName: this.opts.appName,
         laxPort: process.env.LAX_PORT ?? "7007",
         registerServer: !result.isError,
+        // Default: keep the finished app on its dev server. On desktop the
+        // request handler redirects a warm frontend dev server straight to its
+        // native origin, so the user gets real HMR/live preview ("npm run dev in
+        // a tab") with none of the reverse-proxy machinery. A static dist/ build
+        // is now an EXPLICIT export (offline / phone / shareable frozen copy) via
+        // runTarget: "static-build" — not the automatic terminal state.
+        runTarget: "dev-server",
       },
       this.opts.finalizeDeps ?? {},
     );
@@ -245,6 +252,9 @@ class CliBuildAdapter implements Adapter {
       // join would insert the url between each one — skip the base rewrite.
       if (this.opts.appUrl) content = content.split(this.opts.appUrl).join(url);
       content = content.replace(/APP_READY:\s*\S+/g, `APP_READY: ${url}`);
+      // Static-build fell back to a dev server (build failed) — surface the
+      // reason rather than quietly shipping a dev server for a finished app.
+      if (finalized.ok && finalized.note) content = `${content}\n\n[serve] ${finalized.note}`;
     } else {
       const indexPath = resolve(this.opts.appDir, "index.html");
       const verified = verifyWriteLanded(indexPath);

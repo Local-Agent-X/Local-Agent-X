@@ -1,16 +1,17 @@
-// Child "app" windows — the frameless Electron windows that host a user-built
-// app (/apps/<id>) with the preload bridge, plus the warm-window pool that makes
-// pinned-app clicks feel instant. Split out of window.ts (which owns the MAIN
-// window) to keep each file one responsibility. The main window wires
-// handleWindowOpen into its setWindowOpenHandler / will-navigate; main.ts calls
-// prewarmAppWindow once the server is up.
+// Window-open routing for the MAIN window's popups. /apps/<id> links open in the
+// system browser (handleWindowOpen → openAppExternally): a user-built app is a
+// real web app, and a browser tab gives it devtools, real navigation, and a
+// static-build app that runs with no dev server. The one in-app popup that
+// remains is the account window (device-code login + phone pairing), which must
+// stay on our origin. Split out of window.ts (which owns the MAIN window) to keep
+// each file one responsibility; the main window wires handleWindowOpen into its
+// setWindowOpenHandler / will-navigate.
 
 import { BrowserWindow, shell } from "electron";
 import { join } from "path";
 import { ICON_PATH, getProjectRoot, getLAXConfig } from "./config";
 import { bgForTheme, overlayForTheme } from "./theme";
 import { getSetting } from "./settings";
-import { isServerRunning } from "./server-process";
 import { buildAppDragStripJs } from "./window-injections";
 import { lockAppWindowNavigation } from "./app-window-guards";
 import { isExternalBrowserUrl } from "./url-classify";
@@ -61,13 +62,27 @@ export function handleWindowOpen(openUrl: string): Electron.WindowOpenHandlerRes
     }
   }
 
-  // Local app links (/apps/xyz) → frameless Electron window with auth.
-  // Only attach token to our own server origin, not arbitrary loopback.
+  // Local app links (/apps/xyz) → the system browser, not a frameless in-app
+  // window. A user-built app is a real web app; opening it as a browser tab
+  // gives it devtools, real navigation, and a shareable loopback URL, and lets
+  // a static-build app run with no dev server behind it. The operator token is
+  // appended so the loopback auth gate admits it; the served page strips it from
+  // the address bar (history.replaceState) on load.
   if (openUrl.startsWith(appOrigin)) {
-    openAppWindow(openUrl);
+    openAppExternally(openUrl);
     return { action: "deny" };
   }
   return { action: "deny" };
+}
+
+/** Open a loopback /apps/<id> URL in the user's default browser, appending the
+ *  operator token so the same-origin auth gate admits the request. Only ever
+ *  called with our own server origin (handleWindowOpen gates on appOrigin), so
+ *  the token is never leaked to an arbitrary host. */
+function openAppExternally(targetUrl: string): void {
+  const laxConfig = getLAXConfig();
+  const separator = targetUrl.includes("?") ? "&" : "?";
+  shell.openExternal(`${targetUrl}${separator}token=${laxConfig.authToken}`);
 }
 
 function buildAppWindow(hidden: boolean): BrowserWindow {
@@ -133,61 +148,3 @@ function attachAppDragStrip(appWin: BrowserWindow): void {
   });
 }
 
-// ── Warm app-window pool ───────────────────────────────────
-// Pinned-app clicks felt sluggish at startup because every click cold-spawned
-// a renderer + preload + GPU attach (~150-300ms before paint). Keep one
-// hidden window pre-loaded to a cheap same-origin URL (/api/health) so the
-// next openAppWindow() reuses that renderer process — /apps/<id> nav stays
-// in-process and shows near-instant. Replenished in the background after
-// each consume.
-let warmAppWindow: BrowserWindow | null = null;
-let warmingScheduled = false;
-
-export function prewarmAppWindow(): void {
-  if (warmAppWindow || warmingScheduled) return;
-  warmingScheduled = true;
-  const tryWarm = (): void => {
-    isServerRunning().then((up) => {
-      if (!up) { setTimeout(tryWarm, 2000); return; }
-      const laxConfig = getLAXConfig();
-      const w = buildAppWindow(true);
-      attachAppDragStrip(w);
-      w.webContents.once("did-finish-load", () => {
-        if (w.isDestroyed()) { warmingScheduled = false; return; }
-        warmAppWindow = w;
-        warmingScheduled = false;
-      });
-      w.webContents.once("did-fail-load", (_e, errorCode) => {
-        if (errorCode === -3) return; // navigation aborted (consume swapped URLs)
-        warmingScheduled = false;
-        if (!w.isDestroyed()) w.destroy();
-      });
-      w.loadURL(`http://127.0.0.1:${laxConfig.port}/api/health?token=${laxConfig.authToken}`);
-    }).catch(() => setTimeout(tryWarm, 2000));
-  };
-  tryWarm();
-}
-
-function consumeWarmAppWindow(): BrowserWindow | null {
-  const w = warmAppWindow;
-  warmAppWindow = null;
-  setTimeout(prewarmAppWindow, 0);
-  return w && !w.isDestroyed() ? w : null;
-}
-
-function openAppWindow(targetUrl: string): void {
-  const laxConfig = getLAXConfig();
-  const separator = targetUrl.includes("?") ? "&" : "?";
-  const fullUrl = `${targetUrl}${separator}token=${laxConfig.authToken}`;
-
-  const warm = consumeWarmAppWindow();
-  if (warm) {
-    warm.loadURL(fullUrl);
-    warm.show();
-    return;
-  }
-
-  const appWin = buildAppWindow(false);
-  attachAppDragStrip(appWin);
-  appWin.loadURL(fullUrl);
-}

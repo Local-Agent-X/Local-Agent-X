@@ -29,6 +29,7 @@ import { join, dirname } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { workspacePath } from "../config.js";
 import { SESSIONS, startSession, killSession, pidsOnPort } from "./process-session.js";
+import { stripRedundantInstall } from "./dev-server-command.js";
 import { waitForBackend, type BackendOutcome } from "./dev-server-readiness.js";
 import { createLogger } from "../logger.js";
 
@@ -90,6 +91,10 @@ export interface DevServerDeps {
    *  port; on a crash/never-bind it persists the child's captured output. The
    *  real impl polls live SESSIONS, so tests inject a no-op. */
   verifyStartup?: (appId: string, sessionId: string, port: number) => void;
+  /** Epoch-ms the session started, or null if unknown. Used to tell a server
+   *  that's still BOOTING (young, not yet bound) from one that's genuinely stuck,
+   *  so the lazy-restart path doesn't kill a dev server mid-cold-start. */
+  sessionStartedAt?: (sessionId: string) => number | null;
 }
 
 function deps(d: DevServerDeps): Required<DevServerDeps> {
@@ -99,8 +104,19 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
     kill: d.kill ?? ((sid) => { const s = SESSIONS.get(sid); if (s) killSession(s); }),
     portBound: d.portBound ?? ((port) => pidsOnPort(port).length > 0),
     verifyStartup: d.verifyStartup ?? ((appId, sessionId, port) => { void defaultVerifyStartup(appId, sessionId, port); }),
+    sessionStartedAt: d.sessionStartedAt ?? ((sid) => { const s = SESSIONS.get(sid); return s ? s.startedAt : null; }),
   };
 }
+
+// How long a freshly-(re)started dev server is allowed to still be BINDING before
+// the lazy-restart path treats it as stuck. A vite cold start is ~250ms, but a
+// bigger app / first-run can take several seconds — and critically the cold-start
+// holding page polls /apps/<id>/ every 1.5s, each poll re-entering
+// ensureDevServerRunning: without this grace, every poll SIGKILLs the still-booting
+// server (alive but not yet bound), so it NEVER binds — an infinite silent restart
+// loop. Only a server that's been alive-yet-unbound PAST this window is genuinely
+// stuck and gets restarted.
+const DEV_SERVER_BIND_GRACE_MS = 30_000;
 
 // The port-readiness check + the app_serve_* tools that use it live in
 // dev-server-tools.ts (kept this file under the LOC cap).
@@ -276,9 +292,26 @@ export function ensureDevServerRunning(appId: string, d: DevServerDeps = {}): En
   // makes this self-healing.
   const alive = !!(rec.sessionId && dd.isAlive(rec.sessionId));
   if (alive && dd.portBound(rec.port)) return { status: "running", record: rec };
-  if (alive) { logger.info(`[dev-server] ${appId}: session ${rec.sessionId} alive but port ${rec.port} dead — restarting`); dd.kill(rec.sessionId!); }
+  if (alive) {
+    // Alive but not yet listening. Distinguish STILL BOOTING from genuinely stuck:
+    // a dev server spawned moments ago hasn't bound its port yet — that's a normal
+    // cold start, not a dead session. Killing it here restarts the boot clock, and
+    // because the cold-start holding page polls this route every 1.5s, each poll
+    // would kill the next boot attempt → the server never binds (silent SIGKILL,
+    // infinite restart). So within the bind grace, leave it alone and let the
+    // proxy's cold-start retry wait for it; only past the grace is it truly stuck.
+    const startedAt = dd.sessionStartedAt(rec.sessionId!);
+    const booting = startedAt !== null && Date.now() - startedAt < DEV_SERVER_BIND_GRACE_MS;
+    if (booting) return { status: "started", record: rec };
+    logger.info(`[dev-server] ${appId}: session ${rec.sessionId} alive but port ${rec.port} dead past ${DEV_SERVER_BIND_GRACE_MS / 1000}s — restarting`);
+    dd.kill(rec.sessionId!);
+  }
 
-  const started = dd.start(rec.command, rec.cwd || undefined, frontendEnv(rec.kind ?? "backend", rec.port));
+  // Strip the redundant `npm install &&` before restarting: on this lazy-restart
+  // hot path it's the wedge that leaves the app stuck on "Starting…" forever
+  // (install segfaults under the sandbox, so the bind step never runs).
+  const restartCmd = stripRedundantInstall(rec.command, rec.cwd || workspacePath("apps", appId));
+  const started = dd.start(restartCmd, rec.cwd || undefined, frontendEnv(rec.kind ?? "backend", rec.port));
   if ("error" in started) { logger.warn(`[dev-server] ${appId}: restart failed: ${started.error}`); return { status: "error", error: started.error }; }
   const updated: DevServerRecord = { ...rec, sessionId: started.session.sessionId };
   writeRecord(updated);

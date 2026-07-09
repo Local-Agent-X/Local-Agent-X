@@ -26,21 +26,24 @@ let prevDataDir: string | undefined;
 function fakeDeps(): {
   deps: Required<DevServerDeps>;
   sessions: Map<string, boolean>;
+  startTimes: Map<string, number>;
   starts: string[];
   verifyCalls: { appId: string; sessionId: string; port: number }[];
 } {
   const sessions = new Map<string, boolean>();
+  const startTimes = new Map<string, number>();   // sessionId → epoch-ms start (backdate to simulate a stuck one)
   const starts: string[] = [];
   const verifyCalls: { appId: string; sessionId: string; port: number }[] = [];
   let n = 0;
   const deps: Required<DevServerDeps> = {
-    start: (command) => { const id = `s${++n}`; sessions.set(id, true); starts.push(command); return { session: { sessionId: id } }; },
+    start: (command) => { const id = `s${++n}`; sessions.set(id, true); startTimes.set(id, Date.now()); starts.push(command); return { session: { sessionId: id } }; },
     isAlive: (sid) => sessions.get(sid) === true,
     kill: (sid) => { sessions.set(sid, false); },
     portBound: () => true,   // default: an alive session is also bound to its port
     verifyStartup: (appId, sessionId, port) => { verifyCalls.push({ appId, sessionId, port }); },
+    sessionStartedAt: (sid) => startTimes.get(sid) ?? null,
   };
-  return { deps, sessions, starts, verifyCalls };
+  return { deps, sessions, startTimes, starts, verifyCalls };
 }
 
 beforeEach(() => {
@@ -133,18 +136,38 @@ describe("ensureDevServerRunning — lazy start-on-access", () => {
     expect(readDevServerRecord("notes")?.sessionId).not.toBe(oldId);
   });
 
-  it("self-heals a STALE session: alive flag set but the port is DEAD → restart, not a wedge", () => {
+  it("self-heals a STALE session: alive flag set but the port is DEAD (past bind grace) → restart, not a wedge", () => {
     // The real-world bug: a dev server killed externally leaves its session flag
     // 'alive' in memory, so ensureDevServerRunning returned 'running' and the
     // proxy connected to a dead port forever (ECONNREFUSED). The port probe fixes it.
-    const { deps, sessions, starts } = fakeDeps();
+    const { deps, sessions, startTimes, starts } = fakeDeps();
     const reg = registerDevServer({ appId: "stale", command: "vite", port: 5210, cwd: "/tmp/x" }, deps);
     expect(reg.ok && sessions.get(reg.sessionId)).toBe(true);   // session reads alive
+    if (reg.ok) startTimes.set(reg.sessionId, Date.now() - 60_000); // long-alive → genuinely stuck, not booting
     const portDead = { ...deps, portBound: () => false };       // ...but nothing on the port
 
     const res = ensureDevServerRunning("stale", portDead);
     expect(res.status).toBe("started");   // restarted, NOT a no-op 'running'
     expect(starts).toHaveLength(2);       // original register + the heal restart
+  });
+
+  it("does NOT kill a still-BOOTING dev server: alive + unbound but freshly started → wait, no restart", () => {
+    // The wedge fix: a dev server spawned moments ago hasn't bound its port yet.
+    // The cold-start holding page polls this route every 1.5s; without the bind
+    // grace each poll would SIGKILL the booting server and it would NEVER bind
+    // (silent infinite restart — the "stuck on Starting…" bug). Within the grace,
+    // an alive-but-unbound (young) session is left to finish booting.
+    const { deps, sessions, starts } = fakeDeps();
+    const reg = registerDevServer({ appId: "booting", command: "vite", port: 5211, cwd: "/tmp/x" }, deps);
+    const sid = reg.ok ? reg.sessionId : "";
+    expect(sessions.get(sid)).toBe(true);
+    const portDead = { ...deps, portBound: () => false };       // still coming up — not listening yet
+
+    const res = ensureDevServerRunning("booting", portDead);
+    expect(res.status).toBe("started");
+    if (res.status === "started") expect(res.record.sessionId).toBe(sid);  // SAME session — not restarted
+    expect(starts).toHaveLength(1);        // only the original register; NO kill+restart
+    expect(sessions.get(sid)).toBe(true);  // the booting session was NOT killed
   });
 
   // Regression for the silent-502 bug: the idle-sweep kills a dev server, the

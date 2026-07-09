@@ -8,11 +8,10 @@
  * actually binds its port (or crashes) — so a dead/never-bound server is reported
  * as a failure with an actionable fix, never shipped as "ready".
  */
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { workspacePath } from "../config.js";
 import { registerDevServer, stopDevServer } from "./dev-server.js";
+import { stripRedundantInstall } from "./dev-server-command.js";
 import { waitForBackend } from "./dev-server-readiness.js";
 import { detectFramework, type DetectedFramework } from "./framework-detect.js";
 
@@ -85,21 +84,9 @@ export type ResolvedServeCommand =
   | { ok: true; command: string; detected: DetectedFramework | null; evidence: string | null }
   | { ok: false; error: string };
 
-// A leading `npm install && …` (or ci / i / yarn / pnpm equivalent) in a dev
-// command. Harness-scaffolded apps already have node_modules (the scaffold ran
-// install directly, unsandboxed), so re-running install on every serve — and on
-// every lazy-restart — is pure overhead that, under the guarded sandbox + the
-// restart storm, SEGFAULTS and takes the dev server down before Vite ever binds.
-const LEADING_INSTALL_RE = /^\s*(?:npm|pnpm|yarn)\s+(?:install|ci|i)\b[^&|]*&&\s*/i;
-
-/** Drop a redundant leading install step when the deps are already present, so
- *  the dev server just runs its bind step (npx vite / npm run dev). No-op when
- *  node_modules is absent (a real install is still needed) or the command has no
- *  install prefix. */
-export function stripRedundantInstall(command: string, appDir: string): string {
-  if (!existsSync(join(appDir, "node_modules"))) return command;
-  return command.replace(LEADING_INSTALL_RE, "");
-}
+// stripRedundantInstall now lives in dev-server.ts so the lazy-restart path
+// shares it; re-exported here for resolveServeCommand's callers and tests.
+export { stripRedundantInstall };
 
 /**
  * Decide what command app_serve_frontend runs: an explicit `command` always

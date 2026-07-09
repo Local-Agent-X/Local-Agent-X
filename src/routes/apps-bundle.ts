@@ -23,6 +23,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { confineToDir } from "../security/file-access.js";
 import { renderApp } from "../app-renderer/index.js";
+import { staticBuildDistDir } from "../tools/app-run-target.js";
 import type { AppRegistry, AppState } from "../app-runtime/index.js";
 
 /** One static file the phone must persist to run the app offline. */
@@ -102,11 +103,33 @@ export function buildAppBundle(
   port: number,
 ): AppBundlePayload | null {
   const state = appReg.getState(appId);
+  const appDir = resolve(workspaceDir, "apps", appId);
+
+  // Finished STATIC BUILD takes precedence — its built dist/ is what LAX serves
+  // at /apps/<id>/, and the phone's offline runtime serves each bundle file at
+  // that same /apps/<id>/<path> base, so the build's baked `/apps/<id>/` asset
+  // URLs resolve. Must run BEFORE the root-index.html check below: a Vite app
+  // also keeps a SOURCE index.html at its root, and bundling that (unbuilt,
+  // pointing at /src/main.tsx) would ship a blank app. See app-run-target.ts.
+  const distDir = staticBuildDistDir(appDir);
+  if (distDir) {
+    const files: BundleFile[] = [];
+    collectFiles(distDir, distDir, "", files, { used: 0 });
+    const distIndex = resolve(distDir, "index.html");
+    if (!files.some((f) => f.path === "index.html")) {
+      // index.html existed (staticBuildDistDir verified it) but was skipped
+      // (over budget) — include it raw so the bundle always has its entry.
+      try { files.unshift({ path: "index.html", content: readFileSync(distIndex, "utf-8"), encoding: "utf-8" }); }
+      catch { return null; }
+    }
+    let version = "1";
+    try { version = String(Math.floor(statSync(distIndex).mtimeMs)); } catch { /* keep default */ }
+    return { appId, version, entry: "index.html", files, state };
+  }
 
   // Workspace HTML app takes precedence (mirrors the serve path in
   // request-handler.ts / routes.apps.ts: a custom index.html is what the user
   // built and expects to run).
-  const appDir = resolve(workspaceDir, "apps", appId);
   const indexPath = resolve(appDir, "index.html");
   if (appDir.startsWith(resolve(workspaceDir, "apps")) && existsSync(indexPath)) {
     const files: BundleFile[] = [];

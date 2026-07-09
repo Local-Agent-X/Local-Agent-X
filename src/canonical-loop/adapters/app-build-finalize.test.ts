@@ -20,6 +20,9 @@ import {
   type FinalizeFrameworkInput,
 } from "./app-build-finalize.js";
 import type { DevServerRecord, RegisterResult } from "../../tools/dev-server.js";
+import type { StaticBuildResult } from "../../tools/static-build-run.js";
+import { readRunTargetManifest } from "../../tools/app-run-target.js";
+import type { DetectedFramework } from "../../tools/framework-detect.js";
 import { DEFAULT_BASE_PORT } from "../../auto-build/scenario-scorer/port-alloc.js";
 
 const tempDirs: string[] = [];
@@ -50,16 +53,23 @@ function writeNextScaffold(dir: string): void {
 }
 
 type RegisterCall = { appId: string; command: string; port: number; cwd?: string; kind?: string };
+interface DepCalls {
+  register: RegisterCall[];
+  staticBuild: Array<{ appDir: string; framework: DetectedFramework }>;
+  stop: Array<{ appId: string; forget?: boolean }>;
+}
 
 function fakeDeps(opts: {
   records?: DevServerRecord[];
   bound?: (port: number) => boolean;
   registerResult?: RegisterResult;
-} = {}): { deps: FinalizeFrameworkDeps; calls: RegisterCall[] } {
-  const calls: RegisterCall[] = [];
+  /** static-build result the injected runStaticBuild returns (default: ok, dist/). */
+  staticResult?: StaticBuildResult;
+} = {}): { deps: FinalizeFrameworkDeps; calls: DepCalls } {
+  const calls: DepCalls = { register: [], staticBuild: [], stop: [] };
   const deps: FinalizeFrameworkDeps = {
     registerDevServer: (input) => {
-      calls.push(input);
+      calls.register.push(input);
       return opts.registerResult ?? {
         ok: true, connector: `dev-${input.appId}`, sessionId: "sess-1",
         port: input.port, cwd: input.cwd ?? "", restarted: false, kind: input.kind ?? "backend",
@@ -67,6 +77,11 @@ function fakeDeps(opts: {
     },
     listDevServerRecords: () => opts.records ?? [],
     portBound: opts.bound ?? (() => false),
+    runStaticBuild: async (appDir, framework) => {
+      calls.staticBuild.push({ appDir, framework });
+      return opts.staticResult ?? { ok: true, distDir: "dist" };
+    },
+    stopDevServer: (appId, o) => { calls.stop.push({ appId, forget: o.forget }); },
   };
   return { deps, calls };
 }
@@ -91,13 +106,13 @@ describe("finalizeFrameworkBuild — completion-model routing", () => {
     writeFileSync(join(dir, "index.html"), "<!doctype html><html><body>fixture</body></html>");
     const { deps, calls } = fakeDeps();
     expect(await finalizeFrameworkBuild(input(dir), deps)).toEqual({ handled: false });
-    expect(calls).toHaveLength(0);
+    expect(calls.register).toHaveLength(0);
   });
 
   it("unknown (empty) dir → handled:false", async () => {
     const { deps, calls } = fakeDeps();
     expect(await finalizeFrameworkBuild(input(makeDir("empty")), deps)).toEqual({ handled: false });
-    expect(calls).toHaveLength(0);
+    expect(calls.register).toHaveLength(0);
   });
 });
 
@@ -111,13 +126,13 @@ describe("finalizeFrameworkBuild — framework completion", () => {
     if (!r.handled || !r.ok) return;
     // Proxy URL: trailing slash, NO index.html — the /apps/<id>/ reverse-proxy route.
     expect(r.url).toBe("http://127.0.0.1:7007/apps/stitch/");
-    expect(calls).toHaveLength(1);
-    expect(calls[0].appId).toBe("stitch");
-    expect(calls[0].kind).toBe("frontend");
-    expect(calls[0].cwd).toBe(dir);
-    expect(calls[0].command).toContain("next dev");
-    expect(calls[0].command).toContain(`--port ${DEFAULT_BASE_PORT}`);
-    expect(calls[0].port).toBe(DEFAULT_BASE_PORT);
+    expect(calls.register).toHaveLength(1);
+    expect(calls.register[0].appId).toBe("stitch");
+    expect(calls.register[0].kind).toBe("frontend");
+    expect(calls.register[0].cwd).toBe(dir);
+    expect(calls.register[0].command).toContain("next dev");
+    expect(calls.register[0].command).toContain(`--port ${DEFAULT_BASE_PORT}`);
+    expect(calls.register[0].port).toBe(DEFAULT_BASE_PORT);
   });
 
   it('dep-evidence detection (package.json "next" dep, no config file) needs no evidence file on disk', async () => {
@@ -129,7 +144,7 @@ describe("finalizeFrameworkBuild — framework completion", () => {
     const { deps, calls } = fakeDeps();
     const r = await finalizeFrameworkBuild(input(dir), deps);
     expect(r).toMatchObject({ handled: true, ok: true, framework: "nextjs" });
-    expect(calls).toHaveLength(1);
+    expect(calls.register).toHaveLength(1);
   });
 
   it("registerServer:false (failed CLI run) returns the URL but never starts a dev server", async () => {
@@ -138,7 +153,7 @@ describe("finalizeFrameworkBuild — framework completion", () => {
     const { deps, calls } = fakeDeps();
     const r = await finalizeFrameworkBuild(input(dir, { registerServer: false }), deps);
     expect(r).toMatchObject({ handled: true, ok: true, url: "http://127.0.0.1:7007/apps/stitch/" });
-    expect(calls).toHaveLength(0);
+    expect(calls.register).toHaveLength(0);
   });
 });
 
@@ -152,7 +167,7 @@ describe("finalizeFrameworkBuild — failure shaping", () => {
     if (!r.handled || r.ok) return;
     expect(r.message).toContain("nextjs");
     expect(r.message).toContain("package.json");
-    expect(calls).toHaveLength(0);
+    expect(calls.register).toHaveLength(0);
   });
 
   it("registerDevServer failure → dev_server_failed carrying the register error", async () => {
@@ -177,9 +192,9 @@ describe("finalizeFrameworkBuild — dev-port allocation", () => {
     });
     const r = await finalizeFrameworkBuild(input(dir, { laxPort: String(laxPort) }), deps);
     // base taken, base+1 is LAX, base+2 bound → base+3.
-    expect(calls).toHaveLength(1);
-    expect(calls[0].port).toBe(DEFAULT_BASE_PORT + 3);
-    expect(calls[0].command).toContain(`--port ${DEFAULT_BASE_PORT + 3}`);
+    expect(calls.register).toHaveLength(1);
+    expect(calls.register[0].port).toBe(DEFAULT_BASE_PORT + 3);
+    expect(calls.register[0].command).toContain(`--port ${DEFAULT_BASE_PORT + 3}`);
     // The user-facing URL stays on the LAX proxy port, not the dev port.
     expect(r).toMatchObject({ handled: true, ok: true, url: `http://127.0.0.1:${laxPort}/apps/stitch/` });
   });
@@ -193,9 +208,9 @@ describe("finalizeFrameworkBuild — dev-port allocation", () => {
     writeNextScaffold(dir);
     const { deps, calls } = fakeDeps({ bound: () => true });
     await finalizeFrameworkBuild(input(dir), deps);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].port).toBe(DEFAULT_BASE_PORT + 20);
-    expect(calls[0].command).toContain(`--port ${DEFAULT_BASE_PORT + 20}`);
+    expect(calls.register).toHaveLength(1);
+    expect(calls.register[0].port).toBe(DEFAULT_BASE_PORT + 20);
+    expect(calls.register[0].command).toContain(`--port ${DEFAULT_BASE_PORT + 20}`);
   });
 
   it("a rebuild reuses its own record's port even when the probe reports it bound", async () => {
@@ -208,7 +223,77 @@ describe("finalizeFrameworkBuild — dev-port allocation", () => {
       bound: () => true,
     });
     await finalizeFrameworkBuild(input(dir), deps);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].port).toBe(DEFAULT_BASE_PORT + 10);
+    expect(calls.register).toHaveLength(1);
+    expect(calls.register[0].port).toBe(DEFAULT_BASE_PORT + 10);
+  });
+});
+
+/** Vite SPA scaffold (bare "vite" dep, no metaframework) — the only tier that
+ *  takes the static-build finalize path. */
+function writeViteScaffold(dir: string): void {
+  writeFileSync(join(dir, "package.json"), JSON.stringify({
+    name: "stitch", private: true,
+    scripts: { dev: "vite", build: "tsc -b && vite build" },
+    devDependencies: { vite: "^7.0.0" },
+    dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+  }, null, 2));
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeFileSync(join(dir, "src", "main.tsx"), "export {}\n");
+}
+
+describe("finalizeFrameworkBuild — static-build target", () => {
+  it("Vite SPA + runTarget static-build → builds dist/, writes the marker, forgets the dev server, registers NONE", async () => {
+    const dir = makeDir("vite-static");
+    writeViteScaffold(dir);
+    const { deps, calls } = fakeDeps();
+    const r = await finalizeFrameworkBuild(input(dir, { runTarget: "static-build" }), deps);
+    expect(r).toMatchObject({ handled: true, ok: true, framework: "vite", mode: "static-build" });
+    if (!r.handled || !r.ok) return;
+    expect(r.url).toBe("http://127.0.0.1:7007/apps/stitch/");
+    // Built the static bundle, never started a dev server.
+    expect(calls.staticBuild).toEqual([{ appDir: dir, framework: "vite" }]);
+    expect(calls.register).toHaveLength(0);
+    // Forgot any dev server the model started during the build.
+    expect(calls.stop).toEqual([{ appId: "stitch", forget: true }]);
+    // Marker on disk so the request handler serves dist/ (no dev server).
+    expect(readRunTargetManifest(dir)).toEqual({ mode: "static-build", distDir: "dist", framework: "vite" });
+  });
+
+  it("default runTarget (dev-server) leaves a Vite SPA on the dev server — no static build, no marker", async () => {
+    const dir = makeDir("vite-dev");
+    writeViteScaffold(dir);
+    const { deps, calls } = fakeDeps();
+    const r = await finalizeFrameworkBuild(input(dir), deps);   // runTarget omitted → dev-server
+    expect(r).toMatchObject({ handled: true, ok: true, framework: "vite", mode: "dev-server" });
+    expect(calls.staticBuild).toHaveLength(0);
+    expect(calls.register).toHaveLength(1);
+    expect(readRunTargetManifest(dir)).toBeNull();
+  });
+
+  it("static-build requested for a NON-static framework (Next) → ignored, stays on the dev server", async () => {
+    // Only Vite is static-buildable; SSR frameworks keep the dev-server path
+    // even when static-build is requested.
+    const dir = makeDir("next-static-req");
+    writeNextScaffold(dir);
+    const { deps, calls } = fakeDeps();
+    const r = await finalizeFrameworkBuild(input(dir, { runTarget: "static-build" }), deps);
+    expect(r).toMatchObject({ handled: true, ok: true, framework: "nextjs", mode: "dev-server" });
+    expect(calls.staticBuild).toHaveLength(0);
+    expect(calls.register).toHaveLength(1);
+  });
+
+  it("static build FAILS → falls back to the dev server, carries a visible note, writes no marker", async () => {
+    const dir = makeDir("vite-buildfail");
+    writeViteScaffold(dir);
+    const { deps, calls } = fakeDeps({ staticResult: { ok: false, error: "vite build exited 1: Rollup failed to resolve import" } });
+    const r = await finalizeFrameworkBuild(input(dir, { runTarget: "static-build" }), deps);
+    expect(r).toMatchObject({ handled: true, ok: true, framework: "vite", mode: "dev-server" });
+    if (!r.handled || !r.ok) return;
+    expect(r.note).toContain("static build failed");
+    expect(r.note).toContain("Rollup failed to resolve import");
+    expect(calls.staticBuild).toHaveLength(1);
+    expect(calls.register).toHaveLength(1);   // degraded to a real dev server
+    expect(calls.stop).toHaveLength(0);       // no marker → nothing forgotten
+    expect(readRunTargetManifest(dir)).toBeNull();
   });
 });

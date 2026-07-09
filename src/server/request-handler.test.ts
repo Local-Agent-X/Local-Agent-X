@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createRequestHandler } from "./request-handler.js";
 import { RBACManager } from "../rbac.js";
 import { SecurityLayer } from "../security/index.js";
+import { writeRunTargetManifest } from "../tools/app-run-target.js";
 import type { LAXConfig } from "../types.js";
 
 // ── F1 behavioral proof ─────────────────────────────────────────────────
@@ -70,7 +71,10 @@ function makeDeps() {
     whatsappBridge: {} as unknown as never,
     telegramBridge: {} as unknown as never,
     agentSync: {} as unknown as never,
-    appRegistry: {} as unknown as never,
+    // `get` returns undefined for an unregistered app id — the production
+    // AppRegistry behavior that makes handleAppRoutes fall through to the
+    // static-file / dist serving path for a workspace-only (static-build) app.
+    appRegistry: { get: () => undefined } as unknown as never,
     agentRunStore: {} as unknown as never,
     agentTemplateStore: {} as unknown as never,
     issueStore: {} as unknown as never,
@@ -204,5 +208,50 @@ describe("F1: auth gate over a real HTTP round-trip", () => {
     // exception is confined to the browser-openable allowlist.
     const res = await fetch(`${base()}/api/secrets/${SEEDED_NAME}/reveal?token=${OP_TOKEN}`);
     expect(res.status).toBe(401);
+  });
+});
+
+// ── Static-build app serving ────────────────────────────────────────────────
+// A finished frontend-spa build serves its built dist/ directly at /apps/<id>/
+// with NO dev server (app-run-target marker). These prove the request handler
+// rebases the URL under dist/, serves the built assets, and history-falls-back
+// deep links to index.html — the behavior that lets a client-only app open in a
+// plain browser tab / offline.
+describe("static-build app serving (/apps/<id>/ → dist/)", () => {
+  const APP = "spa-app";
+  beforeAll(() => {
+    const appDir = join(tmpDir, "workspace", "apps", APP);
+    mkdirSync(join(appDir, "dist", "assets"), { recursive: true });
+    writeFileSync(join(appDir, "dist", "index.html"), "<!doctype html><html><head><title>built</title></head><body><div id=root></div><script type=module src=\"/apps/spa-app/assets/app.js\"></script></body></html>");
+    writeFileSync(join(appDir, "dist", "assets", "app.js"), "console.log('built spa');");
+    writeRunTargetManifest(appDir, { mode: "static-build", distDir: "dist", framework: "vite" });
+  });
+
+  it("serves the built index.html at /apps/<id>/ with the connector bootstrap injected", async () => {
+    const res = await fetch(`${base()}/apps/${APP}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain("<title>built</title>");
+    expect(html).toContain("__LAX_CONNECTOR_TOKEN__");   // operator token stripped, connector cap injected
+  });
+
+  it("serves a built asset under dist/ with the right content-type", async () => {
+    const res = await fetch(`${base()}/apps/${APP}/assets/app.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/javascript");
+    expect(await res.text()).toContain("built spa");
+  });
+
+  it("deep-links (client routes) history-fall-back to index.html", async () => {
+    const res = await fetch(`${base()}/apps/${APP}/dashboard/settings`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("<title>built</title>");
+  });
+
+  it("a missing ASSET (has a file extension) 404s — it must NOT fall back to index.html", async () => {
+    const res = await fetch(`${base()}/apps/${APP}/assets/missing.js`);
+    expect(res.status).toBe(404);
   });
 });

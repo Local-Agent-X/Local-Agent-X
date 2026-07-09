@@ -71,7 +71,14 @@ export type DevServerUrlResolver = (appName: string) => Promise<string | null>;
  *  frontend needs. Dynamic import keeps process machinery out of unit tests. */
 export const resolveDevServerProxyUrl: DevServerUrlResolver = async (appName) => {
   const { readDevServerRecord } = await import("../../tools/dev-server.js");
-  if (!readDevServerRecord(appName)) return null;
+  const { staticBuildDistDir } = await import("../../tools/app-run-target.js");
+  const { workspacePath } = await import("../../config.js");
+  // A finished static-build app has NO dev-server record but is still served at
+  // /apps/<name>/ (from its built dist/) — so the smoke has a live URL to load.
+  // Without this the resolver would return null and the caller would needlessly
+  // spin up a dev server for an app that already serves statically.
+  const hasStatic = staticBuildDistDir(workspacePath("apps", appName)) !== null;
+  if (!readDevServerRecord(appName) && !hasStatic) return null;
   const laxPort = process.env.LAX_PORT ?? "7007";
   return `http://127.0.0.1:${laxPort}/apps/${appName}/`;
 };

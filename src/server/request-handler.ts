@@ -5,7 +5,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
 import { authorizeAppConnectorHttp, deriveConnectorCapability } from "./app-connector-auth.js";
 import { ensureDevServerRunning, readDevServerRecord } from "../tools/dev-server.js";
-import { proxyFrontendDevServer } from "./dev-server-proxy.js";
+import { staticBuildDistDir } from "../tools/app-run-target.js";
+import { proxyFrontendDevServer, decideFrontendServe } from "./dev-server-proxy.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
 import { confineToDir } from "../security/file-access.js";
 import { getPageBundle } from "./static-bundle.js";
@@ -238,29 +239,61 @@ export function createRequestHandler(deps: {
       res.writeHead(200, h); res.end(readFileSync(file)); return;
     }
     if (method === "GET" && url.pathname.startsWith("/apps/")) {
+      const fid = url.pathname.split("/")[2];
+      const appsDir = resolve(config.workspace);
+      // Finished STATIC BUILD: the app was built to a static dist/ and serves
+      // with no dev server (app-run-target marker). Its built dist/ is
+      // authoritative — serve from there and skip the dev-server proxy, even if
+      // a stale frontend record lingers.
+      const distDir = fid ? staticBuildDistDir(join(appsDir, "apps", fid)) : null;
       // Live FRONTEND dev server (Vite/Next/SPA): if this app registered a
       // `kind: "frontend"` dev server, reverse-proxy the app URL straight to it
       // instead of serving a static file. Desktop gets HMR (the dev CSP lets the
       // browser open the dev server's ws on localhost); the phone gets the
       // proxied document + assets over the broker (full reload, no live HMR).
-      const fid = url.pathname.split("/")[2];
-      const frontendRec = fid ? readDevServerRecord(fid) : null;
-      if (frontendRec && frontendRec.kind === "frontend") {
-        try { ensureDevServerRunning(fid); } catch { /* best-effort wake */ }
-        proxyFrontendDevServer(req, res, frontendRec.port, url, deriveConnectorCapability(config.authToken), { publicDir });
-        return;
+      if (!distDir) {
+        const frontendRec = fid ? readDevServerRecord(fid) : null;
+        if (frontendRec && frontendRec.kind === "frontend") {
+          let warm = false;
+          try { warm = ensureDevServerRunning(fid).status === "running"; } catch { /* best-effort wake */ }
+          const decision = decideFrontendServe({
+            warm,
+            tunneled: !!req.headers["x-lax-tunnel"],
+            port: frontendRec.port,
+            pathAndQuery: url.pathname + url.search,
+          });
+          if (decision.mode === "redirect") {
+            res.writeHead(302, { Location: decision.location, "Cache-Control": "no-store" });
+            res.end();
+            return;
+          }
+          proxyFrontendDevServer(req, res, frontendRec.port, url, deriveConnectorCapability(config.authToken), { publicDir });
+          return;
+        }
       }
-      const appsDir = resolve(config.workspace);
-      let appFile = confineToDir(appsDir, "." + url.pathname);
+      // Static-build apps rebase /apps/<id>/… under their dist/ (the base path
+      // is baked into the built assets); ordinary apps serve from the workspace
+      // app dir as before.
+      const serveRoot = distDir ?? appsDir;
+      const servePathname = distDir ? (url.pathname.slice(`/apps/${fid}`.length) || "/") : url.pathname;
+      let appFile = confineToDir(serveRoot, "." + servePathname);
       if (!appFile) { json(403, { error: "Path traversal blocked" }); return; }
       try {
         if (existsSync(appFile) && statSync(appFile).isDirectory()) {
-          const idx = confineToDir(appsDir, join(appFile, "index.html"));
+          const idx = confineToDir(serveRoot, join(appFile, "index.html"));
           if (idx && existsSync(idx)) appFile = idx;
         }
       } catch {}
+      // Static-build SPA deep-link fallback: a client-routed navigation
+      // (/apps/<id>/dashboard) has no file on disk — serve the built index.html
+      // so the SPA router handles it, mirroring the dev server's history
+      // fallback. Asset requests (they carry a file extension) still 404.
+      if (distDir && !existsSync(appFile) && !/\.[a-z0-9]+$/i.test(servePathname)) {
+        const idx = confineToDir(serveRoot, "index.html");
+        if (idx) appFile = idx;
+      }
       if (existsSync(appFile)) {
-        const ext = appFile.split(".").pop() || "", ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml" };
+        const ext = appFile.split(".").pop() || "", ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml", ico: "image/x-icon", webp: "image/webp", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", woff: "font/woff", woff2: "font/woff2", map: "application/json", wasm: "application/wasm", txt: "text/plain" };
         const h: Record<string, string> = { "Content-Type": ct[ext] || "application/octet-stream" };
         if (ext === "html") {
           // Lazy keep-alive: if this app has a registered full-stack backend,

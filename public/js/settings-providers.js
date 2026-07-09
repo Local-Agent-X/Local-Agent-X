@@ -105,7 +105,10 @@ const PROVIDER_MODELS = {
     { value: 'grok-4.3', label: 'Grok 4.3 (general, 131k context)' },
     { value: 'grok-4.20-0309-reasoning', label: 'Grok 4.20 (reasoning)' },
     { value: 'grok-4.20-0309-non-reasoning', label: 'Grok 4.20 (non-reasoning, fast)' },
-    { value: 'grok-4.20-multi-agent-0309', label: 'Grok 4.20 (multi-agent)' },
+    // grok-4.20-multi-agent-0309 is intentionally omitted from the picker: it's a
+    // multi-agent/heavy tier served via a deferred (async) completion flow, not the
+    // streaming /chat/completions path the chat adapter drives — so it errors in
+    // chat. It stays in the registry (registry.ts) for background/routing use.
     { value: 'grok-code-fast-1', label: 'Grok Code Fast 1 (coding)' },
     { value: 'grok-build-0.1', label: 'Grok Build 0.1 (coding)' },
   ],

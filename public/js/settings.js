@@ -162,6 +162,34 @@ function refreshAppearanceUI() {
 window.refreshAppearanceUI = refreshAppearanceUI;
 document.addEventListener('DOMContentLoaded', refreshAppearanceUI);
 
+// Line-icons for the settings nav rail. Monochrome (stroke:currentColor) so
+// they inherit the row's muted/accent color and highlight on the active tab.
+const SETTINGS_ICONS = {
+  general:      '<circle cx="12" cy="8" r="3.5"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/>',
+  appearance:   '<path d="M12 3.5c3 3.2 5.5 6 5.5 9.2A5.5 5.5 0 0 1 6.5 12.7c0-3.2 2.5-6 5.5-9.2z"/>',
+  ai:           '<rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2"/>',
+  usage:        '<path d="M4 20h16"/><path d="M7 20v-6M12 20v-11M17 20v-4"/>',
+  memory:       '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
+  image:        '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M4 16l4-4 4 4 3-3 5 5"/>',
+  security:     '<path d="M12 3l7 3v5c0 4.4-3 7.5-7 9-4-1.5-7-4.6-7-9V6z"/>',
+  secrets:      '<circle cx="8.5" cy="14.5" r="3.5"/><path d="M11 12l8-8M16.5 6.5l2 2M14.5 8.5l2 2"/>',
+  protocols:    '<rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 9h6M9 12.5h6M9 16h4"/>',
+  whatsapp:     '<path d="M5 5h14v9H9l-4 4z"/>',
+  mobile:       '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M10.5 18h3"/>',
+  integrations: '<path d="M14.7 6.3a3.5 3.5 0 0 0-4.6 4.6l-5.8 5.8 2.5 2.5 5.8-5.8a3.5 3.5 0 0 0 4.6-4.6l-2.4 2.4-2-2z"/>',
+  sync:         '<path d="M19 8a7 7 0 0 0-12-3L4 8M5 16a7 7 0 0 0 12 3l3-3"/><path d="M4 4v4h4M20 20v-4h-4"/>'
+};
+function injectSettingsIcons() {
+  document.querySelectorAll('.settings-nav .tab-pill[data-tab]').forEach(btn => {
+    const paths = SETTINGS_ICONS[btn.dataset.tab];
+    if (!paths || btn.querySelector('svg')) return;
+    const label = btn.textContent.trim();
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg><span>' + label + '</span>';
+  });
+}
+document.addEventListener('DOMContentLoaded', injectSettingsIcons);
+
 // Embed the pairing page (account.html — device-code login + QR) inside the
 // Mobile settings tab. Lazy: only built on first open, so its status polling
 // doesn't run while the tab is unseen. Same-origin, so the token is passed via

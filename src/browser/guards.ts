@@ -1,7 +1,7 @@
 /**
- * Browser safety guards — DNS rebinding protection and evaluate() script
- * pattern blocking. Extracted from browser-tools.ts so the tool definition
- * stays under the file-size cap.
+ * Browser safety guards — request validation and evaluate() script pattern
+ * blocking. Extracted from browser-tools.ts so the tool definition stays
+ * under the file-size cap.
  */
 import type { BrowserContext } from "playwright";
 import { loadEgressConfig, validateUrlWithDns } from "../security/network-policy.js";
@@ -15,6 +15,7 @@ const BLOCKED_NAV_SCHEMES = new Set(["file:", "chrome:", "view-source:", "data:"
  *  one default context across every getPage() call, so without this the route
  *  handler would stack (and double-handle each request). */
 const guardedContexts = new WeakSet<BrowserContext>();
+const guardInstallations = new WeakMap<BrowserContext, Promise<void>>();
 
 /**
  * Install a single context-level request guard so EVERY navigation a page in
@@ -34,11 +35,12 @@ const guardedContexts = new WeakSet<BrowserContext>();
  */
 export async function installRequestGuard(context: BrowserContext): Promise<void> {
   if (guardedContexts.has(context)) return;
-  guardedContexts.add(context);
+  const pending = guardInstallations.get(context);
+  if (pending) return pending;
 
   const selfPort = process.env.LAX_PORT ?? "7007";
 
-  await context.route("**/*", async (route, request) => {
+  const installation = context.route("**/*", async (route, request) => {
     let url: string;
     try {
       url = request.url();
@@ -70,11 +72,12 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
       return;
     }
 
-    // http(s): run the canonical async SSRF gate (scheme + literal-IP + DNS
-    // resolve to private/loopback/link-local/metadata). Self-server calls to
-    // 127.0.0.1:<selfPort> are allowed by the canonical gate. Fail closed on a
-    // navigation request if the check throws; let sub-resources continue so a
-    // transient DNS hiccup on an analytics beacon doesn't kill the page.
+    // http(s): run the canonical URL policy plus a DNS preflight that rejects
+    // private/loopback/link-local/metadata results. Self-server calls to
+    // 127.0.0.1:<selfPort> are allowed. This is not connection pinning:
+    // Playwright cannot bind route.continue() to the preflight address. Fail
+    // closed on navigation if the check throws; let sub-resources continue so
+    // a transient DNS hiccup on an analytics beacon doesn't kill the page.
     try {
       const cfg = loadEgressConfig();
       const decision = await validateUrlWithDns(
@@ -95,6 +98,13 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
       await route.continue();
     }
   });
+  guardInstallations.set(context, installation);
+  try {
+    await installation;
+    guardedContexts.add(context);
+  } finally {
+    guardInstallations.delete(context);
+  }
 }
 
 /**

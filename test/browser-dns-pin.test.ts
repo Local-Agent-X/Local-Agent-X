@@ -59,7 +59,7 @@ beforeEach(() => {
   resolve6.mockResolvedValue([]);
 });
 
-describe("installRequestGuard DNS enforcement", () => {
+describe("installRequestGuard DNS preflight", () => {
   it("fails closed when DNS resolution fails", async () => {
     const handler = await captureGuard();
     const route = fakeRoute();

@@ -33,6 +33,7 @@ const logger = createLogger("browser.launcher");
 export const NAV_TIMEOUT = 20_000;
 export const ACTION_TIMEOUT = 10_000;
 export const MAX_TEXT_LENGTH = 8_000;
+export const SERVICE_WORKER_POLICY = "block" as const;
 
 export type BrowserEngine = "chromium" | "firefox" | "webkit";
 
@@ -97,6 +98,17 @@ export function findChromeExecutable(): string | null {
 export interface LaunchResult {
   browser: Browser;
   chromeProcess: ChildProcess | null;
+}
+
+export function buildPersistentContextOptions(downloadsPath: string) {
+  return {
+    headless: false,
+    args: STEALTH_ARGS,
+    viewport: { width: 1280, height: 800 },
+    acceptDownloads: true,
+    downloadsPath,
+    serviceWorkers: SERVICE_WORKER_POLICY,
+  };
 }
 
 /**
@@ -196,24 +208,17 @@ export async function launchViaCDP(
   const downloadsDir = resolveDownloadsDir();
   try {
     const ctx = await pw.chromium.launchPersistentContext(persistDir, {
+      ...buildPersistentContextOptions(downloadsDir),
       channel: "chrome",
-      headless: false,
-      args: STEALTH_ARGS,
-      viewport: { width: 1280, height: 800 },
-      acceptDownloads: true,
-      downloadsPath: downloadsDir,
     });
     logger.info("[browser] Playwright persistent context (Chrome channel)");
     return { browser: ctx.browser()!, chromeProcess: null };
   } catch {
     try {
-      const ctx = await pw.chromium.launchPersistentContext(persistDir, {
-        headless: false,
-        args: STEALTH_ARGS,
-        viewport: { width: 1280, height: 800 },
-        acceptDownloads: true,
-        downloadsPath: downloadsDir,
-      });
+      const ctx = await pw.chromium.launchPersistentContext(
+        persistDir,
+        buildPersistentContextOptions(downloadsDir),
+      );
       logger.info("[browser] Playwright persistent context (bundled Chromium)");
       return { browser: ctx.browser()!, chromeProcess: null };
     } catch {

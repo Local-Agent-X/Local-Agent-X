@@ -10,7 +10,13 @@
  */
 import type { Browser, BrowserContext } from "playwright";
 import type { ChildProcess } from "node:child_process";
-import { launchViaCDP, STEALTH_ARGS, USER_AGENTS, type BrowserEngine } from "./launcher.js";
+import {
+  launchViaCDP,
+  SERVICE_WORKER_POLICY,
+  STEALTH_ARGS,
+  USER_AGENTS,
+  type BrowserEngine,
+} from "./launcher.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("browser.runtime");
@@ -18,6 +24,8 @@ const log = createLogger("browser.runtime");
 let browser: Browser | null = null;
 let chromeProcess: ChildProcess | null = null;
 let currentEngine: BrowserEngine = "chromium";
+let sharedContext: BrowserContext | null = null;
+let sharedContextCreation: Promise<BrowserContext> | null = null;
 // Dedupe concurrent launches: two sessions calling getSharedBrowser() before
 // Chrome is up must await the same spawn, not race two Chrome processes.
 let launching: Promise<Browser> | null = null;
@@ -40,6 +48,8 @@ export async function getSharedBrowser(engine: BrowserEngine): Promise<Browser> 
   }
   currentEngine = engine;
   if (browser && browser.isConnected()) return browser;
+  sharedContext = null;
+  sharedContextCreation = null;
   if (!launching) {
     launching = launch(engine)
       .then((b) => { browser = b; return b; })
@@ -53,14 +63,15 @@ const CONTEXT_OPTS = (engine: BrowserEngine) => ({
   viewport: { width: 1280, height: 800 },
   locale: "en-US",
   timezoneId: "America/Chicago",
+  serviceWorkers: SERVICE_WORKER_POLICY,
 });
 
 /**
- * The context a session's tabs should live in. Shared mode reuses Chrome's
- * default context (one cookie jar for all sessions); isolated mode mints a
- * fresh context per call (separate cookie jar). CDP-connected Chrome only
- * exposes its default context for sharing, so the UA/locale overrides apply
- * only when we actually create a context.
+ * The context a session's tabs should live in. Shared mode reuses one cookie
+ * jar for all sessions; isolated mode mints a fresh context per call. The CDP
+ * default context cannot be configured to block Service Workers after launch,
+ * so it is never handed to a manager; shared mode caches an explicitly
+ * configured context instead.
  */
 export async function acquireSessionContext(
   engine: BrowserEngine,
@@ -70,9 +81,13 @@ export async function acquireSessionContext(
   if (isolated) {
     return b.newContext(CONTEXT_OPTS(engine));
   }
-  const existing = b.contexts();
-  if (existing.length > 0) return existing[0];
-  return b.newContext(CONTEXT_OPTS(engine));
+  if (sharedContext) return sharedContext;
+  if (!sharedContextCreation) {
+    sharedContextCreation = b.newContext(CONTEXT_OPTS(engine))
+      .then((context) => { sharedContext = context; return context; })
+      .finally(() => { sharedContextCreation = null; });
+  }
+  return sharedContextCreation;
 }
 
 export function getRuntimeEngine(): BrowserEngine { return currentEngine; }
@@ -82,6 +97,8 @@ export function sharedBrowserActive(): boolean {
 }
 
 export async function closeSharedBrowser(): Promise<void> {
+  sharedContext = null;
+  sharedContextCreation = null;
   if (browser) {
     try { await browser.close(); } catch { /* already gone */ }
     browser = null;
@@ -108,6 +125,8 @@ export function forceKillSharedBrowser(): void {
   const b = browser;
   chromeProcess = null;
   browser = null;
+  sharedContext = null;
+  sharedContextCreation = null;
   if (proc) { try { proc.kill("SIGKILL"); } catch { /* already exited */ } }
   if (b) { void b.close().catch(() => { /* connection already dead */ }); }
   log.info("[browser-runtime] shared Chrome force-killed (wedge recovery)");

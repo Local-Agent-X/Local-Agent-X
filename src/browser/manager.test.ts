@@ -283,6 +283,25 @@ async function captureGuard(): Promise<RouteHandler> {
 describe("installRequestGuard — context-level SSRF/scheme guard", () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
+  it("retries installation after context.route rejects", async () => {
+    let handler: RouteHandler | undefined;
+    const context = {
+      route: vi.fn()
+        .mockRejectedValueOnce(new Error("route registration failed"))
+        .mockImplementationOnce(async (_pattern: string, candidate: RouteHandler) => {
+          handler = candidate;
+        }),
+    };
+    const typedContext = context as unknown as Parameters<typeof installRequestGuard>[0];
+
+    await expect(installRequestGuard(typedContext)).rejects.toThrow("route registration failed");
+    await expect(installRequestGuard(typedContext)).resolves.toBeUndefined();
+    await installRequestGuard(typedContext);
+
+    expect(handler).toBeTypeOf("function");
+    expect(context.route).toHaveBeenCalledTimes(2);
+  });
+
   it("aborts a navigation to loopback (127.0.0.1) on a non-self port", async () => {
     const handler = await captureGuard();
     const route = fakeRoute();

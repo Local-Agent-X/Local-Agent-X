@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { STEALTH_ARGS, DISABLE_FEATURES } from "../src/browser/launcher.js";
+import {
+  buildPersistentContextOptions,
+  DISABLE_FEATURES,
+  STEALTH_ARGS,
+} from "../src/browser/launcher.js";
 
 // Regression guard for the silent --disable-features clobber: Chrome honors
 // only the LAST --disable-features occurrence, so every disable must flow
@@ -29,5 +33,11 @@ describe("browser launch args — single --disable-features flag", () => {
     const flag = `--disable-features=${DISABLE_FEATURES.join(",")}`;
     expect(flag.indexOf("--disable-features")).toBe(0);
     expect(flag.indexOf("--disable-features", 1)).toBe(-1);
+  });
+
+  it("blocks Service Workers in persistent contexts", () => {
+    expect(buildPersistentContextOptions("C:\\downloads")).toEqual(
+      expect.objectContaining({ serviceWorkers: "block" }),
+    );
   });
 });

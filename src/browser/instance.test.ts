@@ -75,11 +75,39 @@ describe("per-session BrowserContext allocation", () => {
 
     expect(chat).not.toBe(mission);
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(2);
+    expect(mocks.browser.newContext).toHaveBeenCalledWith(
+      expect.objectContaining({ serviceWorkers: "block" }),
+    );
   });
 
   it("honors explicit shared mode by reusing one BrowserContext", async () => {
     const chat = await acquireSessionContext("chromium", false);
     const mission = await acquireSessionContext("chromium", false);
+
+    expect(chat).toBe(mission);
+    expect(mocks.browser.newContext).toHaveBeenCalledTimes(1);
+    expect(mocks.browser.newContext).toHaveBeenCalledWith(
+      expect.objectContaining({ serviceWorkers: "block" }),
+    );
+  });
+
+  it("does not hand the unconfigurable CDP default context to shared mode", async () => {
+    const defaultContext = { id: Symbol("cdp-default") } as unknown as BrowserContext;
+    mocks.contexts.push(defaultContext);
+
+    const shared = await acquireSessionContext("chromium", false);
+
+    expect(shared).not.toBe(defaultContext);
+    expect(mocks.browser.newContext).toHaveBeenCalledWith(
+      expect.objectContaining({ serviceWorkers: "block" }),
+    );
+  });
+
+  it("deduplicates concurrent shared-context creation", async () => {
+    const [chat, mission] = await Promise.all([
+      acquireSessionContext("chromium", false),
+      acquireSessionContext("chromium", false),
+    ]);
 
     expect(chat).toBe(mission);
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(1);

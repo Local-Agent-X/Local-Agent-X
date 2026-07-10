@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
 import { resolveCredential } from "./auth/resolve.js";
-import { ffmpegBin } from "./ffmpeg-bin.js";
+import { ffmpegBin, ffprobeBin } from "./ffmpeg-bin.js";
 
 /** Safely parse a fraction string like "30000/1001" without eval() */
 function parseFraction(s: string): number {
@@ -67,7 +67,7 @@ export interface SummarizeOptions {
 export function getVideoInfo(videoPath: string): VideoInfo {
   if (!existsSync(videoPath)) throw new Error(`Video not found: ${videoPath}`);
 
-  const probe = execFileSync("ffprobe", ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", videoPath], {
+  const probe = execFileSync(ffprobeBin(), ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", videoPath], {
     encoding: "utf-8",
     timeout: 10_000,
   });

@@ -2,23 +2,27 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, isAbsolute } from "node:path";
-import { ffmpegBin } from "./ffmpeg-bin.js";
+import { ffmpegBin, ffprobeBin } from "./ffmpeg-bin.js";
 
 const exe = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
 
 describe("ffmpegBin", () => {
   let savedFfmpeg: string | undefined;
+  let savedFfprobe: string | undefined;
   let savedBundled: string | undefined;
 
   beforeEach(() => {
     savedFfmpeg = process.env.LAX_FFMPEG;
+    savedFfprobe = process.env.LAX_FFPROBE;
     savedBundled = process.env.LAX_BUNDLED_BIN_DIR;
     delete process.env.LAX_FFMPEG;
+    delete process.env.LAX_FFPROBE;
     delete process.env.LAX_BUNDLED_BIN_DIR;
   });
 
   afterEach(() => {
     if (savedFfmpeg !== undefined) process.env.LAX_FFMPEG = savedFfmpeg;
+    if (savedFfprobe !== undefined) process.env.LAX_FFPROBE = savedFfprobe;
     if (savedBundled !== undefined) process.env.LAX_BUNDLED_BIN_DIR = savedBundled;
   });
 
@@ -54,6 +58,26 @@ describe("ffmpegBin", () => {
   // must hand back a real absolute path to a binary we ship.
   it("resolves an existing absolute binary from node_modules, not bare PATH", () => {
     const p = ffmpegBin();
+    expect(isAbsolute(p)).toBe(true);
+    expect(existsSync(p)).toBe(true);
+  });
+
+  it("ffprobe: LAX_FFPROBE override wins", () => {
+    process.env.LAX_FFPROBE = "/custom/ffprobe";
+    expect(ffprobeBin()).toBe("/custom/ffprobe");
+  });
+
+  it("ffprobe: uses the bundled copy when present, node_modules otherwise", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-ffprobe-"));
+    try {
+      const bundledExe = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
+      writeFileSync(join(dir, bundledExe), "");
+      process.env.LAX_BUNDLED_BIN_DIR = dir;
+      expect(ffprobeBin()).toBe(join(dir, bundledExe));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const p = ffprobeBin();
     expect(isAbsolute(p)).toBe(true);
     expect(existsSync(p)).toBe(true);
   });

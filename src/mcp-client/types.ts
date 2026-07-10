@@ -9,6 +9,8 @@ export interface MCPBinaryIdentity {
 export interface MCPPackageIdentity {
   kind: "package";
   manager: "npx" | "npm" | "pnpm" | "yarn" | "bunx";
+  managerPath: string;
+  managerSha256: string;
   name: string;
   version: string;
 }

@@ -1,10 +1,10 @@
 import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { MCPServerConfig, MCPSignedManifest } from "./types.js";
+import type { MCPPackageIdentity, MCPServerConfig, MCPSignedManifest } from "./types.js";
 
 let dataDir: string;
 let binaryPath: string;
@@ -111,6 +111,65 @@ describe("signed MCP publisher manifests", () => {
       args: ["--stdio", "--exfiltrate"],
       manifest,
     }).reason).toMatch(/arguments or configuration/);
+  });
+
+  it("reviewer fixture: binds the exact package-manager path/hash and pinned package", () => {
+    const managerPath = join(dataDir, process.platform === "win32" ? "npx.cmd" : "npx");
+    writeFileSync(managerPath, "package manager v1\n", { mode: 0o755 });
+    const config: MCPServerConfig = {
+      command: managerPath,
+      args: ["-y", "@acme/mcp@1.2.3"],
+      executionMode: "trusted",
+    };
+    const identity: MCPPackageIdentity = {
+      kind: "package",
+      manager: "npx",
+      managerPath: realpathSync(managerPath),
+      managerSha256: integrityApi.hashCommandBinary(managerPath),
+      name: "@acme/mcp",
+      version: "1.2.3",
+    };
+    config.manifest = signedManifest("package-server", config, "1.2.3", privateKey, { command: identity });
+    expect(manifestApi.assessMcpManifest(dataDir, "package-server", config)).toMatchObject({ trust: "verified", resolvedPath: realpathSync(managerPath) });
+
+    const wrongPackageConfig: MCPServerConfig = { ...config, args: ["-y", "@acme/mcp@1.2.4"], manifest: undefined };
+    wrongPackageConfig.manifest = signedManifest("package-version-drift", wrongPackageConfig, "1.2.3", privateKey, { command: identity });
+    expect(manifestApi.assessMcpManifest(dataDir, "package-version-drift", wrongPackageConfig)).toMatchObject({ trust: "invalid", reason: expect.stringMatching(/package identity/) });
+
+    writeFileSync(managerPath, "package manager replaced\n", { mode: 0o755 });
+    expect(manifestApi.assessMcpManifest(dataDir, "package-server", config)).toMatchObject({ trust: "invalid", reason: expect.stringMatching(/package-manager hash/) });
+
+    const alternateDir = join(dataDir, "alternate");
+    mkdirSync(alternateDir);
+    const alternatePath = join(alternateDir, process.platform === "win32" ? "npx.cmd" : "npx");
+    writeFileSync(alternatePath, "package manager v1\n", { mode: 0o755 });
+    const movedConfig: MCPServerConfig = { ...config, command: alternatePath, manifest: undefined };
+    movedConfig.manifest = signedManifest("package-moved", movedConfig, "1.2.3", privateKey, { command: identity });
+    expect(manifestApi.assessMcpManifest(dataDir, "package-moved", movedConfig)).toMatchObject({ trust: "invalid", reason: expect.stringMatching(/package-manager path/) });
+  });
+
+  it.skipIf(process.platform === "win32")("rejects same-byte package-manager symlink retargeting", () => {
+    const targetA = join(dataDir, "npx-a");
+    const targetB = join(dataDir, "npx-b");
+    const managerLink = join(dataDir, "npx");
+    writeFileSync(targetA, "same package manager bytes\n", { mode: 0o755 });
+    writeFileSync(targetB, "same package manager bytes\n", { mode: 0o755 });
+    symlinkSync(targetA, managerLink, "file");
+    const config: MCPServerConfig = { command: managerLink, args: ["@acme/mcp@1.2.3"], executionMode: "trusted" };
+    const identity: MCPPackageIdentity = {
+      kind: "package",
+      manager: "npx",
+      managerPath: realpathSync(managerLink),
+      managerSha256: integrityApi.hashCommandBinary(managerLink),
+      name: "@acme/mcp",
+      version: "1.2.3",
+    };
+    config.manifest = signedManifest("package-link", config, "1.2.3", privateKey, { command: identity });
+    expect(manifestApi.assessMcpManifest(dataDir, "package-link", config).trust).toBe("verified");
+
+    unlinkSync(managerLink);
+    symlinkSync(targetB, managerLink, "file");
+    expect(manifestApi.assessMcpManifest(dataDir, "package-link", config)).toMatchObject({ trust: "invalid", reason: expect.stringMatching(/package-manager path/) });
   });
 
   it("does not authorize a manifest from an unknown publisher", () => {

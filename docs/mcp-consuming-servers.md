@@ -66,7 +66,9 @@ MCP uses the same raw Ed25519 publisher keys as plugins; there is no second trus
 }
 ```
 
-Portable package manifests can use `{"kind":"package","manager":"npx","name":"@acme/mcp","version":"2.1.0"}` instead. The configured package argument must be exactly `@acme/mcp@2.1.0`; unpinned package names do not satisfy a signed package identity. The package-manager executable is still resolved and hashed by the existing MCP integrity code, and the exact args/config fingerprint remains signed.
+Package manifests can use `{"kind":"package","manager":"npx","managerPath":"C:/Program Files/nodejs/npx.cmd","managerSha256":"<sha256>","name":"@acme/mcp","version":"2.1.0"}` instead. The configured package argument must be exactly `@acme/mcp@2.1.0`; unpinned package names do not satisfy a signed package identity. `managerPath` is the canonical real path of the resolved package-manager executable and `managerSha256` uses the existing MCP integrity hasher. Both are signed and checked before publisher trust, and LAX spawns the canonical signed target so package-manager replacement, PATH drift, or symlink retargeting fails closed.
+
+Because exact executable identity is host-specific, publishers should issue package manifests for each supported platform/package-manager build or operators should use a locally generated publisher manifest. The package name, package version, full command/args/env fingerprint, and execution posture remain independently bound by the same signature.
 
 The signature is over UTF-8 JSON with fields in this order: `schemaVersion`, `serverName`, `version`, `publisher`, optional `keyId`, normalized `command`, lowercase `configFingerprint`, and `executionMode`. `mcpManifestPayload()` and `mcpConfigFingerprint()` in `src/mcp-client/manifest.ts` are the canonical publisher helpers.
 

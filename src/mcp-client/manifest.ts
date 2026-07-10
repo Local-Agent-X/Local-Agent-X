@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, join, normalize, resolve } from "node:path";
 
 import { verifyPublisherSignature } from "../plugin-system.js";
@@ -55,7 +55,14 @@ export function mcpConfigFingerprint(config: MCPServerConfig): string {
 export function mcpManifestPayload(manifest: Omit<MCPSignedManifest, "signature">): Buffer {
   const command = manifest.command.kind === "binary"
     ? { kind: "binary", resolvedPath: normalize(manifest.command.resolvedPath), sha256: manifest.command.sha256.toLowerCase() }
-    : { kind: "package", manager: manifest.command.manager, name: manifest.command.name, version: manifest.command.version };
+    : {
+      kind: "package",
+      manager: manifest.command.manager,
+      managerPath: normalize(manifest.command.managerPath),
+      managerSha256: manifest.command.managerSha256.toLowerCase(),
+      name: manifest.command.name,
+      version: manifest.command.version,
+    };
   return Buffer.from(JSON.stringify({
     schemaVersion: manifest.schemaVersion,
     serverName: manifest.serverName,
@@ -132,7 +139,7 @@ function malformedReason(name: string, config: MCPServerConfig, manifest: MCPSig
   if (manifest.command.kind === "binary") {
     if (typeof manifest.command.resolvedPath !== "string" || !manifest.command.resolvedPath || typeof manifest.command.sha256 !== "string" || !HEX_256_RE.test(manifest.command.sha256)) return "invalid binary identity";
   } else if (manifest.command.kind === "package") {
-    if (!PACKAGE_MANAGERS.has(manifest.command.manager) || typeof manifest.command.name !== "string" || !manifest.command.name || typeof manifest.command.version !== "string" || !VERSION_RE.test(manifest.command.version)) return "invalid package identity";
+    if (!PACKAGE_MANAGERS.has(manifest.command.manager) || typeof manifest.command.managerPath !== "string" || !manifest.command.managerPath || typeof manifest.command.managerSha256 !== "string" || !HEX_256_RE.test(manifest.command.managerSha256) || typeof manifest.command.name !== "string" || !manifest.command.name || typeof manifest.command.version !== "string" || !VERSION_RE.test(manifest.command.version)) return "invalid package identity";
   } else {
     return "unsupported command identity";
   }
@@ -164,24 +171,42 @@ export function assessMcpManifest(
     return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: "arguments or configuration do not match the signed fingerprint" };
   }
 
-  const resolvedPath = resolveCommandPath(config.command);
-  if (!resolvedPath) return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: "command not found on PATH" };
+  const commandPath = resolveCommandPath(config.command);
+  if (!commandPath) return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: "command not found on PATH" };
+  let resolvedPath = commandPath;
   let sha256: string;
   try {
-    sha256 = hashCommandBinary(resolvedPath);
+    sha256 = hashCommandBinary(commandPath);
   } catch (error) {
     return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: `could not hash command: ${(error as Error).message}` };
   }
 
   if (manifest.command.kind === "binary") {
-    if (resolve(manifest.command.resolvedPath) !== resolve(resolvedPath)) {
+    if (resolve(manifest.command.resolvedPath) !== resolve(commandPath)) {
       return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: "resolved command path does not match signed manifest", resolvedPath, sha256 };
     }
     if (manifest.command.sha256.toLowerCase() !== sha256) {
       return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: "command hash does not match signed manifest", resolvedPath, sha256 };
     }
-  } else if (!packageIdentityMatches(config, manifest.command)) {
-    return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: "configured package identity does not match signed manifest", resolvedPath, sha256 };
+  } else {
+    let canonicalManagerPath: string;
+    try {
+      canonicalManagerPath = realpathSync(commandPath);
+    } catch (error) {
+      return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: `could not resolve package-manager identity: ${(error as Error).message}`, resolvedPath, sha256 };
+    }
+    if (resolve(manifest.command.managerPath) !== resolve(canonicalManagerPath)) {
+      return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: "resolved package-manager path does not match signed manifest", resolvedPath, sha256 };
+    }
+    if (manifest.command.managerSha256.toLowerCase() !== sha256) {
+      return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: "package-manager hash does not match signed manifest", resolvedPath, sha256 };
+    }
+    if (!packageIdentityMatches(config, manifest.command)) {
+      return { trust: "invalid", publisher: manifest.publisher, version: manifest.version, reason: "configured package identity does not match signed manifest", resolvedPath, sha256 };
+    }
+    // Spawn the canonical target whose path and bytes the publisher signed,
+    // rather than re-following a package-manager symlink after verification.
+    resolvedPath = canonicalManagerPath;
   }
 
   const { signature, ...unsigned } = manifest;

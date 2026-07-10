@@ -1,8 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Page } from "playwright";
+import type { Page, BrowserContext } from "playwright";
 import { BrowserManager } from "./manager.js";
 import { installRequestGuard } from "./guards.js";
 import { installDownloadHandler } from "./downloads.js";
+import { acquireSessionContext } from "./runtime.js";
+
+vi.mock("./runtime.js", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("./runtime.js")>();
+  return { ...orig, acquireSessionContext: vi.fn() };
+});
+vi.mock("../config.js", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../config.js")>();
+  return { ...orig, getRuntimeConfig: () => ({ browserIdleTimeoutMs: 60_000 }) };
+});
 
 // Post-fill readback policy contract (per Chunk C / fill-mask refactor):
 //   1. value matches    → returns "Filled ... with value (N chars)"
@@ -323,5 +333,91 @@ describe("installRequestGuard — context-level SSRF/scheme guard", () => {
     await handler(route, fakeRequest("http://93.184.216.34/"));
     expect(route.continue).toHaveBeenCalled();
     expect(route.abort).not.toHaveBeenCalled();
+  });
+});
+
+// ── getPage re-acquire: stale context disposal (C16) ──
+// When the cached page is dead (user closed it, or title() throws), getPage
+// mints a new context. The OLD isolated context must be closed first — it
+// otherwise leaks inside the shared Chrome until Chrome exits. The shared
+// context must NEVER be closed: other sessions' pages live in it.
+
+function staleCachedPage(kind: "throws" | "closed") {
+  return {
+    isClosed: () => kind === "closed",
+    title: () => Promise.reject(new Error("Target closed")),
+  };
+}
+
+function freshContextAndPage() {
+  const page = {
+    setDefaultTimeout: vi.fn(),
+    on: vi.fn(),
+    isClosed: () => false,
+    url: () => "about:blank",
+  };
+  const context = {
+    route: vi.fn().mockResolvedValue(undefined),
+    pages: () => [],
+    newPage: vi.fn().mockResolvedValue(page),
+  };
+  return { context, page };
+}
+
+function setupReacquire(isolated: boolean, kind: "throws" | "closed") {
+  const mgr = new BrowserManager("test-session", isolated);
+  const staleClose = vi.fn().mockResolvedValue(undefined);
+  const internal = mgr as unknown as { page: unknown; context: unknown };
+  internal.page = staleCachedPage(kind);
+  internal.context = { close: staleClose };
+  const fresh = freshContextAndPage();
+  vi.mocked(acquireSessionContext).mockResolvedValue(fresh.context as unknown as BrowserContext);
+  return { mgr, staleClose, fresh };
+}
+
+describe("BrowserManager.getPage — stale context disposal on re-acquire", () => {
+  beforeEach(() => { vi.mocked(acquireSessionContext).mockReset(); });
+
+  it("isolated: closes the old context when the cached page's title() throws", async () => {
+    const { mgr, staleClose, fresh } = setupReacquire(true, "throws");
+    const page = await mgr.getPage();
+    expect(staleClose).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(acquireSessionContext)).toHaveBeenCalledWith("chromium", true);
+    expect(page).toBe(fresh.page);
+  });
+
+  it("isolated: closes the old context when the cached page was closed by the user", async () => {
+    const { mgr, staleClose, fresh } = setupReacquire(true, "closed");
+    const page = await mgr.getPage();
+    expect(staleClose).toHaveBeenCalledTimes(1);
+    expect(page).toBe(fresh.page);
+  });
+
+  it("shared: does NOT close the old context (other sessions live in it)", async () => {
+    const { mgr, staleClose, fresh } = setupReacquire(false, "throws");
+    const page = await mgr.getPage();
+    expect(staleClose).not.toHaveBeenCalled();
+    expect(page).toBe(fresh.page);
+  });
+
+  it("isolated: a failing close() is swallowed and re-acquire still succeeds", async () => {
+    const { mgr, staleClose, fresh } = setupReacquire(true, "throws");
+    staleClose.mockRejectedValue(new Error("context already closed"));
+    const page = await mgr.getPage();
+    expect(staleClose).toHaveBeenCalledTimes(1);
+    expect(page).toBe(fresh.page);
+  });
+
+  it("does not touch the context while the cached page is still alive", async () => {
+    const mgr = new BrowserManager("test-session", true);
+    const staleClose = vi.fn();
+    const alive = { isClosed: () => false, title: vi.fn().mockResolvedValue("ok") };
+    const internal = mgr as unknown as { page: unknown; context: unknown };
+    internal.page = alive;
+    internal.context = { close: staleClose };
+    const page = await mgr.getPage();
+    expect(page).toBe(alive);
+    expect(staleClose).not.toHaveBeenCalled();
+    expect(vi.mocked(acquireSessionContext)).not.toHaveBeenCalled();
   });
 });

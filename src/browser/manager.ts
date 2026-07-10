@@ -108,10 +108,14 @@ export class BrowserManager {
         return this.page;
       } catch {
         this.page = null;
-        this.context = null;
       }
     }
 
+    // Dead-page re-acquire: close the orphaned isolated context (it leaks in
+    // the shared Chrome until exit). Never close the shared one — peers use it.
+    if (this.isolated && this.context) {
+      try { await this.context.close(); } catch { /* already closed */ }
+    }
     this.context = await acquireSessionContext(this.currentEngine, this.isolated);
     // Install the context-level SSRF/scheme request guard so EVERY navigation
     // this context makes (click/act/fill-induced, redirect hop, JS-redirect) is
@@ -338,13 +342,11 @@ export class BrowserManager {
   }
 
   async dialogAccept(promptText?: string): Promise<string> {
-    const page = await this.getPage();
-    return handleNextDialog(page, "accept", promptText);
+    return handleNextDialog(await this.getPage(), "accept", promptText);
   }
 
   async dialogDismiss(): Promise<string> {
-    const page = await this.getPage();
-    return handleNextDialog(page, "dismiss");
+    return handleNextDialog(await this.getPage(), "dismiss");
   }
 
   async extractText(selector?: string, find?: string): Promise<string> {
@@ -378,10 +380,7 @@ export class BrowserManager {
   /** Tear down only this session's tabs + refs. The shared Chrome stays up;
    *  in isolated mode the session's own context is closed too. */
   async close(): Promise<void> {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = null;
-    }
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
     this.registry.reset();
     for (const p of this.owned) {
       try { if (!p.isClosed()) await p.close(); } catch { /* already closed */ }

@@ -1,6 +1,6 @@
 # Independent Evaluation Remediation Campaign
 
-Status: approved, in progress
+Status: approved, integration verification in progress
 
 ## Objective
 
@@ -35,26 +35,26 @@ profile, or auto-injecting cross-session memory.
 
 | ID | Report | Responsibility | State | Dependencies |
 | --- | --- | --- | --- | --- |
-| B1 | 1 | Browser isolation default and migration | refutation | baseline |
-| B2 | 5 | Remove legacy DNS navigation authority | repair | baseline |
-| B3 | 7 | Browser download quarantine and sensitive-page blocks | pending | B2 |
-| B4 | 8 | Browser-mode API and UI | pending | B1 |
-| B5 | 13 | Concurrent two-identity browser isolation test | pending | B1, B4 |
-| A1 | 2, 3 | Versioned encrypted provider credential envelope, fail-closed writes | refutation | baseline |
+| B1 | 1 | Browser isolation default and migration | green | baseline |
+| B2 | 5 | Remove legacy DNS navigation authority | green | baseline |
+| B3 | 7 | Browser download quarantine and sensitive-page blocks | green | B2 |
+| B4 | 8 | Browser-mode API and UI | green | B1 |
+| B5 | 13 | Concurrent two-identity browser isolation test | green | B1, B4 |
+| A1 | 2, 3 | Versioned encrypted provider credential envelope, fail-closed writes | green | baseline |
 | A2 | 15 | Provider migration and privacy documentation | green | A1 |
-| S1 | 4 | Effective sandbox status and unattended-host acknowledgement gate | refutation | baseline |
-| R1 | 6 | Tool idempotency classes and retry policy | pending | baseline |
-| R2 | 14 | Crash/restart side-effect non-duplication tests | pending | R1 |
-| M1 | 9 | Memory provenance propagation and retrieval labels | refutation | baseline |
-| M2 | 10 | Approval gate for risky external durable memory | pending | M1 |
-| X1 | 11 | MCP sandbox/trusted-only execution posture | in-flight | baseline |
-| X2 | 12 | Signed MCP manifests and publisher trust | pending | X1 |
+| S1 | 4 | Effective sandbox status and unattended-host acknowledgement gate | green | baseline |
+| R1 | 6 | Tool idempotency classes and retry policy | green | baseline |
+| R2 | 14 | Crash/restart side-effect non-duplication tests | green | R1 |
+| M1 | 9 | Memory provenance propagation and retrieval labels | green | baseline |
+| M2 | 10 | Approval gate for risky external durable memory | green | M1 |
+| X1 | 11 | MCP sandbox/trusted-only execution posture | green | baseline |
+| X2 | 12 | Signed MCP manifests and publisher trust | green | X1 |
 | W1 | 18 | Fail-closed Windows signing pipeline and verification | green | baseline |
-| L1 | 19 | Strict local-only central policy, API, config, and UI | pending | A1, S1, X1 |
-| H1 | 16 | Split request authentication, API dispatch, static serving, app serving | pending | security waves |
-| C1 | 17 | Split canonical chat registration and context/tool setup | pending | reliability waves |
-| D1 | 20 | Prune or correct stale architectural documentation | pending | all production chunks |
-| I1 | all | Cross-seam contracts, full suite, build, final skeptic pass | pending | all unparked chunks |
+| L1 | 19 | Strict local-only central policy, API, config, and UI | green | A1, S1, X1 |
+| H1 | 16 | Split request authentication, API dispatch, static serving, app serving | green | security waves |
+| C1 | 17 | Split canonical chat registration and context/tool setup | green | reliability waves |
+| D1 | 20 | Prune or correct stale architectural documentation | green | all production chunks |
+| I1 | all | Cross-seam contracts, full suite, build, final skeptic pass | in-flight | all unparked chunks |
 
 ## Conflict Magnets
 
@@ -79,11 +79,23 @@ profile, or auto-injecting cross-session memory.
 
 ### Shipped (green)
 
+- B1-B5: isolated-by-default browser identities, explicit continuity/shared
+  modes, pinned egress, download quarantine, sensitive-page withholding, and
+  real concurrent Chromium isolation coverage.
+- A1-A2 and S1: encrypted credential envelopes with fail-closed recovery,
+  accurate migration/privacy copy, effective sandbox reporting, and trusted
+  unattended-host acknowledgement.
+- R1-R2: effect-aware retries and durable crash recovery that blocks duplicate,
+  concurrent, mismatched, or corrupt non-idempotent replays.
+- M1-M2: provenance-preserving memory and approval-gated risky promotion.
+- X1-X2: confined MCP execution, startup cleanup, signed manifests, and
+  package-manager/publisher identity checks.
+- L1: protected strict local-only mode across providers, background services,
+  tools, connectors, embeddings, voice, MCP, bridges, and browser/network paths.
+- H1, C1, and D1: request-handler and canonical-chat responsibility splits,
+  corrected architecture documentation, and a source-backed stale-claim gate.
 - W1: release and rolling Windows workflows require signing credentials,
   validate the exact signer and timestamp, and cannot publish unsigned output.
-- A2: provider-auth documentation and Settings copy now distinguish LAX-owned
-  encrypted envelopes from external CLI-native stores, including migration,
-  fail-closed recovery, keychain boundaries, and the unreachable degraded mode.
 
 ### Parked for user or external authority
 

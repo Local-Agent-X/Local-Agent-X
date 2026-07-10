@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { scoreFact, scoreToLevel } from "./scoring.js";
 import type { RetainedFact } from "../../types.js";
 import { MemoryIndex } from "../../index.js";
+import { authorizeTestFactMutations } from "../../test-promotion.test-helper.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -77,6 +78,7 @@ describe("MemoryIndex.topImportantFacts", () => {
     tempDir = mkdtempSync(join(tmpdir(), "lax-imp-"));
     mkdirSync(join(tempDir, "memory", "bank", "entities"), { recursive: true });
     memory = new MemoryIndex(tempDir, { minScore: -1 });
+    authorizeTestFactMutations(memory);
   });
   afterEach(() => {
     try { memory.close(); } catch { /* noop */ }

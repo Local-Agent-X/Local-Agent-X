@@ -30,6 +30,7 @@ import { PERSONALITY_FILES } from "./personality.js";
 import type { MemoryIndex } from "./index-core.js";
 import {
   assertMemoryPromotionAllowed,
+  createInternalMemoryContext,
   type MemoryPromotionContext,
 } from "./promotion-gate.js";
 
@@ -199,7 +200,10 @@ export function appendToDailyLogSafely(opts: {
     threshold: opts.threshold,
     promotion: opts.promotion,
   });
-  opts.memory.appendDailyLog(sanitized, opts.sessionId, opts.source, { origin: "durable_memory" });
+  opts.memory.appendDailyLog(
+    sanitized, opts.sessionId, opts.source,
+    createInternalMemoryContext(sanitized, opts.memory.getDailyLogPath(), "daily-log-gated-handoff"),
+  );
   noteWrite(opts.source);
 }
 
@@ -214,7 +218,7 @@ export function runMemoryGate(opts: {
   threshold?: number;
   promotion?: MemoryPromotionContext;
 }): string {
-  return applyGateChain(opts);
+  return applyGateChain({ ...opts, consumePromotion: false });
 }
 
 interface GateInput {
@@ -223,11 +227,12 @@ interface GateInput {
   target: string;
   threshold?: number;
   promotion?: MemoryPromotionContext;
+  consumePromotion?: boolean;
 }
 
 function applyGateChain(input: GateInput): string {
   try {
-    assertMemoryPromotionAllowed(input.content, input.target, input.promotion);
+    assertMemoryPromotionAllowed(input.content, input.target, input.promotion, input.consumePromotion ?? true);
   } catch (e) {
     throw new MemoryWriteBlocked({
       reason: (e as Error).message,

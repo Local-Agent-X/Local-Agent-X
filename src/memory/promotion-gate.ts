@@ -1,43 +1,123 @@
 import { createHash } from "node:crypto";
 
 export type MemoryContentOrigin =
-  | "user_statement"
-  | "assistant"
-  | "tool_observation"
-  | "external"
-  | "import"
-  | "unknown"
-  | "durable_memory";
+  | "user_statement" | "assistant" | "tool_observation"
+  | "external" | "import" | "unknown" | "durable_memory";
 
-export interface MemoryPromotionApproval {
-  grantId: string;
-  sessionId: string;
-  source: string;
+export interface MemoryPromotionClaims {
+  content: string;
   target: string;
-  contentHash: string;
+  source: string;
+  sessionId: string;
+  provenance: string;
+  confidence: number;
+  origin: MemoryContentOrigin;
+  evidenceSpan?: string;
 }
+
+export interface MemoryPromotionCapability { readonly kind: "memory-promotion" }
 
 export interface MemoryPromotionContext {
   origin: MemoryContentOrigin;
   sessionId?: string;
   source?: string;
   target?: string;
+  provenance?: string;
+  confidence?: number;
   evidenceContent?: string;
-  approval?: MemoryPromotionApproval;
+  capability?: MemoryPromotionCapability;
 }
 
-export interface MemoryPromotionRequest {
-  source: string;
-  target: string;
-  content: string;
-  sessionId: string;
-}
+export interface MemoryPromotionRequest extends MemoryPromotionClaims {}
 
-const APPROVAL = Symbol("memory-promotion-approval");
-const consumedGrants = new Set<string>();
+const CAPABILITY = Symbol("memory-promotion-capability");
+const states = new WeakMap<object, { claims: MemoryPromotionClaims; consumed: boolean }>();
 
 function hash(content: string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+function mint(claims: MemoryPromotionClaims): MemoryPromotionCapability {
+  const capability = Object.freeze({ kind: "memory-promotion" as const });
+  states.set(capability, { claims: { ...claims }, consumed: false });
+  return capability;
+}
+
+function normalizedWords(text: string): string[] {
+  const stop = new Set(["the", "a", "an", "to", "that", "this", "my", "me", "i", "user", "please", "remember", "save", "profile", "project", "is", "am", "are", "be", "of", "in", "and", "prefer", "response", "respons", "without", "current", "currently", "tak", "taking"]);
+  return (text.toLowerCase().match(/[a-z0-9@]+/g) ?? [])
+    .map((word) => word.replace(/^@/, "").replace(/(?:ing|ed|es|s)$/, ""))
+    .map((word) => (["hate", "dislik"].includes(word) ? "aversion" : ["love", "lov", "like"].includes(word) ? "affinity" : word))
+    .filter((word) => word.length > 1 && !stop.has(word));
+}
+
+function supportedBy(span: string, proposed: string): boolean {
+  const evidence = new Set(normalizedWords(span));
+  const claims = normalizedWords(proposed);
+  if (claims.length === 0) return false;
+  const proposedNumbers = proposed.match(/\d+/g) ?? [];
+  if (proposedNumbers.some((number) => !span.includes(number))) return false;
+  return claims.filter((word) => evidence.has(word)).length / claims.length >= 0.6;
+}
+
+export function createUserEvidenceCapability(input: Omit<MemoryPromotionClaims, "origin"> & {
+  userMessage: string;
+  evidenceSpan: string;
+}): MemoryPromotionCapability {
+  if (!input.evidenceSpan || !input.userMessage.includes(input.evidenceSpan)) {
+    throw new Error("supporting user span is not present in the current user turn");
+  }
+  if (!supportedBy(input.evidenceSpan, input.content)) {
+    throw new Error("proposed memory is not supported by the current user span");
+  }
+  return mint({ ...input, origin: "user_statement" });
+}
+
+export function createInternalMemoryCapability(
+  claims: Omit<MemoryPromotionClaims, "origin">,
+): MemoryPromotionCapability {
+  return mint({ ...claims, origin: "durable_memory" });
+}
+
+export function createInternalMemoryContext(
+  content: string,
+  target: string,
+  source: string,
+  sessionId = "internal",
+): MemoryPromotionContext {
+  const provenance = "durable_memory";
+  const confidence = 1;
+  const capability = createInternalMemoryCapability({ content, target, source, sessionId, provenance, confidence });
+  return { origin: "durable_memory", capability, evidenceContent: content, target, source, sessionId, provenance, confidence };
+}
+
+export function assertMemoryPromotionCapability(
+  capability: MemoryPromotionCapability | undefined,
+  expected: Omit<MemoryPromotionClaims, "origin" | "evidenceSpan">,
+  consume = true,
+): void {
+  const state = capability ? states.get(capability) : undefined;
+  const claims = state?.claims;
+  const matches = claims
+    && hash(claims.content) === hash(expected.content)
+    && claims.target === expected.target
+    && claims.source === expected.source
+    && claims.sessionId === expected.sessionId
+    && claims.provenance === expected.provenance
+    && claims.confidence === expected.confidence;
+  if (!state || !matches) throw new Error("valid memory promotion capability required");
+  if (consume && state.consumed) throw new Error("memory promotion capability has already been consumed");
+  if (consume) state.consumed = true;
+}
+
+function factMetadata(args: Record<string, unknown>): { provenance: string; confidence: number } {
+  const declared = String(args.provenance || "inference");
+  const cap = declared === "user_statement" ? 1 : 0.6;
+  const requested = args.confidence == null ? cap : Number(args.confidence);
+  return {
+    provenance: `model-declared:${declared}`,
+    confidence: Math.min(Number.isFinite(requested) ? requested : cap, cap),
+  };
 }
 
 export function describeMemoryPromotionRequest(
@@ -47,103 +127,79 @@ export function describeMemoryPromotionRequest(
 ): MemoryPromotionRequest | null {
   let content = "";
   let target = "";
-  switch (toolName) {
-    case "remember":
-      content = String(args.content || "").trim();
-      target = "memory:retain";
-      break;
-    case "update_fact":
-      content = String(args.content || "").trim();
-      target = `memory:update:${String(args.query || "").trim()}`;
-      break;
-    case "memory_save":
-      content = String(args.content || "");
-      target = "memory:daily-log";
-      break;
-    case "memory_set_user_field":
-      content = `${String(args.field || "").trim()}: ${String(args.value || "").trim()}`;
-      target = "memory:profile:user-field";
-      break;
-    case "memory_update_profile":
-      content = String(args.content || "");
-      target = `memory:profile:${String(args.file || "unknown")}`;
-      break;
-    case "project_brief_update":
-      content = String(args.content || "").trim();
-      target = "memory:project-brief";
-      break;
-    case "project_create":
-      content = String(args.summary || "").trim();
-      target = "memory:project-brief";
-      break;
-    default:
-      return null;
-  }
+  if (toolName === "remember") { content = String(args.content || "").trim(); target = "memory:retain"; }
+  else if (toolName === "update_fact") { content = String(args.content || "").trim(); target = `memory:update:${String(args.query || "").trim()}`; }
+  else if (toolName === "memory_save") { content = String(args.content || ""); target = "memory:daily-log"; }
+  else if (toolName === "memory_set_user_field") { content = `${String(args.field || "").trim()}: ${String(args.value || "").trim()}`; target = "memory:profile:user-field"; }
+  else if (toolName === "memory_update_profile") { content = String(args.content || ""); target = `memory:profile:${String(args.file || "unknown")}`; }
+  else if (toolName === "project_brief_update") { content = String(args.content || "").trim(); target = "memory:project-brief"; }
+  else if (toolName === "project_create") { content = String(args.summary || "").trim(); target = "memory:project-brief"; }
+  else return null;
   if (!content.trim()) return null;
-  return { content, target, sessionId, source: `model-tool:${toolName}` };
+  const metadata = factMetadata(args);
+  return { content, target, sessionId, source: `model-tool:${toolName}`, ...metadata, origin: "assistant" };
 }
 
-export function stampMemoryPromotionApproval(
-  args: Record<string, unknown>,
+function currentUserTurn(priorMessages: unknown[] | undefined): { text: string; hasToolResult: boolean } {
+  if (!priorMessages) return { text: "", hasToolResult: false };
+  for (let i = priorMessages.length - 1; i >= 0; i--) {
+    const message = priorMessages[i] as { role?: string; content?: unknown };
+    if (message.role === "user" && typeof message.content === "string") {
+      const hasToolResult = priorMessages.slice(i + 1).some(
+        (later) => (later as { role?: string }).role === "tool",
+      );
+      return { text: message.content, hasToolResult };
+    }
+  }
+  return { text: "", hasToolResult: false };
+}
+
+export function trustedCurrentUserEvidence(
   request: MemoryPromotionRequest,
-  grantId: string,
-): void {
-  Object.defineProperty(args, APPROVAL, {
-    value: {
-      grantId,
-      sessionId: request.sessionId,
-      source: request.source,
-      target: request.target,
-      contentHash: hash(request.content),
-    } satisfies MemoryPromotionApproval,
-    enumerable: false,
-  });
+  priorMessages: unknown[] | undefined,
+): { userMessage: string; evidenceSpan: string } | null {
+  const turn = currentUserTurn(priorMessages);
+  const userMessage = turn.text;
+  if (!userMessage || turn.hasToolResult || /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i.test(userMessage)) return null;
+  if (!/\b(remember|save (?:this|that|to memory)|update (?:my |the )?(?:profile|memory)|note that|create (?:a |the )?project|project brief)\b/i.test(userMessage)) return null;
+  return supportedBy(userMessage, request.content) ? { userMessage, evidenceSpan: userMessage } : null;
 }
 
-export function promotionContextFromToolArgs(
-  args: Record<string, unknown>,
-  request: {
-    source: string;
-    target: string;
-    content: string;
-    sessionId?: string;
-  },
-): MemoryPromotionContext {
+export function stampTrustedUserPromotion(args: Record<string, unknown>, request: MemoryPromotionRequest, evidence: { userMessage: string; evidenceSpan: string }): void {
+  const capability = createUserEvidenceCapability({ ...request, ...evidence });
+  Object.defineProperty(args, CAPABILITY, { value: capability, enumerable: false });
+}
+
+export function stampApprovedMemoryPromotion(args: Record<string, unknown>, request: MemoryPromotionRequest, grantId: string): void {
+  const capability = mint({ ...request, source: `${request.source}:approval:${grantId}`, origin: "assistant" });
+  Object.defineProperty(args, CAPABILITY, { value: capability, enumerable: false });
+}
+
+export function promotionContextFromToolArgs(args: Record<string, unknown>, request: {
+  content: string; target: string; source: string; sessionId?: string; provenance?: string; confidence?: number;
+}): MemoryPromotionContext {
+  const capability = (args as Record<PropertyKey, unknown>)[CAPABILITY] as MemoryPromotionCapability | undefined;
+  const state = capability ? states.get(capability) : undefined;
   return {
-    origin: "assistant",
-    sessionId: request.sessionId,
-    source: request.source,
-    target: request.target,
+    ...request,
+    origin: state?.claims.origin ?? "unknown",
+    capability,
     evidenceContent: request.content,
-    approval: (args as Record<PropertyKey, unknown>)[APPROVAL] as MemoryPromotionApproval | undefined,
+    source: state?.claims.source ?? request.source,
+    provenance: state?.claims.provenance ?? request.provenance ?? "unknown",
+    confidence: state?.claims.confidence ?? request.confidence ?? 0,
   };
 }
 
-export function assertMemoryPromotionAllowed(
-  content: string,
-  target: string,
-  context?: MemoryPromotionContext,
-): void {
-  const origin = context?.origin ?? "unknown";
-  if (origin === "user_statement" || origin === "durable_memory") return;
-
-  const approval = context?.approval;
-  const evidence = context?.evidenceContent ?? content;
-  const matches = approval
-    && approval.sessionId === context?.sessionId
-    && approval.source === context?.source
-    && approval.target === (context?.target ?? target)
-    && approval.contentHash === hash(evidence);
-  if (!matches) {
-    throw new Error(`explicit user approval required for ${origin} memory promotion`);
-  }
-  if (consumedGrants.has(approval.grantId)) {
-    throw new Error("memory promotion approval has already been consumed");
-  }
-  consumedGrants.add(approval.grantId);
+export function assertMemoryPromotionAllowed(content: string, target: string, context?: MemoryPromotionContext, consume = true): void {
+  assertMemoryPromotionCapability(context?.capability, {
+    content: context?.evidenceContent ?? content,
+    target: context?.target ?? target,
+    source: context?.source ?? "unknown",
+    sessionId: context?.sessionId ?? "default",
+    provenance: context?.provenance ?? "unknown",
+    confidence: context?.confidence ?? 0,
+  }, consume);
 }
 
-/** Test isolation only. */
-export function _resetMemoryPromotionApprovals(): void {
-  consumedGrants.clear();
-}
+export function _resetMemoryPromotionApprovals(): void { /* WeakMap state is per-capability. */ }

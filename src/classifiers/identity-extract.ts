@@ -39,6 +39,7 @@ Output JSON with these fields (omit or set to null when not stated):
   "personal_affinity": <Array<string> | null>,  // durable LIKES/DISLIKES about things in the user's life (foods, places, brands, hobbies, music, shows, sports, drinks, restaurants): "I love pizza" → ["User's favorite food is pizza"], "@AcmePizza is my favorite spot" → ["@AcmePizza is the user's favorite pizza place"], "I hate olives" → ["User dislikes olives"], "I love pizza and tacos" → ["User loves pizza", "User loves tacos"]. Phrase each as a third-person statement about the user, ≤180 chars. Use @-prefix on named entities (places, brands).
   "ongoing_state": <Array<string> | null>,  // any DURABLE PRESENT-TENSE fact about the user — something that should still be true tomorrow. The catch-all for "I'm currently X" / "I'm doing X" / "I have X" / "I own X" / "I live in a Y" patterns that aren't already captured by location/employer/role/family/relationships/preferences/affinities/events. Examples across categories: medications/health ("I'm taking <med>" → ["User is currently taking <med>"], "I have asthma" → ["User has asthma"]); diet/fitness ("I'm on keto" → ["User is on a keto diet"], "I work out 3x a week" → ["User works out 3x a week"]); work/projects ("I'm building a CRM" → ["User is currently building a CRM"], "I'm studying for the bar exam" → ["User is studying for the bar exam"]); learning ("I'm learning Spanish" → ["User is learning Spanish"]); possessions ("I drive a pickup" → ["User drives a pickup truck"], "I have two cats" → ["User has two cats"]); habits/lifestyle ("I'm a night owl" → ["User is a night owl"], "I'm vegetarian" → ["User is vegetarian"]); current situation ("I'm staying with my parents" → ["User is currently staying with their parents"]). NOT category-specific — if a statement is durable + present-tense + about the user and doesn't fit another field, it goes here. Phrase third-person, ≤180 chars. Each statement in its own array entry. EACH new addition is a separate entry — "I'm also taking <med2>" after a prior <med1> is a SECOND entry, not an update.
   "biographical_event": <string | null>   // durable POINT-IN-TIME life event: "my dog rex passed away last Thursday", "I got married yesterday", "we just moved to Austin", "my mom is in the hospital". For ONGOING states (medications / diets / routines), use ongoing_state above instead.
+  "evidence_spans": <object>               // REQUIRED: field name -> exact verbatim supporting substring from the user message. Array fields require one exact span per item.
 }
 
 Critical rejections (return all-null):
@@ -67,6 +68,7 @@ export interface IdentityFacts {
   personal_affinity?: string[] | null;
   ongoing_state?: string[] | null;
   biographical_event?: string | null;
+  evidence_spans?: Record<string, string | string[]>;
 }
 
 export async function extractIdentityFactsWithLLM(
@@ -94,6 +96,15 @@ export async function extractIdentityFactsWithLLM(
     validate: (parsed) => {
       if (!parsed || typeof parsed !== "object") return null;
       const p = parsed as IdentityFacts;
+      const evidence = p.evidence_spans && typeof p.evidence_spans === "object" ? p.evidence_spans : {};
+      const exactSpan = (key: string): string | null => {
+        const span = evidence[key];
+        return typeof span === "string" && span.length > 0 && userMessage.includes(span) ? span : null;
+      };
+      const exactSpans = (key: string): string[] => {
+        const spans = evidence[key];
+        return Array.isArray(spans) ? spans.filter((span) => typeof span === "string" && userMessage.includes(span)) : [];
+      };
       // Sanity caps — the classifier should already do this, but defense.
       if (p.user_name && (p.user_name.length < 2 || p.user_name.length > 40)) p.user_name = null;
       if (p.agent_name && (p.agent_name.length < 2 || p.agent_name.length > 40)) p.agent_name = null;
@@ -102,6 +113,9 @@ export async function extractIdentityFactsWithLLM(
       if (p.user_role && p.user_role.length > 60) p.user_role = null;
       if (p.preference_rule && (p.preference_rule.length < 8 || p.preference_rule.length > 200)) p.preference_rule = null;
       if (p.biographical_event && (p.biographical_event.length < 8 || p.biographical_event.length > 200)) p.biographical_event = null;
+      for (const key of ["user_name", "agent_name", "user_location", "user_employer", "user_role", "family_count", "preference_rule", "biographical_event"] as const) {
+        if (p[key] && !exactSpan(key)) p[key] = null as never;
+      }
       if (Array.isArray(p.relationships)) {
         const cleaned = p.relationships.filter(
           (r) =>
@@ -111,7 +125,9 @@ export async function extractIdentityFactsWithLLM(
             r.relation.length >= 2 && r.relation.length <= 30 &&
             r.name.length >= 2 && r.name.length <= 40
         );
-        p.relationships = cleaned.length > 0 ? cleaned : null;
+        const spans = exactSpans("relationships");
+        p.relationships = cleaned.filter((_, index) => spans[index]).length > 0
+          ? cleaned.filter((_, index) => spans[index]) : null;
       } else {
         p.relationships = null;
       }
@@ -119,7 +135,9 @@ export async function extractIdentityFactsWithLLM(
         const cleaned = p.personal_affinity.filter(
           (a) => typeof a === "string" && a.length >= 8 && a.length <= 200
         );
-        p.personal_affinity = cleaned.length > 0 ? cleaned : null;
+        const spans = exactSpans("personal_affinity");
+        p.personal_affinity = cleaned.filter((_, index) => spans[index]).length > 0
+          ? cleaned.filter((_, index) => spans[index]) : null;
       } else {
         p.personal_affinity = null;
       }
@@ -127,7 +145,9 @@ export async function extractIdentityFactsWithLLM(
         const cleaned = p.ongoing_state.filter(
           (a) => typeof a === "string" && a.length >= 8 && a.length <= 200
         );
-        p.ongoing_state = cleaned.length > 0 ? cleaned : null;
+        const spans = exactSpans("ongoing_state");
+        p.ongoing_state = cleaned.filter((_, index) => spans[index]).length > 0
+          ? cleaned.filter((_, index) => spans[index]) : null;
       } else {
         p.ongoing_state = null;
       }

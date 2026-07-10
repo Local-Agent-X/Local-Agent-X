@@ -5,15 +5,17 @@ import { parseFactLine, rowToFact, slugify } from "./utils.js";
 import { extractRelations } from "./index-relations.js";
 
 import { createLogger } from "../logger.js";
+import { assertMemoryPromotionAllowed, type MemoryPromotionContext } from "./promotion-gate.js";
 const logger = createLogger("memory.index-facts");
-
 export function retain(
   db: InstanceType<typeof Database>,
   hasFts: boolean,
   text: string,
   sourceFile: string,
-  sourceLine = 0
+  sourceLine = 0,
+  promotion?: MemoryPromotionContext,
 ): RetainedFact[] {
+  assertMemoryPromotionAllowed(text, promotion?.target ?? "memory:retain", promotion);
   const facts: RetainedFact[] = [];
   const lines = text.split("\n");
 
@@ -115,8 +117,9 @@ export async function retainSmart(
   text: string,
   sourceFile: string,
   sourceLine = 0,
-  opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string } }
+  opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext }
 ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
+  assertMemoryPromotionAllowed(text, opts?.promotion?.target ?? "memory:retain", opts?.promotion);
   const { resolveFact } = await import("./resolver.js");
   const candidateLimit = opts?.candidateLimit ?? 5;
   const facts: RetainedFact[] = [];
@@ -338,7 +341,6 @@ export function recallAsOf(
     .all(...params) as Array<Record<string, unknown>>;
   return rows.map(rowToFact);
 }
-
 export function invalidateFact(
   db: InstanceType<typeof Database>,
   id: number,

@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { COMPRESSED_DIR, LAX_DIR } from "./constants.js";
 import type { StoredCompression } from "./types.js";
 import { runMemoryGate } from "../../write-safely.js";
+import { createInternalMemoryContext } from "../../promotion-gate.js";
 
 export function ensureDirs(): void {
   for (const dir of [LAX_DIR, COMPRESSED_DIR]) {
@@ -39,11 +40,12 @@ export function writeStored(stored: StoredCompression): void {
 }
 
 export function writeStoredAtPath(filePath: string, stored: StoredCompression): void {
+  const content = JSON.stringify(stored, null, 2);
   const gated = runMemoryGate({
-    content: JSON.stringify(stored, null, 2),
+    content,
     source: "tool",
     target: filePath,
-    promotion: { origin: "durable_memory" },
+    promotion: createInternalMemoryContext(content, filePath, "compression-rewrite"),
   });
   writeFileSync(filePath, gated, "utf-8");
 }

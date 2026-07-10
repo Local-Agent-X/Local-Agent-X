@@ -64,22 +64,16 @@ describe("operational ingest", () => {
     expect(f.length).toBeLessThan(400);
   });
 
-  it("writes one fact per failed op, with a relation per failed tool", () => {
+  it("keeps failed operations in the ledger instead of promoting them to facts", () => {
     failedTurn("op1", "2026-06-06T10:00:00.000Z", [["bash", "error"], ["edit", "ok"]]);
     failedTurn("op1", "2026-06-06T10:01:00.000Z", [["http_request", "error"]]);
     const { memory, remembered, relations } = stubMemory();
 
     const res = ingestOperationalOutcomes(memory);
 
-    expect(res.ingested).toBe(1); // one fact for op1
-    expect(remembered[0].kind).toBe("experience");
-    expect(remembered[0].content).toContain("bash");
-    expect(remembered[0].content).toContain("http_request");
-    // edit succeeded → not in the fact
-    expect(remembered[0].content).not.toContain("edit");
-    // a relation per failed tool, linked to the fact
-    expect(relations.map(r => r.subject).sort()).toEqual(["bash", "http_request"]);
-    expect(relations.every(r => r.predicate === "failed-during" && r.factId === 1)).toBe(true);
+    expect(res.ingested).toBe(0);
+    expect(remembered).toHaveLength(0);
+    expect(relations).toHaveLength(0);
   });
 
   it("ignores ops with no failures", () => {
@@ -92,7 +86,7 @@ describe("operational ingest", () => {
   it("is idempotent via the watermark — a second run ingests nothing new", () => {
     failedTurn("op1", "2026-06-06T10:00:00.000Z", [["bash", "error"]]);
     const first = stubMemory();
-    expect(ingestOperationalOutcomes(first.memory).ingested).toBe(1);
+    expect(ingestOperationalOutcomes(first.memory).ingested).toBe(0);
 
     const second = stubMemory();
     expect(ingestOperationalOutcomes(second.memory).ingested).toBe(0);
@@ -100,7 +94,7 @@ describe("operational ingest", () => {
     // a NEW failure after the watermark is picked up
     failedTurn("op2", "2026-06-06T11:00:00.000Z", [["web_fetch", "error"]]);
     const third = stubMemory();
-    expect(ingestOperationalOutcomes(third.memory).ingested).toBe(1);
-    expect(third.remembered[0].content).toContain("web_fetch");
+    expect(ingestOperationalOutcomes(third.memory).ingested).toBe(0);
+    expect(third.remembered).toHaveLength(0);
   });
 });

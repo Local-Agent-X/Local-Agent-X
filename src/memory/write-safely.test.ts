@@ -8,9 +8,14 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeMemorySafely, MemoryWriteBlocked, MAX_PROFILE_CHARS } from "./write-safely.js";
+import { writeMemorySafely as rawWriteMemorySafely, MemoryWriteBlocked, MAX_PROFILE_CHARS, type MemoryWriteParams } from "./write-safely.js";
+import { createInternalMemoryContext } from "./promotion-gate.js";
 
-const DURABLE_PROMOTION = { origin: "durable_memory" as const };
+const writeMemorySafely = (params: MemoryWriteParams) => rawWriteMemorySafely({
+  ...params,
+  promotion: createInternalMemoryContext(params.content, params.target, "test-write"),
+});
+const DURABLE_PROMOTION = undefined;
 
 let tempDir: string;
 

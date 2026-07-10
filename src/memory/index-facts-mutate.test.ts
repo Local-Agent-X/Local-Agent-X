@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryIndex } from "../memory/index.js";
+import { authorizeTestFactMutations } from "./test-promotion.test-helper.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -25,6 +26,7 @@ beforeEach(() => {
   mkdirSync(join(tempDir, "memory", "bank", "entities"), { recursive: true });
   mkdirSync(join(tempDir, "memory", "session-summaries"), { recursive: true });
   memory = new MemoryIndex(tempDir, { minScore: -1 });
+  authorizeTestFactMutations(memory);
 });
 
 afterEach(() => {

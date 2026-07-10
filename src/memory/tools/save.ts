@@ -8,7 +8,7 @@ import {
   MemoryWriteBlocked,
   MAX_PROFILE_CHARS,
 } from "../write-safely.js";
-import { promotionContextFromToolArgs } from "../promotion-gate.js";
+import { createInternalMemoryContext, promotionContextFromToolArgs } from "../promotion-gate.js";
 
 export function createSaveTools(memory: MemoryIndex) {
   return [
@@ -218,7 +218,7 @@ export function createSaveTools(memory: MemoryIndex) {
                 source: "tool",
                 target: backupPath,
                 mode: "overwrite",
-                promotion: { origin: "durable_memory" },
+                promotion: createInternalMemoryContext(existing, backupPath, "profile-backup"),
               });
             } catch {}
           }

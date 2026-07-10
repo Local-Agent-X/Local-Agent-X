@@ -16,7 +16,6 @@
  * later batches can see what earlier ones extracted (writes flow through
  * MemoryIndex → universal-index → searchable immediately).
  */
-
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { isSyntheticSessionId } from "./synthetic-sessions.js";
 import { join } from "node:path";
@@ -24,6 +23,7 @@ import { extractSessionPairs, type ConversationMessage } from "./chunking.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { runMemoryGate } from "./write-safely.js";
 import { createLogger } from "../logger.js";
+import { createInternalMemoryContext } from "./promotion-gate.js";
 const logger = createLogger("memory-dream");
 
 const LAX_DIR = getLaxDir();
@@ -63,7 +63,7 @@ function saveDreamState(state: DreamState): void {
     content: JSON.stringify(state, null, 2),
     source: "tool",
     target: DREAM_STATE_PATH,
-    promotion: { origin: "durable_memory" },
+    promotion: createInternalMemoryContext(JSON.stringify(state, null, 2), DREAM_STATE_PATH, "dream-state"),
   });
   writeFileSync(DREAM_STATE_PATH, gated, "utf-8");
 }

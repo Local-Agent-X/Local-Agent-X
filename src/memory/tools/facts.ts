@@ -3,6 +3,7 @@ import type { FactKind } from "../types.js";
 import { displayContent } from "../utils.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
 import { promotionContextFromToolArgs } from "../promotion-gate.js";
+import type { MemoryPromotionContext } from "../promotion-gate.js";
 
 // Agent-facing single-fact tools. Sit on top of the Facts DB primitives
 // (rememberFact / updateFact / forgetFact in index-facts-mutate.ts). Each
@@ -33,6 +34,12 @@ function groundedConfidence(
 function provenanceSource(provenance: FactProvenance): string {
   if (provenance === "tool_observation") return "agent-tool:model-declared-tool-observation";
   return `agent-tool:${provenance.replace("_", "-")}`;
+}
+
+function authorizedSource(provenance: FactProvenance, promotion: MemoryPromotionContext): string {
+  if (promotion.origin === "user_statement") return "agent-tool:user-statement";
+  if (provenance === "tool_observation") return provenanceSource(provenance);
+  return `agent-tool:approved-model-declared-${provenance.replace("_", "-")}`;
 }
 
 // A single durable fact is one compact line. These tight signals reject a
@@ -130,21 +137,26 @@ export function createFactsTools(memory: MemoryIndex) {
 
         try {
           const target = "memory:retain";
+          const promotion = promotionContextFromToolArgs(args, {
+            content,
+            source: "model-tool:remember",
+            target,
+            sessionId: String(args._sessionId || "default"),
+          });
+          if (promotion.provenance !== `model-declared:${provenance}` || promotion.confidence !== confidence) {
+            return { content: "BLOCKED: approved provenance/confidence does not match this fact", isError: true };
+          }
           const gated = runMemoryGate({
             content,
             source: "tool",
             target,
-            promotion: promotionContextFromToolArgs(args, {
-              content,
-              source: "model-tool:remember",
-              target,
-              sessionId: String(args._sessionId || "default"),
-            }),
+            promotion,
           });
           const result = memory.rememberFact(gated, {
             kind,
             confidence,
-            sourceFile: provenanceSource(provenance),
+            sourceFile: authorizedSource(provenance, promotion),
+            promotion,
           });
           if (!result.ok) {
             return { content: formatToolError("remember failed", result), isError: true };
@@ -164,6 +176,9 @@ export function createFactsTools(memory: MemoryIndex) {
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {
             return { content: `BLOCKED: ${e.reason}`, isError: true };
+          }
+          if ((e as Error).message.includes("memory promotion capability")) {
+            return { content: `BLOCKED: ${(e as Error).message}`, isError: true };
           }
           throw e;
         }
@@ -214,21 +229,26 @@ export function createFactsTools(memory: MemoryIndex) {
 
         try {
           const target = `memory:update:${query}`;
+          const promotion = promotionContextFromToolArgs(args, {
+            content,
+            source: "model-tool:update_fact",
+            target,
+            sessionId: String(args._sessionId || "default"),
+          });
+          if (promotion.provenance !== `model-declared:${provenance}` || promotion.confidence !== confidence) {
+            return { content: "BLOCKED: approved provenance/confidence does not match this fact", isError: true };
+          }
           const gated = runMemoryGate({
             content,
             source: "tool",
             target,
-            promotion: promotionContextFromToolArgs(args, {
-              content,
-              source: "model-tool:update_fact",
-              target,
-              sessionId: String(args._sessionId || "default"),
-            }),
+            promotion,
           });
           const result = memory.updateFact(query, gated, {
             kind,
             confidence,
-            sourceFile: provenanceSource(provenance),
+            sourceFile: authorizedSource(provenance, promotion),
+            promotion,
           });
           if (!result.ok) {
             return { content: formatToolError("update_fact failed", result), isError: true };
@@ -240,6 +260,9 @@ export function createFactsTools(memory: MemoryIndex) {
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {
             return { content: `BLOCKED: ${e.reason}`, isError: true };
+          }
+          if ((e as Error).message.includes("memory promotion capability")) {
+            return { content: `BLOCKED: ${(e as Error).message}`, isError: true };
           }
           throw e;
         }

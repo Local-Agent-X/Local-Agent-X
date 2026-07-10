@@ -20,7 +20,9 @@ import type { Phase } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
 import {
   describeMemoryPromotionRequest,
-  stampMemoryPromotionApproval,
+  stampApprovedMemoryPromotion,
+  stampTrustedUserPromotion,
+  trustedCurrentUserEvidence,
 } from "../memory/promotion-gate.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
@@ -29,6 +31,9 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     ctx.args,
     ctx.sessionId || "default",
   );
+  const trustedEvidence = promotion
+    ? trustedCurrentUserEvidence(promotion, ctx.priorMessages as unknown[] | undefined)
+    : null;
   // An irreversible operation is RECLASSIFIED to the profile's destructive
   // tier and re-decided there — so `bash rm -rf` is decided by the
   // destructive rule (not the coarse shell grant), while a profile that
@@ -56,6 +61,11 @@ export const requireApprovalPhase: Phase = async (ctx) => {
       metadata: { layer: "approval", userHint: USER_HINTS.policy },
     };
     return terminate(ctx, { rendered: "model", result, allowed: false });
+  }
+
+  if (promotion && trustedEvidence) {
+    stampTrustedUserPromotion(ctx.args, promotion, trustedEvidence);
+    return CONTINUE;
   }
 
   const policyRequiresPrompt = !!ctx.policyApprovalReason || !!promotion;
@@ -106,7 +116,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   if (outcome.approved) {
     if (promotion) {
       if (!outcome.grantId) throw new Error("approved memory promotion missing canonical grant id");
-      stampMemoryPromotionApproval(ctx.args, promotion, outcome.grantId);
+      stampApprovedMemoryPromotion(ctx.args, promotion, outcome.grantId);
     }
     return CONTINUE;
   }

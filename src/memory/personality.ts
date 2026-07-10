@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { safeReadTextFile } from "./utils.js";
 import { writeMemorySafely } from "./write-safely.js";
+import { createInternalMemoryContext } from "./promotion-gate.js";
 import { findContradictions } from "./contradiction-sweep.js";
 import { stripHtmlComments } from "../sanitize.js";
 
@@ -94,7 +95,7 @@ export function ensurePersonalityFiles(memDir: string): void {
         source: "personality",
         target: filePath,
         mode: "overwrite",
-        promotion: { origin: "durable_memory" },
+        promotion: createInternalMemoryContext(content, filePath, "personality-default"),
       });
     }
   }

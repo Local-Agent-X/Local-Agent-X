@@ -18,8 +18,17 @@ import { join } from "node:path";
 // it in their setup. null mimics "no identity facts found."
 import type { IdentityFacts } from "../classifiers/identity-extract.js";
 let __nextReturn: IdentityFacts | null = null;
+let __evidenceOverride: Record<string, string | string[]> | null = null;
 vi.mock("../classifiers/identity-extract.js", () => ({
-  extractIdentityFactsWithLLM: vi.fn(async () => __nextReturn),
+  extractIdentityFactsWithLLM: vi.fn(async (userMessage: string) => {
+    if (!__nextReturn) return null;
+    const evidence: Record<string, string | string[]> = {};
+    for (const [key, value] of Object.entries(__nextReturn)) {
+      if (key === "evidence_spans" || value == null) continue;
+      evidence[key] = Array.isArray(value) ? value.map(() => userMessage) : userMessage;
+    }
+    return { ...__nextReturn, evidence_spans: __evidenceOverride ?? evidence };
+  }),
 }));
 
 // The fact write path now routes through memory.retainSmart, which calls
@@ -57,6 +66,7 @@ let memory: InstanceType<typeof MemoryIndex>;
 
 beforeEach(() => {
   __nextReturn = null;
+  __evidenceOverride = null;
   __paraphraseOf = () => false;
   resolveFactSpy.mockClear();
   tempDir = mkdtempSync(join(tmpdir(), "lax-autoext-"));
@@ -150,7 +160,16 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(readDailyLogOrEmpty()).toBe("");
   });
 
-  it("agent_name → rewrites IDENTITY.md `- Name:` line and appends daily-log entry", async () => {
+  it("rejects classifier hallucinations not grounded in the exact supporting span", async () => {
+    __nextReturn = { preference_rule: "User prefers daily financial reports" };
+    __evidenceOverride = { preference_rule: "I like pizza" };
+
+    await autoExtractAndSave(memory, "I like pizza", "noted");
+
+    expect(liveFactsCount()).toBe(0);
+  });
+
+  it("agent_name → rewrites IDENTITY.md `- Name:` line", async () => {
     __nextReturn = { agent_name: "Aria" };
     writeFileSync(
       join(memoryDir(), "IDENTITY.md"),
@@ -164,7 +183,6 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(identity).toContain("- Name: Aria");
     expect(identity).not.toContain("- Name: OldAgent");
     expect(identity).toContain("- Other: thing"); // other lines untouched
-    expect(readDailyLogOrEmpty()).toContain('Agent renamed to "Aria"');
   });
 
   it("agent_name → appends Name bullet to IDENTITY.md when missing", async () => {
@@ -182,7 +200,7 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(identity).toContain("- Canonical name: Atlas"); // existing content preserved
   });
 
-  it("user_name → replaces existing Name bullet in USER.md and appends daily-log entry", async () => {
+  it("user_name → replaces existing Name bullet in USER.md", async () => {
     __nextReturn = { user_name: "Alex" };
     writeFileSync(join(memoryDir(), "USER.md"), "# User\n- Name: Stranger\n", "utf-8");
 
@@ -191,7 +209,6 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     const user = readFileSync(join(memoryDir(), "USER.md"), "utf-8");
     expect(user).toContain("- Name: Alex");
     expect(user).not.toContain("- Name: Stranger");
-    expect(readDailyLogOrEmpty()).toContain('User introduced themselves as "Alex"');
   });
 
   it("user_name → appends Name bullet to USER.md when missing", async () => {
@@ -205,7 +222,7 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(user).toContain("- Role: developer"); // existing content preserved
   });
 
-  it("preference_rule → opinion fact with confidence 0.85 + daily-log entry", async () => {
+  it("preference_rule → opinion fact with confidence 0.85", async () => {
     __nextReturn = { preference_rule: "User prefers responses without filler" };
 
     await autoExtractAndSave(memory, "no filler please", "got it");
@@ -214,12 +231,11 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].kind).toBe("opinion");
     expect(rows[0].confidence).toBeCloseTo(0.85);
-    expect(readDailyLogOrEmpty()).toContain("Captured preference:");
   });
 
   it("biographical_event → experience fact with confidence 0.9 + entity mention", async () => {
     __nextReturn = {
-      biographical_event: "User's dog @fido passed away on 2026-05-20",
+      biographical_event: "User's dog @fido passed away",
     };
 
     await autoExtractAndSave(memory, "my dog fido passed away", "i'm so sorry");
@@ -229,10 +245,9 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     // parseFactLine strips @-entities from content and routes them to
     // entity_mentions. So the persisted content has @fido removed and the
     // mention shows up in the join table.
-    expect(rows[0].content).toBe("User's dog passed away on 2026-05-20");
+    expect(rows[0].content).toBe("User's dog passed away");
     expect(rows[0].confidence).toBeCloseTo(0.9);
     expect(entityMentionsForFact(rows[0].id)).toContain("fido");
-    expect(readDailyLogOrEmpty()).toContain("Captured event:");
   });
 
   it("relationships → one world fact per entry, each tagged with the name as @-entity", async () => {
@@ -277,9 +292,6 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(rows).toHaveLength(2);
     const contents = rows.map((r) => r.content).sort();
     expect(contents).toEqual(["User dislikes olives", "User loves pizza"]);
-    const log = readDailyLogOrEmpty();
-    expect(log).toContain("Captured affinity: User loves pizza");
-    expect(log).toContain("Captured affinity: User dislikes olives");
   });
 
   it("ongoing_state → one observation fact per entry with confidence 0.9", async () => {
@@ -312,7 +324,7 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     };
     writeFileSync(join(memoryDir(), "USER.md"), "- Name: Stranger\n", "utf-8");
 
-    await autoExtractAndSave(memory, "lots of facts at once", "ok");
+    await autoExtractAndSave(memory, "I'm Alex, I prefer no emojis, and I shipped Bookwell v1 last Thursday", "ok");
 
     expect(readFileSync(join(memoryDir(), "USER.md"), "utf-8")).toContain("- Name: Alex");
     expect(liveFactsWhere("content = ?", "User prefers no emojis")).toHaveLength(1);

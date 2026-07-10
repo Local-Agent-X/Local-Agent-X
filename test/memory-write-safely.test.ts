@@ -3,14 +3,21 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  writeMemorySafely,
-  runMemoryGate,
+  writeMemorySafely as rawWriteMemorySafely,
+  runMemoryGate as rawRunMemoryGate,
   getMemoryWriteTick,
   getLastWriteTick,
   MemoryWriteBlocked,
 } from "../src/memory/write-safely.js";
+import { createInternalMemoryContext } from "../src/memory/promotion-gate.js";
 
-const USER_PROMOTION = { origin: "user_statement" as const };
+const USER_PROMOTION = undefined;
+const writeMemorySafely = (params: Parameters<typeof rawWriteMemorySafely>[0]) => rawWriteMemorySafely({
+  ...params, promotion: createInternalMemoryContext(params.content, params.target, "test-write"),
+});
+const runMemoryGate = (params: Parameters<typeof rawRunMemoryGate>[0]) => rawRunMemoryGate({
+  ...params, promotion: createInternalMemoryContext(params.content, params.target, "test-gate"),
+});
 
 describe("writeMemorySafely — F5 gate funnel", () => {
   let dir: string;

@@ -11,7 +11,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 vi.mock("../promotion-gate.js", async () => {
   const actual = await vi.importActual<typeof import("../promotion-gate.js")>("../promotion-gate.js");
-  return { ...actual, promotionContextFromToolArgs: () => ({ origin: "user_statement" }) };
+  return {
+    ...actual,
+    promotionContextFromToolArgs: (_args: unknown, request: { content: string; target: string; source: string }) =>
+      actual.createInternalMemoryContext(request.content, request.target, request.source),
+  };
 });
 import { mkdtempSync, rmSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";

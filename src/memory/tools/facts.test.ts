@@ -10,7 +10,26 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 vi.mock("../promotion-gate.js", async () => {
   const actual = await vi.importActual<typeof import("../promotion-gate.js")>("../promotion-gate.js");
-  return { ...actual, promotionContextFromToolArgs: () => ({ origin: "user_statement" }) };
+  return {
+    ...actual,
+    promotionContextFromToolArgs: (args: Record<string, unknown>, request: { content: string; target: string; source: string }) => {
+      const declared = String(args.provenance || "inference");
+      const cap = declared === "user_statement" ? 1 : 0.6;
+      const confidence = Math.min(args.confidence == null ? cap : Number(args.confidence), cap);
+      const provenance = `model-declared:${declared}`;
+      const full = { ...request, sessionId: "default", provenance, confidence, origin: "assistant" as const };
+      if (declared === "user_statement") {
+        const capability = actual.createUserEvidenceCapability({
+          content: request.content, target: request.target, source: request.source,
+          sessionId: "default", provenance, confidence,
+          userMessage: request.content, evidenceSpan: request.content,
+        });
+        return { ...full, origin: "user_statement", capability, evidenceContent: request.content };
+      }
+      actual.stampApprovedMemoryPromotion(args, full, "test-grant");
+      return actual.promotionContextFromToolArgs(args, request);
+    },
+  };
 });
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -104,7 +123,7 @@ describe("remember multi-fact-blob guard", () => {
       "The deployment policy is probably strict",
       expect.objectContaining({
         confidence: 0.6,
-        sourceFile: "agent-tool:inference",
+        sourceFile: "agent-tool:approved-model-declared-inference",
       }),
     );
   });

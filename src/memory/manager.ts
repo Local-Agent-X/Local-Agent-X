@@ -20,6 +20,7 @@ import { appendToDailyLogSafely } from "./write-safely.js";
 import { requestEndOfTurnExtraction } from "./extraction-coalescer.js";
 import { getSessionProject } from "../session/project.js";
 import { createLogger } from "../logger.js";
+import { createUserEvidenceCapability } from "./promotion-gate.js";
 
 const logger = createLogger("memory.manager");
 
@@ -204,12 +205,23 @@ export class MemoryManager {
     try {
       const userSnippet = input.userMessage.slice(0, 300).replace(/\n/g, " ");
       if (userSnippet.length > 10) {
+        const content = `User: ${userSnippet}`;
+        const target = this.index.getDailyLogPath();
+        const sessionId = input.sessionId ?? "default";
+        const capability = createUserEvidenceCapability({
+          content, target, source: "persist-turn", sessionId,
+          provenance: "user_statement", confidence: 1,
+          userMessage: input.userMessage, evidenceSpan: input.userMessage.slice(0, 300),
+        });
         appendToDailyLogSafely({
           memory: this.index,
           source: "auto-extract",
-          content: `User: ${userSnippet}`,
+          content,
           sessionId: input.sessionId,
-          promotion: { origin: "user_statement", sessionId: input.sessionId },
+          promotion: {
+            origin: "user_statement", capability, evidenceContent: content, target, source: "persist-turn",
+            sessionId, provenance: "user_statement", confidence: 1,
+          },
         });
       }
     } catch (e) {

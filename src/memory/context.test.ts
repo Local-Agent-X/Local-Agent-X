@@ -14,8 +14,10 @@ import { mkdtempSync, rmSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryIndex } from "../memory/index.js";
+import { authorizeTestFactMutations } from "./test-promotion.test-helper.js";
 import { buildContextBlock } from "./context.js";
 import { updateProjectBrief } from "./project-brief.js";
+import { createInternalMemoryContext } from "./promotion-gate.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -27,6 +29,7 @@ beforeEach(() => {
   mkdirSync(join(tempDir, "memory", "bank", "entities"), { recursive: true });
   mkdirSync(join(tempDir, "memory", "session-summaries"), { recursive: true });
   memory = new MemoryIndex(tempDir, { minScore: -1 });
+  authorizeTestFactMutations(memory);
 });
 
 afterEach(() => {
@@ -460,10 +463,10 @@ describe("daily-log session tag is locale-independent (CM-6)", () => {
       .spyOn(Date.prototype, "toLocaleTimeString")
       .mockReturnValue("午後3:42:05");
     try {
-      memory.appendDailyLog("User: alpha line from session A", "sess-a", "tool", { origin: "user_statement" });
-      memory.appendDailyLog("User: bravo line from session B", "sess-b", "tool", { origin: "user_statement" });
-      memory.appendDailyLog("User: legacy untagged transcript\nlegacy continuation secret", undefined, "tool", { origin: "durable_memory" });
-      memory.appendDailyLog("Background sync completed", undefined, "tool", { origin: "durable_memory" });
+      memory.appendDailyLog("User: alpha line from session A", "sess-a", "tool", createInternalMemoryContext("User: alpha line from session A", memory.getDailyLogPath(), "test"));
+      memory.appendDailyLog("User: bravo line from session B", "sess-b", "tool", createInternalMemoryContext("User: bravo line from session B", memory.getDailyLogPath(), "test"));
+      memory.appendDailyLog("User: legacy untagged transcript\nlegacy continuation secret", undefined, "tool", createInternalMemoryContext("User: legacy untagged transcript\nlegacy continuation secret", memory.getDailyLogPath(), "test"));
+      memory.appendDailyLog("Background sync completed", undefined, "tool", createInternalMemoryContext("Background sync completed", memory.getDailyLogPath(), "test"));
 
       // Written tag must be a locale-independent, digit-leading HH:MM:SS.
       const raw = readFileSync(memory.getDailyLogPath(), "utf-8");
@@ -488,7 +491,7 @@ describe("<project_brief> injection", () => {
   it("injects the active project's brief when projectId is set", async () => {
     const pid = "proj-ctx-test1";
     await updateProjectBrief(pid, "# Initech\n\n- Goal: $1M revenue", {
-      memDir: memory.getMemoryDir(), promotion: { origin: "durable_memory" },
+      memDir: memory.getMemoryDir(), promotion: createInternalMemoryContext("# Initech\n\n- Goal: $1M revenue", "memory:project-brief", "test"),
     });
 
     const block = await buildContextBlock(memory, { skipDailyLog: true, projectId: pid });
@@ -500,7 +503,7 @@ describe("<project_brief> injection", () => {
   it("omits the brief when no projectId is set", async () => {
     const pid = "proj-ctx-test2";
     await updateProjectBrief(pid, "# Secret\n\n- nothing to see", {
-      memDir: memory.getMemoryDir(), promotion: { origin: "durable_memory" },
+      memDir: memory.getMemoryDir(), promotion: createInternalMemoryContext("# Secret\n\n- nothing to see", "memory:project-brief", "test"),
     });
 
     const block = await buildContextBlock(memory, { skipDailyLog: true });

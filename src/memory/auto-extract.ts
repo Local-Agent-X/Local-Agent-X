@@ -5,11 +5,11 @@ import type { FactKind } from "./types.js";
 import { extractIdentityFactsWithLLM, type IdentityFacts } from "../classifiers/identity-extract.js";
 import {
   writeMemorySafely,
-  appendToDailyLogSafely,
   runMemoryGate,
   MemoryWriteBlocked,
 } from "./write-safely.js";
 import { stripHarnessScaffolding } from "../sanitize.js";
+import { createUserEvidenceCapability, type MemoryPromotionContext } from "./promotion-gate.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.auto-extract");
@@ -69,6 +69,39 @@ export async function autoExtractAndSave(
   }
   if (!facts) return;
 
+  const promotionFor = (
+    content: string,
+    target: string,
+    key: string,
+    confidence: number,
+    index?: number,
+  ): MemoryPromotionContext | null => {
+    const recorded = facts?.evidence_spans?.[key];
+    const span = Array.isArray(recorded) ? recorded[index ?? 0] : recorded;
+    if (typeof span !== "string" || !userMessage.includes(span)) {
+      logger.warn(`[memory] Auto-extract rejected ${key}: missing exact supporting span`);
+      return null;
+    }
+    try {
+      const capability = createUserEvidenceCapability({
+        content, target, source: "auto-extract", sessionId: sessionId ?? "default",
+        provenance: "user_statement", confidence, userMessage, evidenceSpan: span,
+      });
+      return {
+        origin: "user_statement", capability, evidenceContent: content, target,
+        source: "auto-extract", sessionId: sessionId ?? "default",
+        provenance: "user_statement", confidence,
+      };
+    } catch (e) {
+      logger.warn(`[memory] Auto-extract rejected ${key}: ${(e as Error).message}`);
+      return null;
+    }
+  };
+
+  if (facts.agent_name) {
+    const promotion = promotionFor(facts.agent_name, "memory:profile:identity", "agent_name", 1);
+    if (!promotion) facts.agent_name = null;
+  }
   if (facts.agent_name) {
     const identityPath = join(memory["memoryDir"], "IDENTITY.md");
     if (existsSync(identityPath)) {
@@ -84,7 +117,7 @@ export async function autoExtractAndSave(
           source: "auto-extract",
           target: identityPath,
           mode: "overwrite",
-          promotion: { origin: "user_statement", sessionId },
+          promotion: promotionFor(facts.agent_name, "memory:profile:identity", "agent_name", 1)!,
         });
         memory.markDirty();
         logger.info(`[memory] Auto-updated agent name to: ${facts.agent_name}`);
@@ -96,9 +129,12 @@ export async function autoExtractAndSave(
         throw e;
       }
     }
-    safeAppendDaily(memory, `Agent renamed to "${facts.agent_name}" by user`, sessionId);
   }
 
+  if (facts.user_name) {
+    const promotion = promotionFor(facts.user_name, "memory:profile:user", "user_name", 1);
+    if (!promotion) facts.user_name = null;
+  }
   if (facts.user_name) {
     const userPath = join(memory["memoryDir"], "USER.md");
     if (existsSync(userPath)) {
@@ -114,7 +150,7 @@ export async function autoExtractAndSave(
           source: "auto-extract",
           target: userPath,
           mode: "overwrite",
-          promotion: { origin: "user_statement", sessionId },
+          promotion: promotionFor(facts.user_name, "memory:profile:user", "user_name", 1)!,
         });
         memory.markDirty();
         logger.info(`[memory] Auto-saved user name: ${facts.user_name}`);
@@ -126,7 +162,6 @@ export async function autoExtractAndSave(
         throw e;
       }
     }
-    safeAppendDaily(memory, `User introduced themselves as "${facts.user_name}"`, sessionId);
   }
 
   if (facts.user_location || facts.user_employer || facts.user_role || facts.family_count) {
@@ -135,7 +170,7 @@ export async function autoExtractAndSave(
     if (facts.user_employer) summary.push(`employer: ${facts.user_employer}`);
     if (facts.user_location) summary.push(`location: ${facts.user_location}`);
     if (facts.family_count) summary.push(`family: ${facts.family_count.n} ${facts.family_count.relation}`);
-    safeAppendDaily(memory, `User shared identity facts — ${summary.join(", ")}`, sessionId);
+    void summary;
   }
 
   // Phase 2 (May 2026) — auto-write durable preferences and biographical
@@ -154,14 +189,14 @@ export async function autoExtractAndSave(
   // See saveFactSmart for the cost gate (resolver skips the LLM when there's
   // no near-duplicate candidate).
   if (facts.preference_rule) {
-    if (await saveFactSmart(memory, facts.preference_rule, "opinion", 0.85)) {
-      safeAppendDaily(memory, `Captured preference: ${facts.preference_rule}`, sessionId);
+    const promotion = promotionFor(facts.preference_rule, "memory:retain", "preference_rule", 0.85);
+    if (promotion && await saveFactSmart(memory, facts.preference_rule, "opinion", 0.85, promotion)) {
       logger.info(`[memory] Auto-saved preference: ${facts.preference_rule}`);
     }
   }
   if (facts.biographical_event) {
-    if (await saveFactSmart(memory, facts.biographical_event, "experience", 0.9)) {
-      safeAppendDaily(memory, `Captured event: ${facts.biographical_event}`, sessionId);
+    const promotion = promotionFor(facts.biographical_event, "memory:retain", "biographical_event", 0.9);
+    if (promotion && await saveFactSmart(memory, facts.biographical_event, "experience", 0.9, promotion)) {
       logger.info(`[memory] Auto-saved biographical event: ${facts.biographical_event}`);
     }
   }
@@ -172,10 +207,10 @@ export async function autoExtractAndSave(
   // same silent path as user_name / user_location. Phrasing puts the
   // name as the @-entity so recallByEntity surfaces the fact later.
   if (facts.relationships) {
-    for (const rel of facts.relationships) {
+    for (const [index, rel] of facts.relationships.entries()) {
       const content = `@${rel.name} is the user's ${rel.relation}`;
-      if (await saveFactSmart(memory, content, "world", 0.95)) {
-        safeAppendDaily(memory, `Captured relationship: ${rel.relation} = ${rel.name}`, sessionId);
+      const promotion = promotionFor(content, "memory:retain", "relationships", 0.95, index);
+      if (promotion && await saveFactSmart(memory, content, "world", 0.95, promotion)) {
         logger.info(`[memory] Auto-saved relationship: ${rel.relation} = ${rel.name}`);
       }
     }
@@ -190,9 +225,9 @@ export async function autoExtractAndSave(
   // because affinities are stable user preferences, conf=0.85 matches
   // preference_rule.
   if (facts.personal_affinity) {
-    for (const affinity of facts.personal_affinity) {
-      if (await saveFactSmart(memory, affinity, "opinion", 0.85)) {
-        safeAppendDaily(memory, `Captured affinity: ${affinity}`, sessionId);
+    for (const [index, affinity] of facts.personal_affinity.entries()) {
+      const promotion = promotionFor(affinity, "memory:retain", "personal_affinity", 0.85, index);
+      if (promotion && await saveFactSmart(memory, affinity, "opinion", 0.85, promotion)) {
         logger.info(`[memory] Auto-saved affinity: ${affinity}`);
       }
     }
@@ -208,9 +243,9 @@ export async function autoExtractAndSave(
   // factual statements about the user's current state, conf=0.9 (high —
   // these are explicit user claims about their own life).
   if (facts.ongoing_state) {
-    for (const state of facts.ongoing_state) {
-      if (await saveFactSmart(memory, state, "observation", 0.9)) {
-        safeAppendDaily(memory, `Captured ongoing state: ${state}`, sessionId);
+    for (const [index, state] of facts.ongoing_state.entries()) {
+      const promotion = promotionFor(state, "memory:retain", "ongoing_state", 0.9, index);
+      if (promotion && await saveFactSmart(memory, state, "observation", 0.9, promotion)) {
         logger.info(`[memory] Auto-saved ongoing state: ${state}`);
       }
     }
@@ -250,6 +285,7 @@ async function saveFactSmart(
   content: string,
   kind: FactKind,
   confidence: number,
+  promotion: MemoryPromotionContext,
 ): Promise<boolean> {
   const bullet = `- ${KIND_LETTER[kind]}(c=${confidence.toFixed(2)}) ${content.trim()}`;
   try {
@@ -257,30 +293,12 @@ async function saveFactSmart(
       content: bullet,
       source: "auto-extract",
       target: "memory:retain",
-      promotion: { origin: "user_statement" },
+      promotion,
     });
-    await memory.retainSmart(gated, "agent-tool:user-statement");
+    await memory.retainSmart(gated, "agent-tool:user-statement", 0, { promotion });
     return true;
   } catch (e) {
     logger.warn(`[memory] ${kind} write failed: ${(e as Error).message}`);
     return false;
-  }
-}
-
-function safeAppendDaily(memory: MemoryIndex, content: string, sessionId?: string): void {
-  try {
-    appendToDailyLogSafely({
-      memory,
-      source: "auto-extract",
-      content,
-      sessionId,
-      promotion: { origin: "user_statement", sessionId },
-    });
-  } catch (e) {
-    if (e instanceof MemoryWriteBlocked) {
-      logger.warn(`[memory] Auto-extract daily-log entry blocked: ${e.reason}`);
-      return;
-    }
-    throw e;
   }
 }

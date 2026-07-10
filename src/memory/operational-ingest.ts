@@ -84,30 +84,15 @@ export function ingestOperationalOutcomes(memory: MemoryIndex): OperationalInges
     for (const t of failed) g.tools.add(t);
   }
 
-  let ingested = 0;
-  for (const g of byOp.values()) {
-    const tools = [...g.tools].slice(0, MAX_TOOLS_PER_FACT);
-    const content = composeFailureFact(g.task, tools, g.date);
-    const res = memory.rememberFact(content, { kind: "experience", confidence: 0.8 });
-    if (!res.ok) continue;
-    ingested++;
-    const factId = res.fact?.id;
-    const taskObj = (g.task || "an unspecified task").slice(0, TASK_MAX_CHARS);
-    for (const tool of tools) {
-      memory.storeRelation({
-        subject: tool,
-        predicate: "failed-during",
-        object: taskObj,
-        factId,
-        confidence: 0.8,
-      });
-    }
-  }
+  // Ledger entries are tool/assistant observations, not user evidence. Keep
+  // them in the action ledger; a background job has no interactive approval
+  // channel and therefore cannot promote them into retained facts.
+  const ingested = 0;
 
   // Advance the watermark to the newest entry scanned (failure or not) so we
   // never re-scan this window. entries are sorted oldest→newest.
   writeWatermark(entries[entries.length - 1].ts);
-  logger.info(`[operational-ingest] scanned=${entries.length} failedOps=${byOp.size} ingested=${ingested}`);
+  logger.info(`[operational-ingest] scanned=${entries.length} failedOps=${byOp.size} promotion=denied`);
   return { ingested, scanned: entries.length };
 }
 

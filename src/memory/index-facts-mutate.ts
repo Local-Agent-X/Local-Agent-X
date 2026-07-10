@@ -6,6 +6,7 @@ import { retain, invalidateFact } from "./index-facts.js";
 import { findContradictions } from "./contradiction-sweep.js";
 
 import { createLogger } from "../logger.js";
+import type { MemoryPromotionContext } from "./promotion-gate.js";
 const contradictionLogger = createLogger("memory.contradiction");
 
 // Hot-score for prompt injection. Confidence × exponential decay on age.
@@ -54,7 +55,7 @@ export function rememberFact(
   db: InstanceType<typeof Database>,
   hasFts: boolean,
   content: string,
-  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string }
+  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext }
 ): OneFactResult {
   const trimmed = content.trim();
   if (trimmed.length < 3) return { ok: false, error: "content too short (min 3 chars)" };
@@ -62,7 +63,7 @@ export function rememberFact(
   const kind = opts?.kind ?? "observation";
   const confidence = opts?.confidence ?? 1.0;
   const bullet = formatBullet(trimmed, kind, confidence);
-  const facts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool");
+  const facts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool", 0, opts?.promotion);
   if (facts.length === 0) {
     return { ok: false, error: "fact already exists or failed to insert" };
   }
@@ -166,7 +167,7 @@ export function updateFact(
   hasFts: boolean,
   query: string,
   newContent: string,
-  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string }
+  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext }
 ): OneFactResult {
   const trimmed = newContent.trim();
   if (trimmed.length < 3) return { ok: false, error: "new content too short (min 3 chars)" };
@@ -187,7 +188,7 @@ export function updateFact(
   const kind = opts?.kind ?? oldFact.kind;
   const confidence = opts?.confidence ?? oldFact.confidence;
   const bullet = formatBullet(trimmed, kind, confidence);
-  const newFacts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool");
+  const newFacts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool", 0, opts?.promotion);
   if (newFacts.length === 0) {
     return { ok: false, error: "new content is duplicate of an existing fact" };
   }

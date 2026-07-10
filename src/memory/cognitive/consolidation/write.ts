@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { ENTITIES_DIR, type FactEntry } from "./types.js";
 import { todayDateStr } from "./utils.js";
 import { runMemoryGate } from "../../write-safely.js";
+import { createInternalMemoryContext } from "../../promotion-gate.js";
 
 export function updateAllEntityPages(grouped: Map<string, FactEntry[]>): number {
   let updated = 0;
@@ -35,11 +36,11 @@ export function updateAllEntityPages(grouped: Map<string, FactEntry[]>): number 
 
     if (existing) {
       const block = `\n\n### Consolidated ${todayDateStr()}\n${additions}\n`;
-      const gated = runMemoryGate({ content: block, source: "tool", target: entityPath, promotion: { origin: "durable_memory" } });
+      const gated = runMemoryGate({ content: block, source: "tool", target: entityPath, promotion: createInternalMemoryContext(block, entityPath, "entity-consolidation") });
       appendFileSync(entityPath, gated, "utf-8");
     } else {
       const header = `# ${displayName}\n\n*Created: ${todayDateStr()}*\n\n### Facts\n${additions}\n`;
-      const gated = runMemoryGate({ content: header, source: "tool", target: entityPath, promotion: { origin: "durable_memory" } });
+      const gated = runMemoryGate({ content: header, source: "tool", target: entityPath, promotion: createInternalMemoryContext(header, entityPath, "entity-consolidation") });
       writeFileSync(entityPath, gated, "utf-8");
     }
 

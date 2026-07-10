@@ -16,6 +16,30 @@ export function getSchemaVersion(db: InstanceType<typeof Database>): number {
   }
 }
 
+function backfillValidChunkSessionIds(db: InstanceType<typeof Database>): void {
+  const rows = db
+    .prepare(`
+      SELECT id, metadata
+        FROM chunks
+       WHERE (session_id IS NULL OR TRIM(session_id) = '')
+         AND metadata IS NOT NULL
+    `)
+    .all() as Array<{ id: number; metadata: string }>;
+  const update = db.prepare("UPDATE chunks SET session_id = ? WHERE id = ?");
+
+  for (const row of rows) {
+    try {
+      const parsed: unknown = JSON.parse(row.metadata);
+      if (!parsed || typeof parsed !== "object") continue;
+      const sessionId = (parsed as Record<string, unknown>).session_id;
+      if (typeof sessionId !== "string" || !sessionId.trim()) continue;
+      update.run(sessionId.trim(), row.id);
+    } catch (e) {
+      logger.warn(`[memory] session_id backfill quarantined malformed metadata for chunk ${row.id}: ${(e as Error).message}`);
+    }
+  }
+}
+
 export function migrateSchema(
   db: InstanceType<typeof Database>,
   fromVersion: number
@@ -191,20 +215,13 @@ export function migrateSchema(
       // chunks by session at query time, eliminating the entire class of
       // cross-session bleed bugs at the storage boundary.
       try { db.exec(`ALTER TABLE chunks ADD COLUMN session_id TEXT`); } catch {}
-      // Backfill from existing metadata JSON. Profile-level chunks have no
-      // session_id (NULL) and stay queryable via WHERE session_id IS NULL OR ...
-      try {
-        db.exec(`
-          UPDATE chunks
-             SET session_id = json_extract(metadata, '$.session_id')
-           WHERE session_id IS NULL
-             AND metadata IS NOT NULL
-             AND json_extract(metadata, '$.session_id') IS NOT NULL
-        `);
-      } catch (e) {
-        logger.warn(`[memory] v9 session_id backfill failed: ${(e as Error).message}`);
-      }
       db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_session_id ON chunks(session_id)`);
+    }
+
+    if (fromVersion < 11) {
+      // Parse each row independently so malformed legacy JSON cannot abort
+      // valid native/import session IDs before provenance canonicalization.
+      backfillValidChunkSessionIds(db);
     }
 
     if (fromVersion < 10) {

@@ -151,6 +151,52 @@ describe("postProcess — Wall 2: default session gate keeps imports in scope", 
 });
 
 describe("import provenance migration", () => {
+  it("migrates a mixed v8 fixture without malformed metadata erasing valid session ids", () => {
+    const legacyDb = new Database(":memory:");
+    try {
+      legacyDb.exec(`
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE chunks (
+          id INTEGER PRIMARY KEY,
+          path TEXT NOT NULL,
+          source TEXT NOT NULL,
+          metadata TEXT
+        );
+        INSERT INTO chunks VALUES
+          (1, 'sessions/malformed', 'session', '{not-json'),
+          (2, 'sessions/native', 'session', '{"source_type":"agent-x-session","session_id":"native-id"}'),
+          (3, 'import/chatgpt/imported', 'session', '{"source_type":"import","session_id":"import-id","date":"2025-11-14"}');
+      `);
+
+      migrateSchema(legacyDb, 8);
+
+      const rows = legacyDb.prepare("SELECT id, source, session_id, metadata FROM chunks ORDER BY id")
+        .all() as Array<{ id: number; source: string; session_id: string | null; metadata: string }>;
+      expect(rows[0].source).toBe("session");
+      expect(rows[0].session_id).toBeNull();
+      expect(JSON.parse(rows[0].metadata)).toMatchObject({
+        source_type: "agent-x-session", session_id: null,
+      });
+      expect(rows[1].source).toBe("session");
+      expect(rows[1].session_id).toBe("native-id");
+      expect(JSON.parse(rows[1].metadata).session_id).toBe("native-id");
+      expect(rows[2].source).toBe("import");
+      expect(rows[2].session_id).toBe("import-id");
+      expect(JSON.parse(rows[2].metadata)).toMatchObject({
+        source_type: "import", session_id: "import-id", trust_status: "untrusted",
+      });
+      expect(getSchemaVersion(legacyDb)).toBe(11);
+
+      const snapshot = JSON.stringify(rows);
+      migrateSchema(legacyDb, getSchemaVersion(legacyDb));
+      expect(JSON.stringify(
+        legacyDb.prepare("SELECT id, source, session_id, metadata FROM chunks ORDER BY id").all(),
+      )).toBe(snapshot);
+    } finally {
+      legacyDb.close();
+    }
+  });
+
   it("preserves legitimate legacy imports, scrubs forged sessions, and is idempotent", () => {
     insertImport("2025-11-14", "legitimate legacy import", "legacy-import");
     db.prepare(

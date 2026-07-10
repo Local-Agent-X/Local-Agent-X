@@ -30,6 +30,12 @@ describe("master-key recovery dependents", () => {
       .toThrow(/Refusing to auto-regenerate/);
   });
 
+  it("refuses synthetic key recovery when audit-key.enc depends on the old key", () => {
+    writeFileSync(join(dataDir, "audit-key.enc"), "{}");
+    expect(() => assertKeyRecoverySafe(dataDir, "libsecret", "synthetic retrieval failure"))
+      .toThrow(/audit-key\.enc/);
+  });
+
   it("permits initialization when no encrypted dependent exists", () => {
     expect(() => assertKeyRecoverySafe(dataDir, "libsecret", "missing entry")).not.toThrow();
   });
@@ -47,7 +53,7 @@ describe("master-key recovery dependents", () => {
 
   it("enumerates the vault and every auth envelope basename", () => {
     expect(MASTER_KEY_DEPENDENT_BASENAMES).toEqual([
-      "secrets.enc", "auth.json", "anthropic-auth.json", "xai-auth.json",
+      "secrets.enc", "audit-key.enc", "auth.json", "anthropic-auth.json", "xai-auth.json",
     ]);
   });
 });

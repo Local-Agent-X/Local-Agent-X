@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename, dirname, resolve, win32 } from "node:path";
 import { getOrCreateMasterKey } from "../keychain.js";
 import { createLogger } from "../logger.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
@@ -20,7 +20,7 @@ interface Envelope {
   tag: string;
 }
 
-type CredentialFormat = "v2" | "v1" | "plaintext";
+type CredentialFormat = "v2" | "v2-basename" | "v1" | "plaintext";
 type JsonRecord = Record<string, unknown>;
 
 let _cachedKey: Buffer | null = null;
@@ -72,7 +72,27 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 function credentialAad(namespace: ProviderCredentialNamespace, authPath: string): string {
-  return `${ENVELOPE_FORMAT}\n${namespace}\n${basename(authPath)}`;
+  const windowsPath = /^[A-Za-z]:[\\/]/.test(authPath) || authPath.startsWith("\\\\");
+  const absolute = windowsPath ? win32.resolve(authPath) : resolve(authPath);
+  const normalized = absolute.replace(/\\/g, "/");
+  const canonicalPath = windowsPath || process.platform === "win32"
+    ? normalized.toLowerCase()
+    : normalized;
+  return `${ENVELOPE_FORMAT}\n${namespace}\n${canonicalPath}`;
+}
+
+function basenameCredentialAad(namespace: ProviderCredentialNamespace, authPath: string): string {
+  const filename = /^[A-Za-z]:[\\/]/.test(authPath) || authPath.startsWith("\\\\")
+    ? win32.basename(authPath)
+    : basename(authPath);
+  return `${ENVELOPE_FORMAT}\n${namespace}\n${filename}`;
+}
+
+export function _credentialAadForTests(
+  namespace: ProviderCredentialNamespace,
+  authPath: string,
+): string {
+  return credentialAad(namespace, authPath);
 }
 
 export function encryptWithKey(plaintext: string, key: Buffer, aad = ""): string {
@@ -103,6 +123,15 @@ export function _encryptV1WithKeyForTests(plaintext: string, key: Buffer): strin
     ciphertext: ciphertext.toString("base64"),
     tag: cipher.getAuthTag().toString("base64"),
   });
+}
+
+export function _encryptBasenameBoundV2ForTests(
+  plaintext: string,
+  key: Buffer,
+  namespace: ProviderCredentialNamespace,
+  authPath: string,
+): string {
+  return encryptWithKey(plaintext, key, basenameCredentialAad(namespace, authPath));
 }
 
 export function decryptWithKey(envelopeJson: string, key: Buffer, aad = ""): string {
@@ -148,11 +177,31 @@ export function decryptAuthBlob(
   if (!isEnvelope(parsed)) {
     throw new Error("auth-storage: blob is neither legacy plaintext nor a recognized envelope");
   }
-  return {
-    plaintext: decryptWithKey(blob, resolveMasterKey(dataDir), credentialAad(namespace, authPath)),
-    wasEncrypted: true,
-    format: parsed.format === ENVELOPE_FORMAT ? "v2" : "v1",
-  };
+  const key = resolveMasterKey(dataDir);
+  if (parsed.format === LEGACY_ENVELOPE_FORMAT) {
+    return {
+      plaintext: decryptWithKey(blob, key),
+      wasEncrypted: true,
+      format: "v1",
+    };
+  }
+  try {
+    return {
+      plaintext: decryptWithKey(blob, key, credentialAad(namespace, authPath)),
+      wasEncrypted: true,
+      format: "v2",
+    };
+  } catch (fullPathError) {
+    try {
+      return {
+        plaintext: decryptWithKey(blob, key, basenameCredentialAad(namespace, authPath)),
+        wasEncrypted: true,
+        format: "v2-basename",
+      };
+    } catch {
+      throw fullPathError;
+    }
+  }
 }
 
 function assertAllowedKeys(value: JsonRecord, allowed: readonly string[]): void {

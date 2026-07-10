@@ -20,9 +20,12 @@ import {
   _resetMasterKeyCacheForTests,
   _setMasterKeyCacheForTests,
   _encryptV1WithKeyForTests,
+  _encryptBasenameBoundV2ForTests,
+  _credentialAadForTests,
   ENVELOPE_FORMAT,
   LEGACY_ENVELOPE_FORMAT,
   PROBE_CREDENTIAL_PATH_ENV,
+  readProviderCredentials,
   writeProviderCredentials,
 } from "./storage.js";
 import { saveTokens, loadTokens } from "./index.js";
@@ -166,6 +169,13 @@ describe("encryptWithKey / decryptWithKey (pure)", () => {
       tag: Buffer.alloc(16).toString("base64"),
     });
     expect(() => decryptWithKey(bogus, key)).toThrow(/iv must be 12 bytes/);
+  });
+
+  it("normalizes equivalent Windows paths to the same full-path AAD", () => {
+    const backslashes = _credentialAadForTests("core", "C:\\Users\\Example\\..\\Data\\auth.json");
+    const slashes = _credentialAadForTests("core", "c:/users/data/auth.json");
+    expect(backslashes).toBe(slashes);
+    expect(backslashes).toContain("c:/users/data/auth.json");
   });
 });
 
@@ -317,6 +327,29 @@ describe("shared provider stores", () => {
 
     expect(() => decryptAuthBlob(swapped, dataDir, "xai", xaiPath)).toThrow();
     expect(loadXaiTokens()).toBeNull();
+  });
+
+  it("migrates basename-bound v2 before rejecting a same-name cross-directory swap", () => {
+    const key = randomBytes(32);
+    const sourceDir = join(dataDir, "source");
+    const destinationDir = join(dataDir, "destination");
+    const sourcePath = join(sourceDir, "auth.json");
+    const destinationPath = join(destinationDir, "auth.json");
+    const tokens = { accessToken: "bound-access", refreshToken: "bound-refresh", expiresAt: 123 };
+    mkdirSync(sourceDir);
+    mkdirSync(destinationDir);
+    _setMasterKeyCacheForTests(key);
+    const basenameBound = _encryptBasenameBoundV2ForTests(
+      JSON.stringify(tokens), key, "core", sourcePath,
+    );
+    writeFileSync(sourcePath, basenameBound);
+
+    expect(readProviderCredentials(sourcePath, "core")).toEqual(tokens);
+    const migrated = readFileSync(sourcePath, "utf-8");
+    expect(migrated).not.toBe(basenameBound);
+
+    writeFileSync(destinationPath, migrated);
+    expect(() => readProviderCredentials(destinationPath, "core")).toThrow();
   });
 
   it("reads the canonical parent envelope in a fresh probe data dir", () => {

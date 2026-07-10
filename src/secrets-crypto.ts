@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 export const MASTER_KEY_DEPENDENT_BASENAMES = [
   "secrets.enc",
+  "audit-key.enc",
   "auth.json",
   "anthropic-auth.json",
   "xai-auth.json",
@@ -11,7 +12,7 @@ export const MASTER_KEY_DEPENDENT_BASENAMES = [
 
 function isEncryptedMasterKeyDependent(path: string): boolean {
   if (!existsSync(path)) return false;
-  if (path.endsWith("secrets.enc")) return true;
+  if (path.endsWith("secrets.enc") || path.endsWith("audit-key.enc")) return true;
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
     if (typeof parsed !== "object" || parsed === null) return false;

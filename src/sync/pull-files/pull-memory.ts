@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { createLogger } from "../../logger.js";
 import { unionMerge } from "../mirror.js";
 import { writeMemorySafely, MemoryWriteBlocked } from "../../memory/write-safely.js";
+import { createInternalMemoryContext } from "../../memory/promotion-gate.js";
+import { checkMemoryTaint } from "../../sanitize.js";
 
 const logger = createLogger("sync.pull-files.memory");
 
@@ -58,6 +60,12 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
         continue;
       }
 
+      const taint = checkMemoryTaint(merged);
+      if (taint.injectionScore >= SYNC_TRUSTED_THRESHOLD) {
+        logger.warn(`[sync] Rejected ${f}: ${taint.reason ?? "external content failed curated sync classification"}`);
+        continue;
+      }
+
       try {
         writeMemorySafely({
           content: merged,
@@ -65,6 +73,11 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
           target: localPath,
           threshold: SYNC_TRUSTED_THRESHOLD,
           mode: "overwrite",
+          promotion: createInternalMemoryContext(
+            merged,
+            localPath,
+            "sync:curated-memory-file",
+          ),
         });
       } catch (e) {
         if (e instanceof MemoryWriteBlocked) {

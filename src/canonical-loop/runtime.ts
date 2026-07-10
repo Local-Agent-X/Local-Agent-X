@@ -29,6 +29,11 @@ export function registerAdapterForOp(opId: string, factory: AdapterFactory): voi
   opAdapters.set(opId, factory);
 }
 
+/** Remove a per-op adapter factory when its owning runner reaches terminal. */
+export function unregisterAdapterForOp(opId: string): void {
+  opAdapters.delete(opId);
+}
+
 /** Register the default factory used for any op in a given lane that has no per-op override. */
 export function setDefaultAdapterForLane(lane: CanonicalLane, factory: AdapterFactory): void {
   laneAdapters.set(lane, factory);

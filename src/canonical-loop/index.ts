@@ -74,6 +74,7 @@ export { isDispatchFailure } from "./types.js";
 
 export {
   registerAdapterForOp,
+  unregisterAdapterForOp,
   setDefaultAdapterForLane,
   setToolDispatcher,
   getToolDispatcher,
@@ -81,6 +82,7 @@ export {
   unregisterToolDispatcherForOp,
   registerToolsForOp,
   unregisterToolsForOp,
+  getToolsForOp,
   registerOpBaselineTokens,
   unregisterOpBaselineTokens,
   getOpBaselineTokens,

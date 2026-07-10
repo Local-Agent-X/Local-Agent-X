@@ -12,16 +12,16 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1171 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1180 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 65 | 22 | XL |  |
+| `src/ops/` | 66 | 22 | XL |  |
 | `src/security/` | 65 | 27 | XL |  |
 | `src/tools/` | 55 | 141 | XL |  |
-| `src/canonical-loop/` | 38 | 132 | XL |  |
+| `src/canonical-loop/` | 38 | 136 | XL |  |
 | `src/memory/` | 38 | 110 | XL |  |
 | `src/providers/` | 38 | 18 | L |  |
 | `src/classifiers/` | 30 | 13 | L |  |
@@ -42,17 +42,16 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context-manager/` | 12 | 10 | M |  |
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/autonomy/` | 11 | 4 | M |  |
-| `src/browser/` | 11 | 24 | XL |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |
 | `src/whatsapp-bridge/` | 9 | 6 | M |  |
+| `src/sandbox/` | 8 | 6 | L |  |
 | `src/screen-stream/` | 8 | 8 | L |  |
 | `src/self-edit/` | 8 | 14 | L |  |
 | `src/sync/` | 8 | 18 | L |  |
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/protocols/` | 7 | 32 | XL |  |
-| `src/sandbox/` | 7 | 6 | L |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/ari-kernel/` | 6 | 12 | L |  |
@@ -78,7 +77,6 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/cross-session-learning/` | 1 | 7 | M |  |
 | `src/errors/` | 1 | 2 | S |  |
 | `src/manifest-generator/` | 1 | 8 | M |  |
-| `src/tool-execution/` | 1 | 20 | XL |  |
 | `src/types/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)
@@ -222,3 +220,4 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/video-summary.ts` | S |
 | `src/vulnerability-awareness.ts` | M |
 | `src/worker-session.ts` | S |
+

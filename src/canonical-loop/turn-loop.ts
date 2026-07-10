@@ -23,15 +23,9 @@ import type { ProviderStateEnvelope } from "./types.js";
 import { emit, emitErrorOnce, publishStreamChunk } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { commitTurn, type CommitTurnMessage } from "./checkpoint.js";
-import { getToolsForOp } from "./runtime.js";
 import type { Op } from "../ops/types.js";
-import {
-  buildCanonicalLoopContext,
-  getActiveMiddlewareStack,
-  runMiddlewarePhase,
-} from "./middlewares/host.js";
+import { runMiddlewarePhase } from "./middlewares/host.js";
 import type { CanonicalToolResultView } from "./middlewares/types.js";
-import { getEvidenceHistory } from "./middlewares/evidence-history.js";
 
 import type { DriveTurnResult, DriveTurnOptions, MiddlewareDirective } from "./turn-loop/types.js";
 import { extractText, extractToolResultText } from "./turn-loop/content-extract.js";
@@ -44,6 +38,7 @@ import { createIdleWatchdog, readIdleTimeoutMs } from "./turn-loop/idle-watchdog
 import { snapshotTouchedApps } from "./turn-loop/snapshot-apps.js";
 import { decideTurnOutcome } from "./turn-loop/decide-outcome.js";
 import { recoverAdapterThrow, clearAdapterThrowStreak } from "./turn-loop/adapter-throw-recovery.js";
+import { createTurnContextComposer } from "./turn-loop/context-composition.js";
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 
@@ -87,13 +82,9 @@ export async function driveTurn(
   // turn's adapter sees it (mirrors agent-loop's beforeIteration→push-then-
   // restart-iteration). An `abort` short-circuits the whole turn — no
   // adapter call, no tool dispatch — and the worker exits.
-  const evidenceHistory = getEvidenceHistory(op.id);
-  const middlewareStack = getActiveMiddlewareStack();
-  const beforeCtx = buildCanonicalLoopContext({
-    op, turnIdx,
-    tools: getToolsForOp(op.id),
-    evidenceHistory,
-  });
+  const contextComposer = createTurnContextComposer(op, turnIdx);
+  const { middlewareStack } = contextComposer;
+  const beforeCtx = contextComposer.build();
   const beforeRes = await runMiddlewarePhase(beforeCtx, "beforeTurn", middlewareStack);
   if (beforeRes.kind === "abort") {
     return middlewareAbortResult(op, turnIdx, beforeRes);
@@ -215,12 +206,9 @@ export async function driveTurn(
     .filter(m => m.role === "assistant")
     .map(m => extractText(m.content))
     .join("");
-  const afterModelCtx = buildCanonicalLoopContext({
-    op, turnIdx,
-    tools: getToolsForOp(op.id),
+  const afterModelCtx = contextComposer.build({
     toolCalls,
     assistantContent: assistantText,
-    evidenceHistory,
   });
   // Wire the live toolCalls array so auto-build-app's push mutates the
   // dispatcher's input. buildCanonicalLoopContext already passes it; this
@@ -271,13 +259,10 @@ export async function driveTurn(
       content: extractToolResultText(tm.content),
       status: toolSummary[i]?.resultStatus,
     }));
-    const afterToolCtx = buildCanonicalLoopContext({
-      op, turnIdx,
-      tools: getToolsForOp(op.id),
+    const afterToolCtx = contextComposer.build({
       toolCalls,
       toolResults: toolResultsView,
       assistantContent: assistantText,
-      evidenceHistory,
     });
     const afterToolRes = await runMiddlewarePhase(afterToolCtx, "afterToolExecution", middlewareStack);
     if (afterToolRes.kind === "abort") {

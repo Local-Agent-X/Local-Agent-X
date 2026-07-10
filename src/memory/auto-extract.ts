@@ -250,7 +250,11 @@ async function saveFactSmart(
 ): Promise<boolean> {
   const bullet = `- ${KIND_LETTER[kind]}(c=${confidence.toFixed(2)}) ${content.trim()}`;
   try {
-    await memory.retainSmart(bullet, "auto-extract");
+    const { decisions } = await memory.retainSmart(bullet, "auto-extract");
+    // retainSmart's taint gate skips (never throws on) a blocked fact and
+    // surfaces it as a BLOCKED decision — report failure so the caller
+    // doesn't log "Captured ..." for content that never persisted.
+    if (decisions.some((d) => d.op === "BLOCKED")) return false;
     return true;
   } catch (e) {
     logger.warn(`[memory] ${kind} write failed: ${(e as Error).message}`);

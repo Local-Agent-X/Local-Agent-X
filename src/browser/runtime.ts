@@ -25,6 +25,7 @@ import { createLogger } from "../logger.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { BrowserMode } from "../types.js";
 import { installContinuityCacheRestore, persistContinuityCacheState } from "./continuity-cache.js";
+import { resetBrowserNativeDownloadDir } from "./download-paths.js";
 
 const log = createLogger("browser.runtime");
 
@@ -56,6 +57,7 @@ async function launch(engine: BrowserEngine): Promise<Browser> {
     return pw[engine].launch({
       headless: process.env.LAX_BROWSER_HEADLESS === "1",
       args: STEALTH_ARGS,
+      downloadsPath: resetBrowserNativeDownloadDir(),
       proxy: browserProxyConfig(proxy.url),
     });
   } catch (error) {
@@ -91,6 +93,7 @@ const CONTEXT_OPTS = (engine: BrowserEngine) => {
     locale: "en-US",
     timezoneId: "America/Chicago",
     serviceWorkers: SERVICE_WORKER_POLICY,
+    acceptDownloads: true,
     proxy: browserProxyConfig(proxyServer),
   };
 };

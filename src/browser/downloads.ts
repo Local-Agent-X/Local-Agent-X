@@ -1,11 +1,14 @@
 import type { Download, Page, Response } from "playwright";
-import { createWriteStream, existsSync, mkdirSync } from "node:fs";
-import { copyFile, link, rm, unlink, writeFile } from "node:fs/promises";
+import { createWriteStream, mkdirSync } from "node:fs";
+import { rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { basename, extname, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { getRuntimeConfig } from "../config.js";
-import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
+import { getBrowserInspectionDir, getBrowserNativeDownloadDir, isInsideDirectory } from "./download-paths.js";
+import { publishVerifiedDownload } from "./download-integrity.js";
+import { inspectZipFile, type ZipInspection } from "./download-zip.js";
 
 const browserLogger = createLogger("browser.downloads");
 export const MAX_BROWSER_DOWNLOAD_BYTES = 100 * 1024 * 1024;
@@ -18,6 +21,7 @@ export interface DownloadRecord {
   pageUrl: string;
   filename: string;
   size: number;
+  digest: string;
   contentType: string;
   detectedType: string;
   status: DownloadStatus;
@@ -68,6 +72,7 @@ function recordFailure(sessionId: string, sourceUrl: string, pageUrl: string, su
     pageUrl: privateUrl(pageUrl),
     filename: safeDownloadFilename(suggestedFilename),
     size: 0,
+    digest: "",
     contentType: "",
     detectedType: "unknown",
     status: "failed",
@@ -90,16 +95,6 @@ export function safeDownloadFilename(suggested: string): string {
     safe = `${safe.slice(0, 120 - ext.length)}${ext}`;
   }
   return safe;
-}
-
-function uniquePath(dir: string, filename: string): string {
-  const ext = extname(filename);
-  const stem = ext ? filename.slice(0, -ext.length) : filename;
-  for (let i = 1; i < 1000; i++) {
-    const candidate = join(dir, i === 1 ? filename : `${stem}-${i}${ext}`);
-    if (!existsSync(candidate)) return candidate;
-  }
-  return join(dir, `${stem}-${Date.now()}${ext}`);
 }
 
 function detectType(head: Buffer): string {
@@ -131,16 +126,17 @@ const MIME_TYPES: Record<string, Set<string>> = {
   zip: new Set(["application/zip", "application/x-zip-compressed", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation"]),
 };
 
-function policy(filename: string, declared: string, detected: string, macroFound: boolean, archiveMarkers: Set<string>): { status: DownloadStatus; reason: string } {
+function policy(filename: string, declared: string, detected: string, zip: ZipInspection | null, zipError?: string): { status: DownloadStatus; reason: string } {
   const ext = extname(filename).toLowerCase();
   if (detected === "executable" || [".exe", ".msi", ".dll", ".com", ".scr", ".bat", ".cmd", ".ps1", ".sh", ".js", ".vbs", ".jar"].includes(ext)) {
     return { status: "rejected", reason: "Executable or script downloads are blocked." };
   }
+  if (detected === "zip" && zipError) return { status: "rejected", reason: zipError };
   const macroExtension = [".docm", ".xlsm", ".pptm", ".xlam"].includes(ext);
   if (macroExtension && detected !== "zip") {
     return { status: "rejected", reason: "Macro-document extension does not match the file signature." };
   }
-  if (macroFound || macroExtension) {
+  if (zip?.macroEnabled || macroExtension) {
     return { status: "quarantined", reason: "Macro-enabled documents require explicit approval before release." };
   }
   if (!TYPE_EXTENSIONS[detected]?.has(ext)) {
@@ -153,43 +149,15 @@ function policy(filename: string, declared: string, detected: string, macroFound
   if (detected === "html") {
     return { status: "quarantined", reason: "Active HTML or script content requires explicit approval before release." };
   }
-  const officeMarker: Record<string, string> = { ".docx": "word", ".xlsx": "xl", ".pptx": "ppt", ".odt": "odf", ".ods": "odf", ".odp": "odf" };
-  if (detected === "zip" && officeMarker[ext] && (!archiveMarkers.has("content-types") || !archiveMarkers.has(officeMarker[ext]))) {
-    return { status: "rejected", reason: "Archive structure does not match the claimed document extension." };
-  }
   if (detected === "zip" && ext === ".zip") {
     return { status: "quarantined", reason: "Archive downloads require explicit approval before release." };
   }
   return { status: "released", reason: "Passed filename, size, content type, and signature checks." };
 }
 
-async function moveToRelease(quarantinePath: string, releaseDir: string, filename: string): Promise<string> {
-  mkdirSync(releaseDir, { recursive: true, mode: 0o700 });
-  const partial = join(releaseDir, `.${filename}.${Math.random().toString(16).slice(2)}.partial`);
-  try {
-    await copyFile(quarantinePath, partial);
-    let destination = uniquePath(releaseDir, filename);
-    for (;;) {
-      try {
-        await link(partial, destination);
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        destination = uniquePath(releaseDir, filename);
-      }
-    }
-    await unlink(partial);
-    await unlink(quarantinePath);
-    return destination;
-  } catch (error) {
-    await rm(partial, { force: true });
-    throw error;
-  }
-}
-
 export async function inspectBrowserDownload(input: InspectInput): Promise<DownloadRecord> {
   const filename = safeDownloadFilename(input.suggestedFilename);
-  const quarantineDir = resolve(input.quarantineDir ?? join(getLaxDir(), "browser-quarantine"));
+  const quarantineDir = resolve(input.quarantineDir ?? getBrowserInspectionDir());
   const releaseDir = resolve(input.releaseDir ?? join(getRuntimeConfig().workspace, "downloads"));
   mkdirSync(quarantineDir, { recursive: true, mode: 0o700 });
   const id = `dl-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
@@ -198,9 +166,7 @@ export async function inspectBrowserDownload(input: InspectInput): Promise<Downl
   const out = createWriteStream(quarantinePath, { flags: "wx", mode: 0o600 });
   let size = 0;
   let head = Buffer.alloc(0);
-  let scanTail = "";
-  let macroFound = false;
-  const archiveMarkers = new Set<string>();
+  const hash = createHash("sha256");
   try {
     for await (const raw of input.stream) {
       const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
@@ -208,17 +174,7 @@ export async function inspectBrowserDownload(input: InspectInput): Promise<Downl
       const maxBytes = input.maxBytes ?? MAX_BROWSER_DOWNLOAD_BYTES;
       if (size > maxBytes) throw new Error(`Download exceeds the ${maxBytes} byte size cap.`);
       if (head.length < 512) head = Buffer.concat([head, chunk]).subarray(0, 512);
-      const scan = scanTail + chunk.toString("latin1");
-      if (/vbaProject\.bin|macros\/|_vba_project/i.test(scan)) macroFound = true;
-      if (/\[Content_Types\]\.xml/i.test(scan)) archiveMarkers.add("content-types");
-      if (/(^|[\\/])word[\\/]/i.test(scan)) archiveMarkers.add("word");
-      if (/(^|[\\/])xl[\\/]/i.test(scan)) archiveMarkers.add("xl");
-      if (/(^|[\\/])ppt[\\/]/i.test(scan)) archiveMarkers.add("ppt");
-      if (/mimetype.*application\/vnd\.oasis\.opendocument/is.test(scan)) {
-        archiveMarkers.add("content-types");
-        archiveMarkers.add("odf");
-      }
-      scanTail = scan.slice(-128);
+      hash.update(chunk);
       if (!out.write(chunk)) await new Promise<void>((resolveWrite) => out.once("drain", resolveWrite));
     }
     await new Promise<void>((resolveEnd, rejectEnd) => {
@@ -227,17 +183,25 @@ export async function inspectBrowserDownload(input: InspectInput): Promise<Downl
       out.end();
     });
     const detectedType = detectType(head);
-    const verdict = policy(filename, input.contentType ?? "", detectedType, macroFound, archiveMarkers);
+    let zip: ZipInspection | null = null;
+    let zipError: string | undefined;
+    if (detectedType === "zip") {
+      try { zip = await inspectZipFile(quarantinePath, filename); }
+      catch (error) { zipError = (error as Error).message; }
+    }
+    const verdict = policy(filename, input.contentType ?? "", detectedType, zip, zipError);
     const record: DownloadRecord = {
       id, sessionId: input.sessionId, sourceUrl: privateUrl(input.sourceUrl), pageUrl: privateUrl(input.pageUrl),
-      filename, size, contentType: (input.contentType ?? "").split(";", 1)[0], detectedType,
+      filename, size, digest: hash.digest("hex"), contentType: (input.contentType ?? "").split(";", 1)[0], detectedType,
       status: verdict.status, reason: verdict.reason, ts: Date.now(), quarantinePath, metadataPath,
     };
+    await writeFile(metadataPath, JSON.stringify({ ...record, quarantinePath: "retained" }, null, 2), { mode: 0o600 });
     if (verdict.status === "rejected") {
       await rm(quarantinePath, { force: true });
       delete record.quarantinePath;
     } else if (verdict.status === "released") {
-      record.releasePath = await moveToRelease(quarantinePath, releaseDir, filename);
+      mkdirSync(releaseDir, { recursive: true, mode: 0o700 });
+      record.releasePath = await publishVerifiedDownload(quarantinePath, releaseDir, filename, record);
       delete record.quarantinePath;
     }
     await writeFile(metadataPath, JSON.stringify({ ...record, quarantinePath: record.quarantinePath ? "retained" : undefined }, null, 2), { mode: 0o600 });
@@ -267,17 +231,47 @@ export function formatRecentDownloads(sessionId: string): string {
   return recent.map((r) => `[${r.id}] ${r.status.toUpperCase()}: ${r.filename} (${r.size} bytes, ${r.detectedType})\n${r.reason}${r.releasePath ? `\nReleased to: ${r.releasePath}` : ""}`).join("\n\n");
 }
 
-export async function releaseQuarantinedDownload(sessionId: string, id: string, releaseDirOverride?: string): Promise<DownloadRecord> {
+export interface DownloadApprovalBinding {
+  download_id: string;
+  digest: string;
+  size: number;
+  filename: string;
+  content_type: string;
+  detected_type: string;
+}
+
+export function getDownloadApprovalBinding(sessionId: string, id: string): DownloadApprovalBinding {
+  const record = records.find((item) => item.id === id && item.sessionId === sessionId);
+  if (!record || record.status !== "quarantined" || !record.quarantinePath) throw new Error("Quarantined download not found in this browser session.");
+  return {
+    download_id: id, digest: record.digest, size: record.size, filename: record.filename,
+    content_type: record.contentType, detected_type: record.detectedType,
+  };
+}
+
+export async function releaseQuarantinedDownload(sessionId: string, id: string, approved: DownloadApprovalBinding, releaseDirOverride?: string): Promise<DownloadRecord> {
   const record = records.find((item) => item.id === id && item.sessionId === sessionId);
   if (!record) throw new Error("Download not found in this browser session.");
   if (record.status !== "quarantined" || !record.quarantinePath) throw new Error(`Download is ${record.status} and cannot be released.`);
+  const current = getDownloadApprovalBinding(sessionId, id);
+  if (JSON.stringify(current) !== JSON.stringify(approved)) throw new Error("Approved download metadata no longer matches the quarantined file.");
   const releaseDir = resolve(releaseDirOverride ?? join(getRuntimeConfig().workspace, "downloads"));
-  record.releasePath = await moveToRelease(record.quarantinePath, releaseDir, record.filename);
-  record.status = "released";
-  record.reason = "Released after explicit user approval.";
-  delete record.quarantinePath;
-  if (record.metadataPath) await writeFile(record.metadataPath, JSON.stringify(record, null, 2), { mode: 0o600 });
-  return { ...record };
+  mkdirSync(releaseDir, { recursive: true, mode: 0o700 });
+  try {
+    record.releasePath = await publishVerifiedDownload(record.quarantinePath, releaseDir, record.filename, approved);
+    record.status = "released";
+    record.reason = "Released after explicit user approval bound to the inspected digest and metadata.";
+    delete record.quarantinePath;
+    if (record.metadataPath) await writeFile(record.metadataPath, JSON.stringify(record, null, 2), { mode: 0o600 });
+    return { ...record };
+  } catch (error) {
+    record.status = "rejected";
+    record.reason = `Release rejected: ${(error as Error).message}`;
+    if (record.quarantinePath) await rm(record.quarantinePath, { force: true });
+    delete record.quarantinePath;
+    if (record.metadataPath) await writeFile(record.metadataPath, JSON.stringify(record, null, 2), { mode: 0o600 });
+    throw error;
+  }
 }
 
 async function responseContentType(response: Response, map: Map<string, string>): Promise<void> {
@@ -317,8 +311,13 @@ export function installDownloadHandler(page: Page, sessionId = "default"): void 
       }
       browserLogger.info(`[downloads] ${record.status} ${record.filename} from ${sourceOrigin(sourceUrl)}`);
     } catch (error) {
+      await download.cancel().catch(() => { /* delete below owns final cleanup */ });
       recordFailure(sessionId, sourceUrl, pageUrl, suggestedFilename, `Download failed and partial bytes were removed: ${(error as Error).message}`);
       browserLogger.warn(`[downloads] failed from ${sourceOrigin(sourceUrl)}: ${(error as Error).message}`);
+    } finally {
+      const nativePath = await download.path().catch(() => null);
+      await download.delete().catch(() => { /* explicit path removal below is the fallback */ });
+      if (nativePath && isInsideDirectory(nativePath, getBrowserNativeDownloadDir())) await rm(nativePath, { force: true });
     }
   });
 }

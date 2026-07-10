@@ -9,6 +9,7 @@ import type { BrowserManager, BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { createLogger } from "../../logger.js";
 import { ok, err, computeAuthWallPrefix, appendPostActionSnapshot } from "./shared.js";
+import { safeBrowserPageLabel, sensitivePageStub } from "../../browser/guards.js";
 
 // Navigations were invisible in the logs — only browser *spawns* logged, never
 // where the agent went. That made route-arounds (X login wall -> navigate to a
@@ -23,8 +24,10 @@ export async function handleNavigate(
 ): Promise<ToolResult> {
   const url = String(args.url || "");
   if (!url) return err("'url' parameter is required for navigate action.");
-  log.info(`navigate -> ${url}`);
+  log.info(`navigate -> ${safeBrowserPageLabel(url)}`);
   const navResult = await manager.navigate(url, engine);
+  const sensitive = sensitivePageStub(manager.getCurrentUrl());
+  if (sensitive) return ok(sensitive);
   // Auto-snapshot on navigate. Without this, the agent has to remember to call
   // snapshot before fill/click/evaluate — which it routinely forgets, leading
   // to "Could not find input matching X" errors and blind selector guesses.
@@ -40,12 +43,16 @@ export async function handleNewTab(
 ): Promise<ToolResult> {
   const url = String(args.url || "");
   if (!url) return err("'url' parameter is required for new_tab action.");
-  log.info(`new_tab -> ${url}`);
+  log.info(`new_tab -> ${safeBrowserPageLabel(url)}`);
   const tabResult = await manager.newTab(url);
+  const sensitive = sensitivePageStub(manager.getCurrentUrl());
+  if (sensitive) return ok(sensitive);
   return ok(await appendPostActionSnapshot(manager, tabResult));
 }
 
 export async function handleSnapshot(manager: BrowserManager): Promise<ToolResult> {
+  const sensitive = sensitivePageStub(manager.getCurrentUrl());
+  if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
   const raw = await manager.snapshot();
   const prefix = computeAuthWallPrefix(raw);
   return ok(wrapExternalContent(prefix + raw, "browser.snapshot"));

@@ -186,10 +186,34 @@ export interface SensitivePageDecision {
 const MUTATING_BROWSER_ACTIONS = new Set([
   "click", "click_text", "fill", "select", "act", "dialog_accept",
 ]);
-const SECRET_READING_ACTIONS = new Set(["extract", "screenshot", "evaluate"]);
+const SECRET_READING_ACTIONS = new Set(["snapshot", "observe", "extract", "screenshot", "evaluate"]);
 
 function pageLabel(url: URL): string {
   return `${url.origin}${url.pathname}`;
+}
+
+export function safeBrowserPageLabel(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    const sensitive = classifySensitivePage(rawUrl);
+    return sensitive && isSecretBearingCategory(sensitive.category) ? `${url.origin}/[sensitive-path-redacted]` : pageLabel(url);
+  } catch { return "[unavailable]"; }
+}
+
+export function isSecretBearingCategory(category: SensitivePageCategory): boolean {
+  return category === "password manager" || category === "account recovery" || category === "private key management";
+}
+
+export function sensitivePageStub(rawUrl: string): string | null {
+  const sensitive = classifySensitivePage(rawUrl);
+  if (!sensitive || !isSecretBearingCategory(sensitive.category)) return null;
+  return [
+    "[SENSITIVE PAGE CONTENT WITHHELD]",
+    `Category: ${sensitive.category}`,
+    `Page: ${sensitive.page}`,
+    "Status: Page content, title, controls, and values were not read or returned.",
+    "Explicit user approval is required for high-risk actions; structural and secret-reading actions remain blocked.",
+  ].join("\n");
 }
 
 export function classifySensitivePage(rawUrl: string): { category: SensitivePageCategory; page: string } | null {
@@ -198,13 +222,14 @@ export function classifySensitivePage(rawUrl: string): { category: SensitivePage
   const host = url.hostname.toLowerCase();
   const path = url.pathname.toLowerCase();
   const page = pageLabel(url);
+  const secretPage = `${url.origin}/[sensitive-path-redacted]`;
 
   if (host === "169.254.169.254" || host === "metadata.google.internal") return { category: "cloud metadata", page };
   if (/(^|\.)(1password|bitwarden|lastpass|dashlane)\.(com|eu)$/.test(host) || host.endsWith(".keepersecurity.com") || /\/(passwords?|vault)(\/|$)/.test(path)) {
-    return { category: "password manager", page };
+    return { category: "password manager", page: secretPage };
   }
-  if (/\/(recover|recovery|forgot-password|reset-password|account-recovery)(\/|$)/.test(path)) return { category: "account recovery", page };
-  if (/\/(private-?keys?|ssh-keys?|api-keys?|signing-keys?|certificates?)(\/|$)/.test(path)) return { category: "private key management", page };
+  if (/\/(recover|recovery|forgot-password|reset-password|account-recovery)(\/|$)/.test(path)) return { category: "account recovery", page: secretPage };
+  if (/\/(private-?keys?|ssh-keys?|api-keys?|signing-keys?|certificates?)(\/|$)/.test(path)) return { category: "private key management", page: secretPage };
   if (["console.aws.amazon.com", "console.cloud.google.com", "portal.azure.com", "admin.microsoft.com"].includes(host) || /\/(admin|administrator|control-panel|management)(\/|$)/.test(path)) {
     return { category: "administration panel", page };
   }
@@ -217,7 +242,7 @@ export function classifySensitivePage(rawUrl: string): { category: SensitivePage
 export function sensitivePageActionDecision(rawUrl: string, action: string): SensitivePageDecision {
   const sensitive = classifySensitivePage(rawUrl);
   if (!sensitive) return { disposition: "allow", page: "" };
-  if (SECRET_READING_ACTIONS.has(action) && ["password manager", "account recovery", "private key management"].includes(sensitive.category)) {
+  if (SECRET_READING_ACTIONS.has(action) && isSecretBearingCategory(sensitive.category)) {
     return {
       disposition: "blocked", category: sensitive.category, page: sensitive.page,
       reason: `Reading page contents is blocked on this ${sensitive.category} page to keep secrets out of tool results and logs.`,

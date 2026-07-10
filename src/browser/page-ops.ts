@@ -6,6 +6,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright";
+import { sensitivePageStub } from "./guards.js";
 import { MAX_TEXT_LENGTH } from "./launcher.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { capBody, findInBody } from "../tools/paginate-body.js";
@@ -141,10 +142,11 @@ export async function listTabs(pages: Page[], active: Page | null): Promise<stri
   for (let i = 0; i < pages.length; i++) {
     const p = pages[i];
     try {
-      const title = await p.title();
       const url = p.url();
       const act = url === currentUrl ? " ← active" : "";
-      tabs.push(`[${i}] ${title || "(no title)"} — ${url}${act}`);
+      const sensitive = sensitivePageStub(url);
+      if (sensitive) tabs.push(`[${i}] [sensitive page withheld]${act}`);
+      else tabs.push(`[${i}] ${(await p.title()) || "(no title)"} — ${url}${act}`);
     } catch {
       tabs.push(`[${i}] (disconnected)`);
     }
@@ -173,15 +175,15 @@ export async function resolveSwitchTab(
   }
   const page = pages[index];
   await page.bringToFront();
-  const title = await page.title();
   const url = page.url();
-  return { ok: true, page, message: `Switched to tab [${index}]: ${title} — ${url}` };
+  const sensitive = sensitivePageStub(url);
+  return { ok: true, page, message: sensitive ?? `Switched to tab [${index}]: ${await page.title()} — ${url}` };
 }
 
 /** Short page-info string. */
 export async function pageInfo(page: Page | null, engine: string): Promise<string> {
   if (!page || page.isClosed()) return "No browser session active. Use 'navigate' to open a page.";
-  const title = await page.title();
   const url = page.url();
-  return `Browser active\nEngine: ${engine}\nURL: ${url}\nTitle: ${title}`;
+  const sensitive = sensitivePageStub(url);
+  return sensitive ?? `Browser active\nEngine: ${engine}\nURL: ${url}\nTitle: ${await page.title()}`;
 }

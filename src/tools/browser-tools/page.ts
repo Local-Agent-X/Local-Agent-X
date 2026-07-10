@@ -7,7 +7,7 @@
 import type { ToolResult } from "../../types.js";
 import type { BrowserManager } from "../../browser/index.js";
 import { closeBrowser } from "../../browser/index.js";
-import { scanEvaluateScript } from "../../browser/guards.js";
+import { scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { ok, err, appendPostActionSnapshot } from "./shared.js";
 
@@ -15,6 +15,8 @@ export async function handleExtract(
   manager: BrowserManager,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
+  const sensitive = sensitivePageStub(manager.getCurrentUrl());
+  if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
   const selector = args.selector ? String(args.selector) : undefined;
   const find = args.find ? String(args.find) : undefined;
   // extractText already wraps in the untrusted-content boundary — don't re-wrap.
@@ -22,6 +24,8 @@ export async function handleExtract(
 }
 
 export async function handleScreenshot(manager: BrowserManager): Promise<ToolResult> {
+  const sensitive = sensitivePageStub(manager.getCurrentUrl());
+  if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
   return ok(await manager.screenshot());
 }
 
@@ -29,6 +33,8 @@ export async function handleEvaluate(
   manager: BrowserManager,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
+  const sensitive = sensitivePageStub(manager.getCurrentUrl());
+  if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
   const script = String(args.script || "");
   if (!script) return err("'script' parameter is required for evaluate action.");
   const blockedPattern = scanEvaluateScript(script);
@@ -59,7 +65,9 @@ export async function handleReleaseDownload(
 ): Promise<ToolResult> {
   const id = String(args.download_id || "");
   if (!id) return err("'download_id' is required. Use action='downloads' to list quarantined downloads.");
-  return { content: wrapExternalContent(await manager.releaseDownload(id), "browser.download.release"), metadata: { browserStatus: "download-released", downloadId: id } };
+  const approved = args._downloadApproval as ReturnType<BrowserManager["getDownloadApproval"]> | undefined;
+  if (!approved) return err("Download release is missing its digest-bound approval metadata.");
+  return { content: wrapExternalContent(await manager.releaseDownload(id, approved), "browser.download.release"), metadata: { browserStatus: "download-released", downloadId: id } };
 }
 
 export async function handleSwitchTab(

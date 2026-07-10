@@ -8,19 +8,11 @@
 import type { Browser } from "playwright";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, unlinkSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { getRuntimeConfig } from "../config.js";
 import { killProcessTree } from "../process-tree-kill.js";
-
-/** Resolve the workspace/downloads dir (creates it if missing) — shared by
- *  CDP and Playwright fallback paths so downloads land in one place. */
-function resolveDownloadsDir(): string {
-  const cfg = getRuntimeConfig();
-  const dir = resolve(cfg.workspace, "downloads");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return dir;
-}
+import { resetBrowserNativeDownloadDir } from "./download-paths.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser.launcher");
@@ -194,6 +186,19 @@ export function buildPersistentContextOptions(
   };
 }
 
+export function buildChromeLaunchArgs(cdpPort: number, userDataDir: string, downloadsPath: string, proxyServer: string, headless = browserHeadless()): string[] {
+  return [
+    `--remote-debugging-port=${cdpPort}`,
+    `--user-data-dir=${userDataDir}`,
+    ...(headless ? ["--headless=new"] : []),
+    ...STEALTH_ARGS,
+    "--window-size=1280,800",
+    `--download.default_directory=${downloadsPath}`,
+    `--disable-features=${DISABLE_FEATURES.join(",")}`,
+    ...browserProxyArgs(proxyServer),
+  ];
+}
+
 /**
  * Launch the agent's dedicated Chrome via CDP (preferred) or fall back to
  * Playwright's persistent context. Returns both the browser handle and the
@@ -258,20 +263,10 @@ export async function launchViaCDP(
     // Spawn a fully separate Chrome process. The distinct --user-data-dir plus
     // --remote-debugging-port keep this off the user's main instance. All
     // feature-disables are consolidated into one --disable-features flag
-    // (Chrome honors only the last occurrence), and --download.default_directory
-    // points downloads at workspace/downloads/.
-    const downloadsDir = resolveDownloadsDir();
-    const args = [
-      `--remote-debugging-port=${cdpPort}`,
-      `--user-data-dir=${userDataDir}`,
-      ...(headless ? ["--headless=new"] : []),
-      ...STEALTH_ARGS,
-      "--window-size=1280,800",
-      `--download.default_directory=${downloadsDir}`,
-      `--disable-features=${DISABLE_FEATURES.join(",")}`,
-      ...browserProxyArgs(proxyServer),
-      "about:blank",
-    ];
+    // (Chrome honors only the last occurrence). Native download bytes always
+    // land in the private quarantine, never in the synced workspace.
+    const downloadsDir = resetBrowserNativeDownloadDir();
+    const args = buildChromeLaunchArgs(cdpPort, userDataDir, downloadsDir, proxyServer, headless);
 
     logger.info(`[browser] Spawning agent Chrome: ${chromePath} (profile: ${userDataDir})`);
     chromeProcess = spawn(chromePath, args, {
@@ -319,7 +314,7 @@ export async function launchViaCDP(
   const persistDir = options.persistentDataDir ?? join(getLaxDir(), "chrome-profile-pw");
   if (!existsSync(persistDir)) mkdirSync(persistDir, { recursive: true });
   cleanupStaleChromeProfileLocks(persistDir);
-  const downloadsDir = resolveDownloadsDir();
+  const downloadsDir = resetBrowserNativeDownloadDir();
   try {
     const ctx = await pw.chromium.launchPersistentContext(persistDir, {
       ...buildPersistentContextOptions(downloadsDir, proxyServer),
@@ -348,6 +343,7 @@ export async function launchViaCDP(
       const b = await pw.chromium.launch({
         headless,
         args: [...STEALTH_ARGS, ...browserProxyArgs(proxyServer)],
+        downloadsPath: downloadsDir,
         proxy: browserProxyConfig(proxyServer),
       });
       logger.info(`[browser] Playwright Chromium (no persistence) v${b.version()}`);

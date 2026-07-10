@@ -6,9 +6,16 @@ import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { ACTION_TIMEOUT, NAV_TIMEOUT, type BrowserEngine } from "./launcher.js";
 import { acquireSessionContext, releaseSessionContext } from "./runtime.js";
-import { formatRecentDownloads, installDownloadHandler, releaseQuarantinedDownload } from "./downloads.js";
+import {
+  formatRecentDownloads,
+  getDownloadApprovalBinding,
+  installDownloadHandler,
+  releaseQuarantinedDownload,
+  type DownloadApprovalBinding,
+} from "./downloads.js";
 import { injectTokenIfLocal } from "./auth-context.js";
 import { safeHost, redirectMessage } from "./redirect.js";
+import { safeBrowserPageLabel, sensitivePageStub } from "./guards.js";
 import { getRuntimeConfig } from "../config.js";
 import {
   extractTextFrom, screenshotAsBase64, evaluateScript,
@@ -138,7 +145,7 @@ export class BrowserManager {
       const failedUrl = newPage.url();
       this.owned = this.owned.filter((p) => p !== newPage);
       try { await newPage.close(); } catch { /* already closed */ }
-      throw new Error(`Navigation failed: HTTP ${status} (${failedUrl})`);
+      throw new Error(`Navigation failed: HTTP ${status} (${safeBrowserPageLabel(failedUrl)})`);
     }
     try { await newPage.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
     await newPage.waitForTimeout(1000);
@@ -147,7 +154,8 @@ export class BrowserManager {
     const title = await newPage.title();
     const tabCount = this.listOwnedPages().length;
     const redirect = redirectMessage(requestedHost, safeHost(newPage.url()));
-    return `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
+    const sensitive = sensitivePageStub(newPage.url());
+    return sensitive ?? `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
   }
 
   async navigate(url: string, engine?: BrowserEngine): Promise<string> {
@@ -161,7 +169,7 @@ export class BrowserManager {
     // outcome — silently returning "Status: 404" as ok let agents treat broken
     // pages as live. Surface via thrown Error so the outer handler converts to err().
     if (typeof status === "number" && status >= 400) {
-      throw new Error(`Navigation failed: HTTP ${status} (${page.url()})`);
+      throw new Error(`Navigation failed: HTTP ${status} (${safeBrowserPageLabel(page.url())})`);
     }
     try { await page.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
     await page.waitForTimeout(1000);
@@ -172,7 +180,8 @@ export class BrowserManager {
     // post-action snapshot (auth-wall prefix + external-content wrap).
     // Snapshotting here too ran a second full DOM extract + iframe traversal
     // on every navigate whose output was just "page unchanged" noise.
-    return `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
+    const sensitive = sensitivePageStub(page.url());
+    return sensitive ?? `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
   }
 
   async click(selector: string): Promise<string> {
@@ -361,8 +370,12 @@ export class BrowserManager {
 
   getDownloads(): string { return formatRecentDownloads(this.sessionId); }
 
-  async releaseDownload(id: string): Promise<string> {
-    const record = await releaseQuarantinedDownload(this.sessionId, id);
+  getDownloadApproval(id: string): DownloadApprovalBinding {
+    return getDownloadApprovalBinding(this.sessionId, id);
+  }
+
+  async releaseDownload(id: string, approved: DownloadApprovalBinding): Promise<string> {
+    const record = await releaseQuarantinedDownload(this.sessionId, id, approved);
     return `RELEASED: ${record.filename} (${record.size} bytes)\nReleased to: ${record.releasePath}`;
   }
 

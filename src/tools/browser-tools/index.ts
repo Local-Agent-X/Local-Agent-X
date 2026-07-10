@@ -51,7 +51,7 @@ import { handleAct } from "./act.js";
 import { handleObserve } from "./observe.js";
 import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
 import { createLogger } from "../../logger.js";
-import { sensitivePageActionDecision } from "../../browser/guards.js";
+import { sensitivePageActionDecision, sensitivePageStub } from "../../browser/guards.js";
 import { getApprovalManager } from "../../approval-manager.js";
 import { blocked, declined } from "../result-helpers.js";
 
@@ -131,12 +131,15 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
               "BLOCKED: quarantined downloads can only be released from an interactive session with explicit user approval.",
               { layer: "browser-download", browserStatus: "approval-required" },
             );
+            let approvalBinding: ReturnType<BrowserManager["getDownloadApproval"]>;
+            try { approvalBinding = manager.getDownloadApproval(id); }
+            catch (error) { return blocked(`BLOCKED: ${(error as Error).message}`, { layer: "browser-download", browserStatus: "not-releasable" }); }
             const outcome = await getApprovalManager().requestApprovalDetailed({
               toolName: "browser.release_download",
               toolCallId: String(args._toolCallId || `browser-release-${id}`),
               sessionId,
               context: "Release a quarantined browser download into workspace/downloads. The file remains unavailable to agent tools until approved.",
-              args: { action: "release_download", download_id: id },
+              args: { action: "release_download", ...approvalBinding },
               alwaysAsk: true,
               emit: onEvent as (event: ServerEvent) => void,
             });
@@ -144,6 +147,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
               "Download release was not approved; the file remains quarantined.",
               { layer: "browser-download", browserStatus: "quarantined", downloadId: id },
             );
+            args._downloadApproval = approvalBinding;
           } else {
             const pageDecision = sensitivePageActionDecision(manager.getCurrentUrl(), action);
             if (pageDecision.disposition === "blocked") return blocked(
@@ -215,8 +219,19 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
               "Your last action did not complete — retry it and a fresh browser will open.",
             );
           }
+          const sensitive = sensitivePageStub(manager.getCurrentUrl());
+          if (sensitive) {
+            return {
+              content: sensitive,
+              isError: result.isError,
+              status: result.status,
+              metadata: { ...result.metadata, browserStatus: "sensitive-content-withheld" },
+            };
+          }
           return await applyProgressGuard(action, manager, sessionId, result);
         } catch (e) {
+          const sensitive = sensitivePageStub(manager.getCurrentUrl());
+          if (sensitive) return blocked(sensitive, { layer: "browser-sensitive-page", browserStatus: "sensitive-content-withheld" });
           const message = (e as Error).message;
           if (e instanceof BrowserWedgeError) {
             // A page scan hung (wedged CDP connection). Reset now — ~10s — so

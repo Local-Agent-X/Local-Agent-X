@@ -7,8 +7,11 @@
 import type { ToolResult } from "../../types.js";
 import type { BrowserManager } from "../../browser/index.js";
 import { ok } from "./shared.js";
+import { sensitivePageStub } from "../../browser/guards.js";
 
 export async function handleObserve(manager: BrowserManager): Promise<ToolResult> {
+  const sensitive = sensitivePageStub(manager.getCurrentUrl());
+  if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
   // Structured view grouped by role, viewport-first, diff-aware
   const obs = await manager.observe();
   const source = obs.isInitial && obs.full ? obs.full : [...obs.added];

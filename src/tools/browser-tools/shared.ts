@@ -6,6 +6,7 @@ import type { ToolResult } from "../../types.js";
 import type { BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { createLogger } from "../../logger.js";
+import { sensitivePageStub } from "../../browser/guards.js";
 
 const log = createLogger("browser.wall");
 
@@ -32,9 +33,11 @@ export const VALID_ENGINES: BrowserEngine[] = ["chromium", "firefox", "webkit"];
  * already do this at the manager level; this brings the others in line.
  */
 export async function appendPostActionSnapshot(
-  manager: { snapshot: () => Promise<string> },
+  manager: { snapshot: () => Promise<string>; getCurrentUrl?: () => string },
   base: string,
 ): Promise<string> {
+  const stub = manager.getCurrentUrl ? sensitivePageStub(manager.getCurrentUrl()) : null;
+  if (stub) return stub;
   try {
     const raw = await manager.snapshot();
     const prefix = computeAuthWallPrefix(raw);

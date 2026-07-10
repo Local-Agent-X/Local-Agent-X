@@ -2,6 +2,7 @@ import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
+import { encryptAuthBlob, decryptAuthBlob, ENVELOPE_FORMAT } from "./storage.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("auth-xai");
@@ -74,12 +75,52 @@ export async function fetchOidcDiscovery(): Promise<OidcEndpoints> {
   return { authorizationEndpoint, tokenEndpoint };
 }
 
+// storage.ts's decrypt-or-passthrough recognizes legacy plaintext by a
+// top-level refreshToken — optional on XaiTokens. So detect the envelope
+// marker locally: envelope → decrypt via the canonical blob helper, anything
+// else → treat as legacy plaintext and let the shape checks below judge it.
+function isAuthEnvelope(raw: string): boolean {
+  try {
+    const parsed = JSON.parse(raw) as { format?: unknown } | null;
+    return parsed !== null && typeof parsed === "object" && parsed.format === ENVELOPE_FORMAT;
+  } catch {
+    return false;
+  }
+}
+
 export function loadXaiTokens(): XaiTokens | null {
   const authPath = getAuthPath();
   if (!existsSync(authPath)) return null;
   try {
-    const data = JSON.parse(readFileSync(authPath, "utf-8"));
-    if (data.accessToken) return { ...data, provider: "xai" } as XaiTokens;
+    const raw = readFileSync(authPath, "utf-8");
+    let plaintext = raw;
+    let wasEncrypted = false;
+    if (isAuthEnvelope(raw)) {
+      try {
+        ({ plaintext, wasEncrypted } = decryptAuthBlob(raw, getLaxDir()));
+      } catch (e) {
+        logger.error(`[auth-xai] FAILED to decrypt ${authPath}: ${(e as Error).message} — treating as no-auth. If this persists, delete the file and re-login.`);
+        return null;
+      }
+    }
+    const data = JSON.parse(plaintext);
+    if (data.accessToken) {
+      const tokens = { ...data, provider: "xai" } as XaiTokens;
+      // Backwards-compat one-shot migration: a legacy plaintext file is
+      // rewritten as an envelope on next load (same pattern as auth/index.ts).
+      if (!wasEncrypted) {
+        try {
+          saveXaiTokens(tokens);
+          logger.info(`[auth-xai] ${authPath} migrated to encrypted-at-rest format.`);
+        } catch (e) {
+          // Migration failure isn't fatal — the tokens we just parsed are
+          // still valid; the file just stays plaintext on disk until the
+          // next saveXaiTokens succeeds.
+          logger.warn(`[auth-xai] Could not migrate ${authPath} to encrypted format: ${(e as Error).message}`);
+        }
+      }
+      return tokens;
+    }
     logger.error(`[auth-xai] ${authPath} parsed but missing accessToken — treating as no-auth`);
   } catch (e) {
     logger.error(`[auth-xai] FAILED to parse ${authPath}: ${(e as Error).message} — treating as no-auth. Re-login if this persists.`);
@@ -90,7 +131,18 @@ export function loadXaiTokens(): XaiTokens | null {
 export function saveXaiTokens(tokens: XaiTokens): void {
   const authPath = getAuthPath();
   mkdirSync(dirname(authPath), { recursive: true });
-  writeSecretFileAtomic(authPath, JSON.stringify(tokens, null, 2));
+  const jsonString = JSON.stringify(tokens, null, 2);
+  // Encrypt-at-rest with the canonical auth envelope (same as auth.json).
+  // If encryption fails (keychain unavailable) don't crash a successful
+  // login: log loud and write plaintext as a degraded mode.
+  let payload: string;
+  try {
+    payload = encryptAuthBlob(jsonString, getLaxDir());
+  } catch (e) {
+    logger.warn(`[auth-xai] CRITICAL: could not encrypt ${authPath}: ${(e as Error).message}. Falling back to PLAINTEXT on disk — tokens are NOT protected at rest until the keychain becomes available.`);
+    payload = jsonString;
+  }
+  writeSecretFileAtomic(authPath, payload);
 }
 
 export function isXaiTokenExpired(tokens: XaiTokens | null): boolean {

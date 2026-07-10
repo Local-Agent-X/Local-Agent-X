@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
+import { encryptAuthBlob, decryptAuthBlob, ENVELOPE_FORMAT } from "./storage.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("auth-anthropic");
@@ -54,14 +55,53 @@ function getAuthPath(): string {
 
 // ── Token Storage ──
 
+// storage.ts's decrypt-or-passthrough recognizes legacy plaintext by a
+// top-level refreshToken — which method:"token" files here don't have. So
+// detect the envelope marker locally: envelope → decrypt via the canonical
+// blob helper, anything else → treat as legacy plaintext and let the JSON
+// shape checks below judge it.
+function isAuthEnvelope(raw: string): boolean {
+  try {
+    const parsed = JSON.parse(raw) as { format?: unknown } | null;
+    return parsed !== null && typeof parsed === "object" && parsed.format === ENVELOPE_FORMAT;
+  } catch {
+    return false;
+  }
+}
+
 export function loadAnthropicTokens(): AnthropicTokens | null {
   const authPath = getAuthPath();
   if (!existsSync(authPath)) return null;
   try {
-    const data = JSON.parse(readFileSync(authPath, "utf-8"));
+    const raw = readFileSync(authPath, "utf-8");
+    let plaintext = raw;
+    let wasEncrypted = false;
+    if (isAuthEnvelope(raw)) {
+      try {
+        ({ plaintext, wasEncrypted } = decryptAuthBlob(raw, getLaxDir()));
+      } catch (e) {
+        logger.error(`[auth-anthropic] FAILED to decrypt ${authPath}: ${(e as Error).message} — treating as no-auth. If this persists, delete the file and re-login.`);
+        return null;
+      }
+    }
+    const data = JSON.parse(plaintext);
     if (data.accessToken) {
       const method = data.method || (data.refreshToken ? "oauth" : "token");
-      return { ...data, provider: "anthropic", method } as AnthropicTokens;
+      const tokens = { ...data, provider: "anthropic", method } as AnthropicTokens;
+      // Backwards-compat one-shot migration: a legacy plaintext file is
+      // rewritten as an envelope on next load (same pattern as auth/index.ts).
+      if (!wasEncrypted) {
+        try {
+          saveAnthropicTokens(tokens);
+          logger.info(`[auth-anthropic] ${authPath} migrated to encrypted-at-rest format.`);
+        } catch (e) {
+          // Migration failure isn't fatal — the tokens we just parsed are
+          // still valid; the file just stays plaintext on disk until the
+          // next saveAnthropicTokens succeeds.
+          logger.warn(`[auth-anthropic] Could not migrate ${authPath} to encrypted format: ${(e as Error).message}`);
+        }
+      }
+      return tokens;
     }
     logger.error(`[auth-anthropic] ${authPath} parsed OK but missing accessToken — treating as no-auth`);
   } catch (e) {
@@ -71,12 +111,24 @@ export function loadAnthropicTokens(): AnthropicTokens | null {
   return null;
 }
 
-function saveAnthropicTokens(tokens: AnthropicTokens): void {
+// Exported for tests — real callers are inside this module (login + refresh).
+export function saveAnthropicTokens(tokens: AnthropicTokens): void {
   // Atomic write — same race protection as auth.ts saveTokens. Mid-write
   // crash used to leave anthropic-auth.json half-written; next load
   // logged corruption (since this commit) but the user lost their auth.
   const authPath = getAuthPath();
-  writeSecretFileAtomic(authPath, JSON.stringify(tokens, null, 2));
+  const jsonString = JSON.stringify(tokens, null, 2);
+  // Encrypt-at-rest with the canonical auth envelope (same as auth.json).
+  // If encryption fails (keychain unavailable) don't crash a successful
+  // login: log loud and write plaintext as a degraded mode.
+  let payload: string;
+  try {
+    payload = encryptAuthBlob(jsonString, getLaxDir());
+  } catch (e) {
+    logger.warn(`[auth-anthropic] CRITICAL: could not encrypt ${authPath}: ${(e as Error).message}. Falling back to PLAINTEXT on disk — tokens are NOT protected at rest until the keychain becomes available.`);
+    payload = jsonString;
+  }
+  writeSecretFileAtomic(authPath, payload);
 }
 
 // ── Token Refresh ──

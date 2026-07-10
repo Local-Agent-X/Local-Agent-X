@@ -20,7 +20,7 @@ import {
   type CodexStreamYield,
 } from "./types.js";
 import { buildHeaders, buildRequestBody } from "./request.js";
-import { fetchCodexWithRetry } from "./fetch-with-retry.js";
+import { fetchCodexOnce } from "./fetch-once.js";
 import {
   createCodexStreamState,
   processCodexEvent,
@@ -59,7 +59,7 @@ export async function* streamCodexResponse(params: {
     toolChoice: params.toolChoice,
   });
 
-  const res = await fetchCodexWithRetry({
+  const res = await fetchCodexOnce({
     url: CODEX_URL,
     headers,
     body,

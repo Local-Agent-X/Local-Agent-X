@@ -42,6 +42,7 @@ const DEFAULT_MAX_ATTEMPTS = (() => {
   const n = raw ? Number(raw) : NaN;
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 3;
 })();
+const MAX_TRANSPORT_ATTEMPTS = 3;
 
 interface ErrorLike {
   type: string;
@@ -103,7 +104,10 @@ export async function* withTransportRetry<T extends { type: string }>(
   makeStream: () => AsyncIterable<T>,
   opts: TransportRetryOpts,
 ): AsyncIterable<T> {
-  const maxAttempts = Math.max(1, opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
+  const maxAttempts = Math.min(
+    MAX_TRANSPORT_ATTEMPTS,
+    Math.max(1, opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS),
+  );
   const delay = opts.delay ?? abortableDelay;
   const aborted = () => opts.signal?.aborted === true || opts.isAborted?.() === true;
 

@@ -1,7 +1,6 @@
 import { fetch as undiciFetch } from "undici";
 import type { RequestInit as UndiciRequestInit } from "undici";
 import type { ToolDefinition } from "../types.js";
-import { isRetryableTool } from "../resilience-policy.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { findInBody } from "./paginate-body.js";
 import type { SecretsStore } from "../secrets.js";
@@ -30,7 +29,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         ["idempotency-key", "x-idempotency-key"].includes(name.toLowerCase()),
       );
       const rawKey = args.idempotency_key ?? keyEntry?.[1];
-      const operationKey = typeof rawKey === "string" ? rawKey.trim() : "";
+      const operationKey = typeof rawKey === "string" && rawKey.trim().length > 0 ? rawKey : "";
       return operationKey ? { class: "keyed-mutation", operationKey } : { class: "non-idempotent" };
     },
     description:
@@ -188,14 +187,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           return r;
         };
 
-        let res = await doFetch();
-        const RETRYABLE = [429, 503, 504];
-        for (let attempt = 1; attempt <= 3 && RETRYABLE.includes(res.status) && isRetryableTool(tool, args); attempt++) {
-          const retryAfter = parseInt(res.headers.get("retry-after") || "", 10);
-          const delay = retryAfter > 0 ? retryAfter * 1000 : attempt * 2000;
-          await new Promise(r => setTimeout(r, delay));
-          res = await doFetch();
-        }
+        const res = await doFetch();
 
         const statusLine = `${res.status} ${res.statusText}`;
 

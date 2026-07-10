@@ -4,7 +4,7 @@
 // thresholds. Executors stay thin: auto-retry.ts runs the loop, circuit-
 // breaker.ts runs the state machine — both read their policy from here.
 
-import type { ToolDefinition, ToolEffect } from "./types.js";
+import type { ToolDefinition, ToolEffect, ToolResult } from "./types.js";
 
 export type ErrorCategory =
   | "network"
@@ -134,14 +134,18 @@ export function resolveToolEffect(
   return typeof tool.effect === "function" ? tool.effect(args) : tool.effect;
 }
 
+export function isRetryableEffect(effect: ToolEffect): boolean {
+  if (effect.class === "read-only" || effect.class === "idempotent-mutation") return true;
+  return effect.class === "keyed-mutation" &&
+    typeof effect.operationKey === "string" && effect.operationKey.trim().length > 0;
+}
+
 /** Whether replaying this exact tool call is safe after an ambiguous failure. */
 export function isRetryableTool(
   tool: ToolDefinition | undefined,
   args: Record<string, unknown> = {},
 ): boolean {
-  const effect = resolveToolEffect(tool, args);
-  if (effect.class === "read-only" || effect.class === "idempotent-mutation") return true;
-  return effect.class === "keyed-mutation" && Boolean(effect.operationKey?.trim());
+  return isRetryableEffect(resolveToolEffect(tool, args));
 }
 
 /**
@@ -151,10 +155,34 @@ export function isRetryableTool(
  */
 export function isRetryable(
   error: unknown,
-  opts?: { tool?: ToolDefinition; args?: Record<string, unknown>; attempt?: number },
+  opts?: { effect?: ToolEffect; tool?: ToolDefinition; args?: Record<string, unknown>; attempt?: number },
 ): boolean {
+  if (opts?.effect && !isRetryableEffect(opts.effect)) return false;
   if (opts?.tool && !isRetryableTool(opts.tool, opts.args)) return false;
+  if (error instanceof RetryableToolResultError) return true;
   return RETRYABLE_CATEGORIES.has(classify(error));
+}
+
+export class RetryableToolResultError extends Error {
+  readonly result: ToolResult;
+
+  constructor(result: ToolResult) {
+    super(typeof result.content === "string" ? result.content : "Transient tool result");
+    this.name = "RetryableToolResultError";
+    this.result = result;
+  }
+}
+
+/** Convert only recognized transient error results into the retry loop's signal. */
+export function retrySignalForToolResult(
+  result: ToolResult,
+  effect: ToolEffect,
+): RetryableToolResultError | null {
+  if (!result.isError || !isRetryableEffect(effect)) return null;
+  const status = typeof result.metadata?.status === "number" ? result.metadata.status : undefined;
+  const message = typeof result.content === "string" ? result.content : String(result.content ?? "");
+  if (!RETRYABLE_CATEGORIES.has(classify({ message, status }))) return null;
+  return new RetryableToolResultError(result);
 }
 
 /**

@@ -91,12 +91,12 @@ describe("withTransportRetry", () => {
     ]);
   });
 
-  it("is bounded by maxAttempts then forwards the last error", async () => {
+  it("hard-caps total attempts at three then forwards the last error", async () => {
     const err: Ev = { type: "error", code: "transport_error", message: "network fetch failed" };
     const { factory, calls } = scripted([[err], [err], [err], [err]]);
 
     const out = await collect(
-      withTransportRetry(factory, { label: "t", maxAttempts: 3, delay: noDelay }),
+      withTransportRetry(factory, { label: "t", maxAttempts: 9, delay: noDelay }),
     );
 
     expect(calls()).toBe(3); // initial + 2 retries, no more

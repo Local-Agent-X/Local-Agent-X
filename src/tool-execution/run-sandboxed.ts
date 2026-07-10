@@ -15,7 +15,8 @@ import { hasCapability } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
-import { isRetryable, isRetryableTool } from "../resilience-policy.js";
+import { isRetryable, retrySignalForToolResult, RetryableToolResultError } from "../resilience-policy.js";
+import { createRetryCallSnapshot } from "./retry-call.js";
 import { getToolTimeout, withTimeout, ToolTimeoutError } from "../tool-timeout.js";
 import { timeout, blocked, ok } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
@@ -55,7 +56,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   // (metadata.partial_output on the [timeout] row). Bounded so a chatty
   // long-runner can't grow the buffer without limit.
   const progressLog: string[] = [];
-  args._onProgress = (message: string) => {
+  const onProgress = (message: string) => {
     progressLog.push(message);
     if (progressLog.length > 200) progressLog.shift();
     onEvent?.({ type: "tool_progress", toolName: tc.name, toolCallId: tc.id, message } as ServerEvent);
@@ -107,7 +108,8 @@ export const runSandboxedPhase: Phase = async (ctx) => {
 
   const startedAt = Date.now();
   ctx.startedAt = startedAt;
-  const shouldRetry = isRetryableTool(tool, args);
+  const retryCall = createRetryCallSnapshot(tool, args);
+  const shouldRetry = retryCall.retryable;
   // Hang-catcher: bound each execute so a stuck tool yields a [timeout] result
   // row instead of stranding the model with no result. ms <= 0 means the tool
   // is exempt (long-runner) — call it directly, never pass 0 to withTimeout.
@@ -116,7 +118,15 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   // running orphaned (no per-tool abort); acceptable — the point is the row,
   // and the progressLog above preserves what it streamed before the deadline.
   const ms = getToolTimeout(tc.name);
-  const runOnce = () => (ms > 0 ? withTimeout(tool.execute(args, signal), ms, tc.name) : tool.execute(args, signal));
+  const runOnce = async () => {
+    const attemptArgs = retryCall.freshArgs();
+    attemptArgs._onProgress = onProgress;
+    const execution = tool.execute(attemptArgs, signal);
+    const result = await (ms > 0 ? withTimeout(execution, ms, tc.name) : execution);
+    const retrySignal = retrySignalForToolResult(result, retryCall.effect);
+    if (retrySignal) throw retrySignal;
+    return result;
+  };
 
   // ── Pre-execute taint FLOOR-set (R4-09 defense-in-depth) ─────────────────
   //
@@ -166,7 +176,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
         maxRetries: 2,
         baseDelayMs: 500,
         maxDelayMs: 4000,
-        shouldRetry: (err, attempt) => isRetryable(err, { tool, args, attempt }),
+        shouldRetry: (err, attempt) => isRetryable(err, { effect: retryCall.effect, attempt }),
         ctx: getRetryContext(sessionId),
         layer: "L1-tool",
       });
@@ -342,7 +352,9 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       ctx.result = stub;
     }
   } catch (e) {
-    if (e instanceof ToolTimeoutError) {
+    if (e instanceof RetryableToolResultError) {
+      ctx.result = e.result;
+    } else if (e instanceof ToolTimeoutError) {
       // A hung tool: hand the model a hard [timeout] row so it can't narrate
       // "done" against silence. The execute promise is orphaned (no abort), so
       // tell the model to VERIFY state rather than assume success or failure.

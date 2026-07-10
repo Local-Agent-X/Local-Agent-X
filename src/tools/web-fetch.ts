@@ -95,14 +95,7 @@ export const webFetchTool: ToolDefinition = {
         return r;
       };
 
-      let res = await doFetch();
-      const RETRYABLE = [429, 503, 504];
-      for (let attempt = 1; attempt <= 3 && RETRYABLE.includes(res.status); attempt++) {
-        const retryAfter = parseInt(res.headers.get("retry-after") || "", 10);
-        const delay = retryAfter > 0 ? retryAfter * 1000 : attempt * 2000;
-        await new Promise(r => setTimeout(r, delay));
-        res = await doFetch();
-      }
+      const res = await doFetch();
 
       const durationMs = Date.now() - startMs;
       if (!res.ok && !(res.status >= 300 && res.status < 400)) {

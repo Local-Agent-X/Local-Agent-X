@@ -144,9 +144,8 @@ export interface Op {
   inputBindings?: Record<string, string>;
   resourceLocks?: string[];
   /**
-   * Additive canonical-loop fields (PRD §9). Optional sub-object so legacy
-   * consumers ignore it; canonical-loop is the sole writer. Absent on every
-   * op submitted under flag OFF and on every op created before Issue 01.
+   * Additive canonical-loop fields (PRD §9). Optional for persisted operations
+   * created before Issue 01; canonical-loop is the sole writer for current ops.
    * See src/canonical-loop/types.ts for the full shape.
    */
   canonical?: import("../canonical-loop/types.js").CanonicalOpFields;
@@ -216,4 +215,3 @@ export interface PlanStep {
   description: string;
   status: "pending" | "running" | "completed" | "skipped" | "failed";
 }
-

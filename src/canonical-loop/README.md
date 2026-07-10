@@ -1,6 +1,8 @@
 # canonical-loop — module map
 
-Source of truth: [docs/canonical-loop-prd.md](../../docs/canonical-loop-prd.md).
+Runtime module guide. The shipped v1 contract is archived in
+[docs/canonical-loop-prd.md](../../docs/canonical-loop-prd.md); current routing
+and rollback behavior are documented here and in the rollback runbook.
 
 This directory is the canonical-loop runtime — one state machine that owns
 op lifecycle, events, checkpoints, signals, and crash recovery (PRD §6
@@ -11,12 +13,12 @@ Decision #1). Adapters live alongside (e.g., `anthropic-adapter`,
 
 | File | Role | LOC limit |
 |---|---|---|
-| `index.ts` | Public entry — re-exports the loop surface (store/schema/control-API/lease/recovery), the `runChatViaCanonical` / `runAgentViaCanonical` runners, the Anthropic + Codex adapters, and `sweepStaleCanonicalOps`, plus `canonicalLoopEntry()` (the seam `op_submit_async` calls when the canonical flag is ON for the lane). | ≤ 400 |
+| `index.ts` | Public entry — re-exports the loop surface (store/schema/control-API/lease/recovery), the `runChatViaCanonical` / `runAgentViaCanonical` runners, adapters, and `sweepStaleCanonicalOps`, plus the sole submit entry `canonicalLoopEntry()`. | ≤ 400 |
 | `types.ts` | Canonical-state, lane, event, op-fields, turn-row, message-row, provider-state-envelope shapes (PRD §5 / §9). | ≤ 400 |
 | `schema.ts` | On-disk paths under `~/.lax/operations/<opId>/` — canonical-events.jsonl, op-turns/, op-messages.jsonl. | ≤ 400 |
 | `store.ts` | Append-only writers/readers for `op_events`, `op_turns`, `op_messages`. Sole disk gateway. | ≤ 400 |
-| `feature-flag.ts` | Env-driven per-lane flag reader (`lax.canonical_loop.{lane}`, PRD §17). | ≤ 400 |
-| `router.ts` | Pure submit-time routing decision (legacy vs canonical). | ≤ 400 |
+| `feature-flag.ts` | Compatibility reader retained for callers/tests; returns enabled for every lane and does not read environment values (PRD §17). | ≤ 400 |
+| `router.ts` | Compatibility submit decision; always returns `route: "canonical"` and `flagValue: true`. | ≤ 400 |
 | `bus.ts` | In-process pub/sub bus. Channels: `op_events:{opId}` (durable mirror) + `op_stream:{opId}` (ephemeral). | ≤ 400 |
 | `event-emitter.ts` | `emit()` = append to `op_events` + publish to bus. `publishStreamChunk()` = bus only. | ≤ 400 |
 | `state-machine.ts` | Sole writer of `op.canonical.state`. Validates transitions, emits `state_changed`. | ≤ 400 |
@@ -521,7 +523,7 @@ messages, provider_state, or workerIds.
 
 `test/canonical-loop-11-no-op-escapes-canonical.test.ts` is the
 post-cutover invariant the PRD locks in for the lifetime of the
-project — under flag ON, every terminal scenario (succeeded / failed /
+project: every terminal scenario (succeeded / failed /
 cancelled / pre-lease cancel) leaves canonical artifacts and **zero**
 legacy `events.jsonl`.
 
@@ -549,10 +551,10 @@ the per-issue suites don't cover on their own:
 ### Rollback
 
 [docs/runbooks/canonical-loop-rollback.md](../../docs/runbooks/canonical-loop-rollback.md)
-documents the flip-the-flag rollback procedure: per-lane env var,
-in-flight ops drain on canonical (their flag value is captured at
-submit and immutable), new ops route to legacy. No code change, no
-schema migration.
+documents the current procedure. The flags are compatibility shims and cannot
+switch execution paths; roll back the specific post-cutover change or deploy a
+known-good build after draining/cancelling in-flight work. Canonical artifacts
+remain for audit.
 
 ### v1.0 ship readiness
 
@@ -565,16 +567,15 @@ PRD §22 Definition of Done — current state of the canonical loop:
 | Worker pool with op-level leases + heartbeats | green (Issues 03, 08) |
 | Single queue with lane scheduling | green (Issue 03) |
 | `op_pause` / `op_cancel` / `op_redirect` / `op_resume` / `op_events_since` live | green (Issues 04–07) |
-| Feature flag routing inside `op_submit_async` | green (Issues 01, 10) |
+| Canonical-only submit routing; compatibility shims hardwired on | green (retired 2026-05-15) |
 | Schema additions migrated | green (Issue 01) |
 | All 11 v1 acceptance tests pass under fake adapter | green (Issues 01–11) |
 | All 9 conformance items pass for Anthropic | green (Issue 09) |
 | Real Anthropic CLI smoke tests | gated, opt-in via `LAX_RUN_ANTHROPIC_SMOKE=1` |
 | Permanent invariant tests | green (Issue 11) |
-| Old-path compatibility test #11 | green (Issue 10) |
+| Historical old-path compatibility fixture | archived after cutover (Issue 10) |
 | No diff against PRD §19 untouchables | green |
 | Public API signatures unchanged | green (Issue 10 compat fixtures verify) |
-| Feature flag hardwired ON (retired 2026-05-15) | green |
 | Rollback procedure documented | green (this issue) |
 | Adapter sandbox audit clean | green (Issue 11 boundary audit) |
 | Loop has no `child_process` imports | green (Issue 11 boundary audit) |

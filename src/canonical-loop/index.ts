@@ -261,8 +261,8 @@ export {
 } from "./state-machine.js";
 
 /**
- * Entry point invoked by `op_submit_async` when the canonical feature flag
- * is ON for the op's lane. Synchronous bookkeeping; loop driving is
+ * Sole entry point invoked by `op_submit_async`. Synchronous bookkeeping;
+ * loop driving is
  * fire-and-forget via the scheduler.
  *
  * Behavior:
@@ -277,8 +277,8 @@ export {
  *     registered, the op stays at `queued` — the same skeleton behavior as
  *     Issue 01, used by tests that don't drive a loop.
  *
- * NOTE: signature unchanged from Issue 01 — `op_submit_async` consumers see
- * the same return shape regardless of routing (PRD §17 hard rule).
+ * NOTE: signature unchanged from Issue 01 for API compatibility. Routing is
+ * canonical-only; see PRD §17.
  */
 export function canonicalLoopEntry(
   op: Op,

@@ -2,7 +2,9 @@
 
 **Audience:** on-call / shipper.
 **Scope:** the LAX canonical op loop (sole execution path since the worker-pool retirement landed 2026-05-15).
-**Source of truth:** [PRD §17 / §22](../canonical-loop-prd.md).
+**Runtime references:** [`src/canonical-loop/README.md`](../../src/canonical-loop/README.md)
+and PRD [§17](../canonical-loop-prd.md#17-feature-flag--parallel-run-strategy).
+PRD §22 is an archived v1.0 ship checklist, not an operational procedure.
 
 The canonical loop is the **only** execution path for ops. There is no
 legacy fork path to roll back to. **The `LAX_CANONICAL_LOOP_*` flags no

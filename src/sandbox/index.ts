@@ -59,9 +59,9 @@ export function isGuardedUsable(): boolean {
  * directly on the host. This is the strongest isolation boundary — even
  * if the LLM is fully compromised, damage is contained to the container.
  *
- * Modes:
- * - "host" (default): Commands run directly on host. Fast but high blast radius.
- * - "docker": Commands run in a Docker container with limited capabilities.
+ * Modes include the guarded default, explicit unconfined host execution,
+ * stricter native seatbelt/bwrap profiles, and Docker confinement. This
+ * section documents the Docker implementation specifically.
  *
  * The container:
  * - Has workspace mounted read-write at /workspace

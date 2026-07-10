@@ -1,6 +1,10 @@
 # LAX Canonical Operation Loop — v1 PRD
 
-**Status:** Shipped 2026-05-15 (v1 — worker-pool retired, build_app migrated, every op type rides canonical-loop). Doc remains as the architectural spec; section numbers (§5, §6, §9, §15, §17) are cited throughout src/canonical-loop/README.md.
+**Status:** Shipped 2026-05-15; archived ship specification. The migration-era
+requirements and checklists are preserved as historical acceptance criteria.
+Current runtime ownership is [ARCHITECTURE.md](../ARCHITECTURE.md) and
+[`src/canonical-loop/README.md`](../src/canonical-loop/README.md); §17 records
+the 2026-05-15 retirement of legacy routing.
 **Last updated:** 2026-05-22
 
 ---
@@ -650,6 +654,11 @@ interface TurnResult {
 
 ## 16. Migration Plan
 
+> **Historical plan (superseded 2026-05-15 — owner: Canonical Loop).** The
+> versions, parallel-run constraints, and old-path requirements below describe
+> the rollout sequence, not current routing. Canonical-loop is now the sole path;
+> see §17 and the rollback runbook.
+
 | Version | Scope | Status |
 |---|---|---|
 | **v1.0** | Anthropic interactive on canonical-loop. Full control plane (pause/cancel/redirect/resume). All schema, all events, full conformance for Anthropic. Parallel-run behind flag. | Target: first ship. |
@@ -688,7 +697,7 @@ the only path back (see the rollback runbook).
 
 ## 18. Test Plan
 
-Two suites, locked at v1. This section is the v1.0 ship gate, completed
+Two suites, locked at v1. This section is the historical v1.0 ship gate, completed
 2026-05-15, and is kept verbatim as the record of what v1 shipped against;
 §17 records the post-ship retirement of the feature flag.
 
@@ -863,6 +872,10 @@ These are not blocking design questions. Implementation proceeds with these defa
 ---
 
 ## 22. Definition of Done (v1.0)
+
+> **Archived v1.0 checklist.** Unchecked boxes below are the original ship
+> template, not open work and not current runtime claims. For current module
+> status use `src/canonical-loop/README.md`; for rollback use the runbook.
 
 v1.0 is shippable when **all** of the following hold:
 

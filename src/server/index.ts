@@ -89,8 +89,8 @@ export async function startServer(config: LAXConfig) {
   setVoiceProactiveSpeaker(speakToActiveVoice);
 
   // Auto-resume any orchestrator runs that were in flight when LAX last
-  // died. Fire-and-forget — never blocks boot. Skips if the feature flag
-  // is off OR no in-flight registry entries exist (the common case).
+  // died. Fire-and-forget — never blocks boot. Skips when no in-flight
+  // registry entries exist (the common case).
   void (async () => {
     try {
       const { autoResumeOrchestrations } = await import("../auto-build/orchestrator/resume.js");

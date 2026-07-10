@@ -14,9 +14,12 @@ map owns the *counts*. **When a number here disagrees with the map, the map
 wins** — it resolves **dynamic `import()`**, which a plain `grep "from"` misses
 (that gap is exactly why several live dirs were mislabeled "dead" below before).
 
-Companion docs: [AGENTS.md](AGENTS.md) (the invariants/rules), and the deeper
-design notes in [docs/](docs/) (`canonical-agent-design.md`, `ari-kernel.md`,
-`canonical-loop-prd.md`).
+Companion docs: [AGENTS.md](AGENTS.md) (the invariants/rules),
+[docs/ari-kernel.md](docs/ari-kernel.md) (current security-kernel behavior),
+[docs/provider-auth.md](docs/provider-auth.md) (credential storage), and
+[docs/mcp-consuming-servers.md](docs/mcp-consuming-servers.md) (MCP trust and
+execution). `canonical-agent-design.md` and `canonical-loop-prd.md` are
+historical design/ship records; their headers point back to current owners.
 
 Paths below were verified against the tree (the generated map's importer counts
 + the live boot path), not inferred from names.
@@ -39,8 +42,12 @@ Paths below were verified against the tree (the generated map's importer counts
 | **Provider adapters + routing** | `src/providers/registry.ts`, `src/providers/provider-ids.ts` | Per-turn transport adapters: `src/canonical-loop/adapters/`. Credential resolution: `src/auth/resolve.ts`. Per-provider history prep: `src/agent-request/prepare-request.ts`. |
 | **Tool defs + registry + dispatch** | `src/tool-execution/` (entry `execute-tool.ts`) | Registry build: `src/tools/registry-build.ts`; tool impls under `src/tools/`. Public import path `src/tool-executor.ts` is a **re-export shim** of `tool-execution/`. |
 | **Tool governance / policy** | `src/tool-policy/tool-policies.data.ts` + `evaluator.ts` | Default-deny; one row per tool. |
+| **Tool approvals** | `src/tool-execution/require-approval.ts`, `src/approval-manager.ts`, `src/approval-decision.ts` | Live tool-call gate for risky actions; emits `approval_requested` and is rendered by `public/js/chat-stream-store.js`. This is separate from retired issue-level approval fields. |
 | **Security kernel (ARI)** | `src/ari-kernel/` (TS gateway) over `packages/arikernel/*` | The kernel is **TypeScript** (`@arikernel/core`, `policy-engine`, `taint-tracker`, `audit-log`, `tool-executors`, `runtime`), vendored as workspace packages — not a native binary. |
-| **Sandbox / isolation** | `src/sandbox/` (`index.ts`, `server-confine.ts`) | OS sandbox modes: seatbelt / bwrap / docker. |
+| **Sandbox / isolation** | `src/sandbox/` (`index.ts`, `server-confine.ts`) | Selected default is `guarded` (`src/config-schema.ts`); macOS/Linux use a credential-denying kernel cage with network retained. Unsupported hosts visibly fall back to unconfined `host`; unattended shell paths require acknowledgement. Stricter modes: seatbelt / bwrap / docker. |
+| **Browser identity** | `src/browser/runtime.ts`, `src/browser/instance.ts` | `browserMode` defaults to per-session `isolated`; `continuity` and live-context `advanced-shared` are explicit choices (`src/config-schema.ts`, `src/settings-schema.ts`). All modes use the agent-owned Chrome profile, never the user's default profile. |
+| **Provider authentication** | `src/auth/`, `docs/provider-auth.md` | LAX-owned credentials are path-bound encrypted `lax-auth-v2` envelopes. External CLI stores keep their native formats; the default Codex bridge creates a temporary plaintext mirror only when needed and removes it after the subprocess. |
+| **MCP client trust** | `src/mcp-client/`, `docs/mcp-consuming-servers.md` | Config defaults to `sandboxed`; unsupported confinement blocks. Trusted host execution requires exact local approval or a valid manifest from a configured signed publisher, with integrity pinning retained as fallback defense. |
 | **Exfil / threat engine** | `src/threat/` (`threat-engine.ts`, `session-threat-manager.ts`) | Per-session temporal threat scoring + data-flow exfil blocks (`scoring.ts`), tool-chain risk (`tool-chain.ts`), trust ledger, canaries, hash-chained audit trail. Classifications feed the policy gate. |
 | **Memory** | `src/memory/` | `index-core.ts` = `MemoryIndex` (chunking, embeddings, hybrid FTS+vector search); `manager.ts` = `MemoryManager` (curation/extraction/recall). Embedding backends: `src/embedding-providers/`. |
 | **Async work / delegation** | `src/ops/` | The op model (`op-store.ts`, `types.ts`) — lanes, context packs, durable `operations.json`. Among the most cross-referenced subsystems in the repo. |

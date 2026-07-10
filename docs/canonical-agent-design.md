@@ -1,8 +1,10 @@
 # Canonical Agent System — Design
 
-Reference doc for the canonical agent layer. Captures the six load-bearing
-decisions made before the implementation phase started, and the build order
-that follows from them. Don't change the decisions here without raising it.
+**Status:** Historical design record. The six decisions and build order capture
+the pre-implementation plan. Current runtime ownership lives in
+[ARCHITECTURE.md](../ARCHITECTURE.md); security-sensitive tool approvals live in
+`src/tool-execution/require-approval.ts`, `src/approval-manager.ts`, and
+`src/approval-decision.ts`.
 
 ---
 
@@ -151,17 +153,19 @@ split diff (L3 below).
 
 ### Q5: Approvals
 
-**Delete the dead code. Don't ship approvals as a feature yet.**
+**Superseded 2026-07-10 — owner: Runtime Security / Tool Execution.** The
+issue-level approval fields discussed below were dead and remain retired. The
+recommended tool-call permission model was subsequently implemented and is a
+live production security boundary.
 
-`Issue.needsApproval`, `approvalType`, `approvalData` have no producers and
-no consumers today. They contradict the "self-running businesses" vision —
-approval gates are friction by default. Remove the fields, the UI states
-that render them, and the CEO prompt section that references them.
+At the time of this decision, `Issue.needsApproval`, `approvalType`, and
+`approvalData` had no producers or consumers. That issue-workflow cleanup is
+historical and must not be read as removing the current tool-call gate.
 
-When approvals ARE needed later, they belong as **tool-call permissions**
-(declarative `requiresApproval: (args) => boolean` on `ToolDefinition`),
-NOT issue-level workflows. The Handler's `pauseSignal` primitive already
-exists for the runtime pause/wait pattern.
+Approvals belong to **tool-call permissions**, not issue-level workflows. The
+current gate derives approval from policy/risk in
+`src/tool-execution/require-approval.ts`, coordinates decisions through
+`src/approval-manager.ts`, and emits `approval_requested` to the chat UI.
 
 Real approval cases all map to tool-call-level concerns:
 
@@ -248,8 +252,9 @@ that mutates the roster store (Q4). Org chart that routes delegation.
 
 ### L7 — Cross-cutting
 
-Heartbeats invoke through canonical. Budgets enforced at invoke time. Tool-call
-permissions for approvals (Q5).
+Historical plan: heartbeats invoke through canonical; budgets are enforced at
+invoke time. The Q5 tool-call approval portion is shipped and owned by the
+tool-execution pipeline linked above.
 
 ### L8 — Deletion
 

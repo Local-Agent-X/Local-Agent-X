@@ -59,6 +59,13 @@ export const configSchema = z.object({
    *  migration upgrade installs still on the OLD "host" default exactly once,
    *  without re-flipping a user who later picks "host" deliberately. */
   sandboxModeMigrated: z.boolean().default(false),
+  /** Permit shell-capability tools in UNATTENDED runs (cron/delegated/api)
+   *  when the EFFECTIVE sandbox mode is "host" — i.e. no kernel cage is usable
+   *  on this machine, so shell would run fully unconfined with nobody
+   *  watching. Default false: the approval phase blocks such calls with a
+   *  clear reason until the user explicitly acknowledges the risk by flipping
+   *  this on. Interactive ("local") runs are unaffected. */
+  allowUnconfinedAutonomousShell: z.boolean().default(false),
 
   /** Whole-server kernel confinement (phase B). When true, the entry point
    *  re-execs the ENTIRE server under seatbelt (macOS) / bwrap (Linux):

@@ -51,6 +51,11 @@ export interface LAXConfig {
   autoUpdate: boolean;
   logLevel: "basic" | "detailed" | "full-audit";
   sandboxMode: SandboxMode;
+  /** Permit shell tools in unattended runs (cron/delegated/api) on hosts where
+   *  no kernel cage is usable (effective sandbox mode "host"). DEFAULT OFF —
+   *  the approval phase blocks unattended shell on unconfined hosts until the
+   *  user explicitly opts in. Interactive runs unaffected. */
+  allowUnconfinedAutonomousShell: boolean;
   /** Whole-server kernel confinement (seatbelt/bwrap re-exec at boot).
    *  Off by default; see sandbox/server-confine.ts. */
   serverSandbox: boolean;

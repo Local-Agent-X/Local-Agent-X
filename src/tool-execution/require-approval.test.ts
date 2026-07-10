@@ -1,4 +1,20 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
+
+// The unattended-shell-on-unconfined-host gate reads the effective sandbox
+// mode and the allowUnconfinedAutonomousShell config flag. Both are mocked so
+// the tests are deterministic (the real getSandboxMode probes the host kernel,
+// and the real config falls back to reading ~/.lax/config.json from disk).
+const gateState = vi.hoisted(() => ({ mode: "guarded", allowUnconfined: false }));
+vi.mock("../sandbox/index.js", () => ({ getSandboxMode: () => gateState.mode }));
+vi.mock("../config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config.js")>();
+  return {
+    ...actual,
+    getRuntimeConfig: () =>
+      ({ allowUnconfinedAutonomousShell: gateState.allowUnconfined }) as unknown as ReturnType<typeof actual.getRuntimeConfig>,
+  };
+});
+
 import { requireApprovalPhase } from "./require-approval.js";
 import type { ToolCallContext, CallContext } from "./context.js";
 import { setSessionProfile, clearSessionProfile, inheritSessionProfile } from "../autonomy/profile-store.js";
@@ -354,6 +370,83 @@ describe("requireApprovalPhase — user decline is 'declined', not 'blocked'", (
     const unattended = makeCtx({ name: "http_request", sessionId: pinned("Normal"), callContext: "cron" });
     await requireApprovalPhase(unattended);
     expect(unattended.result?.status).toBe("blocked");
+  });
+});
+
+describe("requireApprovalPhase — unattended shell on an unconfined host", () => {
+  afterEach(() => {
+    gateState.mode = "guarded";
+    gateState.allowUnconfined = false;
+  });
+
+  it("blocks unattended bash when the effective mode is host and the flag is false — even under Autonomous", async () => {
+    gateState.mode = "host";
+    const s = pinned("Autonomous"); // a full profile grant must NOT override the gate
+    const ctx = makeCtx({ name: "bash", sessionId: s, callContext: "cron", args: { command: "echo hi" } });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.allowed).toBe(false);
+    expect(ctx.result?.status).toBe("blocked");
+    expect(ctx.result?.isError).toBe(true);
+    expect(ctx.result?.metadata?.layer).toBe("approval");
+    expect(String(ctx.result?.content)).toContain("unattended shell blocked");
+    expect(String(ctx.result?.content)).toContain("no sandbox available on this host");
+    expect(String(ctx.result?.content)).toContain("allowUnconfinedAutonomousShell");
+  });
+
+  it("gates shell synonyms by capability class, not tool name (process_start)", async () => {
+    gateState.mode = "host";
+    const s = pinned("Autonomous");
+    const ctx = makeCtx({ name: "process_start", sessionId: s, callContext: "delegated", args: { command: "node server.js" } });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.result?.status).toBe("blocked");
+    expect(String(ctx.result?.content)).toContain("allowUnconfinedAutonomousShell");
+  });
+
+  it("flag true passes through to the normal profile decision", async () => {
+    gateState.mode = "host";
+    gateState.allowUnconfined = true;
+    const s = pinned("Autonomous"); // shell=allow → runs
+    const ctx = makeCtx({ name: "bash", sessionId: s, callContext: "cron", args: { command: "echo hi" } });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
+    expect(ctx.allowed).toBe(true);
+  });
+
+  it("interactive local bash on a host-mode box is unchanged", async () => {
+    gateState.mode = "host";
+    const s = pinned("Power"); // shell=allow, echo is not irreversible → silent run
+    const events: ServerEvent[] = [];
+    const ctx = makeCtx({
+      name: "bash", sessionId: s, callContext: "local",
+      args: { command: "echo hi" }, onEvent: (e) => events.push(e),
+    });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
+    expect(events.some((e) => e.type === "approval_requested")).toBe(false);
+  });
+
+  it("unattended bash under guarded mode is unchanged (the cage is the mitigation)", async () => {
+    gateState.mode = "guarded";
+    const s = pinned("Autonomous");
+    const ctx = makeCtx({ name: "bash", sessionId: s, callContext: "cron", args: { command: "echo hi" } });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
+  });
+
+  it("non-shell tools are untouched by the gate on an unconfined host", async () => {
+    gateState.mode = "host";
+    const s = pinned("Normal"); // read is allow-tier
+    const ctx = makeCtx({ name: "read", sessionId: s, callContext: "cron" });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
   });
 });
 

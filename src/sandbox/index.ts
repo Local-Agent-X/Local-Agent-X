@@ -177,6 +177,21 @@ export function execInSandbox(
 // Runtime override — set via API, persists in memory for this process
 let runtimeMode: SandboxMode | null = null;
 
+// Loud guarded→host degradation. Explicit docker/seatbelt/bwrap fallbacks have
+// always warned, but the guarded ones were SILENT — a host with no usable
+// kernel cage quietly ran every shell command unconfined while the config said
+// "guarded". getSandboxMode is called on hot paths (every bash spawn), so the
+// WARNING is memoized per source, not the mode resolution (the underlying
+// isGuardedUsable probe is already memoized).
+const warnedGuardedFallback = new Set<string>();
+function guardedFallbackToHost(source: string): SandboxMode {
+  if (!warnedGuardedFallback.has(source)) {
+    warnedGuardedFallback.add(source);
+    logger.warn(`[sandbox] ${source} requests "guarded" but no kernel cage backend is usable on this host (needs macOS sandbox-exec, or Linux with bwrap + unprivileged user namespaces). Falling back to host — shell commands run UNCONFINED.`);
+  }
+  return "host";
+}
+
 /**
  * Get the current sandbox configuration.
  * Priority: runtime override > env var > auto-detect.
@@ -188,7 +203,7 @@ export function getSandboxMode(): SandboxMode {
       logger.warn("[sandbox] Runtime mode is docker but Docker not available. Falling back to host.");
       return "host";
     }
-    if (runtimeMode === "guarded" && !isGuardedUsable()) return "host";
+    if (runtimeMode === "guarded" && !isGuardedUsable()) return guardedFallbackToHost("Runtime override");
     return runtimeMode;
   }
   const envMode = (process.env.LAX_SANDBOX ?? "").toLowerCase();
@@ -218,7 +233,7 @@ export function getSandboxMode(): SandboxMode {
     return "bwrap";
   }
   if (envMode === "guarded") {
-    return isGuardedUsable() ? "guarded" : "host";
+    return isGuardedUsable() ? "guarded" : guardedFallbackToHost("LAX_SANDBOX=guarded");
   }
   // Persisted user setting from settings UI (~/.lax/config.json).
   try {
@@ -244,14 +259,14 @@ export function getSandboxMode(): SandboxMode {
       }
       return "bwrap";
     }
-    if (cfgMode === "guarded") return isGuardedUsable() ? "guarded" : "host";
+    if (cfgMode === "guarded") return isGuardedUsable() ? "guarded" : guardedFallbackToHost("config.sandboxMode=guarded");
     if (cfgMode === "host") return "host";
   } catch { /* config not initialized yet (early boot) — fall through */ }
   // Default: the guarded kernel cage where a backend is usable (macOS/Linux),
   // else host. Guarded keeps the shell fully usable (network + dev tools) while
   // kernel-denying credential reads, so it's a safe default — unlike docker,
   // which is network-less and opt-in. host is the explicit no-cage escape hatch.
-  return isGuardedUsable() ? "guarded" : "host";
+  return isGuardedUsable() ? "guarded" : guardedFallbackToHost("Default mode");
 }
 
 /**

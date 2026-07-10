@@ -16,10 +16,46 @@ import {
   applyIrreversibleFloor,
   destructiveOperationReason,
 } from "../approval-manager.js";
+import { getRuntimeConfig } from "../config.js";
+import { getSandboxMode } from "../sandbox/index.js";
+import { hasCapability } from "../tool-registry.js";
 import type { Phase } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
 
+// Unattended shell on an UNCONFINED host. When no kernel cage is usable the
+// effective sandbox mode is "host", so a cron/delegated/api run would execute
+// arbitrary shell with zero confinement and nobody watching — a strictly
+// weaker posture than the same profile on a caged host. Blocked regardless of
+// profile tier until the user explicitly opts in via the config flag.
+// Interactive ("local") runs are untouched: a human is present to see and
+// stop what the shell does. Default false comes from the config schema.
+function unconfinedAutonomousShellPermitted(): boolean {
+  try {
+    return getRuntimeConfig().allowUnconfinedAutonomousShell === true;
+  } catch {
+    return false; // config not initialized (early boot) — keep the default deny
+  }
+}
+
 export const requireApprovalPhase: Phase = async (ctx) => {
+  if (
+    ctx.callContext !== "local" &&
+    hasCapability(ctx.tc.name, "shell") &&
+    getSandboxMode() === "host" &&
+    !unconfinedAutonomousShellPermitted()
+  ) {
+    const result: ToolResult = {
+      content:
+        `BLOCKED (unattended): ${ctx.tc.name} — unattended shell blocked: ` +
+        `no sandbox available on this host; set allowUnconfinedAutonomousShell to permit. ` +
+        `No one is watching this ${ctx.callContext} run and shell commands would run unconfined.`,
+      isError: true,
+      status: "blocked",
+      metadata: { layer: "approval", userHint: USER_HINTS.policy },
+    };
+    return terminate(ctx, { rendered: "model", result, allowed: false });
+  }
+
   // An irreversible operation is RECLASSIFIED to the profile's destructive
   // tier and re-decided there — so `bash rm -rf` is decided by the
   // destructive rule (not the coarse shell grant), while a profile that

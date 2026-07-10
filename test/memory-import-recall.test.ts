@@ -119,8 +119,8 @@ describe("postProcess — Wall 2: default session gate keeps imports in scope", 
 
   it("imports survive the gate despite a foreign session_id; native foreign sessions are still dropped", () => {
     const results: MemorySearchResult[] = [
-      // import: source='session' but source_type='import', foreign sid → keep
-      r("session", { source_type: "import", session_id: "conv-old" }, "import/chatgpt/conv-old"),
+      // Explicit import source stays profile-scoped despite its archive session id.
+      r("import", { source_type: "import", session_id: "conv-old" }, "import/chatgpt/conv-old"),
       // native LAX session, foreign sid → drop (same source, NOT an import)
       r("session", { source_type: "agent-x-session", session_id: "other-sess" }, "sessions/other"),
       // forged import metadata on a native path → drop

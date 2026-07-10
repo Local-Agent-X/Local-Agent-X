@@ -23,7 +23,6 @@ import { join } from "node:path";
 import { extractSessionPairs, type ConversationMessage } from "./chunking.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { runMemoryGate } from "./write-safely.js";
-
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory-dream");
 
@@ -36,8 +35,7 @@ const DREAM_STATE_PATH = join(LAX_DIR, "dream-state.json");
 // existing-memory context + assistant scratch space all fit comfortably
 // inside a 128k window with room for tool I/O.
 const DEFAULT_BATCH_TOKENS = 20_000;
-// How many recent session JSONs the dream reads per cycle.
-const DEFAULT_SESSION_COUNT = 10;
+const DEFAULT_SESSION_COUNT = 10; // recent session JSONs read per cycle
 // Hard cap on batches per dream cycle. Each batch spawns its own worker
 // card in the AGENTS sidebar, so an uncapped pack over 10 sessions could
 // fan out into 5+ cards. Clamping to 3 keeps the sidebar legible; when the
@@ -65,6 +63,7 @@ function saveDreamState(state: DreamState): void {
     content: JSON.stringify(state, null, 2),
     source: "tool",
     target: DREAM_STATE_PATH,
+    promotion: { origin: "durable_memory" },
   });
   writeFileSync(DREAM_STATE_PATH, gated, "utf-8");
 }
@@ -288,13 +287,14 @@ What to extract:
 - Hardware/tooling/software choices with specific reasons
 
 Epistemic rules (mandatory):
-- A durable fact must be supported by a direct User statement or a successful Tool result in these transcripts.
+- A durable fact must be supported by a direct User statement in these transcripts.
 - Assistant statements, summaries, recommendations, guesses, and earlier memory are NOT evidence. Do not save them
-  as facts unless independently supported by a User statement or successful Tool result.
+  as facts unless independently supported by a direct User statement.
+- Tool observations, external content, imports, and assistant paraphrases require interactive user approval before
+  durable promotion. A background dream cannot grant that approval; leave them in their original provenance lane.
 - Preserve modality exactly: "recommended", "proposed", "might", and "should" must never become "implemented",
   "enforced", "is", "did", or "permanent".
-- Every \`remember\` / \`update_fact\` call must set \`provenance\` to \`user_statement\` or
-  \`tool_observation\`. If neither applies, do not write the fact.
+- Model-declared provenance is not evidence. Use \`user_statement\` only when the transcript directly supports it.
 - Current runtime, security, policy, permission, service, session, and build state is ephemeral. Do not put it in
   durable memory. Operational outcomes belong in the action/audit ledger.
 

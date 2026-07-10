@@ -67,6 +67,8 @@ export type ApprovalDenyReason = "declined" | "timeout" | "superseded";
 
 export interface ApprovalOutcome {
   approved: boolean;
+  /** Unique canonical approval resolution. Consumers may bind one-shot work to it. */
+  grantId?: string;
   /** Set on every approved:false resolution. */
   reason?: ApprovalDenyReason;
 }
@@ -261,7 +263,7 @@ class ApprovalManager {
     const ekey = exactKey(p.sessionId, p.toolName, p.args);
     if (approved) {
       this.suppressed.delete(ekey);
-      p.resolve({ approved: true });
+      p.resolve({ approved: true, grantId: id });
     } else {
       this.suppressed.set(ekey, { ts: Date.now(), reason: "declined" });
       p.resolve({ approved: false, reason: "declined" });

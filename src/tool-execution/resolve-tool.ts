@@ -34,7 +34,9 @@ const SESSION_SCOPED_TOOLS = new Set([
   // (task-tools.ts).
   "task_create", "task_update", "task_list", "task_get",
   "op_submit", "op_submit_async", "op_wait", "op_status",
-  "memory_search", "search_past_sessions", "memory_save",
+  "memory_search", "search_past_sessions", "memory_save", "remember", "update_fact",
+  "memory_set_user_field", "memory_update_profile",
+  "project_brief_update", "project_create",
   "self_edit",
   "build_app",
   "agent_escalate",

@@ -2,6 +2,7 @@ import type { MemoryIndex } from "../../memory/index.js";
 import type { FactKind } from "../types.js";
 import { displayContent } from "../utils.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
+import { promotionContextFromToolArgs } from "../promotion-gate.js";
 
 // Agent-facing single-fact tools. Sit on top of the Facts DB primitives
 // (rememberFact / updateFact / forgetFact in index-facts-mutate.ts). Each
@@ -128,7 +129,18 @@ export function createFactsTools(memory: MemoryIndex) {
         }
 
         try {
-          const gated = runMemoryGate({ content, source: "tool", target: "memory:retain" });
+          const target = "memory:retain";
+          const gated = runMemoryGate({
+            content,
+            source: "tool",
+            target,
+            promotion: promotionContextFromToolArgs(args, {
+              content,
+              source: "model-tool:remember",
+              target,
+              sessionId: String(args._sessionId || "default"),
+            }),
+          });
           const result = memory.rememberFact(gated, {
             kind,
             confidence,
@@ -201,7 +213,18 @@ export function createFactsTools(memory: MemoryIndex) {
         const confidence = groundedConfidence(provenance, requestedConfidence);
 
         try {
-          const gated = runMemoryGate({ content, source: "tool", target: "memory:retain" });
+          const target = `memory:update:${query}`;
+          const gated = runMemoryGate({
+            content,
+            source: "tool",
+            target,
+            promotion: promotionContextFromToolArgs(args, {
+              content,
+              source: "model-tool:update_fact",
+              target,
+              sessionId: String(args._sessionId || "default"),
+            }),
+          });
           const result = memory.updateFact(query, gated, {
             kind,
             confidence,

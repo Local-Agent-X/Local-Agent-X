@@ -21,6 +21,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { ProjectStore, type Project } from "../agent-store/index.js";
 import { seedProjectRosters } from "../project-rosters.js";
 import { readProjectBrief, updateProjectBrief } from "../memory/project-brief.js";
+import { promotionContextFromToolArgs } from "../memory/promotion-gate.js";
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
@@ -126,9 +127,19 @@ export function createProjectTools(): ToolDefinition[] {
           // Seed the brief from the summary. Best-effort: a failed brief write
           // must not fail project creation (the project already exists).
           const summary = args.summary ? String(args.summary).trim() : "";
+          let briefSeeded = false;
           if (summary) {
             try {
-              await updateProjectBrief(project.id, `## Overview\n${summary}`, { title: project.name });
+              await updateProjectBrief(project.id, `## Overview\n${summary}`, {
+                title: project.name,
+                promotion: promotionContextFromToolArgs(args, {
+                  content: summary,
+                  source: "model-tool:project_create",
+                  target: "memory:project-brief",
+                  sessionId: String(args._sessionId || "default"),
+                }),
+              });
+              briefSeeded = true;
             } catch (e) {
               // swallow — project is created; brief can be filled in later
               void e;
@@ -139,7 +150,7 @@ export function createProjectTools(): ToolDefinition[] {
           const rosterLine = agentIds.length > 0
             ? ` Seeded roster: ${agentIds.length} agent(s).`
             : ` Roster is empty; call project_add_agent to populate it.`;
-          const briefLine = summary ? ` Brief started from your summary.` : "";
+          const briefLine = briefSeeded ? ` Brief started from your summary.` : "";
           // Drive the onboarding interview: the model runs it in its normal
           // conversation loop, recording answers via project_brief_update. The
           // brief is the project's shared source of truth for every agent.
@@ -254,7 +265,15 @@ export function createProjectTools(): ToolDefinition[] {
         const project = resolveProject(ref);
         if (!project) return err(`Project not found: ${ref}. Use project_list to see available projects.`);
         try {
-          await updateProjectBrief(project.id, content, { title: project.name });
+          await updateProjectBrief(project.id, content, {
+            title: project.name,
+            promotion: promotionContextFromToolArgs(args, {
+              content,
+              source: "model-tool:project_brief_update",
+              target: "memory:project-brief",
+              sessionId: String(args._sessionId || "default"),
+            }),
+          });
           return ok(`Updated brief for '${project.name}'.`);
         } catch (e) {
           return err(`Failed to update brief: ${String(e)}`);

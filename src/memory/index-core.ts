@@ -6,6 +6,7 @@ import type {
 } from "./types.js";
 import { DEFAULT_MEMORY_CONFIG } from "./types.js";
 import { runMemoryGate, type MemoryWriteSource } from "./write-safely.js";
+import type { MemoryPromotionContext } from "./promotion-gate.js";
 import { openDatabaseSafe } from "./index-db.js";
 import * as Schema from "./index-schema.js";
 import * as Files from "./index-files.js";
@@ -90,7 +91,12 @@ export class MemoryIndex extends MemoryFactsBase {
    *
    * Format: `[sessionId] [HH:MM:SS] text` (sessionId omitted if undefined).
    */
-  appendDailyLog(text: string, sessionId?: string, source: MemoryWriteSource = "tool"): void {
+  appendDailyLog(
+    text: string,
+    sessionId?: string,
+    source: MemoryWriteSource = "tool",
+    promotion?: MemoryPromotionContext,
+  ): void {
     const logPath = this.getDailyLogPath();
     // Locale-independent HH:MM:SS. toLocaleTimeString() on ja/zh/ko locales
     // yields e.g. "午後3:42:05" — the leading non-digit broke the reader's
@@ -105,7 +111,7 @@ export class MemoryIndex extends MemoryFactsBase {
     // sanitize step trims edges, so gating the assembled line ate the `\n`
     // separators — entries concatenated onto one line and the line-anchored
     // session filter (context.ts) could never match past the first entry.
-    const gated = runMemoryGate({ content: text, source, target: logPath });
+    const gated = runMemoryGate({ content: text, source, target: logPath, promotion });
     appendFileSync(logPath, `\n${sidTag}[${timestamp}] ${gated}\n`, "utf-8");
     this.dirty = true;
     this.reindexThroughUniversal("daily-log").catch(() => {});

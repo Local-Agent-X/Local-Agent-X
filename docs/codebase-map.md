@@ -22,8 +22,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/security/` | 65 | 27 | XL |  |
 | `src/tools/` | 55 | 141 | XL |  |
 | `src/canonical-loop/` | 38 | 132 | XL |  |
+| `src/memory/` | 38 | 109 | XL |  |
 | `src/providers/` | 38 | 18 | L |  |
-| `src/memory/` | 37 | 108 | XL |  |
 | `src/classifiers/` | 30 | 13 | L |  |
 | `src/workspace/` | 26 | 2 | M |  |
 | `src/agency/` | 25 | 16 | L |  |
@@ -78,6 +78,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/cross-session-learning/` | 1 | 7 | M |  |
 | `src/errors/` | 1 | 2 | S |  |
 | `src/manifest-generator/` | 1 | 8 | M |  |
+| `src/tool-execution/` | 1 | 20 | XL |  |
 | `src/types/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)

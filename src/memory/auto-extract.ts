@@ -6,6 +6,7 @@ import { extractIdentityFactsWithLLM, type IdentityFacts } from "../classifiers/
 import {
   writeMemorySafely,
   appendToDailyLogSafely,
+  runMemoryGate,
   MemoryWriteBlocked,
 } from "./write-safely.js";
 import { stripHarnessScaffolding } from "../sanitize.js";
@@ -83,6 +84,7 @@ export async function autoExtractAndSave(
           source: "auto-extract",
           target: identityPath,
           mode: "overwrite",
+          promotion: { origin: "user_statement", sessionId },
         });
         memory.markDirty();
         logger.info(`[memory] Auto-updated agent name to: ${facts.agent_name}`);
@@ -112,6 +114,7 @@ export async function autoExtractAndSave(
           source: "auto-extract",
           target: userPath,
           mode: "overwrite",
+          promotion: { origin: "user_statement", sessionId },
         });
         memory.markDirty();
         logger.info(`[memory] Auto-saved user name: ${facts.user_name}`);
@@ -250,7 +253,13 @@ async function saveFactSmart(
 ): Promise<boolean> {
   const bullet = `- ${KIND_LETTER[kind]}(c=${confidence.toFixed(2)}) ${content.trim()}`;
   try {
-    await memory.retainSmart(bullet, "auto-extract");
+    const gated = runMemoryGate({
+      content: bullet,
+      source: "auto-extract",
+      target: "memory:retain",
+      promotion: { origin: "user_statement" },
+    });
+    await memory.retainSmart(gated, "agent-tool:user-statement");
     return true;
   } catch (e) {
     logger.warn(`[memory] ${kind} write failed: ${(e as Error).message}`);
@@ -260,7 +269,13 @@ async function saveFactSmart(
 
 function safeAppendDaily(memory: MemoryIndex, content: string, sessionId?: string): void {
   try {
-    appendToDailyLogSafely({ memory, source: "auto-extract", content, sessionId });
+    appendToDailyLogSafely({
+      memory,
+      source: "auto-extract",
+      content,
+      sessionId,
+      promotion: { origin: "user_statement", sessionId },
+    });
   } catch (e) {
     if (e instanceof MemoryWriteBlocked) {
       logger.warn(`[memory] Auto-extract daily-log entry blocked: ${e.reason}`);

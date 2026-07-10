@@ -18,8 +18,17 @@ import {
 } from "../approval-manager.js";
 import type { Phase } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
+import {
+  describeMemoryPromotionRequest,
+  stampMemoryPromotionApproval,
+} from "../memory/promotion-gate.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
+  const promotion = describeMemoryPromotionRequest(
+    ctx.tc.name,
+    ctx.args,
+    ctx.sessionId || "default",
+  );
   // An irreversible operation is RECLASSIFIED to the profile's destructive
   // tier and re-decided there — so `bash rm -rf` is decided by the
   // destructive rule (not the coarse shell grant), while a profile that
@@ -49,7 +58,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
 
-  const policyRequiresPrompt = !!ctx.policyApprovalReason;
+  const policyRequiresPrompt = !!ctx.policyApprovalReason || !!promotion;
   if (!policyRequiresPrompt && !decisionRequiresPrompt(decision)) return CONTINUE;
 
   // Unattended run: no human to prompt. The profile says "ask" and nothing
@@ -59,7 +68,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     const result: ToolResult = {
       content:
         `BLOCKED (unattended): ${ctx.tc.name} needs human approval` +
-        `${ctx.policyApprovalReason ? ` because ${ctx.policyApprovalReason}` : " under the active autonomy profile"}, ` +
+        `${promotion ? " because risky content cannot become durable memory without explicit user approval" : ctx.policyApprovalReason ? ` because ${ctx.policyApprovalReason}` : " under the active autonomy profile"}, ` +
         `but no one is watching this ${ctx.callContext} run. ` +
         `Run this under the Autonomous profile (or pin a per-job profile) to allow it.`,
       isError: true,
@@ -68,22 +77,39 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     };
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
-  if (!ctx.onEvent) return CONTINUE;
+  if (!ctx.onEvent) {
+    if (!promotion) return CONTINUE;
+    const result: ToolResult = {
+      content: `BLOCKED: ${ctx.tc.name} cannot promote model-originated content without an interactive approval channel.`,
+      isError: true,
+      status: "blocked",
+      metadata: { layer: "approval", userHint: USER_HINTS.policy },
+    };
+    return terminate(ctx, { rendered: "model", result, allowed: false });
+  }
 
   const outcome = await getApprovalManager().requestApprovalDetailed({
     toolName: ctx.tc.name,
     toolCallId: ctx.tc.id,
     sessionId: ctx.sessionId || "default",
-    context: destructive
+    context: promotion
+      ? `Promote this exact model-originated content to durable memory? Source=${promotion.source}; target=${promotion.target}; session=${promotion.sessionId}.`
+      : destructive
       ? `⚠ Irreversible operation (${destructive}) — confirm before running. ${ctx.approvalContext}`
       : ctx.policyApprovalReason
         ? `Policy approval required: ${ctx.policyApprovalReason}. ${ctx.approvalContext}`
         : ctx.approvalContext,
-    args: ctx.args,
+    args: promotion ? { ...promotion } : ctx.args,
     alwaysAsk: !!destructive || policyRequiresPrompt,
     emit: ctx.onEvent,
   });
-  if (outcome.approved) return CONTINUE;
+  if (outcome.approved) {
+    if (promotion) {
+      if (!outcome.grantId) throw new Error("approved memory promotion missing canonical grant id");
+      stampMemoryPromotionApproval(ctx.args, promotion, outcome.grantId);
+    }
+    return CONTINUE;
+  }
 
   // The denial reason decides the status — only an actual human "no" is
   // `declined`. A timed-out or torn-down card was never answered, and a card

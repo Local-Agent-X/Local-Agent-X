@@ -33,6 +33,7 @@ export function writeStored(stored: StoredCompression): void {
     content: JSON.stringify(stored, null, 2),
     source: "tool",
     target,
+    promotion: { origin: "unknown", source: "session-compression" },
   });
   writeFileSync(target, gated, "utf-8");
 }
@@ -42,6 +43,7 @@ export function writeStoredAtPath(filePath: string, stored: StoredCompression): 
     content: JSON.stringify(stored, null, 2),
     source: "tool",
     target: filePath,
+    promotion: { origin: "durable_memory" },
   });
   writeFileSync(filePath, gated, "utf-8");
 }

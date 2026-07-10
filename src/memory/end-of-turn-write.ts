@@ -265,6 +265,11 @@ export async function applyWrite(d: WriteDecisionPayload, memory: MemoryIndex): 
       source: "eot",
       target: filePath,
       mode: "overwrite",
+      promotion: {
+        origin: "assistant",
+        source: "end-of-turn-classifier",
+        evidenceContent: d.content,
+      },
     });
     return { ok: true };
   } catch (e) {

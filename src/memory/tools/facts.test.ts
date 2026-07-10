@@ -8,6 +8,10 @@
  * does NOT call rememberFact. A single compact one-line fact still persists.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+vi.mock("../promotion-gate.js", async () => {
+  const actual = await vi.importActual<typeof import("../promotion-gate.js")>("../promotion-gate.js");
+  return { ...actual, promotionContextFromToolArgs: () => ({ origin: "user_statement" }) };
+});
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -28,6 +28,10 @@ import { createLogger } from "../logger.js";
 import { atomicWriteFileSync } from "./utils.js";
 import { PERSONALITY_FILES } from "./personality.js";
 import type { MemoryIndex } from "./index-core.js";
+import {
+  assertMemoryPromotionAllowed,
+  type MemoryPromotionContext,
+} from "./promotion-gate.js";
 
 const logger = createLogger("memory.write-safely");
 
@@ -56,6 +60,7 @@ export interface MemoryWriteParams {
   /** Block when injection score ≥ threshold. Default 0.3 (strict). */
   threshold?: number;
   mode?: "append" | "overwrite";
+  promotion?: MemoryPromotionContext;
 }
 
 export class MemoryWriteBlocked extends Error {
@@ -118,6 +123,7 @@ export function writeMemorySafely(params: MemoryWriteParams): void {
     source: params.source,
     target: params.target,
     threshold: params.threshold,
+    promotion: params.promotion,
   });
   const mode = params.mode ?? "overwrite";
   if (mode === "append") {
@@ -184,14 +190,16 @@ export function appendToDailyLogSafely(opts: {
   source: MemoryWriteSource;
   sessionId?: string;
   threshold?: number;
+  promotion?: MemoryPromotionContext;
 }): void {
   const sanitized = applyGateChain({
     content: opts.content,
     source: opts.source,
     target: opts.memory.getDailyLogPath(),
     threshold: opts.threshold,
+    promotion: opts.promotion,
   });
-  opts.memory.appendDailyLog(sanitized, opts.sessionId);
+  opts.memory.appendDailyLog(sanitized, opts.sessionId, opts.source, { origin: "durable_memory" });
   noteWrite(opts.source);
 }
 
@@ -204,6 +212,7 @@ export function runMemoryGate(opts: {
   source: MemoryWriteSource;
   target: string;
   threshold?: number;
+  promotion?: MemoryPromotionContext;
 }): string {
   return applyGateChain(opts);
 }
@@ -213,9 +222,20 @@ interface GateInput {
   source: MemoryWriteSource;
   target: string;
   threshold?: number;
+  promotion?: MemoryPromotionContext;
 }
 
 function applyGateChain(input: GateInput): string {
+  try {
+    assertMemoryPromotionAllowed(input.content, input.target, input.promotion);
+  } catch (e) {
+    throw new MemoryWriteBlocked({
+      reason: (e as Error).message,
+      injectionScore: 0,
+      source: input.source,
+      target: input.target,
+    });
+  }
   const threshold = input.threshold ?? DEFAULT_THRESHOLD;
   const normalized = normalizeHomoglyphs(stripControlChars(input.content));
 

@@ -10,7 +10,11 @@
  * a load-time const), so the store + brief modules are imported dynamically
  * after the env is pointed at a temp dir.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+vi.mock("../memory/promotion-gate.js", async () => {
+  const actual = await vi.importActual<typeof import("../memory/promotion-gate.js")>("../memory/promotion-gate.js");
+  return { ...actual, promotionContextFromToolArgs: () => ({ origin: "user_statement" }) };
+});
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

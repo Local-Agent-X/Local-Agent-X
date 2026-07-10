@@ -26,6 +26,7 @@ import { writeMemorySafely } from "./write-safely.js";
 import { dedupeProfileMarkdown } from "./personality.js";
 import { stripHtmlComments } from "../sanitize.js";
 import { createLogger } from "../logger.js";
+import type { MemoryPromotionContext } from "./promotion-gate.js";
 
 const logger = createLogger("memory.project-brief");
 
@@ -96,6 +97,7 @@ function withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T>
 
 export interface UpdateBriefOpts {
   memDir?: string;
+  promotion?: MemoryPromotionContext;
   /** Project title, used as the brief's top-level `#` heading the first time
    *  the doc is written. The dedupe only collapses repeated `##` sections that
    *  live under a top-level `#`, so without a root heading a re-recorded
@@ -134,7 +136,13 @@ export async function updateProjectBrief(
 
     const dir = dirname(path);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeMemorySafely({ content: merged, source: "tool", target: path, mode: "overwrite" });
+    writeMemorySafely({
+      content: merged,
+      source: "tool",
+      target: path,
+      mode: "overwrite",
+      promotion: opts.promotion,
+    });
     return merged;
   });
 }

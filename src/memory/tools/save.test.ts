@@ -8,7 +8,11 @@
  * Fix: stray args (anything but content/_sessionId) return a non-terminal
  * retry hint pointing at `remember`, and do NOT touch the daily log.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+vi.mock("../promotion-gate.js", async () => {
+  const actual = await vi.importActual<typeof import("../promotion-gate.js")>("../promotion-gate.js");
+  return { ...actual, promotionContextFromToolArgs: () => ({ origin: "user_statement" }) };
+});
 import { mkdtempSync, rmSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

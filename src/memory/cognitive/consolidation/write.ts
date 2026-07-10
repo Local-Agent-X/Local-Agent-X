@@ -35,11 +35,11 @@ export function updateAllEntityPages(grouped: Map<string, FactEntry[]>): number 
 
     if (existing) {
       const block = `\n\n### Consolidated ${todayDateStr()}\n${additions}\n`;
-      const gated = runMemoryGate({ content: block, source: "tool", target: entityPath });
+      const gated = runMemoryGate({ content: block, source: "tool", target: entityPath, promotion: { origin: "durable_memory" } });
       appendFileSync(entityPath, gated, "utf-8");
     } else {
       const header = `# ${displayName}\n\n*Created: ${todayDateStr()}*\n\n### Facts\n${additions}\n`;
-      const gated = runMemoryGate({ content: header, source: "tool", target: entityPath });
+      const gated = runMemoryGate({ content: header, source: "tool", target: entityPath, promotion: { origin: "durable_memory" } });
       writeFileSync(entityPath, gated, "utf-8");
     }
 
@@ -60,4 +60,3 @@ export function updateAllEntityPages(grouped: Map<string, FactEntry[]>): number 
   }
   return updated;
 }
-

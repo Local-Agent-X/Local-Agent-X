@@ -16,6 +16,7 @@
  */
 import type { MemoryIndex } from "./index.js";
 import { dispatch } from "../llm-dispatch.js";
+import { runMemoryGate } from "./write-safely.js";
 
 export interface ExtractionOptions {
   lookbackHours?: number;       // default 24
@@ -123,7 +124,14 @@ export async function runExtraction(
 
       // Ingest through retainSmart so the resolver deduplicates + updates
       const sourceFile = `consolidation:${sessionPath}`;
-      const { facts, decisions } = await memory.retainSmart(extractedText, sourceFile, 0, {
+      const origin = chunks.every((chunk) => chunk.source === "import") ? "import" : "unknown";
+      const gated = runMemoryGate({
+        content: extractedText,
+        source: "tool",
+        target: "memory:retain",
+        promotion: { origin, source: sourceFile },
+      });
+      const { facts, decisions } = await memory.retainSmart(gated, sourceFile, 0, {
         resolverOpts: { provider: opts.provider, model: opts.model },
       });
 
@@ -211,4 +219,3 @@ ${transcript}
 
 Facts (output only the list, nothing else):`;
 }
-

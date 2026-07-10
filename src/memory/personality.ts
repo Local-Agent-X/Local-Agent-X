@@ -94,6 +94,7 @@ export function ensurePersonalityFiles(memDir: string): void {
         source: "personality",
         target: filePath,
         mode: "overwrite",
+        promotion: { origin: "durable_memory" },
       });
     }
   }

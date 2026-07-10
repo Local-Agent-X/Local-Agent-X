@@ -209,6 +209,7 @@ export class MemoryManager {
           source: "auto-extract",
           content: `User: ${userSnippet}`,
           sessionId: input.sessionId,
+          promotion: { origin: "user_statement", sessionId: input.sessionId },
         });
       }
     } catch (e) {

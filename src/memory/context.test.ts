@@ -460,10 +460,10 @@ describe("daily-log session tag is locale-independent (CM-6)", () => {
       .spyOn(Date.prototype, "toLocaleTimeString")
       .mockReturnValue("午後3:42:05");
     try {
-      memory.appendDailyLog("User: alpha line from session A", "sess-a");
-      memory.appendDailyLog("User: bravo line from session B", "sess-b");
-      memory.appendDailyLog("User: legacy untagged transcript\nlegacy continuation secret");
-      memory.appendDailyLog("Background sync completed");
+      memory.appendDailyLog("User: alpha line from session A", "sess-a", "tool", { origin: "user_statement" });
+      memory.appendDailyLog("User: bravo line from session B", "sess-b", "tool", { origin: "user_statement" });
+      memory.appendDailyLog("User: legacy untagged transcript\nlegacy continuation secret", undefined, "tool", { origin: "durable_memory" });
+      memory.appendDailyLog("Background sync completed", undefined, "tool", { origin: "durable_memory" });
 
       // Written tag must be a locale-independent, digit-leading HH:MM:SS.
       const raw = readFileSync(memory.getDailyLogPath(), "utf-8");
@@ -487,7 +487,9 @@ describe("daily-log session tag is locale-independent (CM-6)", () => {
 describe("<project_brief> injection", () => {
   it("injects the active project's brief when projectId is set", async () => {
     const pid = "proj-ctx-test1";
-    await updateProjectBrief(pid, "# Initech\n\n- Goal: $1M revenue", { memDir: memory.getMemoryDir() });
+    await updateProjectBrief(pid, "# Initech\n\n- Goal: $1M revenue", {
+      memDir: memory.getMemoryDir(), promotion: { origin: "durable_memory" },
+    });
 
     const block = await buildContextBlock(memory, { skipDailyLog: true, projectId: pid });
     expect(block).toContain("<project_brief>");
@@ -497,7 +499,9 @@ describe("<project_brief> injection", () => {
 
   it("omits the brief when no projectId is set", async () => {
     const pid = "proj-ctx-test2";
-    await updateProjectBrief(pid, "# Secret\n\n- nothing to see", { memDir: memory.getMemoryDir() });
+    await updateProjectBrief(pid, "# Secret\n\n- nothing to see", {
+      memDir: memory.getMemoryDir(), promotion: { origin: "durable_memory" },
+    });
 
     const block = await buildContextBlock(memory, { skipDailyLog: true });
     expect(block).not.toContain("<project_brief>");

@@ -10,6 +10,8 @@ import {
   MemoryWriteBlocked,
 } from "../src/memory/write-safely.js";
 
+const USER_PROMOTION = { origin: "user_statement" as const };
+
 describe("writeMemorySafely — F5 gate funnel", () => {
   let dir: string;
   const auditEnv = process.env.LAX_MEMORY_WRITE_AUDIT;
@@ -32,6 +34,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       source: "tool",
       target,
       mode: "overwrite",
+      promotion: USER_PROMOTION,
     });
     expect(readFileSync(target, "utf-8")).toContain("Alex");
   });
@@ -47,6 +50,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       source: "tool",
       target,
       mode: "overwrite",
+      promotion: USER_PROMOTION,
     })).toThrow(MemoryWriteBlocked);
     expect(existsSync(target)).toBe(false);
   });
@@ -62,6 +66,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       target,
       threshold: 0.5,
       mode: "overwrite",
+      promotion: USER_PROMOTION,
     })).toThrow(MemoryWriteBlocked);
   });
 
@@ -75,6 +80,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       source: "tool",
       target,
       mode: "overwrite",
+      promotion: USER_PROMOTION,
     })).toThrow(MemoryWriteBlocked);
   });
 
@@ -89,6 +95,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       source: "auto-extract",
       target,
       mode: "overwrite",
+      promotion: USER_PROMOTION,
     })).not.toThrow();
     expect(existsSync(target)).toBe(true);
   });
@@ -102,6 +109,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       content: `- API note: ${antKey} and ${ghToken} and ${tgToken}`,
       source: "tool",
       target: join(dir, "USER.md"),
+      promotion: USER_PROMOTION,
     });
     expect(out).not.toContain(antKey);
     expect(out).not.toContain(ghToken);
@@ -115,6 +123,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       content: benign,
       source: "tool",
       target: join(dir, "USER.md"),
+      promotion: USER_PROMOTION,
     });
     expect(out).toBe(benign.trim());
   });
@@ -128,6 +137,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       source: "tool",
       target: join(dir, "USER.md"),
       mode: "overwrite",
+      promotion: USER_PROMOTION,
     });
     expect(getMemoryWriteTick()).toBe(before + 1);
     expect(getLastWriteTick("tool")).toBe(before + 1);
@@ -137,6 +147,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       source: "eot",
       target: join(dir, "USER.md"),
       mode: "append",
+      promotion: USER_PROMOTION,
     });
     expect(getMemoryWriteTick()).toBe(before + 2);
     expect(getLastWriteTick("eot")).toBe(before + 2);
@@ -153,6 +164,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
       source: "tool",
       target: join(dir, "USER.md"),
       mode: "overwrite",
+      promotion: USER_PROMOTION,
     })).toThrow(MemoryWriteBlocked);
     expect(getMemoryWriteTick()).toBe(before);
     expect(getLastWriteTick("tool")).toBe(toolBefore);
@@ -166,6 +178,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
         source: "eot",
         target,
         mode: "overwrite",
+        promotion: USER_PROMOTION,
       });
       throw new Error("expected to throw");
     } catch (e) {

@@ -8,6 +8,7 @@ import {
   MemoryWriteBlocked,
   MAX_PROFILE_CHARS,
 } from "../write-safely.js";
+import { promotionContextFromToolArgs } from "../promotion-gate.js";
 
 export function createSaveTools(memory: MemoryIndex) {
   return [
@@ -53,11 +54,18 @@ export function createSaveTools(memory: MemoryIndex) {
         }
 
         try {
+          const target = "memory:daily-log";
           appendToDailyLogSafely({
             memory,
             source: "tool",
             content: rawContent,
             sessionId,
+            promotion: promotionContextFromToolArgs(args, {
+              content: rawContent,
+              source: "model-tool:memory_save",
+              target,
+              sessionId: sessionId || "default",
+            }),
           });
           return {
             content: `Saved to daily log (${new Date().toISOString().split("T")[0]})`,
@@ -104,11 +112,18 @@ export function createSaveTools(memory: MemoryIndex) {
         // Funnel through the same dedupe + safety gate every other write uses.
         const safe = dedupeProfileMarkdown(updated);
         try {
+          const target = "memory:profile:user-field";
           writeMemorySafely({
             content: safe,
             source: "tool",
             target: filePath,
             mode: "overwrite",
+            promotion: promotionContextFromToolArgs(args, {
+              content: `${field}: ${value}`,
+              source: "model-tool:memory_set_user_field",
+              target,
+              sessionId: String(args._sessionId || "default"),
+            }),
           });
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {
@@ -203,6 +218,7 @@ export function createSaveTools(memory: MemoryIndex) {
                 source: "tool",
                 target: backupPath,
                 mode: "overwrite",
+                promotion: { origin: "durable_memory" },
               });
             } catch {}
           }
@@ -276,11 +292,18 @@ export function createSaveTools(memory: MemoryIndex) {
         }
 
         try {
+          const target = `memory:profile:${fileKey}`;
           writeMemorySafely({
             content: updated,
             source: "tool",
             target: filePath,
             mode: "overwrite",
+            promotion: promotionContextFromToolArgs(args, {
+              content: newContent,
+              source: "model-tool:memory_update_profile",
+              target,
+              sessionId: String(args._sessionId || "default"),
+            }),
           });
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {

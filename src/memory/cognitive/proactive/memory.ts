@@ -50,13 +50,13 @@ class ProactiveMemoryImpl {
     updateTopicIndex(this.data, topics);
     detectBehavioralPatterns(this.data, topics, timestamp);
 
-    savePatterns(this.data);
+    savePatterns(this.data, { origin: "unknown", source: "proactive-analysis", sessionId });
   }
 
   /** Manually register a learned pattern. */
   learnPattern(pattern: InteractionPattern): void {
     recordPattern(this.data, pattern);
-    savePatterns(this.data);
+    savePatterns(this.data, { origin: "unknown", source: "proactive-analysis" });
   }
 
   /** Orchestrator signal: the highest-confidence proactive suggestion for the current context. */

@@ -16,6 +16,7 @@ import {
 } from "./page-ops.js";
 import { isBlankish } from "./blankish.js";
 import type { BrowserMode } from "../types.js";
+import { waitForContinuityCacheRestore } from "./continuity-cache.js";
 
 /**
  * Result of a ref/text-targeted interaction. `ok` carries the underlying
@@ -128,6 +129,7 @@ export class BrowserManager {
     const newPage = this.adoptPage(await this.context!.newPage());
     this.owned.push(newPage);
     const response = await newPage.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    if (this.mode === "continuity") await waitForContinuityCacheRestore(newPage);
     const status = response?.status() ?? "unknown";
     // Same HTTP ≥400 guard as navigate() below — reporting "Status: 404" as a
     // success string let the agent interact with an error page. Close the
@@ -153,6 +155,7 @@ export class BrowserManager {
     const requestedHost = safeHost(url);
     const page = await this.getPage(engine);
     const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    if (this.mode === "continuity") await waitForContinuityCacheRestore(page);
     const status = response?.status() ?? "unknown";
     // HTTP error responses (404, 500, etc.) are NOT a successful navigation
     // outcome — silently returning "Status: 404" as ok let agents treat broken
@@ -362,6 +365,16 @@ export class BrowserManager {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
+    }
+    // Cache Storage can only be read through a live page. Continuity must
+    // serialize and close the context before its owned tabs are torn down.
+    if (this.context && this.mode === "continuity") {
+      await releaseSessionContext(this.context, this.mode);
+      this.context = null;
+      this.page = null;
+      this.owned = [];
+      this.registry.reset();
+      return;
     }
     this.registry.reset();
     for (const p of this.owned) {

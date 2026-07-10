@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => {
     newContext: vi.fn(async () => {
       const context = {
         id: Symbol("context"),
+        pages: vi.fn(() => []),
+        addInitScript: vi.fn(async () => undefined),
         close: vi.fn(async () => undefined),
         storageState: vi.fn(async (options?: { path?: string; indexedDB?: boolean }) => {
           if (options?.path) writeFileSync(options.path, JSON.stringify({ cookies: [], origins: [] }));

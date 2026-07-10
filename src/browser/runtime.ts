@@ -24,11 +24,13 @@ import { closeBrowserEgressProxy, ensureBrowserEgressProxy } from "./egress-prox
 import { createLogger } from "../logger.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { BrowserMode } from "../types.js";
+import { installContinuityCacheRestore, persistContinuityCacheState } from "./continuity-cache.js";
 
 const log = createLogger("browser.runtime");
 
 let browser: Browser | null = null;
 let chromeProcess: ChildProcess | null = null;
+let browserLaunchCleanup: (() => Promise<void>) | null = null;
 let currentEngine: BrowserEngine = "chromium";
 let sharedContext: BrowserContext | null = null;
 let sharedContextCreation: Promise<BrowserContext> | null = null;
@@ -46,8 +48,9 @@ async function launch(engine: BrowserEngine): Promise<Browser> {
   const pw = await import("playwright");
   try {
     if (engine === "chromium") {
-      const { browser: b, chromeProcess: proc } = await launchViaCDP(pw, proxy.url);
+      const { browser: b, chromeProcess: proc, cleanup } = await launchViaCDP(pw, proxy.url);
       chromeProcess = proc;
+      browserLaunchCleanup = cleanup ?? null;
       return b;
     }
     return pw[engine].launch({
@@ -100,6 +103,7 @@ const CONTEXT_OPTS = (engine: BrowserEngine) => {
  * configured context instead.
  */
 const continuityStatePath = (): string => join(getLaxDir(), "browser-continuity-state.json");
+const continuityCachePath = (): string => join(getLaxDir(), "browser-continuity-cache-state.json");
 
 export class BrowserContinuityPersistenceError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -130,6 +134,15 @@ export async function persistBrowserContextState(
 
 async function persistContinuityContext(context: BrowserContext): Promise<void> {
   await persistBrowserContextState(context, continuityStatePath());
+  try {
+    await persistContinuityCacheState(context, continuityCachePath());
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new BrowserContinuityPersistenceError(
+      `Could not save the dedicated continuity browser cache identity: ${detail}`,
+      { cause: error },
+    );
+  }
 }
 
 export async function acquireSessionContext(
@@ -155,6 +168,7 @@ export async function acquireSessionContext(
         ...CONTEXT_OPTS(engine),
         ...(existsSync(statePath) ? { storageState: statePath } : {}),
       });
+      await installContinuityCacheRestore(continuityContext, continuityCachePath());
       continuityOwner = ownerId;
       return continuityContext;
     });
@@ -208,10 +222,13 @@ export async function closeSharedBrowser(): Promise<void> {
     try { await browser.close(); } catch { /* already gone */ }
     browser = null;
   }
-  if (chromeProcess) {
+  if (browserLaunchCleanup) {
+    await browserLaunchCleanup();
+    browserLaunchCleanup = null;
+  } else if (chromeProcess) {
     try { chromeProcess.kill(); } catch { /* already exited */ }
-    chromeProcess = null;
   }
+  chromeProcess = null;
   proxyServer = null;
   await closeBrowserEgressProxy();
   log.info("[browser-runtime] shared Chrome closed");
@@ -230,14 +247,17 @@ export async function closeSharedBrowser(): Promise<void> {
 export function forceKillSharedBrowser(): void {
   const proc = chromeProcess;
   const b = browser;
+  const cleanup = browserLaunchCleanup;
   chromeProcess = null;
+  browserLaunchCleanup = null;
   browser = null;
   sharedContext = null;
   sharedContextCreation = null;
   continuityContext = null;
   continuityOwner = null;
   proxyServer = null;
-  if (proc) { try { proc.kill("SIGKILL"); } catch { /* already exited */ } }
+  if (cleanup) void cleanup().catch(() => { /* best-effort wedge recovery */ });
+  else if (proc) { try { proc.kill("SIGKILL"); } catch { /* already exited */ } }
   if (b) { void b.close().catch(() => { /* connection already dead */ }); }
   void closeBrowserEgressProxy().catch((error) => {
     log.warn(`[browser-runtime] browser proxy close failed: ${(error as Error).message}`);

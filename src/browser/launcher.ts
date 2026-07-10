@@ -7,10 +7,11 @@
  */
 import type { Browser } from "playwright";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { getRuntimeConfig } from "../config.js";
+import { killProcessTree } from "../process-tree-kill.js";
 
 /** Resolve the workspace/downloads dir (creates it if missing) — shared by
  *  CDP and Playwright fallback paths so downloads land in one place. */
@@ -102,6 +103,71 @@ export function findChromeExecutable(): string | null {
 export interface LaunchResult {
   browser: Browser;
   chromeProcess: ChildProcess | null;
+  cleanup?: () => Promise<void>;
+}
+
+export interface ProfileLaunchOptions {
+  /** Explicit test/ops seam. Normal runtime discovery remains unchanged. */
+  executablePath?: string;
+  userDataDir?: string;
+  persistentDataDir?: string;
+  cdpPort?: number;
+  headless?: boolean;
+  forceProfileLaunch?: boolean;
+  forcePersistentFallback?: boolean;
+  removeProfileOnCleanup?: boolean;
+  readyAttempts?: number;
+}
+
+export const CHROME_PROFILE_LOCKS = ["SingletonCookie", "SingletonLock", "SingletonSocket"] as const;
+
+/** Remove only Chrome's coordination artifacts. On Windows an active process
+ * holds these open, so unlink fails safely; stale crash leftovers are removed. */
+export function cleanupStaleChromeProfileLocks(profileDir: string): string[] {
+  if (process.platform !== "win32") {
+    try {
+      const lockPath = join(profileDir, "SingletonLock");
+      if (lstatSync(lockPath).isSymbolicLink()) {
+        const match = readlinkSync(lockPath).match(/-(\d+)$/);
+        if (match) {
+          try { process.kill(Number(match[1]), 0); return []; }
+          catch { /* stale owner */ }
+        }
+      }
+    } catch { /* no lock or unreadable stale artifact */ }
+  }
+  const removed: string[] = [];
+  for (const name of CHROME_PROFILE_LOCKS) {
+    const path = join(profileDir, name);
+    try {
+      if (existsSync(path)) {
+        unlinkSync(path);
+        removed.push(name);
+      }
+    } catch { /* active profile lock or already removed */ }
+  }
+  return removed;
+}
+
+function launchCleanup(
+  proc: ChildProcess | null,
+  profileDir: string | undefined,
+  removeProfile: boolean,
+): () => Promise<void> {
+  return async () => {
+    if (proc) {
+      killProcessTree(proc, "SIGKILL");
+      if (proc.exitCode === null) {
+        await Promise.race([
+          new Promise<void>((resolve) => proc.once("exit", () => resolve())),
+          new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+        ]);
+      }
+    }
+    if (removeProfile && profileDir) {
+      rmSync(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  };
 }
 
 export function browserProxyArgs(proxyServer: string): string[] {
@@ -112,9 +178,13 @@ export function browserProxyConfig(proxyServer: string) {
   return { server: proxyServer, bypass: "<-loopback>" };
 }
 
-export function buildPersistentContextOptions(downloadsPath: string, proxyServer: string) {
+export function buildPersistentContextOptions(
+  downloadsPath: string,
+  proxyServer: string,
+  headless = browserHeadless(),
+) {
   return {
-    headless: browserHeadless(),
+    headless,
     args: [...STEALTH_ARGS, ...browserProxyArgs(proxyServer)],
     viewport: { width: 1280, height: 800 },
     acceptDownloads: true,
@@ -139,23 +209,27 @@ export function buildPersistentContextOptions(downloadsPath: string, proxyServer
 export async function launchViaCDP(
   pw: typeof import("playwright"),
   proxyServer: string,
+  options: ProfileLaunchOptions = {},
 ): Promise<LaunchResult> {
-  if (browserHeadless()) {
+  const headless = options.headless ?? browserHeadless();
+  if (headless && !options.forceProfileLaunch && !options.forcePersistentFallback) {
     const browser = await pw.chromium.launch({
       headless: true,
       args: [...STEALTH_ARGS, ...browserProxyArgs(proxyServer)],
       proxy: browserProxyConfig(proxyServer),
     });
     logger.info(`[browser] Playwright Chromium headless v${browser.version()}`);
-    return { browser, chromeProcess: null };
+    return { browser, chromeProcess: null, cleanup: launchCleanup(null, undefined, false) };
   }
-  const chromePath = findChromeExecutable();
+  const chromePath = options.forcePersistentFallback
+    ? null
+    : options.executablePath ?? findChromeExecutable();
   const cfg = getRuntimeConfig();
   let chromeProcess: ChildProcess | null = null;
 
   if (chromePath) {
-    const cdpPort = cfg.browserCdpPort;
-    const userDataDir = join(getLaxDir(), "chrome-profile");
+    const cdpPort = options.cdpPort ?? cfg.browserCdpPort;
+    const userDataDir = options.userDataDir ?? join(getLaxDir(), "chrome-profile");
     if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
     const cdpUrl = `http://127.0.0.1:${cdpPort}`;
 
@@ -179,6 +253,7 @@ export async function launchViaCDP(
         );
       }
     }
+    cleanupStaleChromeProfileLocks(userDataDir);
 
     // Spawn a fully separate Chrome process. The distinct --user-data-dir plus
     // --remote-debugging-port keep this off the user's main instance. All
@@ -189,11 +264,13 @@ export async function launchViaCDP(
     const args = [
       `--remote-debugging-port=${cdpPort}`,
       `--user-data-dir=${userDataDir}`,
+      ...(headless ? ["--headless=new"] : []),
       ...STEALTH_ARGS,
       "--window-size=1280,800",
       `--download.default_directory=${downloadsDir}`,
       `--disable-features=${DISABLE_FEATURES.join(",")}`,
       ...browserProxyArgs(proxyServer),
+      "about:blank",
     ];
 
     logger.info(`[browser] Spawning agent Chrome: ${chromePath} (profile: ${userDataDir})`);
@@ -206,7 +283,7 @@ export async function launchViaCDP(
 
     // Wait up to ~9s for CDP to come up.
     let ready = false;
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < (options.readyAttempts ?? 30); i++) {
       try {
         const res = await fetch(`${cdpUrl}/json/version`, { signal: AbortSignal.timeout(1000) });
         if (res.ok) { ready = true; break; }
@@ -218,15 +295,19 @@ export async function launchViaCDP(
       try {
         const browser = await pw.chromium.connectOverCDP(cdpUrl);
         logger.info(`[browser] Connected via CDP on port ${cdpPort} — dedicated agent Chrome session`);
-        return { browser, chromeProcess };
+        return {
+          browser,
+          chromeProcess,
+          cleanup: launchCleanup(chromeProcess, userDataDir, options.removeProfileOnCleanup === true),
+        };
       } catch (e) {
         logger.info(`[browser] CDP connect failed: ${(e as Error).message}`);
-        try { chromeProcess.kill(); } catch { /* ignore */ }
+        killProcessTree(chromeProcess, "SIGKILL");
         chromeProcess = null;
       }
     } else {
       logger.info("[browser] Agent Chrome CDP didn't become ready in time — falling back to Playwright");
-      try { chromeProcess?.kill(); } catch { /* ignore */ }
+      killProcessTree(chromeProcess, "SIGKILL");
       chromeProcess = null;
     }
   }
@@ -235,32 +316,42 @@ export async function launchViaCDP(
   // so Playwright doesn't abort navigation when a response is a download
   // (the failure mode that landed files nowhere pre-2026-05-19).
   logger.info("[browser] Launching Playwright persistent context");
-  const persistDir = join(getLaxDir(), "chrome-profile-pw");
+  const persistDir = options.persistentDataDir ?? join(getLaxDir(), "chrome-profile-pw");
   if (!existsSync(persistDir)) mkdirSync(persistDir, { recursive: true });
+  cleanupStaleChromeProfileLocks(persistDir);
   const downloadsDir = resolveDownloadsDir();
   try {
     const ctx = await pw.chromium.launchPersistentContext(persistDir, {
       ...buildPersistentContextOptions(downloadsDir, proxyServer),
+      headless,
       channel: "chrome",
     });
     logger.info("[browser] Playwright persistent context (Chrome channel)");
-    return { browser: ctx.browser()!, chromeProcess: null };
+    return {
+      browser: ctx.browser()!,
+      chromeProcess: null,
+      cleanup: launchCleanup(null, persistDir, options.removeProfileOnCleanup === true),
+    };
   } catch {
     try {
       const ctx = await pw.chromium.launchPersistentContext(
         persistDir,
-        buildPersistentContextOptions(downloadsDir, proxyServer),
+        buildPersistentContextOptions(downloadsDir, proxyServer, headless),
       );
       logger.info("[browser] Playwright persistent context (bundled Chromium)");
-      return { browser: ctx.browser()!, chromeProcess: null };
+      return {
+        browser: ctx.browser()!,
+        chromeProcess: null,
+        cleanup: launchCleanup(null, persistDir, options.removeProfileOnCleanup === true),
+      };
     } catch {
       const b = await pw.chromium.launch({
-        headless: false,
+        headless,
         args: [...STEALTH_ARGS, ...browserProxyArgs(proxyServer)],
         proxy: browserProxyConfig(proxyServer),
       });
       logger.info(`[browser] Playwright Chromium (no persistence) v${b.version()}`);
-      return { browser: b, chromeProcess: null };
+      return { browser: b, chromeProcess: null, cleanup: launchCleanup(null, undefined, false) };
     }
   }
 }

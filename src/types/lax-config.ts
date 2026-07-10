@@ -66,9 +66,10 @@ export interface LAXConfig {
   videoServerUrl: string;
   xttsServerUrl: string;
 
-  /** When true, each session gets its own browser context (separate cookie
-   *  jar) inside the shared Chrome. Off = shared context (cookies carry
-   *  across sessions). Tabs/refs are per-session either way. */
+  /** When true (the default), each session gets its own browser context
+   *  (separate cookie jar) inside the shared Chrome. Off = opt-out shared
+   *  context (cookies carry across sessions for continuity). Tabs/refs are
+   *  per-session either way. */
   browserPerSessionContext: boolean;
 
   // ── Externalized limits & timeouts ──

@@ -6,7 +6,8 @@ import { getRuntimeConfig } from "../config.js";
 // One Chrome process, one BrowserManager per session. Each manager owns its
 // own tabs + observation registry (see manager.ts), so concurrent sessions —
 // e.g. a chat and a scheduled mission — never stomp each other's page or refs.
-// Cookies are shared across sessions unless browserPerSessionContext is on.
+// Cookies are per-session by default; turning browserPerSessionContext off
+// opts into one shared cookie jar across sessions (continuity).
 const managers = new Map<string, BrowserManager>();
 
 function peerPagesExcept(self: BrowserManager): Page[] {

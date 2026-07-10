@@ -36,7 +36,7 @@ registerBuiltinMigration({
         maxIterations: 160, temperature: 0.7, profile: "home",
         toolApproval: "confirm-risky", retentionDays: 90,
         logLevel: "basic", browserCdpPort: 9800,
-        browserPerSessionContext: false,
+        browserPerSessionContext: true,
         browserIdleTimeoutMs: 600000, agentTimeoutMs: 300000,
       };
       for (const [key, value] of Object.entries(defaults)) {
@@ -75,6 +75,26 @@ registerBuiltinMigration({
     const stalePath = join(getLaxDir(), "memory-tiers.json");
     if (!existsSync(stalePath)) return;
     unlinkSync(stalePath);
+  },
+});
+
+// v4: Isolated browser contexts become the default. Existing installs carry a
+// persisted browserPerSessionContext=false from the old shared-context default;
+// flip it to true (single-user product pre-launch, so no continuity to lose).
+// The settings toggle remains the opt-out back to a shared cookie jar.
+registerBuiltinMigration({
+  version: 4,
+  name: "browser-context-isolated-by-default",
+  up: () => {
+    const cfgPath = join(getLaxDir(), "config.json");
+    if (!existsSync(cfgPath)) return;
+    try {
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+      if (cfg.browserPerSessionContext === false) {
+        cfg.browserPerSessionContext = true;
+        atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+      }
+    } catch {}
   },
 });
 

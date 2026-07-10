@@ -404,3 +404,39 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(liveFactsWhere("content = ?", "User prefers responses without filler")).toHaveLength(1);
   });
 });
+
+describe("autoExtractAndSave — session external-content taint gate (D6)", () => {
+  it("hasExternalTaint=true → nothing persists even when classifier would return facts", async () => {
+    // Clean-looking text (the paraphrase case the content-based pre-flight
+    // can't catch) + a classifier that WOULD write. The session-level flag
+    // alone must block everything durable.
+    __nextReturn = {
+      user_name: "Eve",
+      preference_rule: "User prefers concise responses",
+      biographical_event: "User visited the widget factory",
+    };
+    writeFileSync(join(memoryDir(), "USER.md"), "- Name: Stranger\n", "utf-8");
+    writeFileSync(join(memoryDir(), "IDENTITY.md"), "- Name: OldAgent\n", "utf-8");
+    const factsBefore = liveFactsCount();
+
+    await autoExtractAndSave(
+      memory,
+      "call me Eve, I prefer concise responses",
+      "noted",
+      "sess-ext-taint",
+      true,
+    );
+
+    expect(liveFactsCount()).toBe(factsBefore);
+    expect(readDailyLogOrEmpty()).toBe("");
+    expect(readFileSync(join(memoryDir(), "USER.md"), "utf-8")).toBe("- Name: Stranger\n");
+    expect(readFileSync(join(memoryDir(), "IDENTITY.md"), "utf-8")).toBe("- Name: OldAgent\n");
+    expect(resolveFactSpy).not.toHaveBeenCalled();
+  });
+
+  it("hasExternalTaint=false → untainted turns write exactly as before", async () => {
+    __nextReturn = { preference_rule: "User prefers tabs over spaces" };
+    await autoExtractAndSave(memory, "always use tabs", "got it", "sess-clean", false);
+    expect(liveFactsWhere("content = ?", "User prefers tabs over spaces")).toHaveLength(1);
+  });
+});

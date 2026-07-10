@@ -66,6 +66,14 @@ export interface EndOfTurnContext {
   userMessage: string;
   assistantReply: string;
   memory: MemoryIndex;
+  /**
+   * The spawning turn's session had ingested external (untrusted) content —
+   * web/http/browser/MCP results (data-lineage-external.ts). Captured at
+   * persist time (the pass runs later in the background). When set, the pass
+   * is skipped outright: the classifier's paraphrase of injected content
+   * would launder it past every content-based taint marker (D6).
+   */
+  hasExternalTaint?: boolean;
 }
 
 /**
@@ -91,6 +99,21 @@ export type EndOfTurnWriteOutcome = "completed" | "unavailable";
  */
 export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<EndOfTurnWriteOutcome> {
   if (!ctx.sessionId || !ctx.userMessage || !ctx.assistantReply) return "completed";
+
+  // Session-taint gate (D6) — BEFORE any classifier work. The spawning turn's
+  // session ingested external content, so nothing from this exchange may be
+  // paraphrased into USER.md: the rewrite would erase every content marker the
+  // write gate keys on. Definitive ("completed" — the coalescer advances, no
+  // retry of the tainted delta). The ingestion mark is STICKY for the
+  // session's life (data-lineage-external.ts), so this session stays blocked;
+  // a NEW session starts clean and extracts as usual.
+  if (ctx.hasExternalTaint) {
+    logger.warn(
+      `[end-of-turn] write skipped: session ingested external content this run — ` +
+      `durable auto-promotion blocked (session-taint gate D6) sess=${ctx.sessionId}`,
+    );
+    return "completed";
+  }
 
   // Availability gate BEFORE the curate signal is consumed. The signal
   // (curate-nudge session state) is the trigger for this whole pass; consuming

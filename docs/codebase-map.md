@@ -119,6 +119,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/correction-learning.ts` | M |
 | `src/cost-tracker.ts` | M |
 | `src/crash-analytics.ts` | S |
+| `src/data-lineage-external.ts` | S |
 | `src/data-lineage-fingerprint.ts` | S |
 | `src/data-lineage-paths.ts` | M |
 | `src/data-lineage-taint.ts` | M |

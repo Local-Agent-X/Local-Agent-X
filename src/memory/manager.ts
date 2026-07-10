@@ -63,6 +63,14 @@ export interface PersistTurnInput {
   skip?: boolean;
   /** Tag the daily-log entry so today_context can filter by current session. */
   sessionId?: string;
+  /**
+   * The session ingested external (untrusted) content this run — web_fetch /
+   * http_request / browser / MCP results (see data-lineage-external.ts).
+   * Blocks durable auto-promotion (auto-extract + end-of-turn profile write):
+   * an LLM paraphrase of injected content erases the markers the content-based
+   * taint gate keys on. Explicit remember/memory_save tool calls are unaffected.
+   */
+  hasExternalTaint?: boolean;
 }
 
 export type RecallBy = "entity" | "kind" | "time";
@@ -197,7 +205,7 @@ export class MemoryManager {
   async persistTurn(input: PersistTurnInput): Promise<void> {
     if (input.skip) return;
     try {
-      await autoExtractAndSave(this.index, input.userMessage, input.agentResponse, input.sessionId);
+      await autoExtractAndSave(this.index, input.userMessage, input.agentResponse, input.sessionId, input.hasExternalTaint);
     } catch (e) {
       logger.warn("autoExtractAndSave failed:", (e as Error).message);
     }
@@ -225,6 +233,7 @@ export class MemoryManager {
           userMessage: input.userMessage,
           assistantReply: input.agentResponse,
           memory: this.index,
+          hasExternalTaint: input.hasExternalTaint,
         });
       } catch (e) {
         logger.warn("end-of-turn extraction enqueue failed:", (e as Error).message);

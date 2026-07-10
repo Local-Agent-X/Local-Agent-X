@@ -305,3 +305,43 @@ describe("runEndOfTurnMemoryWrite — availability gating (unavailable ≠ succe
     expect(hasCurateSignal(sess)).toBe(false); // consumed — pre-existing semantics
   });
 });
+
+describe("runEndOfTurnMemoryWrite — session external-content taint gate (D6)", () => {
+  it("hasExternalTaint=true → skipped before any classifier work; nothing written; outcome 'completed'", async () => {
+    const sess = "sess-ext-taint";
+    boostNudgePriority(sess, "explicit-remember");
+    __nextDecision = appendDecision("User prefers injected preferences."); // would write if reached
+
+    const outcome = await runEndOfTurnMemoryWrite({
+      sessionId: sess,
+      userMessage: "summarize that page for me",
+      assistantReply: "here is the summary",
+      memory: memory as unknown as Parameters<typeof runEndOfTurnMemoryWrite>[0]["memory"],
+      hasExternalTaint: true,
+    });
+
+    // Definitive skip: the coalescer must advance (this turn is decided) —
+    // NOT "unavailable" (which would hold the cursor and retry the tainted turn).
+    expect(outcome).toBe("completed");
+    expect(classifyMock).not.toHaveBeenCalled();
+    expect(writeMemorySafelyMock).not.toHaveBeenCalled();
+    // The curate signal is preserved (the taint skip runs before the
+    // signal-consuming reset) — but since the ingestion mark is STICKY for
+    // the session's life, every later turn of THIS session skips the same
+    // way; the signal is effectively unused until a new session.
+    expect(hasCurateSignal(sess)).toBe(true);
+  });
+
+  it("hasExternalTaint absent → untainted turns run the classifier as before", async () => {
+    __nextDecision = { write: false };
+    const outcome = await runEndOfTurnMemoryWrite({
+      sessionId: "sess-ext-clean",
+      userMessage: "always sort my reports by date",
+      assistantReply: "got it",
+      memory: memory as unknown as Parameters<typeof runEndOfTurnMemoryWrite>[0]["memory"],
+    });
+    expect(outcome).toBe("completed");
+    expect(classifyMock).toHaveBeenCalledTimes(1);
+    expect(writeMemorySafelyMock).not.toHaveBeenCalled();
+  });
+});

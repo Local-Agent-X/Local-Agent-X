@@ -14,6 +14,7 @@ import {
   BLOCKED_HOSTNAMES,
 } from "./ip-classification.js";
 import { ollamaLoopbackPort } from "./security-config.js";
+import { isStrictLocalOnly } from "./egress-policy.js";
 
 const logger = createLogger("security.network-policy");
 
@@ -125,6 +126,23 @@ export function evaluateWebFetch(
   }
 
   // ── Egress policy ──
+  // strictLocalOnly (config.json): a hard local-only floor OVER any stored
+  // egress mode/allowlist. Every host that reaches this point is public —
+  // self-calls and operator-trusted local service ports (incl. the ollama
+  // loopback carve-out) returned allowed above, and loopback/private/metadata
+  // literals were blocked by the SSRF guards — so deny it outright. This is
+  // the single choke point every URL egress check flows through: layer-core
+  // web_fetch/http_request/browser-navigate, kernel-class http tools,
+  // browser request-layer guards (validateUrlWithDns), and redirect/
+  // integration re-checks (evaluateEgressForUrl via loadEgressConfig).
+  if (isStrictLocalOnly()) {
+    return {
+      allowed: false,
+      reason: `Blocked: ${host} — strictLocalOnly is enabled (config.json); outbound requests are limited to loopback/local services (incl. the local model endpoint)`,
+      userHint: USER_HINTS.network,
+    };
+  }
+
   // Permissive (default): all public hosts allowed. SSRF/private-IP/cloud-metadata
   // blocks above remain; allowlist (if present) gates secret-bearing requests
   // at the tool layer (web-tools.ts), not the network layer.

@@ -49,6 +49,58 @@ export function getEgressMode(): "allowlist" | "blocklist" | "permissive" {
   return loadPolicy().mode;
 }
 
+/**
+ * strictLocalOnly (config.json): the hard local-only switch. Read at call time
+ * (never cached at module load) directly from <laxDir>/config.json — the same
+ * no-side-effect pattern as security-config.ts's ollamaLoopbackPort, so the
+ * security layer never imports config.ts (which starts watchers on import).
+ * Consulted by every egress enforcement point (network-policy evaluateWebFetch
+ * — the choke point all web_fetch/http_request/browser/redirect checks flow
+ * through), by checkEgress below, by the cloud-credential seam (auth/resolve),
+ * and by the cloud OAuth routes.
+ */
+export function isStrictLocalOnly(): boolean {
+  try {
+    const cfgPath = join(getLaxDir(), "config.json");
+    if (!existsSync(cfgPath)) return false;
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+    return cfg.strictLocalOnly === true;
+  } catch {
+    return false;
+  }
+}
+
+/** The stored mode, overridden to "allowlist" while strictLocalOnly is on —
+ *  the flag behaves as an implicit allowlist containing only local hosts. */
+export function getEffectiveEgressMode(): "allowlist" | "blocklist" | "permissive" {
+  if (isStrictLocalOnly()) return "allowlist";
+  return getEgressMode();
+}
+
+/** Loopback (127/8, ::1, localhost) or RFC1918 LAN-local literal. Deliberately
+ *  NARROWER than ip-classification's isPrivateIPv4: link-local / cloud-metadata
+ *  (169.254.0.0/16) is "private" there but must never count as local-ALLOWED. */
+function isLoopbackOrRfc1918(host: string): boolean {
+  if (host === "localhost" || host === "::1" || host === "[::1]") return true;
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  return false;
+}
+
+/** Tool-seam refusal for the public-search tools (web_search / image_search),
+ *  whose provider fetches go straight to search-engine APIs and never pass the
+ *  evaluateWebFetch choke point. Null when the flag is off — the tools run
+ *  unchanged. Matches the tools' `{ content: "Error: ...", isError }` shape. */
+export function strictLocalOnlySearchRefusal(toolName: string): { content: string; isError: true } | null {
+  if (!isStrictLocalOnly()) return null;
+  return {
+    content: `Error: ${toolName} is disabled — strictLocalOnly is enabled (config.json); public search providers are non-local egress.`,
+    isError: true,
+  };
+}
+
 /** Set egress policy mode */
 export function setEgressMode(mode: "allowlist" | "blocklist" | "permissive"): void {
   const policy = loadPolicy();
@@ -89,8 +141,27 @@ export function removeEgressRule(domain: string): boolean {
 
 /** Check if a domain is allowed by the egress policy */
 export function checkEgress(hostname: string): { allowed: boolean; reason: string; userHint?: string } {
-  const policy = loadPolicy();
   const host = hostname.toLowerCase();
+
+  // strictLocalOnly overrides the stored mode AND the per-domain rules: only
+  // loopback / RFC1918 LAN-local literals pass. The local model endpoint
+  // qualifies through the loopback rule — there is deliberately NO carve-out
+  // keyed on config.json's ollamaUrl host: the agent can write config.json,
+  // so a poisoned ollamaUrl (http://attacker.com) must never whitelist a
+  // public host. Same validate-as-loopback hardening as ollamaPortFromUrl
+  // (security-config.ts).
+  if (isStrictLocalOnly()) {
+    if (isLoopbackOrRfc1918(host)) {
+      return { allowed: true, reason: "strictLocalOnly — local host allowed" };
+    }
+    return {
+      allowed: false,
+      reason: `Blocked: ${host} — strictLocalOnly is enabled (config.json); only loopback, LAN-local (RFC1918), and the local model endpoint are reachable`,
+      userHint: USER_HINTS.network,
+    };
+  }
+
+  const policy = loadPolicy();
 
   if (policy.mode === "permissive") {
     // In permissive mode, only explicit blocks apply

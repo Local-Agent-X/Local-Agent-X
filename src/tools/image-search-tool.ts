@@ -1,4 +1,5 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { strictLocalOnlySearchRefusal } from "../security/egress-policy.js";
 
 /**
  * image_search — find DIRECT image URLs on the web so the agent can embed them
@@ -119,6 +120,10 @@ export const imageSearchTool: ToolDefinition = {
     required: ["query"],
   },
   async execute(args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+    // Search providers are public hosts fetched directly (never through the
+    // evaluateWebFetch choke point) — refuse at the tool seam under the flag.
+    const refusal = strictLocalOnlySearchRefusal("image_search");
+    if (refusal) return refusal;
     const query = String(args.query ?? "").trim();
     if (!query) return { content: "Error: query is required.", isError: true };
     const max = Math.min(Math.max(Number(args.max_results) || 8, 1), 20);

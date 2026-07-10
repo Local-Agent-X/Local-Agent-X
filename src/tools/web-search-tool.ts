@@ -1,5 +1,6 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { htmlToText } from "../app-renderer/sanitize.js";
+import { strictLocalOnlySearchRefusal } from "../security/egress-policy.js";
 
 interface SearchResult { title: string; url: string; snippet: string }
 
@@ -98,6 +99,10 @@ export const webSearchTool: ToolDefinition = {
     required: ["query"],
   },
   async execute(args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+    // Search providers are public hosts fetched directly (never through the
+    // evaluateWebFetch choke point) — refuse at the tool seam under the flag.
+    const refusal = strictLocalOnlySearchRefusal("web_search");
+    if (refusal) return refusal;
     const single = String(args.query ?? "").trim();
     const multi = Array.isArray(args.queries) ? args.queries.map(q => String(q ?? "").trim()) : [];
     const queries = [...new Set([single, ...multi].filter(Boolean))];

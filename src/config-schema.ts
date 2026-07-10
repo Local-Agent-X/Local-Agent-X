@@ -76,6 +76,15 @@ export const configSchema = z.object({
    *  (see sandbox/server-confine.ts). Env override: LAX_SERVER_SANDBOX=1/0. */
   serverSandbox: z.boolean().default(false),
 
+  /** Hard local-only mode. When true, ALL cloud LLM providers are refused at
+   *  the credential seam (auth/resolve), the cloud OAuth sign-in routes return
+   *  403, and non-local egress is denied at the egress choke point
+   *  (security/network-policy evaluateWebFetch + security/egress-policy) —
+   *  only loopback self-calls, operator-trusted local service ports, and the
+   *  local model endpoint (Ollama, via the loopback carve-out) stay reachable.
+   *  The local server and LAN-local (RFC1918) services remain available. */
+  strictLocalOnly: z.boolean().default(false),
+
   // AriKernel kill-switch posture. true = if the kernel fails to start
   // or evaluate, BLOCK the tool call (and refuse to boot the server on
   // a hard wiring failure). false = fail-open through the kernel layer

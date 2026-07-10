@@ -59,6 +59,11 @@ export interface LAXConfig {
   /** Whole-server kernel confinement (seatbelt/bwrap re-exec at boot).
    *  Off by default; see sandbox/server-confine.ts. */
   serverSandbox: boolean;
+  /** Hard local-only mode. Blocks all cloud LLM providers, cloud OAuth
+   *  sign-in flows, and non-local egress; loopback self-calls, LAN-local
+   *  services, and the local model endpoint (Ollama) stay available. See
+   *  config-schema.ts for the enforcement points. Default false. */
+  strictLocalOnly: boolean;
   ariRequired?: boolean;
 
   // ── Externalized service URLs ──

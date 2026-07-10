@@ -119,12 +119,38 @@ function parseHttpTarget(request: IncomingMessage): URL {
   return target;
 }
 
-function parseConnectTarget(authority: string | undefined): URL {
-  if (!authority || authority.includes("/") || !authority.includes(":")) {
-    throw new ProxyPolicyError("Blocked: CONNECT requires host:port authority");
+export function parseConnectTarget(authority: string | undefined): URL {
+  if (!authority || /[\u0000-\u0020\u007f]/.test(authority)) {
+    throw new ProxyPolicyError("Blocked: invalid CONNECT authority");
   }
+
+  const match = authority.match(/^(?:\[([0-9a-f:.]+)\]|([a-z0-9.-]+)):(\d{1,5})$/i);
+  if (!match) throw new ProxyPolicyError("Blocked: CONNECT requires host:port authority");
+
+  const bracketedIpv6 = match[1];
+  const hostname = (bracketedIpv6 ?? match[2]).toLowerCase();
+  const port = Number(match[3]);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new ProxyPolicyError("Blocked: invalid CONNECT port");
+  }
+
+  if (bracketedIpv6) {
+    if (isIP(hostname) !== 6) throw new ProxyPolicyError("Blocked: invalid bracketed IPv6 authority");
+  } else if (/^[\d.]+$/.test(hostname)) {
+    if (isIP(hostname) !== 4) throw new ProxyPolicyError("Blocked: invalid IPv4 authority");
+  } else {
+    const dnsName = hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
+    const labels = dnsName.split(".");
+    if (dnsName.length === 0 || dnsName.length > 253 || labels.some(
+      (label) => label.length === 0 || label.length > 63 ||
+        !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label),
+    )) {
+      throw new ProxyPolicyError("Blocked: invalid CONNECT hostname");
+    }
+  }
+
   try {
-    return new URL(`https://${authority}/`);
+    return new URL(`https://${bracketedIpv6 ? `[${hostname}]` : hostname}:${port}/`);
   } catch {
     throw new ProxyPolicyError("Blocked: invalid CONNECT authority");
   }

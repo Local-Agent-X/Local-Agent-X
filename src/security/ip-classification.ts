@@ -25,118 +25,119 @@ function parseStrictIPv4(ip: string): number[] | null {
   return nums;
 }
 
-/** Check if an IPv4 address is private/loopback/link-local/reserved */
-export function isPrivateIPv4(ip: string): boolean {
-  const parts = parseStrictIPv4(ip);
-  if (!parts) return true; // malformed or non-decimal → block (fail-closed)
-
-  const [a, b] = parts;
-  if (a === 127) return true;                          // 127.0.0.0/8 loopback
-  if (a === 10) return true;                           // 10.0.0.0/8 private
-  if (a === 192 && b === 168) return true;             // 192.168.0.0/16 private
-  if (a === 172 && b >= 16 && b <= 31) return true;    // 172.16.0.0/12 private
-  if (a === 169 && b === 254) return true;             // 169.254.0.0/16 link-local
-  if (a === 0) return true;                            // 0.0.0.0/8
-  if (a >= 224) return true;                           // multicast + reserved (224+)
-  if (a === 100 && b >= 64 && b <= 127) return true;   // 100.64.0.0/10 CGNAT
-  return false;
+interface SpecialUseRange {
+  cidr: string;
+  reason: string;
 }
 
-/** Normalize an IPv6 address to its canonical compressed form */
-function normalizeIPv6(ip: string): string {
+export const SPECIAL_USE_IPV4_RANGES: readonly SpecialUseRange[] = [
+  { cidr: "0.0.0.0/8", reason: "current network" },
+  { cidr: "10.0.0.0/8", reason: "private use" },
+  { cidr: "100.64.0.0/10", reason: "shared address space" },
+  { cidr: "127.0.0.0/8", reason: "loopback" },
+  { cidr: "169.254.0.0/16", reason: "link local" },
+  { cidr: "172.16.0.0/12", reason: "private use" },
+  { cidr: "192.0.0.0/24", reason: "IETF protocol assignments" },
+  { cidr: "192.0.2.0/24", reason: "documentation TEST-NET-1" },
+  { cidr: "192.31.196.0/24", reason: "AS112 service" },
+  { cidr: "192.52.193.0/24", reason: "AMT" },
+  { cidr: "192.88.99.0/24", reason: "deprecated 6to4 relay" },
+  { cidr: "192.168.0.0/16", reason: "private use" },
+  { cidr: "192.175.48.0/24", reason: "AS112 service" },
+  { cidr: "198.18.0.0/15", reason: "benchmarking" },
+  { cidr: "198.51.100.0/24", reason: "documentation TEST-NET-2" },
+  { cidr: "203.0.113.0/24", reason: "documentation TEST-NET-3" },
+  { cidr: "224.0.0.0/4", reason: "multicast" },
+  { cidr: "240.0.0.0/4", reason: "reserved" },
+];
+
+function ipv4Value(parts: readonly number[]): number {
+  return (((parts[0] * 256 + parts[1]) * 256 + parts[2]) * 256 + parts[3]) >>> 0;
+}
+
+const compiledIPv4Ranges = SPECIAL_USE_IPV4_RANGES.map(({ cidr }) => {
+  const [base, prefixText] = cidr.split("/");
+  const parts = parseStrictIPv4(base);
+  if (!parts) throw new Error(`Invalid internal IPv4 CIDR: ${cidr}`);
+  const prefix = Number(prefixText);
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return { network: ipv4Value(parts) & mask, mask };
+});
+
+/** True for malformed, non-global, or special-purpose IPv4 addresses. */
+export function isPrivateIPv4(ip: string): boolean {
+  const parts = parseStrictIPv4(ip);
+  if (!parts) return true;
+  const value = ipv4Value(parts);
+  return compiledIPv4Ranges.some(({ network, mask }) => (value & mask) === network);
+}
+
+export const SPECIAL_USE_IPV6_RANGES: readonly SpecialUseRange[] = [
+  { cidr: "::/128", reason: "unspecified" },
+  { cidr: "::1/128", reason: "loopback" },
+  { cidr: "::/96", reason: "deprecated IPv4-compatible addressing" },
+  { cidr: "::ffff:0:0/96", reason: "IPv4-mapped addressing" },
+  { cidr: "::ffff:0:0:0/96", reason: "IPv4-translated addressing" },
+  { cidr: "64:ff9b::/96", reason: "IPv4/IPv6 translation" },
+  { cidr: "64:ff9b:1::/48", reason: "local IPv4/IPv6 translation" },
+  { cidr: "100::/64", reason: "discard only" },
+  { cidr: "2001::/23", reason: "IETF protocol assignments" },
+  { cidr: "2001:db8::/32", reason: "documentation" },
+  { cidr: "2002::/16", reason: "6to4" },
+  { cidr: "2620:4f:8000::/48", reason: "AS112 service" },
+  { cidr: "3fff::/20", reason: "documentation" },
+  { cidr: "5f00::/16", reason: "segment routing SIDs" },
+  { cidr: "fc00::/7", reason: "unique local" },
+  { cidr: "fe80::/10", reason: "link local" },
+  { cidr: "ff00::/8", reason: "multicast" },
+];
+
+function parseIPv6Value(ip: string): bigint | null {
   let cleaned = ip.toLowerCase().replace(/^\[|\]$/g, "");
-  // A trailing dotted-quad (e.g. 64:ff9b::169.254.169.254 or ::ffff:1.2.3.4)
-  // occupies the LAST 32 bits = two hex groups. Rewrite it to those two groups
-  // up front so the group math below is correct and the embedded IPv4 survives
-  // expansion (parseInt would otherwise truncate "169.254.169.254" to 0x169).
   const dotted = cleaned.match(/(\d+\.\d+\.\d+\.\d+)$/);
   if (dotted) {
     const v4 = parseStrictIPv4(dotted[1]);
-    if (v4) {
-      const hi = ((v4[0] << 8) | v4[1]).toString(16);
-      const lo = ((v4[2] << 8) | v4[3]).toString(16);
-      cleaned = cleaned.slice(0, dotted.index) + `${hi}:${lo}`;
-    }
+    if (!v4) return null;
+    const hi = ((v4[0] << 8) | v4[1]).toString(16);
+    const lo = ((v4[2] << 8) | v4[3]).toString(16);
+    cleaned = cleaned.slice(0, dotted.index) + `${hi}:${lo}`;
   }
-  // Expand :: notation to full form, then re-compress
+
+  if ((cleaned.match(/::/g) ?? []).length > 1) return null;
   let groups: string[];
   if (cleaned.includes("::")) {
     const [left, right] = cleaned.split("::");
     const leftGroups = left ? left.split(":") : [];
     const rightGroups = right ? right.split(":") : [];
     const missing = 8 - leftGroups.length - rightGroups.length;
+    if (missing < 1) return null;
     groups = [...leftGroups, ...Array(missing).fill("0"), ...rightGroups];
   } else {
     groups = cleaned.split(":");
   }
-  // Normalize each group (strip leading zeros)
-  groups = groups.map(g => (parseInt(g, 16) || 0).toString(16));
-  // Re-compress: find longest run of zeros
-  const full = groups.join(":");
-  return full;
+  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+  return groups.reduce((value, group) => (value << 16n) | BigInt(`0x${group}`), 0n);
 }
 
-/** Check if an IPv6 address is private/loopback/link-local */
+const compiledIPv6Ranges = SPECIAL_USE_IPV6_RANGES.map(({ cidr }) => {
+  const [base, prefixText] = cidr.split("/");
+  const value = parseIPv6Value(base);
+  if (value === null) throw new Error(`Invalid internal IPv6 CIDR: ${cidr}`);
+  return { value, prefix: Number(prefixText) };
+});
+
+/** True for malformed, non-global, or special-purpose IPv6 addresses. */
 export function isPrivateIPv6(ip: string): boolean {
-  const normalized = normalizeIPv6(ip);
+  const value = parseIPv6Value(ip);
+  if (value === null) return true;
 
-  // Loopback (::1 and all equivalent forms like 0:0:0:0:0:0:0:1)
-  if (normalized === "0:0:0:0:0:0:0:1" || normalized === "::1") return true;
-  // Unspecified (:: and 0:0:0:0:0:0:0:0)
-  if (normalized === "0:0:0:0:0:0:0:0" || normalized === "::") return true;
-  // Link-local
-  if (normalized.startsWith("fe80:") || /^fe[89ab][0-9a-f]:/.test(normalized)) return true;
-  // Unique local (fc00::/7)
-  if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
+  if (compiledIPv6Ranges.some(({ value: base, prefix }) => {
+    const shift = BigInt(128 - prefix);
+    return (value >> shift) === (base >> shift);
+  })) return true;
 
-  // IPv4-mapped IPv6 (::ffff:a.b.c.d) — check original form for dotted notation
-  const original = ip.toLowerCase().replace(/^\[|\]$/g, "");
-  const v4mapped = original.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (v4mapped) return isPrivateIPv4(v4mapped[1]);
-
-  // IPv4-mapped IPv6 hex form (::ffff:7f00:1 = 127.0.0.1)
-  const v4mappedHex = normalized.match(/^0:0:0:0:0:ffff:([0-9a-f]+):([0-9a-f]+)$/);
-  if (v4mappedHex) {
-    const hi = parseInt(v4mappedHex[1], 16);
-    const lo = parseInt(v4mappedHex[2], 16);
-    const reconstructed = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-    return isPrivateIPv4(reconstructed);
-  }
-
-  // IPv4-compatible IPv6 (::a.b.c.d)
-  const v4compat = original.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
-  if (v4compat) return isPrivateIPv4(v4compat[1]);
-
-  // ── Embedded-IPv4 transition prefixes (NAT64 / 6to4) ──
-  // These standard mechanisms wrap an IPv4 address inside an IPv6 literal, so a
-  // literal like 64:ff9b::169.254.169.254 or 2002:a9fe:a9fe:: reaches the
-  // embedded IPv4 (here, cloud metadata) while looking like a benign IPv6 host.
-  // Decode the embedded v4 from the normalized 8-group form and range-check it
-  // with isPrivateIPv4; only a private/reserved/metadata embedding is blocked,
-  // so a transition literal wrapping a PUBLIC IPv4 (e.g. 2002:0808:0808:: =
-  // 8.8.8.8) is still allowed.
-  const groups = normalized.split(":");
-  if (groups.length === 8) {
-    const g = groups.map(h => parseInt(h, 16) & 0xffff);
-    const v4From = (hi: number, lo: number) =>
-      `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-
-    // NAT64 well-known prefix 64:ff9b::/96 (RFC6052): the embedded IPv4 is the
-    // last 32 bits (groups 6-7). Also covers the local-use prefix 64:ff9b:1::/48
-    // (RFC8215), whose low 32 bits likewise hold the embedded v4.
-    if ((g[0] === 0x64 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) ||
-        (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 0x0001)) {
-      if (isPrivateIPv4(v4From(g[6], g[7]))) return true;
-    }
-
-    // 6to4 prefix 2002::/16 (RFC3056): the embedded IPv4 is bits 16-48
-    // (groups 1-2), e.g. 2002:a9fe:a9fe:: = 169.254.169.254.
-    if (g[0] === 0x2002) {
-      if (isPrivateIPv4(v4From(g[1], g[2]))) return true;
-    }
-  }
-
-  return false;
+  // Global unicast is currently 2000::/3. Everything else fails closed.
+  return (value >> 125n) !== 0b001n;
 }
 
 /** Blocked hostnames (loopback aliases, cloud metadata) */

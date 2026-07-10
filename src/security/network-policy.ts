@@ -20,16 +20,13 @@ const logger = createLogger("security.network-policy");
 export type EgressMode = "permissive" | "strict";
 
 /**
- * Canonicalize a URL host for blocklist/allowlist comparison: lowercase and
- * strip a SINGLE trailing dot. WHATWG `new URL()` preserves a trailing dot on a
- * non-IP host, so `metadata.google.internal.` and `metadata.google.internal`
- * are distinct hostname strings even though DNS treats them identically. Apply
- * this ONCE at every point a host is derived from a parsed URL so `h` and `h.`
- * yield identical verdicts. Only a trailing `.` is stripped — IPv4/IPv6
- * literals carry no trailing dot, so this is a no-op for them.
+ * Canonicalize a URL host for policy comparison: lowercase, remove IPv6 URL
+ * brackets, and strip one trailing DNS dot. WHATWG `new URL()` preserves both
+ * bracketed IPv6 hostnames and trailing dots, while policy tables use bare
+ * address/hostname forms.
  */
 function canonicalizeHost(host: string): string {
-  return host.toLowerCase().replace(/\.$/, "");
+  return host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "");
 }
 
 /**

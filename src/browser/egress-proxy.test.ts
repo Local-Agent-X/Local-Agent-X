@@ -14,6 +14,7 @@ vi.mock("node:dns", () => ({
 }));
 
 import {
+  parseConnectTarget,
   startBrowserEgressProxy,
   type BrowserEgressProxy,
   type BrowserProxyDialTarget,
@@ -143,6 +144,25 @@ describe("browser egress proxy", () => {
     expect(dial).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["192.0.2.25", []],
+    ["198.51.100.25", []],
+    ["203.0.113.25", []],
+    ["198.18.0.25", []],
+    [undefined, ["2001:db8::25"]],
+    [undefined, ["ff02::1"]],
+  ])("never dials special-purpose DNS answers (A=%s AAAA=%s)", async (ipv4, ipv6) => {
+    resolve4.mockResolvedValue(ipv4 ? [ipv4] : []);
+    resolve6.mockResolvedValue(ipv6);
+    const dial = vi.fn(async (_target: BrowserProxyDialTarget) => new HttpResponseSocket());
+    const proxy = await startWithDial(dial);
+
+    const response = await requestThroughProxy(proxy, "http://special.example/");
+
+    expect(response.status).toBe(403);
+    expect(dial).not.toHaveBeenCalled();
+  });
+
   it("pins CONNECT to the validated address while preserving the hostname authority", async () => {
     resolve4.mockResolvedValue(["93.184.216.35"]);
     const dial = vi.fn(async (_target: BrowserProxyDialTarget) => tunnelSocket());
@@ -171,6 +191,41 @@ describe("browser egress proxy", () => {
     expect(dial).not.toHaveBeenCalled();
   });
 
+  it("accepts only bracketed IPv6 CONNECT authority and dials global IPv6", async () => {
+    const dial = vi.fn(async (_target: BrowserProxyDialTarget) => tunnelSocket());
+    const proxy = await startWithDial(dial);
+
+    const response = await connectThroughProxy(proxy, "[2606:4700:4700::1111]:443");
+
+    expect(response).toContain("200 Connection Established");
+    expect(dial).toHaveBeenCalledWith({
+      address: "2606:4700:4700::1111",
+      family: 6,
+      hostname: "2606:4700:4700::1111",
+      port: 443,
+    });
+  });
+
+  it.each([
+    undefined,
+    "",
+    "public.example",
+    "public.example:0",
+    "public.example:65536",
+    "public.example:notaport",
+    "user@public.example:443",
+    "public.example:443/path",
+    "public.example:443#fragment",
+    " public.example:443",
+    "public.example :443",
+    "public.example:\t443",
+    "2001:4860:4860::8888:443",
+    "[2001:4860:4860::8888]",
+    "[not-ipv6]:443",
+  ])("strictly rejects malformed CONNECT authority %s", (authority) => {
+    expect(() => parseConnectTarget(authority)).toThrow(/Blocked:/);
+  });
+
   it("preserves canonical self-server access through the proxy", async () => {
     const dial = vi.fn(async (_target: BrowserProxyDialTarget) => tunnelSocket());
     const proxy = await startWithDial(dial);
@@ -182,6 +237,15 @@ describe("browser egress proxy", () => {
       address: "127.0.0.1",
       family: 4,
       hostname: "127.0.0.1",
+      port: 7007,
+    });
+
+    const ipv6 = await connectThroughProxy(proxy, "[::1]:7007");
+    expect(ipv6).toContain("200 Connection Established");
+    expect(dial).toHaveBeenCalledWith({
+      address: "::1",
+      family: 6,
+      hostname: "::1",
       port: 7007,
     });
   });

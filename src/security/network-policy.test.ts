@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { resolveAndPinHost, validateUrlWithDns, evaluateWebFetch } from "./network-policy.js";
-import { BLOCKED_HOSTNAMES } from "./ip-classification.js";
+import {
+  BLOCKED_HOSTNAMES,
+  SPECIAL_USE_IPV4_RANGES,
+  SPECIAL_USE_IPV6_RANGES,
+  isPrivateIPv4,
+  isPrivateIPv6,
+} from "./ip-classification.js";
 
 const EMPTY_ALLOWLIST = new Set<string>();
 
@@ -8,6 +14,54 @@ const EMPTY_ALLOWLIST = new Set<string>();
 function webFetch(url: string) {
   return evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", url, "permissive");
 }
+
+describe("special-purpose IP classification", () => {
+  it.each(SPECIAL_USE_IPV4_RANGES)("blocks IPv4 table range $cidr ($reason)", ({ cidr }) => {
+    expect(isPrivateIPv4(cidr.split("/")[0])).toBe(true);
+  });
+
+  it.each([
+    "192.0.2.77",
+    "198.19.255.254",
+    "198.51.100.42",
+    "203.0.113.99",
+    "233.252.0.1",
+    "250.1.2.3",
+  ])("blocks representative special-purpose IPv4 %s", (ip) => {
+    expect(isPrivateIPv4(ip)).toBe(true);
+  });
+
+  it.each(["1.1.1.1", "8.8.8.8", "93.184.216.34"])("allows global IPv4 %s", (ip) => {
+    expect(isPrivateIPv4(ip)).toBe(false);
+  });
+
+  it.each(SPECIAL_USE_IPV6_RANGES)("blocks IPv6 table range $cidr ($reason)", ({ cidr }) => {
+    expect(isPrivateIPv6(cidr.split("/")[0])).toBe(true);
+  });
+
+  it.each([
+    "100::dead:beef",
+    "2001:2::1",
+    "2001:db8:abcd::1",
+    "2002:808:808::1",
+    "2620:4f:8000::1234",
+    "3fff:abc::1",
+    "5f00::1",
+    "ff02::1",
+    "4000::1",
+  ])("blocks representative special-purpose IPv6 %s", (ip) => {
+    expect(isPrivateIPv6(ip)).toBe(true);
+  });
+
+  it.each(["2001:4860:4860::8888", "2606:4700:4700::1111"])("allows global IPv6 %s", (ip) => {
+    expect(isPrivateIPv6(ip)).toBe(false);
+  });
+
+  it("blocks IPv4-mapped IPv6 as special-purpose regardless of payload", () => {
+    expect(isPrivateIPv6("::ffff:198.51.100.7")).toBe(true);
+    expect(isPrivateIPv6("::ffff:8.8.8.8")).toBe(true);
+  });
+});
 
 describe("resolveAndPinHost", () => {
   it("returns { ok: true, pin: null } for a PUBLIC literal IPv4 (nothing to resolve)", async () => {
@@ -68,9 +122,8 @@ describe("resolveAndPinHost", () => {
 // RFC3056) IPv6 literals embed an IPv4 address. A literal like
 // 64:ff9b::169.254.169.254 or 2002:a9fe:a9fe:: dials the embedded IPv4 (here,
 // cloud metadata) while looking like a benign public IPv6 host. isPrivateIPv6
-// must decode the embedded v4 and range-check it. Only a private/reserved
-// embedding is blocked — a transition literal wrapping a PUBLIC IPv4 still
-// connects (no over-block of legitimate transition addressing).
+// must reject the special-purpose transition range regardless of the embedded
+// address. Browser egress is global-unicast only.
 describe("evaluateWebFetch — NAT64/6to4 embedded-IPv4 SSRF (C3-5)", () => {
   it.each([
     ["[64:ff9b::169.254.169.254]", "NAT64 dotted-tail → AWS metadata"],
@@ -87,8 +140,6 @@ describe("evaluateWebFetch — NAT64/6to4 embedded-IPv4 SSRF (C3-5)", () => {
 
   it.each([
     ["[2606:4700:4700::1111]", "Cloudflare public IPv6 — not a transition literal"],
-    ["[2002:0808:0808::]", "6to4 wrapping PUBLIC 8.8.8.8 — only private embeds blocked"],
-    ["[64:ff9b::8.8.8.8]", "NAT64 wrapping PUBLIC 8.8.8.8"],
   ])("allows %s (%s)", (host) => {
     const d = webFetch(`http://${host}/`);
     expect(d.allowed).toBe(true);
@@ -102,9 +153,9 @@ describe("evaluateWebFetch — NAT64/6to4 embedded-IPv4 SSRF (C3-5)", () => {
     if (!result.ok) expect(result.reason).toContain("SSRF protection");
   });
 
-  it("resolveAndPinHost allows a 6to4 literal wrapping a public IPv4", async () => {
+  it("resolveAndPinHost blocks 6to4 even when it wraps a public IPv4", async () => {
     const result = await resolveAndPinHost("2002:0808:0808::");
-    expect(result).toEqual({ ok: true, pin: null });
+    expect(result.ok).toBe(false);
   });
 });
 
@@ -116,6 +167,17 @@ describe("validateUrlWithDns — literal-IP regression", () => {
       false,
       selfPort,
       `http://127.0.0.1:${selfPort}/x`,
+      "permissive",
+    );
+    expect(decision.allowed).toBe(true);
+  });
+
+  it("allows an IPv6 loopback self-call to the agent's own server", async () => {
+    const decision = await validateUrlWithDns(
+      EMPTY_ALLOWLIST,
+      false,
+      "7007",
+      "http://[::1]:7007/x",
       "permissive",
     );
     expect(decision.allowed).toBe(true);

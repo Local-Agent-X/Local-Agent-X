@@ -5,6 +5,10 @@
  * circular imports. Public types are re-exported from src/memory.ts.
  */
 
+// Canonical promotion-origin value set, owned by promotion-gate.ts (which
+// imports nothing from this module — the type-only import cannot cycle).
+import type { MemoryContentOrigin } from "./promotion-gate.js";
+
 // ── Configuration ──
 
 export interface MemoryConfig {
@@ -267,6 +271,8 @@ export interface RetainedFact {
   validTo?: number | null;
   invalidatedBy?: number | null;
   invalidationReason?: string | null;
+  /** Promotion origin at write time; null = written before schema v12 (unknown). */
+  provenance?: MemoryContentOrigin | null;
 }
 
 export interface EntityPage {

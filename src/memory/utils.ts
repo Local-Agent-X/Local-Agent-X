@@ -8,6 +8,7 @@ import { writeFileSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { randomBytes, createHash } from "node:crypto";
 import { containsNulByte } from "../binary-sniff.js";
 import type { FactKind, RetainedFact } from "./types.js";
+import type { MemoryContentOrigin } from "./promotion-gate.js";
 
 // ── File I/O helpers ──
 
@@ -158,6 +159,7 @@ export function rowToFact(row: Record<string, unknown>): RetainedFact {
     validTo: (row.valid_to as number | null) ?? null,
     invalidatedBy: (row.invalidated_by as number | null) ?? null,
     invalidationReason: (row.invalidation_reason as string | null) ?? null,
+    provenance: (row.provenance as MemoryContentOrigin | null) ?? null,
   };
 }
 

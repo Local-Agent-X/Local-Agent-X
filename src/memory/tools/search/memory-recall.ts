@@ -121,7 +121,10 @@ export function memoryRecallTool(memory: MemoryIndex) {
             const date = new Date(f.timestamp).toISOString().split("T")[0];
             const conf = f.kind === "opinion" ? ` (c=${f.confidence.toFixed(2)})` : "";
             const ents = f.entities.length > 0 ? ` @${f.entities.join(" @")}` : "";
-            return `[${i + 1}] [${f.kind}]${conf}${ents} ${f.content} — ${date} (${f.sourceFile}#L${f.sourceLine})`;
+            // Rows written before schema v12 have no persisted origin — omit
+            // rather than printing a fabricated one.
+            const origin = f.provenance ? `, origin=${f.provenance}` : "";
+            return `[${i + 1}] [${f.kind}]${conf}${ents} ${f.content} — ${date} (${f.sourceFile}#L${f.sourceLine}${origin})`;
           })
           .join("\n");
         sections.push(`Retained facts (${facts.length}):\n${formatted}`);

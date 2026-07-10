@@ -44,6 +44,7 @@ export function registerWorkerRunnerForServer(deps: WorkerRunnerDeps): void {
         provider: provider as AgentOptions["provider"],
         systemPrompt: workerPrompt, tools: workerTools,
         security, toolPolicy, sessionId,
+        callContext: "delegated",
         maxIterations: 15,
         opType: "app_builder",
         lane: "background",

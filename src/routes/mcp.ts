@@ -121,6 +121,10 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
         sessionId,
         ctx.getActiveOnEvent(sessionId), // pipe tool_start / tool_end / tool_progress to that session's SSE stream
         undefined, // signal
+        undefined, // priorMessages
+        undefined, // runId
+        undefined, // operationId
+        "api", // trusted route origin; body.sessionId never affects privilege classification
       );
 
       const content = serializeMcpContent(results as Array<{ role: string; content: unknown }>);

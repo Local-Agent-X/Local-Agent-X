@@ -130,6 +130,7 @@ export async function runAgentViaCanonical(
     rbac: options.rbac,
     callerRole: options.callerRole,
     sessionId,
+    callContext: options.callContext ?? "api",
     opId: op.id,
     runId: options.runId,
     onEvent: options.onEvent,

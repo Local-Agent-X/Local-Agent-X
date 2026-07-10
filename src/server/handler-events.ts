@@ -216,6 +216,7 @@ export function registerHandlerEvents(deps: {
       const agentResult = await runAgentViaCanonical(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock,
         tools: spawnedTools, security, toolPolicy, sessionId: runSessionId, maxIterations: config.maxIterations, temperature: config.temperature,
+        callContext: "delegated",
         wallClockMs: config.agentTimeoutMs,
         opType: "agent_spawn",
         lane: "agent",

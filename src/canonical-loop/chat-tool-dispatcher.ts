@@ -29,6 +29,7 @@ import { registerToolsForOp } from "./runtime.js";
 import { unifiedRegistry } from "../tools/registry.js";
 import { enqueueBridgeMedia } from "../bridge-media-queue.js";
 import { createLogger } from "../logger.js";
+import type { CallContext } from "../tool-execution/context.js";
 
 const logger = createLogger("canonical-loop.chat-tool-dispatcher");
 
@@ -40,6 +41,8 @@ export interface ChatToolDispatcherOptions {
   rbac?: RBACManager;
   callerRole?: Role;
   sessionId: string;
+  /** Trusted dispatch origin. Omitted callers fail closed as unattended API. */
+  callContext?: CallContext;
   /** Op id for the current canonical chat op. When provided, a successful
    *  tool_search call side-effect-registers the discovered tools onto the op's
    *  tool list — so the next iteration's request schema includes them and the
@@ -102,6 +105,7 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
           priorMessages,
           opts.runId,
           opts.opId,
+          opts.callContext ?? "api",
         );
 
         // executeToolCalls returns 1+ ChatCompletionMessageParam. The

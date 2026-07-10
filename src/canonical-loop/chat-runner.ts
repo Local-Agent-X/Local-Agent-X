@@ -188,6 +188,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     rbac: ctx.rbac,
     callerRole: ctx.callerRole,
     sessionId: ctx.sessionId,
+    callContext: "local",
     opId: op.id,
     onEvent: ctx.onToolEvent,
     signal: cancelBridge.signal,

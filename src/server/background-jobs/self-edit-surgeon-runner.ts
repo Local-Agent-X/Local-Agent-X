@@ -63,6 +63,7 @@ export function registerSelfEditSurgeonForServer(deps: SelfEditSurgeonRunnerDeps
         provider: provider as AgentOptions["provider"],
         systemPrompt: surgeonPersona(worktreePath),
         tools, security, toolPolicy, sessionId,
+        callContext: "delegated",
         maxIterations: 30,
         opType: "self_edit",
         lane: "background",

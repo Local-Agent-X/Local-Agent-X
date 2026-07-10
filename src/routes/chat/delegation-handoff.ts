@@ -152,6 +152,7 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
     tools: [],                                      // force text-only — no tool calls
     security: ctx.security, toolPolicy: ctx.toolPolicy,
     threatEngine: threatEngineDel, rbac: ctx.rbac, callerRole: requestRole, sessionId,
+    callContext: "local",
     images: prepared.images as AgentOptions["images"],
     maxIterations: 1,                               // 1-shot — agent says its piece, ends turn
     temperature: prepared.temperature,

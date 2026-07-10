@@ -66,6 +66,7 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
           apiKey, model: dreamModel, provider: provider as AgentOptions["provider"],
           systemPrompt: DREAM_SYSTEM_PROMPT, tools: dreamTools, security, toolPolicy,
           sessionId: dreamSession.id, maxIterations: 10, temperature: 0.3,
+          callContext: "delegated",
           opType: "memory_consolidation", lane: "background",
         });
         dreamSession.messages.push(...result.messages.filter(m => m.role !== "system"));
@@ -76,6 +77,7 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
             apiKey, model: dreamModel, provider: provider as AgentOptions["provider"],
             systemPrompt: DREAM_SYSTEM_PROMPT, tools: dreamTools, security, toolPolicy,
             sessionId: `${dreamSession.id}-b${i}`, maxIterations: 15, temperature: 0.3,
+            callContext: "delegated",
             opType: "memory_consolidation", lane: "background",
           });
           dreamSession.messages.push(...result.messages.filter(m => m.role !== "system"));

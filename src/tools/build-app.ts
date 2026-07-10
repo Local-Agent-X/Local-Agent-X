@@ -360,10 +360,10 @@ export const buildAppTool: ToolDefinition = {
         tools: builderTools,
         security,
         sessionId: sessionId || op.id,
+        callContext: "delegated",
         opId: op.id,
       }));
     }
-
     registerAdapterForOp(op.id, () => createAppBuildAdapter({
       strategy,
       provider,

@@ -81,6 +81,7 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
         { id: "2", name: "grep", arguments: JSON.stringify({ path: "/tmp", pattern: "x" }) },
       ],
       toolMap, undefined as never, undefined, undefined, undefined, undefined, session,
+      undefined, undefined, undefined, undefined, undefined, "local",
     );
     // Co-batched: both enter before either exits.
     expect(events.slice(0, 2)).toEqual(["enter:read", "enter:grep"]);
@@ -104,6 +105,7 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
         { id: "2", name: "web_search", arguments: JSON.stringify({ query: "hi" }) },
       ],
       toolMap, undefined as never, undefined, undefined, undefined, undefined, session,
+      undefined, undefined, undefined, undefined, undefined, "local",
     );
     // Sequential: read's enter+exit precede web_search's enter entirely.
     expect(events).toEqual(["enter:read", "exit:read", "enter:web_search", "exit:web_search"]);
@@ -128,6 +130,7 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
         { id: "2", name: "web_search", arguments: JSON.stringify({ query: "exfil please" }) },
       ],
       toolMap, undefined as never, undefined, undefined, undefined, undefined, session,
+      undefined, undefined, undefined, undefined, undefined, "local",
     );
 
     // The read tainted the session (floor set from args, pre-execute).
@@ -190,6 +193,7 @@ describe("dedup hit emits the tool result exactly once (TD-4)", () => {
     const msgs = await executeToolCalls(
       [{ id: "call-2", name: "fetch_stub", arguments: args }],
       toolMap, undefined as never, undefined, undefined, undefined, undefined, session, onEvent,
+      undefined, undefined, undefined, undefined, "local",
     );
 
     // Exactly ONE tool message for call-2 — not the terminate+audit pair that
@@ -238,7 +242,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     ]);
     const r = await dispatchSingleToolCall(
       { id: "x1", name: "deny_stub", args: {} },
-      { toolMap, security: undefined as never },
+      { toolMap, security: undefined as never, callContext: "api" },
     );
     expect(r.status).toBe("blocked");
     expect(r.isError).toBe(true);
@@ -253,7 +257,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     ]);
     const r = await dispatchSingleToolCall(
       { id: "x1d", name: "decline_stub", args: {} },
-      { toolMap, security: undefined as never },
+      { toolMap, security: undefined as never, callContext: "api" },
     );
     expect(r.status).toBe("declined");
     expect(r.isError).toBe(true);
@@ -266,7 +270,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     ]);
     const r = await dispatchSingleToolCall(
       { id: "x2", name: "err_stub", args: {} },
-      { toolMap, security: undefined as never },
+      { toolMap, security: undefined as never, callContext: "api" },
     );
     expect(r.status).toBe("error");
     expect(r.isError).toBe(true);
@@ -278,7 +282,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     ]);
     const r = await dispatchSingleToolCall(
       { id: "x3", name: "ok_stub", args: {} },
-      { toolMap, security: undefined as never },
+      { toolMap, security: undefined as never, callContext: "api" },
     );
     expect(r.status).toBe("ok");
     expect(r.isError).toBe(false);
@@ -310,9 +314,9 @@ describe("canonical unattended shell capability gate", () => {
 
   beforeEach(() => setUnconfinedHostAcknowledgement(false));
 
-  async function dispatch(name: string, prefix: "agent" | "mcp" | "cron", acknowledged: boolean) {
+  async function dispatch(name: string, sessionId: string, callContext: "api" | "delegated" | "cron", acknowledged: boolean) {
     if (acknowledged) setUnconfinedHostAcknowledgement(true);
-    const sessionId = `${prefix}-shell-gate-${seq++}`;
+    sessionId = `${sessionId}-${seq++}`;
     setSessionProfile(sessionId, "Power");
     const execute = vi.fn(async (): Promise<ToolResult> => ({ content: `executed:${name}` }));
     const tool = {
@@ -331,6 +335,12 @@ describe("canonical unattended shell capability gate", () => {
         undefined,
         undefined,
         sessionId,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        callContext,
       );
       return { execute, content: String(messages[0]?.content ?? "") };
     } finally {
@@ -338,22 +348,39 @@ describe("canonical unattended shell capability gate", () => {
     }
   }
 
-  for (const context of ["agent", "mcp"] as const) {
-    it.each(SHELL_BACKENDS)(`blocks %s on an unacknowledged unconfined ${context} run`, async (name) => {
-      const result = await dispatch(name, context, false);
+  const ORIGINS = [
+    { label: "delegated agent", sessionId: "agent-shell-gate", callContext: "delegated" as const },
+    { label: "worker session", sessionId: "worker-app-forged", callContext: "delegated" as const },
+    { label: "API with chat-style session", sessionId: "chat-forged-mcp", callContext: "api" as const },
+  ];
+
+  for (const origin of ORIGINS) {
+    it.each(SHELL_BACKENDS)(`blocks %s on an unacknowledged unconfined ${origin.label}`, async (name) => {
+      const result = await dispatch(name, origin.sessionId, origin.callContext, false);
       expect(result.execute).not.toHaveBeenCalled();
       expect(result.content).toMatch(/effective mode is "host"/i);
     });
 
-    it.each(SHELL_BACKENDS)(`allows %s on an acknowledged unconfined ${context} run`, async (name) => {
-      const result = await dispatch(name, context, true);
+    it.each(SHELL_BACKENDS)(`allows %s on an acknowledged unconfined ${origin.label}`, async (name) => {
+      const result = await dispatch(name, origin.sessionId, origin.callContext, true);
       expect(result.execute).toHaveBeenCalledOnce();
       expect(result.content).toContain(`executed:${name}`);
     });
   }
 
+  it("defaults omitted origin metadata to API even for a chat-style session id", async () => {
+    const execute = vi.fn(async (): Promise<ToolResult> => ({ content: "executed:shell" }));
+    const tool = { name: "shell", description: "", parameters: { type: "object", properties: {} }, execute } as unknown as ToolDefinition;
+    const messages = await executeToolCalls(
+      [{ id: "default-api", name: "shell", arguments: JSON.stringify({ command: "echo ok" }) }],
+      new Map([[tool.name, tool]]), undefined as never, undefined, undefined, undefined, undefined, "chat-style-forged",
+    );
+    expect(execute).not.toHaveBeenCalled();
+    expect(String(messages[0]?.content)).toMatch(/effective mode is "host"/i);
+  });
+
   it.each(SHELL_BACKENDS)("categorically blocks %s in cron even when host execution is acknowledged", async (name) => {
-    const result = await dispatch(name, "cron", true);
+    const result = await dispatch(name, "chat-looking-cron", "cron", true);
     expect(result.execute).not.toHaveBeenCalled();
     expect(result.content).toMatch(/categorically disabled for cron/i);
   });

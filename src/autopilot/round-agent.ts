@@ -105,6 +105,7 @@ export async function runAutopilotRound(
       tools,
       security,
       sessionId,
+      callContext: "delegated",
       maxIterations: deps.config.maxIterations,
       wallClockMs: opts.wallClockMs,
       opType: "autopilot_round",

@@ -28,7 +28,7 @@ export interface ToolCallContext {
   readonly signal?: AbortSignal;
   readonly priorMessages?: ChatCompletionMessageParam[];
 
-  callContext: CallContext;
+  readonly callContext: CallContext;
   args: Record<string, unknown>;
   tool?: ToolDefinition;
   riskLevel: "low" | "medium" | "high";
@@ -77,6 +77,7 @@ export function createContext(input: {
   threatEngine?: ThreatEngine;
   rbac?: RBACManager;
   callerRole?: Role;
+  callContext?: CallContext;
   sessionId?: string;
   runId?: string;
   operationId?: string;
@@ -98,7 +99,7 @@ export function createContext(input: {
     onEvent: input.onEvent,
     signal: input.signal,
     priorMessages: input.priorMessages,
-    callContext: "local",
+    callContext: input.callContext ?? "api",
     args: {},
     riskLevel: "low",
     approvalContext: "",

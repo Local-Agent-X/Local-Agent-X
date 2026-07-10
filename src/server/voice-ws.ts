@@ -215,6 +215,7 @@ export async function setupVoiceWs(deps: {
           tools: voiceTools,
           security, toolPolicy, rbac,
           sessionId,
+          callContext: "local",
           // Budget: a quick lookup (web_search → speak) or delegate-and-ack
           // (op_submit_async → speak) needs ~2; a browser flow needs room for
           // navigate → observe → maybe one more action → speak. 8 covers an

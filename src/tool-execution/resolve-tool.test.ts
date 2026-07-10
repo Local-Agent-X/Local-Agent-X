@@ -33,6 +33,7 @@ async function dispatch(name: string, args: Record<string, unknown>) {
     toolMap: new Map(),
     security: {} as SecurityLayer,
     sessionId: SESSION,
+    callContext: "delegated",
   });
   const outcome = await resolvePhase(ctx);
   expect(outcome.kind).toBe("continue");
@@ -81,12 +82,13 @@ describe("work-rooted session tool anchoring (dispatch → resolver seam)", () =
 
 // Drive resolvePhase without asserting a specific outcome — the anti-brick gate
 // HALTs, so the work-root helper (which expects "continue") can't be reused.
-async function resolveRaw(name: string, args: Record<string, unknown>, sessionId?: string) {
+async function resolveRaw(name: string, args: Record<string, unknown>, sessionId?: string, callContext: "local" | "api" | "delegated" | "cron" = "api") {
   const ctx = createContext({
     tc: { id: "p1", name, arguments: JSON.stringify(args) },
     toolMap: new Map(),
     security: {} as SecurityLayer,
     sessionId,
+    callContext,
   });
   const outcome = await resolvePhase(ctx);
   return { ctx, outcome };
@@ -119,15 +121,11 @@ describe("protected-file anti-brick gate keys on the edit family, not a name lis
   });
 });
 
-describe("deriveCallContext yields 'api' for the unattended MCP bridge (TD-6)", () => {
-  it("an mcp- session runs as 'api', not an interactive 'local' session", async () => {
-    const { ctx } = await resolveRaw("read", { path: "notes.txt" }, "mcp-bridge");
-    expect(ctx.callContext).toBe("api");
-  });
-
-  it("known prefixes still map to their own contexts", async () => {
-    expect((await resolveRaw("read", { path: "x" }, "agent-1")).ctx.callContext).toBe("delegated");
-    expect((await resolveRaw("read", { path: "x" }, "cron-1")).ctx.callContext).toBe("cron");
-    expect((await resolveRaw("read", { path: "x" }, "chat-1")).ctx.callContext).toBe("local");
+describe("trusted call context metadata", () => {
+  it("does not derive privileges from session id prefixes", async () => {
+    expect((await resolveRaw("read", { path: "x" }, "chat-looking-session")).ctx.callContext).toBe("api");
+    expect((await resolveRaw("read", { path: "x" }, "worker-app", "delegated")).ctx.callContext).toBe("delegated");
+    expect((await resolveRaw("read", { path: "x" }, "chat-forged", "api")).ctx.callContext).toBe("api");
+    expect((await resolveRaw("read", { path: "x" }, "anything", "local")).ctx.callContext).toBe("local");
   });
 });

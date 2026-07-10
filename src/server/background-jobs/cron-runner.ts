@@ -106,6 +106,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
         security: cronSecurity,
         toolPolicy,
         sessionId,
+        callContext: "cron",
         maxIterations: config.maxIterations,
         signal: externalCancelController.signal,
         wallClockMs: MISSION_HARD_TIMEOUT_MS,

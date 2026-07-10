@@ -1,4 +1,4 @@
-// Resolve phase: parse args, dup-check, derive callContext, inject
+// Resolve phase: parse args, dup-check, inject
 // session/worktree/onEvent state, compute risk + approval context, emit
 // tool_start, short-circuit dry-run + plan-mode + protected-file blocks,
 // look up the tool. Pre-policy: any block here returns the standard
@@ -8,7 +8,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { USER_HINTS } from "../types.js";
 import { isPlanMode, isReadOnlyCall } from "../tools/plan-tools.js";
 import { logRetry } from "../retry-telemetry.js";
-import type { CallContext, Phase, PhaseOutcome, ToolCallContext } from "./context.js";
+import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, HALT } from "./context.js";
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
@@ -50,20 +50,6 @@ const SESSION_SCOPED_TOOLS = new Set([
   "read", "write", "edit", "multi_edit", "edit_lines", "bulk_replace", "delete_file", "glob", "grep",
   "structural_search", // searchRoot(args) is session-anchored like grep's
 ]);
-
-function deriveCallContext(sessionId: string | undefined): CallContext {
-  if (sessionId?.startsWith("agent-")) return "delegated";
-  if (sessionId?.startsWith("cron-")) return "cron";
-  // Programmatic MCP-bridge calls (routes/mcp.ts defaults sessionId to
-  // "mcp-bridge" when no chat session is attached) are unattended — they must
-  // NOT inherit interactive privileges. "api" keeps the automated-run
-  // guarantees: protected security settings can't be flipped (pre-dispatch)
-  // and ask-tier approvals block instead of passing (require-approval).
-  // A bridge call stamped with a real chat session id (LAX_MCP_SESSION_ID)
-  // doesn't match this prefix and stays with that session's context.
-  if (sessionId?.startsWith("mcp-")) return "api";
-  return "local";
-}
 
 const SESSION_REPEAT_SKIP_TOOLS = new Set([
   "request_secret", "request_secrets",
@@ -212,7 +198,6 @@ export const resolvePhase: Phase = async (ctx) => {
   }
 
   await parseArgs(ctx);
-  ctx.callContext = deriveCallContext(sessionId);
 
   // Plan mode: block non-read-only tools (session-scoped). Collapsed family
   // tools (spreadsheet/document/pdf) are judged per args.action.

@@ -10,7 +10,7 @@ import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import { compactIfNeeded, compactIfNeededWithLLM } from "../context-manager/index.js";
-import { createContext } from "./context.js";
+import { createContext, type CallContext } from "./context.js";
 import { resolvePhase } from "./resolve-tool.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
 import { dedupCheckPhase, dedupRecordPhase } from "./dedup-check.js";
@@ -36,8 +36,9 @@ async function executeSingleTool(
   priorMessages?: ChatCompletionMessageParam[],
   runId?: string,
   operationId?: string,
+  callContext: CallContext = "api",
 ): Promise<ChatCompletionMessageParam[]> {
-  const ctx = createContext({ tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, runId, operationId, onEvent, signal, priorMessages });
+  const ctx = createContext({ tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, runId, operationId, callContext, onEvent, signal, priorMessages });
 
   if ((await resolvePhase(ctx)).kind === "halt") return ctx.msgs;
 
@@ -126,6 +127,7 @@ export interface UnifiedDispatchCtx {
   sessionId?: string;
   runId?: string;
   operationId?: string;
+  callContext?: CallContext;
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
   priorMessages?: ChatCompletionMessageParam[];
@@ -158,6 +160,7 @@ export async function dispatchSingleToolCall(
     ctx.priorMessages,
     ctx.runId,
     ctx.operationId,
+    ctx.callContext ?? "api",
   );
   const last = msgs[msgs.length - 1];
   const content = typeof last?.content === "string" ? last.content : "";
@@ -225,6 +228,7 @@ export async function executeToolCalls(
   priorMessages?: ChatCompletionMessageParam[],
   runId?: string,
   operationId?: string,
+  callContext: CallContext = "api",
 ): Promise<ChatCompletionMessageParam[]> {
   const results: ChatCompletionMessageParam[] = [];
 
@@ -248,15 +252,15 @@ export async function executeToolCalls(
       }
       if (batch.length > 1) {
         const parallel = await Promise.all(
-          batch.map((b) => executeSingleTool(b, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId)),
+          batch.map((b) => executeSingleTool(b, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId, callContext)),
         );
         results.push(...parallel.flat());
       } else {
-        const msgs = await executeSingleTool(batch[0], toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId);
+        const msgs = await executeSingleTool(batch[0], toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId, callContext);
         results.push(...msgs);
       }
     } else {
-      const msgs = await executeSingleTool(tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId);
+      const msgs = await executeSingleTool(tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId, callContext);
       results.push(...msgs);
     }
     i++;

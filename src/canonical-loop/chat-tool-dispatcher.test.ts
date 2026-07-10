@@ -64,6 +64,7 @@ describe("makeChatToolDispatcher wires priorMessages from op storage", () => {
       tools: [echoTool(calls)],
       security: undefined as never,
       sessionId: "s-dedup",
+      callContext: "local",
       opId,
     });
 
@@ -84,6 +85,7 @@ describe("makeChatToolDispatcher wires priorMessages from op storage", () => {
       tools: [echoTool(calls)],
       security: undefined as never,
       sessionId: "s-control",
+      callContext: "local",
       opId,
     });
 

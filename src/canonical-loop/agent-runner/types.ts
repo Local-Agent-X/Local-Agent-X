@@ -1,7 +1,10 @@
 import type { OpLane } from "../../ops/types.js";
 import type { AgentOptions } from "../../providers/types.js";
+import type { CallContext } from "../../tool-execution/context.js";
 
 export interface CanonicalAgentOptions extends AgentOptions {
+  /** Trusted dispatch origin. Omitted non-chat callers default to API. */
+  callContext?: CallContext;
   /** Op-level wall-clock ceiling. Replaces caller-side setTimeout-driven
    *  AbortControllers — when this fires, the runner calls opCancel so
    *  canonical's state machine sees a clean running → cancelling → cancelled

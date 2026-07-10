@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type Database from "better-sqlite3";
 import type { Session } from "../types.js";
-import type { Chunk, ChunkMetadata, EmbeddingProvider, FileRecord, MemoryConfig } from "./types.js";
+import type { CanonicalSource, Chunk, ChunkMetadata, EmbeddingProvider, FileRecord, MemoryConfig } from "./types.js";
 import { chunkConversationPairs, extractSessionPairs } from "./chunking.js";
-import { chunkText } from "./search-helpers.js";
+import { chunkText, withChunkProvenance } from "./search-helpers.js";
 import { redactCredentials, safeReadTextFile } from "./utils.js";
 import { embedChunksWithRetry, pruneEmbeddingCache } from "./index-embedding.js";
 import { archiveOldFacts } from "./index-watcher.js";
@@ -158,7 +158,9 @@ async function indexFile(
         if (sess.createdAt) sessionDate = new Date(sess.createdAt).toISOString().split("T")[0];
       }
     } catch {}
-    const metadata: ChunkMetadata = { source_type: "agent-x-session", session_id: sessionId, date: sessionDate };
+    const metadata: ChunkMetadata = withChunkProvenance("session", {
+      source_type: "agent-x-session", session_id: sessionId, date: sessionDate,
+    });
     chunks = chunkConversationPairs(messages, file.path, file.source, metadata) as Chunk[];
   } else {
     const raw = safeReadTextFile(file.path);
@@ -166,10 +168,10 @@ async function indexFile(
     if (!raw.trim()) return;
     const maxChunkChars = config.chunkTokens * config.charsPerToken;
     const overlapChars = config.chunkOverlap * config.charsPerToken;
-    const metadata: ChunkMetadata = {
+    const metadata: ChunkMetadata = withChunkProvenance(file.source as CanonicalSource, {
       source_type: file.source === "entity" ? "entity-page" : "memory-file",
       date: extractDateFromPath(file.path),
-    };
+    });
     chunks = chunkText(raw, file.path, file.source, maxChunkChars, overlapChars) as Chunk[];
     for (const c of chunks) c.metadata = metadata;
   }

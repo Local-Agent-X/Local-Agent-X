@@ -168,6 +168,8 @@ export interface MemorySearchResult {
   entities?: string[];
   kind?: FactKind;
   metadata?: ChunkMetadata;
+  /** Normalized provenance for model- and UI-facing retrieval results. */
+  provenance?: MemoryProvenance;
   /**
    * Epoch-ms of the chunk's `updated_at` — when THIS snippet's content last
    * changed. The staleness signal for prompt formatting (relative age +
@@ -180,12 +182,38 @@ export interface MemorySearchResult {
   updatedAt?: number;
 }
 
+export type ChunkSourceType =
+  | "agent-x-session"
+  | "chatgpt-import"
+  | "claude-import"
+  | "codex-import"
+  | "slack-import"
+  | "memory-file"
+  | "entity-page"
+  | "import";
+
+export type MemoryTrustStatus = "trusted" | "untrusted" | "mixed" | "unknown";
+export type MemoryTaintStatus = "clean" | "tainted" | "unknown";
+
+export interface MemoryProvenance {
+  source: string;
+  source_type: string;
+  session_id?: string;
+  date?: string;
+  trust_status: MemoryTrustStatus;
+  taint_status: MemoryTaintStatus;
+  label: string;
+}
+
 export interface ChunkMetadata {
   project?: string;
   topic?: string;
   date?: string;
-  source_type?: "agent-x-session" | "chatgpt-import" | "claude-import" | "codex-import" | "slack-import" | "memory-file" | "entity-page" | "import";
+  source_type?: ChunkSourceType;
   session_id?: string;
+  trust_status?: MemoryTrustStatus;
+  taint_status?: MemoryTaintStatus;
+  provenance_label?: string;
 }
 
 export interface Chunk {

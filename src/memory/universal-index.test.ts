@@ -55,6 +55,16 @@ describe("UniversalIndex.indexEntityPage", () => {
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].source).toBe("entity");
     expect(results[0].snippet).toMatch(/glasses/i);
+
+    const stored = memory["db"]
+      .prepare("SELECT metadata FROM chunks WHERE source = 'entity' LIMIT 1")
+      .get() as { metadata: string };
+    expect(JSON.parse(stored.metadata)).toMatchObject({
+      source_type: "entity-page",
+      trust_status: "unknown",
+      taint_status: "unknown",
+      provenance_label: "Entity memory page",
+    });
   });
 });
 

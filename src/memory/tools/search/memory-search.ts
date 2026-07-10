@@ -79,7 +79,13 @@ export function memorySearchTool(memory: MemoryIndex) {
             if (rel && !rel.startsWith("..")) virtualPath = rel;
           } catch { /* fall back to absolute */ }
           const ent = r.entities?.length ? ` entities=${r.entities.join(",")}` : "";
-          return `[${i + 1}] source=${r.source} path=${virtualPath}:${r.startLine}-${r.endLine} score=${r.score.toFixed(2)}${ent}\n${r.snippet}`;
+          const provenance = r.provenance;
+          const provenanceFields = provenance
+            ? ` source_type=${provenance.source_type} trust=${provenance.trust_status} taint=${provenance.taint_status} label=${JSON.stringify(provenance.label)}` +
+              (provenance.session_id ? ` session=${provenance.session_id}` : "") +
+              (provenance.date ? ` date=${provenance.date}` : "")
+            : "";
+          return `[${i + 1}] source=${r.source}${provenanceFields} path=${virtualPath}:${r.startLine}-${r.endLine} score=${r.score.toFixed(2)}${ent}\n${r.snippet}`;
         })
         .join("\n\n");
 

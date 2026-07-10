@@ -48,10 +48,14 @@ export function searchPastSessionsTool(memory: MemoryIndex) {
 
       const formatted = sessionResults
         .map((r, i) => {
-          const dateStr = r.metadata?.date ? ` date=${r.metadata.date}` : "";
+          const provenance = r.provenance;
+          const dateStr = provenance?.date ? ` date=${provenance.date}` : "";
           const topic = r.metadata?.topic ? ` topic=${r.metadata.topic}` : "";
-          const sid = r.metadata?.session_id ? ` session=${r.metadata.session_id.slice(0, 12)}` : "";
-          return `[${i + 1}] source=${r.source}${dateStr}${topic}${sid} score=${r.score.toFixed(2)}\n${r.snippet}`;
+          const sid = provenance?.session_id ? ` session=${provenance.session_id.slice(0, 12)}` : "";
+          const provenanceFields = provenance
+            ? ` source_type=${provenance.source_type} trust=${provenance.trust_status} taint=${provenance.taint_status} label=${JSON.stringify(provenance.label)}`
+            : "";
+          return `[${i + 1}] source=${r.source}${provenanceFields}${dateStr}${topic}${sid} score=${r.score.toFixed(2)}\n${r.snippet}`;
         })
         .join("\n\n");
 

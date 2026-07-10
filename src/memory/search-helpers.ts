@@ -5,7 +5,10 @@
  * Used by MemoryIndex's search pipeline.
  */
 import { basename } from "node:path";
-import type { Chunk, MemorySearchResult } from "./types.js";
+import type {
+  CanonicalSource, Chunk, ChunkMetadata, ChunkSourceType, MemoryProvenance,
+  MemorySearchResult, MemoryTaintStatus, MemoryTrustStatus,
+} from "./types.js";
 import { sha256, tokenize, jaccardSimilarity, normalizeScores } from "./utils.js";
 
 // ── Chunking ──
@@ -60,6 +63,63 @@ export function chunkText(
 
 // ── Result converter ──
 
+const SOURCE_TYPE_DEFAULTS: Record<CanonicalSource, ChunkSourceType> = {
+  entity: "entity-page",
+  "daily-log": "memory-file",
+  mind: "memory-file",
+  "session-summary": "memory-file",
+  session: "agent-x-session",
+  personality: "memory-file",
+  import: "import",
+};
+
+const SOURCE_LABELS: Record<ChunkSourceType, string> = {
+  "agent-x-session": "Local session transcript",
+  "chatgpt-import": "Imported ChatGPT conversation",
+  "claude-import": "Imported Claude conversation",
+  "codex-import": "Imported Codex conversation",
+  "slack-import": "Imported Slack conversation",
+  "memory-file": "Local memory file",
+  "entity-page": "Entity memory page",
+  import: "Imported conversation",
+};
+
+function defaultTrust(sourceType: ChunkSourceType): MemoryTrustStatus {
+  if (sourceType === "agent-x-session") return "mixed";
+  if (sourceType === "import" || sourceType.endsWith("-import")) return "untrusted";
+  return "unknown";
+}
+
+export function describeChunkProvenance(
+  source: CanonicalSource,
+  metadata: ChunkMetadata | undefined,
+): MemoryProvenance {
+  const sourceType = metadata?.source_type ?? SOURCE_TYPE_DEFAULTS[source];
+  return {
+    source,
+    source_type: sourceType,
+    session_id: metadata?.session_id,
+    date: metadata?.date,
+    trust_status: metadata?.trust_status ?? defaultTrust(sourceType),
+    taint_status: metadata?.taint_status ?? "unknown",
+    label: metadata?.provenance_label ?? SOURCE_LABELS[sourceType],
+  };
+}
+
+export function withChunkProvenance(
+  source: CanonicalSource,
+  metadata: ChunkMetadata,
+): ChunkMetadata {
+  const provenance = describeChunkProvenance(source, metadata);
+  return {
+    ...metadata,
+    source_type: provenance.source_type as ChunkSourceType,
+    trust_status: provenance.trust_status,
+    taint_status: provenance.taint_status,
+    provenance_label: provenance.label,
+  };
+}
+
 /**
  * A search result that still carries its source chunk's DB `id`. The hybrid
  * rescore in search.ts must classify a merged result as vector-found or
@@ -83,6 +143,10 @@ export function toSearchResult(
     try { metadata = JSON.parse((chunk as unknown as { metadataRaw: string }).metadataRaw); } catch {}
   }
 
+  const source = chunk.source as MemorySearchResult["source"];
+  const provenance = describeChunkProvenance(source, metadata);
+  metadata = withChunkProvenance(source, metadata ?? {});
+
   return {
     id: chunk.id,
     path: chunk.path,
@@ -90,9 +154,10 @@ export function toSearchResult(
     endLine: chunk.endLine,
     score: chunk.score,
     snippet: chunk.text.slice(0, snippetMaxChars),
-    source: chunk.source as MemorySearchResult["source"],
+    source,
     entities: entities.length > 0 ? entities : undefined,
     metadata,
+    provenance,
     updatedAt: chunk.updatedAt,
   };
 }

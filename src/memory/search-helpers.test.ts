@@ -9,9 +9,15 @@
  * when no id exists).
  */
 
-import { describe, it, expect } from "vitest";
-import { mergeHybridResults } from "./search-helpers.js";
-import type { Chunk } from "./types.js";
+import Database from "better-sqlite3";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { getAtlasRecords, getChunk } from "./index-atlas.js";
+import { describeChunkProvenance, mergeHybridResults, toSearchResult } from "./search-helpers.js";
+import type { Chunk, MemorySearchResult } from "./types.js";
+import { memorySearchTool } from "./tools/search/memory-search.js";
+import { searchPastSessionsTool } from "./tools/search/search-past-sessions.js";
+
+vi.mock("./tools/search/app-matcher.js", () => ({ findMatchingApps: vi.fn(async () => []) }));
 
 const SNIPPET_MAX = 500;
 
@@ -67,5 +73,147 @@ describe("mergeHybridResults chunk identity (CM-4)", () => {
     expect(results).toHaveLength(2);
     expect(results.find((r) => r.snippet === "chunk a")!.score).toBeCloseTo(0.5 * 0.9 + 0.5 * 0.5);
     expect(results.find((r) => r.snippet === "chunk b")!.score).toBeCloseTo(0.35);
+  });
+});
+
+describe("memory provenance labels", () => {
+  it("derives complete provenance for legacy chunks without stored labels", () => {
+    const result = toSearchResult(chunk({
+      source: "session",
+      text: "prior turn",
+      score: 0.8,
+      metadata: {
+        source_type: "agent-x-session",
+        session_id: "session-123",
+        date: "2026-07-09",
+      },
+    }), SNIPPET_MAX);
+
+    expect(result.provenance).toEqual({
+      source: "session",
+      source_type: "agent-x-session",
+      session_id: "session-123",
+      date: "2026-07-09",
+      trust_status: "mixed",
+      taint_status: "unknown",
+      label: "Local session transcript",
+    });
+    expect(result.metadata).toMatchObject({
+      trust_status: "mixed",
+      taint_status: "unknown",
+      provenance_label: "Local session transcript",
+    });
+  });
+
+  it("preserves explicitly recorded trust, taint, and label values", () => {
+    const provenance = describeChunkProvenance("import", {
+      source_type: "import",
+      trust_status: "trusted",
+      taint_status: "clean",
+      provenance_label: "Reviewed archive",
+    });
+
+    expect(provenance.trust_status).toBe("trusted");
+    expect(provenance.taint_status).toBe("clean");
+    expect(provenance.label).toBe("Reviewed archive");
+  });
+});
+
+describe("retrieval provenance output", () => {
+  const result: MemorySearchResult = {
+    path: "session-live/session-123",
+    startLine: 1,
+    endLine: 2,
+    score: 0.87,
+    snippet: "A prior conversation snippet.",
+    source: "session",
+    metadata: {
+      source_type: "agent-x-session",
+      session_id: "session-123456789",
+      date: "2026-07-09",
+    },
+    provenance: {
+      source: "session",
+      source_type: "agent-x-session",
+      session_id: "session-123456789",
+      date: "2026-07-09",
+      trust_status: "mixed",
+      taint_status: "unknown",
+      label: "Local session transcript",
+    },
+  };
+
+  function stubMemory() {
+    return {
+      memoryDir: "C:\\memory",
+      search: vi.fn(async () => [result]),
+    } as never;
+  }
+
+  it("includes provenance in memory_search and explicit past-session results", async () => {
+    const regular = await memorySearchTool(stubMemory()).execute({ query: "prior" });
+    const past = await searchPastSessionsTool(stubMemory()).execute({ query: "prior" });
+
+    for (const content of [regular.content, past.content]) {
+      expect(content).toContain("source=session");
+      expect(content).toContain("source_type=agent-x-session");
+      expect(content).toContain("date=2026-07-09");
+      expect(content).toContain("trust=mixed");
+      expect(content).toContain("taint=unknown");
+      expect(content).toContain('label="Local session transcript"');
+    }
+    expect(regular.content).toContain("session=session-123456789");
+    expect(past.content).toContain("session=session-123");
+  });
+});
+
+describe("atlas provenance", () => {
+  let db: InstanceType<typeof Database> | undefined;
+
+  afterEach(() => db?.close());
+
+  it("returns complete labels for stored metadata and legacy rows", () => {
+    db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE chunks (
+        id INTEGER PRIMARY KEY,
+        text TEXT NOT NULL,
+        source TEXT NOT NULL,
+        metadata TEXT,
+        path TEXT NOT NULL,
+        embedding BLOB,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    db.prepare(
+      "INSERT INTO chunks (id, text, source, metadata, path, embedding, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      1,
+      "Session memory",
+      "session",
+      JSON.stringify({ source_type: "agent-x-session", session_id: "sess-1", date: "2026-07-09" }),
+      "session-live/sess-1",
+      Buffer.from([1]),
+      2,
+    );
+
+    const record = getAtlasRecords(db, 10).items[0];
+    expect(record).toMatchObject({
+      source: "session",
+      sourceType: "agent-x-session",
+      sessionId: "sess-1",
+      date: "2026-07-09",
+      trustStatus: "mixed",
+      taintStatus: "unknown",
+      label: "Local session transcript",
+    });
+    expect(getChunk(db, 1)).toMatchObject({
+      text: "Session memory",
+      sourceType: record.sourceType,
+      sessionId: record.sessionId,
+      trustStatus: record.trustStatus,
+      taintStatus: record.taintStatus,
+      label: record.label,
+    });
   });
 });

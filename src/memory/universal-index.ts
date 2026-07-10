@@ -21,6 +21,7 @@ import { join, basename } from "node:path";
 import { createHash } from "node:crypto";
 import type { MemoryIndex } from "../memory/index.js";
 import type { CanonicalSource, ChunkMetadata, Chunk } from "./types.js";
+import { withChunkProvenance } from "./search-helpers.js";
 import { chunkText, chunkConversationPairs, extractSessionPairs } from "./chunking.js";
 
 import { createLogger } from "../logger.js";
@@ -147,7 +148,7 @@ export class UniversalIndex {
     const path = join(this.entitiesDir, `${slug}.md`);
     const raw = safeRead(path);
     if (!raw || !raw.trim()) return { added: 0, removed: 0, unchanged: 0 };
-    const metadata: ChunkMetadata = { source_type: "entity-page" };
+    const metadata: ChunkMetadata = withChunkProvenance("entity", { source_type: "entity-page" });
     const chunks = chunkBySections(raw, path, "entity", metadata);
     return this.memory.indexChunksIdempotent(chunks, path, "entity");
   }
@@ -158,7 +159,7 @@ export class UniversalIndex {
     const path = join(this.memoryDir, `${dateStr}.md`);
     const raw = safeRead(path);
     if (!raw || !raw.trim()) return { added: 0, removed: 0, unchanged: 0 };
-    const metadata: ChunkMetadata = { source_type: "memory-file", date: dateStr };
+    const metadata: ChunkMetadata = withChunkProvenance("daily-log", { source_type: "memory-file", date: dateStr });
     const chunks = chunkBySections(raw, path, "daily-log", metadata);
     return this.memory.indexChunksIdempotent(chunks, path, "daily-log");
   }
@@ -167,7 +168,9 @@ export class UniversalIndex {
     const path = join(this.summariesDir, `${sessionId}.md`);
     const raw = safeRead(path);
     if (!raw || !raw.trim()) return { added: 0, removed: 0, unchanged: 0 };
-    const metadata: ChunkMetadata = { source_type: "memory-file", session_id: sessionId };
+    const metadata: ChunkMetadata = withChunkProvenance("session-summary", {
+      source_type: "memory-file", session_id: sessionId,
+    });
     const chunks = chunkBySections(raw, path, "session-summary", metadata);
     return this.memory.indexChunksIdempotent(chunks, path, "session-summary");
   }
@@ -193,11 +196,11 @@ export class UniversalIndex {
       }
     } catch {}
 
-    const metadata: ChunkMetadata = {
+    const metadata: ChunkMetadata = withChunkProvenance("session", {
       source_type: "agent-x-session",
       session_id: sessionId,
       date: sessionDate,
-    };
+    });
     const chunks = chunkConversationPairs(messages, path, "session", metadata) as Chunk[];
     return this.memory.indexChunksIdempotent(chunks, path, "session");
   }
@@ -206,7 +209,7 @@ export class UniversalIndex {
     const path = join(this.memoryDir, filename);
     const raw = safeRead(path);
     if (!raw || !raw.trim()) return { added: 0, removed: 0, unchanged: 0 };
-    const metadata: ChunkMetadata = { source_type: "memory-file" };
+    const metadata: ChunkMetadata = withChunkProvenance("personality", { source_type: "memory-file" });
     const chunks = chunkBySections(raw, path, "personality", metadata);
     return this.memory.indexChunksIdempotent(chunks, path, "personality");
   }

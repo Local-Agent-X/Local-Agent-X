@@ -69,6 +69,10 @@ describe("autoSearchContext relative age + stale caveat", () => {
 
     expect(out).toContain("RELEVANT MEMORIES");
     expect(out).toContain("bambu");
+    expect(out).toContain("source_type: entity-page");
+    expect(out).toContain("trust: unknown");
+    expect(out).toContain("taint: unknown");
+    expect(out).toContain("label: Entity memory page");
     // Relative age from chunk updated_at — never a raw stamp.
     expect(out).toContain("3 days ago");
     // >24h old → citation-drift caveat.

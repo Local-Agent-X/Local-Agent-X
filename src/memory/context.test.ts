@@ -146,6 +146,7 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
     expect(core).toMatch(/not proof/i);
     expect(core).toMatch(/NEVER use it as evidence for current runtime/i);
     expect(core).toContain("[unverified inference]");
+    expect(core).toContain('source=retained-fact source_type=inference trust=untrusted taint=clean label="Unverified inference"');
   });
 
   it("body cap holds under flood — never wildly exceeds MAX_BYTES=3000", async () => {
@@ -348,7 +349,7 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
     // Pin the inter-bucket separator: last bullet of "world" → blank line →
     // next "## " heading. Catches a regression that flattens to `\n## ` or
     // expands to `\n\n\n## `.
-    expect(core).toMatch(/^- owns Initech Dallas\n\n## Recent in their life$/m);
+    expect(core).toMatch(/^- owns Initech Dallas .*\n\n## Recent in their life$/m);
     expect(core).not.toMatch(/\n\n\n/);
   });
 

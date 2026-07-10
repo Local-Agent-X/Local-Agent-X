@@ -1,4 +1,6 @@
 import type Database from "better-sqlite3";
+import { describeChunkProvenance } from "./search-helpers.js";
+import type { CanonicalSource, ChunkMetadata, MemoryTaintStatus, MemoryTrustStatus } from "./types.js";
 
 // Lightweight per-chunk records for the memory brain visual. One row per dot:
 // just enough to render and read on hover (id + a short snippet + provenance),
@@ -8,7 +10,12 @@ export interface AtlasRecord {
   id: number;
   snippet: string;
   source: string;
+  sourceType: string;
   date: string | null;
+  sessionId: string | null;
+  trustStatus: MemoryTrustStatus;
+  taintStatus: MemoryTaintStatus;
+  label: string;
 }
 
 export interface AtlasResult {
@@ -41,16 +48,22 @@ export function getAtlasRecords(
     .all(limit) as Array<{ id: number; snippet: string; source: string; metadata: string | null }>;
 
   const items = rows.map((r) => {
-    let date: string | null = null;
+    let metadata: ChunkMetadata | undefined;
     if (r.metadata) {
       try {
-        date = (JSON.parse(r.metadata) as { date?: string }).date ?? null;
+        metadata = JSON.parse(r.metadata) as ChunkMetadata;
       } catch {
-        // malformed metadata blob — leave date null
+        // malformed metadata blob — derive legacy provenance from source
       }
     }
+    const provenance = describeChunkProvenance(r.source as CanonicalSource, metadata);
     const snippet = (r.snippet || "").replace(/\s+/g, " ").trim().slice(0, 140);
-    return { id: r.id, snippet, source: r.source, date };
+    return {
+      id: r.id, snippet, source: r.source, sourceType: provenance.source_type,
+      date: provenance.date ?? null, sessionId: provenance.session_id ?? null,
+      trustStatus: provenance.trust_status, taintStatus: provenance.taint_status,
+      label: provenance.label,
+    };
   });
 
   return { total, items };
@@ -60,7 +73,12 @@ export interface AtlasChunk {
   id: number;
   text: string;
   source: string;
+  sourceType: string;
   date: string | null;
+  sessionId: string | null;
+  trustStatus: MemoryTrustStatus;
+  taintStatus: MemoryTaintStatus;
+  label: string;
   path: string;
 }
 
@@ -70,13 +88,19 @@ export function getChunk(db: InstanceType<typeof Database>, id: number): AtlasCh
     .prepare("SELECT id, text, source, metadata, path FROM chunks WHERE id = ?")
     .get(id) as { id: number; text: string; source: string; metadata: string | null; path: string } | undefined;
   if (!r) return null;
-  let date: string | null = null;
+  let metadata: ChunkMetadata | undefined;
   if (r.metadata) {
     try {
-      date = (JSON.parse(r.metadata) as { date?: string }).date ?? null;
+      metadata = JSON.parse(r.metadata) as ChunkMetadata;
     } catch {
-      // malformed metadata blob — leave date null
+      // malformed metadata blob — derive legacy provenance from source
     }
   }
-  return { id: r.id, text: r.text, source: r.source, date, path: r.path };
+  const provenance = describeChunkProvenance(r.source as CanonicalSource, metadata);
+  return {
+    id: r.id, text: r.text, source: r.source, sourceType: provenance.source_type,
+    date: provenance.date ?? null, sessionId: provenance.session_id ?? null,
+    trustStatus: provenance.trust_status, taintStatus: provenance.taint_status,
+    label: provenance.label, path: r.path,
+  };
 }

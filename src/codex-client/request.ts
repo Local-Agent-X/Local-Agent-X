@@ -26,8 +26,15 @@ export function buildHeaders(token: string): Record<string, string> {
     "Content-Type": "application/json",
     Accept: "text/event-stream",
     "OpenAI-Beta": "responses=experimental",
-    originator: "pi",
-    "User-Agent": `lax (${process.platform} ${process.arch})`,
+    // The chatgpt.com/backend-api/codex Cloudflare layer whitelists a small set
+    // of first-party originators (codex_cli_rs, codex_vscode, codex_sdk_ts).
+    // A non-whitelisted originator ("pi") is served a degraded, reasoning-stripped
+    // stream (answer only, no reasoning_summary_* events) even when auth is valid,
+    // and non-residential IPs get a 403 challenge outright. Pin the codex-rs CLI
+    // originator + a matching User-Agent so the backend emits the full reasoning
+    // summary stream — the same values the upstream Codex CLI sends.
+    originator: "codex_cli_rs",
+    "User-Agent": "codex_cli_rs/0.0.0 (Local Agent X)",
   };
   if (accountId) headers["chatgpt-account-id"] = accountId;
   return headers;

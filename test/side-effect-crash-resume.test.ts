@@ -29,10 +29,14 @@ function run(
   });
 }
 
-function runAsync(opId: string, phase = ""): Promise<number | null> {
+function runAsync(
+  opId: string,
+  phase = "",
+  effectClass: "keyed-mutation" | "non-idempotent" = "keyed-mutation",
+): Promise<number | null> {
   return new Promise((resolveExit, reject) => {
     const child = spawn(process.execPath, [
-      "--import=tsx", fixture, "dispatch", ledger, opId, `call-${opId}`, "keyed-mutation", phase,
+      "--import=tsx", fixture, "dispatch", ledger, opId, `call-${opId}`, effectClass, phase,
     ], {
       cwd: process.cwd(),
       env: { ...process.env, LAX_DATA_DIR: root, LAX_DISABLE_OS_KEYCHAIN: "1" },
@@ -82,6 +86,14 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("persisted side-effect journal crash/restart/resume", () => {
+  it("executes one non-idempotent effect across concurrent runtimes", async () => {
+    expect(await Promise.all([
+      runAsync("same-operation", "", "non-idempotent"),
+      runAsync("same-operation", "", "non-idempotent"),
+    ])).toEqual([0, 0]);
+    expect(ledgerRows().filter(row => row.opId === "same-operation")).toHaveLength(1);
+  });
+
   it("runs once when the process dies after prepare but before the effect", () => {
     expect(run("before", "prepared").status).toBe(86);
     expect(ledgerRows()).toHaveLength(0);

@@ -24,11 +24,11 @@ export function createJournaledExecution(input: {
 }): JournaledExecution {
   const decision = prepareSideEffect(input.operationId, input.toolCallId, input.tool, input.args, input.effect);
   let started = false;
-  const replayed = decision.kind === "replay" || decision.kind === "reconcile";
+  const replayed = decision.kind === "replay" || decision.kind === "blocked";
   return {
     replayed,
     async run(execute) {
-      if (decision.kind === "replay" || decision.kind === "reconcile") return decision.result;
+      if (decision.kind === "replay" || decision.kind === "blocked") return decision.result;
       if (decision.kind === "execute") {
         markSideEffectExecuting(decision.entry);
         started = true;

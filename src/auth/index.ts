@@ -56,10 +56,10 @@ export function saveTokens(tokens: OAuthTokens): void {
   writeProviderCredentials(authPath, "core", tokens);
   // Bridge to the Codex CLI's own credential store. By default we do NOT
   // eagerly mirror tokens to ~/.codex/auth.json on every login/refresh —
-  // build_app writes it just-in-time before it spawns Codex and removes it
-  // after (see prepareCodexAuthForBuild). Opt into the always-on persistent
-  // mirror (for running the Codex CLI directly outside build_app) with
-  // LAX_MIRROR_CODEX_AUTH=1.
+  // build_app preserves an existing CLI-native store, or writes and removes
+  // a just-in-time mirror when none exists (see prepareCodexAuthForBuild).
+  // Opt into the always-on persistent mirror (for running the Codex CLI
+  // directly outside build_app) with LAX_MIRROR_CODEX_AUTH=1.
   if (isCodexEagerMirrorEnabled()) {
     mirrorImpl.fn(tokens);
   }

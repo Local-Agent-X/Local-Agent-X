@@ -230,8 +230,8 @@ async function checkSettingsAuth() {
       if (discBtn) discBtn.style.display = 'none';
     }
     // CLI installation and persistent CLI-native sign-in are separate from
-    // LAX OAuth. A build can use LAX OAuth through a temporary credential
-    // mirror even when the persistent CLI store is absent.
+    // LAX OAuth. A build uses an existing CLI store unchanged; only when that
+    // store is absent can it create a temporary credential mirror.
     if (cliEl) {
       if (!d.cliInstalled) {
         cliEl.className = 'status-badge err';
@@ -240,7 +240,7 @@ async function checkSettingsAuth() {
         if (cliLoginBtn) cliLoginBtn.style.display = 'none';
       } else if (d.cliAuthenticated === false) {
         cliEl.className = 'status-badge warn';
-        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed without a persistent CLI sign-in. Sign in below to create its CLI-native store; otherwise app builds may use a temporary plaintext mirror.';
+        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed without a persistent CLI sign-in. Sign in below to create its CLI-native store; otherwise app builds may create and remove a temporary plaintext mirror.';
         if (cliBtn) cliBtn.style.display = 'none';
         if (cliLoginBtn) cliLoginBtn.style.display = '';
       } else {
@@ -277,7 +277,8 @@ async function installCodexCli() {
 // captures the OAuth URL, opens it in a new tab, then polls
 // /api/auth/status until `cliAuthenticated` flips true. Acts as the
 // persistent CLI-native path. LAX OAuth remains a separate encrypted store;
-// build_app can bridge it into a temporary CLI credential when needed.
+// build_app can bridge it into a temporary CLI credential only when no
+// CLI-native store already exists.
 let _codexCliLoginPoll = null;
 async function doCodexCliLogin() {
   const btn = document.getElementById('btn-codex-cli-login');

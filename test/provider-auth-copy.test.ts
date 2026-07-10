@@ -28,6 +28,8 @@ describe("provider auth documentation and UI copy", () => {
       expect(docs).toContain(path);
     }
     expect(ui).toMatch(/CLI-native[^\n]*(?:does not encrypt|not encrypted by LAX)/i);
+    expect(docs).toMatch(/already exists[\s\S]*uses it unchanged[\s\S]*does not load or\s+mirror/i);
+    expect(read("public/app.html")).toMatch(/never overwrites an existing CLI store by default/i);
   });
 
   it("documents fail-closed migration and unreachable degraded mode", () => {

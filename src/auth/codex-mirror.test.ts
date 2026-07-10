@@ -5,8 +5,8 @@
  * default. Instead:
  *   - LAX_MIRROR_CODEX_AUTH=1 → eager persistent mirror (saveTokens writes it)
  *   - LAX_MIRROR_CODEX_AUTH=0 → never mirror, not even for a build
- *   - default                → build_app writes it just-in-time via
- *                              prepareCodexAuthForBuild and removes it after
+ *   - default                → build_app preserves an existing CLI store, or
+ *                              creates and removes a just-in-time mirror
  *
  * Env redirect: saveTokens writes to getAuthPath() (HOME/USERPROFILE + ".lax")
  * and the mirror writes ~/.codex/. beforeEach swaps HOME + USERPROFILE to an
@@ -158,36 +158,33 @@ describe("saveTokens eager-mirror gate", () => {
 });
 
 describe("prepareCodexAuthForBuild", () => {
-  it("default: writes the mirror just-in-time and the cleanup removes it again", async () => {
+  it("default: removes the LAX-created plaintext mirror after the build", async () => {
     delete process.env.LAX_MIRROR_CODEX_AUTH;
     saveTokens(makeTokens());
-    const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {
-      mkdirSync(join(tempHome, ".codex"), { recursive: true });
-      writeFileSync(codexPath, "{}");
-    });
 
     const cleanup = await prepareCodexAuthForBuild();
-    expect(mirrorSpy).toHaveBeenCalledTimes(1);
     expect(existsSync(codexPath)).toBe(true);
+    expect(readFileSync(codexPath, "utf-8")).toContain("access-test");
 
     cleanup();
     expect(existsSync(codexPath)).toBe(false);
+    expect(readFileSync(join(tempHome, ".lax", "auth.json"), "utf-8")).not.toContain("access-test");
   });
 
-  it("leaves a pre-existing ~/.codex/auth.json in place on cleanup (didn't create it)", async () => {
+  it("never overwrites a pre-existing CLI store", async () => {
     delete process.env.LAX_MIRROR_CODEX_AUTH;
     saveTokens(makeTokens());
     mkdirSync(join(tempHome, ".codex"), { recursive: true });
-    writeFileSync(codexPath, '{"pre":true}');
-    const mirrorSpy = vi.spyOn(mirrorImpl, "fn").mockImplementation(() => {
-      writeFileSync(codexPath, "{}");
-    });
+    const sentinel = Buffer.from([0x00, 0x7b, 0xff, 0x0a, 0x41, 0x32]);
+    writeFileSync(codexPath, sentinel);
+    const mirrorSpy = vi.spyOn(mirrorImpl, "fn");
 
     const cleanup = await prepareCodexAuthForBuild();
-    expect(mirrorSpy).toHaveBeenCalledTimes(1);
+    expect(mirrorSpy).not.toHaveBeenCalled();
+    expect(readFileSync(codexPath)).toEqual(sentinel);
 
     cleanup();
-    expect(existsSync(codexPath)).toBe(true);
+    expect(readFileSync(codexPath)).toEqual(sentinel);
   });
 
   it("is a no-op when hard-disabled (=0)", async () => {

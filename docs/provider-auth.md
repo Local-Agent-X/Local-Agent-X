@@ -44,13 +44,16 @@ envelope implementation:
 | `~/.codex/auth.json` | Codex CLI login or an optional LAX bridge. LAX does not encrypt this CLI format. |
 | `~/.grok/auth.json` | Grok Build CLI login. LAX does not encrypt this CLI format. |
 
-The default Codex app-build bridge creates `~/.codex/auth.json` only when a
-build needs it and removes the file afterward if LAX created it. A file that
-already existed is left untouched. `LAX_MIRROR_CODEX_AUTH=1` explicitly keeps a
-persistent plaintext CLI mirror; `LAX_MIRROR_CODEX_AUTH=0` disables both the
-persistent and just-in-time bridge. A separate `codex login` remains owned by
-the CLI. File permissions and full-disk encryption are the at-rest protections
-for CLI-native files unless the CLI itself provides stronger storage.
+The default Codex app-build bridge first checks for `~/.codex/auth.json`. If the
+CLI-native file already exists, LAX uses it unchanged and does not load or
+mirror LAX OAuth tokens into that path. If no file exists and a build needs one,
+LAX creates a temporary plaintext CLI mirror and removes it after the subprocess
+finishes. `LAX_MIRROR_CODEX_AUTH=1` is the explicit opt-in that lets LAX own and
+persistently replace the plaintext CLI mirror; `LAX_MIRROR_CODEX_AUTH=0`
+disables both the persistent and just-in-time bridge. A separate `codex login`
+remains owned by the CLI. File permissions and full-disk encryption are the
+at-rest protections for CLI-native files unless the CLI itself provides
+stronger storage.
 
 ## Failure and recovery
 

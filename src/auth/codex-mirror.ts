@@ -8,10 +8,10 @@
  * The mirror is a plaintext copy of live OAuth tokens (0600, but the CLI's
  * format can't carry our AES-GCM envelope). To keep that plaintext copy off
  * disk except when it's actually needed, the default is NOT to mirror on
- * every login/refresh. Instead build_app calls prepareCodexAuthForBuild()
- * to write it just-in-time before spawning Codex and remove it afterwards
- * (when we created it) — so a Codex-connected user who never builds never
- * has a second on-disk credential, and the file isn't rewritten on every
+ * every login/refresh. Instead build_app calls prepareCodexAuthForBuild(),
+ * which uses an existing CLI store unchanged or creates and removes a
+ * just-in-time file when none exists. A Codex-connected user who never builds
+ * never has a second on-disk credential, and the file isn't rewritten on every
  * token refresh.
  *
  * Env-var gates:
@@ -203,11 +203,9 @@ export function mirrorToCodexCli(tokens: OAuthTokens): void {
  *   - LAX_MIRROR_CODEX_AUTH=0  → no-op (user manages ~/.codex/auth.json).
  *   - LAX_MIRROR_CODEX_AUTH=1  → persistent mirror already maintained by
  *                                saveTokens; write nothing, delete nothing.
- *   - default                  → write the mirror now from the current LAX
- *                                tokens; the cleanup removes it again, but
- *                                only if we created it (a pre-existing file —
- *                                e.g. the user's own `codex login` — is left
- *                                untouched on cleanup).
+ *   - default                  → use a pre-existing CLI store unchanged, or
+ *                                write a temporary mirror from the current
+ *                                LAX tokens and remove it after the build.
  *
  * Keeping the plaintext mirror on disk only for the duration of a build is
  * the at-rest-minimization the always-on mirror couldn't give us.
@@ -216,14 +214,17 @@ export async function prepareCodexAuthForBuild(): Promise<() => void> {
   const noop = (): void => { /* nothing to undo */ };
   if (isCodexMirrorDisabled() || isCodexEagerMirrorEnabled()) return noop;
 
+  const codexPath = join(homedir(), ".codex", "auth.json");
+  if (existsSync(codexPath)) {
+    logger.info(`[auth] using existing Codex CLI credentials at ${codexPath}; temporary LAX mirror skipped`);
+    return noop;
+  }
+
   const { loadTokens } = await import("./index.js");
   const tokens = loadTokens();
   if (!tokens?.idToken) return noop; // nothing to mirror; Codex falls back to its own login
 
-  const codexPath = join(homedir(), ".codex", "auth.json");
-  const preexisting = existsSync(codexPath);
   mirrorImpl.fn(tokens);
-  if (preexisting) return noop; // don't delete a file we didn't create
   return (): void => {
     try { if (existsSync(codexPath)) unlinkSync(codexPath); } catch { /* best-effort */ }
   };

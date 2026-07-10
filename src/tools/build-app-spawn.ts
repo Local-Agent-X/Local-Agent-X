@@ -110,9 +110,9 @@ export function frameworkScaffoldPresent(appDir: string): boolean {
 async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
   const { prompt, appDir, appUrl, signal, onEvent, model } = input;
   const indexPath = resolve(appDir, "index.html");
-  // Write the Codex CLI's ~/.codex/auth.json just-in-time (and remove it after)
-  // unless the user opted into the persistent mirror. Keeps the plaintext token
-  // copy off disk except for the duration of this build.
+  // Use an existing CLI-native store unchanged. Otherwise write LAX's bridge
+  // credential just-in-time and remove it after the build; persistent mirroring
+  // remains an explicit opt-in.
   const { prepareCodexAuthForBuild } = await import("../auth/codex-mirror.js");
   const cleanupCodexAuth = await prepareCodexAuthForBuild();
   try {

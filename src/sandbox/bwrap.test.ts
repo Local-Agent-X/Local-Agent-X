@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { generateBwrapArgs, isBwrapAvailable, wrapForBwrap, bwrapEnforces, bwrapServerCageRuns, bwrapGuardedRuns } from "./bwrap.js";
+import { generateBwrapArgs, isBwrapAvailable, resolveBwrapPath, wrapForBwrap, bwrapEnforces, bwrapServerCageRuns, bwrapGuardedRuns } from "./bwrap.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 
 const bwrapHere = isBwrapAvailable();
@@ -110,9 +110,18 @@ describe("bwrap arg generation", () => {
 });
 
 describe("wrapForBwrap", () => {
+  it.skipIf(process.platform !== "linux")("resolves an absolute executable from the host PATH", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-fake-bwrap-"));
+    const fake = join(dir, "bwrap");
+    writeFileSync(fake, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    try {
+      expect(resolveBwrapPath(dir)).toBe(realpathSync(fake));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it.skipIf(!bwrapHere)("wraps with bwrap on Linux", () => {
     const { cmd, args } = wrapForBwrap("/bin/bash", ["-c", "echo hi"]);
-    expect(cmd).toBe("bwrap");
+    expect(cmd).toBe(resolveBwrapPath());
     expect(args.slice(-3)).toEqual(["/bin/bash", "-c", "echo hi"]);
     expect(args).toContain("--unshare-net");
   });
@@ -203,7 +212,7 @@ describe.skipIf(!bwrapHere)("bwrap enforcement (live)", () => {
       mkdirSync(join(home, ".config", "gh"), { recursive: true });
       writeFileSync(join(home, ".config", "gh", "hosts.yml"), "GH-CONFIG");
       const out = execFileSync(
-        "bwrap",
+        resolveBwrapPath()!,
         [...generateBwrapArgs(home, "guarded"), "/bin/bash", "-c",
           `cat "${join(home, ".ssh", "id_rsa")}" 2>&1; cat "${join(home, ".config", "gh", "hosts.yml")}" 2>&1; echo RAN`],
         { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] },
@@ -220,7 +229,7 @@ describe.skipIf(!bwrapHere)("bwrap enforcement (live)", () => {
       writeFileSync(join(home, ".ssh", "id_rsa"), "PRIVATE-KEY");
       const args = generateBwrapArgs(home, "server");
       const out = execFileSync(
-        "bwrap",
+        resolveBwrapPath()!,
         [...args, "/bin/bash", "-c", `cat "${join(home, ".ssh", "id_rsa")}" 2>&1; echo RAN`],
         { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] },
       );

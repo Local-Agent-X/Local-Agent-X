@@ -38,7 +38,7 @@ async function loadMcpServers() {
     const sandboxOption = executionSelect && executionSelect.querySelector('option[value="sandboxed"]');
     if (capability && disclosure) {
       disclosure.textContent = capability.sandboxSupported
-        ? `Child-process sandbox available (${capability.sandboxBackend}). Sandboxed is recommended; trusted mode is only for reviewed server code.`
+        ? `Guarded child confinement available (${capability.sandboxBackend}). It retains network and broad host filesystem access while blocking selected credential paths and persistence locations.`
         : 'Child-process sandbox unavailable on this platform. MCP servers can run only as explicitly trusted host processes after you review their code.';
     }
     if (sandboxOption) sandboxOption.disabled = !!(capability && !capability.sandboxSupported);
@@ -54,20 +54,25 @@ async function loadMcpServers() {
       const toggleBtn = s.redundant ? '' : (s.disabled
         ? `<button class="btn" onclick="toggleMcpServer('${esc(s.name)}',false)" style="padding:4px 8px;font-size:.7rem;color:var(--accent)">Enable</button>`
         : `<button class="btn" onclick="toggleMcpServer('${esc(s.name)}',true)" style="padding:4px 8px;font-size:.7rem">Disable</button>`);
+      const trustBtn = s.executionMode !== 'trusted' ? '' : (s.locallyTrusted
+        ? `<button class="btn" onclick="setMcpTrust('${esc(s.name)}',false)" style="padding:4px 8px;font-size:.7rem">Revoke local trust</button>`
+        : `<button class="btn" onclick="setMcpTrust('${esc(s.name)}',true)" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">Approve trusted execution</button>`);
       const tools = (s.connected && s.tools && s.tools.length)
         ? `<div style="font-size:.66rem;color:var(--muted);margin-top:6px;font-family:var(--mono);word-break:break-word">${esc(s.tools.join(', '))}</div>`
         : '';
       const execution = s.executionPosture === 'sandboxed'
-        ? `Sandboxed (${esc(s.sandboxBackend || 'kernel')})`
+        ? `Guarded (${esc(s.sandboxBackend || 'kernel')}; broad host access retained)`
         : s.executionPosture === 'trusted'
           ? 'Trusted host process'
-          : 'Blocked: sandbox unavailable; explicit trust required';
+          : s.executionMode === 'trusted'
+            ? 'Blocked: local approval required'
+            : 'Blocked: guarded child confinement unavailable';
       // Redundant servers (filesystem) are never spawned — their tools
       // duplicate native read/write/edit. Offering Test/Enable on them makes a
       // by-design skip look like a failure, so show an explanation instead.
       const actions = s.redundant
         ? `<button class="btn" onclick="removeMcpServer('${esc(s.name)}')" title="Remove" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">🗑</button>`
-        : `${secretBtns}${toggleBtn}
+        : `${secretBtns}${toggleBtn}${trustBtn}
            <button class="btn" onclick="testMcpServer('${esc(s.name)}')" style="padding:4px 8px;font-size:.7rem">Test</button>
            <button class="btn" onclick="removeMcpServer('${esc(s.name)}')" title="Remove" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">🗑</button>`;
       const note = s.redundant
@@ -139,6 +144,9 @@ async function addMcpServer() {
   if (listEl) listEl.innerHTML = '<p style="color:var(--muted)">Connecting…</p>';
   try {
     await apiPost('/api/mcp/servers', { name, command, args, env, executionMode });
+    if (executionMode === 'trusted' && confirm(`Run MCP server "${name}" as a trusted host process? It will have your user account's full host permissions. Approve only after reviewing this exact command and package.`)) {
+      await apiPost('/api/mcp/servers/trust', { name, approved: true });
+    }
     ['mcp-new-name', 'mcp-new-command', 'mcp-new-args', 'mcp-new-env', 'mcp-new-execution'].forEach(fid => {
       const e = document.getElementById(fid); if (e) e.value = '';
     });
@@ -147,6 +155,16 @@ async function addMcpServer() {
     alert('Failed to add server: ' + e.message);
     loadMcpServers();
   }
+}
+
+async function setMcpTrust(name, approved) {
+  if (approved && !confirm(`Approve trusted host execution for "${name}"? This grants the reviewed command your user account's full host permissions on this machine only.`)) return;
+  try {
+    await apiPost('/api/mcp/servers/trust', { name, approved });
+  } catch (e) {
+    alert('Failed to update local trust: ' + e.message);
+  }
+  loadMcpServers();
 }
 
 async function toggleMcpServer(name, disabled) {

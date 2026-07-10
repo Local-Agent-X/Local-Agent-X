@@ -30,13 +30,13 @@ The agent picks up the new tools on next config save (file watcher reloads autom
 
 ## Child execution posture
 
-`executionMode` is required by the API and UI. Direct configs that omit it default to `sandboxed`, never trusted.
+`executionMode` is required by the API and UI. Direct configs that omit it default to `sandboxed`, never trusted. The field is synced configuration and is not an approval.
 
-- `sandboxed` wraps the integrity-checked executable in the existing macOS seatbelt or Linux bubblewrap guarded profile. The profile keeps network access for remote MCP services while denying sensitive credential paths and persistence writes.
-- `trusted` runs the integrity-checked executable as a normal child process with the current user account's host permissions. Use it only after reviewing and trusting the server code.
-- Windows currently has no supported MCP child-process sandbox. A `sandboxed` entry is blocked before integrity trust or spawn; the API and UI require an explicit `trusted` selection.
+- `sandboxed` wraps the integrity-checked executable in the existing macOS seatbelt or Linux bubblewrap guarded profile. This is targeted confinement, not a full sandbox: it retains network and broad host filesystem access while denying selected credential paths and persistence writes.
+- `trusted` requests a normal child process with the current user account's host permissions. It remains blocked until the authenticated user approves that exact command/args/env fingerprint in Settings. Approval lives only in `~/.lax/mcp-local-trust.json`, is not synced, and is invalidated by a config change.
+- Windows currently has no supported MCP guarded child confinement. A `sandboxed` entry is blocked before integrity trust or spawn; trusted execution needs the separate local approval.
 
-Docker shell mode does not transparently containerize MCP servers because arbitrary host-installed MCP executables and their runtimes are not present in the shell image. Binary hash pinning, environment filtering, per-call policy, and output sanitization remain defense-in-depth controls; none makes an unreviewed server safe to run as trusted code.
+The agent-facing `mcp_add_server` tool cannot create or approve trusted execution. A synced or manually edited `executionMode: "trusted"` entry also cannot start through boot or the config watcher without the matching local approval. Docker shell mode does not transparently containerize MCP servers because arbitrary host-installed MCP executables and their runtimes are not present in the shell image. Binary hash pinning, environment filtering, per-call policy, and output sanitization remain defense-in-depth controls; none makes an unreviewed server safe to run as trusted code.
 
 ## Placeholders — making one config work on every machine
 

@@ -32,9 +32,9 @@
 // shadows ~/.config too.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 import type { SandboxScope } from "./types.js";
@@ -46,21 +46,30 @@ const SHELL_RC_FILES = [
   ".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zshenv",
 ];
 
-// Memoized PATH probe — spawns `which`, deterministic per process.
-let bwrapOnPath: boolean | null = null;
+let bwrapPath: string | null | undefined;
+
+/** Resolve once from the host environment before any child-specific env exists. */
+export function resolveBwrapPath(pathEnv: string | undefined = process.env.PATH): string | null {
+  if (pathEnv === process.env.PATH && bwrapPath !== undefined) return bwrapPath;
+  if (process.platform !== "linux" || !pathEnv) return null;
+  for (const dir of pathEnv.split(delimiter)) {
+    if (!isAbsolute(dir)) continue;
+    const candidate = join(dir, "bwrap");
+    try {
+      if (!statSync(candidate).isFile()) continue;
+      accessSync(candidate, constants.X_OK);
+      const resolved = realpathSync(candidate);
+      if (pathEnv === process.env.PATH) bwrapPath = resolved;
+      return resolved;
+    } catch { /* keep searching */ }
+  }
+  if (pathEnv === process.env.PATH) bwrapPath = null;
+  return null;
+}
 
 /** Linux with bwrap on PATH. Bwrap mode is a no-op everywhere else. */
 export function isBwrapAvailable(): boolean {
-  if (process.platform !== "linux") return false;
-  if (bwrapOnPath === null) {
-    try {
-      execFileSync("which", ["bwrap"], { stdio: "ignore", timeout: 5000 });
-      bwrapOnPath = true;
-    } catch {
-      bwrapOnPath = false;
-    }
-  }
-  return bwrapOnPath;
+  return resolveBwrapPath() !== null;
 }
 
 // Canonicalize for embedding in the mount table. realpath when it exists;
@@ -128,8 +137,9 @@ export function wrapForBwrap(
   home?: string,
   scope: SandboxScope = "shell",
 ): { cmd: string; args: string[] } {
-  if (!isBwrapAvailable()) return { cmd: shell, args: shellArgs };
-  return { cmd: "bwrap", args: [...generateBwrapArgs(home, scope), shell, ...shellArgs] };
+  const executable = resolveBwrapPath();
+  if (!executable) return { cmd: shell, args: shellArgs };
+  return { cmd: executable, args: [...generateBwrapArgs(home, scope), shell, ...shellArgs] };
 }
 
 /**
@@ -147,7 +157,7 @@ export function bwrapEnforces(home?: string): boolean {
   const probe = "exec 3<>/dev/tcp/192.0.2.1/80 && echo NET-OK || echo NET-BLOCKED; echo RAN";
   try {
     const out = execFileSync(
-      "bwrap",
+      resolveBwrapPath()!,
       [...generateBwrapArgs(home), "/bin/bash", "-c", probe],
       { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -169,7 +179,7 @@ export function bwrapServerCageRuns(home?: string): boolean {
   if (!isBwrapAvailable()) return false;
   try {
     const out = execFileSync(
-      "bwrap",
+      resolveBwrapPath()!,
       [...generateBwrapArgs(home, "server"), "/bin/sh", "-c", "echo RAN"],
       { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -191,7 +201,7 @@ export function bwrapGuardedRuns(home?: string): boolean {
   if (!isBwrapAvailable()) return false;
   try {
     const out = execFileSync(
-      "bwrap",
+      resolveBwrapPath()!,
       [...generateBwrapArgs(home, "guarded"), "/bin/sh", "-c", "echo RAN"],
       { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] },
     );

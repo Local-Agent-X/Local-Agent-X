@@ -1,9 +1,19 @@
+import { timingSafeEqual } from "node:crypto";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody } from "../server-utils.js";
 import { MCPManager } from "../mcp-client/index.js";
 import type { MCPServerConfig } from "../mcp-client/types.js";
+import { getRuntimeConfig } from "../config.js";
 
 const NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+function hasOperatorToken(req: import("node:http").IncomingMessage): boolean {
+  const expected = getRuntimeConfig().authToken;
+  const header = req.headers.authorization || "";
+  const provided = header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (!expected || provided.length !== expected.length) return false;
+  try { return timingSafeEqual(Buffer.from(provided), Buffer.from(expected)); } catch { return false; }
+}
 
 /**
  * MCP server management — backs the "MCP Servers" card in the Tools &
@@ -60,6 +70,17 @@ export const handleMcpServerRoutes: RouteHandler = async (method, url, req, res,
     if (!mgr.setServerDisabled(body.name, !!body.disabled)) { json(404, { error: "Server not found" }); return true; }
     await mgr.reload();
     json(200, { ok: true, name: body.name, disabled: !!body.disabled });
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/mcp/servers/trust") {
+    if (!hasOperatorToken(req)) { json(403, { error: "Trusted MCP approval requires an authenticated Settings action" }); return true; }
+    const body = await safeParseBody(req) as { name?: string; approved?: boolean } | null;
+    if (body === null || !body.name || typeof body.approved !== "boolean") { json(400, { error: "name and approved are required" }); return true; }
+    if (!mgr.setServerLocalTrust(body.name, body.approved)) { json(404, { error: "Trusted MCP server not found" }); return true; }
+    await mgr.reload();
+    ctx.broadcastAll({ type: "settings_changed", settings: { mcpServers: true } });
+    json(200, { ok: true, name: body.name, approved: body.approved });
     return true;
   }
 

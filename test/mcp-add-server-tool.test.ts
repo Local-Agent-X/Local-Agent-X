@@ -15,11 +15,13 @@ import { join } from "node:path";
 async function setup() {
   const { MCPManager, setSecretLookup } = await import("../src/mcp-client/index.js");
   const { createMcpAdminTools } = await import("../src/tools/mcp-admin-tools.js");
+  const { __setMcpSandboxBackendForTests } = await import("../src/mcp-client/connection.js");
   // Seed the singleton on a throwaway dir BEFORE the tool resolves it, and
   // make every secret lookup miss so credentialed servers report missing
   // secrets instead of spawning.
   MCPManager.getInstance(mkdtempSync(join(tmpdir(), "lax-mcp-tool-")));
   setSecretLookup(() => undefined);
+  __setMcpSandboxBackendForTests("bwrap");
   const tool = createMcpAdminTools().find(t => t.name === "mcp_add_server")!;
   return { tool };
 }
@@ -45,6 +47,13 @@ describe("mcp_add_server — validation", () => {
     expect(r.isError).toBe(true);
     expect(String(r.content)).toMatch(/executionMode must be sandboxed or trusted/i);
   });
+
+  it("rejects trusted mode because an agent cannot grant local trust", async () => {
+    const { tool } = await setup();
+    const r = await tool.execute({ name: "github", command: "npx", executionMode: "trusted" });
+    expect(r.isError).toBe(true);
+    expect(String(r.content)).toMatch(/cannot be granted by an agent/i);
+  });
 });
 
 describe("mcp_add_server — missing-secret guidance", () => {
@@ -53,7 +62,7 @@ describe("mcp_add_server — missing-secret guidance", () => {
     const r = await tool.execute({
       name: "github",
       command: "npx",
-      executionMode: "trusted",
+      executionMode: "sandboxed",
       args: ["-y", "@modelcontextprotocol/server-github"],
       env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${secret:GITHUB_TOKEN}" },
     });

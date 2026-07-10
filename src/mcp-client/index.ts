@@ -23,6 +23,7 @@ import { createLogger } from "../logger.js";
 import { getMcpExecutionPosture, getMcpSandboxBackend, MCPConnection } from "./connection.js";
 import { expandPlaceholdersDeep } from "./placeholders.js";
 import type { MCPConfig, MCPServerConfig } from "./types.js";
+import { isMcpTrustedLocally, setMcpLocalTrust } from "./local-trust.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
 const logger = createLogger("mcp-client");
@@ -48,6 +49,7 @@ export interface MCPServerStatus {
   executionMode: "sandboxed" | "trusted";
   executionPosture: "sandboxed" | "trusted" | "blocked";
   sandboxBackend: "seatbelt" | "bwrap" | null;
+  locallyTrusted: boolean;
 }
 
 export interface MCPExecutionCapability {
@@ -76,8 +78,10 @@ export class MCPManager {
   private static instance: MCPManager | null = null;
   private connections = new Map<string, MCPConnection>();
   private configPath: string;
+  private dataDir: string;
 
   private constructor(dataDir: string) {
+    this.dataDir = dataDir;
     this.configPath = join(dataDir, "mcp.json");
   }
 
@@ -125,10 +129,13 @@ export class MCPManager {
       }
 
       try {
-        const conn = new MCPConnection(name, expanded.config, expanded.secretEnvKeys);
-        await conn.connect();
+        const locallyTrusted = isMcpTrustedLocally(this.dataDir, name, raw);
+        const conn = new MCPConnection(name, expanded.config, expanded.secretEnvKeys, locallyTrusted);
         this.connections.set(name, conn);
+        await conn.connect();
       } catch (e) {
+        this.connections.get(name)?.disconnect();
+        this.connections.delete(name);
         logger.warn(`[mcp] Failed to connect to ${name}: ${(e as Error).message}`);
       }
     }
@@ -219,7 +226,8 @@ export class MCPManager {
     for (const [name, raw] of Object.entries(config.servers)) {
       const conn = this.connections.get(name);
       const { missing } = expandPlaceholdersDeep(raw);
-      const posture = getMcpExecutionPosture(raw);
+      const locallyTrusted = isMcpTrustedLocally(this.dataDir, name, raw);
+      const posture = getMcpExecutionPosture(raw, locallyTrusted);
       out.push({
         name,
         command: raw.command,
@@ -234,6 +242,7 @@ export class MCPManager {
         executionMode: posture.requested,
         executionPosture: posture.effective,
         sandboxBackend: posture.sandboxBackend,
+        locallyTrusted,
       });
     }
     return out;
@@ -242,6 +251,13 @@ export class MCPManager {
   getExecutionCapability(): MCPExecutionCapability {
     const backend = getMcpSandboxBackend();
     return { sandboxSupported: backend !== null, sandboxBackend: backend, trustedOnly: backend === null };
+  }
+
+  setServerLocalTrust(name: string, approved: boolean): boolean {
+    const server = this.loadConfig().servers[name];
+    if (!server || server.executionMode !== "trusted") return false;
+    setMcpLocalTrust(this.dataDir, name, server, approved);
+    return true;
   }
 
   /** Flip a server's `disabled` flag in the config file. Caller reloads to apply. */
@@ -266,7 +282,7 @@ export class MCPManager {
     if (REDUNDANT_MCP_SERVERS.has(name)) return { ok: false, error: `"${name}" is skipped — its tools duplicate native read/write/edit` };
     const expanded = expandPlaceholdersDeep(raw);
     if (expanded.missing.length > 0) return { ok: false, missingSecrets: expanded.missing, error: `Missing secret(s): ${expanded.missing.join(", ")}` };
-    const probe = new MCPConnection(name, expanded.config, expanded.secretEnvKeys);
+    const probe = new MCPConnection(name, expanded.config, expanded.secretEnvKeys, isMcpTrustedLocally(this.dataDir, name, raw));
     try {
       await probe.connect();
       const tools = probe.getTools().map(t => t.name);
@@ -358,8 +374,10 @@ export class MCPManager {
   /** Remove a server config entry. */
   removeServer(name: string): void {
     const current = this.loadConfig();
+    const removed = current.servers[name];
     delete current.servers[name];
     writeFileSync(this.configPath, JSON.stringify(current, null, 2), "utf-8");
+    if (removed) setMcpLocalTrust(this.dataDir, name, removed, false);
     this.disconnect(name);
   }
 }

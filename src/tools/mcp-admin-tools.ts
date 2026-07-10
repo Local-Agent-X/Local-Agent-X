@@ -24,8 +24,8 @@ export function createMcpAdminTools(): ToolDefinition[] {
       "call this. Common servers: github (npx -y @modelcontextprotocol/server-github, env " +
       "GITHUB_PERSONAL_ACCESS_TOKEN=${secret:GITHUB_TOKEN}); postgres (npx -y @modelcontextprotocol/server-postgres " +
       "${secret:POSTGRES_URL}); slack (npx -y @modelcontextprotocol/server-slack, env SLACK_BOT_TOKEN=${secret:SLACK_BOT_TOKEN}); " +
-      "puppeteer (npx -y @modelcontextprotocol/server-puppeteer, no secret). Use executionMode=sandboxed by default. " +
-      "Only use trusted when the host reports no MCP child sandbox and the user explicitly trusts the server code. Idempotent: calling again with the same name " +
+      "puppeteer (npx -y @modelcontextprotocol/server-puppeteer, no secret). Use executionMode=sandboxed. " +
+      "Trusted host execution can only be added and approved by the user in authenticated Settings. Idempotent: calling again with the same name " +
       "re-applies and reconnects — use that to connect a server after its secret has been saved.",
     parameters: {
       type: "object",
@@ -44,7 +44,7 @@ export function createMcpAdminTools(): ToolDefinition[] {
         executionMode: {
           type: "string",
           enum: ["sandboxed", "trusted"],
-          description: "Use sandboxed unless no child sandbox exists and the user explicitly trusts this server's code.",
+          description: "Must be sandboxed. Trusted host execution requires a separate user-confirmed Settings action.",
         },
       },
       required: ["name", "command", "executionMode"],
@@ -56,6 +56,7 @@ export function createMcpAdminTools(): ToolDefinition[] {
       if (!command) return fail("command is required (e.g. \"npx\").");
       const executionMode = args.executionMode === "trusted" ? "trusted" : args.executionMode === "sandboxed" ? "sandboxed" : null;
       if (!executionMode) return fail("executionMode must be sandboxed or trusted.");
+      if (executionMode === "trusted") return fail("Trusted MCP execution cannot be granted by an agent or synced config. Ask the user to add and approve this server in Settings → MCP Servers.");
 
       const argList = Array.isArray(args.args) ? args.args.filter(a => typeof a === "string").map(String) : [];
       const env: Record<string, string> = {};
@@ -66,7 +67,7 @@ export function createMcpAdminTools(): ToolDefinition[] {
       }
 
       const mgr = MCPManager.getInstance();
-      if (executionMode === "sandboxed" && !mgr.getExecutionCapability().sandboxSupported) {
+      if (!mgr.getExecutionCapability().sandboxSupported) {
         return fail("This host cannot sandbox MCP child processes. Ask the user to review the server and explicitly approve trusted execution before adding it.");
       }
       const config: MCPServerConfig = { command, args: argList, disabled: false, executionMode };

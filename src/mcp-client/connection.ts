@@ -1,9 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { extname, isAbsolute, join } from "node:path";
 
 import { createLogger } from "../logger.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "../sandbox/seatbelt.js";
 import { isBwrapAvailable, bwrapGuardedRuns, wrapForBwrap } from "../sandbox/bwrap.js";
+import { killProcessGroup, killProcessTree } from "../process-tree-kill.js";
 import type { ToolResult } from "../types.js";
 import { type MCPExecutionMode, type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
 import { verifyOrTrust } from "./integrity.js";
@@ -148,11 +151,11 @@ export interface MCPExecutionPosture {
   trustedOnly: boolean;
 }
 
-export function getMcpExecutionPosture(config: Pick<MCPServerConfig, "executionMode">): MCPExecutionPosture {
+export function getMcpExecutionPosture(config: Pick<MCPServerConfig, "executionMode">, locallyTrusted = false): MCPExecutionPosture {
   const requested = config.executionMode ?? "sandboxed";
   const backend = getMcpSandboxBackend();
   if (requested === "trusted") {
-    return { requested, effective: "trusted", sandboxBackend: backend, trustedOnly: backend === null };
+    return { requested, effective: locallyTrusted ? "trusted" : "blocked", sandboxBackend: backend, trustedOnly: backend === null };
   }
   return {
     requested,
@@ -160,6 +163,24 @@ export function getMcpExecutionPosture(config: Pick<MCPServerConfig, "executionM
     sandboxBackend: backend,
     trustedOnly: backend === null,
   };
+}
+
+export function buildWindowsMcpSpawn(resolvedPath: string, args: string[], env: NodeJS.ProcessEnv = process.env): { cmd: string; args: string[]; windowsVerbatimArguments: boolean } {
+  const extension = extname(resolvedPath).toLowerCase();
+  if (extension !== ".cmd" && extension !== ".bat") return { cmd: resolvedPath, args, windowsVerbatimArguments: false };
+  if ([resolvedPath, ...args].some(arg => /[%\r\n]/.test(arg))) {
+    throw new Error("Windows MCP .cmd/.bat paths and arguments cannot contain %, CR, or LF because cmd.exe would expand or split them");
+  }
+  const systemRoot = env.SystemRoot || env.SYSTEMROOT || "C:\\Windows";
+  const cmd = env.ComSpec || env.COMSPEC || join(systemRoot, "System32", "cmd.exe");
+  if (!isAbsolute(cmd) || !existsSync(cmd)) throw new Error("Could not resolve a trusted absolute cmd.exe path for MCP launch");
+  const commandLine = `"${[cmdQuote(resolvedPath), ...args.map(cmdQuote)].join(" ")}"`;
+  return { cmd, args: ["/d", "/v:off", "/s", "/c", commandLine], windowsVerbatimArguments: true };
+}
+
+function killMcpProcess(proc: ChildProcess | null): void {
+  if (process.platform !== "win32" && proc?.pid) killProcessGroup(proc.pid, proc);
+  else killProcessTree(proc);
 }
 
 export function __setMcpSandboxBackendForTests(value: MCPSandboxBackend | null | undefined): void {
@@ -177,17 +198,17 @@ export class MCPConnection {
   // from the credential strip in buildMcpChildEnv (the legitimate injection path).
   private readonly exemptEnvKeys: ReadonlySet<string>;
 
-  constructor(serverName: string, private config: MCPServerConfig, secretEnvKeys: readonly string[] = []) {
+  constructor(serverName: string, private config: MCPServerConfig, secretEnvKeys: readonly string[] = [], private locallyTrusted = false) {
     this.serverName = serverName;
     this.exemptEnvKeys = new Set(secretEnvKeys.map(k => k.toUpperCase()));
   }
 
   async connect(): Promise<void> {
-    const posture = getMcpExecutionPosture(this.config);
+    const posture = getMcpExecutionPosture(this.config, this.locallyTrusted);
     if (posture.effective === "blocked") {
       throw new Error(
-        `MCP server "${this.serverName}" was not started: no supported child-process sandbox is available on this host. ` +
-        `Set executionMode to "trusted" only after reviewing and trusting the server code.`,
+        `MCP server "${this.serverName}" was not started: requested execution is not authorized. ` +
+        `Use guarded mode where supported, or approve this exact configuration from authenticated Settings for trusted execution.`,
       );
     }
 
@@ -202,8 +223,6 @@ export class MCPConnection {
       logger.info(`MCP server "${this.serverName}" trusted on first connect (sha256: ${verdict.sha256.slice(0, 12)}...).`);
     }
 
-    const env = buildMcpChildEnv(this.config.env, this.exemptEnvKeys);
-
     // Spawn the resolved absolute path the integrity check hashed, NOT the
     // bare command name. If we re-pass `this.config.command`, Node (and on
     // Windows the cmd.exe shim) does its own PATH lookup, which can resolve
@@ -212,34 +231,37 @@ export class MCPConnection {
     // advertises "this binary matches the hash you trusted" — that property
     // only holds if we execute the exact resolved path.
     //
-    // Windows: the resolved binary is usually a .cmd shim (npx.cmd) that can
-    // only run via the shell, and its path routinely contains spaces
-    // (C:\Program Files\nodejs\...). Under shell:true Node does NOT quote the
-    // command or args, so cmd.exe splits the path on the space and the spawn
-    // dies ("'C:\Program' is not recognized" → exit 1). Quote the command path
-    // AND each arg for cmd.exe: this fixes the spaces and stops a secret-bearing
-    // arg (e.g. a postgres URL) from being reinterpreted by the shell (inside
-    // double quotes cmd treats & | < > ^ ( ) as literal). POSIX uses no shell,
-    // so the raw argv is correct as-is.
+    // Resolve the wrapper from the host environment before building the child
+    // env. In particular, config.env.PATH must never select bwrap/cmd.exe.
     const isWin = process.platform === "win32";
-    let command = isWin ? cmdQuote(verdict.resolvedPath) : verdict.resolvedPath;
-    let spawnArgs = isWin ? (this.config.args || []).map(cmdQuote) : (this.config.args || []);
+    let command = verdict.resolvedPath;
+    let spawnArgs = this.config.args || [];
+    let windowsVerbatimArguments = false;
     if (posture.effective === "sandboxed") {
       const wrapped = posture.sandboxBackend === "seatbelt"
         ? wrapForSeatbelt(verdict.resolvedPath, this.config.args || [], undefined, "guarded")
         : wrapForBwrap(verdict.resolvedPath, this.config.args || [], undefined, "guarded");
       command = wrapped.cmd;
       spawnArgs = wrapped.args;
+    } else if (isWin) {
+      const wrapped = buildWindowsMcpSpawn(verdict.resolvedPath, spawnArgs);
+      command = wrapped.cmd;
+      spawnArgs = wrapped.args;
+      windowsVerbatimArguments = wrapped.windowsVerbatimArguments;
     }
-    this.proc = spawn(command, spawnArgs, {
-      stdio: ["pipe", "pipe", "pipe"],
-      env,
-      shell: isWin && posture.effective === "trusted",
-      windowsHide: true,
-    });
+    const env = buildMcpChildEnv(this.config.env, this.exemptEnvKeys);
+    try {
+      this.proc = spawn(command, spawnArgs, {
+        stdio: ["pipe", "pipe", "pipe"],
+        env,
+        shell: false,
+        detached: !isWin,
+        windowsVerbatimArguments,
+        windowsHide: true,
+      });
 
-    this.proc.stdout?.setEncoding("utf-8");
-    this.proc.stdout?.on("data", (chunk: string) => {
+      this.proc.stdout?.setEncoding("utf-8");
+      this.proc.stdout?.on("data", (chunk: string) => {
       this.buffer += chunk;
       const lines = this.buffer.split("\n");
       this.buffer = lines.pop() || "";
@@ -258,18 +280,18 @@ export class MCPConnection {
           }
         } catch {}
       }
-    });
+      });
 
-    this.proc.stderr?.setEncoding("utf-8");
-    this.proc.stderr?.on("data", (chunk: string) => {
+      this.proc.stderr?.setEncoding("utf-8");
+      this.proc.stderr?.on("data", (chunk: string) => {
       // MCP servers log to stderr — only show errors, not info
       const trimmed = chunk.trim();
       if (trimmed && /error|fail|crash/i.test(trimmed)) {
         logger.warn(`[mcp:${this.serverName}] ${trimmed.slice(0, 200)}`);
       }
-    });
+      });
 
-    this.proc.on("exit", (code) => {
+      this.proc.on("exit", (code) => {
       if (code !== 0 && code !== null) {
         logger.warn(`[mcp:${this.serverName}] Process exited with code ${code}`);
       }
@@ -280,20 +302,24 @@ export class MCPConnection {
       }
       this.pending.clear();
       this.proc = null;
-    });
+      });
 
-    // Handshake
-    await this.request("initialize", {
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities: { tools: {} },
-      clientInfo: { name: "local-agent-x", version: "1.0.0" },
-    });
-    this.notify("initialized", {});
+      // Handshake
+      await this.request("initialize", {
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: { tools: {} },
+        clientInfo: { name: "local-agent-x", version: "1.0.0" },
+      });
+      this.notify("initialized", {});
 
-    // Discover tools
-    const result = await this.request("tools/list", {}) as { tools: MCPTool[] };
-    this.tools = result.tools || [];
-    logger.info(`[mcp:${this.serverName}] Connected — ${this.tools.length} tools: ${this.tools.map(t => t.name).join(", ")}`);
+      // Discover tools
+      const result = await this.request("tools/list", {}) as { tools: MCPTool[] };
+      this.tools = result.tools || [];
+      logger.info(`[mcp:${this.serverName}] Connected — ${this.tools.length} tools: ${this.tools.map(t => t.name).join(", ")}`);
+    } catch (e) {
+      this.disconnect();
+      throw e;
+    }
   }
 
   private request(method: string, params: unknown): Promise<unknown> {
@@ -356,7 +382,7 @@ export class MCPConnection {
       handler.reject(new Error("Disconnecting"));
     }
     this.pending.clear();
-    this.proc?.kill();
+    killMcpProcess(this.proc);
     this.proc = null;
   }
 

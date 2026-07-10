@@ -8,6 +8,7 @@ import { EMAIL_SEND_WINDOW_MS, getSmtpConfig, resolvePath } from "./email-config
 
 export const emailSend: ToolDefinition = {
   name: "email_send",
+  effect: { class: "non-idempotent" },
   description: 'Send an email via the user\'s configured IMAP/SMTP mailbox (set up with email_setup). For a Gmail account connected through the claude.ai Google integration, use the Gmail MCP tool instead. ' +
     'Example: to="alice@example.com", subject="Meeting Notes", body="Hi Alice,\\nAttached are the notes.\\nBest, Bob"',
   parameters: {

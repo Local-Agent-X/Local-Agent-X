@@ -11,6 +11,7 @@ function normNumber(s: string): string { return s.replace(/\D/g, ""); }
 
 export const whatsappSend: ToolDefinition = {
   name: "whatsapp_send",
+  effect: { class: "non-idempotent" },
   description:
     "Proactively send a WhatsApp message to the owner — a scheduled reminder, " +
     "check-in, accountability nudge, or alert. Use this to message the user on " +

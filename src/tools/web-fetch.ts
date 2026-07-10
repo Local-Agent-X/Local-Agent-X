@@ -39,6 +39,7 @@ const FETCH_HEADERS = {
 
 export const webFetchTool: ToolDefinition = {
   name: "web_fetch",
+  effect: { class: "read-only" },
   description: "Fetch a URL and return its text content. Useful for reading web pages and APIs.",
   parameters: {
     type: "object",

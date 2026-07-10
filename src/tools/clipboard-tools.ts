@@ -28,6 +28,7 @@ function fail(msg: string): ToolResult {
 
 const clipboardRead: ToolDefinition = {
   name: "clipboard_read",
+  effect: { class: "read-only" },
   description: "Read the current text content from the system clipboard.",
   parameters: { type: "object", properties: {}, required: [] },
   async execute(_args, signal) {
@@ -44,6 +45,7 @@ const clipboardRead: ToolDefinition = {
 
 const clipboardWrite: ToolDefinition = {
   name: "clipboard_write",
+  effect: { class: "idempotent-mutation" },
   description:
     'Write text to the system clipboard. Example: text="Hello, copied to clipboard!"',
   parameters: {
@@ -80,6 +82,7 @@ const clipboardWrite: ToolDefinition = {
  */
 const clipboardWriteFromSecret: ToolDefinition = {
   name: "clipboard_write_from_secret",
+  effect: { class: "idempotent-mutation" },
   description:
     "Copy a vault-stored secret value to the system clipboard WITHOUT the model ever seeing it. " +
     "Use this when the user wants a secret on their clipboard (to paste into a 3rd-party UI) but the " +

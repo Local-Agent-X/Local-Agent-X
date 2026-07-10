@@ -1,6 +1,7 @@
 import { fetch as undiciFetch } from "undici";
 import type { RequestInit as UndiciRequestInit } from "undici";
 import type { ToolDefinition } from "../types.js";
+import { isRetryableTool } from "../resilience-policy.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { findInBody } from "./paginate-body.js";
 import type { SecretsStore } from "../secrets.js";
@@ -17,8 +18,21 @@ import {
 } from "./web-egress.js";
 
 export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
-  return {
+  const tool: ToolDefinition = {
     name: "http_request",
+    effect: (args) => {
+      const method = String(args.method || "GET").toUpperCase();
+      if (["GET", "HEAD", "OPTIONS"].includes(method)) return { class: "read-only" };
+      const headers = args.headers && typeof args.headers === "object"
+        ? args.headers as Record<string, unknown>
+        : {};
+      const keyEntry = Object.entries(headers).find(([name]) =>
+        ["idempotency-key", "x-idempotency-key"].includes(name.toLowerCase()),
+      );
+      const rawKey = args.idempotency_key ?? keyEntry?.[1];
+      const operationKey = typeof rawKey === "string" ? rawKey.trim() : "";
+      return operationKey ? { class: "keyed-mutation", operationKey } : { class: "non-idempotent" };
+    },
     description:
       "Make a full HTTP request to any API. Supports all methods, custom headers, authentication, and request bodies. " +
       "Use {{SECRET_NAME}} syntax in header values to securely inject stored secrets (e.g. \"Authorization\": \"Bearer {{GITHUB_TOKEN}}\"). " +
@@ -45,6 +59,10 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         timeout: {
           type: "number",
           description: "Timeout in milliseconds (default: 30000 = 30s, max: 120000 = 2min)",
+        },
+        idempotency_key: {
+          type: "string",
+          description: "Stable operation key for safely retrying a mutation after a transient failure. Sent as Idempotency-Key.",
         },
         find: {
           type: "string",
@@ -92,6 +110,11 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           }
           headers[String(key)] = resolved;
         }
+      }
+      if (args.idempotency_key && !Object.keys(headers).some(key =>
+        ["idempotency-key", "x-idempotency-key"].includes(key.toLowerCase()),
+      )) {
+        headers["Idempotency-Key"] = String(args.idempotency_key);
       }
 
       let bodyStr = args.body ? String(args.body) : undefined;
@@ -167,7 +190,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
 
         let res = await doFetch();
         const RETRYABLE = [429, 503, 504];
-        for (let attempt = 1; attempt <= 3 && RETRYABLE.includes(res.status); attempt++) {
+        for (let attempt = 1; attempt <= 3 && RETRYABLE.includes(res.status) && isRetryableTool(tool, args); attempt++) {
           const retryAfter = parseInt(res.headers.get("retry-after") || "", 10);
           const delay = retryAfter > 0 ? retryAfter * 1000 : attempt * 2000;
           await new Promise(r => setTimeout(r, delay));
@@ -267,4 +290,5 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       }
     },
   };
+  return tool;
 }

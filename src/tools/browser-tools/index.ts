@@ -61,6 +61,7 @@ const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close"]);
 // Pure reads/utilities (extract, screenshot, evaluate, info, tabs, dialogs)
 // are excluded: they legitimately return varying data off an unchanged page.
 const TRACKED_ACTIONS = new Set(["click", "click_text", "fill", "select", "scroll", "observe", "snapshot", "act"]);
+const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe"]);
 
 /**
  * After an advancing action, fingerprint the page and trip a no-progress stop
@@ -97,6 +98,9 @@ async function applyProgressGuard(
 export function createBrowserTools(getSessionId?: () => string): ToolDefinition[] {
   const browserTool: ToolDefinition = {
     name: BROWSER_TOOL_NAME,
+    effect: (args) => READ_ONLY_ACTIONS.has(String(args.action || ""))
+      ? { class: "read-only" }
+      : { class: "non-idempotent" },
     description: BROWSER_TOOL_DESCRIPTION,
     parameters: BROWSER_TOOL_PARAMETERS,
     async execute(args) {

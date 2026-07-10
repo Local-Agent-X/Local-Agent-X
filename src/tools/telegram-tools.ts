@@ -8,6 +8,7 @@ const TELEGRAM_SEND_WINDOW_MS = 60_000;
 
 export const telegramSend: ToolDefinition = {
   name: "telegram_send",
+  effect: { class: "non-idempotent" },
   description:
     "Proactively send a Telegram message to the owner — a scheduled reminder, " +
     "check-in, accountability nudge, or alert. Use this to message the user on " +

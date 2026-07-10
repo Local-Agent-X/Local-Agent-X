@@ -118,6 +118,7 @@ export const readTool: ToolDefinition = {
 
 export const writeTool: ToolDefinition = {
   name: "write",
+  effect: { class: "idempotent-mutation" },
   description: "Write file contents. PREFER THIS over `bash` heredoc (cat <<EOF > file) for any file creation or full rewrite — write has no length limit, bash commands are capped at 2000 chars and will be rejected. Creates the file and parent directories if they don't exist.",
   parameters: {
     type: "object",

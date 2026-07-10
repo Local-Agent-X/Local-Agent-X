@@ -86,6 +86,7 @@ const VIDEO_MIME: Record<string, string> = {
 
 export const sendVideoTool: ToolDefinition = {
   name: "send_video",
+  effect: { class: "non-idempotent" },
   description:
     "Send a video file from this computer to the user over the current messaging channel (WhatsApp/Telegram). " +
     "Use when the user asks you to send or share a video file with them. Only delivers on a messaging bridge — " +
@@ -144,6 +145,7 @@ const IMAGE_MIME: Record<string, string> = {
 
 export const sendImageTool: ToolDefinition = {
   name: "send_image",
+  effect: { class: "non-idempotent" },
   description:
     "Send an image FILE from this computer to the user over the current messaging channel (WhatsApp/Telegram) — " +
     "e.g. a screenshot you captured, or an image you generated/saved to a file. Use when the user asks you to send " +

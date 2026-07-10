@@ -120,6 +120,7 @@ function commitEdit(filePath: string, updated: string, verb: string, allowSyntax
 
 export const editTool: ToolDefinition = {
   name: "edit",
+  effect: { class: "non-idempotent" },
   description:
     "Edit a file by replacing a string. Matching is forgiving — it tolerates CRLF/LF and indentation differences, so you don't need byte-perfect whitespace, but the content must be right. PREFER THIS over `bash sed/awk/heredoc` for targeted edits (no length limit; bash is capped at 2000 chars). Pass replace_all:true to change every occurrence. If you know the line numbers from a recent read, edit_lines is even more reliable; to make several changes at once, use multi_edit; for the SAME replacement across many files, use bulk_replace.",
   parameters: {
@@ -151,6 +152,7 @@ export const editTool: ToolDefinition = {
 
 export const editLinesTool: ToolDefinition = {
   name: "edit_lines",
+  effect: { class: "non-idempotent" },
   description:
     "Edit a file by LINE NUMBER instead of by matching text — pairs with the line numbers `read` returns, so you never have to reproduce exact whitespace. Replace a range by passing start_line + end_line; insert by passing start_line + insert (before|after) and no end_line. Both bounds are 1-based and inclusive. Most reliable edit when you've just read the file.",
   parameters: {
@@ -204,6 +206,7 @@ export const editLinesTool: ToolDefinition = {
 
 export const multiEditTool: ToolDefinition = {
   name: "multi_edit",
+  effect: { class: "non-idempotent" },
   description:
     "Apply several string edits to ONE file in a single call, in order, ATOMICALLY — if any edit fails to match, none are written and the file is left untouched. Each edit is {old_string, new_string} with the same forgiving matching as `edit` (and optional replace_all). Use to make multiple changes to one file without re-reading between each.",
   parameters: {
@@ -266,6 +269,7 @@ const BULK_FILE_MAX_BYTES = 5 * 1024 * 1024;
 
 export const bulkReplaceTool: ToolDefinition = {
   name: "bulk_replace",
+  effect: { class: "non-idempotent" },
   description:
     "Find/replace the same string across MANY files in one call — the tool-native form of `sed -i` over a folder, with verifiable results: returns files-changed plus per-file match counts, and refuses when nothing matches. Matching is exact (CRLF-tolerant); every occurrence in every matching file is replaced. Pass dry_run:true to preview counts without writing. For a single file use edit/multi_edit.",
   parameters: {

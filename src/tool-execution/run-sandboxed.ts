@@ -107,7 +107,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
 
   const startedAt = Date.now();
   ctx.startedAt = startedAt;
-  const shouldRetry = isRetryableTool(tc.name);
+  const shouldRetry = isRetryableTool(tool, args);
   // Hang-catcher: bound each execute so a stuck tool yields a [timeout] result
   // row instead of stranding the model with no result. ms <= 0 means the tool
   // is exempt (long-runner) — call it directly, never pass 0 to withTimeout.
@@ -166,7 +166,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
         maxRetries: 2,
         baseDelayMs: 500,
         maxDelayMs: 4000,
-        shouldRetry: (err, attempt) => isRetryable(err, { toolName: tc.name, attempt }),
+        shouldRetry: (err, attempt) => isRetryable(err, { tool, args, attempt }),
         ctx: getRetryContext(sessionId),
         layer: "L1-tool",
       });

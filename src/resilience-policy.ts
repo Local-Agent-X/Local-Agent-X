@@ -1,8 +1,10 @@
 // ResiliencePolicy — the single seam for "is this error retryable, and how
 // hard should we back off?" Owns error classification, retryability (error
-// category + per-tool eligibility), the backoff curve, and the circuit
+// category + explicit tool effect eligibility), the backoff curve, and the circuit
 // thresholds. Executors stay thin: auto-retry.ts runs the loop, circuit-
 // breaker.ts runs the state machine — both read their policy from here.
+
+import type { ToolDefinition, ToolEffect } from "./types.js";
 
 export type ErrorCategory =
   | "network"
@@ -20,11 +22,7 @@ export type ErrorCategory =
 export const CIRCUIT_FAILURE_THRESHOLD = 4;
 export const CIRCUIT_COOLDOWN_MS = 30_000;
 
-// ── Per-tool retry eligibility ──
-// Tools whose failures are usually transient (network, rate limit).
-const RETRYABLE_TOOLS = new Set(["http_request", "web_fetch", "web_search", "browser"]);
-// Tools whose failures are deterministic — retrying re-runs the same mutation.
-const NEVER_RETRY = new Set(["bash", "write", "edit", "agent_spawn", "delegate"]);
+const UNKNOWN_EFFECT: ToolEffect = Object.freeze({ class: "non-idempotent" });
 
 // Categories worth retrying: the failure is environmental, not the caller's
 // fault. auth/model/tool/contentFilter won't improve on a retry.
@@ -127,18 +125,35 @@ export function classify(error: unknown): ErrorCategory {
   return "unknown";
 }
 
-/** Whether a tool is eligible for retry at all (network-ish, non-mutating). */
-export function isRetryableTool(toolName: string): boolean {
-  return RETRYABLE_TOOLS.has(toolName) && !NEVER_RETRY.has(toolName);
+/** Resolve canonical effect metadata. Missing metadata fails closed. */
+export function resolveToolEffect(
+  tool: ToolDefinition | undefined,
+  args: Record<string, unknown> = {},
+): ToolEffect {
+  if (!tool?.effect) return UNKNOWN_EFFECT;
+  return typeof tool.effect === "function" ? tool.effect(args) : tool.effect;
+}
+
+/** Whether replaying this exact tool call is safe after an ambiguous failure. */
+export function isRetryableTool(
+  tool: ToolDefinition | undefined,
+  args: Record<string, unknown> = {},
+): boolean {
+  const effect = resolveToolEffect(tool, args);
+  if (effect.class === "read-only" || effect.class === "idempotent-mutation") return true;
+  return effect.class === "keyed-mutation" && Boolean(effect.operationKey?.trim());
 }
 
 /**
  * Should this error be retried? Combines per-tool eligibility (when a
- * toolName is supplied) with the error's category. Without a toolName the
+ * tool is supplied) with the error's category. Without a tool the
  * decision is category-only (provider/transport callers).
  */
-export function isRetryable(error: unknown, opts?: { toolName?: string; attempt?: number }): boolean {
-  if (opts?.toolName && !isRetryableTool(opts.toolName)) return false;
+export function isRetryable(
+  error: unknown,
+  opts?: { tool?: ToolDefinition; args?: Record<string, unknown>; attempt?: number },
+): boolean {
+  if (opts?.tool && !isRetryableTool(opts.tool, opts.args)) return false;
   return RETRYABLE_CATEGORIES.has(classify(error));
 }
 

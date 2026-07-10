@@ -42,6 +42,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context-manager/` | 12 | 10 | M |  |
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/autonomy/` | 11 | 4 | M |  |
+| `src/browser/` | 11 | 24 | XL |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |

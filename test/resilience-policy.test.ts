@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { ToolDefinition, ToolEffect } from "../src/types.js";
 import {
   classify,
   isRetryable,
@@ -7,6 +8,16 @@ import {
   CIRCUIT_FAILURE_THRESHOLD,
   CIRCUIT_COOLDOWN_MS,
 } from "../src/resilience-policy.js";
+
+function tool(effect?: ToolEffect | ToolDefinition["effect"]): ToolDefinition {
+  return {
+    name: "test_tool",
+    description: "test",
+    parameters: {},
+    effect,
+    async execute() { return { content: "ok" }; },
+  };
+}
 
 describe("classify", () => {
   it("flags rate limits", () => {
@@ -58,18 +69,21 @@ describe("classify", () => {
 });
 
 describe("isRetryableTool", () => {
-  it("allows network-ish tools", () => {
-    expect(isRetryableTool("http_request")).toBe(true);
-    expect(isRetryableTool("web_fetch")).toBe(true);
-    expect(isRetryableTool("browser")).toBe(true);
+  it("allows read-only and idempotent effects", () => {
+    expect(isRetryableTool(tool({ class: "read-only" }))).toBe(true);
+    expect(isRetryableTool(tool({ class: "idempotent-mutation" }))).toBe(true);
   });
 
-  it("blocks mutating / unknown tools", () => {
-    expect(isRetryableTool("bash")).toBe(false);
-    expect(isRetryableTool("write")).toBe(false);
-    expect(isRetryableTool("edit")).toBe(false);
-    expect(isRetryableTool("agent_spawn")).toBe(false);
-    expect(isRetryableTool("read")).toBe(false);
+  it("requires a stable key for keyed mutations", () => {
+    expect(isRetryableTool(tool({ class: "keyed-mutation", operationKey: "op-123" }))).toBe(true);
+    expect(isRetryableTool(tool({ class: "keyed-mutation" }))).toBe(false);
+    expect(isRetryableTool(tool({ class: "keyed-mutation", operationKey: "  " }))).toBe(false);
+  });
+
+  it("blocks non-idempotent and unknown tools", () => {
+    expect(isRetryableTool(tool({ class: "non-idempotent" }))).toBe(false);
+    expect(isRetryableTool(tool())).toBe(false);
+    expect(isRetryableTool(undefined)).toBe(false);
   });
 });
 
@@ -87,15 +101,15 @@ describe("isRetryable", () => {
     expect(isRetryable(new Error("400 Bad Request"))).toBe(false);
   });
 
-  it("gates on tool eligibility when toolName is supplied", () => {
+  it("gates on explicit tool effect metadata", () => {
     const transient = new Error("ECONNRESET");
-    expect(isRetryable(transient, { toolName: "web_fetch" })).toBe(true);
-    expect(isRetryable(transient, { toolName: "bash" })).toBe(false);
+    expect(isRetryable(transient, { tool: tool({ class: "read-only" }) })).toBe(true);
+    expect(isRetryable(transient, { tool: tool({ class: "non-idempotent" }) })).toBe(false);
   });
 
   it("preserves the live transient set run-sandboxed relied on", () => {
     for (const msg of ["timeout", "timed out", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "rate limit", "429", "503", "504", "network"]) {
-      expect(isRetryable(new Error(msg), { toolName: "web_fetch" })).toBe(true);
+      expect(isRetryable(new Error(msg), { tool: tool({ class: "read-only" }) })).toBe(true);
     }
   });
 });

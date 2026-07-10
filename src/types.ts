@@ -14,11 +14,25 @@ export type Audience =
   | "operator"       // Operations-phase workers (browser + file + memory)
   | "build-intent";  // strip-down used when main-chat detects build intent
 
+export type ToolEffectClass =
+  | "read-only"
+  | "idempotent-mutation"
+  | "keyed-mutation"
+  | "non-idempotent";
+
+export interface ToolEffect {
+  class: ToolEffectClass;
+  /** Stable caller-supplied key reused unchanged on every retry. */
+  operationKey?: string;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
   execute: (args: Record<string, unknown>, signal?: AbortSignal) => Promise<ToolResult>;
+  /** Side-effect semantics used by automatic tool retry. Unset is non-idempotent. */
+  effect?: ToolEffect | ((args: Record<string, unknown>) => ToolEffect);
   /** Tool only reads state, never mutates. Eligible for parallel batching. */
   readOnly?: boolean;
   /** Explicit opt-in to parallel execution alongside adjacent concurrent-safe tools. */

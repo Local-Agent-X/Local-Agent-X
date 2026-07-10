@@ -15,6 +15,7 @@
  */
 
 import type { ToolDefinition, ToolResult } from "../../types.js";
+import type { ServerEvent } from "../../types.js";
 import { getBrowserManager, closeBrowser, withBrowserLock, resetWedgedBrowser, BrowserWedgeError } from "../../browser/index.js";
 import type { BrowserEngine, BrowserManager } from "../../browser/index.js";
 import { getToolTimeout } from "../../tool-timeout.js";
@@ -43,11 +44,16 @@ import {
   handleDialogAccept,
   handleDialogDismiss,
   handleClose,
+  handleDownloads,
+  handleReleaseDownload,
 } from "./page.js";
 import { handleAct } from "./act.js";
 import { handleObserve } from "./observe.js";
 import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
 import { createLogger } from "../../logger.js";
+import { sensitivePageActionDecision } from "../../browser/guards.js";
+import { getApprovalManager } from "../../approval-manager.js";
+import { blocked, declined } from "../result-helpers.js";
 
 // Names the action that wedged. Without it the circuit-breaker FAIL only says
 // "an action hung" — which action is left to inference. The destructive part is
@@ -118,6 +124,52 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
         }
 
         try {
+          if (action === "release_download") {
+            const id = String(args.download_id || "");
+            if (!id) return err("'download_id' is required. Use action='downloads' first.");
+            if (!onEvent) return blocked(
+              "BLOCKED: quarantined downloads can only be released from an interactive session with explicit user approval.",
+              { layer: "browser-download", browserStatus: "approval-required" },
+            );
+            const outcome = await getApprovalManager().requestApprovalDetailed({
+              toolName: "browser.release_download",
+              toolCallId: String(args._toolCallId || `browser-release-${id}`),
+              sessionId,
+              context: "Release a quarantined browser download into workspace/downloads. The file remains unavailable to agent tools until approved.",
+              args: { action: "release_download", download_id: id },
+              alwaysAsk: true,
+              emit: onEvent as (event: ServerEvent) => void,
+            });
+            if (!outcome.approved) return declined(
+              "Download release was not approved; the file remains quarantined.",
+              { layer: "browser-download", browserStatus: "quarantined", downloadId: id },
+            );
+          } else {
+            const pageDecision = sensitivePageActionDecision(manager.getCurrentUrl(), action);
+            if (pageDecision.disposition === "blocked") return blocked(
+              `BLOCKED: ${pageDecision.reason}`,
+              { layer: "browser-sensitive-page", browserStatus: "blocked", category: pageDecision.category },
+            );
+            if (pageDecision.disposition === "approval-required") {
+              if (!onEvent) return blocked(
+                `BLOCKED: ${pageDecision.reason} Explicit approval is unavailable in this run.`,
+                { layer: "browser-sensitive-page", browserStatus: "approval-required", category: pageDecision.category },
+              );
+              const outcome = await getApprovalManager().requestApprovalDetailed({
+                toolName: "browser.sensitive_page_action",
+                toolCallId: String(args._toolCallId || `browser-sensitive-${sessionId}`),
+                sessionId,
+                context: `${pageDecision.reason} Approve only if you expect this action. Page contents and form values are intentionally omitted.`,
+                args: { action, category: pageDecision.category, page: pageDecision.page },
+                alwaysAsk: true,
+                emit: onEvent as (event: ServerEvent) => void,
+              });
+              if (!outcome.approved) return declined(
+                `Sensitive-page ${action} was not approved; no browser action was performed.`,
+                { layer: "browser-sensitive-page", browserStatus: "declined", category: pageDecision.category },
+              );
+            }
+          }
           const dispatch = (async (): Promise<ToolResult> => {
           switch (action) {
             case "navigate": return await handleNavigate(manager, args, engine);
@@ -134,6 +186,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "tabs": return await handleTabs(manager);
             case "switch_tab": return await handleSwitchTab(manager, args);
             case "info": return await handleInfo(manager);
+            case "downloads": return await handleDownloads(manager);
+            case "release_download": return await handleReleaseDownload(manager, args);
             case "dialog_accept": return await handleDialogAccept(manager, args);
             case "dialog_dismiss": return await handleDialogDismiss(manager);
             case "close": return await handleClose(sessionId);

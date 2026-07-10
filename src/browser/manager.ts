@@ -6,7 +6,7 @@ import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { ACTION_TIMEOUT, NAV_TIMEOUT, type BrowserEngine } from "./launcher.js";
 import { acquireSessionContext, releaseSessionContext } from "./runtime.js";
-import { installDownloadHandler } from "./downloads.js";
+import { formatRecentDownloads, installDownloadHandler, releaseQuarantinedDownload } from "./downloads.js";
 import { injectTokenIfLocal } from "./auth-context.js";
 import { safeHost, redirectMessage } from "./redirect.js";
 import { getRuntimeConfig } from "../config.js";
@@ -70,7 +70,7 @@ export class BrowserManager {
   private adoptPage(p: Page): Page {
     p.setDefaultTimeout(ACTION_TIMEOUT);
     installDialogHandler(p);
-    installDownloadHandler(p);
+    installDownloadHandler(p, this.sessionId);
     return p;
   }
 
@@ -357,6 +357,13 @@ export class BrowserManager {
 
   async getInfo(): Promise<string> {
     return pageInfo(this.page, this.currentEngine);
+  }
+
+  getDownloads(): string { return formatRecentDownloads(this.sessionId); }
+
+  async releaseDownload(id: string): Promise<string> {
+    const record = await releaseQuarantinedDownload(this.sessionId, id);
+    return `RELEASED: ${record.filename} (${record.size} bytes)\nReleased to: ${record.releasePath}`;
   }
 
   /** Tear down only this session's tabs + refs. The shared Chrome stays up;

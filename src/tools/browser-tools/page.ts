@@ -8,6 +8,7 @@ import type { ToolResult } from "../../types.js";
 import type { BrowserManager } from "../../browser/index.js";
 import { closeBrowser } from "../../browser/index.js";
 import { scanEvaluateScript } from "../../browser/guards.js";
+import { wrapExternalContent } from "../../sanitize.js";
 import { ok, err, appendPostActionSnapshot } from "./shared.js";
 
 export async function handleExtract(
@@ -46,6 +47,19 @@ export async function handleInfo(manager: BrowserManager): Promise<ToolResult> {
 
 export async function handleTabs(manager: BrowserManager): Promise<ToolResult> {
   return ok(await manager.listTabs());
+}
+
+export async function handleDownloads(manager: BrowserManager): Promise<ToolResult> {
+  return { content: wrapExternalContent(manager.getDownloads(), "browser.downloads"), metadata: { browserStatus: "download-status" } };
+}
+
+export async function handleReleaseDownload(
+  manager: BrowserManager,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const id = String(args.download_id || "");
+  if (!id) return err("'download_id' is required. Use action='downloads' to list quarantined downloads.");
+  return { content: wrapExternalContent(await manager.releaseDownload(id), "browser.download.release"), metadata: { browserStatus: "download-released", downloadId: id } };
 }
 
 export async function handleSwitchTab(

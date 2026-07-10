@@ -126,7 +126,8 @@ describe("installDownloadHandler — idempotence per page", () => {
     installDownloadHandler(page);
     installDownloadHandler(page);
     installDownloadHandler(page);
-    expect((page.on as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect((page.on as ReturnType<typeof vi.fn>).mock.calls.filter(([event]) => event === "download")).toHaveLength(1);
+    expect((page.on as ReturnType<typeof vi.fn>).mock.calls.filter(([event]) => event === "response")).toHaveLength(1);
   });
 
   it("still installs a listener on each distinct page", () => {
@@ -134,8 +135,8 @@ describe("installDownloadHandler — idempotence per page", () => {
     const b = { on: vi.fn() } as unknown as Page;
     installDownloadHandler(a);
     installDownloadHandler(b);
-    expect((a.on as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
-    expect((b.on as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect((a.on as ReturnType<typeof vi.fn>).mock.calls.filter(([event]) => event === "download")).toHaveLength(1);
+    expect((b.on as ReturnType<typeof vi.fn>).mock.calls.filter(([event]) => event === "download")).toHaveLength(1);
   });
 });
 

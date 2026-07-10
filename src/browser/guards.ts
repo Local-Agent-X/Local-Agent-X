@@ -167,3 +167,67 @@ export function scanEvaluateScript(script: string): string | null {
   }
   return null;
 }
+
+export type SensitivePageCategory =
+  | "password manager"
+  | "cloud metadata"
+  | "administration panel"
+  | "financial account"
+  | "account recovery"
+  | "private key management";
+
+export interface SensitivePageDecision {
+  disposition: "allow" | "approval-required" | "blocked";
+  category?: SensitivePageCategory;
+  reason?: string;
+  page: string;
+}
+
+const MUTATING_BROWSER_ACTIONS = new Set([
+  "click", "click_text", "fill", "select", "act", "dialog_accept",
+]);
+const SECRET_READING_ACTIONS = new Set(["extract", "screenshot", "evaluate"]);
+
+function pageLabel(url: URL): string {
+  return `${url.origin}${url.pathname}`;
+}
+
+export function classifySensitivePage(rawUrl: string): { category: SensitivePageCategory; page: string } | null {
+  let url: URL;
+  try { url = new URL(rawUrl); } catch { return null; }
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname.toLowerCase();
+  const page = pageLabel(url);
+
+  if (host === "169.254.169.254" || host === "metadata.google.internal") return { category: "cloud metadata", page };
+  if (/(^|\.)(1password|bitwarden|lastpass|dashlane)\.(com|eu)$/.test(host) || host.endsWith(".keepersecurity.com") || /\/(passwords?|vault)(\/|$)/.test(path)) {
+    return { category: "password manager", page };
+  }
+  if (/\/(recover|recovery|forgot-password|reset-password|account-recovery)(\/|$)/.test(path)) return { category: "account recovery", page };
+  if (/\/(private-?keys?|ssh-keys?|api-keys?|signing-keys?|certificates?)(\/|$)/.test(path)) return { category: "private key management", page };
+  if (["console.aws.amazon.com", "console.cloud.google.com", "portal.azure.com", "admin.microsoft.com"].includes(host) || /\/(admin|administrator|control-panel|management)(\/|$)/.test(path)) {
+    return { category: "administration panel", page };
+  }
+  if (/(^|\.)(paypal|stripe|coinbase|venmo|wise|chase|bankofamerica|wellsfargo|capitalone|fidelity|schwab|americanexpress)\.com$/.test(host) || /(^|\.)(bank|banking)\./.test(host) || /\/(banking|billing|payments?|payouts?|transfers?|wire)(\/|$)/.test(path)) {
+    return { category: "financial account", page };
+  }
+  return null;
+}
+
+export function sensitivePageActionDecision(rawUrl: string, action: string): SensitivePageDecision {
+  const sensitive = classifySensitivePage(rawUrl);
+  if (!sensitive) return { disposition: "allow", page: "" };
+  if (SECRET_READING_ACTIONS.has(action) && ["password manager", "account recovery", "private key management"].includes(sensitive.category)) {
+    return {
+      disposition: "blocked", category: sensitive.category, page: sensitive.page,
+      reason: `Reading page contents is blocked on this ${sensitive.category} page to keep secrets out of tool results and logs.`,
+    };
+  }
+  if (MUTATING_BROWSER_ACTIONS.has(action) || action === "evaluate") {
+    return {
+      disposition: "approval-required", category: sensitive.category, page: sensitive.page,
+      reason: `This high-risk browser action targets a ${sensitive.category} page.`,
+    };
+  }
+  return { disposition: "allow", category: sensitive.category, page: sensitive.page };
+}

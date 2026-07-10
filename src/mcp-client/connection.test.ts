@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,7 @@ const spawnMock = vi.hoisted(() => vi.fn());
 const killTreeMock = vi.hoisted(() => vi.fn());
 const killGroupMock = vi.hoisted(() => vi.fn());
 const bwrapMock = vi.hoisted(() => vi.fn((cmd: string, args: string[]) => ({ cmd: "/trusted/bwrap", args: ["--guarded", cmd, ...args] })));
+const seatbeltWrapMock = vi.hoisted(() => vi.fn((cmd: string, args: string[]) => ({ cmd: "/usr/bin/sandbox-exec", args: ["-p", "profile", cmd, ...args] })));
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, spawn: spawnMock };
@@ -25,6 +27,10 @@ vi.mock("node:child_process", async (importOriginal) => {
 vi.mock("../sandbox/bwrap.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../sandbox/bwrap.js")>();
   return { ...actual, wrapForBwrap: bwrapMock };
+});
+vi.mock("../sandbox/seatbelt.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../sandbox/seatbelt.js")>();
+  return { ...actual, wrapForSeatbelt: seatbeltWrapMock };
 });
 vi.mock("../process-tree-kill.js", () => ({ killProcessTree: killTreeMock, killProcessGroup: killGroupMock }));
 
@@ -279,6 +285,23 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
   let binPath: string;
   const envSnap: Record<string, string | undefined> = {};
 
+  function fakeProcess(writable = false): EventEmitter & Record<string, unknown> {
+    const proc = new EventEmitter() as EventEmitter & Record<string, unknown>;
+    const stdout = new EventEmitter() as EventEmitter & { setEncoding: () => void };
+    const stderr = new EventEmitter() as EventEmitter & { setEncoding: () => void };
+    stdout.setEncoding = () => {};
+    stderr.setEncoding = () => {};
+    Object.assign(proc, {
+      stdout,
+      stderr,
+      stdin: { writable, write: () => {} },
+      kill: () => {},
+      killed: false,
+      pid: 12345,
+    });
+    return proc;
+  }
+
   beforeEach(() => {
     for (const k of ["LAX_DATA_DIR", "HOME", "USERPROFILE", "PATH", "LAX_MCP_STRICT_TRUST", "LAX_MCP_RETRUST"]) {
       envSnap[k] = process.env[k];
@@ -301,19 +324,13 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
     killTreeMock.mockReset();
     killGroupMock.mockReset();
     bwrapMock.mockClear();
+    seatbeltWrapMock.mockReset();
+    seatbeltWrapMock.mockImplementation((cmd: string, args: string[]) => ({ cmd: "/usr/bin/sandbox-exec", args: ["-p", "profile", cmd, ...args] }));
     // Return a stub ChildProcess shape — connect() reads .stdout/.stderr/.stdin
     // and registers listeners; we don't need a real process, just enough
     // surface that the synchronous spawn(...) call doesn't crash before our
     // assertion runs.
-    spawnMock.mockReturnValue({
-      stdout: { setEncoding: () => {}, on: () => {} },
-      stderr: { setEncoding: () => {}, on: () => {} },
-      stdin: { writable: false, write: () => {} },
-      on: () => {},
-      kill: () => {},
-      killed: false,
-      pid: 12345,
-    });
+    spawnMock.mockReturnValue(fakeProcess());
   });
 
   afterEach(() => {
@@ -367,5 +384,45 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
     if (process.platform === "win32") expect(killTreeMock).toHaveBeenCalledWith(expect.objectContaining({ pid: 12345 }));
     else expect(killGroupMock).toHaveBeenCalledWith(12345, expect.objectContaining({ pid: 12345 }));
     expect(conn.connected).toBe(false);
+  });
+
+  it("turns an asynchronous spawn error into handshake rejection and tree cleanup", async () => {
+    const proc = fakeProcess(true);
+    spawnMock.mockReturnValue(proc);
+    const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
+    const conn = new MCPConnection("mock-srv", { command: bareName, executionMode: "trusted" }, [], true);
+
+    const connecting = conn.connect();
+    proc.emit("error", new Error("ENOENT after spawn"));
+
+    await expect(connecting).rejects.toThrow(/failed to spawn.*ENOENT after spawn/);
+    if (process.platform === "win32") expect(killTreeMock).toHaveBeenCalledWith(proc);
+    else expect(killGroupMock).toHaveBeenCalledWith(12345, proc);
+    expect(conn.connected).toBe(false);
+  });
+
+  it("retains process-group cleanup when a child forks then exits during initialization", async () => {
+    const proc = fakeProcess(true);
+    spawnMock.mockReturnValue(proc);
+    const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
+    const conn = new MCPConnection("mock-srv", { command: bareName, executionMode: "trusted" }, [], true);
+
+    const connecting = conn.connect();
+    proc.emit("exit", 0);
+
+    await expect(connecting).rejects.toThrow(/exited/);
+    if (process.platform === "win32") expect(killTreeMock).toHaveBeenCalledWith(proc);
+    else expect(killGroupMock).toHaveBeenCalledWith(12345, proc);
+    expect(conn.connected).toBe(false);
+  });
+
+  it("fails closed when cached Seatbelt capability loses sandbox-exec before wrapping", async () => {
+    __setMcpSandboxBackendForTests("seatbelt");
+    seatbeltWrapMock.mockImplementationOnce(() => { throw new Error("Required sandbox executable is unavailable"); });
+    const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
+    const conn = new MCPConnection("mock-srv", { command: bareName, executionMode: "sandboxed" });
+
+    await expect(conn.connect()).rejects.toThrow(/Required sandbox executable is unavailable/);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 });

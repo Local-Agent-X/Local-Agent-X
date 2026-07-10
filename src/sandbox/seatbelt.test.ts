@@ -95,6 +95,11 @@ describe("wrapForSeatbelt", () => {
     expect(cmd).toBe("/bin/bash");
     expect(args).toEqual(["-c", "echo hi"]);
   });
+
+  it.skipIf(onDarwin)("fails closed when a cached backend requires a missing sandbox-exec", () => {
+    expect(() => wrapForSeatbelt("/bin/bash", ["-c", "echo hi"], undefined, "guarded", true))
+      .toThrow(/Required sandbox executable is unavailable/);
+  });
 });
 
 // The profile is only meaningful if the kernel actually enforces it. Drive

@@ -1,6 +1,4 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
-import { extname, isAbsolute, join } from "node:path";
 
 import { createLogger } from "../logger.js";
 import { wrapExternalContent } from "../sanitize.js";
@@ -11,6 +9,9 @@ import type { ToolResult } from "../types.js";
 import { type MCPExecutionMode, type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
 import { verifyOrTrust } from "./integrity.js";
 import { DENY_PREFIXES, DENY_SUBSTRINGS, DENY_EXACT, ENV_ALLOWLIST } from "./env-credential-patterns.js";
+import { buildWindowsMcpSpawn } from "./windows-spawn.js";
+
+export { buildWindowsMcpSpawn, cmdQuote } from "./windows-spawn.js";
 
 const logger = createLogger("mcp-client");
 
@@ -118,16 +119,6 @@ export function __resetMcpEnvLogState(): void {
   allowlistLogged = false;
 }
 
-/**
- * Quote a single token for a Windows `cmd.exe` command line (used when spawning
- * a .cmd shim via shell:true). Wraps in double quotes — which neutralizes
- * spaces and the `& | < > ^ ( )` metacharacters — and doubles any embedded
- * quote (cmd's `""` = literal `"`), so a value can't break out of its quoting.
- */
-export function cmdQuote(token: string): string {
-  return `"${token.replace(/"/g, '""')}"`;
-}
-
 export type MCPSandboxBackend = "seatbelt" | "bwrap";
 
 let sandboxBackend: MCPSandboxBackend | null | undefined;
@@ -165,30 +156,15 @@ export function getMcpExecutionPosture(config: Pick<MCPServerConfig, "executionM
   };
 }
 
-export function buildWindowsMcpSpawn(resolvedPath: string, args: string[], env: NodeJS.ProcessEnv = process.env): { cmd: string; args: string[]; windowsVerbatimArguments: boolean } {
-  const extension = extname(resolvedPath).toLowerCase();
-  if (extension !== ".cmd" && extension !== ".bat") return { cmd: resolvedPath, args, windowsVerbatimArguments: false };
-  if ([resolvedPath, ...args].some(arg => /[%\r\n]/.test(arg))) {
-    throw new Error("Windows MCP .cmd/.bat paths and arguments cannot contain %, CR, or LF because cmd.exe would expand or split them");
-  }
-  const systemRoot = env.SystemRoot || env.SYSTEMROOT || "C:\\Windows";
-  const cmd = env.ComSpec || env.COMSPEC || join(systemRoot, "System32", "cmd.exe");
-  if (!isAbsolute(cmd) || !existsSync(cmd)) throw new Error("Could not resolve a trusted absolute cmd.exe path for MCP launch");
-  const commandLine = `"${[cmdQuote(resolvedPath), ...args.map(cmdQuote)].join(" ")}"`;
-  return { cmd, args: ["/d", "/v:off", "/s", "/c", commandLine], windowsVerbatimArguments: true };
-}
-
-function killMcpProcess(proc: ChildProcess | null): void {
-  if (process.platform !== "win32" && proc?.pid) killProcessGroup(proc.pid, proc);
-  else killProcessTree(proc);
-}
-
 export function __setMcpSandboxBackendForTests(value: MCPSandboxBackend | null | undefined): void {
   sandboxBackend = value;
 }
 
 export class MCPConnection {
   private proc: ChildProcess | null = null;
+  private cleanupProc: ChildProcess | null = null;
+  private cleanupPid: number | null = null;
+  private initializationComplete = false;
   private messageId = 0;
   private pending = new Map<number, PendingRequest>();
   private buffer = "";
@@ -239,7 +215,7 @@ export class MCPConnection {
     let windowsVerbatimArguments = false;
     if (posture.effective === "sandboxed") {
       const wrapped = posture.sandboxBackend === "seatbelt"
-        ? wrapForSeatbelt(verdict.resolvedPath, this.config.args || [], undefined, "guarded")
+        ? wrapForSeatbelt(verdict.resolvedPath, this.config.args || [], undefined, "guarded", true)
         : wrapForBwrap(verdict.resolvedPath, this.config.args || [], undefined, "guarded");
       command = wrapped.cmd;
       spawnArgs = wrapped.args;
@@ -250,6 +226,8 @@ export class MCPConnection {
       windowsVerbatimArguments = wrapped.windowsVerbatimArguments;
     }
     const env = buildMcpChildEnv(this.config.env, this.exemptEnvKeys);
+    let rejectSpawnFailure!: (error: Error) => void;
+    const spawnFailure = new Promise<never>((_resolve, reject) => { rejectSpawnFailure = reject; });
     try {
       this.proc = spawn(command, spawnArgs, {
         stdio: ["pipe", "pipe", "pipe"],
@@ -259,9 +237,17 @@ export class MCPConnection {
         windowsVerbatimArguments,
         windowsHide: true,
       });
+      const spawned = this.proc;
+      spawned.once("error", (error) => {
+        const failure = new Error(`MCP server ${this.serverName} failed to spawn: ${error.message}`);
+        rejectSpawnFailure(failure);
+        this.rejectPending(failure);
+      });
+      this.cleanupProc = spawned;
+      this.cleanupPid = spawned.pid ?? null;
 
-      this.proc.stdout?.setEncoding("utf-8");
-      this.proc.stdout?.on("data", (chunk: string) => {
+      spawned.stdout?.setEncoding("utf-8");
+      spawned.stdout?.on("data", (chunk: string) => {
       this.buffer += chunk;
       const lines = this.buffer.split("\n");
       this.buffer = lines.pop() || "";
@@ -282,8 +268,8 @@ export class MCPConnection {
       }
       });
 
-      this.proc.stderr?.setEncoding("utf-8");
-      this.proc.stderr?.on("data", (chunk: string) => {
+      spawned.stderr?.setEncoding("utf-8");
+      spawned.stderr?.on("data", (chunk: string) => {
       // MCP servers log to stderr — only show errors, not info
       const trimmed = chunk.trim();
       if (trimmed && /error|fail|crash/i.test(trimmed)) {
@@ -291,30 +277,27 @@ export class MCPConnection {
       }
       });
 
-      this.proc.on("exit", (code) => {
+      spawned.on("exit", (code) => {
       if (code !== 0 && code !== null) {
         logger.warn(`[mcp:${this.serverName}] Process exited with code ${code}`);
       }
-      // Reject all pending requests
-      for (const [, handler] of this.pending) {
-        clearTimeout(handler.timer);
-        handler.reject(new Error(`MCP server ${this.serverName} exited`));
-      }
-      this.pending.clear();
-      this.proc = null;
+      this.rejectPending(new Error(`MCP server ${this.serverName} exited`));
+      if (this.proc === spawned) this.proc = null;
+      if (this.initializationComplete) this.cleanupProcess();
       });
 
       // Handshake
-      await this.request("initialize", {
+      await Promise.race([this.request("initialize", {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
         clientInfo: { name: "local-agent-x", version: "1.0.0" },
-      });
+      }), spawnFailure]);
       this.notify("initialized", {});
 
       // Discover tools
-      const result = await this.request("tools/list", {}) as { tools: MCPTool[] };
+      const result = await Promise.race([this.request("tools/list", {}), spawnFailure]) as { tools: MCPTool[] };
       this.tools = result.tools || [];
+      this.initializationComplete = true;
       logger.info(`[mcp:${this.serverName}] Connected — ${this.tools.length} tools: ${this.tools.map(t => t.name).join(", ")}`);
     } catch (e) {
       this.disconnect();
@@ -344,6 +327,21 @@ export class MCPConnection {
     if (!this.proc?.stdin?.writable) return;
     const msg = JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n";
     this.proc.stdin.write(msg);
+  }
+
+  private rejectPending(error: Error): void {
+    for (const [, handler] of this.pending) {
+      clearTimeout(handler.timer);
+      handler.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  private cleanupProcess(): void {
+    if (process.platform !== "win32" && this.cleanupPid) killProcessGroup(this.cleanupPid, this.cleanupProc ?? undefined);
+    else killProcessTree(this.cleanupProc);
+    this.cleanupProc = null;
+    this.cleanupPid = null;
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -377,13 +375,10 @@ export class MCPConnection {
   }
 
   disconnect(): void {
-    for (const [, handler] of this.pending) {
-      clearTimeout(handler.timer);
-      handler.reject(new Error("Disconnecting"));
-    }
-    this.pending.clear();
-    killMcpProcess(this.proc);
+    this.rejectPending(new Error("Disconnecting"));
+    this.cleanupProcess();
     this.proc = null;
+    this.initializationComplete = false;
   }
 
   get connected(): boolean {

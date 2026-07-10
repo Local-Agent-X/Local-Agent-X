@@ -119,18 +119,22 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
 
 /**
  * Wrap an intended `(shell, shellArgs)` spawn so it runs under the seatbelt
- * profile. Returns the original pair unchanged when seatbelt isn't available,
- * so callers can wrap unconditionally. The profile is passed inline via `-p`
- * (no temp file to manage); sandbox-exec exits non-zero on a malformed profile,
- * so a broken cage fails the command loudly rather than running unconfined.
+ * profile. Ordinary callers can request passthrough when seatbelt is not active;
+ * callers that already selected Seatbelt pass `required=true` and fail closed
+ * if sandbox-exec disappeared after capability detection. The profile is passed
+ * inline via `-p`, so a malformed profile also fails the command loudly.
  */
 export function wrapForSeatbelt(
   shell: string,
   shellArgs: string[],
   home?: string,
   scope: SandboxScope = "shell",
+  required = false,
 ): { cmd: string; args: string[] } {
-  if (!isSeatbeltAvailable()) return { cmd: shell, args: shellArgs };
+  if (!isSeatbeltAvailable()) {
+    if (required) throw new Error(`Required sandbox executable is unavailable: ${SANDBOX_EXEC}`);
+    return { cmd: shell, args: shellArgs };
+  }
   const profile = generateSeatbeltProfile(home, scope);
   return { cmd: SANDBOX_EXEC, args: ["-p", profile, shell, ...shellArgs] };
 }

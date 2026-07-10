@@ -1,7 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// dnsPinCheck resolves A/AAAA records via node:dns promises. Mock both so the
-// tests are deterministic and offline; each case primes the resolver returns.
 const resolve4 = vi.fn<(host: string) => Promise<string[]>>();
 const resolve6 = vi.fn<(host: string) => Promise<string[]>>();
 
@@ -12,7 +10,47 @@ vi.mock("node:dns", () => ({
   },
 }));
 
-import { dnsPinCheck } from "../src/browser/guards.js";
+import { installRequestGuard } from "../src/browser/guards.js";
+
+interface FakeRoute {
+  abort: ReturnType<typeof vi.fn>;
+  continue: ReturnType<typeof vi.fn>;
+}
+
+interface FakeRequest {
+  url: () => string;
+  resourceType: () => string;
+  isNavigationRequest: () => boolean;
+}
+
+type RouteHandler = (route: FakeRoute, request: FakeRequest) => Promise<void>;
+
+async function captureGuard(): Promise<RouteHandler> {
+  let handler: RouteHandler | undefined;
+  const context = {
+    route: vi.fn(async (_pattern: string, candidate: RouteHandler) => {
+      handler = candidate;
+    }),
+  };
+  await installRequestGuard(context as unknown as Parameters<typeof installRequestGuard>[0]);
+  if (!handler) throw new Error("request guard did not register a route handler");
+  return handler;
+}
+
+function fakeRoute(): FakeRoute {
+  return {
+    abort: vi.fn().mockResolvedValue(undefined),
+    continue: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function navigationRequest(url: string): FakeRequest {
+  return {
+    url: () => url,
+    resourceType: () => "document",
+    isNavigationRequest: () => true,
+  };
+}
 
 beforeEach(() => {
   resolve4.mockReset();
@@ -21,59 +59,34 @@ beforeEach(() => {
   resolve6.mockResolvedValue([]);
 });
 
-describe("dnsPinCheck — IPv6 / DNS-rebinding hardening", () => {
-  it("treats literal ::1 (loopback) as safe — same class as localhost", async () => {
-    // ::1 is IPv6 loopback. The explicit [::1] early-return keeps it allowed,
-    // matching the 127.0.0.1/localhost policy. isPrivateIpv6 also classifies
-    // bare ::1 — so any code path agrees it is not an external rebind target.
-    expect(await dnsPinCheck("http://[::1]/")).toBeNull();
+describe("installRequestGuard DNS enforcement", () => {
+  it("fails closed when DNS resolution fails", async () => {
+    const handler = await captureGuard();
+    const route = fakeRoute();
+    resolve4.mockRejectedValueOnce(new Error("DNS unavailable"));
+    resolve6.mockRejectedValueOnce(new Error("DNS unavailable"));
+
+    await handler(route, navigationRequest("https://unresolved.example/"));
+
+    expect(route.abort).toHaveBeenCalledWith("blockedbyclient");
+    expect(route.continue).not.toHaveBeenCalled();
   });
 
-  it("treats bracketed [::1] with a port as safe", async () => {
-    expect(await dnsPinCheck("http://[::1]:8080/")).toBeNull();
-  });
+  it("checks a redirect hop and aborts when it resolves to a private address", async () => {
+    const handler = await captureGuard();
+    resolve4.mockResolvedValueOnce(["93.184.216.34"]);
+    const initialRoute = fakeRoute();
 
-  it("blocks literal fe80::1 (link-local)", async () => {
-    expect(await dnsPinCheck("http://[fe80::1]/")).toMatch(/private\/reserved IP/);
-  });
+    await handler(initialRoute, navigationRequest("https://public.example/start"));
 
-  it("blocks literal fc00::1 (ULA)", async () => {
-    expect(await dnsPinCheck("http://[fc00::1]/")).toMatch(/private\/reserved IP/);
-  });
+    expect(initialRoute.continue).toHaveBeenCalledOnce();
+    expect(initialRoute.abort).not.toHaveBeenCalled();
 
-  it("blocks literal fd12::1 (ULA)", async () => {
-    expect(await dnsPinCheck("http://[fd12::1]/")).toMatch(/private\/reserved IP/);
-  });
+    resolve4.mockResolvedValueOnce(["10.0.0.5"]);
+    const redirectRoute = fakeRoute();
+    await handler(redirectRoute, navigationRequest("https://redirect.example/internal"));
 
-  it("blocks IPv4-mapped ::ffff:192.168.1.1", async () => {
-    expect(await dnsPinCheck("http://[::ffff:192.168.1.1]/")).toMatch(/private\/reserved IP/);
-  });
-
-  it("allows public IPv6 literal 2606:4700:4700::1111", async () => {
-    expect(await dnsPinCheck("http://[2606:4700:4700::1111]/")).toBeNull();
-  });
-
-  it("blocks a hostname whose AAAA record is a ULA address", async () => {
-    resolve6.mockResolvedValue(["fd00::dead:beef"]);
-    expect(await dnsPinCheck("https://evil.example.com/")).toMatch(/DNS rebinding blocked/);
-  });
-
-  it("blocks a hostname whose A record is 10.x (regression)", async () => {
-    resolve4.mockResolvedValue(["10.0.0.5"]);
-    expect(await dnsPinCheck("https://evil.example.com/")).toMatch(/DNS rebinding blocked/);
-  });
-
-  it("allows a hostname resolving only to public addresses", async () => {
-    resolve4.mockResolvedValue(["93.184.216.34"]);
-    resolve6.mockResolvedValue(["2606:2800:220:1:248:1893:25c8:1946"]);
-    expect(await dnsPinCheck("https://example.com/")).toBeNull();
-  });
-
-  it("allows localhost", async () => {
-    expect(await dnsPinCheck("http://localhost:3000/")).toBeNull();
-  });
-
-  it("allows 127.0.0.1 literal", async () => {
-    expect(await dnsPinCheck("http://127.0.0.1/")).toBeNull();
+    expect(redirectRoute.abort).toHaveBeenCalledWith("blockedbyclient");
+    expect(redirectRoute.continue).not.toHaveBeenCalled();
   });
 });

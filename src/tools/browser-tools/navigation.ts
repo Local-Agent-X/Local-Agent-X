@@ -7,7 +7,6 @@
 import type { ToolResult } from "../../types.js";
 import type { BrowserManager, BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
-import { dnsPinCheck } from "../../browser/guards.js";
 import { createLogger } from "../../logger.js";
 import { ok, err, computeAuthWallPrefix, appendPostActionSnapshot } from "./shared.js";
 
@@ -24,9 +23,6 @@ export async function handleNavigate(
 ): Promise<ToolResult> {
   const url = String(args.url || "");
   if (!url) return err("'url' parameter is required for navigate action.");
-  // DNS rebinding protection — resolve hostname before browser navigates
-  const pinResult = await dnsPinCheck(url);
-  if (pinResult) return err(pinResult);
   log.info(`navigate -> ${url}`);
   const navResult = await manager.navigate(url, engine);
   // Auto-snapshot on navigate. Without this, the agent has to remember to call
@@ -44,8 +40,6 @@ export async function handleNewTab(
 ): Promise<ToolResult> {
   const url = String(args.url || "");
   if (!url) return err("'url' parameter is required for new_tab action.");
-  const pinResult = await dnsPinCheck(url);
-  if (pinResult) return err(pinResult);
   log.info(`new_tab -> ${url}`);
   const tabResult = await manager.newTab(url);
   return ok(await appendPostActionSnapshot(manager, tabResult));

@@ -5,7 +5,7 @@ import { waitForStability } from "./stability.js";
 import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { ACTION_TIMEOUT, NAV_TIMEOUT, type BrowserEngine } from "./launcher.js";
-import { acquireSessionContext } from "./runtime.js";
+import { acquireSessionContext, releaseSessionContext } from "./runtime.js";
 import { installDownloadHandler } from "./downloads.js";
 import { injectTokenIfLocal } from "./auth-context.js";
 import { safeHost, redirectMessage } from "./redirect.js";
@@ -15,6 +15,7 @@ import {
   listTabs as listTabsOp, resolveSwitchTab, pageInfo,
 } from "./page-ops.js";
 import { isBlankish } from "./blankish.js";
+import type { BrowserMode } from "../types.js";
 
 /**
  * Result of a ref/text-targeted interaction. `ok` carries the underlying
@@ -47,7 +48,7 @@ export class BrowserManager {
 
   constructor(
     private readonly sessionId: string = "default",
-    private readonly isolated: boolean = false,
+    private readonly mode: BrowserMode = "isolated",
   ) {}
 
   /** Called when the idle timer fires after this session is torn down. */
@@ -109,7 +110,7 @@ export class BrowserManager {
       }
     }
 
-    this.context = await acquireSessionContext(this.currentEngine, this.isolated);
+    this.context = await acquireSessionContext(this.currentEngine, this.mode, this.sessionId);
     // Install the context-level SSRF/scheme request guard so EVERY navigation
     // this context makes (click/act/fill-induced, redirect hop, JS-redirect) is
     // egress-checked at the request layer — not just the initial navigate URL.
@@ -367,9 +368,7 @@ export class BrowserManager {
       try { if (!p.isClosed()) await p.close(); } catch { /* already closed */ }
     }
     this.owned = [];
-    if (this.isolated && this.context) {
-      try { await this.context.close(); } catch { /* already closed */ }
-    }
+    if (this.context) await releaseSessionContext(this.context, this.mode);
     this.context = null;
     this.page = null;
   }

@@ -4,12 +4,14 @@
  * this holds the process-global half (the Browser connection and the spawned
  * Chrome process), while page + ref state lives per session in BrowserManager.
  *
- * A session's tab lives in its own context (the isolation default), or in the
- * shared default context when browserPerSessionContext is explicitly off for
- * cookie/login continuity.
+ * A session's tab lives in an ephemeral context (isolation), a serialized
+ * persistent identity context (continuity), or an explicitly shared live
+ * context (advanced-shared).
  */
 import type { Browser, BrowserContext } from "playwright";
 import type { ChildProcess } from "node:child_process";
+import { chmodSync, existsSync, renameSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import {
   browserProxyConfig,
   launchViaCDP,
@@ -20,6 +22,8 @@ import {
 } from "./launcher.js";
 import { closeBrowserEgressProxy, ensureBrowserEgressProxy } from "./egress-proxy.js";
 import { createLogger } from "../logger.js";
+import { getLaxDir } from "../lax-data-dir.js";
+import type { BrowserMode } from "../types.js";
 
 const log = createLogger("browser.runtime");
 
@@ -28,6 +32,9 @@ let chromeProcess: ChildProcess | null = null;
 let currentEngine: BrowserEngine = "chromium";
 let sharedContext: BrowserContext | null = null;
 let sharedContextCreation: Promise<BrowserContext> | null = null;
+let continuityContext: BrowserContext | null = null;
+let continuityOwner: string | null = null;
+let continuityTransition: Promise<void> = Promise.resolve();
 let proxyServer: string | null = null;
 // Dedupe concurrent launches: two sessions calling getSharedBrowser() before
 // Chrome is up must await the same spawn, not race two Chrome processes.
@@ -92,13 +99,46 @@ const CONTEXT_OPTS = (engine: BrowserEngine) => {
  * so it is never handed to a manager; shared mode caches an explicitly
  * configured context instead.
  */
+const continuityStatePath = (): string => join(getLaxDir(), "browser-continuity-state.json");
+
+async function persistContinuityContext(context: BrowserContext): Promise<void> {
+  const statePath = continuityStatePath();
+  const tempPath = `${statePath}.tmp`;
+  try {
+    await context.storageState({ path: tempPath });
+    chmodSync(tempPath, 0o600);
+    renameSync(tempPath, statePath);
+  } catch {
+    try { if (existsSync(tempPath)) unlinkSync(tempPath); } catch { /* best-effort */ }
+  }
+}
+
 export async function acquireSessionContext(
   engine: BrowserEngine,
-  isolated: boolean
+  mode: BrowserMode,
+  ownerId: string,
 ): Promise<BrowserContext> {
   const b = await getSharedBrowser(engine);
-  if (isolated) {
+  if (mode === "isolated") {
     return b.newContext(CONTEXT_OPTS(engine));
+  }
+  if (mode === "continuity") {
+    const operation = continuityTransition.then(async () => {
+      if (continuityContext && continuityOwner === ownerId) return continuityContext;
+      if (continuityContext) {
+        await persistContinuityContext(continuityContext);
+        try { await continuityContext.close(); } catch { /* already closed */ }
+      }
+      const statePath = continuityStatePath();
+      continuityContext = await b.newContext({
+        ...CONTEXT_OPTS(engine),
+        ...(existsSync(statePath) ? { storageState: statePath } : {}),
+      });
+      continuityOwner = ownerId;
+      return continuityContext;
+    });
+    continuityTransition = operation.then(() => undefined, () => undefined);
+    return operation;
   }
   if (sharedContext) return sharedContext;
   if (!sharedContextCreation) {
@@ -107,6 +147,19 @@ export async function acquireSessionContext(
       .finally(() => { sharedContextCreation = null; });
   }
   return sharedContextCreation;
+}
+
+export async function releaseSessionContext(
+  context: BrowserContext,
+  mode: BrowserMode,
+): Promise<void> {
+  if (mode === "advanced-shared") return;
+  if (mode === "continuity") await persistContinuityContext(context);
+  try { await context.close(); } catch { /* already closed */ }
+  if (continuityContext === context) {
+    continuityContext = null;
+    continuityOwner = null;
+  }
 }
 
 export function getRuntimeEngine(): BrowserEngine { return currentEngine; }
@@ -118,6 +171,9 @@ export function sharedBrowserActive(): boolean {
 export async function closeSharedBrowser(): Promise<void> {
   sharedContext = null;
   sharedContextCreation = null;
+  if (continuityContext) await persistContinuityContext(continuityContext);
+  continuityContext = null;
+  continuityOwner = null;
   if (browser) {
     try { await browser.close(); } catch { /* already gone */ }
     browser = null;
@@ -148,6 +204,8 @@ export function forceKillSharedBrowser(): void {
   browser = null;
   sharedContext = null;
   sharedContextCreation = null;
+  continuityContext = null;
+  continuityOwner = null;
   proxyServer = null;
   if (proc) { try { proc.kill("SIGKILL"); } catch { /* already exited */ } }
   if (b) { void b.close().catch(() => { /* connection already dead */ }); }

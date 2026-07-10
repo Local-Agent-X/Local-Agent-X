@@ -7,6 +7,7 @@ import type { SandboxMode } from "../sandbox/types.js";
 // ── Deployment Profile Types ──
 
 export type DeploymentProfile = "home" | "dev" | "enterprise";
+export type BrowserMode = "isolated" | "continuity" | "advanced-shared";
 
 export interface ProfileDefaults {
   sandboxMode: SandboxMode;
@@ -66,13 +67,10 @@ export interface LAXConfig {
   videoServerUrl: string;
   xttsServerUrl: string;
 
-  /** When true, each session gets its own browser context (separate cookie
-   *  jar) inside the shared Chrome. This is the fresh-install default. Off =
-   *  explicit shared context (cookies carry across sessions). Tabs/refs are
-   *  per-session either way. */
-  browserPerSessionContext: boolean;
-  /** Whether the legacy shared-context default has been migrated. */
-  browserPerSessionContextMigrated: boolean;
+  /** Browser identity posture. Isolated is ephemeral per session; continuity
+   *  persists one dedicated agent identity with single-session ownership;
+   *  advanced-shared explicitly shares one live context across sessions. */
+  browserMode: BrowserMode;
 
   // ── Externalized limits & timeouts ──
   browserCdpPort: number;

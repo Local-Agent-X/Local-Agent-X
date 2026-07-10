@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import type { Browser, BrowserContext } from "playwright";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const mocks = vi.hoisted(() => {
   const contexts: BrowserContext[] = [];
@@ -7,7 +10,14 @@ const mocks = vi.hoisted(() => {
     isConnected: () => true,
     contexts: () => contexts,
     newContext: vi.fn(async () => {
-      const context = { id: Symbol("context") } as unknown as BrowserContext;
+      const context = {
+        id: Symbol("context"),
+        close: vi.fn(async () => undefined),
+        storageState: vi.fn(async (options?: { path?: string }) => {
+          if (options?.path) writeFileSync(options.path, JSON.stringify({ cookies: [], origins: [] }));
+          return { cookies: [], origins: [] };
+        }),
+      } as unknown as BrowserContext;
       contexts.push(context);
       return context;
     }),
@@ -69,7 +79,11 @@ describe("per-session browser isolation", () => {
 });
 
 describe("per-session BrowserContext allocation", () => {
+  let dataDir: string;
+
   beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "browser-mode-runtime-"));
+    process.env.LAX_DATA_DIR = dataDir;
     mocks.startProxy.mockResolvedValue({ url: "http://127.0.0.1:43123" });
   });
 
@@ -77,12 +91,14 @@ describe("per-session BrowserContext allocation", () => {
     await closeSharedBrowser();
     mocks.contexts.length = 0;
     vi.clearAllMocks();
+    delete process.env.LAX_DATA_DIR;
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   it("gives two sessions distinct BrowserContexts by default", async () => {
-    const isolatedByDefault = configSchema.parse({}).browserPerSessionContext;
-    const chat = await acquireSessionContext("chromium", isolatedByDefault);
-    const mission = await acquireSessionContext("chromium", isolatedByDefault);
+    const isolatedByDefault = configSchema.parse({}).browserMode;
+    const chat = await acquireSessionContext("chromium", isolatedByDefault, "chat");
+    const mission = await acquireSessionContext("chromium", isolatedByDefault, "mission");
 
     expect(chat).not.toBe(mission);
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(2);
@@ -95,8 +111,8 @@ describe("per-session BrowserContext allocation", () => {
   });
 
   it("honors explicit shared mode by reusing one BrowserContext", async () => {
-    const chat = await acquireSessionContext("chromium", false);
-    const mission = await acquireSessionContext("chromium", false);
+    const chat = await acquireSessionContext("chromium", "advanced-shared", "chat");
+    const mission = await acquireSessionContext("chromium", "advanced-shared", "mission");
 
     expect(chat).toBe(mission);
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(1);
@@ -112,7 +128,7 @@ describe("per-session BrowserContext allocation", () => {
     const defaultContext = { id: Symbol("cdp-default") } as unknown as BrowserContext;
     mocks.contexts.push(defaultContext);
 
-    const shared = await acquireSessionContext("chromium", false);
+    const shared = await acquireSessionContext("chromium", "advanced-shared", "chat");
 
     expect(shared).not.toBe(defaultContext);
     expect(mocks.browser.newContext).toHaveBeenCalledWith(
@@ -126,18 +142,40 @@ describe("per-session BrowserContext allocation", () => {
   it("fails closed before browser launch when proxy startup fails", async () => {
     mocks.startProxy.mockRejectedValueOnce(new Error("proxy bind failed"));
 
-    await expect(acquireSessionContext("chromium", true)).rejects.toThrow("proxy bind failed");
+    await expect(acquireSessionContext("chromium", "isolated", "chat")).rejects.toThrow("proxy bind failed");
 
     expect(mocks.browser.newContext).not.toHaveBeenCalled();
   });
 
   it("deduplicates concurrent shared-context creation", async () => {
     const [chat, mission] = await Promise.all([
-      acquireSessionContext("chromium", false),
-      acquireSessionContext("chromium", false),
+      acquireSessionContext("chromium", "advanced-shared", "chat"),
+      acquireSessionContext("chromium", "advanced-shared", "mission"),
     ]);
 
     expect(chat).toBe(mission);
+    expect(mocks.browser.newContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands continuity identity between owners without sharing a live context", async () => {
+    const chat = await acquireSessionContext("chromium", "continuity", "chat");
+    const mission = await acquireSessionContext("chromium", "continuity", "mission");
+    const statePath = join(dataDir, "browser-continuity-state.json");
+
+    expect(mission).not.toBe(chat);
+    expect(chat.storageState).toHaveBeenCalledWith({ path: `${statePath}.tmp` });
+    expect(chat.close).toHaveBeenCalledOnce();
+    expect(existsSync(statePath)).toBe(true);
+    expect(mocks.browser.newContext).toHaveBeenLastCalledWith(
+      expect.objectContaining({ storageState: statePath }),
+    );
+  });
+
+  it("reuses continuity context only for the same owner", async () => {
+    const first = await acquireSessionContext("chromium", "continuity", "chat");
+    const second = await acquireSessionContext("chromium", "continuity", "chat");
+
+    expect(second).toBe(first);
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(1);
   });
 });

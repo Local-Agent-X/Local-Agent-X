@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { Readable } from "node:stream";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -6,6 +6,14 @@ import { tmpdir } from "node:os";
 import { handlePreferencesRoutes } from "./preferences.js";
 import { loadConfig, setRuntimeConfig, getConfigPath } from "../../config.js";
 import type { LAXConfig } from "../../types.js";
+
+const routeMocks = vi.hoisted(() => ({
+  broadcastAll: vi.fn(() => 2),
+  closeAllBrowsers: vi.fn(async () => undefined),
+}));
+
+vi.mock("../../chat-ws/index.js", () => ({ broadcastAll: routeMocks.broadcastAll }));
+vi.mock("../../browser/index.js", () => ({ closeAllBrowsers: routeMocks.closeAllBrowsers }));
 
 // ── SV-5 regression: config hot-reload split-brain ──
 //
@@ -19,9 +27,9 @@ import type { LAXConfig } from "../../types.js";
 // This drives the real POST /api/settings handler through that exact
 // sequence and asserts the hand edit survives.
 
-function makeReq(body: unknown): Readable & { headers: Record<string, string> } {
+function makeReq(body: unknown, token?: string): Readable & { headers: Record<string, string> } {
   const req = Readable.from([Buffer.from(JSON.stringify(body))]) as Readable & { headers: Record<string, string> };
-  req.headers = {};
+  req.headers = token ? { authorization: `Bearer ${token}` } : {};
   return req;
 }
 
@@ -89,5 +97,33 @@ describe("POST /api/settings persists the live runtime config, not the stale boo
     const persisted = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(persisted.maxSubAgents).toBe(7); // the new save landed
     expect(persisted.maxIterations).toBe(299); // hand edit NOT clobbered
+  });
+
+  it("persists, broadcasts, and invalidates browser state on a mode change", async () => {
+    routeMocks.broadcastAll.mockClear();
+    routeMocks.closeAllBrowsers.mockClear();
+    const config = loadConfig();
+    config.browserMode = "isolated";
+    setRuntimeConfig(config);
+    const ctx = { config, dataDir: suiteLaxDir } as unknown as Parameters<typeof handlePreferencesRoutes>[4];
+    const req = makeReq({ browserMode: "continuity" }, config.authToken);
+    const res = makeRes();
+
+    await handlePreferencesRoutes(
+      "POST",
+      new URL("http://127.0.0.1/api/settings"),
+      req as unknown as Parameters<typeof handlePreferencesRoutes>[2],
+      res as unknown as Parameters<typeof handlePreferencesRoutes>[3],
+      ctx,
+      "operator",
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(readFileSync(getConfigPath(), "utf-8")).browserMode).toBe("continuity");
+    expect(routeMocks.closeAllBrowsers).toHaveBeenCalledOnce();
+    expect(routeMocks.broadcastAll).toHaveBeenCalledWith({
+      type: "settings_changed",
+      settings: { browserMode: "continuity" },
+    });
   });
 });

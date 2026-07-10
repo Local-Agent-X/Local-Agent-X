@@ -54,17 +54,18 @@ describe("browser identity isolation config migration", () => {
 
     const config = loadConfig();
 
-    expect(config.browserPerSessionContext).toBe(true);
-    expect(config.browserPerSessionContextMigrated).toBe(true);
+    expect(config.browserMode).toBe("isolated");
+    expect(JSON.parse(readFileSync(configPath, "utf-8")).browserMode).toBe("isolated");
   });
 
   it("upgrades the old untouched shared-context default once", () => {
     writeConfig({ browserPerSessionContext: false });
 
-    expect(loadConfig().browserPerSessionContext).toBe(true);
+    expect(loadConfig().browserMode).toBe("isolated");
     const persisted = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-    expect(persisted.browserPerSessionContext).toBe(true);
-    expect(persisted.browserPerSessionContextMigrated).toBe(true);
+    expect(persisted.browserMode).toBe("isolated");
+    expect(persisted.browserPerSessionContext).toBeUndefined();
+    expect(persisted.browserPerSessionContextMigrated).toBeUndefined();
   });
 
   it("does not persist environment overrides while migrating the browser default", () => {
@@ -88,8 +89,8 @@ describe("browser identity isolation config migration", () => {
       expect(persisted.authToken).toBe("disk-auth-token");
       expect(persisted.openaiApiKey).toBe("disk-provider-key");
       expect(persisted.model).toBe("disk-model");
-      expect(persisted.browserPerSessionContext).toBe(true);
-      expect(persisted.browserPerSessionContextMigrated).toBe(true);
+      expect(persisted.browserMode).toBe("isolated");
+      expect(persisted.browserPerSessionContext).toBeUndefined();
     });
   });
 
@@ -190,8 +191,9 @@ describe("browser identity isolation config migration", () => {
         expect(persisted.workspace).toBe(expectedWorkspace);
         expect(persisted.sandboxMode).toBe("guarded");
         expect(persisted.sandboxModeMigrated).toBe(true);
-        expect(persisted.browserPerSessionContext).toBe(true);
-        expect(persisted.browserPerSessionContextMigrated).toBe(true);
+        expect(persisted.browserMode).toBe("isolated");
+        expect(persisted.browserPerSessionContext).toBeUndefined();
+        expect(persisted.browserPerSessionContextMigrated).toBeUndefined();
       });
     } finally {
       process.chdir(previousCwd);
@@ -204,7 +206,24 @@ describe("browser identity isolation config migration", () => {
       browserPerSessionContextMigrated: true,
     });
 
-    expect(loadConfig().browserPerSessionContext).toBe(false);
+    expect(loadConfig().browserMode).toBe("advanced-shared");
+    const persisted = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    expect(persisted.browserPerSessionContext).toBeUndefined();
+    expect(persisted.browserPerSessionContextMigrated).toBeUndefined();
+  });
+
+  it("preserves a canonical continuity choice without legacy authority", () => {
+    writeConfig({
+      browserMode: "continuity",
+      browserPerSessionContext: false,
+      browserPerSessionContextMigrated: true,
+    });
+
+    expect(loadConfig().browserMode).toBe("continuity");
+    const persisted = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    expect(persisted.browserMode).toBe("continuity");
+    expect(persisted.browserPerSessionContext).toBeUndefined();
+    expect(persisted.browserPerSessionContextMigrated).toBeUndefined();
   });
 });
 

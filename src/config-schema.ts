@@ -89,14 +89,9 @@ export const configSchema = z.object({
   videoServerUrl: z.string().default("http://127.0.0.1:7861"),
   xttsServerUrl: z.string().default("http://127.0.0.1:7862"),
 
-  // Per-session browser context. On by default: each session gets its own
-  // context (separate cookie jar) inside the same Chrome. Off explicitly
-  // shares one context so cookies/logins carry across chats and missions.
-  // Tabs and element refs are always per-session regardless of this flag.
-  browserPerSessionContext: z.boolean().default(true),
-  /** One-time marker for the false-to-true default upgrade. Once set, an
-   *  explicit shared-context choice remains false across future boots. */
-  browserPerSessionContextMigrated: z.boolean().default(false),
+  // Explicit browser identity posture. The agent always uses a dedicated
+  // profile and never touches the user's normal browser profile.
+  browserMode: z.enum(["isolated", "continuity", "advanced-shared"]).default("isolated"),
 
   // Limits & timeouts
   browserCdpPort: z.number().int().min(1).max(65535).default(9800),

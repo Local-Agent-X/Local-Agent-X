@@ -7,7 +7,7 @@ import { runSecurityAudit, printAuditReport } from "../security/security-audit.j
 import { startAriKernel } from "../ari-kernel/index.js";
 import { EventBus } from "../event-bus.js";
 import { ConfigWatcher } from "../config-hot-reload.js";
-import { loadConfig, setRuntimeConfig } from "../config.js";
+import { getRuntimeConfig, loadConfig, setRuntimeConfig } from "../config.js";
 import { closeAllBrowsers } from "../browser/index.js";
 import type { LAXConfig } from "../types.js";
 import type { MemoryIndex } from "../memory/index.js";
@@ -146,7 +146,12 @@ export function startConfigWatcher(dataDir: string): void {
   // as "I turned shell OFF but bash still runs" until process restart.
   new ConfigWatcher().start(join(dataDir, "config.json"), () => {
     try {
-      setRuntimeConfig(loadConfig());
+      const previousBrowserMode = getRuntimeConfig().browserMode;
+      const nextConfig = loadConfig();
+      setRuntimeConfig(nextConfig);
+      if (nextConfig.browserMode !== previousBrowserMode) {
+        void closeAllBrowsers();
+      }
       logger.info("[config] Hot-reloaded (runtime config updated)");
     } catch (e) {
       logger.warn(`[config] Hot-reload load failed: ${(e as Error).message}`);

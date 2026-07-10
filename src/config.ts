@@ -60,6 +60,10 @@ export function loadConfig(): LAXConfig {
     Object.assign(diskRaw, updates);
     diskDirty = true;
   };
+  const deleteDiskKeys = (...keys: string[]): void => {
+    for (const key of keys) delete diskRaw[key];
+    diskDirty = true;
+  };
 
   if (existsSync(configPath)) {
     try {
@@ -144,17 +148,18 @@ export function loadConfig(): LAXConfig {
     applyDiskMutation(updates);
   }
 
-  // Isolate browser identity on fresh installs and upgrade the old untouched
-  // shared-context default once. The marker preserves a later explicit choice
-  // to share browser identity across sessions.
-  if (!diskRaw.browserPerSessionContextMigrated) {
-    const updates: Record<string, unknown> = { browserPerSessionContextMigrated: true };
-    if (diskRaw.browserPerSessionContext === undefined || diskRaw.browserPerSessionContext === false) {
-      config.browserPerSessionContext = true;
-      updates.browserPerSessionContext = true;
-    }
-    config.browserPerSessionContextMigrated = true;
-    applyDiskMutation(updates);
+  // Replace the ambiguous legacy boolean with one canonical mode. An old
+  // unmarked false was the former shared default and upgrades to isolation;
+  // only a false saved after that migration represents an explicit choice.
+  if (diskRaw.browserMode === undefined) {
+    config.browserMode = diskRaw.browserPerSessionContext === false
+      && diskRaw.browserPerSessionContextMigrated === true
+      ? "advanced-shared"
+      : "isolated";
+    applyDiskMutation({ browserMode: config.browserMode });
+  }
+  if ("browserPerSessionContext" in diskRaw || "browserPerSessionContextMigrated" in diskRaw) {
+    deleteDiskKeys("browserPerSessionContext", "browserPerSessionContextMigrated");
   }
 
   // Workspace location. The packaged desktop app sets LAX_DOCUMENTS_DIR so the

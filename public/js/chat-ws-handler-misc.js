@@ -38,6 +38,9 @@ function handleSettingsChanged(msg) {
       if ('enableRemoteControl' in msg.settings) setToolPolicyToggle('tp-toggle-remote', msg.settings.enableRemoteControl === true);
     }
   }
+  if ('browserMode' in msg.settings && typeof renderBrowserMode === 'function') {
+    renderBrowserMode(msg.settings.browserMode);
+  }
 }
 
 function handleSidebarPinsChanged(msg) {

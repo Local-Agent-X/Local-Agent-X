@@ -129,6 +129,14 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Category kill-switch — when false, blocks ALL browser_* tool calls at pre-dispatch",
   },
   {
+    field: "browserMode",
+    validate: z.enum(["isolated", "continuity", "advanced-shared"]),
+    runtime: true,
+    broadcast: true,
+    protected: true,
+    description: "Browser identity mode. isolated=ephemeral identity per session; continuity=persistent dedicated agent identity with one live session owner; advanced-shared=one live context shared across sessions",
+  },
+  {
     field: "enableComputerControl",
     validate: z.boolean(),
     runtime: true,

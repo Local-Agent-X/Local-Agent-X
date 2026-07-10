@@ -4,7 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, atomicWriteFileSync } from "../../server-utils.js";
-import { RUNTIME_SETTINGS, BROADCAST_KEYS, publicSchema, isProtectedSetting } from "../../settings-schema.js";
+import { FLIPPABLE_SETTINGS, RUNTIME_SETTINGS, BROADCAST_KEYS, publicSchema, isProtectedSetting } from "../../settings-schema.js";
 import { loadSettings, saveSettings } from "../../settings.js";
 import { getRuntimeConfig } from "../../config.js";
 
@@ -82,7 +82,10 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     // tabs/windows pick up the change without a reload.
     const broadcastBody: Record<string, unknown> = {};
     for (const key of Object.keys(body)) {
-      if (BROADCAST_KEYS.has(key)) broadcastBody[key] = body[key];
+      if (!BROADCAST_KEYS.has(key)) continue;
+      const spec = FLIPPABLE_SETTINGS.find((field) => field.field === key);
+      const parsed = spec?.validate.safeParse(body[key]);
+      if (parsed?.success) broadcastBody[key] = parsed.data;
     }
     if (Object.keys(broadcastBody).length > 0) {
       try {
@@ -131,16 +134,22 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     // and the next GET will reflect that, so the UI re-syncs without us
     // needing a 400 round-trip path.
     let runtimeChanged = false;
+    let browserModeChanged = false;
     for (const field of RUNTIME_SETTINGS) {
       if (!(field.field in body)) continue;
       const parsed = field.validate.safeParse(body[field.field]);
       if (!parsed.success) continue;
+      if (field.field === "browserMode" && runtimeConfig.browserMode !== parsed.data) browserModeChanged = true;
       (runtimeConfig as unknown as Record<string, unknown>)[field.field] = parsed.data;
       runtimeChanged = true;
     }
     if (runtimeChanged) {
       const { saveConfig } = await import("../../config.js");
       saveConfig(runtimeConfig);
+    }
+    if (browserModeChanged) {
+      const { closeAllBrowsers } = await import("../../browser/index.js");
+      await closeAllBrowsers();
     }
 
     json(200, { ok: true }); return true;

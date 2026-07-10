@@ -305,4 +305,4 @@ export interface OAuthTokens {
 // cap, same as server-events.ts). Re-exported so existing imports are
 // unchanged.
 export { MIN_MAX_ITERATIONS } from "./types/lax-config.js";
-export type { DeploymentProfile, ProfileDefaults, LAXConfig } from "./types/lax-config.js";
+export type { BrowserMode, DeploymentProfile, ProfileDefaults, LAXConfig } from "./types/lax-config.js";

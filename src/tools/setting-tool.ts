@@ -15,7 +15,7 @@
  *   - Wrong-field guesses (the `shellAccess` failure 2026-05-19) return a
  *     clean error with the valid field list, not a silent 200 merge.
  *
- * Runtime fields (toolApproval, enable*, etc.) get mirrored to config.json
+ * Runtime fields (toolApproval, enable*, browserMode, etc.) get mirrored to config.json
  * + ctx.config so the next tool call sees the new value. Broadcasts the
  * change over WS so other tabs (and the settings page) re-sync the toggle
  * DOM without a refresh.
@@ -95,6 +95,7 @@ export const settingTool: ToolDefinition = {
     //    so the gate / dispatcher reads the new value on the next call.
     if (spec.runtime) {
       const cfg = getRuntimeConfig();
+      const changed = (cfg as unknown as Record<string, unknown>)[fieldName] !== newValue;
       (cfg as unknown as Record<string, unknown>)[fieldName] = newValue;
       saveConfig(cfg);
 
@@ -111,6 +112,10 @@ export const settingTool: ToolDefinition = {
           `Saved ${fieldName} = ${JSON.stringify(newValue)} but post-write verify failed: ${verified.reason}. The toggle did NOT take effect.`,
           { recovery: "Re-call setting with the same field/value; if it keeps failing, check ~/.lax/config.json permissions and disk space." },
         );
+      }
+      if (fieldName === "browserMode" && changed) {
+        const { closeAllBrowsers } = await import("../browser/index.js");
+        await closeAllBrowsers();
       }
     }
 

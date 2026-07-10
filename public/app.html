@@ -575,6 +575,23 @@
       <!-- Security -->
       <div id="stab-security" class="tab-pane">
         <div class="section-card">
+          <div class="section-title">Agent Browser Identity</div>
+          <div class="section-desc">Controls how the dedicated agent browser keeps sign-ins between sessions.</div>
+          <div class="field" style="margin-top:14px;max-width:520px">
+            <label class="field-label" for="cfg-browser-mode">Identity mode</label>
+            <select class="field-select" id="cfg-browser-mode" onchange="setBrowserMode(this.value)">
+              <option value="isolated">Isolated (recommended)</option>
+              <option value="continuity">Continuity</option>
+              <option value="advanced-shared">Advanced: shared live context</option>
+            </select>
+            <div class="field-hint" id="browser-mode-status" role="status"></div>
+            <div id="browser-mode-warning" role="alert" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:.78rem;font-weight:600">
+              Warning: every agent session can see and change the same live tabs, cookies, and signed-in state.
+            </div>
+            <div class="field-hint" style="margin-top:10px">All modes use a dedicated agent browser profile. Your normal browser profile is never used.</div>
+          </div>
+        </div>
+        <div class="section-card">
           <div class="section-title">Tool Policy</div>
           <div class="section-desc">Default-deny. Only allowed tools can execute.</div>
           <div class="toggle-row"><div><div class="toggle-label">Shell Access (bash)</div><div class="toggle-desc">Allow shell commands (rate limited)</div></div><div id="tp-toggle-shell" class="toggle on" onclick="toolPolicyToggle('enableShell', this)"></div></div>
@@ -1384,6 +1401,7 @@
 <script src="/js/settings-audit-log.js?v=v1"></script>
 <script src="/js/settings-sandbox.js?v=v3"></script>
 <script src="/js/settings-tool-policy.js?v=v1"></script>
+<script src="/js/settings-browser-mode.js?v=v1"></script>
 <script src="/js/settings-usage.js?v=v1"></script>
 <script src="/js/settings-permissions.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>

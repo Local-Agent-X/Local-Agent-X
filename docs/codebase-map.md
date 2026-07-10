@@ -19,8 +19,8 @@ over 400 LOC (the source-hygiene ceiling).
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 65 | 22 | XL |  |
-| `src/security/` | 64 | 27 | XL |  |
-| `src/tools/` | 54 | 141 | XL |  |
+| `src/security/` | 65 | 27 | XL |  |
+| `src/tools/` | 55 | 141 | XL |  |
 | `src/canonical-loop/` | 38 | 132 | XL |  |
 | `src/providers/` | 38 | 18 | L |  |
 | `src/memory/` | 37 | 108 | XL |  |
@@ -37,11 +37,11 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agents/` | 15 | 13 | L |  |
 | `src/app-runtime/` | 14 | 12 | L |  |
 | `src/chat-ws/` | 14 | 9 | L |  |
+| `src/browser/` | 13 | 24 | XL |  |
 | `src/anthropic-client/` | 12 | 18 | L |  |
 | `src/context-manager/` | 12 | 10 | M |  |
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/autonomy/` | 11 | 4 | M |  |
-| `src/browser/` | 11 | 23 | XL |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |
@@ -69,6 +69,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context/` | 3 | 2 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
 | `src/language-intel/` | 3 | 4 | M |  |
+| `src/tool-execution/` | 3 | 21 | XL |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
 | `src/anticipatory-care/` | 1 | 6 | M |  |
@@ -76,7 +77,6 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/cross-session-learning/` | 1 | 7 | M |  |
 | `src/errors/` | 1 | 2 | S |  |
 | `src/manifest-generator/` | 1 | 8 | M |  |
-| `src/tool-execution/` | 1 | 20 | L |  |
 | `src/types/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)
@@ -191,7 +191,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/self-edit-smoke-suite.ts` | S |
 | `src/server-context.ts` | S |
 | `src/server-utils.ts` | M |
-| `src/settings-schema.ts` | S |
+| `src/settings-schema.ts` | M |
 | `src/settings.ts` | S |
 | `src/shared-history.ts` | M |
 | `src/slash-commands.ts` | S |
@@ -220,4 +220,3 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/video-summary.ts` | S |
 | `src/vulnerability-awareness.ts` | M |
 | `src/worker-session.ts` | S |
-

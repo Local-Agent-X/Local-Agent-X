@@ -13,11 +13,16 @@
 //     (dataLineageGate) sees the floor and BLOCKS — the read's sensitive path is
 //     tainted before the egress check runs.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { executeToolCalls, dispatchSingleToolCall } from "./execute-tool.js";
 import { _clearDedupCacheForTests, dedupRecord } from "./dedup-cache.js";
 import { setAriRequired } from "../ari-kernel/state.js";
 import { clearSessionTaint, getTaintSummary } from "../data-lineage.js";
+import { clearSessionProfile, setSessionProfile } from "../autonomy/profile-store.js";
+import { setUnconfinedHostAcknowledgement } from "../sandbox/index.js";
 import type { ToolDefinition, ToolResult, ServerEvent } from "../types.js";
 
 // A sensitive path knowable from args: basename `id_rsa` is flagged by
@@ -277,5 +282,79 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     );
     expect(r.status).toBe("ok");
     expect(r.isError).toBe(false);
+  });
+});
+
+describe("canonical unattended shell capability gate", () => {
+  const SHELL_BACKENDS = ["bash", "shell", "ari_shell", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"];
+  let dataDir: string;
+  let previousDataDir: string | undefined;
+  let previousMode: string | undefined;
+  let seq = 0;
+
+  beforeAll(() => {
+    setAriRequired(false);
+    previousDataDir = process.env.LAX_DATA_DIR;
+    previousMode = process.env.LAX_SANDBOX;
+    dataDir = mkdtempSync(join(tmpdir(), "lax-shell-pipeline-"));
+    process.env.LAX_DATA_DIR = dataDir;
+    process.env.LAX_SANDBOX = "host";
+  });
+
+  afterAll(() => {
+    setAriRequired(true);
+    if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = previousDataDir;
+    if (previousMode === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = previousMode;
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => setUnconfinedHostAcknowledgement(false));
+
+  async function dispatch(name: string, prefix: "agent" | "mcp" | "cron", acknowledged: boolean) {
+    if (acknowledged) setUnconfinedHostAcknowledgement(true);
+    const sessionId = `${prefix}-shell-gate-${seq++}`;
+    setSessionProfile(sessionId, "Power");
+    const execute = vi.fn(async (): Promise<ToolResult> => ({ content: `executed:${name}` }));
+    const tool = {
+      name,
+      description: "shell gate test",
+      parameters: { type: "object", properties: { command: { type: "string" } } },
+      execute,
+    } as unknown as ToolDefinition;
+    try {
+      const messages = await executeToolCalls(
+        [{ id: `call-${seq}`, name, arguments: JSON.stringify({ command: "echo ok" }) }],
+        new Map([[name, tool]]),
+        undefined as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sessionId,
+      );
+      return { execute, content: String(messages[0]?.content ?? "") };
+    } finally {
+      clearSessionProfile(sessionId);
+    }
+  }
+
+  for (const context of ["agent", "mcp"] as const) {
+    it.each(SHELL_BACKENDS)(`blocks %s on an unacknowledged unconfined ${context} run`, async (name) => {
+      const result = await dispatch(name, context, false);
+      expect(result.execute).not.toHaveBeenCalled();
+      expect(result.content).toMatch(/effective mode is "host"/i);
+    });
+
+    it.each(SHELL_BACKENDS)(`allows %s on an acknowledged unconfined ${context} run`, async (name) => {
+      const result = await dispatch(name, context, true);
+      expect(result.execute).toHaveBeenCalledOnce();
+      expect(result.content).toContain(`executed:${name}`);
+    });
+  }
+
+  it.each(SHELL_BACKENDS)("categorically blocks %s in cron even when host execution is acknowledged", async (name) => {
+    const result = await dispatch(name, "cron", true);
+    expect(result.execute).not.toHaveBeenCalled();
+    expect(result.content).toMatch(/categorically disabled for cron/i);
   });
 });

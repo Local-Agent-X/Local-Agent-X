@@ -8,7 +8,7 @@ import { evaluateShellCommand } from "./shell-policy.js";
 import { detectInlineInterpreterEval } from "./shell-detectors.js";
 import { evaluateShellCommandAndPaths, evaluateShellPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch } from "./network-policy.js";
-import { TOOL_PATH_ARGS } from "../tool-registry.js";
+import { CAPABILITY_CLASS_MEMBERS, TOOL_PATH_ARGS } from "../tool-registry.js";
 import { uploadsDir } from "../config.js";
 import { mapUploadsRef } from "../workspace/paths.js";
 
@@ -26,6 +26,17 @@ const WORKSPACE_ROOT = realpathSync(mkdtempSync(join(tmpdir(), "lax-ws-")));
 const WORKSPACE = join(WORKSPACE_ROOT, "workspace");
 mkdirSync(WORKSPACE, { recursive: true });
 afterAll(() => rmSync(WORKSPACE_ROOT, { recursive: true, force: true }));
+
+describe("cron shell context restriction", () => {
+  it("categorically denies every shell capability member", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    for (const toolName of CAPABILITY_CLASS_MEMBERS.shell) {
+      const decision = sec.evaluate({ toolName, args: { command: "echo ok" }, sessionId: "cron-test", callContext: "cron" });
+      expect(decision.allowed, toolName).toBe(false);
+      expect(decision.reason).toContain("cron context");
+    }
+  });
+});
 
 // Isolated LAX_DATA_DIR for the main suite, populated with a known egress
 // allowlist so the deny-by-default semantics don't make every "public URL

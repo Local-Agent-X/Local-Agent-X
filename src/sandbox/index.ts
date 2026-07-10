@@ -185,7 +185,9 @@ export interface SandboxStatus {
   confined: boolean;
   fallbackReason?: string;
   unconfinedHostAcknowledged: boolean;
-  unattendedBashAllowed: boolean;
+  cronShellAllowed: boolean;
+  delegatedShellAllowed: boolean;
+  apiShellAllowed: boolean;
 }
 
 function acknowledgementPath(): string {
@@ -254,13 +256,16 @@ export function getSandboxStatus(): SandboxStatus {
 
   const confined = effectiveMode !== "host";
   const unconfinedHostAcknowledged = isUnconfinedHostAcknowledged();
+  const unattendedHostAllowed = confined || unconfinedHostAcknowledged;
   return {
     selectedMode,
     effectiveMode,
     confined,
     ...(fallbackReason ? { fallbackReason } : {}),
     unconfinedHostAcknowledged,
-    unattendedBashAllowed: confined || unconfinedHostAcknowledged,
+    cronShellAllowed: false,
+    delegatedShellAllowed: unattendedHostAllowed,
+    apiShellAllowed: unattendedHostAllowed,
   };
 }
 

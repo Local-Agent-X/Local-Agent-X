@@ -82,6 +82,7 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "whatsapp_send",             // proactively DMs the owner over the WhatsApp bridge
   "clipboard_write",           // crosses into another app's read surface
   "process_start",             // spawns a subprocess that can carry data off-box
+  "process_restart",           // respawns through the same shell path as process_start
   "app_serve_backend",         // spawns a full-stack app's dev-server subprocess (same sink as process_start)
   "app_serve_frontend",        // spawns a frontend (Vite/Next) dev-server subprocess (same sink as process_start)
   "browser",                   // browser navigation/fetch actions (browser_* below)
@@ -131,7 +132,7 @@ const WORKSPACE_WRITE_TOOLS: ReadonlySet<string> = new Set([
 // Shell = subprocess spawn / arbitrary command execution.
 const SHELL_TOOLS: ReadonlySet<string> = new Set([
   "bash",          // canonical
-  "shell", "ari_shell", "process_start",
+  "shell", "ari_shell", "process_start", "process_restart",
   "app_serve_backend",  // wraps a process spawn — gate it as shell like process_start
   "app_serve_frontend", // also wraps a process spawn (Vite/Next dev server)
 ]);

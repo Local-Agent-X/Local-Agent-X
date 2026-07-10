@@ -87,7 +87,14 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
   }
   if (method === "POST" && url.pathname === "/api/sandbox") {
     const body = await readBody(req);
-    const { mode, acknowledgeUnconfinedHost } = JSON.parse(body);
+    const { mode, acknowledgeUnconfinedHost, revokeUnconfinedHostAcknowledgement } = JSON.parse(body);
+    if (revokeUnconfinedHostAcknowledgement === true) {
+      const { getSandboxStatus, setUnconfinedHostAcknowledgement } = await import("../../sandbox/index.js");
+      setUnconfinedHostAcknowledgement(false);
+      const status = getSandboxStatus();
+      ctx.broadcastAll({ type: "settings_changed", settings: { sandbox: status } });
+      json(200, { ok: true, mode: status.effectiveMode, ...status }); return true;
+    }
     if (acknowledgeUnconfinedHost === true) {
       const { getSandboxStatus, setUnconfinedHostAcknowledgement } = await import("../../sandbox/index.js");
       const current = getSandboxStatus();

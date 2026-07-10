@@ -653,7 +653,10 @@
             </select>
             <div class="field-hint" id="sandbox-hint">Bash commands run directly on your host OS.</div>
           </div>
-          <button class="action-btn danger" id="sandbox-ack-btn" onclick="acknowledgeUnconfinedHost()" style="display:none;margin-top:10px">Acknowledge unattended host shell</button>
+          <div class="btn-row" id="sandbox-host-ack-actions" style="display:none">
+            <button class="action-btn danger" id="sandbox-ack-btn" onclick="acknowledgeUnconfinedHost()">Acknowledge delegated/API host shell</button>
+            <button class="action-btn secondary" id="sandbox-revoke-btn" onclick="revokeUnconfinedHostAcknowledgement()">Revoke host-shell acknowledgement</button>
+          </div>
         </div>
         <!-- Hidden unless the server reports a git checkout (selfEditAvailable):
              packaged installs can't run self_edit, so the switch never shows there. -->
@@ -1376,7 +1379,7 @@
 <script src="/js/settings-rollback.js?v=v1"></script>
 <script src="/js/settings-run-traces.js?v=v1"></script>
 <script src="/js/settings-audit-log.js?v=v1"></script>
-<script src="/js/settings-sandbox.js?v=v2"></script>
+<script src="/js/settings-sandbox.js?v=v3"></script>
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-usage.js?v=v1"></script>
 <script src="/js/settings-permissions.js?v=v1"></script>

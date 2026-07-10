@@ -171,7 +171,7 @@ describe("guarded sandbox mode (default)", () => {
 });
 
 describe("effective sandbox status", () => {
-  it("reports an explicitly selected host as unconfined and blocks unattended bash by default", () => {
+  it("reports context-specific shell policy for an unacknowledged host", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "lax-sandbox-status-"));
     const prevMode = process.env.LAX_SANDBOX;
     const prevDataDir = process.env.LAX_DATA_DIR;
@@ -184,14 +184,18 @@ describe("effective sandbox status", () => {
         effectiveMode: "host",
         confined: false,
         unconfinedHostAcknowledged: false,
-        unattendedBashAllowed: false,
+        cronShellAllowed: false,
+        delegatedShellAllowed: false,
+        apiShellAllowed: false,
       });
 
       setUnconfinedHostAcknowledgement(true);
       expect(getSandboxStatus()).toMatchObject({
         effectiveMode: "host",
         unconfinedHostAcknowledged: true,
-        unattendedBashAllowed: true,
+        cronShellAllowed: false,
+        delegatedShellAllowed: true,
+        apiShellAllowed: true,
       });
     } finally {
       if (prevMode === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prevMode;
@@ -202,15 +206,23 @@ describe("effective sandbox status", () => {
 
   it("surfaces guarded fallback instead of presenting the selected mode as effective", () => {
     const prev = process.env.LAX_SANDBOX;
+    const prevDataDir = process.env.LAX_DATA_DIR;
+    const dataDir = mkdtempSync(join(tmpdir(), "lax-sandbox-status-"));
     process.env.LAX_SANDBOX = "guarded";
+    process.env.LAX_DATA_DIR = dataDir;
     try {
       const status = getSandboxStatus();
       expect(status.selectedMode).toBe("guarded");
       expect(status.effectiveMode).toBe(isGuardedUsable() ? "guarded" : "host");
       expect(status.confined).toBe(isGuardedUsable());
+      expect(status.cronShellAllowed).toBe(false);
+      expect(status.delegatedShellAllowed).toBe(isGuardedUsable());
+      expect(status.apiShellAllowed).toBe(isGuardedUsable());
       if (!isGuardedUsable()) expect(status.fallbackReason).toMatch(/unconfined/i);
     } finally {
       if (prev === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prev;
+      if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDataDir;
+      rmSync(dataDir, { recursive: true, force: true });
     }
   });
 
@@ -225,6 +237,28 @@ describe("effective sandbox status", () => {
       expect(getSandboxStatus().unconfinedHostAcknowledged).toBe(true);
       process.env.LAX_SANDBOX = "guarded";
       expect(getSandboxStatus().unconfinedHostAcknowledged).toBe(false);
+    } finally {
+      if (prevMode === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prevMode;
+      if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDataDir;
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("persists and revokes the host acknowledgement", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "lax-sandbox-status-"));
+    const prevMode = process.env.LAX_SANDBOX;
+    const prevDataDir = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = dataDir;
+    process.env.LAX_SANDBOX = "host";
+    try {
+      setUnconfinedHostAcknowledgement(true);
+      expect(getSandboxStatus().unconfinedHostAcknowledged).toBe(true);
+      setUnconfinedHostAcknowledgement(false);
+      expect(getSandboxStatus()).toMatchObject({
+        unconfinedHostAcknowledged: false,
+        delegatedShellAllowed: false,
+        apiShellAllowed: false,
+      });
     } finally {
       if (prevMode === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prevMode;
       if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDataDir;

@@ -25,7 +25,9 @@ function ensureGuardedOption(sel) {
 function renderSandboxStatus(d) {
   const badge = document.getElementById('sandbox-effective-status');
   const detail = document.getElementById('sandbox-effective-detail');
+  const actions = document.getElementById('sandbox-host-ack-actions');
   const ack = document.getElementById('sandbox-ack-btn');
+  const revoke = document.getElementById('sandbox-revoke-btn');
   const effective = d.effectiveMode || d.mode || 'host';
   const confined = d.confined === true;
   if (badge) {
@@ -33,11 +35,13 @@ function renderSandboxStatus(d) {
     badge.innerHTML = '<span class="status-dot"></span> Effective: ' + (confined ? effective + ' confined' : 'HOST UNCONFINED');
   }
   if (detail) {
-    if (confined) detail.textContent = 'Selected and effective mode: ' + effective + '. Unattended bash is allowed.';
-    else if (d.unconfinedHostAcknowledged) detail.textContent = (d.fallbackReason || 'Bash runs directly on the host.') + ' Unattended host shell has been acknowledged.';
-    else detail.textContent = (d.fallbackReason || 'Bash runs directly on the host.') + ' Unattended bash is blocked until you acknowledge this state.';
+    if (confined) detail.textContent = 'Cron shell is blocked. Delegated and API shell are allowed because the effective mode is confined.';
+    else if (d.unconfinedHostAcknowledged) detail.textContent = (d.fallbackReason || 'Shell commands run directly on the host.') + ' Cron shell is blocked; delegated and API host shell are acknowledged.';
+    else detail.textContent = (d.fallbackReason || 'Shell commands run directly on the host.') + ' Cron shell is blocked; delegated and API shell are blocked until acknowledgement.';
   }
+  if (actions) actions.style.display = confined ? 'none' : '';
   if (ack) ack.style.display = !confined && !d.unconfinedHostAcknowledged ? '' : 'none';
+  if (revoke) revoke.style.display = !confined && d.unconfinedHostAcknowledged ? '' : 'none';
 }
 
 async function loadSandboxMode() {
@@ -104,6 +108,22 @@ async function acknowledgeUnconfinedHost() {
     console.warn('[sandbox] acknowledgement failed', d);
     const detail = document.getElementById('sandbox-effective-detail');
     if (detail) detail.textContent = d.error || 'Failed to save acknowledgement.';
+    return;
+  }
+  renderSandboxStatus(d);
+}
+
+async function revokeUnconfinedHostAcknowledgement() {
+  const r = await apiFetch('/api/sandbox', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ revokeUnconfinedHostAcknowledgement: true })
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    console.warn('[sandbox] acknowledgement revoke failed', d);
+    const detail = document.getElementById('sandbox-effective-detail');
+    if (detail) detail.textContent = d.error || 'Failed to revoke acknowledgement.';
     return;
   }
   renderSandboxStatus(d);

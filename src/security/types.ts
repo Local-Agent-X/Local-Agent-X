@@ -1,5 +1,7 @@
 // ── Tool call context ──
 
+import { CAPABILITY_CLASS_MEMBERS } from "../tool-registry.js";
+
 export type CallContext = "local" | "api" | "delegated" | "cron";
 
 export type FileAccessMode = "workspace" | "common" | "unrestricted";
@@ -25,7 +27,7 @@ export interface ToolCallContext {
 
 // Tools blocked in non-local contexts (API calls, delegated agents, cron jobs)
 export const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
-  bash: ["cron"],                         // Shell blocked in cron (no worktree isolation)
+  ...Object.fromEntries(CAPABILITY_CLASS_MEMBERS.shell.map((name) => [name, ["cron"] as CallContext[]])),
   browser: ["cron"],                      // No browser in automated jobs
   generate_image: ["cron"],               // Resource-intensive, block in cron
   edit_image: ["cron"],                    // Resource-intensive off-box edit, block in cron
@@ -40,7 +42,7 @@ export const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
 // worktree isolation identically to their canonical equivalents (write/edit/bash).
 // Canonical {write, edit, bash} are preserved; the synonyms are newly added.
 export const WORKTREE_REQUIRED_TOOLS = new Set([
-  "write", "edit", "bash",
-  "ari_file", "ari_shell", "process_start",
+  "write", "edit", "ari_file",
+  ...CAPABILITY_CLASS_MEMBERS.shell,
   "edit_lines", "multi_edit", "bulk_replace", "delete_file", // registered edit/delete synonyms — same blast radius as write/edit
 ]);

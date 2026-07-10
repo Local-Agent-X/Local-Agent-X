@@ -213,7 +213,7 @@ function fakeBash(content: string, isError: boolean): ToolDefinition {
   } as unknown as ToolDefinition;
 }
 
-describe("unattended bash effective-sandbox gate", () => {
+describe("unattended shell effective-sandbox gate", () => {
   async function withUnconfinedHost(runTest: (dataDir: string) => Promise<void>): Promise<void> {
     const dataDir = mkdtempSync(join(tmpdir(), "lax-unattended-bash-"));
     dirs.add(dataDir);
@@ -229,7 +229,7 @@ describe("unattended bash effective-sandbox gate", () => {
     }
   }
 
-  it("fails closed without invoking bash in an unattended run", async () => {
+  it("categorically blocks cron shell without invoking it", async () => {
     await withUnconfinedHost(async () => {
       const execute = vi.fn(async () => ({ content: "ran" }));
       const tool = { ...fakeBash("ran", false), execute };
@@ -238,7 +238,7 @@ describe("unattended bash effective-sandbox gate", () => {
 
       expect(execute).not.toHaveBeenCalled();
       expect(ctx.result).toMatchObject({ status: "blocked", isError: true });
-      expect(ctx.result?.content).toMatch(/effectively running on the unconfined host/i);
+      expect(ctx.result?.content).toMatch(/categorically disabled for cron/i);
     });
   });
 

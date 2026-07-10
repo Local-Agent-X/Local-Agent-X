@@ -30,7 +30,21 @@ export async function autoExtractAndSave(
   userMessage: string,
   assistantResponse: string,
   sessionId?: string,
+  hasExternalTaint?: boolean,
 ): Promise<void> {
+  // Session-level external-content gate (D6). The content-based pre-flight
+  // below can't catch taint an LLM paraphrase erased — when the SESSION
+  // ingested external content (web/http/browser/MCP; see
+  // data-lineage-external.ts), no fact from this turn may auto-promote to
+  // durable memory, regardless of how clean the text now looks. Explicit
+  // remember/memory_save tool calls stay allowed (gated + provenance-marked).
+  if (hasExternalTaint) {
+    logger.warn(
+      `[memory] Auto-extract skipped: session ingested external content this run — ` +
+      `durable auto-promotion blocked (session-taint gate D6)${sessionId ? ` sess=${sessionId}` : ""}`,
+    );
+    return;
+  }
   // Strip harness scaffolding (system-reminder blocks, anti-loop / self-check
   // nudges) BEFORE the taint check and classifier — it's injected by the
   // harness, not user-authored, and must never become a durable fact.

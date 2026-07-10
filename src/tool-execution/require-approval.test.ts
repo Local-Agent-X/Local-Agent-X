@@ -27,6 +27,7 @@ function makeCtx(opts: {
   args?: Record<string, unknown>;
   onEvent?: (e: ServerEvent) => void;
   policyApprovalReason?: string;
+  priorMessages?: Array<{ role: string; content: string }>;
 }): ToolCallContext {
   return {
     tc: { id: `tc-${opts.name}`, name: opts.name, arguments: "{}" },
@@ -34,6 +35,7 @@ function makeCtx(opts: {
     callContext: opts.callContext,
     args: opts.args ?? {},
     onEvent: opts.onEvent,
+    priorMessages: opts.priorMessages,
     approvalContext: "",
     policyApprovalReason: opts.policyApprovalReason,
     riskLevel: "low",
@@ -462,5 +464,73 @@ describe("requireApprovalPhase — destructive reclassification", () => {
     const outcome = await requireApprovalPhase(ctx);
     expect(outcome.kind).toBe("halt");
     expect(ctx.result?.status).toBe("blocked");
+  });
+});
+
+describe("requireApprovalPhase — external-ingestion taint downgrades trusted user evidence", () => {
+  // A memory promotion backed by an exact current-turn user span normally
+  // stamps a user-evidence capability and continues silently. Once the
+  // session has ingested off-box content (data-lineage-external.ts), that
+  // span may itself be laundered injection — the silent path must close and
+  // the promotion must go through interactive approval (blocked unattended).
+  const USER_TURN = "remember I prefer tabs over spaces";
+  const CONTENT = "User prefers tabs over spaces";
+
+  afterEach(async () => {
+    const { clearExternalIngestion } = await import("../data-lineage-external.js");
+    for (const s of sessions) clearExternalIngestion(s);
+  });
+
+  function promotionCtx(sessionId: string, callContext: CallContext, onEvent?: (e: ServerEvent) => void): ToolCallContext {
+    return makeCtx({
+      name: "remember",
+      sessionId,
+      callContext,
+      args: { content: CONTENT },
+      priorMessages: [{ role: "user", content: USER_TURN }],
+      onEvent,
+    });
+  }
+
+  it("clean session + user-evidence span → stamps and continues with NO prompt (baseline stays)", async () => {
+    const s = pinned("Power");
+    const events: ServerEvent[] = [];
+    const ctx = promotionCtx(s, "local", (e) => events.push(e));
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
+    expect(events.some((e) => e.type === "approval_requested")).toBe(false);
+  });
+
+  it("tainted session + same user-evidence span → interactive approval is REQUIRED", async () => {
+    const { recordExternalIngestion } = await import("../data-lineage-external.js");
+    const s = pinned("Power");
+    recordExternalIngestion(s);
+    const events: ServerEvent[] = [];
+    const ctx = promotionCtx(s, "local", (e) => {
+      events.push(e);
+      if (e.type === "approval_requested") {
+        getApprovalManager().resolveApproval(e.approvalId, true);
+      }
+    });
+    const outcome = await requireApprovalPhase(ctx);
+
+    // The silent stamp path is closed: the promotion only proceeds because a
+    // human approved it (grant-stamped), not via trusted user evidence.
+    expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
+    expect(outcome.kind).toBe("continue");
+  });
+
+  it("tainted session + user-evidence span in an UNATTENDED run → hard-blocked", async () => {
+    const { recordExternalIngestion } = await import("../data-lineage-external.js");
+    const s = pinned("Power");
+    recordExternalIngestion(s);
+    const ctx = promotionCtx(s, "cron");
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.allowed).toBe(false);
+    expect(ctx.result?.status).toBe("blocked");
+    expect(String(ctx.result?.content)).toContain("risky content cannot become durable memory");
   });
 });

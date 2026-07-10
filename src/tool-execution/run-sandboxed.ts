@@ -9,6 +9,7 @@ import { circuitArgsSig, recordCircuitFailure, recordCircuitSuccess } from "../c
 import { recordToolCall as recordToolStat } from "../tool-tracker.js";
 import { recordToolCall as recordRateLimit } from "./rate-limiter.js";
 import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput, redactSecretSpans } from "../data-lineage.js";
+import { recordExternalIngestion, isExternalIngestingTool } from "../data-lineage-external.js";
 import { hasCapability } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
@@ -306,6 +307,21 @@ export const runSandboxedPhase: Phase = async (ctx) => {
           );
         }
       }
+    }
+
+    // External-content ingestion mark (memory-promotion gate, NOT egress
+    // taint). TOOL-CLASS keyed (D8): a successful result from an off-box-
+    // ingesting tool (web_fetch/http_request/browser/search/mcp_*) means the
+    // model is about to SEE external content this turn — mark the session so
+    // the memory auto-promotion paths (auto-extract pre-flight, approval-phase
+    // trusted-evidence downgrade) refuse durable writes: an LLM paraphrase of
+    // injected material erases the content markers checkMemoryTaint keys on
+    // (D6). Deliberately NOT content-sniffing the wrapExternalContent boundary
+    // — that missed unwrapped browser reads (observe/evaluate/post-action
+    // snapshots) and self-tainted any session that merely read a source file
+    // containing the boundary literal.
+    if (ctx.result && !ctx.result.isError && isExternalIngestingTool(tc.name)) {
+      recordExternalIngestion(sessionId || "default");
     }
 
     if (redactReason && ctx.result && !ctx.result.isError) {

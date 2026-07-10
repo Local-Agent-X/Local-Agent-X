@@ -1,4 +1,5 @@
 import { propagateTaint } from "../data-lineage.js";
+import { propagateExternalIngestion } from "../data-lineage-external.js";
 import { createLogger } from "../logger.js";
 import type { FieldAgent } from "./handler-types.js";
 
@@ -31,6 +32,13 @@ export function pushCompletionToParent(
     const moved = propagateTaint(childSession, parent);
     if (moved > 0) {
       logger.info(`[handler] propagated ${moved} taint label(s) from sub-agent ${agent.id} → parent session ${parent}`);
+    }
+    // Same seam, other trust axis: if the child ingested off-box content
+    // (web/browser/MCP), its result carries that content into the parent's
+    // context — the parent's memory auto-promotion gate must see the mark too
+    // (data-lineage-external.ts, D6).
+    if (propagateExternalIngestion(childSession, parent)) {
+      logger.info(`[handler] propagated external-ingestion mark from sub-agent ${agent.id} → parent session ${parent}`);
     }
   } catch (e) {
     logger.error(`[handler] taint propagation failed for sub-agent ${agent.id} → parent ${parent}: ${(e as Error).message}`);

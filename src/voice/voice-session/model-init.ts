@@ -22,7 +22,7 @@ import {
   ensureWhisperModelDownloaded,
   getWhisperModelPaths,
 } from "../whisper-model-fetch.js";
-import { createTier4, tier4VariantFromEnv } from "../tier4/index.js";
+import { createTier4, tier4ModelDownloaded, tier4VariantFromEnv } from "../tier4/index.js";
 import { createSttProvider, resolveSttProviderName } from "../stt-providers/index.js";
 import type { Tier4StreamingTTS } from "../tier4/types.js";
 import type { ResolvedVoiceSettings } from "./settings.js";
@@ -106,19 +106,22 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
     //    a real server-side variant and would crash createTier4)
     // Otherwise we go through the normal Tier4/CPU-fallback init.
     let tts: StreamingTTS | null = null;
-    const clientHandlesTts = voiceSettings.tier4Provider === "browser";
+    const clientHandlesTts = !isLocalOnlyMode() && voiceSettings.tier4Provider === "browser";
     if (ctx.mode !== "dictate" && !clientHandlesTts) {
       if (TIER4_MODE) {
         // Provider selection. settings.voiceTier4Provider beats env
         // (LAX_VOICE_TIER4_PROVIDER), env beats the kokoro/chatterbox-clone
         // auto-pick. Set to "edge-tts" to route through the edge-tts
         // adapter (no API key, requires `npm i msedge-tts mpg123-decoder`).
-        const providerOverride = voiceSettings.tier4Provider
+        const providerOverride = isLocalOnlyMode() ? "kokoro" : voiceSettings.tier4Provider
           || process.env.LAX_VOICE_TIER4_PROVIDER?.trim();
         const variant = providerOverride && providerOverride.length > 0
           ? providerOverride
           : tier4VariantFromEnv();
         logger.info(`[voice-session] ${ctx.sessionId}: TIER4 mode → variant=${variant}`);
+        if (isLocalOnlyMode() && !(await tier4ModelDownloaded()).cached) {
+          throw new Error("Strict local-only mode requires the local voice model to be downloaded before activation.");
+        }
         // Only spread defined fields — the kokoro-engine merge below treats
         // explicit `undefined` as a real override and would clobber env vars.
         const t4 = await createTier4(

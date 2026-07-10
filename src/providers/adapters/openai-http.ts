@@ -9,7 +9,7 @@
  * fallback for local providers.
  */
 
-import OpenAI from "openai";
+import OpenAI, { type ClientOptions } from "openai";
 import { BaseAdapter } from "../adapter/base-adapter.js";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import { toOpenAITools } from "../shared/tool-shape.js";
@@ -17,6 +17,7 @@ import { hasNoToolSupport, markNoToolSupport, hasParamUnsupported, markParamUnsu
 import { createLogger } from "../../logger.js";
 import { PROVIDERS, isHttpProvider } from "../registry.js";
 import { PROVIDER_IDS, type ProviderId } from "../provider-ids.js";
+import { isLocalOnlyMode, isLoopbackUrl } from "../../local-only-policy.js";
 
 const logger = createLogger("providers.adapters.openai-http");
 
@@ -82,7 +83,10 @@ export class OpenAIHttpAdapter extends BaseAdapter {
   readonly name: string = "openai-http";
 
   async *stream(req: ProviderRequest): AsyncIterable<StreamChunk> {
-    const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL });
+    const strictFetch: ClientOptions["fetch"] = isLocalOnlyMode() && req.baseURL && isLoopbackUrl(req.baseURL)
+      ? (((input: unknown, init?: unknown) => fetch(input as Parameters<typeof fetch>[0], { ...(init as RequestInit), redirect: "manual" })) as unknown as NonNullable<ClientOptions["fetch"]>)
+      : undefined;
+    const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL, ...(strictFetch ? { fetch: strictFetch } : {}) });
     const useTools = !hasNoToolSupport(req.baseURL, req.model);
     const reasoningCapable =
       isReasoningCapable(req.baseURL, req.model) &&

@@ -79,6 +79,11 @@ let sessionFactory: VoiceSessionFactory = (ctx) => ({
   onMicFrame(frame) { ctx.sendAudio(frame); },
   close() {},
 });
+const activeVoiceTeardowns = new Set<() => void>();
+
+export function closeAllVoiceSessions(): void {
+  for (const teardown of [...activeVoiceTeardowns]) teardown();
+}
 
 /** Register the real voice-session factory. Called from server.ts once the
  *  voice orchestrator is initialized (Phase 3). */
@@ -217,6 +222,7 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
     const teardown = (): void => {
       if (closed) return;
       closed = true;
+      activeVoiceTeardowns.delete(teardown);
       try { session?.close(); } catch (e) {
         logger.warn(`[voice-ws] session close threw: ${(e as Error).message}`);
       }
@@ -227,6 +233,7 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
       peer = null;
       logger.info(`[voice-ws] session closed: ${sessionId || "(no-hello)"}`);
     };
+    activeVoiceTeardowns.add(teardown);
 
     ws.on("message", async (data: RawData, isBinary: boolean) => {
       if (closed) return;

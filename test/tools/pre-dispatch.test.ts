@@ -171,4 +171,34 @@ describe("protected security settings gate", () => {
       ),
     ).resolves.toBeUndefined();
   });
+
+  it("always prompts before disabling strict local-only mode, even after a remembered grant", async () => {
+    const events: Array<{ type: string; approvalId?: string }> = [];
+    const run = (id: string) => assertToolCallAllowed(
+      { id, name: "setting", args: { field: "localOnlyMode", value: false } },
+      {
+        sessionId: "strict-disable",
+        callContext: "local",
+        approval: {
+          onEvent: (event) => {
+            events.push(event as { type: string; approvalId?: string });
+            if (event.type === "approval_requested") {
+              approvalModule.getApprovalManager().resolveApproval(event.approvalId, true, true);
+            }
+          },
+        },
+      },
+    );
+    await expect(run("strict-off-1")).resolves.toBeUndefined();
+    await expect(run("strict-off-2")).resolves.toBeUndefined();
+    expect(events.filter((event) => event.type === "approval_requested")).toHaveLength(2);
+    approvalModule.getApprovalManager().clearSession("strict-disable");
+  });
+
+  it("cannot disable strict local-only mode without an interactive approval channel", async () => {
+    await expect(assertToolCallAllowed(
+      { id: "strict-off-no-ui", name: "setting", args: { field: "localOnlyMode", value: false } },
+      { sessionId: "strict-disable-no-ui", callContext: "local" },
+    )).rejects.toThrow(/requires explicit user approval/);
+  });
 });

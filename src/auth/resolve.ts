@@ -5,6 +5,7 @@ import type {
   CredentialResolution,
   ResolveCredentialOpts,
 } from "./auth-provider.js";
+import { isLocalOnlyMode } from "../local-only-policy.js";
 
 export type { CredentialResolution } from "./auth-provider.js";
 
@@ -17,6 +18,7 @@ export async function resolveCredential(
   provider: ProviderId,
   opts?: ResolveCredentialOpts,
 ): Promise<CredentialResolution | null> {
+  if (isLocalOnlyMode() && provider !== "local" && provider !== "custom") return null;
   const store = getSecretsStoreSingleton();
   return PROVIDERS[provider].auth.resolve(opts ?? {}, store);
 }

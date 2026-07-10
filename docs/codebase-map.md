@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1191 non-test source files · 1 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1192 non-test source files · 1 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -38,9 +38,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/app-runtime/` | 14 | 12 | L |  |
 | `src/browser/` | 14 | 28 | XL | 1 |
 | `src/chat-ws/` | 14 | 9 | L |  |
+| `src/voice/` | 13 | 65 | XL |  |
 | `src/anthropic-client/` | 12 | 18 | L |  |
 | `src/context-manager/` | 12 | 10 | M |  |
-| `src/voice/` | 12 | 65 | XL |  |
 | `src/autonomy/` | 11 | 4 | M |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
@@ -67,7 +67,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/tool-policy/` | 4 | 19 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/context/` | 3 | 2 | M |  |
-| `src/embedding-providers/` | 3 | 9 | M |  |
+| `src/embedding-providers/` | 3 | 10 | M |  |
 | `src/language-intel/` | 3 | 4 | M |  |
 | `src/tool-execution/` | 3 | 25 | XL |  |
 | `src/conversation/` | 2 | 3 | M |  |

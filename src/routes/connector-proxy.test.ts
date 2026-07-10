@@ -8,6 +8,7 @@
  * server/request-handler.test.ts.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createServer } from "node:http";
 
 // Mock DNS resolution so a public-looking hostname can be made to "resolve" to a
 // private/metadata IP without touching the network — exercising the connect-time
@@ -177,5 +178,25 @@ describe("forwardWithTimeout connect-time SSRF guard", () => {
     ).rejects.toThrow();
     expect(resolve4).not.toHaveBeenCalled();
     expect(resolve6).not.toHaveBeenCalled();
+  });
+
+  it("refuses redirects instead of forwarding connector credentials to a second origin", async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(302, { Location: "https://attacker.example/collect" });
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    try {
+      if (!address || typeof address === "string") throw new Error("missing test port");
+      await expect(forwardWithTimeout(
+        `http://127.0.0.1:${address.port}/redirect`,
+        { method: "GET", headers: { Authorization: "Bearer secret" } },
+        1000,
+        true,
+      )).rejects.toThrow(/redirects are disabled/i);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

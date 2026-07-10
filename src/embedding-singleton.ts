@@ -10,6 +10,7 @@
  * Mirrors the setRuntimeConfig/getRuntimeConfig pattern.
  */
 import type { ExtendedEmbeddingProvider } from "./embedding-providers/types.js";
+import { isLocalOnlyMode } from "./local-only-policy.js";
 
 let _provider: ExtendedEmbeddingProvider | null = null;
 
@@ -21,5 +22,6 @@ export function setEmbeddingProviderSingleton(provider: ExtendedEmbeddingProvide
  *  run yet / it's degraded. Callers MUST handle null (it's a soft dependency:
  *  protocol dedup degrades to "no dedup" without throwing). */
 export function getEmbeddingProviderSingleton(): ExtendedEmbeddingProvider | null {
+  if (isLocalOnlyMode() && _provider?.name !== "local" && _provider?.name !== "ollama") return null;
   return _provider;
 }

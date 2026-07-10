@@ -4,6 +4,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { readProviderCredentials, writeProviderCredentials } from "./storage.js";
 
 import { createLogger } from "../logger.js";
+import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 const logger = createLogger("auth-xai");
 
 /**
@@ -117,6 +118,7 @@ export function deleteXaiTokens(): void {
 let inflightRefresh: Promise<XaiTokens> | null = null;
 
 export async function refreshXaiTokens(tokens: XaiTokens): Promise<XaiTokens> {
+  if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
   if (!tokens.refreshToken) throw new Error("xAI refresh token missing — re-login required");
   if (inflightRefresh) return inflightRefresh;
   inflightRefresh = (async () => {

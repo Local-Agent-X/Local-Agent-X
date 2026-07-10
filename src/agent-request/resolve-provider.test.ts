@@ -18,6 +18,7 @@ import type { SecretsStore } from "../secrets.js";
 const credsPresent = new Set<string>();
 // Mutable saved-settings map returned by loadSettings().
 let savedSettings: Record<string, unknown> = {};
+let localModels: Array<{ name: string }> = [];
 
 vi.mock("../settings.js", () => ({
   loadSettings: () => savedSettings,
@@ -29,6 +30,10 @@ vi.mock("../auth/resolve.js", () => ({
     credential: `key-${provider}`,
     source: "secrets-store" as const,
   }),
+}));
+
+vi.mock("../ollama-cloud.js", () => ({
+  fetchLocalOllamaTags: async () => ({ reachable: true, models: localModels }),
 }));
 
 vi.mock("../providers/registry.js", () => {
@@ -72,6 +77,7 @@ describe("resolveProvider — provider-switch surfacing (PR-12)", () => {
   beforeEach(() => {
     credsPresent.clear();
     savedSettings = {};
+    localModels = [];
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -127,6 +133,27 @@ describe("resolveProvider — provider-switch surfacing (PR-12)", () => {
     expect(res.provider).toBe("anthropic");
     expect(res.providerSwitch).toBeUndefined();
     expect(res.model).toBe("claude-sonnet-4-6");
+  });
+});
+
+describe("resolveProvider — strict local model validation", () => {
+  const strictConfig = { ...CONFIG, localOnlyMode: true, ollamaUrl: "http://127.0.0.1:11434" };
+
+  beforeEach(() => {
+    savedSettings = { provider: "local", model: "qwen2:7b" };
+    localModels = [{ name: "qwen2:7b" }];
+  });
+
+  it("runs only a model present on the actual loopback Ollama endpoint", async () => {
+    await expect(resolveProvider(strictConfig, SECRETS, "/tmp")).resolves.toMatchObject({
+      provider: "local",
+      model: "qwen2:7b",
+    });
+  });
+
+  it("rejects a stale cloud-only model name instead of substituting it locally", async () => {
+    savedSettings.model = "cloud-only:70b";
+    await expect(resolveProvider(strictConfig, SECRETS, "/tmp")).rejects.toThrow(/requires model .* to exist/i);
   });
 });
 

@@ -3,6 +3,7 @@ import { createLogger } from "../logger.js";
 import { fetchLocalOllamaTags } from "../ollama-cloud.js";
 import { emptyVector } from "./helpers.js";
 import type { ExtendedEmbeddingProvider } from "./types.js";
+import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
 
 const logger = createLogger("embedding-providers");
 
@@ -34,6 +35,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
+    if (isLocalOnlyMode() && !isLoopbackUrl(this.baseUrl)) return emptyVector(this.dimensions);
     if (!(await this.ensureHealthy())) return emptyVector(this.dimensions);
     if (!text || !text.trim()) return emptyVector(this.dimensions);
     // Truncate to ~512 tokens (~2000 chars) for models with smaller context windows
@@ -47,6 +49,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     try {
       const res = await fetch(`${this.baseUrl}/api/embed`, {
         method: "POST",
+        redirect: "manual",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: this.model, input: truncated }),
         signal: ac.signal,
@@ -76,6 +79,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
+    if (isLocalOnlyMode() && !isLoopbackUrl(this.baseUrl)) return texts.map(() => emptyVector(this.dimensions));
     if (!(await this.ensureHealthy())) {
       return texts.map(() => emptyVector(this.dimensions));
     }
@@ -90,6 +94,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     try {
       const res = await fetch(`${this.baseUrl}/api/embed`, {
         method: "POST",
+        redirect: "manual",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: this.model, input: validTexts }),
         signal: ac.signal,
@@ -122,9 +127,14 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   private async ensureHealthy(): Promise<boolean> {
     if (this.healthy !== null) return this.healthy;
     try {
-      const { reachable } = await fetchLocalOllamaTags(this.baseUrl);
+      if (isLocalOnlyMode() && !isLoopbackUrl(this.baseUrl)) return false;
+      const { reachable, models } = await fetchLocalOllamaTags(this.baseUrl);
       if (!reachable) {
         logger.warn(`[ollama-embed] Server at ${this.baseUrl} not reachable`);
+        this.healthy = false;
+        return false;
+      }
+      if (isLocalOnlyMode() && !models.some((entry) => entry.name.replace(/:latest$/, "") === this.model)) {
         this.healthy = false;
         return false;
       }
@@ -133,18 +143,20 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
       try {
         const testRes = await fetch(`${this.baseUrl}/api/embed`, {
           method: "POST",
+          redirect: "manual",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: this.model, input: ["test"] }),
           signal: AbortSignal.timeout(60000), // 60s for first model load
         });
         if (!testRes.ok) {
           // Model not available — try fallback to nomic-embed-text
-          if (this.model !== "nomic-embed-text") {
+          if (!isLocalOnlyMode() && this.model !== "nomic-embed-text") {
             logger.warn(`[ollama-embed] Model "${this.model}" not available (HTTP ${testRes.status}) — falling back to nomic-embed-text`);
             this.model = "nomic-embed-text";
             this.dimensions = 768;
             const fallbackRes = await fetch(`${this.baseUrl}/api/embed`, {
               method: "POST",
+              redirect: "manual",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ model: this.model, input: ["test"] }),
               signal: AbortSignal.timeout(30000),

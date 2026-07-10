@@ -220,11 +220,17 @@ export async function forwardWithTimeout(
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
+    let response: Response | UndiciResponse;
     if (isLocalUpstream) {
-      return await fetch(u, { ...init, signal: ctrl.signal });
+      response = await fetch(u, { ...init, redirect: "manual", signal: ctrl.signal });
+    } else {
+      await assertLiteralIpEgressAllowed(u);
+      response = await undiciFetch(u, { ...init, redirect: "manual", signal: ctrl.signal, dispatcher: pinnedDispatcher() });
     }
-    await assertLiteralIpEgressAllowed(u);
-    return await undiciFetch(u, { ...init, signal: ctrl.signal, dispatcher: pinnedDispatcher() });
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error("Connector upstream redirects are disabled; configure the manifest with the final origin.");
+    }
+    return response;
   } finally {
     clearTimeout(timer);
   }

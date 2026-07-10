@@ -9,6 +9,7 @@ import { DEFAULT_CONFIG, type SyncConfig } from "./constants.js";
 import { resolveConflicts } from "./conflict-resolver.js";
 import { copyFromSync } from "./pull-files.js";
 import { copyToSync } from "./push-files.js";
+import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 export type { SyncConfig } from "./constants.js";
 
@@ -132,6 +133,7 @@ export class AgentSync {
   }
 
   async push(): Promise<{ success: boolean; message: string }> {
+    if (isLocalOnlyMode()) return { success: false, message: LOCAL_ONLY_BLOCK_MESSAGE };
     if (!this.config.enabled || this.isSyncing) return { success: false, message: "Sync disabled or already running" };
     this.isSyncing = true;
     try {
@@ -241,6 +243,7 @@ export class AgentSync {
   }
 
   async pull(): Promise<{ success: boolean; message: string }> {
+    if (isLocalOnlyMode()) return { success: false, message: LOCAL_ONLY_BLOCK_MESSAGE };
     if (!this.config.enabled || this.isSyncing) return { success: false, message: "Sync disabled or already running" };
     this.isSyncing = true;
     try {
@@ -262,6 +265,7 @@ export class AgentSync {
   }
 
   startHeartbeat(): void {
+    if (isLocalOnlyMode()) return;
     if (!this.config.enabled || this.config.interval === "manual") return;
     const ms = { after_chat: 0, "2min": 120_000, "5min": 300_000, "15min": 900_000, manual: 0 }[this.config.interval];
     if (ms > 0) {
@@ -274,7 +278,7 @@ export class AgentSync {
   }
 
   async onChatEnd(): Promise<void> {
-    if (this.config.enabled && this.config.interval === "after_chat") this.push().catch(() => {});
+    if (!isLocalOnlyMode() && this.config.enabled && this.config.interval === "after_chat") this.push().catch(() => {});
   }
 
   private pushDebounceTimer: ReturnType<typeof setTimeout> | null = null;

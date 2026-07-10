@@ -18,6 +18,7 @@ import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync, rmSync,
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { getLaxDir } from "../lax-data-dir.js";
+import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("voice.tts-model-fetch");
@@ -96,6 +97,7 @@ async function doDownload(
   signal?: AbortSignal,
 ): Promise<TTSModelPaths> {
   if (ttsModelExists()) return getTTSModelPaths();
+  if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
 
   const paths = getTTSModelPaths();
   mkdirSync(MODEL_DIR, { recursive: true });

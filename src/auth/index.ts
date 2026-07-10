@@ -4,6 +4,7 @@ import { getAuthPath } from "../config.js";
 import type { OAuthTokens } from "../types.js";
 import { isCodexEagerMirrorEnabled, mirrorImpl } from "./codex-mirror.js";
 import { readProviderCredentials, writeProviderCredentials } from "./storage.js";
+import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("auth");
@@ -79,6 +80,7 @@ export function saveTokens(tokens: OAuthTokens): void {
 let inflightRefresh: Promise<OAuthTokens> | null = null;
 
 export async function refreshTokens(tokens: OAuthTokens): Promise<OAuthTokens> {
+  if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
   if (inflightRefresh) return inflightRefresh;
   inflightRefresh = (async () => {
     const res = await fetch(TOKEN_URL, {

@@ -23,6 +23,7 @@ import { initializeVoiceStack } from "./model-init.js";
 import { createVoiceTurnMachine, SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./turn-runner.js";
 import { registerVoiceSpeaker, unregisterVoiceSpeaker } from "../proactive-registry.js";
 import type { VoiceTurnRunner, SecretLookup } from "./types.js";
+import { isLocalOnlyMode } from "../../local-only-policy.js";
 
 const logger = createLogger("voice.voice-session");
 
@@ -41,7 +42,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
     // before the picker change must NOT silently route main-agent voice to the
     // cloud, so we deliberately ignore voiceSettings.mode here. Settings still
     // supply the voice/model overrides below when env opts in.
-    const realtimeWanted = process.env.LAX_VOICE_MODE === "realtime";
+    const realtimeWanted = !isLocalOnlyMode() && process.env.LAX_VOICE_MODE === "realtime";
     if (realtimeWanted) {
       const ready = realtimeReadiness();
       if (ready.ready) {

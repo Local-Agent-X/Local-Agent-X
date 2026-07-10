@@ -19,6 +19,7 @@
 
 import { recordNoTools, hasNoTools } from "./model-capabilities-store.js";
 import { createLogger } from "../logger.js";
+import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
 
 const logger = createLogger("providers.ollama-probe");
 
@@ -47,6 +48,7 @@ export async function probeOllamaCapabilities(
   model: string,
   apiKey?: string,
 ): Promise<void> {
+  if (isLocalOnlyMode() && !isLoopbackUrl(compatBaseURL)) return;
   const key = probeKey(compatBaseURL, model);
   if (probed.has(key)) return;
   probed.add(key);
@@ -57,6 +59,7 @@ export async function probeOllamaCapabilities(
   try {
     const r = await fetch(`${ollamaRoot(compatBaseURL)}/api/show`, {
       method: "POST",
+      redirect: "manual",
       headers: {
         "content-type": "application/json",
         // Local Ollama uses the literal "ollama" placeholder key (no auth);

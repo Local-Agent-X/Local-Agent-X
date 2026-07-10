@@ -11,6 +11,7 @@
 
 import { loadTokens, refreshTokens } from "./index.js";
 import { loadAnthropicTokens, refreshAnthropicTokens } from "./anthropic.js";
+import { isLocalOnlyMode, registerLocalOnlyTeardown } from "../local-only-policy.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("auth-refresh");
@@ -43,6 +44,7 @@ const abandonedRefreshTokens = new Set<string>();
 export function _resetAbandonedRefreshTokens(): void { abandonedRefreshTokens.clear(); }
 
 export async function tickCodex(): Promise<void> {
+  if (isLocalOnlyMode()) return;
   const tokens = loadTokens();
   if (!tokens) return;
   if (Date.now() < tokens.expiresAt - REFRESH_WINDOW_MS) return;
@@ -62,6 +64,7 @@ export async function tickCodex(): Promise<void> {
 }
 
 export async function tickAnthropic(): Promise<void> {
+  if (isLocalOnlyMode()) return;
   const tokens = loadAnthropicTokens();
   if (!tokens) return;
   // Subscription tokens (method: "token") don't expire
@@ -84,6 +87,7 @@ export async function tickAnthropic(): Promise<void> {
 }
 
 export function startAuthRefreshTimer(): void {
+  if (isLocalOnlyMode()) return;
   if (timer) return;
   // Run immediately on startup so we don't wait 2 minutes for the first check
   tickCodex();
@@ -102,3 +106,5 @@ export function stopAuthRefreshTimer(): void {
   clearInterval(timer);
   timer = null;
 }
+
+registerLocalOnlyTeardown("oauth-refresh", stopAuthRefreshTimer);

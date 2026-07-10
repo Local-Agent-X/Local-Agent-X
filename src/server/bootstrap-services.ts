@@ -136,7 +136,14 @@ export async function initOrRefreshEmbeddingProvider(deps: {
     // dedup, future similar) — single warm-up cost, single source of truth on
     // the user's configured choice.
     const { setEmbeddingProviderSingleton } = await import("../embedding-singleton.js");
+    const { registerLocalOnlyTeardown } = await import("../local-only-policy.js");
     setEmbeddingProviderSingleton(provider);
+    registerLocalOnlyTeardown("embeddings", async () => {
+      const { LocalEmbeddings } = await import("../embedding-providers/index.js");
+      const local = new LocalEmbeddings();
+      memoryIndex.setEmbeddingProvider(local);
+      setEmbeddingProviderSingleton(local);
+    });
     logger.info(`[memory] Embedding provider: ${provider.name}/${provider.model} (${provider.dimensions}d)${degraded ? " [degraded]" : ""}`);
 
     if (provider.name !== "local") {

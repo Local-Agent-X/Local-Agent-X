@@ -17,6 +17,7 @@ import { WebSocket } from "ws";
 
 import {
   setupVoiceWebSocket,
+  closeAllVoiceSessions,
   setVoiceSessionFactory,
   setVoicePeerFactory,
 } from "./audio-ws.js";
@@ -129,6 +130,17 @@ async function waitForPeer(timeoutMs = 2000): Promise<FakePeer> {
 }
 
 describe("/ws/voice webrtc transport", () => {
+  it("strict-mode transition teardown closes an already-active voice session", async () => {
+    const ws = await connect();
+    const ready = nextEvent(ws, "ready");
+    ws.send(JSON.stringify({ type: "hello", sessionId: "strict-live" }));
+    await ready;
+    expect(lastSession?.closed).toBe(false);
+    closeAllVoiceSessions();
+    expect(lastSession?.closed).toBe(true);
+    ws.close();
+  });
+
   it("hello{transport:webrtc} → creates a peer and sends rtc_offer with the fake SDP", async () => {
     const ws = await connect();
     const offerP = nextEvent(ws, "rtc_offer");

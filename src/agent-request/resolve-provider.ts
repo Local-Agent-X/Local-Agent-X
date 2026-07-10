@@ -165,6 +165,16 @@ export async function resolveProvider(
     || meta.defaultModel
     || config.model;
 
+  if (isLocalOnlyMode(config) && provider === "local") {
+    const { fetchLocalOllamaTags } = await import("../ollama-cloud.js");
+    const local = await fetchLocalOllamaTags(config.ollamaUrl);
+    const normalize = (name: string) => name.replace(/:latest$/, "");
+    if (!local.reachable) throw new Error("Strict local-only mode could not reach the configured loopback Ollama endpoint.");
+    if (!local.models.some((entry) => normalize(entry.name) === normalize(model))) {
+      throw new Error(`Strict local-only mode requires model "${model}" to exist on the configured loopback Ollama endpoint.`);
+    }
+  }
+
   const temperature = typeof saved.temperature === "number" ? saved.temperature : config.temperature;
   // settings.json is read schema-less, so legacy saved caps (old UI default 25)
   // land here raw — clamp to the floor. config.maxIterations is already clamped

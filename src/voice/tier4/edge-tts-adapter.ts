@@ -29,6 +29,7 @@ import type {
 } from "./types.js";
 import { TIER4_SAMPLE_RATE } from "./types.js";
 import { EDGE_DEFAULT_VOICE } from "./edge-voices.js";
+import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
 const logger = createLogger("voice.tier4.edge-tts");
 
@@ -81,6 +82,7 @@ export async function createEdgeTtsProvider(
   config: Tier4Config,
   cb: Tier4Callbacks,
 ): Promise<Tier4StreamingTTS> {
+  if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
   // msedge-tts only accepts the short-name format (e.g. "en-US-AriaNeural")
   // and infers the locale via /\w{2}-\w{2}/ on the voice string. If a caller
   // hands us a long-name browser voice ("Microsoft Zira - English (United
@@ -217,7 +219,7 @@ export async function createEdgeTtsProvider(
 
   const adapter: Tier4StreamingTTS = {
     speak(text: string) {
-      if (state.closed) return;
+      if (state.closed || isLocalOnlyMode()) { adapter.close(); return; }
       const t = text.trim();
       if (!t) return;
       state.queue.push(t);

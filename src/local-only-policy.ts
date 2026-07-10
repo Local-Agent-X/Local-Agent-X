@@ -40,6 +40,7 @@ export function localProviderDecision(
 const REMOTE_ONLY_TOOLS = new Set([
   "bash", "shell", "ari_shell", "process_start", "process_restart",
   "app_serve_backend", "app_serve_frontend",
+  "build_app",
   "web_search", "image_search", "extract_site_assets", "youtube_analyze",
   "generate_image", "edit_image", "generate_video", "email_send",
   "telegram_send", "whatsapp_send", "send_image", "send_video",
@@ -52,6 +53,7 @@ export function localOnlyToolDecision(
   config: Pick<LAXConfig, "localOnlyMode"> = getRuntimeConfig(),
 ): LocalOnlyDecision {
   if (!isLocalOnlyMode(config)) return { allowed: true };
+  if (name.startsWith("email_")) return { allowed: false, reason: LOCAL_ONLY_BLOCK_MESSAGE };
   if (name.startsWith("mcp_")) return { allowed: false, reason: LOCAL_ONLY_BLOCK_MESSAGE };
   if (REMOTE_ONLY_TOOLS.has(name)) return { allowed: false, reason: LOCAL_ONLY_BLOCK_MESSAGE };
   if (name === "http_request" || name === "web_fetch" || name === "ari_http") {
@@ -96,13 +98,15 @@ export function registerLocalOnlyTeardown(name: string, teardown: Teardown): () 
 
 export async function activateLocalOnlyMode(): Promise<void> {
   await Promise.allSettled([...remoteTeardowns.values()].map((teardown) => teardown()));
-  const [{ closeAllBrowsers }, { closeBrowserEgressProxy }, { MCPManager }, account] = await Promise.all([
+  const [{ closeAllBrowsers }, { closeBrowserEgressProxy }, { closeAllVoiceSessions }, { MCPManager }, account] = await Promise.all([
     import("./browser/index.js"),
     import("./browser/egress-proxy.js"),
+    import("./voice/audio-ws.js"),
     import("./mcp-client/index.js"),
     import("./broker-transport/account/runtime.js"),
   ]);
   account.stopBrokerPresence();
+  closeAllVoiceSessions();
   MCPManager.getInstance().suspendForLocalOnly();
   await Promise.allSettled([closeAllBrowsers(), closeBrowserEgressProxy()]);
 }

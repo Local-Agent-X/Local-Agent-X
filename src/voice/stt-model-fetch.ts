@@ -13,6 +13,7 @@
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 const MODEL_DIR = join(getLaxDir(), "models", "stt");
 
@@ -93,6 +94,7 @@ export async function ensureModelDownloaded(
   signal?: AbortSignal,
 ): Promise<ModelPaths> {
   if (modelExists()) return getModelPaths();
+  if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
 
   const paths = getModelPaths();
   mkdirSync(paths.modelDir, { recursive: true });

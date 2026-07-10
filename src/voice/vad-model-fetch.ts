@@ -8,6 +8,7 @@
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 const MODEL_DIR = join(getLaxDir(), "models", "vad");
 const MODEL_NAME = "silero_vad.onnx";
@@ -45,6 +46,7 @@ export async function ensureVadModelDownloaded(
   signal?: AbortSignal,
 ): Promise<VadModelPaths> {
   if (vadModelExists()) return getVadModelPaths();
+  if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
 
   const paths = getVadModelPaths();
   mkdirSync(paths.modelDir, { recursive: true });

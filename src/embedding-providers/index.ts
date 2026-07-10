@@ -25,6 +25,8 @@ import type {
 } from "./types.js";
 import { VoyageEmbeddings } from "./voyage.js";
 import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
+import { LocalOnlyEmbeddingGuard } from "./local-only-guard.js";
+import { getRuntimeConfig } from "../config.js";
 
 const logger = createLogger("embedding-providers");
 
@@ -57,7 +59,8 @@ export function createEmbeddingProvider(config: EmbeddingProviderConfig = {}): E
   const requested = config.provider ?? "local";
 
   if (isLocalOnlyMode()) {
-    if (requested === "ollama" && (!config.baseUrl || isLoopbackUrl(config.baseUrl))) {
+    const ollamaBaseUrl = config.baseUrl || getRuntimeConfig().ollamaUrl;
+    if (requested === "ollama" && isLoopbackUrl(ollamaBaseUrl)) {
       return new OllamaEmbeddings({ model: config.model, baseUrl: config.baseUrl });
     }
     return new LocalEmbeddings();
@@ -69,19 +72,21 @@ export function createEmbeddingProvider(config: EmbeddingProviderConfig = {}): E
     return new LocalEmbeddings();
   }
 
+  let provider: ExtendedEmbeddingProvider;
   switch (requested) {
     case "openai":
-      return new OpenAIEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl });
+      provider = new OpenAIEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl }); break;
     case "gemini":
-      return new GeminiEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl });
+      provider = new GeminiEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl }); break;
     case "voyage":
-      return new VoyageEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl });
+      provider = new VoyageEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl }); break;
     case "mistral":
-      return new MistralEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl });
+      provider = new MistralEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl }); break;
     case "ollama":
       return new OllamaEmbeddings({ model: config.model, baseUrl: config.baseUrl });
     case "local":
     default:
       return new LocalEmbeddings();
   }
+  return new LocalOnlyEmbeddingGuard(provider);
 }

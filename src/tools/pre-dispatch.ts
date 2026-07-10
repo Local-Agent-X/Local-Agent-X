@@ -294,6 +294,40 @@ export async function assertToolCallAllowed(
     });
   }
 
+  // Lowering the strict local-only boundary is never delegated to the active
+  // autonomy profile. Even an "allow" profile or remembered setting grant
+  // must produce a fresh, explicit user confirmation every time.
+  if (
+    call.name === "setting" &&
+    String((call.args as { field?: unknown }).field ?? "") === "localOnlyMode" &&
+    (call.args as { value?: unknown }).value === false
+  ) {
+    if (ctx.callContext !== "local" || !ctx.approval) {
+      throw new ToolBlocked({
+        stage: "approval",
+        reason: "Disabling strict local-only mode requires explicit user approval in an interactive session.",
+        userHint: USER_HINTS.policy,
+      });
+    }
+    const approved = await getApprovalManager().requestApproval({
+      toolName: call.name,
+      toolCallId: call.id,
+      sessionId: ctx.sessionId,
+      context: "Disable strict local-only mode and restore remote network access?",
+      args: call.args,
+      alwaysAsk: true,
+      emit: ctx.approval.onEvent,
+    });
+    if (!approved) {
+      throw new ToolBlocked({
+        stage: "approval",
+        reason: "The user did not approve disabling strict local-only mode.",
+        userHint: USER_HINTS.policy,
+      });
+    }
+    return;
+  }
+
   // Per-user gate (not a rule pack — interactive consent driven by the
   // active autonomy profile). The four-valued Decision branches into:
   // run silently, prompt the user, or block outright.

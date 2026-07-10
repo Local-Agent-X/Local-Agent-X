@@ -7,6 +7,7 @@ import { writeSecretFileAtomic } from "./secret-file.js";
 import { readProviderCredentials, writeProviderCredentials } from "./storage.js";
 
 import { createLogger } from "../logger.js";
+import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 const logger = createLogger("auth-anthropic");
 
 /**
@@ -81,6 +82,7 @@ function saveAnthropicTokens(tokens: AnthropicTokens): void {
 
 export async function refreshAnthropicTokens(tokens: AnthropicTokens): Promise<AnthropicTokens> {
   if (tokens.method === "token") return tokens;
+  if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

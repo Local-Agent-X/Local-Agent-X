@@ -22,6 +22,7 @@
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 export type WhisperVariant = "tiny.en" | "base.en" | "small.en";
 
@@ -127,6 +128,7 @@ export async function ensureWhisperModelDownloaded(
 ): Promise<WhisperModelPaths> {
   const variant = resolveWhisperVariant(opts);
   if (whisperModelExists({ variant })) return getWhisperModelPaths({ variant });
+  if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
 
   const paths = getWhisperModelPaths({ variant });
   const files = modelFilesFor(variant);

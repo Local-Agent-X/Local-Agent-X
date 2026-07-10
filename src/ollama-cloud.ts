@@ -25,6 +25,7 @@
 import type { SecretsStore } from "./secrets.js";
 import { isEmbeddingModel } from "./canonical-loop/model-capabilities.js";
 import { createLogger } from "./logger.js";
+import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "./local-only-policy.js";
 
 const logger = createLogger("ollama-cloud");
 
@@ -61,6 +62,10 @@ export async function refreshCloudOllama(
   secretsStore: SecretsStore,
   cloudUrl: string,
 ): Promise<{ models: string[]; reachable: boolean; error?: string }> {
+  if (isLocalOnlyMode()) {
+    cached = null;
+    return { models: [], reachable: false, error: LOCAL_ONLY_BLOCK_MESSAGE };
+  }
   const apiKey = readApiKey(secretsStore);
   if (!apiKey) {
     cached = null;
@@ -75,6 +80,7 @@ export async function refreshCloudOllama(
   try {
     const r = await fetch(`${base}/api/tags`, {
       headers: { Authorization: `Bearer ${apiKey}` },
+      redirect: "manual",
       signal: AbortSignal.timeout(5000),
     });
     if (!r.ok) {
@@ -104,6 +110,7 @@ export async function refreshCloudOllama(
  *  fresh enough — chat dispatch hot path, where we don't want to make
  *  an HTTP round-trip per turn. */
 export function getCachedCloudOllama(): CloudState | null {
+  if (isLocalOnlyMode()) { cached = null; return null; }
   if (!cached) return null;
   if (Date.now() - cached.refreshedAt > REFRESH_TTL_MS) {
     // Stale — caller should refresh. Return null so dispatch falls back
@@ -119,6 +126,7 @@ export function getCachedCloudOllama(): CloudState | null {
  *  whatever is cached so /api/providers never blocks on a network call —
  *  a background refresh keeps it current. */
 export function getCachedCloudModels(): string[] {
+  if (isLocalOnlyMode()) return [];
   return cached ? [...cached.modelNames] : [];
 }
 
@@ -152,9 +160,10 @@ let cachedLocal: LocalState | null = null;
 export async function fetchLocalOllamaTags(
   ollamaUrl: string,
 ): Promise<{ reachable: boolean; models: OllamaTag[] }> {
+  if (isLocalOnlyMode() && !isLoopbackUrl(ollamaUrl)) return { reachable: false, models: [] };
   const base = ollamaUrl.replace(/\/+$/, "");
   try {
-    const r = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3000) });
+    const r = await fetch(`${base}/api/tags`, { redirect: "manual", signal: AbortSignal.timeout(3000) });
     if (!r.ok) return { reachable: false, models: [] };
     const data = (await r.json()) as { models?: OllamaTag[] };
     const models = (data.models || []).filter(m => typeof m?.name === "string" && m.name.length > 0);
@@ -187,14 +196,14 @@ export function getCachedLocalOllama(): LocalState | null {
 /** True when the given model name is currently registered as a cloud
  *  model. Cheap lookup — used by chat-runner per turn. */
 export function isCloudModel(modelName: string): boolean {
-  return cached !== null && cached.modelNames.has(modelName);
+  return !isLocalOnlyMode() && cached !== null && cached.modelNames.has(modelName);
 }
 
 /** Cloud baseURL + apiKey for the OpenAI-compat HTTP adapter, or null
  *  if cloud isn't configured / cached. The adapter expects the OpenAI-
  *  compat path; cloud Ollama serves it at `<base>/v1`, same as local. */
 export function getCloudOllamaCallTarget(): { baseURL: string; apiKey: string } | null {
-  if (!cached) return null;
+  if (isLocalOnlyMode() || !cached) return null;
   return { baseURL: `${cached.baseURL}/v1`, apiKey: cached.apiKey };
 }
 

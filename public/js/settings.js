@@ -229,12 +229,9 @@ async function checkSettingsAuth() {
       if (loginBtn) loginBtn.disabled = false;
       if (discBtn) discBtn.style.display = 'none';
     }
-    // Codex CLI status — three states, not two. The CLI binary being
-    // present is separate from the CLI being signed in (~/.codex/auth.json).
-    // Previously we conflated them: green "installed" badge even when the
-    // CLI had no auth, so build_app would 401 in mysterious silence. The
-    // user called this "the UI lying" — fixed by surfacing the
-    // installed-but-not-signed-in state explicitly with a fix instruction.
+    // CLI installation and persistent CLI-native sign-in are separate from
+    // LAX OAuth. A build can use LAX OAuth through a temporary credential
+    // mirror even when the persistent CLI store is absent.
     if (cliEl) {
       if (!d.cliInstalled) {
         cliEl.className = 'status-badge err';
@@ -243,7 +240,7 @@ async function checkSettingsAuth() {
         if (cliLoginBtn) cliLoginBtn.style.display = 'none';
       } else if (d.cliAuthenticated === false) {
         cliEl.className = 'status-badge warn';
-        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed but not signed in — click "Sign in via Codex CLI" below, or reconnect OpenAI above (that signs the CLI in too).';
+        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed without a persistent CLI sign-in. Sign in below to create its CLI-native store; otherwise app builds may use a temporary plaintext mirror.';
         if (cliBtn) cliBtn.style.display = 'none';
         if (cliLoginBtn) cliLoginBtn.style.display = '';
       } else {
@@ -279,8 +276,8 @@ async function installCodexCli() {
 // flow in settings-anthropic.js. Spawns `codex login` server-side,
 // captures the OAuth URL, opens it in a new tab, then polls
 // /api/auth/status until `cliAuthenticated` flips true. Acts as the
-// fallback path; the primary "Sign in with OpenAI" button should
-// already bridge both stores so users don't typically need this.
+// persistent CLI-native path. LAX OAuth remains a separate encrypted store;
+// build_app can bridge it into a temporary CLI credential when needed.
 let _codexCliLoginPoll = null;
 async function doCodexCliLogin() {
   const btn = document.getElementById('btn-codex-cli-login');
@@ -373,4 +370,3 @@ if (document.getElementById('integrations-list')) {
 shouldShowOnboarding().then(show => {
   if (show) setTimeout(showOnboarding, 500);
 });
-

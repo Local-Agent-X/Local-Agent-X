@@ -304,11 +304,9 @@ export interface OAuthTokens {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
-  // Captured from the OAuth response when present. Used to mirror
-  // credentials into ~/.codex/auth.json so a single LAX sign-in
-  // covers the Codex CLI subprocess too (build_app, auto-build,
-  // etc.). Optional because pre-bridge installs don't have them on
-  // disk yet — the next token refresh repopulates.
+  // Captured from the OAuth response when present. Used for the optional
+  // persistent or just-in-time plaintext Codex CLI mirror. Optional because
+  // pre-bridge installs do not have it on disk; refresh repopulates it.
   idToken?: string;
   accountId?: string;
 }

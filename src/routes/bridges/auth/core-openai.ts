@@ -37,15 +37,9 @@ export const handleCoreAuthRoutes: RouteHandler = async (method, url, req, res, 
     const daysRemaining = expiresAt ? Math.max(0, Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000))) : null;
     let cliInstalled = false;
     try { _execSync("codex --version", { timeout: 5000, stdio: "pipe", env: npmAugmentedEnv() }); cliInstalled = true; } catch {}
-    // Codex CLI auth is SEPARATE from LAX's ~/.lax/auth.json. The CLI has
-    // its own credential store at ~/.codex/auth.json — written only by
-    // `codex login`, NOT by LAX's "Sign in with OpenAI" button. We were
-    // reporting cliInstalled and the UI rendered a green "ready" badge,
-    // but the CLI subprocess would 401 on every build_app call because
-    // ~/.codex/auth.json didn't exist. The user calls this "the UI lying"
-    // and they're right. Separate the two concepts in the response so
-    // the badge can show "installed but not signed in" as a distinct
-    // state with an actionable fix-button.
+    // Persistent CLI-native auth is separate from LAX's encrypted OAuth
+    // envelope. This status reports only whether ~/.codex/auth.json exists;
+    // build_app may create a temporary mirror later for one subprocess run.
     let cliAuthenticated = false;
     if (cliInstalled) {
       try {
@@ -76,13 +70,10 @@ export const handleCoreAuthRoutes: RouteHandler = async (method, url, req, res, 
     } catch (e) { json(500, { error: `Install failed: ${safeErrorMessage(e)}` }); }
     return true;
   }
-  // Mirror of /api/auth/anthropic/cli-login for the Codex CLI. The Codex
-  // CLI has its own credential store at ~/.codex/auth.json — written
-  // only when the user runs `codex login`, NOT by LAX's "Sign in with
-  // OpenAI" button (that's a separate OAuth flow that writes
-  // ~/.lax/auth.json). User caught the UI lying about CLI readiness
-  // (7900fc4); this route lets the Settings panel actually trigger the
-  // CLI login without making the user open Terminal.
+  // Persistent CLI-native login writes ~/.codex/auth.json. This is separate
+  // from the encrypted LAX OAuth envelope and from build_app's temporary
+  // just-in-time mirror. The Settings panel triggers the CLI login without
+  // requiring the user to open Terminal.
   if (method === "POST" && url.pathname === "/api/auth/openai/cli-login") {
     try {
       const { spawn } = await import("node:child_process");

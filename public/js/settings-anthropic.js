@@ -28,7 +28,7 @@ async function checkAnthropicAuth() {
       el.className = 'status-badge ok';
       const label =
         d.method === 'token' ? 'Connected — Setup-token (routes through CLI subprocess)' :
-        usingCliSession ? 'Connected — Claude CLI login (auto-detected from ~/.claude/.credentials.json)' :
+        usingCliSession ? 'Connected — Claude CLI-native login (store is not encrypted by LAX)' :
         'Connected — Stale direct OAuth tokens (third-party use blocked by Anthropic TOS — disconnect and use CLI login)';
       el.innerHTML = '<span class="status-dot"></span> ' + label;
       // CLI-login button: when CLI session is the active auth, mark "Already Connected".
@@ -279,4 +279,3 @@ async function checkVoiceCaps() {
     if (tts) { tts.className = 'status-badge ok'; tts.innerHTML = `<span class="status-dot"></span> ${voice.startsWith('clone:') ? 'XTTS (cloned)' : 'Kokoro'} (${esc(voice)})`; }
   } catch {}
 }
-

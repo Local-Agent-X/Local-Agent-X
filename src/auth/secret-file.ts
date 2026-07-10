@@ -1,8 +1,8 @@
 /**
  * Atomic, symlink-safe write for on-disk secrets (OAuth token stores).
  *
- * The four auth writers (LAX auth.json, the Codex mirror, anthropic-auth.json
- * + the Claude CLI credential file, xai-auth.json) each hand-rolled the same
+ * The provider and CLI auth writers (LAX envelopes plus Codex/Claude CLI
+ * files) previously hand-rolled the same
  * `writeFileSync(`${path}.tmp`, …, {mode:0o600})` + `renameSync` dance. `mode`
  * only applies when open() *creates* the inode — so a pre-planted
  * `auth.json.tmp` symlink redirects the write to wherever the attacker points,

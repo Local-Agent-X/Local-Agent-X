@@ -17,8 +17,9 @@ profile, or auto-injecting cross-session memory.
 - Strict local-only: only loopback network access and local models; cloud
   providers, OAuth, brokers, connectors, remote MCP, and internet browser/tool
   egress are blocked.
-- Degraded credential storage: disabled by default and available only after an
-  explicit warning and acknowledgement.
+- Degraded credential storage: disabled by default. The storage API has an
+  explicit warning-producing option, but no shipped route, setting, or
+  environment variable enables it; production provider-auth writes fail closed.
 
 ## Invariants
 
@@ -40,7 +41,7 @@ profile, or auto-injecting cross-session memory.
 | B4 | 8 | Browser-mode API and UI | pending | B1 |
 | B5 | 13 | Concurrent two-identity browser isolation test | pending | B1, B4 |
 | A1 | 2, 3 | Versioned encrypted provider credential envelope, fail-closed writes | refutation | baseline |
-| A2 | 15 | Provider migration and privacy documentation | pending | A1 |
+| A2 | 15 | Provider migration and privacy documentation | green | A1 |
 | S1 | 4 | Effective sandbox status and unattended-host acknowledgement gate | refutation | baseline |
 | R1 | 6 | Tool idempotency classes and retry policy | pending | baseline |
 | R2 | 14 | Crash/restart side-effect non-duplication tests | pending | R1 |
@@ -80,6 +81,9 @@ profile, or auto-injecting cross-session memory.
 
 - W1: release and rolling Windows workflows require signing credentials,
   validate the exact signer and timestamp, and cannot publish unsigned output.
+- A2: provider-auth documentation and Settings copy now distinguish LAX-owned
+  encrypted envelopes from external CLI-native stores, including migration,
+  fail-closed recovery, keychain boundaries, and the unreachable degraded mode.
 
 ### Parked for user or external authority
 

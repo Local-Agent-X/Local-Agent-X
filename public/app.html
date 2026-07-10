@@ -303,13 +303,13 @@
             <button id="btn-xai-disconnect" class="action-btn danger" onclick="doXaiDisconnect()" style="display:none">Disconnect</button>
             <button class="action-btn" onclick="window.open('https://grok.com/?_s=usage','_blank')" title="Open SuperGrok subscription usage">View Usage ↗</button>
           </div>
-          <div class="field-hint" style="margin-top:8px">Opens accounts.x.ai in your browser. Tokens land in <code>~/.lax/xai-auth.json</code> and refresh automatically.</div>
+          <div class="field-hint" style="margin-top:8px">Opens accounts.x.ai in your browser. LAX stores the OAuth tokens as an encrypted envelope at <code>~/.lax/xai-auth.json</code> and refreshes them automatically.</div>
           <div id="xai-cli-status" class="status-badge warn" style="margin-top:10px"><span class="status-dot"></span> Checking Grok Build CLI...</div>
           <div class="btn-row" style="margin-top:8px">
             <button id="btn-install-grok-cli" class="action-btn" onclick="installGrokCli()" style="display:none">Install Grok Build CLI</button>
             <button id="btn-grok-cli-login" class="action-btn" onclick="doGrokCliLogin()">Sign in via Grok Build CLI</button>
           </div>
-          <div class="field-hint" style="margin-top:6px">The Grok Build CLI (<code>grok</code>) lets <code>self_edit</code> do code surgery on your SuperGrok / X Premium+ subscription — a separate sign-in from the OAuth above. Signs in the CLI's own store at <code>~/.grok/auth.json</code>.</div>
+          <div class="field-hint" style="margin-top:6px">The Grok Build CLI (<code>grok</code>) lets <code>self_edit</code> do code surgery on your SuperGrok / X Premium+ subscription. This separate sign-in uses the CLI-native store at <code>~/.grok/auth.json</code>, which LAX does not encrypt.</div>
           <div id="xai-open-fallback" style="display:none;margin-top:8px;font-size:.85rem"></div>
           <details style="margin-top:10px;font-size:.85rem">
             <summary style="cursor:pointer;color:var(--muted)">Browser couldn't reach the app? Paste the code from xAI</summary>
@@ -322,7 +322,7 @@
         </div>
         <div class="section-card">
           <div class="section-title">OpenAI Authentication</div>
-          <div class="section-desc">Connect to OpenAI via OAuth to use GPT/Codex models.</div>
+          <div class="section-desc">Connect to OpenAI via OAuth to use GPT/Codex models. LAX stores this sign-in as an encrypted envelope at <code>~/.lax/auth.json</code>.</div>
           <div id="auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div id="codex-cli-status" class="status-badge warn" style="margin-top:6px"><span class="status-dot"></span> Checking Codex CLI...</div>
           <div class="btn-row" style="margin-top:10px">
@@ -332,7 +332,7 @@
             <button id="btn-codex-cli-login" class="action-btn" onclick="doCodexCliLogin()" style="display:none">Sign in via Codex CLI</button>
             <button class="action-btn" onclick="window.open('https://chatgpt.com/codex/settings/usage','_blank')" title="Open ChatGPT/Codex usage dashboard">View Usage ↗</button>
           </div>
-          <div class="field-hint" style="margin-top:8px">The Codex CLI enables reliable app building via subprocess — avoids the ChatGPT subscription endpoint's output truncation on large file writes.</div>
+          <div class="field-hint" style="margin-top:8px">The Codex CLI enables reliable app building via subprocess. A separate <code>codex login</code> uses the CLI-native <code>~/.codex/auth.json</code>, which LAX does not encrypt. Without that login, app builds may create a temporary plaintext CLI mirror from your encrypted LAX sign-in and remove it afterward.</div>
         </div>
         <div class="section-card">
           <div class="section-title">Anthropic Authentication</div>
@@ -354,7 +354,7 @@
                 <button class="action-btn" onclick="window.open('https://claude.ai/settings/usage','_blank')" title="Open Claude.ai usage dashboard">View Usage ↗</button>
               </div>
               <div id="claude-cli-update-status" class="field-hint" style="margin-top:6px;display:none"></div>
-              <div id="anthropic-cli-login-status" class="field-hint" style="margin-top:8px">Click to sign in. A browser tab opens to approve; you paste the code it shows back here — no terminal needed.</div>
+              <div id="anthropic-cli-login-status" class="field-hint" style="margin-top:8px">Click to sign in. A browser tab opens to approve; you paste the code it shows back here. This writes the CLI-native <code>~/.claude/.credentials.json</code>, which LAX does not encrypt.</div>
             </div>
             <div class="field" style="margin-top:14px">
               <label class="field-label">Option 2 — Setup-token</label>
@@ -362,7 +362,7 @@
                 <input class="field-input" id="anthropic-setup-token" type="password" placeholder="Paste token from claude setup-token" autocomplete="off" style="flex:1"/>
                 <button id="btn-anthropic-save-token" class="action-btn primary" onclick="saveAnthropicSetupToken()">Save Token</button>
               </div>
-              <div class="field-hint">Run <code>claude setup-token</code> in terminal, paste here. Stored encrypted; routes through CLI subprocess.</div>
+              <div class="field-hint">Run <code>claude setup-token</code> in terminal and paste it here. LAX stores it as an encrypted envelope at <code>~/.lax/anthropic-auth.json</code>; requests route through the CLI subprocess.</div>
             </div>
             <div class="field" style="margin-top:14px">
               <div class="btn-row">

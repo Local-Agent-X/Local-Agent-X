@@ -55,7 +55,7 @@ async function checkXaiAuth() {
         if (cliLoginBtn) { cliLoginBtn.disabled = false; cliLoginBtn.textContent = 'Sign in via Grok Build CLI'; }
       } else {
         cliEl.className = 'status-badge ok';
-        cliEl.innerHTML = '<span class="status-dot"></span> Grok Build CLI signed in (~/.grok/auth.json)';
+        cliEl.innerHTML = '<span class="status-dot"></span> Grok Build CLI signed in (CLI-native store; not encrypted by LAX)';
         if (cliInstallBtn) cliInstallBtn.style.display = 'none';
         if (cliLoginBtn) { cliLoginBtn.disabled = true; cliLoginBtn.textContent = '✓ Signed in'; }
       }
@@ -207,7 +207,7 @@ async function doXaiExchangeCode() {
 }
 
 async function doXaiDisconnect() {
-  if (!confirm('Disconnect xAI OAuth? Removes saved tokens from ~/.lax/xai-auth.json. Any saved XAI_API_KEY stays in place.')) return;
+  if (!confirm('Disconnect xAI OAuth? Removes the encrypted LAX credential envelope at ~/.lax/xai-auth.json. Any saved XAI_API_KEY stays in place.')) return;
   try { await apiFetch('/api/auth/xai/logout', { method: 'POST' }); } catch {}
   checkXaiAuth();
 }

@@ -1,6 +1,6 @@
 # Local Agent X
 
-A self-hosted personal agent platform. It runs on your machine — your files, your keys, and your conversations stay local, stored encrypted at rest, and the server binds to `127.0.0.1` only. The one thing that leaves your machine is what you'd expect: the prompts, and any files/context you attach, go to whichever LLM provider you pick for a turn (Anthropic, OpenAI, Codex CLI, xAI Grok, Google Gemini, Cerebras) — or to nothing off-box at all if you run a local Ollama model. Multi-provider means you're not locked into one vendor's pricing or availability.
+A self-hosted personal agent platform. It runs on your machine, and the server binds to `127.0.0.1` only. LAX-owned provider credentials and secrets are encrypted at rest; chat sessions, memory, uploads, and audit logs remain local but are not all encrypted by LAX, so use full-disk encryption for that boundary. Prompts and any files/context you attach go to whichever LLM provider you pick for a turn (Anthropic, OpenAI, Codex CLI, xAI Grok, Google Gemini, Cerebras), or to nothing off-box if you run a local Ollama model. Multi-provider means you're not locked into one vendor's pricing or availability.
 
 The shell tools run on the **host** by default (the tool-policy default-deny and the ARI security kernel still gate every call); enable an OS sandbox — `LAX_SANDBOX=seatbelt`/`bwrap`/`docker` — for kernel-enforced isolation. See [docs/ari-kernel.md](docs/ari-kernel.md) for what the kernel does (and its red-team results), and [SECURITY.md](SECURITY.md) for the full deployment checklist and threat model.
 
@@ -56,11 +56,14 @@ Each script is a thin wrapper that bootstraps Node + Ollama (if missing) and the
 1. Run `install.command` (double-click in Finder) — wait for "Install complete."
 2. Open **Launchpad**, click **Local Agent X**. (First launch only: right-click → **Open** → **Open** to clear macOS Gatekeeper, since the build isn't code-signed.)
 3. Sign in a provider. Open **Settings → Model Provider**:
-   - **Anthropic** — paste a `claude setup-token` from the Claude CLI (the Anthropic auth on Max plans routes through the CLI subprocess; see [AGENTS.md](AGENTS.md)).
-   - **OpenAI / Codex / Cerebras / Ollama** — paste an API key or point at a local endpoint.
+   - **Anthropic** — sign in through the Claude CLI flow or paste a `claude setup-token`.
+   - **OpenAI or xAI** — use the built-in OAuth flow, or save an API key in the encrypted secrets vault.
+   - **Other cloud providers** — save an API key in the encrypted secrets vault. **Ollama** needs no cloud credential.
 4. Talk to the agent. The chat box is the main entry point; voice and scheduled missions live under their own panels on the sidebar. See [docs/agent-capabilities.md](docs/agent-capabilities.md) for the things you can ask it to do (e.g. "change the app to dark mode", "build me a todo app", "dream now").
 
 Embedding defaults are seeded into `~/.lax/settings.json` on first install (Ollama + `mxbai-embed-large`). Provider and chat model are not pre-seeded — you pick them on first run via Settings → Model Provider. Edit `~/.lax/settings.json` directly to change defaults, or change them from the UI.
+
+Provider OAuth/setup-token storage and CLI sign-ins have different encryption boundaries. See [docs/provider-auth.md](docs/provider-auth.md) before backing up, moving, or manually deleting credential files.
 
 ## Dev commands
 

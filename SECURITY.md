@@ -50,6 +50,7 @@ Local Agent X is a single-user personal agent designed for a local workstation. 
 - Memory: stored in `~/.lax/memory/` as Markdown (synced if Agent Sync enabled)
 - Uploads: stored in `~/.lax/uploads/` (can be cleaned manually)
 - Secrets: encrypted at rest in `~/.lax/secrets.enc` (AES-256-GCM)
+- LAX-owned OpenAI, Anthropic setup-token, and xAI OAuth credentials: AES-256-GCM envelopes in historically named `*.json` files; CLI-native credential stores are outside this guarantee. See [docs/provider-auth.md](docs/provider-auth.md).
 - No data is sent to external services except the configured LLM provider (e.g. Anthropic, OpenAI, xAI, Google Gemini, Cerebras, or a custom endpoint; local/Ollama models run on-device)
 - PI (Personal Information) in chat is not automatically redacted from storage — use high-security session mode for sensitive conversations
 

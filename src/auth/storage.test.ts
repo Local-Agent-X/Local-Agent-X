@@ -7,7 +7,7 @@
  * never touch the developer's real ~/.lax/auth.json. Same pattern as
  * auth-codex-mirror.test.ts.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,13 +17,30 @@ import {
   decryptAuthBlob,
   encryptWithKey,
   decryptWithKey,
+  encryptForSaveOrThrow,
   _resetMasterKeyCacheForTests,
+  _authStorageLogger,
   ENVELOPE_FORMAT,
 } from "./storage.js";
 import { saveTokens, loadTokens } from "./index.js";
 import type { OAuthTokens } from "../types.js";
 
-const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "HOME", "USERPROFILE"] as const;
+// Injectable keychain failure: when set, getOrCreateMasterKey throws with this
+// message — simulates a genuinely unavailable/corrupt key path, which the test
+// env's LAX_DISABLE_OS_KEYCHAIN file-fallback can never produce on its own.
+let mockKeychainFailure: string | null = null;
+vi.mock("../keychain.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../keychain.js")>();
+  return {
+    ...actual,
+    getOrCreateMasterKey: (dataDir: string) => {
+      if (mockKeychainFailure) throw new Error(mockKeychainFailure);
+      return actual.getOrCreateMasterKey(dataDir);
+    },
+  };
+});
+
+const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "LAX_ALLOW_PLAINTEXT_AUTH", "HOME", "USERPROFILE"] as const;
 
 function snapshotEnv(): Record<string, string | undefined> {
   const snap: Record<string, string | undefined> = {};
@@ -46,6 +63,8 @@ beforeEach(() => {
   envSnap = snapshotEnv();
   // Gate mirror off so tests don't try to install @openai/codex or write ~/.codex/.
   delete process.env.LAX_MIRROR_CODEX_AUTH;
+  delete process.env.LAX_ALLOW_PLAINTEXT_AUTH;
+  mockKeychainFailure = null;
   tempHome = mkdtempSync(join(tmpdir(), "lax-auth-storage-test-"));
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
@@ -274,5 +293,62 @@ describe("auth.ts integration: saveTokens / loadTokens round-trip", () => {
     const authPath = join(dataDir, "auth.json");
     writeFileSync(authPath, "not json at all", { mode: 0o600 });
     expect(loadTokens()).toBeNull();
+  });
+});
+
+describe("encryptForSaveOrThrow: no silent plaintext on encryption failure", () => {
+  function freshTokens(): OAuthTokens {
+    return {
+      accessToken: "access-secret-abc123",
+      refreshToken: "refresh-secret-xyz789",
+      expiresAt: Date.now() + 60_000,
+    };
+  }
+
+  it("throws with the keychain failure reason when encryption fails", () => {
+    mockKeychainFailure = "Cannot retrieve DPAPI-protected master key — simulated";
+    _resetMasterKeyCacheForTests();
+    expect(() => encryptForSaveOrThrow("{}", dataDir, join(dataDir, "auth.json")))
+      .toThrow(/token encryption failed.*simulated/);
+  });
+
+  it("saveTokens: encryption failure → throws and writes NO file", () => {
+    mockKeychainFailure = "keychain unavailable — simulated";
+    _resetMasterKeyCacheForTests();
+    const authPath = join(dataDir, "auth.json");
+    expect(() => saveTokens(freshTokens())).toThrow(/token encryption failed/);
+    expect(existsSync(authPath)).toBe(false);
+  });
+
+  it("saveTokens: encryption failure leaves an existing file unchanged", () => {
+    const authPath = join(dataDir, "auth.json");
+    saveTokens(freshTokens());
+    const before = readFileSync(authPath, "utf-8");
+
+    mockKeychainFailure = "keychain unavailable — simulated";
+    _resetMasterKeyCacheForTests();
+    const newer: OAuthTokens = { ...freshTokens(), accessToken: "newer-token" };
+    expect(() => saveTokens(newer)).toThrow(/token encryption failed/);
+    expect(readFileSync(authPath, "utf-8")).toBe(before);
+  });
+
+  it("LAX_ALLOW_PLAINTEXT_AUTH=1: writes plaintext in degraded mode and error-logs", () => {
+    mockKeychainFailure = "keychain unavailable — simulated";
+    _resetMasterKeyCacheForTests();
+    process.env.LAX_ALLOW_PLAINTEXT_AUTH = "1";
+    const errorSpy = vi.spyOn(_authStorageLogger, "error");
+    try {
+      const tokens = freshTokens();
+      saveTokens(tokens);
+      const authPath = join(dataDir, "auth.json");
+      const onDisk = readFileSync(authPath, "utf-8");
+      expect(onDisk).toContain("access-secret-abc123");
+      expect(onDisk).not.toContain(ENVELOPE_FORMAT);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("PLAINTEXT"));
+      // Plaintext passthrough still loads (legacy-format path).
+      expect(loadTokens()?.accessToken).toBe(tokens.accessToken);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

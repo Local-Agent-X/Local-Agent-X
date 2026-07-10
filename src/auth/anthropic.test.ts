@@ -8,14 +8,29 @@
  * Uses LAX_DATA_DIR to redirect the data dir to a mkdtempSync so the
  * developer's real ~/.lax/anthropic-auth.json is never touched.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadAnthropicTokens, saveAnthropicTokens, type AnthropicTokens } from "./anthropic.js";
 import { _resetMasterKeyCacheForTests, ENVELOPE_FORMAT } from "./storage.js";
 
-const ENV_KEYS = ["LAX_DATA_DIR", "LAX_DISABLE_OS_KEYCHAIN"] as const;
+// Injectable keychain failure: when set, getOrCreateMasterKey throws with this
+// message — simulates a genuinely unavailable/corrupt key path, which the test
+// env's LAX_DISABLE_OS_KEYCHAIN file-fallback can never produce on its own.
+let mockKeychainFailure: string | null = null;
+vi.mock("../keychain.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../keychain.js")>();
+  return {
+    ...actual,
+    getOrCreateMasterKey: (dataDir: string) => {
+      if (mockKeychainFailure) throw new Error(mockKeychainFailure);
+      return actual.getOrCreateMasterKey(dataDir);
+    },
+  };
+});
+
+const ENV_KEYS = ["LAX_DATA_DIR", "LAX_DISABLE_OS_KEYCHAIN", "LAX_ALLOW_PLAINTEXT_AUTH"] as const;
 
 let envSnap: Record<string, string | undefined>;
 let dataDir: string;
@@ -26,6 +41,8 @@ beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "lax-anthropic-auth-test-"));
   process.env.LAX_DATA_DIR = dataDir;
   process.env.LAX_DISABLE_OS_KEYCHAIN = "1";
+  delete process.env.LAX_ALLOW_PLAINTEXT_AUTH;
+  mockKeychainFailure = null;
   _resetMasterKeyCacheForTests();
 });
 
@@ -119,5 +136,32 @@ describe("anthropic token store encryption at rest", () => {
     writeFileSync(authPath, JSON.stringify(env), { mode: 0o600 });
 
     expect(loadAnthropicTokens()).toBeNull();
+  });
+});
+
+describe("anthropic token store: no silent plaintext on encryption failure", () => {
+  const tokens: AnthropicTokens = {
+    accessToken: "anthropic-secret-token-abc",
+    method: "token",
+    provider: "anthropic",
+  };
+
+  it("encryption failure → save throws and writes NO file", () => {
+    mockKeychainFailure = "keychain unavailable — simulated";
+    _resetMasterKeyCacheForTests();
+    const authPath = join(dataDir, "anthropic-auth.json");
+    expect(() => saveAnthropicTokens(tokens)).toThrow(/token encryption failed/);
+    expect(existsSync(authPath)).toBe(false);
+  });
+
+  it("LAX_ALLOW_PLAINTEXT_AUTH=1: writes plaintext in explicit degraded mode", () => {
+    mockKeychainFailure = "keychain unavailable — simulated";
+    _resetMasterKeyCacheForTests();
+    process.env.LAX_ALLOW_PLAINTEXT_AUTH = "1";
+    saveAnthropicTokens(tokens);
+    const onDisk = readFileSync(join(dataDir, "anthropic-auth.json"), "utf-8");
+    expect(onDisk).toContain("anthropic-secret-token-abc");
+    expect(onDisk).not.toContain(ENVELOPE_FORMAT);
+    expect(loadAnthropicTokens()?.accessToken).toBe(tokens.accessToken);
   });
 });

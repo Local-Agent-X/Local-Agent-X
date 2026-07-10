@@ -158,11 +158,30 @@ export function decryptAuthBlob(
   );
 }
 
-/** Surface the cached key for diagnostics. Exported for the unencrypted
- *  fallback path in saveTokens, so we can log which keychain provider
- *  was used. */
-export function getCachedKeyInfo(): { hasKey: boolean } {
-  return { hasKey: _cachedKey !== null };
+/**
+ * Encrypt-or-fail policy for every auth-token save path (auth.json,
+ * anthropic-auth.json, xai-auth.json). If encryption fails (keychain
+ * unavailable, corrupt key), the save must FAIL — the caller surfaces it
+ * as a failed login/refresh instead of silently writing live OAuth tokens
+ * in plaintext. Escape hatch: LAX_ALLOW_PLAINTEXT_AUTH=1 accepts
+ * plaintext-on-disk as an explicit degraded mode, logged as an error.
+ * The underlying keychain error text (refuse-rotate corrupt-key vs
+ * provider-unavailable, see keychain.ts) is preserved in the message.
+ */
+export function encryptForSaveOrThrow(plaintext: string, dataDir: string, filePath: string): string {
+  try {
+    return encryptAuthBlob(plaintext, dataDir);
+  } catch (e) {
+    const reason = (e as Error).message;
+    if (process.env.LAX_ALLOW_PLAINTEXT_AUTH === "1") {
+      logger.error(`[auth-storage] could not encrypt ${filePath}: ${reason}. LAX_ALLOW_PLAINTEXT_AUTH=1 — writing PLAINTEXT in degraded mode; tokens are NOT protected at rest.`);
+      return plaintext;
+    }
+    throw new Error(
+      `auth-storage: refusing to save ${filePath} — token encryption failed: ${reason}. ` +
+      `Fix the keychain, or set LAX_ALLOW_PLAINTEXT_AUTH=1 to accept unprotected plaintext on disk.`,
+    );
+  }
 }
 
 // Re-export the logger so the wiring module can share a tag. Not used

@@ -2,7 +2,7 @@ import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
-import { encryptAuthBlob, decryptAuthBlob, ENVELOPE_FORMAT } from "./storage.js";
+import { encryptForSaveOrThrow, decryptAuthBlob, ENVELOPE_FORMAT } from "./storage.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("auth-xai");
@@ -133,15 +133,11 @@ export function saveXaiTokens(tokens: XaiTokens): void {
   mkdirSync(dirname(authPath), { recursive: true });
   const jsonString = JSON.stringify(tokens, null, 2);
   // Encrypt-at-rest with the canonical auth envelope (same as auth.json).
-  // If encryption fails (keychain unavailable) don't crash a successful
-  // login: log loud and write plaintext as a degraded mode.
-  let payload: string;
-  try {
-    payload = encryptAuthBlob(jsonString, getLaxDir());
-  } catch (e) {
-    logger.warn(`[auth-xai] CRITICAL: could not encrypt ${authPath}: ${(e as Error).message}. Falling back to PLAINTEXT on disk — tokens are NOT protected at rest until the keychain becomes available.`);
-    payload = jsonString;
-  }
+  // If encryption fails (keychain unavailable, corrupt key) this THROWS
+  // and nothing is written — a failed save must surface as a failed
+  // login/refresh, never as silent plaintext on disk. Opt-in degraded
+  // mode: LAX_ALLOW_PLAINTEXT_AUTH=1 (see storage.ts).
+  const payload = encryptForSaveOrThrow(jsonString, getLaxDir(), authPath);
   writeSecretFileAtomic(authPath, payload);
 }
 

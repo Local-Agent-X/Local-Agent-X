@@ -108,9 +108,9 @@ export function gateBuildAt(dir: string): GateResult {
 }
 
 // The OAuth/subscription token file each provider's LAX loop reads from the
-// data dir. Plaintext for anthropic/xai; auth.json (openai/codex) is encrypted
-// under the machine-level OS-keychain master key, so a copy still decrypts in
-// the probe's fresh data dir on the same machine. API-key-only creds (in the
+// data dir. All three files are encrypted under the machine-level OS-keychain
+// master key, so a copy still decrypts in the probe's fresh data dir on the
+// same machine. API-key-only creds (in the
 // encrypted secrets store, or in env) are NOT copied — env keys ride through
 // buildSelfEditChildEnv(_, provider); a secrets-store-only key falls back to
 // failing the smoke gate (no silent pass).

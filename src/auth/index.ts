@@ -5,7 +5,7 @@ import { dirname } from "node:path";
 import { getAuthPath } from "../config.js";
 import type { OAuthTokens } from "../types.js";
 import { isCodexEagerMirrorEnabled, mirrorImpl } from "./codex-mirror.js";
-import { encryptAuthBlob, decryptAuthBlob } from "./storage.js";
+import { encryptForSaveOrThrow, decryptAuthBlob } from "./storage.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
 
 import { createLogger } from "../logger.js";
@@ -105,18 +105,11 @@ export function saveTokens(tokens: OAuthTokens): void {
   // envelope keyed by the OS keychain (DPAPI / macOS Keychain /
   // libsecret). A stolen laptop or leaked disk image no longer hands
   // an attacker the user's live OAuth tokens — they also need the OS
-  // keychain. If encryption fails (keychain unavailable, key wrong
-  // length, etc.) we don't crash a successful login: log loud and
-  // write plaintext as a degraded mode. keychain.ts always returns
-  // *some* key (file-fallback as last resort), so this branch should
-  // be rare in practice.
-  let payload: string;
-  try {
-    payload = encryptAuthBlob(jsonString, dirname(authPath));
-  } catch (e) {
-    logger.warn(`[auth] CRITICAL: could not encrypt ${authPath}: ${(e as Error).message}. Falling back to PLAINTEXT on disk — your OAuth tokens are NOT protected at rest until the keychain becomes available.`);
-    payload = jsonString;
-  }
+  // keychain. If encryption fails (keychain unavailable, corrupt key)
+  // this THROWS and nothing is written — a failed save must surface as
+  // a failed login/refresh, never as silent plaintext on disk. Opt-in
+  // degraded mode: LAX_ALLOW_PLAINTEXT_AUTH=1 (see storage.ts).
+  const payload = encryptForSaveOrThrow(jsonString, dirname(authPath), authPath);
 
   // Atomic + symlink-safe write. Without this, a crash or kill-9 mid-write
   // leaves auth.json half-written; next loadTokens parses partial JSON and

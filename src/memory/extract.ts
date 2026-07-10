@@ -17,6 +17,7 @@
 import type { MemoryIndex } from "./index.js";
 import { dispatch } from "../llm-dispatch.js";
 import { runMemoryGate } from "./write-safely.js";
+import { createInternalMemoryContext } from "./promotion-gate.js";
 
 export interface ExtractionOptions {
   lookbackHours?: number;       // default 24
@@ -124,15 +125,25 @@ export async function runExtraction(
 
       // Ingest through retainSmart so the resolver deduplicates + updates
       const sourceFile = `consolidation:${sessionPath}`;
-      const origin = chunks.every((chunk) => chunk.source === "import") ? "import" : "unknown";
+      // Consolidation reorganizes chunks that are already in the durable memory
+      // index. Bind that handoff to this exact output, target, source, and
+      // session; the gate sanitizes without consuming, then retainSmart consumes
+      // the same one-use capability at the durable Facts DB boundary.
+      const promotion = createInternalMemoryContext(
+        extractedText,
+        "memory:retain",
+        sourceFile,
+        sessionPath,
+      );
       const gated = runMemoryGate({
         content: extractedText,
         source: "tool",
         target: "memory:retain",
-        promotion: { origin, source: sourceFile },
+        promotion,
       });
       const { facts, decisions } = await memory.retainSmart(gated, sourceFile, 0, {
         resolverOpts: { provider: opts.provider, model: opts.model },
+        promotion,
       });
 
       result.factsExtracted += facts.length;

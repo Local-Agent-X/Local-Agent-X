@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { createLogger } from "../logger.js";
+import { wrapSpawnForMcp } from "../sandbox/index.js";
 import { wrapExternalContent } from "../sanitize.js";
 import type { ToolResult } from "../types.js";
 import { type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
@@ -170,9 +171,21 @@ export class MCPConnection {
     // arg (e.g. a postgres URL) from being reinterpreted by the shell (inside
     // double quotes cmd treats & | < > ^ ( ) as literal). POSIX uses no shell,
     // so the raw argv is correct as-is.
+    //
+    // Kernel cage: wrap the spawn in the guarded scope (credential-path deny,
+    // network kept) unless this server's config opts out with sandbox:false.
+    // Wrap BEFORE the Windows cmd.exe quoting — on win32 the wrap is always a
+    // passthrough (no seatbelt/bwrap), so the quoting still applies to the
+    // original resolved path + args, never to wrapper argv.
+    const rawArgs = this.config.args || [];
+    const optedOut = this.config.sandbox === false;
+    const wrapped = optedOut
+      ? { cmd: verdict.resolvedPath, args: rawArgs, mode: "host" as const }
+      : wrapSpawnForMcp(verdict.resolvedPath, rawArgs);
+    logger.info(`[mcp:${this.serverName}] child sandbox: ${wrapped.mode}${optedOut ? " (config opt-out)" : ""}`);
     const isWin = process.platform === "win32";
-    const command = isWin ? cmdQuote(verdict.resolvedPath) : verdict.resolvedPath;
-    const spawnArgs = isWin ? (this.config.args || []).map(cmdQuote) : (this.config.args || []);
+    const command = isWin ? cmdQuote(wrapped.cmd) : wrapped.cmd;
+    const spawnArgs = isWin ? wrapped.args.map(cmdQuote) : wrapped.args;
     this.proc = spawn(command, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       env,

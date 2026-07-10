@@ -11,6 +11,18 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...actual, spawn: spawnMock };
 });
 
+// Mock the sandbox module so these tests are deterministic across hosts —
+// on a real macOS dev box the guarded cage is usable and every spawn would
+// otherwise become a sandbox-exec invocation. Default: passthrough (host);
+// individual tests override the implementation to simulate a usable cage.
+const wrapForMcpMock = vi.hoisted(() =>
+  vi.fn(
+    (cmd: string, args: string[]): { cmd: string; args: string[]; mode: "guarded" | "host" } =>
+      ({ cmd, args, mode: "host" }),
+  ),
+);
+vi.mock("../sandbox/index.js", () => ({ wrapSpawnForMcp: wrapForMcpMock }));
+
 // Snapshot + restore process.env around every test so a leaked variable
 // from one case (e.g. a planted ANTHROPIC_API_KEY) cannot influence
 // another. Vitest gives each file its own process.env reference but the
@@ -233,6 +245,8 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
     delete process.env.LAX_MCP_RETRUST;
 
     spawnMock.mockReset();
+    wrapForMcpMock.mockClear();
+    wrapForMcpMock.mockImplementation((cmd: string, args: string[]) => ({ cmd, args, mode: "host" }));
     // Return a stub ChildProcess shape — connect() reads .stdout/.stderr/.stdin
     // and registers listeners; we don't need a real process, just enough
     // surface that the synchronous spawn(...) call doesn't crash before our
@@ -273,5 +287,55 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
     const expectedCmd = process.platform === "win32" ? cmdQuote(binPath) : binPath;
     expect(firstArg).toBe(expectedCmd);
     expect(firstArg).not.toBe(bareName);
+  });
+
+  it("spawns the sandbox wrapper when the cage is usable (default: wrapped)", async () => {
+    // Simulate a usable guarded backend: the wrap returns a cage argv.
+    wrapForMcpMock.mockImplementation((cmd: string, args: string[]) => ({
+      cmd: "/fake/cage",
+      args: ["-p", "profile", cmd, ...args],
+      mode: "guarded" as const,
+    }));
+    const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
+    const conn = new MCPConnection("caged-srv", { command: bareName, args: ["--foo"] });
+
+    conn.connect().catch(() => { /* expected — stub stdin is non-writable */ });
+
+    // The wrap received the integrity-resolved path (not the bare name)...
+    expect(wrapForMcpMock).toHaveBeenCalledTimes(1);
+    expect(wrapForMcpMock).toHaveBeenCalledWith(binPath, ["--foo"]);
+    // ...and spawn got the wrapper argv, with the original target inside it.
+    const isWin = process.platform === "win32";
+    expect(spawnMock.mock.calls[0][0]).toBe(isWin ? cmdQuote("/fake/cage") : "/fake/cage");
+    const spawnArgs = spawnMock.mock.calls[0][1] as string[];
+    expect(spawnArgs).toContain(isWin ? cmdQuote(binPath) : binPath);
+    expect(spawnArgs).toContain(isWin ? cmdQuote("--foo") : "--foo");
+  });
+
+  it("passthrough when the server config opts out with sandbox:false", async () => {
+    wrapForMcpMock.mockImplementation(() => {
+      throw new Error("wrapSpawnForMcp must not be called for sandbox:false servers");
+    });
+    const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
+    const conn = new MCPConnection("naked-srv", { command: bareName, args: ["--foo"], sandbox: false });
+
+    conn.connect().catch(() => { /* expected — stub stdin is non-writable */ });
+
+    expect(wrapForMcpMock).not.toHaveBeenCalled();
+    const expectedCmd = process.platform === "win32" ? cmdQuote(binPath) : binPath;
+    expect(spawnMock.mock.calls[0][0]).toBe(expectedCmd);
+  });
+
+  it("passthrough when no cage is usable (host mode): spawn gets the raw resolved path", async () => {
+    // Default mock impl = passthrough with mode host (what the real wrap
+    // returns on host mode or a cageless platform like Windows).
+    const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
+    const conn = new MCPConnection("host-srv", { command: bareName, args: ["--foo"] });
+
+    conn.connect().catch(() => { /* expected — stub stdin is non-writable */ });
+
+    expect(wrapForMcpMock).toHaveBeenCalledTimes(1);
+    const expectedCmd = process.platform === "win32" ? cmdQuote(binPath) : binPath;
+    expect(spawnMock.mock.calls[0][0]).toBe(expectedCmd);
   });
 });

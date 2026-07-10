@@ -294,6 +294,41 @@ export function wrapSpawnForSandbox(shell: string, shellArgs: string[]): { cmd: 
   return { cmd: shell, args: shellArgs };
 }
 
+// Warn once per process when an MCP child should be caged but no kernel
+// backend is usable here — after that the per-connect log line in
+// mcp-client/connection.ts carries the mode, so repeating the warn per
+// server would just be noise.
+let mcpFallbackWarned = false;
+
+/**
+ * Wrap an intended MCP child-server spawn `(cmd, args)` in the GUARDED kernel
+ * cage (credential-path deny, network kept — MCP servers are networked by
+ * nature, so the strict shell scope's network deny would break them).
+ *
+ * Unlike wrapSpawnForSandbox this does NOT follow the bash sandbox mode into
+ * seatbelt/bwrap/docker — MCP children always get the guarded posture where a
+ * backend is usable. The one mode it respects is "host": that is the user's
+ * explicit no-cage escape hatch, and MCP children honor it the same way bash
+ * does. On platforms with no usable backend (Windows, hardened Linux) this is
+ * a passthrough, identical to wrapSpawnForSandbox's behavior there.
+ *
+ * Returns the mode the child actually got so the caller can log it.
+ */
+export function wrapSpawnForMcp(cmd: string, args: string[]): { cmd: string; args: string[]; mode: "guarded" | "host" } {
+  if (getSandboxMode() === "host") {
+    return { cmd, args, mode: "host" };
+  }
+  if (isGuardedUsable()) {
+    if (isSeatbeltAvailable()) return { ...wrapForSeatbelt(cmd, args, undefined, "guarded"), mode: "guarded" };
+    if (isBwrapAvailable()) return { ...wrapForBwrap(cmd, args, undefined, "guarded"), mode: "guarded" };
+  }
+  if (!mcpFallbackWarned) {
+    logger.warn("[sandbox] No usable kernel cage for MCP child servers on this host — they run unconfined (env scrub + integrity gate still apply).");
+    mcpFallbackWarned = true;
+  }
+  return { cmd, args, mode: "host" };
+}
+
 /**
  * When a bash command fails because the active kernel cage denied a credential
  * dir, return a one-line notice mapping the raw "Operation not permitted" to the

@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { validateSandboxConfig, execInSandbox, getSandboxMode, wrapSpawnForSandbox, isGuardedUsable, sandboxDenialHint } from "./index.js";
+import { validateSandboxConfig, execInSandbox, getSandboxMode, wrapSpawnForSandbox, wrapSpawnForMcp, isGuardedUsable, sandboxDenialHint } from "./index.js";
 import type { SandboxConfig } from "./types.js";
 
 // Sandbox config validator unit tests. These tests do NOT spawn docker —
@@ -167,6 +167,50 @@ describe("guarded sandbox mode (default)", () => {
     const { cmd, args } = wrapSpawnForSandbox("/bin/bash", ["-c", "echo hi"]);
     expect(cmd).toBe("/bin/bash");
     expect(args).toEqual(["-c", "echo hi"]);
+  });
+});
+
+describe("wrapSpawnForMcp — MCP child cage", () => {
+  const prev = process.env.LAX_SANDBOX;
+  afterEach(() => { if (prev === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prev; });
+
+  it("host mode is the explicit escape hatch: passthrough, mode host", () => {
+    process.env.LAX_SANDBOX = "host";
+    const r = wrapSpawnForMcp("/usr/bin/some-mcp", ["--stdio"]);
+    expect(r).toEqual({ cmd: "/usr/bin/some-mcp", args: ["--stdio"], mode: "host" });
+  });
+
+  it.skipIf(!isGuardedUsable())("applies the guarded cage (network kept) where a backend is usable", () => {
+    delete process.env.LAX_SANDBOX; // default mode resolution
+    const { cmd, args, mode } = wrapSpawnForMcp("/usr/bin/some-mcp", ["--stdio"]);
+    expect(mode).toBe("guarded");
+    // The cage is applied — not a bare passthrough...
+    expect(cmd).not.toBe("/usr/bin/some-mcp");
+    expect(args.slice(-2)).toEqual(["/usr/bin/some-mcp", "--stdio"]);
+    // ...but network is NOT denied — MCP servers are networked by nature.
+    const blob = [cmd, ...args].join(" ");
+    expect(blob).not.toContain("(deny network*)"); // seatbelt strict scope
+    expect(blob).not.toContain("--unshare-net"); // bwrap strict scope
+    // The guarded scope still denies credential dirs (the point of the cage).
+    if (process.platform === "darwin") expect(blob).toContain(".ssh");
+  });
+
+  it.skipIf(!isGuardedUsable())("never applies the strict network deny, even when the bash mode is a strict cage", () => {
+    // Bash may run under the strict (network-denied) cage; MCP children must
+    // not inherit that — they'd lose the network they exist to use.
+    process.env.LAX_SANDBOX = process.platform === "darwin" ? "seatbelt" : "bwrap";
+    const { cmd, args } = wrapSpawnForMcp("/usr/bin/some-mcp", []);
+    const blob = [cmd, ...args].join(" ");
+    expect(blob).not.toContain("(deny network*)"); // seatbelt strict scope
+    expect(blob).not.toContain("--unshare-net"); // bwrap strict scope
+  });
+
+  it.skipIf(isGuardedUsable())("passthrough where no kernel backend exists (e.g. Windows) — no crash", () => {
+    delete process.env.LAX_SANDBOX;
+    const r = wrapSpawnForMcp("/usr/bin/some-mcp", ["--stdio"]);
+    expect(r.cmd).toBe("/usr/bin/some-mcp");
+    expect(r.args).toEqual(["--stdio"]);
+    expect(r.mode).toBe("host");
   });
 });
 

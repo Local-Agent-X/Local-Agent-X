@@ -3,6 +3,13 @@ export interface MCPServerConfig {
   args?: string[];
   env?: Record<string, string>;
   disabled?: boolean;
+  /**
+   * Kernel-cage the child process (guarded scope: credential-path deny,
+   * network kept). Default (absent/true) = caged where a backend is usable.
+   * Set false to opt this one server out — e.g. a local server that
+   * legitimately needs to read a denied path like ~/.aws.
+   */
+  sandbox?: boolean;
 }
 
 export interface MCPConfig {

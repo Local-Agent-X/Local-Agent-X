@@ -6,11 +6,16 @@
  * beside the sourceFile reference. Rows written before v12 stay NULL and the
  * recall line omits the origin tag instead of fabricating one.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
+
+vi.mock("./resolver.js", () => ({
+	resolveFact: vi.fn(async (content: string) => ({ op: "ADD", reason: `new fact: ${content.slice(0, 20)}` })),
+}));
+
 import { MemoryIndex } from "../memory/index.js";
 import { authorizeTestFactMutations } from "./test-promotion.test-helper.js";
 import { describeMemoryPromotionRequest, stampTrustedUserPromotion } from "./promotion-gate.js";
@@ -76,6 +81,13 @@ describe("fact provenance round-trip", () => {
     const res = await recall.execute({ kind: "observation" });
     expect(res.content).toContain("tab indentation");
     expect(res.content).toMatch(/\(agent-tool:user-statement#L\d+, origin=user_statement\)/);
+  });
+
+  it("persists the promotion origin through the retainSmart resolver path", async () => {
+    authorizeTestFactMutations(memory);
+    const { facts } = await memory.retainSmart("- O(c=0.9) drinks two coffees before noon", "auto-extract");
+    expect(facts).toHaveLength(1);
+    expect(storedProvenance(facts[0].id!)).toBe("durable_memory");
   });
 
   it("keeps pre-v12 rows NULL and omits the origin tag for them", async () => {

@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 9;
+export const CURRENT_SCHEMA_VERSION = 10;
 
 export function getSchemaVersion(db: InstanceType<typeof Database>): number {
   try {
@@ -205,6 +205,13 @@ export function migrateSchema(
         logger.warn(`[memory] v9 session_id backfill failed: ${(e as Error).message}`);
       }
       db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_session_id ON chunks(session_id)`);
+    }
+
+    if (fromVersion < 10) {
+      // First-class trust origin on facts (was only encoded inside the
+      // source_file string for agent-tool writes). Existing rows stay NULL —
+      // "unknown" — rather than guessing a value they never declared.
+      try { db.exec(`ALTER TABLE facts ADD COLUMN provenance TEXT`); } catch {}
     }
 
     db

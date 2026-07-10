@@ -11,7 +11,7 @@
  */
 
 import type { MemoryIndex } from "./index-core.js";
-import type { FactKind, MemorySearchResult, RetainedFact } from "./types.js";
+import type { FactKind, FactProvenance, MemorySearchResult, RetainedFact } from "./types.js";
 import type { SearchOptions } from "./index-search.js";
 import { buildContextBlock, autoSearchContext } from "./context.js";
 import { autoExtractAndSave } from "./auto-extract.js";
@@ -237,9 +237,9 @@ export class MemoryManager {
     return this.index.search(query, options);
   }
 
-  /** Tool-layer fact retention. */
-  retain(text: string, sourceFile: string, sourceLine = 0): RetainedFact[] {
-    return this.index.retain(text, sourceFile, sourceLine);
+  /** Tool-layer fact retention. Gated: tainted lines are skipped, not thrown. */
+  retain(text: string, sourceFile: string, sourceLine = 0, provenance?: FactProvenance): RetainedFact[] {
+    return this.index.retain(text, sourceFile, sourceLine, provenance);
   }
 
   /** Tool-layer recall by entity slug, fact kind, or time window. */

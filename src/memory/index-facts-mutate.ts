@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { FactKind, RetainedFact } from "./types.js";
+import type { FactKind, FactProvenance, RetainedFact } from "./types.js";
 import { DEFAULT_MEMORY_CONFIG } from "./types.js";
 import { rowToFact, slugify } from "./utils.js";
 import { retain, invalidateFact } from "./index-facts.js";
@@ -54,7 +54,7 @@ export function rememberFact(
   db: InstanceType<typeof Database>,
   hasFts: boolean,
   content: string,
-  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string }
+  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; provenance?: FactProvenance }
 ): OneFactResult {
   const trimmed = content.trim();
   if (trimmed.length < 3) return { ok: false, error: "content too short (min 3 chars)" };
@@ -62,7 +62,7 @@ export function rememberFact(
   const kind = opts?.kind ?? "observation";
   const confidence = opts?.confidence ?? 1.0;
   const bullet = formatBullet(trimmed, kind, confidence);
-  const facts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool");
+  const facts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool", 0, opts?.provenance);
   if (facts.length === 0) {
     return { ok: false, error: "fact already exists or failed to insert" };
   }
@@ -166,7 +166,7 @@ export function updateFact(
   hasFts: boolean,
   query: string,
   newContent: string,
-  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string }
+  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; provenance?: FactProvenance }
 ): OneFactResult {
   const trimmed = newContent.trim();
   if (trimmed.length < 3) return { ok: false, error: "new content too short (min 3 chars)" };
@@ -187,7 +187,7 @@ export function updateFact(
   const kind = opts?.kind ?? oldFact.kind;
   const confidence = opts?.confidence ?? oldFact.confidence;
   const bullet = formatBullet(trimmed, kind, confidence);
-  const newFacts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool");
+  const newFacts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool", 0, opts?.provenance);
   if (newFacts.length === 0) {
     return { ok: false, error: "new content is duplicate of an existing fact" };
   }

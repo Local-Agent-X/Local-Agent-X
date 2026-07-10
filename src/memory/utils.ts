@@ -7,7 +7,7 @@
 import { writeFileSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { randomBytes, createHash } from "node:crypto";
 import { containsNulByte } from "../binary-sniff.js";
-import type { FactKind, RetainedFact } from "./types.js";
+import type { FactKind, FactProvenance, RetainedFact } from "./types.js";
 
 // ── File I/O helpers ──
 
@@ -152,6 +152,7 @@ export function rowToFact(row: Record<string, unknown>): RetainedFact {
     evidenceAgainst: JSON.parse((row.evidence_against as string) || "[]"),
     sourceFile: row.source_file as string,
     sourceLine: row.source_line as number,
+    provenance: (row.provenance as FactProvenance | null) ?? null,
     timestamp: row.timestamp as number,
     lastUpdated: row.last_updated as number,
     validFrom: (row.valid_from as number | null) ?? undefined,

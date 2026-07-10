@@ -222,6 +222,32 @@ export interface EmbeddingProvider {
 
 export type FactKind = "world" | "experience" | "opinion" | "observation";
 
+// Trust origin of a memory write. First-class (persisted in the facts table
+// and threaded through the write gate) so retrieval can tell a user-declared
+// fact from an agent inference or machine-extracted content.
+//   user_statement   — the user directly said it
+//   tool_observation — a successful tool result
+//   inference        — the agent's own interpretation (lowest trust)
+//   external_content — imported / third-party content (web, file imports)
+//   auto_extract     — background extraction pipelines (consolidation, EOT)
+export const FACT_PROVENANCE_VALUES = [
+  "user_statement",
+  "tool_observation",
+  "inference",
+  "external_content",
+  "auto_extract",
+] as const;
+export type FactProvenance = (typeof FACT_PROVENANCE_VALUES)[number];
+
+// The subset an agent may self-declare via remember/update_fact. The other
+// values are stamped by the harness (import ingest, extraction pipelines) —
+// letting the model claim them would defeat the trust distinction.
+export const AGENT_DECLARED_PROVENANCE = [
+  "user_statement",
+  "tool_observation",
+  "inference",
+] as const satisfies readonly FactProvenance[];
+
 export interface RetainedFact {
   id?: number;
   kind: FactKind;
@@ -232,6 +258,8 @@ export interface RetainedFact {
   evidenceAgainst: string[];
   sourceFile: string;
   sourceLine: number;
+  /** Trust origin (facts.provenance column). NULL on rows predating v10. */
+  provenance?: FactProvenance | null;
   timestamp: number;
   lastUpdated: number;
   // Bi-temporal validity (Zep-style). Facts with valid_to != null are superseded.

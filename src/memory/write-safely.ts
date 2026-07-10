@@ -28,6 +28,7 @@ import { createLogger } from "../logger.js";
 import { atomicWriteFileSync } from "./utils.js";
 import { PERSONALITY_FILES } from "./personality.js";
 import type { MemoryIndex } from "./index-core.js";
+import type { FactProvenance } from "./types.js";
 
 const logger = createLogger("memory.write-safely");
 
@@ -56,6 +57,8 @@ export interface MemoryWriteParams {
   /** Block when injection score ≥ threshold. Default 0.3 (strict). */
   threshold?: number;
   mode?: "append" | "overwrite";
+  /** Trust origin of the content; recorded wherever the write is audited. */
+  provenance?: FactProvenance;
 }
 
 export class MemoryWriteBlocked extends Error {
@@ -118,6 +121,7 @@ export function writeMemorySafely(params: MemoryWriteParams): void {
     source: params.source,
     target: params.target,
     threshold: params.threshold,
+    provenance: params.provenance,
   });
   const mode = params.mode ?? "overwrite";
   if (mode === "append") {
@@ -204,6 +208,7 @@ export function runMemoryGate(opts: {
   source: MemoryWriteSource;
   target: string;
   threshold?: number;
+  provenance?: FactProvenance;
 }): string {
   return applyGateChain(opts);
 }
@@ -213,6 +218,8 @@ interface GateInput {
   source: MemoryWriteSource;
   target: string;
   threshold?: number;
+  /** Trust origin of the content; carried into audit records. */
+  provenance?: FactProvenance;
 }
 
 function applyGateChain(input: GateInput): string {
@@ -232,7 +239,7 @@ function applyGateChain(input: GateInput): string {
       target: input.target,
     };
     if (auditMode()) {
-      logAuditEvent(blockInfo, normalized);
+      logAuditEvent({ ...blockInfo, provenance: input.provenance }, normalized);
     } else {
       throw new MemoryWriteBlocked(blockInfo);
     }
@@ -250,6 +257,7 @@ function logAuditEvent(
     injectionScore: number;
     source: string;
     target: string;
+    provenance?: FactProvenance;
   },
   preview: string,
 ): void {
@@ -261,6 +269,7 @@ function logAuditEvent(
       ts: new Date().toISOString(),
       source: info.source,
       target: info.target,
+      ...(info.provenance ? { provenance: info.provenance } : {}),
       injectionScore: info.injectionScore,
       reason: info.reason,
       preview: preview.slice(0, 200),

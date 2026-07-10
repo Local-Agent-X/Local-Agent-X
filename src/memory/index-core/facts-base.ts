@@ -10,7 +10,7 @@
  * db / hasFts / entitiesDir / dirty state and the reindex hook.
  */
 import type Database from "better-sqlite3";
-import type { FactKind, RetainedFact } from "../types.js";
+import type { FactKind, FactProvenance, RetainedFact } from "../types.js";
 import * as Facts from "../index-facts.js";
 import * as FactsMutate from "../index-facts-mutate.js";
 import * as Relations from "../index-relations.js";
@@ -29,15 +29,15 @@ export abstract class MemoryFactsBase {
 
   // ── RETAIN ──
 
-  retain(text: string, sourceFile: string, sourceLine = 0): RetainedFact[] {
-    return Facts.retain(this.db, this.hasFts, text, sourceFile, sourceLine);
+  retain(text: string, sourceFile: string, sourceLine = 0, provenance?: FactProvenance): RetainedFact[] {
+    return Facts.retain(this.db, this.hasFts, text, sourceFile, sourceLine, provenance);
   }
 
   async retainSmart(
     text: string,
     sourceFile: string,
     sourceLine = 0,
-    opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string } }
+    opts?: { candidateLimit?: number; provenance?: FactProvenance; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string } }
   ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
     return Facts.retainSmart(this.db, this.hasFts, text, sourceFile, sourceLine, opts);
   }
@@ -82,7 +82,7 @@ export abstract class MemoryFactsBase {
 
   rememberFact(
     content: string,
-    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string }
+    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; provenance?: FactProvenance }
   ): FactsMutate.OneFactResult {
     return FactsMutate.rememberFact(this.db, this.hasFts, content, opts);
   }
@@ -90,7 +90,7 @@ export abstract class MemoryFactsBase {
   updateFact(
     query: string,
     newContent: string,
-    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string }
+    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; provenance?: FactProvenance }
   ): FactsMutate.OneFactResult {
     return FactsMutate.updateFact(this.db, this.hasFts, query, newContent, opts);
   }

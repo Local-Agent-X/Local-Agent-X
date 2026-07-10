@@ -121,7 +121,8 @@ export function memoryRecallTool(memory: MemoryIndex) {
             const date = new Date(f.timestamp).toISOString().split("T")[0];
             const conf = f.kind === "opinion" ? ` (c=${f.confidence.toFixed(2)})` : "";
             const ents = f.entities.length > 0 ? ` @${f.entities.join(" @")}` : "";
-            return `[${i + 1}] [${f.kind}]${conf}${ents} ${f.content} — ${date} (${f.sourceFile}#L${f.sourceLine})`;
+            const prov = f.provenance ? ` prov=${f.provenance}` : "";
+            return `[${i + 1}] [${f.kind}]${conf}${ents}${prov} ${f.content} — ${date} (${f.sourceFile}#L${f.sourceLine})`;
           })
           .join("\n");
         sections.push(`Retained facts (${facts.length}):\n${formatted}`);

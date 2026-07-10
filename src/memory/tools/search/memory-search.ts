@@ -1,5 +1,6 @@
 import { resolve, relative } from "node:path";
 import type { MemoryIndex } from "../../../memory/index.js";
+import { provenanceTag } from "./provenance-tag.js";
 
 export function memorySearchTool(memory: MemoryIndex) {
   return {
@@ -79,7 +80,7 @@ export function memorySearchTool(memory: MemoryIndex) {
             if (rel && !rel.startsWith("..")) virtualPath = rel;
           } catch { /* fall back to absolute */ }
           const ent = r.entities?.length ? ` entities=${r.entities.join(",")}` : "";
-          return `[${i + 1}] source=${r.source} path=${virtualPath}:${r.startLine}-${r.endLine} score=${r.score.toFixed(2)}${ent}\n${r.snippet}`;
+          return `[${i + 1}] source=${r.source}${provenanceTag(r.metadata)} path=${virtualPath}:${r.startLine}-${r.endLine} score=${r.score.toFixed(2)}${ent}\n${r.snippet}`;
         })
         .join("\n\n");
 

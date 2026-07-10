@@ -1,5 +1,6 @@
 import type { MemoryIndex } from "../../memory/index.js";
-import type { FactKind } from "../types.js";
+import type { FactKind, FactProvenance } from "../types.js";
+import { AGENT_DECLARED_PROVENANCE } from "../types.js";
 import { displayContent } from "../utils.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
 
@@ -8,22 +9,24 @@ import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
 // tool maps one user-visible verb to one DB action.
 
 const VALID_KINDS: FactKind[] = ["world", "experience", "opinion", "observation"];
-const VALID_PROVENANCE = ["user_statement", "tool_observation", "inference"] as const;
-type FactProvenance = typeof VALID_PROVENANCE[number];
+// Only the agent-declarable subset of FactProvenance (types.ts) — the harness
+// stamps external_content / auto_extract itself.
+const VALID_PROVENANCE = AGENT_DECLARED_PROVENANCE;
+type AgentProvenance = (typeof VALID_PROVENANCE)[number];
 
-const PROVENANCE_CONFIDENCE_CAP: Record<FactProvenance, number> = {
+const PROVENANCE_CONFIDENCE_CAP: Record<AgentProvenance, number> = {
   user_statement: 1.0,
   tool_observation: 0.95,
   inference: 0.6,
 };
 
-function parseProvenance(value: unknown): FactProvenance {
-  const provenance = String(value || "inference") as FactProvenance;
+function parseProvenance(value: unknown): AgentProvenance {
+  const provenance = String(value || "inference") as AgentProvenance;
   return VALID_PROVENANCE.includes(provenance) ? provenance : "inference";
 }
 
 function groundedConfidence(
-  provenance: FactProvenance,
+  provenance: AgentProvenance,
   requested: number | undefined,
 ): number {
   return Math.min(requested ?? PROVENANCE_CONFIDENCE_CAP[provenance], PROVENANCE_CONFIDENCE_CAP[provenance]);
@@ -126,11 +129,12 @@ export function createFactsTools(memory: MemoryIndex) {
         }
 
         try {
-          const gated = runMemoryGate({ content, source: "tool", target: "memory:retain" });
+          const gated = runMemoryGate({ content, source: "tool", target: "memory:retain", provenance });
           const result = memory.rememberFact(gated, {
             kind,
             confidence,
             sourceFile: provenanceSource(provenance),
+            provenance,
           });
           if (!result.ok) {
             return { content: formatToolError("remember failed", result), isError: true };
@@ -199,11 +203,12 @@ export function createFactsTools(memory: MemoryIndex) {
         const confidence = groundedConfidence(provenance, requestedConfidence);
 
         try {
-          const gated = runMemoryGate({ content, source: "tool", target: "memory:retain" });
+          const gated = runMemoryGate({ content, source: "tool", target: "memory:retain", provenance });
           const result = memory.updateFact(query, gated, {
             kind,
             confidence,
             sourceFile: provenanceSource(provenance),
+            provenance,
           });
           if (!result.ok) {
             return { content: formatToolError("update_fact failed", result), isError: true };

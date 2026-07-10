@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
-import type { RetainedFact } from "./types.js";
+import type { FactProvenance, RetainedFact } from "./types.js";
 import { parseFactLine, slugify } from "./utils.js";
 import { extractRelations } from "./index-relations.js";
 import { runMemoryGate, MemoryWriteBlocked, type MemoryWriteSource } from "./write-safely.js";
@@ -21,10 +21,14 @@ export function retain(
   hasFts: boolean,
   text: string,
   sourceFile: string,
-  sourceLine = 0
+  sourceLine = 0,
+  provenance?: FactProvenance
 ): RetainedFact[] {
   const facts: RetainedFact[] = [];
   const lines = text.split("\n");
+  // Same taint gate every other Facts-DB sink runs (retainSmart below, the
+  // `remember` tool). retain() was the last ungated insert path.
+  const gateSource: MemoryWriteSource = sourceFile.startsWith("auto-extract") ? "auto-extract" : "tool";
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -36,6 +40,19 @@ export function retain(
 
     if (parsed.content.length < 3) continue;
 
+    // Blocked lines are skipped with a warning, never thrown — a poisoned
+    // line must not abort the rest of a bulk retain.
+    try {
+      parsed.content = runMemoryGate({ content: parsed.content, source: gateSource, target: "memory:retain", provenance });
+    } catch (e) {
+      if (e instanceof MemoryWriteBlocked) {
+        logger.warn(`[memory] retain blocked "${parsed.content.slice(0, 60)}": ${e.reason}`);
+        continue;
+      }
+      throw e;
+    }
+    if (parsed.content.length < 3) continue;
+
     const validEntities = parsed.entities.filter((e) => e.length > 0);
 
     const now = Date.now();
@@ -45,8 +62,8 @@ export function retain(
       const result = db
         .prepare(
           `INSERT INTO facts (kind, content, entities, confidence, evidence_for, evidence_against,
-           source_file, source_line, timestamp, last_updated)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           source_file, source_line, timestamp, last_updated, provenance)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           parsed.kind,
@@ -58,7 +75,8 @@ export function retain(
           sourceFile,
           sourceLine + i + 1,
           now,
-          now
+          now,
+          provenance ?? null
         );
 
       const factId = result.lastInsertRowid as number;
@@ -73,6 +91,7 @@ export function retain(
         evidenceAgainst: [],
         sourceFile,
         sourceLine: sourceLine + i + 1,
+        provenance: provenance ?? null,
         timestamp: now,
         lastUpdated: now,
       };
@@ -124,10 +143,13 @@ export async function retainSmart(
   text: string,
   sourceFile: string,
   sourceLine = 0,
-  opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string } }
+  opts?: { candidateLimit?: number; provenance?: FactProvenance; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string } }
 ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
   const { resolveFact } = await import("./resolver.js");
   const candidateLimit = opts?.candidateLimit ?? 5;
+  // Every retainSmart caller is an extraction pipeline (consolidation,
+  // end-of-turn auto-extract), so machine-extracted is the honest default.
+  const provenance: FactProvenance = opts?.provenance ?? "auto_extract";
   const facts: RetainedFact[] = [];
   const decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> = [];
   const lines = text.split("\n");
@@ -149,7 +171,7 @@ export async function retainSmart(
     // abort the rest of a background extraction pass. Surfaced as a BLOCKED
     // decision so callers can tell nothing persisted.
     try {
-      parsed.content = runMemoryGate({ content: parsed.content, source: gateSource, target: "memory:retain" });
+      parsed.content = runMemoryGate({ content: parsed.content, source: gateSource, target: "memory:retain", provenance });
     } catch (e) {
       if (e instanceof MemoryWriteBlocked) {
         logger.warn(`[memory] retainSmart blocked "${parsed.content.slice(0, 60)}": ${e.reason}`);
@@ -176,10 +198,10 @@ export async function retainSmart(
     try {
       const result = db.prepare(
         `INSERT INTO facts (kind, content, entities, confidence, evidence_for, evidence_against,
-           source_file, source_line, timestamp, last_updated, valid_from)
-         VALUES (?, ?, ?, ?, '[]', '[]', ?, ?, ?, ?, ?)`
+           source_file, source_line, timestamp, last_updated, valid_from, provenance)
+         VALUES (?, ?, ?, ?, '[]', '[]', ?, ?, ?, ?, ?, ?)`
       ).run(parsed.kind, parsed.content, entitiesJson, parsed.confidence,
-            sourceFile, sourceLine + i + 1, now, now, now);
+            sourceFile, sourceLine + i + 1, now, now, now, provenance);
       const factId = result.lastInsertRowid as number;
 
       if (decision.op === "UPDATE" && decision.targetId !== undefined) {
@@ -198,7 +220,7 @@ export async function retainSmart(
       facts.push({
         id: factId, kind: parsed.kind, content: parsed.content, entities: validEntities,
         confidence: parsed.confidence, evidenceFor: [], evidenceAgainst: [],
-        sourceFile, sourceLine: sourceLine + i + 1, timestamp: now, lastUpdated: now,
+        sourceFile, sourceLine: sourceLine + i + 1, provenance, timestamp: now, lastUpdated: now,
         validFrom: now, validTo: null,
       });
     } catch (e) {

@@ -1,5 +1,6 @@
 import type { MemoryIndex } from "../../../memory/index.js";
 import { findMatchingApps } from "./app-matcher.js";
+import { provenanceTag } from "./provenance-tag.js";
 
 export function searchPastSessionsTool(memory: MemoryIndex) {
   return {
@@ -51,7 +52,7 @@ export function searchPastSessionsTool(memory: MemoryIndex) {
           const dateStr = r.metadata?.date ? ` date=${r.metadata.date}` : "";
           const topic = r.metadata?.topic ? ` topic=${r.metadata.topic}` : "";
           const sid = r.metadata?.session_id ? ` session=${r.metadata.session_id.slice(0, 12)}` : "";
-          return `[${i + 1}] source=${r.source}${dateStr}${topic}${sid} score=${r.score.toFixed(2)}\n${r.snippet}`;
+          return `[${i + 1}] source=${r.source}${provenanceTag(r.metadata)}${dateStr}${topic}${sid} score=${r.score.toFixed(2)}\n${r.snippet}`;
         })
         .join("\n\n");
 

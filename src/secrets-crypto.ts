@@ -1,4 +1,38 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+export const MASTER_KEY_DEPENDENT_BASENAMES = [
+  "secrets.enc",
+  "auth.json",
+  "anthropic-auth.json",
+  "xai-auth.json",
+] as const;
+
+function isEncryptedMasterKeyDependent(path: string): boolean {
+  if (!existsSync(path)) return false;
+  if (path.endsWith("secrets.enc")) return true;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    if (typeof parsed !== "object" || parsed === null) return false;
+    const format = (parsed as Record<string, unknown>).format;
+    return typeof format === "string" && format.startsWith("lax-auth-v");
+  } catch {
+    return true;
+  }
+}
+
+export function assertKeyRecoverySafe(dataDir: string, provider: string, why: string): void {
+  const dependents = MASTER_KEY_DEPENDENT_BASENAMES
+    .map((name) => join(dataDir, name))
+    .filter((path) => isEncryptedMasterKeyDependent(path));
+  if (dependents.length === 0) return;
+  throw new Error(
+    `Cannot retrieve ${provider}-protected master key — ${why}\n` +
+    `Refusing to auto-regenerate; that would invalidate encrypted data: ${dependents.join(", ")}.\n` +
+    "Restore keychain access or intentionally remove every listed dependent before creating a new key.",
+  );
+}
 
 /** Derive a canonical origin (scheme://host[:port]) from an arbitrary URL. Returns undefined on failure. */
 export function deriveOrigin(url: string | undefined | null): string | undefined {

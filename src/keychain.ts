@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "
 import { join } from "node:path";
 import { randomBytes, scryptSync } from "node:crypto";
 import { hostname, userInfo } from "node:os";
+import { assertKeyRecoverySafe } from "./secrets-crypto.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("keychain");
@@ -234,6 +235,7 @@ function fileFallbackGetOrCreate(dataDir: string): Buffer {
   if (existsSync(saltPath)) {
     salt = readFileSync(saltPath);
   } else {
+    assertKeyRecoverySafe(dataDir, "file fallback", "master-key salt is missing");
     salt = randomBytes(32);
     writeFileSync(saltPath, salt, { mode: 0o600 });
   }
@@ -301,10 +303,12 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
         }
         throw new Error(`DPAPI returned ${key.length} bytes (expected 32) — file likely corrupt`);
       } catch (e) {
+        assertKeyRecoverySafe(dataDir, "DPAPI", (e as Error).message);
         throw new Error(refuseRotateMessage("DPAPI", (e as Error).message));
       }
     }
     // First-run — no master.dpapi yet. Safe to generate.
+    assertKeyRecoverySafe(dataDir, "DPAPI", "protected master key is missing");
     try {
       const key = randomBytes(32);
       dpapiStore(key, dpapiPath);
@@ -317,9 +321,8 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
 
   // ── Try macOS Keychain ──
   if (macKeychainAvailable()) {
-    // Try retrieve first. If a key exists in Keychain and retrieve
-    // succeeds, return it; if retrieve fails, throw (don't rotate).
-    // Only generate if Keychain has no key for our service yet.
+    // Retrieve first. On failure, initialization is allowed only when no
+    // encrypted file still depends on the missing key.
     try {
       const key = macKeychainRetrieve();
       if (key.length === 32) {
@@ -328,15 +331,7 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
       throw new Error(`Keychain returned ${key.length} bytes (expected 32) — entry corrupt`);
     } catch (e) {
       const msg = (e as Error).message ?? "";
-      // Distinguish "no entry" (safe to generate) from "retrieve broke"
-      // (must throw). Keychain `security find-generic-password` exits
-      // with code 44 / "could not be found" when the entry is absent.
-      const isMissing = /could not be found|44|SecKeychainSearchCopyNext|errSecItemNotFound/i.test(msg);
-      if (!isMissing && existsSync(secretsPath)) {
-        // We have an encrypted secrets file but can't get the key — fail loud.
-        throw new Error(refuseRotateMessage("macOS Keychain", msg));
-      }
-      // Either no key entry yet, or no secrets file to lose — safe to init.
+      assertKeyRecoverySafe(dataDir, "macOS Keychain", msg);
       try {
         const key = randomBytes(32);
         macKeychainStore(key);
@@ -358,10 +353,7 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
       throw new Error(`libsecret returned ${key.length} bytes (expected 32) — entry corrupt`);
     } catch (e) {
       const msg = (e as Error).message ?? "";
-      const isMissing = /no such secret|item not found|no results/i.test(msg);
-      if (!isMissing && existsSync(secretsPath)) {
-        throw new Error(refuseRotateMessage("libsecret", msg));
-      }
+      assertKeyRecoverySafe(dataDir, "libsecret", msg);
       try {
         const key = randomBytes(32);
         libsecretStore(key);

@@ -8,11 +8,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync,
-  symlinkSync, statSync, lstatSync,
+  symlinkSync, statSync, lstatSync, writeSync,
 } from "node:fs";
 import { tmpdir, platform } from "node:os";
 import { join } from "node:path";
-import { writeSecretFileAtomic } from "./secret-file.js";
+import { writeSecretFileAtomic, _writeSecretFileAtomicForTests } from "./secret-file.js";
 
 let dir: string;
 
@@ -63,5 +63,60 @@ describe("writeSecretFileAtomic", () => {
     writeFileSync(target, '{"token":"old"}');
     writeSecretFileAtomic(target, '{"token":"new"}');
     expect(readFileSync(target, "utf-8")).toBe('{"token":"new"}');
+  });
+
+  it("loops until every byte is written after short writes", () => {
+    const target = join(dir, "auth.json");
+    let calls = 0;
+    _writeSecretFileAtomicForTests(target, "synthetic-secret", {
+      write: ((fd, buffer, offset, length, position) => {
+        calls += 1;
+        const bytes = buffer as Buffer;
+        const start = offset ?? 0;
+        return writeSync(fd, bytes.subarray(start, start + Math.min(length ?? bytes.length, 3)));
+      }) as typeof writeSync,
+    });
+    expect(calls).toBeGreaterThan(1);
+    expect(readFileSync(target, "utf-8")).toBe("synthetic-secret");
+  });
+
+  it("preserves the valid target and cleans temp after a write failure", () => {
+    const target = join(dir, "auth.json");
+    writeFileSync(target, "valid-old-data");
+    expect(() => _writeSecretFileAtomicForTests(target, "replacement", {
+      write: (() => { throw new Error("synthetic write failure"); }) as typeof writeSync,
+    })).toThrow(/synthetic write failure/);
+    expect(readFileSync(target, "utf-8")).toBe("valid-old-data");
+    expect(existsSync(`${target}.tmp`)).toBe(false);
+  });
+
+  it("preserves the valid target and cleans temp after fsync failure", () => {
+    const target = join(dir, "auth.json");
+    writeFileSync(target, "valid-old-data");
+    expect(() => _writeSecretFileAtomicForTests(target, "replacement", {
+      fsync: () => { throw new Error("synthetic fsync failure"); },
+    })).toThrow(/synthetic fsync failure/);
+    expect(readFileSync(target, "utf-8")).toBe("valid-old-data");
+    expect(existsSync(`${target}.tmp`)).toBe(false);
+  });
+
+  it("preserves the valid target and cleans temp after close failure", () => {
+    const target = join(dir, "auth.json");
+    writeFileSync(target, "valid-old-data");
+    expect(() => _writeSecretFileAtomicForTests(target, "replacement", {
+      close: () => { throw new Error("synthetic close failure"); },
+    })).toThrow(/synthetic close failure/);
+    expect(readFileSync(target, "utf-8")).toBe("valid-old-data");
+    expect(existsSync(`${target}.tmp`)).toBe(false);
+  });
+
+  it("preserves the valid target and cleans temp after rename failure", () => {
+    const target = join(dir, "auth.json");
+    writeFileSync(target, "valid-old-data");
+    expect(() => _writeSecretFileAtomicForTests(target, "replacement", {
+      rename: () => { throw new Error("synthetic rename failure"); },
+    })).toThrow(/synthetic rename failure/);
+    expect(readFileSync(target, "utf-8")).toBe("valid-old-data");
+    expect(existsSync(`${target}.tmp`)).toBe(false);
   });
 });

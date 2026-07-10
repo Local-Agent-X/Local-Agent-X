@@ -77,7 +77,7 @@ export async function fetchOidcDiscovery(): Promise<OidcEndpoints> {
 export function loadXaiTokens(): XaiTokens | null {
   const authPath = getAuthPath();
   try {
-    const data = readProviderCredentials(authPath);
+    const data = readProviderCredentials(authPath, "xai");
     if (data === null) return null;
     if (typeof data === "object" && typeof (data as Partial<XaiTokens>).accessToken === "string") {
       return { ...(data as XaiTokens), provider: "xai" };
@@ -90,7 +90,7 @@ export function loadXaiTokens(): XaiTokens | null {
 }
 
 export function saveXaiTokens(tokens: XaiTokens): void {
-  writeProviderCredentials(getAuthPath(), tokens);
+  writeProviderCredentials(getAuthPath(), "xai", tokens);
 }
 
 export function isXaiTokenExpired(tokens: XaiTokens | null): boolean {

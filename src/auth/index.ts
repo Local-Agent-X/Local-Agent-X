@@ -29,7 +29,7 @@ export function loadTokens(): OAuthTokens | null {
   const authPath = getAuthPath();
   let data: unknown;
   try {
-    data = readProviderCredentials(authPath);
+    data = readProviderCredentials(authPath, "core");
   } catch (e) {
     logger.error(`[auth] FAILED to load ${authPath}: ${(e as Error).message} — treating as no-auth. Re-login if this persists.`);
     return null;
@@ -53,7 +53,7 @@ export function loadTokens(): OAuthTokens | null {
 // controls whether the Codex mirror runs.
 export function saveTokens(tokens: OAuthTokens): void {
   const authPath = getAuthPath();
-  writeProviderCredentials(authPath, tokens);
+  writeProviderCredentials(authPath, "core", tokens);
   // Bridge to the Codex CLI's own credential store. By default we do NOT
   // eagerly mirror tokens to ~/.codex/auth.json on every login/refresh —
   // build_app writes it just-in-time before it spawns Codex and removes it

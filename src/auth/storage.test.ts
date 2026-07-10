@@ -19,7 +19,10 @@ import {
   decryptWithKey,
   _resetMasterKeyCacheForTests,
   _setMasterKeyCacheForTests,
+  _encryptV1WithKeyForTests,
   ENVELOPE_FORMAT,
+  LEGACY_ENVELOPE_FORMAT,
+  PROBE_CREDENTIAL_PATH_ENV,
   writeProviderCredentials,
 } from "./storage.js";
 import { saveTokens, loadTokens } from "./index.js";
@@ -27,7 +30,10 @@ import { loadAnthropicTokens, saveAnthropicSetupToken } from "./anthropic.js";
 import { loadXaiTokens, saveXaiTokens } from "./xai.js";
 import type { OAuthTokens } from "../types.js";
 
-const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "LAX_DATA_DIR", "HOME", "USERPROFILE"] as const;
+const ENV_KEYS = [
+  "LAX_MIRROR_CODEX_AUTH", "LAX_DATA_DIR", "LAX_SELF_EDIT_PROBE",
+  PROBE_CREDENTIAL_PATH_ENV, "HOME", "USERPROFILE",
+] as const;
 
 function snapshotEnv(): Record<string, string | undefined> {
   const snap: Record<string, string | undefined> = {};
@@ -169,6 +175,7 @@ describe("encryptAuthBlob / decryptAuthBlob (keychain-backed)", () => {
     expect(decryptAuthBlob(env, dataDir)).toEqual({
       plaintext: "hello world",
       wasEncrypted: true,
+      format: "v2",
     });
   });
 
@@ -181,6 +188,7 @@ describe("encryptAuthBlob / decryptAuthBlob (keychain-backed)", () => {
     expect(decryptAuthBlob(legacy, dataDir)).toEqual({
       plaintext: legacy,
       wasEncrypted: false,
+      format: "plaintext",
     });
   });
 
@@ -208,7 +216,11 @@ describe("provider credential writes", () => {
     const authPath = join(dataDir, "fail-closed.json");
     _setMasterKeyCacheForTests(randomBytes(16));
 
-    expect(() => writeProviderCredentials(authPath, { accessToken: "secret" }))
+    expect(() => writeProviderCredentials(authPath, "core", {
+      accessToken: "secret",
+      refreshToken: "refresh",
+      expiresAt: 1,
+    }))
       .toThrow(/refusing unencrypted credential write/);
     expect(existsSync(authPath)).toBe(false);
   });
@@ -220,13 +232,24 @@ describe("provider credential writes", () => {
 
     writeProviderCredentials(
       authPath,
-      { accessToken: "degraded-secret" },
+      "core",
+      { accessToken: "degraded-secret", refreshToken: "refresh", expiresAt: 1 },
       { allowUnencryptedWrite: true, warn: (message) => warnings.push(message) },
     );
 
     expect(readFileSync(authPath, "utf-8")).toContain("degraded-secret");
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/degraded mode was explicitly enabled/);
+  });
+
+  it("rejects provider fields outside the strict namespace schema", () => {
+    const authPath = join(dataDir, "xai-auth.json");
+    expect(() => writeProviderCredentials(authPath, "xai", {
+      accessToken: "secret",
+      provider: "anthropic",
+      unexpected: true,
+    })).toThrow(/unexpected credential fields|provider marker/);
+    expect(existsSync(authPath)).toBe(false);
   });
 });
 
@@ -284,6 +307,31 @@ describe("shared provider stores", () => {
     expect(onDisk).toContain(`"format":"${ENVELOPE_FORMAT}"`);
     expect(onDisk).not.toContain("legacy-xai-token");
   });
+
+  it("rejects a v2 envelope swapped into another provider file", () => {
+    saveTokens({ accessToken: "core-access", refreshToken: "core-refresh", expiresAt: 123 });
+    const corePath = join(dataDir, "auth.json");
+    const xaiPath = join(dataDir, "xai-auth.json");
+    const swapped = readFileSync(corePath, "utf-8");
+    writeFileSync(xaiPath, swapped);
+
+    expect(() => decryptAuthBlob(swapped, dataDir, "xai", xaiPath)).toThrow();
+    expect(loadXaiTokens()).toBeNull();
+  });
+
+  it("reads the canonical parent envelope in a fresh probe data dir", () => {
+    const tokens = { accessToken: "probe-xai", provider: "xai" as const };
+    saveXaiTokens(tokens);
+    const canonicalPath = join(dataDir, "xai-auth.json");
+    const probeDir = join(tempHome, "probe-data");
+    mkdirSync(probeDir);
+    process.env.LAX_SELF_EDIT_PROBE = "1";
+    process.env[PROBE_CREDENTIAL_PATH_ENV] = canonicalPath;
+    process.env.LAX_DATA_DIR = probeDir;
+
+    expect(loadXaiTokens()).toEqual(tokens);
+    expect(existsSync(join(probeDir, "xai-auth.json"))).toBe(false);
+  });
 });
 
 describe("auth.ts integration: saveTokens / loadTokens round-trip", () => {
@@ -303,7 +351,7 @@ describe("auth.ts integration: saveTokens / loadTokens round-trip", () => {
     expect(existsSync(authPath)).toBe(true);
     const onDisk = readFileSync(authPath, "utf-8");
     // Envelope marker present.
-    expect(onDisk).toContain('"format":"lax-auth-v1"');
+    expect(onDisk).toContain(`"format":"${ENVELOPE_FORMAT}"`);
     // Sensitive material NOT visible on disk.
     expect(onDisk).not.toContain("access-secret-abc123");
     expect(onDisk).not.toContain("refresh-secret-xyz789");
@@ -327,7 +375,7 @@ describe("auth.ts integration: saveTokens / loadTokens round-trip", () => {
     // Sanity: starts as plaintext.
     const before = readFileSync(authPath, "utf-8");
     expect(before).toContain("legacy-access-token");
-    expect(before).not.toContain("lax-auth-v1");
+    expect(before).not.toContain(ENVELOPE_FORMAT);
 
     const loaded = loadTokens();
     expect(loaded?.accessToken).toBe("legacy-access-token");
@@ -336,7 +384,7 @@ describe("auth.ts integration: saveTokens / loadTokens round-trip", () => {
     // After load, file is now an envelope and the plaintext token value
     // is no longer recoverable from a disk-only read.
     const after = readFileSync(authPath, "utf-8");
-    expect(after).toContain('"format":"lax-auth-v1"');
+    expect(after).toContain(`"format":"${ENVELOPE_FORMAT}"`);
     expect(after).not.toContain("legacy-access-token");
     expect(after).not.toContain("legacy-refresh-token");
 
@@ -344,6 +392,20 @@ describe("auth.ts integration: saveTokens / loadTokens round-trip", () => {
     const reloaded = loadTokens();
     expect(reloaded?.accessToken).toBe("legacy-access-token");
     expect(reloaded?.refreshToken).toBe("legacy-refresh-token");
+  });
+
+  it("migrates a v1 encrypted envelope to provider-bound v2", () => {
+    const authPath = join(dataDir, "auth.json");
+    const key = randomBytes(32);
+    const tokens = freshTokens();
+    _setMasterKeyCacheForTests(key);
+    writeFileSync(authPath, _encryptV1WithKeyForTests(JSON.stringify(tokens), key));
+    expect(readFileSync(authPath, "utf-8")).toContain(LEGACY_ENVELOPE_FORMAT);
+
+    expect(loadTokens()).toEqual(tokens);
+    const migrated = readFileSync(authPath, "utf-8");
+    expect(migrated).toContain(ENVELOPE_FORMAT);
+    expect(migrated).not.toContain(LEGACY_ENVELOPE_FORMAT);
   });
 
   it("does not return legacy plaintext when encrypted migration fails", () => {

@@ -7,9 +7,9 @@
  */
 
 import { spawn, execSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { runCommandInWorktree, getWorktreePath, getMergeDeltaFiles, isolateNodeModules, changedFilesTouchDeps } from "./agency/worktree.js";
 import { killProcessTree } from "./process-tree-kill.js";
 import { runSmokeAssertions } from "./self-edit-smoke-suite.js";
@@ -19,6 +19,7 @@ import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("self-edit.sandbox-gates");
+const PROBE_CREDENTIAL_PATH_ENV = "LAX_PROBE_PROVIDER_AUTH_PATH";
 
 // ── Config ─────────────────────────────────────────────────────────────────
 
@@ -107,13 +108,9 @@ export function gateBuildAt(dir: string): GateResult {
   }
 }
 
-// The OAuth/subscription token file each provider's LAX loop reads from the
-// data dir. Plaintext for anthropic/xai; auth.json (openai/codex) is encrypted
-// under the machine-level OS-keychain master key, so a copy still decrypts in
-// the probe's fresh data dir on the same machine. API-key-only creds (in the
-// encrypted secrets store, or in env) are NOT copied — env keys ride through
-// buildSelfEditChildEnv(_, provider); a secrets-store-only key falls back to
-// failing the smoke gate (no silent pass).
+// The provider loop reads this one canonical credential path when the probe
+// starts. The path is inherited in the probe environment; credential bytes and
+// key material are never copied into the fresh data dir or candidate tree.
 const PROVIDER_TOKEN_FILE: Record<string, string> = {
   anthropic: "anthropic-auth.json",
   xai: "xai-auth.json",
@@ -126,23 +123,24 @@ const PROVIDER_TOKEN_FILE: Record<string, string> = {
  * ACTIVE provider — the same provider the edited code runs on in production —
  * instead of defaulting to anthropic with no credential (which made the smoke
  * gate fail for every non-anthropic / subscription-only user). Writes
- * settings.json {provider} and copies that ONE provider's token file.
+ * settings.json {provider} and returns the canonical credential path.
  *
  * Confidentiality (generalizes the Pass-4 anthropic-only residual): the probe
- * runs the untrusted edited code with the active provider's token in its
- * ephemeral 0600 data dir (deleted in the caller's finally). It's only the
- * provider the edit already uses, and every OTHER credential stays scrubbed.
+ * runs the untrusted edited code with access to only the active provider's
+ * canonical credential path. Every other credential stays scrubbed.
  */
-export function seedProbeProvider(dataDir: string, provider: string): void {
+export function seedProbeProvider(
+  dataDir: string,
+  provider: string,
+): { credentialPath?: string; unavailable?: string } {
   try {
     writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider }), { mode: 0o600 });
   } catch (e) { logger.warn(`[self-edit.bind] could not seed probe settings: ${(e as Error).message}`); }
   const tokenFile = PROVIDER_TOKEN_FILE[provider];
-  if (!tokenFile) return;
-  try {
-    const src = join(getLaxDir(), tokenFile);
-    if (existsSync(src)) copyFileSync(src, join(dataDir, tokenFile));
-  } catch (e) { logger.warn(`[self-edit.bind] could not seed probe ${tokenFile}: ${(e as Error).message}`); }
+  if (!tokenFile) return {};
+  const credentialPath = resolve(getLaxDir(), tokenFile);
+  if (existsSync(credentialPath)) return { credentialPath };
+  return { unavailable: `canonical ${tokenFile} is unavailable; probe requires an environment credential` };
 }
 
 // ── Gate 2: bind ───────────────────────────────────────────────────────────
@@ -182,7 +180,7 @@ export async function gateBindAt(wt: string, port: number, authToken: string, si
   // anthropic default) so the smoke gate's /api/chat gets a real completion
   // for codex/xai/subscription users too.
   const provider = readActiveProvider();
-  seedProbeProvider(dataDir, provider);
+  const probeSeed = seedProbeProvider(dataDir, provider);
   // Boot the COMPILED build (`npm start` → node dist/index.js), not
   // `dev:nowatch` (tsx). The build gate just produced dist/; tsx would instead
   // cold-recompile the whole codebase from scratch (esbuild caches per project
@@ -209,7 +207,13 @@ export async function gateBindAt(wt: string, port: number, authToken: string, si
     // LAX_PROBE_PARENT_PID lets the probe self-terminate if THIS process (the
     // gate-runner) dies before killProbe runs — otherwise the orphan lives
     // forever (Windows never reaps it). See src/probe-self-destruct.ts.
-    env: { ...buildSelfEditChildEnv(process.env, provider), LAX_PORT: String(port), LAX_DISABLE_BACKGROUND_JOBS: "1", LAX_DATA_DIR: dataDir, LAX_AUTH_TOKEN: authToken, LAX_INTEGRITY_WARN_ONLY: "1", LAX_SELF_EDIT_PROBE: "1", LAX_PROBE_PARENT_PID: String(process.pid) },
+    env: {
+      ...buildSelfEditChildEnv(process.env, provider),
+      ...(probeSeed.credentialPath ? { [PROBE_CREDENTIAL_PATH_ENV]: probeSeed.credentialPath } : {}),
+      LAX_PORT: String(port), LAX_DISABLE_BACKGROUND_JOBS: "1", LAX_DATA_DIR: dataDir,
+      LAX_AUTH_TOKEN: authToken, LAX_INTEGRITY_WARN_ONLY: "1", LAX_SELF_EDIT_PROBE: "1",
+      LAX_PROBE_PARENT_PID: String(process.pid),
+    },
   });
 
   let probeStdout = "";

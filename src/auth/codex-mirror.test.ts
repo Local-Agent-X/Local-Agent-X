@@ -24,7 +24,7 @@ import {
   mirrorImpl,
 } from "./codex-mirror.js";
 import { saveTokens, loadTokens } from "./index.js";
-import { _resetMasterKeyCacheForTests } from "./storage.js";
+import { _resetMasterKeyCacheForTests, ENVELOPE_FORMAT } from "./storage.js";
 import type { OAuthTokens } from "../types.js";
 
 const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "LAX_INSTALL_CODEX_CLI", "HOME", "USERPROFILE"] as const;
@@ -140,7 +140,7 @@ describe("saveTokens eager-mirror gate", () => {
     const laxAuth = join(tempHome, ".lax", "auth.json");
     expect(existsSync(laxAuth)).toBe(true);
     const onDisk = readFileSync(laxAuth, "utf-8");
-    expect(onDisk).toContain('"format":"lax-auth-v1"');
+    expect(onDisk).toContain(`"format":"${ENVELOPE_FORMAT}"`);
     expect(onDisk).not.toContain("access-test");
     expect(loadTokens()?.accessToken).toBe("access-test");
   });

@@ -30,31 +30,79 @@ const SECRET_MODE = 0o600;
 const WRITE_FLAGS =
   constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0);
 
-export function writeSecretFileAtomic(targetPath: string, data: string): void {
+export interface SecretFileOps {
+  open: typeof openSync;
+  write: typeof writeSync;
+  fsync: typeof fsyncSync;
+  close: typeof closeSync;
+  rename: typeof renameSync;
+  lstat: typeof lstatSync;
+  unlink: typeof unlinkSync;
+  exists: typeof existsSync;
+}
+
+const DEFAULT_OPS: SecretFileOps = {
+  open: openSync,
+  write: writeSync,
+  fsync: fsyncSync,
+  close: closeSync,
+  rename: renameSync,
+  lstat: lstatSync,
+  unlink: unlinkSync,
+  exists: existsSync,
+};
+
+function writeSecretFileAtomicWithOps(targetPath: string, data: string, ops: SecretFileOps): void {
   const tmp = `${targetPath}.tmp`;
   let fd: number;
   try {
-    fd = openSync(tmp, WRITE_FLAGS, SECRET_MODE);
+    fd = ops.open(tmp, WRITE_FLAGS, SECRET_MODE);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     // Temp path already exists. A symlink is a redirect attack — refuse it.
     // A stale regular file is a crashed-write leftover — clear it and retry.
-    if (lstatSync(tmp).isSymbolicLink()) {
+    if (ops.lstat(tmp).isSymbolicLink()) {
       throw new Error(`writeSecretFileAtomic: refusing to write through symlinked temp path ${tmp}`);
     }
-    unlinkSync(tmp);
-    fd = openSync(tmp, WRITE_FLAGS, SECRET_MODE);
+    ops.unlink(tmp);
+    fd = ops.open(tmp, WRITE_FLAGS, SECRET_MODE);
   }
+
+  let failure: unknown;
   try {
-    writeSync(fd, data);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  try {
-    renameSync(tmp, targetPath);
+    const bytes = Buffer.from(data);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const written = ops.write(fd, bytes, offset, bytes.length - offset, null);
+      if (written <= 0) throw new Error("writeSecretFileAtomic: write made no progress");
+      offset += written;
+    }
+    ops.fsync(fd);
   } catch (e) {
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
+    failure = e;
+  } finally {
+    try { ops.close(fd); } catch (e) { failure ??= e; }
+  }
+  if (failure) {
+    try { if (ops.exists(tmp)) ops.unlink(tmp); } catch { /* preserve the primary failure */ }
+    throw failure;
+  }
+  try {
+    ops.rename(tmp, targetPath);
+  } catch (e) {
+    try { if (ops.exists(tmp)) ops.unlink(tmp); } catch { /* preserve the rename failure */ }
     throw e;
   }
+}
+
+export function writeSecretFileAtomic(targetPath: string, data: string): void {
+  writeSecretFileAtomicWithOps(targetPath, data, DEFAULT_OPS);
+}
+
+export function _writeSecretFileAtomicForTests(
+  targetPath: string,
+  data: string,
+  overrides: Partial<SecretFileOps>,
+): void {
+  writeSecretFileAtomicWithOps(targetPath, data, { ...DEFAULT_OPS, ...overrides });
 }

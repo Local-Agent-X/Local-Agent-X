@@ -58,7 +58,7 @@ function getAuthPath(): string {
 export function loadAnthropicTokens(): AnthropicTokens | null {
   const authPath = getAuthPath();
   try {
-    const data = readProviderCredentials(authPath);
+    const data = readProviderCredentials(authPath, "anthropic");
     if (data === null) return null;
     if (typeof data === "object" && typeof (data as Partial<AnthropicTokens>).accessToken === "string") {
       const tokens = data as AnthropicTokens;
@@ -74,7 +74,7 @@ export function loadAnthropicTokens(): AnthropicTokens | null {
 }
 
 function saveAnthropicTokens(tokens: AnthropicTokens): void {
-  writeProviderCredentials(getAuthPath(), tokens);
+  writeProviderCredentials(getAuthPath(), "anthropic", tokens);
 }
 
 // ── Token Refresh ──

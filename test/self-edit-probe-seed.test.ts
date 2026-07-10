@@ -3,11 +3,9 @@
  * self-edit-sandbox-gates.ts).
  *
  * The gated path's bind probe boots LAX on a FRESH data dir; without seeding it
- * defaults to anthropic with no credential, so the smoke gate's /api/chat can't
- * get a completion for a codex/xai/subscription user. seedProbeProvider writes
- * settings.json {provider} and copies THAT provider's token file (only) into the
- * probe dir. LAX_DATA_DIR points at a temp "real" dir so the source token is
- * controllable and no developer creds are touched.
+ * seedProbeProvider writes settings.json {provider} and returns the canonical
+ * credential path for the child environment without copying credential bytes
+ * into the fresh data dir.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -36,31 +34,38 @@ describe("seedProbeProvider", () => {
     expect(settings.provider).toBe("xai");
   });
 
-  it("copies the active provider's token file into the probe dir", () => {
+  it("returns the canonical active-provider path without copying it", () => {
     writeFileSync(join(REAL_DIR, "xai-auth.json"), '{"access_token":"xai-tok"}');
-    seedProbeProvider(probeDir, "xai");
-    expect(existsSync(join(probeDir, "xai-auth.json"))).toBe(true);
-    expect(readFileSync(join(probeDir, "xai-auth.json"), "utf-8")).toContain("xai-tok");
+    const result = seedProbeProvider(probeDir, "xai");
+    expect(result.credentialPath).toBe(join(REAL_DIR, "xai-auth.json"));
+    expect(existsSync(join(probeDir, "xai-auth.json"))).toBe(false);
   });
 
-  it("copies ONLY the active provider's token, not other providers'", () => {
+  it("does not copy any provider credential into the fresh data dir", () => {
     writeFileSync(join(REAL_DIR, "xai-auth.json"), "xai");
     writeFileSync(join(REAL_DIR, "anthropic-auth.json"), "ant");
     seedProbeProvider(probeDir, "xai");
-    expect(existsSync(join(probeDir, "xai-auth.json"))).toBe(true);
+    expect(existsSync(join(probeDir, "xai-auth.json"))).toBe(false);
     expect(existsSync(join(probeDir, "anthropic-auth.json"))).toBe(false);
   });
 
   it("maps codex/openai to auth.json", () => {
     writeFileSync(join(REAL_DIR, "auth.json"), "openai-oauth");
-    seedProbeProvider(probeDir, "codex");
-    expect(existsSync(join(probeDir, "auth.json"))).toBe(true);
+    const result = seedProbeProvider(probeDir, "codex");
+    expect(result.credentialPath).toBe(join(REAL_DIR, "auth.json"));
+    expect(existsSync(join(probeDir, "auth.json"))).toBe(false);
   });
 
   it("still writes settings.json when no token file exists (env/secrets-store creds)", () => {
     seedProbeProvider(probeDir, "gemini");
     expect(existsSync(join(probeDir, "settings.json"))).toBe(true);
-    // gemini has no mapped token file — nothing to copy, and that's fine.
+    // gemini has no mapped token file.
     expect(existsSync(join(probeDir, "auth.json"))).toBe(false);
+  });
+
+  it("returns a precise unavailable status when canonical auth is absent", () => {
+    expect(seedProbeProvider(probeDir, "xai")).toEqual({
+      unavailable: "canonical xai-auth.json is unavailable; probe requires an environment credential",
+    });
   });
 });

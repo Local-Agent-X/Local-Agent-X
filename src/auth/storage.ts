@@ -1,46 +1,30 @@
-/**
- * Auth-token at-rest encryption.
- *
- * Wraps provider credential JSON with AES-256-GCM
- * using the OS-keychain master key (see keychain.ts). The plaintext file
- * format that comparable local agents ship is a stolen-laptop hazard —
- * any disk-image leak hands an attacker the user's live OAuth access
- * and refresh tokens. With this wrapper, attackers need the OS keychain
- * (DPAPI / macOS Keychain / libsecret) as well.
- *
- * Envelope format (also the format marker for migration detection):
- *   {
- *     "format": "lax-auth-v1",
- *     "iv": "<base64 12-byte IV>",
- *     "ciphertext": "<base64 ciphertext>",
- *     "tag": "<base64 16-byte GCM auth tag>"
- *   }
- *
- * Legacy plaintext files (with `accessToken` at the
- * top level) are detected and returned verbatim so the caller can
- * re-save them encrypted on next load.
- */
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import { getOrCreateMasterKey } from "../keychain.js";
 import { createLogger } from "../logger.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
 
 const logger = createLogger("auth-storage");
 
-export const ENVELOPE_FORMAT = "lax-auth-v1" as const;
+export const ENVELOPE_FORMAT = "lax-auth-v2" as const;
+export const LEGACY_ENVELOPE_FORMAT = "lax-auth-v1" as const;
+export const PROBE_CREDENTIAL_PATH_ENV = "LAX_PROBE_PROVIDER_AUTH_PATH" as const;
+
+export type ProviderCredentialNamespace = "core" | "anthropic" | "xai";
 
 interface Envelope {
-  format: typeof ENVELOPE_FORMAT;
+  format: typeof ENVELOPE_FORMAT | typeof LEGACY_ENVELOPE_FORMAT;
   iv: string;
   ciphertext: string;
   tag: string;
 }
 
-/** Resolve the master key from the OS keychain. Cached per-process so
- *  every saveTokens / loadTokens doesn't re-hit DPAPI / PowerShell. */
+type CredentialFormat = "v2" | "v1" | "plaintext";
+type JsonRecord = Record<string, unknown>;
+
 let _cachedKey: Buffer | null = null;
+
 function resolveMasterKey(dataDir: string): Buffer {
   const key = _cachedKey ?? getOrCreateMasterKey(dataDir).key;
   if (key.length !== 32) {
@@ -50,7 +34,6 @@ function resolveMasterKey(dataDir: string): Buffer {
   return key;
 }
 
-/** Test seam: drop the cached key so a test can swap the underlying keychain. */
 export function _resetMasterKeyCacheForTests(): void {
   _cachedKey = null;
 }
@@ -59,31 +42,7 @@ export function _setMasterKeyCacheForTests(key: Buffer): void {
   _cachedKey = key;
 }
 
-/** Encrypt with an explicit key. Pure function — used by the public
- *  `encryptAuthBlob` and by tests that want to verify wrong-key rejection. */
-export function encryptWithKey(plaintext: string, key: Buffer): string {
-  if (key.length !== 32) {
-    throw new Error(`auth-storage: encryption key must be 32 bytes, got ${key.length}`);
-  }
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  const env: Envelope = {
-    format: ENVELOPE_FORMAT,
-    iv: iv.toString("base64"),
-    ciphertext: ciphertext.toString("base64"),
-    tag: tag.toString("base64"),
-  };
-  return JSON.stringify(env);
-}
-
-/** Decrypt an envelope with an explicit key. Throws on tamper / wrong key
- *  (AES-GCM auth tag failure) or malformed envelope. */
-export function decryptWithKey(envelopeJson: string, key: Buffer): string {
-  if (key.length !== 32) {
-    throw new Error(`auth-storage: decryption key must be 32 bytes, got ${key.length}`);
-  }
+function parseEnvelope(envelopeJson: string): Envelope {
   let parsed: unknown;
   try {
     parsed = JSON.parse(envelopeJson);
@@ -93,75 +52,166 @@ export function decryptWithKey(envelopeJson: string, key: Buffer): string {
   if (!isEnvelope(parsed)) {
     throw new Error("auth-storage: envelope is missing required fields (format/iv/ciphertext/tag)");
   }
-  const iv = Buffer.from(parsed.iv, "base64");
-  const ciphertext = Buffer.from(parsed.ciphertext, "base64");
-  const tag = Buffer.from(parsed.tag, "base64");
-  if (iv.length !== 12) {
-    throw new Error(`auth-storage: iv must be 12 bytes, got ${iv.length}`);
-  }
-  if (tag.length !== 16) {
-    throw new Error(`auth-storage: tag must be 16 bytes, got ${tag.length}`);
-  }
-  const decipher = createDecipheriv("aes-256-gcm", key, iv);
-  decipher.setAuthTag(tag);
-  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  return plaintext.toString("utf-8");
+  return parsed;
 }
 
-/** Type guard for the envelope shape. */
-function isEnvelope(v: unknown): v is Envelope {
-  if (typeof v !== "object" || v === null) return false;
-  const o = v as Record<string, unknown>;
+function isEnvelope(value: unknown): value is Envelope {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
   return (
-    o.format === ENVELOPE_FORMAT &&
-    typeof o.iv === "string" &&
-    typeof o.ciphertext === "string" &&
-    typeof o.tag === "string"
+    keys.length === 4 &&
+    (value.format === ENVELOPE_FORMAT || value.format === LEGACY_ENVELOPE_FORMAT) &&
+    typeof value.iv === "string" &&
+    typeof value.ciphertext === "string" &&
+    typeof value.tag === "string"
   );
 }
 
-/** Detect whether a string is a legacy plaintext OAuth tokens blob.
- *  Plaintext files have `accessToken`/`refreshToken` at the top level. */
-function isLegacyPlaintext(v: unknown): boolean {
-  if (typeof v !== "object" || v === null) return false;
-  const o = v as Record<string, unknown>;
-  return typeof o.accessToken === "string";
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Encrypt a JSON string using the OS-keychain master key. */
-export function encryptAuthBlob(plaintext: string, dataDir: string): string {
-  const key = resolveMasterKey(dataDir);
-  return encryptWithKey(plaintext, key);
+function credentialAad(namespace: ProviderCredentialNamespace, authPath: string): string {
+  return `${ENVELOPE_FORMAT}\n${namespace}\n${basename(authPath)}`;
 }
 
-/**
- * Decrypt or pass through. If the input is an envelope, decrypts and
- * returns the inner JSON with `wasEncrypted: true`. If the input is
- * legacy plaintext (recognized by top-level `accessToken`), returns it
- * verbatim with `wasEncrypted: false`. Any other shape (malformed,
- * tampered, wrong key) throws — the caller treats it as a load failure.
- */
+export function encryptWithKey(plaintext: string, key: Buffer, aad = ""): string {
+  if (key.length !== 32) {
+    throw new Error(`auth-storage: encryption key must be 32 bytes, got ${key.length}`);
+  }
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  cipher.setAAD(Buffer.from(aad, "utf-8"));
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()]);
+  const envelope: Envelope = {
+    format: ENVELOPE_FORMAT,
+    iv: iv.toString("base64"),
+    ciphertext: ciphertext.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+  };
+  return JSON.stringify(envelope);
+}
+
+export function _encryptV1WithKeyForTests(plaintext: string, key: Buffer): string {
+  if (key.length !== 32) throw new Error("auth-storage: encryption key must be 32 bytes");
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()]);
+  return JSON.stringify({
+    format: LEGACY_ENVELOPE_FORMAT,
+    iv: iv.toString("base64"),
+    ciphertext: ciphertext.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+  });
+}
+
+export function decryptWithKey(envelopeJson: string, key: Buffer, aad = ""): string {
+  if (key.length !== 32) {
+    throw new Error(`auth-storage: decryption key must be 32 bytes, got ${key.length}`);
+  }
+  const envelope = parseEnvelope(envelopeJson);
+  const iv = Buffer.from(envelope.iv, "base64");
+  const ciphertext = Buffer.from(envelope.ciphertext, "base64");
+  const tag = Buffer.from(envelope.tag, "base64");
+  if (iv.length !== 12) throw new Error(`auth-storage: iv must be 12 bytes, got ${iv.length}`);
+  if (tag.length !== 16) throw new Error(`auth-storage: tag must be 16 bytes, got ${tag.length}`);
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  if (envelope.format === ENVELOPE_FORMAT) decipher.setAAD(Buffer.from(aad, "utf-8"));
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf-8");
+}
+
+export function encryptAuthBlob(
+  plaintext: string,
+  dataDir: string,
+  namespace: ProviderCredentialNamespace = "core",
+  authPath = `${dataDir}/auth.json`,
+): string {
+  return encryptWithKey(plaintext, resolveMasterKey(dataDir), credentialAad(namespace, authPath));
+}
+
 export function decryptAuthBlob(
   blob: string,
   dataDir: string,
-): { plaintext: string; wasEncrypted: boolean } {
+  namespace: ProviderCredentialNamespace = "core",
+  authPath = `${dataDir}/auth.json`,
+): { plaintext: string; wasEncrypted: boolean; format: CredentialFormat } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(blob);
   } catch (e) {
     throw new Error(`auth-storage: input is not valid JSON: ${(e as Error).message}`);
   }
-  if (isLegacyPlaintext(parsed)) {
-    return { plaintext: blob, wasEncrypted: false };
+  if (isRecord(parsed) && typeof parsed.accessToken === "string") {
+    return { plaintext: blob, wasEncrypted: false, format: "plaintext" };
   }
-  if (isEnvelope(parsed)) {
-    const key = resolveMasterKey(dataDir);
-    const plaintext = decryptWithKey(blob, key);
-    return { plaintext, wasEncrypted: true };
+  if (!isEnvelope(parsed)) {
+    throw new Error("auth-storage: blob is neither legacy plaintext nor a recognized envelope");
   }
-  throw new Error(
-    "auth-storage: blob is neither legacy plaintext nor a recognized envelope — refusing to guess",
-  );
+  return {
+    plaintext: decryptWithKey(blob, resolveMasterKey(dataDir), credentialAad(namespace, authPath)),
+    wasEncrypted: true,
+    format: parsed.format === ENVELOPE_FORMAT ? "v2" : "v1",
+  };
+}
+
+function assertAllowedKeys(value: JsonRecord, allowed: readonly string[]): void {
+  const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (unknown.length > 0) throw new Error(`auth-storage: unexpected credential fields: ${unknown.join(", ")}`);
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function optionalNumber(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function validateCredentials(namespace: ProviderCredentialNamespace, value: unknown): JsonRecord {
+  if (!isRecord(value)) throw new Error("auth-storage: credentials must be a JSON object");
+  if (typeof value.accessToken !== "string" || value.accessToken.length === 0) {
+    throw new Error("auth-storage: credentials require a non-empty accessToken");
+  }
+  if (namespace === "core") {
+    assertAllowedKeys(value, ["accessToken", "refreshToken", "expiresAt", "idToken", "accountId"]);
+    if (typeof value.refreshToken !== "string" || !Number.isFinite(value.expiresAt)) {
+      throw new Error("auth-storage: core credentials require refreshToken and finite expiresAt");
+    }
+    if (!optionalString(value.idToken) || !optionalString(value.accountId)) {
+      throw new Error("auth-storage: core credential optional fields must be strings");
+    }
+    return value;
+  }
+  if (namespace === "anthropic") {
+    assertAllowedKeys(value, ["accessToken", "refreshToken", "expiresAt", "method", "provider"]);
+    if (!optionalString(value.refreshToken) || !optionalNumber(value.expiresAt)) {
+      throw new Error("auth-storage: anthropic refreshToken/expiresAt fields are invalid");
+    }
+    if (value.method !== undefined && value.method !== "oauth" && value.method !== "token") {
+      throw new Error("auth-storage: anthropic method is invalid");
+    }
+    if (value.provider !== undefined && value.provider !== "anthropic") {
+      throw new Error("auth-storage: anthropic provider marker is invalid");
+    }
+    const method = value.method ?? (value.refreshToken ? "oauth" : "token");
+    return { ...value, provider: "anthropic", method };
+  }
+  assertAllowedKeys(value, [
+    "accessToken", "refreshToken", "expiresAt", "authorizationEndpoint", "tokenEndpoint", "provider",
+  ]);
+  if (
+    !optionalString(value.refreshToken) ||
+    !optionalNumber(value.expiresAt) ||
+    !optionalString(value.authorizationEndpoint) ||
+    !optionalString(value.tokenEndpoint)
+  ) {
+    throw new Error("auth-storage: xai credential optional fields are invalid");
+  }
+  if (value.provider !== undefined && value.provider !== "xai") {
+    throw new Error("auth-storage: xai provider marker is invalid");
+  }
+  return { ...value, provider: "xai" };
 }
 
 export interface CredentialWriteOptions {
@@ -171,16 +221,15 @@ export interface CredentialWriteOptions {
 
 export function writeProviderCredentials(
   authPath: string,
+  namespace: ProviderCredentialNamespace,
   credentials: unknown,
   options: CredentialWriteOptions = {},
 ): void {
-  const plaintext = JSON.stringify(credentials, null, 2);
-  if (plaintext === undefined) {
-    throw new Error("auth-storage: credentials are not JSON serializable");
-  }
+  const validated = validateCredentials(namespace, credentials);
+  const plaintext = JSON.stringify(validated, null, 2);
   let payload: string;
   try {
-    payload = encryptAuthBlob(plaintext, dirname(authPath));
+    payload = encryptAuthBlob(plaintext, dirname(authPath), namespace, authPath);
   } catch (e) {
     const reason = (e as Error).message;
     if (!options.allowUnencryptedWrite) {
@@ -194,18 +243,34 @@ export function writeProviderCredentials(
   writeSecretFileAtomic(authPath, payload);
 }
 
-export function readProviderCredentials(authPath: string): unknown | null {
-  if (!existsSync(authPath)) return null;
-  const raw = readFileSync(authPath, "utf-8");
-  const { plaintext, wasEncrypted } = decryptAuthBlob(raw, dirname(authPath));
-  let credentials: unknown;
+function resolveCredentialReadPath(authPath: string): string {
+  const inherited = process.env.LAX_SELF_EDIT_PROBE === "1"
+    ? process.env[PROBE_CREDENTIAL_PATH_ENV]
+    : undefined;
+  if (!inherited) return authPath;
+  if (basename(inherited) !== basename(authPath)) {
+    throw new Error(`auth-storage: inherited probe credential does not match ${basename(authPath)}`);
+  }
+  return inherited;
+}
+
+export function readProviderCredentials(
+  authPath: string,
+  namespace: ProviderCredentialNamespace,
+): unknown | null {
+  const readPath = resolveCredentialReadPath(authPath);
+  if (!existsSync(readPath)) return null;
+  const raw = readFileSync(readPath, "utf-8");
+  const result = decryptAuthBlob(raw, dirname(readPath), namespace, readPath);
+  let parsed: unknown;
   try {
-    credentials = JSON.parse(plaintext);
+    parsed = JSON.parse(result.plaintext);
   } catch (e) {
     throw new Error(`auth-storage: credential payload is not valid JSON: ${(e as Error).message}`);
   }
-  if (!wasEncrypted) {
-    writeProviderCredentials(authPath, credentials);
+  const credentials = validateCredentials(namespace, parsed);
+  if (result.format !== "v2" && readPath === authPath) {
+    writeProviderCredentials(authPath, namespace, credentials);
     logger.info(`[auth-storage] Migrated ${authPath} to ${ENVELOPE_FORMAT}.`);
   }
   return credentials;

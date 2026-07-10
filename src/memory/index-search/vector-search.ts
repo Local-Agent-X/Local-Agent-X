@@ -7,12 +7,14 @@ export function searchVector(
   queryVec: number[],
   limit: number,
   sources?: string[],
-  sessionFilter?: string
+  sessionFilter?: string | null
 ): Array<Chunk & { score: number }> {
   const BATCH_SIZE = 1000;
   const sourceFilter = sources ? `AND source IN (${sources.map(() => "?").join(",")})` : "";
-  // Same gate as searchKeyword: profile-level (NULL) + active session only.
-  const sessionWhere = sessionFilter ? `AND (session_id IS NULL OR session_id = ?)` : "";
+  // Same source-authoritative gate as searchKeyword.
+  const sessionWhere = sessionFilter !== undefined
+    ? `AND (source IN ('entity', 'mind', 'personality', 'import')${sessionFilter ? " OR session_id = ?" : ""})`
+    : "";
   const baseParams: unknown[] = sources ? [...sources] : [];
   const params = sessionFilter ? [...baseParams, sessionFilter] : baseParams;
 
@@ -30,7 +32,7 @@ export function searchVector(
   for (let offset = 0; offset < totalCount; offset += BATCH_SIZE) {
     const batch = db
       .prepare(
-        `SELECT id, path, source, start_line, end_line, text, embedding, metadata, updated_at
+        `SELECT id, path, source, start_line, end_line, text, embedding, metadata, session_id, updated_at
          FROM chunks WHERE embedding IS NOT NULL ${sourceFilter} ${sessionWhere}
          LIMIT ? OFFSET ?`
       )
@@ -43,6 +45,7 @@ export function searchVector(
       text: string;
       embedding: string;
       metadata: string | null;
+      session_id: string | null;
       updated_at: number;
     }>;
 
@@ -66,7 +69,10 @@ export function searchVector(
           endLine: row.end_line,
           text: row.text,
           hash: "",
-          metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+          metadata: {
+            ...(row.metadata ? JSON.parse(row.metadata) as Record<string, unknown> : {}),
+            session_id: row.session_id ?? undefined,
+          },
           updatedAt: row.updated_at,
           score: similarity,
         });

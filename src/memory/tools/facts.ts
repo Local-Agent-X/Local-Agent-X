@@ -13,7 +13,7 @@ type FactProvenance = typeof VALID_PROVENANCE[number];
 
 const PROVENANCE_CONFIDENCE_CAP: Record<FactProvenance, number> = {
   user_statement: 1.0,
-  tool_observation: 0.95,
+  tool_observation: 0.6,
   inference: 0.6,
 };
 
@@ -30,6 +30,7 @@ function groundedConfidence(
 }
 
 function provenanceSource(provenance: FactProvenance): string {
+  if (provenance === "tool_observation") return "agent-tool:model-declared-tool-observation";
   return `agent-tool:${provenance.replace("_", "-")}`;
 }
 
@@ -71,6 +72,7 @@ export function createFactsTools(memory: MemoryIndex) {
         "Mention entities with @-prefix to index them: 'User's wife is @Sam.' " +
         "Always set `provenance`: `user_statement` only for something the user directly said, " +
         "`tool_observation` only for a successful tool result, or `inference` for any interpretation. " +
+        "This argument is model-declared and does not itself verify a tool execution; tool observations remain unverified. " +
         "Inferences are confidence-capped and must preserve uncertainty; never upgrade suggested/recommended " +
         "language into happened/enforced/current language. " +
         "\n\n" +
@@ -87,7 +89,7 @@ export function createFactsTools(memory: MemoryIndex) {
           },
           confidence: {
             type: "number",
-            description: "0.0-1.0 confidence; capped by provenance (inference max 0.6, tool observation max 0.95)",
+            description: "0.0-1.0 confidence; model-declared inference and tool observation are capped at 0.6",
           },
           provenance: {
             type: "string",

@@ -12,8 +12,12 @@
 import Database from "better-sqlite3";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { getAtlasRecords, getChunk } from "./index-atlas.js";
+import { migrateSchema } from "./index-schema.js";
+import { searchKeyword } from "./index-search/keyword-search.js";
+import { postProcess } from "./index-search/post-process.js";
+import { searchVector } from "./index-search/vector-search.js";
 import { describeChunkProvenance, mergeHybridResults, toSearchResult } from "./search-helpers.js";
-import type { Chunk, MemorySearchResult } from "./types.js";
+import { DEFAULT_MEMORY_CONFIG, type Chunk, type ChunkMetadata, type ChunkSourceType, type MemorySearchResult } from "./types.js";
 import { memorySearchTool } from "./tools/search/memory-search.js";
 import { searchPastSessionsTool } from "./tools/search/search-past-sessions.js";
 
@@ -105,7 +109,7 @@ describe("memory provenance labels", () => {
     });
   });
 
-  it("preserves explicitly recorded trust, taint, and label values", () => {
+  it("rejects stored trust, cleanliness, and label upgrades", () => {
     const provenance = describeChunkProvenance("import", {
       source_type: "import",
       trust_status: "trusted",
@@ -113,9 +117,156 @@ describe("memory provenance labels", () => {
       provenance_label: "Reviewed archive",
     });
 
-    expect(provenance.trust_status).toBe("trusted");
-    expect(provenance.taint_status).toBe("clean");
-    expect(provenance.label).toBe("Reviewed archive");
+    expect(provenance.trust_status).toBe("untrusted");
+    expect(provenance.taint_status).toBe("unknown");
+    expect(provenance.label).toBe("Imported conversation");
+  });
+
+  it("preserves conservative untrusted and tainted downgrades", () => {
+    expect(describeChunkProvenance("entity", {
+      trust_status: "untrusted",
+      taint_status: "tainted",
+    })).toMatchObject({ trust_status: "untrusted", taint_status: "tainted" });
+  });
+
+  it("ignores forged source identity and supplies a label for unknown legacy sources", () => {
+    expect(describeChunkProvenance("session", {
+      source_type: "entity-page",
+      trust_status: "trusted",
+      taint_status: "clean",
+      provenance_label: "Trusted profile",
+    })).toMatchObject({
+      source_type: "agent-x-session",
+      trust_status: "mixed",
+      taint_status: "unknown",
+      label: "Local session transcript",
+    });
+
+    const legacy = describeChunkProvenance(
+      "old-memory-store",
+      { source_type: "mystery-v1" } as unknown as ChunkMetadata,
+    );
+    expect(legacy.source_type).toBe("legacy");
+    expect(legacy.label).toBe("Legacy memory (old-memory-store)");
+  });
+});
+
+describe("same-session storage gate", () => {
+  function searchDb(): InstanceType<typeof Database> {
+    const db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE chunks (
+        id INTEGER PRIMARY KEY,
+        path TEXT NOT NULL,
+        source TEXT NOT NULL,
+        start_line INTEGER NOT NULL,
+        end_line INTEGER NOT NULL,
+        text TEXT NOT NULL,
+        embedding TEXT,
+        metadata TEXT,
+        session_id TEXT,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content=chunks, content_rowid=id);
+    `);
+    const insert = db.prepare(
+      "INSERT INTO chunks (id, path, source, start_line, end_line, text, embedding, metadata, session_id, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?, ?, ?, 1)",
+    );
+    const rows = [
+      [1, "entity.md", "entity", "needle entity", null, JSON.stringify({ source_type: "agent-x-session", trust_status: "trusted", taint_status: "clean" }), null],
+      [2, "session-null", "session", "needle null", null, JSON.stringify({ source_type: "entity-page" }), null],
+      [3, "session-blank", "session", "needle blank", null, JSON.stringify({ source_type: "entity-page" }), ""],
+      [4, "session-other", "session", "needle other", null, JSON.stringify({ session_id: "current" }), "other"],
+      [5, "session-current", "session", "needle current", null, JSON.stringify({ session_id: "forged-other" }), "current"],
+      [6, "import", "import", "needle import", null, JSON.stringify({ source_type: "import", session_id: "archive" }), "archive"],
+    ] as const;
+    for (const row of rows) {
+      insert.run(...row);
+      db.prepare("INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)").run(row[0], row[3]);
+    }
+    db.prepare("UPDATE chunks SET embedding = ?").run(JSON.stringify([1, 0]));
+    return db;
+  }
+
+  it("fails closed for NULL, blank, and foreign session ids in keyword and vector SQL", () => {
+    const db = searchDb();
+    try {
+      const keywordIds = searchKeyword(db, "needle", 20, undefined, "current").map((r) => r.id);
+      const vectorIds = searchVector(db, [1, 0], 20, undefined, "current").map((r) => r.id);
+      expect(keywordIds.sort()).toEqual([1, 5, 6]);
+      expect(vectorIds.sort()).toEqual([1, 5, 6]);
+      expect(searchKeyword(db, "needle", 20, undefined, null).map((r) => r.id).sort()).toEqual([1, 6]);
+      expect(searchVector(db, [1, 0], 20, undefined, null).map((r) => r.id).sort()).toEqual([1, 6]);
+      expect(searchKeyword(db, "needle", 20, undefined, undefined)).toHaveLength(6);
+      expect(searchVector(db, [1, 0], 20, undefined, undefined)).toHaveLength(6);
+
+      const current = searchKeyword(db, "needle", 20, undefined, "current").find((r) => r.id === 5);
+      expect(current?.metadata?.session_id).toBe("current");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("uses source, not forged metadata, in post-processing and preserves explicit cross-session search", () => {
+    const mk = (id: number, source: MemorySearchResult["source"], sessionId?: string, sourceType: ChunkSourceType = "memory-file"): MemorySearchResult => ({
+      path: String(id), startLine: 1, endLine: 1, score: 1, snippet: String(id), source,
+      metadata: { source_type: sourceType, session_id: sessionId },
+    });
+    const rows = [
+      mk(1, "entity", "other", "agent-x-session"),
+      mk(2, "session", undefined, "entity-page"),
+      mk(3, "session", "other", "import"),
+      mk(4, "session", "current", "entity-page"),
+      mk(5, "daily-log"),
+    ];
+    const config = { ...DEFAULT_MEMORY_CONFIG, temporalDecayEnabled: false, mmrEnabled: false };
+    const db = new Database(":memory:");
+    try {
+      expect(postProcess(db, config, rows, 10, -1, { sessionId: "current" }).map((r) => r.snippet))
+        .toEqual(["1", "4"]);
+      expect(postProcess(db, config, rows, 10, -1, { sessionId: "current", crossSession: true }))
+        .toHaveLength(5);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("schema v10 provenance migration", () => {
+  it("normalizes blank session ids and scrubs forged provenance", () => {
+    const db = new Database(":memory:");
+    try {
+      db.exec(`
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE chunks (id INTEGER PRIMARY KEY, source TEXT NOT NULL, metadata TEXT, session_id TEXT);
+        INSERT INTO chunks VALUES
+          (1, 'session', '{"source_type":"entity-page","trust_status":"trusted","taint_status":"clean","provenance_label":"Profile"}', ''),
+          (2, 'entity', '{"source_type":"agent-x-session","trust_status":"trusted","taint_status":"clean"}', NULL),
+          (3, 'old-store', '{"source_type":"mystery","trust_status":"trusted","taint_status":"clean"}', NULL);
+      `);
+
+      migrateSchema(db, 9);
+
+      const rows = db.prepare("SELECT id, session_id, metadata FROM chunks ORDER BY id")
+        .all() as Array<{ id: number; session_id: string | null; metadata: string }>;
+      expect(rows[0].session_id).toBeNull();
+      expect(JSON.parse(rows[0].metadata)).toMatchObject({
+        source_type: "agent-x-session", trust_status: "mixed", taint_status: "unknown",
+        provenance_label: "Local session transcript",
+      });
+      expect(JSON.parse(rows[1].metadata)).toMatchObject({
+        source_type: "entity-page", trust_status: "unknown", taint_status: "unknown",
+        provenance_label: "Entity memory page",
+      });
+      expect(JSON.parse(rows[2].metadata)).toMatchObject({
+        source_type: "legacy", trust_status: "unknown", taint_status: "unknown",
+        provenance_label: "Legacy memory (old-store)",
+      });
+      const indexes = db.prepare("PRAGMA index_list('chunks')").all() as Array<{ name: string }>;
+      expect(indexes.some((index) => index.name === "idx_chunks_source_session_id")).toBe(true);
+    } finally {
+      db.close();
+    }
   });
 });
 

@@ -73,47 +73,75 @@ const SOURCE_TYPE_DEFAULTS: Record<CanonicalSource, ChunkSourceType> = {
   import: "import",
 };
 
-const SOURCE_LABELS: Record<ChunkSourceType, string> = {
-  "agent-x-session": "Local session transcript",
+const IMPORT_SOURCE_TYPES = new Set<ChunkSourceType>([
+  "chatgpt-import", "claude-import", "codex-import", "slack-import", "import",
+]);
+
+const IMPORT_LABELS: Partial<Record<ChunkSourceType, string>> = {
   "chatgpt-import": "Imported ChatGPT conversation",
   "claude-import": "Imported Claude conversation",
   "codex-import": "Imported Codex conversation",
   "slack-import": "Imported Slack conversation",
-  "memory-file": "Local memory file",
-  "entity-page": "Entity memory page",
   import: "Imported conversation",
 };
 
-function defaultTrust(sourceType: ChunkSourceType): MemoryTrustStatus {
-  if (sourceType === "agent-x-session") return "mixed";
-  if (sourceType === "import" || sourceType.endsWith("-import")) return "untrusted";
+function canonicalSourceType(source: string, declared: unknown): string {
+  if (source === "import" && IMPORT_SOURCE_TYPES.has(declared as ChunkSourceType)) {
+    return declared as string;
+  }
+  return SOURCE_TYPE_DEFAULTS[source as CanonicalSource] ?? "legacy";
+}
+
+function sourceLabel(source: string, sourceType: string): string {
+  if (source === "import") {
+    return IMPORT_LABELS[sourceType as ChunkSourceType] ?? "Imported conversation";
+  }
+  const labels: Partial<Record<CanonicalSource, string>> = {
+    entity: "Entity memory page",
+    "daily-log": "Daily memory log",
+    mind: "Legacy mind memory",
+    "session-summary": "Session summary",
+    session: "Local session transcript",
+    personality: "Local profile memory",
+  };
+  return labels[source as CanonicalSource]
+    ?? `Legacy memory (${source.trim() || "unknown source"})`;
+}
+
+function defaultTrust(source: string): MemoryTrustStatus {
+  if (source === "session") return "mixed";
+  if (source === "import") return "untrusted";
   return "unknown";
 }
 
 export function describeChunkProvenance(
-  source: CanonicalSource,
+  source: string,
   metadata: ChunkMetadata | undefined,
 ): MemoryProvenance {
-  const sourceType = metadata?.source_type ?? SOURCE_TYPE_DEFAULTS[source];
+  const sourceType = canonicalSourceType(source, metadata?.source_type);
+  const trust = defaultTrust(source);
   return {
     source,
     source_type: sourceType,
-    session_id: metadata?.session_id,
+    session_id: typeof metadata?.session_id === "string" && metadata.session_id.trim()
+      ? metadata.session_id.trim()
+      : undefined,
     date: metadata?.date,
-    trust_status: metadata?.trust_status ?? defaultTrust(sourceType),
-    taint_status: metadata?.taint_status ?? "unknown",
-    label: metadata?.provenance_label ?? SOURCE_LABELS[sourceType],
+    trust_status: metadata?.trust_status === "untrusted" ? "untrusted" : trust,
+    taint_status: metadata?.taint_status === "tainted" ? "tainted" : "unknown",
+    label: sourceLabel(source, sourceType),
   };
 }
 
 export function withChunkProvenance(
-  source: CanonicalSource,
+  source: string,
   metadata: ChunkMetadata,
 ): ChunkMetadata {
   const provenance = describeChunkProvenance(source, metadata);
   return {
     ...metadata,
     source_type: provenance.source_type as ChunkSourceType,
+    session_id: provenance.session_id,
     trust_status: provenance.trust_status,
     taint_status: provenance.taint_status,
     provenance_label: provenance.label,

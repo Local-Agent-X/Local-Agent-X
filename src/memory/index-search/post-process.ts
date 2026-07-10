@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import type Database from "better-sqlite3";
-import type { FactKind, MemoryConfig, MemorySearchResult } from "../types.js";
+import { PROFILE_SOURCES, type FactKind, type MemoryConfig, type MemorySearchResult } from "../types.js";
 import {
   applyTemporalDecay, applyTemporalQueryBoost, mmrRerank,
 } from "../search-helpers.js";
@@ -15,24 +15,13 @@ export function postProcess(
   minScore: number,
   options?: { since?: Date; entities?: string[]; kind?: FactKind; project?: string; sourceType?: string; dateFrom?: string; dateTo?: string; query?: string; sessionId?: string; crossSession?: boolean }
 ): MemorySearchResult[] {
-  // Cross-session gate. Default-deny: if a sessionId is provided and the
-  // caller hasn't explicitly opted into cross-session, drop chunks tagged
-  // with a different session_id. Profile-level chunks (no session_id) are
-  // always allowed through — they're the stable per-user knowledge.
-  //
-  // Imports are profile-level too: history the user explicitly brought in
-  // (ChatGPT/Claude) to be remembered. They're stored with source='session'
-  // (same column as native sessions) but metadata.source_type='import' — and
-  // they carry the ORIGINAL conversation's session_id, never the current one.
-  // Without this carve-out the default gate silently drops 100% of imported
-  // history. Key on source_type so imports pass while native foreign sessions
-  // (source_type='agent-x-session') are still correctly dropped.
-  if (options?.sessionId && !options?.crossSession) {
-    const sid = options.sessionId;
+  // Source is the scope authority. Session-scoped rows fail closed unless an
+  // exact active-session id is present; metadata cannot relabel them profile.
+  if (!options?.crossSession) {
+    const sid = options?.sessionId;
     results = results.filter((r) => {
-      if (r.metadata?.source_type?.includes("import")) return true;
-      const chunkSid = r.metadata?.session_id;
-      return !chunkSid || chunkSid === sid;
+      if (PROFILE_SOURCES.includes(r.source)) return true;
+      return !!sid && r.metadata?.session_id === sid;
     });
   }
 

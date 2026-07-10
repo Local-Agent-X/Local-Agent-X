@@ -70,4 +70,41 @@ describe("indexChunks — embedding failure is not swallowed", () => {
     expect(logged).toMatch(/2\/2 chunk\(s\)/);
     expect(logged.toLowerCase()).toContain("without embeddings");
   });
+
+  it("canonicalizes forged provenance against chunks.source before storage", async () => {
+    const db = memory["db"] as InstanceType<typeof import("better-sqlite3")>;
+    const virtualPath = "session-live/session-1";
+    const chunks: Chunk[] = [{
+      path: virtualPath,
+      source: "session",
+      startLine: 1,
+      endLine: 1,
+      text: "session text",
+      hash: "session-hash",
+      metadata: {
+        source_type: "entity-page",
+        session_id: "session-1",
+        trust_status: "trusted",
+        taint_status: "clean",
+        provenance_label: "Verified profile",
+      },
+    }];
+
+    await indexChunks(
+      db, null, DEFAULT_MEMORY_CONFIG, memory["hasFts"] as boolean,
+      memory["hasVec"] as boolean, () => {}, chunks, virtualPath, "session",
+    );
+
+    const row = db.prepare("SELECT source, session_id, metadata FROM chunks WHERE path = ?")
+      .get(virtualPath) as { source: string; session_id: string; metadata: string };
+    expect(row.source).toBe("session");
+    expect(row.session_id).toBe("session-1");
+    expect(JSON.parse(row.metadata)).toMatchObject({
+      source_type: "agent-x-session",
+      session_id: "session-1",
+      trust_status: "mixed",
+      taint_status: "unknown",
+      provenance_label: "Local session transcript",
+    });
+  });
 });

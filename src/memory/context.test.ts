@@ -145,8 +145,24 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
     const core = extractCoreMemory(block);
     expect(core).toMatch(/not proof/i);
     expect(core).toMatch(/NEVER use it as evidence for current runtime/i);
+    expect(core).toContain('source=retained-fact source_type=fact-db trust=mixed taint=unknown label="Retained fact memory"');
     expect(core).toContain("[unverified inference]");
     expect(core).toContain('source=retained-fact source_type=inference trust=untrusted taint=clean label="Unverified inference"');
+  });
+
+  it("labels model-declared tool observations as unverified and not clean", async () => {
+    const r = memory.rememberFact("the service returned healthy", {
+      kind: "observation",
+      confidence: 0.6,
+      sourceFile: "agent-tool:model-declared-tool-observation",
+    });
+    expect(r.ok).toBe(true);
+
+    const core = extractCoreMemory(await buildContextBlock(memory, { skipDailyLog: true }));
+    expect(core).toContain("[unverified model-declared tool observation]");
+    expect(core).toContain("trust=unknown taint=unknown");
+    expect(core).not.toContain("source_type=model_declared_tool_observation trust=trusted");
+    expect(core).not.toContain("source_type=model_declared_tool_observation trust=unknown taint=clean");
   });
 
   it("body cap holds under flood — never wildly exceeds MAX_BYTES=3000", async () => {
@@ -446,6 +462,8 @@ describe("daily-log session tag is locale-independent (CM-6)", () => {
     try {
       memory.appendDailyLog("User: alpha line from session A", "sess-a");
       memory.appendDailyLog("User: bravo line from session B", "sess-b");
+      memory.appendDailyLog("User: legacy untagged transcript\nlegacy continuation secret");
+      memory.appendDailyLog("Background sync completed");
 
       // Written tag must be a locale-independent, digit-leading HH:MM:SS.
       const raw = readFileSync(memory.getDailyLogPath(), "utf-8");
@@ -456,6 +474,10 @@ describe("daily-log session tag is locale-independent (CM-6)", () => {
       const block = await buildContextBlock(memory, { sessionId: "sess-a" });
       expect(block).toContain("alpha line from session A");
       expect(block).not.toContain("bravo line from session B");
+      expect(block).not.toContain("legacy untagged transcript");
+      expect(block).not.toContain("legacy continuation secret");
+      expect(block).toContain("Background sync completed");
+      expect(block).toContain('source=daily-log source_type=memory-file trust=mixed taint=unknown label="Current-session daily log"');
     } finally {
       spy.mockRestore();
     }
@@ -470,6 +492,7 @@ describe("<project_brief> injection", () => {
     const block = await buildContextBlock(memory, { skipDailyLog: true, projectId: pid });
     expect(block).toContain("<project_brief>");
     expect(block).toContain("Goal: $1M revenue");
+    expect(block).toContain('source=project-brief source_type=memory-file trust=unknown taint=clean label="Active project brief"');
   });
 
   it("omits the brief when no projectId is set", async () => {
@@ -478,5 +501,15 @@ describe("<project_brief> injection", () => {
 
     const block = await buildContextBlock(memory, { skipDailyLog: true });
     expect(block).not.toContain("<project_brief>");
+  });
+});
+
+describe("profile context provenance", () => {
+  it("labels every injected personality block", async () => {
+    const block = await buildContextBlock(memory, { skipDailyLog: true });
+
+    expect(block).toContain('source=personality source_type=memory-file trust=unknown taint=clean label="Agent identity profile"');
+    expect(block).toContain('source=personality source_type=memory-file trust=unknown taint=clean label="Agent behavior profile"');
+    expect(block).toContain('source=personality source_type=memory-file trust=unknown taint=clean label="User profile"');
   });
 });

@@ -28,11 +28,11 @@ export async function searchInIndex(
   let vectorResults: Array<Chunk & { score: number }> = [];
 
   // Same-session filter pushed into SQL when caller hasn't opted into
-  // cross-session. Profile-level chunks (session_id IS NULL) always pass
-  // because they describe the user as a stable entity, not a conversation.
-  const sqlSessionFilter = options?.sessionId && !options?.crossSession
-    ? options.sessionId
-    : undefined;
+  // cross-session. Profile scope comes from chunks.source; nullable IDs never
+  // turn session-scoped rows into profile memory.
+  const sqlSessionFilter = options?.crossSession
+    ? undefined
+    : options?.sessionId ?? null;
 
   if (deps.hasFts) {
     keywordResults = searchKeyword(deps.db, query, candidateLimit, options?.sources, sqlSessionFilter);

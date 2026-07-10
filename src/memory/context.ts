@@ -20,11 +20,20 @@ function sanitizeDailyLogForModeration(log: string): string {
   return out.join("\n");
 }
 
+function provenanceHeader(
+  source: string,
+  sourceType: string,
+  trust: string,
+  taint: string,
+  label: string,
+): string {
+  return `[provenance source=${source} source_type=${sourceType} trust=${trust} taint=${taint} label=${JSON.stringify(label)}]`;
+}
+
 /**
- * Filter today's daily log to lines tagged with the given session ID. Lines
- * without a session tag (system / background entries) always pass — those
- * are profile-level facts about the day, not transcript content from a
- * specific chat. The whole purpose: when this session reads `today_context`,
+ * Filter today's daily log to timestamped blocks for the given session ID.
+ * Untagged system/background events pass, but legacy untagged User/Agent
+ * transcript blocks fail closed. The whole purpose: when this session reads `today_context`,
  * it sees ITS OWN earlier turns plus untagged system events, NOT another
  * chat session's transcript that happens to be in the same date file.
  *
@@ -32,23 +41,28 @@ function sanitizeDailyLogForModeration(log: string): string {
  * conversation's transcript appeared in the logo-redesign chat after a
  * server restart. The tagged-line format is `[session-id] [HH:MM:SS] text`.
  */
-function filterDailyLogToSession(content: string, sessionId: string): string {
+function filterDailyLogToSession(content: string, sessionId?: string): string {
   const lines = content.split("\n");
   const kept: string[] = [];
-  const TAG_RE = /^\[([^\]]+)\]\s+\[\d/; // `[some-id] [HH:MM:SS]` shape
+  const taggedEntry = /^\[([^\]]+)\]\s+\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/;
+  const legacyEntry = /^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/;
+  let keepContinuation = true;
   for (const line of lines) {
-    if (!line.trim()) {
-      kept.push(line);
+    const tagged = line.match(taggedEntry);
+    if (tagged) {
+      keepContinuation = !!sessionId && tagged[1] === sessionId;
+      if (keepContinuation) kept.push(line);
       continue;
     }
-    const m = line.match(TAG_RE);
-    if (!m) {
-      // Untagged line — legacy entries (pre-tagging) and system events. Keep.
-      kept.push(line);
+
+    const legacy = line.match(legacyEntry);
+    if (legacy) {
+      keepContinuation = !/^(?:User|Agent):\s*/i.test(legacy[2]);
+      if (keepContinuation) kept.push(line);
       continue;
     }
-    if (m[1] === sessionId) kept.push(line);
-    // tagged with a different session_id → drop, this is exactly the bleed
+
+    if (keepContinuation) kept.push(line);
   }
   return kept.join("\n");
 }
@@ -87,17 +101,17 @@ export async function buildContextBlock(
 
   const identity = await readPersonalityFile(memDir, "identity");
   if (identity) {
-    sections.push(`<agent_identity>\n${identity}\n</agent_identity>`);
+    sections.push(`<agent_identity>\n${provenanceHeader("personality", "memory-file", "unknown", "clean", "Agent identity profile")}\n${identity}\n</agent_identity>`);
   }
 
   const heart = await readPersonalityFile(memDir, "heart");
   if (heart) {
-    sections.push(`<agent_heart>\n${heart}\n</agent_heart>`);
+    sections.push(`<agent_heart>\n${provenanceHeader("personality", "memory-file", "unknown", "clean", "Agent behavior profile")}\n${heart}\n</agent_heart>`);
   }
 
   const user = await readPersonalityFile(memDir, "user");
   if (user) {
-    sections.push(`<user_profile>\n${user}\n</user_profile>`);
+    sections.push(`<user_profile>\n${provenanceHeader("personality", "memory-file", "unknown", "clean", "User profile")}\n${user}\n</user_profile>`);
   }
 
   // Active project's living brief. Only when this turn is scoped to a
@@ -108,7 +122,8 @@ export async function buildContextBlock(
     const brief = await readProjectBrief(opts.projectId, memDir);
     if (brief) {
       sections.push(
-        `<project_brief>\n(the current state of this project. Weave it in naturally; ` +
+        `<project_brief>\n${provenanceHeader("project-brief", "memory-file", "unknown", "clean", "Active project brief")}\n` +
+        `(the current state of this project. Weave it in naturally; ` +
         `record changes via project_brief_update — do not repeat this block verbatim.)\n\n${brief}\n</project_brief>`,
       );
     }
@@ -121,16 +136,16 @@ export async function buildContextBlock(
       if (content && content.trim()) {
         // Cross-session bleed fix (May 2026): filter today's log to lines
         // tagged with the current session id BEFORE the tail slice.
-        // Pre-tagging legacy lines (no [sid] prefix) still pass through
-        // because they predate the fix. Without a sessionId we keep the
-        // legacy behavior (whole-day) as a fallback.
-        const filtered = opts.sessionId
-          ? filterDailyLogToSession(content, opts.sessionId)
-          : content;
+        // Legacy untagged transcript blocks fail closed; untagged system
+        // events remain available, while tagged blocks require an exact id.
+        const filtered = filterDailyLogToSession(content, opts.sessionId);
         const recent = filtered.trim().slice(-cfg.dailyLogTailChars);
         if (recent) {
           const displayed = opts.sanitizeDailyLog ? sanitizeDailyLogForModeration(recent) : recent;
-          sections.push(`<today_context>\n${displayed}\n</today_context>`);
+          sections.push(
+            `<today_context>\n${provenanceHeader("daily-log", "memory-file", "mixed", "unknown", "Current-session daily log")}\n` +
+            `${displayed}\n</today_context>`,
+          );
         }
       }
     }
@@ -222,7 +237,10 @@ export async function buildContextBlock(
         suffix += " [source=retained-fact source_type=inference trust=untrusted taint=clean label=\"Unverified inference\"]";
       } else if (f.sourceFile === "agent-tool:tool-observation") {
         suffix += " [observed earlier; may be stale]";
-        suffix += " [source=retained-fact source_type=tool_observation trust=trusted taint=clean label=\"Prior tool observation\"]";
+        suffix += " [source=retained-fact source_type=model_declared_tool_observation trust=unknown taint=unknown label=\"Unverified model-declared tool observation\"]";
+      } else if (f.sourceFile === "agent-tool:model-declared-tool-observation") {
+        suffix += " [unverified model-declared tool observation]";
+        suffix += " [source=retained-fact source_type=model_declared_tool_observation trust=unknown taint=unknown label=\"Unverified model-declared tool observation\"]";
       } else if (f.sourceFile === "agent-tool:user-statement") {
         suffix += " [reported by user]";
         suffix += " [source=retained-fact source_type=user_statement trust=unknown taint=clean label=\"User-reported fact\"]";
@@ -252,7 +270,8 @@ export async function buildContextBlock(
       .join("\n\n");
     if (body) {
       sections.push(
-        `<core_memory>\n(long-term context, not proof. It may be stale, mistaken, inferred, or copied from prior assistant prose. ` +
+        `<core_memory>\n${provenanceHeader("retained-fact", "fact-db", "mixed", "unknown", "Retained fact memory")}\n` +
+        `(long-term context, not proof. It may be stale, mistaken, inferred, or copied from prior assistant prose. ` +
         `Use it naturally for personal continuity, but NEVER use it as evidence for current runtime, security, policy, ` +
         `permission, service, or project state. Verify those with fresh tools. Legacy entries are unverified. ` +
         `Do NOT narrate that you're using memory, and do NOT edit this block. Extend via remember/update_fact/forget.)\n\n${body}\n</core_memory>`
@@ -261,7 +280,10 @@ export async function buildContextBlock(
   }
 
   if (mentionedEntities.length > 0) {
-    sections.push(`<known_entities>\n${mentionedEntities.join(", ")}\n</known_entities>`);
+    sections.push(
+      `<known_entities>\n${provenanceHeader("entity", "entity-page", "unknown", "unknown", "Mentioned known entities")}\n` +
+      `${mentionedEntities.join(", ")}\n</known_entities>`,
+    );
   }
 
   if (sections.length === 0) return "";

@@ -84,7 +84,9 @@ describe("UniversalIndex.indexDailyLog (incremental)", () => {
     // The morning section's content_hash didn't change, so it should not be re-added
     expect(r2.unchanged).toBeGreaterThan(0);
 
-    const hits = await memory.search("temple speakers", { sources: ["daily-log"], maxResults: 5 });
+    const hits = await memory.search("temple speakers", {
+      sources: ["daily-log"], maxResults: 5, crossSession: true,
+    });
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0].source).toBe("daily-log");
   });
@@ -131,7 +133,7 @@ describe("Cross-source search", () => {
 
     await ui.backfillAll();
 
-    const hits = await memory.search("glasses", { maxResults: 10 });
+    const hits = await memory.search("glasses", { maxResults: 10, crossSession: true });
     const sources = new Set(hits.map(h => h.source));
     // Should hit at least two distinct stores
     expect(sources.size).toBeGreaterThanOrEqual(2);

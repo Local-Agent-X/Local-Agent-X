@@ -16,10 +16,10 @@ export interface SearchOptions {
   rerankModel?: string;
   sessionId?: string;
   /**
-   * Cross-session opt-in. Default false. When false AND sessionId is set,
-   * results are filtered to chunks with metadata.session_id === sessionId
-   * (or no session_id at all, i.e. profile-level chunks). When true, all
-   * sessions are searched and applySessionGrouping is applied.
+   * Cross-session opt-in. Default false. When false, profile sources are
+   * eligible plus session-scoped chunks whose stored session_id exactly
+   * matches a provided sessionId. NULL/unknown IDs fail closed. When true,
+   * all sessions are searched and applySessionGrouping is applied.
    *
    * Auto-inject paths (buildTurnContext, autoSearchContext) leave this false
    * to prevent cross-session bleed. The `search_past_sessions` tool sets it

@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 9;
+export const CURRENT_SCHEMA_VERSION = 10;
 
 export function getSchemaVersion(db: InstanceType<typeof Database>): number {
   try {
@@ -205,6 +205,48 @@ export function migrateSchema(
         logger.warn(`[memory] v9 session_id backfill failed: ${(e as Error).message}`);
       }
       db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_session_id ON chunks(session_id)`);
+    }
+
+    if (fromVersion < 10) {
+      db.exec(`UPDATE chunks SET session_id = NULL WHERE TRIM(COALESCE(session_id, '')) = ''`);
+      db.exec(`
+        UPDATE chunks
+           SET metadata = json_set(
+             CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,
+             '$.source_type', CASE
+               WHEN source = 'entity' THEN 'entity-page'
+               WHEN source = 'session' THEN 'agent-x-session'
+               WHEN source = 'import' AND json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.source_type')
+                    IN ('chatgpt-import', 'claude-import', 'codex-import', 'slack-import', 'import')
+                 THEN json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.source_type')
+               WHEN source = 'import' THEN 'import'
+               WHEN source IN ('daily-log', 'mind', 'session-summary', 'personality') THEN 'memory-file'
+               ELSE 'legacy'
+             END,
+             '$.session_id', session_id,
+             '$.trust_status', CASE
+               WHEN json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.trust_status') = 'untrusted' THEN 'untrusted'
+               WHEN source = 'session' THEN 'mixed'
+               WHEN source = 'import' THEN 'untrusted'
+               ELSE 'unknown'
+             END,
+             '$.taint_status', CASE
+               WHEN json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.taint_status') = 'tainted' THEN 'tainted'
+               ELSE 'unknown'
+             END,
+             '$.provenance_label', CASE
+               WHEN source = 'entity' THEN 'Entity memory page'
+               WHEN source = 'daily-log' THEN 'Daily memory log'
+               WHEN source = 'mind' THEN 'Legacy mind memory'
+               WHEN source = 'session-summary' THEN 'Session summary'
+               WHEN source = 'session' THEN 'Local session transcript'
+               WHEN source = 'personality' THEN 'Local profile memory'
+               WHEN source = 'import' THEN 'Imported conversation'
+               ELSE 'Legacy memory (' || COALESCE(NULLIF(TRIM(source), ''), 'unknown source') || ')'
+             END
+           )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_source_session_id ON chunks(source, session_id)`);
     }
 
     db

@@ -7,17 +7,18 @@ export function searchKeyword(
   query: string,
   limit: number,
   sources?: string[],
-  sessionFilter?: string
+  sessionFilter?: string | null
 ): Array<Chunk & { score: number }> {
   const ftsQuery = buildFtsQuery(query);
   if (!ftsQuery) return [];
 
   try {
     // Storage-layer cross-session gate (defense-in-depth on top of postProcess).
-    // session_id IS NULL = profile-level chunks (entity, MIND, daily-log,
-    // personality) — always allowed. Otherwise must match the active session.
-    const sessionWhere = sessionFilter ? `AND (c.session_id IS NULL OR c.session_id = ?)` : "";
-    const sql = `SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text, c.metadata, c.updated_at,
+    // Scope comes from chunks.source, never nullable or model-authored metadata.
+    const sessionWhere = sessionFilter !== undefined
+      ? `AND (c.source IN ('entity', 'mind', 'personality', 'import')${sessionFilter ? " OR c.session_id = ?" : ""})`
+      : "";
+    const sql = `SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text, c.metadata, c.session_id, c.updated_at,
                 bm25(chunks_fts) as rank
          FROM chunks_fts f
          JOIN chunks c ON c.id = f.rowid
@@ -38,6 +39,7 @@ export function searchKeyword(
       end_line: number;
       text: string;
       metadata: string | null;
+      session_id: string | null;
       updated_at: number;
       rank: number;
     }>;
@@ -52,7 +54,10 @@ export function searchKeyword(
         endLine: r.end_line,
         text: r.text,
         hash: "",
-        metadata: r.metadata ? JSON.parse(r.metadata) : undefined,
+        metadata: {
+          ...(r.metadata ? JSON.parse(r.metadata) as Record<string, unknown> : {}),
+          session_id: r.session_id ?? undefined,
+        },
         updatedAt: r.updated_at,
         score: bm25RankToScore(r.rank),
       }));

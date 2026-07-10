@@ -121,4 +121,22 @@ describe("remember multi-fact-blob guard", () => {
       }),
     );
   });
+
+  it("keeps model-declared tool observations unverified", async () => {
+    const spy = vi.spyOn(memory, "rememberFact");
+    const tool = rememberTool();
+    await tool.execute({
+      content: "The service returned healthy",
+      provenance: "tool_observation",
+      confidence: 1,
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      "The service returned healthy",
+      expect.objectContaining({
+        confidence: 0.6,
+        sourceFile: "agent-tool:model-declared-tool-observation",
+      }),
+    );
+  });
 });

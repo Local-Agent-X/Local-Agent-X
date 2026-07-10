@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import type Database from "better-sqlite3";
 import type { Chunk, EmbeddingProvider, MemoryConfig } from "./types.js";
 import { embedChunksWithRetry } from "./index-embedding.js";
+import { withChunkProvenance } from "./search-helpers.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-ingest");
@@ -19,6 +20,9 @@ export async function indexChunks(
 ): Promise<void> {
   removeFile(virtualPath);
   if (chunks.length === 0) return;
+  for (const chunk of chunks) {
+    chunk.metadata = withChunkProvenance(source, chunk.metadata ?? {});
+  }
   if (embeddingProvider) {
     try {
       await embedChunksWithRetry(db, embeddingProvider, config, chunks);
@@ -84,6 +88,9 @@ export async function indexChunksIdempotent(
   virtualPath: string,
   source: string
 ): Promise<{ added: number; removed: number; unchanged: number }> {
+  for (const chunk of chunks) {
+    chunk.metadata = withChunkProvenance(source, chunk.metadata ?? {});
+  }
   const existing = db
     .prepare("SELECT id, content_hash FROM chunks WHERE path = ?")
     .all(virtualPath) as Array<{ id: number; content_hash: string | null }>;

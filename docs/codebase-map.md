@@ -70,13 +70,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/embedding-providers/` | 3 | 9 | M |  |
 | `src/language-intel/` | 3 | 4 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
+| `src/tool-execution/` | 2 | 20 | L |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
 | `src/anticipatory-care/` | 1 | 6 | M |  |
 | `src/associative-recall/` | 1 | 7 | M |  |
 | `src/cross-session-learning/` | 1 | 7 | M |  |
 | `src/errors/` | 1 | 2 | S |  |
 | `src/manifest-generator/` | 1 | 8 | M |  |
-| `src/tool-execution/` | 1 | 20 | L |  |
 | `src/types/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)

@@ -15,7 +15,7 @@ import { hasCapability } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
-import { isRetryable, isRetryableTool } from "../resilience-policy.js";
+import { isRetryable, isRetryableCall } from "../resilience-policy.js";
 import { getToolTimeout, withTimeout, ToolTimeoutError } from "../tool-timeout.js";
 import { timeout, blocked, ok } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
@@ -100,7 +100,10 @@ export const runSandboxedPhase: Phase = async (ctx) => {
 
   const startedAt = Date.now();
   ctx.startedAt = startedAt;
-  const shouldRetry = isRetryableTool(tc.name);
+  // Effect-aware: a mutating http_request (POST/PUT/PATCH/DELETE) or a
+  // write-capable browser action must execute at most once — after an
+  // ambiguous network error the mutation may already have landed.
+  const shouldRetry = isRetryableCall(tc.name, args);
   // Hang-catcher: bound each execute so a stuck tool yields a [timeout] result
   // row instead of stranding the model with no result. ms <= 0 means the tool
   // is exempt (long-runner) — call it directly, never pass 0 to withTimeout.

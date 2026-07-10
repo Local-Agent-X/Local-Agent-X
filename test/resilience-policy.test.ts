@@ -3,6 +3,7 @@ import {
   classify,
   isRetryable,
   isRetryableTool,
+  isRetryableCall,
   backoffMs,
   CIRCUIT_FAILURE_THRESHOLD,
   CIRCUIT_COOLDOWN_MS,
@@ -70,6 +71,44 @@ describe("isRetryableTool", () => {
     expect(isRetryableTool("edit")).toBe(false);
     expect(isRetryableTool("agent_spawn")).toBe(false);
     expect(isRetryableTool("read")).toBe(false);
+  });
+});
+
+describe("isRetryableCall (effect-aware)", () => {
+  it("keeps the name-level allowlist as the floor", () => {
+    expect(isRetryableCall("bash", { command: "ls" })).toBe(false);
+    expect(isRetryableCall("write", { path: "/x" })).toBe(false);
+    expect(isRetryableCall("web_fetch", { url: "https://x.test" })).toBe(true);
+    expect(isRetryableCall("web_search", { query: "q" })).toBe(true);
+  });
+
+  it("http_request: idempotent verbs retry; missing method defaults to GET", () => {
+    expect(isRetryableCall("http_request", { url: "https://x.test", method: "GET" })).toBe(true);
+    expect(isRetryableCall("http_request", { url: "https://x.test", method: "head" })).toBe(true);
+    expect(isRetryableCall("http_request", { url: "https://x.test", method: "OPTIONS" })).toBe(true);
+    expect(isRetryableCall("http_request", { url: "https://x.test" })).toBe(true);
+    expect(isRetryableCall("http_request", undefined)).toBe(true);
+  });
+
+  it("http_request: mutating verbs never retry", () => {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "post", "delete"]) {
+      expect(isRetryableCall("http_request", { url: "https://x.test", method })).toBe(false);
+    }
+  });
+
+  it("browser: read-only actions retry", () => {
+    for (const action of ["navigate", "snapshot", "extract", "screenshot", "observe", "tabs", "switch_tab", "info", "scroll"]) {
+      expect(isRetryableCall("browser", { action })).toBe(true);
+    }
+  });
+
+  it("browser: write-capable or unknown actions never retry", () => {
+    for (const action of ["click", "click_text", "fill", "select", "evaluate", "act", "dialog_accept", "dialog_dismiss", "new_tab", "close", "future_unknown_action"]) {
+      expect(isRetryableCall("browser", { action })).toBe(false);
+    }
+    // Missing action: not provably read-only → no retry.
+    expect(isRetryableCall("browser", {})).toBe(false);
+    expect(isRetryableCall("browser", undefined)).toBe(false);
   });
 });
 

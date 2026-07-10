@@ -332,3 +332,46 @@ describe("work-root env read-taint carve-out", () => {
     }
   });
 });
+
+// Effect-aware auto-retry: a network error on an idempotent call retries, but
+// a call that may already have mutated remote state executes exactly once.
+describe("effect-aware auto-retry (run-sandboxed integration)", () => {
+  function failingStub(name: string): { tool: ToolDefinition; calls: () => number } {
+    let n = 0;
+    const tool: ToolDefinition = {
+      name,
+      description: "stub",
+      parameters: { type: "object", properties: {} },
+      execute: async () => { n++; throw new Error("read ECONNRESET"); },
+    };
+    return { tool, calls: () => n };
+  }
+
+  it("does NOT retry a POST http_request on a network error (executes once)", async () => {
+    const { tool, calls } = failingStub("http_request");
+    const res = await run(tool, { url: "https://x.test/pay", method: "POST", body: "{}" }, freshSession());
+    expect(res.isError).toBe(true);
+    expect(calls()).toBe(1);
+  });
+
+  it("retries a GET http_request on a network error", async () => {
+    const { tool, calls } = failingStub("http_request");
+    const res = await run(tool, { url: "https://x.test/status", method: "GET" }, freshSession());
+    expect(res.isError).toBe(true);
+    expect(calls()).toBe(3); // initial attempt + maxRetries 2
+  }, 20_000);
+
+  it("does NOT retry a browser click (executes once)", async () => {
+    const { tool, calls } = failingStub("browser");
+    const res = await run(tool, { action: "click", ref: "5" }, freshSession());
+    expect(res.isError).toBe(true);
+    expect(calls()).toBe(1);
+  });
+
+  it("retries a browser read action (snapshot) on a network error", async () => {
+    const { tool, calls } = failingStub("browser");
+    const res = await run(tool, { action: "snapshot" }, freshSession());
+    expect(res.isError).toBe(true);
+    expect(calls()).toBe(3);
+  }, 20_000);
+});

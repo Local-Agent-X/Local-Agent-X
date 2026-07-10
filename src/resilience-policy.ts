@@ -4,6 +4,8 @@
 // thresholds. Executors stay thin: auto-retry.ts runs the loop, circuit-
 // breaker.ts runs the state machine — both read their policy from here.
 
+import { deriveAriAction } from "./tool-execution/ari-action-map.js";
+
 export type ErrorCategory =
   | "network"
   | "auth"
@@ -25,6 +27,21 @@ export const CIRCUIT_COOLDOWN_MS = 30_000;
 const RETRYABLE_TOOLS = new Set(["http_request", "web_fetch", "web_search", "browser"]);
 // Tools whose failures are deterministic — retrying re-runs the same mutation.
 const NEVER_RETRY = new Set(["bash", "write", "edit", "agent_spawn", "delegate"]);
+
+// Browser actions that only OBSERVE the page or re-issue an idempotent
+// navigation. Retry eligibility is an ALLOWLIST: anything not provably free
+// of remote side effects (click/click_text/fill/select/evaluate/act/
+// dialog_*/new_tab/close — or an unknown future action) must not auto-retry,
+// because after an ambiguous network error the action may already have
+// landed and re-running it fires the mutation twice. Deliberately stricter
+// than BROWSER_WRITE_ACTIONS in ari-action-map.ts (kernel policy verbs use a
+// write-BLOCKLIST; at-most-once needs the inverse default), hence its own
+// set. Action names' source of truth: the handler switch in
+// src/tools/browser-tools/index.ts.
+const BROWSER_READONLY_ACTIONS = new Set([
+  "navigate", "snapshot", "extract", "screenshot", "observe",
+  "tabs", "switch_tab", "info", "scroll",
+]);
 
 // Categories worth retrying: the failure is environmental, not the caller's
 // fault. auth/model/tool/contentFilter won't improve on a retry.
@@ -127,9 +144,30 @@ export function classify(error: unknown): ErrorCategory {
   return "unknown";
 }
 
-/** Whether a tool is eligible for retry at all (network-ish, non-mutating). */
+/**
+ * Whether a tool is eligible for retry at all (network-ish, non-mutating).
+ * NAME-only — it cannot see that a given http_request is a POST or a given
+ * browser call is a click. Prefer isRetryableCall wherever the call's args
+ * are available; this remains for callers that only have a name.
+ */
 export function isRetryableTool(toolName: string): boolean {
   return RETRYABLE_TOOLS.has(toolName) && !NEVER_RETRY.has(toolName);
+}
+
+/**
+ * Args-aware retry eligibility: the per-tool allowlist PLUS the call's actual
+ * effect. http_request retries only idempotent verbs — GET/HEAD/OPTIONS, and
+ * a missing method means GET (the tool's own default, http-request.ts) — via
+ * the same verb derivation the kernel policy uses (deriveAriAction maps all
+ * three, and absent, to "get"). browser retries only read-only actions.
+ * Anything that may have mutated remote state before an ambiguous network
+ * error must execute at most once.
+ */
+export function isRetryableCall(toolName: string, args?: Record<string, unknown>): boolean {
+  if (!isRetryableTool(toolName)) return false;
+  if (toolName === "http_request") return deriveAriAction(toolName, args ?? {}) === "get";
+  if (toolName === "browser") return BROWSER_READONLY_ACTIONS.has(String(args?.action ?? "").toLowerCase());
+  return true;
 }
 
 /**

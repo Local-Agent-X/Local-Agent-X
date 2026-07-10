@@ -25,6 +25,11 @@ name: Rolling Installer (tracks main)
 # For reproducible, pinned releases use installer-release.yml instead (push a
 # v* tag); that path bakes in the tag and never tracks main.
 #
+# Windows publishing requires AZURE_SIGN_TENANT_ID, AZURE_SIGN_CLIENT_ID,
+# AZURE_SIGN_CLIENT_SECRET, AZURE_SIGN_ENDPOINT, AZURE_SIGN_ACCOUNT, and
+# AZURE_SIGN_CERT_PROFILE secrets plus the exact WIN_SIGN_EXPECTED_SUBJECT
+# repository variable. Missing or drifted signing configuration fails closed.
+#
 # Integrity of the in-app rolling update (R4-06): the app resolves main → an
 # immutable commit sha and binds the executed bytes to that sha (src/ota-update.ts
 # downloadMainTarball/applyUpdate refuse to extract without a resolved commit).
@@ -45,12 +50,36 @@ jobs:
   build-windows-rolling:
     name: Windows rolling installer (.exe)
     runs-on: windows-latest
-    # Mirrored to a job-level env so the sign step can gate on its presence —
-    # `secrets.*` can't be referenced directly in a step `if:`, only `env.*`.
     env:
+      AZURE_SIGN_TENANT_ID: ${{ secrets.AZURE_SIGN_TENANT_ID }}
       AZURE_SIGN_CLIENT_ID: ${{ secrets.AZURE_SIGN_CLIENT_ID }}
+      AZURE_SIGN_CLIENT_SECRET: ${{ secrets.AZURE_SIGN_CLIENT_SECRET }}
+      AZURE_SIGN_ENDPOINT: ${{ secrets.AZURE_SIGN_ENDPOINT }}
+      AZURE_SIGN_ACCOUNT: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+      AZURE_SIGN_CERT_PROFILE: ${{ secrets.AZURE_SIGN_CERT_PROFILE }}
+      WIN_SIGN_EXPECTED_SUBJECT: ${{ vars.WIN_SIGN_EXPECTED_SUBJECT }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Require Windows release signing configuration
+        shell: pwsh
+        run: |
+          $required = [ordered]@{
+            AZURE_SIGN_TENANT_ID = $env:AZURE_SIGN_TENANT_ID
+            AZURE_SIGN_CLIENT_ID = $env:AZURE_SIGN_CLIENT_ID
+            AZURE_SIGN_CLIENT_SECRET = $env:AZURE_SIGN_CLIENT_SECRET
+            AZURE_SIGN_ENDPOINT = $env:AZURE_SIGN_ENDPOINT
+            AZURE_SIGN_ACCOUNT = $env:AZURE_SIGN_ACCOUNT
+            AZURE_SIGN_CERT_PROFILE = $env:AZURE_SIGN_CERT_PROFILE
+            WIN_SIGN_EXPECTED_SUBJECT = $env:WIN_SIGN_EXPECTED_SUBJECT
+          }
+          $missing = @($required.GetEnumerator() | Where-Object {
+            [string]::IsNullOrWhiteSpace([string]$_.Value)
+          } | ForEach-Object Key)
+          if ($missing.Count -gt 0) {
+            Write-Error "Windows release signing configuration is incomplete: $($missing -join ', ')"
+            exit 1
+          }
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v5
@@ -90,43 +119,33 @@ jobs:
           Copy-Item -LiteralPath $src -Destination $dst -Force
           Write-Host ("Size: {0:N1} MB" -f ((Get-Item -LiteralPath $dst).Length / 1MB))
 
-      - name: Sign the installer (Azure Trusted Signing)
-        # Skips automatically until the AZURE_SIGN_* secrets exist, so unsigned
-        # builds keep shipping until signing is set up. Once the secrets are in
-        # place the published .exe is Authenticode-signed via Azure Trusted
-        # Signing: no SmartScreen "unknown publisher" prompt, and Defender stops
-        # block-at-first-sight quarantining the Electron runtime the installer
-        # downloads on low-trust (Mark-of-the-Web) machines.
-        # NOTE: action was rebranded Azure/artifact-signing-action; bump the ref
-        # + switch `trusted-signing-account-name`→`signing-account-name` if needed.
-        if: ${{ env.AZURE_SIGN_CLIENT_ID != '' }}
-        uses: azure/trusted-signing-action@v0.5.1
+      - name: Sign the installer (Azure Artifact Signing)
+        uses: azure/artifact-signing-action@v2
         with:
           azure-tenant-id: ${{ secrets.AZURE_SIGN_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_SIGN_CLIENT_ID }}
           azure-client-secret: ${{ secrets.AZURE_SIGN_CLIENT_SECRET }}
           endpoint: ${{ secrets.AZURE_SIGN_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+          signing-account-name: ${{ secrets.AZURE_SIGN_ACCOUNT }}
           certificate-profile-name: ${{ secrets.AZURE_SIGN_CERT_PROFILE }}
           files: ${{ github.workspace }}\Install Local Agent X Windows Installer.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - name: Verify signing identity (fail-closed on cert drift)
-        # SmartScreen reputation accrues to the cert SUBJECT. If a rebuild ever
-        # signs with a different Trusted Signing account/profile, that reputation
-        # resets to zero. Pin the expected subject (public — it's in every shipped
-        # binary) as repo VARIABLE WIN_SIGN_EXPECTED_SUBJECT and fail the build on
-        # drift, so a cert swap can't silently ship. Skips when signing was skipped
-        # or the var is unset (non-breaking until you set it).
-        if: ${{ env.AZURE_SIGN_CLIENT_ID != '' && vars.WIN_SIGN_EXPECTED_SUBJECT != '' }}
+        # Artifact Signing rotates short-lived certificates, so pin the stable,
+        # public certificate subject instead of a rotating thumbprint.
         shell: pwsh
         run: |
           $exe = "Install Local Agent X Windows Installer.exe"
           $sig = Get-AuthenticodeSignature -LiteralPath $exe
           if ($sig.Status -ne 'Valid') { Write-Error "Signature not Valid: $($sig.Status) - $($sig.StatusMessage)"; exit 1 }
+          if ($null -eq $sig.TimeStamperCertificate) { Write-Error "Signature has no trusted timestamp - refusing to ship."; exit 1 }
           $subj = $sig.SignerCertificate.Subject
-          $want = "${{ vars.WIN_SIGN_EXPECTED_SUBJECT }}"
-          if ($subj -notlike "*$want*") {
-            Write-Error "Signing identity drift: subject [$subj] does not contain expected [$want]. A cert/profile swap would reset SmartScreen reputation - refusing to ship."
+          $want = $env:WIN_SIGN_EXPECTED_SUBJECT
+          if ($subj -cne $want) {
+            Write-Error "Signing identity drift: subject [$subj] does not exactly match expected [$want] - refusing to ship."
             exit 1
           }
           Write-Host "Signing identity OK: $subj"
@@ -357,10 +376,10 @@ jobs:
             the latest source at install time, so a fresh install is always
             current. After install, the app checks `main` on launch and offers a
             one-click in-app update (with a notification banner), so you stay
-            current without re-downloading. The macOS .dmg is signed +
-            Apple-notarized (one-click, no Gatekeeper prompt); the Windows .exe
-            shows the normal SmartScreen "More info → Run anyway" prompt. For a
-            specific pinned version, see the individual `vX.Y.Z` releases below.
+            current without re-downloading. The Windows .exe is Authenticode-
+            signed with Azure Artifact Signing; the macOS .dmg is Developer ID-
+            signed and Apple-notarized. For a specific pinned version, see the
+            individual `vX.Y.Z` releases below.
           # Featured "Latest" release: non-prerelease + make_latest so new users
           # landing on the releases page get this auto-latest installer first,
           # not a frozen version tag. The `rolling` tag keeps the download URL

@@ -17,6 +17,9 @@
 // social posts call this; the inert-side-effect tools rely on Axis 2.
 
 import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { getLaxDir } from "../lax-data-dir.js";
 
 interface Entry {
   ts: number;
@@ -24,6 +27,67 @@ interface Entry {
 }
 
 const store = new Map<string, Entry>();
+
+// Cap the store by sweeping anything past the widest realistic window.
+// 24h is well past the longest per-tool window and bounds memory under
+// adversarial input. The same bound gates what survives a reload.
+const SWEEP_MS = 24 * 60 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// Persistence. The Map alone cannot survive a crash between the side effect
+// (e.g. `transport.sendMail` resolving) and canonical-loop commitTurn
+// persisting the turn: recovery re-drives the uncommitted turn, the tool
+// re-executes, and an empty store means the transport fires TWICE. So
+// markDone mirrors the store to disk and the first lookup after process
+// start reloads it. Contents are hash-only keys (24-char sha256 prefixes) +
+// timestamps + tool-result summaries that transcripts already persist —
+// nothing beyond what the transcript holds. The in-memory Map stays
+// authoritative for the process lifetime; disk is a crash-recovery
+// backstop, so every disk failure below is warn-and-continue — a
+// persistence failure must never fail a send.
+// ---------------------------------------------------------------------------
+
+let loaded = false;
+
+function storeFile(): string {
+  return join(getLaxDir(), "send-idempotency.json");
+}
+
+function ensureLoaded(): void {
+  if (loaded) return;
+  loaded = true;
+  const now = Date.now();
+  try {
+    const raw = JSON.parse(readFileSync(storeFile(), "utf-8")) as Record<string, Entry>;
+    for (const [k, v] of Object.entries(raw)) {
+      if (!v || typeof v.ts !== "number" || typeof v.result !== "string") continue;
+      if (now - v.ts > SWEEP_MS) continue; // GC expired entries on load
+      if (!store.has(k)) store.set(k, v); // never clobber fresher in-memory state
+    }
+  } catch (err) {
+    // ENOENT = first run, nothing persisted yet. Anything else (corrupt
+    // JSON, permissions) degrades to process-local semantics.
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`[idempotency] could not load persisted store: ${(err as Error).message}`);
+    }
+  }
+}
+
+function persist(): void {
+  // Full rewrite via tmp + rename: the store is small and TTL-bounded, and
+  // rename keeps a crash mid-write from truncating the previous snapshot.
+  try {
+    mkdirSync(getLaxDir(), { recursive: true });
+    const file = storeFile();
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, JSON.stringify(Object.fromEntries(store)), { mode: 0o600 });
+    renameSync(tmp, file);
+  } catch (err) {
+    console.warn(
+      `[idempotency] could not persist store (the send itself succeeded): ${(err as Error).message}`,
+    );
+  }
+}
 
 function key(toolName: string, fingerprint: string): string {
   return createHash("sha256")
@@ -33,10 +97,6 @@ function key(toolName: string, fingerprint: string): string {
 }
 
 function gc(now: number): void {
-  // Cap the store by sweeping anything past the widest realistic window.
-  // 24h is well past the longest per-tool window and bounds memory under
-  // adversarial input.
-  const SWEEP_MS = 24 * 60 * 60 * 1000;
   for (const [k, v] of store) {
     if (now - v.ts > SWEEP_MS) store.delete(k);
   }
@@ -50,6 +110,7 @@ export function recentlyDone(
   fingerprint: string,
   windowMs: number,
 ): { result: string; ageMs: number } | null {
+  ensureLoaded();
   const now = Date.now();
   gc(now);
   const entry = store.get(key(toolName, fingerprint));
@@ -64,7 +125,11 @@ export function recentlyDone(
  *  resolves successfully) so a failed attempt doesn't block legitimate
  *  retry. */
 export function markDone(toolName: string, fingerprint: string, result: string): void {
-  store.set(key(toolName, fingerprint), { ts: Date.now(), result });
+  ensureLoaded();
+  const now = Date.now();
+  gc(now);
+  store.set(key(toolName, fingerprint), { ts: now, result });
+  persist();
 }
 
 /** Build a stable fingerprint from arbitrary string parts. Empty parts
@@ -83,7 +148,25 @@ export function describeAge(ageMs: number): string {
   return `${Math.round(ageMs / 3_600_000)}h ago`;
 }
 
-/** Test-only: drop the entire store. */
+/** Test-only: drop the entire store, including the persisted snapshot, and
+ *  mark the module loaded so nothing is lazily re-read. Preserves the
+ *  pre-persistence semantics existing tests rely on: after a clear, every
+ *  lookup misses. */
 export function _clearIdempotencyStoreForTests(): void {
   store.clear();
+  loaded = true;
+  try {
+    rmSync(storeFile(), { force: true });
+  } catch {
+    // Best effort — an unreadable data dir just means nothing was persisted.
+  }
+}
+
+/** Test-only: simulate a process restart. Drops the in-memory Map and the
+ *  loaded flag but leaves the persisted snapshot on disk, so the next
+ *  recentlyDone/markDone lazily reloads it — the crash re-drive path.
+ *  Naming mirrors _resetMasterKeyCacheForTests. */
+export function _resetIdempotencyForTests(): void {
+  store.clear();
+  loaded = false;
 }

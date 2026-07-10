@@ -4,7 +4,7 @@
 // copy's whole duration. mirrorDir is now async (fs/promises) so it yields the
 // loop between file operations. These invariants would fail on the old
 // synchronous implementation (which returned void and never yielded).
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -39,5 +39,23 @@ describe("mirrorDir (async, non-blocking workspace copy)", () => {
     for (let i = 0; i < 25; i++) {
       expect(readFileSync(join(dest, `f${i}.md`), "utf-8")).toBe(`content ${i}`);
     }
+  });
+
+  it("excludes downloads/ from the mirror (browser downloads are machine-local)", async () => {
+    root = mkdtempSync(join(tmpdir(), "lax-mirror-"));
+    const src = join(root, "src");
+    const dest = join(root, "dest");
+    // downloads/ holds arbitrary web files saved by the browser handler
+    // (src/browser/downloads.ts) — syncing them would propagate downloads
+    // across machines through the workspace sync repo.
+    mkdirSync(join(src, "downloads"), { recursive: true });
+    writeFileSync(join(src, "downloads", "grabbed.pdf"), "web bytes");
+    mkdirSync(join(src, "docs"), { recursive: true });
+    writeFileSync(join(src, "docs", "notes.md"), "keep me");
+
+    await mirrorDir(src, dest, /* additiveOnly */ true);
+
+    expect(existsSync(join(dest, "downloads"))).toBe(false);
+    expect(readFileSync(join(dest, "docs", "notes.md"), "utf-8")).toBe("keep me");
   });
 });

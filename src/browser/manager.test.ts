@@ -123,17 +123,17 @@ describe("BrowserManager.fill — readback policy", () => {
 describe("installDownloadHandler — idempotence per page", () => {
   it("registers at most one download listener no matter how often a page is re-adopted", () => {
     const page = { on: vi.fn() } as unknown as Page;
-    installDownloadHandler(page);
-    installDownloadHandler(page);
-    installDownloadHandler(page);
+    installDownloadHandler(page, "sess");
+    installDownloadHandler(page, "sess");
+    installDownloadHandler(page, "sess");
     expect((page.on as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
   });
 
   it("still installs a listener on each distinct page", () => {
     const a = { on: vi.fn() } as unknown as Page;
     const b = { on: vi.fn() } as unknown as Page;
-    installDownloadHandler(a);
-    installDownloadHandler(b);
+    installDownloadHandler(a, "sess-a");
+    installDownloadHandler(b, "sess-b");
     expect((a.on as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
     expect((b.on as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
   });

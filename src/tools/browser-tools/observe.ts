@@ -36,5 +36,9 @@ export async function handleObserve(manager: BrowserManager): Promise<ToolResult
   parts.push("", `Inputs (${inputs.length}):`, ...inputs.slice(0, 15).map(fmt));
   parts.push("", `Dropdowns (${selects.length}):`, ...selects.slice(0, 10).map(fmt));
   parts.push("", `Checkboxes/Radios (${checks.length}):`, ...checks.slice(0, 10).map(fmt));
+  // observe assembles its own text instead of going through manager.snapshot(),
+  // so it must surface completed downloads itself — same funnel, same cursor.
+  const downloadsNote = manager.consumeDownloadsNote();
+  if (downloadsNote) parts.push("", downloadsNote);
   return ok(parts.join("\n"));
 }

@@ -52,6 +52,10 @@ export const SYNC_EXTENSIONS = new Set([
 export const SKIP_DIRS = new Set([
   "node_modules", ".next", "dist", "build", ".cache", "__pycache__",
   ".git", ".venv", "venv", "sd-server", "models", "checkpoints", "weights",
+  // Browser downloads (workspace/downloads/ — see browser/downloads.ts).
+  // Arbitrary files pulled from the web are machine-local artifacts, often
+  // large; they must not ride workspace sync onto every other machine.
+  "downloads",
 ]);
 
 export const MAX_FILE_SIZE = 10_000_000;

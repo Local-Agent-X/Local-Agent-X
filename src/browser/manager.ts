@@ -6,7 +6,7 @@ import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { ACTION_TIMEOUT, NAV_TIMEOUT, type BrowserEngine } from "./launcher.js";
 import { acquireSessionContext } from "./runtime.js";
-import { installDownloadHandler } from "./downloads.js";
+import { installDownloadHandler, downloadsSince, formatDownloadNote, latestDownloadSeq } from "./downloads.js";
 import { injectTokenIfLocal } from "./auth-context.js";
 import { safeHost, redirectMessage } from "./redirect.js";
 import { getRuntimeConfig } from "../config.js";
@@ -42,6 +42,9 @@ export class BrowserManager {
   private currentEngine: BrowserEngine = "chromium";
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private registry = new ObservationRegistry();
+  // Downloads after this cursor surface in the next formatted observation.
+  // Starts at the current global seq so a fresh session doesn't replay history.
+  private downloadCursor = latestDownloadSeq();
   private onIdle: (() => void) | null = null;
   private peerPages: (() => Page[]) | null = null;
 
@@ -68,7 +71,7 @@ export class BrowserManager {
   private adoptPage(p: Page): Page {
     p.setDefaultTimeout(ACTION_TIMEOUT);
     installDialogHandler(p);
-    installDownloadHandler(p);
+    installDownloadHandler(p, this.sessionId);
     return p;
   }
 
@@ -223,9 +226,26 @@ export class BrowserManager {
   // navigation emits the full ref list; subsequent calls emit a diff
   // (+ added / - removed / ~ changed).
   async snapshot(): Promise<string> {
-    const page = await this.getPage();
-    const obs = await this.registry.observe(page);
-    return ObservationRegistry.format(obs);
+    return this.observeAndFormat(await this.getPage());
+  }
+
+  // Every formatted observation flows through here so downloads that completed
+  // since the last one are surfaced to the agent (the download handler saves
+  // files silently — without this the agent is never told a download landed).
+  private async observeAndFormat(page: Page): Promise<string> {
+    const text = ObservationRegistry.format(await this.registry.observe(page));
+    const note = this.consumeDownloadsNote();
+    return note ? `${text}\n\n${note}` : text;
+  }
+
+  /** Note for THIS session's downloads since the last surfaced observation —
+   *  "" when none. Consuming advances the cursor (each download reported once).
+   *  Public: the observe tool assembles its own text outside snapshot(). */
+  consumeDownloadsNote(): string {
+    const fresh = downloadsSince(this.downloadCursor, this.sessionId);
+    if (fresh.length === 0) return "";
+    this.downloadCursor = fresh[fresh.length - 1].seq;
+    return formatDownloadNote(fresh);
   }
 
   exportRegistry(): unknown { return this.registry.serialize(); }
@@ -286,11 +306,11 @@ export class BrowserManager {
       result = await clickRef(page, this.registry, ref);
     }
     if (!result.ok) {
-      const refreshed = ObservationRegistry.format(await this.registry.observe(page));
+      const refreshed = await this.observeAndFormat(page);
       return { ok: false, text: `${result.message}\n\nCurrent page:\n\n${refreshed}` };
     }
     await waitForStability(page, { maxWait: 2500 });
-    const after = ObservationRegistry.format(await this.registry.observe(page));
+    const after = await this.observeAndFormat(page);
     return { ok: true, text: `${result.message}\nPage: ${page.url()}\n\n${after}` };
   }
 
@@ -302,7 +322,7 @@ export class BrowserManager {
       result = await fillRef(page, this.registry, ref, value);
     }
     if (!result.ok) {
-      const refreshed = ObservationRegistry.format(await this.registry.observe(page));
+      const refreshed = await this.observeAndFormat(page);
       return { ok: false, text: `${result.message}\n\nCurrent page:\n\n${refreshed}` };
     }
     return { ok: true, text: `${result.message} — ${value.length} chars` };
@@ -313,7 +333,7 @@ export class BrowserManager {
     const result = await clickByTextAction(page, text);
     if (!result.ok) return { ok: false, text: result.message };
     await waitForStability(page, { maxWait: 2500 });
-    const after = ObservationRegistry.format(await this.registry.observe(page));
+    const after = await this.observeAndFormat(page);
     return { ok: true, text: `${result.message}\nPage: ${page.url()}\n\n${after}` };
   }
 

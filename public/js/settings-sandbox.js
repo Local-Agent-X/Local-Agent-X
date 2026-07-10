@@ -22,6 +22,24 @@ function ensureGuardedOption(sel) {
   sel.insertBefore(opt, sel.firstChild);
 }
 
+function renderSandboxStatus(d) {
+  const badge = document.getElementById('sandbox-effective-status');
+  const detail = document.getElementById('sandbox-effective-detail');
+  const ack = document.getElementById('sandbox-ack-btn');
+  const effective = d.effectiveMode || d.mode || 'host';
+  const confined = d.confined === true;
+  if (badge) {
+    badge.className = 'status-badge ' + (confined ? 'ok' : 'err');
+    badge.innerHTML = '<span class="status-dot"></span> Effective: ' + (confined ? effective + ' confined' : 'HOST UNCONFINED');
+  }
+  if (detail) {
+    if (confined) detail.textContent = 'Selected and effective mode: ' + effective + '. Unattended bash is allowed.';
+    else if (d.unconfinedHostAcknowledged) detail.textContent = (d.fallbackReason || 'Bash runs directly on the host.') + ' Unattended host shell has been acknowledged.';
+    else detail.textContent = (d.fallbackReason || 'Bash runs directly on the host.') + ' Unattended bash is blocked until you acknowledge this state.';
+  }
+  if (ack) ack.style.display = !confined && !d.unconfinedHostAcknowledged ? '' : 'none';
+}
+
 async function loadSandboxMode() {
   try {
     const r = await apiFetch('/api/sandbox');
@@ -29,7 +47,8 @@ async function loadSandboxMode() {
     const d = await r.json();
     const sel = document.getElementById('cfg-sandbox-mode');
     ensureGuardedOption(sel);
-    if (sel) sel.value = d.mode || 'guarded';
+    if (sel) sel.value = d.selectedMode || d.mode || 'guarded';
+    renderSandboxStatus(d);
     const hint = document.getElementById('sandbox-hint');
     if (hint) hint.textContent = SANDBOX_HINTS[d.mode] || SANDBOX_HINTS.guarded;
     if (sel && !d.dockerAvailable) {
@@ -66,8 +85,28 @@ async function setSandboxModeUI(mode) {
       const sel = document.getElementById('cfg-sandbox-mode');
       if (sel && err.actual) sel.value = err.actual;
       if (hint) hint.textContent = err.error || 'Failed to set sandbox mode.';
+      renderSandboxStatus(err);
+    } else {
+      const d = await r.json();
+      renderSandboxStatus(d);
     }
   } catch (e) { console.warn('[sandbox] save failed', e); }
+}
+
+async function acknowledgeUnconfinedHost() {
+  const r = await apiFetch('/api/sandbox', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ acknowledgeUnconfinedHost: true })
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    console.warn('[sandbox] acknowledgement failed', d);
+    const detail = document.getElementById('sandbox-effective-detail');
+    if (detail) detail.textContent = d.error || 'Failed to save acknowledgement.';
+    return;
+  }
+  renderSandboxStatus(d);
 }
 
 document.addEventListener('DOMContentLoaded', loadSandboxMode);

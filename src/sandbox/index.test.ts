@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { validateSandboxConfig, execInSandbox, getSandboxMode, wrapSpawnForSandbox, isGuardedUsable, sandboxDenialHint } from "./index.js";
+import { validateSandboxConfig, execInSandbox, getSandboxMode, getSandboxStatus, wrapSpawnForSandbox, isGuardedUsable, sandboxDenialHint, setUnconfinedHostAcknowledgement } from "./index.js";
 import type { SandboxConfig } from "./types.js";
 
 // Sandbox config validator unit tests. These tests do NOT spawn docker —
@@ -167,6 +167,69 @@ describe("guarded sandbox mode (default)", () => {
     const { cmd, args } = wrapSpawnForSandbox("/bin/bash", ["-c", "echo hi"]);
     expect(cmd).toBe("/bin/bash");
     expect(args).toEqual(["-c", "echo hi"]);
+  });
+});
+
+describe("effective sandbox status", () => {
+  it("reports an explicitly selected host as unconfined and blocks unattended bash by default", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "lax-sandbox-status-"));
+    const prevMode = process.env.LAX_SANDBOX;
+    const prevDataDir = process.env.LAX_DATA_DIR;
+    process.env.LAX_SANDBOX = "host";
+    process.env.LAX_DATA_DIR = dataDir;
+    try {
+      const status = getSandboxStatus();
+      expect(status).toMatchObject({
+        selectedMode: "host",
+        effectiveMode: "host",
+        confined: false,
+        unconfinedHostAcknowledged: false,
+        unattendedBashAllowed: false,
+      });
+
+      setUnconfinedHostAcknowledgement(true);
+      expect(getSandboxStatus()).toMatchObject({
+        effectiveMode: "host",
+        unconfinedHostAcknowledged: true,
+        unattendedBashAllowed: true,
+      });
+    } finally {
+      if (prevMode === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prevMode;
+      if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDataDir;
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces guarded fallback instead of presenting the selected mode as effective", () => {
+    const prev = process.env.LAX_SANDBOX;
+    process.env.LAX_SANDBOX = "guarded";
+    try {
+      const status = getSandboxStatus();
+      expect(status.selectedMode).toBe("guarded");
+      expect(status.effectiveMode).toBe(isGuardedUsable() ? "guarded" : "host");
+      expect(status.confined).toBe(isGuardedUsable());
+      if (!isGuardedUsable()) expect(status.fallbackReason).toMatch(/unconfined/i);
+    } finally {
+      if (prev === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prev;
+    }
+  });
+
+  it("does not carry acknowledgement across selected sandbox modes", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "lax-sandbox-status-"));
+    const prevMode = process.env.LAX_SANDBOX;
+    const prevDataDir = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = dataDir;
+    process.env.LAX_SANDBOX = "host";
+    try {
+      setUnconfinedHostAcknowledgement(true);
+      expect(getSandboxStatus().unconfinedHostAcknowledged).toBe(true);
+      process.env.LAX_SANDBOX = "guarded";
+      expect(getSandboxStatus().unconfinedHostAcknowledged).toBe(false);
+    } finally {
+      if (prevMode === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prevMode;
+      if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDataDir;
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -5,16 +5,17 @@
 // after a read, (c) re-blocks once the file changes on disk, and (d) never
 // writes when it blocks.
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runSandboxedPhase } from "./run-sandboxed.js";
-import type { ToolCallContext } from "./context.js";
+import type { CallContext, ToolCallContext } from "./context.js";
 import { readTool, editTool } from "../tools/file-tools.js";
 import type { ToolDefinition } from "../types.js";
 import { checkEgressTaint, clearSessionTaint } from "../data-lineage-taint.js";
 import { detectSecretsInOutput } from "../data-lineage-paths.js";
+import { setUnconfinedHostAcknowledgement } from "../sandbox/index.js";
 
 const dirs = new Set<string>();
 afterEach(() => {
@@ -33,14 +34,14 @@ function tmpFile(body: string): string {
   return file;
 }
 
-function ctxFor(tool: ToolDefinition, args: Record<string, unknown>, sessionId: string): ToolCallContext {
+function ctxFor(tool: ToolDefinition, args: Record<string, unknown>, sessionId: string, callContext: CallContext = "local"): ToolCallContext {
   return {
     tc: { id: "tc1", name: tool.name, arguments: JSON.stringify(args) },
     toolMap: new Map([[tool.name, tool]]),
     tool,
     args,
     sessionId,
-    callContext: "local",
+    callContext,
     riskLevel: "low",
     approvalContext: "",
     allowed: true,
@@ -211,6 +212,61 @@ function fakeBash(content: string, isError: boolean): ToolDefinition {
     async execute() { return { content, isError }; },
   } as unknown as ToolDefinition;
 }
+
+describe("unattended bash effective-sandbox gate", () => {
+  async function withUnconfinedHost(runTest: (dataDir: string) => Promise<void>): Promise<void> {
+    const dataDir = mkdtempSync(join(tmpdir(), "lax-unattended-bash-"));
+    dirs.add(dataDir);
+    const prevMode = process.env.LAX_SANDBOX;
+    const prevDataDir = process.env.LAX_DATA_DIR;
+    process.env.LAX_SANDBOX = "host";
+    process.env.LAX_DATA_DIR = dataDir;
+    try {
+      await runTest(dataDir);
+    } finally {
+      if (prevMode === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prevMode;
+      if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDataDir;
+    }
+  }
+
+  it("fails closed without invoking bash in an unattended run", async () => {
+    await withUnconfinedHost(async () => {
+      const execute = vi.fn(async () => ({ content: "ran" }));
+      const tool = { ...fakeBash("ran", false), execute };
+      const ctx = ctxFor(tool, { command: "echo ran" }, freshSession(), "cron");
+      await runSandboxedPhase(ctx);
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(ctx.result).toMatchObject({ status: "blocked", isError: true });
+      expect(ctx.result?.content).toMatch(/effectively running on the unconfined host/i);
+    });
+  });
+
+  it("still permits interactive user-invoked bash", async () => {
+    await withUnconfinedHost(async () => {
+      const execute = vi.fn(async () => ({ content: "ran" }));
+      const tool = { ...fakeBash("ran", false), execute };
+      const ctx = ctxFor(tool, { command: "echo ran" }, freshSession(), "local");
+      await runSandboxedPhase(ctx);
+
+      expect(execute).toHaveBeenCalledOnce();
+      expect(ctx.result?.content).toBe("ran");
+    });
+  });
+
+  it("permits unattended bash after explicit acknowledgement", async () => {
+    await withUnconfinedHost(async () => {
+      setUnconfinedHostAcknowledgement(true);
+      const execute = vi.fn(async () => ({ content: "ran" }));
+      const tool = { ...fakeBash("ran", false), execute };
+      const ctx = ctxFor(tool, { command: "echo ran" }, freshSession(), "delegated");
+      await runSandboxedPhase(ctx);
+
+      expect(execute).toHaveBeenCalledOnce();
+      expect(ctx.result?.content).toBe("ran");
+    });
+  });
+});
 
 describe("bash-output taint respects isError (the ARI over-block fix)", () => {
   // Secret-shaped output (canonical AWS example key). The first test pins that

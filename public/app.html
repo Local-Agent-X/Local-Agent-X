@@ -642,7 +642,9 @@
         </div>
         <div class="section-card">
           <div class="section-title">Bash Sandbox</div>
-          <div class="section-desc">Run shell commands inside a Docker container instead of directly on your host. Off by default — turning it on isolates bash but disables OS-native commands (ipconfig, Get-*, etc.) and all network access from bash.</div>
+          <div class="section-desc">Shell confinement for interactive and unattended agent runs.</div>
+          <div id="sandbox-effective-status" class="status-badge warn"><span class="status-dot"></span> Checking effective sandbox...</div>
+          <div class="field-hint" id="sandbox-effective-detail" style="margin:0 0 12px"></div>
           <div class="field">
             <label class="field-label">Sandbox Mode</label>
             <select class="field-select" id="cfg-sandbox-mode" onchange="setSandboxModeUI(this.value)">
@@ -651,6 +653,7 @@
             </select>
             <div class="field-hint" id="sandbox-hint">Bash commands run directly on your host OS.</div>
           </div>
+          <button class="action-btn danger" id="sandbox-ack-btn" onclick="acknowledgeUnconfinedHost()" style="display:none;margin-top:10px">Acknowledge unattended host shell</button>
         </div>
         <!-- Hidden unless the server reports a git checkout (selfEditAvailable):
              packaged installs can't run self_edit, so the switch never shows there. -->
@@ -1373,7 +1376,7 @@
 <script src="/js/settings-rollback.js?v=v1"></script>
 <script src="/js/settings-run-traces.js?v=v1"></script>
 <script src="/js/settings-audit-log.js?v=v1"></script>
-<script src="/js/settings-sandbox.js?v=v1"></script>
+<script src="/js/settings-sandbox.js?v=v2"></script>
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-usage.js?v=v1"></script>
 <script src="/js/settings-permissions.js?v=v1"></script>

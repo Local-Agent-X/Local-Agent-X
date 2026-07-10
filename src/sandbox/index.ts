@@ -1,10 +1,12 @@
 import { execSync, execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 import { createLogger } from "../logger.js";
 import { getRuntimeConfig, saveConfig } from "../config.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { SandboxConfig, SandboxMode } from "./types.js";
 import { validateSandboxConfig, HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
@@ -177,81 +179,97 @@ export function execInSandbox(
 // Runtime override — set via API, persists in memory for this process
 let runtimeMode: SandboxMode | null = null;
 
+export interface SandboxStatus {
+  selectedMode: SandboxMode;
+  effectiveMode: SandboxMode;
+  confined: boolean;
+  fallbackReason?: string;
+  unconfinedHostAcknowledged: boolean;
+  unattendedBashAllowed: boolean;
+}
+
+function acknowledgementPath(): string {
+  return join(getLaxDir(), "sandbox-host-acknowledgement.json");
+}
+
+export function isUnconfinedHostAcknowledged(): boolean {
+  const path = acknowledgementPath();
+  if (!existsSync(path)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as { acknowledged?: unknown; selectedMode?: unknown };
+    return parsed.acknowledged === true && parsed.selectedMode === getSelectedSandboxMode();
+  } catch (e) {
+    logger.warn(`[sandbox] Failed to read host acknowledgement: ${(e as Error).message}`);
+    return false;
+  }
+}
+
+export function setUnconfinedHostAcknowledgement(acknowledged: boolean): void {
+  const path = acknowledgementPath();
+  if (!acknowledged) {
+    if (existsSync(path)) unlinkSync(path);
+    return;
+  }
+  mkdirSync(getLaxDir(), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.tmp.${randomBytes(4).toString("hex")}`;
+  try {
+    writeFileSync(tmp, JSON.stringify({ acknowledged: true, selectedMode: getSelectedSandboxMode(), acknowledgedAt: new Date().toISOString() }, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
+    renameSync(tmp, path);
+  } catch (e) {
+    try { unlinkSync(tmp); } catch { /* cleanup failure does not replace the persistence error */ }
+    throw e;
+  }
+}
+
+function getSelectedSandboxMode(): SandboxMode {
+  if (runtimeMode) return runtimeMode;
+  const envMode = (process.env.LAX_SANDBOX ?? "").toLowerCase();
+  if (envMode === "host" || envMode === "disabled" || envMode === "off" || envMode === "none" || envMode === "false") return "host";
+  if (envMode === "guarded" || envMode === "docker" || envMode === "seatbelt" || envMode === "bwrap") return envMode;
+  try {
+    return getRuntimeConfig().sandboxMode;
+  } catch {
+    return "guarded";
+  }
+}
+
+export function getSandboxStatus(): SandboxStatus {
+  const selectedMode = getSelectedSandboxMode();
+  let effectiveMode = selectedMode;
+  let fallbackReason: string | undefined;
+
+  if (selectedMode === "docker" && !isDockerAvailable()) {
+    effectiveMode = "host";
+    fallbackReason = "Docker is unavailable, so bash fell back to the unconfined host.";
+  } else if (selectedMode === "guarded" && !isGuardedUsable()) {
+    effectiveMode = "host";
+    fallbackReason = "The guarded kernel cage is unavailable on this host, so bash is unconfined.";
+  } else if (selectedMode === "seatbelt" && !isSeatbeltUsable()) {
+    effectiveMode = "host";
+    fallbackReason = "sandbox-exec is unavailable, so bash fell back to the unconfined host.";
+  } else if (selectedMode === "bwrap" && !isBwrapUsable()) {
+    effectiveMode = "host";
+    fallbackReason = "bubblewrap is unavailable, so bash fell back to the unconfined host.";
+  }
+
+  const confined = effectiveMode !== "host";
+  const unconfinedHostAcknowledged = isUnconfinedHostAcknowledged();
+  return {
+    selectedMode,
+    effectiveMode,
+    confined,
+    ...(fallbackReason ? { fallbackReason } : {}),
+    unconfinedHostAcknowledged,
+    unattendedBashAllowed: confined || unconfinedHostAcknowledged,
+  };
+}
+
 /**
  * Get the current sandbox configuration.
  * Priority: runtime override > env var > auto-detect.
  */
 export function getSandboxMode(): SandboxMode {
-  // Runtime override (set from settings UI)
-  if (runtimeMode) {
-    if (runtimeMode === "docker" && !isDockerAvailable()) {
-      logger.warn("[sandbox] Runtime mode is docker but Docker not available. Falling back to host.");
-      return "host";
-    }
-    if (runtimeMode === "guarded" && !isGuardedUsable()) return "host";
-    return runtimeMode;
-  }
-  const envMode = (process.env.LAX_SANDBOX ?? "").toLowerCase();
-  // Aliases for host (no container).
-  if (envMode === "host" || envMode === "disabled" || envMode === "off" || envMode === "none" || envMode === "false") {
-    return "host";
-  }
-  if (envMode === "docker") {
-    if (!isDockerAvailable()) {
-      logger.warn("[sandbox] LAX_SANDBOX=docker but Docker not available. Falling back to host.");
-      return "host";
-    }
-    return "docker";
-  }
-  if (envMode === "seatbelt") {
-    if (!isSeatbeltUsable()) {
-      logger.warn("[sandbox] LAX_SANDBOX=seatbelt but sandbox-exec unusable on this host (non-macOS or profile failed to load). Falling back to host.");
-      return "host";
-    }
-    return "seatbelt";
-  }
-  if (envMode === "bwrap") {
-    if (!isBwrapUsable()) {
-      logger.warn("[sandbox] LAX_SANDBOX=bwrap but bwrap unusable on this host (non-Linux, not installed, or user namespaces disabled). Falling back to host.");
-      return "host";
-    }
-    return "bwrap";
-  }
-  if (envMode === "guarded") {
-    return isGuardedUsable() ? "guarded" : "host";
-  }
-  // Persisted user setting from settings UI (~/.lax/config.json).
-  try {
-    const cfgMode = getRuntimeConfig().sandboxMode;
-    if (cfgMode === "docker") {
-      if (!isDockerAvailable()) {
-        logger.warn("[sandbox] config.sandboxMode=docker but Docker not available. Falling back to host.");
-        return "host";
-      }
-      return "docker";
-    }
-    if (cfgMode === "seatbelt") {
-      if (!isSeatbeltUsable()) {
-        logger.warn("[sandbox] config.sandboxMode=seatbelt but sandbox-exec unusable on this host. Falling back to host.");
-        return "host";
-      }
-      return "seatbelt";
-    }
-    if (cfgMode === "bwrap") {
-      if (!isBwrapUsable()) {
-        logger.warn("[sandbox] config.sandboxMode=bwrap but bwrap unusable on this host. Falling back to host.");
-        return "host";
-      }
-      return "bwrap";
-    }
-    if (cfgMode === "guarded") return isGuardedUsable() ? "guarded" : "host";
-    if (cfgMode === "host") return "host";
-  } catch { /* config not initialized yet (early boot) — fall through */ }
-  // Default: the guarded kernel cage where a backend is usable (macOS/Linux),
-  // else host. Guarded keeps the shell fully usable (network + dev tools) while
-  // kernel-denying credential reads, so it's a safe default — unlike docker,
-  // which is network-less and opt-in. host is the explicit no-cage escape hatch.
-  return isGuardedUsable() ? "guarded" : "host";
+  return getSandboxStatus().effectiveMode;
 }
 
 /**

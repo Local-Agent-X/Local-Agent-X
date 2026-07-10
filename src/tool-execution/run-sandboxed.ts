@@ -22,6 +22,7 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import { isAbsolute } from "node:path";
 import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/file-access.js";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
+import { getSandboxStatus } from "../sandbox/index.js";
 
 const logger = createLogger("tool-execution");
 
@@ -41,6 +42,19 @@ const PATH_GATED_READS: ReadonlySet<string> = new Set(["read", "glob", "grep", "
 export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
   if (!tool) return CONTINUE;
+
+  if (tc.name === "bash" && ctx.callContext !== "local") {
+    const sandbox = getSandboxStatus();
+    if (!sandbox.unattendedBashAllowed) {
+      ctx.result = blocked(
+        `BLOCKED (unattended): bash is effectively running on the unconfined host. ` +
+        `The selected sandbox mode is "${sandbox.selectedMode}" but the effective mode is "host". ` +
+        `A user must explicitly acknowledge unconfined unattended shell execution in Settings > Security before this ${ctx.callContext} run can use bash.`,
+        { layer: "sandbox", selectedMode: sandbox.selectedMode, effectiveMode: sandbox.effectiveMode, recovery: "Ask the user to review and acknowledge the effective sandbox status in Settings > Security." },
+      );
+      return CONTINUE;
+    }
+  }
 
   // Progress messages double as the timeout path's partial-output capture:
   // withTimeout orphans the execute promise on expiry, so whatever the tool

@@ -54,6 +54,12 @@ export function loadConfig(): LAXConfig {
   const configPath = getConfigPath();
   let diskRaw: Record<string, unknown> = {};
   let raw: Record<string, unknown> = {};
+  let diskDirty = false;
+
+  const applyDiskMutation = (updates: Record<string, unknown>): void => {
+    Object.assign(diskRaw, updates);
+    diskDirty = true;
+  };
 
   if (existsSync(configPath)) {
     try {
@@ -128,26 +134,27 @@ export function loadConfig(): LAXConfig {
   // denied at the syscall, network + ~/.config kept) exactly once. The marker
   // means a user who later picks "host" deliberately is respected and not
   // re-flipped on the next boot. Mirrors the legacy-workspace migration below.
-  if (!raw.sandboxModeMigrated) {
-    if (raw.sandboxMode === undefined || raw.sandboxMode === "host") {
+  if (!diskRaw.sandboxModeMigrated) {
+    const updates: Record<string, unknown> = { sandboxModeMigrated: true };
+    if (diskRaw.sandboxMode === undefined || diskRaw.sandboxMode === "host") {
       config.sandboxMode = "guarded";
+      updates.sandboxMode = "guarded";
     }
     config.sandboxModeMigrated = true;
-    saveConfig(config);
+    applyDiskMutation(updates);
   }
 
   // Isolate browser identity on fresh installs and upgrade the old untouched
   // shared-context default once. The marker preserves a later explicit choice
   // to share browser identity across sessions.
-  if (!raw.browserPerSessionContextMigrated) {
-    const migratedDisk = { ...diskRaw };
+  if (!diskRaw.browserPerSessionContextMigrated) {
+    const updates: Record<string, unknown> = { browserPerSessionContextMigrated: true };
     if (diskRaw.browserPerSessionContext === undefined || diskRaw.browserPerSessionContext === false) {
       config.browserPerSessionContext = true;
-      migratedDisk.browserPerSessionContext = true;
+      updates.browserPerSessionContext = true;
     }
     config.browserPerSessionContextMigrated = true;
-    migratedDisk.browserPerSessionContextMigrated = true;
-    writeConfigFile(migratedDisk);
+    applyDiskMutation(updates);
   }
 
   // Workspace location. The packaged desktop app sets LAX_DOCUMENTS_DIR so the
@@ -158,8 +165,8 @@ export function loadConfig(): LAXConfig {
   // value is non-legacy and this never runs again. Dev / standalone server
   // (no LAX_DOCUMENTS_DIR) keeps "./workspace".
   const docsDir = process.env.LAX_DOCUMENTS_DIR ? deOneDrive(process.env.LAX_DOCUMENTS_DIR) : undefined;
-  const legacyWorkspace = raw.workspace === undefined || raw.workspace === "./workspace";
-  if (docsDir && legacyWorkspace) {
+  const legacyWorkspace = diskRaw.workspace === undefined || diskRaw.workspace === "./workspace";
+  if (docsDir && !workspaceEnv && legacyWorkspace) {
     // iCloud-synced Documents (macOS) → keep the high-write workspace on
     // local-only disk instead of seeding it into a sync engine that evicts
     // files; otherwise nest under ~/Documents/Local Agent X/workspace so the
@@ -169,18 +176,19 @@ export function loadConfig(): LAXConfig {
     const newWorkspace = isCloudSyncedDir(docsDir) ? localOnlyWorkspace() : join(docsDir, "Local Agent X", "workspace");
     migrateWorkspace(resolve(config.workspace), newWorkspace);
     config.workspace = newWorkspace;
-    saveConfig(config);
+    applyDiskMutation({ workspace: newWorkspace });
   }
 
   // Self-heal a workspace that was previously persisted into OneDrive (older
   // build, or a manual migration). The bad path is already saved as an
   // absolute value, so the legacy-only block above won't catch it — correct it
   // here and move the data onto the real disk.
-  const healed = deOneDrive(config.workspace);
-  if (healed !== config.workspace) {
-    migrateWorkspace(resolve(config.workspace), resolve(healed));
-    config.workspace = healed;
-    saveConfig(config);
+  const diskWorkspace = typeof diskRaw.workspace === "string" ? diskRaw.workspace : "./workspace";
+  const healed = deOneDrive(diskWorkspace);
+  if (healed !== diskWorkspace) {
+    migrateWorkspace(resolve(diskWorkspace), resolve(healed));
+    if (!workspaceEnv) config.workspace = healed;
+    applyDiskMutation({ workspace: healed });
   }
 
   // macOS analogue: self-heal a workspace persisted under a cloud-synced
@@ -189,13 +197,14 @@ export function loadConfig(): LAXConfig {
   // sync from its parent Documents dir, so check the parent's identity as well
   // as the path itself (third-party File Providers live under CloudStorage).
   if (process.platform === "darwin") {
-    const ws = resolve(config.workspace);
+    const savedWorkspace = typeof diskRaw.workspace === "string" ? diskRaw.workspace : "./workspace";
+    const ws = resolve(savedWorkspace);
     if (isCloudStoragePath(ws) || isCloudSyncedDir(dirname(ws))) {
       const local = localOnlyWorkspace();
       if (resolve(local) !== ws) {
         migrateWorkspace(ws, local);
-        config.workspace = local;
-        saveConfig(config);
+        if (!workspaceEnv) config.workspace = local;
+        applyDiskMutation({ workspace: local });
       }
     }
   }
@@ -214,9 +223,11 @@ export function loadConfig(): LAXConfig {
   // Auto-generate auth token if missing
   if (!config.authToken) {
     config.authToken = generateAuthToken();
-    saveConfig(config);
+    applyDiskMutation({ authToken: config.authToken });
     logger.info("[config] Generated new auth token (see ~/.lax/config.json)");
   }
+
+  if (diskDirty) writeConfigFile(diskRaw);
 
   return config;
 }

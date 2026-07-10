@@ -5,6 +5,23 @@ import { join, resolve } from "node:path";
 import { stripOneDriveDocuments, isCloudStoragePath, migrateWorkspace, ensureWorkspaceLink } from "./workspace/lifecycle.js";
 import { loadConfig } from "./config.js";
 
+function withEnvironment(overrides: Record<string, string | undefined>, run: () => void): void {
+  const previous = new Map<string, string | undefined>();
+  for (const [name, value] of Object.entries(overrides)) {
+    previous.set(name, process.env[name]);
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  try {
+    run();
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
 describe("browser identity isolation config migration", () => {
   let dataDir: string;
   let previousDataDir: string | undefined;
@@ -57,16 +74,11 @@ describe("browser identity isolation config migration", () => {
       model: "disk-model",
       browserPerSessionContext: false,
     });
-    const previous = {
-      authToken: process.env.LAX_AUTH_TOKEN,
-      openaiApiKey: process.env.OPENAI_API_KEY,
-      model: process.env.LAX_MODEL,
-    };
-    process.env.LAX_AUTH_TOKEN = "env-auth-token";
-    process.env.OPENAI_API_KEY = "env-provider-key";
-    process.env.LAX_MODEL = "env-model";
-
-    try {
+    withEnvironment({
+      LAX_AUTH_TOKEN: "env-auth-token",
+      OPENAI_API_KEY: "env-provider-key",
+      LAX_MODEL: "env-model",
+    }, () => {
       const runtime = loadConfig();
       expect(runtime.authToken).toBe("env-auth-token");
       expect(runtime.openaiApiKey).toBe("env-provider-key");
@@ -78,13 +90,111 @@ describe("browser identity isolation config migration", () => {
       expect(persisted.model).toBe("disk-model");
       expect(persisted.browserPerSessionContext).toBe(true);
       expect(persisted.browserPerSessionContextMigrated).toBe(true);
+    });
+  });
+
+  it("does not persist environment overrides through sandbox migration", () => {
+    writeConfig({
+      authToken: "disk-sandbox-auth",
+      model: "disk-sandbox-model",
+      sandboxMode: "host",
+      sandboxModeMigrated: false,
+      browserPerSessionContextMigrated: true,
+    });
+
+    withEnvironment({
+      LAX_AUTH_TOKEN: "env-sandbox-auth",
+      LAX_MODEL: "env-sandbox-model",
+      LAX_DOCUMENTS_DIR: undefined,
+    }, () => {
+      const runtime = loadConfig();
+      expect(runtime.authToken).toBe("env-sandbox-auth");
+      expect(runtime.model).toBe("env-sandbox-model");
+      expect(runtime.sandboxMode).toBe("guarded");
+
+      const persisted = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+      expect(persisted.authToken).toBe("disk-sandbox-auth");
+      expect(persisted.model).toBe("disk-sandbox-model");
+      expect(persisted.sandboxMode).toBe("guarded");
+      expect(persisted.sandboxModeMigrated).toBe(true);
+    });
+  });
+
+  it("persists a generated auth token without persisting other env overlays", () => {
+    writeFileSync(configPath, JSON.stringify({
+      model: "disk-generated-auth-model",
+      workspace: resolve("workspace"),
+      sandboxModeMigrated: true,
+      browserPerSessionContextMigrated: true,
+    }), "utf-8");
+
+    withEnvironment({
+      LAX_AUTH_TOKEN: undefined,
+      XAI_API_KEY: undefined,
+      OPENAI_API_KEY: "ENV_GENERATED_AUTH_PROVIDER",
+      LAX_MODEL: "ENV_GENERATED_AUTH_MODEL",
+      LAX_DOCUMENTS_DIR: undefined,
+    }, () => {
+      const runtime = loadConfig();
+      expect(runtime.authToken).toMatch(/^[a-f0-9]{64}$/);
+      expect(runtime.openaiApiKey).toBe("ENV_GENERATED_AUTH_PROVIDER");
+      expect(runtime.model).toBe("ENV_GENERATED_AUTH_MODEL");
+
+      const persistedText = readFileSync(configPath, "utf-8");
+      const persisted = JSON.parse(persistedText) as Record<string, unknown>;
+      expect(persistedText).not.toContain("ENV_GENERATED_AUTH");
+      expect(persisted.authToken).toBe(runtime.authToken);
+      expect(persisted.openaiApiKey).toBeUndefined();
+      expect(persisted.model).toBe("disk-generated-auth-model");
+    });
+  });
+
+  it("keeps all env sentinels out of a fresh packaged-install migration", () => {
+    const installDir = join(dataDir, "packaged-install");
+    const documentsDir = join(dataDir, "packaged-documents");
+    const expectedWorkspace = join(documentsDir, "Local Agent X", "workspace");
+    mkdirSync(join(installDir, "workspace"), { recursive: true });
+    mkdirSync(documentsDir, { recursive: true });
+    writeFileSync(configPath, JSON.stringify({
+      authToken: "disk-packaged-auth",
+      openaiApiKey: "disk-packaged-provider",
+      model: "disk-packaged-model",
+      workspace: "./workspace",
+      sandboxMode: "host",
+      browserPerSessionContext: false,
+    }), "utf-8");
+
+    const previousCwd = process.cwd();
+    process.chdir(installDir);
+    try {
+      withEnvironment({
+        LAX_DOCUMENTS_DIR: documentsDir,
+        LAX_WORKSPACE: undefined,
+        LAX_AUTH_TOKEN: "ENV_AUTH_SENTINEL",
+        XAI_API_KEY: "ENV_XAI_SENTINEL",
+        OPENAI_API_KEY: "ENV_OPENAI_SENTINEL",
+        LAX_MODEL: "ENV_MODEL_SENTINEL",
+      }, () => {
+        const runtime = loadConfig();
+        expect(runtime.authToken).toBe("ENV_AUTH_SENTINEL");
+        expect(runtime.openaiApiKey).toBe("ENV_OPENAI_SENTINEL");
+        expect(runtime.model).toBe("ENV_MODEL_SENTINEL");
+        expect(runtime.workspace).toBe(expectedWorkspace);
+
+        const persistedText = readFileSync(configPath, "utf-8");
+        const persisted = JSON.parse(persistedText) as Record<string, unknown>;
+        expect(persistedText).not.toContain("ENV_");
+        expect(persisted.authToken).toBe("disk-packaged-auth");
+        expect(persisted.openaiApiKey).toBe("disk-packaged-provider");
+        expect(persisted.model).toBe("disk-packaged-model");
+        expect(persisted.workspace).toBe(expectedWorkspace);
+        expect(persisted.sandboxMode).toBe("guarded");
+        expect(persisted.sandboxModeMigrated).toBe(true);
+        expect(persisted.browserPerSessionContext).toBe(true);
+        expect(persisted.browserPerSessionContextMigrated).toBe(true);
+      });
     } finally {
-      if (previous.authToken === undefined) delete process.env.LAX_AUTH_TOKEN;
-      else process.env.LAX_AUTH_TOKEN = previous.authToken;
-      if (previous.openaiApiKey === undefined) delete process.env.OPENAI_API_KEY;
-      else process.env.OPENAI_API_KEY = previous.openaiApiKey;
-      if (previous.model === undefined) delete process.env.LAX_MODEL;
-      else process.env.LAX_MODEL = previous.model;
+      process.chdir(previousCwd);
     }
   });
 

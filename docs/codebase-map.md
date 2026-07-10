@@ -12,14 +12,14 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1185 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1188 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
+| `src/ops/` | 67 | 22 | XL |  |
 | `src/security/` | 67 | 27 | XL |  |
-| `src/ops/` | 66 | 22 | XL |  |
 | `src/tools/` | 55 | 141 | XL |  |
 | `src/canonical-loop/` | 38 | 136 | XL |  |
 | `src/memory/` | 38 | 110 | XL |  |
@@ -69,7 +69,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context/` | 3 | 2 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
 | `src/language-intel/` | 3 | 4 | M |  |
-| `src/tool-execution/` | 3 | 22 | XL |  |
+| `src/tool-execution/` | 3 | 25 | XL |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
 | `src/anticipatory-care/` | 1 | 6 | M |  |

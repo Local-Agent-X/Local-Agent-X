@@ -5,8 +5,6 @@
 // stats / circuit-breaker state / rate-limit consumption.
 
 import type { ServerEvent, ToolResult } from "../types.js";
-import { withRetry } from "../auto-retry.js";
-import { getRetryContext } from "../retry-context.js";
 import { circuitArgsSig, recordCircuitFailure, recordCircuitSuccess } from "../circuit-breaker.js";
 import { recordToolCall as recordToolStat } from "../tool-tracker.js";
 import { recordToolCall as recordRateLimit } from "./rate-limiter.js";
@@ -15,15 +13,15 @@ import { hasCapability } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
-import { isRetryable, retrySignalForToolResult, RetryableToolResultError } from "../resilience-policy.js";
-import { createRetryCallSnapshot } from "./retry-call.js";
-import { getToolTimeout, withTimeout, ToolTimeoutError } from "../tool-timeout.js";
+import { RetryableToolResultError } from "../resilience-policy.js";
+import { ToolTimeoutError } from "../tool-timeout.js";
 import { timeout, blocked, ok } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { isAbsolute } from "node:path";
 import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/file-access.js";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
 import { unattendedShellBlock } from "./unattended-shell-gate.js";
+import { createToolRunner } from "./tool-runner.js";
 
 const logger = createLogger("tool-execution");
 
@@ -108,25 +106,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
 
   const startedAt = Date.now();
   ctx.startedAt = startedAt;
-  const retryCall = createRetryCallSnapshot(tool, args);
-  const shouldRetry = retryCall.retryable;
-  // Hang-catcher: bound each execute so a stuck tool yields a [timeout] result
-  // row instead of stranding the model with no result. ms <= 0 means the tool
-  // is exempt (long-runner) — call it directly, never pass 0 to withTimeout.
-  // withTimeout sits INSIDE the withRetry thunk so each attempt is bounded
-  // independently. NOTE: on timeout the underlying execute promise keeps
-  // running orphaned (no per-tool abort); acceptable — the point is the row,
-  // and the progressLog above preserves what it streamed before the deadline.
-  const ms = getToolTimeout(tc.name);
-  const runOnce = async () => {
-    const attemptArgs = retryCall.freshArgs();
-    attemptArgs._onProgress = onProgress;
-    const execution = tool.execute(attemptArgs, signal);
-    const result = await (ms > 0 ? withTimeout(execution, ms, tc.name) : execution);
-    const retrySignal = retrySignalForToolResult(result, retryCall.effect);
-    if (retrySignal) throw retrySignal;
-    return result;
-  };
+  const runner = createToolRunner({ tool, args, operationId: ctx.operationId, toolCallId: tc.id, toolName: tc.name, sessionId, signal, onProgress });
 
   // ── Pre-execute taint FLOOR-set (R4-09 defense-in-depth) ─────────────────
   //
@@ -171,18 +151,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   }
 
   try {
-    if (shouldRetry) {
-      ctx.result = await withRetry(runOnce, {
-        maxRetries: 2,
-        baseDelayMs: 500,
-        maxDelayMs: 4000,
-        shouldRetry: (err, attempt) => isRetryable(err, { effect: retryCall.effect, attempt }),
-        ctx: getRetryContext(sessionId),
-        layer: "L1-tool",
-      });
-    } else {
-      ctx.result = await runOnce();
-    }
+    ctx.result = await runner.run();
     // Taint detection + result redaction.
     //
     // The taint model is "if you touched sensitive bytes, the whole session
@@ -352,7 +321,10 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       ctx.result = stub;
     }
   } catch (e) {
-    if (e instanceof RetryableToolResultError) {
+    const reconciliation = runner.reconcile(e);
+    if (reconciliation) {
+      ctx.result = reconciliation;
+    } else if (e instanceof RetryableToolResultError) {
       ctx.result = e.result;
     } else if (e instanceof ToolTimeoutError) {
       // A hung tool: hand the model a hard [timeout] row so it can't narrate
@@ -379,6 +351,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   }
 
   const result = ctx.result!;
+  runner.complete(result);
   const durationMs = Date.now() - startedAt;
   const succeeded = !result.isError;
   if (succeeded && typeof args.path === "string" && args.path && RECORDS_SEEN.has(tc.name)) {

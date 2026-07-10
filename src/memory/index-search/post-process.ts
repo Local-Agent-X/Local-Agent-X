@@ -7,6 +7,10 @@ import {
 import { parseDateRange, dateInRange } from "../date-parser.js";
 import { slugify } from "../utils.js";
 
+const IMPORT_SOURCE_TYPES = new Set([
+  "import", "chatgpt-import", "claude-import", "codex-import", "slack-import",
+]);
+
 export function postProcess(
   db: InstanceType<typeof Database>,
   config: MemoryConfig,
@@ -20,7 +24,13 @@ export function postProcess(
   if (!options?.crossSession) {
     const sid = options?.sessionId;
     results = results.filter((r) => {
-      if (PROFILE_SOURCES.includes(r.source)) return true;
+      const importType = r.metadata?.source_type;
+      const canonicalImport = r.path.startsWith("import/")
+        && (r.source === "import" || r.source === "session")
+        && !!importType
+        && IMPORT_SOURCE_TYPES.has(importType);
+      if (canonicalImport) return true;
+      if (r.source !== "import" && PROFILE_SOURCES.includes(r.source)) return true;
       return !!sid && r.metadata?.session_id === sid;
     });
   }

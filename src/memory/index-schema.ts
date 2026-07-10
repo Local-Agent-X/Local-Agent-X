@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = 11;
 
 export function getSchemaVersion(db: InstanceType<typeof Database>): number {
   try {
@@ -211,6 +211,14 @@ export function migrateSchema(
       db.exec(`UPDATE chunks SET session_id = NULL WHERE TRIM(COALESCE(session_id, '')) = ''`);
       db.exec(`
         UPDATE chunks
+           SET source = 'import'
+         WHERE source = 'session'
+           AND path LIKE 'import/%'
+           AND json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.source_type')
+               IN ('chatgpt-import', 'claude-import', 'codex-import', 'slack-import', 'import')
+      `);
+      db.exec(`
+        UPDATE chunks
            SET metadata = json_set(
              CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,
              '$.source_type', CASE
@@ -247,6 +255,38 @@ export function migrateSchema(
            )
       `);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_source_session_id ON chunks(source, session_id)`);
+    }
+
+    if (fromVersion === 10) {
+      // v10 briefly scrubbed legacy import metadata before recognizing the
+      // ingest-owned import/<format>/<id> path. Recover those rows by path.
+      db.exec(`
+        UPDATE chunks
+           SET source = 'import'
+         WHERE source = 'session'
+           AND path LIKE 'import/%'
+      `);
+      db.exec(`
+        UPDATE chunks
+           SET metadata = json_set(
+             CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,
+             '$.source_type', CASE
+               WHEN json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.source_type')
+                    IN ('chatgpt-import', 'claude-import', 'codex-import', 'slack-import', 'import')
+                 THEN json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.source_type')
+               ELSE 'import'
+             END,
+             '$.session_id', session_id,
+             '$.trust_status', 'untrusted',
+             '$.taint_status', CASE
+               WHEN json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.taint_status') = 'tainted' THEN 'tainted'
+               ELSE 'unknown'
+             END,
+             '$.provenance_label', 'Imported conversation'
+           )
+         WHERE source = 'import'
+           AND path LIKE 'import/%'
+      `);
     }
 
     db

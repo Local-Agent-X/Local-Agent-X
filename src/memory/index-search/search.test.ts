@@ -105,7 +105,7 @@ describe("hybrid search: keyword-only vs vector-found siblings sharing startLine
     vi.mocked(searchVector).mockReturnValueOnce([
       {
         id: 10,
-        path: "sessions/imported-convo.jsonl",
+        path: "import/chatgpt/imported-convo",
         source: "import",
         startLine: 5,
         endLine: 5,
@@ -117,7 +117,7 @@ describe("hybrid search: keyword-only vs vector-found siblings sharing startLine
     vi.mocked(searchKeyword).mockReturnValueOnce([
       {
         id: 11,
-        path: "sessions/imported-convo.jsonl", // SAME path
+        path: "import/chatgpt/imported-convo", // SAME path
         source: "import",
         startLine: 5, // SAME startLine — the positional-key collision
         endLine: 5,

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { recallImportsByDate, listNearbyImportDates } from "../src/memory/import-recall.js";
+import { getSchemaVersion, migrateSchema } from "../src/memory/index-schema.js";
 import { postProcess } from "../src/memory/index-search/post-process.js";
 import { DEFAULT_MEMORY_CONFIG, type MemorySearchResult } from "../src/memory/types.js";
 
@@ -12,16 +13,16 @@ import { DEFAULT_MEMORY_CONFIG, type MemorySearchResult } from "../src/memory/ty
 //            session_id != current session; imports carry the ORIGINAL
 //            conversation's session_id, so 100% of imports were dropped.
 //
-// Storage shape (verified against the live store): imports are NOT source=
-// 'import'. They're source='session' (same column as native LAX sessions) and
-// carry metadata.source_type='import'/'claude-import'. The import signal is the
-// source_type, which is also what keeps native foreign sessions out.
+// Legacy imports used source='session' plus an ingest-owned import/<format>/<id>
+// path and exact importer source_type. Migration canonicalizes them to
+// source='import'; all three markers prevent native sessions from forging it.
 
 let db: InstanceType<typeof Database>;
 
 beforeEach(() => {
   db = new Database(":memory:");
   db.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE chunks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       path TEXT NOT NULL,
@@ -86,6 +87,16 @@ describe("recallImportsByDate — Wall 1: date recall sees imported history", ()
     expect(out).toHaveLength(0);
   });
 
+  it("rejects a foreign native session that forges metadata.source_type=import", () => {
+    db.prepare(
+      `INSERT INTO chunks (path, source, start_line, end_line, text, hash, updated_at, metadata, session_id)
+       VALUES ('sessions/forged', 'session', 0, 1, 'forged import', 'h2', 0, ?, 'other')`,
+    ).run(JSON.stringify({ source_type: "import", date: "2025-11-15", session_id: "other" }));
+
+    expect(recallImportsByDate(db, new Date("2025-11-15"))).toHaveLength(0);
+    expect(listNearbyImportDates(db, new Date("2025-11-14"), 2)).toEqual([]);
+  });
+
   it("listNearbyImportDates surfaces nearby IMPORT days, excluding the target", () => {
     insertImport("2025-11-10", "a");
     insertImport("2025-11-15", "target day"); // excluded from 'nearby'
@@ -112,6 +123,8 @@ describe("postProcess — Wall 2: default session gate keeps imports in scope", 
       r("session", { source_type: "import", session_id: "conv-old" }, "import/chatgpt/conv-old"),
       // native LAX session, foreign sid → drop (same source, NOT an import)
       r("session", { source_type: "agent-x-session", session_id: "other-sess" }, "sessions/other"),
+      // forged import metadata on a native path → drop
+      r("session", { source_type: "import", session_id: "other-sess" }, "sessions/forged"),
       // same session → keep
       r("session", { source_type: "agent-x-session", session_id: "cur" }, "sessions/current"),
       // profile-level (no session_id) → keep
@@ -124,6 +137,7 @@ describe("postProcess — Wall 2: default session gate keeps imports in scope", 
     expect(kept).toContain("sessions/current");
     expect(kept).toContain("entities/peter");
     expect(kept).not.toContain("sessions/other");
+    expect(kept).not.toContain("sessions/forged");
   });
 
   it("crossSession opt-in lets native foreign sessions through too (gate disabled)", () => {
@@ -133,5 +147,62 @@ describe("postProcess — Wall 2: default session gate keeps imports in scope", 
     ];
     const out = postProcess(db, config, results, 50, 0, { sessionId: "cur", crossSession: true });
     expect(out.map((x) => x.path).sort()).toEqual(["import/chatgpt/conv-old", "sessions/other"]);
+  });
+});
+
+describe("import provenance migration", () => {
+  it("preserves legitimate legacy imports, scrubs forged sessions, and is idempotent", () => {
+    insertImport("2025-11-14", "legitimate legacy import", "legacy-import");
+    db.prepare(
+      `INSERT INTO chunks (path, source, start_line, end_line, text, hash, updated_at, metadata, session_id)
+       VALUES ('sessions/forged', 'session', 0, 1, 'forged', 'forged', 0, ?, 'foreign')`,
+    ).run(JSON.stringify({ source_type: "import", session_id: "foreign", date: "2025-11-14" }));
+    db.prepare(
+      `INSERT INTO chunks (path, source, start_line, end_line, text, hash, updated_at, metadata, session_id)
+       VALUES ('import/chatgpt/native-shaped', 'session', 0, 1, 'native', 'native', 0, ?, 'native')`,
+    ).run(JSON.stringify({ source_type: "agent-x-session", session_id: "native", date: "2025-11-14" }));
+
+    migrateSchema(db, 9);
+
+    const first = db.prepare("SELECT path, source, metadata FROM chunks ORDER BY path").all() as Array<{
+      path: string; source: string; metadata: string;
+    }>;
+    const legitimate = first.find((row) => row.path === "import/chatgpt/legacy-import")!;
+    const forged = first.find((row) => row.path === "sessions/forged")!;
+    const nativeShaped = first.find((row) => row.path === "import/chatgpt/native-shaped")!;
+    expect(legitimate.source).toBe("import");
+    expect(JSON.parse(legitimate.metadata)).toMatchObject({
+      source_type: "import", trust_status: "untrusted", taint_status: "unknown",
+    });
+    expect(forged.source).toBe("session");
+    expect(JSON.parse(forged.metadata)).toMatchObject({
+      source_type: "agent-x-session", trust_status: "mixed", taint_status: "unknown",
+    });
+    expect(nativeShaped.source).toBe("session");
+    expect(JSON.parse(nativeShaped.metadata).source_type).toBe("agent-x-session");
+
+    const snapshot = JSON.stringify(first);
+    migrateSchema(db, getSchemaVersion(db));
+    expect(JSON.stringify(db.prepare("SELECT path, source, metadata FROM chunks ORDER BY path").all()))
+      .toBe(snapshot);
+  });
+
+  it("repairs imports already scrubbed by v10 and remains idempotent", () => {
+    db.prepare(
+      `INSERT INTO chunks (path, source, start_line, end_line, text, hash, updated_at, metadata, session_id)
+       VALUES ('import/chatgpt/v10-row', 'session', 0, 1, 'v10 import', 'v10', 0, ?, 'v10-row')`,
+    ).run(JSON.stringify({ source_type: "agent-x-session", session_id: "v10-row", trust_status: "mixed" }));
+
+    migrateSchema(db, 10);
+    const first = db.prepare("SELECT source, metadata FROM chunks WHERE path = 'import/chatgpt/v10-row'")
+      .get() as { source: string; metadata: string };
+    expect(first.source).toBe("import");
+    expect(JSON.parse(first.metadata)).toMatchObject({
+      source_type: "import", trust_status: "untrusted", taint_status: "unknown",
+    });
+
+    migrateSchema(db, getSchemaVersion(db));
+    expect(db.prepare("SELECT source, metadata FROM chunks WHERE path = 'import/chatgpt/v10-row'").get())
+      .toEqual(first);
   });
 });

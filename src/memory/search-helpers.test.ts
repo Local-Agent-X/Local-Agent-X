@@ -232,17 +232,17 @@ describe("same-session storage gate", () => {
   });
 });
 
-describe("schema v10 provenance migration", () => {
+describe("schema provenance migration", () => {
   it("normalizes blank session ids and scrubs forged provenance", () => {
     const db = new Database(":memory:");
     try {
       db.exec(`
         CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE chunks (id INTEGER PRIMARY KEY, source TEXT NOT NULL, metadata TEXT, session_id TEXT);
+        CREATE TABLE chunks (id INTEGER PRIMARY KEY, path TEXT NOT NULL, source TEXT NOT NULL, metadata TEXT, session_id TEXT);
         INSERT INTO chunks VALUES
-          (1, 'session', '{"source_type":"entity-page","trust_status":"trusted","taint_status":"clean","provenance_label":"Profile"}', ''),
-          (2, 'entity', '{"source_type":"agent-x-session","trust_status":"trusted","taint_status":"clean"}', NULL),
-          (3, 'old-store', '{"source_type":"mystery","trust_status":"trusted","taint_status":"clean"}', NULL);
+          (1, 'sessions/one', 'session', '{"source_type":"entity-page","trust_status":"trusted","taint_status":"clean","provenance_label":"Profile"}', ''),
+          (2, 'entities/two', 'entity', '{"source_type":"agent-x-session","trust_status":"trusted","taint_status":"clean"}', NULL),
+          (3, 'legacy/three', 'old-store', '{"source_type":"mystery","trust_status":"trusted","taint_status":"clean"}', NULL);
       `);
 
       migrateSchema(db, 9);

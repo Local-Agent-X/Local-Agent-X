@@ -1,16 +1,21 @@
 import type Database from "better-sqlite3";
 
-// Imported conversation history (ChatGPT/Claude) lives in the chunks table
-// tagged metadata.source_type='import'/'claude-import' — NOT source='import':
-// their `source` column is 'session', identical to native LAX sessions, so the
-// import signal is the source_type. Each carries a per-conversation date in
+// Imported conversation history carries an ingest-owned import/<format>/<id>
+// path plus an exact importer source type. Current rows use source='import';
+// the source='session' branch preserves legitimate pre-v10 rows until schema
+// migration canonicalizes them. Each carries a per-conversation date in
 // metadata JSON ({source_type, session_id, date}). recallByTime (Facts DB) and
 // the daily-log files never see them, so a calendar-date recall for an imported
 // era came back empty — and the agent wrongly concluded the history "predates"
 // what it has. These read imports straight from the chunk store by their stored
 // date, with no embeddings or FTS, so they answer regardless of index state.
 // (claude-import chunks lack a date and are reachable via free-text search.)
-const IMPORT_FILTER = "json_extract(metadata, '$.source_type') LIKE '%import%'";
+const IMPORT_FILTER = `
+  source IN ('import', 'session')
+  AND path LIKE 'import/%'
+  AND json_extract(metadata, '$.source_type') IN
+      ('chatgpt-import', 'claude-import', 'codex-import', 'slack-import', 'import')
+`;
 
 export interface ImportChunkEntry {
   date: string;

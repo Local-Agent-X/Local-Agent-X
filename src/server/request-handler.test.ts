@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequestHandler } from "./request-handler.js";
+import { deriveConnectorCapability } from "./app-connector-auth.js";
 import { RBACManager } from "../rbac.js";
 import { SecurityLayer } from "../security/index.js";
 import { writeRunTargetManifest } from "../tools/app-run-target.js";
@@ -98,6 +99,13 @@ const REPORT_JOB_ID = "cron_testjob";
 
 beforeAll(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "request-handler-test-"));
+  mkdirSync(join(tmpDir, "public"), { recursive: true });
+  writeFileSync(join(tmpDir, "public", "app.html"), "<!doctype html><html><head><title>core</title></head><body>shell</body></html>");
+  mkdirSync(join(tmpDir, "public", "js"), { recursive: true });
+  writeFileSync(join(tmpDir, "public", "bundle.html"), '<!doctype html><html><head><script src="/js/one.js"></script></head><body>bundle</body></html>');
+  writeFileSync(join(tmpDir, "public", "js", "one.js"), "window.bundleContract = true;");
+  mkdirSync(join(tmpDir, "workspace", "videos"), { recursive: true });
+  writeFileSync(join(tmpDir, "workspace", "videos", "sample.mp4"), "0123456789");
   // Seed a cron report so /api/cron/<id>/reports/latest renders 200 HTML.
   // dataDir === tmpDir, and the route reads <dataDir>/cron/reports/<id>/*.md.
   const reportDir = join(tmpDir, "cron", "reports", REPORT_JOB_ID);
@@ -253,5 +261,92 @@ describe("static-build app serving (/apps/<id>/ → dist/)", () => {
   it("a missing ASSET (has a file extension) 404s — it must NOT fall back to index.html", async () => {
     const res = await fetch(`${base()}/apps/${APP}/assets/missing.js`);
     expect(res.status).toBe(404);
+  });
+});
+
+interface ContractOutcome {
+  status: number;
+  contentType: string;
+  cacheControl: string;
+  body: string;
+}
+
+async function outcome(path: string, init?: RequestInit): Promise<ContractOutcome> {
+  const response = await fetch(`${base()}${path}`, init);
+  return {
+    status: response.status,
+    contentType: response.headers.get("content-type") || "",
+    cacheControl: response.headers.get("cache-control") || "",
+    body: await response.text(),
+  };
+}
+
+describe("request-handler extraction preserves the recorded legacy contract", () => {
+  it("matches representative API, static, media, app fallback, and traversal outcomes", async () => {
+    const auth = { Authorization: `Bearer ${OP_TOKEN}` };
+    const actual = {
+      unauthenticatedApi: await outcome(`/api/secrets/${SEEDED_NAME}/reveal`),
+      authenticatedApi: await outcome(`/api/secrets/${SEEDED_NAME}/reveal`, { headers: auth }),
+      coreStatic: await outcome("/app.html"),
+      mediaWithRange: await outcome(`/videos/sample.mp4?token=${OP_TOKEN}`, { headers: { Range: "bytes=2-5" } }),
+      appDeepLink: await outcome("/apps/spa-app/dashboard/settings"),
+      appTraversal: await outcome(`/apps/spa-app/%2e%2e%2fsecret.txt`),
+      protectedTraversal: await outcome(`/files/%2e%2e%2fsecret.txt?token=${OP_TOKEN}`),
+    };
+
+    expect(actual).toEqual({
+      unauthenticatedApi: { status: 401, contentType: "application/json", cacheControl: "", body: '{"error":"Unauthorized"}' },
+      authenticatedApi: { status: 200, contentType: "application/json", cacheControl: "", body: `{"name":"${SEEDED_NAME}","value":"${SEEDED_VALUE}"}` },
+      coreStatic: { status: 200, contentType: "text/html", cacheControl: "no-cache, must-revalidate", body: "<!doctype html><html><head><title>core</title></head><body>shell</body></html>" },
+      mediaWithRange: { status: 200, contentType: "video/mp4", cacheControl: "", body: "0123456789" },
+      appDeepLink: expect.objectContaining({ status: 200, contentType: "text/html", cacheControl: "no-cache, must-revalidate" }),
+      appTraversal: { status: 404, contentType: "application/json", cacheControl: "", body: '{"error":"Not found"}' },
+      protectedTraversal: { status: 403, contentType: "application/json", cacheControl: "", body: '{"error":"Path traversal blocked"}' },
+    });
+    expect(actual.appDeepLink.body).toContain("<title>built</title>");
+    expect(actual.appDeepLink.body).toContain("__LAX_CONNECTOR_TOKEN__");
+  });
+
+  it("keeps query-token authentication confined to the browser report allowlist", async () => {
+    const actual = {
+      report: await outcome(`/api/cron/${REPORT_JOB_ID}/reports/latest?token=${OP_TOKEN}`),
+      ordinaryApi: await outcome(`/api/secrets/${SEEDED_NAME}/reveal?token=${OP_TOKEN}`),
+    };
+    expect(actual.report.status).toBe(200);
+    expect(actual.report.contentType).toContain("text/html");
+    expect(actual.ordinaryApi).toEqual({ status: 401, contentType: "application/json", cacheControl: "", body: '{"error":"Unauthorized"}' });
+  });
+
+  it("preserves connector capability scope through the request auth gate", async () => {
+    const capability = deriveConnectorCapability(OP_TOKEN);
+    const connector = await outcome("/api/connectors/INVALID", { headers: { Authorization: `Bearer ${capability}` } });
+    const nonConnector = await outcome(`/api/secrets/${SEEDED_NAME}/reveal`, { headers: { Authorization: `Bearer ${capability}` } });
+    expect(connector).toEqual({ status: 400, contentType: "application/json", cacheControl: "", body: '{"error":"Connector name must be a lowercase slug."}' });
+    expect(nonConnector).toEqual({ status: 401, contentType: "application/json", cacheControl: "", body: '{"error":"Unauthorized"}' });
+  });
+
+  it("preserves exact HTML security headers and immutable static bundle caching", async () => {
+    const core = await fetch(`${base()}/app.html`);
+    expect(Object.fromEntries([
+      "content-security-policy", "x-content-type-options", "x-frame-options",
+      "referrer-policy", "permissions-policy", "cache-control", "pragma",
+    ].map(name => [name, core.headers.get(name)]))).toEqual({
+      "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "SAMEORIGIN",
+      "referrer-policy": "no-referrer",
+      "permissions-policy": "camera=(self), microphone=(self), geolocation=()",
+      "cache-control": "no-cache, must-revalidate",
+      pragma: "no-cache",
+    });
+
+    const page = await fetch(`${base()}/bundle.html`);
+    const bundlePath = (await page.text()).match(/src="([^"?]+)\?v=\d+"/)?.[1];
+    expect(bundlePath).toBe("/js/_bundle/bundle.js");
+    const bundle = await fetch(`${base()}${bundlePath}`);
+    expect(bundle.status).toBe(200);
+    expect(bundle.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(bundle.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await bundle.text()).toContain("window.bundleContract = true;");
   });
 });

@@ -1,18 +1,10 @@
-import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, unlinkSync } from "node:fs";
-import { join, resolve, relative } from "node:path";
-import { timingSafeEqual, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
-import { authorizeAppConnectorHttp, deriveConnectorCapability } from "./app-connector-auth.js";
-import { ensureDevServerRunning, readDevServerRecord } from "../tools/dev-server.js";
-import { staticBuildDistDir } from "../tools/app-run-target.js";
-import { proxyFrontendDevServer, decideFrontendServe } from "./dev-server-proxy.js";
-import { phoneErrorPipeScript } from "./error-pipe-inject.js";
-import { confineToDir } from "../security/file-access.js";
-import { getPageBundle } from "./static-bundle.js";
-import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes, handleAccountRoutes } from "../routes/index.js";
+import { jsonResponse } from "../server-utils.js";
+import { authorizeRequest } from "./request-auth.js";
+import { routeApiRequest } from "./api-request-router.js";
+import { serveProtectedAssets, servePublicAsset } from "./static-assets.js";
+import { serveWorkspaceApp } from "./workspace-app-serving.js";
 import type { ServerContext } from "../server-context.js";
-import type { Role } from "../rbac.js";
 import type { LAXConfig, ServerEvent, Session, ToolDefinition } from "../types.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
@@ -30,17 +22,7 @@ import type { ToolRegistry } from "../tool-search.js";
 
 export type RequestHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
-// GET-only `/api/` routes that render an HTML page meant to be opened as a
-// top-level browser navigation (Electron child window / external tab). Such a
-// navigation can't attach an `Authorization` header, so for THESE routes only
-// the gate also accepts `?token=<bearer>` — the same posture the static media
-// routes (/uploads, /videos, /images) already use. An explicit allowlist keeps
-// token-in-URL off every mutation and JSON-API read. Currently just the cron
-// mission "latest report" HTML view linked from the AGENTS sidebar worker card
-// (public/js/chat-agent-feeds.js appends the token to the link's href).
-const BROWSER_OPENABLE_GET_API = /^\/api\/cron\/[^/]+\/reports\/latest$/;
-
-export function createRequestHandler(deps: {
+export interface RequestHandlerDeps {
   config: LAXConfig;
   security: SecurityLayer;
   toolPolicy: ToolPolicy;
@@ -65,296 +47,54 @@ export function createRequestHandler(deps: {
   toolRegistry: ToolRegistry;
   bridgeTools: ToolDefinition[];
   getOrCreateSession: (id: string) => Session;
-  saveSession: (s: Session) => Promise<void>;
+  saveSession: (session: Session) => Promise<void>;
   flushSession: (id: string) => Promise<void>;
   getChatWs: () => ServerContext["chatWs"];
   broadcastAll: (event: Record<string, unknown>) => void;
   activeOnEventBySession: Map<string, (event: ServerEvent) => void>;
   activeBrowserSessionIdRef: { value: string };
   activeRuntimeBySession: Map<string, { provider: string; model: string }>;
-}): RequestHandler {
-  const {
-    config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager,
-    secretsStore, cronService, integrations, whatsappBridge, telegramBridge, agentSync,
-    appRegistry, agentRunStore, agentTemplateStore, issueStore, projectStore,
-    allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, flushSession,
-    getChatWs, broadcastAll, activeOnEventBySession, activeBrowserSessionIdRef, activeRuntimeBySession,
-  } = deps;
+}
 
+function createServerContext(deps: RequestHandlerDeps): ServerContext {
+  return {
+    config: deps.config, security: deps.security, toolPolicy: deps.toolPolicy, rbac: deps.rbac,
+    dataDir: deps.dataDir, publicDir: deps.publicDir, sessionStore: deps.sessionStore,
+    memoryIndex: deps.memoryIndex, memoryManager: deps.memoryManager, secretsStore: deps.secretsStore,
+    cronService: deps.cronService, integrations: deps.integrations, whatsappBridge: deps.whatsappBridge,
+    telegramBridge: deps.telegramBridge, agentSync: deps.agentSync, appRegistry: deps.appRegistry,
+    agentRunStore: deps.agentRunStore, agentTemplateStore: deps.agentTemplateStore,
+    issueStore: deps.issueStore, projectStore: deps.projectStore, allAgentTools: deps.allAgentTools,
+    toolRegistry: deps.toolRegistry, bridgeTools: deps.bridgeTools,
+    getOrCreateSession: deps.getOrCreateSession, saveSession: deps.saveSession,
+    flushSession: deps.flushSession, chatWs: deps.getChatWs(), broadcastAll: deps.broadcastAll,
+    getActiveOnEvent: sid => deps.activeOnEventBySession.get(sid),
+    setActiveOnEvent: (sid, fn) => {
+      if (fn) deps.activeOnEventBySession.set(sid, fn);
+      else deps.activeOnEventBySession.delete(sid);
+    },
+    activeBrowserSessionId: deps.activeBrowserSessionIdRef.value,
+    setActiveBrowserSessionId: id => { deps.activeBrowserSessionIdRef.value = id; },
+    getActiveRuntime: sid => deps.activeRuntimeBySession.get(sid),
+    setActiveRuntime: (sid, runtime) => {
+      if (runtime) deps.activeRuntimeBySession.set(sid, runtime);
+      else deps.activeRuntimeBySession.delete(sid);
+    },
+  };
+}
+
+export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
   return async (req, res) => {
-    const url = new URL(req.url || "/", `http://127.0.0.1:${config.port}`);
+    const url = new URL(req.url || "/", `http://127.0.0.1:${deps.config.port}`);
     const method = req.method || "GET";
-    const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
-    if (method === "OPTIONS") { res.writeHead(204, corsHeaders(req)); res.end(); return; }
-    if (url.pathname.startsWith("/api/") && method !== "GET") {
-      if (req.headers["sec-fetch-site"] === "cross-site") { json(403, { error: "Cross-origin mutation blocked" }); return; }
-      if (req.headers.origin && !isLoopbackOrigin(req.headers.origin)) { json(403, { error: "Cross-origin request blocked" }); return; }
-    }
-    if (url.pathname.startsWith("/api/") && !checkRateLimit(getRateLimitKey(req))) { json(429, { error: "Rate limit exceeded." }); return; }
-    let requestRole: Role = "operator";
-    // Only genuine PRE-auth reads are token-exempt. The mutating provider-auth
-    // routes (login/logout/exchange-code) were exempt too, so any token-less
-    // local process could de-authenticate the user or kick off OAuth flows — the
-    // UI always holds the token (apiFetch attaches it), so they need no
-    // exemption. Browser OAuth *redirects* land on dedicated callback servers
-    // (ports 1455 / 56121), not these /api routes, so gating them is safe.
-    // Only bare `/api/health` (liveness — no sensitive data) is exempt. The
-    // `/api/health/*` subroutes (/providers, /workers) leak provider status and
-    // queue depth / active-op counts, so they must sit behind auth like any
-    // other read — an exact-match Set, never a prefix, keeps the subtree gated.
-    const authExempt = new Set(["/api/auth/status", "/api/auth/anthropic/status", "/api/auth/xai/status", "/api/health"]);
-    if (url.pathname.startsWith("/api/") && !authExempt.has(url.pathname)) {
-      const clientIp = req.socket.remoteAddress || "unknown";
-      const headerToken = (req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "";
-      // Browser-openable HTML routes can't carry an Authorization header on a
-      // top-level navigation, so accept ?token= for that GET allowlist only.
-      const token = headerToken || (method === "GET" && BROWSER_OPENABLE_GET_API.test(url.pathname) ? (url.searchParams.get("token") || "") : "");
-      const lockout = getAuthFloodGuard().get(clientIp);
-      if (lockout && lockout.lockedUntil > Date.now()) { res.writeHead(429, { ...corsHeaders(req), "Retry-After": String(Math.ceil((lockout.lockedUntil - Date.now()) / 1000)) }); res.end(JSON.stringify({ error: "Too many failed attempts." })); return; }
-      if (!token) { json(401, { error: "Unauthorized" }); return; }
-      const authResult = rbac.authenticate(token);
-      if (!authResult.valid || !authResult.entry) {
-        if (authorizeAppConnectorHttp(token, url.pathname, config.authToken)) {
-          // Served apps get their operator token stripped, so they carry only
-          // this connector capability — admitted for /api/connectors/* alone.
-          // The connector proxy enforces its own per-manifest allow list.
-          getAuthFloodGuard().delete(clientIp);
-          requestRole = "user";
-        } else {
-          recordAuthFailure(clientIp); json(401, { error: "Unauthorized" }); return;
-        }
-      } else {
-        getAuthFloodGuard().delete(clientIp); requestRole = authResult.entry.role;
-        const ep = rbac.checkEndpoint(requestRole, method, url.pathname);
-        if (!ep.allowed) { json(403, { error: ep.reason }); return; }
-      }
-    }
-    const ctx: ServerContext = {
-      config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations,
-      whatsappBridge, telegramBridge, agentSync, appRegistry, agentRunStore, agentTemplateStore, issueStore, projectStore,
-      allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, flushSession, chatWs: getChatWs(), broadcastAll,
-      getActiveOnEvent: (sid) => activeOnEventBySession.get(sid),
-      setActiveOnEvent: (sid, fn) => {
-        if (fn) activeOnEventBySession.set(sid, fn);
-        else activeOnEventBySession.delete(sid);
-      },
-      activeBrowserSessionId: activeBrowserSessionIdRef.value,
-      setActiveBrowserSessionId: (id) => { activeBrowserSessionIdRef.value = id; },
-      getActiveRuntime: (sid) => activeRuntimeBySession.get(sid),
-      setActiveRuntime: (sid, runtime) => {
-        if (runtime) activeRuntimeBySession.set(sid, runtime);
-        else activeRuntimeBySession.delete(sid);
-      },
-    };
-    for (const h of [handleHealthRoutes, handleAccountRoutes, handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes]) {
-      if (await h(method, url, req, res, ctx, requestRole)) return;
-    }
-    if (method === "POST" && url.pathname === "/api/upload") {
-      const uploadsDir = join(dataDir, "uploads"); mkdirSync(uploadsDir, { recursive: true });
-      const chunks: Buffer[] = []; let totalSize = 0;
-      for await (const chunk of req) { totalSize += (chunk as Buffer).length; if (totalSize > config.maxUploadBytes) { json(413, { error: `File too large. Max ${Math.round(config.maxUploadBytes / 1048576)}MB.` }); req.destroy(); return; } chunks.push(chunk as Buffer); }
-      const ct = req.headers["content-type"] || "";
-      const bm = ct.match(/boundary=(?:"([^"]{1,70})"|([^\s;]{1,70}))/);
-      if (!bm) { json(400, { error: "Multipart form data required" }); return; }
-      const boundary = bm[1] || bm[2];
-      if (!boundary || boundary.length > 70 || /[^\x20-\x7e]/.test(boundary)) { json(400, { error: "Invalid boundary" }); return; }
-      const parts = parseMultipart(Buffer.concat(chunks), boundary);
-      const MAGIC: Record<string, Buffer[]> = { png: [Buffer.from([0x89, 0x50, 0x4E, 0x47])], jpg: [Buffer.from([0xFF, 0xD8, 0xFF])], jpeg: [Buffer.from([0xFF, 0xD8, 0xFF])], gif: [Buffer.from("GIF87a"), Buffer.from("GIF89a")], webp: [Buffer.from("RIFF")], bmp: [Buffer.from("BM")], pdf: [Buffer.from("%PDF")] };
-      const BLOCKED = new Set(["exe", "sh", "bat", "cmd", "com", "ps1", "vbs", "js", "msi", "dll", "so"]);
-      const uploaded: { name: string; url: string; size: number; isImage: boolean }[] = [];
-      for (const part of parts) {
-        const ext = (part.filename?.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
-        if (BLOCKED.has(ext)) { json(400, { error: `File type .${ext} not allowed` }); return; }
-        const sigs = MAGIC[ext]; if (sigs && !sigs.some(s => part.data.length >= s.length && part.data.subarray(0, s.length).equals(s))) { json(400, { error: `File ${part.filename} doesn't match type .${ext}` }); return; }
-        // Content-addressed name: identical bytes dedupe to one file on disk,
-        // so pasting the same screenshot repeatedly never re-stores it.
-        const safeName = `${createHash("sha256").update(part.data).digest("hex")}.${ext}`;
-        const destPath = join(uploadsDir, safeName);
-        if (!existsSync(destPath)) writeFileSync(destPath, part.data);
-        uploaded.push({ name: part.filename || safeName, url: `/uploads/${safeName}`, size: part.data.length, isImage: /^(png|jpg|jpeg|gif|webp|svg|bmp)$/.test(ext) });
-      }
-      json(200, { files: uploaded }); return;
-    }
-    if (url.pathname === "/api/uploads/stats" && method === "GET") {
-      const uploadsDir = join(dataDir, "uploads");
-      let count = 0, bytes = 0;
-      if (existsSync(uploadsDir)) {
-        for (const fn of readdirSync(uploadsDir)) {
-          const st = statSync(join(uploadsDir, fn));
-          if (st.isFile()) { count++; bytes += st.size; }
-        }
-      }
-      json(200, { count, bytes }); return;
-    }
-    if (url.pathname === "/api/uploads" && method === "DELETE") {
-      const uploadsDir = join(dataDir, "uploads");
-      let removed = 0;
-      if (existsSync(uploadsDir)) {
-        for (const fn of readdirSync(uploadsDir)) {
-          const fp = join(uploadsDir, fn);
-          if (statSync(fp).isFile()) { unlinkSync(fp); removed++; }
-        }
-      }
-      json(200, { removed }); return;
-    }
-    if (method === "GET" && ["/uploads/", "/videos/", "/images/", "/files/"].some(r => url.pathname.startsWith(r))) {
-      const provided = ((req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "") || url.searchParams.get("token") || "";
-      const operatorOk = !!provided && provided.length === config.authToken.length && timingSafeEqual(Buffer.from(provided), Buffer.from(config.authToken));
-      if (!operatorOk) { json(401, { error: "Authentication required" }); return; }
-    }
-    if (method === "GET" && url.pathname.startsWith("/uploads/")) {
-      const fn = url.pathname.replace("/uploads/", ""); if (/[^a-zA-Z0-9._-]/.test(fn)) { json(400, { error: "Invalid filename" }); return; }
-      const fp = confineToDir(join(dataDir, "uploads"), fn); if (!fp) { json(403, { error: "Path traversal blocked" }); return; }
-      if (!existsSync(fp)) { json(404, { error: "File not found" }); return; }
-      const ext = fn.split(".").pop() || "", ct: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv" };
-      const h: Record<string, string> = { ...corsHeaders(req), "Content-Type": ct[ext] || "application/octet-stream", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" };
-      if (ext === "svg") h["Content-Security-Policy"] = "script-src 'none'";
-      res.writeHead(200, h); res.end(readFileSync(fp)); return;
-    }
-    for (const [prefix, subdir] of [["/videos/", "videos"], ["/images/", "images"]] as const) {
-      if (method === "GET" && url.pathname.startsWith(prefix)) {
-        const dir = resolve(config.workspace, subdir), file = confineToDir(dir, url.pathname.replace(prefix, ""));
-        if (!file || url.pathname.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return; }
-        if (existsSync(file)) { const ext = file.split(".").pop() || ""; const ct: Record<string, string> = { mp4: "video/mp4", webm: "video/webm", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" }; res.writeHead(200, { "Content-Type": ct[ext] || "application/octet-stream" }); res.end(readFileSync(file)); return; }
-        // File not at the resolved path — return 404 here with the actual
-        // checked path so the next access shows what went wrong instead of
-        // falling through to the generic "Not found" at the bottom.
-        json(404, { error: "File not found", path: url.pathname, checked: file, workspace: config.workspace });
-        return;
-      }
-    }
-    if (method === "GET" && url.pathname.startsWith("/files/")) {
-      const filePath = decodeURIComponent(url.pathname.slice(7));
-      const wsDir = resolve(config.workspace);
-      const file = confineToDir(wsDir, filePath);
-      if (!file || filePath.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return; }
-      if (!existsSync(file)) { json(404, { error: "File not found" }); return; }
-      const ext = (file.split(".").pop() || "").toLowerCase();
-      const ct: Record<string, string> = { docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", html: "text/html", css: "text/css", js: "application/javascript" };
-      const inlineable = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "pdf", "txt", "json", "csv", "md", "html", "css", "js", "mp4", "webm"]);
-      const filename = file.split(/[/\\]/).pop() || "download";
-      const h: Record<string, string> = { ...corsHeaders(req), "Content-Type": ct[ext] || "application/octet-stream", "X-Content-Type-Options": "nosniff" };
-      if (!inlineable.has(ext)) h["Content-Disposition"] = `attachment; filename="${filename}"`;
-      if (ext === "svg") h["Content-Security-Policy"] = "script-src 'none'";
-      res.writeHead(200, h); res.end(readFileSync(file)); return;
-    }
-    if (method === "GET" && url.pathname.startsWith("/apps/")) {
-      const fid = url.pathname.split("/")[2];
-      const appsDir = resolve(config.workspace);
-      // Finished STATIC BUILD: the app was built to a static dist/ and serves
-      // with no dev server (app-run-target marker). Its built dist/ is
-      // authoritative — serve from there and skip the dev-server proxy, even if
-      // a stale frontend record lingers.
-      const distDir = fid ? staticBuildDistDir(join(appsDir, "apps", fid)) : null;
-      // Live FRONTEND dev server (Vite/Next/SPA): if this app registered a
-      // `kind: "frontend"` dev server, reverse-proxy the app URL straight to it
-      // instead of serving a static file. Desktop gets HMR (the dev CSP lets the
-      // browser open the dev server's ws on localhost); the phone gets the
-      // proxied document + assets over the broker (full reload, no live HMR).
-      if (!distDir) {
-        const frontendRec = fid ? readDevServerRecord(fid) : null;
-        if (frontendRec && frontendRec.kind === "frontend") {
-          let warm = false;
-          try { warm = ensureDevServerRunning(fid).status === "running"; } catch { /* best-effort wake */ }
-          const decision = decideFrontendServe({
-            warm,
-            tunneled: !!req.headers["x-lax-tunnel"],
-            port: frontendRec.port,
-            pathAndQuery: url.pathname + url.search,
-          });
-          if (decision.mode === "redirect") {
-            res.writeHead(302, { Location: decision.location, "Cache-Control": "no-store" });
-            res.end();
-            return;
-          }
-          proxyFrontendDevServer(req, res, frontendRec.port, url, deriveConnectorCapability(config.authToken), { publicDir });
-          return;
-        }
-      }
-      // Static-build apps rebase /apps/<id>/… under their dist/ (the base path
-      // is baked into the built assets); ordinary apps serve from the workspace
-      // app dir as before.
-      const serveRoot = distDir ?? appsDir;
-      const servePathname = distDir ? (url.pathname.slice(`/apps/${fid}`.length) || "/") : url.pathname;
-      let appFile = confineToDir(serveRoot, "." + servePathname);
-      if (!appFile) { json(403, { error: "Path traversal blocked" }); return; }
-      try {
-        if (existsSync(appFile) && statSync(appFile).isDirectory()) {
-          const idx = confineToDir(serveRoot, join(appFile, "index.html"));
-          if (idx && existsSync(idx)) appFile = idx;
-        }
-      } catch {}
-      // Static-build SPA deep-link fallback: a client-routed navigation
-      // (/apps/<id>/dashboard) has no file on disk — serve the built index.html
-      // so the SPA router handles it, mirroring the dev server's history
-      // fallback. Asset requests (they carry a file extension) still 404.
-      if (distDir && !existsSync(appFile) && !/\.[a-z0-9]+$/i.test(servePathname)) {
-        const idx = confineToDir(serveRoot, "index.html");
-        if (idx) appFile = idx;
-      }
-      if (existsSync(appFile)) {
-        const ext = appFile.split(".").pop() || "", ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml", ico: "image/x-icon", webp: "image/webp", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", woff: "font/woff", woff2: "font/woff2", map: "application/json", wasm: "application/wasm", txt: "text/plain" };
-        const h: Record<string, string> = { "Content-Type": ct[ext] || "application/octet-stream" };
-        if (ext === "html") {
-          // Lazy keep-alive: if this app has a registered full-stack backend,
-          // make sure it's running before its frontend starts hitting the
-          // connector. Cheap no-op (a Map lookup) for the common backend-less
-          // app; best-effort, never blocks serving the page.
-          const appId = url.pathname.split("/")[2];
-          if (appId) { try { ensureDevServerRunning(appId); } catch { /* best-effort */ } }
-          h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self'";
-          h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
-          h["Cache-Control"] = "no-cache, must-revalidate"; h["Pragma"] = "no-cache";
-          let html = readFileSync(appFile, "utf-8");
-          // Strip the operator token (an app is a lower-trust principal) but hand
-          // it the connector capability so it can reach /api/connectors/* — and
-          // nothing else — instead of raw-fetching external APIs (CSP-blocked) or
-          // driving a core self_edit to wire an integration.
-          const connectorCap = deriveConnectorCapability(config.authToken);
-          // Phone requests (marked by the broker tunnel) get the render-verify
-          // capture core — the desktop IDE instruments its own preview iframe,
-          // but nothing else instruments a page served to the phone.
-          const errorPipe = req.headers["x-lax-tunnel"] && appId ? phoneErrorPipeScript(publicDir, appId) : "";
-          const iso = `<script>sessionStorage.removeItem('lax_token');localStorage.removeItem('lax_token');delete window.__AUTH_TOKEN__;window.__LAX_CONNECTOR_TOKEN__=${JSON.stringify(connectorCap)};history.replaceState(null,'',location.pathname);</script>` + errorPipe;
-          html = html.includes("<head>") ? html.replace("<head>", "<head>" + iso) : html.includes("<body>") ? html.replace("<body>", "<body>" + iso) : iso + html;
-          res.writeHead(200, h); res.end(html); return;
-        }
-        res.writeHead(200, h); res.end(readFileSync(appFile)); return;
-      }
-    }
-    if (method === "GET") {
-      // Serve-time JS bundle: collapses a page's ~90 classic /js scripts into
-      // one response (see static-bundle.ts). URL is mtime-stamped so it's safe
-      // to cache hard; the route ignores the ?v= and serves the live body.
-      const bundleMatch = url.pathname.match(/^\/js\/_bundle\/([a-z0-9_-]+)\.js$/i);
-      if (bundleMatch) {
-        const pb = getPageBundle(bundleMatch[1], publicDir);
-        if (pb) {
-          res.writeHead(200, { ...corsHeaders(req), "Content-Type": "application/javascript", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" });
-          res.end(pb.body); return;
-        }
-      }
-      const fp = url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/app.html" ? join(publicDir, "app.html") : join(publicDir, url.pathname);
-      if (relative(publicDir, resolve(fp)).startsWith("..")) { json(403, { error: "Path traversal blocked" }); return; }
-      if (existsSync(fp)) {
-        const ext = fp.split(".").pop() || "", ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", svg: "image/svg+xml", png: "image/png", ico: "image/x-icon" };
-        const h: Record<string, string> = { "Content-Type": ct[ext] || "application/octet-stream" };
-        if (ext === "html") {
-          h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"; h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
-          // The HTML carries the mtime-stamped bundle URL (getPageBundle rewrite).
-          // The bundle is served `immutable`, so the HTML MUST never be cached —
-          // a heuristically-cached HTML pins an OLD stamp and the renderer keeps
-          // loading the stale immutable bundle forever (empty sidebar / no
-          // providers after any source change). Mirror the /apps/ route's policy.
-          h["Cache-Control"] = "no-cache, must-revalidate"; h["Pragma"] = "no-cache";
-          const raw = readFileSync(fp, "utf-8");
-          const page = (fp.split(/[/\\]/).pop() || "").replace(/\.html$/i, "");
-          const pb = getPageBundle(page, publicDir, raw);
-          res.writeHead(200, h); res.end(pb ? pb.rewrittenHtml : raw); return;
-        }
-        res.writeHead(200, h); res.end(readFileSync(fp)); return;
-      }
-    }
-    json(404, { error: "Not found" });
+    const authorization = authorizeRequest(method, url, req, res, deps.config, deps.rbac);
+    if (authorization.handled) return;
+
+    const ctx = createServerContext(deps);
+    if (await routeApiRequest(method, url, req, res, ctx, authorization.role, deps.config, deps.dataDir)) return;
+    if (serveProtectedAssets(method, url, req, res, deps.config, deps.dataDir)) return;
+    if (serveWorkspaceApp(method, url, req, res, deps.config, deps.publicDir)) return;
+    if (servePublicAsset(method, url, req, res, deps.publicDir)) return;
+    jsonResponse(res, 404, { error: "Not found" }, req);
   };
 }

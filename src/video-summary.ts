@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "./lax-data-dir.js";
 import { resolveCredential } from "./auth/resolve.js";
+import { ffmpegBin } from "./ffmpeg-bin.js";
 
 /** Safely parse a fraction string like "30000/1001" without eval() */
 function parseFraction(s: string): number {
@@ -116,7 +117,7 @@ export function extractKeyframes(
         : `scale=-2:${maxDim}`;
 
       try {
-        execFileSync("ffmpeg", ["-ss", ts.toFixed(2), "-i", videoPath, "-frames:v", "1", "-vf", scaleFilter, "-y", outPath], {
+        execFileSync(ffmpegBin(), ["-ss", ts.toFixed(2), "-i", videoPath, "-frames:v", "1", "-vf", scaleFilter, "-y", outPath], {
           timeout: 10_000,
           stdio: "ignore",
         });

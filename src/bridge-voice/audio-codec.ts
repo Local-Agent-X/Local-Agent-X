@@ -11,9 +11,10 @@
 import { spawn } from "node:child_process";
 
 import { createLogger } from "../logger.js";
+import { ffmpegBin } from "../ffmpeg-bin.js";
 const logger = createLogger("bridge-voice.audio-codec");
 
-const FFMPEG = process.env.LAX_FFMPEG || "ffmpeg";
+const FFMPEG = ffmpegBin();
 
 function runFfmpeg(args: string[], stdin: Buffer | null, timeoutMs: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {

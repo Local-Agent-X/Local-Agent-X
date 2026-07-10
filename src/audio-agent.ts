@@ -4,6 +4,7 @@
  */
 
 import { spawn, ChildProcess } from "node:child_process";
+import { ffmpegBin } from "./ffmpeg-bin.js";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
@@ -140,7 +141,7 @@ export class AudioAgent extends EventEmitter {
       const timeout = this.options.silenceTimeout;
 
       // Use ffmpeg to record from default audio device with silence detection
-      const proc = spawn("ffmpeg", [
+      const proc = spawn(ffmpegBin(), [
         "-f", "dshow",
         "-i", "audio=default",
         "-ar", "16000",

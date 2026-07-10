@@ -91,7 +91,7 @@ project's own LICENSE is authoritative.
 |---|---|---|---|
 | [Electron](https://github.com/electron/electron) | OpenJS Foundation | MIT | Desktop companion shell |
 | [electron-builder](https://github.com/electron-userland/electron-builder) | electron-userland | MIT | Packaging / installers |
-| [FFmpeg](https://ffmpeg.org/) | FFmpeg team | LGPL/GPL | Screen capture (`gdigrab`) — external binary |
+| [FFmpeg](https://ffmpeg.org/) | FFmpeg team | LGPL/GPL | Screen capture (`gdigrab`), screen-stream, camera, voice codecs — GPL binary bundled via [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static), invoked as a separate process |
 
 ## Installer (.NET / Avalonia)
 

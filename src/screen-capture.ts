@@ -8,8 +8,9 @@ import { writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { randomBytes } from "node:crypto";
+import { ffmpegBin } from "./ffmpeg-bin.js";
 
-const FFMPEG = process.env.LAX_FFMPEG || "ffmpeg";
+const FFMPEG = ffmpegBin();
 
 // listMonitors still shells a tiny PowerShell enum script. That's benign:
 // screen *enumeration* isn't a capture, so Defender's AMSI never flags it.

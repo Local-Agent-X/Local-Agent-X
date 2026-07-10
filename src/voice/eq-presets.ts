@@ -4,6 +4,7 @@
 // playback medium (headphones vs phone earpiece vs small speaker).
 
 import { execFileSync } from "node:child_process";
+import { ffmpegBin } from "../ffmpeg-bin.js";
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { tmpPath } from "./paths.js";
 
@@ -37,7 +38,7 @@ export function applyEQPreset(audioBuffer: Buffer, preset: EQPreset = "default")
 
   try {
     writeFileSync(inPath, audioBuffer);
-    execFileSync("ffmpeg", ["-i", inPath, "-af", filters, "-y", outPath], {
+    execFileSync(ffmpegBin(), ["-i", inPath, "-af", filters, "-y", outPath], {
       timeout: 10_000, stdio: "ignore",
     });
     if (existsSync(outPath)) return readFileSync(outPath);

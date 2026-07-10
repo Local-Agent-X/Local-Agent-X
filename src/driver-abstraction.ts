@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { ffmpegBin } from "./ffmpeg-bin.js";
 import { EventEmitter } from "node:events";
 
 export interface Driver {
@@ -87,7 +88,7 @@ export class WebcamDriver implements CameraDriver {
 
   async init(): Promise<void> {
     try {
-      await runCommand("ffmpeg", ["-version"]);
+      await runCommand(ffmpegBin(), ["-version"]);
       this.available = true;
     } catch {
       this.available = false;
@@ -116,7 +117,7 @@ export class WebcamDriver implements CameraDriver {
       "-pix_fmt", "rgb24",
       "pipe:1",
     ];
-    return runCommandRaw("ffmpeg", args);
+    return runCommandRaw(ffmpegBin(), args);
   }
 
   setResolution(width: number, height: number): void {

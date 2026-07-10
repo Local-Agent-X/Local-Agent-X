@@ -8,6 +8,7 @@ import { readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { randomBytes } from "node:crypto";
+import { ffmpegBin } from "../ffmpeg-bin.js";
 
 const TMP_DIR = join(getLaxDir(), "voice-tmp");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
@@ -114,7 +115,7 @@ export function captureFrame(options: CaptureOptions = {}): CaptureResult {
 
     args.push("-y", outPath);
 
-    execFileSync("ffmpeg", args, {
+    execFileSync(ffmpegBin(), args, {
       timeout: 10_000,
       stdio: "ignore",
     });

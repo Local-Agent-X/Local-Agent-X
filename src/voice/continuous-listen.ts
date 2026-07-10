@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import { readFileSync, statSync, existsSync, unlinkSync } from "node:fs";
 import { tmpPath } from "./paths.js";
 import { transcribe } from "./stt.js";
+import { ffmpegBin } from "../ffmpeg-bin.js";
 
 export interface ContinuousListenOptions {
   /** Silence duration (seconds) to split segments. Default: 1.5 */
@@ -40,7 +41,7 @@ export function continuousListen(options: ContinuousListenOptions = {}): { stop:
           : process.platform === "darwin"
             ? ["avfoundation", ":0"]
             : ["alsa", "default"];
-        currentProc = spawn("ffmpeg", [
+        currentProc = spawn(ffmpegBin(), [
           "-f", audioInput[0], "-i", audioInput[1],
           "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
           "-af", `silencedetect=noise=-30dB:d=${silenceThreshold}`,

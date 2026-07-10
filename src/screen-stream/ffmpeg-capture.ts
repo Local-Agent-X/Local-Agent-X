@@ -16,9 +16,10 @@ import { spawn, execFileSync, type ChildProcessWithoutNullStreams } from "node:c
 import { createSocket, type Socket } from "node:dgram";
 import { listMonitors } from "../screen-capture.js";
 import { createLogger } from "../logger.js";
+import { ffmpegBin } from "../ffmpeg-bin.js";
 
 const logger = createLogger("screen-stream.ffmpeg");
-const FFMPEG = process.env.LAX_FFMPEG || "ffmpeg";
+const FFMPEG = ffmpegBin();
 
 /** VP8 payload type / clock the offer advertises (must match the peer codec). */
 export const VP8_PAYLOAD_TYPE = 96;

@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1167 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1168 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 65 | 22 | XL |  |
 | `src/security/` | 64 | 27 | XL |  |
-| `src/tools/` | 53 | 141 | XL |  |
+| `src/tools/` | 54 | 141 | XL |  |
 | `src/canonical-loop/` | 38 | 132 | XL |  |
 | `src/providers/` | 38 | 18 | L |  |
 | `src/memory/` | 37 | 108 | XL |  |
@@ -35,8 +35,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-guards/` | 17 | 14 | L |  |
 | `src/agent-request/` | 17 | 12 | L |  |
 | `src/agents/` | 15 | 13 | L |  |
+| `src/app-runtime/` | 14 | 12 | L |  |
 | `src/chat-ws/` | 14 | 9 | L |  |
-| `src/app-runtime/` | 13 | 12 | L |  |
 | `src/anthropic-client/` | 12 | 18 | L |  |
 | `src/context-manager/` | 12 | 10 | M |  |
 | `src/voice/` | 12 | 65 | XL |  |
@@ -58,7 +58,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/auto-build/` | 5 | 47 | XL |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
 | `src/mcp-client/` | 5 | 6 | L |  |
-| `src/routes/` | 5 | 80 | XL |  |
+| `src/routes/` | 5 | 81 | XL |  |
 | `src/routing/` | 5 | 7 | M |  |
 | `src/util/` | 5 | 1 | S |  |
 | `src/hooks/` | 4 | 3 | M |  |
@@ -135,6 +135,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/emotional-lexicon.ts` | S |
 | `src/emotional-memory.ts` | M |
 | `src/event-bus.ts` | S |
+| `src/ffmpeg-bin.ts` | S |
 | `src/file-audit.ts` | S |
 | `src/growth-tracker-store.ts` | S |
 | `src/growth-tracker.ts` | M |

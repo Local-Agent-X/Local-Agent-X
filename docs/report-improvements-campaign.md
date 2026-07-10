@@ -34,21 +34,21 @@ profile, or auto-injecting cross-session memory.
 
 | ID | Report | Responsibility | State | Dependencies |
 | --- | --- | --- | --- | --- |
-| B1 | 1 | Browser isolation default and migration | pending | baseline |
-| B2 | 5 | Remove legacy DNS navigation authority | pending | baseline |
+| B1 | 1 | Browser isolation default and migration | refutation | baseline |
+| B2 | 5 | Remove legacy DNS navigation authority | repair | baseline |
 | B3 | 7 | Browser download quarantine and sensitive-page blocks | pending | B2 |
 | B4 | 8 | Browser-mode API and UI | pending | B1 |
 | B5 | 13 | Concurrent two-identity browser isolation test | pending | B1, B4 |
-| A1 | 2, 3 | Versioned encrypted provider credential envelope, fail-closed writes | pending | baseline |
+| A1 | 2, 3 | Versioned encrypted provider credential envelope, fail-closed writes | refutation | baseline |
 | A2 | 15 | Provider migration and privacy documentation | pending | A1 |
-| S1 | 4 | Effective sandbox status and unattended-host acknowledgement gate | pending | baseline |
+| S1 | 4 | Effective sandbox status and unattended-host acknowledgement gate | refutation | baseline |
 | R1 | 6 | Tool idempotency classes and retry policy | pending | baseline |
 | R2 | 14 | Crash/restart side-effect non-duplication tests | pending | R1 |
-| M1 | 9 | Memory provenance propagation and retrieval labels | pending | baseline |
+| M1 | 9 | Memory provenance propagation and retrieval labels | refutation | baseline |
 | M2 | 10 | Approval gate for risky external durable memory | pending | M1 |
-| X1 | 11 | MCP sandbox/trusted-only execution posture | pending | baseline |
+| X1 | 11 | MCP sandbox/trusted-only execution posture | in-flight | baseline |
 | X2 | 12 | Signed MCP manifests and publisher trust | pending | X1 |
-| W1 | 18 | Fail-closed Windows signing pipeline and verification | pending | baseline |
+| W1 | 18 | Fail-closed Windows signing pipeline and verification | green | baseline |
 | L1 | 19 | Strict local-only central policy, API, config, and UI | pending | A1, S1, X1 |
 | H1 | 16 | Split request authentication, API dispatch, static serving, app serving | pending | security waves |
 | C1 | 17 | Split canonical chat registration and context/tool setup | pending | reliability waves |
@@ -78,7 +78,8 @@ profile, or auto-injecting cross-session memory.
 
 ### Shipped (green)
 
-Pending.
+- W1: release and rolling Windows workflows require signing credentials,
+  validate the exact signer and timestamp, and cannot publish unsigned output.
 
 ### Parked for user or external authority
 

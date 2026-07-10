@@ -14,6 +14,8 @@ describe("MCP local trust ledger", () => {
       setMcpLocalTrust(dataDir, "example", config, true);
       expect(isMcpTrustedLocally(dataDir, "example", config)).toBe(true);
       expect(isMcpTrustedLocally(dataDir, "example", { ...config, args: ["-y", "different-mcp"] })).toBe(false);
+      expect(isMcpTrustedLocally(dataDir, "example", { ...config, executionMode: "sandboxed" })).toBe(false);
+      expect(isMcpTrustedLocally(dataDir, "example", { ...config, manifest: { changed: true } } as never)).toBe(false);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

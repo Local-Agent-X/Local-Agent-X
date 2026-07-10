@@ -34,9 +34,59 @@ The agent picks up the new tools on next config save (file watcher reloads autom
 
 - `sandboxed` wraps the integrity-checked executable in the existing macOS seatbelt or Linux bubblewrap guarded profile. This is targeted confinement, not a full sandbox: it retains network and broad host filesystem access while denying selected credential paths and persistence writes.
 - `trusted` requests a normal child process with the current user account's host permissions. It remains blocked until the authenticated user approves that exact command/args/env fingerprint in Settings. Approval lives only in `~/.lax/mcp-local-trust.json`, is not synced, and is invalidated by a config change.
+- A valid signed manifest from a key in `~/.lax/trusted-publishers.json` can authorize its manifest-bound posture without local first-use approval. The signature binds the server name, release version, command identity, args/config fingerprint, publisher key, and `executionMode`.
 - Windows currently has no supported MCP guarded child confinement. A `sandboxed` entry is blocked before integrity trust or spawn; trusted execution needs the separate local approval.
 
-The agent-facing `mcp_add_server` tool cannot create or approve trusted execution. A synced or manually edited `executionMode: "trusted"` entry also cannot start through boot or the config watcher without the matching local approval. Docker shell mode does not transparently containerize MCP servers because arbitrary host-installed MCP executables and their runtimes are not present in the shell image. Binary hash pinning, environment filtering, per-call policy, and output sanitization remain defense-in-depth controls; none makes an unreviewed server safe to run as trusted code.
+The agent-facing `mcp_add_server` tool cannot create or approve trusted execution. A synced or manually edited unsigned `executionMode: "trusted"` entry also cannot start through boot or the config watcher without matching local approval. Docker shell mode does not transparently containerize MCP servers because arbitrary host-installed MCP executables and their runtimes are not present in the shell image. Binary hash pinning, environment filtering, per-call policy, and output sanitization remain defense-in-depth controls; none makes an unreviewed server safe to run as trusted code.
+
+### Signed publisher manifests
+
+MCP uses the same raw Ed25519 publisher keys as plugins; there is no second trust root or incompatible signature scheme. A server config may include a `manifest`:
+
+```json
+{
+  "command": "C:/tools/acme-mcp.exe",
+  "args": ["--stdio"],
+  "executionMode": "trusted",
+  "manifest": {
+    "schemaVersion": 1,
+    "serverName": "acme",
+    "version": "2.1.0",
+    "publisher": "acme",
+    "keyId": "release-2026",
+    "command": {
+      "kind": "binary",
+      "resolvedPath": "C:/tools/acme-mcp.exe",
+      "sha256": "<sha256 from the MCP integrity hasher>"
+    },
+    "configFingerprint": "<sha256 of canonical command/args/env config>",
+    "executionMode": "trusted",
+    "signature": "<hex Ed25519 signature>"
+  }
+}
+```
+
+Portable package manifests can use `{"kind":"package","manager":"npx","name":"@acme/mcp","version":"2.1.0"}` instead. The configured package argument must be exactly `@acme/mcp@2.1.0`; unpinned package names do not satisfy a signed package identity. The package-manager executable is still resolved and hashed by the existing MCP integrity code, and the exact args/config fingerprint remains signed.
+
+The signature is over UTF-8 JSON with fields in this order: `schemaVersion`, `serverName`, `version`, `publisher`, optional `keyId`, normalized `command`, lowercase `configFingerprint`, and `executionMode`. `mcpManifestPayload()` and `mcpConfigFingerprint()` in `src/mcp-client/manifest.ts` are the canonical publisher helpers.
+
+Trusted publishers are configured in the existing local store. The legacy single-key form remains supported; named keys enable rotation:
+
+```json
+{
+  "acme": {
+    "name": "ACME Tools",
+    "publicKeys": {
+      "release-2026": "<64 hex chars>",
+      "release-2027": "<64 hex chars>"
+    }
+  }
+}
+```
+
+Remove a retired key from `publicKeys` after its overlap window. Unknown publishers are not publisher-verified and may run only guarded or with explicit machine-local trust. An unknown key ID for a known publisher, a bad signature, binary/args/config/posture tampering, or a malformed manifest fails closed in every posture.
+
+Accepted signed releases are recorded in local `~/.lax/mcp-signed-manifests.json`. A valid higher semantic version advances the record. Lower versions, different manifests reusing an accepted version, removing the manifest, and losing the previously accepted publisher trust are blocked. This prevents downgrade, same-version replay, and signature stripping after an upgrade.
 
 ## Placeholders — making one config work on every machine
 

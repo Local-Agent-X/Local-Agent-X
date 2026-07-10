@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { createLogger } from "../logger.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "../sandbox/seatbelt.js";
 import { isBwrapAvailable, bwrapGuardedRuns, wrapForBwrap } from "../sandbox/bwrap.js";
@@ -8,6 +9,7 @@ import { killProcessGroup, killProcessTree } from "../process-tree-kill.js";
 import type { ToolResult } from "../types.js";
 import { type MCPExecutionMode, type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
 import { verifyOrTrust } from "./integrity.js";
+import { assessMcpManifest } from "./manifest.js";
 import { DENY_PREFIXES, DENY_SUBSTRINGS, DENY_EXACT, ENV_ALLOWLIST } from "./env-credential-patterns.js";
 import { buildWindowsMcpSpawn } from "./windows-spawn.js";
 
@@ -142,11 +144,15 @@ export interface MCPExecutionPosture {
   trustedOnly: boolean;
 }
 
-export function getMcpExecutionPosture(config: Pick<MCPServerConfig, "executionMode">, locallyTrusted = false): MCPExecutionPosture {
+export function getMcpExecutionPosture(
+  config: Pick<MCPServerConfig, "executionMode">,
+  locallyTrusted = false,
+  publisherTrusted = false,
+): MCPExecutionPosture {
   const requested = config.executionMode ?? "sandboxed";
   const backend = getMcpSandboxBackend();
   if (requested === "trusted") {
-    return { requested, effective: locallyTrusted ? "trusted" : "blocked", sandboxBackend: backend, trustedOnly: backend === null };
+    return { requested, effective: locallyTrusted || publisherTrusted ? "trusted" : "blocked", sandboxBackend: backend, trustedOnly: backend === null };
   }
   return {
     requested,
@@ -174,13 +180,19 @@ export class MCPConnection {
   // from the credential strip in buildMcpChildEnv (the legitimate injection path).
   private readonly exemptEnvKeys: ReadonlySet<string>;
 
-  constructor(serverName: string, private config: MCPServerConfig, secretEnvKeys: readonly string[] = [], private locallyTrusted = false) {
+  constructor(serverName: string, private config: MCPServerConfig, secretEnvKeys: readonly string[] = [],
+    private locallyTrusted = false, private trustConfig: MCPServerConfig = config, private dataDir: string = getLaxDir()) {
     this.serverName = serverName;
     this.exemptEnvKeys = new Set(secretEnvKeys.map(k => k.toUpperCase()));
   }
 
   async connect(): Promise<void> {
-    const posture = getMcpExecutionPosture(this.config, this.locallyTrusted);
+    const manifest = assessMcpManifest(this.dataDir, this.serverName, this.trustConfig, { recordAcceptance: true });
+    if (manifest.trust === "invalid") {
+      throw new Error(`MCP server "${this.serverName}" signed manifest verification failed: ${manifest.reason}.`);
+    }
+    const publisherTrusted = manifest.trust === "verified";
+    const posture = getMcpExecutionPosture(this.config, this.locallyTrusted, publisherTrusted);
     if (posture.effective === "blocked") {
       throw new Error(
         `MCP server "${this.serverName}" was not started: requested execution is not authorized. ` +
@@ -188,10 +200,10 @@ export class MCPConnection {
       );
     }
 
-    // Binary integrity gate — fail closed on mismatch BEFORE spawning.
-    // First-trust auto-accepts; subsequent hash drift refuses to spawn.
-    // Operator escape hatches: LAX_MCP_RETRUST / LAX_MCP_STRICT_TRUST.
-    const verdict = verifyOrTrust(this.serverName, this.config.command);
+    // Signed identities replace TOFU; fallback entries retain the local pin.
+    const verdict = publisherTrusted
+      ? { ok: true as const, firstTrust: false, sha256: manifest.sha256!, resolvedPath: manifest.resolvedPath! }
+      : verifyOrTrust(this.serverName, this.config.command);
     if (!verdict.ok) {
       throw new Error(`MCP server "${this.serverName}" integrity check failed: ${verdict.reason}. ${verdict.userHint}`);
     }

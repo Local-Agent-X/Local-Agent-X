@@ -19,6 +19,7 @@ function mcpStatusBadge(s) {
   const pill = (bg, color, text) =>
     `<span style="font-size:.65rem;padding:3px 8px;border-radius:4px;background:${bg};color:${color}">${esc(text)}</span>`;
   if (s.redundant) return pill('var(--border)', 'var(--muted)', 'SKIPPED (native)');
+  if (s.manifestTrust === 'invalid') return pill('var(--danger)', '#fff', 'SIGNATURE INVALID');
   if (s.missingSecrets && s.missingSecrets.length) return pill('var(--warn,#a86)', '#000', 'NEEDS SECRET');
   if (s.disabled) return pill('var(--border)', 'var(--muted)', 'DISABLED');
   if (s.connected) return pill('var(--accent)', '#000', `CONNECTED — ${s.toolCount} tool${s.toolCount === 1 ? '' : 's'}`);
@@ -54,7 +55,7 @@ async function loadMcpServers() {
       const toggleBtn = s.redundant ? '' : (s.disabled
         ? `<button class="btn" onclick="toggleMcpServer('${esc(s.name)}',false)" style="padding:4px 8px;font-size:.7rem;color:var(--accent)">Enable</button>`
         : `<button class="btn" onclick="toggleMcpServer('${esc(s.name)}',true)" style="padding:4px 8px;font-size:.7rem">Disable</button>`);
-      const trustBtn = s.executionMode !== 'trusted' ? '' : (s.locallyTrusted
+      const trustBtn = s.executionMode !== 'trusted' || s.manifestTrust === 'verified' || s.manifestTrust === 'invalid' ? '' : (s.locallyTrusted
         ? `<button class="btn" onclick="setMcpTrust('${esc(s.name)}',false)" style="padding:4px 8px;font-size:.7rem">Revoke local trust</button>`
         : `<button class="btn" onclick="setMcpTrust('${esc(s.name)}',true)" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">Approve trusted execution</button>`);
       const tools = (s.connected && s.tools && s.tools.length)
@@ -67,6 +68,14 @@ async function loadMcpServers() {
           : s.executionMode === 'trusted'
             ? 'Blocked: local approval required'
             : 'Blocked: guarded child confinement unavailable';
+      const manifestTrust = s.manifestTrust === 'verified'
+        ? `Publisher verified: ${esc(s.publisherName || s.publisher)} v${esc(s.signedVersion)}${s.manifestKeyId ? ` (${esc(s.manifestKeyId)})` : ''}`
+        : s.manifestTrust === 'unknown-publisher'
+          ? `Publisher not trusted: ${esc(s.publisher || 'unknown')}${s.manifestMessage ? ` — ${esc(s.manifestMessage)}` : ''}`
+          : s.manifestTrust === 'invalid'
+            ? `Manifest blocked: ${esc(s.manifestMessage || 'verification failed')}`
+            : 'Unsigned: guarded execution or explicit local trust required';
+      const manifestColor = s.manifestTrust === 'verified' ? 'var(--accent)' : s.manifestTrust === 'invalid' ? 'var(--danger)' : 'var(--muted)';
       // Redundant servers (filesystem) are never spawned — their tools
       // duplicate native read/write/edit. Offering Test/Enable on them makes a
       // by-design skip look like a failure, so show an explanation instead.
@@ -85,6 +94,7 @@ async function loadMcpServers() {
             <div style="font-family:var(--mono);font-size:.85rem;font-weight:600;color:var(--text)">${esc(s.name)}</div>
             <div style="font-size:.7rem;color:var(--muted);margin-top:2px;font-family:var(--mono);word-break:break-word">${cmdLine}</div>
             <div style="font-size:.68rem;color:${s.executionPosture === 'blocked' ? 'var(--danger)' : 'var(--muted)'};margin-top:4px">${execution}</div>
+            <div style="font-size:.68rem;color:${manifestColor};margin-top:4px">${manifestTrust}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">${mcpStatusBadge(s)}</div>
         </div>
@@ -135,19 +145,25 @@ async function addMcpServer() {
   const command = document.getElementById('mcp-new-command')?.value?.trim();
   const argsRaw = document.getElementById('mcp-new-args')?.value?.trim() || '';
   const envRaw = document.getElementById('mcp-new-env')?.value || '';
+  const manifestRaw = document.getElementById('mcp-new-manifest')?.value?.trim() || '';
   const executionMode = document.getElementById('mcp-new-execution')?.value;
   if (!name || !command) { alert('Server Name and Command are required.'); return; }
   if (!executionMode) { alert('Choose sandboxed or trusted execution. Trusted mode is only for server code you have reviewed.'); return; }
   const args = argsRaw ? argsRaw.split(/\s+/) : [];
   const env = parseMcpEnv(envRaw);
+  let manifest;
+  if (manifestRaw) {
+    try { manifest = JSON.parse(manifestRaw); }
+    catch { alert('Signed publisher manifest must be valid JSON.'); return; }
+  }
   const listEl = document.getElementById('mcp-servers-list');
   if (listEl) listEl.innerHTML = '<p style="color:var(--muted)">Connecting…</p>';
   try {
-    await apiPost('/api/mcp/servers', { name, command, args, env, executionMode });
-    if (executionMode === 'trusted' && confirm(`Run MCP server "${name}" as a trusted host process? It will have your user account's full host permissions. Approve only after reviewing this exact command and package.`)) {
+    await apiPost('/api/mcp/servers', { name, command, args, env, executionMode, ...(manifest ? { manifest } : {}) });
+    if (executionMode === 'trusted' && !manifest && confirm(`Run MCP server "${name}" as a trusted host process? It will have your user account's full host permissions. Approve only after reviewing this exact command and package.`)) {
       await apiPost('/api/mcp/servers/trust', { name, approved: true });
     }
-    ['mcp-new-name', 'mcp-new-command', 'mcp-new-args', 'mcp-new-env', 'mcp-new-execution'].forEach(fid => {
+    ['mcp-new-name', 'mcp-new-command', 'mcp-new-args', 'mcp-new-env', 'mcp-new-execution', 'mcp-new-manifest'].forEach(fid => {
       const e = document.getElementById(fid); if (e) e.value = '';
     });
     loadMcpServers();

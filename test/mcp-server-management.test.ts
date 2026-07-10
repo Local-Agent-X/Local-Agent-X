@@ -57,7 +57,7 @@ describe("MCPManager.getServers — full config view for the settings UI", () =>
     const mgr = await freshManager();
     expect(mgr.getExecutionCapability()).toEqual({ sandboxSupported: false, sandboxBackend: null, trustedOnly: true });
     const gh = mgr.getServers().find(s => s.name === "github")!;
-    expect(gh).toMatchObject({ executionMode: "sandboxed", executionPosture: "blocked", sandboxBackend: null, locallyTrusted: false });
+    expect(gh).toMatchObject({ executionMode: "sandboxed", executionPosture: "blocked", sandboxBackend: null, locallyTrusted: false, manifestTrust: "unsigned", publisher: null });
   });
 
   it("masks literal env values but passes placeholder references through", async () => {
@@ -79,7 +79,9 @@ describe("MCP settings disclosure", () => {
     expect(js).toContain("Blocked: local approval required");
     expect(js).toContain("broad host filesystem access");
     expect(js).toContain("/api/mcp/servers/trust");
-    expect(js).toContain("{ name, command, args, env, executionMode }");
+    expect(js).toContain("{ name, command, args, env, executionMode, ...(manifest ? { manifest } : {}) }");
+    expect(js).toContain("Publisher verified:");
+    expect(js).toContain("Manifest blocked:");
   });
 });
 

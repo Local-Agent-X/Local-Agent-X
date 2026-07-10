@@ -18,16 +18,20 @@ export interface PluginManifest {
   tools: string[];
   signature?: string;   // hex-encoded Ed25519 signature over the entry point content
   publisher?: string;    // publisher ID, maps to key in trusted-publishers.json
+  keyId?: string;        // optional named key in the publisher's publicKeys map
 }
 
 export type TrustLevel = "unsigned" | "hash-verified" | "signed";
 
-interface TrustedPublisher {
+export interface TrustedPublisher {
   name: string;
-  publicKey: string; // hex-encoded raw Ed25519 public key (32 bytes = 64 hex chars)
+  /** Legacy/default key. Hex-encoded raw Ed25519 public key (32 bytes). */
+  publicKey?: string;
+  /** Named keys permit rotation without changing publisher identity. */
+  publicKeys?: Record<string, string>;
 }
 
-interface TrustedPublishersFile {
+export interface TrustedPublishersFile {
   [publisherId: string]: TrustedPublisher;
 }
 
@@ -70,7 +74,7 @@ function writeRegistry(registry: PluginRegistry): void {
   writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2), "utf-8");
 }
 
-function readTrustedPublishers(): TrustedPublishersFile {
+export function readTrustedPublishers(): TrustedPublishersFile {
   if (!existsSync(TRUSTED_PUBLISHERS_PATH)) return {};
   try {
     return JSON.parse(readFileSync(TRUSTED_PUBLISHERS_PATH, "utf-8"));
@@ -84,13 +88,12 @@ function computeEntryHash(entryFilePath: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function verifySignature(
-  entryFilePath: string,
+function verifyEd25519(
+  data: Buffer,
   signatureHex: string,
   publicKeyHex: string,
 ): boolean {
   try {
-    const data = readFileSync(entryFilePath);
     const signature = Buffer.from(signatureHex, "hex");
     const rawKey = Buffer.from(publicKeyHex, "hex");
     if (rawKey.length !== 32) return false;
@@ -100,6 +103,41 @@ function verifySignature(
   } catch {
     return false;
   }
+}
+
+export type PublisherSignatureVerdict =
+  | { status: "valid"; publisher: TrustedPublisher; keyId: string | null }
+  | { status: "unknown-publisher" }
+  | { status: "unknown-key"; publisher: TrustedPublisher }
+  | { status: "invalid"; publisher: TrustedPublisher; keyId: string | null };
+
+/** Shared Ed25519 publisher verifier used by plugins and signed MCP manifests. */
+export function verifyPublisherSignature(
+  publisherId: string,
+  data: Buffer,
+  signatureHex: string,
+  keyId?: string,
+): PublisherSignatureVerdict {
+  const publisher = readTrustedPublishers()[publisherId];
+  if (!publisher) return { status: "unknown-publisher" };
+
+  let publicKey: string | undefined;
+  let resolvedKeyId: string | null = null;
+  if (keyId) {
+    publicKey = publisher.publicKeys?.[keyId];
+    resolvedKeyId = keyId;
+    if (!publicKey) return { status: "unknown-key", publisher };
+  } else if (publisher.publicKey) {
+    publicKey = publisher.publicKey;
+  } else {
+    const keys = Object.entries(publisher.publicKeys ?? {});
+    if (keys.length !== 1) return { status: "unknown-key", publisher };
+    [resolvedKeyId, publicKey] = keys[0];
+  }
+
+  return verifyEd25519(data, signatureHex, publicKey)
+    ? { status: "valid", publisher, keyId: resolvedKeyId }
+    : { status: "invalid", publisher, keyId: resolvedKeyId };
 }
 
 function assessTrustLevel(
@@ -120,11 +158,14 @@ function assessTrustLevel(
 
   // Check publisher signature
   if (manifest.signature && manifest.publisher) {
-    const publishers = readTrustedPublishers();
-    const pub = publishers[manifest.publisher];
-    if (pub) {
-      const valid = verifySignature(entryFilePath, manifest.signature, pub.publicKey);
-      if (valid) {
+    const verdict = verifyPublisherSignature(
+      manifest.publisher,
+      readFileSync(entryFilePath),
+      manifest.signature,
+      manifest.keyId,
+    );
+    if (verdict.status !== "unknown-publisher") {
+      if (verdict.status === "valid") {
         return { trustLevel: "signed", currentHash };
       }
       throw new Error(
@@ -168,8 +209,10 @@ function validateManifest(data: unknown): data is PluginManifest {
   // Optional signature fields
   if (m.signature !== undefined && typeof m.signature !== "string") return false;
   if (m.publisher !== undefined && typeof m.publisher !== "string") return false;
+  if (m.keyId !== undefined && typeof m.keyId !== "string") return false;
   if (m.signature && !m.publisher) return false;
   if (typeof m.publisher === "string" && !/^[a-zA-Z0-9._-]+$/.test(m.publisher)) return false;
+  if (typeof m.keyId === "string" && !/^[a-zA-Z0-9._-]+$/.test(m.keyId)) return false;
   if (typeof m.signature === "string" && !/^[a-f0-9]+$/i.test(m.signature)) return false;
   return true;
 }

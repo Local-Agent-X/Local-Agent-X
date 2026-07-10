@@ -29,6 +29,8 @@ export function mcpTrustFingerprint(name: string, config: MCPServerConfig): stri
     command: config.command,
     args: config.args ?? [],
     env: Object.entries(config.env ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+    executionMode: config.executionMode ?? "sandboxed",
+    manifest: config.manifest ?? null,
   });
   return createHash("sha256").update(stable).digest("hex");
 }

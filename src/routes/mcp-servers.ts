@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody } from "../server-utils.js";
 import { MCPManager } from "../mcp-client/index.js";
-import type { MCPServerConfig } from "../mcp-client/types.js";
+import type { MCPServerConfig, MCPSignedManifest } from "../mcp-client/types.js";
 import { getRuntimeConfig } from "../config.js";
 
 const NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -35,7 +35,7 @@ export const handleMcpServerRoutes: RouteHandler = async (method, url, req, res,
   }
 
   if (method === "POST" && url.pathname === "/api/mcp/servers") {
-    const body = await safeParseBody(req) as { name?: string; command?: string; args?: unknown; env?: unknown; executionMode?: unknown } | null;
+    const body = await safeParseBody(req) as { name?: string; command?: string; args?: unknown; env?: unknown; executionMode?: unknown; manifest?: unknown } | null;
     if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     const name = (body.name || "").trim();
     const command = (body.command || "").trim();
@@ -58,6 +58,12 @@ export const handleMcpServerRoutes: RouteHandler = async (method, url, req, res,
     }
     const config: MCPServerConfig = { command, args, disabled: false, executionMode: body.executionMode };
     if (Object.keys(env).length > 0) config.env = env;
+    if (body.manifest !== undefined) {
+      if (!body.manifest || typeof body.manifest !== "object" || Array.isArray(body.manifest)) {
+        json(400, { error: "manifest must be a signed MCP manifest object" }); return true;
+      }
+      config.manifest = body.manifest as MCPSignedManifest;
+    }
     mgr.addServer(name, config);
     await mgr.reload();
     json(200, { ok: true, name });

@@ -24,6 +24,7 @@ import { getMcpExecutionPosture, getMcpSandboxBackend, MCPConnection } from "./c
 import { expandPlaceholdersDeep } from "./placeholders.js";
 import type { MCPConfig, MCPServerConfig } from "./types.js";
 import { isMcpTrustedLocally, setMcpLocalTrust } from "./local-trust.js";
+import { assessMcpManifest, type MCPManifestTrust } from "./manifest.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
 const logger = createLogger("mcp-client");
@@ -50,6 +51,12 @@ export interface MCPServerStatus {
   executionPosture: "sandboxed" | "trusted" | "blocked";
   sandboxBackend: "seatbelt" | "bwrap" | null;
   locallyTrusted: boolean;
+  manifestTrust: MCPManifestTrust;
+  publisher: string | null;
+  publisherName: string | null;
+  signedVersion: string | null;
+  manifestKeyId: string | null;
+  manifestMessage: string | null;
 }
 
 export interface MCPExecutionCapability {
@@ -130,7 +137,7 @@ export class MCPManager {
 
       try {
         const locallyTrusted = isMcpTrustedLocally(this.dataDir, name, raw);
-        const conn = new MCPConnection(name, expanded.config, expanded.secretEnvKeys, locallyTrusted);
+        const conn = new MCPConnection(name, expanded.config, expanded.secretEnvKeys, locallyTrusted, raw, this.dataDir);
         this.connections.set(name, conn);
         await conn.connect();
       } catch (e) {
@@ -227,7 +234,8 @@ export class MCPManager {
       const conn = this.connections.get(name);
       const { missing } = expandPlaceholdersDeep(raw);
       const locallyTrusted = isMcpTrustedLocally(this.dataDir, name, raw);
-      const posture = getMcpExecutionPosture(raw, locallyTrusted);
+      const manifest = assessMcpManifest(this.dataDir, name, raw);
+      const posture = getMcpExecutionPosture(raw, locallyTrusted, manifest.trust === "verified");
       out.push({
         name,
         command: raw.command,
@@ -243,6 +251,12 @@ export class MCPManager {
         executionPosture: posture.effective,
         sandboxBackend: posture.sandboxBackend,
         locallyTrusted,
+        manifestTrust: manifest.trust,
+        publisher: manifest.publisher ?? null,
+        publisherName: manifest.publisherName ?? null,
+        signedVersion: manifest.version ?? null,
+        manifestKeyId: manifest.keyId ?? null,
+        manifestMessage: manifest.reason ?? null,
       });
     }
     return out;
@@ -282,7 +296,7 @@ export class MCPManager {
     if (REDUNDANT_MCP_SERVERS.has(name)) return { ok: false, error: `"${name}" is skipped — its tools duplicate native read/write/edit` };
     const expanded = expandPlaceholdersDeep(raw);
     if (expanded.missing.length > 0) return { ok: false, missingSecrets: expanded.missing, error: `Missing secret(s): ${expanded.missing.join(", ")}` };
-    const probe = new MCPConnection(name, expanded.config, expanded.secretEnvKeys, isMcpTrustedLocally(this.dataDir, name, raw));
+    const probe = new MCPConnection(name, expanded.config, expanded.secretEnvKeys, isMcpTrustedLocally(this.dataDir, name, raw), raw, this.dataDir);
     try {
       await probe.connect();
       const tools = probe.getTools().map(t => t.name);

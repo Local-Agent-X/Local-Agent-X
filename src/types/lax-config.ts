@@ -67,9 +67,12 @@ export interface LAXConfig {
   xttsServerUrl: string;
 
   /** When true, each session gets its own browser context (separate cookie
-   *  jar) inside the shared Chrome. Off = shared context (cookies carry
-   *  across sessions). Tabs/refs are per-session either way. */
+   *  jar) inside the shared Chrome. This is the fresh-install default. Off =
+   *  explicit shared context (cookies carry across sessions). Tabs/refs are
+   *  per-session either way. */
   browserPerSessionContext: boolean;
+  /** Whether the legacy shared-context default has been migrated. */
+  browserPerSessionContextMigrated: boolean;
 
   // ── Externalized limits & timeouts ──
   browserCdpPort: number;

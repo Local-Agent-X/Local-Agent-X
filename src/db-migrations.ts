@@ -36,7 +36,8 @@ registerBuiltinMigration({
         maxIterations: 160, temperature: 0.7, profile: "home",
         toolApproval: "confirm-risky", retentionDays: 90,
         logLevel: "basic", browserCdpPort: 9800,
-        browserPerSessionContext: false,
+        browserPerSessionContext: true,
+        browserPerSessionContextMigrated: true,
         browserIdleTimeoutMs: 600000, agentTimeoutMs: 300000,
       };
       for (const [key, value] of Object.entries(defaults)) {

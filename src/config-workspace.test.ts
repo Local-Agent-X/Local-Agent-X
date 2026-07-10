@@ -1,8 +1,64 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterAll, afterEach, beforeAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, readlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { stripOneDriveDocuments, isCloudStoragePath, migrateWorkspace, ensureWorkspaceLink } from "./workspace/lifecycle.js";
+import { loadConfig } from "./config.js";
+
+describe("browser identity isolation config migration", () => {
+  let dataDir: string;
+  let previousDataDir: string | undefined;
+  let configPath: string;
+
+  beforeAll(() => {
+    previousDataDir = process.env.LAX_DATA_DIR;
+    dataDir = mkdtempSync(join(tmpdir(), "browser-isolation-config-"));
+    process.env.LAX_DATA_DIR = dataDir;
+    configPath = join(dataDir, "config.json");
+  });
+
+  afterAll(() => {
+    if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = previousDataDir;
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  function writeConfig(browser: Record<string, unknown>): void {
+    writeFileSync(configPath, JSON.stringify({
+      authToken: "test-token",
+      workspace: resolve("workspace"),
+      sandboxModeMigrated: true,
+      ...browser,
+    }), "utf-8");
+  }
+
+  it("defaults fresh installs to per-session browser identity isolation", () => {
+    writeConfig({});
+
+    const config = loadConfig();
+
+    expect(config.browserPerSessionContext).toBe(true);
+    expect(config.browserPerSessionContextMigrated).toBe(true);
+  });
+
+  it("upgrades the old untouched shared-context default once", () => {
+    writeConfig({ browserPerSessionContext: false });
+
+    expect(loadConfig().browserPerSessionContext).toBe(true);
+    const persisted = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    expect(persisted.browserPerSessionContext).toBe(true);
+    expect(persisted.browserPerSessionContextMigrated).toBe(true);
+  });
+
+  it("preserves an explicit shared-context continuity choice", () => {
+    writeConfig({
+      browserPerSessionContext: false,
+      browserPerSessionContextMigrated: true,
+    });
+
+    expect(loadConfig().browserPerSessionContext).toBe(false);
+  });
+});
 
 // Regression: on Windows with OneDrive "Known Folder Move", the agent
 // workspace was being placed under ...\OneDrive\Documents\Local Agent X, where

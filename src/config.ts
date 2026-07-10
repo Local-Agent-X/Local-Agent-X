@@ -134,6 +134,17 @@ export function loadConfig(): LAXConfig {
     saveConfig(config);
   }
 
+  // Isolate browser identity on fresh installs and upgrade the old untouched
+  // shared-context default once. The marker preserves a later explicit choice
+  // to share browser identity across sessions.
+  if (!raw.browserPerSessionContextMigrated) {
+    if (raw.browserPerSessionContext === undefined || raw.browserPerSessionContext === false) {
+      config.browserPerSessionContext = true;
+    }
+    config.browserPerSessionContextMigrated = true;
+    saveConfig(config);
+  }
+
   // Workspace location. The packaged desktop app sets LAX_DOCUMENTS_DIR so the
   // agent workspace lives in the user's Documents (findable in Finder/Explorer,
   // survives updates) instead of the hidden install dir that "./workspace"

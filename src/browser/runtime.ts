@@ -4,9 +4,9 @@
  * this holds the process-global half (the Browser connection and the spawned
  * Chrome process), while page + ref state lives per session in BrowserManager.
  *
- * A session's tab lives in either the shared default context (cookies/logins
- * shared across sessions — the continuity default) or its own context
- * (separate cookie jar) when browserPerSessionContext is on.
+ * A session's tab lives in its own context (the isolation default), or in the
+ * shared default context when browserPerSessionContext is explicitly off for
+ * cookie/login continuity.
  */
 import type { Browser, BrowserContext } from "playwright";
 import type { ChildProcess } from "node:child_process";

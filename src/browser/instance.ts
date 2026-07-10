@@ -60,10 +60,12 @@ export function resetWedgedBrowser(sessionId: string = "default"): void {
 export async function closeAllBrowsers(): Promise<void> {
   const all = [...managers.values()];
   managers.clear();
+  let teardownError: unknown;
   for (const m of all) {
-    try { await m.close(); } catch { /* already closed */ }
+    try { await m.close(); } catch (error) { teardownError ??= error; }
   }
-  await closeSharedBrowser();
+  try { await closeSharedBrowser(); } catch (error) { teardownError ??= error; }
+  if (teardownError) throw teardownError;
 }
 
 // Backwards compat — session ID now passed directly to getBrowserManager.

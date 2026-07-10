@@ -150,7 +150,9 @@ export function startConfigWatcher(dataDir: string): void {
       const nextConfig = loadConfig();
       setRuntimeConfig(nextConfig);
       if (nextConfig.browserMode !== previousBrowserMode) {
-        void closeAllBrowsers();
+        void closeAllBrowsers().catch((error) => {
+          logger.error(`[config] Browser mode teardown failed: ${(error as Error).message}`);
+        });
       }
       logger.info("[config] Hot-reloaded (runtime config updated)");
     } catch (e) {

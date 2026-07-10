@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => {
       const context = {
         id: Symbol("context"),
         close: vi.fn(async () => undefined),
-        storageState: vi.fn(async (options?: { path?: string }) => {
+        storageState: vi.fn(async (options?: { path?: string; indexedDB?: boolean }) => {
           if (options?.path) writeFileSync(options.path, JSON.stringify({ cookies: [], origins: [] }));
           return { cookies: [], origins: [] };
         }),
@@ -42,7 +42,7 @@ vi.mock("./launcher.js", async (importOriginal) => {
 });
 
 import { getBrowserManager, closeBrowser, closeAllBrowsers } from "./instance.js";
-import { acquireSessionContext, closeSharedBrowser } from "./runtime.js";
+import { acquireSessionContext, closeSharedBrowser, releaseSessionContext } from "./runtime.js";
 import { configSchema } from "../config-schema.js";
 
 // These exercise the per-session isolation contract at the registry level —
@@ -163,7 +163,7 @@ describe("per-session BrowserContext allocation", () => {
     const statePath = join(dataDir, "browser-continuity-state.json");
 
     expect(mission).not.toBe(chat);
-    expect(chat.storageState).toHaveBeenCalledWith({ path: `${statePath}.tmp` });
+    expect(chat.storageState).toHaveBeenCalledWith({ path: `${statePath}.tmp`, indexedDB: true });
     expect(chat.close).toHaveBeenCalledOnce();
     expect(existsSync(statePath)).toBe(true);
     expect(mocks.browser.newContext).toHaveBeenLastCalledWith(
@@ -177,5 +177,31 @@ describe("per-session BrowserContext allocation", () => {
 
     expect(second).toBe(first);
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the current continuity owner live and surfaces a failed handoff save", async () => {
+    const chat = await acquireSessionContext("chromium", "continuity", "chat");
+    vi.mocked(chat.storageState).mockRejectedValueOnce(new Error("disk full"));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(acquireSessionContext("chromium", "continuity", "mission"))
+      .rejects.toThrow("Could not save the dedicated continuity browser identity: disk full");
+
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("continuity state save failed: disk full"));
+    errorLog.mockRestore();
+    expect(chat.close).not.toHaveBeenCalled();
+    expect(mocks.browser.newContext).toHaveBeenCalledTimes(1);
+    expect(await acquireSessionContext("chromium", "continuity", "chat")).toBe(chat);
+  });
+
+  it("refuses continuity teardown when durable state cannot be saved", async () => {
+    const chat = await acquireSessionContext("chromium", "continuity", "chat");
+    vi.mocked(chat.storageState).mockRejectedValueOnce(new Error("permission denied"));
+
+    await expect(releaseSessionContext(chat, "continuity"))
+      .rejects.toThrow("Could not save the dedicated continuity browser identity: permission denied");
+
+    expect(chat.close).not.toHaveBeenCalled();
+    expect(await acquireSessionContext("chromium", "continuity", "chat")).toBe(chat);
   });
 });

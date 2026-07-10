@@ -101,16 +101,35 @@ const CONTEXT_OPTS = (engine: BrowserEngine) => {
  */
 const continuityStatePath = (): string => join(getLaxDir(), "browser-continuity-state.json");
 
-async function persistContinuityContext(context: BrowserContext): Promise<void> {
-  const statePath = continuityStatePath();
+export class BrowserContinuityPersistenceError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "BrowserContinuityPersistenceError";
+  }
+}
+
+export async function persistBrowserContextState(
+  context: BrowserContext,
+  statePath: string,
+): Promise<void> {
   const tempPath = `${statePath}.tmp`;
   try {
-    await context.storageState({ path: tempPath });
+    await context.storageState({ path: tempPath, indexedDB: true });
     chmodSync(tempPath, 0o600);
     renameSync(tempPath, statePath);
-  } catch {
+  } catch (error) {
     try { if (existsSync(tempPath)) unlinkSync(tempPath); } catch { /* best-effort */ }
+    const detail = error instanceof Error ? error.message : String(error);
+    log.error(`[browser-runtime] continuity state save failed: ${detail}`);
+    throw new BrowserContinuityPersistenceError(
+      `Could not save the dedicated continuity browser identity: ${detail}`,
+      { cause: error },
+    );
   }
+}
+
+async function persistContinuityContext(context: BrowserContext): Promise<void> {
+  await persistBrowserContextState(context, continuityStatePath());
 }
 
 export async function acquireSessionContext(
@@ -127,7 +146,9 @@ export async function acquireSessionContext(
       if (continuityContext && continuityOwner === ownerId) return continuityContext;
       if (continuityContext) {
         await persistContinuityContext(continuityContext);
-        try { await continuityContext.close(); } catch { /* already closed */ }
+        await continuityContext.close();
+        continuityContext = null;
+        continuityOwner = null;
       }
       const statePath = continuityStatePath();
       continuityContext = await b.newContext({
@@ -155,7 +176,7 @@ export async function releaseSessionContext(
 ): Promise<void> {
   if (mode === "advanced-shared") return;
   if (mode === "continuity") await persistContinuityContext(context);
-  try { await context.close(); } catch { /* already closed */ }
+  await context.close();
   if (continuityContext === context) {
     continuityContext = null;
     continuityOwner = null;

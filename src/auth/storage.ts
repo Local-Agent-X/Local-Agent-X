@@ -1,7 +1,7 @@
 /**
  * Auth-token at-rest encryption.
  *
- * Wraps the JSON blob written to ~/.lax/auth.json with AES-256-GCM
+ * Wraps provider credential JSON with AES-256-GCM
  * using the OS-keychain master key (see keychain.ts). The plaintext file
  * format that comparable local agents ship is a stolen-laptop hazard —
  * any disk-image leak hands an attacker the user's live OAuth access
@@ -16,13 +16,16 @@
  *     "tag": "<base64 16-byte GCM auth tag>"
  *   }
  *
- * Legacy plaintext files (with `accessToken` / `refreshToken` at the
+ * Legacy plaintext files (with `accessToken` at the
  * top level) are detected and returned verbatim so the caller can
  * re-save them encrypted on next load.
  */
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { getOrCreateMasterKey } from "../keychain.js";
 import { createLogger } from "../logger.js";
+import { writeSecretFileAtomic } from "./secret-file.js";
 
 const logger = createLogger("auth-storage");
 
@@ -39,8 +42,7 @@ interface Envelope {
  *  every saveTokens / loadTokens doesn't re-hit DPAPI / PowerShell. */
 let _cachedKey: Buffer | null = null;
 function resolveMasterKey(dataDir: string): Buffer {
-  if (_cachedKey) return _cachedKey;
-  const { key } = getOrCreateMasterKey(dataDir);
+  const key = _cachedKey ?? getOrCreateMasterKey(dataDir).key;
   if (key.length !== 32) {
     throw new Error(`auth-storage: master key must be 32 bytes, got ${key.length}`);
   }
@@ -51,6 +53,10 @@ function resolveMasterKey(dataDir: string): Buffer {
 /** Test seam: drop the cached key so a test can swap the underlying keychain. */
 export function _resetMasterKeyCacheForTests(): void {
   _cachedKey = null;
+}
+
+export function _setMasterKeyCacheForTests(key: Buffer): void {
+  _cachedKey = key;
 }
 
 /** Encrypt with an explicit key. Pure function — used by the public
@@ -119,7 +125,7 @@ function isEnvelope(v: unknown): v is Envelope {
 function isLegacyPlaintext(v: unknown): boolean {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
-  return typeof o.accessToken === "string" && typeof o.refreshToken === "string";
+  return typeof o.accessToken === "string";
 }
 
 /** Encrypt a JSON string using the OS-keychain master key. */
@@ -158,13 +164,49 @@ export function decryptAuthBlob(
   );
 }
 
-/** Surface the cached key for diagnostics. Exported for the unencrypted
- *  fallback path in saveTokens, so we can log which keychain provider
- *  was used. */
-export function getCachedKeyInfo(): { hasKey: boolean } {
-  return { hasKey: _cachedKey !== null };
+export interface CredentialWriteOptions {
+  allowUnencryptedWrite?: boolean;
+  warn?: (message: string) => void;
 }
 
-// Re-export the logger so the wiring module can share a tag. Not used
-// internally here; kept for symmetry with secrets.ts.
-export { logger as _authStorageLogger };
+export function writeProviderCredentials(
+  authPath: string,
+  credentials: unknown,
+  options: CredentialWriteOptions = {},
+): void {
+  const plaintext = JSON.stringify(credentials, null, 2);
+  if (plaintext === undefined) {
+    throw new Error("auth-storage: credentials are not JSON serializable");
+  }
+  let payload: string;
+  try {
+    payload = encryptAuthBlob(plaintext, dirname(authPath));
+  } catch (e) {
+    const reason = (e as Error).message;
+    if (!options.allowUnencryptedWrite) {
+      throw new Error(`auth-storage: refusing unencrypted credential write: ${reason}`, { cause: e });
+    }
+    const warning = `auth-storage: writing provider credentials unencrypted because degraded mode was explicitly enabled: ${reason}`;
+    logger.warn(warning);
+    options.warn?.(warning);
+    payload = plaintext;
+  }
+  writeSecretFileAtomic(authPath, payload);
+}
+
+export function readProviderCredentials(authPath: string): unknown | null {
+  if (!existsSync(authPath)) return null;
+  const raw = readFileSync(authPath, "utf-8");
+  const { plaintext, wasEncrypted } = decryptAuthBlob(raw, dirname(authPath));
+  let credentials: unknown;
+  try {
+    credentials = JSON.parse(plaintext);
+  } catch (e) {
+    throw new Error(`auth-storage: credential payload is not valid JSON: ${(e as Error).message}`);
+  }
+  if (!wasEncrypted) {
+    writeProviderCredentials(authPath, credentials);
+    logger.info(`[auth-storage] Migrated ${authPath} to ${ENVELOPE_FORMAT}.`);
+  }
+  return credentials;
+}

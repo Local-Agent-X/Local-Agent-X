@@ -1,7 +1,7 @@
-import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { writeSecretFileAtomic } from "./secret-file.js";
+import { readProviderCredentials, writeProviderCredentials } from "./storage.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("auth-xai");
@@ -76,21 +76,21 @@ export async function fetchOidcDiscovery(): Promise<OidcEndpoints> {
 
 export function loadXaiTokens(): XaiTokens | null {
   const authPath = getAuthPath();
-  if (!existsSync(authPath)) return null;
   try {
-    const data = JSON.parse(readFileSync(authPath, "utf-8"));
-    if (data.accessToken) return { ...data, provider: "xai" } as XaiTokens;
+    const data = readProviderCredentials(authPath);
+    if (data === null) return null;
+    if (typeof data === "object" && typeof (data as Partial<XaiTokens>).accessToken === "string") {
+      return { ...(data as XaiTokens), provider: "xai" };
+    }
     logger.error(`[auth-xai] ${authPath} parsed but missing accessToken — treating as no-auth`);
   } catch (e) {
-    logger.error(`[auth-xai] FAILED to parse ${authPath}: ${(e as Error).message} — treating as no-auth. Re-login if this persists.`);
+    logger.error(`[auth-xai] FAILED to load ${authPath}: ${(e as Error).message} — treating as no-auth. Re-login if this persists.`);
   }
   return null;
 }
 
 export function saveXaiTokens(tokens: XaiTokens): void {
-  const authPath = getAuthPath();
-  mkdirSync(dirname(authPath), { recursive: true });
-  writeSecretFileAtomic(authPath, JSON.stringify(tokens, null, 2));
+  writeProviderCredentials(getAuthPath(), tokens);
 }
 
 export function isXaiTokenExpired(tokens: XaiTokens | null): boolean {

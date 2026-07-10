@@ -18,12 +18,16 @@ import {
   encryptWithKey,
   decryptWithKey,
   _resetMasterKeyCacheForTests,
+  _setMasterKeyCacheForTests,
   ENVELOPE_FORMAT,
+  writeProviderCredentials,
 } from "./storage.js";
 import { saveTokens, loadTokens } from "./index.js";
+import { loadAnthropicTokens, saveAnthropicSetupToken } from "./anthropic.js";
+import { loadXaiTokens, saveXaiTokens } from "./xai.js";
 import type { OAuthTokens } from "../types.js";
 
-const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "HOME", "USERPROFILE"] as const;
+const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "LAX_DATA_DIR", "HOME", "USERPROFILE"] as const;
 
 function snapshotEnv(): Record<string, string | undefined> {
   const snap: Record<string, string | undefined> = {};
@@ -50,6 +54,7 @@ beforeEach(() => {
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
   dataDir = join(tempHome, ".lax");
+  process.env.LAX_DATA_DIR = dataDir;
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   _resetMasterKeyCacheForTests();
 });
@@ -198,6 +203,89 @@ describe("encryptAuthBlob / decryptAuthBlob (keychain-backed)", () => {
   });
 });
 
+describe("provider credential writes", () => {
+  it("fails closed when encryption cannot produce an envelope", () => {
+    const authPath = join(dataDir, "fail-closed.json");
+    _setMasterKeyCacheForTests(randomBytes(16));
+
+    expect(() => writeProviderCredentials(authPath, { accessToken: "secret" }))
+      .toThrow(/refusing unencrypted credential write/);
+    expect(existsSync(authPath)).toBe(false);
+  });
+
+  it("writes plaintext only in explicit degraded mode and warns", () => {
+    const authPath = join(dataDir, "degraded.json");
+    const warnings: string[] = [];
+    _setMasterKeyCacheForTests(randomBytes(16));
+
+    writeProviderCredentials(
+      authPath,
+      { accessToken: "degraded-secret" },
+      { allowUnencryptedWrite: true, warn: (message) => warnings.push(message) },
+    );
+
+    expect(readFileSync(authPath, "utf-8")).toContain("degraded-secret");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/degraded mode was explicitly enabled/);
+  });
+});
+
+describe("shared provider stores", () => {
+  it("encrypts and loads Anthropic setup tokens", () => {
+    const token = "anthropic-setup-token-secret";
+    saveAnthropicSetupToken(token);
+
+    const authPath = join(dataDir, "anthropic-auth.json");
+    const onDisk = readFileSync(authPath, "utf-8");
+    expect(onDisk).toContain(`"format":"${ENVELOPE_FORMAT}"`);
+    expect(onDisk).not.toContain(token);
+    expect(loadAnthropicTokens()?.accessToken).toBe(token);
+  });
+
+  it("migrates legacy plaintext Anthropic setup tokens on first load", () => {
+    const authPath = join(dataDir, "anthropic-auth.json");
+    writeFileSync(authPath, JSON.stringify({
+      accessToken: "legacy-anthropic-token",
+      method: "token",
+      provider: "anthropic",
+    }));
+
+    expect(loadAnthropicTokens()?.accessToken).toBe("legacy-anthropic-token");
+    const onDisk = readFileSync(authPath, "utf-8");
+    expect(onDisk).toContain(`"format":"${ENVELOPE_FORMAT}"`);
+    expect(onDisk).not.toContain("legacy-anthropic-token");
+  });
+
+  it("encrypts and loads xAI tokens", () => {
+    const tokens = {
+      accessToken: "xai-access-secret",
+      refreshToken: "xai-refresh-secret",
+      expiresAt: Date.now() + 60_000,
+      provider: "xai" as const,
+    };
+    saveXaiTokens(tokens);
+
+    const authPath = join(dataDir, "xai-auth.json");
+    const onDisk = readFileSync(authPath, "utf-8");
+    expect(onDisk).toContain(`"format":"${ENVELOPE_FORMAT}"`);
+    expect(onDisk).not.toContain(tokens.accessToken);
+    expect(loadXaiTokens()).toEqual(tokens);
+  });
+
+  it("migrates legacy plaintext xAI tokens on first load", () => {
+    const authPath = join(dataDir, "xai-auth.json");
+    writeFileSync(authPath, JSON.stringify({
+      accessToken: "legacy-xai-token",
+      provider: "xai",
+    }));
+
+    expect(loadXaiTokens()?.accessToken).toBe("legacy-xai-token");
+    const onDisk = readFileSync(authPath, "utf-8");
+    expect(onDisk).toContain(`"format":"${ENVELOPE_FORMAT}"`);
+    expect(onDisk).not.toContain("legacy-xai-token");
+  });
+});
+
 describe("auth.ts integration: saveTokens / loadTokens round-trip", () => {
   function freshTokens(): OAuthTokens {
     return {
@@ -256,6 +344,16 @@ describe("auth.ts integration: saveTokens / loadTokens round-trip", () => {
     const reloaded = loadTokens();
     expect(reloaded?.accessToken).toBe("legacy-access-token");
     expect(reloaded?.refreshToken).toBe("legacy-refresh-token");
+  });
+
+  it("does not return legacy plaintext when encrypted migration fails", () => {
+    const authPath = join(dataDir, "auth.json");
+    const legacy = freshTokens();
+    writeFileSync(authPath, JSON.stringify(legacy), { mode: 0o600 });
+    _setMasterKeyCacheForTests(randomBytes(16));
+
+    expect(loadTokens()).toBeNull();
+    expect(readFileSync(authPath, "utf-8")).toContain(legacy.accessToken);
   });
 
   it("loadTokens returns null when the envelope is tampered (caller sees as no-auth)", () => {

@@ -1,9 +1,8 @@
 /**
- * Browser safety guards — DNS rebinding protection and evaluate() script
- * pattern blocking. Extracted from browser-tools.ts so the tool definition
- * stays under the file-size cap.
+ * Browser safety guards — request-layer SSRF/scheme guard and evaluate()
+ * script pattern blocking. Extracted from browser-tools.ts so the tool
+ * definition stays under the file-size cap.
  */
-import { promises as dns } from "node:dns";
 import type { BrowserContext } from "playwright";
 import { loadEgressConfig, validateUrlWithDns } from "../security/network-policy.js";
 
@@ -22,8 +21,11 @@ const guardedContexts = new WeakSet<BrowserContext>();
  * this context makes — click/act/fill-induced, form-submit, JS-redirect,
  * meta-refresh, and every HTTP-redirect hop — is SSRF/scheme-checked by
  * construction at the request layer, before the request leaves. This is the
- * invariant that closes the gap where per-call dnsPinCheck only gated the
- * INITIAL url of navigate/new_tab (R4-01 click-to-internal, R4-02 redirect).
+ * invariant that closed the gap left by the legacy per-call DNS pre-check,
+ * which only gated the INITIAL url of navigate/new_tab (R4-01
+ * click-to-internal, R4-02 redirect). That pre-check also failed OPEN on DNS
+ * errors; this guard fails closed on navigation requests and is the single
+ * canonical browser URL guard.
  *
  * Playwright fires the route handler for the original request AND for each
  * redirected request, so per-hop coverage is automatic once installed.
@@ -96,67 +98,6 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
       await route.continue();
     }
   });
-}
-
-/**
- * Prevents DNS rebinding to private IPs. Allows localhost/127.0.0.1.
- * Returns an error string to surface to the caller, or null if safe.
- */
-export async function dnsPinCheck(url: string): Promise<string | null> {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname;
-    if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") return null;
-
-    function isPrivateIp(ip: string): boolean {
-      const [a, b] = ip.split(".").map(Number);
-      if (a === 10 || a === 0 || a >= 224) return true;
-      if (a === 192 && b === 168) return true;
-      if (a === 172 && b >= 16 && b <= 31) return true;
-      if (a === 169 && b === 254) return true;
-      return false;
-    }
-
-    function isPrivateIpv6(ip: string): boolean {
-      const addr = ip.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
-      if (addr === "::1" || addr === "::") return true;
-      // IPv4-mapped (::ffff:a.b.c.d) — delegate the embedded quad to isPrivateIp.
-      const quad = addr.match(/(\d+\.\d+\.\d+\.\d+)$/);
-      if (quad) return isPrivateIp(quad[1]);
-      // IPv4-mapped in hex form (::ffff:c0a8:101) — Node normalizes the dotted
-      // quad to two trailing hextets; decode them back to a dotted quad.
-      const hexMapped = addr.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-      if (hexMapped) {
-        const hi = parseInt(hexMapped[1], 16);
-        const lo = parseInt(hexMapped[2], 16);
-        const dotted = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
-        return isPrivateIp(dotted);
-      }
-      const first = addr.split(":")[0];
-      if (/^(fc|fd)/.test(first)) return true; // fc00::/7 ULA
-      if (/^fe[89ab]/.test(first)) return true; // fe80::/10 link-local
-      return false;
-    }
-
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
-      if (isPrivateIp(host)) return `Blocked: ${host} is a private/reserved IP`;
-      return null;
-    }
-    if (host.includes(":")) {
-      if (isPrivateIpv6(host)) return `Blocked: ${host} is a private/reserved IP`;
-      return null;
-    }
-
-    const addrs4 = await dns.resolve4(host).catch(() => [] as string[]);
-    for (const ip of addrs4) {
-      if (isPrivateIp(ip)) return `DNS rebinding blocked: ${host} → ${ip}`;
-    }
-    const addrs6 = await dns.resolve6(host).catch(() => [] as string[]);
-    for (const ip of addrs6) {
-      if (isPrivateIpv6(ip)) return `DNS rebinding blocked: ${host} → ${ip}`;
-    }
-  } catch { /* DNS failure: fail open */ }
-  return null;
 }
 
 /**

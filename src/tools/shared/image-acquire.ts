@@ -128,7 +128,7 @@ async function fetchFromUrl(url: string): Promise<Buffer> {
 
   // Route through the ONE hardened pinned fetch (per-hop literal-IP + DNS-pin +
   // scheme check, fail-closed) — same SSRF coverage web_fetch gets. This
-  // supersedes the old final-only dnsPinCheck: every redirect hop is validated
+  // supersedes the old final-only DNS pre-check: every redirect hop is validated
   // BEFORE connecting, so a 302 to a private/metadata host can't slip through.
   //
   // The body read stays INSIDE the wrapping try: the abort timer covers it

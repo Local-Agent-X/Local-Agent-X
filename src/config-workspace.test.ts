@@ -50,6 +50,44 @@ describe("browser identity isolation config migration", () => {
     expect(persisted.browserPerSessionContextMigrated).toBe(true);
   });
 
+  it("does not persist environment overrides while migrating the browser default", () => {
+    writeConfig({
+      authToken: "disk-auth-token",
+      openaiApiKey: "disk-provider-key",
+      model: "disk-model",
+      browserPerSessionContext: false,
+    });
+    const previous = {
+      authToken: process.env.LAX_AUTH_TOKEN,
+      openaiApiKey: process.env.OPENAI_API_KEY,
+      model: process.env.LAX_MODEL,
+    };
+    process.env.LAX_AUTH_TOKEN = "env-auth-token";
+    process.env.OPENAI_API_KEY = "env-provider-key";
+    process.env.LAX_MODEL = "env-model";
+
+    try {
+      const runtime = loadConfig();
+      expect(runtime.authToken).toBe("env-auth-token");
+      expect(runtime.openaiApiKey).toBe("env-provider-key");
+      expect(runtime.model).toBe("env-model");
+
+      const persisted = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+      expect(persisted.authToken).toBe("disk-auth-token");
+      expect(persisted.openaiApiKey).toBe("disk-provider-key");
+      expect(persisted.model).toBe("disk-model");
+      expect(persisted.browserPerSessionContext).toBe(true);
+      expect(persisted.browserPerSessionContextMigrated).toBe(true);
+    } finally {
+      if (previous.authToken === undefined) delete process.env.LAX_AUTH_TOKEN;
+      else process.env.LAX_AUTH_TOKEN = previous.authToken;
+      if (previous.openaiApiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous.openaiApiKey;
+      if (previous.model === undefined) delete process.env.LAX_MODEL;
+      else process.env.LAX_MODEL = previous.model;
+    }
+  });
+
   it("preserves an explicit shared-context continuity choice", () => {
     writeConfig({
       browserPerSessionContext: false,

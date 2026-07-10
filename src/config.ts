@@ -52,11 +52,13 @@ function generateAuthToken(): string {
 
 export function loadConfig(): LAXConfig {
   const configPath = getConfigPath();
+  let diskRaw: Record<string, unknown> = {};
   let raw: Record<string, unknown> = {};
 
   if (existsSync(configPath)) {
     try {
-      raw = JSON.parse(readFileSync(configPath, "utf-8"));
+      diskRaw = JSON.parse(readFileSync(configPath, "utf-8"));
+      raw = { ...diskRaw };
     } catch {
       logger.warn(`[config] Failed to parse ${configPath}, using defaults`);
     }
@@ -138,11 +140,14 @@ export function loadConfig(): LAXConfig {
   // shared-context default once. The marker preserves a later explicit choice
   // to share browser identity across sessions.
   if (!raw.browserPerSessionContextMigrated) {
-    if (raw.browserPerSessionContext === undefined || raw.browserPerSessionContext === false) {
+    const migratedDisk = { ...diskRaw };
+    if (diskRaw.browserPerSessionContext === undefined || diskRaw.browserPerSessionContext === false) {
       config.browserPerSessionContext = true;
+      migratedDisk.browserPerSessionContext = true;
     }
     config.browserPerSessionContextMigrated = true;
-    saveConfig(config);
+    migratedDisk.browserPerSessionContextMigrated = true;
+    writeConfigFile(migratedDisk);
   }
 
   // Workspace location. The packaged desktop app sets LAX_DOCUMENTS_DIR so the
@@ -216,7 +221,7 @@ export function loadConfig(): LAXConfig {
   return config;
 }
 
-export function saveConfig(config: LAXConfig): void {
+function writeConfigFile(config: object): void {
   const configPath = getConfigPath();
   // Atomic write — write to .tmp then rename. Prevents a concurrent
   // reader (server boot, settings POST handler, hot-reload) from
@@ -231,6 +236,10 @@ export function saveConfig(config: LAXConfig): void {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
     throw e;
   }
+}
+
+export function saveConfig(config: LAXConfig): void {
+  writeConfigFile(config);
 }
 
 export function getAuthPath(): string {

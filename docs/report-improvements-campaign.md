@@ -1,6 +1,7 @@
 # Independent Evaluation Remediation Campaign
 
-Status: approved, integration verification in progress
+Status: complete; all 20 recommendations implemented or explicitly parked for
+external authority
 
 ## Objective
 
@@ -54,7 +55,7 @@ profile, or auto-injecting cross-session memory.
 | H1 | 16 | Split request authentication, API dispatch, static serving, app serving | green | security waves |
 | C1 | 17 | Split canonical chat registration and context/tool setup | green | reliability waves |
 | D1 | 20 | Prune or correct stale architectural documentation | green | all production chunks |
-| I1 | all | Cross-seam contracts, full suite, build, final skeptic pass | in-flight | all unparked chunks |
+| I1 | all | Cross-seam contracts, full suite, build, final skeptic pass | green | all unparked chunks |
 
 ## Conflict Magnets
 
@@ -110,3 +111,18 @@ None.
 ### Descoped
 
 None.
+
+## Final Integration Evidence
+
+- Campaign surface: 75 test files passed; 1,012 tests passed and 24 skipped.
+- Production build: passed source hygiene, no-`require`, documentation
+  consistency, codebase-map, pricing, Ari, TypeScript, and protocol-copy gates.
+- Full unit suite: 8,357 passed, 52 skipped, and 22 failed. The failures remain
+  in the pre-existing Windows path/shell assumptions, timing-sensitive stream
+  and browser cleanup checks, and repository harness tests. The browser cleanup
+  case was an `EBUSY` cache-file race under full parallel load and passed in the
+  focused production-CDP campaign suite.
+- Final cross-seam review found no campaign regression in browser isolation and
+  quarantine, strict local-only enforcement, request routing, sandbox/retry
+  recovery, memory provenance/promotion, MCP trust, documentation, or signing
+  workflow integration.

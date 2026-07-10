@@ -19,6 +19,7 @@ import { transportMode } from "../config.js";
 import { startBrokerPresence, type BrokerPresence } from "../broker-presence.js";
 import { startBrokerVoicePresence } from "../broker-voice-presence.js";
 import { createLogger } from "../../logger.js";
+import { isLocalOnlyMode } from "../../local-only-policy.js";
 
 const logger = createLogger("broker-transport.account");
 
@@ -40,6 +41,7 @@ function brokerWsUrl(): string {
 
 /** The desktop's single account manager, built from the real adapters on first use. */
 export function getAccountManager(): AgentxosAccountManager {
+  if (isLocalOnlyMode()) throw new Error("Account access is blocked by strict local-only mode.");
   if (manager) return manager;
   manager = new AgentxosAccountManager({
     api: new AgentxosApiClient(accountApiUrl()),
@@ -64,6 +66,7 @@ export function getAccountManager(): AgentxosAccountManager {
  * already-paired install) and from the manager's onPaired hook (right after pairing).
  */
 export function maybeStartBrokerPresence(state: AccountState | null = loadAccountState()): void {
+  if (isLocalOnlyMode()) return;
   if (presence) return; // already running
   if (transportMode() !== "broker") return; // broker is the only transport
   if (!state || !state.pairedPhoneId) return; // need a session + a pairing

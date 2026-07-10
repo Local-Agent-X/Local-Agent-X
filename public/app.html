@@ -295,7 +295,7 @@
       <!-- General -->
       <div id="stab-general" class="tab-pane active">
         <div class="section-card">
-          <div class="section-title">xAI Grok Authentication</div>
+          <div class="section-title" data-local-only-auth-title>xAI Grok Authentication</div>
           <div class="section-desc">Sign in with your <strong>SuperGrok</strong> or <strong>X Premium+</strong> subscription to use Grok models without burning API credit. OAuth wins when both are configured. xAI's backend allowlists OAuth API access by tier — if login succeeds but inference returns 403, fall back to an <code>XAI_API_KEY</code> in the AI &amp; Models tab.</div>
           <div id="xai-auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div class="btn-row" style="margin-top:10px">
@@ -321,7 +321,7 @@
           </details>
         </div>
         <div class="section-card">
-          <div class="section-title">OpenAI Authentication</div>
+          <div class="section-title" data-local-only-auth-title>OpenAI Authentication</div>
           <div class="section-desc">Connect to OpenAI via OAuth to use GPT/Codex models. LAX stores this sign-in as an encrypted envelope at <code>~/.lax/auth.json</code>.</div>
           <div id="auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div id="codex-cli-status" class="status-badge warn" style="margin-top:6px"><span class="status-dot"></span> Checking Codex CLI...</div>
@@ -335,7 +335,7 @@
           <div class="field-hint" style="margin-top:8px">The Codex CLI enables reliable app building via subprocess. A separate <code>codex login</code> uses the CLI-native <code>~/.codex/auth.json</code>, which LAX does not encrypt. LAX never overwrites an existing CLI store by default. When none exists, an app build may create a temporary plaintext mirror from your encrypted LAX sign-in and remove it afterward.</div>
         </div>
         <div class="section-card">
-          <div class="section-title">Anthropic Authentication</div>
+          <div class="section-title" data-local-only-auth-title>Anthropic Authentication</div>
           <div class="section-desc">Connect to Claude (Sonnet, Opus, Haiku) via the Claude CLI subprocess. Two supported options: Claude CLI login (easiest) or setup-token from <code>claude setup-token</code>. Starting 2026-06-15 LAX usage draws from your subscription's <strong>Agent SDK credit pool</strong> (Max 20x = $200/mo), separate from interactive Claude.ai. Direct OAuth tokens are NOT permitted for third-party tools per Anthropic's TOS.</div>
           <div id="anthropic-auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div id="claude-cli-status" class="status-badge warn" style="margin-top:6px"><span class="status-dot"></span> Checking Claude CLI...</div>
@@ -378,7 +378,7 @@
           <div class="field-row"><div class="field"><label class="field-label">Port</label><input class="field-input" id="cfg-port" type="number" value="7007" onchange="onPortFieldChange()"/></div><div class="field"><label class="field-label">Workspace</label><div style="display:flex;gap:6px;align-items:center"><input class="field-input" id="cfg-workspace" value="./workspace" style="flex:1;min-width:0"/><button type="button" class="action-btn" id="cfg-workspace-browse" onclick="pickWorkspaceFolder()" title="Choose a workspace folder">Browse…</button></div></div></div>
         </div>
         <div class="section-card">
-          <div class="section-title">Updates</div>
+          <div class="section-title" data-local-only-update-title>Updates</div>
           <div class="section-desc">Check for new versions of Local Agent X.</div>
           <div id="settings-update-status" style="font-size:.8rem;color:var(--muted);margin-bottom:8px">Not checked yet.</div>
           <button class="action-btn primary" onclick="settingsCheckUpdate()">Check for Updates</button>
@@ -574,6 +574,11 @@
       </div>
       <!-- Security -->
       <div id="stab-security" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">Strict Local-Only Mode</div>
+          <div class="section-desc" id="local-only-status">Off. Remote providers and integrations may connect when configured.</div>
+          <div class="toggle-row"><div><div class="toggle-label">Local-only</div><div class="toggle-desc">Allow local models and loopback apps/browser only. Blocks cloud providers and auth, internet and subprocess tools, remote MCP, connectors, integrations, bridges, account presence, sync, and updates.</div></div><div id="tp-toggle-local-only" class="toggle" onclick="toolPolicyToggle('localOnlyMode', this)"></div></div>
+        </div>
         <div class="section-card">
           <div class="section-title">Agent Browser Identity</div>
           <div class="section-desc">Controls how the dedicated agent browser keeps sign-ins between sessions.</div>

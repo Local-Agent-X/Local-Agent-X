@@ -14,6 +14,7 @@ import {
   BLOCKED_HOSTNAMES,
 } from "./ip-classification.js";
 import { ollamaLoopbackPort } from "./security-config.js";
+import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 const logger = createLogger("security.network-policy");
 
@@ -65,6 +66,15 @@ export function evaluateWebFetch(
   }
 
   const host = canonicalizeHost(parsed.hostname);
+
+  // Strict local-only mode sits above the configurable egress policy. It is a
+  // user-owned hard boundary: allow every literal loopback port (local apps,
+  // Ollama, and the browser proxy remain useful) and reject every other host.
+  if (isLocalOnlyMode()) {
+    return isLoopbackUrl(parsed.href)
+      ? { allowed: true, reason: "Loopback allowed by strict local-only mode" }
+      : { allowed: false, reason: LOCAL_ONLY_BLOCK_MESSAGE, userHint: USER_HINTS.network };
+  }
 
   // Allow requests to the agent's own server BEFORE any other checks.
   // The agent needs to call its own API for settings, theme, orgs, etc.

@@ -125,6 +125,7 @@ export const configSchema = z.object({
   // enableComputerControl (that gates the AGENT) — this gates the human operator
   // driving from mobile. Same risk profile: DEFAULT OFF, also needs the OS grant.
   enableRemoteControl: z.boolean().default(false),
+  localOnlyMode: z.boolean().default(false),
 
   /** Opt-in USD spend caps on REAL per-call API spend. 0 = disabled (default).
    *  When > 0, the spend-cap rule pack blocks every tool call once the matching

@@ -147,11 +147,17 @@ export function startConfigWatcher(dataDir: string): void {
   new ConfigWatcher().start(join(dataDir, "config.json"), () => {
     try {
       const previousBrowserMode = getRuntimeConfig().browserMode;
+      const previousLocalOnlyMode = getRuntimeConfig().localOnlyMode;
       const nextConfig = loadConfig();
       setRuntimeConfig(nextConfig);
       if (nextConfig.browserMode !== previousBrowserMode) {
         void closeAllBrowsers().catch((error) => {
           logger.error(`[config] Browser mode teardown failed: ${(error as Error).message}`);
+        });
+      }
+      if (!previousLocalOnlyMode && nextConfig.localOnlyMode) {
+        void import("../local-only-policy.js").then((m) => m.activateLocalOnlyMode()).catch((error) => {
+          logger.error(`[config] Local-only teardown failed: ${(error as Error).message}`);
         });
       }
       logger.info("[config] Hot-reloaded (runtime config updated)");

@@ -7,6 +7,7 @@ import { loadSettings, getSetting } from "../settings.js";
 import { resolveCredential } from "../auth/resolve.js";
 import type { CredentialSource } from "../auth/auth-provider.js";
 import { createLogger } from "../logger.js";
+import { isLocalOnlyMode, localProviderDecision } from "../local-only-policy.js";
 
 const logger = createLogger("agent-request.resolve-provider");
 
@@ -21,7 +22,7 @@ const isProviderId = (s: string): s is ProviderId =>
 export interface ProviderSwitch {
   from: ProviderId;
   to: ProviderId;
-  reason: "credential-unavailable";
+  reason: "credential-unavailable" | "local-only";
 }
 
 export async function resolveProvider(
@@ -74,7 +75,21 @@ export async function resolveProvider(
     (providerOverride && isProviderId(providerOverride)) ? providerOverride
       : isProviderId(savedProvider) ? savedProvider
         : "";
-  if (providerOverride && isProviderId(providerOverride) && hasCredsFor(providerOverride)) {
+  if (isLocalOnlyMode(config)) {
+    const customBaseUrl = getSetting<string>("customBaseUrl") || undefined;
+    const requestedAllowed = requestedProvider
+      ? localProviderDecision(requestedProvider, config, customBaseUrl).allowed
+      : false;
+    provider = requestedAllowed ? requestedProvider : "local";
+    if (!localProviderDecision(provider, config, customBaseUrl).allowed) {
+      throw new Error("Strict local-only mode requires Ollama on a loopback URL or a loopback custom provider.");
+    }
+    if (provider !== requestedProvider) {
+      providerWasOverridden = true;
+      saved.model = "";
+    }
+  }
+  if (!isLocalOnlyMode(config) && providerOverride && isProviderId(providerOverride) && hasCredsFor(providerOverride)) {
     provider = providerOverride;
     // If the caller-supplied override differs from the saved provider, the
     // saved model belongs to the old provider (e.g. settings.json says
@@ -82,16 +97,16 @@ export async function resolveProvider(
     // gpt-5.5 — Claude has no idea what that is). Blank it so the
     // downstream default picker chooses a valid model for the new provider.
     if (providerOverride !== savedProvider) providerWasOverridden = true;
-  } else if (isProviderId(savedProvider)) {
+  } else if (!isLocalOnlyMode(config) && isProviderId(savedProvider)) {
     provider = savedProvider;
   }
   // Distinct from `providerWasOverridden` (an INTENTIONAL caller switch whose
   // modelOverride is meant for the new provider): a forced fallback means the
   // requested provider could not be honored at all. The fallback chain itself
   // is shared with the classifier context seam — see credential-reroute.ts.
-  const reroute = rerouteToCredentialedProvider(provider, hasCredsFor, {
-    allowCodexFallback: !config.openaiApiKey,
-  });
+  const reroute = isLocalOnlyMode(config)
+    ? { provider: provider as ProviderId, rerouted: false }
+    : rerouteToCredentialedProvider(provider, hasCredsFor, { allowCodexFallback: !config.openaiApiKey });
   const forcedFallback = reroute.rerouted;
   if (forcedFallback) providerWasOverridden = true;
   provider = reroute.provider;
@@ -115,6 +130,10 @@ export async function resolveProvider(
       `provider switch: '${requestedProvider}' unavailable (no usable credential) — ` +
       `rerouted to '${provider}'. Dropping model override; using ${provider} default.`,
     );
+  }
+  if (isLocalOnlyMode(config) && requestedProvider && requestedProvider !== provider) {
+    providerSwitch = { from: requestedProvider, to: provider, reason: "local-only" };
+    effectiveModelOverride = undefined;
   }
 
   // Resolve API key

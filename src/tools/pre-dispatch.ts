@@ -124,6 +124,16 @@ export async function assertToolCallAllowed(
   // These sit ABOVE the rule packs so a flipped-off category short-circuits
   // before any rule eval. Cheap, predictable, user-visible.
   const cfg = getRuntimeConfig();
+  const { localOnlyToolDecision } = await import("../local-only-policy.js");
+  const localOnly = localOnlyToolDecision(call.name, call.args as Record<string, unknown>, cfg);
+  if (!localOnly.allowed) {
+    throw new ToolBlocked({
+      stage: "tool-policy",
+      reason: localOnly.reason!,
+      recovery: "Disable strict local-only mode in Settings → Security only when the user explicitly wants remote access.",
+      userHint: USER_HINTS.policy,
+    });
+  }
   // The shell kill-switch covers every shell-class tool, not just `bash`: the
   // process_* family spawns the same /bin/bash -c (or powershell) subprocess,
   // so leaving them on while Shell is off would be a silent bypass of the

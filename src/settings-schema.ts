@@ -152,6 +152,14 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     protected: true,
     description: "Kill-switch for a paired phone driving mouse/keyboard over the live screen. When false, the live-screen session drops all remote input. Off by default (high-risk opt-in; also needs OS Accessibility permission)",
   },
+  {
+    field: "localOnlyMode",
+    validate: z.boolean(),
+    runtime: true,
+    broadcast: true,
+    protected: true,
+    description: "Strict local-only mode. Allows only loopback network access and local models; blocks cloud auth, providers, web tools, remote MCP, connectors, integrations, bridges, account presence, sync, and updates",
+  },
 
   // ── UI-only (renderer reads settings.json directly; no runtime mirror needed) ──
   {

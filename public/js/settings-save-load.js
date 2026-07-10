@@ -7,10 +7,12 @@
 // every other settings field on the page.
 
 async function saveSettings() {
-  const provider = document.getElementById('cfg-provider')?.value;
+  const cachedSettings = JSON.parse(localStorage.getItem('lax_settings') || '{}');
+  const localOnly = document.getElementById('tp-toggle-local-only')?.classList.contains('on') === true;
+  const provider = localOnly ? cachedSettings.provider : document.getElementById('cfg-provider')?.value;
   const modelInput = document.getElementById('cfg-model');
   const modelSelect = document.getElementById('cfg-model-select');
-  const model = provider === 'local' ? modelSelect?.value :
+  const model = localOnly ? cachedSettings.model : provider === 'local' ? modelSelect?.value :
     (modelSelect?.value === '__custom__' || modelSelect?.style.display === 'none') ? modelInput?.value : (modelSelect?.value || modelInput?.value);
   const portVal = document.getElementById('cfg-port')?.value;
   const s = {
@@ -65,7 +67,7 @@ async function saveSettings() {
     alert('Workspace changed to ' + wsVal + '. Quit and relaunch Local Agent X — your existing files move to the new location on restart.');
   }
   // Also save sync config to server
-  await saveSyncConfig();
+  if (!localOnly) await saveSyncConfig();
   // A saved key/provider may have just added (or switched) a provider — refresh
   // the chat picker so it shows up without a page reload.
   window.refreshProviderPicker?.();
@@ -80,6 +82,7 @@ async function loadSettings() {
     try { const r = await apiFetch('/api/settings'); serverSettings = await r.json(); } catch {}
     const local = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     const s = { ...local, ...serverSettings };
+    if (typeof applyLocalOnlyUi === 'function') applyLocalOnlyUi(s.localOnlyMode === true);
     // Sync localStorage with server (so they don't fight)
     localStorage.setItem('lax_settings', JSON.stringify(s));
     const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
@@ -94,7 +97,7 @@ async function loadSettings() {
     // The native folder picker only works in the desktop app — hide it in a browser.
     const browseBtn = document.getElementById('cfg-workspace-browse');
     if (browseBtn && !window.desktop?.isDesktop) browseBtn.style.display = 'none';
-    set('cfg-provider', s.provider); set('cfg-model', s.model); set('cfg-temperature', s.temperature);
+    set('cfg-provider', s.localOnlyMode && s.provider !== 'custom' ? 'local' : s.provider); set('cfg-model', s.model); set('cfg-temperature', s.temperature);
     set('cfg-maxiter', s.maxIterations); set('cfg-maxsubagents', s.maxSubAgents);
     // Store saved model and trigger provider change to populate dropdown
     const modelInput = document.getElementById('cfg-model');
@@ -180,4 +183,3 @@ async function applyServerChangeWithRestart(kind, value, prev, el) {
     alert('Saved. Quit and relaunch Local Agent X to apply the new ' + human + '.');
   }
 }
-

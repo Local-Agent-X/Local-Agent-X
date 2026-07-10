@@ -27,6 +27,7 @@ import { createSttProvider, resolveSttProviderName } from "../stt-providers/inde
 import type { Tier4StreamingTTS } from "../tier4/types.js";
 import type { ResolvedVoiceSettings } from "./settings.js";
 import type { SecretLookup } from "./types.js";
+import { isLocalOnlyMode } from "../../local-only-policy.js";
 
 const logger = createLogger("voice.voice-session");
 
@@ -157,7 +158,9 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
     // no Web Speech API key in Electron-Chromium. Force local-whisper.
     // (The earlier isBrowserTier override in index.ts only covered the
     // top-level skip; this branch is the per-provider selection.)
-    const sttProviderName = (ctx.mode === "dictate" && rawProvider === "browser")
+    const sttProviderName = isLocalOnlyMode()
+      ? "local-whisper"
+      : (ctx.mode === "dictate" && rawProvider === "browser")
       ? "local-whisper"
       : rawProvider;
 

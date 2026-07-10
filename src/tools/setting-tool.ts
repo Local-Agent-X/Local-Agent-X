@@ -117,6 +117,10 @@ export const settingTool: ToolDefinition = {
         const { closeAllBrowsers } = await import("../browser/index.js");
         await closeAllBrowsers();
       }
+      if (fieldName === "localOnlyMode" && newValue === true && changed) {
+        const { activateLocalOnlyMode } = await import("../local-only-policy.js");
+        await activateLocalOnlyMode();
+      }
     }
 
     // 3) Broadcast to all connected browsers so toggles/UI dropdowns re-sync.

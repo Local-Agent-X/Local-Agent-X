@@ -23,6 +23,7 @@ import { createLogger } from "../logger.js";
 const logger = createLogger("server.bootstrap-bridges");
 
 import type { BridgeReply } from "../whatsapp-bridge/index.js";
+import { isLocalOnlyMode, registerLocalOnlyTeardown } from "../local-only-policy.js";
 
 export type BridgeHandler = (
   platform: string,
@@ -281,14 +282,18 @@ export function bootstrapBridges(deps: {
   setWhatsAppBridgeInstance(whatsappBridge);
   const telegramBridge = new TelegramBridge({ dataDir, getToken: () => secretsStore.get("TELEGRAM_BOT_TOKEN") ?? null, onMessage: (p) => bridgeHandler("Telegram", p) });
   setTelegramBridgeInstance(telegramBridge);
-  if (secretsStore.has("TELEGRAM_BOT_TOKEN")) telegramBridge.connect().then(r => { if (r.state === "connected") { logger.info(`[telegram] Auto-reconnected as @${r.botUsername}`); void sendRestartPingIfPending("telegram"); } }).catch(() => {});
+  registerLocalOnlyTeardown("messaging-bridges", () => {
+    telegramBridge.disconnect();
+    return whatsappBridge.disconnect(true);
+  });
+  if (!isLocalOnlyMode() && secretsStore.has("TELEGRAM_BOT_TOKEN")) telegramBridge.connect().then(r => { if (r.state === "connected") { logger.info(`[telegram] Auto-reconnected as @${r.botUsername}`); void sendRestartPingIfPending("telegram"); } }).catch(() => {});
   // WhatsApp auto-reconnect on boot. Only attempts when a saved Baileys
   // session exists (creds.json under whatsapp-auth/) — otherwise the
   // first connect generates a fresh QR that nobody is around to scan,
   // wasting cycles. Mirrors the telegram pattern. The bridge's connect
   // method is idempotent and returns immediately if already connected.
   const waCredsPath = join(dataDir, "whatsapp-auth", "creds.json");
-  if (existsSync(waCredsPath)) {
+  if (!isLocalOnlyMode() && existsSync(waCredsPath)) {
     whatsappBridge.connect()
       .then(r => { if (r.state === "connected") { logger.info(`[whatsapp] Auto-reconnected as ${r.phone || "(phone unknown)"}`); void sendRestartPingIfPending("whatsapp"); } })
       .catch((e: Error) => logger.warn(`[whatsapp] Auto-reconnect failed: ${e.message}`));

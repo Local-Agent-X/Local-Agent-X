@@ -40,6 +40,7 @@ import { createLogger } from "../logger.js";
 import { type SignedAuthConfig, validateSignedAuth, signRequest } from "./connector-signing.js";
 import { wakeDevServer } from "../tools/dev-server-access.js";
 import { createPinningDispatcher, assertLiteralIpEgressAllowed } from "../tools/web-egress.js";
+import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 const logger = createLogger("routes.connector-proxy");
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -215,6 +216,7 @@ export async function forwardWithTimeout(
   timeoutMs: number,
   isLocalUpstream: boolean,
 ): Promise<Response | UndiciResponse> {
+  if (isLocalOnlyMode() && !isLoopbackUrl(u)) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -261,6 +263,11 @@ export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req,
   const loaded = loadManifest(name);
   if (!loaded.ok) { json(loaded.status, { error: loaded.error }); return true; }
   const manifest = loaded.manifest;
+
+  if (isLocalOnlyMode() && !isLoopbackUrl(manifest.upstream)) {
+    json(403, { error: LOCAL_ONLY_BLOCK_MESSAGE, code: "LOCAL_ONLY" });
+    return true;
+  }
 
   if (!matchAllow(manifest.allow, method, upstreamPath)) {
     json(403, { error: `${method} ${upstreamPath} is not in connector "${name}"'s allow list.`, allow: manifest.allow });

@@ -24,6 +24,7 @@ import type {
   ExtendedEmbeddingProvider,
 } from "./types.js";
 import { VoyageEmbeddings } from "./voyage.js";
+import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
 
 const logger = createLogger("embedding-providers");
 
@@ -54,6 +55,13 @@ export function listProviders(): string[] {
  */
 export function createEmbeddingProvider(config: EmbeddingProviderConfig = {}): ExtendedEmbeddingProvider {
   const requested = config.provider ?? "local";
+
+  if (isLocalOnlyMode()) {
+    if (requested === "ollama" && (!config.baseUrl || isLoopbackUrl(config.baseUrl))) {
+      return new OllamaEmbeddings({ model: config.model, baseUrl: config.baseUrl });
+    }
+    return new LocalEmbeddings();
+  }
 
   const needsKey = ["openai", "gemini", "voyage", "mistral"].includes(requested);
   if (needsKey && !config.apiKey) {

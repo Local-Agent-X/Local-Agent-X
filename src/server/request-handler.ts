@@ -16,6 +16,7 @@ import type { IntegrationRegistry } from "../integrations/index.js";
 import type { WhatsAppBridge } from "../whatsapp-bridge/index.js";
 import type { TelegramBridge } from "../telegram-bridge/index.js";
 import type { AgentSync } from "../sync/index.js";
+import { localOnlyRouteDecision } from "../local-only-policy.js";
 import type { AppRegistry } from "../app-runtime/index.js";
 import type { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "../agent-store/index.js";
 import type { ToolRegistry } from "../tool-search.js";
@@ -89,6 +90,11 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
     const method = req.method || "GET";
     const authorization = authorizeRequest(method, url, req, res, deps.config, deps.rbac);
     if (authorization.handled) return;
+    const localOnlyRoute = localOnlyRouteDecision(method, url.pathname);
+    if (!localOnlyRoute.allowed) {
+      jsonResponse(res, 403, { error: localOnlyRoute.reason, code: "LOCAL_ONLY" }, req);
+      return;
+    }
 
     const ctx = createServerContext(deps);
     if (await routeApiRequest(method, url, req, res, ctx, authorization.role, deps.config, deps.dataDir)) return;

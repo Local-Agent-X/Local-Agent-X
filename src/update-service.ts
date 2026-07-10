@@ -11,6 +11,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeErrorMessage } from "./server-utils.js";
+import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "./local-only-policy.js";
 
 export interface UpdateCheckResult {
   localVersion: string;
@@ -37,6 +38,9 @@ let _updateCache: { data: UpdateCheckResult; time: number } | null = null;
 export function bustUpdateCache(): void { _updateCache = null; }
 
 export async function checkForUpdate(force = false): Promise<UpdateCheckResult> {
+  if (isLocalOnlyMode()) {
+    return { localVersion: "0.0.0", localCommit: "", remoteVersion: "0.0.0", remoteCommit: "", updateAvailable: false, releaseNotes: "", error: LOCAL_ONLY_BLOCK_MESSAGE };
+  }
   try {
     const { execSync } = await import("node:child_process");
     const repoRoot = process.cwd();
@@ -107,6 +111,9 @@ export async function checkForUpdate(force = false): Promise<UpdateCheckResult> 
  * browser user to restart; apply_update triggers a relaunch).
  */
 export async function applyUpdateNow(): Promise<ApplyUpdateResult> {
+  if (isLocalOnlyMode()) {
+    return { ok: false, held: true, fromCommit: "", toCommit: "", detail: LOCAL_ONLY_BLOCK_MESSAGE };
+  }
   const { execSync } = await import("node:child_process");
   const { getRuntimeConfig } = await import("./config.js");
   const repoRoot = process.cwd();

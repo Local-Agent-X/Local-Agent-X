@@ -106,14 +106,14 @@ export class WhatsAppBridge {
   }
 
   /** Disconnect cleanly */
-  async disconnect(): Promise<void> {
+  async disconnect(preservePairing = false): Promise<void> {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     if (this.sock) {
       try {
-        await this.sock.logout();
+        if (preservePairing) this.sock.end(); else await this.sock.logout();
       } catch {
         try { this.sock.end(); } catch {}
       }

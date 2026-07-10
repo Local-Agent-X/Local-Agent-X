@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { IntegrationConfig } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
 import { evaluateEgressForUrl } from "../security/network-policy.js";
+import { isLocalOnlyMode } from "../local-only-policy.js";
 
 export class IntegrationRegistry {
   private filePath: string;
@@ -105,6 +106,7 @@ export class IntegrationRegistry {
   }
 
   getAgentContext(): string {
+    if (isLocalOnlyMode()) return "";
     const installed = Array.from(this.integrations.values()).filter(i => i.installed && i.enabled);
     if (installed.length === 0) return "";
 

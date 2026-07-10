@@ -36,8 +36,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-request/` | 17 | 12 | L |  |
 | `src/agents/` | 15 | 13 | L |  |
 | `src/app-runtime/` | 14 | 12 | L |  |
+| `src/browser/` | 14 | 28 | XL | 1 |
 | `src/chat-ws/` | 14 | 9 | L |  |
-| `src/browser/` | 13 | 28 | XL | 1 |
 | `src/anthropic-client/` | 12 | 18 | L |  |
 | `src/context-manager/` | 12 | 10 | M |  |
 | `src/voice/` | 12 | 65 | XL |  |
@@ -55,16 +55,16 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/ari-kernel/` | 6 | 12 | L |  |
+| `src/mcp-client/` | 6 | 9 | L |  |
 | `src/auto-build/` | 5 | 47 | XL |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
-| `src/mcp-client/` | 5 | 9 | L |  |
 | `src/routes/` | 5 | 81 | XL |  |
 | `src/routing/` | 5 | 7 | M |  |
 | `src/util/` | 5 | 1 | S |  |
+| `src/broker-transport/` | 4 | 27 | L |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/server/` *(entrypoint)* | 4 | 31 | XL |  |
 | `src/tool-policy/` | 4 | 19 | L |  |
-| `src/broker-transport/` | 3 | 27 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/context/` | 3 | 2 | M |  |
 | `src/embedding-providers/` | 3 | 9 | M |  |
@@ -149,6 +149,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/lax-data-dir.ts` | S |
 | `src/lifecycle.ts` | S |
 | `src/llm-dispatch.ts` | M |
+| `src/local-only-policy.ts` | S |
 | `src/logger.ts` | S |
 | `src/mcp-bridge.ts` | S |
 | `src/milestone-celebrations.ts` | M |

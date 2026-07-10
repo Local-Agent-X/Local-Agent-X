@@ -120,6 +120,9 @@ export interface LAXConfig {
    *  enableComputerControl. When false, the live-screen session drops every
    *  rtc_input. The panic hotkey flips this off too. */
   enableRemoteControl: boolean;
+  /** User-controlled strict privacy posture. When enabled, every server-side
+   * egress surface is limited to loopback and provider routing is local-only. */
+  localOnlyMode: boolean;
 
   /** Opt-in daily USD spend cap. 0 (default) = disabled. When > 0, the
    *  spend-cap pack blocks every tool call once today's total cost reaches

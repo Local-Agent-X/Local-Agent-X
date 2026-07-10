@@ -12,6 +12,7 @@ import {
   getCachedLocalOllama,
   fetchLocalOllamaTags,
 } from "../../ollama-cloud.js";
+import { isLocalOnlyMode, localProviderDecision, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
 export const handleProvidersRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -22,13 +23,14 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const { loadAnthropicTokens, isAnthropicCliAuthenticated } = await import("../../auth/anthropic.js");
     const { loadXaiTokens } = await import("../../auth/xai.js");
     const providers: Array<{ id: string; name: string; models: string[]; active: boolean }> = [];
-    const hasOpenAIOAuth = !!loadTokens();
+    const localOnly = isLocalOnlyMode();
+    const hasOpenAIOAuth = !localOnly && !!loadTokens();
     // Count BOTH our setup-token store (~/.lax) and the CLI's own credential
     // file (~/.claude) — the paste-the-code sign-in writes the latter, and the
     // chat subprocess authenticates from it. Without the CLI check a CLI-signed
     // user is "Connected" in Settings but missing from this picker.
-    const hasAnthropicOAuth = !!loadAnthropicTokens() || isAnthropicCliAuthenticated();
-    const hasXaiOAuth = !!loadXaiTokens();
+    const hasAnthropicOAuth = !localOnly && (!!loadAnthropicTokens() || isAnthropicCliAuthenticated());
+    const hasXaiOAuth = !localOnly && !!loadXaiTokens();
     const hasXaiKey = ctx.secretsStore.has("XAI_API_KEY") || hasXaiOAuth;
     const hasCerebrasKey = ctx.secretsStore.has("CEREBRAS_API_KEY");
     const hasOpenAIKey = !!ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY");
@@ -54,7 +56,11 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       if (s.provider) currentProvider = String(s.provider);
       if (s.model) currentModel = String(s.model);
     }
-    if (!currentProvider) {
+    if (localOnly) {
+      const customBaseUrl = String(loadSettings().customBaseUrl || "");
+      currentProvider = localProviderDecision("custom", getRuntimeConfig(), customBaseUrl).allowed ? "custom" : "local";
+      currentModel = currentProvider === "custom" ? String(loadSettings().model || "custom-model") : "";
+    } else if (!currentProvider) {
       // Auto-detect priority matches resolve-provider.ts's fallback chain
       // so the UI dropdown and the request path agree on which provider
       // is "active by default" when at least one credential is present.
@@ -84,12 +90,12 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // adding a provider only requires editing registry.ts.
     const pushFromRegistry = (id: ProviderId) =>
       providers.push({ id, name: PROVIDERS[id].label, models: [...PROVIDERS[id].models], active: currentProvider === id });
-    if (hasXaiKey) pushFromRegistry("xai");
-    if (hasGeminiKey) pushFromRegistry("gemini");
-    if (hasCerebrasKey) pushFromRegistry("cerebras");
-    if (hasOpenAIOAuth) pushFromRegistry("codex");
-    if (hasAnthropicOAuth) pushFromRegistry("anthropic");
-    if (hasOpenAIKey) pushFromRegistry("openai");
+    if (hasXaiKey && !localOnly) pushFromRegistry("xai");
+    if (hasGeminiKey && !localOnly) pushFromRegistry("gemini");
+    if (hasCerebrasKey && !localOnly) pushFromRegistry("cerebras");
+    if (hasOpenAIOAuth && !localOnly) pushFromRegistry("codex");
+    if (hasAnthropicOAuth && !localOnly) pushFromRegistry("anthropic");
+    if (hasOpenAIKey && !localOnly) pushFromRegistry("openai");
     if (hasOllama) {
       // From cache (populated above / at boot) — no network call here.
       providers.push({ id: "local", name: "Ollama", models: localCache?.models ?? [], active: currentProvider === "local" });
@@ -99,7 +105,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // surface the provider with an empty model list so the picker shows
     // the option (and the connect-key field appears, same UX as xAI/
     // Gemini before keys are added).
-    {
+    if (!localOnly) {
       const hasCloudKey = ctx.secretsStore.has("OLLAMA_CLOUD_API_KEY");
       // Read cloud models from cache — NEVER an inline ollama.com round-trip
       // here. That internet call (only present when a cloud key is set) was
@@ -120,8 +126,9 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
         active: currentProvider === "ollama-cloud",
       });
     }
-    if (hasCustomKey) pushFromRegistry("custom");
-    json(200, { providers, current: { provider: currentProvider, model: currentModel } }); return true;
+    const customBaseUrl = String(loadSettings().customBaseUrl || "");
+    if (hasCustomKey && (!localOnly || localProviderDecision("custom", getRuntimeConfig(), customBaseUrl).allowed)) pushFromRegistry("custom");
+    json(200, { providers, current: { provider: currentProvider, model: currentModel }, localOnlyMode: localOnly }); return true;
   }
 
   // Switch provider
@@ -131,6 +138,9 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     let provider = String(body.provider || "");
     let model = String(body.model || "");
     if (!provider) { json(400, { error: "provider required" }); return true; }
+    const customBaseUrl = String(loadSettings().customBaseUrl || "");
+    const localDecision = localProviderDecision(provider, getRuntimeConfig(), customBaseUrl);
+    if (!localDecision.allowed) { json(403, { error: localDecision.reason || LOCAL_ONLY_BLOCK_MESSAGE, code: "LOCAL_ONLY" }); return true; }
 
     // Alias: if the user (or agent) asks for "openai" but only OAuth-based
     // Codex is configured, route to codex. Avoids saving a broken
@@ -173,14 +183,17 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
   // Lets the Apps gallery dropdown render every provider without
   // re-hardcoding the metadata client-side.
   if (method === "GET" && url.pathname === "/api/providers/registry") {
-    const out = (Object.keys(PROVIDERS) as ProviderId[]).map(id => ({
+    const customBaseUrl = String(loadSettings().customBaseUrl || "");
+    const out = (Object.keys(PROVIDERS) as ProviderId[])
+      .filter(id => localProviderDecision(id, getRuntimeConfig(), customBaseUrl).allowed)
+      .map(id => ({
       id,
       label: PROVIDERS[id].label,
       models: PROVIDERS[id].models,
       defaultModel: PROVIDERS[id].defaultModel,
       transport: PROVIDERS[id].transport,
     }));
-    json(200, { providers: out });
+    json(200, { providers: out, localOnlyMode: isLocalOnlyMode() });
     return true;
   }
 

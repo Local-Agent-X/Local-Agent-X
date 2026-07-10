@@ -15,6 +15,7 @@ import { registerWorkerRunnerForServer } from "./worker-runner.js";
 import { registerSelfEditSurgeonForServer } from "./self-edit-surgeon-runner.js";
 import { makeRunMemBg } from "./memory-bg.js";
 import { registerDreamRunnerForServer } from "./dream-check.js";
+import { isLocalOnlyMode, registerLocalOnlyTeardown } from "../../local-only-policy.js";
 
 const logger = createLogger("server.background-jobs");
 
@@ -158,8 +159,9 @@ export function startBackgroundJobs(deps: {
   };
   setTimeout(runBackfill, 15_000);
   const syncCfg = agentSync.getConfig();
-  if (syncCfg.enabled && syncCfg.autoDownload) agentSync.pull().then(r => { if (r.success) logger.info(`[sync] Startup pull: ${r.message}`); }).catch(() => {});
-  agentSync.startHeartbeat();
+  if (!isLocalOnlyMode() && syncCfg.enabled && syncCfg.autoDownload) agentSync.pull().then(r => { if (r.success) logger.info(`[sync] Startup pull: ${r.message}`); }).catch(() => {});
+  if (!isLocalOnlyMode()) agentSync.startHeartbeat();
+  registerLocalOnlyTeardown("agent-sync", () => agentSync.stopHeartbeat());
 
   return { scheduler };
 }

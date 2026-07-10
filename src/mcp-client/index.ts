@@ -26,6 +26,7 @@ import type { MCPConfig, MCPServerConfig } from "./types.js";
 import { isMcpTrustedLocally, setMcpLocalTrust } from "./local-trust.js";
 import { assessMcpManifest, type MCPManifestTrust } from "./manifest.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { isLocalOnlyMode } from "../local-only-policy.js";
 
 const logger = createLogger("mcp-client");
 
@@ -109,6 +110,7 @@ export class MCPManager {
    * trains operators to ignore real warnings.
    */
   async connectAll(): Promise<void> {
+    if (isLocalOnlyMode()) { this.disconnectAll(); return; }
     const config = this.loadConfig();
     for (const [name, raw] of Object.entries(config.servers)) {
       if (raw.disabled) continue;
@@ -326,6 +328,7 @@ export class MCPManager {
     }
     this.connections.clear();
   }
+  suspendForLocalOnly(): void { this.disconnectAll(); this.onToolsChanged?.(); }
 
   /** Disconnect a specific server. */
   disconnect(serverName: string): void {

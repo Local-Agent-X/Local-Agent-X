@@ -135,6 +135,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     // needing a 400 round-trip path.
     let runtimeChanged = false;
     let browserModeChanged = false;
+    const localOnlyWasEnabled = runtimeConfig.localOnlyMode === true;
     for (const field of RUNTIME_SETTINGS) {
       if (!(field.field in body)) continue;
       const parsed = field.validate.safeParse(body[field.field]);
@@ -150,6 +151,11 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     if (browserModeChanged) {
       const { closeAllBrowsers } = await import("../../browser/index.js");
       await closeAllBrowsers();
+    }
+    if (!localOnlyWasEnabled && runtimeConfig.localOnlyMode === true) {
+      const { activateLocalOnlyMode } = await import("../../local-only-policy.js");
+      ctx.agentSync.stopHeartbeat();
+      await activateLocalOnlyMode();
     }
 
     json(200, { ok: true }); return true;

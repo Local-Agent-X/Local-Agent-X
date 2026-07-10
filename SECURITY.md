@@ -34,7 +34,7 @@ Local Agent X is a single-user personal agent designed for a local workstation. 
 - [ ] Run on a dedicated user account with minimal privileges
 - [ ] Enable full-disk encryption on the host
 - [ ] Keep `~/.lax/` directory permissions at `0700`
-- [ ] Verify the effective shell sandbox in Settings → Security. The selected default is `guarded`: macOS/Linux use a kernel cage that denies credential paths while retaining normal network access. If that backend is unavailable (including Windows), LAX reports an effective `host` fallback and requires explicit acknowledgement before unattended shell paths run. Select stricter `LAX_SANDBOX=seatbelt`, `bwrap`, or `docker` where appropriate. Optionally confine the whole server with `LAX_SERVER_SANDBOX=1`.
+- [ ] Verify the effective shell sandbox in Settings → Security. The selected default is `guarded`: macOS/Linux use a kernel cage that denies credential paths while retaining normal network access. If that backend is unavailable (including Windows), LAX reports an effective `host` fallback and requires explicit acknowledgement before unattended shell paths run. Settings offers guarded, unconfined host, and network-isolated Docker. Use `LAX_SANDBOX=seatbelt` or `bwrap` for the stricter network-denying native profiles. Optionally confine the whole server with `LAX_SERVER_SANDBOX=1`.
 - [ ] Create `~/.lax/egress-allowlist.json` with approved domains — a JSON array, e.g. `["api.anthropic.com", "*.example.com"]`
 - [ ] Review `~/.lax/tool-policy.json` for your use case
 - [ ] Monitor `~/.lax/audit/` logs for anomalies
@@ -51,7 +51,7 @@ Local Agent X is a single-user personal agent designed for a local workstation. 
 - Uploads: stored in `~/.lax/uploads/` (can be cleaned manually)
 - Secrets: encrypted at rest in `~/.lax/secrets.enc` (AES-256-GCM)
 - LAX-owned OpenAI, Anthropic setup-token, and xAI OAuth credentials: AES-256-GCM envelopes in historically named `*.json` files; CLI-native credential stores are outside this guarantee. See [docs/provider-auth.md](docs/provider-auth.md).
-- No data is sent to external services except the configured LLM provider (e.g. Anthropic, OpenAI, xAI, Google Gemini, Cerebras, or a custom endpoint; local/Ollama models run on-device)
+- Provider prompts and attached context are sent to the selected LLM endpoint; local/Ollama inference stays on-device. Separately configured Agent Sync, browser/web, email, connector, MCP, and other external tools can transmit the data supplied to them. Review each destination, tool policy, and sync scope.
 - PI (Personal Information) in chat is not automatically redacted from storage — use high-security session mode for sensitive conversations
 
 ## Security Advisory Process

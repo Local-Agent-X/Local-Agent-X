@@ -665,10 +665,11 @@
           <div class="field">
             <label class="field-label">Sandbox Mode</label>
             <select class="field-select" id="cfg-sandbox-mode" onchange="setSandboxModeUI(this.value)">
-              <option value="host" selected>Off — Run on host (default)</option>
-              <option value="docker">On — Run in Docker container (network-isolated)</option>
+              <option value="guarded" selected>Protected — Block credential files, keep network (default)</option>
+              <option value="host">Off — Run on host (unconfined)</option>
+              <option value="docker">Maximum — Docker container (network-isolated)</option>
             </select>
-            <div class="field-hint" id="sandbox-hint">Bash commands run directly on your host OS.</div>
+            <div class="field-hint" id="sandbox-hint">Bash runs under the guarded kernel cage where supported.</div>
           </div>
           <div class="btn-row" id="sandbox-host-ack-actions" style="display:none">
             <button class="action-btn danger" id="sandbox-ack-btn" onclick="acknowledgeUnconfinedHost()">Acknowledge delegated/API host shell</button>

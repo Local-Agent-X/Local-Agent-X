@@ -53,7 +53,7 @@ Key properties:
 - **Residual risk**: Local malware can reach loopback.
 
 ### 2. Tool Execution Surface
-- **Shell**: Metacharacter rejection, blocked commands, network client blocking, env sanitization, optional Docker sandbox
+- **Shell**: Metacharacter rejection, blocked commands, network-client policy, env sanitization, guarded native cage by default where supported, optional strict native or Docker confinement
 - **File**: Path normalization, symlink detection, sensitive path blocking, core file protection
 - **HTTP**: SSRF protection, DNS pinning, redirect header stripping, content wrapping
 - **Browser**: DNS pinning, evaluate sandbox, session isolation, snapshot sanitization
@@ -107,14 +107,14 @@ Layer 10: Output Redaction   — Credential masking before AI sees tool results
 
 ## Windows shell confinement
 
-The agent shell runs under OS-native kernel confinement on macOS (`seatbelt`) and
-Linux (`bwrap`): a targeted-deny posture that blocks external network and shadows
-the sensitive home dirs/persistence vectors while leaving the dev shell usable
-(`npm install`, `git`, workspace I/O all work). **Windows has no equivalent native
-mode** — there, `LAX_SANDBOX` exposes only `host` and `docker`, and **Docker is the
-documented Windows confinement answer.** The in-process guards (shell-policy
-denylist, path/symlink guard, egress/lineage layers) still apply on Windows in
-host mode, but they are best-effort, not a kernel boundary.
+On macOS and Linux, the default `guarded` profile uses seatbelt/bwrap to shadow
+credential paths while retaining external network and common development paths.
+The explicit strict `seatbelt`/`bwrap` modes additionally deny external network
+and more configuration paths. **Windows has no equivalent native mode**: guarded
+falls back visibly to unconfined host, unattended shell paths require explicit
+acknowledgement, and Docker is the documented confinement answer. The in-process
+guards (shell-policy denylist, path/symlink guard, egress/lineage layers) still
+apply in host mode, but they are best-effort, not a kernel boundary.
 
 ### Why not a native Windows mode (AppContainer evaluated, rejected)
 

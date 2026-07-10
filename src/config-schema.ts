@@ -53,7 +53,8 @@ export const configSchema = z.object({
    *  "docker" runs commands inside a network-isolated Alpine container — opt-in
    *  for paranoid setups; breaks host-OS commands and network access. "seatbelt"
    *  (macOS) / "bwrap" (Linux) are the STRICT kernel cage — same credential deny
-   *  PLUS all-network deny and ~/.config deny. Toggleable from Settings → Security. */
+   *  PLUS all-network deny and ~/.config deny. Settings exposes guarded/host/
+   *  docker; select these strict native modes through env or config. */
   sandboxMode: z.enum(["host", "guarded", "docker", "seatbelt", "bwrap"]).default("guarded"),
   /** One-time marker: the "host"→"guarded" default upgrade has run. Lets the
    *  migration upgrade installs still on the OLD "host" default exactly once,

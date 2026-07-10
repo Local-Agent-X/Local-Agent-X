@@ -3,24 +3,11 @@
 // Controls how the bash tool's commands are confined. Persists to
 // ~/.lax/config.json via /api/sandbox.
 //
-// The "guarded" option is injected here rather than declared in app.html: this
-// JS already mutates the <select> at runtime (it disables docker when Docker
-// isn't installed), and keeping the option list owned here avoids editing the
-// shared app.html markup.
-
 const SANDBOX_HINTS = {
   guarded: 'Bash runs under a kernel cage that blocks reads of your credential files (~/.ssh, ~/.aws, API keys) — even via indirection a text filter would miss — while keeping network and dev tools (npm/git/gh) working. Recommended.',
   host: 'Bash runs directly on your host with no kernel cage. Full functionality, but a prompt-injected command could read credential files.',
   docker: 'Bash runs inside a Docker container (Alpine Linux, --network=none, workspace-only). Strongest isolation, but breaks host-OS commands and network access.'
 };
-
-function ensureGuardedOption(sel) {
-  if (!sel || sel.querySelector('option[value="guarded"]')) return;
-  const opt = document.createElement('option');
-  opt.value = 'guarded';
-  opt.textContent = 'Protected — block credential files, keep network (default)';
-  sel.insertBefore(opt, sel.firstChild);
-}
 
 function renderSandboxStatus(d) {
   const badge = document.getElementById('sandbox-effective-status');
@@ -50,7 +37,6 @@ async function loadSandboxMode() {
     if (!r.ok) return;
     const d = await r.json();
     const sel = document.getElementById('cfg-sandbox-mode');
-    ensureGuardedOption(sel);
     if (sel) sel.value = d.selectedMode || d.mode || 'guarded';
     renderSandboxStatus(d);
     const hint = document.getElementById('sandbox-hint');

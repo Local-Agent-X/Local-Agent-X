@@ -306,7 +306,8 @@ Lease lifecycle (PRD §14):
 
 Heartbeat is a `setInterval` started inside `worker.drive()`. On heartbeat
 failure (lease stolen) the worker calls `adapter.abort()` and exits the
-turn loop without committing the partial turn.
+turn loop without committing the partial turn. The 10-second heartbeat is
+steady-state lease maintenance; it is not a retry delay.
 
 ### Resume protocol uses `op_turns`, not the cache
 
@@ -330,16 +331,29 @@ duplicate `turn_committed` events.
 ```
 recoverStaleOp(opId):
   read op
-  guard:  state ∈ {running, cancelling}, lease present, lease expired
+  guard:  state ∈ {queued, running, cancelling}; skip a fresh running/cancelling lease
   evict   stale worker from scheduler.active (frees the lane slot)
-  clear   leaseOwner / leaseExpiresAt  ← persistOpKeepingSignals
-  emit    lease_lost { workerId, reason: "expired" }
+  clear   leaseOwner / leaseExpiresAt and emit lease_lost when a lease exists
+  if state === queued:
+      enqueue + pump without consuming a recovery attempt
   if state === cancelling:
       transition cancelling → cancelled  (cancel always wins, PRD §13)
-  else:
+  if state === running and retry cap/circuit breaker allow:
+      increment attemptCount
       transition running → queued        (state-machine emits state_changed)
       enqueue + pump scheduler            (replacement worker leases)
+  otherwise transition running → failed
 ```
+
+`src/ops/heartbeat.ts` computes per-op recovery limits and a `nextDelayMs`
+from `retryPolicy.backoffMs`, but the canonical recovery seam deliberately does
+not schedule that delay. Recovery requeues immediately after lease expiry; the
+30-second lease duration already paces crash cycles, and an in-memory backoff
+timer could strand the queued op if the process died during the delay. The
+backoff arrays and computed `nextDelayMs` remain persisted/returned policy
+metadata, not an active canonical recovery delay. This is separate from the
+10-second live-worker heartbeat above and from tool-call retry backoff in
+`src/resilience-policy.ts`.
 
 Bulk variant `recoverStaleOps(opIds)` exists for ad-hoc/test sweeps.
 `sweepStaleCanonicalOps()` is a boot-time janitor that scans

@@ -133,7 +133,7 @@ const sourceContracts = [
   ["memory enters Agent Sync", "src/sync/push-files.ts", /const memDir = join\(dataDir, "memory"\)/],
   ["Agent Sync pushes to a remote", "src/sync/index.ts", /await this\.git\("push", "-u", "origin", "HEAD:main"\)/],
   ["audit entries use keyed HMAC", "src/app-runtime/audit-signing.ts", /signAuditEntry[\s\S]{0,240}createHmac\("sha256", getAuditHmacKey\(\)\)/],
-  ["isolated browser identity default", "src/config-schema.ts", /browserMode:[\s\S]{0,120}\.default\("isolated"\)/],
+  ["continuity browser identity default", "src/config-schema.ts", /browserMode:[\s\S]{0,120}\.default\("continuity"\)/],
   ["all browser identity modes remain explicit", "src/config-schema.ts", /z\.enum\(\["isolated", "continuity", "advanced-shared"\]\)/],
   ["browser fill selector guard", "src/browser/secret-fill.ts", /reason: "selector_not_whitelisted"/],
   ["browser fill origin guard", "src/browser/secret-fill.ts", /reason: "origin_mismatch"/],

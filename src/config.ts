@@ -148,14 +148,16 @@ export function loadConfig(): LAXConfig {
     applyDiskMutation(updates);
   }
 
-  // Replace the ambiguous legacy boolean with one canonical mode. An old
-  // unmarked false was the former shared default and upgrades to isolation;
-  // only a false saved after that migration represents an explicit choice.
+  // Replace the ambiguous legacy boolean with one canonical mode. Only a false
+  // saved after the earlier migration represents an explicit shared choice and
+  // is preserved as advanced-shared; everyone else (unmarked legacy false, or
+  // no setting at all) adopts the current default so an everyday agent keeps
+  // its logins across sessions.
   if (diskRaw.browserMode === undefined) {
     config.browserMode = diskRaw.browserPerSessionContext === false
       && diskRaw.browserPerSessionContextMigrated === true
       ? "advanced-shared"
-      : "isolated";
+      : "continuity";
     applyDiskMutation({ browserMode: config.browserMode });
   }
   if ("browserPerSessionContext" in diskRaw || "browserPerSessionContextMigrated" in diskRaw) {

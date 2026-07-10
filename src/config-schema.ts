@@ -91,8 +91,12 @@ export const configSchema = z.object({
   xttsServerUrl: z.string().default("http://127.0.0.1:7862"),
 
   // Explicit browser identity posture. The agent always uses a dedicated
-  // profile and never touches the user's normal browser profile.
-  browserMode: z.enum(["isolated", "continuity", "advanced-shared"]).default("isolated"),
+  // profile and never touches the user's normal browser profile. Default is
+  // continuity: an everyday personal agent should stay logged into the sites
+  // the user has it operate (email, dashboards, suppliers) across sessions.
+  // Isolated (fresh disposable context) is a per-task opt-in for untrusted or
+  // privacy-sensitive work; advanced-shared is the explicit high-risk mode.
+  browserMode: z.enum(["isolated", "continuity", "advanced-shared"]).default("continuity"),
 
   // Limits & timeouts
   browserCdpPort: z.number().int().min(1).max(65535).default(9800),

@@ -12,8 +12,10 @@ profile, or auto-injecting cross-session memory.
 
 ## Approved Product Semantics
 
-- `isolated`: default; each session receives a separate ephemeral browser identity.
-- `continuity`: an explicitly selected persistent dedicated browser identity.
+- `continuity`: default; one persistent dedicated agent browser identity so an
+  everyday agent stays signed in to the sites it operates across sessions.
+- `isolated`: an explicitly selected fresh ephemeral identity per session, for
+  untrusted or privacy-sensitive one-off work.
 - `advanced-shared`: an explicitly selected live context shared across sessions.
 - Strict local-only: only loopback network access and local models; cloud
   providers, OAuth, brokers, connectors, remote MCP, and internet browser/tool

@@ -49,21 +49,21 @@ describe("browser identity isolation config migration", () => {
     }), "utf-8");
   }
 
-  it("defaults fresh installs to per-session browser identity isolation", () => {
+  it("defaults fresh installs to persistent continuity browser identity", () => {
     writeConfig({});
 
     const config = loadConfig();
 
-    expect(config.browserMode).toBe("isolated");
-    expect(JSON.parse(readFileSync(configPath, "utf-8")).browserMode).toBe("isolated");
+    expect(config.browserMode).toBe("continuity");
+    expect(JSON.parse(readFileSync(configPath, "utf-8")).browserMode).toBe("continuity");
   });
 
-  it("upgrades the old untouched shared-context default once", () => {
+  it("upgrades the old untouched shared-context default to continuity once", () => {
     writeConfig({ browserPerSessionContext: false });
 
-    expect(loadConfig().browserMode).toBe("isolated");
+    expect(loadConfig().browserMode).toBe("continuity");
     const persisted = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-    expect(persisted.browserMode).toBe("isolated");
+    expect(persisted.browserMode).toBe("continuity");
     expect(persisted.browserPerSessionContext).toBeUndefined();
     expect(persisted.browserPerSessionContextMigrated).toBeUndefined();
   });
@@ -89,7 +89,7 @@ describe("browser identity isolation config migration", () => {
       expect(persisted.authToken).toBe("disk-auth-token");
       expect(persisted.openaiApiKey).toBe("disk-provider-key");
       expect(persisted.model).toBe("disk-model");
-      expect(persisted.browserMode).toBe("isolated");
+      expect(persisted.browserMode).toBe("continuity");
       expect(persisted.browserPerSessionContext).toBeUndefined();
     });
   });
@@ -191,7 +191,7 @@ describe("browser identity isolation config migration", () => {
         expect(persisted.workspace).toBe(expectedWorkspace);
         expect(persisted.sandboxMode).toBe("guarded");
         expect(persisted.sandboxModeMigrated).toBe(true);
-        expect(persisted.browserMode).toBe("isolated");
+        expect(persisted.browserMode).toBe("continuity");
         expect(persisted.browserPerSessionContext).toBeUndefined();
         expect(persisted.browserPerSessionContextMigrated).toBeUndefined();
       });

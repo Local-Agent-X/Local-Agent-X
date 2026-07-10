@@ -53,7 +53,6 @@ vi.mock("./launcher.js", async (importOriginal) => {
 
 import { getBrowserManager, closeBrowser, closeAllBrowsers } from "./instance.js";
 import { acquireSessionContext, closeSharedBrowser, releaseSessionContext } from "./runtime.js";
-import { configSchema } from "../config-schema.js";
 
 // These exercise the per-session isolation contract at the registry level —
 // no Chrome is launched (a manager stays inert until getPage()), so they run
@@ -106,10 +105,9 @@ describe("per-session BrowserContext allocation", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("gives two sessions distinct BrowserContexts by default", async () => {
-    const isolatedByDefault = configSchema.parse({}).browserMode;
-    const chat = await acquireSessionContext("chromium", isolatedByDefault, "chat");
-    const mission = await acquireSessionContext("chromium", isolatedByDefault, "mission");
+  it("gives two sessions distinct BrowserContexts in isolated mode", async () => {
+    const chat = await acquireSessionContext("chromium", "isolated", "chat");
+    const mission = await acquireSessionContext("chromium", "isolated", "mission");
 
     expect(chat).not.toBe(mission);
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(2);

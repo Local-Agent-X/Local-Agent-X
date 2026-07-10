@@ -5,7 +5,7 @@ const BROWSER_MODE_STATUS = {
 };
 
 function renderBrowserMode(mode) {
-  const canonical = BROWSER_MODE_STATUS[mode] ? mode : 'isolated';
+  const canonical = BROWSER_MODE_STATUS[mode] ? mode : 'continuity';
   const select = document.getElementById('cfg-browser-mode');
   const status = document.getElementById('browser-mode-status');
   const warning = document.getElementById('browser-mode-warning');
@@ -22,7 +22,7 @@ async function loadBrowserMode() {
     const response = await apiFetch('/api/settings');
     if (!response.ok) return;
     const settings = await response.json();
-    renderBrowserMode(settings.browserMode || 'isolated');
+    renderBrowserMode(settings.browserMode || 'continuity');
   } catch (error) {
     console.warn('[browser-mode] load failed', error);
   }
@@ -30,7 +30,7 @@ async function loadBrowserMode() {
 
 async function setBrowserMode(mode) {
   const select = document.getElementById('cfg-browser-mode');
-  const previous = select?.dataset.current || 'isolated';
+  const previous = select?.dataset.current || 'continuity';
   try {
     const response = await apiFetch('/api/settings', {
       method: 'POST',

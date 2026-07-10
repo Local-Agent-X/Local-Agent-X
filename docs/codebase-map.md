@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1192 non-test source files · 1 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1192 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -36,7 +36,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-request/` | 17 | 12 | L |  |
 | `src/agents/` | 15 | 13 | L |  |
 | `src/app-runtime/` | 14 | 12 | L |  |
-| `src/browser/` | 14 | 28 | XL | 1 |
+| `src/browser/` | 14 | 28 | XL |  |
 | `src/chat-ws/` | 14 | 9 | L |  |
 | `src/voice/` | 13 | 65 | XL |  |
 | `src/anthropic-client/` | 12 | 18 | L |  |
@@ -221,14 +221,4 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/video-summary.ts` | S |
 | `src/vulnerability-awareness.ts` | M |
 | `src/worker-session.ts` | S |
-
-## God files (> 400 LOC)
-
-Burn-down targets for `/refactor-godfiles`. Membership only (not exact LOC),
-so a god file growing a little doesn't churn this doc — only crossing the
-400-line line does.
-
-| File | Size |
-|---|:--:|
-| `src/browser/manager.ts` | M |
 

@@ -36,6 +36,9 @@ const launched = await launchViaCDP(playwright, `http://127.0.0.1:${proxyAddress
   userDataDir,
   downloadsDir: downloadsPath,
   headless: true,
+  forceProfileLaunch: true,
+  removeProfileOnCleanup: true,
+  readyAttempts: 50,
 });
 
 try {

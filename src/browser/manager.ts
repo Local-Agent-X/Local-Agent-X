@@ -25,17 +25,8 @@ import { isBlankish } from "./blankish.js";
 import type { BrowserMode } from "../types.js";
 import { waitForContinuityCacheRestore } from "./continuity-cache.js";
 
-/**
- * Result of a ref/text-targeted interaction. `ok` carries the underlying
- * ActionResult.ok verdict so the tool layer can route a resolution failure to
- * an isError result (which feeds the circuit breaker) instead of burying it in
- * a success-prefixed string. `text` is the human-readable status + snapshot the
- * agent sees either way.
- */
-export interface InteractionResult {
-  ok: boolean;
-  text: string;
-}
+/** Keeps ref-resolution failures distinct from successful action text. */
+export interface InteractionResult { ok: boolean; text: string; }
 
 /**
  * Per-session browser surface. Each session owns its own tabs + observation
@@ -340,28 +331,22 @@ export class BrowserManager {
     const page = await this.getPage();
     return handleNextDialog(page, "accept", promptText);
   }
-
   async dialogDismiss(): Promise<string> {
     const page = await this.getPage();
     return handleNextDialog(page, "dismiss");
   }
-
   async extractText(selector?: string, find?: string): Promise<string> {
     return extractTextFrom(await this.getPage(), selector, find);
   }
-
   async screenshot(): Promise<string> {
     return screenshotAsBase64(await this.getPage(), this.currentEngine);
   }
-
   async evaluate(script: string): Promise<string> {
     return evaluateScript(await this.getPage(), script);
   }
-
   async listTabs(): Promise<string> {
     return listTabsOp(this.listOwnedPages(), this.page);
   }
-
   async switchTab(index: number): Promise<string> {
     const result = await resolveSwitchTab(this.listOwnedPages(), index);
     if (result.ok && result.page) {
@@ -369,17 +354,13 @@ export class BrowserManager {
     }
     return result.message;
   }
-
   async getInfo(): Promise<string> {
     return pageInfo(this.page, this.currentEngine);
   }
-
   getDownloads(): string { return formatRecentDownloads(this.sessionId); }
-
   getDownloadApproval(id: string): DownloadApprovalBinding {
     return getDownloadApprovalBinding(this.sessionId, id);
   }
-
   async releaseDownload(id: string, approved: DownloadApprovalBinding): Promise<string> {
     const record = await releaseQuarantinedDownload(this.sessionId, id, approved);
     return `RELEASED: ${record.filename} (${record.size} bytes)\nReleased to: ${record.releasePath}`;

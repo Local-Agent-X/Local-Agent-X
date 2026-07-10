@@ -32,6 +32,16 @@ async function loadMcpServers() {
   try {
     const data = await apiJson('/api/mcp/servers');
     const servers = (data && data.servers) || [];
+    const capability = data && data.execution;
+    const disclosure = document.getElementById('mcp-execution-disclosure');
+    const executionSelect = document.getElementById('mcp-new-execution');
+    const sandboxOption = executionSelect && executionSelect.querySelector('option[value="sandboxed"]');
+    if (capability && disclosure) {
+      disclosure.textContent = capability.sandboxSupported
+        ? `Child-process sandbox available (${capability.sandboxBackend}). Sandboxed is recommended; trusted mode is only for reviewed server code.`
+        : 'Child-process sandbox unavailable on this platform. MCP servers can run only as explicitly trusted host processes after you review their code.';
+    }
+    if (sandboxOption) sandboxOption.disabled = !!(capability && !capability.sandboxSupported);
     if (servers.length === 0) {
       el.innerHTML = '<p style="color:var(--muted)">No MCP servers configured yet. Add one below.</p>';
       return;
@@ -47,6 +57,11 @@ async function loadMcpServers() {
       const tools = (s.connected && s.tools && s.tools.length)
         ? `<div style="font-size:.66rem;color:var(--muted);margin-top:6px;font-family:var(--mono);word-break:break-word">${esc(s.tools.join(', '))}</div>`
         : '';
+      const execution = s.executionPosture === 'sandboxed'
+        ? `Sandboxed (${esc(s.sandboxBackend || 'kernel')})`
+        : s.executionPosture === 'trusted'
+          ? 'Trusted host process'
+          : 'Blocked: sandbox unavailable; explicit trust required';
       // Redundant servers (filesystem) are never spawned — their tools
       // duplicate native read/write/edit. Offering Test/Enable on them makes a
       // by-design skip look like a failure, so show an explanation instead.
@@ -64,6 +79,7 @@ async function loadMcpServers() {
           <div style="flex:1;min-width:0">
             <div style="font-family:var(--mono);font-size:.85rem;font-weight:600;color:var(--text)">${esc(s.name)}</div>
             <div style="font-size:.7rem;color:var(--muted);margin-top:2px;font-family:var(--mono);word-break:break-word">${cmdLine}</div>
+            <div style="font-size:.68rem;color:${s.executionPosture === 'blocked' ? 'var(--danger)' : 'var(--muted)'};margin-top:4px">${execution}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">${mcpStatusBadge(s)}</div>
         </div>
@@ -93,6 +109,8 @@ function prefillMcpServer(id) {
   set('mcp-new-command', c.command);
   set('mcp-new-args', c.args);
   set('mcp-new-env', c.env);
+  const execution = document.getElementById('mcp-new-execution');
+  if (execution) execution.value = execution.querySelector('option[value="sandboxed"]')?.disabled ? '' : 'sandboxed';
 }
 
 function parseMcpEnv(text) {
@@ -112,14 +130,16 @@ async function addMcpServer() {
   const command = document.getElementById('mcp-new-command')?.value?.trim();
   const argsRaw = document.getElementById('mcp-new-args')?.value?.trim() || '';
   const envRaw = document.getElementById('mcp-new-env')?.value || '';
+  const executionMode = document.getElementById('mcp-new-execution')?.value;
   if (!name || !command) { alert('Server Name and Command are required.'); return; }
+  if (!executionMode) { alert('Choose sandboxed or trusted execution. Trusted mode is only for server code you have reviewed.'); return; }
   const args = argsRaw ? argsRaw.split(/\s+/) : [];
   const env = parseMcpEnv(envRaw);
   const listEl = document.getElementById('mcp-servers-list');
   if (listEl) listEl.innerHTML = '<p style="color:var(--muted)">Connecting…</p>';
   try {
-    await apiPost('/api/mcp/servers', { name, command, args, env });
-    ['mcp-new-name', 'mcp-new-command', 'mcp-new-args', 'mcp-new-env'].forEach(fid => {
+    await apiPost('/api/mcp/servers', { name, command, args, env, executionMode });
+    ['mcp-new-name', 'mcp-new-command', 'mcp-new-args', 'mcp-new-env', 'mcp-new-execution'].forEach(fid => {
       const e = document.getElementById(fid); if (e) e.value = '';
     });
     loadMcpServers();

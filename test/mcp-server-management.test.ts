@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,7 +25,9 @@ async function freshManager() {
 describe("MCPManager.getServers — full config view for the settings UI", () => {
   beforeEach(async () => {
     const { setSecretLookup } = await import("../src/mcp-client/index.js");
+    const { __setMcpSandboxBackendForTests } = await import("../src/mcp-client/connection.js");
     setSecretLookup(() => undefined);
+    __setMcpSandboxBackendForTests(null);
   });
 
   it("lists every configured server from the default template", async () => {
@@ -51,12 +53,31 @@ describe("MCPManager.getServers — full config view for the settings UI", () =>
     expect(gh.missingSecrets).toContain("GITHUB_TOKEN");
   });
 
+  it("discloses blocked sandbox defaults and trusted-only platform capability", async () => {
+    const mgr = await freshManager();
+    expect(mgr.getExecutionCapability()).toEqual({ sandboxSupported: false, sandboxBackend: null, trustedOnly: true });
+    const gh = mgr.getServers().find(s => s.name === "github")!;
+    expect(gh).toMatchObject({ executionMode: "sandboxed", executionPosture: "blocked", sandboxBackend: null });
+  });
+
   it("masks literal env values but passes placeholder references through", async () => {
     const mgr = await freshManager();
     mgr.addServer("custom", { command: "node", args: ["server.js"], env: { RAW: "sk-abc123", REF: "${secret:MY_TOKEN}" } });
     const custom = mgr.getServers().find(s => s.name === "custom")!;
     expect(custom.env.RAW).toBe("••••••••");
     expect(custom.env.REF).toBe("${secret:MY_TOKEN}");
+  });
+});
+
+describe("MCP settings disclosure", () => {
+  it("requires a posture selection and renders blocked/trusted safety language", () => {
+    const app = readFileSync(join(process.cwd(), "public/app.html"), "utf8");
+    const js = readFileSync(join(process.cwd(), "public/js/settings-mcp.js"), "utf8");
+    expect(app).toContain('id="mcp-new-execution"');
+    expect(app).toContain("MCP servers are third-party programs, not inherently safe");
+    expect(js).toContain("explicitly trusted host processes");
+    expect(js).toContain("Blocked: sandbox unavailable; explicit trust required");
+    expect(js).toContain("{ name, command, args, env, executionMode }");
   });
 });
 

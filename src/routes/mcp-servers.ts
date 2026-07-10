@@ -20,17 +20,23 @@ export const handleMcpServerRoutes: RouteHandler = async (method, url, req, res,
   const mgr = MCPManager.getInstance(ctx.dataDir);
 
   if (method === "GET" && url.pathname === "/api/mcp/servers") {
-    json(200, { servers: mgr.getServers() });
+    json(200, { servers: mgr.getServers(), execution: mgr.getExecutionCapability() });
     return true;
   }
 
   if (method === "POST" && url.pathname === "/api/mcp/servers") {
-    const body = await safeParseBody(req) as { name?: string; command?: string; args?: unknown; env?: unknown } | null;
+    const body = await safeParseBody(req) as { name?: string; command?: string; args?: unknown; env?: unknown; executionMode?: unknown } | null;
     if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     const name = (body.name || "").trim();
     const command = (body.command || "").trim();
     if (!NAME_RE.test(name)) { json(400, { error: "Server name must be 1-64 chars: letters, digits, _ or -" }); return true; }
     if (!command) { json(400, { error: "Command is required" }); return true; }
+    if (body.executionMode !== "sandboxed" && body.executionMode !== "trusted") {
+      json(400, { error: "executionMode must be sandboxed or trusted" }); return true;
+    }
+    if (body.executionMode === "sandboxed" && !mgr.getExecutionCapability().sandboxSupported) {
+      json(409, { error: "MCP child sandboxing is unavailable on this platform. Choose trusted only after reviewing the server code." }); return true;
+    }
     if (mgr.getServers().some(s => s.name === name)) { json(409, { error: `A server named "${name}" already exists` }); return true; }
 
     const args = Array.isArray(body.args) ? body.args.filter(a => typeof a === "string") as string[] : [];
@@ -40,7 +46,7 @@ export const handleMcpServerRoutes: RouteHandler = async (method, url, req, res,
         if (typeof v === "string" && k.trim()) env[k.trim()] = v;
       }
     }
-    const config: MCPServerConfig = { command, args, disabled: false };
+    const config: MCPServerConfig = { command, args, disabled: false, executionMode: body.executionMode };
     if (Object.keys(env).length > 0) config.env = env;
     mgr.addServer(name, config);
     await mgr.reload();

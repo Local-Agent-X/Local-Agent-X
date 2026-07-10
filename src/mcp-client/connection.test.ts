@@ -3,12 +3,24 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildMcpChildEnv, __resetMcpEnvLogState, MCPConnection, cmdQuote } from "./connection.js";
+import {
+  buildMcpChildEnv,
+  __resetMcpEnvLogState,
+  __setMcpSandboxBackendForTests,
+  getMcpExecutionPosture,
+  MCPConnection,
+  cmdQuote,
+} from "./connection.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
+const bwrapMock = vi.hoisted(() => vi.fn((cmd: string, args: string[]) => ({ cmd: "bwrap", args: ["--guarded", cmd, ...args] })));
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, spawn: spawnMock };
+});
+vi.mock("../sandbox/bwrap.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../sandbox/bwrap.js")>();
+  return { ...actual, wrapForBwrap: bwrapMock };
 });
 
 // Snapshot + restore process.env around every test so a leaked variable
@@ -31,11 +43,25 @@ function clearEnv(): void {
 beforeEach(() => {
   clearEnv();
   __resetMcpEnvLogState();
+  __setMcpSandboxBackendForTests(undefined);
 });
 
 afterEach(() => {
   clearEnv();
   Object.assign(process.env, ORIGINAL_ENV);
+  __setMcpSandboxBackendForTests(undefined);
+});
+
+describe("MCP child execution posture", () => {
+  it("defaults to blocked when no child sandbox is supported", () => {
+    __setMcpSandboxBackendForTests(null);
+    expect(getMcpExecutionPosture({})).toMatchObject({ requested: "sandboxed", effective: "blocked", trustedOnly: true });
+  });
+
+  it("allows host execution only when explicitly marked trusted", () => {
+    __setMcpSandboxBackendForTests(null);
+    expect(getMcpExecutionPosture({ executionMode: "trusted" })).toMatchObject({ requested: "trusted", effective: "trusted" });
+  });
 });
 
 describe("buildMcpChildEnv", () => {
@@ -233,6 +259,7 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
     delete process.env.LAX_MCP_RETRUST;
 
     spawnMock.mockReset();
+    bwrapMock.mockClear();
     // Return a stub ChildProcess shape — connect() reads .stdout/.stderr/.stdin
     // and registers listeners; we don't need a real process, just enough
     // surface that the synchronous spawn(...) call doesn't crash before our
@@ -258,7 +285,7 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
 
   it("spawns the resolved absolute path, not the bare command name (TOCTOU defense)", async () => {
     const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
-    const conn = new MCPConnection("mock-srv", { command: bareName, args: ["--foo"] });
+    const conn = new MCPConnection("mock-srv", { command: bareName, args: ["--foo"], executionMode: "trusted" });
 
     // connect() will hang on the initialize handshake against our stub; we
     // only care about the spawn() invocation, which happens synchronously
@@ -273,5 +300,25 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
     const expectedCmd = process.platform === "win32" ? cmdQuote(binPath) : binPath;
     expect(firstArg).toBe(expectedCmd);
     expect(firstArg).not.toBe(bareName);
+  });
+
+  it("wraps the integrity-resolved command when sandboxed", async () => {
+    __setMcpSandboxBackendForTests("bwrap");
+    const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
+    const conn = new MCPConnection("mock-srv", { command: bareName, args: ["--foo"], executionMode: "sandboxed" });
+
+    conn.connect().catch(() => { /* expected — stub stdin is non-writable */ });
+
+    expect(bwrapMock).toHaveBeenCalledWith(binPath, ["--foo"], undefined, "guarded");
+    expect(spawnMock).toHaveBeenCalledWith("bwrap", ["--guarded", binPath, "--foo"], expect.objectContaining({ shell: false }));
+  });
+
+  it("refuses an unmarked server before integrity trust or spawn when no sandbox exists", async () => {
+    __setMcpSandboxBackendForTests(null);
+    const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
+    const conn = new MCPConnection("mock-srv", { command: bareName });
+
+    await expect(conn.connect()).rejects.toThrow(/explicitly|Set executionMode to "trusted"/);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 });

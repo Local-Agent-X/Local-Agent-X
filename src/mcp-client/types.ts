@@ -1,8 +1,11 @@
+export type MCPExecutionMode = "sandboxed" | "trusted";
+
 export interface MCPServerConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
   disabled?: boolean;
+  executionMode?: MCPExecutionMode;
 }
 
 export interface MCPConfig {

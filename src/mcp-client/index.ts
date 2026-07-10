@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 
 import { createLogger } from "../logger.js";
-import { MCPConnection } from "./connection.js";
+import { getMcpExecutionPosture, getMcpSandboxBackend, MCPConnection } from "./connection.js";
 import { expandPlaceholdersDeep } from "./placeholders.js";
 import type { MCPConfig, MCPServerConfig } from "./types.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
@@ -45,6 +45,15 @@ export interface MCPServerStatus {
   toolCount: number;
   tools: string[];
   missingSecrets: string[];
+  executionMode: "sandboxed" | "trusted";
+  executionPosture: "sandboxed" | "trusted" | "blocked";
+  sandboxBackend: "seatbelt" | "bwrap" | null;
+}
+
+export interface MCPExecutionCapability {
+  sandboxSupported: boolean;
+  sandboxBackend: "seatbelt" | "bwrap" | null;
+  trustedOnly: boolean;
 }
 
 /**
@@ -210,6 +219,7 @@ export class MCPManager {
     for (const [name, raw] of Object.entries(config.servers)) {
       const conn = this.connections.get(name);
       const { missing } = expandPlaceholdersDeep(raw);
+      const posture = getMcpExecutionPosture(raw);
       out.push({
         name,
         command: raw.command,
@@ -221,9 +231,17 @@ export class MCPManager {
         toolCount: conn?.getTools().length ?? 0,
         tools: conn?.getTools().map(t => t.name) ?? [],
         missingSecrets: missing,
+        executionMode: posture.requested,
+        executionPosture: posture.effective,
+        sandboxBackend: posture.sandboxBackend,
       });
     }
     return out;
+  }
+
+  getExecutionCapability(): MCPExecutionCapability {
+    const backend = getMcpSandboxBackend();
+    return { sandboxSupported: backend !== null, sandboxBackend: backend, trustedOnly: backend === null };
   }
 
   /** Flip a server's `disabled` flag in the config file. Caller reloads to apply. */
@@ -313,11 +331,13 @@ export class MCPManager {
           args: ["-y", "@modelcontextprotocol/server-github"],
           env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${secret:GITHUB_TOKEN}" },
           disabled: true,
+          executionMode: "sandboxed",
         },
         "postgres": {
           command: "npx",
           args: ["-y", "@modelcontextprotocol/server-postgres", "${secret:POSTGRES_URL}"],
           disabled: true,
+          executionMode: "sandboxed",
         },
       },
     };

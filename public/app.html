@@ -766,7 +766,8 @@
         </div>
         <div class="section-card">
           <div class="section-title">MCP Servers</div>
-          <div class="section-desc">Connect <a href="https://modelcontextprotocol.io/" target="_blank" style="color:var(--accent)">Model Context Protocol</a> servers to give your agent extra tools (GitHub, Postgres, Slack, and more). Tools appear automatically once a server connects — no restart needed. Secrets are read from your encrypted vault; never inline tokens.</div>
+          <div class="section-desc">Connect <a href="https://modelcontextprotocol.io/" target="_blank" style="color:var(--accent)">Model Context Protocol</a> servers to give your agent extra tools. MCP servers are third-party programs, not inherently safe. Secrets are read from your encrypted vault; never inline tokens.</div>
+          <div id="mcp-execution-disclosure" style="font-size:.72rem;color:var(--muted);margin-top:8px"></div>
           <div id="mcp-servers-list" style="margin-top:12px">Loading...</div>
           <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
             <div style="font-size:.82rem;font-weight:600;color:var(--text);margin-bottom:6px">Add a server</div>
@@ -775,6 +776,7 @@
             <div class="field"><label class="field-label">Server Name</label><input class="field-input" id="mcp-new-name" placeholder="e.g. github"/></div>
             <div class="field"><label class="field-label">Command</label><input class="field-input" id="mcp-new-command" placeholder="e.g. npx"/></div>
             <div class="field"><label class="field-label">Arguments (space-separated)</label><input class="field-input" id="mcp-new-args" placeholder="e.g. -y @modelcontextprotocol/server-github"/></div>
+            <div class="field"><label class="field-label">Execution</label><select class="field-select" id="mcp-new-execution"><option value="">Choose execution posture</option><option value="sandboxed">Sandboxed (recommended)</option><option value="trusted">Trusted host process (reviewed servers only)</option></select><div class="field-hint">Sandboxing limits access to sensitive host paths. Trusted mode gives the server your user account's host permissions.</div></div>
             <div class="field"><label class="field-label">Environment (optional — one KEY=value per line)</label><textarea class="field-input" id="mcp-new-env" rows="2" placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=&#36;{secret:GITHUB_TOKEN}" style="font-family:var(--mono);font-size:.78rem"></textarea></div>
             <div class="btn-row"><button class="action-btn primary" onclick="addMcpServer()">Add Server</button></div>
           </div>

@@ -2,8 +2,10 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 import { createLogger } from "../logger.js";
 import { wrapExternalContent } from "../sanitize.js";
+import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "../sandbox/seatbelt.js";
+import { isBwrapAvailable, bwrapGuardedRuns, wrapForBwrap } from "../sandbox/bwrap.js";
 import type { ToolResult } from "../types.js";
-import { type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
+import { type MCPExecutionMode, type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
 import { verifyOrTrust } from "./integrity.js";
 import { DENY_PREFIXES, DENY_SUBSTRINGS, DENY_EXACT, ENV_ALLOWLIST } from "./env-credential-patterns.js";
 
@@ -123,6 +125,47 @@ export function cmdQuote(token: string): string {
   return `"${token.replace(/"/g, '""')}"`;
 }
 
+export type MCPSandboxBackend = "seatbelt" | "bwrap";
+
+let sandboxBackend: MCPSandboxBackend | null | undefined;
+
+export function getMcpSandboxBackend(): MCPSandboxBackend | null {
+  if (sandboxBackend !== undefined) return sandboxBackend;
+  if (process.platform === "darwin" && isSeatbeltAvailable() && seatbeltProfileLoads(undefined, "guarded")) {
+    sandboxBackend = "seatbelt";
+  } else if (process.platform === "linux" && isBwrapAvailable() && bwrapGuardedRuns()) {
+    sandboxBackend = "bwrap";
+  } else {
+    sandboxBackend = null;
+  }
+  return sandboxBackend;
+}
+
+export interface MCPExecutionPosture {
+  requested: MCPExecutionMode;
+  effective: "sandboxed" | "trusted" | "blocked";
+  sandboxBackend: MCPSandboxBackend | null;
+  trustedOnly: boolean;
+}
+
+export function getMcpExecutionPosture(config: Pick<MCPServerConfig, "executionMode">): MCPExecutionPosture {
+  const requested = config.executionMode ?? "sandboxed";
+  const backend = getMcpSandboxBackend();
+  if (requested === "trusted") {
+    return { requested, effective: "trusted", sandboxBackend: backend, trustedOnly: backend === null };
+  }
+  return {
+    requested,
+    effective: backend ? "sandboxed" : "blocked",
+    sandboxBackend: backend,
+    trustedOnly: backend === null,
+  };
+}
+
+export function __setMcpSandboxBackendForTests(value: MCPSandboxBackend | null | undefined): void {
+  sandboxBackend = value;
+}
+
 export class MCPConnection {
   private proc: ChildProcess | null = null;
   private messageId = 0;
@@ -140,6 +183,14 @@ export class MCPConnection {
   }
 
   async connect(): Promise<void> {
+    const posture = getMcpExecutionPosture(this.config);
+    if (posture.effective === "blocked") {
+      throw new Error(
+        `MCP server "${this.serverName}" was not started: no supported child-process sandbox is available on this host. ` +
+        `Set executionMode to "trusted" only after reviewing and trusting the server code.`,
+      );
+    }
+
     // Binary integrity gate — fail closed on mismatch BEFORE spawning.
     // First-trust auto-accepts; subsequent hash drift refuses to spawn.
     // Operator escape hatches: LAX_MCP_RETRUST / LAX_MCP_STRICT_TRUST.
@@ -171,12 +222,19 @@ export class MCPConnection {
     // double quotes cmd treats & | < > ^ ( ) as literal). POSIX uses no shell,
     // so the raw argv is correct as-is.
     const isWin = process.platform === "win32";
-    const command = isWin ? cmdQuote(verdict.resolvedPath) : verdict.resolvedPath;
-    const spawnArgs = isWin ? (this.config.args || []).map(cmdQuote) : (this.config.args || []);
+    let command = isWin ? cmdQuote(verdict.resolvedPath) : verdict.resolvedPath;
+    let spawnArgs = isWin ? (this.config.args || []).map(cmdQuote) : (this.config.args || []);
+    if (posture.effective === "sandboxed") {
+      const wrapped = posture.sandboxBackend === "seatbelt"
+        ? wrapForSeatbelt(verdict.resolvedPath, this.config.args || [], undefined, "guarded")
+        : wrapForBwrap(verdict.resolvedPath, this.config.args || [], undefined, "guarded");
+      command = wrapped.cmd;
+      spawnArgs = wrapped.args;
+    }
     this.proc = spawn(command, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       env,
-      shell: isWin,
+      shell: isWin && posture.effective === "trusted",
       windowsHide: true,
     });
 

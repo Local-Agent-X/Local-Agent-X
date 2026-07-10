@@ -38,6 +38,13 @@ describe("mcp_add_server — validation", () => {
     expect(r.isError).toBe(true);
     expect(String(r.content)).toMatch(/command is required/i);
   });
+
+  it("requires an explicit execution posture", async () => {
+    const { tool } = await setup();
+    const r = await tool.execute({ name: "github", command: "npx" });
+    expect(r.isError).toBe(true);
+    expect(String(r.content)).toMatch(/executionMode must be sandboxed or trusted/i);
+  });
 });
 
 describe("mcp_add_server — missing-secret guidance", () => {
@@ -46,6 +53,7 @@ describe("mcp_add_server — missing-secret guidance", () => {
     const r = await tool.execute({
       name: "github",
       command: "npx",
+      executionMode: "trusted",
       args: ["-y", "@modelcontextprotocol/server-github"],
       env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${secret:GITHUB_TOKEN}" },
     });

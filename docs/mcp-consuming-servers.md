@@ -1,12 +1,12 @@
 # Consuming external MCP servers
 
-LAX can consume any [Model Context Protocol](https://modelcontextprotocol.io/) server as a tool source. Each MCP server is a subprocess that exposes tools (and optionally resources/prompts); LAX's agent can call those tools alongside its native tool surface.
+LAX can consume [Model Context Protocol](https://modelcontextprotocol.io/) servers as tool sources. An MCP server is third-party executable code, not a safe data feed: review its package, publisher, version, and requested access before enabling it.
 
 This doc covers the *consumption* side — LAX as MCP client. For exposing LAX's tools to external MCP clients, see the separate `mcp-server-exposure.md` once that ships.
 
 ## Quick start — adding a server
 
-The easiest path is the UI: **Settings → Tools & Integrations → MCP Servers**. Quick-add a recommended server (GitHub, Postgres, Slack, Puppeteer), set any required secret inline, and enable/disable/test/remove servers without touching a file. Changes apply to the agent's tool surface live — no restart.
+The easiest path is the UI: **Settings → Tools & Integrations → MCP Servers**. Quick-add a known server, choose its execution posture, set any required vault secret, and enable/disable/test/remove it without touching a file. Changes apply to the agent's tool surface live — no restart.
 
 You can also just **ask the agent** — "set up the GitHub MCP" — and it calls the `mcp_add_server` tool, prompting you for any required secret via `request_secret` before connecting. (Spawning a server is `shell`-risk, so it follows your autonomy profile: Safe asks first, Normal and looser run it like any `bash` call.)
 
@@ -19,6 +19,7 @@ To edit by hand instead, open `~/.lax/mcp.json`. Each entry is one server:
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${secret:GITHUB_TOKEN}" },
+      "executionMode": "sandboxed",
       "disabled": false
     }
   }
@@ -26,6 +27,16 @@ To edit by hand instead, open `~/.lax/mcp.json`. Each entry is one server:
 ```
 
 The agent picks up the new tools on next config save (file watcher reloads automatically). Tools are namespaced as `mcp_<server>_<tool>`, e.g. `mcp_github_create_issue`. A server **named `filesystem`** is skipped entirely at connect time (the subprocess is never spawned) because LAX's native `read`/`write`/`edit`/`grep`/`glob` already cover that surface with full ARI/security integration. The skip is keyed on the server name, so a filesystem server configured under a different name would still connect and expose its tools.
+
+## Child execution posture
+
+`executionMode` is required by the API and UI. Direct configs that omit it default to `sandboxed`, never trusted.
+
+- `sandboxed` wraps the integrity-checked executable in the existing macOS seatbelt or Linux bubblewrap guarded profile. The profile keeps network access for remote MCP services while denying sensitive credential paths and persistence writes.
+- `trusted` runs the integrity-checked executable as a normal child process with the current user account's host permissions. Use it only after reviewing and trusting the server code.
+- Windows currently has no supported MCP child-process sandbox. A `sandboxed` entry is blocked before integrity trust or spawn; the API and UI require an explicit `trusted` selection.
+
+Docker shell mode does not transparently containerize MCP servers because arbitrary host-installed MCP executables and their runtimes are not present in the shell image. Binary hash pinning, environment filtering, per-call policy, and output sanitization remain defense-in-depth controls; none makes an unreviewed server safe to run as trusted code.
 
 ## Placeholders — making one config work on every machine
 
@@ -100,7 +111,7 @@ A 250ms debounce coalesces editor save-events. No server restart required for: a
 
 ## Recommended servers to start with
 
-These are well-maintained, broadly useful, and have low setup friction:
+These are common examples, not a security endorsement. Verify current ownership, maintenance, and package contents before installation:
 
 | Server | Capability | Required secret |
 |---|---|---|
@@ -110,7 +121,7 @@ These are well-maintained, broadly useful, and have low setup friction:
 | `@modelcontextprotocol/server-filesystem` | scoped FS access (mostly redundant with native `read`/`write`) | none — uses path arg |
 | `@modelcontextprotocol/server-puppeteer` | additional browser control surface | none |
 
-The `mcp.json` template that ships with a fresh LAX install includes `filesystem`, `github`, and `postgres` entries with `disabled: true`. Flip `disabled` to `false` and add the matching secret to the vault to enable.
+The `mcp.json` template that ships with a fresh LAX install includes `github` and `postgres` entries with `disabled: true` and `executionMode: "sandboxed"`. Add the matching secret to the vault and enable the entry when ready.
 
 ## Architecture notes
 

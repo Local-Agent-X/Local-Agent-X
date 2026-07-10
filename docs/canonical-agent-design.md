@@ -151,23 +151,28 @@ split diff (L3 below).
 
 ### Q5: Approvals
 
-**Delete the dead code. Don't ship approvals as a feature yet.**
+**Issue-level approvals deleted; tool-call-level approvals shipped.** (This
+section originally said "delete the dead code, don't ship approvals yet" —
+both halves have since happened.)
 
-`Issue.needsApproval`, `approvalType`, `approvalData` have no producers and
-no consumers today. They contradict the "self-running businesses" vision —
-approval gates are friction by default. Remove the fields, the UI states
-that render them, and the CEO prompt section that references them.
+`Issue.needsApproval`, `approvalType`, `approvalData` are gone, along with
+the UI states and CEO prompt section that referenced them. Approvals now
+live where this doc said they belong: at the tool-call level, as a phase in
+the tool-execution pipeline (`src/tool-execution/require-approval.ts`, wired
+in `src/tool-execution/execute-tool.ts` between policy and sandbox).
 
-When approvals ARE needed later, they belong as **tool-call permissions**
-(declarative `requiresApproval: (args) => boolean` on `ToolDefinition`),
-NOT issue-level workflows. The Handler's `pauseSignal` primitive already
-exists for the runtime pause/wait pattern.
+How it works today:
 
-Real approval cases all map to tool-call-level concerns:
-
-- Spend cap → enforced at invoke time (a limit, not a gate)
-- External communications → tool-call permission on `send_email` etc.
-- Destructive actions → tool-call permission on `bash`, file deletions, etc.
+- Each call resolves to a four-valued decision — `allow` /
+  `allow-with-rollback` / `ask` / `deny` — from the active autonomy profile
+  (`src/autonomy/profiles.ts`); irreversible shell ops get reclassified to
+  the destructive tier before deciding.
+- `ask` prompts the user via `ApprovalManager` (`src/approval-manager.ts`),
+  with a session-scoped exact-args approval cache so identical repeat calls
+  don't re-prompt.
+- Unattended runs (`callContext !== "local"`, i.e. cron/delegated) have no
+  human to prompt: `ask` hard-blocks instead of silently running. The
+  profile is the authorization contract for those runs.
 
 ### Q6: Main agent in the catalog?
 
@@ -249,7 +254,7 @@ that mutates the roster store (Q4). Org chart that routes delegation.
 ### L7 — Cross-cutting
 
 Heartbeats invoke through canonical. Budgets enforced at invoke time. Tool-call
-permissions for approvals (Q5).
+approvals (Q5) — shipped as the approval phase in the tool-execution pipeline.
 
 ### L8 — Deletion
 

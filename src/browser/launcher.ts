@@ -100,14 +100,23 @@ export interface LaunchResult {
   chromeProcess: ChildProcess | null;
 }
 
-export function buildPersistentContextOptions(downloadsPath: string) {
+export function browserProxyArgs(proxyServer: string): string[] {
+  return [`--proxy-server=${proxyServer}`, "--proxy-bypass-list=<-loopback>"];
+}
+
+export function browserProxyConfig(proxyServer: string) {
+  return { server: proxyServer, bypass: "<-loopback>" };
+}
+
+export function buildPersistentContextOptions(downloadsPath: string, proxyServer: string) {
   return {
     headless: false,
-    args: STEALTH_ARGS,
+    args: [...STEALTH_ARGS, ...browserProxyArgs(proxyServer)],
     viewport: { width: 1280, height: 800 },
     acceptDownloads: true,
     downloadsPath,
     serviceWorkers: SERVICE_WORKER_POLICY,
+    proxy: browserProxyConfig(proxyServer),
   };
 }
 
@@ -124,7 +133,8 @@ export function buildPersistentContextOptions(downloadsPath: string) {
  * measure — so there's nothing to gain and a lot to lose.)
  */
 export async function launchViaCDP(
-  pw: typeof import("playwright")
+  pw: typeof import("playwright"),
+  proxyServer: string,
 ): Promise<LaunchResult> {
   const chromePath = findChromeExecutable();
   const cfg = getRuntimeConfig();
@@ -136,17 +146,25 @@ export async function launchViaCDP(
     if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
     const cdpUrl = `http://127.0.0.1:${cdpPort}`;
 
-    // Reconnect to an existing agent Chrome if one is running.
+    // An existing process may have stale or missing proxy flags. Close it and
+    // launch a fresh process whose only network path is this proxy.
+    let existing = false;
     try {
       const res = await fetch(`${cdpUrl}/json/version`, { signal: AbortSignal.timeout(2000) });
-      if (res.ok) {
-        await res.json();
-        const browser = await pw.chromium.connectOverCDP(cdpUrl);
-        logger.info(`[browser] Reconnected to existing agent Chrome on port ${cdpPort}`);
-        return { browser, chromeProcess: null };
-      }
+      existing = res.ok;
     } catch {
-      // Not running; we'll launch fresh.
+      existing = false;
+    }
+    if (existing) {
+      try {
+        const browser = await pw.chromium.connectOverCDP(cdpUrl);
+        await browser.close();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      } catch (error) {
+        throw new Error(
+          `Cannot replace existing agent Chrome with a proxied process: ${(error as Error).message}`,
+        );
+      }
     }
 
     // Spawn a fully separate Chrome process. The distinct --user-data-dir plus
@@ -162,6 +180,7 @@ export async function launchViaCDP(
       "--window-size=1280,800",
       `--download.default_directory=${downloadsDir}`,
       `--disable-features=${DISABLE_FEATURES.join(",")}`,
+      ...browserProxyArgs(proxyServer),
     ];
 
     logger.info(`[browser] Spawning agent Chrome: ${chromePath} (profile: ${userDataDir})`);
@@ -208,7 +227,7 @@ export async function launchViaCDP(
   const downloadsDir = resolveDownloadsDir();
   try {
     const ctx = await pw.chromium.launchPersistentContext(persistDir, {
-      ...buildPersistentContextOptions(downloadsDir),
+      ...buildPersistentContextOptions(downloadsDir, proxyServer),
       channel: "chrome",
     });
     logger.info("[browser] Playwright persistent context (Chrome channel)");
@@ -217,12 +236,16 @@ export async function launchViaCDP(
     try {
       const ctx = await pw.chromium.launchPersistentContext(
         persistDir,
-        buildPersistentContextOptions(downloadsDir),
+        buildPersistentContextOptions(downloadsDir, proxyServer),
       );
       logger.info("[browser] Playwright persistent context (bundled Chromium)");
       return { browser: ctx.browser()!, chromeProcess: null };
     } catch {
-      const b = await pw.chromium.launch({ headless: false, args: STEALTH_ARGS });
+      const b = await pw.chromium.launch({
+        headless: false,
+        args: [...STEALTH_ARGS, ...browserProxyArgs(proxyServer)],
+        proxy: browserProxyConfig(proxyServer),
+      });
       logger.info(`[browser] Playwright Chromium (no persistence) v${b.version()}`);
       return { browser: b, chromeProcess: null };
     }

@@ -11,12 +11,14 @@
 import type { Browser, BrowserContext } from "playwright";
 import type { ChildProcess } from "node:child_process";
 import {
+  browserProxyConfig,
   launchViaCDP,
   SERVICE_WORKER_POLICY,
   STEALTH_ARGS,
   USER_AGENTS,
   type BrowserEngine,
 } from "./launcher.js";
+import { closeBrowserEgressProxy, ensureBrowserEgressProxy } from "./egress-proxy.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("browser.runtime");
@@ -26,18 +28,31 @@ let chromeProcess: ChildProcess | null = null;
 let currentEngine: BrowserEngine = "chromium";
 let sharedContext: BrowserContext | null = null;
 let sharedContextCreation: Promise<BrowserContext> | null = null;
+let proxyServer: string | null = null;
 // Dedupe concurrent launches: two sessions calling getSharedBrowser() before
 // Chrome is up must await the same spawn, not race two Chrome processes.
 let launching: Promise<Browser> | null = null;
 
 async function launch(engine: BrowserEngine): Promise<Browser> {
+  const proxy = await ensureBrowserEgressProxy();
+  proxyServer = proxy.url;
   const pw = await import("playwright");
-  if (engine === "chromium") {
-    const { browser: b, chromeProcess: proc } = await launchViaCDP(pw);
-    chromeProcess = proc;
-    return b;
+  try {
+    if (engine === "chromium") {
+      const { browser: b, chromeProcess: proc } = await launchViaCDP(pw, proxy.url);
+      chromeProcess = proc;
+      return b;
+    }
+    return pw[engine].launch({
+      headless: false,
+      args: STEALTH_ARGS,
+      proxy: browserProxyConfig(proxy.url),
+    });
+  } catch (error) {
+    proxyServer = null;
+    await closeBrowserEgressProxy();
+    throw error;
   }
-  return pw[engine].launch({ headless: false, args: STEALTH_ARGS });
 }
 
 /** The single Chrome connection, launched on first use. Switching engines
@@ -58,13 +73,17 @@ export async function getSharedBrowser(engine: BrowserEngine): Promise<Browser> 
   return launching;
 }
 
-const CONTEXT_OPTS = (engine: BrowserEngine) => ({
-  userAgent: USER_AGENTS[engine],
-  viewport: { width: 1280, height: 800 },
-  locale: "en-US",
-  timezoneId: "America/Chicago",
-  serviceWorkers: SERVICE_WORKER_POLICY,
-});
+const CONTEXT_OPTS = (engine: BrowserEngine) => {
+  if (!proxyServer) throw new Error("Browser egress proxy is unavailable");
+  return {
+    userAgent: USER_AGENTS[engine],
+    viewport: { width: 1280, height: 800 },
+    locale: "en-US",
+    timezoneId: "America/Chicago",
+    serviceWorkers: SERVICE_WORKER_POLICY,
+    proxy: browserProxyConfig(proxyServer),
+  };
+};
 
 /**
  * The context a session's tabs should live in. Shared mode reuses one cookie
@@ -107,6 +126,8 @@ export async function closeSharedBrowser(): Promise<void> {
     try { chromeProcess.kill(); } catch { /* already exited */ }
     chromeProcess = null;
   }
+  proxyServer = null;
+  await closeBrowserEgressProxy();
   log.info("[browser-runtime] shared Chrome closed");
 }
 
@@ -127,7 +148,11 @@ export function forceKillSharedBrowser(): void {
   browser = null;
   sharedContext = null;
   sharedContextCreation = null;
+  proxyServer = null;
   if (proc) { try { proc.kill("SIGKILL"); } catch { /* already exited */ } }
   if (b) { void b.close().catch(() => { /* connection already dead */ }); }
+  void closeBrowserEgressProxy().catch((error) => {
+    log.warn(`[browser-runtime] browser proxy close failed: ${(error as Error).message}`);
+  });
   log.info("[browser-runtime] shared Chrome force-killed (wedge recovery)");
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import type { Browser, BrowserContext } from "playwright";
 
 const mocks = vi.hoisted(() => {
@@ -13,8 +13,15 @@ const mocks = vi.hoisted(() => {
     }),
     close: vi.fn(async () => undefined),
   } as unknown as Browser;
-  return { browser, contexts };
+  const startProxy = vi.fn();
+  const closeProxy = vi.fn(async () => undefined);
+  return { browser, contexts, startProxy, closeProxy };
 });
+
+vi.mock("./egress-proxy.js", () => ({
+  ensureBrowserEgressProxy: mocks.startProxy,
+  closeBrowserEgressProxy: mocks.closeProxy,
+}));
 
 vi.mock("./launcher.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("./launcher.js")>();
@@ -62,6 +69,10 @@ describe("per-session browser isolation", () => {
 });
 
 describe("per-session BrowserContext allocation", () => {
+  beforeEach(() => {
+    mocks.startProxy.mockResolvedValue({ url: "http://127.0.0.1:43123" });
+  });
+
   afterEach(async () => {
     await closeSharedBrowser();
     mocks.contexts.length = 0;
@@ -76,7 +87,10 @@ describe("per-session BrowserContext allocation", () => {
     expect(chat).not.toBe(mission);
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(2);
     expect(mocks.browser.newContext).toHaveBeenCalledWith(
-      expect.objectContaining({ serviceWorkers: "block" }),
+      expect.objectContaining({
+        serviceWorkers: "block",
+        proxy: { server: "http://127.0.0.1:43123", bypass: "<-loopback>" },
+      }),
     );
   });
 
@@ -87,7 +101,10 @@ describe("per-session BrowserContext allocation", () => {
     expect(chat).toBe(mission);
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(1);
     expect(mocks.browser.newContext).toHaveBeenCalledWith(
-      expect.objectContaining({ serviceWorkers: "block" }),
+      expect.objectContaining({
+        serviceWorkers: "block",
+        proxy: { server: "http://127.0.0.1:43123", bypass: "<-loopback>" },
+      }),
     );
   });
 
@@ -99,8 +116,19 @@ describe("per-session BrowserContext allocation", () => {
 
     expect(shared).not.toBe(defaultContext);
     expect(mocks.browser.newContext).toHaveBeenCalledWith(
-      expect.objectContaining({ serviceWorkers: "block" }),
+      expect.objectContaining({
+        serviceWorkers: "block",
+        proxy: { server: "http://127.0.0.1:43123", bypass: "<-loopback>" },
+      }),
     );
+  });
+
+  it("fails closed before browser launch when proxy startup fails", async () => {
+    mocks.startProxy.mockRejectedValueOnce(new Error("proxy bind failed"));
+
+    await expect(acquireSessionContext("chromium", true)).rejects.toThrow("proxy bind failed");
+
+    expect(mocks.browser.newContext).not.toHaveBeenCalled();
   });
 
   it("deduplicates concurrent shared-context creation", async () => {

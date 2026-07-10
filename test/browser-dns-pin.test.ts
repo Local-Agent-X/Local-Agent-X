@@ -1,15 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const resolve4 = vi.fn<(host: string) => Promise<string[]>>();
-const resolve6 = vi.fn<(host: string) => Promise<string[]>>();
-
-vi.mock("node:dns", () => ({
-  promises: {
-    resolve4: (host: string) => resolve4(host),
-    resolve6: (host: string) => resolve6(host),
-  },
-}));
-
 import { installRequestGuard } from "../src/browser/guards.js";
 
 interface FakeRoute {
@@ -53,38 +43,31 @@ function navigationRequest(url: string): FakeRequest {
 }
 
 beforeEach(() => {
-  resolve4.mockReset();
-  resolve6.mockReset();
-  resolve4.mockResolvedValue([]);
-  resolve6.mockResolvedValue([]);
+  vi.clearAllMocks();
 });
 
-describe("installRequestGuard DNS preflight", () => {
-  it("fails closed when DNS resolution fails", async () => {
+describe("installRequestGuard URL policy", () => {
+  it("fails closed on a private literal before proxy dispatch", async () => {
     const handler = await captureGuard();
     const route = fakeRoute();
-    resolve4.mockRejectedValueOnce(new Error("DNS unavailable"));
-    resolve6.mockRejectedValueOnce(new Error("DNS unavailable"));
 
-    await handler(route, navigationRequest("https://unresolved.example/"));
+    await handler(route, navigationRequest("https://10.0.0.7/"));
 
     expect(route.abort).toHaveBeenCalledWith("blockedbyclient");
     expect(route.continue).not.toHaveBeenCalled();
   });
 
-  it("checks a redirect hop and aborts when it resolves to a private address", async () => {
+  it("checks a redirect hop and aborts a metadata target", async () => {
     const handler = await captureGuard();
-    resolve4.mockResolvedValueOnce(["93.184.216.34"]);
     const initialRoute = fakeRoute();
 
-    await handler(initialRoute, navigationRequest("https://public.example/start"));
+    await handler(initialRoute, navigationRequest("https://93.184.216.34/start"));
 
     expect(initialRoute.continue).toHaveBeenCalledOnce();
     expect(initialRoute.abort).not.toHaveBeenCalled();
 
-    resolve4.mockResolvedValueOnce(["10.0.0.5"]);
     const redirectRoute = fakeRoute();
-    await handler(redirectRoute, navigationRequest("https://redirect.example/internal"));
+    await handler(redirectRoute, navigationRequest("http://169.254.169.254/internal"));
 
     expect(redirectRoute.abort).toHaveBeenCalledWith("blockedbyclient");
     expect(redirectRoute.continue).not.toHaveBeenCalled();

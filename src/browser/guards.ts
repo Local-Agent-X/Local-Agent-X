@@ -4,7 +4,8 @@
  * under the file-size cap.
  */
 import type { BrowserContext } from "playwright";
-import { loadEgressConfig, validateUrlWithDns } from "../security/network-policy.js";
+import { evaluateEgressForUrl } from "../security/network-policy.js";
+import { getRuntimeConfig } from "../config.js";
 
 /** Schemes that must never be reached via a top-level document navigation —
  *  click-induced, redirect, or JS. Sub-resources (a page's own data: image,
@@ -38,7 +39,7 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
   const pending = guardInstallations.get(context);
   if (pending) return pending;
 
-  const selfPort = process.env.LAX_PORT ?? "7007";
+  const selfPort = process.env.LAX_PORT ?? String(getRuntimeConfig().port);
 
   const installation = context.route("**/*", async (route, request) => {
     let url: string;
@@ -72,22 +73,10 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
       return;
     }
 
-    // http(s): run the canonical URL policy plus a DNS preflight that rejects
-    // private/loopback/link-local/metadata results. Self-server calls to
-    // 127.0.0.1:<selfPort> are allowed. This is not connection pinning:
-    // Playwright cannot bind route.continue() to the preflight address. Fail
-    // closed on navigation if the check throws; let sub-resources continue so
-    // a transient DNS hiccup on an analytics beacon doesn't kill the page.
+    // Run the canonical URL policy here for early denial and diagnostics. The
+    // mandatory browser proxy owns DNS validation and pinned socket creation.
     try {
-      const cfg = loadEgressConfig();
-      const decision = await validateUrlWithDns(
-        cfg.allowlist,
-        cfg.configured,
-        selfPort,
-        url,
-        cfg.mode,
-        cfg.localServicePorts,
-      );
+      const decision = evaluateEgressForUrl(url, selfPort);
       if (!decision.allowed) {
         await route.abort("blockedbyclient");
         return;

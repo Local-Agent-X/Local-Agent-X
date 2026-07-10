@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  browserProxyArgs,
+  browserProxyConfig,
   buildPersistentContextOptions,
   DISABLE_FEATURES,
   STEALTH_ARGS,
@@ -36,8 +38,22 @@ describe("browser launch args — single --disable-features flag", () => {
   });
 
   it("blocks Service Workers in persistent contexts", () => {
-    expect(buildPersistentContextOptions("C:\\downloads")).toEqual(
-      expect.objectContaining({ serviceWorkers: "block" }),
+    expect(buildPersistentContextOptions("C:\\downloads", "http://127.0.0.1:43123")).toEqual(
+      expect.objectContaining({
+        serviceWorkers: "block",
+        proxy: { server: "http://127.0.0.1:43123", bypass: "<-loopback>" },
+      }),
     );
+  });
+
+  it("forces dedicated Chrome through the proxy without implicit loopback bypass", () => {
+    expect(browserProxyArgs("http://127.0.0.1:43123")).toEqual([
+      "--proxy-server=http://127.0.0.1:43123",
+      "--proxy-bypass-list=<-loopback>",
+    ]);
+    expect(browserProxyConfig("http://127.0.0.1:43123")).toEqual({
+      server: "http://127.0.0.1:43123",
+      bypass: "<-loopback>",
+    });
   });
 });

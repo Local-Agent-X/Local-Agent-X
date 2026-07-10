@@ -179,6 +179,17 @@ describe("per-session BrowserContext allocation", () => {
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(1);
   });
 
+  it("lets a previous owner close cleanly after continuity has handed off", async () => {
+    const chat = await acquireSessionContext("chromium", "continuity", "chat");
+    await acquireSessionContext("chromium", "continuity", "mission");
+    vi.mocked(chat.storageState).mockClear();
+
+    await expect(releaseSessionContext(chat, "continuity")).resolves.toBeUndefined();
+
+    expect(chat.storageState).not.toHaveBeenCalled();
+    expect(chat.close).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the current continuity owner live and surfaces a failed handoff save", async () => {
     const chat = await acquireSessionContext("chromium", "continuity", "chat");
     vi.mocked(chat.storageState).mockRejectedValueOnce(new Error("disk full"));

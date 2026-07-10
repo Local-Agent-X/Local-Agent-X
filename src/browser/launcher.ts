@@ -35,6 +35,10 @@ export const ACTION_TIMEOUT = 10_000;
 export const MAX_TEXT_LENGTH = 8_000;
 export const SERVICE_WORKER_POLICY = "block" as const;
 
+function browserHeadless(): boolean {
+  return process.env.LAX_BROWSER_HEADLESS === "1";
+}
+
 export type BrowserEngine = "chromium" | "firefox" | "webkit";
 
 export const USER_AGENTS: Record<BrowserEngine, string> = {
@@ -110,7 +114,7 @@ export function browserProxyConfig(proxyServer: string) {
 
 export function buildPersistentContextOptions(downloadsPath: string, proxyServer: string) {
   return {
-    headless: false,
+    headless: browserHeadless(),
     args: [...STEALTH_ARGS, ...browserProxyArgs(proxyServer)],
     viewport: { width: 1280, height: 800 },
     acceptDownloads: true,
@@ -136,6 +140,15 @@ export async function launchViaCDP(
   pw: typeof import("playwright"),
   proxyServer: string,
 ): Promise<LaunchResult> {
+  if (browserHeadless()) {
+    const browser = await pw.chromium.launch({
+      headless: true,
+      args: [...STEALTH_ARGS, ...browserProxyArgs(proxyServer)],
+      proxy: browserProxyConfig(proxyServer),
+    });
+    logger.info(`[browser] Playwright Chromium headless v${browser.version()}`);
+    return { browser, chromeProcess: null };
+  }
   const chromePath = findChromeExecutable();
   const cfg = getRuntimeConfig();
   let chromeProcess: ChildProcess | null = null;

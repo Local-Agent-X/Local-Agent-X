@@ -167,6 +167,9 @@ async function forwardHttp(
   const headers: Record<string, string | string[] | undefined> = {
     ...request.headers,
     host: url.host,
+    via: request.headers.via
+      ? `${Array.isArray(request.headers.via) ? request.headers.via.join(", ") : request.headers.via}, 1.1 lax-browser-egress`
+      : "1.1 lax-browser-egress",
   };
   delete headers["proxy-authorization"];
   delete headers["proxy-connection"];

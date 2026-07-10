@@ -51,7 +51,7 @@ async function launch(engine: BrowserEngine): Promise<Browser> {
       return b;
     }
     return pw[engine].launch({
-      headless: false,
+      headless: process.env.LAX_BROWSER_HEADLESS === "1",
       args: STEALTH_ARGS,
       proxy: browserProxyConfig(proxy.url),
     });
@@ -175,12 +175,21 @@ export async function releaseSessionContext(
   mode: BrowserMode,
 ): Promise<void> {
   if (mode === "advanced-shared") return;
-  if (mode === "continuity") await persistContinuityContext(context);
-  await context.close();
-  if (continuityContext === context) {
-    continuityContext = null;
-    continuityOwner = null;
+  if (mode === "continuity") {
+    const operation = continuityTransition.then(async () => {
+      // A newer owner may already have persisted and closed this context.
+      // The stale manager must not try to serialize the closed predecessor.
+      if (continuityContext !== context) return;
+      await persistContinuityContext(context);
+      await context.close();
+      continuityContext = null;
+      continuityOwner = null;
+    });
+    continuityTransition = operation.then(() => undefined, () => undefined);
+    await operation;
+    return;
   }
+  await context.close();
 }
 
 export function getRuntimeEngine(): BrowserEngine { return currentEngine; }

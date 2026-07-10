@@ -210,6 +210,14 @@ describe("BrowserManager.newTab — HTTP ≥400 guard (parity with navigate)", (
     expect(result).toContain("Status: 200");
     expect(page.close).not.toHaveBeenCalled();
   });
+
+  it("classifies a recovery destination before reading its title", async () => {
+    const page = navFakePage(200, "https://example.com/account-recovery/private-token");
+    const mgr = makeTabManager(page);
+    const result = await mgr.newTab("https://example.com/account-recovery/private-token");
+    expect(result).toContain("SENSITIVE PAGE CONTENT WITHHELD");
+    expect(page.title).not.toHaveBeenCalled();
+  });
 });
 
 describe("BrowserManager.navigate — single observation per navigation", () => {
@@ -240,6 +248,15 @@ describe("BrowserManager.navigate — single observation per navigation", () => 
     await expect(mgr.navigate("http://example.com/missing")).rejects.toThrow(
       /Navigation failed: HTTP 404/,
     );
+  });
+
+  it("classifies a private-key destination before reading its title", async () => {
+    const page = navFakePage(200, "https://example.com/private-keys/private-token");
+    const mgr = new BrowserManager("test-session");
+    (mgr as unknown as { getPage: () => Promise<unknown> }).getPage = vi.fn().mockResolvedValue(page);
+    const result = await mgr.navigate("https://example.com/private-keys/private-token");
+    expect(result).toContain("SENSITIVE PAGE CONTENT WITHHELD");
+    expect(page.title).not.toHaveBeenCalled();
   });
 });
 

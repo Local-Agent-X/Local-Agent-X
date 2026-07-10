@@ -108,6 +108,10 @@ export class BrowserManager {
     if (engine) this.currentEngine = engine;
 
     if (this.page && !this.page.isClosed()) {
+      if (sensitivePageStub(this.page.url())) {
+        this.armIdle();
+        return this.page;
+      }
       try {
         await this.page.title();
         this.armIdle();
@@ -147,15 +151,16 @@ export class BrowserManager {
       try { await newPage.close(); } catch { /* already closed */ }
       throw new Error(`Navigation failed: HTTP ${status} (${safeBrowserPageLabel(failedUrl)})`);
     }
+    const sensitive = sensitivePageStub(newPage.url());
     try { await newPage.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
     await newPage.waitForTimeout(1000);
     this.page = newPage;
     await newPage.bringToFront();
+    if (sensitive) return sensitive;
     const title = await newPage.title();
     const tabCount = this.listOwnedPages().length;
     const redirect = redirectMessage(requestedHost, safeHost(newPage.url()));
-    const sensitive = sensitivePageStub(newPage.url());
-    return sensitive ?? `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
+    return `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
   }
 
   async navigate(url: string, engine?: BrowserEngine): Promise<string> {
@@ -171,17 +176,18 @@ export class BrowserManager {
     if (typeof status === "number" && status >= 400) {
       throw new Error(`Navigation failed: HTTP ${status} (${safeBrowserPageLabel(page.url())})`);
     }
+    const sensitive = sensitivePageStub(page.url());
     try { await page.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
     await page.waitForTimeout(1000);
 
+    if (sensitive) return sensitive;
     const title = await page.title();
     const redirect = redirectMessage(requestedHost, safeHost(page.url()));
     // Deliberately NO snapshot here: handleNavigate appends the canonical
     // post-action snapshot (auth-wall prefix + external-content wrap).
     // Snapshotting here too ran a second full DOM extract + iframe traversal
     // on every navigate whose output was just "page unchanged" noise.
-    const sensitive = sensitivePageStub(page.url());
-    return sensitive ?? `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
+    return `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
   }
 
   async click(selector: string): Promise<string> {

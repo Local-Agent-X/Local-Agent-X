@@ -6,10 +6,17 @@ import { tmpdir } from "node:os";
 
 const mocks = vi.hoisted(() => {
   const contexts: BrowserContext[] = [];
+  const contextIds: string[] = [];
+  let nextContextId = 1;
+  const cdpSend = vi.fn(async (method: string) => {
+    if (method === "Target.getBrowserContexts") return { browserContextIds: [...contextIds] };
+    return {};
+  });
   const browser = {
     isConnected: () => true,
     contexts: () => contexts,
     newContext: vi.fn(async () => {
+      contextIds.push(`context-${nextContextId++}`);
       const context = {
         id: Symbol("context"),
         pages: vi.fn(() => []),
@@ -23,11 +30,12 @@ const mocks = vi.hoisted(() => {
       contexts.push(context);
       return context;
     }),
+    newBrowserCDPSession: vi.fn(async () => ({ send: cdpSend, detach: vi.fn(async () => undefined) })),
     close: vi.fn(async () => undefined),
   } as unknown as Browser;
   const startProxy = vi.fn();
   const closeProxy = vi.fn(async () => undefined);
-  return { browser, contexts, startProxy, closeProxy };
+  return { browser, contexts, contextIds, cdpSend, startProxy, closeProxy };
 });
 
 vi.mock("./egress-proxy.js", () => ({
@@ -92,6 +100,7 @@ describe("per-session BrowserContext allocation", () => {
   afterEach(async () => {
     await closeSharedBrowser();
     mocks.contexts.length = 0;
+    mocks.contextIds.length = 0;
     vi.clearAllMocks();
     delete process.env.LAX_DATA_DIR;
     rmSync(dataDir, { recursive: true, force: true });
@@ -110,6 +119,10 @@ describe("per-session BrowserContext allocation", () => {
         proxy: { server: "http://127.0.0.1:43123", bypass: "<-loopback>" },
       }),
     );
+    expect(mocks.cdpSend).toHaveBeenCalledWith("Browser.setDownloadBehavior", expect.objectContaining({
+      behavior: "allowAndName",
+      browserContextId: expect.stringMatching(/^context-/),
+    }));
   });
 
   it("honors explicit shared mode by reusing one BrowserContext", async () => {

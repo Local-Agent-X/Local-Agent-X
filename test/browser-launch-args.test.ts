@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   browserProxyArgs,
   browserProxyConfig,
   buildPersistentContextOptions,
   buildChromeLaunchArgs,
+  configureCdpDownloadBehavior,
   DISABLE_FEATURES,
   STEALTH_ARGS,
 } from "../src/browser/launcher.js";
@@ -77,5 +78,18 @@ describe("browser launch args — single --disable-features flag", () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("sets browser-level CDP download behavior to private quarantine", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const detach = vi.fn().mockResolvedValue(undefined);
+    const browser = { newBrowserCDPSession: vi.fn().mockResolvedValue({ send, detach }) };
+    await configureCdpDownloadBehavior(browser as never, "C:\\private-quarantine");
+    expect(send).toHaveBeenCalledWith("Browser.setDownloadBehavior", {
+      behavior: "allowAndName",
+      downloadPath: "C:\\private-quarantine",
+      eventsEnabled: true,
+    });
+    expect(detach).not.toHaveBeenCalled();
   });
 });

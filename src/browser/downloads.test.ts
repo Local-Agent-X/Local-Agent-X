@@ -159,6 +159,26 @@ describe("browser download quarantine", () => {
     }
   });
 
+  it("never auto-releases arbitrary ZIPs named as OpenDocument files", async () => {
+    const types: Array<[string, string]> = [
+      ["odt", "application/vnd.oasis.opendocument.text"],
+      ["ods", "application/vnd.oasis.opendocument.spreadsheet"],
+      ["odp", "application/vnd.oasis.opendocument.presentation"],
+    ];
+    for (const [extension, contentType] of types) {
+      const paths = dirs();
+      const result = await inspectBrowserDownload({
+        ...paths, sessionId: `odf-${extension}`, sourceUrl: `https://files.test/arbitrary.${extension}`,
+        pageUrl: "https://files.test/", suggestedFilename: `arbitrary.${extension}`, contentType,
+        stream: stream(await zip({ "arbitrary.txt": "not an OpenDocument package" })),
+      });
+      expect(result.status, extension).toBe("quarantined");
+      expect(result.reason, extension).toMatch(/OpenDocument.*approval/i);
+      expect(result.quarantinePath, extension).toBeTruthy();
+      expect(existsSync(join(paths.releaseDir, `arbitrary.${extension}`)), extension).toBe(false);
+    }
+  });
+
   it("binds release to exact metadata and rejects changed or symlinked quarantine bytes", async () => {
     const changedPaths = dirs();
     const changed = await inspectBrowserDownload({

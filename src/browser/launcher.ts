@@ -5,7 +5,7 @@
  *
  * Extracted from browser.ts so the main manager stays under 400 LOC.
  */
-import type { Browser } from "playwright";
+import type { Browser, CDPSession } from "playwright";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -16,6 +16,7 @@ import { resetBrowserNativeDownloadDir } from "./download-paths.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser.launcher");
+const browserDownloadSessions = new WeakMap<Browser, CDPSession>();
 
 // Kept under the browser tool's wedge deadline (toolMs−1s ≈ 29s in
 // tool-timeout.ts + wedge-deadline.ts): navigate = goto(NAV_TIMEOUT) + the 5s
@@ -109,6 +110,7 @@ export interface ProfileLaunchOptions {
   forcePersistentFallback?: boolean;
   removeProfileOnCleanup?: boolean;
   readyAttempts?: number;
+  downloadsDir?: string;
 }
 
 export const CHROME_PROFILE_LOCKS = ["SingletonCookie", "SingletonLock", "SingletonSocket"] as const;
@@ -187,16 +189,32 @@ export function buildPersistentContextOptions(
 }
 
 export function buildChromeLaunchArgs(cdpPort: number, userDataDir: string, downloadsPath: string, proxyServer: string, headless = browserHeadless()): string[] {
-  return [
+  const args = [
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${userDataDir}`,
-    ...(headless ? ["--headless=new"] : []),
     ...STEALTH_ARGS,
     "--window-size=1280,800",
     `--download.default_directory=${downloadsPath}`,
     `--disable-features=${DISABLE_FEATURES.join(",")}`,
     ...browserProxyArgs(proxyServer),
   ];
+  if (headless) args.push("--headless=new", "--disable-gpu");
+  return args;
+}
+
+export async function configureCdpDownloadBehavior(browser: Browser, downloadsPath: string): Promise<void> {
+  const session = await browser.newBrowserCDPSession();
+  try {
+    await session.send("Browser.setDownloadBehavior", {
+      behavior: "allowAndName",
+      downloadPath: downloadsPath,
+      eventsEnabled: true,
+    });
+    browserDownloadSessions.set(browser, session);
+  } catch (error) {
+    await session.detach().catch(() => {});
+    throw error;
+  }
 }
 
 /**
@@ -265,7 +283,8 @@ export async function launchViaCDP(
     // feature-disables are consolidated into one --disable-features flag
     // (Chrome honors only the last occurrence). Native download bytes always
     // land in the private quarantine, never in the synced workspace.
-    const downloadsDir = resetBrowserNativeDownloadDir();
+    const downloadsDir = options.downloadsDir ?? resetBrowserNativeDownloadDir();
+    if (!existsSync(downloadsDir)) mkdirSync(downloadsDir, { recursive: true, mode: 0o700 });
     const args = buildChromeLaunchArgs(cdpPort, userDataDir, downloadsDir, proxyServer, headless);
 
     logger.info(`[browser] Spawning agent Chrome: ${chromePath} (profile: ${userDataDir})`);
@@ -289,6 +308,7 @@ export async function launchViaCDP(
     if (ready) {
       try {
         const browser = await pw.chromium.connectOverCDP(cdpUrl);
+        await configureCdpDownloadBehavior(browser, downloadsDir);
         logger.info(`[browser] Connected via CDP on port ${cdpPort} — dedicated agent Chrome session`);
         return {
           browser,

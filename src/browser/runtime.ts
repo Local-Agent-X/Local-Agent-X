@@ -8,7 +8,7 @@
  * persistent identity context (continuity), or an explicitly shared live
  * context (advanced-shared).
  */
-import type { Browser, BrowserContext } from "playwright";
+import type { Browser, BrowserContext, BrowserContextOptions, CDPSession } from "playwright";
 import type { ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -25,7 +25,7 @@ import { createLogger } from "../logger.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { BrowserMode } from "../types.js";
 import { installContinuityCacheRestore, persistContinuityCacheState } from "./continuity-cache.js";
-import { resetBrowserNativeDownloadDir } from "./download-paths.js";
+import { getBrowserNativeDownloadDir, resetBrowserNativeDownloadDir } from "./download-paths.js";
 
 const log = createLogger("browser.runtime");
 
@@ -42,6 +42,43 @@ let proxyServer: string | null = null;
 // Dedupe concurrent launches: two sessions calling getSharedBrowser() before
 // Chrome is up must await the same spawn, not race two Chrome processes.
 let launching: Promise<Browser> | null = null;
+let contextCreationTail: Promise<void> = Promise.resolve();
+const contextDownloadSessions = new WeakMap<BrowserContext, CDPSession>();
+
+export function createQuarantinedChromiumContext(
+  browserInstance: Browser,
+  options: BrowserContextOptions,
+  downloadsPath = getBrowserNativeDownloadDir(),
+): Promise<BrowserContext> {
+  const create = contextCreationTail.then(async () => {
+    const session = await browserInstance.newBrowserCDPSession();
+    let context: BrowserContext | null = null;
+    try {
+      const before = await session.send("Target.getBrowserContexts") as { browserContextIds: string[] };
+      context = await browserInstance.newContext(options);
+      const after = await session.send("Target.getBrowserContexts") as { browserContextIds: string[] };
+      const added = after.browserContextIds.filter((id) => !before.browserContextIds.includes(id));
+      if (added.length !== 1) {
+        await context.close();
+        throw new Error("Could not identify the new Chrome browser context for private download configuration.");
+      }
+      await session.send("Browser.setDownloadBehavior", {
+        behavior: "allowAndName",
+        downloadPath: downloadsPath,
+        browserContextId: added[0],
+        eventsEnabled: true,
+      });
+      contextDownloadSessions.set(context, session);
+      return context;
+    } catch (error) {
+      await context?.close().catch(() => {});
+      await session.detach().catch(() => {});
+      throw error;
+    }
+  });
+  contextCreationTail = create.then(() => undefined, () => undefined);
+  return create;
+}
 
 async function launch(engine: BrowserEngine): Promise<Browser> {
   const proxy = await ensureBrowserEgressProxy();
@@ -155,7 +192,9 @@ export async function acquireSessionContext(
 ): Promise<BrowserContext> {
   const b = await getSharedBrowser(engine);
   if (mode === "isolated") {
-    return b.newContext(CONTEXT_OPTS(engine));
+    return engine === "chromium"
+      ? createQuarantinedChromiumContext(b, CONTEXT_OPTS(engine))
+      : b.newContext(CONTEXT_OPTS(engine));
   }
   if (mode === "continuity") {
     const operation = continuityTransition.then(async () => {
@@ -167,10 +206,13 @@ export async function acquireSessionContext(
         continuityOwner = null;
       }
       const statePath = continuityStatePath();
-      continuityContext = await b.newContext({
+      const continuityOptions = {
         ...CONTEXT_OPTS(engine),
         ...(existsSync(statePath) ? { storageState: statePath } : {}),
-      });
+      };
+      continuityContext = engine === "chromium"
+        ? await createQuarantinedChromiumContext(b, continuityOptions)
+        : await b.newContext(continuityOptions);
       await installContinuityCacheRestore(continuityContext, continuityCachePath());
       continuityOwner = ownerId;
       return continuityContext;
@@ -180,7 +222,10 @@ export async function acquireSessionContext(
   }
   if (sharedContext) return sharedContext;
   if (!sharedContextCreation) {
-    sharedContextCreation = b.newContext(CONTEXT_OPTS(engine))
+    const creation = engine === "chromium"
+      ? createQuarantinedChromiumContext(b, CONTEXT_OPTS(engine))
+      : b.newContext(CONTEXT_OPTS(engine));
+    sharedContextCreation = creation
       .then((context) => { sharedContext = context; return context; })
       .finally(() => { sharedContextCreation = null; });
   }

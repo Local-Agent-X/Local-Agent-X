@@ -123,7 +123,7 @@ const MIME_TYPES: Record<string, Set<string>> = {
   pdf: new Set(["application/pdf"]), png: new Set(["image/png"]), jpeg: new Set(["image/jpeg"]),
   gif: new Set(["image/gif"]), webp: new Set(["image/webp"]), html: new Set(["text/html"]),
   text: new Set(["text/plain", "text/csv", "application/json", "application/xml", "text/xml", "text/markdown"]),
-  zip: new Set(["application/zip", "application/x-zip-compressed", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation"]),
+  zip: new Set(["application/zip", "application/x-zip-compressed", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.presentation"]),
 };
 
 function policy(filename: string, declared: string, detected: string, zip: ZipInspection | null, zipError?: string): { status: DownloadStatus; reason: string } {
@@ -148,6 +148,9 @@ function policy(filename: string, declared: string, detected: string, zip: ZipIn
   }
   if (detected === "html") {
     return { status: "quarantined", reason: "Active HTML or script content requires explicit approval before release." };
+  }
+  if (detected === "zip" && [".odt", ".ods", ".odp"].includes(ext)) {
+    return { status: "quarantined", reason: "OpenDocument archives require explicit approval before release." };
   }
   if (detected === "zip" && ext === ".zip") {
     return { status: "quarantined", reason: "Archive downloads require explicit approval before release." };

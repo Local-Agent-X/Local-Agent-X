@@ -27,8 +27,11 @@
 //
 // Off by default. Enable with config.json `"serverSandbox": true` or
 // LAX_SERVER_SANDBOX=1. NOTE: this module must stay import-light — it runs in
-// the launcher before config.ts (which starts file watchers at import time)
-// is allowed to load, so it reads config.json raw instead of via loadConfig().
+// the launcher before the boot imports (config.ts and the server graph behind
+// it) are allowed to load, so it reads config.json raw instead of via
+// loadConfig(). config.ts imports are pure now (side effects moved to
+// initConfig()), but keep this module lean anyway: the launcher should load
+// nothing it doesn't need.
 
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

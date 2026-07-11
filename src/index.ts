@@ -120,17 +120,27 @@ process.on("unhandledRejection", (reason) => {
 // ── Whole-server kernel confinement (round-5 phase B) ──
 // When enabled, re-exec the entire server under seatbelt/bwrap and turn this
 // process into an inert launcher that proxies the child's stdio/signals/exit.
-// Must run before any subsystem import executes — config.ts starts file
-// watchers at import time, which is why every boot import below is dynamic
-// (static imports hoist and would run in the launcher too). The unresolved
-// await suspends this module forever in the launcher; the child-exit handler
-// inside maybeReexecServerConfined() calls process.exit.
+// Must run before any subsystem import executes — the boot imports below pull
+// in the entire server graph (module-level caches, singletons), which is why
+// every boot import is dynamic (static imports hoist and would run in the
+// launcher too). The unresolved await suspends this module forever in the
+// launcher; the child-exit handler inside maybeReexecServerConfined() calls
+// process.exit.
 const { maybeReexecServerConfined } = await import("./sandbox/server-confine.js");
 if (maybeReexecServerConfined()) {
   await new Promise<never>(() => { /* launcher parks here until the confined child exits */ });
 }
 
-const { loadConfig, setRuntimeConfig } = await import("./config.js");
+const { initConfig, loadConfig, setRuntimeConfig } = await import("./config.js");
+
+// Generate config/app-manifest.json and start the hot-reload watchers
+// (config/ cache invalidation + manifest regeneration). These used to run at
+// config.ts import time — i.e. exactly here, when the dynamic import above
+// executed — and are now explicit so importing config.ts stays pure.
+// Idempotent, and gated behind the confinement check so the inert launcher
+// never starts watchers. Note: the ~/.lax/config.json hot-reload is a
+// DIFFERENT watcher, started later by server/lifecycle.ts startConfigWatcher.
+initConfig();
 const { startServer } = await import("./server/index.js");
 const { loadTokens } = await import("./auth/index.js");
 const { enforceStartupIntegrity } = await import("./startup-integrity.js");

@@ -28,10 +28,25 @@ import { writeManifest, startManifestWatcher } from "./manifest-generator/index.
 // default) moved to config-schema.ts, same LOC-ceiling split as config-profiles.
 import { configSchema } from "./config-schema.js";
 
-// Generate manifest and start watchers for hot-reload
-writeManifest();
-startConfigWatcher();
-startManifestWatcher();
+// ── Boot-time side effects (explicit) ──
+// writeManifest + the two hot-reload watchers used to run AT IMPORT TIME,
+// so any of config.ts's ~74 importers transitively wrote config/app-manifest.json
+// and started fs watchers — unit tests couldn't import config purely, and
+// standalone entrypoints (doctor, test-suite) picked up watchers they never
+// wanted. Importing this module is now side-effect free; the server boot path
+// (src/index.ts) calls initConfig() once, right where the import-time execution
+// used to happen. Idempotent: the guard (plus each callee's own internal guard)
+// makes a second call from another entrypoint a no-op.
+let _initialized = false;
+
+export function initConfig(): void {
+  if (_initialized) return;
+  _initialized = true;
+  // Generate manifest and start watchers for hot-reload
+  writeManifest();
+  startConfigWatcher();
+  startManifestWatcher();
+}
 
 
 function getConfigDir(): string {

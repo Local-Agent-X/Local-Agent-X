@@ -1,4 +1,9 @@
 const MODEL_CONTEXTS: Record<string, number> = {
+  // GPT-5.6 family (Sol/Terra/Luna) — 1.05M native, 128k max output
+  "gpt-5.6": 1_000_000,      // bare alias routes to Sol
+  "gpt-5.6-sol": 1_000_000,
+  "gpt-5.6-terra": 1_000_000,
+  "gpt-5.6-luna": 1_000_000,
   "gpt-5.4": 272_000,        // Native 1.05M, default working 272k
   "gpt-5.4-mini": 272_000,
   "gpt-5.5": 1_000_000,
@@ -47,7 +52,7 @@ export function lookupContextWindow(model: string): number {
   const lower = model.toLowerCase();
   if (lower.includes("claude")) return 200_000;
   if (lower.includes("gemini")) return 1_000_000;
-  if (lower.includes("gpt-5.5")) return 1_000_000;
+  if (lower.includes("gpt-5.6") || lower.includes("gpt-5.5")) return 1_000_000;
   if (lower.includes("gpt-5.4")) return 272_000;
   if (lower.includes("gpt-4") || lower.includes("gpt-5") || lower.includes("o3")) return 128_000;
   if (lower.includes("grok")) return 131_072;

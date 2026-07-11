@@ -34,6 +34,13 @@ describe("getPricing — real rates", () => {
     expect(getPricing("gemini-3-pro-preview")).toEqual({ input: 2, output: 12 });
   });
 
+  it("prices the gpt-5.6 tiers at their per-tier rates, not a family default", () => {
+    expect(getPricing("gpt-5.6-sol")).toEqual({ input: 5, output: 30 });
+    expect(getPricing("gpt-5.6-terra")).toEqual({ input: 2.50, output: 15 });
+    expect(getPricing("gpt-5.6-luna")).toEqual({ input: 1, output: 6 });
+    expect(getPricing("gpt-5.6")).toEqual({ input: 5, output: 30 });
+  });
+
   it("still prefix-matches alias suffixes to their base model", () => {
     expect(getPricing("claude-opus-4-8[1m]")).toEqual({ input: 5, output: 25 });
   });

@@ -87,6 +87,9 @@ function toggleApiKeyVisibility() {
 
 const PROVIDER_MODELS = {
   codex: [
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (frontier, 1M ctx)' },
+    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (balanced)' },
+    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (fastest)' },
     { value: 'gpt-5.5', label: 'GPT-5.5 (1M ctx, $5/$30)' },
     { value: 'gpt-5.4', label: 'GPT-5.4' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini (faster)' },
@@ -113,6 +116,9 @@ const PROVIDER_MODELS = {
     { value: 'grok-build-0.1', label: 'Grok Build 0.1 (coding)' },
   ],
   openai: [
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (frontier, 1M ctx)' },
+    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (balanced)' },
+    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (fastest)' },
     { value: 'gpt-4o', label: 'GPT-4o (default)' },
     { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
     { value: 'gpt-4.1', label: 'GPT-4.1' },

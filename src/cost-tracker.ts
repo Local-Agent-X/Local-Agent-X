@@ -65,6 +65,11 @@ const PRICING: Record<string, ModelPricing> = {
   "claude-haiku-4-5-20251001": { input: 1, output: 5 },
   "claude-haiku-3-5-20241022": { input: 0.80, output: 4 },
   // OpenAI / Codex (GPT-5.x — developers.openai.com/api/docs/pricing)
+  // GPT-5.6 short-context tier; long-context (>~272k) bills ~2x, not modeled
+  "gpt-5.6": { input: 5, output: 30 }, // bare alias routes to Sol
+  "gpt-5.6-sol": { input: 5, output: 30 },
+  "gpt-5.6-terra": { input: 2.50, output: 15 },
+  "gpt-5.6-luna": { input: 1, output: 6 },
   "gpt-5.5": { input: 5, output: 30 },
   "gpt-5.5-pro": { input: 30, output: 180 },
   "gpt-5.4": { input: 2.50, output: 15 },

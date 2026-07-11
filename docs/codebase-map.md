@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1217 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1213 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -22,18 +22,19 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ops/` | 67 | 22 | XL |  |
 | `src/tools/` | 56 | 143 | XL |  |
 | `src/providers/` | 42 | 19 | L |  |
-| `src/canonical-loop/` | 38 | 133 | XL |  |
+| `src/canonical-loop/` | 38 | 137 | XL |  |
 | `src/memory/` | 38 | 112 | XL |  |
 | `src/classifiers/` | 29 | 13 | L |  |
 | `src/workspace/` | 26 | 2 | M |  |
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/auth/` | 23 | 10 | L |  |
-| `src/tool-policy/` | 21 | 19 | L |  |
+| `src/tool-policy/` | 22 | 19 | L |  |
 | `src/threat/` | 20 | 11 | L |  |
 | `src/session/` | 19 | 5 | M |  |
-| `src/orchestrator/` | 18 | 21 | L |  |
+| `src/util/` | 19 | 2 | S |  |
 | `src/agent-request/` | 17 | 12 | L |  |
+| `src/orchestrator/` | 16 | 21 | L |  |
 | `src/agent-guards/` | 15 | 13 | L |  |
 | `src/agents/` | 15 | 13 | L |  |
 | `src/app-runtime/` | 14 | 12 | L |  |
@@ -57,14 +58,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/ari-kernel/` | 6 | 11 | L |  |
-| `src/cognition/` | 6 | 38 | XL |  |
+| `src/cognition/` | 6 | 29 | XL |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
 | `src/auto-build/` | 5 | 47 | XL |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
 | `src/routes/` | 5 | 81 | XL |  |
 | `src/routing/` | 5 | 7 | M |  |
-| `src/tool-execution/` | 5 | 28 | XL |  |
-| `src/util/` | 5 | 2 | S |  |
+| `src/tool-execution/` | 5 | 29 | XL |  |
 | `src/broker-transport/` | 4 | 27 | L |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/server/` *(entrypoint)* | 4 | 31 | XL |  |
@@ -179,7 +179,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/tool-executor.ts` | S |
 | `src/tool-mutation-check.ts` | S |
 | `src/tool-registry.ts` | S |
-| `src/tool-tracker.ts` | S |
+| `src/tool-tracker.ts` | M |
 | `src/tools.ts` | S |
 | `src/tts-stream.ts` | S |
 | `src/types.ts` | M |

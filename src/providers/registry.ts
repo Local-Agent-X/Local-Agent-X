@@ -132,7 +132,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "openai",
     label: "OpenAI API",
-    models: ["gpt-4o", "gpt-4o-mini", "o3-pro"],
+    models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-4o", "gpt-4o-mini", "o3-pro"],
     defaultModel: "o3-pro",
     // Non-reasoning: the default o3-pro hides reasoning server-side, so a
     // long think streams nothing and the idle watchdog can't tell it from a
@@ -147,7 +147,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "codex",
     label: "OpenAI Codex",
-    models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+    models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
     defaultModel: "gpt-5.5",
     backgroundModel: "gpt-5.4-mini",
     // Codex uses ChatGPT OAuth via getApiKey(); chat-runner routes it

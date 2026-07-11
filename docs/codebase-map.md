@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1188 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1186 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -40,8 +40,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/chat-ws/` | 14 | 9 | L |  |
 | `src/voice/` | 13 | 65 | XL |  |
 | `src/anthropic-client/` | 12 | 18 | L |  |
-| `src/context-manager/` | 12 | 9 | M |  |
 | `src/autonomy/` | 11 | 4 | M |  |
+| `src/context-manager/` | 11 | 7 | M |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |

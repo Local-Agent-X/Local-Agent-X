@@ -16,5 +16,4 @@ export { estimateTokens, messageTokens, totalTokens } from "./token-estimation.j
 export { getContextStatus, type ContextStatus } from "./status.js";
 export { effectiveContextWindow, isAnthropicModel, type AnthropicTransport } from "./effective-window.js";
 export { resolveAnthropicTransport } from "./resolve-transport.js";
-export { buildCompactionPrompt, forceCompact } from "./compaction-prompt.js";
-export { compactIfNeeded, compactIfNeededWithLLM } from "./compaction.js";
+export { summarizeOldMessages, COMPACTION_SYSTEM_PROMPT } from "./compaction.js";

@@ -1,133 +1,34 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 import { createLogger } from "../logger.js";
-import { buildCompactionPrompt, COMPACTION_SYSTEM_PROMPT } from "./compaction-prompt.js";
-import { getContextStatus, type ContextStatus } from "./status.js";
 
 const logger = createLogger("context-manager");
 
-/**
- * Compact messages if needed. Returns compacted messages or original if no compaction needed.
- *
- * SYNCHRONOUS path — uses string truncation. Kept as a fallback. New callers
- * should prefer `compactIfNeededWithLLM` when they're already in an async
- * context, because truncation silently drops constraints in the middle of
- * long messages ("build X, do NOT use Y, must support Z" → "build X, do").
- */
-export function compactIfNeeded(
-  messages: ChatCompletionMessageParam[],
-  model: string,
-  force: boolean = false
-): {
-  messages: ChatCompletionMessageParam[];
-  compacted: boolean;
-  status: ContextStatus;
-} {
-  const status = getContextStatus(messages, model);
+export const COMPACTION_SYSTEM_PROMPT = `You compact long conversation segments into a structured summary that the agent will use to continue working.
 
-  if (!force && !status.shouldCompact) {
-    return { messages, compacted: false, status };
-  }
+Output a tight summary covering exactly these sections (skip a section if empty):
 
-  // Determine how many recent messages to keep
-  // More aggressive compaction at higher thresholds
-  let keepLast = 6;
-  if (status.percentage >= 95) keepLast = 4;
-  if (status.percentage >= 99) keepLast = 2;
+DECISIONS: bullet list of choices the user explicitly made or approved (technologies, file locations, model choices, etc).
+CONSTRAINTS: bullet list of "must do" / "must not do" rules the user stated. Preserve every "do NOT use X", "always Y", "must support Z". This is the highest-priority section — never drop a constraint.
+FACTS_ABOUT_USER: bullet list of durable user facts mentioned (preferences, projects they own, tools they use). Skip transient mood.
+OUTSTANDING_ASKS: bullet list of work the user requested that wasn't yet completed.
+CURRENT_TASK_STATE: one paragraph — what is the agent in the middle of doing right now?
 
-  const { keptMessages } = buildCompactionPrompt(messages, keepLast);
-  const newStatus = getContextStatus(keptMessages, model);
-
-  logger.info(
-    `[context] Compacted: ${messages.length} msgs (${status.percentage}%) → ${keptMessages.length} msgs (${newStatus.percentage}%)`
-  );
-
-  return {
-    messages: keptMessages,
-    compacted: true,
-    status: newStatus,
-  };
-}
-
-/**
- * Compact messages using a real LLM summarization call. Preferred over the
- * sync `compactIfNeeded` because it preserves constraints, decisions, facts,
- * and outstanding asks rather than slicing at 300 chars per message.
- *
- * Falls back to the sync truncation path if the LLM call fails (no auth,
- * network blip, timeout) so compaction never blocks the agent loop.
- */
-export async function compactIfNeededWithLLM(
-  messages: ChatCompletionMessageParam[],
-  model: string,
-  force: boolean = false,
-): Promise<{
-  messages: ChatCompletionMessageParam[];
-  compacted: boolean;
-  status: ContextStatus;
-  summarizedByLLM: boolean;
-}> {
-  const status = getContextStatus(messages, model);
-  if (!force && !status.shouldCompact) {
-    return { messages, compacted: false, status, summarizedByLLM: false };
-  }
-
-  let keepLast = 6;
-  if (status.percentage >= 95) keepLast = 4;
-  if (status.percentage >= 99) keepLast = 2;
-
-  const systemMsgs = messages.filter((m) => m.role === "system");
-  const nonSystem = messages.filter((m) => m.role !== "system");
-  if (nonSystem.length <= keepLast + 2) {
-    return { messages, compacted: false, status, summarizedByLLM: false };
-  }
-  const oldMessages = nonSystem.slice(0, -keepLast);
-  let recentMessages = nonSystem.slice(-keepLast);
-  const lastUserIdx = nonSystem.findLastIndex((m) => m.role === "user");
-  if (
-    lastUserIdx >= 0 &&
-    lastUserIdx < nonSystem.length - keepLast &&
-    !recentMessages.includes(nonSystem[lastUserIdx])
-  ) {
-    recentMessages = [nonSystem[lastUserIdx], ...recentMessages];
-  }
-
-  const summary = await summarizeOldMessages(oldMessages);
-
-  if (!summary) {
-    // Fallback: sync truncation path so the agent loop never stalls.
-    const { keptMessages } = buildCompactionPrompt(messages, keepLast);
-    const newStatus = getContextStatus(keptMessages, model);
-    logger.info(
-      `[context] Compacted (truncation fallback): ${messages.length} → ${keptMessages.length} msgs`,
-    );
-    return { messages: keptMessages, compacted: true, status: newStatus, summarizedByLLM: false };
-  }
-
-  const summaryMsg: ChatCompletionMessageParam = {
-    role: "system",
-    content:
-      `[CONVERSATION SUMMARY — auto-compacted via LLM to save context]\n` +
-      `Messages summarized: ${oldMessages.length}\n\n` +
-      summary +
-      `\n\nThe ${recentMessages.length} most recent messages are preserved verbatim below. ` +
-      `Continue the conversation naturally.`,
-  };
-
-  const keptMessages = [...systemMsgs, summaryMsg, ...recentMessages];
-  const newStatus = getContextStatus(keptMessages, model);
-  logger.info(
-    `[context] Compacted (LLM summary): ${messages.length} msgs (${status.percentage}%) → ${keptMessages.length} msgs (${newStatus.percentage}%)`,
-  );
-  return { messages: keptMessages, compacted: true, status: newStatus, summarizedByLLM: true };
-}
+Rules:
+- Quote user constraints near-verbatim — phrasing matters ("don't use X" vs "avoid X" can differ).
+- Skip filler like "you said hi, agent said hi back".
+- Skip tool call mechanics — only what they accomplished.
+- No preamble, no closing remarks. Start with the first section header.
+- If the segment is genuinely empty of decisions/constraints/asks, reply with the single line: NOTHING_NOTABLE.`;
 
 /**
  * Summarize a segment of older messages into a structured digest via the user's
  * configured provider (no new API key — routes through classifyWithLLM). Returns
  * null when the call is disabled (LAX_LLM_COMPACTION), times out, or fails, so
- * callers can fall back without ever blocking the loop. Shared by the legacy
- * tool-execution path (above) and the canonical loop's history compaction.
+ * callers can fall back without ever blocking the loop. This is THE compaction
+ * primitive — consumed by the canonical loop's history compaction
+ * (turn-loop/compact-history.ts), the chat-lane digest (providers/sanitize.ts),
+ * and the /api/compact route.
  */
 export async function summarizeOldMessages(
   oldMessages: ChatCompletionMessageParam[],

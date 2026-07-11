@@ -9,7 +9,6 @@ import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
-import { compactIfNeeded, compactIfNeededWithLLM } from "../context-manager/index.js";
 import { createContext, type CallContext } from "./context.js";
 import { resolvePhase } from "./resolve-tool.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
@@ -76,45 +75,6 @@ async function executeSingleTool(
 
   await auditPhase(ctx);
   return ctx.msgs;
-}
-
-export function checkAndCompact(
-  messages: ChatCompletionMessageParam[],
-  model: string,
-  onEvent?: (event: ServerEvent) => void,
-  force: boolean = false,
-): ChatCompletionMessageParam[] {
-  const result = compactIfNeeded(messages, model, force);
-  onEvent?.({
-    type: "context_status",
-    percentage: result.status.percentage,
-    level: result.status.level,
-    usedTokens: result.status.usedTokens,
-    maxTokens: result.status.maxTokens,
-    compacted: result.compacted,
-  });
-  return result.messages;
-}
-
-// Async variant — uses real LLM summarization instead of string truncation.
-// Falls back to the sync truncation path internally if the LLM call fails so
-// compaction never blocks.
-export async function checkAndCompactAsync(
-  messages: ChatCompletionMessageParam[],
-  model: string,
-  onEvent?: (event: ServerEvent) => void,
-  force: boolean = false,
-): Promise<ChatCompletionMessageParam[]> {
-  const result = await compactIfNeededWithLLM(messages, model, force);
-  onEvent?.({
-    type: "context_status",
-    percentage: result.status.percentage,
-    level: result.status.level,
-    usedTokens: result.status.usedTokens,
-    maxTokens: result.status.maxTokens,
-    compacted: result.compacted,
-  });
-  return result.messages;
 }
 
 export interface UnifiedDispatchCtx {

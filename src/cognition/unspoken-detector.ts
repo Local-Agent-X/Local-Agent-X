@@ -9,10 +9,9 @@
  * Persists to ~/.lax/topic-frequencies.json.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createJsonStore } from "../util/json-store.js";
 import type { ModuleSignal } from "../orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
@@ -49,7 +48,7 @@ interface SessionMeta {
   toneSignals: string[];
 }
 
-interface FrequencyStore {
+interface FrequencyStore extends Record<string, unknown> {
   entities: EntityRecord[];
   sessions: SessionMeta[];
 }
@@ -63,51 +62,24 @@ const MAX_SESSIONS = 500;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
-
-function loadStore(): FrequencyStore {
-  if (!existsSync(STORE_FILE)) return { entities: [], sessions: [] };
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return {
-      entities: Array.isArray(parsed.entities) ? parsed.entities : [],
-      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
-    };
-  } catch {
-    return { entities: [], sessions: [] };
-  }
-}
+const jsonStore = createJsonStore<FrequencyStore>(STORE_FILE, {
+  defaults: () => ({ entities: [], sessions: [] }),
+  caps: {
+    entities: { max: MAX_ENTITIES, keep: "head" },
+    sessions: MAX_SESSIONS,
+  },
+});
 
 function saveStore(store: FrequencyStore): void {
-  ensureDir();
-  // Enforce limits
   if (store.entities.length > MAX_ENTITIES) {
-    // Keep the most recently mentioned entities
+    // Keep the most recently mentioned entities — the head cap slices after this sort.
     store.entities.sort((a, b) => {
       const aLast = a.mentions.length > 0 ? a.mentions[a.mentions.length - 1].timestamp : 0;
       const bLast = b.mentions.length > 0 ? b.mentions[b.mentions.length - 1].timestamp : 0;
       return bLast - aLast;
     });
-    store.entities = store.entities.slice(0, MAX_ENTITIES);
   }
-  if (store.sessions.length > MAX_SESSIONS) {
-    store.sessions = store.sessions.slice(-MAX_SESSIONS);
-  }
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
+  jsonStore.save(store);
 }
 
 // ── UnspokenDetector ────────────────────────────────────────
@@ -128,7 +100,7 @@ export class UnspokenDetector {
    * Record topic and entity frequency for a session.
    */
   recordTopicFrequency(sessionId: string, topics: string[], entities: string[]): void {
-    const store = loadStore();
+    const store = jsonStore.load();
     const ts = Date.now();
 
     const allItems: { name: string; type: "topic" | "entity" }[] = [
@@ -157,7 +129,7 @@ export class UnspokenDetector {
    * Compares recent 7 days to historical 90-day pattern.
    */
   detectAbsence(): Absence[] {
-    const store = loadStore();
+    const store = jsonStore.load();
     const now = Date.now();
     const recentCutoff = now - 7 * DAY_MS;
     const historicalCutoff = now - 90 * DAY_MS;
@@ -248,7 +220,7 @@ export class UnspokenDetector {
    * Detect behavioral changes: time of day, conversation length, tone.
    */
   detectBehaviorChange(): BehaviorChange[] {
-    const store = loadStore();
+    const store = jsonStore.load();
     const now = Date.now();
     const recentCutoff = now - 14 * DAY_MS;
     const olderCutoff = now - 60 * DAY_MS;
@@ -330,7 +302,7 @@ export class UnspokenDetector {
    * Record session metadata for behavior tracking.
    */
   recordSession(sessionId: string, messageCount: number, avgMessageLength: number, toneSignals: string[]): void {
-    const store = loadStore();
+    const store = jsonStore.load();
     const now_ts = Date.now();
     const hour = new Date(now_ts).getHours();
 

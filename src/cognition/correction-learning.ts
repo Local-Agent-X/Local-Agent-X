@@ -5,10 +5,9 @@
  * Persists to ~/.lax/correction-history.json (max 500 entries).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createJsonStore } from "../util/json-store.js";
 import { classifyYesNo } from "../classifiers/classify-with-llm.js";
 import {
   CORRECTION_PREGATE,
@@ -42,7 +41,7 @@ export interface MistakePattern {
   relatedTopics: string[];
 }
 
-interface CorrectionStore {
+interface CorrectionStore extends Record<string, unknown> {
   records: CorrectionRecord[];
 }
 
@@ -103,39 +102,10 @@ const DEFAULT_CONFIRM: ConfirmCorrectionFn = (userMessage, agentMessage) =>
 
 // ── Persistence ─────────────────────────────────────────────
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
-
-function loadStore(): CorrectionStore {
-  if (!existsSync(STORE_FILE)) return { records: [] };
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return { records: Array.isArray(parsed.records) ? parsed.records : [] };
-  } catch {
-    return { records: [] };
-  }
-}
-
-function saveStore(store: CorrectionStore): void {
-  ensureDir();
-  if (store.records.length > MAX_RECORDS) {
-    store.records = store.records.slice(-MAX_RECORDS);
-  }
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
-}
+const jsonStore = createJsonStore<CorrectionStore>(STORE_FILE, {
+  defaults: () => ({ records: [] }),
+  caps: { records: MAX_RECORDS },
+});
 
 // ── Class ───────────────────────────────────────────────────
 
@@ -144,7 +114,7 @@ export class CorrectionLearner {
   private store: CorrectionStore;
 
   private constructor() {
-    this.store = loadStore();
+    this.store = jsonStore.load();
   }
 
   static getInstance(): CorrectionLearner {
@@ -203,7 +173,7 @@ export class CorrectionLearner {
     };
 
     this.store.records.push(record);
-    saveStore(this.store);
+    jsonStore.save(this.store);
   }
 
   /**

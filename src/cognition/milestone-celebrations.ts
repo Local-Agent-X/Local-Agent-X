@@ -8,10 +8,9 @@
  * Persists to ~/.lax/milestones.json.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createJsonStore } from "../util/json-store.js";
 import { SharedHistory } from "./shared-history.js";
 import type { ModuleSignal } from "../orchestrator/types.js";
 
@@ -38,7 +37,7 @@ export interface MilestoneContext {
   streak: number;
 }
 
-interface MilestoneStore {
+interface MilestoneStore extends Record<string, unknown> {
   unlocked: Milestone[];
   knownTools: string[];
   birthday: string | null;
@@ -189,43 +188,9 @@ function buildMilestoneDefs(): MilestoneDef[] {
 
 // ── Persistence ─────────────────────────────────────────────
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
-
-function loadStore(): MilestoneStore {
-  if (!existsSync(STORE_FILE)) {
-    return { unlocked: [], knownTools: [], birthday: null, startDate: null };
-  }
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return {
-      unlocked: Array.isArray(parsed.unlocked) ? parsed.unlocked : [],
-      knownTools: Array.isArray(parsed.knownTools) ? parsed.knownTools : [],
-      birthday: parsed.birthday ?? null,
-      startDate: parsed.startDate ?? null,
-    };
-  } catch {
-    return { unlocked: [], knownTools: [], birthday: null, startDate: null };
-  }
-}
-
-function saveStore(store: MilestoneStore): void {
-  ensureDir();
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
-}
+const jsonStore = createJsonStore<MilestoneStore>(STORE_FILE, {
+  defaults: () => ({ unlocked: [], knownTools: [], birthday: null, startDate: null }),
+});
 
 // ── MilestoneCelebrator class ───────────────────────────────
 
@@ -235,7 +200,7 @@ export class MilestoneCelebrator {
   private defs: MilestoneDef[];
 
   private constructor() {
-    this.store = loadStore();
+    this.store = jsonStore.load();
     this.defs = buildMilestoneDefs();
   }
 
@@ -281,7 +246,7 @@ export class MilestoneCelebrator {
     }
 
     if (newlyUnlocked.length > 0) {
-      saveStore(this.store);
+      jsonStore.save(this.store);
     }
 
     return newlyUnlocked;
@@ -332,7 +297,7 @@ export class MilestoneCelebrator {
   /** Set the user's birthday for personal milestones. */
   setBirthday(date: string): void {
     this.store.birthday = date;
-    saveStore(this.store);
+    jsonStore.save(this.store);
   }
 
   /** Orchestrator signals: celebrations for any milestones the current relationship totals cross. */
@@ -356,7 +321,7 @@ export class MilestoneCelebrator {
 
   /** Reload store from disk. */
   reload(): void {
-    this.store = loadStore();
+    this.store = jsonStore.load();
   }
 
   /** Reset singleton (testing). */

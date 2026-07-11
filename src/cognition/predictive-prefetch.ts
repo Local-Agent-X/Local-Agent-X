@@ -11,10 +11,9 @@
  * deferred save instead of rewriting the full store synchronously per call.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { atomicWriteFileSync, createJsonStore, ensureDirFor } from "../util/json-store.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -45,7 +44,7 @@ interface ScheduleEntry {
   entities: string[];
 }
 
-interface ScheduleStore {
+interface ScheduleStore extends Record<string, unknown> {
   entries: ScheduleEntry[];
   cache: Record<string, string[]>;
 }
@@ -81,41 +80,19 @@ const CREATIVE_KEYWORDS = [
 
 // ── Persistence ─────────────────────────────────────────────
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
-
-function loadStore(): ScheduleStore {
-  if (!existsSync(PROFILE_FILE)) return { entries: [], cache: {} };
-  try {
-    const raw = readFileSync(PROFILE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return {
-      entries: Array.isArray(parsed.entries) ? parsed.entries : [],
-      cache: parsed.cache && typeof parsed.cache === "object" ? parsed.cache : {},
-    };
-  } catch {
-    return { entries: [], cache: {} };
-  }
-}
+const jsonStore = createJsonStore<ScheduleStore>(PROFILE_FILE, {
+  defaults: () => ({ entries: [], cache: {} }),
+});
 
 function saveStore(store: ScheduleStore): void {
-  ensureDir();
+  ensureDirFor(PROFILE_FILE);
   if (store.entries.length > MAX_ENTRIES) {
     store.entries = store.entries.slice(-MAX_ENTRIES);
   }
-  atomicWrite(PROFILE_FILE, JSON.stringify(store));
+  // Written COMPACT, not through jsonStore.save (which pretty-prints): the
+  // debounced flush persists up to 2000 entries and the AM-5 regression test
+  // pins the compact format.
+  atomicWriteFileSync(PROFILE_FILE, JSON.stringify(store));
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -141,7 +118,7 @@ export class PredictivePrefetcher {
   private dirty = false;
 
   private constructor() {
-    this.store = loadStore();
+    this.store = jsonStore.load();
     // Sync writes are safe in an exit handler; without this, buffered
     // entries inside the debounce window would be lost on clean exit.
     process.once("exit", () => this.flush());

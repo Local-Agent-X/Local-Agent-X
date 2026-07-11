@@ -8,10 +8,9 @@
  * Persists to ~/.lax/inside-references.json.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createJsonStore } from "../util/json-store.js";
 import type { ModuleSignal } from "../orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
@@ -47,7 +46,7 @@ interface PhraseOccurrence {
   timestamp: number;
 }
 
-interface ReferenceStore {
+interface ReferenceStore extends Record<string, unknown> {
   references: Reference[];
   pendingPhrases: PhraseOccurrence[];
 }
@@ -64,46 +63,20 @@ const AUTO_THRESHOLD = 3; // phrases need 3+ uses to auto-register
 // than naming its subject. Short messages get the benefit of the doubt too.
 const SHORTHAND_OPENER = /^(that|this|the one|you know|it|same)\b/i;
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
-
-function loadStore(): ReferenceStore {
-  if (!existsSync(STORE_FILE)) return { references: [], pendingPhrases: [] };
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return {
-      references: Array.isArray(parsed.references) ? parsed.references : [],
-      pendingPhrases: Array.isArray(parsed.pendingPhrases) ? parsed.pendingPhrases : [],
-    };
-  } catch {
-    return { references: [], pendingPhrases: [] };
-  }
-}
+const jsonStore = createJsonStore<ReferenceStore>(STORE_FILE, {
+  defaults: () => ({ references: [], pendingPhrases: [] }),
+  caps: {
+    references: { max: MAX_REFERENCES, keep: "head" },
+    pendingPhrases: MAX_PENDING,
+  },
+});
 
 function saveStore(store: ReferenceStore): void {
-  ensureDir();
   if (store.references.length > MAX_REFERENCES) {
-    // Keep most recently used
+    // Keep most recently used — the head cap slices after this sort.
     store.references.sort((a, b) => b.lastUsed.localeCompare(a.lastUsed));
-    store.references = store.references.slice(0, MAX_REFERENCES);
   }
-  if (store.pendingPhrases.length > MAX_PENDING) {
-    store.pendingPhrases = store.pendingPhrases.slice(-MAX_PENDING);
-  }
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
+  jsonStore.save(store);
 }
 
 function dateStamp(): string {
@@ -139,7 +112,7 @@ export class InsideReferences {
    * when the user explicitly defines a phrase's meaning.
    */
   recordReference(phrase: string, context: string, sessionId: string): void {
-    const store = loadStore();
+    const store = jsonStore.load();
     const normalized = normalize(phrase);
     const today = dateStamp();
 
@@ -194,7 +167,7 @@ export class InsideReferences {
    * "remember, 'the thing' means deploying to prod"
    */
   defineReference(phrase: string, means: string, context: string, sessionId: string): void {
-    const store = loadStore();
+    const store = jsonStore.load();
     const normalized = normalize(phrase);
     const today = dateStamp();
 
@@ -224,7 +197,7 @@ export class InsideReferences {
    * Resolve an ambiguous phrase to its shared meaning.
    */
   resolveReference(phrase: string): ReferenceContext | null {
-    const store = loadStore();
+    const store = jsonStore.load();
     const normalized = normalize(phrase);
 
     // Exact match
@@ -256,7 +229,7 @@ export class InsideReferences {
    * Get all established inside references.
    */
   getSharedVocabulary(): Reference[] {
-    const store = loadStore();
+    const store = jsonStore.load();
     return store.references.slice().sort((a, b) => b.timesUsed - a.timesUsed);
   }
 
@@ -264,7 +237,7 @@ export class InsideReferences {
    * Detect when a message references a past shared moment.
    */
   detectCallback(message: string): Callback | null {
-    const store = loadStore();
+    const store = jsonStore.load();
     const lowerMessage = message.toLowerCase();
 
     // Check for "remember" pattern
@@ -305,7 +278,7 @@ export class InsideReferences {
    * When talking about a topic, suggest a natural callback to shared history.
    */
   suggestCallback(currentTopic: string): string | null {
-    const store = loadStore();
+    const store = jsonStore.load();
     const lowerTopic = currentTopic.toLowerCase();
 
     // Find references related to the current topic

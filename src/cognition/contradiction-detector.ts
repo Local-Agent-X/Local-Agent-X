@@ -8,9 +8,9 @@
  * Persists contradiction history to ~/.lax/contradiction-history.json.
  */
 
-import { getLaxDir } from "./lax-data-dir.js";
-import { getUniversalIndex } from "./memory/universal-index.js";
-import type { ModuleSignal } from "./orchestrator/types.js";
+import { getLaxDir } from "../lax-data-dir.js";
+import { getUniversalIndex } from "../memory/universal-index.js";
+import type { ModuleSignal } from "../orchestrator/types.js";
 import {
   FACT_PATTERNS,
   FIELD_PATTERNS,

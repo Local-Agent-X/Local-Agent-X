@@ -2,7 +2,7 @@ import type { UpcomingEvent, FollowUp } from "./types.js";
 import { loadStore, saveStore, generateId, parseDate, DAY_MS } from "./persistence.js";
 import { resolveRelativeDate } from "./date-parser.js";
 import { EVENT_PATTERNS, guessImportance } from "./detection.js";
-import type { ModuleSignal } from "../orchestrator/types.js";
+import type { ModuleSignal } from "../../orchestrator/types.js";
 
 export class AnticipatoryCare {
   private static instance: AnticipatoryCare | null = null;

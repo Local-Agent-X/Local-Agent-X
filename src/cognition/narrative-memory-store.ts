@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 // ── Types ────────────────────────────────────────────────────
 

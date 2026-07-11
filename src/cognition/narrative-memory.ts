@@ -8,7 +8,7 @@
  * Persistence and pure scoring helpers live in ./narrative-memory-store.js.
  */
 
-import type { ModuleSignal } from "./orchestrator/types.js";
+import type { ModuleSignal } from "../orchestrator/types.js";
 import {
   loadStore,
   saveStore,

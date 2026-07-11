@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // The Facts DB is mocked so signalsFor() runs against a controlled fact set
 // instead of the real universal index — nothing here touches disk or memory.
 const recallRecentFacts = vi.fn<() => { content: string }[]>(() => []);
-vi.mock("./memory/universal-index.js", () => ({
+vi.mock("../memory/universal-index.js", () => ({
   getUniversalIndex: () => ({
     getMemory: () => ({ recallRecentFacts }),
   }),

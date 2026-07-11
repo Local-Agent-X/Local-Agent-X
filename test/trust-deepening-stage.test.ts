@@ -37,7 +37,7 @@ function seedStore(store: Record<string, unknown>): void {
 }
 
 async function stage(): Promise<string> {
-  const { TrustEngine } = await import("../src/trust-deepening.js");
+  const { TrustEngine } = await import("../src/cognition/trust-deepening.js");
   TrustEngine.reset();
   return TrustEngine.getInstance().getRelationshipStage();
 }

@@ -22,7 +22,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-let CorrectionLearner: typeof import("../src/correction-learning.js").CorrectionLearner;
+let CorrectionLearner: typeof import("../src/cognition/correction-learning.js").CorrectionLearner;
 let tmpRoot: string;
 let prevDataDir: string | undefined;
 
@@ -32,7 +32,7 @@ beforeAll(async () => {
   prevDataDir = process.env.LAX_DATA_DIR;
   tmpRoot = mkdtempSync(join(tmpdir(), "lax-correction-test-"));
   process.env.LAX_DATA_DIR = tmpRoot;
-  ({ CorrectionLearner } = await import("../src/correction-learning.js"));
+  ({ CorrectionLearner } = await import("../src/cognition/correction-learning.js"));
 });
 
 afterAll(() => {
@@ -120,7 +120,7 @@ describe("detectCorrection contrast rules", () => {
  * losing a real correction is worse than an occasional false one.
  */
 describe("recordCorrectionMaybe — LLM-confirmed persist", () => {
-  function candidate(): import("../src/correction-learning.js").CorrectionEvent {
+  function candidate(): import("../src/cognition/correction-learning.js").CorrectionEvent {
     const c = CorrectionLearner.getInstance().detectCorrection(
       "No, it's port 3000",
       "The server runs on port 8080.",

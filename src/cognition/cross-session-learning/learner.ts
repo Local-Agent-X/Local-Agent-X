@@ -21,7 +21,7 @@ import {
 } from "./detectors.js";
 import { getInsights, suggestAutomation } from "./suggestions.js";
 import { fuzzyMatch } from "./text-utils.js";
-import type { ModuleSignal } from "../orchestrator/types.js";
+import type { ModuleSignal } from "../../orchestrator/types.js";
 
 export class CrossSessionLearner {
   private static instance: CrossSessionLearner;

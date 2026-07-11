@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { getLaxDir } from "../lax-data-dir.js";
+import { getLaxDir } from "../../lax-data-dir.js";
 
 export interface ActionEntry {
   sessionId: string;

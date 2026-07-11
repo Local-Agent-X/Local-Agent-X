@@ -1,9 +1,9 @@
-import crossSessionLearner, { CrossSessionLearner } from "../cross-session-learning/index.js";
-import { UnspokenDetector } from "../unspoken-detector.js";
-import { GrowthTracker } from "../growth-tracker.js";
-import { MilestoneCelebrator } from "../milestone-celebrations.js";
-import { CorrectionLearner } from "../correction-learning.js";
-import { ContradictionDetector } from "../contradiction-detector.js";
+import crossSessionLearner, { CrossSessionLearner } from "../cognition/cross-session-learning/index.js";
+import { UnspokenDetector } from "../cognition/unspoken-detector.js";
+import { GrowthTracker } from "../cognition/growth-tracker.js";
+import { MilestoneCelebrator } from "../cognition/milestone-celebrations.js";
+import { CorrectionLearner } from "../cognition/correction-learning.js";
+import { ContradictionDetector } from "../cognition/contradiction-detector.js";
 import type { CognitiveSignal } from "./types.js";
 
 export const metaSignals: CognitiveSignal[] = [

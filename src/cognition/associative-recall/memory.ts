@@ -10,7 +10,7 @@ import {
 import { loadStore, saveStore } from "./persistence.js";
 import { buildAssociations, upsertAssociation } from "./builder.js";
 import { findByContext, getAssociationWeb, recall } from "./query.js";
-import type { ModuleSignal } from "../orchestrator/types.js";
+import type { ModuleSignal } from "../../orchestrator/types.js";
 
 export class AssociativeMemory {
   private static instance: AssociativeMemory | null = null;

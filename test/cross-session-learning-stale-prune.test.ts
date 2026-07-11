@@ -5,15 +5,15 @@ import { join } from "node:path";
 import {
   autoPrune,
   MAX_STALE_PER_TYPE,
-} from "../src/cross-session-learning/persistence.js";
+} from "../src/cognition/cross-session-learning/persistence.js";
 import type {
   ActionEntry,
   SessionData,
-} from "../src/cross-session-learning/types.js";
+} from "../src/cognition/cross-session-learning/types.js";
 import {
   MS_PER_DAY,
   PRUNE_AGE_DAYS,
-} from "../src/cross-session-learning/types.js";
+} from "../src/cognition/cross-session-learning/types.js";
 
 // Regression for AM-3: recordAction lost its last caller in May, freezing the
 // cross-session data file, yet signalsFor kept mining it every 5th message and
@@ -120,7 +120,7 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
     writeDataFile(stale, NOW);
 
     const { CrossSessionLearner } = await import(
-      "../src/cross-session-learning/learner.js"
+      "../src/cognition/cross-session-learning/learner.js"
     );
     const learner = CrossSessionLearner.getInstance();
 
@@ -136,7 +136,7 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
     writeDataFile(fresh, NOW);
 
     const { CrossSessionLearner } = await import(
-      "../src/cross-session-learning/learner.js"
+      "../src/cognition/cross-session-learning/learner.js"
     );
     const signals = CrossSessionLearner.getInstance().signalsFor();
 

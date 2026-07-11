@@ -52,7 +52,7 @@ export async function detectAndBoostCurate(input: CurateNudgeInput): Promise<str
     const lastAssistantMsg = [...input.sessionMessages].reverse().find(m => m.role === "assistant");
     const lastAssistantText = typeof lastAssistantMsg?.content === "string" ? lastAssistantMsg.content : "";
     try {
-      const { CorrectionLearner } = await import("../../correction-learning.js");
+      const { CorrectionLearner } = await import("../../cognition/correction-learning.js");
       if (lastAssistantText) {
         const correction = CorrectionLearner.getInstance().detectCorrection(input.message, lastAssistantText);
         if (correction) { boostNudgePriority(input.sessionId, "correction-detected"); regexBoosted = true; }

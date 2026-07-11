@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 
-import { NarrativeMemory } from "../narrative-memory.js";
-import { UnspokenDetector } from "../unspoken-detector.js";
-import { GrowthTracker } from "../growth-tracker.js";
-import { PredictivePrefetcher } from "../predictive-prefetch.js";
+import { NarrativeMemory } from "../cognition/narrative-memory.js";
+import { UnspokenDetector } from "../cognition/unspoken-detector.js";
+import { GrowthTracker } from "../cognition/growth-tracker.js";
+import { PredictivePrefetcher } from "../cognition/predictive-prefetch.js";
 import { MemoryCompressor } from "../memory/cognitive/compression/index.js";
 import type { MemoryIndex } from "../memory/index.js";
 

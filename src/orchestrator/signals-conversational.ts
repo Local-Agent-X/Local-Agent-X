@@ -1,13 +1,13 @@
-import { EmotionalMemory } from "../emotional-memory.js";
+import { EmotionalMemory } from "../cognition/emotional-memory.js";
 import { ProactiveMemory } from "../memory/cognitive/proactive/index.js";
-import { NarrativeMemory } from "../narrative-memory.js";
-import { InsideReferences } from "../inside-references.js";
-import { AnticipatoryCare } from "../anticipatory-care/index.js";
-import { SharedHistory } from "../shared-history.js";
-import { LanguageMirror } from "../language-mirror.js";
-import { TrustEngine } from "../trust-deepening.js";
-import { VulnerabilityAwareness } from "../vulnerability-awareness.js";
-import { AssociativeMemory } from "../associative-recall/index.js";
+import { NarrativeMemory } from "../cognition/narrative-memory.js";
+import { InsideReferences } from "../cognition/inside-references.js";
+import { AnticipatoryCare } from "../cognition/anticipatory-care/index.js";
+import { SharedHistory } from "../cognition/shared-history.js";
+import { LanguageMirror } from "../cognition/language-mirror.js";
+import { TrustEngine } from "../cognition/trust-deepening.js";
+import { VulnerabilityAwareness } from "../cognition/vulnerability-awareness.js";
+import { AssociativeMemory } from "../cognition/associative-recall/index.js";
 import type { CognitiveSignal } from "./types.js";
 
 export const conversationalSignals: CognitiveSignal[] = [

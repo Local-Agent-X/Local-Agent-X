@@ -1,4 +1,4 @@
-import { PredictivePrefetcher } from "../predictive-prefetch.js";
+import { PredictivePrefetcher } from "../cognition/predictive-prefetch.js";
 import { MemoryCompressor } from "../memory/cognitive/compression/index.js";
 import { MemoryConsolidator } from "../memory/cognitive/consolidation/index.js";
 import type { CognitiveSignal } from "./types.js";

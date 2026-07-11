@@ -18,7 +18,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { PredictivePrefetcher } from "../src/predictive-prefetch.js";
+import type { PredictivePrefetcher } from "../src/cognition/predictive-prefetch.js";
 
 let tmpRoot: string;
 let prevDataDir: string | undefined;
@@ -38,7 +38,7 @@ afterEach(() => {
 
 async function freshPrefetcher(): Promise<PredictivePrefetcher> {
   vi.resetModules();
-  const mod = await import("../src/predictive-prefetch.js");
+  const mod = await import("../src/cognition/predictive-prefetch.js");
   return mod.PredictivePrefetcher.getInstance();
 }
 

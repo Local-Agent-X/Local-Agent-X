@@ -17,7 +17,7 @@ import { join } from "node:path";
 let getSessionCadence: typeof import("./state.js").getSessionCadence;
 let sessionCadenceCount: typeof import("./state.js").sessionCadenceCount;
 let MAX_CADENCE_SESSIONS: number;
-let EmotionalMemory: typeof import("../emotional-memory.js").EmotionalMemory;
+let EmotionalMemory: typeof import("../cognition/emotional-memory.js").EmotionalMemory;
 let processMessageImpl: typeof import("./process-message-impl.js").processMessageImpl;
 
 beforeAll(async () => {
@@ -26,7 +26,7 @@ beforeAll(async () => {
   getSessionCadence = state.getSessionCadence;
   sessionCadenceCount = state.sessionCadenceCount;
   MAX_CADENCE_SESSIONS = state.MAX_CADENCE_SESSIONS;
-  ({ EmotionalMemory } = await import("../emotional-memory.js"));
+  ({ EmotionalMemory } = await import("../cognition/emotional-memory.js"));
   ({ processMessageImpl } = await import("./process-message-impl.js"));
 });
 

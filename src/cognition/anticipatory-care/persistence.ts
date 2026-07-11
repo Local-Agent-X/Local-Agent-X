@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { EventStore } from "./types.js";
-import { getLaxDir } from "../lax-data-dir.js";
+import { getLaxDir } from "../../lax-data-dir.js";
 
 const LAX_DIR = getLaxDir();
 const STORE_FILE = join(LAX_DIR, "upcoming-events.json");

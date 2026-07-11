@@ -43,7 +43,7 @@ export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, re
   // Correction history — patterns the user has flagged
   if (method === "GET" && url.pathname === "/api/corrections") {
     try {
-      const { CorrectionLearner } = await import("../../correction-learning.js");
+      const { CorrectionLearner } = await import("../../cognition/correction-learning.js");
       const learner = CorrectionLearner.getInstance();
       const limit = parseInt(url.searchParams.get("limit") || "50", 10);
       const history = learner.getCorrectionHistory().slice(-limit);

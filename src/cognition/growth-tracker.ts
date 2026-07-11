@@ -8,7 +8,7 @@
  * Persists to ~/.lax/growth-tracker.json.
  */
 
-import type { ModuleSignal } from "./orchestrator/types.js";
+import type { ModuleSignal } from "../orchestrator/types.js";
 import {
   loadStore,
   saveStore,

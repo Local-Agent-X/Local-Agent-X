@@ -5,6 +5,9 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createSystemPromptBuilder } from "./system-prompt-builder.js";
 
 const MOCK_INPUTS = {
@@ -105,5 +108,51 @@ describe("Context Builder", () => {
     // The attacker's raw sentinel was neutralized, not left intact.
     expect(output.slice(open, inj)).not.toContain("</untrusted-recalled-data>");
     expect(output).toContain("&lt;/untrusted-recalled-data>");
+  });
+});
+
+// The `agents-md` section resolves the repo root from this file's location and
+// injects the ROOT AGENTS.md verbatim under an "## Invariants" heading. It
+// regressed once: the root was resolved with ".." instead of "../..". In the
+// COMPILED build that resolved dist/context → dist/, which has no AGENTS.md, so
+// the section silently returned "" (`if (!existsSync(p)) return ""`) and the
+// harness's architectural invariants never reached the system prompt for
+// months. The dev/vitest run can't reproduce the empty mode — it runs from
+// src/context and a *sibling* src/AGENTS.md exists (one of four AGENTS.md in the
+// tree) — but the bug is worse there: ".." would inject the WRONG file. Both
+// failure modes are caught by locking the invariant "the canonical repo-root
+// AGENTS.md is the one injected". The catch-and-return-"" makes the empty mode
+// invisible, so it needs an explicit test.
+describe("AGENTS.md invariants injection", () => {
+  const contextDir = dirname(fileURLToPath(import.meta.url)); // src/context/
+  const repoRoot = resolve(contextDir, "../.."); // the fixed "../.." resolution
+  const siblingRoot = resolve(contextDir, ".."); // the old ".." resolution → src/
+
+  it("keeps the root and src AGENTS.md distinct, so the resolution level matters", () => {
+    // If these were identical the injection test below couldn't tell a wrong
+    // root from a right one. They are different files (5073 vs 2817 bytes), so
+    // resolving to src/ (the old bug, in dev) silently swaps the invariants.
+    expect(existsSync(join(repoRoot, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(siblingRoot, "AGENTS.md"))).toBe(true); // the shadow
+    const rootMd = readFileSync(join(repoRoot, "AGENTS.md"), "utf-8");
+    const srcMd = readFileSync(join(siblingRoot, "AGENTS.md"), "utf-8");
+    expect(rootMd).not.toEqual(srcMd);
+  });
+
+  it("injects the canonical repo-root AGENTS.md verbatim, not the src sibling or empty", async () => {
+    const rootMd = readFileSync(join(repoRoot, "AGENTS.md"), "utf-8");
+    const srcMd = readFileSync(join(siblingRoot, "AGENTS.md"), "utf-8");
+    expect(rootMd.trim().length).toBeGreaterThan(0); // guard a truncated fixture
+
+    const builder = createSystemPromptBuilder(MOCK_INPUTS);
+    const output = await builder.build();
+
+    // Heading present AND the ROOT file's actual bytes present. A ".." regression
+    // fails this on both paths: compiled → "" (no heading, no content); dev →
+    // src/AGENTS.md (heading present but root bytes absent). Content-agnostic
+    // whole-file contains, so editing AGENTS.md doesn't break the test.
+    expect(output).toContain("## Invariants (AGENTS.md)");
+    expect(output).toContain(rootMd);
+    expect(output).not.toContain(srcMd); // the shadow file must not be what shipped
   });
 });

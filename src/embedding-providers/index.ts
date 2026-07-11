@@ -1,13 +1,11 @@
 /**
  * Multi-provider embedding system.
  *
- * Six embedding backends conforming to the EmbeddingProvider interface used by
+ * Four embedding backends conforming to the EmbeddingProvider interface used by
  * memory.ts, plus a factory that picks one from config. Each provider lives in
  * its own module under src/embedding-providers/:
  *   - openai.ts   — OpenAI text-embedding-3-* with ada-002 fallback
  *   - gemini.ts   — Google embedContent / batchEmbedContents
- *   - voyage.ts   — Voyage AI document/query input types
- *   - mistral.ts  — Mistral embeddings
  *   - ollama.ts   — Local Ollama (mxbai-embed-large + nomic fallback)
  *   - local.ts    — TF-IDF + feature hashing, zero network, deterministic
  */
@@ -15,7 +13,6 @@
 import { createLogger } from "../logger.js";
 import { GeminiEmbeddings } from "./gemini.js";
 import { LocalEmbeddings } from "./local.js";
-import { MistralEmbeddings } from "./mistral.js";
 import { OllamaEmbeddings } from "./ollama.js";
 import { OpenAIEmbeddings } from "./openai.js";
 import type {
@@ -23,7 +20,6 @@ import type {
   EmbeddingProviderType,
   ExtendedEmbeddingProvider,
 } from "./types.js";
-import { VoyageEmbeddings } from "./voyage.js";
 import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
 import { LocalOnlyEmbeddingGuard } from "./local-only-guard.js";
 import { getRuntimeConfig } from "../config.js";
@@ -33,16 +29,12 @@ const logger = createLogger("embedding-providers");
 export type { EmbeddingProviderConfig, EmbeddingProviderType, ExtendedEmbeddingProvider } from "./types.js";
 export { OpenAIEmbeddings } from "./openai.js";
 export { GeminiEmbeddings } from "./gemini.js";
-export { VoyageEmbeddings } from "./voyage.js";
-export { MistralEmbeddings } from "./mistral.js";
 export { OllamaEmbeddings } from "./ollama.js";
 export { LocalEmbeddings } from "./local.js";
 
 const PROVIDER_NAMES: EmbeddingProviderType[] = [
   "openai",
   "gemini",
-  "voyage",
-  "mistral",
   "ollama",
   "local",
 ];
@@ -66,7 +58,7 @@ export function createEmbeddingProvider(config: EmbeddingProviderConfig = {}): E
     return new LocalEmbeddings();
   }
 
-  const needsKey = ["openai", "gemini", "voyage", "mistral"].includes(requested);
+  const needsKey = ["openai", "gemini"].includes(requested);
   if (needsKey && !config.apiKey) {
     logger.warn(`[embeddings] Provider "${requested}" requires an API key — falling back to local`);
     return new LocalEmbeddings();
@@ -78,10 +70,6 @@ export function createEmbeddingProvider(config: EmbeddingProviderConfig = {}): E
       provider = new OpenAIEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl }); break;
     case "gemini":
       provider = new GeminiEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl }); break;
-    case "voyage":
-      provider = new VoyageEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl }); break;
-    case "mistral":
-      provider = new MistralEmbeddings({ apiKey: config.apiKey!, model: config.model, baseUrl: config.baseUrl }); break;
     case "ollama":
       return new OllamaEmbeddings({ model: config.model, baseUrl: config.baseUrl });
     case "local":

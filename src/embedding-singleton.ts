@@ -4,7 +4,7 @@
  * The memory subsystem builds a provider once at boot (bootstrap-services.ts).
  * Other modules that need embeddings (protocol dedup, future similar features)
  * shouldn't re-construct one — both because it doubles the warmup cost and
- * because the user's configured choice (Ollama / OpenAI / Voyage / etc.) lives
+ * because the user's configured choice (Ollama / OpenAI / etc.) lives
  * in settings.json and we want a single source of truth.
  *
  * Mirrors the setRuntimeConfig/getRuntimeConfig pattern.

@@ -3,8 +3,6 @@ import type { EmbeddingProvider } from "../memory/index.js";
 export type EmbeddingProviderType =
   | "openai"
   | "gemini"
-  | "voyage"
-  | "mistral"
   | "ollama"
   | "local";
 

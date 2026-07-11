@@ -1,7 +1,7 @@
 /**
  * Warm-pool of long-lived `claude -p --input-format=stream-json` processes.
  *
- * Validated by `scripts/spike-claude-warm-pool.mjs`: the CLI accepts
+ * Validated by a throwaway spike (Jun 2026): the CLI accepts
  * multiple consecutive prompts via stdin JSON-lines without re-spawning.
  * Cold start (~2-4s) is paid once per process; warm turns drop first-byte
  * latency from ~2000ms to ~4ms.

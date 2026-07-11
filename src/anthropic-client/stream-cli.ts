@@ -46,7 +46,7 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
   const { model, messages, systemPrompt, tools } = options;
 
   // Warm-pool fast path: long-lived CLI process per (model, permissionMode,
-  // sessionId). Validated by scripts/spike-claude-warm-pool.mjs — drops
+  // sessionId). Validated by a throwaway spike (Jun 2026) — drops
   // first-byte latency from ~2000ms (cold) to ~4ms (warm).
   //
   // Gate: ANY caller with the flag on. Earlier I gated on sessionId being

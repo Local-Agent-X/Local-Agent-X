@@ -12,17 +12,17 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1213 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1218 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/security/` | 68 | 26 | XL |  |
+| `src/security/` | 68 | 28 | XL |  |
 | `src/ops/` | 67 | 22 | XL |  |
 | `src/tools/` | 56 | 143 | XL |  |
 | `src/providers/` | 42 | 19 | L |  |
-| `src/canonical-loop/` | 38 | 137 | XL |  |
+| `src/canonical-loop/` | 38 | 138 | XL |  |
 | `src/memory/` | 38 | 112 | XL |  |
 | `src/classifiers/` | 29 | 13 | L |  |
 | `src/workspace/` | 26 | 2 | M |  |
@@ -41,9 +41,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/browser/` | 14 | 28 | XL |  |
 | `src/chat-ws/` | 14 | 9 | L |  |
 | `src/voice/` | 13 | 65 | XL |  |
-| `src/anthropic-client/` | 12 | 18 | L |  |
+| `src/anthropic-client/` | 12 | 19 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
-| `src/context-manager/` | 11 | 7 | M |  |
+| `src/context-manager/` | 11 | 8 | M |  |
 | `src/data-lineage/` | 11 | 5 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |

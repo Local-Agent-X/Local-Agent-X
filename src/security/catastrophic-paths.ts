@@ -105,7 +105,12 @@ export function detectCatastrophicRm(
 	home: string,
 	platform: NodeJS.Platform = process.platform,
 ): string | null {
-	for (const segment of command.split("|")) {
+	// Split on EVERY command boundary — pipes, ;, &&, ||, &, newlines — not just
+	// pipes. On POSIX the upstream separator guard blocks `;` anyway, but on
+	// win32 `;` is legit PowerShell statement separation, so `ls; rm -rf /`
+	// reached this scan as ONE segment with argv[0]="ls" and the chained rm was
+	// invisible (live hole found by the startup self-test's SHL-001).
+	for (const segment of command.split(/(?:\|\||&&|[|;&\r\n])+/)) {
 		const words = segment.trim().split(/\s+/).filter(Boolean);
 		if (!words.length) continue;
 		const bin = words[0].replace(/^['"]+|['"]+$/g, "");

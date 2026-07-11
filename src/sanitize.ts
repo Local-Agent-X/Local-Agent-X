@@ -14,7 +14,6 @@ import {
   SYSTEM_INJECTION_TAG_RE,
   SYSTEM_INJECTION_LONE_TAG_RE,
   PSEUDO_PIPE_TAG_RE,
-  LEET_MAP,
   HARNESS_SCAFFOLD_PATTERNS,
   EXTERNAL_MARKERS,
   MEMORY_INJECTION_EXTRA,
@@ -66,24 +65,10 @@ export function stripSystemInjectionTags(text: string): string {
   return result;
 }
 
-/**
- * Leetspeak-normalized view of a string for injection scanning. Substitutes
- * digit/symbol leet chars back to letters, but ONLY inside alphanumeric tokens
- * that already contain a letter — so standalone numbers ("5 apples", "year
- * 2026") are left alone. This is a scan-only second view; never persist or
- * display its output. Note: it intentionally lets a leet spelling reach the same
- * patterns its plaintext would (e.g. "jailbr34k" → "jailbreak"), so leet-spelled
- * flagged terms are flagged just as plaintext is. Only digit leet is handled
- * (0 1 3 4 5 7 8 9 @ $); symbol maps like ()→o or +→t are deliberately excluded
- * — substituting bare +, |, ! would mangle ordinary text and code.
- */
-export function deleet(text: string): string {
-  return text.replace(/[a-z0-9@$]+/gi, (tok) => {
-    if (!/[a-z]/i.test(tok)) return tok;
-    if (!/[01345789@$]/.test(tok)) return tok;
-    return tok.replace(/[01345789@$]/g, (c) => LEET_MAP[c] ?? c);
-  });
-}
+// Derived scan views (leetspeak/dot-stripped) live in injection-views.ts —
+// re-exported here for the existing public surface.
+export { deleet, dedot, injectionScanViews } from "./injection-views.js";
+import { injectionScanViews } from "./injection-views.js";
 
 // ── Harness scaffolding stripping ──
 
@@ -148,11 +133,9 @@ export function detectInjection(text: string): Array<{ label: string; score: num
   // pathological input a caller failed to bound; it sits above every real cap.
   const scanned = text.length > MAX_INJECTION_SCAN_LENGTH ? text.slice(0, MAX_INJECTION_SCAN_LENGTH) : text;
   const normalized = normalizeHomoglyphs(stripControlChars(scanned));
-  // Scan a leetspeak-normalized view too so digit-substituted directives match
-  // the same patterns. When no leet chars are present deleet() returns the input
-  // unchanged, so behavior on ordinary content is identical to before.
-  const deleeted = deleet(normalized);
-  const views = deleeted === normalized ? [normalized] : [normalized, deleeted];
+  // Shared derived views (leetspeak + separator-stripped) so digit-substituted
+  // and dot-separated directives match the same patterns plaintext does.
+  const views = injectionScanViews(normalized);
 
   const seen = new Set<string>();
   for (const view of views) {
@@ -331,11 +314,11 @@ export function checkMemoryTaint(content: string): MemoryTaintResult {
   // FIRST: normalize unicode tricks that could bypass pattern matching
   // This closes the homoglyph/invisible-char bypass the audit identified
   const normalized = normalizeHomoglyphs(stripControlChars(scanned)).normalize('NFKC');
-  // Leetspeak-normalized second view — same rationale as detectInjection: a
-  // poisoning directive hidden in leet ("y0ur 0wn 1n57ruc75") must not slip the
-  // memory gate. Identical to `normalized` when no leet chars are present.
-  const deleeted = deleet(normalized);
-  const views = deleeted === normalized ? [normalized] : [normalized, deleeted];
+  // Shared derived views — the same builder detectInjection uses (leetspeak +
+  // separator-stripped), so a directive hidden in leet ("y0ur 0wn 1n57ruc75")
+  // or dot-separation ("in.st.ru.ct.io.ns") can't slip the memory gate while
+  // being caught upstream, or vice versa.
+  const views = injectionScanViews(normalized);
 
   // Check for external content markers (wrapped content leaking into memory)
   for (const marker of EXTERNAL_MARKERS) {

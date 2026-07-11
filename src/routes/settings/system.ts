@@ -21,7 +21,7 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
     json(200, {
       profile: ctx.config.profile, toolApproval: ctx.config.toolApproval,
       autonomyProfile: loadProfileName(),
-      retentionDays: ctx.config.retentionDays, autoUpdate: ctx.config.autoUpdate, logLevel: ctx.config.logLevel,
+      retentionDays: ctx.config.retentionDays, logLevel: ctx.config.logLevel,
       sandbox: { mode: sandboxStatus.effectiveMode, ...sandboxStatus, dockerAvailable: isDockerAvailable(), guardedAvailable: isGuardedUsable() },
       security: { threatsBlocked: threatData.stats?.totalBlocked || 0, threatLevel: threatData.currentThreatLevel || "normal", recentEvents: (threatData.recentEvents || []).slice(0, 5) },
       providers: providerHealth,
@@ -73,7 +73,6 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
     ctx.config.profile = profile;
     ctx.config.toolApproval = defaults.toolApproval;
     ctx.config.retentionDays = defaults.retentionDays;
-    ctx.config.autoUpdate = defaults.autoUpdate;
     ctx.config.logLevel = defaults.logLevel;
     saveConfig(ctx.config);
     json(200, { ok: true, profile, applied: defaults }); return true;

@@ -143,7 +143,6 @@ export function loadConfig(): LAXConfig {
   const profileDefaults = PROFILE_DEFAULTS[config.profile];
   if (!raw.toolApproval) config.toolApproval = profileDefaults.toolApproval;
   if (!raw.retentionDays) config.retentionDays = profileDefaults.retentionDays;
-  if (raw.autoUpdate === undefined) config.autoUpdate = profileDefaults.autoUpdate;
   if (!raw.logLevel) config.logLevel = profileDefaults.logLevel;
 
   // One-time upgrade to the kernel-guarded bash default. "host" was the old

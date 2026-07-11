@@ -13,7 +13,6 @@ export interface ProfileDefaults {
   sandboxMode: SandboxMode;
   toolApproval: "auto" | "confirm-risky" | "confirm-all";
   retentionDays: number;
-  autoUpdate: boolean;
   networkExposure: "localhost" | "lan" | "public";
   logLevel: "basic" | "detailed" | "full-audit";
 }
@@ -49,7 +48,6 @@ export interface LAXConfig {
   profile: DeploymentProfile;
   toolApproval: "auto" | "confirm-risky" | "confirm-all";
   retentionDays: number;
-  autoUpdate: boolean;
   logLevel: "basic" | "detailed" | "full-audit";
   sandboxMode: SandboxMode;
   /** Whole-server kernel confinement (seatbelt/bwrap re-exec at boot).

@@ -42,7 +42,6 @@ export const configSchema = z.object({
   profile: z.enum(["home", "dev", "enterprise"]).default("home"),
   toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("auto"),
   retentionDays: z.number().int().min(7).max(365).default(90),
-  autoUpdate: z.boolean().default(true),
   logLevel: z.enum(["basic", "detailed", "full-audit"]).default("basic"),
   /** Bash sandbox mode. "guarded" (default, macOS/Linux) runs bash under a
    *  kernel cage that denies reads/writes of credential dirs (~/.ssh, ~/.aws, …)

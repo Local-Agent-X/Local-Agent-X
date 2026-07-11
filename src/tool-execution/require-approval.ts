@@ -19,8 +19,10 @@ import {
 import type { Phase } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
 import {
+  cleanTurnForModelSelfSave,
   describeMemoryPromotionRequest,
   stampApprovedMemoryPromotion,
+  stampCleanModelPromotion,
   stampTrustedUserPromotion,
   trustedCurrentUserEvidence,
 } from "../memory/promotion-gate.js";
@@ -38,7 +40,8 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // itself be laundered injection, so the silent stamp-and-continue path is
   // off — the promotion falls through to interactive approval (and therefore
   // hard-blocks in unattended runs, same as any risky promotion).
-  const trustedEvidence = promotion && !hasExternalIngestion(ctx.sessionId || "default")
+  const sessionClean = !hasExternalIngestion(ctx.sessionId || "default");
+  const trustedEvidence = promotion && sessionClean
     ? trustedCurrentUserEvidence(promotion, ctx.priorMessages as unknown[] | undefined)
     : null;
   // An irreversible operation is RECLASSIFIED to the profile's destructive
@@ -72,6 +75,17 @@ export const requireApprovalPhase: Phase = async (ctx) => {
 
   if (promotion && trustedEvidence) {
     stampTrustedUserPromotion(ctx.args, promotion, trustedEvidence);
+    return CONTINUE;
+  }
+
+  // Clean-session model self-save: on a session that never ingested external
+  // (untrusted off-box) content — and whose current turn carries no tool result
+  // or external-untrusted marker — the model may promote its own reasoning
+  // without a human click, there being nothing laundered to guard against. Any
+  // session-level ingestion OR turn-level untrusted signal falls the promotion
+  // through to interactive approval, same as any risky one.
+  if (promotion && sessionClean && cleanTurnForModelSelfSave(ctx.priorMessages as unknown[] | undefined)) {
+    stampCleanModelPromotion(ctx.args, promotion);
     return CONTINUE;
   }
 

@@ -180,6 +180,26 @@ describe("memory promotion through the canonical tool pipeline", () => {
     expect(result.content).toMatch(/provenance\/confidence|capability required/);
   });
 
+  it("clean session promotes model-authored content silently and the sink accepts the capability", async () => {
+    // No supporting user span and no save-intent phrasing: the trusted-user
+    // branch cannot fire, so this proves the clean-session model-self branch
+    // both skips the prompt AND mints a capability the durable sink honors.
+    const prepared = await prepareRemember({
+      content: "Backgrounding embeddings init warms the boot cache fastest",
+      userMessage: "why is startup slow?",
+    });
+
+    expect(prepared.outcome.kind).toBe("continue");
+    expect(prepared.events.some((event) => event.type === "approval_requested")).toBe(false);
+    const result = await rememberTool().execute(prepared.args);
+    expect(result.isError, result.content).toBeUndefined();
+
+    const facts = memory.recallByKind("observation");
+    expect(facts).toHaveLength(1);
+    expect(facts[0].sourceFile).toMatch(/auto-model-clean/);
+    expect(facts[0].sourceFile).not.toMatch(/approved-model-declared/);
+  });
+
   it("raw durable primitives deny callers without a capability", async () => {
     expect(() => memory.retain("- S(c=0.8) bypass", "unknown")).toThrow(/capability required/);
     await expect(memory.retainSmart("- S(c=0.8) bypass", "unknown")).rejects.toThrow(/capability required/);

@@ -170,6 +170,30 @@ export function stampTrustedUserPromotion(args: Record<string, unknown>, request
   Object.defineProperty(args, CAPABILITY, { value: capability, enumerable: false });
 }
 
+// Turn-level guards for silent model self-save, mirroring the ones in
+// trustedCurrentUserEvidence. The session-level taint flag (hasExternalIngestion)
+// is sticky across the whole session, but a single turn can carry untrusted
+// content BEFORE that flag is set (an external-marker wrapper injected into the
+// user span, or a tool result the model may now be paraphrasing) — both must
+// keep the promotion on the interactive-approval path.
+export function cleanTurnForModelSelfSave(priorMessages: unknown[] | undefined): boolean {
+  const turn = currentUserTurn(priorMessages);
+  if (turn.hasToolResult) return false;
+  return !/EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i.test(turn.text);
+}
+
+export const CLEAN_SELF_SOURCE_SUFFIX = ":clean-self";
+
+// A clean session (no external ingestion this turn) is the only place the model
+// may promote its OWN reasoning without a human click — there is no untrusted
+// off-box content that could be laundered into the saved text. The distinct
+// `:clean-self` source suffix keeps the audit trail honest: this was
+// auto-allowed on a clean session, NOT human-approved.
+export function stampCleanModelPromotion(args: Record<string, unknown>, request: MemoryPromotionRequest): void {
+  const capability = mint({ ...request, source: `${request.source}${CLEAN_SELF_SOURCE_SUFFIX}`, origin: "assistant" });
+  Object.defineProperty(args, CAPABILITY, { value: capability, enumerable: false });
+}
+
 export function stampApprovedMemoryPromotion(args: Record<string, unknown>, request: MemoryPromotionRequest, grantId: string): void {
   const capability = mint({ ...request, source: `${request.source}:approval:${grantId}`, origin: "assistant" });
   Object.defineProperty(args, CAPABILITY, { value: capability, enumerable: false });

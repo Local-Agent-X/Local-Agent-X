@@ -2,7 +2,7 @@ import type { MemoryIndex } from "../../memory/index.js";
 import type { FactKind } from "../types.js";
 import { displayContent } from "../utils.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
-import { promotionContextFromToolArgs } from "../promotion-gate.js";
+import { promotionContextFromToolArgs, CLEAN_SELF_SOURCE_SUFFIX } from "../promotion-gate.js";
 import type { MemoryPromotionContext } from "../promotion-gate.js";
 
 // Agent-facing single-fact tools. Sit on top of the Facts DB primitives
@@ -39,7 +39,10 @@ function provenanceSource(provenance: FactProvenance): string {
 function authorizedSource(provenance: FactProvenance, promotion: MemoryPromotionContext): string {
   if (promotion.origin === "user_statement") return "agent-tool:user-statement";
   if (provenance === "tool_observation") return provenanceSource(provenance);
-  return `agent-tool:approved-model-declared-${provenance.replace("_", "-")}`;
+  // Clean-session auto-allowed (no human click) vs interactively human-approved:
+  // the audit label must not claim approval that never happened.
+  const grant = promotion.source?.endsWith(CLEAN_SELF_SOURCE_SUFFIX) ? "auto-model-clean" : "approved-model-declared";
+  return `agent-tool:${grant}-${provenance.replace("_", "-")}`;
 }
 
 // A single durable fact is one compact line. These tight signals reject a

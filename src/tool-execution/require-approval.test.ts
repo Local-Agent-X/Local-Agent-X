@@ -534,3 +534,77 @@ describe("requireApprovalPhase — external-ingestion taint downgrades trusted u
     expect(String(ctx.result?.content)).toContain("risky content cannot become durable memory");
   });
 });
+
+describe("requireApprovalPhase — clean-session model self-save is silent", () => {
+  // The model may promote its OWN reasoning (no supporting user span) without a
+  // human click on a clean session — there is nothing laundered to guard. Any
+  // external ingestion flips it back to interactive approval / unattended-block.
+  const CONTENT = "The boot cache warms fastest when embeddings init is backgrounded";
+  // A user turn with NO save intent and no supporting span: the trusted-user
+  // branch cannot fire, so this exercises the model-self-save branch alone.
+  const UNRELATED_USER_TURN = "why is startup slow?";
+
+  afterEach(async () => {
+    const { clearExternalIngestion } = await import("../data-lineage-external.js");
+    for (const s of sessions) clearExternalIngestion(s);
+  });
+
+  function modelSaveCtx(sessionId: string, callContext: CallContext, onEvent?: (e: ServerEvent) => void): ToolCallContext {
+    return makeCtx({
+      name: "remember",
+      sessionId,
+      callContext,
+      args: { content: CONTENT },
+      priorMessages: [{ role: "user", content: UNRELATED_USER_TURN }],
+      onEvent,
+    });
+  }
+
+  it("clean session, model-authored content (no user span) → stamps and continues with NO prompt", async () => {
+    const s = pinned("Power");
+    const events: ServerEvent[] = [];
+    const ctx = modelSaveCtx(s, "local", (e) => events.push(e));
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
+    expect(events.some((e) => e.type === "approval_requested")).toBe(false);
+  });
+
+  it("clean session, model-authored content, UNATTENDED run → still silent (no human needed)", async () => {
+    const s = pinned("Normal");
+    const events: ServerEvent[] = [];
+    const ctx = modelSaveCtx(s, "cron", (e) => events.push(e));
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
+    expect(ctx.allowed).toBe(true);
+    expect(events.some((e) => e.type === "approval_requested")).toBe(false);
+  });
+
+  it("TAINTED session, same model-authored content → interactive approval REQUIRED", async () => {
+    const { recordExternalIngestion } = await import("../data-lineage-external.js");
+    const s = pinned("Power");
+    recordExternalIngestion(s);
+    const events: ServerEvent[] = [];
+    const ctx = modelSaveCtx(s, "local", (e) => {
+      events.push(e);
+      if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, true);
+    });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
+    expect(outcome.kind).toBe("continue");
+  });
+
+  it("TAINTED session, model-authored content, UNATTENDED run → hard-blocked", async () => {
+    const { recordExternalIngestion } = await import("../data-lineage-external.js");
+    const s = pinned("Power");
+    recordExternalIngestion(s);
+    const ctx = modelSaveCtx(s, "cron");
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.result?.status).toBe("blocked");
+    expect(String(ctx.result?.content)).toContain("risky content cannot become durable memory");
+  });
+});

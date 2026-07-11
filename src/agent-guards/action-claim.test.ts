@@ -85,3 +85,41 @@ describe("checkUnmatchedActionClaim — execution/verification verbs", () => {
     expect(checkUnmatchedActionClaim("I tested the assumption mentally.", NO_TOOLS)).toBeNull();
   });
 });
+
+// Folded in from the retired hallucination-check middleware (2026-07-10): an
+// invented tool ID ("Job ID: 5a0fb8ae", "sched_abc123") presented with no
+// ID-producing tool call is a fabricated artifact even without an action verb.
+describe("checkUnmatchedActionClaim — invented tool IDs", () => {
+  it("flags a prefix-style ID with no ID-producing tool called", () => {
+    const result = checkUnmatchedActionClaim(
+      "Your mission is set up under sched_x9k2mf41.",
+      NO_TOOLS,
+    );
+    expect(result).not.toBeNull();
+    expect(result).toContain("presented a tool ID");
+  });
+
+  it("flags 'Job ID: 5a0fb8ae' with no ID-producing tool called", () => {
+    const result = checkUnmatchedActionClaim(
+      "All done. Job ID: 5a0fb8ae",
+      NO_TOOLS,
+    );
+    expect(result).not.toBeNull();
+  });
+
+  it("does NOT flag an ID when an ID-producing tool actually ran", () => {
+    const result = checkUnmatchedActionClaim(
+      "Scheduled it — Job ID: 5a0fb8ae",
+      new Set(["cron_create"]),
+    );
+    expect(result).toBeNull();
+  });
+
+  it("does NOT flag an ID inside a code block (quoted sample, not a claim)", () => {
+    const result = checkUnmatchedActionClaim(
+      "You could run it like this:\n```\nlax jobs show sched_x9k2mf41\n```\nWant me to?",
+      NO_TOOLS,
+    );
+    expect(result).toBeNull();
+  });
+});

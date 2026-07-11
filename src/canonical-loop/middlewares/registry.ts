@@ -8,7 +8,7 @@
  *
  *   beforeTurn:           mid-turn-stale, open-steps
  *                         (turn-0 plan seed on agent/background lanes)
- *   afterModelCall:       loop-detection, hallucination-check, action-claim,
+ *   afterModelCall:       loop-detection, action-claim,
  *                         tool-search-nudge (all lanes — forces a tool_search
  *                         when the model declines a capability tool-lessly),
  *                         premature-completion (worker ops only — forces one
@@ -21,11 +21,8 @@
  *                         (interactive chat only — forces continuation when a
  *                         browser-driving turn punts the obstruction back to the
  *                         user with the page still open), self-check,
- *                         post-turn-detector, auto-build-app
- *                         (anthropic, runs AFTER post-turn-detector so the
- *                         detector sees the original empty-toolCalls state
- *                         before auto-build mutates it)
- *   afterToolExecution:   post-commit, dead-end, repeat-failure (ALL lanes —
+ *                         post-turn-detector
+ *   afterToolExecution:   dead-end, repeat-failure (ALL lanes —
  *                         same-tool same-error spiral breaker; nudge at 3,
  *                         abort at 5)
  *
@@ -49,10 +46,8 @@ import type { CanonicalMiddleware } from "./types.js";
 import { loopDetectionMiddleware } from "./loop-detection.js";
 import { repeatOutputMiddleware } from "./repeat-output.js";
 import { deadEndMiddleware } from "./dead-end.js";
-import { postCommitMiddleware } from "./post-commit.js";
 import { repeatFailureMiddleware } from "./repeat-failure.js";
 import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
-import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { attributionClaimMiddleware } from "./attribution-claim.js";
 import { operationalClaimMiddleware } from "./operational-claim.js";
@@ -67,7 +62,6 @@ import { browserHandoffMiddleware } from "./browser-handoff.js";
 import { selfCheckMiddleware } from "./self-check.js";
 import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
 import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
-import { autoBuildAppMiddleware } from "./auto-build-app.js";
 import { verifyGateMiddleware } from "./verify-gate.js";
 import { postEditDiagnosticsMiddleware } from "./post-edit-diagnostics.js";
 import { externalChangeDiffMiddleware } from "./external-change-diff.js";
@@ -103,7 +97,10 @@ const DEFAULT_STACK: StackEntry[] = [
   // tool-call identity and can't see a text loop). Two-strike nudge→abort;
   // aborts on every lane because repeated identical prose has no legit form.
   { order: 50, mw: repeatOutputMiddleware },
-  { order: 60, mw: hallucinationCheckMiddleware },
+  // NOTE: hallucination-check (order 60) retired 2026-07-10 — its approval and
+  // phantom-worker branches never fired in 4.5 weeks of persisted ops, and its
+  // creation branch (incl. the fake tool-ID check) is folded into action-claim's
+  // unmatched-claim table below.
   { order: 70, mw: actionClaimMiddleware },
   // Interactive chat — catches a final summary that CREDITS the result with a
   // tool/model/service it never used (action-claim is worker-only + checks
@@ -174,13 +171,16 @@ const DEFAULT_STACK: StackEntry[] = [
   { order: 200, mw: browserHandoffMiddleware },
   { order: 210, mw: selfCheckMiddleware },
   { order: 220, mw: postTurnDetectorMiddleware },
-  { order: 230, mw: autoBuildAppMiddleware },
-  { order: 240, mw: postCommitMiddleware },
+  // NOTE: auto-build-app (order 230) and post-commit (order 240) retired
+  // 2026-07-10 — zero fires across the full persisted-op window (post-commit:
+  // 33 days / 190 worker ops; auto-build-app: no log evidence and modern
+  // anthropic models call build_app directly). agent-guards/post-commit.ts
+  // survives — instruction-audit reuses checkPostCommit for its
+  // commit-obligation evidence.
   // All lanes — after a turn's dispatch edited TS/JS source, diff language-intel
   // diagnostics against the op's per-file baseline and inject only the NEW
   // errors as same-turn feedback, so the model fixes "your edit broke X" now
-  // instead of at build time. Sits after post-commit (a landed commit's wrap-up
-  // nudge wins first) and before dead-end. Fail-open; disable with
+  // instead of at build time. Sits before dead-end. Fail-open; disable with
   // LAX_POST_EDIT_DIAGNOSTICS=0.
   { order: 245, mw: postEditDiagnosticsMiddleware },
   // All lanes — each turn after tool dispatch, sweep the session's read files

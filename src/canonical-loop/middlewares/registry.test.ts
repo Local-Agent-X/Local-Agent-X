@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getDefaultMiddlewareStack } from "./registry.js";
 import { loopDetectionMiddleware } from "./loop-detection.js";
-import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { attributionClaimMiddleware } from "./attribution-claim.js";
 import { operationalClaimMiddleware } from "./operational-claim.js";
@@ -25,7 +24,6 @@ import { instructionAuditMiddleware } from "./instruction-audit.js";
 // guards we built can't silently fall out of the loop.
 const REQUIRED_GUARDS = [
   loopDetectionMiddleware,
-  hallucinationCheckMiddleware,
   actionClaimMiddleware,
   attributionClaimMiddleware,
   operationalClaimMiddleware,
@@ -86,13 +84,15 @@ describe("default middleware stack completeness", () => {
 // middleware, so the emitted sequence IS the behavior. This freezes the exact
 // order by name; any reorder (even one position) fails here. Do NOT edit this
 // list to make it pass — a diff means the refactor changed observable order.
+// (Deliberate removals are the exception: hallucination-check, auto-build-app
+// and post-commit were retired 2026-07-10 after a fire-count audit — see
+// registry.ts notes at orders 60/230/240.)
 const EXPECTED_ORDER = [
   "mid-turn-stale",
   "office-theme-guard",
   "instruction-ledger",
   "loop-detection",
   "repeat-output",
-  "hallucination-check",
   "action-claim",
   "attribution-claim",
   "operational-claim",
@@ -109,8 +109,6 @@ const EXPECTED_ORDER = [
   "browser-handoff",
   "self-check",
   "post-turn-detector",
-  "auto-build-app",
-  "post-commit",
   "post-edit-diagnostics",
   "external-change-diff",
   "dead-end",

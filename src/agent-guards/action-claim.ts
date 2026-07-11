@@ -1,10 +1,9 @@
-// Tool-verified hallucination check.
-//
-// The iteration===0 gate on checkCreationHallucination misses hallucinations
-// that happen on iteration N where the agent made SOME tool call on iter 0
-// but then claimed a different, un-executed action at the end. This check
-// closes that gap by requiring that any claimed action verb maps to a tool
-// that was actually called this turn.
+// Tool-verified hallucination check: any claimed action verb (or presented
+// tool ID) must map to a tool that was actually called this turn. Sole
+// surviving unmatched-claim guard — the narrower hallucination-check
+// middleware (turn-0 creation claims, approval requests, phantom workers)
+// was retired 2026-07-10 after a fire-count audit; its fake-tool-ID check
+// lives on here as CLAIM_TOOL_ID_RE.
 
 import { stripCodeBlocks } from "./code-strip.js";
 
@@ -73,6 +72,20 @@ const ACTION_VERB_TO_TOOLS: Array<{ verb: RegExp; tools: string[] }> = [
 ];
 
 const CLAIM_AT_REPLY_START_RE = /(?:^|\n)\s*[-*]?\s*(Removed|Unpinned|Deleted|Dropped|Cleared|Unscheduled|Added|Pinned|Scheduled|Created|Wrote|Built|Saved|Installed|Sent|Posted|Emailed|Messaged|Published|Mailed|Updated|Edited|Modified|Changed|Renamed|Patched|Configured|Noted|Remembered|Recorded|Logged|Bookmarked|Memorized|Stored|Ran|Restarted|Relaunched|Rebooted|Executed|Verified|Validated)\b/i;
+// Invented tool IDs — prefix-style (sched_/job_/cron_) or a short hex string
+// presented as "Job ID: 5a0fb8ae". An ID only comes from a tool result, so an
+// ID in a reply whose op never called an ID-producing tool is a fabricated
+// artifact — the same unmatched-claim failure the verb classes catch, minus
+// the verb. Folded in from the retired hallucination-check middleware.
+const CLAIM_TOOL_ID_RE = new RegExp(
+  "(\\b(sched_|job_|cron_)[a-zA-Z0-9_-]{6,})|" +
+  "(\\b(Job|Schedule|Mission|Task|Run)\\s*ID[:=]?\\s*[`\"']?[a-f0-9]{6,16}[`\"']?\\b)",
+  "i"
+);
+const ID_PRODUCING_TOOLS = [
+  "cron_create", "cron_update", "mission_schedule_create", "mission_schedule_update",
+  "agent_spawn", "op_submit", "op_submit_async", "build_app", "bash",
+];
 // Result-claim phrases ("check passed", "tests passed", "build succeeded",
 // "npm run check passed", "log confirms", "confirmed running") assert an
 // outcome that only a real run produces. They aren't first-person and need
@@ -103,7 +116,8 @@ export function checkUnmatchedActionClaim(
   if (
     !CLAIM_AT_REPLY_START_RE.test(cleaned) &&
     !CLAIM_FIRST_PERSON_RE.test(cleaned) &&
-    !CLAIM_RESULT_RE.test(cleaned)
+    !CLAIM_RESULT_RE.test(cleaned) &&
+    !CLAIM_TOOL_ID_RE.test(cleaned)
   ) return null;
   text = cleaned; // downstream verb-class regex tests use the cleaned form too
 
@@ -117,6 +131,11 @@ export function checkUnmatchedActionClaim(
       claimedVerbs.push(entry.verb.source.replace(/[()\\b?]/g, "").split("|")[0]);
       missingTools.push(entry.tools);
     }
+  }
+  // A fabricated ID is a claim even without an action verb in a known class.
+  if (CLAIM_TOOL_ID_RE.test(text) && !ID_PRODUCING_TOOLS.some(t => toolsCalledThisTurn.has(t))) {
+    claimedVerbs.push("presented a tool ID");
+    missingTools.push(ID_PRODUCING_TOOLS);
   }
   if (claimedVerbs.length === 0) return null;
 

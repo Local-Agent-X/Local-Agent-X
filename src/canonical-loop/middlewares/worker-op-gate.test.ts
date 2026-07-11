@@ -3,9 +3,7 @@ import { isWorkerOp, type CanonicalLoopContext } from "./types.js";
 import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { actionClaimMiddleware } from "./action-claim.js";
-import { hallucinationCheckMiddleware } from "./hallucination-check.js";
 import { selfCheckMiddleware } from "./self-check.js";
-import { postCommitMiddleware } from "./post-commit.js";
 
 function ctxWithLane(lane: string): CanonicalLoopContext {
   return { op: { lane } } as unknown as CanonicalLoopContext;
@@ -38,9 +36,7 @@ describe("nudge middlewares gate on isWorkerOp", () => {
     postTurnDetectorMiddleware,
     prematureCompletionMiddleware,
     actionClaimMiddleware,
-    hallucinationCheckMiddleware,
     selfCheckMiddleware,
-    postCommitMiddleware,
   ];
 
   for (const mw of middlewares) {

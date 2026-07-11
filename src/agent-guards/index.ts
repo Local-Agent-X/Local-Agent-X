@@ -10,7 +10,6 @@
  */
 
 export { detectUnresolvedErrors, buildReflectionPrompt } from "./reflection.js";
-export { checkApprovalHallucination, checkCreationHallucination, checkWorkerHallucination } from "./hallucination.js";
 export { checkUnmatchedActionClaim } from "./action-claim.js";
 export {
   checkUnsupportedOperationalClaim,

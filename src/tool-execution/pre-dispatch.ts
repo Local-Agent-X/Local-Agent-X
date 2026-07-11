@@ -10,32 +10,27 @@
  * RBAC / approval remain per-user gates outside the pack mechanism.
  */
 import type { SecurityLayer } from "../security/index.js";
-import { checkSessionPolicy } from "../session/policy.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import {
-  getApprovalManager,
-  getToolDecision,
-  getRiskDecision,
   decisionRequiresPrompt,
   decisionDenies,
   applyIrreversibleFloor,
   destructiveOperationReason,
 } from "../approval-manager.js";
-import { getRuntimeConfig } from "../config.js";
-import { hasCapability, type CapabilityClass } from "../tool-registry.js";
-import { opForbidsCapability, planModeForbidsCapability } from "../canonical-loop/instruction-ledger/index.js";
+import type { CapabilityClass } from "../tool-registry.js";
 import { shellCommandWritesFiles } from "../security/shell-write-detector.js";
 import { isProtectedSetting } from "../settings-schema.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";
-import { makeSpendCapPack } from "../tool-policy/packs/spend-cap-pack.js";
 import { makeSecurityLayerPack } from "../tool-policy/packs/security-layer-pack.js";
 import { makeDefaultPolicyPack } from "../tool-policy/packs/default-policy-pack.js";
 import { makeThreatEnginePack } from "../tool-policy/packs/threat-engine-pack.js";
-import { makeEgressRefutationPack } from "../tool-policy/packs/egress-refutation-pack.js";
+import { resolvePreDispatchDeps, type PreDispatchDeps } from "./pre-dispatch-deps.js";
+
+export type { PreDispatchDeps, PreDispatchApprovalManager, PreDispatchRuntimeFlags } from "./pre-dispatch-deps.js";
 
 export type ToolBlockedStage =
   | "session-policy"
@@ -85,6 +80,12 @@ export interface PreDispatchCtx {
   toolPolicy?: ToolPolicy;
   threatEngine?: ThreatEngine;
   approval?: { onEvent: (event: ServerEvent) => void; context?: string };
+  /** Overrides for the module singletons the gate chain reads (runtime config
+   *  kill-switches, local-only policy, instruction ledger / plan mode,
+   *  autonomy profile, approval manager, singleton-backed packs). Absent
+   *  fields fall back to the live singletons — production callers pass
+   *  nothing; tests inject fakes here instead of vi.mock. */
+  deps?: PreDispatchDeps;
 }
 
 /** One entry per capability class the instruction ledger can prohibit.
@@ -112,18 +113,19 @@ export async function assertToolCallAllowed(
   call: ToolCallShape,
   ctx: PreDispatchCtx,
 ): Promise<void> {
+  const d = resolvePreDispatchDeps(ctx.deps);
+
   // Per-session gate (not a rule pack — session-scoped runtime toggle).
   if (!ctx.skipSessionPolicy) {
-    const sessionBlock = checkSessionPolicy(ctx.sessionId, call.name);
+    const sessionBlock = d.checkSessionPolicy(ctx.sessionId, call.name);
     if (sessionBlock) throw new ToolBlocked({ stage: "session-policy", reason: sessionBlock });
   }
 
   // Category-level kill-switches from Settings → Security → Tool Policy.
   // These sit ABOVE the rule packs so a flipped-off category short-circuits
   // before any rule eval. Cheap, predictable, user-visible.
-  const cfg = getRuntimeConfig();
-  const { localOnlyToolDecision } = await import("../local-only-policy.js");
-  const localOnly = localOnlyToolDecision(call.name, call.args as Record<string, unknown>, cfg);
+  const cfg = d.getRuntimeConfig();
+  const localOnly = await d.localOnlyToolDecision(call.name, call.args as Record<string, unknown>, cfg);
   if (!localOnly.allowed) {
     throw new ToolBlocked({
       stage: "tool-policy",
@@ -183,13 +185,13 @@ export async function assertToolCallAllowed(
   // FAIL-OPEN: no opId + plan mode off, or an absent/empty ledger, fires
   // nothing; unconstrained ops are untouched.
   const opForbids = (cls: CapabilityClass): boolean =>
-    ctx.opId !== undefined && opForbidsCapability(ctx.opId, cls);
+    ctx.opId !== undefined && d.opForbidsCapability(ctx.opId, cls);
   const capForbidden = (cls: CapabilityClass): boolean =>
-    opForbids(cls) || planModeForbidsCapability(ctx.sessionId, cls);
+    opForbids(cls) || d.planModeForbidsCapability(ctx.sessionId, cls);
   {
     for (const { cls, verb, recovery } of OP_PROHIBITION_GUIDANCE) {
       if (!capForbidden(cls)) continue;
-      if (!hasCapability(call.name, cls)) continue;
+      if (!d.hasCapability(call.name, cls)) continue;
       // Plan mode gets its own wording — only the user's toggle lifts it, so
       // "ask the user to lift the restriction" would be misleading half-advice.
       if (!opForbids(cls)) {
@@ -217,7 +219,7 @@ export async function assertToolCallAllowed(
     // block a mutating shell command too — read-only shell (grep/ls/cat)
     // stays allowed. Best-effort: a bespoke interpreter one-liner can still
     // slip past static analysis; the post-hoc mutation gates catch that.
-    if (capForbidden("workspace-write") && hasCapability(call.name, "shell")) {
+    if (capForbidden("workspace-write") && d.hasCapability(call.name, "shell")) {
       const cmd = (call.args as { command?: unknown } | undefined)?.command;
       if (typeof cmd === "string" && shellCommandWritesFiles(cmd)) {
         const cause = opForbids("workspace-write")
@@ -250,11 +252,11 @@ export async function assertToolCallAllowed(
 
   // Unified policy evaluation: one pass over the rule packs.
   const packs: RulePack[] = [
-    makeSpendCapPack(),
+    d.makeSpendCapPack(),
     makeSecurityLayerPack(ctx.security),
     makeDefaultPolicyPack(ctx.toolPolicy),
     makeThreatEnginePack(ctx.threatEngine),
-    makeEgressRefutationPack(),
+    d.makeEgressRefutationPack(),
   ];
   const decision = await evaluatePolicy(
     { id: call.id, name: call.name, args: call.args },
@@ -306,7 +308,7 @@ export async function assertToolCallAllowed(
         userHint: USER_HINTS.policy,
       });
     }
-    const approved = await getApprovalManager().requestApproval({
+    const approved = await d.getApprovalManager().requestApproval({
       toolName: call.name,
       toolCallId: call.id,
       sessionId: ctx.sessionId,
@@ -334,8 +336,8 @@ export async function assertToolCallAllowed(
     // no confirm floor above the profile table.
     const destructive = destructiveOperationReason(call.name, call.args);
     let decision = destructive
-      ? getRiskDecision("destructive", ctx.sessionId)
-      : getToolDecision(call.name, ctx.sessionId);
+      ? d.getRiskDecision("destructive", ctx.sessionId)
+      : d.getToolDecision(call.name, ctx.sessionId);
 
     // Irreversible-action floor (this block is already local-only): force one
     // confirm before a truly-unrecoverable shell op even if the profile allows
@@ -351,7 +353,7 @@ export async function assertToolCallAllowed(
     }
 
     if (decisionRequiresPrompt(decision)) {
-      const approved = await getApprovalManager().requestApproval({
+      const approved = await d.getApprovalManager().requestApproval({
         toolName: call.name,
         toolCallId: call.id,
         sessionId: ctx.sessionId,

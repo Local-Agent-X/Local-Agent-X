@@ -34,11 +34,55 @@ function highlightCodeBlocks(container) {
   });
 }
 
+// Render ```mermaid code blocks into diagrams (runs after md() output is in
+// the DOM, same hook as highlightCodeBlocks). The block's TEXT is handed to
+// mermaid.render (securityLevel 'strict' escapes labels — model output can't
+// inject markup through the SVG), and the whole code-block wrapper is swapped
+// for the diagram. mermaid.parse() gates rendering so a half-streamed block
+// stays a plain code block until it parses; the next observer tick retries.
+let _mermaidReady = false;
+function _mermaidInit() {
+  if (_mermaidReady) return;
+  // Match the app palette: dark UI → dark diagram theme.
+  const bg = getComputedStyle(document.body).backgroundColor.match(/\d+/g) || [255, 255, 255];
+  const dark = (0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2]) < 128;
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'neutral' });
+  _mermaidReady = true;
+}
+let _mermaidSeq = 0;
+async function renderMermaidBlocks(container) {
+  if (typeof mermaid === 'undefined') return;
+  const el = container || document;
+  for (const block of el.querySelectorAll('pre code.language-mermaid')) {
+    if (block.dataset.mermaidDone) continue;
+    block.dataset.mermaidDone = 'true';
+    const src = block.textContent;
+    try {
+      _mermaidInit();
+      if (!(await mermaid.parse(src, { suppressErrors: true }))) {
+        // Incomplete/invalid (usually mid-stream): leave the code block and
+        // allow a retry on the next repaint.
+        delete block.dataset.mermaidDone;
+        continue;
+      }
+      const { svg } = await mermaid.render('md-mermaid-' + (++_mermaidSeq), src);
+      const wrapper = block.closest('.code-block-wrapper');
+      if (!wrapper || !wrapper.parentNode) continue;
+      const div = document.createElement('div');
+      div.className = 'md-mermaid';
+      div.innerHTML = svg;
+      wrapper.replaceWith(div);
+    } catch {
+      // Renderer threw despite parse passing — keep the readable code block.
+    }
+  }
+}
+
 // Auto-highlight after any innerHTML update (debounced)
 let _hlDebounce;
 const _hlObserver = typeof MutationObserver !== 'undefined' ? new MutationObserver(() => {
   clearTimeout(_hlDebounce);
-  _hlDebounce = setTimeout(() => highlightCodeBlocks(), 100);
+  _hlDebounce = setTimeout(() => { highlightCodeBlocks(); renderMermaidBlocks(); }, 100);
 }) : null;
 if (_hlObserver) {
   document.addEventListener('DOMContentLoaded', () => {

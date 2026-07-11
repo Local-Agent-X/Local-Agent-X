@@ -172,9 +172,28 @@ function md(s) {
   });
 
   // 9. Lists — process line by line for proper grouping
+  // Nesting: 2 spaces of indent = one level (models emit 2; tolerate 3-4 per
+  // level via floor). A frame's <li> stays open until its next sibling or the
+  // frame closes, so a deeper list nests INSIDE the item above it.
   const lines = h.split('\n');
   const result = [];
-  let inUl = false, inOl = false;
+  const frames = []; // stack of {type:'ul'|'ol', liOpen:boolean}
+  const LIST_STYLE = 'style="margin:4px 0;padding-left:20px"';
+  function closeFrame() {
+    const f = frames.pop();
+    if (f.liOpen) result.push('</li>');
+    result.push(`</${f.type}>`);
+    // The parent's li (that this list nested inside) closes via its own flow.
+  }
+  function closeAllFrames() { while (frames.length) closeFrame(); }
+  function itemHtml(content) {
+    // Task-list items: "- [ ] foo" / "- [x] foo" → ☐/☑ (unicode, not
+    // <input> — the sanitizer allowlist has no input tag).
+    const task = content.match(/^\[( |x|X)\] (.+)$/);
+    if (!task) return `<li>${content}`;
+    const done = task[1].toLowerCase() === 'x';
+    return `<li style="list-style:none;margin-left:-16px">${done ? '☑' : '☐'} ${done ? `<del>${task[2]}</del>` : task[2]}`;
+  }
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -183,46 +202,40 @@ function md(s) {
 
     // Detect "1. **Bold header**" pattern — render as section header, not list item
     if (olMatch && olMatch[2].match(/^<strong>.+<\/strong>$/) && olMatch[1] === '') {
-      if (inUl) { result.push('</ul>'); inUl = false; }
-      if (inOl) { result.push('</ol>'); inOl = false; }
+      closeAllFrames();
       result.push(`<h4 class="md-h" style="font-size:.88rem;margin-top:14px">${olMatch[2]}</h4>`);
-    } else if (ulMatch) {
-      if (!inUl) { if (inOl) { result.push('</ol>'); inOl = false; } result.push('<ul style="margin:4px 0;padding-left:20px">'); inUl = true; }
-      // Task-list items: "- [ ] foo" / "- [x] foo" → ☐/☑ (unicode, not
-      // <input> — the sanitizer allowlist has no input tag).
-      const task = ulMatch[2].match(/^\[( |x|X)\] (.+)$/);
-      if (task) {
-        const done = task[1].toLowerCase() === 'x';
-        result.push(`<li style="list-style:none;margin-left:-16px">${done ? '☑' : '☐'} ${done ? `<del>${task[2]}</del>` : task[2]}</li>`);
-      } else {
-      result.push(`<li>${ulMatch[2]}</li>`);
+    } else if (ulMatch || olMatch) {
+      const m = ulMatch || olMatch;
+      const type = ulMatch ? 'ul' : 'ol';
+      const depth = Math.min(Math.floor(m[1].length / 2), 3);
+      while (frames.length > depth + 1) closeFrame();
+      if (frames.length === depth + 1 && frames[frames.length - 1].type !== type) closeFrame();
+      while (frames.length < depth + 1) {
+        result.push(`<${type} ${LIST_STYLE}>`);
+        frames.push({ type, liOpen: false });
       }
-    } else if (olMatch) {
-      if (!inOl) { if (inUl) { result.push('</ul>'); inUl = false; } result.push('<ol style="margin:4px 0;padding-left:20px">'); inOl = true; }
-      result.push(`<li>${olMatch[2]}</li>`);
-    } else if (line.trim() === '' && (inUl || inOl)) {
+      const f = frames[frames.length - 1];
+      if (f.liOpen) result.push('</li>');
+      result.push(itemHtml(m[2]));
+      f.liOpen = true;
+    } else if (line.trim() === '' && frames.length) {
       // Blank line inside a list: peek ahead. If the next non-blank line is
-      // another item of the SAME list type, keep the list open so the renderer
-      // doesn't close+reopen (which restarts <ol> numbering at 1).
+      // another list item, keep the list open so the renderer doesn't
+      // close+reopen (which restarts <ol> numbering at 1).
       let j = i + 1;
       while (j < lines.length && lines[j].trim() === '') j++;
       const nextLine = j < lines.length ? lines[j] : '';
-      const nextIsOl = /^(\s*)\d+\. (.+)$/.test(nextLine);
-      const nextIsUl = /^(\s*)[-*] (.+)$/.test(nextLine);
-      if ((inOl && nextIsOl) || (inUl && nextIsUl)) {
+      if (/^(\s*)[-*] (.+)$/.test(nextLine) || /^(\s*)\d+\. (.+)$/.test(nextLine)) {
         continue; // swallow the blank, keep list open
       }
-      if (inUl) { result.push('</ul>'); inUl = false; }
-      if (inOl) { result.push('</ol>'); inOl = false; }
+      closeAllFrames();
       result.push(line);
     } else {
-      if (inUl) { result.push('</ul>'); inUl = false; }
-      if (inOl) { result.push('</ol>'); inOl = false; }
+      closeAllFrames();
       result.push(line);
     }
   }
-  if (inUl) result.push('</ul>');
-  if (inOl) result.push('</ol>');
+  closeAllFrames();
   h = result.join('\n');
 
   // 10. Auto-link bare URLs

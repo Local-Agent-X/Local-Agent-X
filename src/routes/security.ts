@@ -3,8 +3,6 @@ import { existsSync, readFileSync } from "node:fs";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeParseBody, atomicWriteFileSync } from "../server-utils.js";
 import { getThreatDashboard } from "../threat/threat-dashboard.js";
-import { listPolicies, createPolicy, deletePolicy } from "../ari-kernel/policy-editor.js";
-import { listEgressRules, addEgressRule } from "../security/egress-policy.js";
 import { scanForSecrets } from "../security/secret-scanner.js";
 import { queryAuditLog, getAuditSummary } from "../ari-kernel/audit-viewer.js";
 import { runBenchmarks } from "../ari-kernel/benchmarks.js";
@@ -21,24 +19,6 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
 
   if (method === "GET" && url.pathname === "/api/security/dashboard") {
     json(200, getThreatDashboard()); return true;
-  }
-  if (method === "GET" && url.pathname === "/api/security/policies") {
-    json(200, listPolicies()); return true;
-  }
-  if (method === "POST" && url.pathname === "/api/security/policies") {
-    const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-    json(200, createPolicy(body as Omit<import("../ari-kernel/policy-editor.js").PolicyRule, "id" | "createdAt" | "updatedAt">)); return true;
-  }
-  if (method === "DELETE" && url.pathname.startsWith("/api/security/policies/")) {
-    const id = url.pathname.split("/").pop()!;
-    json(200, { ok: deletePolicy(id) }); return true;
-  }
-  if (method === "GET" && url.pathname === "/api/security/egress") {
-    json(200, { rules: listEgressRules() }); return true;
-  }
-  if (method === "POST" && url.pathname === "/api/security/egress") {
-    const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-    json(200, addEgressRule(body.domain as string, body.action as "allow" | "block", body.reason as string | undefined)); return true;
   }
   if (method === "GET" && url.pathname === "/api/security/audit") {
     const query = Object.fromEntries(url.searchParams.entries());

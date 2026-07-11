@@ -165,14 +165,12 @@ async function testVoiceEngine(): Promise<StartupTestResult> {
 async function testAriKernel(): Promise<StartupTestResult> {
   const start = Date.now();
 
-  // Check if ARI kernel policy files exist
-  const policyFile = join(getLaxDir(), "custom-policies.json");
+  // The kernel's audit dir is the signal it has run — kernel policies come
+  // from built-in presets, not a config file.
   const auditDir = join(getLaxDir(), "audit");
-
-  const hasPolicy = existsSync(policyFile);
   const hasAudit = existsSync(auditDir);
 
-  if (hasPolicy || hasAudit) {
+  if (hasAudit) {
     return {
       name: "ari_kernel",
       status: "pass",

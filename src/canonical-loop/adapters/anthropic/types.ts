@@ -32,6 +32,8 @@ export interface AnthropicTransportRequest {
    * directive because the subprocess doesn't accept tool_choice flags.
    */
   forcedToolChoice?: { type: "tool"; name: string };
+  /** Chat lane opt-in to the direct-HTTP OAuth path — see AnthropicAdapterOptions. */
+  preferDirectHttp?: boolean;
 }
 
 export interface TransportMessage {
@@ -127,6 +129,13 @@ export interface AnthropicAdapterOptions {
    * into a system-prompt directive when the auth path is OAuth/CLI.
    */
   forcedToolChoice?: { type: "tool"; name: string };
+  /**
+   * Chat lane only: prefer the direct-HTTP OAuth path (real streamed thinking)
+   * over the CLI proxy when a direct subscription token is resolvable. Builds
+   * and sub-agents leave this unset so they stay on the CLI's agentic loop.
+   * Falls back to the CLI path automatically when no direct token is available.
+   */
+  preferDirectHttp?: boolean;
 }
 
 // ── Stream-consume result ────────────────────────────────────────────────
@@ -139,6 +148,16 @@ export interface AnthropicAdapterOptions {
 export interface StreamConsumeResult {
   assembledText: string;
   toolCallIds: string[];
+  /**
+   * Full tool calls this turn emitted ({id,name,arguments}) — kept so the
+   * adapter can persist them on the finalized assistant message's
+   * `content.toolCalls`. Without this the next turn replays tool_result rows
+   * with no matching tool_use block and the Anthropic Messages API 400s
+   * ("unexpected tool_use_id … must have a corresponding tool_use block").
+   * The `toolCallIds` array remains the count/outstanding signal; this carries
+   * the payload for history rebuild. Mirrors Codex's pendingToolCalls.
+   */
+  toolCalls: Array<{ id: string; name: string; arguments: string }>;
   firstError: { code: string; message: string } | null;
   providerStop: string | undefined;
   usageInputTokens: number | undefined;

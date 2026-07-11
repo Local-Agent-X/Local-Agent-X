@@ -141,6 +141,58 @@ export async function getAnthropicApiKey(): Promise<string> {
   throw new Error("No Anthropic API key or OAuth tokens. Sign in via Settings → General.");
 }
 
+/**
+ * Resolve a RAW bearer token for the direct-HTTP OAuth path (chat "Thinking"
+ * block), or null if none is usable. Unlike getAnthropicApiKey — which returns
+ * the "cli" sentinel for subscription auth so requests route through the CLI
+ * subprocess — this returns the actual token so streamViaAPI can wear Claude
+ * Code's identity and stream reasoning text (the CLI redacts it).
+ *
+ * Sources, in precedence order. NONE of them rotate a lineage the standalone
+ * `claude` CLI depends on:
+ *   1. ANTHROPIC_OAUTH_TOKEN env — used verbatim.
+ *   2. LAX's own store (~/.lax/anthropic-auth.json): a `token` (setup-token) is
+ *      long-lived and used as-is; an `oauth` token is refreshed by us when
+ *      expired (LAX owns that lineage — its refresh token isn't shared with the
+ *      CLI).
+ *   3. The Claude CLI credential FILE (~/.claude/.credentials.json), but ONLY
+ *      while its access token is unexpired. We deliberately never refresh this
+ *      one: on macOS the CLI keeps its live token in the Keychain and this file
+ *      is a stale artifact, and refreshing a shared lineage would rotate the
+ *      CLI's refresh token out from under it. Expired file → null → the caller
+ *      falls back to the CLI proxy (no thinking, but no breakage).
+ *
+ * Returns null (not throw) when nothing is available — the caller treats that
+ * as "use the CLI path".
+ */
+export async function getAnthropicDirectToken(): Promise<string | null> {
+  const envTok = process.env.ANTHROPIC_OAUTH_TOKEN?.trim();
+  if (envTok) return envTok;
+
+  const tokens = loadAnthropicTokens();
+  if (tokens?.method === "token" && tokens.accessToken) return tokens.accessToken;
+  if (tokens?.method === "oauth" && tokens.refreshToken) {
+    try {
+      const fresh = isAnthropicTokenExpired(tokens) ? await refreshAnthropicTokens(tokens) : tokens;
+      if (fresh.accessToken) return fresh.accessToken;
+    } catch (e) {
+      logger.warn(`[auth-anthropic] direct-token refresh failed: ${(e as Error).message} — falling back to CLI path`);
+    }
+  }
+
+  // Claude CLI credential file — use only if unexpired (never refresh; see above).
+  try {
+    const credPath = getClaudeCredentialsPath();
+    if (existsSync(credPath)) {
+      const cred = JSON.parse(readFileSync(credPath, "utf-8")) as { claudeAiOauth?: { accessToken?: string; expiresAt?: number } };
+      const o = cred.claudeAiOauth;
+      if (o?.accessToken && (!o.expiresAt || Date.now() < o.expiresAt)) return o.accessToken;
+    }
+  } catch { /* unreadable/corrupt → no direct token */ }
+
+  return null;
+}
+
 export function isAnthropicTokenExpired(tokens: AnthropicTokens | null): boolean {
   if (!tokens) return false;
   if (tokens.method === "token") return false;
@@ -297,6 +349,25 @@ export async function completeAnthropicCliOAuth(rawCode: string): Promise<void> 
   };
   mkdirSync(join(homedir(), ".claude"), { recursive: true });
   writeSecretFileAtomic(credPath, JSON.stringify(credPayload, null, 2));
+
+  // Also save the grant into LAX's OWN store so the direct-HTTP thinking path
+  // has a token it can REFRESH. getAnthropicDirectToken reads the CLI file only
+  // while unexpired and never refreshes it (that lineage may be shared with the
+  // standalone CLI on Linux/Windows); this paste-the-code grant is a SEPARATE
+  // authorization from the CLI's own login, so LAX refreshing it can't rotate
+  // the CLI out from under itself. Without this, direct thinking would work for
+  // ~1h then silently drop back to the CLI proxy until the user re-signed in.
+  if (data.refresh_token) {
+    saveAnthropicTokens({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      // Mirror refreshAnthropicTokens' 5-min buffer so we refresh just before
+      // the API would start rejecting the token.
+      expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 - 5 * 60 * 1000 : undefined,
+      method: "oauth",
+      provider: "anthropic",
+    });
+  }
   pendingOAuth = null;
   logger.info("[anthropic-auth] CLI credentials written via paste-the-code OAuth");
 }

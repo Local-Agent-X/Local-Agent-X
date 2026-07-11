@@ -40,6 +40,7 @@ export async function streamConsume(
   const out: StreamConsumeResult = {
     assembledText: "",
     toolCallIds: [],
+    toolCalls: [],
     firstError: null,
     providerStop: undefined,
     usageInputTokens: undefined,
@@ -87,6 +88,10 @@ export async function streamConsume(
       }
       if (ev.type === "tool_call") {
         out.toolCallIds.push(ev.id);
+        // Keep the full call so runTurn can persist it on the finalized
+        // assistant message (content.toolCalls) — the history-replay pair for
+        // the tool_result rows the loop feeds back next turn.
+        out.toolCalls.push({ id: ev.id, name: ev.name, arguments: ev.arguments });
         report({
           kind: "tool_call_requested",
           call: {
@@ -169,6 +174,7 @@ export function applyToolCallTextFallback(
   logger.info(`${model} emitted ${extracted.toolCalls.length} tool call(s) as text — extracted`);
   for (const tc of extracted.toolCalls) {
     result.toolCallIds.push(tc.id);
+    result.toolCalls.push({ id: tc.id, name: tc.name, arguments: tc.arguments });
     report({
       kind: "tool_call_requested",
       call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) },

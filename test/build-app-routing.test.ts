@@ -6,8 +6,8 @@
  * Three things this guards:
  *   - resolveBuildProvider normalizes backend args + reads settings.json.
  *   - resolveBuildStrategy reads the right strategy from the app-builder
- *     template's providerStrategy map: codex / anthropic → cli-subprocess,
- *     everyone else → in-canonical-sub-agent.
+ *     template's providerStrategy map: every provider → in-canonical-sub-agent
+ *     (the default), unless one is explicitly pinned to cli-subprocess.
  *   - buildAppTool.execute returns the canonical-shape result (op-submitted
  *     chip + opId; the op lands in the store with type "app_build").
  */
@@ -84,8 +84,8 @@ describe("resolveBuildStrategy — template-driven strategy split", () => {
     expect(resolveBuildStrategy("codex")).toBe("in-canonical-sub-agent");
   });
 
-  it("anthropic provider → cli-subprocess", () => {
-    expect(resolveBuildStrategy("anthropic")).toBe("cli-subprocess");
+  it("anthropic provider → in-canonical-sub-agent (CLI unpinned; Claude inference runs over the direct-HTTP path)", () => {
+    expect(resolveBuildStrategy("anthropic")).toBe("in-canonical-sub-agent");
   });
 
   it.each(["qwen", "cerebras", "grok", "gemini", "local", "xai"])(

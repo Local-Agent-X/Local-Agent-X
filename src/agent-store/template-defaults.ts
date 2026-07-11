@@ -101,11 +101,14 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       allowedTools: ["write", "read", "edit", "bash", "glob"],
       icon: "🛠",
       providerStrategy: {
-        // codex builds via the in-canonical default (HTTP, like grok). Its
-        // CLI advantage was the tuned gpt-5.3-codex model, retired by OpenAI;
-        // gpt-5.5 in the codex CLI over-plans and overruns the wall-clock
-        // ceiling. anthropic keeps the claude CLI — it stays fast.
-        anthropic: "cli-subprocess",
+        // Every provider now builds via the in-canonical default (LAX drives
+        // the write/read/edit loop over the provider's HTTP inference — no
+        // vendor CLI subprocess). codex moved here when the tuned gpt-5.3-codex
+        // model was retired; anthropic followed because the claude CLI build
+        // path was slower in practice, and Claude inference can now run over the
+        // direct-HTTP OAuth path (app-build-adapter sets preferDirectHttp), so
+        // a build no longer needs to spawn `claude` per turn. To pin a provider
+        // back onto its CLI, set it to "cli-subprocess" here.
         default: "in-canonical-sub-agent",
       },
       requiresWorktree: false,

@@ -251,6 +251,27 @@ describe("Issue 09 — provider stream → canonical adapter_reports", () => {
     expect(result.terminalReason).toBeUndefined();
   });
 
+  it("a tool-only turn finalizes an assistant message carrying content.toolCalls (history round-trip)", async () => {
+    // Regression: a tool-only turn used to finalize nothing, so the next turn
+    // replayed the tool_result with no matching tool_use block → Anthropic 400
+    // "unexpected tool_use_id … must have a corresponding tool_use block".
+    // Surfaced first on the direct-HTTP build path (multi-turn tool use).
+    const transport = new MockAnthropicTransport({
+      plans: [planToolCall({ id: "tc-9", name: "write", arguments: '{"path":"a.ts"}' })],
+    });
+    const adapter = new AnthropicAdapter({ transport });
+    const reports: { kind: string; message?: { role: string; content: { text: string; toolCalls?: Array<{ id: string; name: string; arguments: string }> } } }[] = [];
+    await adapter.runTurn(
+      { opId: "tool-only", turnIdx: 0, messages: [], tools: [] },
+      r => reports.push(r as never),
+    );
+    const finalized = reports.filter(r => r.kind === "message_finalized");
+    expect(finalized).toHaveLength(1);
+    const msg = finalized[0].message!;
+    expect(msg.role).toBe("assistant");
+    expect(msg.content.toolCalls).toEqual([{ id: "tc-9", name: "write", arguments: '{"path":"a.ts"}' }]);
+  });
+
   it("an unrecovered provider error surfaces as exactly one error adapter_report and never throws", async () => {
     // Post-0f581efb the transport-retry seam retries a `retryable:true` error
     // that hasn't streamed content yet — so a bare retryable error would be

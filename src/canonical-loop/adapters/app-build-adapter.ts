@@ -347,6 +347,11 @@ async function defaultProviderAdapterFactory(
       systemPrompt: opts.systemPrompt,
       model: opts.model,
       sessionId: opts.sessionId,
+      // In-canonical builds run tool-by-tool through LAX's loop; route Claude
+      // inference over the direct-HTTP OAuth path so a build never spawns the
+      // `claude` CLI per turn (that's the whole point of the no-CLI strategy).
+      // Falls back to the CLI proxy automatically if no direct token resolves.
+      preferDirectHttp: true,
     });
   }
   if (provider === "codex") {

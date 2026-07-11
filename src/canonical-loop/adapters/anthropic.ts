@@ -129,6 +129,7 @@ export class AnthropicAdapter implements Adapter {
       maxTokens: this.opts.maxTokens,
       sessionId: this.opts.sessionId,
       forcedToolChoice,
+      preferDirectHttp: this.opts.preferDirectHttp,
     };
 
     // Idle-event detection lives in turn-loop now (provider-agnostic).
@@ -148,16 +149,24 @@ export class AnthropicAdapter implements Adapter {
     // + rewrite. No-op for healthy turns.
     applyToolCallTextFallback(result, report, model, new Set(input.tools.map(t => t.name)));
 
-    // Finalize the assistant message if any text was produced. A turn that
-    // only emitted tool calls (no narration) finalizes nothing — the next
-    // turn carries the tool_result(s) back to the adapter.
+    // Finalize the assistant message whenever there is EITHER text OR tool
+    // calls. A tool-only turn (no narration) MUST still finalize, carrying its
+    // toolCalls on content.toolCalls — otherwise the next turn replays the
+    // matching tool_result rows with no tool_use block and the Messages API
+    // 400s ("unexpected tool_use_id … must have a corresponding tool_use
+    // block"). This is the round-trip the CLI proxy path never needed (it
+    // serializes history as text); the direct-HTTP path does. Mirrors Codex.
     let finalizedMessageId: string | null = null;
-    if (result.assembledText.length > 0) {
+    if (result.assembledText.length > 0 || result.toolCalls.length > 0) {
       finalizedMessageId = `am-${input.opId}-${input.turnIdx}-${Date.now().toString(36)}`;
+      const content: { text: string; toolCalls?: typeof result.toolCalls } = {
+        text: result.assembledText,
+      };
+      if (result.toolCalls.length > 0) content.toolCalls = result.toolCalls;
       const msg: CanonicalMessage = {
         messageId: finalizedMessageId,
         role: "assistant",
-        content: { text: result.assembledText },
+        content,
       };
       report({ kind: "message_finalized", message: msg });
     }

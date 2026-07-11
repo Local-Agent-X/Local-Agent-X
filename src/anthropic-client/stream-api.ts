@@ -1,11 +1,20 @@
 import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking } from "../anthropic-models.js";
 import { API_BASE, convertMessages } from "./request.js";
 import { connectTimeout } from "../providers/connect-timeout.js";
+import {
+  isDirectOAuthToken, unwrapDirectOAuthToken, buildOAuthHeaders,
+  CLAUDE_CODE_SYSTEM_PREFIX, toOAuthWireName, fromOAuthWireName,
+} from "./oauth-direct.js";
+import type { AnthropicContent } from "./types.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, maxTokens = 8192, toolChoice, forcedToolName, signal } = options;
-  const resolvedModel = normalizeAnthropicModel(model, "api");
+  // Subscription OAuth tokens reach the Messages API only when the request wears
+  // Claude Code's identity (Bearer + betas + UA + system prefix). This is the
+  // only subscription path that streams real thinking text. See oauth-direct.ts.
+  const oauth = isDirectOAuthToken(token);
+  const resolvedModel = normalizeAnthropicModel(model, oauth ? "subscription" : "api");
   const adaptive = anthropicUsesAdaptiveThinking(resolvedModel);
 
   // Fail fast if the caller already cancelled before we started.
@@ -14,19 +23,26 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     return;
   }
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "x-api-key": token,
-    "anthropic-version": "2023-06-01",
-    // interleaved-thinking is GA (auto-enabled) under adaptive thinking; the
-    // beta header is only meaningful for the legacy enabled-thinking models.
-    ...(adaptive ? {} : { "anthropic-beta": "interleaved-thinking-2025-05-14" }),
-  };
+  const headers: Record<string, string> = oauth
+    ? buildOAuthHeaders(unwrapDirectOAuthToken(token))
+    : {
+        "Content-Type": "application/json",
+        "x-api-key": token,
+        "anthropic-version": "2023-06-01",
+        // interleaved-thinking is GA (auto-enabled) under adaptive thinking; the
+        // beta header is only meaningful for the legacy enabled-thinking models.
+        ...(adaptive ? {} : { "anthropic-beta": "interleaved-thinking-2025-05-14" }),
+      };
 
   const body: Record<string, unknown> = {
     model: resolvedModel,
     max_tokens: maxTokens,
-    system: systemPrompt,
+    // OAuth routing keys on the system prompt STARTING with the Claude Code
+    // identity block; prepend it as a separate text block so the caller's own
+    // system prompt still applies verbatim below it.
+    system: oauth
+      ? [{ type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX }, { type: "text", text: systemPrompt }]
+      : systemPrompt,
     messages: convertMessages(messages),
     stream: true,
     // Thinking lets the model reason about blockers before acting. Adaptive
@@ -42,9 +58,25 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       : { thinking: { type: "enabled", budget_tokens: 3000 }, temperature: 1 }),
   };
 
-  const anthropicTools = tools?.map(t => ({
-    name: t.name, description: t.description, input_schema: t.parameters,
-  })) as Array<{ name: string; description: string; input_schema: unknown; cache_control?: { type: "ephemeral" } }> | undefined;
+  // On the OAuth wire, every tool name must be a bare or `mcp__` identifier or
+  // the billing classifier meters the request as extra-usage. Rewrite outbound
+  // names and keep a reverse map for the tool_call events we surface back.
+  const wireToOriginal = new Map<string, string>();
+  const anthropicTools = tools?.map(t => {
+    const name = oauth ? toOAuthWireName(t.name) : t.name;
+    if (oauth) wireToOriginal.set(name, t.name);
+    return { name, description: t.description, input_schema: t.parameters };
+  }) as Array<{ name: string; description: string; input_schema: unknown; cache_control?: { type: "ephemeral" } }> | undefined;
+  // Prior-turn tool_use blocks ride on the wire too; normalize their names to
+  // match so the classifier sees a consistent Claude-Code-shaped tool surface.
+  if (oauth) {
+    for (const m of body.messages as Array<{ role: string; content: unknown }>) {
+      if (!Array.isArray(m.content)) continue;
+      for (const block of m.content as AnthropicContent[]) {
+        if (block.type === "tool_use") block.name = toOAuthWireName(block.name);
+      }
+    }
+  }
   if (anthropicTools?.length) {
     // Anthropic prompt caching: mark the LAST tool with cache_control to
     // cache the entire tools array (everything above the marker). First
@@ -55,8 +87,9 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // cold-write — is sized to the tools actually loaded this turn.
     anthropicTools[anthropicTools.length - 1].cache_control = { type: "ephemeral" };
     body.tools = anthropicTools;
-    if (forcedToolName && anthropicTools.some(t => t.name === forcedToolName)) {
-      body.tool_choice = { type: "tool", name: forcedToolName };
+    const forcedWireName = forcedToolName && oauth ? toOAuthWireName(forcedToolName) : forcedToolName;
+    if (forcedWireName && anthropicTools.some(t => t.name === forcedWireName)) {
+      body.tool_choice = { type: "tool", name: forcedWireName };
     } else if (toolChoice === "required") {
       body.tool_choice = { type: "any" };
     }
@@ -79,7 +112,9 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
 
     if (!response.ok) {
       const errorText = await response.text();
-      const hint = buildAnthropicRateLimitHint(response.status, token);
+      // The OAuth-direct token shape isn't recognized by usesAnthropicSubscriptionAuth;
+      // pass an `oauth:`-shaped marker so a 429 still gets the subscription hint.
+      const hint = buildAnthropicRateLimitHint(response.status, oauth ? "oauth:direct" : token);
       yield { type: "error", error: `Anthropic ${response.status}: ${errorText.slice(0, 500)}${hint}` };
       return;
     }
@@ -164,7 +199,8 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
           } else if (eventType === "content_block_stop") {
             if (currentToolId) {
               sawToolCall = true;
-              yield { type: "tool_call", id: currentToolId, name: currentToolName, arguments: currentToolArgs };
+              const emittedName = oauth ? fromOAuthWireName(currentToolName, wireToOriginal) : currentToolName;
+              yield { type: "tool_call", id: currentToolId, name: emittedName, arguments: currentToolArgs };
               currentToolId = ""; currentToolName = ""; currentToolArgs = "";
             }
           } else if (eventType === "message_delta") {

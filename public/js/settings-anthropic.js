@@ -27,9 +27,9 @@ async function checkAnthropicAuth() {
     if (hasValidAuth) {
       el.className = 'status-badge ok';
       const label =
-        d.method === 'token' ? 'Connected — Setup-token (routes through CLI subprocess)' :
-        usingCliSession ? 'Connected — Claude CLI-native login (store is not encrypted by LAX)' :
-        'Connected — Stale direct OAuth tokens (third-party use blocked by Anthropic TOS — disconnect and use CLI login)';
+        d.method === 'token' ? 'Connected — setup-token · chat streams live Thinking, builds via CLI' :
+        usingCliSession ? 'Connected — Claude CLI session · builds via CLI, chat uses the API when a token is available' :
+        'Connected — Claude subscription · chat streams live Thinking, builds via CLI';
       el.innerHTML = '<span class="status-dot"></span> ' + label;
       // CLI-login button: when CLI session is the active auth, mark "Already Connected".
       if (cliLoginBtn) {
@@ -167,7 +167,7 @@ async function submitClaudeCliCode() {
   if (msg) { msg.style.color = ''; msg.textContent = 'Exchanging code…'; }
   try {
     await apiPost('/api/auth/anthropic/cli-login-submit', { code });
-    if (status) status.innerHTML = '<span style="color:var(--accent)">✓ Signed in. Chat &amp; builds route through the Claude CLI subprocess.</span>';
+    if (status) status.innerHTML = '<span style="color:var(--accent)">✓ Signed in. Chat streams live Thinking from Claude\'s API; builds run through the Claude CLI.</span>';
     if (cancelBtn) cancelBtn.style.display = 'none';
     if (btn) { btn.style.display = ''; btn.disabled = false; btn.textContent = 'Re-sign in'; }
     checkAnthropicAuth();

@@ -202,7 +202,7 @@ export const buildAppTool: ToolDefinition = {
     properties: {
       name: { type: "string", description: "App directory name (e.g. 'trading-bot', 'todo-app')" },
       prompt: { type: "string", description: "Build brief — what to make, target features, styling notes, behavior. Be specific." },
-      backend: { type: "string", enum: ["codex", "claude", "auto"], description: "Which CLI to use. 'auto' (default) matches your active provider. 'codex' = codex CLI. 'claude' = claude CLI." },
+      backend: { type: "string", enum: ["codex", "claude", "auto"], description: "Which model builds the app. 'auto' (default) matches your active provider. 'codex' = GPT, 'claude' = Claude. All build over HTTP (no CLI subprocess) unless a provider is explicitly pinned to cli-subprocess in the app-builder template." },
       update: { type: "boolean", description: "Set true ONLY when modifying an EXISTING app under the same name — e.g. user said 'make it green', 'update X', 'add Y to it'. Omit/false for a new app; if the name collides, the tool refuses rather than overwrite. For a new variant on the same theme, pick a different name instead." },
     },
     required: ["name", "prompt"],

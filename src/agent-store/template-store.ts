@@ -56,7 +56,7 @@ export class AgentTemplateStore {
   private static instance: AgentTemplateStore;
   private templates: AgentTemplate[] = [];
 
-  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateAppBuilderCodexStrategy(); this.migrateManagerModel(); this.migrateAppBuilderPersona(); this.seedDefaults(); }
+  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateAppBuilderCodexStrategy(); this.migrateAppBuilderAnthropicStrategy(); this.migrateManagerModel(); this.migrateAppBuilderPersona(); this.seedDefaults(); }
 
   /**
    * Strip deprecated org-membership fields from persisted templates.
@@ -120,6 +120,26 @@ export class AgentTemplateStore {
     t.updatedAt = Date.now();
     this.persist();
     logger.info("[agents] migrated app-builder: codex build path cli-subprocess → in-canonical");
+  }
+
+  /**
+   * Move anthropic builds off the cli-subprocess path onto the in-canonical
+   * default (LAX drives the tool loop; Claude inference runs over the
+   * direct-HTTP OAuth path via app-build-adapter's preferDirectHttp). The
+   * claude CLI build path was slower in practice, and the direct-HTTP inference
+   * path didn't exist when the CLI was pinned. Mirrors the codex migration:
+   * drop the persisted override so anthropic inherits `default`. Idempotent —
+   * no anthropic override (already in-canonical) → left alone. To keep the CLI,
+   * a user/template can re-set anthropic: "cli-subprocess" and this won't undo it
+   * (it only strips the specific value it migrated away from).
+   */
+  private migrateAppBuilderAnthropicStrategy(): void {
+    const t = this.templates.find(x => x.id === "app-builder");
+    if (t?.providerStrategy?.anthropic !== "cli-subprocess") return;
+    delete t.providerStrategy.anthropic;
+    t.updatedAt = Date.now();
+    this.persist();
+    logger.info("[agents] migrated app-builder: anthropic build path cli-subprocess → in-canonical (direct-HTTP inference)");
   }
 
   /**

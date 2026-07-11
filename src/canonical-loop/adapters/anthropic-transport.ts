@@ -30,11 +30,33 @@ export function defaultAnthropicTransport(): AnthropicTransport {
   return {
     async *stream(req: AnthropicTransportRequest): AsyncIterable<TransportEvent> {
       const { streamAnthropicResponse } = await import("../../anthropic-client/index.js");
-      const { getAnthropicApiKey } = await import("../../auth/anthropic.js");
+      const { getAnthropicApiKey, getAnthropicDirectToken } = await import("../../auth/anthropic.js");
 
       let token: string;
       try {
-        token = await getAnthropicApiKey();
+        // Chat lane: try the direct-HTTP OAuth token first (real streamed
+        // thinking). If none is resolvable, fall through to getAnthropicApiKey
+        // — which yields the "cli" sentinel and routes through the CLI proxy.
+        let direct: string | null = null;
+        if (req.preferDirectHttp) {
+          try {
+            const raw = await getAnthropicDirectToken();
+            if (raw) {
+              const { wrapDirectOAuthToken } = await import("../../anthropic-client/oauth-direct.js");
+              direct = wrapDirectOAuthToken(raw);
+            }
+          } catch { /* fall back to CLI path below */ }
+          // Make the path choice observable — the CLI proxy can't stream
+          // thinking text, so "why is the Thinking block empty" is answered by
+          // whether we secured a direct token here.
+          const { createLogger } = await import("../../logger.js");
+          createLogger("anthropic-transport").info(
+            direct
+              ? "[anthropic] chat → direct-HTTP OAuth path (thinking enabled)"
+              : "[anthropic] chat → CLI proxy (no direct token; thinking unavailable — authenticate Anthropic via Settings to enable)",
+          );
+        }
+        token = direct ?? await getAnthropicApiKey();
       } catch (e) {
         yield {
           type: "error",

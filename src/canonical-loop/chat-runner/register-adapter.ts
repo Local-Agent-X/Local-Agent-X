@@ -25,6 +25,10 @@ export async function registerAdapterForChat(
         model: prepared.model,
         sessionId,
         forcedToolChoice,
+        // Chat streams real "Thinking" via the direct-HTTP OAuth path when a
+        // subscription token is resolvable; auto-falls back to the CLI proxy
+        // otherwise. Sub-agents/builds omit this and stay on the CLI loop.
+        preferDirectHttp: true,
       }),
     );
     return;

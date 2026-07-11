@@ -146,7 +146,7 @@ enforceStartupIntegrity();
 // operator the revert escape hatch in case the merged code misbehaves at
 // runtime (the post-merge re-gate only catches a broken build). Best-effort.
 try {
-  const { revertPendingMergeIfCrashed, surfaceUnacknowledgedMerge } = await import("./self-edit-rollback.js");
+  const { revertPendingMergeIfCrashed, surfaceUnacknowledgedMerge } = await import("./self-edit/rollback.js");
   // Crashed-merge guard FIRST: if a prior boot loaded a self_edit merge and
   // never bound, the merged code crashes on startup — auto-revert + rebuild so
   // this/next boot runs the last good code instead of bricking on every restart.

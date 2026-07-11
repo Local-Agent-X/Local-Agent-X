@@ -332,7 +332,7 @@ export async function startServer(config: LAXConfig) {
 
     // The server bound successfully — confirm any pending self_edit merge so the
     // boot-time crashed-merge guard knows the merged code actually boots.
-    void import("../self-edit-rollback.js")
+    void import("../self-edit/rollback.js")
       .then(m => m.confirmMergeBoot())
       .catch(e => bootLogger.warn(`[self-edit] confirmMergeBoot failed: ${(e as Error).message}`));
     // …and reset the server-sandbox escape-hatch counter: a confined boot

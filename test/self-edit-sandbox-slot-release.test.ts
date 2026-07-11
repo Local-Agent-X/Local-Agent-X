@@ -23,7 +23,7 @@ vi.mock("../src/self-edit/surgeon.js", () => ({
   formatSurgeonOutput: vi.fn(() => "surgeon output"),
 }));
 
-vi.mock("../src/self-edit-sandbox-gates.js", () => ({
+vi.mock("../src/self-edit/sandbox-gates.js", () => ({
   SKIPPED_GATE: { ok: false, skipped: true, durationMs: 0, detail: "skipped (earlier gate failed)" },
   gateDeps: vi.fn(() => ({ ok: false, skipped: false, durationMs: 5, detail: "simulated dep install failure" })),
   gateBuild: vi.fn(),
@@ -48,7 +48,7 @@ vi.mock("../src/self-edit/refute-merge.js", () => ({
   refuteSelfEditMerge: vi.fn(async () => ({ hold: false })),
 }));
 
-const { runSelfEditInSandbox } = await import("../src/self-edit-sandbox.js");
+const { runSelfEditInSandbox } = await import("../src/self-edit/sandbox.js");
 const { activeWorktrees, WORKTREE_BASE, worktreeSlotAvailable } = await import("../src/agency/worktree-core.js");
 
 const repo = mkdtempSync(join(tmpdir(), "lax-slot-release-"));

@@ -1,4 +1,4 @@
-// A self_edit/update bind probe (src/self-edit-sandbox-gates.ts) boots a real
+// A self_edit/update bind probe (src/self-edit/sandbox-gates.ts) boots a real
 // server on an isolated temp data-dir to smoke-test a candidate build, then is
 // torn down by killProbe in the gate's finally. If the gate-running process
 // dies abnormally before that finally runs, Windows never reaps the orphaned

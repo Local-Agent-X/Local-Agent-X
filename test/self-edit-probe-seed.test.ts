@@ -1,6 +1,6 @@
 /**
  * Tests for probe-provider seeding (seedProbeProvider in
- * self-edit-sandbox-gates.ts).
+ * self-edit/sandbox-gates.ts).
  *
  * The gated path's bind probe boots LAX on a FRESH data dir; without seeding it
  * seedProbeProvider writes settings.json {provider} and returns the canonical
@@ -16,7 +16,7 @@ import { join } from "node:path";
 const REAL_DIR = mkdtempSync(join(tmpdir(), "lax-seed-real-"));
 process.env.LAX_DATA_DIR = REAL_DIR;
 
-const { seedProbeProvider } = await import("../src/self-edit-sandbox-gates.js");
+const { seedProbeProvider } = await import("../src/self-edit/sandbox-gates.js");
 
 let probeDir: string;
 beforeEach(() => {

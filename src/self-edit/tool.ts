@@ -271,7 +271,7 @@ export const selfEditTool: ToolDefinition = {
       // _cwd is set (autopilot already provides isolation) or _unsafe is set.
       if (!internalCwd && !unsafe) {
         onProgress("Creating sandbox worktree…");
-        const { runSelfEditInSandbox, formatSandboxResult } = await import("../self-edit-sandbox.js");
+        const { runSelfEditInSandbox, formatSandboxResult } = await import("./sandbox.js");
         const { getRuntimeConfig } = await import("../config.js");
         const authToken = getRuntimeConfig().authToken;
         const result = await runSelfEditInSandbox({
@@ -309,7 +309,7 @@ export const selfEditTool: ToolDefinition = {
       if (unsafe && !internalCwd) {
         try {
           const { getBranchHead } = await import("../agency/worktree.js");
-          const { recordUnsafeEdit } = await import("../self-edit-rollback.js");
+          const { recordUnsafeEdit } = await import("./rollback.js");
           const preSha = getBranchHead(LAX_REPO_ROOT, "HEAD");
           const { createLogger } = await import("../logger.js");
           createLogger("self-edit.unsafe").warn(

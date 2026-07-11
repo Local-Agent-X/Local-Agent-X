@@ -13,8 +13,8 @@
  */
 
 import { rmSync } from "node:fs";
-import { gateBind, gateSmoke, killProbe } from "../self-edit-sandbox-gates.js";
-import { pickProbePort } from "../self-edit-sandbox.js";
+import { gateBind, gateSmoke, killProbe } from "../self-edit/sandbox-gates.js";
+import { pickProbePort } from "../self-edit/sandbox.js";
 import { getRuntimeConfig } from "../config.js";
 import type { AutopilotConfig, BootProof } from "./types.js";
 import { createLogger } from "../logger.js";

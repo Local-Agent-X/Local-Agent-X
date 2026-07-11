@@ -30,7 +30,7 @@ const ALLOWLIST: Record<string, string> = {
   // Deliberate ephemeral 0600 probe seed: writes a minimal {provider} to a
   // throwaway sandbox dataDir that's deleted in the caller's finally — must NOT
   // touch the real cache/file.
-  "src/self-edit-sandbox-gates.ts": "ephemeral self-edit probe seed, not the real settings",
+  "src/self-edit/sandbox-gates.ts": "ephemeral self-edit probe seed, not the real settings",
 };
 
 describe("settings.json I/O class lock", () => {

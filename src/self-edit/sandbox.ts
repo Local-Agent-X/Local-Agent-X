@@ -19,27 +19,27 @@
  * branch is preserved on disk for inspection (per existing mergeWorktree
  * behavior) and main tree stays untouched.
  *
- * Gate implementations live in self-edit-sandbox-gates.ts; the surgeon spawner
- * lives in self-edit/surgeon.ts; naming + probe-port helpers live in
- * self-edit-sandbox-naming.ts. Split out to keep files under the 400-LOC limit.
+ * Gate implementations live in sandbox-gates.ts; the surgeon spawner
+ * lives in surgeon.ts; naming + probe-port helpers live in
+ * sandbox-naming.ts. Split out to keep files under the 400-LOC limit.
  */
 
 import { rmSync } from "node:fs";
 import { type ChildProcess } from "node:child_process";
-import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getMergeDeltaFiles, getMergeDeltaDiff, securitySensitiveChangedFiles } from "./agency/worktree.js";
-import { releaseWorktreeSlot } from "./agency/worktree-core.js";
-import { recordMerge } from "./self-edit-rollback.js";
-import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
-import { runSurgeon, formatSurgeonOutput } from "./self-edit/surgeon.js";
-import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./self-edit/global-lock.js";
-import { fingerprintParentDeps, restoreParentDeps } from "./self-edit/parent-deps-guard.js";
-import { scanWorktreeForStagedSecrets } from "./self-edit/exfil-scan.js";
-import { refuteSelfEditMerge } from "./self-edit/refute-merge.js";
-import { redactSecrets } from "./security/secret-scanner.js";
-import { slugify, nowSlug, pickProbePort } from "./self-edit-sandbox-naming.js";
-export { pickProbePort } from "./self-edit-sandbox-naming.js";
+import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getMergeDeltaFiles, getMergeDeltaDiff, securitySensitiveChangedFiles } from "../agency/worktree.js";
+import { releaseWorktreeSlot } from "../agency/worktree-core.js";
+import { recordMerge } from "./rollback.js";
+import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, type GateResult } from "./sandbox-gates.js";
+import { runSurgeon, formatSurgeonOutput } from "./surgeon.js";
+import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./global-lock.js";
+import { fingerprintParentDeps, restoreParentDeps } from "./parent-deps-guard.js";
+import { scanWorktreeForStagedSecrets } from "./exfil-scan.js";
+import { refuteSelfEditMerge } from "./refute-merge.js";
+import { redactSecrets } from "../security/secret-scanner.js";
+import { slugify, nowSlug, pickProbePort } from "./sandbox-naming.js";
+export { pickProbePort } from "./sandbox-naming.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("self-edit.sandbox");
 
 // ── Types ──────────────────────────────────────────────────────────────────

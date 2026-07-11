@@ -29,10 +29,10 @@ import {
 } from "./agency/worktree.js";
 import { OTAManager } from "./ota-update.js";
 import { linkDirectoryInto, unlinkSharedJunctions } from "./agency/worktree-junctions.js";
-import { gateDeps, gateBuild, gateBuildAt, gateBind, gateBindAt, gateSmoke, killProbe, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit-sandbox-gates.js";
+import { gateDeps, gateBuild, gateBuildAt, gateBind, gateBindAt, gateSmoke, killProbe, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
-import { recordMerge } from "./self-edit-rollback.js";
-import { nowSlug, pickProbePort } from "./self-edit-sandbox-naming.js";
+import { recordMerge } from "./self-edit/rollback.js";
+import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
 import { getSetting } from "./settings.js";
 import { createLogger } from "./logger.js";
 

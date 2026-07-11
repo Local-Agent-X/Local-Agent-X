@@ -43,7 +43,7 @@ const sample = {
 
 describe("self-edit-rollback", () => {
   it("round-trips recordMerge → readLastMerge with surfaced=false", async () => {
-    const { recordMerge, readLastMerge } = await import("../src/self-edit-rollback.js");
+    const { recordMerge, readLastMerge } = await import("../src/self-edit/rollback.js");
     recordMerge(sample);
     const rec = readLastMerge();
     expect(rec).not.toBeNull();
@@ -57,13 +57,13 @@ describe("self-edit-rollback", () => {
   });
 
   it("readLastMerge() returns null when no record exists", async () => {
-    const { readLastMerge } = await import("../src/self-edit-rollback.js");
+    const { readLastMerge } = await import("../src/self-edit/rollback.js");
     expect(readLastMerge()).toBeNull();
   });
 
   it("surfaceUnacknowledgedMerge() flips surfaced to true exactly once", async () => {
     const { recordMerge, readLastMerge, surfaceUnacknowledgedMerge } =
-      await import("../src/self-edit-rollback.js");
+      await import("../src/self-edit/rollback.js");
     recordMerge(sample);
     surfaceUnacknowledgedMerge();
     expect(readLastMerge()!.surfaced).toBe(true);
@@ -73,7 +73,7 @@ describe("self-edit-rollback", () => {
   });
 
   it("recordMerge starts boot-pending with zero attempts", async () => {
-    const { recordMerge, readLastMerge } = await import("../src/self-edit-rollback.js");
+    const { recordMerge, readLastMerge } = await import("../src/self-edit/rollback.js");
     recordMerge(sample);
     const rec = readLastMerge()!;
     expect(rec.bootPending).toBe(true);
@@ -81,7 +81,7 @@ describe("self-edit-rollback", () => {
   });
 
   it("confirmMergeBoot clears the boot-pending flag", async () => {
-    const { recordMerge, readLastMerge, confirmMergeBoot } = await import("../src/self-edit-rollback.js");
+    const { recordMerge, readLastMerge, confirmMergeBoot } = await import("../src/self-edit/rollback.js");
     recordMerge(sample);
     confirmMergeBoot();
     expect(readLastMerge()!.bootPending).toBe(false);
@@ -89,7 +89,7 @@ describe("self-edit-rollback", () => {
 
   it("crashed-merge guard: first boot only records an attempt, second boot reverts", async () => {
     const { recordMerge, readLastMerge, revertPendingMergeIfCrashed } =
-      await import("../src/self-edit-rollback.js");
+      await import("../src/self-edit/rollback.js");
     recordMerge(sample);
 
     // First boot after the merge: don't revert (it hasn't tried to bind yet) —
@@ -108,7 +108,7 @@ describe("self-edit-rollback", () => {
 
   it("crashed-merge guard REFUSES to auto-revert over a dirty working tree", async () => {
     const { recordMerge, readLastMerge, revertPendingMergeIfCrashed } =
-      await import("../src/self-edit-rollback.js");
+      await import("../src/self-edit/rollback.js");
 
     // Build a real repo: commit a tracked file, then a second "merge" commit.
     const repo = mkdtempSync(join(tmpdir(), "self-edit-rollback-repo-"));
@@ -153,7 +153,7 @@ describe("self-edit-rollback", () => {
 
   it("crashed-merge guard is a no-op once boot is confirmed", async () => {
     const { recordMerge, confirmMergeBoot, revertPendingMergeIfCrashed } =
-      await import("../src/self-edit-rollback.js");
+      await import("../src/self-edit/rollback.js");
     recordMerge(sample);
     confirmMergeBoot();
     expect(revertPendingMergeIfCrashed()).toBeNull();

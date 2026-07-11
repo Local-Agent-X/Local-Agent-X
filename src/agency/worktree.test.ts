@@ -165,8 +165,8 @@ describe("self_edit merge-gate scoping (R6-B1/B2)", () => {
     // else a self_edit could weaken the gate and auto-merge it. Derived from the
     // protected-files.json manifest, so this fails loudly if the manifest drifts.
     const gateModules = [
-      "src/self-edit-sandbox.ts",
-      "src/self-edit-sandbox-gates.ts",
+      "src/self-edit/sandbox.ts",
+      "src/self-edit/sandbox-gates.ts",
       "src/self-edit/exfil-scan.ts",
       "src/agency/worktree-state.ts",
       "src/agency/worktree-lifecycle.ts",

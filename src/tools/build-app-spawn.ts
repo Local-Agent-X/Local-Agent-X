@@ -8,7 +8,7 @@
  *   1. Accepts an AbortSignal. On abort the subprocess tree dies via
  *      killProcessTree (Windows shell:true wraps the real binary in cmd.exe,
  *      so plain proc.kill leaves an orphan — same pattern as
- *      self-edit-sandbox-gates.ts). Closes gap A from Phase 2 where the
+ *      self-edit/sandbox-gates.ts). Closes gap A from Phase 2 where the
  *      adapter's abort flag flipped but the subprocess kept running.
  *   2. Lives outside `src/canonical-loop/` so the adapter-sandbox audit
  *      (test/canonical-loop-11-boundary-audit.test.ts) stays clean — the

@@ -1,23 +1,23 @@
 /**
  * Self-edit sandbox gates — build, bind, smoke. (The surgeon spawner lives in
- * self-edit/surgeon.ts.)
+ * surgeon.ts.)
  *
- * Split from self-edit-sandbox.ts to keep both files under the 400-LOC limit.
- * All exports here are called only from self-edit-sandbox.ts.
+ * Split from sandbox.ts to keep both files under the 400-LOC limit.
+ * All exports here are called only from sandbox.ts.
  */
 
 import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { runCommandInWorktree, getWorktreePath, getMergeDeltaFiles, isolateNodeModules, changedFilesTouchDeps } from "./agency/worktree.js";
-import { killProcessTree } from "./process-tree-kill.js";
-import { runSmokeAssertions } from "./self-edit-smoke-suite.js";
-import { buildSelfEditChildEnv } from "./self-edit/child-env.js";
-import { readActiveProvider } from "./self-edit/surgeon.js";
-import { getLaxDir } from "./lax-data-dir.js";
+import { runCommandInWorktree, getWorktreePath, getMergeDeltaFiles, isolateNodeModules, changedFilesTouchDeps } from "../agency/worktree.js";
+import { killProcessTree } from "../process-tree-kill.js";
+import { runSmokeAssertions } from "./smoke-suite.js";
+import { buildSelfEditChildEnv } from "./child-env.js";
+import { readActiveProvider } from "./surgeon.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("self-edit.sandbox-gates");
 const PROBE_CREDENTIAL_PATH_ENV = "LAX_PROBE_PROVIDER_AUTH_PATH";
 
@@ -303,7 +303,7 @@ export async function gateSmoke(port: number, authToken: string, signal?: AbortS
 }
 
 // The surgeon spawner (claude / codex / grok, picked from the active provider)
-// lives in self-edit/surgeon.ts — runSurgeon(). The sandbox calls it directly.
+// lives in surgeon.ts — runSurgeon(). The sandbox calls it directly.
 
 // ── Probe process cleanup helper ───────────────────────────────────────────
 

@@ -3,7 +3,7 @@
  *
  * Why: self_edit's gates run on the worktree branch, then the worktree merges
  * into main. The merge can combine the worktree with main commits no gate ever
- * saw, and the post-merge re-gate (in self-edit-sandbox.ts) only catches a
+ * saw, and the post-merge re-gate (in sandbox.ts) only catches a
  * broken BUILD. If the merged code boots but misbehaves at runtime, the operator
  * needs a one-command revert. We persist the pre/post SHA of the last self_edit
  * merge so revertLastMerge() can hard-reset the base branch, and surface a
@@ -13,10 +13,10 @@
 import { writeFileSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
-import { revertBranchTo, runRepoBuild } from "./agency/worktree.js";
+import { getLaxDir } from "../lax-data-dir.js";
+import { revertBranchTo, runRepoBuild } from "../agency/worktree.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("self-edit.rollback");
 
 export interface MergeRecord {
@@ -233,7 +233,7 @@ export function surfaceUnacknowledgedMerge(): void {
         `self_edit merged into ${rec.baseBranch} (${rec.postSha.slice(0, 8)})`,
         `  when: ${rec.ts}   files: ${rec.files}`,
         `  If the app is misbehaving since this merge, revert it:`,
-        `  call revertLastMerge() (self-edit-rollback) to reset ${rec.baseBranch} to the pre-merge state.`,
+        `  call revertLastMerge() (self-edit/rollback) to reset ${rec.baseBranch} to the pre-merge state.`,
         `─────────────────────────────────────────────`,
       ].join("\n"),
     );

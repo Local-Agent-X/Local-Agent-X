@@ -10,17 +10,17 @@
  * source is tainted for the rest of the run. The LLM can't "un-see" it.
  */
 
-import { decodedPayloadViews } from "./security/secret-scanner.js";
-import { getLaxDir } from "./lax-data-dir.js";
-import { CryptoAuditTrail, getSharedAuditTrail } from "./threat/audit-trail.js";
+import { decodedPayloadViews } from "../security/secret-scanner.js";
+import { getLaxDir } from "../lax-data-dir.js";
+import { CryptoAuditTrail, getSharedAuditTrail } from "../threat/audit-trail.js";
 import {
   type TaintSource,
   type TaintEntry,
   computeFingerprints,
   payloadFingerprints,
-} from "./data-lineage-fingerprint.js";
+} from "./fingerprint.js";
 
-export type { TaintSource, TaintEntry } from "./data-lineage-fingerprint.js";
+export type { TaintSource, TaintEntry } from "./fingerprint.js";
 
 // Per-session taint state
 const sessionTaint = new Map<string, TaintEntry[]>();

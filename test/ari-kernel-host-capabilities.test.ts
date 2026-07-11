@@ -194,7 +194,7 @@ describe("AriKernel host capability manifest", () => {
     // ariEvaluate receives non-empty taint → deny-tainted-shell fires. Proves
     // the kernel rule (not just the chunk-3 dataLineageGate) now enforces.
     const { recordSensitiveRead, getKernelTaintSources, clearSessionTaint } = await import(
-      "../src/data-lineage.js"
+      "../src/data-lineage/index.js"
     );
     const SID = "chat-e2e-taint-shell";
     clearSessionTaint(SID);
@@ -221,7 +221,7 @@ describe("AriKernel host capability manifest", () => {
     // deny-tainted-shell rule recognizes — so reading ~/.aws/credentials also
     // shuts the shell, not just web content.
     const { recordSensitiveRead, getKernelTaintSources, clearSessionTaint } = await import(
-      "../src/data-lineage.js"
+      "../src/data-lineage/index.js"
     );
     const SID = "chat-e2e-taint-file";
     clearSessionTaint(SID);

@@ -7,7 +7,7 @@ import { isAriRequired } from "./state.js";
 import { kernelClassForTool, isMcpToolName } from "./tool-class-map.js";
 import { lookupHostGrantId } from "./grants.js";
 import { ensureAriKernelScope, refreshAriKernelScope } from "./lifecycle.js";
-import { isSensitivePath } from "../data-lineage-paths.js";
+import { isSensitivePath } from "../data-lineage/index.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 
 const logger = createLogger("ari-kernel");

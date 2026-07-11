@@ -23,7 +23,7 @@
 // getLaxDir(). They are the strongest possible "is this a secret file" signal
 // for our OWN files: we KNOW exactly what we write, so we match THOSE basenames
 // rather than guessing. This is the ONE canonical enumeration — the read-taint
-// classifier (data-lineage-paths.ts isSensitivePath / extractSensitivePaths…),
+// classifier (data-lineage/paths.ts isSensitivePath / extractSensitivePaths…),
 // the file-access read gate + write block (file-access.ts SENSITIVE_PATTERNS /
 // coreProtectedFiles) ALL derive from it so they can never drift apart and
 // leave one of our own key files read-untainted or write-unprotected again.

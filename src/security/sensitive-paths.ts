@@ -2,7 +2,7 @@
  * Shared credential-file catalog — the ONE structured "is this path a credential
  * file" leaf, by file SHAPE (basename / extension / known cred-dir location).
  *
- * Both the read-taint classifier (data-lineage-paths.ts isSensitivePath) and the
+ * Both the read-taint classifier (data-lineage/paths.ts isSensitivePath) and the
  * file-access read gate (file-access.ts matchesSensitivePath) consume
  * {@link classifySensitivePath} so the gate can be a PROVABLE SUPERSET of the
  * taint classifier and the two can never drift on "what is a credential file."

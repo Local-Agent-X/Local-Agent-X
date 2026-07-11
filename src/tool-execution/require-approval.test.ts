@@ -470,14 +470,14 @@ describe("requireApprovalPhase — destructive reclassification", () => {
 describe("requireApprovalPhase — external-ingestion taint downgrades trusted user evidence", () => {
   // A memory promotion backed by an exact current-turn user span normally
   // stamps a user-evidence capability and continues silently. Once the
-  // session has ingested off-box content (data-lineage-external.ts), that
+  // session has ingested off-box content (data-lineage/external.ts), that
   // span may itself be laundered injection — the silent path must close and
   // the promotion must go through interactive approval (blocked unattended).
   const USER_TURN = "remember I prefer tabs over spaces";
   const CONTENT = "User prefers tabs over spaces";
 
   afterEach(async () => {
-    const { clearExternalIngestion } = await import("../data-lineage-external.js");
+    const { clearExternalIngestion } = await import("../data-lineage/external.js");
     for (const s of sessions) clearExternalIngestion(s);
   });
 
@@ -503,7 +503,7 @@ describe("requireApprovalPhase — external-ingestion taint downgrades trusted u
   });
 
   it("tainted session + same user-evidence span → interactive approval is REQUIRED", async () => {
-    const { recordExternalIngestion } = await import("../data-lineage-external.js");
+    const { recordExternalIngestion } = await import("../data-lineage/external.js");
     const s = pinned("Power");
     recordExternalIngestion(s);
     const events: ServerEvent[] = [];
@@ -522,7 +522,7 @@ describe("requireApprovalPhase — external-ingestion taint downgrades trusted u
   });
 
   it("tainted session + user-evidence span in an UNATTENDED run → hard-blocked", async () => {
-    const { recordExternalIngestion } = await import("../data-lineage-external.js");
+    const { recordExternalIngestion } = await import("../data-lineage/external.js");
     const s = pinned("Power");
     recordExternalIngestion(s);
     const ctx = promotionCtx(s, "cron");
@@ -545,7 +545,7 @@ describe("requireApprovalPhase — clean-session model self-save is silent", () 
   const UNRELATED_USER_TURN = "why is startup slow?";
 
   afterEach(async () => {
-    const { clearExternalIngestion } = await import("../data-lineage-external.js");
+    const { clearExternalIngestion } = await import("../data-lineage/external.js");
     for (const s of sessions) clearExternalIngestion(s);
   });
 
@@ -582,7 +582,7 @@ describe("requireApprovalPhase — clean-session model self-save is silent", () 
   });
 
   it("TAINTED session, same model-authored content → interactive approval REQUIRED", async () => {
-    const { recordExternalIngestion } = await import("../data-lineage-external.js");
+    const { recordExternalIngestion } = await import("../data-lineage/external.js");
     const s = pinned("Power");
     recordExternalIngestion(s);
     const events: ServerEvent[] = [];
@@ -597,7 +597,7 @@ describe("requireApprovalPhase — clean-session model self-save is silent", () 
   });
 
   it("TAINTED session, model-authored content, UNATTENDED run → hard-blocked", async () => {
-    const { recordExternalIngestion } = await import("../data-lineage-external.js");
+    const { recordExternalIngestion } = await import("../data-lineage/external.js");
     const s = pinned("Power");
     recordExternalIngestion(s);
     const ctx = modelSaveCtx(s, "cron");

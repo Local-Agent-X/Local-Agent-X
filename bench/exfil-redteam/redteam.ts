@@ -19,7 +19,7 @@ import { startAriKernel, ariEvaluate } from "../../src/ari-kernel/index.js";
 import {
   recordSensitiveRead, getKernelTaintSources, checkEgressTaintWithPayload,
   findTaintInPayload, detectSecretsInOutput, isSensitivePath, clearSessionTaint,
-} from "../../src/data-lineage.js";
+} from "../../src/data-lineage/index.js";
 import { checkCanariesInPayload } from "../../src/threat/canaries.js";
 import { checkOutboundRequest, checkOutboundPayload } from "../../src/tools/http-egress-guard.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../../src/memory/write-safely.js";

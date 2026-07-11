@@ -54,10 +54,10 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
     const reason = typeof body.reason === "string" ? body.reason.trim() : "";
     if (!sessionId) { json(400, { error: "sessionId is required" }); return true; }
     if (!reason) { json(400, { error: "reason is required" }); return true; }
-    const { declassifySession, declassifyTaintSource } = await import("../data-lineage.js");
+    const { declassifySession, declassifyTaintSource } = await import("../data-lineage/index.js");
     const opts = { reason, authorizedBy: role };
     const result = typeof body.source === "string" && body.source
-      ? declassifyTaintSource(sessionId, body.source as import("../data-lineage.js").TaintSource, opts)
+      ? declassifyTaintSource(sessionId, body.source as import("../data-lineage/index.js").TaintSource, opts)
       : declassifySession(sessionId, opts);
     logger.info(`[security] Declassified ${result.cleared} taint entr${result.cleared === 1 ? "y" : "ies"} for session ${sessionId} (by ${role})`);
     json(200, { ok: true, ...result }); return true;

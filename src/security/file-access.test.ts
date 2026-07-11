@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { evaluateFileAccess, confineToDir, matchesSensitivePath, pathIsWithin, realpathDeep } from "./file-access.js";
 import { openValidatedRead, readValidatedFile } from "./validated-io.js";
-import { isSensitivePath } from "../data-lineage-paths.js";
+import { isSensitivePath } from "../data-lineage/index.js";
 import { SecurityLayer } from "./layer-core.js";
 
 // Hermetic temp root, realpath-resolved so the test's lexical paths and the

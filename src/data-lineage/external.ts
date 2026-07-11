@@ -1,7 +1,7 @@
 /**
  * Data Lineage — per-session EXTERNAL-CONTENT ingestion registry.
  *
- * Sibling of the sensitive-read taint registry (data-lineage-taint.ts), but
+ * Sibling of the sensitive-read taint registry (taint.ts), but
  * for the OTHER trust axis. That registry answers "did this session touch OUR
  * secrets?" and gates EGRESS. This one answers "did this session ingest
  * UNTRUSTED off-box content (web fetch / http / browser / search / MCP)?" and

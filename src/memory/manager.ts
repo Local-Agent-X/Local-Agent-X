@@ -66,7 +66,7 @@ export interface PersistTurnInput {
   sessionId?: string;
   /**
    * The session ingested external (untrusted) content this run — web_fetch /
-   * http_request / browser / MCP results (see data-lineage-external.ts).
+   * http_request / browser / MCP results (see data-lineage/external.ts).
    * Blocks durable auto-promotion (auto-extract): an LLM paraphrase of
    * injected content erases the markers the content-based taint gate keys on.
    * Explicit remember/memory_save tool calls are unaffected (they stay behind

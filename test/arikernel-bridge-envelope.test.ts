@@ -21,7 +21,7 @@ import {
   clearSessionPolicy,
   checkSessionPolicy,
 } from "../src/session/policy.js";
-import { recordSensitiveRead, clearSessionTaint } from "../src/data-lineage.js";
+import { recordSensitiveRead, clearSessionTaint } from "../src/data-lineage/index.js";
 
 const cfg: BridgeConfig = {
   toolName: "ari_shell",

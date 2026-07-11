@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { executeToolCalls, dispatchSingleToolCall } from "./execute-tool.js";
 import { _clearDedupCacheForTests, dedupRecord } from "./dedup-cache.js";
 import { setAriRequired } from "../ari-kernel/state.js";
-import { clearSessionTaint, getTaintSummary } from "../data-lineage.js";
+import { clearSessionTaint, getTaintSummary } from "../data-lineage/index.js";
 import { clearSessionProfile, setSessionProfile } from "../autonomy/profile-store.js";
 import { setUnconfinedHostAcknowledgement } from "../sandbox/index.js";
 import type { ToolDefinition, ToolResult, ServerEvent } from "../types.js";

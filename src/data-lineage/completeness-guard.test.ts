@@ -23,8 +23,8 @@ import {
   clearSessionTaint,
   findTaintInPayload,
   checkEgressTaintWithPayload,
-} from "./data-lineage.js";
-import { computeFingerprints } from "./data-lineage-fingerprint.js";
+} from "./index.js";
+import { computeFingerprints } from "./fingerprint.js";
 import { createHash } from "node:crypto";
 
 // Deterministic high-entropy base64 body via chained SHA-256 blocks — every

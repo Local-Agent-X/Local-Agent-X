@@ -4,14 +4,14 @@
  * The shape-based classifiers that decide whether a file path is sensitive
  * (read-taint or attachment sink), whether text contains secret-shaped spans,
  * and how to redact them. Pure functions — no per-session state lives here;
- * callers feed results into the taint registry (data-lineage-taint.ts).
+ * callers feed results into the taint registry (taint.ts).
  */
 
 import { homedir } from "node:os";
-import { scanForSecrets } from "./security/secret-scanner.js";
-import { isAppAtRestSecretBasename } from "./security/known-secrets.js";
-import { classifySensitivePath } from "./security/sensitive-paths.js";
-import { getLaxDir } from "./lax-data-dir.js";
+import { scanForSecrets } from "../security/secret-scanner.js";
+import { isAppAtRestSecretBasename } from "../security/known-secrets.js";
+import { classifySensitivePath } from "../security/sensitive-paths.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 function pathSegments(p: string): string[] {
   return p.split(/[\\/]/).filter(Boolean);

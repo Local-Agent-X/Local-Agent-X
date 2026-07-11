@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig, uploadsDir } from "../config.js";
 import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionIdOf, realpathDeep } from "./paths.js";
-import { isSensitivePath } from "../data-lineage-paths.js";
+import { isSensitivePath } from "../data-lineage/index.js";
 
 // resolveAgentPath is the single source of truth for turning an agent's raw
 // `path` argument into an absolute path. It must anchor RELATIVE paths to the

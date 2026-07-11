@@ -29,7 +29,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { enforcePolicyPhase } from "./enforce-policy.js";
 import { egressAggregateGate } from "./egress-gates.js";
 import { startAriKernel, stopAriKernel } from "../ari-kernel/lifecycle.js";
-import { recordSensitiveRead, clearSessionTaint } from "../data-lineage.js";
+import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
 import type { ToolCallContext } from "./context.js";
 
 // AWS Access Key shape — matched by the credential scanner (checkOutboundRequest).

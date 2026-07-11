@@ -38,7 +38,7 @@
  */
 import type { ToolCall, ToolClass, ToolResult as AriToolResult, TaintLabel, TaintSource } from "@arikernel/core";
 import { generateId, now } from "@arikernel/core";
-import { getKernelTaintSources } from "../data-lineage.js";
+import { getKernelTaintSources } from "../data-lineage/index.js";
 import {
   DatabaseExecutor,
   FileExecutor,

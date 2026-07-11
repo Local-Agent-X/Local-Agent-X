@@ -24,7 +24,7 @@ import {
   detectSecretsInOutput,
   recordSensitiveRead,
   clearSessionTaint,
-} from "../src/data-lineage.js";
+} from "../src/data-lineage/index.js";
 
 describe("isSensitivePath — credential files flagged, lookalikes not", () => {
   it("flags ~/.aws/credentials (dir-scoped pair)", () => {

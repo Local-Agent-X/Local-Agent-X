@@ -1,5 +1,5 @@
 /**
- * External-content ingestion registry (data-lineage-external.ts) + its
+ * External-content ingestion registry (external.ts) + its
  * production hooks: the tool-class mark in runSandboxedPhase (D8) and the
  * parent←child propagation in pushCompletionToParent.
  *
@@ -22,14 +22,14 @@ import {
 	clearExternalIngestion,
 	propagateExternalIngestion,
 	isExternalIngestingTool,
-} from "./data-lineage-external.js";
-import { runSandboxedPhase } from "./tool-execution/run-sandboxed.js";
-import type { ToolCallContext } from "./tool-execution/context.js";
-import type { ToolDefinition } from "./types.js";
-import { readTool } from "./tools/read-write-tools.js";
-import { ok } from "./tools/result-helpers.js";
-import { pushCompletionToParent } from "./agency/handler-completion.js";
-import type { FieldAgent } from "./agency/handler-types.js";
+} from "./external.js";
+import { runSandboxedPhase } from "../tool-execution/run-sandboxed.js";
+import type { ToolCallContext } from "../tool-execution/context.js";
+import type { ToolDefinition } from "../types.js";
+import { readTool } from "../tools/read-write-tools.js";
+import { ok } from "../tools/result-helpers.js";
+import { pushCompletionToParent } from "../agency/handler-completion.js";
+import type { FieldAgent } from "../agency/handler-types.js";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 
@@ -155,7 +155,7 @@ describe("runSandboxedPhase — external-content ingestion hook (tool-class, D8)
 		// src/sanitize.ts contains the literal `<<<EXTERNAL_UNTRUSTED_CONTENT`
 		// wrap boundary — under content-sniffing, any dev session on this repo
 		// self-tainted and silently lost memory auto-promotion for life.
-		const sanitizePath = join(dirname(fileURLToPath(import.meta.url)), "sanitize.ts");
+		const sanitizePath = join(dirname(fileURLToPath(import.meta.url)), "..", "sanitize.ts");
 		const ctx = ctxFor(readTool, { path: sanitizePath }, s);
 		await runSandboxedPhase(ctx);
 		expect(ctx.result!.isError).toBeFalsy();

@@ -26,7 +26,7 @@ import {
   stampTrustedUserPromotion,
   trustedCurrentUserEvidence,
 } from "../memory/promotion-gate.js";
-import { hasExternalIngestion } from "../data-lineage-external.js";
+import { hasExternalIngestion } from "../data-lineage/external.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
   const promotion = describeMemoryPromotionRequest(
@@ -34,7 +34,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     ctx.args,
     ctx.sessionId || "default",
   );
-  // Session-level external-ingestion taint (data-lineage-external.ts)
+  // Session-level external-ingestion taint (data-lineage/external.ts)
   // downgrades "trusted current-user evidence" to risky: once this session
   // has seen off-box content (web/browser/MCP/email), a user-looking span may
   // itself be laundered injection, so the silent stamp-and-continue path is

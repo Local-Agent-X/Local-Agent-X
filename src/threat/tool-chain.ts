@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { DataClassification } from "./classification.js";
 import { fingerprintOf, isLearned } from "./trust-ledger.js";
-import { isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage-paths.js";
+import { isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage/index.js";
 import { outboundPayloadParts } from "../security/outbound-payload.js";
 
 // ═══════════════════════════════════════════════════════════════════

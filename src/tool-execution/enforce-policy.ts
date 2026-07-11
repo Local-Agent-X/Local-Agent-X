@@ -8,7 +8,7 @@
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
-import { getKernelTaintSources } from "../data-lineage.js";
+import { getKernelTaintSources } from "../data-lineage/index.js";
 import { WORKTREE_PATH_TOOLS, hasCapability } from "../tool-registry.js";
 import { taintedShellBlockReason, blockedSelfVerifyGuidance } from "./shell-block-guidance.js";
 import { getHookEngine } from "../hooks/hook-engine.js";

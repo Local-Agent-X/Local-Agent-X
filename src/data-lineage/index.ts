@@ -13,12 +13,12 @@
  * source is tainted for the rest of the run. The LLM can't "un-see" it.
  *
  * This module is a re-export barrel. The implementation lives in:
- *  - data-lineage-fingerprint.ts — privacy-preserving content fingerprints
- *  - data-lineage-taint.ts       — the stateful per-session taint registry
- *  - data-lineage-paths.ts       — stateless sensitive-path & secret detection
+ *  - fingerprint.ts — privacy-preserving content fingerprints
+ *  - taint.ts       — the stateful per-session taint registry
+ *  - paths.ts       — stateless sensitive-path & secret detection
  */
 
-export type { TaintSource } from "./data-lineage-fingerprint.js";
+export type { TaintSource } from "./fingerprint.js";
 
 export {
   recordSensitiveRead,
@@ -32,8 +32,8 @@ export {
   getKernelTaintSources,
   propagateTaint,
   getTaintSummary,
-} from "./data-lineage-taint.js";
-export type { DeclassifyOptions, DeclassifyResult } from "./data-lineage-taint.js";
+} from "./taint.js";
+export type { DeclassifyOptions, DeclassifyResult } from "./taint.js";
 
 export {
   isSensitivePath,
@@ -41,4 +41,4 @@ export {
   detectSecretsInOutput,
   redactSecretSpans,
   extractSensitivePathsFromCommand,
-} from "./data-lineage-paths.js";
+} from "./paths.js";

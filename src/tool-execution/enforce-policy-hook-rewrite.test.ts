@@ -12,7 +12,7 @@ vi.mock("../ari-kernel/index.js", () => ({
   ariObserve: vi.fn(),
 }));
 vi.mock("../session/policy.js", () => ({ checkSessionPolicy: vi.fn(() => null) }));
-vi.mock("../data-lineage.js", () => ({ getKernelTaintSources: vi.fn(() => []) }));
+vi.mock("../data-lineage/index.js", () => ({ getKernelTaintSources: vi.fn(() => []) }));
 vi.mock("../tool-registry.js", () => ({ WORKTREE_PATH_TOOLS: new Set(), hasCapability: vi.fn(() => false) }));
 vi.mock("./ari-action-map.js", () => ({ ARI_ACTION_MAP: {}, deriveAriAction: vi.fn(() => "read") }));
 vi.mock("./egress-gates.js", () => ({

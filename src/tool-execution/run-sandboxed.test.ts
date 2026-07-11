@@ -13,8 +13,7 @@ import { runSandboxedPhase } from "./run-sandboxed.js";
 import type { CallContext, ToolCallContext } from "./context.js";
 import { readTool, editTool } from "../tools/file-tools.js";
 import type { ToolDefinition } from "../types.js";
-import { checkEgressTaint, clearSessionTaint } from "../data-lineage-taint.js";
-import { detectSecretsInOutput } from "../data-lineage-paths.js";
+import { checkEgressTaint, clearSessionTaint, detectSecretsInOutput } from "../data-lineage/index.js";
 import { setUnconfinedHostAcknowledgement } from "../sandbox/index.js";
 
 const dirs = new Set<string>();

@@ -1,5 +1,5 @@
-import { propagateTaint } from "../data-lineage.js";
-import { propagateExternalIngestion } from "../data-lineage-external.js";
+import { propagateTaint } from "../data-lineage/index.js";
+import { propagateExternalIngestion } from "../data-lineage/external.js";
 import { createLogger } from "../logger.js";
 import type { FieldAgent } from "./handler-types.js";
 
@@ -36,7 +36,7 @@ export function pushCompletionToParent(
     // Same seam, other trust axis: if the child ingested off-box content
     // (web/browser/MCP), its result carries that content into the parent's
     // context — the parent's memory auto-promotion gate must see the mark too
-    // (data-lineage-external.ts, D6).
+    // (data-lineage/external.ts, D6).
     if (propagateExternalIngestion(childSession, parent)) {
       logger.info(`[handler] propagated external-ingestion mark from sub-agent ${agent.id} → parent session ${parent}`);
     }

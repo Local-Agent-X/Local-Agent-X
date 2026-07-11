@@ -9,7 +9,7 @@ import {
 } from "../security/known-secrets.js";
 import { AUDIT_SEED_BASENAMES, getAuditHmacKey, _resetAuditKeyCacheForTests } from "./audit-signing.js";
 import { KEYCHAIN_AT_REST_BASENAMES } from "../keychain.js";
-import { isSensitivePath } from "../data-lineage-paths.js";
+import { isSensitivePath } from "../data-lineage/index.js";
 
 // ── Build-time enrollment assertion (R4-04 / R4-05 drift lock) ──
 //

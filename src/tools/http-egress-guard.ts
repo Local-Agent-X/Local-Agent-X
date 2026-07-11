@@ -26,7 +26,7 @@ import { matchEgressList } from "../security/network-policy.js";
 import { classifyData } from "../threat/classification.js";
 import { loadDataEgressGuard } from "../security/security-config.js";
 import { getLaxDir } from "../lax-data-dir.js";
-import { isSensitiveAttachmentPath } from "../data-lineage.js";
+import { isSensitiveAttachmentPath } from "../data-lineage/index.js";
 import { realpathDeep } from "../security/file-access.js";
 
 let trustedDestinationsCache: { fingerprint: number; set: Set<string> } | null = null;

@@ -17,8 +17,7 @@
 
 import { checkOutboundRequest, checkOutboundPayload } from "../../../src/tools/http-egress-guard.js";
 import { wrapExternalContent } from "../../../src/sanitize.js";
-import { recordSensitiveRead, detectSecretsInOutput } from "../../../src/data-lineage.js";
-import { getKernelTaintSources, checkEgressTaintWithPayload, clearSessionTaint } from "../../../src/data-lineage-taint.js";
+import { recordSensitiveRead, detectSecretsInOutput, getKernelTaintSources, checkEgressTaintWithPayload, clearSessionTaint } from "../../../src/data-lineage/index.js";
 import { generateCanaries, registerSessionCanaries, checkCanariesInPayload } from "../../../src/threat/canaries.js";
 import { ThreatEngine } from "../../../src/threat/threat-engine.js";
 import { buildRunFirewall, evaluateRun, type RunFirewall } from "./ari-runtime.js";

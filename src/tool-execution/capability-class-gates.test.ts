@@ -15,7 +15,7 @@ import { hasCapability, WORKTREE_PATH_TOOLS, CAPABILITY_CLASS_MEMBERS, TOOLS, va
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 import { getAllTools } from "../tools/registry-build.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../security/types.js";
-import { recordSensitiveRead, clearSessionTaint } from "../data-lineage.js";
+import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
 import { scanForSecrets } from "../security/secret-scanner.js";
 import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/known-secrets.js";

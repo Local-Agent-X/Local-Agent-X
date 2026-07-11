@@ -16,7 +16,7 @@
 // effect.
 
 import { USER_HINTS, type ToolResult } from "../types.js";
-import { checkEgressTaintWithPayload } from "../data-lineage.js";
+import { checkEgressTaintWithPayload } from "../data-lineage/index.js";
 import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
 import { hasCapability } from "../tool-registry.js";
 import { checkOutboundRequest, checkOutboundPayload, checkAttachmentPaths } from "../tools/http-egress-guard.js";

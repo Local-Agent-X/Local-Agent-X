@@ -54,7 +54,7 @@ async function main(): Promise<void> {
   // mode that masked it in the chat test.
   {
     const { evaluateFileAccess } = await import("../../src/security/file-access.js");
-    const { isSensitivePath } = await import("../../src/data-lineage-paths.js");
+    const { isSensitivePath } = await import("../../src/data-lineage/index.js");
     const workspace = join(LAX_TMP, "workspace");
     mkdirSync(workspace, { recursive: true });
 

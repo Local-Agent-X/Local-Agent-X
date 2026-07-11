@@ -18,12 +18,12 @@ import {
   declassifySession,
   declassifyTaintSource,
   _setDeclassifyAuditTrail,
-} from "./data-lineage.js";
-import { Handler } from "./agency/handler.js";
-import { CryptoAuditTrail } from "./threat/audit-trail.js";
-import { runSandboxedPhase } from "./tool-execution/run-sandboxed.js";
-import type { ToolCallContext } from "./tool-execution/context.js";
-import type { ToolDefinition } from "./types.js";
+} from "./index.js";
+import { Handler } from "../agency/handler.js";
+import { CryptoAuditTrail } from "../threat/audit-trail.js";
+import { runSandboxedPhase } from "../tool-execution/run-sandboxed.js";
+import type { ToolCallContext } from "../tool-execution/context.js";
+import type { ToolDefinition } from "../types.js";
 
 describe("isSensitivePath — pattern spec table", () => {
   // The test table IS the spec. Each row is (path, expected). False-positive

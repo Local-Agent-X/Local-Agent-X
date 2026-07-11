@@ -35,7 +35,7 @@ export async function autoExtractAndSave(
   // Session-level external-content gate (D6). The content-based pre-flight
   // below can't catch taint an LLM paraphrase erased — when the SESSION
   // ingested external content (web/http/browser/MCP; see
-  // data-lineage-external.ts), no fact from this turn may auto-promote to
+  // data-lineage/external.ts), no fact from this turn may auto-promote to
   // durable memory, regardless of how clean the text now looks. Explicit
   // remember/memory_save tool calls stay allowed (gated + provenance-marked).
   if (hasExternalTaint) {

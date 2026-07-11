@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { evaluateFileAccess, confineToDir, matchesSensitivePath, pathIsWithin, realpathDeep } from "./file-access.js";
 import { openValidatedRead, readValidatedFile } from "./validated-io.js";
-import { isSensitivePath } from "../data-lineage/index.js";
+import { isSensitivePath } from "../../data-lineage/index.js";
 import { SecurityLayer } from "./layer-core.js";
 
 // Hermetic temp root, realpath-resolved so the test's lexical paths and the
@@ -419,11 +419,11 @@ describe("work-root .env carve-out", () => {
   beforeAll(async () => {
     mkdirSync(PROJ, { recursive: true });
     writeFileSync(join(PROJ, ".env.local"), "NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co\n");
-    const { setSessionWorkRoot } = await import("../workspace/paths.js");
+    const { setSessionWorkRoot } = await import("../../workspace/paths.js");
     setSessionWorkRoot(SESSION, PROJ);
   });
   afterAll(async () => {
-    const { clearSessionWorkRoot } = await import("../workspace/paths.js");
+    const { clearSessionWorkRoot } = await import("../../workspace/paths.js");
     clearSessionWorkRoot(SESSION);
   });
 

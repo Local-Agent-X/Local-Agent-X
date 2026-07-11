@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { scanForSecrets } from "../security/secret-scanner.js";
+import { scanForSecrets } from "../security/secrets/secret-scanner.js";
 import { checkCanariesInPayload } from "../threat/canaries.js";
 import { imageIsTextBearing } from "../tools/shared/image-binary-meta.js";
 import { checkAttachmentPaths } from "../tools/http-egress-guard.js";

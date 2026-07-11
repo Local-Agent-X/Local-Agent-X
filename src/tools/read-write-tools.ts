@@ -3,7 +3,7 @@ import { containsNulByte } from "../binary-sniff.js";
 import { dirname } from "node:path";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { moveToTrash } from "../safe-delete.js";
-import { readValidatedFile, writeValidatedFile } from "../security/validated-io.js";
+import { readValidatedFile, writeValidatedFile } from "../security/layer/index.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";

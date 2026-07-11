@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getOrCreateMasterKey, type KeychainProvider } from "./keychain.js";
-import { registerRedactedSecretValue } from "./security/known-secrets.js";
+import { registerRedactedSecretValue } from "./security/secrets/index.js";
 import { deriveOrigin, encrypt, decrypt } from "./secrets-crypto.js";
 import type {
   SecretEntry,

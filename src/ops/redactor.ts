@@ -24,7 +24,7 @@
  */
 
 import type { OpEvent } from "./types.js";
-import { redactSecrets } from "../security/secret-scanner.js";
+import { redactSecrets } from "../security/secrets/index.js";
 
 // ── Patterns ───────────────────────────────────────────────────────────────
 

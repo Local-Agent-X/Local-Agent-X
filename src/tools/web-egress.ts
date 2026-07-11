@@ -1,7 +1,7 @@
 import { Agent, fetch as undiciFetch } from "undici";
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { getInternalAgentToken } from "../rbac.js";
-import { resolveAndPinHost, evaluateEgressForUrl } from "../security/network-policy.js";
+import { resolveAndPinHost, evaluateEgressForUrl } from "../security/layer/index.js";
 
 /** Browser-like identity for agent web fetches. Many commerce/price sites
  *  (PriceCharting, TCGplayer, eBay) reject a non-browser User-Agent with an

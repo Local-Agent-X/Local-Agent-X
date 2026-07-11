@@ -8,9 +8,9 @@
  */
 
 import { homedir } from "node:os";
-import { scanForSecrets } from "../security/secret-scanner.js";
-import { isAppAtRestSecretBasename } from "../security/known-secrets.js";
-import { classifySensitivePath } from "../security/sensitive-paths.js";
+import { scanForSecrets } from "../security/secrets/index.js";
+import { isAppAtRestSecretBasename } from "../security/secrets/index.js";
+import { classifySensitivePath } from "../security/layer/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
 function pathSegments(p: string): string[] {

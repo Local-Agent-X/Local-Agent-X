@@ -3,8 +3,8 @@ import {
   CREDENTIAL_ENV_PREFIXES,
   CREDENTIAL_KEY_PATTERNS,
   redact,
-} from "../src/security/credential-patterns.js";
-import { redactCredentials } from "../src/security/credentials.js";
+} from "../src/security/secrets/index.js";
+import { redactCredentials } from "../src/security/secrets/index.js";
 
 const TAIL = "abcdef1234567890ABCDEFGH";
 

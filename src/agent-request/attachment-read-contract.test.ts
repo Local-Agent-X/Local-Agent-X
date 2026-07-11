@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig, uploadsDir } from "../config.js";
 import { resolveAgentPath } from "../workspace/paths.js";
-import { evaluateFileAccess } from "../security/file-access.js";
+import { evaluateFileAccess } from "../security/layer/index.js";
 import { processAttachments } from "./attachments.js";
 
 // ── END-TO-END CONTRACT (the guardrail that crosses the seam) ──

@@ -1,10 +1,10 @@
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
-import { getLaxDir } from "../lax-data-dir.js";
+import { getLaxDir } from "../../lax-data-dir.js";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import type { EgressMode } from "./network-policy.js";
 
-import { createLogger } from "../logger.js";
+import { createLogger } from "../../logger.js";
 const logger = createLogger("security.layer-core");
 
 export function loadEgressMode(): EgressMode {

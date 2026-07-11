@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join, basename, extname } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readValidatedFile } from "../../security/validated-io.js";
+import { readValidatedFile } from "../../security/layer/index.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const pexec = promisify(execFile);

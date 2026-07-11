@@ -7,7 +7,7 @@
 import { writeFileSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { randomBytes, createHash } from "node:crypto";
 import { containsNulByte } from "../binary-sniff.js";
-import { redact } from "../security/credential-patterns.js";
+import { redact } from "../security/secrets/index.js";
 import type { FactKind, RetainedFact } from "./types.js";
 import type { MemoryContentOrigin } from "./promotion-gate.js";
 

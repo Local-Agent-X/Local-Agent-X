@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeParseBody, atomicWriteFileSync } from "../server-utils.js";
 import { getThreatDashboard } from "../threat/threat-dashboard.js";
-import { scanForSecrets } from "../security/secret-scanner.js";
+import { scanForSecrets } from "../security/secrets/index.js";
 import { queryAuditLog, getAuditSummary } from "../ari-kernel/audit-viewer.js";
 import { runBenchmarks } from "../ari-kernel/benchmarks.js";
 import { runInjectionTests } from "../security-tests.js";

@@ -2,11 +2,11 @@ import { promises as dns } from "node:dns";
 import { isIP } from "node:net";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { SecurityDecision } from "../types.js";
-import { USER_HINTS } from "../types.js";
-import { getLaxDir } from "../lax-data-dir.js";
+import type { SecurityDecision } from "../../types.js";
+import { USER_HINTS } from "../../types.js";
+import { getLaxDir } from "../../lax-data-dir.js";
 
-import { createLogger } from "../logger.js";
+import { createLogger } from "../../logger.js";
 import {
   LOCAL_SERVICE_RECOVERY,
   isPrivateIPv4,
@@ -14,7 +14,7 @@ import {
   BLOCKED_HOSTNAMES,
 } from "./ip-classification.js";
 import { ollamaLoopbackPort } from "./security-config.js";
-import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
+import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
 const logger = createLogger("security.network-policy");
 

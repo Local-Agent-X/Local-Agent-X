@@ -35,7 +35,7 @@ import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockB
 import { fingerprintParentDeps, restoreParentDeps } from "./parent-deps-guard.js";
 import { scanWorktreeForStagedSecrets } from "./exfil-scan.js";
 import { refuteSelfEditMerge } from "./refute-merge.js";
-import { redactSecrets } from "../security/secret-scanner.js";
+import { redactSecrets } from "../security/secrets/index.js";
 import { slugify, nowSlug, pickProbePort } from "./sandbox-naming.js";
 export { pickProbePort } from "./sandbox-naming.js";
 

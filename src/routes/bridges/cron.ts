@@ -135,7 +135,7 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     const id = url.pathname.split("/")[3];
     const { existsSync: exists, readdirSync } = await import("node:fs");
     const { join: pjoin } = await import("node:path");
-    const { confineToDir } = await import("../../security/file-access.js");
+    const { confineToDir } = await import("../../security/layer/index.js");
     // Symlink-safe containment: an agent that plants a symlink at
     // ~/.lax/cron/reports/<id> must not redirect this read outside the root.
     const reportDir = confineToDir(pjoin(ctx.dataDir, "cron", "reports"), id);
@@ -149,7 +149,7 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     if (!/^[\w-]+\.md$/.test(file)) { json(400, { error: "Invalid file name" }); return true; }
     const { existsSync: exists, readFileSync: readF } = await import("node:fs");
     const { join: pjoin } = await import("node:path");
-    const { confineToDir } = await import("../../security/file-access.js");
+    const { confineToDir } = await import("../../security/layer/index.js");
     const reportPath = confineToDir(pjoin(ctx.dataDir, "cron", "reports"), pjoin(id, file));
     if (!reportPath || !exists(reportPath)) { json(404, { error: "Report not found" }); return true; }
     json(200, { content: readF(reportPath, "utf-8") }); return true;

@@ -17,7 +17,7 @@ describe("isProtectedFile — anchored to the platform root", () => {
     expect(isProtectedFile("src/index.ts").protected).toBe(true);
     expect(isProtectedFile(join(REPO_ROOT, "src/index.ts")).protected).toBe(true);
     expect(isProtectedFile("src/types.ts").protected).toBe(true);
-    expect(isProtectedFile(join(REPO_ROOT, "src/security/file-access.ts")).protected).toBe(true);
+    expect(isProtectedFile(join(REPO_ROOT, "src/security/layer/file-access.ts")).protected).toBe(true);
     expect(isProtectedFile(join(REPO_ROOT, "src/canonical-loop/turn-loop/decide-outcome.ts")).protected).toBe(true);
   });
 
@@ -54,7 +54,7 @@ describe("pathMatchesProtected — segment-anchored matching on a repo-relative 
   });
 
   it("matches a directory entry across its whole subtree", () => {
-    expect(pathMatchesProtected("src/security/file-access.ts", "src/security/")).toBe(true);
+    expect(pathMatchesProtected("src/security/layer/file-access.ts", "src/security/")).toBe(true);
     expect(pathMatchesProtected("src/canonical-loop/turn-loop/x.ts", "src/canonical-loop/")).toBe(true);
   });
 });

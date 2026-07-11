@@ -30,7 +30,7 @@
  */
 import { type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
-import { loadFileAccessMode } from "../../security/security-config.js";
+import { loadFileAccessMode } from "../../security/layer/security-config.js";
 
 interface FiredFlag { fired: boolean }
 

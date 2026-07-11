@@ -1,8 +1,8 @@
 import { resolve, relative, join, isAbsolute } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import type { SecurityDecision } from "../types.js";
-import { getLaxDir } from "../lax-data-dir.js";
-import { USER_HINTS } from "../types.js";
+import type { SecurityDecision } from "../../types.js";
+import { getLaxDir } from "../../lax-data-dir.js";
+import { USER_HINTS } from "../../types.js";
 import {
   CONTEXT_RESTRICTED_TOOLS,
   WORKTREE_REQUIRED_TOOLS,
@@ -13,12 +13,12 @@ import {
 import { evaluateFileAccess, realpathDeep, pathIsWithin, canonicalAllowForms } from "./file-access.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
-import { kernelClassForTool } from "../ari-kernel/tool-class-map.js";
-import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../tool-registry.js";
+import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
+import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
 import { loadEgressMode, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy } from "./security-config.js";
 
-import { createLogger } from "../logger.js";
+import { createLogger } from "../../logger.js";
 const logger = createLogger("security.layer-core");
 
 // Extract a list of path strings from a JSON-array-string arg (pdf_merge.files).

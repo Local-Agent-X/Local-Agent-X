@@ -14,11 +14,11 @@ import { dataLineageGate, egressGuardGate, canaryEgressGate } from "./enforce-po
 import { hasCapability, WORKTREE_PATH_TOOLS, CAPABILITY_CLASS_MEMBERS, TOOLS, validateCapabilitySets } from "../tool-registry.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 import { getAllTools } from "../tools/registry-build.js";
-import { WORKTREE_REQUIRED_TOOLS } from "../security/types.js";
+import { WORKTREE_REQUIRED_TOOLS } from "../security/layer/index.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
-import { scanForSecrets } from "../security/secret-scanner.js";
+import { scanForSecrets } from "../security/secrets/index.js";
 import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
-import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/known-secrets.js";
+import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/secrets/index.js";
 import { generateCanaries, registerSessionCanaries, clearSessionCanaries, checkCanariesInPayload, _setCanaryAuditTrail } from "../threat/canaries.js";
 import { CryptoAuditTrail } from "../threat/audit-trail.js";
 import { getLaxDir } from "../lax-data-dir.js";

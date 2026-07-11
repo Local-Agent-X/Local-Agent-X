@@ -29,7 +29,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
-import { realpathDeep } from "../security/file-access.js";
+import { realpathDeep } from "../security/layer/index.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("read-state");

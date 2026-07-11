@@ -1,5 +1,5 @@
 import { runSurgeon } from "./surgeon.js";
-import { redactSecrets } from "../security/secret-scanner.js";
+import { redactSecrets } from "../security/secrets/index.js";
 
 const MAX_OUTPUT_CHARS = 4000;
 

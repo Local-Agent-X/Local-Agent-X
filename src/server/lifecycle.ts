@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { setupChatWebSocket } from "../chat-ws/index.js";
-import { runSecurityAudit, printAuditReport } from "../security/security-audit.js";
+import { runSecurityAudit, printAuditReport } from "../security/layer/index.js";
 import { startAriKernel } from "../ari-kernel/index.js";
 import { EventBus } from "../event-bus.js";
 import { ConfigWatcher } from "../config-hot-reload.js";

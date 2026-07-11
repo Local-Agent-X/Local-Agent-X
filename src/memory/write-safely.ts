@@ -23,7 +23,7 @@ import {
   sanitizeForMemory,
   stripControlChars,
 } from "../sanitize.js";
-import { redact } from "../security/credential-patterns.js";
+import { redact } from "../security/secrets/index.js";
 import { createLogger } from "../logger.js";
 import { atomicWriteFileSync } from "./utils.js";
 import { PERSONALITY_FILES } from "./personality.js";

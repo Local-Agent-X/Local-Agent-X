@@ -11,7 +11,7 @@
  */
 
 import { CREDENTIAL_PATTERNS } from "./credential-patterns.js";
-import { normalizeHomoglyphs, stripControlChars } from "../sanitize.js";
+import { normalizeHomoglyphs, stripControlChars } from "../../sanitize.js";
 import { knownSecretValues, hasKnownSecretValues } from "./known-secrets.js";
 import {
   type SecretMatch,

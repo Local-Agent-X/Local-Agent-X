@@ -1,11 +1,11 @@
-import type { SecurityDecision } from "../types.js";
-import { USER_HINTS } from "../types.js";
+import type { SecurityDecision } from "../../types.js";
+import { USER_HINTS } from "../../types.js";
 import type { FileAccessMode, InlineEvalPolicy, ToolCallContext } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
-import { resolvePath as resolveSqlDbPath } from "../tools/sql-tools.js";
+import { resolvePath as resolveSqlDbPath } from "../../tools/sql-tools.js";
 import { evaluateWebFetch, type EgressMode } from "./network-policy.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
-import type { KernelClass } from "../tool-registry.js";
+import type { KernelClass } from "../../tool-registry.js";
 
 export interface KernelClassPolicyCtx {
   egressAllowlist: ReadonlySet<string>;

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { corsHeaders, jsonResponse } from "../server-utils.js";
-import { confineToDir } from "../security/file-access.js";
+import { confineToDir } from "../security/layer/index.js";
 import { getPageBundle } from "./static-bundle.js";
 import type { LAXConfig } from "../types.js";
 

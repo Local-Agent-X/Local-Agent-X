@@ -17,7 +17,7 @@ import { ToolPolicy, type ToolPolicyConfig } from "./tool-policy/index.js";
 import { RBACManager } from "./rbac.js";
 import { checkRegexSafety } from "./safe-regex.js";
 import { classifyData } from "./threat/threat-engine.js";
-import { evaluateShellCommand } from "./security/shell-policy.js";
+import { evaluateShellCommand } from "./security/layer/index.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // SecurityLayer Tests

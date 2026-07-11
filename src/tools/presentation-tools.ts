@@ -265,7 +265,7 @@ const presentationEdit: ToolDefinition = {
       const { replaceTextInDeck, setSlideTitle, deleteSlide, addImageSlide, slideFileNames } = await import("./shared/pptx-edit.js");
       // O_NOFOLLOW validated read — same TOCTOU posture as every other
       // caller-supplied-path reader (the path itself is pathArgs-gated).
-      const { readValidatedFile } = await import("../security/validated-io.js");
+      const { readValidatedFile } = await import("../security/layer/index.js");
       const zip = await JSZip.loadAsync(readValidatedFile(fp));
       if (slideFileNames(zip).length === 0) return err(`${fp} has no slides — not a .pptx deck?`);
 

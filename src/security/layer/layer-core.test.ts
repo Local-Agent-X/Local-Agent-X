@@ -8,9 +8,9 @@ import { evaluateShellCommand } from "./shell-policy.js";
 import { detectInlineInterpreterEval } from "./shell-detectors.js";
 import { evaluateShellCommandAndPaths, evaluateShellPaths } from "./shell-path-guard.js";
 import { evaluateWebFetch } from "./network-policy.js";
-import { CAPABILITY_CLASS_MEMBERS, TOOL_PATH_ARGS } from "../tool-registry.js";
-import { uploadsDir } from "../config.js";
-import { mapUploadsRef } from "../workspace/paths.js";
+import { CAPABILITY_CLASS_MEMBERS, TOOL_PATH_ARGS } from "../../tool-registry.js";
+import { uploadsDir } from "../../config.js";
+import { mapUploadsRef } from "../../workspace/paths.js";
 
 // All tests build a SecurityLayer with an explicit fileAccessMode so the
 // constructor doesn't read ~/.lax/security.json and produce host-dependent

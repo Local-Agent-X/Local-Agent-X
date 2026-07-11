@@ -16,7 +16,7 @@ import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
-import { readValidatedFile } from "../security/validated-io.js";
+import { readValidatedFile } from "../security/layer/index.js";
 import { resolveOfficeTheme, argb, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { cleanText } from "./shared/office-md.js";
 import { collapseFamily } from "./shared/collapse-family.js";

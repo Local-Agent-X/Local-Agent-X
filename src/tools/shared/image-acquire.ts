@@ -23,7 +23,7 @@ import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import { readValidatedFile } from "../../security/validated-io.js";
+import { readValidatedFile } from "../../security/layer/index.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { workspacePath } from "../../config.js";
 import { canonicalFetch, EgressRedirectBlocked, BROWSER_USER_AGENT, BROWSER_ACCEPT_LANGUAGE } from "../web-egress.js";

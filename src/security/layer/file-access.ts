@@ -1,12 +1,12 @@
 import { resolve, relative, dirname, basename, isAbsolute, sep } from "node:path";
-import type { SecurityDecision } from "../types.js";
-import { USER_HINTS } from "../types.js";
+import type { SecurityDecision } from "../../types.js";
+import { USER_HINTS } from "../../types.js";
 import type { FileAccessMode } from "./types.js";
-import { isAppAtRestSecretBasename } from "./known-secrets.js";
+import { isAppAtRestSecretBasename } from "../secrets/known-secrets.js";
 import { classifySensitivePath } from "./sensitive-paths.js";
 import { SYSTEM_DIR_PATTERNS } from "./catastrophic-paths.js";
-import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../workspace/paths.js";
-import { getLaxDir } from "../lax-data-dir.js";
+import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../../workspace/paths.js";
+import { getLaxDir } from "../../lax-data-dir.js";
 
 // ── Containment predicate (the ONE lexical "is `target` inside `root`") ──
 //
@@ -115,7 +115,7 @@ const SENSITIVE_PATTERNS = [
 // use, and importing from here would be a cycle). Re-exported so the many
 // existing consumers (egress guard, shell detectors, layer-core, read-state,
 // validated-io, run-sandboxed) keep their import path.
-export { realpathDeep, canonicalAllowForms } from "../workspace/paths.js";
+export { realpathDeep, canonicalAllowForms } from "../../workspace/paths.js";
 
 // A work-rooted session (auto-build chunk worker) owns its project's env
 // files: scaffolding <workRoot>/.env.local with placeholders is the sanctioned

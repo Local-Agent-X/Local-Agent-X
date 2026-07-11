@@ -4,7 +4,7 @@ import type { Duplex } from "node:stream";
 import {
   evaluateEgressForUrl,
   resolveAndPinHost,
-} from "../security/network-policy.js";
+} from "../security/layer/index.js";
 import { getRuntimeConfig } from "../config.js";
 
 export interface BrowserProxyDialTarget {

@@ -4,9 +4,9 @@ import { join } from "node:path";
 
 import { USER_HINTS } from "../src/types.js";
 import type { SecurityDecision, ToolResult } from "../src/types.js";
-import { evaluateFileAccess } from "../src/security/file-access.js";
-import { evaluateShellCommand } from "../src/security/shell-policy.js";
-import { evaluateWebFetch } from "../src/security/network-policy.js";
+import { evaluateFileAccess } from "../src/security/layer/index.js";
+import { evaluateShellCommand } from "../src/security/layer/index.js";
+import { evaluateWebFetch } from "../src/security/layer/index.js";
 import { SecurityLayer } from "../src/security/index.js";
 import { ToolPolicy } from "../src/tool-policy/index.js";
 import { makeThreatEnginePack } from "../src/tool-policy/packs/threat-engine-pack.js";

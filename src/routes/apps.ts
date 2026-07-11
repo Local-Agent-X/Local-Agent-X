@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
-import { confineToDir } from "../security/file-access.js";
+import { confineToDir } from "../security/layer/index.js";
 import { renderApp } from "../app-renderer/index.js";
 import { loadSettings, reloadSettings, saveSettings } from "../settings.js";
 import { readDevServerRecord, registerDevServer, listDevServerRecords } from "../tools/dev-server.js";

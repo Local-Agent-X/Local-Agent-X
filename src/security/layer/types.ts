@@ -1,6 +1,6 @@
 // ── Tool call context ──
 
-import { CAPABILITY_CLASS_MEMBERS } from "../tool-registry.js";
+import { CAPABILITY_CLASS_MEMBERS } from "../../tool-registry.js";
 
 export type CallContext = "local" | "api" | "delegated" | "cron";
 

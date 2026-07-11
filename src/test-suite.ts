@@ -130,7 +130,7 @@ async function testModuleImports(): Promise<void> {
     "./security-tests.js",
     "./threat/threat-dashboard.js",
     "./security/egress-policy.js",
-    "./security/secret-scanner.js",
+    "./security/secrets/secret-scanner.js",
     "./file-audit.js",
     "./tool-execution/rate-limiter.js",
     "./voice/voice-commands.js",

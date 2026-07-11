@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { TOOL_POLICIES } from "../src/tool-policy/tool-policies.js";
 import { CAPABILITY_CLASS_MEMBERS } from "../src/tool-registry.js";
-import { WORKTREE_REQUIRED_TOOLS } from "../src/security/types.js";
+import { WORKTREE_REQUIRED_TOOLS } from "../src/security/layer/index.js";
 import { EDIT_TOOLS } from "../src/agent-guards/verify-gate.js";
 import { allTools } from "../src/tools/registry-build.js";
 

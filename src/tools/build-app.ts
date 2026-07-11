@@ -49,7 +49,7 @@ import {
 } from "../canonical-loop/index.js";
 import { createAppBuildAdapter } from "../canonical-loop/public/build-adapters.js";
 import { SecurityLayer } from "../security/index.js";
-import { loadFileAccessModeAtLeast } from "../security/security-config.js";
+import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
 import type { Op, OpVisibility } from "../ops/types.js";
 import { readTool, writeTool, editTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";

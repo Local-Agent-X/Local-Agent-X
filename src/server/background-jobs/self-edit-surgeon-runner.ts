@@ -15,7 +15,7 @@ import { type AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/index.js";
 import { extractAgentOutput } from "../../server-utils.js";
 import { SecurityLayer } from "../../security/index.js";
-import { loadFileAccessModeAtLeast } from "../../security/security-config.js";
+import { loadFileAccessModeAtLeast } from "../../security/layer/index.js";
 import type { LAXConfig, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";

@@ -5,7 +5,7 @@ import { runAgentViaCanonical } from "../../canonical-loop/index.js";
 import { stripEphemeralMessages } from "../../providers/sanitize.js";
 import { extractAgentOutput } from "../../server-utils.js";
 import { SecurityLayer } from "../../security/index.js";
-import { loadFileAccessModeAtLeast } from "../../security/security-config.js";
+import { loadFileAccessModeAtLeast } from "../../security/layer/index.js";
 import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
 import type { MemoryIndex, MemoryManager } from "../../memory/index.js";
 import type { SecretsStore } from "../../secrets.js";

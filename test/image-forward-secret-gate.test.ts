@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { imageIsTextBearing, detectMime } from "../src/tools/shared/image-binary-meta.js";
-import { scanForSecrets } from "../src/security/secret-scanner.js";
+import { scanForSecrets } from "../src/security/secrets/index.js";
 
 // Regression: the bridge image-forward loop (bootstrap-bridges.ts) decoded raster
 // image bytes as UTF-8 and ran scanForSecrets over them. Compressed binary noise

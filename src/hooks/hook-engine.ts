@@ -16,7 +16,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { HookDefinition, HookEvent, HookEventContext, HookResult, HooksConfig } from "./hook-types.js";
-import { CREDENTIAL_ENV_PREFIXES } from "../security/credential-patterns.js";
+import { CREDENTIAL_ENV_PREFIXES } from "../security/secrets/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("hooks.hook-engine");

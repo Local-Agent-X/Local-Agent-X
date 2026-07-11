@@ -5,7 +5,7 @@ import {
   knownSecretValues,
   registerRedactedSecretValue,
   unregisterRedactedSecretValue,
-} from "./security/known-secrets.js";
+} from "./security/secrets/known-secrets.js";
 import {
   INJECTION_PATTERNS,
   ANGLE_HOMOGLYPHS,

@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { jsonResponse } from "../server-utils.js";
-import { confineToDir } from "../security/file-access.js";
+import { confineToDir } from "../security/layer/index.js";
 import { staticBuildDistDir } from "../tools/app-run-target.js";
 import { ensureDevServerRunning, readDevServerRecord } from "../tools/dev-server.js";
 import { deriveConnectorCapability } from "./app-connector-auth.js";

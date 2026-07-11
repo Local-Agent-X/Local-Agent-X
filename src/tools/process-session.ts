@@ -16,7 +16,7 @@ import { dirname, basename, resolve, sep } from "node:path";
 import { buildSanitizedEnv } from "./shell-tools.js";
 import { resolveWindowsShell } from "./shell-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
-import { evaluateShellCommand } from "../security/shell-policy.js";
+import { evaluateShellCommand } from "../security/layer/index.js";
 import { getSandboxMode, wrapSpawnForSandbox } from "../sandbox/index.js";
 import { projectRoot } from "../workspace/paths.js";
 

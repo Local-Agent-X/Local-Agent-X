@@ -12,7 +12,7 @@ import type { Operation, OperationPhase } from "./operation-types.js";
 import type { AutopilotConfig } from "./types.js";
 import type { ToolDefinition, LAXConfig } from "../types.js";
 import { SecurityLayer } from "../security/index.js";
-import { loadFileAccessModeAtLeast } from "../security/security-config.js";
+import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
 import { extractAgentOutput } from "../server-utils.js";
 import { registerAutopilotSession, unregisterAutopilotSession, getSelfEditCount } from "./registry.js";
 import { buildAutopilotNudge, type NudgeContext } from "./nudge.js";

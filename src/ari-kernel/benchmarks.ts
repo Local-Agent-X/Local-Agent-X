@@ -7,7 +7,7 @@
 
 import { SecurityLayer } from "../security/index.js";
 import { detectInjection } from "../sanitize.js";
-import { scanForSecrets } from "../security/secret-scanner.js";
+import { scanForSecrets } from "../security/secrets/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("ari-benchmarks");

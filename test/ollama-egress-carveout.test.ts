@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { ollamaPortFromUrl } from "../src/security/security-config.js";
-import { evaluateWebFetch } from "../src/security/network-policy.js";
+import { ollamaPortFromUrl } from "../src/security/layer/index.js";
+import { evaluateWebFetch } from "../src/security/layer/index.js";
 
 // The agent must be able to reach its own local ollama embed API (default
 // 127.0.0.1:11434) for RAG — but the SSRF guard blocks all loopback by default.

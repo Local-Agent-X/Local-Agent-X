@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CanonicalLoopContext } from "./types.js";
 import { falseRefusalMiddleware, looksLikeFalseFileRefusal } from "./false-refusal.js";
-import { loadFileAccessMode } from "../../security/security-config.js";
+import { loadFileAccessMode } from "../../security/layer/security-config.js";
 
-vi.mock("../../security/security-config.js", () => ({
+vi.mock("../../security/layer/security-config.js", () => ({
   loadFileAccessMode: vi.fn(() => "unrestricted"),
 }));
 const mockMode = loadFileAccessMode as unknown as ReturnType<typeof vi.fn>;

@@ -171,7 +171,7 @@ describe("self_edit merge-gate scoping (R6-B1/B2)", () => {
       "src/agency/worktree-state.ts",
       "src/agency/worktree-lifecycle.ts",
       "src/tool-policy/anything.ts",   // subtree-protected
-      "src/security/secret-scanner.ts",
+      "src/security/secrets/secret-scanner.ts",
       "src/auth/index.ts",
       "config/protected-files.json",
     ];

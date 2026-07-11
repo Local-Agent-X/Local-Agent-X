@@ -1,12 +1,12 @@
 import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
-import type { SecurityDecision } from "../types.js";
-import { USER_HINTS } from "../types.js";
+import type { SecurityDecision } from "../../types.js";
+import { USER_HINTS } from "../../types.js";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
-import { isProtectedFile } from "../config-loader.js";
-import { isLockedBaselinePath } from "../tools/app-tools/write-guard.js";
+import { isProtectedFile } from "../../config-loader.js";
+import { isLockedBaselinePath } from "../../tools/app-tools/write-guard.js";
 
 // ── Best-effort shell file-access confinement (defense in depth) ──
 //

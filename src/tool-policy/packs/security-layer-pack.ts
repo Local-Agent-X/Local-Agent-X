@@ -3,7 +3,7 @@
  * context checks). Rule semantics are unchanged.
  */
 import type { SecurityLayer } from "../../security/index.js";
-import { CONTEXT_RESTRICTED_TOOLS, WORKTREE_REQUIRED_TOOLS } from "../../security/types.js";
+import { CONTEXT_RESTRICTED_TOOLS, WORKTREE_REQUIRED_TOOLS } from "../../security/layer/index.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
 const PACK_ID = "security-layer";

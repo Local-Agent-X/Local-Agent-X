@@ -4,8 +4,8 @@ import { join } from "node:path";
 import {
   evaluateShellCommand,
   detectObfuscation,
-} from "../src/security/shell-policy.js";
-import { evaluateShellCommandAndPaths } from "../src/security/shell-path-guard.js";
+} from "../src/security/layer/index.js";
+import { evaluateShellCommandAndPaths } from "../src/security/layer/index.js";
 
 const isWin = process.platform === "win32";
 

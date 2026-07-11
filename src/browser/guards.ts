@@ -4,7 +4,7 @@
  * under the file-size cap.
  */
 import type { BrowserContext } from "playwright";
-import { evaluateEgressForUrl } from "../security/network-policy.js";
+import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { getRuntimeConfig } from "../config.js";
 
 /** Schemes that must never be reached via a top-level document navigation —

@@ -21,7 +21,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { scanForSecrets } from "../security/secret-scanner.js";
+import { scanForSecrets } from "../security/secrets/index.js";
 
 /** Per-file scan budget — skip pathological large additions (e.g. a vendored
  *  blob or generated lockfile) rather than choke the gate. */

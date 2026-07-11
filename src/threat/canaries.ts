@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-import { decodedPayloadViews } from "../security/secret-scanner.js";
+import { decodedPayloadViews } from "../security/secrets/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { CryptoAuditTrail, getSharedAuditTrail } from "./audit-trail.js";
 

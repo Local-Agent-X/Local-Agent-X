@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Force the secret-scan gate to trip so we exercise the block path deterministically.
 const scanClean = { clean: true, findings: [] as unknown[] };
 const scanState = { value: scanClean as { clean: boolean; findings: unknown[] } };
-vi.mock("../security/secret-scanner.js", () => ({
+vi.mock("../security/secrets/secret-scanner.js", () => ({
   scanForSecrets: () => scanState.value,
 }));
 // Keep the canary tripwire quiet so it never masks/duplicates the assertion.

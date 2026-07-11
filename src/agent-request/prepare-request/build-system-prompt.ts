@@ -10,8 +10,8 @@ import type { IntegrationRegistry } from "../../integrations/index.js";
 import { loadSystemPrompt } from "../../config-loader.js";
 import { createLogger } from "../../logger.js";
 import { providerRiderFor } from "./provider-riders.js";
-import type { FileAccessMode } from "../../security/types.js";
-import { loadFileAccessMode } from "../../security/security-config.js";
+import type { FileAccessMode } from "../../security/layer/index.js";
+import { loadFileAccessMode } from "../../security/layer/index.js";
 import { harnessNotice } from "../../context/system-prompt-builder.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");

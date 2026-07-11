@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { DataClassification } from "./classification.js";
 import { fingerprintOf, isLearned } from "./trust-ledger.js";
 import { isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage/index.js";
-import { outboundPayloadParts } from "../security/outbound-payload.js";
+import { outboundPayloadParts } from "../security/secrets/index.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // TOOL CHAIN ANALYSIS — Track tool sequences, block exfiltration

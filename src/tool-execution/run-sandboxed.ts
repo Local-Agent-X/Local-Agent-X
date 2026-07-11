@@ -19,7 +19,7 @@ import { ToolTimeoutError } from "./tool-timeout.js";
 import { timeout, blocked, ok } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { isAbsolute } from "node:path";
-import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/file-access.js";
+import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/layer/index.js";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
 import { unattendedShellBlock } from "./unattended-shell-gate.js";
 import { createToolRunner } from "./tool-runner.js";

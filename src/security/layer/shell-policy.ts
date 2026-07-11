@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
-import type { SecurityDecision } from "../types.js";
-import { USER_HINTS } from "../types.js";
+import type { SecurityDecision } from "../../types.js";
+import { USER_HINTS } from "../../types.js";
 import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
-import { countTopLevelPipes } from "../tools/shell-translate.js";
+import { countTopLevelPipes } from "../../tools/shell-translate.js";
 import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
 import { detectCatastrophicRm } from "./catastrophic-paths.js";
 import {

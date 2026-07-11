@@ -287,7 +287,7 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     // a chat export legitimately reads a user-chosen dir (~/Downloads, a USB
     // drive) outside it. The dir is scanned non-recursively (ingest.ts), so the
     // root is the only path that gets read.
-    const { realpathDeep, matchesSensitivePath } = await import("../security/file-access.js");
+    const { realpathDeep, matchesSensitivePath } = await import("../security/layer/index.js");
     const { getLaxDir } = await import("../lax-data-dir.js");
     let realRoot: string;
     try { realRoot = realpathDeep(path); } catch { json(400, { error: "path not accessible" }); return true; }

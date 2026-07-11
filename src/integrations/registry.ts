@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { IntegrationConfig } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
-import { evaluateEgressForUrl } from "../security/network-policy.js";
+import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLocalOnlyMode } from "../local-only-policy.js";
 
 export class IntegrationRegistry {

@@ -20,14 +20,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { containsNulByte } from "../binary-sniff.js";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { scanForSecrets, decodedPayloadViews } from "../security/secret-scanner.js";
-import { outboundPayloadParts } from "../security/outbound-payload.js";
-import { matchEgressList } from "../security/network-policy.js";
+import { scanForSecrets, decodedPayloadViews } from "../security/secrets/index.js";
+import { outboundPayloadParts } from "../security/secrets/index.js";
+import { matchEgressList } from "../security/layer/index.js";
 import { classifyData } from "../threat/classification.js";
-import { loadDataEgressGuard } from "../security/security-config.js";
+import { loadDataEgressGuard } from "../security/layer/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { isSensitiveAttachmentPath } from "../data-lineage/index.js";
-import { realpathDeep } from "../security/file-access.js";
+import { realpathDeep } from "../security/layer/index.js";
 
 let trustedDestinationsCache: { fingerprint: number; set: Set<string> } | null = null;
 

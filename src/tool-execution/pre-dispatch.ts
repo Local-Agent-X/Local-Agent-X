@@ -20,7 +20,7 @@ import {
   destructiveOperationReason,
 } from "../approval-manager.js";
 import type { CapabilityClass } from "../tool-registry.js";
-import { shellCommandWritesFiles } from "../security/shell-write-detector.js";
+import { shellCommandWritesFiles } from "../security/layer/index.js";
 import { isProtectedSetting } from "../settings-schema.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";

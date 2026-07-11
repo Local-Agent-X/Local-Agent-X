@@ -10,7 +10,7 @@
  * source is tainted for the rest of the run. The LLM can't "un-see" it.
  */
 
-import { decodedPayloadViews } from "../security/secret-scanner.js";
+import { decodedPayloadViews } from "../security/secrets/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { CryptoAuditTrail, getSharedAuditTrail } from "../threat/audit-trail.js";
 import {

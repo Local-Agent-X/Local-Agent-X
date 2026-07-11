@@ -109,7 +109,7 @@ export const handleAutopilotRoutes: RouteHandler = async (method, url, req, res,
     }
     // Not active — try the persisted operation.json + summary.md
     try {
-      const { confineToDir } = await import("../security/file-access.js");
+      const { confineToDir } = await import("../security/layer/index.js");
       // Symlink-safe: a symlink planted at ~/.lax/operations/<opId> must not
       // redirect these reads outside the operations root.
       const opDir = confineToDir(join(ctx.dataDir, "operations"), opId);

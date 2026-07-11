@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   APP_AT_REST_SECRET_BASENAMES,
   isAppAtRestSecretBasename,
-} from "../security/known-secrets.js";
+} from "../security/secrets/index.js";
 import { AUDIT_SEED_BASENAMES, getAuditHmacKey, _resetAuditKeyCacheForTests } from "./audit-signing.js";
 import { KEYCHAIN_AT_REST_BASENAMES } from "../keychain.js";
 import { isSensitivePath } from "../data-lineage/index.js";

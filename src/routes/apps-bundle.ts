@@ -21,7 +21,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { confineToDir } from "../security/file-access.js";
+import { confineToDir } from "../security/layer/index.js";
 import { renderApp } from "../app-renderer/index.js";
 import { staticBuildDistDir } from "../tools/app-run-target.js";
 import type { AppRegistry, AppState } from "../app-runtime/index.js";

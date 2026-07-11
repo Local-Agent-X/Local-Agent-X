@@ -14,18 +14,20 @@ export function bgForTheme(theme: DesktopSettings["theme"]): string {
   return "#0a0a0f";
 }
 
-// Windows titleBarOverlay control colors. Native widget, can't use CSS vars,
-// so we resolve to concrete hex per theme and call setTitleBarOverlay
-// whenever the renderer's theme changes. Without this the min/max/X strip
-// stays dark even in light mode.
+// Windows titleBarOverlay control colors. Native widget, can't use CSS vars.
+// BOOT-PHASE FALLBACK ONLY: once the renderer loads it reports its computed
+// --surface via report-chrome-tint, which owns the overlay color from then on
+// (window.ts caches it and every zoom/theme re-sync repaints with it). So this
+// only needs to blend with what's on screen BEFORE that report — the splash /
+// window background, both painted from bgForTheme. Deriving from bgForTheme
+// keeps the corner matched during boot by construction.
 export function overlayForTheme(theme: DesktopSettings["theme"]): { color: string; symbolColor: string; height: number } {
   const isDark = theme === "dark" || (theme === "system" && nativeTheme.shouldUseDarkColors);
-  // Light overlay is #ffffff (--surface, the white sidebar) not #f5f5f7
-  // (--bg) so the native min/max/X strip blends into the white top bar
-  // instead of showing a faint grey block in the top-right corner.
-  return isDark
-    ? { color: "#0a0a0f", symbolColor: "#40f0f0", height: 32 }
-    : { color: "#ffffff", symbolColor: "#1a1a2e", height: 32 };
+  return {
+    color: bgForTheme(theme),
+    symbolColor: isDark ? "#40f0f0" : "#1a1a2e",
+    height: 32,
+  };
 }
 
 // Tells Windows itself which theme our app prefers. Without this set,

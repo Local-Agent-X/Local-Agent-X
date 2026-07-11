@@ -9,9 +9,17 @@
 // lax://quit. main.ts intercepts those via webContents.will-navigate so
 // the splash can stay a pure data: URL (no IPC / preload plumbing).
 
-export function buildSplashDataUrl(theme: string): string {
-  const isLight = theme === "light";
-  const bg = isLight ? "#f6f7fa" : "#0a0a0f";
+import { nativeTheme } from "electron";
+import { bgForTheme } from "./theme";
+import type { DesktopSettings } from "./settings";
+
+export function buildSplashDataUrl(theme: DesktopSettings["theme"]): string {
+  // Resolve "system" via the OS (same rule as overlayForTheme) and paint the
+  // page from bgForTheme — the SAME source as the window backgroundColor and
+  // the boot-phase titleBarOverlay fallback, so all three boot surfaces match
+  // by construction instead of via three hand-kept hexes.
+  const isLight = theme === "light" || (theme === "system" && !nativeTheme.shouldUseDarkColors);
+  const bg = bgForTheme(theme);
   const fg = isLight ? "#1a1a2e" : "#dddde8";
   const dim = isLight ? "rgba(26,26,46,0.55)" : "rgba(221,221,232,0.55)";
   const dimmer = isLight ? "rgba(26,26,46,0.35)" : "rgba(221,221,232,0.35)";

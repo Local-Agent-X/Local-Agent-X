@@ -11,7 +11,7 @@
  * directly names a FactKind.
  */
 import { describe, it, expect } from "vitest";
-import { parseFactLine, displayContent } from "./utils.js";
+import { parseFactLine, displayContent, redactCredentials } from "./utils.js";
 
 describe("parseFactLine — schema-aligned prefix letters", () => {
   it("E maps to experience and parses confidence + entity", () => {
@@ -84,5 +84,49 @@ describe("displayContent — re-attaches stripped entities for display", () => {
   it("multiple entities → comma-separated `(@a, @b)`", () => {
     expect(displayContent({ content: "adopted puppies", entities: ["fido", "rex"] }))
       .toBe("adopted puppies (@fido, @rex)");
+  });
+});
+
+// Regression: memory's at-rest redaction used to be a FORK of the security
+// credential catalog and had silently drifted — provider-key shapes added to
+// security/credential-patterns.ts (Anthropic sk-ant-, xAI xai-, Google AIza,
+// entropy-aware masking) never reached the memory index. redactCredentials
+// now routes through the canonical catalog; these cases FAIL on the old
+// forked list. Cross-seam contract: memory ⇄ security share ONE definition
+// of "what counts as a credential."
+describe("redactCredentials — canonical catalog seam (memory ⇄ security)", () => {
+  it("catches canonical-catalog shapes the old memory fork missed", () => {
+    // Anthropic key: fork's generic rule required [a-zA-Z0-9]{20,} with NO
+    // inner dashes after the prefix, so sk-ant-... slipped through whole.
+    const anthropic = redactCredentials(
+      "note: my key is sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv-1234567890abcdef"
+    );
+    expect(anthropic).not.toContain("api03-AbCdEfGhIjKlMnOpQrStUv");
+
+    // Google API key: no prefix the fork knew about at all.
+    const google = redactCredentials("google key AIzaSyA1234567890abcdefghijklmnopqrstuv sent");
+    expect(google).not.toContain("SyA1234567890abcdefghijklmnopqrstuv");
+  });
+
+  it("still redacts the shapes the fork did cover (no regression on merge)", () => {
+    const gh = redactCredentials("token ghp_" + "a".repeat(40) + " in log");
+    expect(gh).not.toContain("ghp_" + "a".repeat(40));
+
+    const dbUrl = redactCredentials("db at postgres://admin:hunter2@db.internal:5432/prod");
+    expect(dbUrl).not.toContain("hunter2");
+  });
+
+  it("keeps the memory-local PII rule: credit card numbers", () => {
+    const cc = redactCredentials("card 4111 1111 1111 1111 on file");
+    expect(cc).toContain("[REDACTED]");
+    expect(cc).not.toContain("4111 1111 1111 1111");
+  });
+
+  it("canonical catalog now covers the fork-only credential shapes (ghu_/ghr_/Basic)", () => {
+    const ghu = redactCredentials("user token ghu_" + "b".repeat(40));
+    expect(ghu).not.toContain("ghu_" + "b".repeat(40));
+
+    const basic = redactCredentials("Authorization: Basic dXNlcjpodW50ZXIyLXNlY3JldC1wdw==");
+    expect(basic).not.toContain("dXNlcjpodW50ZXIyLXNlY3JldC1wdw==");
   });
 });

@@ -72,6 +72,8 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   { type: "vcs", name: "GitHub Fine-grained PAT", regex: /\b(github_pat_[a-zA-Z0-9_]{20,})/g },
   { type: "vcs", name: "GitHub OAuth", regex: /\b(gho_[a-zA-Z0-9]{36,})/g },
   { type: "vcs", name: "GitHub App", regex: /\b(ghs_[a-zA-Z0-9]{36,})/g },
+  { type: "vcs", name: "GitHub User-to-Server", regex: /\b(ghu_[a-zA-Z0-9]{36,})/g },
+  { type: "vcs", name: "GitHub Refresh Token", regex: /\b(ghr_[a-zA-Z0-9]{36,})/g },
   { type: "vcs", name: "GitLab PAT", regex: /\b(glpat-[a-zA-Z0-9_-]{20,})/g },
 
   // ── Communication ──
@@ -96,6 +98,8 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
 
   // ── Generic shapes ──
   { type: "generic", name: "Bearer Token", regex: /Bearer\s+([a-zA-Z0-9._\-]{20,})/gi },
+  // Basic auth carries base64(user:password) — same leak class as Bearer.
+  { type: "generic", name: "Basic Auth Header", regex: /Basic\s+([A-Za-z0-9+/]{16,}={0,2})/g },
   { type: "generic", name: "Password in URL", regex: /\/\/[^:]+:[^@]+@[^\s/]+/g },
   { type: "generic", name: "Key-Value Secret", regex: /(?:api[_-]?key|token|secret|password|authorization|access_key|private_key)\s*[:=]\s*["']?([^\s"',]{12,})/gi },
   { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9+/=]{40,})/gi },

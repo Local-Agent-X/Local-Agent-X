@@ -7,6 +7,7 @@
 import { writeFileSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { randomBytes, createHash } from "node:crypto";
 import { containsNulByte } from "../binary-sniff.js";
+import { redact } from "../security/credential-patterns.js";
 import type { FactKind, RetainedFact } from "./types.js";
 import type { MemoryContentOrigin } from "./promotion-gate.js";
 
@@ -55,22 +56,19 @@ export const STOP_WORDS = new Set([
   "think", "um", "uh", "use", "used", "using", "want", "well", "went",
 ]);
 
-const CREDENTIAL_PATTERNS = [
-  /(?:sk|pk|api[_-]?key|token|secret|password|passwd|auth)[-_]?[a-zA-Z0-9]{20,}/gi,
-  /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}/g,           // GitHub tokens
-  /xoxb-[0-9]+-[0-9]+-[a-zA-Z0-9]+/g,                      // Slack tokens
-  /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWTs
-  /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----[\s\S]*?-----END/g,
-  /AKIA[0-9A-Z]{16}/g,                                       // AWS keys
-  /(?:mongodb|postgres|mysql|redis):\/\/[^\s]+/gi,           // Database URLs with passwords
-  /\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b/g,             // Credit card numbers
-  /npm_[A-Za-z0-9]{36,}/g,                                   // npm tokens
-  /(?:Bearer|Basic)\s+[A-Za-z0-9_\-.~+/]+=*/gi,            // Authorization headers
+// Memory-only PII shapes (NOT credentials — they stay out of the shared
+// catalog so the egress guard doesn't false-positive on every 16-digit
+// number). Credential shapes live in security/credential-patterns.ts; add
+// new ones THERE, not here.
+const MEMORY_PII_PATTERNS = [
+  /\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b/g, // Credit card numbers
 ];
 
+/** At-rest redaction for the memory index: the canonical credential catalog
+ *  (security/credential-patterns.ts) plus memory-local PII shapes. */
 export function redactCredentials(text: string): string {
-  let redacted = text;
-  for (const pattern of CREDENTIAL_PATTERNS) {
+  let redacted = redact(text);
+  for (const pattern of MEMORY_PII_PATTERNS) {
     redacted = redacted.replace(pattern, "[REDACTED]");
   }
   return redacted;

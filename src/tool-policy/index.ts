@@ -1,16 +1,16 @@
 import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { createLogger } from "./logger.js";
-import { checkRegexSafety } from "./safe-regex.js";
-import { DEFAULT_POLICY } from "./tool-policy/default-rules.js";
-import { matchArgPattern, matchGlob, matchHost } from "./tool-policy/matchers.js";
-import type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./tool-policy/types.js";
-import { USER_HINTS } from "./types.js";
+import { createLogger } from "../logger.js";
+import { checkRegexSafety } from "../safe-regex.js";
+import { DEFAULT_POLICY } from "./default-rules.js";
+import { matchArgPattern, matchGlob, matchHost } from "./matchers.js";
+import type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./types.js";
+import { USER_HINTS } from "../types.js";
 
 const logger = createLogger("tool-policy");
 
-export type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./tool-policy/types.js";
+export type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./types.js";
 
 /**
  * Tool Policy System

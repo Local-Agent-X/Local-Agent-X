@@ -2,7 +2,7 @@
  * Default-policy pack — wraps the existing DEFAULT_POLICY (default-rules.ts)
  * via the ToolPolicy evaluator. Rule semantics are unchanged.
  */
-import type { ToolPolicy } from "../../tool-policy.js";
+import type { ToolPolicy } from "../../tool-policy/index.js";
 import { USER_HINTS } from "../../types.js";
 import { DEFAULT_POLICY } from "../default-rules.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";

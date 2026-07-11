@@ -5,13 +5,13 @@
  * (packages/arikernel/tool-executors/*) call this, closing F3 from DRY-AUDIT.md.
  *
  * Policy evaluation is unified through src/tool-policy/evaluator.ts (F4).
- * Four packs (security, default-policy, threat, arikernel) are evaluated in
- * one pass; session-policy / RBAC / approval remain per-user gates outside
- * the pack mechanism.
+ * Five packs (spend-cap, security-layer, default-policy, threat-engine,
+ * egress-refutation) are evaluated in one pass; session-policy /
+ * RBAC / approval remain per-user gates outside the pack mechanism.
  */
 import type { SecurityLayer } from "../security/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
-import type { ToolPolicy } from "../tool-policy.js";
+import type { ToolPolicy } from "../tool-policy/index.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import {

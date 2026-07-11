@@ -7,7 +7,7 @@ import { serveWorkspaceApp } from "./workspace-app-serving.js";
 import type { ServerContext } from "../server-context.js";
 import type { LAXConfig, ServerEvent, Session, ToolDefinition } from "../types.js";
 import type { SecurityLayer } from "../security/index.js";
-import type { ToolPolicy } from "../tool-policy.js";
+import type { ToolPolicy } from "../tool-policy/index.js";
 import type { RBACManager } from "../rbac.js";
 import type { SessionStore, MemoryIndex, MemoryManager } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
@@ -19,7 +19,7 @@ import type { AgentSync } from "../sync/index.js";
 import { localOnlyRouteDecision } from "../local-only-policy.js";
 import type { AppRegistry } from "../app-runtime/index.js";
 import type { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "../agent-store/index.js";
-import type { ToolRegistry } from "../tool-search.js";
+import type { ToolRegistry } from "../tools/tool-search.js";
 
 export type RequestHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 

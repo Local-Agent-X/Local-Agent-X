@@ -10,7 +10,7 @@
  * set, not the audience-filtered subset.
  */
 import { describe, it, expect } from "vitest";
-import { resolveToolsForRequest } from "../src/tool-search.js";
+import { resolveToolsForRequest } from "../src/tools/tool-search.js";
 import { applyAudiences } from "../src/tools/audience-map.js";
 import type { ToolDefinition, Audience } from "../src/types.js";
 

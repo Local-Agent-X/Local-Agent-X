@@ -1,7 +1,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { withRetry } from "../auto-retry.js";
 import { getRetryContext } from "../retry-context.js";
-import { getToolTimeout, withTimeout } from "../tool-timeout.js";
+import { getToolTimeout, withTimeout } from "./tool-timeout.js";
 import { isRetryable, retrySignalForToolResult } from "../resilience-policy.js";
 import { createRetryCallSnapshot } from "./retry-call.js";
 import { createJournaledExecution } from "./journaled-execution.js";

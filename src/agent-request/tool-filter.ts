@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "../types.js";
-import { resolveToolsForRequest } from "../tool-search.js";
+import { resolveToolsForRequest } from "../tools/tool-search.js";
 
 // ── Smart Tool Filtering ──
 // Always include core tools. Add extras if the user's message hints at them.

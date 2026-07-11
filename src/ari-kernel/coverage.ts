@@ -1,5 +1,5 @@
 // Boot-time coverage audit. Mirrors auditPolicyCoverage in
-// src/tool-policy.ts — surfaces missing TOOL_CLASS_MAP entries at startup
+// src/tool-policy/index.ts — surfaces missing TOOL_CLASS_MAP entries at startup
 // so devs catch them before users hit the runtime block. Boot warns,
 // runtime blocks.
 

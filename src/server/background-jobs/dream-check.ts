@@ -4,7 +4,7 @@ import { SecurityLayer } from "../../security/index.js";
 import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
 import type { SessionStore } from "../../memory/index.js";
 import type { SecretsStore } from "../../secrets.js";
-import type { ToolPolicy } from "../../tool-policy.js";
+import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
 import { DREAM_SYSTEM_PROMPT, DREAM_TOOL_NAMES } from "./prompts.js";
 import type { ProviderId } from "../../providers/provider-ids.js";

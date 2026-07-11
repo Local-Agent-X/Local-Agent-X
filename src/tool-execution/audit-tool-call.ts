@@ -8,7 +8,7 @@ import { USER_HINTS, type ToolResult, type ToolChip } from "../types.js";
 import { renderToolResultForModel, statusOf } from "../tools/result-helpers.js";
 import { closeUnterminatedExternalBlocks } from "../sanitize.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
-import { logToolUsage } from "../tool-usage-telemetry.js";
+import { logToolUsage } from "./tool-usage-telemetry.js";
 import { spillFullResult } from "../tools/result-spill.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";

@@ -11,8 +11,8 @@
 import type { ToolCall } from "@arikernel/core";
 import { setPreDispatchGate } from "@arikernel/tool-executors";
 import type { SecurityLayer } from "../security/index.js";
-import type { ToolPolicy } from "../tool-policy.js";
-import { assertToolCallAllowed } from "../tools/pre-dispatch.js";
+import type { ToolPolicy } from "../tool-policy/index.js";
+import { assertToolCallAllowed } from "../tool-execution/pre-dispatch.js";
 
 function mapToolName(toolClass: string, action: string): string {
   if (toolClass === "file") {

@@ -2,7 +2,7 @@
  * CROSS-SEAM CONTRACT — one instruction-ledger write must reach BOTH sides of
  * the seam it exists to unify:
  *
- *   Consumer A — the pre-dispatch TOOL gate (src/tools/pre-dispatch.ts) keys its
+ *   Consumer A — the pre-dispatch TOOL gate (src/tool-execution/pre-dispatch.ts) keys its
  *     per-op hard-deny on opForbidsCapability(opId, cls) (pre-dispatch.ts ~L176).
  *   Consumer B — the loop's PERSISTENCE guards (the middlewares that stop an op
  *     from persisting as "done" prematurely) read the same record;

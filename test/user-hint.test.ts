@@ -8,7 +8,7 @@ import { evaluateFileAccess } from "../src/security/file-access.js";
 import { evaluateShellCommand } from "../src/security/shell-policy.js";
 import { evaluateWebFetch } from "../src/security/network-policy.js";
 import { SecurityLayer } from "../src/security/index.js";
-import { ToolPolicy } from "../src/tool-policy.js";
+import { ToolPolicy } from "../src/tool-policy/index.js";
 import { makeThreatEnginePack } from "../src/tool-policy/packs/threat-engine-pack.js";
 import { makeDefaultPolicyPack } from "../src/tool-policy/packs/default-policy-pack.js";
 import { makeSecurityLayerPack } from "../src/tool-policy/packs/security-layer-pack.js";

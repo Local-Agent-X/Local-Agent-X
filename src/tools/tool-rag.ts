@@ -15,12 +15,12 @@
  *   - Graceful fallback: if no embedding provider, return all tools unchanged
  *   - No behavioral change without opt-in (filterToolsSemanticFor must be called)
  */
-import type { ToolDefinition } from "./types.js";
+import type { ToolDefinition } from "../types.js";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("tool-rag");
 
 export interface EmbedFn {

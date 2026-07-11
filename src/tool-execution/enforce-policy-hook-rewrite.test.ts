@@ -21,7 +21,7 @@ vi.mock("./egress-gates.js", () => ({
   dataLineageGate: vi.fn(),
   canaryEgressGate: vi.fn(),
 }));
-vi.mock("../tools/pre-dispatch.js", () => ({ assertToolCallAllowed: vi.fn(async () => {}) }));
+vi.mock("./pre-dispatch.js", () => ({ assertToolCallAllowed: vi.fn(async () => {}) }));
 vi.mock("../circuit-breaker.js", () => ({
   checkCircuit: vi.fn(() => ({ allowed: true })),
   circuitArgsSig: vi.fn(() => "sig"),
@@ -32,7 +32,7 @@ vi.mock("../hooks/hook-engine.js", () => ({ getHookEngine: vi.fn() }));
 
 import { enforcePolicyPhase } from "./enforce-policy.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
-import { assertToolCallAllowed } from "../tools/pre-dispatch.js";
+import { assertToolCallAllowed } from "./pre-dispatch.js";
 import type { ToolCallContext } from "./context.js";
 
 const TOOL = {

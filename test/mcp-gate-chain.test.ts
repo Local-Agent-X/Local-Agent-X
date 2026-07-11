@@ -58,7 +58,7 @@ describe("MCP tools pass every default-deny gate", () => {
       // Exercise the real merge (which injects the default rules, incl. the
       // mcp_* glob) without loadToolPolicy's file watcher — a fresh install has
       // no user rules, so defaults supply allow-mcp.
-      const { ToolPolicy, mergeWithDefaults } = await import("../src/tool-policy.js");
+      const { ToolPolicy, mergeWithDefaults } = await import("../src/tool-policy/index.js");
       const tp = new ToolPolicy(mergeWithDefaults({ defaultDecision: "deny", rules: [] }));
       const d = tp.evaluate(tool, {}, "default");
       expect(d.allowed, `tool-policy denied: ${d.reason}`).toBe(true);

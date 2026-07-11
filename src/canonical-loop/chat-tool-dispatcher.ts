@@ -18,7 +18,7 @@ import { parseStatusHeader } from "../tools/result-helpers.js";
 import type { ToolCall } from "./contract-types.js";
 import type { ToolDefinition, ServerEvent } from "../types.js";
 import type { SecurityLayer } from "../security/index.js";
-import type { ToolPolicy } from "../tool-policy.js";
+import type { ToolPolicy } from "../tool-policy/index.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";

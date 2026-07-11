@@ -14,7 +14,7 @@
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 const DIR = join(getLaxDir(), "telemetry");
 const FILE = join(DIR, "tool-usage.jsonl");

@@ -156,7 +156,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
       }
     }
     try {
-      const { getToolRAG } = await import("../../tool-rag.js");
+      const { getToolRAG } = await import("../../tools/tool-rag.js");
       const rag = getToolRAG();
       // Do NOT call rag.build() from the chat path — embedding 167 tools
       // serially on CPU-only Ollama is 50-100s. Pre-warm at server boot

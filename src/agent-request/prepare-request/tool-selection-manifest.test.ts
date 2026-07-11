@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { selectTools } from "./tool-selection.js";
-import { buildDeferredToolManifest } from "../../tool-prompt-builder.js";
+import { buildDeferredToolManifest } from "../../tools/tool-prompt-builder.js";
 import { applyAudiences } from "../../tools/audience-map.js";
 import type { ToolDefinition } from "../../types.js";
 

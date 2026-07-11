@@ -15,7 +15,7 @@ import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
 import { RetryableToolResultError } from "../resilience-policy.js";
-import { ToolTimeoutError } from "../tool-timeout.js";
+import { ToolTimeoutError } from "./tool-timeout.js";
 import { timeout, blocked, ok } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { isAbsolute } from "node:path";

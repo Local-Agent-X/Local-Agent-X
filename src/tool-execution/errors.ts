@@ -2,4 +2,4 @@
 // across the boundary into tools/. Error classification lives in
 // ../resilience-policy.ts.
 
-export { ToolBlocked } from "../tools/pre-dispatch.js";
+export { ToolBlocked } from "./pre-dispatch.js";

@@ -13,7 +13,7 @@ import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
 import type { SecurityLayer } from "../security/index.js";
-import type { ToolPolicy } from "../tool-policy.js";
+import type { ToolPolicy } from "../tool-policy/index.js";
 import type { AgentRunStore, AgentTemplateStore } from "../agent-store/index.js";
 
 import { createLogger } from "../logger.js";
@@ -140,7 +140,7 @@ export function registerHandlerEvents(deps: {
       // Falls back to the invocation's resolved tool list when no template
       // was provided (ad-hoc agents like operations/executor's phase agents
       // pass their tools through the invokeDefinition surface).
-      const { resolveToolsForRequest } = await import("../tool-search.js");
+      const { resolveToolsForRequest } = await import("../tools/tool-search.js");
       const audience = role === "operator" ? "operator" : "spawned-agent";
       const spawnedTools = resolveToolsForRequest(
         {

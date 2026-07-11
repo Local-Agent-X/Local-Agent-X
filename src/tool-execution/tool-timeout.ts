@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 // A timeout of 0 (or negative) means "unbounded — never time out". Used to
 // EXEMPT tools that legitimately run for minutes: they spawn sub-agents,

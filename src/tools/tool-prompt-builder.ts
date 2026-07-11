@@ -3,7 +3,7 @@
  * Each tool can contribute natural-language usage instructions via a prompt() function.
  * These get injected into the system prompt to teach the LLM best practices.
  */
-import type { ToolDefinition } from "./types.js";
+import type { ToolDefinition } from "../types.js";
 
 interface ToolWithPrompt extends ToolDefinition {
   _prompt?: () => string;

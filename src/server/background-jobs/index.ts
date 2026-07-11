@@ -4,7 +4,7 @@ import { SecurityLayer } from "../../security/index.js";
 import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
 import type { SessionStore, MemoryIndex, MemoryManager } from "../../memory/index.js";
 import type { SecretsStore } from "../../secrets.js";
-import type { ToolPolicy } from "../../tool-policy.js";
+import type { ToolPolicy } from "../../tool-policy/index.js";
 import type { CronService } from "../../cron/cron-service.js";
 import type { IntegrationRegistry } from "../../integrations/index.js";
 import type { AgentSync } from "../../sync/index.js";

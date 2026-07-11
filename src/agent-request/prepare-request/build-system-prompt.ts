@@ -98,7 +98,7 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
   // cold-start ship task without the proactive memory_search nudge.
   let toolPromptSection = "";
   try {
-    const { buildToolPromptSection, buildDeferredToolManifest } = await import("../../tool-prompt-builder.js");
+    const { buildToolPromptSection, buildDeferredToolManifest } = await import("../../tools/tool-prompt-builder.js");
     toolPromptSection = buildToolPromptSection(input.allAgentTools);
     // Deferred-tool manifest: name every tool NOT loaded into this turn's
     // schema so the model can reach it via tool_search instead of fail-

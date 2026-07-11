@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SecurityLayer } from "./security/index.js";
-import type { ToolPolicy } from "./tool-policy.js";
+import type { ToolPolicy } from "./tool-policy/index.js";
 import type { RBACManager, Role } from "./rbac.js";
 import type { SessionStore, MemoryIndex, MemoryManager } from "./memory/index.js";
 import type { SecretsStore } from "./secrets.js";
@@ -12,7 +12,7 @@ import type { AgentSync } from "./sync/index.js";
 import type { AppRegistry } from "./app-runtime/index.js";
 import type { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "./agent-store/index.js";
 import type { ToolDefinition, LAXConfig, ServerEvent, Session } from "./types.js";
-import type { ToolRegistry } from "./tool-search.js";
+import type { ToolRegistry } from "./tools/tool-search.js";
 
 export interface ServerContext {
   config: LAXConfig;

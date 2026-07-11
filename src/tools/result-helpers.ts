@@ -1,5 +1,5 @@
 import type { ToolDefinition, ToolResult, ToolResultStatus } from "../types.js";
-import { withPrompt } from "../tool-prompt-builder.js";
+import { withPrompt } from "./tool-prompt-builder.js";
 
 /**
  * Tool-result builders.

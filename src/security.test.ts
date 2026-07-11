@@ -13,7 +13,7 @@ import {
   unregisterRedactedSecretValue,
   redactKnownSecrets,
 } from "./sanitize.js";
-import { ToolPolicy, type ToolPolicyConfig } from "./tool-policy.js";
+import { ToolPolicy, type ToolPolicyConfig } from "./tool-policy/index.js";
 import { RBACManager } from "./rbac.js";
 import { checkRegexSafety } from "./safe-regex.js";
 import { classifyData } from "./threat/threat-engine.js";

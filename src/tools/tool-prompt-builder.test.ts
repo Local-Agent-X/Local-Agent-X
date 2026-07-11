@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildDeferredToolManifest } from "./tool-prompt-builder.js";
-import type { ToolDefinition } from "./types.js";
+import type { ToolDefinition } from "../types.js";
 
 function tool(name: string, description = `${name} does a thing.`): ToolDefinition {
   return {

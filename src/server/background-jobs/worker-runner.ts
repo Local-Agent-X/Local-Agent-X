@@ -7,7 +7,7 @@ import { extractAgentOutput } from "../../server-utils.js";
 import { SecurityLayer } from "../../security/index.js";
 import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
-import type { ToolPolicy } from "../../tool-policy.js";
+import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
 import { WORKER_SYSTEM_PROMPT_TEMPLATE } from "./prompts.js";
 

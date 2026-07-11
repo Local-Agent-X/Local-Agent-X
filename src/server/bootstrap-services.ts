@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { loadSettings } from "../settings.js";
 import { SecurityLayer } from "../security/index.js";
-import { loadToolPolicy } from "../tool-policy.js";
+import { loadToolPolicy } from "../tool-policy/index.js";
 import { SessionStore, MemoryIndex, MemoryManager, ensurePersonalityFiles } from "../memory/index.js";
 import { SecretsStore } from "../secrets.js";
 import { AgentSync } from "../sync/index.js";

@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto";
 import { SecurityLayer } from "../../src/security/index.js";
 import { wireAriPreDispatch } from "../../src/server/bootstrap-ari-gate.js";
 import * as approvalModule from "../../src/approval-manager.js";
-import { assertToolCallAllowed } from "../../src/tools/pre-dispatch.js";
+import { assertToolCallAllowed } from "../../src/tool-execution/pre-dispatch.js";
 
 // Regression test for DRY-AUDIT.md F3 — the AriKernel tool dispatcher
 // previously skipped LAX's approval/security gates. After this fix, every

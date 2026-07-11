@@ -8,7 +8,7 @@ import type { MemoryIndex, MemoryManager } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
 import type { IntegrationRegistry } from "../integrations/index.js";
 import type { SecurityLayer } from "../security/index.js";
-import type { ToolPolicy } from "../tool-policy.js";
+import type { ToolPolicy } from "../tool-policy/index.js";
 import type { RBACManager } from "../rbac.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.lifecycle");

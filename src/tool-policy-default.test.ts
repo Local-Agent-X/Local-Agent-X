@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { ToolPolicy, auditPolicyCoverage, mergeWithDefaults, type ToolPolicyConfig } from "./tool-policy.js";
+import { ToolPolicy, auditPolicyCoverage, mergeWithDefaults, type ToolPolicyConfig } from "./tool-policy/index.js";
 import { DEFAULT_POLICY } from "./tool-policy/default-rules.js";
 import { deriveRateLimits } from "./tool-policy/tool-policies.js";
 import { TOOLS } from "./tool-registry.js";

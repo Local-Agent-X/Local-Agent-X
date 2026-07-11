@@ -18,7 +18,7 @@ import { SecurityLayer } from "../../security/index.js";
 import { loadFileAccessModeAtLeast } from "../../security/security-config.js";
 import type { LAXConfig, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
-import type { ToolPolicy } from "../../tool-policy.js";
+import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("server.background-jobs.self-edit-surgeon");

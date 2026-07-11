@@ -9,8 +9,8 @@ import { describe, it, expect } from "vitest";
 
 // Import the matchArgPattern function indirectly via ToolPolicy
 // We test through the public evaluate() API
-import { ToolPolicy } from "./tool-policy.js";
-import type { ToolPolicyConfig } from "./tool-policy.js";
+import { ToolPolicy } from "./tool-policy/index.js";
+import type { ToolPolicyConfig } from "./tool-policy/index.js";
 
 function makePolicy(rules: ToolPolicyConfig["rules"]): ToolPolicy {
   return new ToolPolicy({ defaultDecision: "deny", rules });

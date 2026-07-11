@@ -15,7 +15,7 @@ import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit, circuitArgsSig } from "../circuit-breaker.js";
 import { checkToolRateLimit } from "./rate-limiter.js";
 import { logRetry } from "../retry-telemetry.js";
-import { assertToolCallAllowed } from "../tools/pre-dispatch.js";
+import { assertToolCallAllowed } from "./pre-dispatch.js";
 import { ToolBlocked } from "./errors.js";
 import { join, resolve, relative } from "node:path";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";

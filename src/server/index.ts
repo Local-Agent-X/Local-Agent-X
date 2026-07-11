@@ -115,7 +115,7 @@ export async function startServer(config: LAXConfig) {
   // uncovered, it'll be visible immediately on server boot instead of
   // surfacing as a "BLOCKED by tool-policy" failure to a real user.
   {
-    const { auditPolicyCoverage, printPolicyCoverageReport } = await import("../tool-policy.js");
+    const { auditPolicyCoverage, printPolicyCoverageReport } = await import("../tool-policy/index.js");
     const { auditKernelCoverage, printKernelCoverageReport } = await import("../ari-kernel/index.js");
     const seen = new Set<string>();
     const names: string[] = [];
@@ -143,7 +143,7 @@ export async function startServer(config: LAXConfig) {
   void (async () => {
     try {
       const t0 = Date.now();
-      const { getToolRAG } = await import("../tool-rag.js");
+      const { getToolRAG } = await import("../tools/tool-rag.js");
       const { join } = await import("node:path");
       const rag = getToolRAG();
       const embedder = (memoryIndex as unknown as {

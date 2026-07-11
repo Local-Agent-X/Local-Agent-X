@@ -87,7 +87,7 @@ describe("getToolTimeout exemptions", () => {
 describe("runSandboxedPhase hang → timeout result row", () => {
   it("maps a hung tool to a status:'timeout' ToolResult", async () => {
     const { setToolTimeout } = await import("./tool-timeout.js");
-    const { runSandboxedPhase } = await import("./tool-execution/run-sandboxed.js");
+    const { runSandboxedPhase } = await import("./run-sandboxed.js");
 
     const hangName = "__lax_test_hang_tool";
     setToolTimeout(hangName, 20); // tiny, non-exempt deadline
@@ -120,7 +120,7 @@ describe("runSandboxedPhase hang → timeout result row", () => {
 
   it("preserves _onProgress output as metadata.partial_output on the timeout row (TD-9)", async () => {
     const { setToolTimeout } = await import("./tool-timeout.js");
-    const { runSandboxedPhase } = await import("./tool-execution/run-sandboxed.js");
+    const { runSandboxedPhase } = await import("./run-sandboxed.js");
 
     const hangName = "__lax_test_hang_progress_tool";
     setToolTimeout(hangName, 30); // tiny, non-exempt deadline
@@ -157,7 +157,7 @@ describe("runSandboxedPhase hang → timeout result row", () => {
 
   it("omits partial_output when the hung tool produced no progress", async () => {
     const { setToolTimeout } = await import("./tool-timeout.js");
-    const { runSandboxedPhase } = await import("./tool-execution/run-sandboxed.js");
+    const { runSandboxedPhase } = await import("./run-sandboxed.js");
 
     const hangName = "__lax_test_hang_silent_tool";
     setToolTimeout(hangName, 20);
@@ -184,7 +184,7 @@ describe("runSandboxedPhase hang → timeout result row", () => {
 
   it("runs an exempt tool (timeout 0) unbounded — no wrap, normal result", async () => {
     const { setToolTimeout } = await import("./tool-timeout.js");
-    const { runSandboxedPhase } = await import("./tool-execution/run-sandboxed.js");
+    const { runSandboxedPhase } = await import("./run-sandboxed.js");
 
     const exemptName = "__lax_test_exempt_tool";
     setToolTimeout(exemptName, 0); // unbounded

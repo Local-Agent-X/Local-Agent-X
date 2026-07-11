@@ -1,5 +1,5 @@
-import type { Audience, ToolDefinition, ToolResult } from "./types.js";
-import { UnifiedToolRegistry } from "./tools/registry.js";
+import type { Audience, ToolDefinition, ToolResult } from "../types.js";
+import { UnifiedToolRegistry } from "./registry.js";
 
 /**
  * Canonical per-request tool resolver.
@@ -119,8 +119,8 @@ export const toolSearchEnhancements = {
  * import { ToolRegistry } from "./tool-search.js" continue to work and
  * delegate to the same store.
  */
-export { UnifiedToolRegistry as ToolRegistry } from "./tools/registry.js";
-export { unifiedRegistry } from "./tools/registry.js";
+export { UnifiedToolRegistry as ToolRegistry } from "./registry.js";
+export { unifiedRegistry } from "./registry.js";
 
 export function createToolSearchTool(registry: UnifiedToolRegistry): ToolDefinition {
   return {

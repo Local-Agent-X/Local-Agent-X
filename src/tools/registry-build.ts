@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "../types.js";
-import { createToolSearchTool } from "../tool-search.js";
+import { createToolSearchTool } from "./tool-search.js";
 import { type UnifiedToolRegistry, unifiedRegistry } from "./registry.js";
-import { buildToolPromptSection } from "../tool-prompt-builder.js";
+import { buildToolPromptSection } from "./tool-prompt-builder.js";
 import { applyPrompts } from "./result-helpers.js";
 import { applyAudiences } from "./audience-map.js";
 import { readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool } from "./file-tools.js";

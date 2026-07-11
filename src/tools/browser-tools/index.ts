@@ -18,7 +18,7 @@ import type { ToolDefinition, ToolResult } from "../../types.js";
 import type { ServerEvent } from "../../types.js";
 import { getBrowserManager, closeBrowser, withBrowserLock, resetWedgedBrowser, BrowserWedgeError } from "../../browser/index.js";
 import type { BrowserEngine, BrowserManager } from "../../browser/index.js";
-import { getToolTimeout } from "../../tool-timeout.js";
+import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { raceWedgeDeadline, WEDGED } from "./wedge-deadline.js";
 import { VALID_ENGINES, err } from "./shared.js";
 import {

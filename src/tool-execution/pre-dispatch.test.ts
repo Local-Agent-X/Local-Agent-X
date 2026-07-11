@@ -6,7 +6,7 @@ import { SecurityLayer } from "../security/index.js";
 import { assertToolCallAllowed, ToolBlocked, type PreDispatchCtx } from "./pre-dispatch.js";
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
 import type { LAXConfig } from "../types.js";
-import { ToolPolicy } from "../tool-policy.js";
+import { ToolPolicy } from "../tool-policy/index.js";
 import { setOpLedger, setEnforcedPlanMode } from "../canonical-loop/instruction-ledger/index.js";
 import { _resetOpLedgers } from "../canonical-loop/instruction-ledger/ledger.js";
 import { _resetEnforcedPlanMode } from "../canonical-loop/instruction-ledger/plan-mode.js";

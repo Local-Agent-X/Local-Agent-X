@@ -8,7 +8,7 @@
  * Two consumer views read from this same store:
  *
  *   - Chat-path: name-keyed lookup for prompt assembly, tool_search,
- *     audience filtering, and dispatch (see src/tool-search.ts re-export).
+ *     audience filtering, and dispatch (see src/tools/tool-search.ts re-export).
  *   - AriKernel: toolClass-keyed filter via getByToolClass(); the
  *     ExecutorRegistry inside the arikernel package is the matching
  *     in-package store (no longer self-constructing) and the LAX side
@@ -182,7 +182,7 @@ export class UnifiedToolRegistry {
 
 /**
  * Process-wide singleton. Both `src/tools/registry-build.ts` and
- * `src/tool-search.ts` consume this instance — there is no second
+ * `src/tools/tool-search.ts` consume this instance — there is no second
  * `new UnifiedToolRegistry()` anywhere outside this file.
  */
 export const unifiedRegistry: UnifiedToolRegistry = new UnifiedToolRegistry();

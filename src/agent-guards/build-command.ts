@@ -172,7 +172,10 @@ export function detectTestCommand(editedPaths: string[], fs: FsProbe): TestComma
     if ((byDir.get(dir)?.length ?? 0) > (byDir.get(bestDir)?.length ?? 0)) bestDir = dir;
   }
 
-  const rels = byDir.get(bestDir)!.map((f) => relative(bestDir, f));
+  // Forward slashes regardless of host OS: vitest/jest accept them on Windows,
+  // and a backslash path would be escape-mangled if this command runs through a
+  // POSIX-ish shell (Git Bash). relative() emits `\` on win32.
+  const rels = byDir.get(bestDir)!.map((f) => relative(bestDir, f).replaceAll("\\", "/"));
   const vitest = joinPath(bestDir, "node_modules/.bin/vitest");
   if (fs.exists(vitest)) return { command: `node_modules/.bin/vitest run ${rels.join(" ")}`, cwd: bestDir };
   const jest = joinPath(bestDir, "node_modules/.bin/jest");

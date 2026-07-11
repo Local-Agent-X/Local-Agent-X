@@ -1,6 +1,5 @@
 import crossSessionLearner, { CrossSessionLearner } from "../cognition/cross-session-learning/index.js";
 import { UnspokenDetector } from "../cognition/unspoken-detector.js";
-import { GrowthTracker } from "../cognition/growth-tracker.js";
 import { MilestoneCelebrator } from "../cognition/milestone-celebrations.js";
 import { CorrectionLearner } from "../cognition/correction-learning.js";
 import { ContradictionDetector } from "../cognition/contradiction-detector.js";
@@ -22,15 +21,6 @@ export const metaSignals: CognitiveSignal[] = [
     triage: ({ msgCount }) => (msgCount % 10 === 0 && msgCount > 0 ? "scheduled" : null),
     run: (_input, out) => out.push(...UnspokenDetector.getInstance().signalsFor()),
     health: () => UnspokenDetector.getInstance(),
-  },
-
-  {
-    id: "growth-tracker",
-    storageFile: "growth-tracker.json",
-    scope: "profile",
-    triage: ({ msgCount }) => (msgCount % 20 === 0 && msgCount > 0 ? "scheduled" : null),
-    run: (_input, out) => out.push(...GrowthTracker.getInstance().signalsFor()),
-    health: () => GrowthTracker.getInstance(),
   },
 
   {

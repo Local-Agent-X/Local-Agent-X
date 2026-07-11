@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { NarrativeMemory } from "../cognition/narrative-memory.js";
 import { UnspokenDetector } from "../cognition/unspoken-detector.js";
-import { GrowthTracker } from "../cognition/growth-tracker.js";
 import { PredictivePrefetcher } from "../cognition/predictive-prefetch.js";
 import { MemoryCompressor } from "../memory/cognitive/compression/index.js";
 import type { MemoryIndex } from "../memory/index.js";
@@ -16,7 +15,7 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
   // Note: consolidation, retain-from-logs, and reflect are scheduled directly
   // via the JobScheduler in src/server/background-jobs.ts. The orchestrator
   // owns the orchestrator-internal jobs only (compression, prefetch,
-  // unspoken, growth, narratives, graph).
+  // unspoken, narratives, graph).
 
   const compression = safeRun("memory-compression:bg", () => {
     const mc = MemoryCompressor.getInstance();
@@ -37,10 +36,6 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
     const changes = ud.detectBehaviorChange();
     return { absences: absences.length, changes: changes.length };
   }, { absences: 0, changes: 0 });
-
-  const growth = safeRun("growth-tracker:bg", () => {
-    return GrowthTracker.getInstance().getGrowthSummary();
-  }, "");
 
   const narratives = safeRun("narrative-memory:bg", () => {
     const nm = NarrativeMemory.getInstance();
@@ -76,7 +71,6 @@ export function runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
     compression,
     prefetch,
     unspoken,
-    growth,
     narratives,
     graphEdges,
     totalTimeMs: Date.now() - startTime,

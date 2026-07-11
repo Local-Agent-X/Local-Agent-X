@@ -7,7 +7,6 @@ import { SharedHistory } from "../cognition/shared-history.js";
 import { LanguageMirror } from "../cognition/language-mirror.js";
 import { TrustEngine } from "../cognition/trust-deepening.js";
 import { VulnerabilityAwareness } from "../cognition/vulnerability-awareness.js";
-import { AssociativeMemory } from "../cognition/associative-recall/index.js";
 import type { CognitiveSignal } from "./types.js";
 
 export const conversationalSignals: CognitiveSignal[] = [
@@ -81,15 +80,6 @@ export const conversationalSignals: CognitiveSignal[] = [
           }
         : null,
     health: () => VulnerabilityAwareness.getInstance(),
-  },
-
-  {
-    id: "associative-recall",
-    scope: "session",
-    triage: ({ input }) => (input.message.length > 30 ? "conditional" : null),
-    run: (input, out) => out.push(...AssociativeMemory.getInstance().signalsFor(input.message)),
-    record: input => AssociativeMemory.getInstance().recordFrom(input.message),
-    health: () => AssociativeMemory.getInstance(),
   },
 
   {

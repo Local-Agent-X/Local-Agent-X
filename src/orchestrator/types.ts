@@ -65,7 +65,6 @@ export interface BackgroundReport {
   compression: { compressed: number; savedBytes: number };
   prefetch: { topics: string[] };
   unspoken: { absences: number; changes: number };
-  growth: string;
   narratives: number;
   graphEdges: number;
   totalTimeMs: number;

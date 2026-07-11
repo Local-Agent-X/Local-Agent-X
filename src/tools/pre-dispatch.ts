@@ -35,7 +35,6 @@ import { makeSpendCapPack } from "../tool-policy/packs/spend-cap-pack.js";
 import { makeSecurityLayerPack } from "../tool-policy/packs/security-layer-pack.js";
 import { makeDefaultPolicyPack } from "../tool-policy/packs/default-policy-pack.js";
 import { makeThreatEnginePack } from "../tool-policy/packs/threat-engine-pack.js";
-import { makeArikernelPack } from "../tool-policy/packs/arikernel-pack.js";
 import { makeEgressRefutationPack } from "../tool-policy/packs/egress-refutation-pack.js";
 
 export type ToolBlockedStage =
@@ -106,7 +105,6 @@ const PACK_TO_STAGE: Record<string, ToolBlockedStage> = {
   "security-layer": "security",
   "default-policy": "tool-policy",
   "threat-engine": "threat",
-  "arikernel": "arikernel",
   "egress-refutation": "threat",
 };
 
@@ -250,13 +248,12 @@ export async function assertToolCallAllowed(
     }
   }
 
-  // Unified policy evaluation: one pass over the four rule packs.
+  // Unified policy evaluation: one pass over the rule packs.
   const packs: RulePack[] = [
     makeSpendCapPack(),
     makeSecurityLayerPack(ctx.security),
     makeDefaultPolicyPack(ctx.toolPolicy),
     makeThreatEnginePack(ctx.threatEngine),
-    makeArikernelPack(),
     makeEgressRefutationPack(),
   ];
   const decision = await evaluatePolicy(

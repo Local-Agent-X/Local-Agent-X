@@ -25,7 +25,7 @@ import { USER_HINTS } from "../../types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
 const PACK_ID = "egress-refutation";
-// Higher than security (10), default (20), threat (30), arikernel (90) so the
+// Higher than security (10), default (20), threat (30) so the
 // cheaper, deterministic gates evaluate first and short-circuit on a deny.
 const PACK_PRIORITY = 95;
 

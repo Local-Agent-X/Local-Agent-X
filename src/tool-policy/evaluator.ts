@@ -1,11 +1,14 @@
 /**
  * Unified policy evaluator — closes F4 from DRY-AUDIT.md.
  *
- * Four policy layers used to evaluate independently with no cross-awareness:
+ * These policy layers used to evaluate independently with no cross-awareness:
  *   - src/security/layer-core.ts (file/shell/network checks)
  *   - src/tool-policy/default-rules.ts (DEFAULT_POLICY allow/deny rules)
  *   - src/threat/tool-chain.ts (pre-tool-call restricted-mode check)
- *   - packages/arikernel/policy-engine/src/defaults.ts (deny-by-default backstop)
+ *
+ * (The arikernel deny-by-default layer is enforced natively via ariEvaluate in
+ * src/tool-execution/enforce-policy.ts; its no-op mirror pack was removed —
+ * the default-policy pack carries the same deny-by-default backstop here.)
  *
  * This module unifies dispatch: each layer becomes a `RulePack` with a sealed
  * list of rules + a pack-internal evaluator. The evaluator below iterates the

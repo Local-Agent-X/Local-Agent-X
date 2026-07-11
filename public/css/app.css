@@ -48,8 +48,10 @@ body.platform-win{height:calc(100vh - 32px);margin-top:32px}
 /* right padding reserves room for the OS caption buttons (min/max/close ~138px
    on Windows) so the ⋯ overflow doesn't sit under them and get misclicked. */
 body.platform-win #desktop-titlebar{display:flex;position:fixed;top:0;left:0;right:0;height:32px;padding-right:138px;z-index:99999;align-items:center;background:var(--surface);-webkit-app-region:drag;font-size:12px;user-select:none}
-body.platform-win #sidebar-expand-btn{top:52px !important}
 body.platform-win #agents-toggle{top:52px !important}
+/* Windows: the sidebar controls ride inside the 32px in-window titlebar, after
+   the favicon + brand (~120px). z-index must clear the titlebar's 99999. */
+body.platform-win #sidebar-controls{top:4px;left:128px;z-index:100000}
 #desktop-titlebar #dtb-favicon{width:16px;height:16px;margin:0 8px;-webkit-app-region:no-drag}
 #desktop-titlebar #dtb-brand{color:var(--muted);font-weight:600;letter-spacing:.01em;-webkit-app-region:drag}
 #desktop-titlebar .dtb-spacer{flex:1;-webkit-app-region:drag}
@@ -71,10 +73,37 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 /* ── Sidebar ── */
 #sidebar{width:256px;min-width:256px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:relative}
 #sidebar.collapsed{width:0;min-width:0;overflow:hidden;border-right:none}
-/* Drag-to-resize handle pinned to the sidebar's right edge. Thin hit area with
+/* Sidebar on the right: body only has two in-flow children (#sidebar, #main),
+   so row-reverse swaps the columns without touching DOM order — sibling
+   selectors like `#sidebar.collapsed + #main` keep working. */
+body.sidebar-right{flex-direction:row-reverse}
+body.sidebar-right #sidebar{border-right:none;border-left:1px solid var(--border)}
+body.sidebar-right #sidebar.collapsed{border-left:none}
+/* ── Window-top sidebar controls (hide/show + flip side) ──
+   Fixed to the window, not the sidebar, so they survive hide + flip. Base
+   coords cover the plain-browser case; the platform-darwin/platform-win rules
+   reposition them into the native chrome strip. */
+/* Hidden until the platform class is resolved (added at DOMContentLoaded), so
+   the buttons never paint at the browser-fallback position first and then jump
+   to the macOS/Windows spot. The reveal class is added in app-sidebar-toggle.js
+   after the platform class is in place — one paint, already positioned. */
+#sidebar-controls{position:fixed;top:18px;left:10px;z-index:1100;display:flex;gap:2px;-webkit-app-region:no-drag;visibility:hidden}
+body.sidebar-controls-ready #sidebar-controls{visibility:visible}
+#sidebar-controls button{-webkit-app-region:no-drag;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.95rem;line-height:1;padding:4px 7px;border-radius:6px}
+#sidebar-controls button:hover{color:var(--text);background:var(--hover)}
+/* Plain browser: no native chrome strip, so the cluster floats over the
+   top-left corner. Clear whatever column sits there — the brand row when the
+   sidebar is on the left, page titles when it's hidden or flipped right. */
+body:not(.platform-darwin):not(.platform-win):not(.sidebar-right) #sidebar:not(.collapsed) #sidebar-brand{padding-left:74px}
+body:not(.platform-darwin):not(.platform-win) #sidebar.collapsed + #main .page-header,
+body.sidebar-right:not(.platform-darwin):not(.platform-win) #main .page-header{padding-left:74px}
+/* Drag-to-resize handle pinned to the sidebar's inner edge (right normally,
+   left when the sidebar is flipped to the right side). Thin hit area with
    an accent line on hover/drag. Hidden while collapsed or on mobile. */
 #sidebar-resizer{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;z-index:60;-webkit-app-region:no-drag;touch-action:none}
 #sidebar-resizer::after{content:"";position:absolute;top:0;right:0;width:2px;height:100%;background:transparent;transition:background .15s}
+body.sidebar-right #sidebar-resizer{right:auto;left:0}
+body.sidebar-right #sidebar-resizer::after{right:auto;left:0}
 #sidebar-resizer:hover::after,body.resizing-sidebar #sidebar-resizer::after{background:var(--accent)}
 #sidebar.collapsed #sidebar-resizer{display:none}
 body.resizing-sidebar{cursor:col-resize;user-select:none}
@@ -109,27 +138,23 @@ body.platform-darwin #main::before{content:"";display:block;height:28px;-webkit-
    strip. Only applies when collapsed — with the sidebar open the
    page-header starts at x=280px, well past the lights. */
 body.platform-darwin #sidebar.collapsed + #main .page-header{padding-left:76px}
+/* Same clearance when the sidebar is flipped right: the main column touches
+   the left window edge, putting page titles under the traffic lights. */
+body.platform-darwin.sidebar-right #main .page-header{padding-left:76px}
 
-/* Sidebar collapsed: the floating expand button (☰) is position:fixed
-   at top:14px left:8px — exactly where the traffic lights sit. Push it
-   down past the ~32px traffic-light zone so it's reachable and the
-   lights aren't drawn on top of it. !important is required because the
-   button carries an inline style="top:14px" in app.html (set for the
-   non-Electron browser case) which would otherwise win the cascade.
-   Windows/Linux use the platform-win rule above (top:52px, clearing the
-   in-window titlebar); this is the macOS counterpart. */
-body.platform-darwin #sidebar-expand-btn{top:40px !important}
+/* macOS: the sidebar controls sit in the 28px chrome strip, immediately
+   right of the traffic lights (~70px zone + breathing room). */
+body.platform-darwin #sidebar-controls{top:3px;left:78px}
 
-/* Brand row — AGENT X logo + New Chat button + collapse arrow on a
-   single line below the traffic-light spacer. Logo flexes to fill so
-   the buttons sit hard against the right edge. */
+/* Brand row — AGENT X logo + New Chat button on a single line below the
+   traffic-light spacer. Logo flexes to fill so the button sits hard
+   against the right edge. */
 #sidebar-brand{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);min-height:63px;overflow:hidden}
 #sidebar.collapsed #sidebar-brand{display:none}
-/* Logo gives up space first (shrinks + ellipsizes) so the New Chat button and
-   collapse chevron stay inside the sidebar when it's dragged narrow. */
+/* Logo gives up space first (shrinks + ellipsizes) so the New Chat button
+   stays inside the sidebar when it's dragged narrow. */
 #logo{font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 10px var(--accent-dim);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;cursor:pointer;white-space:nowrap}
 #new-chat-btn{flex-shrink:0;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-family:var(--mono);transition:all .2s;white-space:nowrap}
-#sidebar-collapse-btn{flex-shrink:0}
 #new-chat-btn:hover{background:var(--accent);color:var(--bg);box-shadow:0 0 12px var(--accent-dim)}
 #pinned-section{padding:8px 0;border-bottom:1px solid var(--border)}
 .pinned-item{display:flex;align-items:center;gap:8px;padding:5px 12px;cursor:pointer;color:var(--fg);border-radius:4px;margin:1px 6px;transition:background .15s}
@@ -915,6 +940,10 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 .md-math-block{margin:10px 0;overflow-x:auto;overflow-y:hidden;text-align:center}
 .md-math-block .katex{font-size:1.05em}
 
+/* ── Mermaid diagrams (rendered from ```mermaid blocks by shared-dom.js) ── */
+.md-mermaid{margin:10px 0;overflow-x:auto;text-align:center}
+.md-mermaid svg{max-width:100%;height:auto}
+
 /* ── Code block copy button (feature 91) ── */
 .code-block-wrapper{position:relative;margin:8px 0}
 .code-block-header{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#0a0a14;border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;font-family:var(--mono);font-size:.7rem}
@@ -1149,6 +1178,7 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
   #sidebar{position:fixed;left:-300px;top:0;bottom:0;z-index:1000;width:280px;transition:left .25s ease;box-shadow:none}
   #sidebar.mobile-open{left:0;box-shadow:4px 0 20px rgba(0,0,0,.4)}
   #sidebar-resizer{display:none}
+  #sidebar-controls{display:none}
   #mobile-menu-btn{display:flex}
   #main{margin-left:0;width:100%}
 
@@ -1335,7 +1365,7 @@ body.ide-resizing iframe{pointer-events:none}
 /* IDE fullscreen mode — sidebar + hamburger toggles belong to nav, hide while editing an app */
 body.ide-fullscreen #sidebar,
 body.ide-fullscreen #mobile-menu-btn,
-body.ide-fullscreen #sidebar-expand-btn,
+body.ide-fullscreen #sidebar-controls,
 body.ide-fullscreen #sidebar-backdrop{display:none!important}
 
 /* IDE file empty state */

@@ -1,7 +1,8 @@
-// Desktop sidebar collapse toggle (spring-animated)
+// Desktop sidebar collapse toggle (spring-animated). Lives in the window-top
+// #sidebar-controls cluster (next to the macOS traffic lights), which stays
+// visible when the sidebar is hidden — no separate expand button needed.
 function toggleSidebarCollapse() {
   const sidebar = document.getElementById('sidebar');
-  const expandBtn = document.getElementById('sidebar-expand-btn');
   if (!sidebar) return;
   const collapsed = !sidebar.classList.contains('collapsed');
   // Disable CSS transition — spring handles it
@@ -9,24 +10,44 @@ function toggleSidebarCollapse() {
   if (collapsed) {
     sidebar.classList.add('collapsed');
     Spring.animate(sidebar, 'width', 0, { from: sidebar.offsetWidth, preset: 'stiff', unit: 'px', onUpdate: v => { sidebar.style.minWidth = v + 'px'; }, onDone: () => { sidebar.style.transition = ''; } });
-    if (expandBtn) expandBtn.style.display = 'block';
   } else {
     sidebar.classList.remove('collapsed');
     sidebar.style.overflow = 'hidden';
     const expandedW = (typeof window.__sidebarExpandedWidth === 'function') ? window.__sidebarExpandedWidth() : 256;
     Spring.animate(sidebar, 'width', expandedW, { from: 0, preset: 'stiff', unit: 'px', onUpdate: v => { sidebar.style.minWidth = v + 'px'; }, onDone: () => { sidebar.style.overflow = ''; sidebar.style.transition = ''; } });
-    if (expandBtn) expandBtn.style.display = 'none';
   }
   localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '');
+  const hideBtn = document.getElementById('sidebar-hide-btn');
+  if (hideBtn) hideBtn.title = collapsed ? 'Show sidebar' : 'Hide sidebar';
+}
+
+// Flip the sidebar to the other side of the window (body flex row-reverse).
+function flipSidebarSide() {
+  const right = document.body.classList.toggle('sidebar-right');
+  localStorage.setItem('sidebar-side', right ? 'right' : '');
 }
 
 // Restore sidebar state on load
 (function() {
   if (localStorage.getItem('sidebar-collapsed') === '1') {
     const sidebar = document.getElementById('sidebar');
-    const expandBtn = document.getElementById('sidebar-expand-btn');
     if (sidebar) sidebar.classList.add('collapsed');
-    if (expandBtn) expandBtn.style.display = 'block';
+    const hideBtn = document.getElementById('sidebar-hide-btn');
+    if (hideBtn) hideBtn.title = 'Show sidebar';
+  }
+  if (localStorage.getItem('sidebar-side') === 'right') {
+    document.body.classList.add('sidebar-right');
+  }
+  // Reveal the window-top controls only once the platform class (added by the
+  // preload's DOMContentLoaded handler, which is registered before this script)
+  // is in place — so they appear directly at the macOS/Windows position instead
+  // of flashing at the browser-fallback spot first. This script's DCL listener
+  // runs after the preload's, guaranteeing the platform class is already set.
+  const reveal = () => document.body.classList.add('sidebar-controls-ready');
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', reveal, { once: true });
+  } else {
+    reveal();
   }
 })();
 
@@ -88,7 +109,10 @@ function toggleMobileSidebar() {
       e.preventDefault();
     });
     handle.addEventListener('pointermove', (e) => {
-      if (dragging) applyWidth(startW + (e.clientX - startX), false);
+      if (!dragging) return;
+      // Dragging outward grows the sidebar on either side — invert when flipped right.
+      const dx = e.clientX - startX;
+      applyWidth(document.body.classList.contains('sidebar-right') ? startW - dx : startW + dx, false);
     });
     function end(e) {
       if (!dragging) return;

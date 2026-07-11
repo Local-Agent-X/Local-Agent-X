@@ -24,9 +24,12 @@
      $$..$$ LaTeX from model output into typeset math at md() time. -->
 <link rel="stylesheet" href="/vendor/katex/katex.min.css"/>
 <script src="/vendor/katex/katex.min.js"></script>
+<!-- Mermaid (self-hosted): shared-dom.js renders ```mermaid code blocks into
+     diagrams at display time, same MutationObserver hook as highlightjs. -->
+<script src="/vendor/mermaid/mermaid.min.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb22"/>
+<link rel="stylesheet" href="/css/app.css?v=vb25"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
      Import map lets `import * as THREE from 'three'` resolve cleanly in
@@ -81,14 +84,6 @@
 
 <!-- Mobile hamburger (feature 95) -->
 <button id="mobile-menu-btn" class="mobile-only" onclick="toggleMobileSidebar()" aria-label="Toggle sidebar menu">&#9776;</button>
-<!-- Window-top sidebar controls: hide/show + flip side. Fixed to the window
-     (not the sidebar) so they stay reachable when the sidebar is hidden or on
-     the right. Positioned right of the macOS traffic lights / inside the
-     Windows in-window titlebar via the platform-* rules in app.css. -->
-<div id="sidebar-controls">
-  <button id="sidebar-hide-btn" onclick="toggleSidebarCollapse()" title="Hide sidebar" aria-label="Hide or show sidebar">&#9707;</button>
-  <button id="sidebar-flip-btn" onclick="flipSidebarSide()" title="Move sidebar to the other side" aria-label="Move sidebar to the other side">&#8644;</button>
-</div>
 
 <!-- ═══ SIDEBAR (persists across all pages) ═══ -->
 <div id="sidebar" role="navigation" aria-label="Sidebar navigation">
@@ -1334,8 +1329,8 @@
 <script src="/js/shared-theme.js?v=v2"></script>
 <script src="/js/shared-desktop.js?v=v1"></script>
 <script src="/js/shared-escape.js?v=v1"></script>
-<script src="/js/shared-md.js?v=v2"></script>
-<script src="/js/shared-dom.js?v=v1"></script>
+<script src="/js/shared-md.js?v=v3"></script>
+<script src="/js/shared-dom.js?v=v2"></script>
 <script src="/js/shared-api.js?v=v1"></script>
 <!-- ChatStreamStore must load before app.js's top-level boot (renderSidebar →
      isChatActive reads window.ChatStreamStore) AND before every chat-ws /
@@ -1474,7 +1469,7 @@
 <script src="/js/apps-ide-snapshots.js?v=v1"></script>
 <script type="module" src="/js/agents.js?v=v4"></script>
 <script src="/js/shortcuts.js"></script>
-<script src="/js/app-sidebar-toggle.js?v=v2"></script>
+<script src="/js/app-sidebar-toggle.js?v=v4"></script>
 <script src="/js/desktop-titlebar.js?v=v2"></script>
 
 <!-- ═══ Global Search Modal ═══ -->
@@ -1485,6 +1480,19 @@
       oninput="debounceGlobalSearch(this.value)" />
     <div id="global-search-results" style="flex:1;overflow-y:auto;padding:8px;max-height:50vh"></div>
   </div>
+</div>
+
+<!-- Window-top sidebar controls: hide/show + flip side. Fixed to the window
+     (not the sidebar) so they stay reachable when the sidebar is hidden or on
+     the right. Positioned right of the macOS traffic lights / inside the
+     Windows in-window titlebar via the platform-* rules in app.css.
+     MUST be the last body element: on macOS the platform-darwin drag strips
+     (#main::before / #sidebar-header) claim -webkit-app-region:drag, and
+     Chromium resolves app-region by PAINT ORDER, not z-index — so these
+     no-drag buttons only stay clickable if they paint after the strips. -->
+<div id="sidebar-controls">
+  <button id="sidebar-hide-btn" onclick="toggleSidebarCollapse()" title="Hide sidebar" aria-label="Hide or show sidebar">&#9707;</button>
+  <button id="sidebar-flip-btn" onclick="flipSidebarSide()" title="Move sidebar to the other side" aria-label="Move sidebar to the other side">&#8644;</button>
 </div>
 
 </body>

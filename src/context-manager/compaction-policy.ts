@@ -87,6 +87,19 @@ export function chatHistoryMaxKeep(channel: string): number {
 	return channel === "web" ? CHAT_KEEP.web : CHAT_KEEP.default;
 }
 
+// ─── Manual compaction keep count (consumed by routes/chat/compact-route.ts) ─
+
+/**
+ * Rows the manual "Compact" button (POST /api/compact) keeps verbatim. Unlike
+ * the turn loop (token-pressure-tiered) and the chat lane (per-channel), the
+ * button runs on explicit user demand, not at a fullness threshold, so it keeps
+ * a single flat count — smaller than the auto-truncate counts because the user
+ * is deliberately reclaiming context right now. The caller still snaps the cut
+ * forward to the next user-message boundary, so this is a lower bound on kept
+ * rows, and clamps it against the session length.
+ */
+export const MANUAL_COMPACT_KEEP_RECENT = 20;
+
 // ─── Chat-lane digest budgets (consumed by providers/sanitize.ts) ───────────
 
 /**

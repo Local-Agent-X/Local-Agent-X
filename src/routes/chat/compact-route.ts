@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
+import { MANUAL_COMPACT_KEEP_RECENT } from "../../context-manager/compaction-policy.js";
 import { CompactSchema, validateBody } from "../../route-schemas.js";
 import type { ServerContext } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
@@ -38,7 +39,7 @@ export async function handleCompactRoute(
     return true;
   }
 
-  const KEEP_RECENT = Math.min(20, session.messages.length - 5);
+  const KEEP_RECENT = Math.min(MANUAL_COMPACT_KEEP_RECENT, session.messages.length - 5);
   let cutIdx = Math.max(0, session.messages.length - KEEP_RECENT);
   for (let i = cutIdx; i < session.messages.length; i++) {
     if (session.messages[i].role === "user") { cutIdx = i; break; }

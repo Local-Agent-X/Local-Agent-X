@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
+import { TURN_KEEP_TIERS } from "../../context-manager/compaction-policy.js";
 import { getContextStatus } from "../../context-manager/status.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 
@@ -32,7 +33,9 @@ export async function handleEvalCompactRoute(
 
   const messages = body.messages as ChatCompletionMessageParam[];
   const model = typeof body.model === "string" && body.model ? body.model : "claude-sonnet-5";
-  const keepLast = typeof body.keepLast === "number" && body.keepLast > 0 ? body.keepLast : 6;
+  // This route mirrors the turn-loop compaction primitive, so its default keep
+  // count is the turn loop's default tier — the single authority owns the 6.
+  const keepLast = typeof body.keepLast === "number" && body.keepLast > 0 ? body.keepLast : TURN_KEEP_TIERS.default;
 
   const systemMsgs = messages.filter((m) => m.role === "system");
   const nonSystem = messages.filter((m) => m.role !== "system");

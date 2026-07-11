@@ -19,7 +19,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { actionLogDir, readAllEntriesSince, type ActionLedgerEntry } from "../ops/action-ledger.js";
-import { isDispatchFailure } from "../canonical-loop/types.js";
+import { isDispatchFailure } from "../canonical-loop/public/op-facts.js";
 import type { MemoryIndex } from "./index.js";
 import { createLogger } from "../logger.js";
 

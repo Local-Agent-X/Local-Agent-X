@@ -1,7 +1,7 @@
 import { type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import type { AgentOptions } from "../providers/types.js";
-import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
+import { runAgentViaCanonical } from "../canonical-loop/index.js";
 import { getApprovalManager } from "../approval-manager.js";
 import type { LAXConfig, ServerEvent, ToolDefinition, Session } from "../types.js";
 import type { MemoryIndex, MemoryManager } from "../memory/index.js";

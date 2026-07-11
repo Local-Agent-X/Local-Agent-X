@@ -173,8 +173,8 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
   const newChatMessages: ChatCompletionMessageParam[] = [];
   if (canonicalOpId) {
     try {
-      const { readOpMessages } = await import("../../../canonical-loop/store.js");
-      const { opMessageRowToChatParam } = await import("../../../canonical-loop/chat-runner.js");
+      const { readOpMessages } = await import("../../../canonical-loop/index.js");
+      const { opMessageRowToChatParam } = await import("../../../canonical-loop/index.js");
       const rows = readOpMessages(canonicalOpId);
       for (const row of rows) {
         if (row.messageId.startsWith("hist-")) continue;

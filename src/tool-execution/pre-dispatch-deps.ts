@@ -15,7 +15,7 @@ import type { LAXConfig } from "../types.js";
 import type { LocalOnlyDecision } from "../local-only-policy.js";
 import { getApprovalManager, getToolDecision, getRiskDecision } from "../approval-manager.js";
 import { hasCapability, type CapabilityClass } from "../tool-registry.js";
-import { opForbidsCapability, planModeForbidsCapability } from "../canonical-loop/instruction-ledger/index.js";
+import { opForbidsCapability, planModeForbidsCapability } from "../canonical-loop/public/plan-ledger.js";
 import type { ServerEvent } from "../types.js";
 import type { RulePack } from "../tool-policy/evaluator.js";
 import { makeSpendCapPack } from "../tool-policy/packs/spend-cap-pack.js";

@@ -12,7 +12,7 @@
 
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { readSessionActions } from "../ops/action-ledger.js";
-import { isDispatchFailure } from "../canonical-loop/types.js";
+import { isDispatchFailure } from "../canonical-loop/public/op-facts.js";
 
 function ok(content: string): ToolResult { return { content }; }
 

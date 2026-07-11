@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type AgentOptions } from "../providers/types.js";
-import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
+import { runAgentViaCanonical } from "../canonical-loop/index.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
 import { EventBus } from "../event-bus.js";
 import { ProjectStore, type AgentRun } from "../agent-store/index.js";

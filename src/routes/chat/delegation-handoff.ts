@@ -1,5 +1,5 @@
 import type { AgentOptions } from "../../providers/types.js";
-import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
+import { runAgentViaCanonical, canonicalLoopEntry } from "../../canonical-loop/index.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { createLogger } from "../../logger.js";
 import type { ServerContext } from "../../server-context.js";
@@ -11,7 +11,6 @@ import { newOpId } from "../../ops/op-store.js";
 import { buildContextPack } from "../../ops/context-pack-builder.js";
 import { getRetryPolicy } from "../../ops/heartbeat.js";
 import { trackOpForSession } from "../../ops/session-bridge.js";
-import { canonicalLoopEntry } from "../../canonical-loop/index.js";
 import type { Op, OpVisibility } from "../../ops/types.js";
 
 async function submitDelegationOp(message: string, sessionId: string): Promise<{ opId: string }> {

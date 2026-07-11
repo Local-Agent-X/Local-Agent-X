@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { withTransportRetry } from "../canonical-loop/adapters/transport-retry.js";
+import { withTransportRetry } from "../canonical-loop/public/build-adapters.js";
 import { fetchCodexOnce } from "./fetch-once.js";
 
 type Event =

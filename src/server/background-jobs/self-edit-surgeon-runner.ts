@@ -12,7 +12,7 @@
  * never imports the canonical loop directly.
  */
 import { type AgentOptions } from "../../providers/types.js";
-import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
+import { runAgentViaCanonical } from "../../canonical-loop/index.js";
 import { extractAgentOutput } from "../../server-utils.js";
 import { SecurityLayer } from "../../security/index.js";
 import { loadFileAccessModeAtLeast } from "../../security/security-config.js";

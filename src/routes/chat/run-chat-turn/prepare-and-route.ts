@@ -60,7 +60,7 @@ export async function emitContextStatus(
     // string estimate as first-message fallback.
     let baselineTokens = 0;
     if (process.env.LAX_CONTEXT_BASELINE !== "0" && isAnthropicModel(prepared.model)) {
-      const { getSessionBaselineTokens } = await import("../../../canonical-loop/session-baseline.js");
+      const { getSessionBaselineTokens } = await import("../../../canonical-loop/index.js");
       baselineTokens = getSessionBaselineTokens(sessionId)
         ?? (estimateTokens(prepared.systemPrompt) + estimateTokens(JSON.stringify(prepared.tools)));
     }

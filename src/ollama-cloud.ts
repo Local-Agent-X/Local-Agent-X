@@ -23,7 +23,7 @@
  * surface origin in the picker so the user can pick explicitly.
  */
 import type { SecretsStore } from "./secrets.js";
-import { isEmbeddingModel } from "./canonical-loop/model-capabilities.js";
+import { isEmbeddingModel } from "./canonical-loop/public/op-facts.js";
 import { createLogger } from "./logger.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "./local-only-policy.js";
 

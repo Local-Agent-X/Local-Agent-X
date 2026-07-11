@@ -5,7 +5,7 @@
 // ends the mode. Decline/timeout keeps the mandate standing.
 import { describe, it, expect, afterEach } from "vitest";
 import { planTools, isPlanMode, clearSoftPlanMode } from "./plan-tools.js";
-import { setEnforcedPlanMode, isEnforcedPlanMode, _resetEnforcedPlanMode } from "../canonical-loop/instruction-ledger/plan-mode.js";
+import { setEnforcedPlanMode, isEnforcedPlanMode, _resetEnforcedPlanMode } from "../canonical-loop/public/plan-ledger.js";
 import { getApprovalManager } from "../approval-manager.js";
 import type { ServerEvent } from "../types.js";
 

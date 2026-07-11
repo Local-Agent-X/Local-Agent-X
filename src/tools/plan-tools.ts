@@ -1,5 +1,5 @@
 import type { ServerEvent, ToolDefinition, ToolResult } from '../types.js';
-import { isEnforcedPlanMode, setEnforcedPlanMode } from '../canonical-loop/instruction-ledger/index.js';
+import { isEnforcedPlanMode, setEnforcedPlanMode } from '../canonical-loop/public/plan-ledger.js';
 import { getApprovalManager } from '../approval-manager.js';
 
 // Session-scoped plan mode — each session tracks its own state. This set is

@@ -10,13 +10,11 @@ import {
   createAnthropicAdapter,
   sweepStaleCanonicalOps,
   setLaneCapConfigReader,
+  lostRegistrationAdapterFactory,
+  setRenderProbe,
+  type CanonicalLane,
+  type PreviewRuntimeError,
 } from "../canonical-loop/index.js";
-// Imported straight from runtime.js (not re-exported via index.js) so this
-// bootstrap keeps its light static graph — runtime.ts pulls in nothing heavy.
-import { lostRegistrationAdapterFactory } from "../canonical-loop/runtime.js";
-import type { CanonicalLane } from "../canonical-loop/types.js";
-import { setRenderProbe } from "../canonical-loop/turn-loop/render-verify.js";
-import type { PreviewRuntimeError } from "../canonical-loop/turn-loop/render-verify.js";
 import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 
@@ -77,7 +75,7 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
     }));
     if (result.screenshotB64) {
       const { visionVerdictForScreenshot } = await import("../tools/app-tools/vision-verify.js");
-      const { getDesignSpec } = await import("../canonical-loop/turn-loop/design-verify.js");
+      const { getDesignSpec } = await import("../canonical-loop/index.js");
       const verdict = await visionVerdictForScreenshot(result.screenshotB64, appDescription, {}, getDesignSpec(opId));
       if (verdict && !verdict.ok) {
         errors.push({ kind: "blank", message: `Screenshot looks broken: ${verdict.reason}`, ts: Date.now() });
@@ -86,7 +84,7 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
         // (decide-outcome runs it last, after the app is proven non-broken /
         // compiling / behaving). Only when NOT broken: a broken app retries for
         // brokenness first, and a design nudge over a broken screenshot is noise.
-        const { recordDesignVerdict } = await import("../canonical-loop/turn-loop/design-verify.js");
+        const { recordDesignVerdict } = await import("../canonical-loop/index.js");
         recordDesignVerdict(opId, verdict.design);
       }
     }

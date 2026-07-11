@@ -1,5 +1,5 @@
 import { type AgentOptions } from "../../providers/types.js";
-import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
+import { runAgentViaCanonical } from "../../canonical-loop/index.js";
 import { SecurityLayer } from "../../security/index.js";
 import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
 import type { SessionStore } from "../../memory/index.js";

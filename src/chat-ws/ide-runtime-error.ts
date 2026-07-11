@@ -8,7 +8,7 @@
 // previous turn are fine to drop.
 
 import { createLogger } from "../logger.js";
-import type { PreviewRuntimeError } from "../canonical-loop/turn-loop/render-verify.js";
+import type { PreviewRuntimeError } from "../canonical-loop/public/verify-bridge.js";
 
 const logger = createLogger("chat-ws");
 
@@ -36,7 +36,7 @@ export async function handleIdeRuntimeError(
     if (liveOps.length === 0) return;
     const err = parseRuntimeError(msg);
     if (!err) return;
-    const { pushPreviewRuntimeError } = await import("../canonical-loop/turn-loop/render-verify.js");
+    const { pushPreviewRuntimeError } = await import("../canonical-loop/public/verify-bridge.js");
     for (const opId of liveOps) {
       pushPreviewRuntimeError(opId, err);
     }
@@ -52,7 +52,7 @@ export async function handleAppRuntimeError(
   try {
     const err = parseRuntimeError(msg);
     if (!err) return;
-    const { listOpsForApp, pushPreviewRuntimeError } = await import("../canonical-loop/turn-loop/render-verify.js");
+    const { listOpsForApp, pushPreviewRuntimeError } = await import("../canonical-loop/public/verify-bridge.js");
     for (const opId of listOpsForApp(appId)) {
       pushPreviewRuntimeError(opId, err);
     }

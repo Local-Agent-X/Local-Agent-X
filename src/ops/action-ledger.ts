@@ -21,7 +21,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from
 import { join, dirname } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
-import type { ToolDispatchStatus } from "../canonical-loop/types.js";
+import type { ToolDispatchStatus } from "../canonical-loop/public/op-facts.js";
 
 const logger = createLogger("ops.action-ledger");
 

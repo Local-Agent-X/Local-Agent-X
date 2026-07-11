@@ -10,7 +10,7 @@ import { readCheckpoint } from "../checkpoint.js";
 import { readEvents } from "../event-log.js";
 import { listOps, readOp } from "../op-store.js";
 import { listOpsForSession } from "../session-bridge.js";
-import { extractFinalAssistantText } from "../../canonical-loop/session-bridge-extractors.js";
+import { extractFinalAssistantText } from "../../canonical-loop/index.js";
 import {
   POLL_LOOP_MAX,
   POLL_LOOP_WINDOW_MS,

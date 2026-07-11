@@ -26,7 +26,7 @@ import { handleIdeRuntimeError } from "./ide-runtime-error.js";
 // race: enqueue happens in one event-loop turn, the guard sees it.
 import { listOpsForSession, hasChatHandlerPending } from "../ops/session-bridge.js";
 import { pushInject } from "../agent-loop/inject-queue.js";
-import { setEnforcedPlanMode, isEnforcedPlanMode } from "../canonical-loop/instruction-ledger/index.js";
+import { setEnforcedPlanMode, isEnforcedPlanMode } from "../canonical-loop/public/plan-ledger.js";
 import { clearSoftPlanMode } from "../tools/plan-tools.js";
 import { handleAgentRedirect, handleAgentControl } from "./agent-controls.js";
 import type { ScreenAttachment } from "../screen-stream/index.js";

@@ -32,8 +32,8 @@
  * distinct top-level statuses are gone.
  */
 
-import type { TerminalState } from "../canonical-loop/terminal-states.js";
-export type { TerminalState } from "../canonical-loop/terminal-states.js";
+import type { TerminalState } from "../canonical-loop/public/op-facts.js";
+export type { TerminalState } from "../canonical-loop/public/op-facts.js";
 
 /** All possible run statuses. The terminal subset matches TerminalState
  *  exactly — anything that watches the canonical-loop bus and anything

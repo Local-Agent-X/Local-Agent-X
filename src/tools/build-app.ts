@@ -45,9 +45,9 @@ import {
   registerToolDispatcherForOp,
   registerToolsForOp,
   appendOpMessage,
+  makeChatToolDispatcher,
 } from "../canonical-loop/index.js";
-import { createAppBuildAdapter } from "../canonical-loop/adapters/app-build-adapter.js";
-import { makeChatToolDispatcher } from "../canonical-loop/chat-tool-dispatcher.js";
+import { createAppBuildAdapter } from "../canonical-loop/public/build-adapters.js";
 import { SecurityLayer } from "../security/index.js";
 import { loadFileAccessModeAtLeast } from "../security/security-config.js";
 import type { Op, OpVisibility } from "../ops/types.js";
@@ -59,7 +59,7 @@ import { processStartTool, processStatusTool, processKillTool } from "./process-
 import { appServeBackendTool, appServeFrontendTool } from "./dev-server-tools.js";
 import { classifyAppTier, tierLabel, type AppTier } from "./app-tier.js";
 import { selectDesignBrief } from "./design-brief.js";
-import { recordDesignSpec } from "../canonical-loop/turn-loop/design-verify.js";
+import { recordDesignSpec } from "../canonical-loop/index.js";
 
 /** Tool defs the in-canonical-sub-agent strategy hands to the agent. Mirrors
  *  the app-builder template's allowedTools verbatim. */

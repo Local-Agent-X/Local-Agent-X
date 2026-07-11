@@ -9,7 +9,7 @@ import {
   evidenceImagesFromPriorSessions,
   type PriorBuildEntry,
 } from "./build-session-context.js";
-import { VERIFY_EVIDENCE_MARKER } from "../canonical-loop/adapters/app-build-verify-adapter.js";
+import { VERIFY_EVIDENCE_MARKER } from "../canonical-loop/public/build-adapters.js";
 
 const store = vi.hoisted(() => ({
   ops: [] as Array<Record<string, unknown>>,

@@ -2,7 +2,7 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody } from "../../server-utils.js";
 import { getRuntimeConfig } from "../../config.js";
 import { loadSettings, saveSettings } from "../../settings.js";
-import { isEmbeddingModel } from "../../canonical-loop/model-capabilities.js";
+import { isEmbeddingModel } from "../../canonical-loop/public/op-facts.js";
 import type { ProviderId } from "../../providers/provider-ids.js";
 import { PROVIDERS } from "../../providers/registry.js";
 import {

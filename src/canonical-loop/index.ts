@@ -250,6 +250,30 @@ export {
   type ChatToolDispatcherOptions,
 } from "./chat-tool-dispatcher.js";
 
+// ── Interface seal: promoted earned exports ───────────────────────────────
+// Symbols external consumers used to deep-import; the boundary is now sealed
+// (see interface-seal.test.ts). NOTE: the app-build adapter surface lives
+// ONLY in ./public/build-adapters.ts — re-exporting it here would pull the
+// app-build verification stack into every index consumer and mint cycles.
+
+// Instruction ledger / enforced plan mode + render/design verification
+// bridge (light sub-barrels; in-orbit consumers import them directly).
+export * from "./public/plan-ledger.js";
+export * from "./public/verify-bridge.js";
+
+// Leaf op facts (isDispatchFailure and the op types are exported above).
+export type { TerminalState } from "./terminal-states.js";
+export { isEmbeddingModel } from "./model-capabilities.js";
+
+// Chat/session bridge helpers.
+export { opMessageRowToChatParam } from "./chat-runner.js";
+export { extractFinalAssistantText } from "./session-bridge-extractors.js";
+export { getSessionBaselineTokens } from "./session-baseline.js";
+export { persistOpKeepingSignals } from "./op-persist.js";
+
+// Runtime fallback adapter for ops recovered without a live registration.
+export { lostRegistrationAdapterFactory } from "./runtime.js";
+
 export { runWorker, type WorkerHandle } from "./worker.js";
 export { driveTurn, type DriveTurnResult } from "./turn-loop.js";
 export { seedInitialUserMessage, buildInitialUserContent } from "./initial-prompt.js";

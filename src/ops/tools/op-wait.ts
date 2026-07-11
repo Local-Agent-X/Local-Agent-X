@@ -6,7 +6,7 @@
 
 import type { ToolDefinition } from "../../types.js";
 import { awaitCanonicalOp } from "../../canonical-loop/index.js";
-import { extractFinalAssistantText } from "../../canonical-loop/session-bridge-extractors.js";
+import { extractFinalAssistantText } from "../../canonical-loop/index.js";
 
 export const opWaitTool: ToolDefinition = {
   name: "op_wait",

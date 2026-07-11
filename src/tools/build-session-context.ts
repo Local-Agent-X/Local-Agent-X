@@ -18,7 +18,7 @@
 import { existsSync } from "node:fs";
 import { listOps } from "../ops/op-store.js";
 import { readOpMessages, firstUserMessageText } from "../canonical-loop/index.js";
-import { VERIFY_EVIDENCE_MARKER } from "../canonical-loop/adapters/app-build-verify-adapter.js";
+import { VERIFY_EVIDENCE_MARKER } from "../canonical-loop/public/build-adapters.js";
 
 /** Most recent prior builds included. Newest last (chronological read). */
 const MAX_PRIOR_OPS = 3;

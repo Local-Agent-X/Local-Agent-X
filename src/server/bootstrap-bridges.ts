@@ -175,7 +175,7 @@ export function createBridgeHandler(deps: {
     // web chat uses — runChatViaCanonical yields ServerEvents; we
     // collect text into a single response (bridges don't stream to the
     // user — Telegram/WhatsApp send one message per reply).
-    const { runChatViaCanonical } = await import("../canonical-loop/chat-runner.js");
+    const { runChatViaCanonical } = await import("../canonical-loop/index.js");
     let assistantText = "";
     let canonicalOpId = "";
     let firstError: string | null = null;
@@ -208,8 +208,8 @@ export function createBridgeHandler(deps: {
     // synthesis would lose).
     if (canonicalOpId) {
       try {
-        const { readOpMessages } = await import("../canonical-loop/store.js");
-        const { opMessageRowToChatParam } = await import("../canonical-loop/chat-runner.js");
+        const { readOpMessages } = await import("../canonical-loop/index.js");
+        const { opMessageRowToChatParam } = await import("../canonical-loop/index.js");
         const newRows: ChatCompletionMessageParam[] = [];
         for (const row of readOpMessages(canonicalOpId)) {
           if (row.messageId.startsWith("hist-")) continue;

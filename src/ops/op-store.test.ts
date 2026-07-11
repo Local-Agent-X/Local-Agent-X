@@ -19,7 +19,7 @@ const dataDir = mkdtempSync(join(tmpdir(), "lax-opstore-"));
 process.env.LAX_DATA_DIR = dataDir;
 
 const { writeOp, readOp, setOpStatus, withOpLock } = await import("./op-store.js");
-const { persistOpKeepingSignals } = await import("../canonical-loop/op-persist.js");
+const { persistOpKeepingSignals } = await import("../canonical-loop/index.js");
 
 const opDirOf = (id: string) => join(dataDir, "operations", id);
 const lockOf = (id: string) => join(opDirOf(id), "operation.lock");

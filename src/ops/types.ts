@@ -148,7 +148,7 @@ export interface Op {
    * created before Issue 01; canonical-loop is the sole writer for current ops.
    * See src/canonical-loop/types.ts for the full shape.
    */
-  canonical?: import("../canonical-loop/types.js").CanonicalOpFields;
+  canonical?: import("../canonical-loop/public/op-facts.js").CanonicalOpFields;
 }
 
 // ── Op events (streamed worker→supervisor→subscribers, also disked) ─────

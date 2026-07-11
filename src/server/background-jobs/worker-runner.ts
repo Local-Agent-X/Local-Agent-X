@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { type AgentOptions } from "../../providers/types.js";
-import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
+import { runAgentViaCanonical } from "../../canonical-loop/index.js";
 import { stripEphemeralMessages } from "../../providers/sanitize.js";
 import { extractAgentOutput } from "../../server-utils.js";
 import { SecurityLayer } from "../../security/index.js";

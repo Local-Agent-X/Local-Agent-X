@@ -8,10 +8,9 @@
  * Persists to ~/.lax/language-style.json.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createJsonStore } from "../util/json-store.js";
 import type { ModuleSignal } from "../orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
@@ -27,7 +26,7 @@ export interface StyleProfile {
   sampleSize: number;
 }
 
-interface StyleStore {
+type StyleStore = {
   greetings: Record<string, number>;
   emojiCount: number;
   messageCount: number;
@@ -39,7 +38,7 @@ interface StyleStore {
   noPunctuationMessages: number;
   formalMarkers: number;
   casualMarkers: number;
-}
+};
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -85,32 +84,6 @@ const COMMON_WORDS = new Set([
 
 // ── Persistence ─────────────────────────────────────────────
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
-
-function loadStore(): StyleStore {
-  if (!existsSync(STORE_FILE)) return emptyStore();
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return { ...emptyStore(), ...parsed };
-  } catch {
-    return emptyStore();
-  }
-}
-
 function emptyStore(): StyleStore {
   return {
     greetings: {},
@@ -127,10 +100,9 @@ function emptyStore(): StyleStore {
   };
 }
 
-function saveStore(store: StyleStore): void {
-  ensureDir();
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
-}
+const styleStore = createJsonStore<StyleStore>(STORE_FILE, {
+  defaults: emptyStore,
+});
 
 // ── LanguageMirror class ────────────────────────────────────
 
@@ -139,7 +111,7 @@ export class LanguageMirror {
   private store: StyleStore;
 
   private constructor() {
-    this.store = loadStore();
+    this.store = styleStore.load();
   }
 
   static getInstance(): LanguageMirror {
@@ -208,7 +180,7 @@ export class LanguageMirror {
     const casualHits = trimmed.match(CASUAL_MARKERS_RE);
     if (casualHits) this.store.casualMarkers += casualHits.length;
 
-    saveStore(this.store);
+    styleStore.save(this.store);
   }
 
   /** Get the current computed style profile. */
@@ -362,7 +334,7 @@ export class LanguageMirror {
 
   /** Reload store from disk. */
   reload(): void {
-    this.store = loadStore();
+    this.store = styleStore.load();
   }
 
   /** Reset singleton (testing). */

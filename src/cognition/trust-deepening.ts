@@ -8,10 +8,9 @@
  * Persists to ~/.lax/trust-engine.json.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createJsonStore } from "../util/json-store.js";
 import { EmotionalMemory } from "./emotional-memory.js";
 import type { ModuleSignal } from "../orchestrator/types.js";
 
@@ -37,13 +36,13 @@ interface SignalEntry {
   weight: number;
 }
 
-interface TrustStore {
+type TrustStore = {
   firstSeen: number;
   signals: SignalEntry[];
   conversationCount: number;
   successfulTasks: number;
   lastInteraction: number;
-}
+};
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -68,59 +67,16 @@ const NEGATIVE_WEIGHTS: Record<NegativeSignal, number> = {
 
 // ── Persistence ─────────────────────────────────────────────
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
-
-function loadStore(): TrustStore {
-  if (!existsSync(STORE_FILE)) {
-    return {
-      firstSeen: Date.now(),
-      signals: [],
-      conversationCount: 0,
-      successfulTasks: 0,
-      lastInteraction: Date.now(),
-    };
-  }
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return {
-      firstSeen: parsed.firstSeen ?? Date.now(),
-      signals: Array.isArray(parsed.signals) ? parsed.signals : [],
-      conversationCount: parsed.conversationCount ?? 0,
-      successfulTasks: parsed.successfulTasks ?? 0,
-      lastInteraction: parsed.lastInteraction ?? Date.now(),
-    };
-  } catch {
-    return {
-      firstSeen: Date.now(),
-      signals: [],
-      conversationCount: 0,
-      successfulTasks: 0,
-      lastInteraction: Date.now(),
-    };
-  }
-}
-
-function saveStore(store: TrustStore): void {
-  ensureDir();
-  if (store.signals.length > MAX_SIGNALS) {
-    store.signals = store.signals.slice(-MAX_SIGNALS);
-  }
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
-}
+const trustStore = createJsonStore<TrustStore>(STORE_FILE, {
+  defaults: () => ({
+    firstSeen: Date.now(),
+    signals: [],
+    conversationCount: 0,
+    successfulTasks: 0,
+    lastInteraction: Date.now(),
+  }),
+  caps: { signals: MAX_SIGNALS },
+});
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -135,7 +91,7 @@ export class TrustEngine {
   private store: TrustStore;
 
   private constructor() {
-    this.store = loadStore();
+    this.store = trustStore.load();
   }
 
   static getInstance(): TrustEngine {
@@ -217,7 +173,7 @@ export class TrustEngine {
       weight: POSITIVE_WEIGHTS[type],
     });
     this.store.lastInteraction = Date.now();
-    saveStore(this.store);
+    trustStore.save(this.store);
   }
 
   /** Record a negative interaction signal. */
@@ -229,20 +185,20 @@ export class TrustEngine {
       weight: NEGATIVE_WEIGHTS[type],
     });
     this.store.lastInteraction = Date.now();
-    saveStore(this.store);
+    trustStore.save(this.store);
   }
 
   /** Increment conversation count. */
   recordConversation(): void {
     this.store.conversationCount++;
     this.store.lastInteraction = Date.now();
-    saveStore(this.store);
+    trustStore.save(this.store);
   }
 
   /** Increment successful task count. */
   recordTaskSuccess(): void {
     this.store.successfulTasks++;
-    saveStore(this.store);
+    trustStore.save(this.store);
   }
 
   /** Get a natural-language description of the current relationship stage. */
@@ -298,7 +254,7 @@ export class TrustEngine {
 
   /** Reload store from disk. */
   reload(): void {
-    this.store = loadStore();
+    this.store = trustStore.load();
   }
 
   /** Reset singleton (testing). */

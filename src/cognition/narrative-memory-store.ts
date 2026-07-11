@@ -8,10 +8,10 @@
  * Persists to ~/.lax/narratives.json.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createJsonStore } from "../util/json-store.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -51,38 +51,17 @@ const LAX_DIR = getLaxDir();
 const STORE_FILE = join(LAX_DIR, "narratives.json");
 const MAX_NARRATIVES = 2000;
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
+const narrativeStore = createJsonStore<{ narratives: Narrative[] }>(STORE_FILE, {
+  defaults: () => ({ narratives: [] }),
+  caps: { narratives: MAX_NARRATIVES },
+});
 
 export function loadStore(): NarrativeStore {
-  if (!existsSync(STORE_FILE)) return { narratives: [] };
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return { narratives: Array.isArray(parsed.narratives) ? parsed.narratives : [] };
-  } catch {
-    return { narratives: [] };
-  }
+  return narrativeStore.load();
 }
 
 export function saveStore(store: NarrativeStore): void {
-  ensureDir();
-  if (store.narratives.length > MAX_NARRATIVES) {
-    store.narratives = store.narratives.slice(-MAX_NARRATIVES);
-  }
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
+  narrativeStore.save(store);
 }
 
 export function generateId(): string {

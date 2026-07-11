@@ -5,10 +5,9 @@
  * Persists to ~/.lax/emotional-history.json (max 1000 entries, FIFO).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createJsonStore } from "../util/json-store.js";
 import type { ModuleSignal } from "../orchestrator/types.js";
 import {
   EMOTION_KEYWORDS,
@@ -31,41 +30,13 @@ const LAX_DIR = getLaxDir();
 const HISTORY_FILE = join(LAX_DIR, "emotional-history.json");
 const MAX_ENTRIES = 1000;
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
-
-function loadHistory(): EmotionRecord[] {
-  try {
-    if (existsSync(HISTORY_FILE)) {
-      const raw = readFileSync(HISTORY_FILE, "utf-8");
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-      if (parsed && Array.isArray(parsed.records)) return parsed.records;
-    }
-  } catch {}
-  return [];
-}
-
-function saveHistory(records: EmotionRecord[]): void {
-  ensureDir();
+const historyStore = createJsonStore<{ records: EmotionRecord[] }>(HISTORY_FILE, {
+  defaults: () => ({ records: [] }),
   // FIFO: keep only the most recent MAX_ENTRIES
-  const trimmed = records.length > MAX_ENTRIES
-    ? records.slice(records.length - MAX_ENTRIES)
-    : records;
-  atomicWrite(HISTORY_FILE, JSON.stringify({ records: trimmed }, null, 2));
-}
+  caps: { records: MAX_ENTRIES },
+  // Pre-envelope legacy files were a bare array of records.
+  upgrade: (parsed) => (Array.isArray(parsed) ? { records: parsed } : parsed),
+});
 
 // ── EmotionalMemory class ───────────────────────────────────
 
@@ -73,7 +44,7 @@ class EmotionalMemoryImpl {
   private records: EmotionRecord[];
 
   constructor() {
-    this.records = loadHistory();
+    this.records = historyStore.load().records;
   }
 
   /**
@@ -172,12 +143,13 @@ class EmotionalMemoryImpl {
     };
     this.records.push(record);
     // Bound the in-memory list to the same FIFO cap the disk copy uses.
-    // saveHistory() only trims the slice it writes; without reassigning here
-    // this.records grows unboundedly for the process lifetime (AM-9 symptom c).
+    // The store's cap only trims the envelope it writes; without reassigning
+    // here this.records grows unboundedly for the process lifetime (AM-9
+    // symptom c).
     if (this.records.length > MAX_ENTRIES) {
       this.records = this.records.slice(this.records.length - MAX_ENTRIES);
     }
-    saveHistory(this.records);
+    historyStore.save({ records: this.records });
   }
 
   /**

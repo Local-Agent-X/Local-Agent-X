@@ -4,10 +4,9 @@
  * Backs GrowthTracker; persists to ~/.lax/growth-tracker.json.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createJsonStore } from "../util/json-store.js";
 
 export type SkillLevel = "beginner" | "intermediate" | "advanced" | "expert";
 
@@ -27,11 +26,11 @@ export interface SkillProfile {
   lastSeen: number;
 }
 
-export interface TrackerStore {
+export type TrackerStore = {
   skills: SkillProfile[];
   firsts: { type: string; timestamp: number; sessionId: string }[];
   counters: Record<string, number>;
-}
+};
 
 const LAX_DIR = getLaxDir();
 const STORE_FILE = join(LAX_DIR, "growth-tracker.json");
@@ -39,51 +38,28 @@ const MAX_SKILLS = 200;
 const MAX_ENTRIES_PER_SKILL = 100;
 const MAX_FIRSTS = 500;
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
+const trackerStore = createJsonStore<TrackerStore>(STORE_FILE, {
+  defaults: () => ({ skills: [], firsts: [], counters: {} }),
+  caps: { skills: { max: MAX_SKILLS, keep: "head" }, firsts: MAX_FIRSTS },
+});
 
 export function loadStore(): TrackerStore {
-  if (!existsSync(STORE_FILE)) return { skills: [], firsts: [], counters: {} };
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return {
-      skills: Array.isArray(parsed.skills) ? parsed.skills : [],
-      firsts: Array.isArray(parsed.firsts) ? parsed.firsts : [],
-      counters: parsed.counters && typeof parsed.counters === "object" ? parsed.counters : {},
-    };
-  } catch {
-    return { skills: [], firsts: [], counters: {} };
-  }
+  return trackerStore.load();
 }
 
 export function saveStore(store: TrackerStore): void {
-  ensureDir();
+  // Most-recently-seen skills survive the head cap; sort only when over the
+  // cap so an under-cap store keeps its existing on-disk order.
   if (store.skills.length > MAX_SKILLS) {
     store.skills.sort((a, b) => b.lastSeen - a.lastSeen);
-    store.skills = store.skills.slice(0, MAX_SKILLS);
   }
+  // Per-skill entry cap is nested, outside the store's per-key cap model.
   for (const skill of store.skills) {
     if (skill.entries.length > MAX_ENTRIES_PER_SKILL) {
       skill.entries = skill.entries.slice(-MAX_ENTRIES_PER_SKILL);
     }
   }
-  if (store.firsts.length > MAX_FIRSTS) {
-    store.firsts = store.firsts.slice(-MAX_FIRSTS);
-  }
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
+  trackerStore.save(store);
 }
 
 export const LEVEL_ORDER: Record<SkillLevel, number> = {

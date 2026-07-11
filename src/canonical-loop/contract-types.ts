@@ -32,7 +32,7 @@ export interface CanonicalMessage {
 
 /**
  * One tool invocation requested by the model. The loop dispatches via
- * tool-executor.ts and returns the result as a `tool_result` message in
+ * tool-execution/ and returns the result as a `tool_result` message in
  * the next turn's input.
  */
 export interface ToolCall {

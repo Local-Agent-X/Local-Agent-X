@@ -82,7 +82,7 @@ export function canonicalToChatParam(
       // a tool message with the text summary, then a follow-up user
       // message with image_url multi-part content so the next turn's
       // model actually sees the image. Mirrors the legacy
-      // tool-executor.ts pattern at line ~677.
+      // tool-execution/ pattern at line ~677.
       let resultText: string;
       let imagesPayload: Array<{ mime: string; b64: string }> | null = null;
       if (r && typeof r === "object" && Array.isArray((r as { images?: unknown }).images)) {

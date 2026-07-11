@@ -1,5 +1,5 @@
 /**
- * Tool dispatch boundary (PRD §15: "Loop dispatches via tool-executor.ts").
+ * Tool dispatch boundary (PRD §15: "Loop dispatches via tool-execution/").
  *
  * The canonical-loop NEVER executes tools itself. It hands a `ToolCall` to a
  * `ToolDispatcher` and treats the result as observability + a `tool_result`
@@ -7,7 +7,7 @@
  *
  * The default dispatcher is a no-op (returns an error result). Production
  * wiring (Issue 09 / Issue 13) injects a dispatcher whose implementation
- * delegates to tool-executor.ts. Tests inject a programmable fake.
+ * delegates to tool-execution/. Tests inject a programmable fake.
  *
  * Boundary: this module has no DB handle, no event-writer, no child_process.
  */

@@ -2,8 +2,8 @@
  * In-memory registry of active autopilot sessions, keyed by sessionId.
  *
  * Used by:
- *   - tool-executor.ts to inject internal _cwd into self_edit args
- *   - tool-executor.ts to gate self_edit against maxSelfEditCalls
+ *   - tool-execution/ to inject internal _cwd into self_edit args
+ *   - tool-execution/ to gate self_edit against maxSelfEditCalls
  *   - autopilot loop to bookkeep per-session counters
  *
  * Lives outside the autopilot module's main control flow so it can be

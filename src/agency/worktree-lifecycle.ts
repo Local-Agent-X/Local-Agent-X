@@ -152,7 +152,7 @@ export function cleanupAllWorktrees(): void {
 // createWorktree() above derives branch name as `agent/<id>` and is called
 // only from the agency delegated-agent path. Autopilot needs a different
 // branch prefix (and doesn't want to be subject to the agent- session-id
-// path-rewrite logic in tool-executor.ts). createNamedWorktree() lets the
+// path-rewrite logic in tool-execution/). createNamedWorktree() lets the
 // caller supply both the map key (name) and the full branch name.
 
 /**

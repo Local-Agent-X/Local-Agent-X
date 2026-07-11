@@ -12,7 +12,7 @@
  *   3. Registers a per-op adapter (Anthropic / Codex / OpenAI-compat) using
  *      the prepared system prompt and model
  *   4. Registers a per-op tool dispatcher that delegates to the chat tool
- *      runtime (`tool-executor.ts`) — so canonical chat uses the SAME tool
+ *      runtime (`tool-execution/`) — so canonical chat uses the SAME tool
  *      implementations as legacy chat
  *   5. Submits via `canonicalLoopEntry`
  *   6. Subscribes to op stream + events, yields `ServerEvent`s for the

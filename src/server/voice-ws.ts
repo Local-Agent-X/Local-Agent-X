@@ -182,7 +182,7 @@ export async function setupVoiceWs(deps: {
       // Register this session's onEvent in the shared map so the MCP bridge
       // (Anthropic's tool path) can fire side-effect events that reach the
       // voice WebSocket. Codex calls voice_visual natively and uses the
-      // _onEvent injection in tool-executor.ts, so this is only required
+      // _onEvent injection in tool-execution/, so this is only required
       // for Anthropic, but registering unconditionally is harmless.
       const hadPrev = activeOnEventBySession.has(sessionId);
       const prev = activeOnEventBySession.get(sessionId);

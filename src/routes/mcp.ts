@@ -108,7 +108,7 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
       // Run through the same path as other agent tool calls: security, policy,
       // RBAC, Ari all apply. Caller role is operator (MCP bridge is trusted —
       // only reachable on localhost, authed via LAX auth token).
-      const { executeToolCalls } = await import("../tool-executor.js");
+      const { executeToolCalls } = await import("../tool-execution/index.js");
       const toolMap = new Map(ctx.allAgentTools.map(t => [t.name, t]));
       const results = await executeToolCalls(
         [{ id: `mcp-${Date.now()}`, name: body.name, arguments: JSON.stringify(args) }],

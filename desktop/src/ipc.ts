@@ -18,7 +18,7 @@ import {
   getServerPid,
 } from "./server-process";
 import { showNotification, registerHotkey, registerPanicHotkey } from "./hotkey-notifications";
-import { getMainWindow, toggleWindow, reapplyMainTitleBarOverlay, stepMainZoom } from "./window";
+import { getMainWindow, toggleWindow, reapplyMainTitleBarOverlay, stepMainZoom, setMainChromeTint } from "./window";
 import { registerAutostart, unregisterAutostart } from "./autostart";
 import {
   isNativeSpeechAvailable,
@@ -280,7 +280,13 @@ export function setupIPC(): void {
     if (process.platform === "darwin") return;
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
-    const height = win === getMainWindow()
+    const isMain = win === getMainWindow();
+    if (isMain) {
+      // Cache so zoom/theme re-syncs (syncTitleBarToZoom) repaint with THIS
+      // tint instead of resetting to overlayForTheme's hardcoded hex.
+      setMainChromeTint(color, symbolColor);
+    }
+    const height = isMain
       ? Math.max(1, Math.round(32 * win.webContents.getZoomFactor()))
       : 32;
     try { win.setTitleBarOverlay({ color, symbolColor, height }); } catch { /* not available */ }

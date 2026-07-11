@@ -42,12 +42,24 @@ const ZOOM_MAX = 1.6;
 const ZOOM_STEP = 0.1;
 const usesOverlayTitlebar = process.platform !== "darwin";
 
+// Last tint the renderer reported for the main window (its sampled computed
+// --surface, via report-chrome-tint). Once set, it is the ONLY color source
+// for the overlay: zoom steps and theme re-applies reuse it instead of
+// re-deriving from overlayForTheme's hardcoded hex — which used to stomp the
+// renderer's tint back to #ffffff on every such sync. overlayForTheme remains
+// the first-frame fallback only, before the renderer has reported.
+let mainChromeTint: { color: string; symbolColor: string } | null = null;
+
+export function setMainChromeTint(color: string, symbolColor: string): void {
+  mainChromeTint = { color, symbolColor };
+}
+
 /** Resize the native window-control overlay to match the zoomed CSS titlebar. */
 function syncTitleBarToZoom(win: BrowserWindow, factor: number): void {
   if (!usesOverlayTitlebar) return;
   try {
     win.setTitleBarOverlay({
-      ...overlayForTheme(getSetting("theme")),
+      ...(mainChromeTint ?? overlayForTheme(getSetting("theme"))),
       height: Math.max(1, Math.round(BASE_TITLEBAR_PX * factor)),
     });
   } catch { /* window has no overlay / is gone — nothing to sync */ }

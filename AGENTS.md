@@ -65,7 +65,7 @@ Don't skip. Try the cheapest step first. Only escalate when the one below return
 ## Protocol invariants (enforced at build time)
 
 - **Runtime state changes must broadcast.** Any `/api/*` POST that mutates shared state (settings, provider, theme, session) must call `broadcastAll({ type: "settings_changed", ... })` so connected UI tabs reflect the change. Silent writes to `settings.json` are a bug — they desync the UI.
-- **Tool results route through `tool-executor.ts`.** Don't bypass it — Ari + policy + approval + RBAC all live there.
+- **Tool results route through `src/tool-execution/`.** Don't bypass it — Ari + policy + approval + RBAC all live there.
 - **External content flows through `sanitize.ts` wrappers.** Never paste raw web content into the model context without `wrapExternalContent()`.
 - **Agent-facing tools belong in the tool registry (`src/tools/` definitions, wired in `src/tools/registry-build.ts`).** Model can only see what's registered. Register → policy rule in `tool-policies.data.ts` → done.
 

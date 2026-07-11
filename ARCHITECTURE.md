@@ -40,7 +40,7 @@ Paths below were verified against the tree (the generated map's importer counts
 | **Server entry + HTTP boot** | `src/index.ts` → `src/server/index.ts`, `src/server/lifecycle.ts` | Services: `src/server/bootstrap-services.ts`. Tools: `src/server/bootstrap-tools.ts`. Loop adapter registration: `src/server/canonical-loop-bootstrap.ts`. |
 | **Agent / turn loop** | `src/canonical-loop/` | Entry `index.ts`; driver `turn-loop.ts`; chat runner `chat-runner.ts`; durable event store `store.ts`. One of the most-imported subsystems (see the map) — this is *the* loop. The module boundary is sealed: outside consumers import `index.ts` or the `public/` sub-barrels, enforced by `interface-seal.test.ts`. |
 | **Provider adapters + routing** | `src/providers/registry.ts`, `src/providers/provider-ids.ts` | Per-turn transport adapters: `src/canonical-loop/adapters/`. Credential resolution: `src/auth/resolve.ts`. Per-provider history prep: `src/agent-request/prepare-request.ts`. |
-| **Tool defs + registry + dispatch** | `src/tool-execution/` (entry `execute-tool.ts`) | Registry build: `src/tools/registry-build.ts`; tool impls under `src/tools/`. Public import path `src/tool-executor.ts` is a **re-export shim** of `tool-execution/`. |
+| **Tool defs + registry + dispatch** | `src/tool-execution/` (entry `execute-tool.ts`) | Registry build: `src/tools/registry-build.ts`; tool impls under `src/tools/`. |
 | **Tool governance / policy** | `src/tool-policy/tool-policies.data.ts` + `evaluator.ts` | Default-deny; one row per tool. |
 | **Tool approvals** | `src/tool-execution/require-approval.ts`, `src/approval-manager.ts`, `src/approval-decision.ts` | Live tool-call gate for risky actions; emits `approval_requested` and is rendered by `public/js/chat-stream-store.js`. This is separate from retired issue-level approval fields. |
 | **Retry / resilience policy** | `src/auto-retry.ts`, `src/resilience-policy.ts` | Retries only recognized transient categories and only replay-safe tool effects: read-only, idempotent mutation, or keyed mutation with an operation key. Missing effect metadata and non-idempotent mutations are not auto-retried. |
@@ -79,8 +79,6 @@ that *looks* like the canonical owner but isn't:
 | Path | Status | Read instead / note |
 |---|---|---|
 | `src/agent-loop/` | **Pruned to one live file** — `inject-queue.ts` (consumed by canonical-loop); the rest is gone | `src/canonical-loop/` |
-| `src/tool-executor.ts` | **Shim** (re-export) | `src/tool-execution/` |
-| `src/anthropic-client/` | Parse/convert utilities only — **not** the turn transport | provider adapters in `src/canonical-loop/adapters/` |
 
 ### Live, but easy to misread as dead
 
@@ -94,6 +92,7 @@ wired in and running — do not skip them:
 | `src/conversation/` | The chat-export → memory **ingest** pipeline (`ingest.ts`) — imported by the `/api/memory` route + `src/memory/tools/`. |
 | `src/agent-loop-detectors/` | **Post-turn validation** (planning-only / single-tool-then-stop detection) — imported by the loop's `post-turn-detector` middleware. |
 | `src/context-manager/` | Token-budget tracking + **auto-compaction** — imported by the loop's `turn-loop/compact-history.ts`. Don't confuse with `src/context/` (input builder). |
+| `src/anthropic-client/` | The live **Anthropic turn transport** (API + warm-pool CLI streaming) — dynamically imported by `src/canonical-loop/adapters/anthropic-transport.ts`, plus `llm-dispatch.ts` and the classifiers. An earlier version of this doc called it "parse utilities only"; that was wrong. |
 
 ## One-line architecture
 

@@ -323,9 +323,11 @@ describe("purgeEventsBefore — audit-event retention", () => {
 
 		const anchorBefore = store.queryRun("run-old").at(-1)!.hash;
 
-		// retentionMs=0 → cutoff=now → everything already written is "old";
-		// only the open run protects its events.
-		const purged = store.purgeEventsBefore(0);
+		// Negative retention → cutoff strictly in the future, so everything
+		// already written is unambiguously "old" (retentionMs=0 was flaky: an
+		// event stamped in the same millisecond as the cutoff isn't `< cutoff`).
+		// Only the open run protects its events.
+		const purged = store.purgeEventsBefore(-1000);
 		expect(purged.events).toBe(2);
 		expect(purged.runs).toBe(1);
 
@@ -342,16 +344,16 @@ describe("purgeEventsBefore — audit-event retention", () => {
 
 	it("is idempotent and a fresh store purges nothing", () => {
 		store = new AuditStore(":memory:");
-		expect(store.purgeEventsBefore(0)).toEqual({ events: 0, runs: 0 });
+		expect(store.purgeEventsBefore(-1000)).toEqual({ events: 0, runs: 0 });
 		expect(store.getChainAnchor()).toBeNull();
 
 		store.startRun("run-1", "agent", {});
 		store.append(makeToolCall(), makeDecision());
 		store.endRun("run-1");
-		store.purgeEventsBefore(0);
+		store.purgeEventsBefore(-1000);
 		// Second purge: nothing left to remove, anchor unchanged.
 		const anchor = store.getChainAnchor();
-		expect(store.purgeEventsBefore(0)).toEqual({ events: 0, runs: 0 });
+		expect(store.purgeEventsBefore(-1000)).toEqual({ events: 0, runs: 0 });
 		expect(store.getChainAnchor()).toBe(anchor);
 		expect(verifyDatabaseChain(store).valid).toBe(true);
 	});
@@ -370,7 +372,7 @@ describe("purgeEventsBefore — audit-event retention", () => {
 		store.startRun("run-old", "agent", {});
 		store.append(makeToolCall({ runId: "run-old" }), makeDecision());
 		store.endRun("run-old");
-		store.purgeEventsBefore(0);
+		store.purgeEventsBefore(-1000);
 
 		store.startRun("run-new", "agent", {});
 		store.append(makeToolCall({ id: "n1", runId: "run-new" }), makeDecision());

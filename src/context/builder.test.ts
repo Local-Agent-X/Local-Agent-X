@@ -1,11 +1,11 @@
 /**
  * Context Builder regression tests.
  *
- * Verifies section ordering, cache boundary placement, and split behavior.
+ * Verifies section ordering (static always before dynamic) and fence safety.
  */
 
 import { describe, it, expect } from "vitest";
-import { createSystemPromptBuilder, ContextBuilder, CACHE_BOUNDARY } from "./builder.js";
+import { createSystemPromptBuilder } from "./builder.js";
 
 const MOCK_INPUTS = {
   basePrompt: "You are a personal AI companion.",
@@ -21,24 +21,21 @@ const MOCK_INPUTS = {
 };
 
 describe("Context Builder", () => {
-  it("places static sections before cache boundary, dynamic after", async () => {
+  it("places all static sections before all dynamic sections", async () => {
     const builder = createSystemPromptBuilder(MOCK_INPUTS);
     const output = await builder.build();
 
-    expect(output).toContain(CACHE_BOUNDARY);
-    const { stablePrefix, dynamicSuffix } = ContextBuilder.split(output);
+    const staticMarkers = ["personal AI companion", "powered by Codex", "Tool Guidance", "Connected: GitHub"];
+    const dynamicMarkers = ["MEMORY", "RELEVANT", "[Memory: focused]", "canary:abc123"];
 
-    // Static sections in prefix
-    expect(stablePrefix).toContain("personal AI companion");
-    expect(stablePrefix).toContain("powered by Codex");
-    expect(stablePrefix).toContain("Tool Guidance");
-    expect(stablePrefix).toContain("Connected: GitHub");
+    const lastStatic = Math.max(...staticMarkers.map(m => output.indexOf(m)));
+    const firstDynamic = Math.min(...dynamicMarkers.map(m => output.indexOf(m)));
 
-    // Dynamic sections in suffix
-    expect(dynamicSuffix).toContain("MEMORY");
-    expect(dynamicSuffix).toContain("RELEVANT");
-    expect(dynamicSuffix).toContain("[Memory: focused]");
-    expect(dynamicSuffix).toContain("canary:abc123");
+    for (const m of [...staticMarkers, ...dynamicMarkers]) {
+      expect(output.indexOf(m), m).toBeGreaterThanOrEqual(0);
+    }
+    // Cacheable-prefix invariant: every static section precedes every dynamic one.
+    expect(lastStatic).toBeLessThan(firstDynamic);
   });
 
   it("skips empty optional sections", async () => {
@@ -61,12 +58,6 @@ describe("Context Builder", () => {
     expect(order).toContain("canary");
     // Canary should be last
     expect(order[order.length - 1]).toBe("canary");
-  });
-
-  it("split returns full prompt as stablePrefix when no boundary", () => {
-    const { stablePrefix, dynamicSuffix } = ContextBuilder.split("no boundary here");
-    expect(stablePrefix).toBe("no boundary here");
-    expect(dynamicSuffix).toBe("");
   });
 
   it("includes bridge context when provided", async () => {

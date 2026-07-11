@@ -20,8 +20,7 @@
  *                           the chain.
  *
  * This file wires them together as `ThreatEngine` (the per-session
- * orchestrator) and re-exports the public types plus `SessionThreatManager`
- * (the multi-session score map, which lives in session-threat-manager.ts).
+ * orchestrator) and re-exports the public types.
  */
 
 import { canaryPromptBlock, checkCanaries, generateCanaries, registerSessionCanaries } from "./canaries.js";
@@ -38,7 +37,6 @@ export { generateCanaries, canaryPromptBlock, checkCanaries, checkCanariesInPayl
 export { ThreatScorer, THREAT_SCORES, type ThreatLevel } from "./scoring.js";
 export { ToolChainAnalyzer } from "./tool-chain.js";
 export { CryptoAuditTrail } from "./audit-trail.js";
-export { SessionThreatManager } from "./session-threat-manager.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // UNIFIED THREAT ENGINE — per-session orchestrator
@@ -290,70 +288,5 @@ export class ThreatEngine {
     this.canaries = generateCanaries();
     if (newSessionId) this.sessionId = newSessionId;
     registerSessionCanaries(this.sessionId, this.canaries);
-  }
-
-  // ── Canary token rotation ──
-
-  private canaryRotationTimer: ReturnType<typeof setInterval> | null = null;
-  private canaryRotationIntervalMs = 24 * 60 * 60 * 1000; // 24 hours
-
-  /** Auto-rotate canary strings on a schedule (default: every 24h) */
-  autoRotateCanary(intervalMs?: number): void {
-    if (this.canaryRotationTimer) clearInterval(this.canaryRotationTimer);
-    if (intervalMs) this.canaryRotationIntervalMs = intervalMs;
-    this.canaryRotationTimer = setInterval(() => {
-      this.canaries = generateCanaries();
-      registerSessionCanaries(this.sessionId, this.canaries);
-      this.audit.record({
-        sessionId: this.sessionId,
-        event: "canary_rotated",
-        decision: "allow",
-        reason: "Canary tokens rotated on schedule",
-        threatScore: this.scorer.getStatus().score,
-        threatLevel: this.scorer.getStatus().level,
-      });
-    }, this.canaryRotationIntervalMs);
-  }
-
-  /** Stop canary auto-rotation */
-  stopCanaryRotation(): void {
-    if (this.canaryRotationTimer) {
-      clearInterval(this.canaryRotationTimer);
-      this.canaryRotationTimer = null;
-    }
-  }
-
-  /** Force immediate canary rotation */
-  rotateCanariesNow(): string[] {
-    this.canaries = generateCanaries();
-    registerSessionCanaries(this.sessionId, this.canaries);
-    return this.canaries;
-  }
-
-  // ── ARI explainability ──
-
-  /** Last block reason for explainability */
-  private lastBlockDetails: {
-    event: string;
-    toolName?: string;
-    reason: string;
-    controls: string[];
-    timestamp: number;
-  } | null = null;
-
-  /** Record a block event for explainability */
-  recordBlockExplanation(event: string, reason: string, controls: string[], toolName?: string): void {
-    this.lastBlockDetails = { event, toolName, reason, controls, timestamp: Date.now() };
-  }
-
-  /** Get plain English explanation for the most recent block */
-  getExplanation(): string | null {
-    if (!this.lastBlockDetails) return null;
-    const d = this.lastBlockDetails;
-    const controlList = d.controls.length > 0 ? d.controls.join(", ") : "general policy";
-    const toolPart = d.toolName ? ` on tool "${d.toolName}"` : "";
-    return `Block${toolPart}: ${d.reason} (detected by: ${controlList}). ` +
-      `This action was blocked because it matched a known threat pattern. ` +
-      `Current threat level: ${this.scorer.getStatus().level} (score: ${this.scorer.getStatus().score}).`;
   }
 }

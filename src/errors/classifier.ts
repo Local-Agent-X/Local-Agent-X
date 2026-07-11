@@ -8,7 +8,6 @@
  * Today this logic in LAX is scattered across:
  *   - src/agent-guards.ts (EMPTY_RESULT_RE for dead-end detection)
  *   - src/ops/worker-entry.ts (REFUSAL_PATTERNS for worker output)
- *   - src/context-manager.ts (isContextOverflowError)
  *   - src/providers/run-anthropic.ts (transient-error detection)
  *   - src/agent-loop-detectors.ts (various unresolved-error patterns)
  *

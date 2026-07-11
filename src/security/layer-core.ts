@@ -48,7 +48,6 @@ export class SecurityLayer {
   static _selfPort: string = "7007";
 
   private workspace: string;
-  private auditLog: Array<{ timestamp: number; tool: string; decision: SecurityDecision }> = [];
   private egressAllowlist: Set<string> = new Set();
   // true once we successfully loaded an egress-allowlist.json file from
   // disk (even if its content is `[]`). false means no file existed —
@@ -273,7 +272,6 @@ export class SecurityLayer {
       decision = this.evaluateByKernelClass(toolName, kernelClassForTool(toolName), args, ctx);
     }
 
-    this.auditLog.push({ timestamp: Date.now(), tool: toolName, decision });
     return decision;
   }
 
@@ -391,9 +389,5 @@ export class SecurityLayer {
       this.egressMode,
       this.localServicePorts,
     );
-  }
-
-  getAuditLog() {
-    return this.auditLog;
   }
 }

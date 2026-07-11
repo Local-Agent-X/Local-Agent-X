@@ -1,18 +1,13 @@
 /**
- * Context Builder — modular, ordered system prompt assembly with cache boundary.
+ * Context Builder — modular, ordered system prompt assembly.
  *
  * All entry points (web chat, bridge, cron, sub-agents) use this single builder.
- * Sections above the cache boundary are stable across turns (cacheable by LLM).
- * Sections below are dynamic per request.
- *
- * Static sections are separated from dynamic ones by a cache boundary marker.
- * LLM providers that support prompt caching (Anthropic, OpenAI) can cache the
- * stable prefix and only reprocess the suffix.
+ * Static sections (stable across turns) are always emitted before dynamic
+ * per-request sections, so providers with prompt caching get a stable prefix.
  */
 
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-export const CACHE_BOUNDARY = "\n<!-- CACHE_BOUNDARY -->\n";
 
 /** Fence sentinels for recalled-memory sections. */
 const RECALLED_OPEN = "<untrusted-recalled-data";
@@ -68,7 +63,7 @@ export class ContextBuilder {
     return this;
   }
 
-  /** Build the full prompt with cache boundary between static and dynamic sections. */
+  /** Build the full prompt — static sections first, dynamic sections after. */
   async build(): Promise<string> {
     const staticParts: string[] = [];
     const dynamicParts: string[] = [];
@@ -85,20 +80,7 @@ export class ContextBuilder {
       }
     }
 
-    if (dynamicParts.length > 0) {
-      return staticParts.join("") + CACHE_BOUNDARY + dynamicParts.join("");
-    }
-    return staticParts.join("");
-  }
-
-  /** Split a built prompt into cacheable prefix and dynamic suffix. */
-  static split(prompt: string): { stablePrefix: string; dynamicSuffix: string } {
-    const idx = prompt.indexOf(CACHE_BOUNDARY);
-    if (idx === -1) return { stablePrefix: prompt, dynamicSuffix: "" };
-    return {
-      stablePrefix: prompt.slice(0, idx),
-      dynamicSuffix: prompt.slice(idx + CACHE_BOUNDARY.length),
-    };
+    return staticParts.join("") + dynamicParts.join("");
   }
 
   getSectionOrder(): string[] {
@@ -311,6 +293,3 @@ When the user references a project, website, person, or topic you don't recogniz
 
   return builder;
 }
-
-// Keep backward compat for any code importing the old name
-export const createChatContextBuilder = createSystemPromptBuilder;

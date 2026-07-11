@@ -14,8 +14,7 @@
 
 export { estimateTokens, messageTokens, totalTokens } from "./token-estimation.js";
 export { getContextStatus, type ContextStatus } from "./status.js";
-export { effectiveContextWindow, isAnthropicModel, CLI_EFFECTIVE_WINDOW, type AnthropicTransport } from "./effective-window.js";
+export { effectiveContextWindow, isAnthropicModel, type AnthropicTransport } from "./effective-window.js";
 export { resolveAnthropicTransport } from "./resolve-transport.js";
-export { isContextOverflowError } from "./overflow-detection.js";
 export { buildCompactionPrompt, forceCompact } from "./compaction-prompt.js";
 export { compactIfNeeded, compactIfNeededWithLLM } from "./compaction.js";

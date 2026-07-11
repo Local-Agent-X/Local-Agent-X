@@ -166,10 +166,11 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
         const { readFileSync, existsSync } = await import("node:fs");
         const { resolve, join, dirname } = await import("node:path");
         const { fileURLToPath } = await import("node:url");
-        // Resolve from this file's location to the repo root.
-        // dist/context-builder.js → dist/ → repo root.
+        // Resolve from this file's location to the repo root. tsc preserves
+        // directories: dist/context/system-prompt-builder.js → up two → repo
+        // root (same shape when running from src/context/ under tsx/vitest).
         const thisFile = fileURLToPath(import.meta.url);
-        const root = resolve(dirname(thisFile), "..");
+        const root = resolve(dirname(thisFile), "../..");
         const p = join(root, "AGENTS.md");
         if (!existsSync(p)) return "";
         const md = readFileSync(p, "utf-8");

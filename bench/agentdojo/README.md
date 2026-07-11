@@ -27,7 +27,7 @@ Node bridge (bench/agentdojo/bridge/, run via tsx)
 Real LAX code exercised: `src/ari-kernel/*` (kernel, preset `workspace-assistant`,
 host grants, behavioral rules), `src/sanitize.ts` (`wrapExternalContent`,
 41 injection patterns, homoglyph normalize, system-tag strip),
-`src/data-lineage-taint.ts` (taint + egress gate), `src/threat/*` (canary tokens,
+`src/data-lineage/taint.ts` (taint + egress gate), `src/threat/*` (canary tokens,
 chain analysis). The model is the real `claude` CLI via OAuth — no new API key.
 
 ## Configs (the three runs)

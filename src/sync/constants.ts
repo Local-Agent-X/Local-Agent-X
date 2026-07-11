@@ -75,7 +75,6 @@ export const BRAIN_JSON_FILES: readonly string[] = [
   "agent-issues.json",
   "agent-projects.json",
   "agent-templates.json",
-  "associative-memory.json",
   "calendar.json",
   "consolidation-log.json",
   "correction-history.json",

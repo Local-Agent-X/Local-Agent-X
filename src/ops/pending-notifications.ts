@@ -31,7 +31,7 @@
  *     where user never replies — keeps the queue small)
  */
 
-import { harnessNotice } from "../context/builder.js";
+import { harnessNotice } from "../context/system-prompt-builder.js";
 
 export interface PendingNotification {
   opId: string;

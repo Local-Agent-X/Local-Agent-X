@@ -1,11 +1,11 @@
 /**
- * Context Builder regression tests.
+ * System Prompt Builder regression tests.
  *
  * Verifies section ordering (static always before dynamic) and fence safety.
  */
 
 import { describe, it, expect } from "vitest";
-import { createSystemPromptBuilder } from "./builder.js";
+import { createSystemPromptBuilder } from "./system-prompt-builder.js";
 
 const MOCK_INPUTS = {
   basePrompt: "You are a personal AI companion.",

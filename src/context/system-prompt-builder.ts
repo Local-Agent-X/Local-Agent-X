@@ -1,5 +1,5 @@
 /**
- * Context Builder — modular, ordered system prompt assembly.
+ * System Prompt Builder — modular, ordered system prompt assembly.
  *
  * All entry points (web chat, bridge, cron, sub-agents) use this single builder.
  * Static sections (stable across turns) are always emitted before dynamic
@@ -55,7 +55,7 @@ export interface PromptSection {
   shouldInclude?: () => boolean;
 }
 
-export class ContextBuilder {
+export class SystemPromptBuilder {
   private sections: PromptSection[] = [];
 
   addSection(section: PromptSection): this {
@@ -108,8 +108,8 @@ export function createSystemPromptBuilder(opts: {
   canaryBlock?: string;
   // Bridge-specific
   bridgeContext?: string;
-}): ContextBuilder {
-  const builder = new ContextBuilder();
+}): SystemPromptBuilder {
+  const builder = new SystemPromptBuilder();
 
   // ── Static sections (cacheable across turns) ──
 

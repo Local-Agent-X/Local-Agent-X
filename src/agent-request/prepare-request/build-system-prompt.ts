@@ -12,7 +12,7 @@ import { createLogger } from "../../logger.js";
 import { providerRiderFor } from "./provider-riders.js";
 import type { FileAccessMode } from "../../security/types.js";
 import { loadFileAccessMode } from "../../security/security-config.js";
-import { harnessNotice } from "../../context/builder.js";
+import { harnessNotice } from "../../context/system-prompt-builder.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -168,7 +168,7 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
     // Prefer hot-reloadable config file over static config object
     const basePrompt = loadSystemPrompt() || input.config.systemPrompt;
 
-    const { createSystemPromptBuilder } = await import("../../context/builder.js");
+    const { createSystemPromptBuilder } = await import("../../context/system-prompt-builder.js");
     const contextBuilder = createSystemPromptBuilder({
       basePrompt,
       providerHint,

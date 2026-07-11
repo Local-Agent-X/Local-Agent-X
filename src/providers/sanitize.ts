@@ -1,4 +1,8 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+// Pure constants module — safe as a static edge (unlike the summarizer, which
+// stays a dynamic import so this early-loaded module never pulls in the
+// context-manager/classifier stack).
+import { CHAT_DIGEST_BUDGETS, chatHistoryMaxKeep } from "../context-manager/compaction-policy.js";
 import { stripSystemInjectionTags } from "../sanitize.js";
 
 /** Sanitize tool result content to remove pseudo-system injection tags. */
@@ -150,7 +154,7 @@ export function buildCleanHistory(
   channel: string,
   maxHistory?: number,
 ): ChatCompletionMessageParam[] {
-  const maxKeep = maxHistory || (channel === "web" ? 40 : 30);
+  const maxKeep = maxHistory || chatHistoryMaxKeep(channel);
   return truncateHistory(sanitizeHistory(sessionMessages), maxKeep);
 }
 
@@ -174,17 +178,17 @@ export function buildCleanHistory(
 //     constraints cluster at the start and END of long specs — keeps a
 //     bounded slice of assistant turns and tool results, and marks every
 //     omission explicitly instead of dropping content silently.
-const USER_KEEP_HEAD = 2000;
-const USER_KEEP_TAIL = 1000;
-const ASSISTANT_DIGEST_MAX = 300;
-const TOOL_DIGEST_MAX = 200;
-// Total budget for the deterministic digest, spent newest-first (older turns
-// are likelier superseded AND likelier already covered by the LLM summary).
-const DIGEST_CHAR_BUDGET = 24_000;
-// Don't re-summarize on every turn — refresh once the uncovered gap has grown
-// past this many messages. Between refreshes the gap is rendered by the
-// deterministic digest above.
-const SUMMARY_REFRESH_MIN_GROWTH = 10;
+// Clip/budget values are policy — context-manager/compaction-policy.ts owns
+// them (CHAT_DIGEST_BUDGETS). Aliased locally to keep the digest code terse.
+const {
+  userKeepHead: USER_KEEP_HEAD,
+  userKeepTail: USER_KEEP_TAIL,
+  assistantMax: ASSISTANT_DIGEST_MAX,
+  toolMax: TOOL_DIGEST_MAX,
+  totalChars: DIGEST_CHAR_BUDGET,
+  summaryRefreshMinGrowth: SUMMARY_REFRESH_MIN_GROWTH,
+} = CHAT_DIGEST_BUDGETS;
+// Cache eviction bound — mechanics, not budget policy; stays lane-local.
 const SUMMARY_CACHE_MAX = 32;
 
 interface OldSegmentSummary { covered: number; prefixHash: string; summary: string }
@@ -285,7 +289,10 @@ export async function awaitPendingHistorySummaries(): Promise<void> {
   await Promise.allSettled([...refreshInFlight.values()]);
 }
 
-export function truncateHistory(messages: ChatCompletionMessageParam[], maxKeep: number = 30): ChatCompletionMessageParam[] {
+export function truncateHistory(
+  messages: ChatCompletionMessageParam[],
+  maxKeep: number = chatHistoryMaxKeep("default"),
+): ChatCompletionMessageParam[] {
   let preservedLeader: ChatCompletionMessageParam | null = null;
   let body: ChatCompletionMessageParam[] = messages;
   if (body[0]?.role === "system") {

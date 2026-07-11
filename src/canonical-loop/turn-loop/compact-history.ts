@@ -13,6 +13,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { CanonicalMessage } from "../contract-types.js";
 import type { LastTurnUsage } from "../op-usage.js";
 import { getContextStatus } from "../../context-manager/status.js";
+import { turnCompactionKeepLast } from "../../context-manager/compaction-policy.js";
 import { resolveAnthropicTransport } from "../../context-manager/resolve-transport.js";
 import type { TokenAnchor } from "../../context-manager/token-estimation.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
@@ -288,11 +289,9 @@ export async function compactHistory(
   const status = getContextStatus(toChatParams(messages), model, usageAnchor ?? undefined, resolveAnthropicTransport(), baselineTokens);
   if (!forced && !status.shouldCompact) return { messages, compacted: false };
 
-  // Forced (provider already rejected the call as over-window): the estimate
-  // is proven low — keep the aggressive minimum instead of trusting it.
-  let keepLast = 6;
-  if (status.percentage >= 95) keepLast = 4;
-  if (forced || status.percentage >= 99) keepLast = 2;
+  // Keep tiers (incl. the forced/overflow aggressive minimum) are policy —
+  // context-manager/compaction-policy.ts owns the values.
+  const keepLast = turnCompactionKeepLast(status.percentage, forced);
 
   const splitIdx = safeSplitIndex(messages, keepLast);
   if (splitIdx <= 0) return { messages, compacted: false };

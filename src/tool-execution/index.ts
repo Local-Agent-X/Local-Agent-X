@@ -1,6 +1,6 @@
 // Public surface for the tool-execution pipeline.
-// Legacy `src/tool-executor.ts` re-exports from here so existing callers
-// don't need to update import paths.
+// Imported directly by callers (chat-tool-dispatcher, routes/chat, routes/mcp,
+// tests) — this index is the public surface.
 
 export { executeToolCalls, dispatchSingleToolCall } from "./execute-tool.js";
 export type { UnifiedDispatchCtx } from "./execute-tool.js";

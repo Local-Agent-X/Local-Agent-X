@@ -16,7 +16,7 @@ the block — if you need to change protected core, either:
 
 | Module | Owns | Don't touch from elsewhere |
 |---|---|---|
-| `tool-executor.ts` → `tool-execution/` | tool-call lifecycle, Ari+policy+approval gating (`tool-executor.ts` is a re-export shim; pipeline lives in `tool-execution/`) | Never bypass to call tools directly |
+| `tool-execution/` | tool-call lifecycle, Ari+policy+approval gating | Never bypass to call tools directly |
 | `tool-policy.ts` | allow/deny rules + default-deny | New tools need `allow-<name>` rule |
 | `ari-kernel/` | in-process security layer | Don't add a second one |
 | `anthropic-client/`, `codex-client/`, `canonical-loop/adapters/` | provider-specific streaming | Keep provider differences here, not leaking into routes |
@@ -27,7 +27,7 @@ the block — if you need to change protected core, either:
 ## Invariants specific to src/
 
 - **One responsibility per file.** If a file passes ~400 LOC, split before adding more.
-- **Tool results must pass through `tool-executor.executeToolCalls`.** That's where Ari, policy, RBAC, approval, and event emission live. Any new tool path that bypasses is a bug.
+- **Tool results must pass through `tool-execution/`'s `executeToolCalls`.** That's where Ari, policy, RBAC, approval, and event emission live. Any new tool path that bypasses is a bug.
 - **Every new tool needs:** (a) `ToolDefinition` with JSON schema, (b) registration in the `allTools` array in `tools/registry-build.ts` (re-exported via `tools.ts`), (c) allow rule in `tool-policy/tool-policies.data.ts`. All three. Missing any → default-deny kicks in.
 - **Mutations to shared state must broadcast.** Any `/api/*` POST that changes theme/settings/provider/session must `broadcastAll({ type: "settings_changed", ... })`. Silent writes desync the UI.
 - **Never import from `dist/`.** Source files import source files with `.js` suffix (ESM + Node16 resolution quirk).

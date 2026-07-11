@@ -8,7 +8,7 @@ import { handleAutoDelegateRoutes } from "./chat/auto-delegate-routes.js";
 import { handleCompactRoute } from "./chat/compact-route.js";
 import { handleEvalCompactRoute } from "./chat/eval-compact-route.js";
 import { runChatTurn } from "./chat/run-chat-turn.js";
-import { markDryRunSession, unmarkDryRunSession } from "../tool-executor.js";
+import { markDryRunSession, unmarkDryRunSession } from "../tool-execution/index.js";
 
 const logger = createLogger("routes.chat");
 void logger;

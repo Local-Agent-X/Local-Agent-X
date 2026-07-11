@@ -2,7 +2,7 @@
  * Bridge: canonical-loop ToolDispatcher → chat's executeToolCalls.
  *
  * Why this exists: the canonical-loop has its own `ToolCall`/`ToolDispatchResult`
- * shape. The chat tool runtime (`tool-executor.ts`) takes a different shape
+ * shape. The chat tool runtime (`tool-execution/`) takes a different shape
  * with security context, RBAC, threat engine, session callbacks, etc. This
  * module is the per-op closure that wires one to the other so a chat op
  * running through canonical can use the SAME tool implementations the
@@ -22,7 +22,7 @@ import type { ToolPolicy } from "../tool-policy/index.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { executeToolCalls } from "../tool-executor.js";
+import { executeToolCalls } from "../tool-execution/index.js";
 import { readOpMessages } from "./store.js";
 import { opMessageRowToChatParam } from "./chat-runner/message-convert.js";
 import { registerToolsForOp } from "./runtime.js";

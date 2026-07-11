@@ -1,7 +1,7 @@
 /**
  * Pre-dispatch gate chain — the checks every tool call must pass before
  * execution, regardless of which dispatcher routed it. Both the chat-path
- * (src/tool-executor.ts) and the AriKernel-path
+ * (canonical-loop/chat-tool-dispatcher.ts) and the AriKernel-path
  * (packages/arikernel/tool-executors/*) call this, closing F3 from DRY-AUDIT.md.
  *
  * Policy evaluation is unified through src/tool-policy/evaluator.ts (F4).
@@ -100,7 +100,7 @@ const OP_PROHIBITION_GUIDANCE: ReadonlyArray<{ cls: CapabilityClass; verb: strin
 ];
 
 /** Map pack id → ToolBlocked stage so the existing caller-side stage map
- *  (in tool-executor.ts) keeps working unchanged. */
+ *  (in tool-execution/execute-tool.ts) keeps working unchanged. */
 const PACK_TO_STAGE: Record<string, ToolBlockedStage> = {
   "spend-cap": "tool-policy",
   "security-layer": "security",

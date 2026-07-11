@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { createArikernelBridgeTools } from "../../src/tools/arikernel-bridge.js";
-import { dispatchSingleToolCall, type UnifiedDispatchCtx } from "../../src/tool-executor.js";
+import { dispatchSingleToolCall, type UnifiedDispatchCtx } from "../../src/tool-execution/index.js";
 import { UnifiedToolRegistry } from "../../src/tools/registry.js";
 import { SecurityLayer } from "../../src/security/index.js";
 import { ToolPolicy } from "../../src/tool-policy/index.js";

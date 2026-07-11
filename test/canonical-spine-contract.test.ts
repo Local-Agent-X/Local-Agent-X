@@ -18,9 +18,9 @@
  *   2. The tool-execution primitives (executeToolCalls,
  *      dispatchSingleToolCall) may only be deep-imported from inside
  *      src/tool-execution/ or the canonical-loop bridge. Outside callers
- *      go through the re-export shim src/tool-executor.ts so any future
- *      pipeline restructure inside src/tool-execution/ doesn't fan out
- *      across consumers.
+ *      go through the public barrel src/tool-execution/index.ts so any
+ *      future pipeline restructure inside src/tool-execution/ doesn't
+ *      fan out across consumers.
  *
  * If a violation appears, the failure message names the file, symbol,
  * and import path, plus the path you'd take to add a legitimate new
@@ -193,13 +193,15 @@ const SPINE_RULES: readonly SpineRule[] = [
   },
   {
     // Tool-execution dispatch primitives. Consumers should import from
-    // the public shim src/tool-executor.ts so any reshuffle inside
-    // src/tool-execution/ stays internal — this is exactly the role of
-    // the shim, and it only buys us anything if nobody bypasses it.
+    // the public barrel src/tool-execution/index.ts so any reshuffle
+    // inside src/tool-execution/ stays internal — the barrel is the one
+    // door, and it only buys us anything if nobody imports past it.
+    // (index.js is excluded from the pattern: importing the barrel IS
+    // the sanctioned path; importing anything deeper is the violation.)
     symbols: ["executeToolCalls", "dispatchSingleToolCall"],
-    importPathPattern: /tool-execution\//,
+    importPathPattern: /tool-execution\/(?!index\.js$)/,
     useInstead:
-      "the re-export shim src/tool-executor.ts (`import { executeToolCalls } from \"./tool-executor.js\"`) so internal pipeline restructure doesn't fan out.",
+      "the public barrel src/tool-execution/index.ts (`import { executeToolCalls } from \"../tool-execution/index.js\"`) so internal pipeline restructure doesn't fan out.",
     allowlist: [
       "src/tool-execution/",
       "src/canonical-loop/",

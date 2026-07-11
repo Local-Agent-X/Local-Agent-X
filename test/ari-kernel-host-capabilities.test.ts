@@ -36,7 +36,7 @@ import {
 // Every (toolName, action) pair the production toolClassMap can route
 // through firewall.execute(). Mirrors HOST_CAPABILITY_MANIFEST, but
 // expressed as the toolName the dispatcher receives so we exercise the
-// same `ariEvaluate(toolName, action)` call shape as tool-executor.ts.
+// same `ariEvaluate(toolName, action)` call shape as tool-execution/.
 const MANIFEST_CASES: Array<{ name: string; action: string }> = [
   { name: "web_search", action: "get" },
   { name: "web_fetch", action: "head" },

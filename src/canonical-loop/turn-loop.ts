@@ -37,7 +37,8 @@ import { dispatchTools } from "./turn-loop/dispatch-tools.js";
 import { createIdleWatchdog, readIdleTimeoutMs } from "./turn-loop/idle-watchdog.js";
 import { snapshotTouchedApps } from "./turn-loop/snapshot-apps.js";
 import { decideTurnOutcome } from "./turn-loop/decide-outcome.js";
-import { recoverAdapterThrow, clearAdapterThrowStreak } from "./turn-loop/adapter-throw-recovery.js";
+import { recoverAdapterThrow, clearAdapterThrowStreak, recoverContextOverflow, clearOverflowAttempts } from "./turn-loop/adapter-throw-recovery.js";
+import { classify } from "../errors/classifier.js";
 import { createTurnContextComposer } from "./turn-loop/context-composition.js";
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
@@ -185,6 +186,19 @@ export async function driveTurn(
   // A model call that actually returned (success, or a reported kind:"error")
   // breaks the THROWN-error streak — the provider is responding again.
   clearAdapterThrowStreak(op.id);
+  // A REPORTED over-window error (adapter converted the provider's
+  // context_overflow/413 into kind:"error" instead of throwing) gets the same
+  // forced-compact-and-retry as the thrown path — without this it would ride
+  // adapterError straight to terminal "error" and kill the op. Bounded by the
+  // recovery's own attempt cap; success clears the counter below.
+  // (read via a typed local: adapterError is assigned inside the stream
+  // callback, which TS's narrowing can't see — it types the direct read `never`)
+  const reportedError = adapterError as { code: string; message: string } | null;
+  if (reportedError && classify(reportedError.message).recovery === "compress") {
+    const recovered = recoverContextOverflow(op, reportedError.message, turnIdx);
+    if (recovered) return recovered;
+  }
+  if (!reportedError) clearOverflowAttempts(op.id);
   void idleFired; // surfaced via adapterError; reserved for telemetry
   const modelMs = Date.now() - modelStart;
 

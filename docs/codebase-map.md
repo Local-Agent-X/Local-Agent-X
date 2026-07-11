@@ -68,6 +68,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/context/` | 3 | 2 | M |  |
 | `src/embedding-providers/` | 3 | 10 | M |  |
+| `src/errors/` | 3 | 2 | S |  |
 | `src/language-intel/` | 3 | 4 | M |  |
 | `src/tool-execution/` | 3 | 25 | XL |  |
 | `src/conversation/` | 2 | 3 | M |  |
@@ -75,7 +76,6 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/anticipatory-care/` | 1 | 6 | M |  |
 | `src/associative-recall/` | 1 | 7 | M |  |
 | `src/cross-session-learning/` | 1 | 7 | M |  |
-| `src/errors/` | 1 | 2 | S |  |
 | `src/manifest-generator/` | 1 | 8 | M |  |
 | `src/types/` | 1 | 2 | M |  |
 

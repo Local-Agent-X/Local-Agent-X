@@ -215,6 +215,19 @@ function recordBreakerFailure(opId: string): void {
   }
 }
 
+// ─── Forced compaction (overflow recovery) ───────────────────────────────────
+// When the PROVIDER rejects a call as over-window (context_overflow /
+// payload-too-large), the threshold estimate demonstrably undershot — the next
+// build-input must compact regardless of what the estimate says. The overflow
+// recovery (adapter-throw-recovery.ts) sets this marker; compactHistory
+// consumes it once: threshold check bypassed, aggressive keep, and the breaker
+// skip is overridden (the provider error IS the probe signal).
+const forcedOps = new Set<string>();
+
+export function forceCompactNext(opId: string): void {
+  forcedOps.add(opId);
+}
+
 /** Readonly view of an op's breaker state, for telemetry/doctor. */
 export function compactionBreakerState(
   opId: string,
@@ -249,8 +262,10 @@ export async function compactHistory(
   // chat sizing accounts for the ~147k the pure estimate can't see. 0 → off.
   baselineTokens = 0,
 ): Promise<CompactHistoryResult> {
+  // Consume the overflow-recovery marker (set once per provider overflow).
+  const forced = opId ? forcedOps.delete(opId) : false;
   const breaker = opId ? breakers.get(opId) : undefined;
-  if (breaker?.tripped) {
+  if (breaker?.tripped && !forced) {
     breaker.touchedAt = Date.now();
     if (breaker.skipsSinceTrip + 1 < PROBE_INTERVAL) {
       breaker.skipsSinceTrip += 1;
@@ -271,11 +286,13 @@ export async function compactHistory(
     logger.debug(`anchor at turn ${usage.turnIdx} not mappable onto the current view; sizing by pure estimate`);
   }
   const status = getContextStatus(toChatParams(messages), model, usageAnchor ?? undefined, resolveAnthropicTransport(), baselineTokens);
-  if (!status.shouldCompact) return { messages, compacted: false };
+  if (!forced && !status.shouldCompact) return { messages, compacted: false };
 
+  // Forced (provider already rejected the call as over-window): the estimate
+  // is proven low — keep the aggressive minimum instead of trusting it.
   let keepLast = 6;
   if (status.percentage >= 95) keepLast = 4;
-  if (status.percentage >= 99) keepLast = 2;
+  if (forced || status.percentage >= 99) keepLast = 2;
 
   const splitIdx = safeSplitIndex(messages, keepLast);
   if (splitIdx <= 0) return { messages, compacted: false };

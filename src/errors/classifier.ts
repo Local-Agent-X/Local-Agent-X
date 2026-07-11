@@ -114,7 +114,11 @@ const STATUS_HINTS: Array<{ test: (msg: string, code?: number) => boolean; reaso
   { test: (m, c) => c === 503 || c === 529 || /\b(overloaded|service unavailable|capacity)/i.test(m), reason: FailoverReason.Overloaded, recovery: "retry", retryable: true },
   { test: (m, c) => c === 500 || c === 502 || /\b(internal server error|bad gateway|upstream error)/i.test(m), reason: FailoverReason.ServerError, recovery: "retry", retryable: true },
   { test: (m) => /\b(timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up)\b/i.test(m), reason: FailoverReason.Timeout, recovery: "retry", retryable: true },
-  { test: (m, c) => c === 413 || /\b(payload too large|request entity too large|max(_|imum)? token|content too long)\b/i.test(m), reason: FailoverReason.ContextOverflow, recovery: "compress", retryable: true },
+  // Ordered BEFORE the 400/FormatError hint: providers ship overflow as HTTP
+  // 400 (Anthropic "prompt is too long: X tokens > Y maximum"; OpenAI "This
+  // model's maximum context length is ..."), and message match must win over
+  // the bare status code.
+  { test: (m, c) => c === 413 || /\b(payload too large|request entity too large|max(_|imum)? tokens?|content too long|prompt is too long|maximum context length|context (length|window)\b.{0,60}\bexceed|exceeds?\b.{0,60}\bcontext (length|window)|input is too long)\b/i.test(m), reason: FailoverReason.ContextOverflow, recovery: "compress", retryable: true },
   { test: (m, c) => c === 404 || /\b(model not found|invalid model|unknown model)\b/i.test(m), reason: FailoverReason.ModelNotFound, recovery: "fallback", retryable: true },
   { test: (m, c) => c === 400 || /\b(bad request|invalid request|malformed)\b/i.test(m), reason: FailoverReason.FormatError, recovery: "abort", retryable: false },
 ];

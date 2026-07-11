@@ -9,7 +9,7 @@ vi.mock("../../context-manager/resolve-transport.js", () => ({ resolveAnthropicT
 const loggerMock = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock("../../logger.js", () => ({ createLogger: () => loggerMock }));
 
-import { compactHistory, locateAnchor, safeSplitIndex, toChatParams } from "./compact-history.js";
+import { compactHistory, forceCompactNext, locateAnchor, safeSplitIndex, toChatParams } from "./compact-history.js";
 import { getContextStatus } from "../../context-manager/status.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import type { CanonicalMessage } from "../contract-types.js";
@@ -270,6 +270,44 @@ describe("compactHistory — anchored sizing", () => {
     const msgs = [at(u("u1", "seed"), 0, 0), at(a("a1", "r1"), 0, 1)];
     await compactHistory(msgs, "claude-opus-4-8", null, "op1", 147_000);
     expect(mockStatus).toHaveBeenCalledWith(expect.any(Array), "claude-opus-4-8", undefined, "cli", 147_000);
+  });
+});
+
+// Regression: overflow recovery. When the PROVIDER rejects a call as
+// over-window, the threshold estimate demonstrably undershot — the retry must
+// compact even though getContextStatus still says "under threshold". FAILS on
+// old code (no forceCompactNext; the under-threshold early-return wins and the
+// retry re-sends the exact same oversized view).
+describe("compactHistory — forced compaction (provider overflow recovery)", () => {
+  it("compacts under threshold when forced, with the aggressive keep", async () => {
+    mockStatus.mockReturnValue(status(60, false)); // estimate says fine — provider said otherwise
+    mockSummarize.mockResolvedValue("DECISIONS: keep going");
+    const msgs = [
+      u("u1", "q1"), a("a1", "r1"), u("u2", "q2"), a("a2", "r2"),
+      u("u3", "q3"), a("a3", "r3"), u("u4", "q4"), a("a4", "r4"),
+    ];
+    forceCompactNext("op-ovf");
+    const out = await compactHistory(msgs, "claude-opus-4-8", null, "op-ovf");
+    expect(out.compacted).toBe(true);
+    expect(mockSummarize).toHaveBeenCalled();
+    // keepLast=2 (aggressive): only the last two rows survive verbatim.
+    expect(out.messages.find(m => m.messageId === "u3")).toBeUndefined();
+    expect(out.messages.find(m => m.messageId === "a4")).toBeDefined();
+  });
+
+  it("consumes the marker once — the next call is threshold-gated again", async () => {
+    mockStatus.mockReturnValue(status(60, false));
+    mockSummarize.mockResolvedValue("DECISIONS: keep going");
+    const msgs = [
+      u("u1", "q1"), a("a1", "r1"), u("u2", "q2"), a("a2", "r2"),
+      u("u3", "q3"), a("a3", "r3"), u("u4", "q4"), a("a4", "r4"),
+    ];
+    forceCompactNext("op-once");
+    expect((await compactHistory(msgs, "claude-opus-4-8", null, "op-once")).compacted).toBe(true);
+    mockSummarize.mockClear();
+    const second = await compactHistory(msgs, "claude-opus-4-8", null, "op-once");
+    expect(second.compacted).toBe(false);
+    expect(mockSummarize).not.toHaveBeenCalled();
   });
 });
 

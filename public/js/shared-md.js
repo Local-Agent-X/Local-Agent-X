@@ -31,6 +31,28 @@ function md(s) {
     return ph(`<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${lang || 'code'}</span><button type="button" class="code-copy-btn" aria-label="Copy code">Copy</button></div><pre class="code-block"><code${langClass}>${esc(code)}</code></pre></div>`);
   });
 
+  // 1.5. Extract LaTeX math (after code blocks so ``` wins, before links so
+  // \frac{a}{b} etc. never hits the md regexes). Models emit \[..\] / $$..$$
+  // for display math and \(..\) for inline. Single-$ is deliberately NOT a
+  // delimiter — "$1.10 and $2" would false-positive on money. Rendered with
+  // output:'html' (no MathML) because sanitizeHtml drops <math> subtrees;
+  // KaTeX's HTML output is span/class/style only, which the allowlist keeps.
+  // If katex failed to load (or the TeX is bad) fall back to escaped source.
+  function texToHtml(tex, displayMode) {
+    if (typeof katex === 'undefined') return null;
+    try {
+      return katex.renderToString(tex, { displayMode, output: 'html', throwOnError: false });
+    } catch { return null; }
+  }
+  h = h.replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (m, dollars, brackets) => {
+    const rendered = texToHtml(dollars || brackets, true);
+    return rendered === null ? m : ph(`<div class="md-math-block">${rendered}</div>`);
+  });
+  h = h.replace(/\\\(([\s\S]+?)\\\)/g, (m, tex) => {
+    const rendered = texToHtml(tex, false);
+    return rendered === null ? m : ph(rendered);
+  });
+
   // 2. Extract inline images and links before escaping
   h = h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) => {
     const safeSrc = /^(https?:\/\/|data:image\/)/.test(src) ? src : '#';
@@ -166,7 +188,15 @@ function md(s) {
       result.push(`<h4 class="md-h" style="font-size:.88rem;margin-top:14px">${olMatch[2]}</h4>`);
     } else if (ulMatch) {
       if (!inUl) { if (inOl) { result.push('</ol>'); inOl = false; } result.push('<ul style="margin:4px 0;padding-left:20px">'); inUl = true; }
+      // Task-list items: "- [ ] foo" / "- [x] foo" → ☐/☑ (unicode, not
+      // <input> — the sanitizer allowlist has no input tag).
+      const task = ulMatch[2].match(/^\[( |x|X)\] (.+)$/);
+      if (task) {
+        const done = task[1].toLowerCase() === 'x';
+        result.push(`<li style="list-style:none;margin-left:-16px">${done ? '☑' : '☐'} ${done ? `<del>${task[2]}</del>` : task[2]}</li>`);
+      } else {
       result.push(`<li>${ulMatch[2]}</li>`);
+      }
     } else if (olMatch) {
       if (!inOl) { if (inUl) { result.push('</ul>'); inUl = false; } result.push('<ol style="margin:4px 0;padding-left:20px">'); inOl = true; }
       result.push(`<li>${olMatch[2]}</li>`);

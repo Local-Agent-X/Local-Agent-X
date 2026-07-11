@@ -20,9 +20,13 @@
 <title>Local Agent X</title>
 <link rel="stylesheet" href="/vendor/highlightjs/github-dark.min.css"/>
 <script src="/vendor/highlightjs/highlight.min.js"></script>
+<!-- KaTeX (self-hosted, like highlightjs): shared-md.js renders \[..\] / \(..\) /
+     $$..$$ LaTeX from model output into typeset math at md() time. -->
+<link rel="stylesheet" href="/vendor/katex/katex.min.css"/>
+<script src="/vendor/katex/katex.min.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb20"/>
+<link rel="stylesheet" href="/css/app.css?v=vb22"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
      Import map lets `import * as THREE from 'three'` resolve cleanly in
@@ -77,7 +81,14 @@
 
 <!-- Mobile hamburger (feature 95) -->
 <button id="mobile-menu-btn" class="mobile-only" onclick="toggleMobileSidebar()" aria-label="Toggle sidebar menu">&#9776;</button>
-<button id="sidebar-expand-btn" onclick="toggleSidebarCollapse()" title="Expand sidebar" aria-label="Expand sidebar" style="display:none;position:fixed;top:14px;left:8px;z-index:100;-webkit-app-region:no-drag;background:var(--surface);border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:1.1rem;padding:4px 8px;border-radius:6px">&#9776;</button>
+<!-- Window-top sidebar controls: hide/show + flip side. Fixed to the window
+     (not the sidebar) so they stay reachable when the sidebar is hidden or on
+     the right. Positioned right of the macOS traffic lights / inside the
+     Windows in-window titlebar via the platform-* rules in app.css. -->
+<div id="sidebar-controls">
+  <button id="sidebar-hide-btn" onclick="toggleSidebarCollapse()" title="Hide sidebar" aria-label="Hide or show sidebar">&#9707;</button>
+  <button id="sidebar-flip-btn" onclick="flipSidebarSide()" title="Move sidebar to the other side" aria-label="Move sidebar to the other side">&#8644;</button>
+</div>
 
 <!-- ═══ SIDEBAR (persists across all pages) ═══ -->
 <div id="sidebar" role="navigation" aria-label="Sidebar navigation">
@@ -85,7 +96,6 @@
   <div id="sidebar-brand">
     <span id="logo" onclick="navigate('chat')" role="button" tabindex="0" aria-label="Go to chat">Agent X</span>
     <button id="new-chat-btn" onclick="newChat()">+ New Chat</button>
-    <button id="sidebar-collapse-btn" onclick="toggleSidebarCollapse()" title="Collapse sidebar" aria-label="Collapse sidebar" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:2px 6px;margin-left:4px">&#x276E;</button>
   </div>
 
   <div id="pinned-section" style="display:none">
@@ -1324,7 +1334,7 @@
 <script src="/js/shared-theme.js?v=v2"></script>
 <script src="/js/shared-desktop.js?v=v1"></script>
 <script src="/js/shared-escape.js?v=v1"></script>
-<script src="/js/shared-md.js?v=v1"></script>
+<script src="/js/shared-md.js?v=v2"></script>
 <script src="/js/shared-dom.js?v=v1"></script>
 <script src="/js/shared-api.js?v=v1"></script>
 <!-- ChatStreamStore must load before app.js's top-level boot (renderSidebar →
@@ -1464,7 +1474,7 @@
 <script src="/js/apps-ide-snapshots.js?v=v1"></script>
 <script type="module" src="/js/agents.js?v=v4"></script>
 <script src="/js/shortcuts.js"></script>
-<script src="/js/app-sidebar-toggle.js?v=v1"></script>
+<script src="/js/app-sidebar-toggle.js?v=v2"></script>
 <script src="/js/desktop-titlebar.js?v=v2"></script>
 
 <!-- ═══ Global Search Modal ═══ -->

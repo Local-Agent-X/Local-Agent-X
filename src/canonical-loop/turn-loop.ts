@@ -20,28 +20,17 @@
 import type { Adapter, AdapterReport, TurnResult } from "./adapter-contract.js";
 import type { CanonicalMessage, ToolCall } from "./contract-types.js";
 import type { ProviderStateEnvelope } from "./types.js";
-import { emit, emitErrorOnce, publishStreamChunk } from "./event-emitter.js";
-import { transitionOp } from "./state-machine.js";
-import { commitTurn, type CommitTurnMessage } from "./checkpoint.js";
+import type { CommitTurnMessage } from "./checkpoint.js";
 import type { Op } from "../ops/types.js";
-import { runMiddlewarePhase } from "./middlewares/host.js";
 import type { CanonicalToolResultView } from "./middlewares/types.js";
 
 import type { DriveTurnResult, DriveTurnOptions, MiddlewareDirective } from "./turn-loop/types.js";
-import { extractText, extractToolResultText } from "./turn-loop/content-extract.js";
-import { appendNudgeAsUserMessage, middlewareAbortResult } from "./turn-loop/nudges.js";
-import { buildTurnInput, readPendingRedirect } from "./turn-loop/build-input.js";
-import { drainInjectsIntoTurn } from "./turn-loop/inject-drain.js";
-import { opConsumesInjects } from "../agent-loop/inject-queue.js";
-import { dispatchTools } from "./turn-loop/dispatch-tools.js";
-import { createIdleWatchdog, readIdleTimeoutMs } from "./turn-loop/idle-watchdog.js";
-import { snapshotTouchedApps } from "./turn-loop/snapshot-apps.js";
-import { decideTurnOutcome } from "./turn-loop/decide-outcome.js";
+import { resolveTurnLoopDeps, type TurnLoopDeps } from "./turn-loop/turn-deps.js";
 import { recoverAdapterThrow, clearAdapterThrowStreak, recoverContextOverflow, clearOverflowAttempts } from "./turn-loop/adapter-throw-recovery.js";
 import { classify } from "../errors/classifier.js";
-import { createTurnContextComposer } from "./turn-loop/context-composition.js";
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
+export type { TurnLoopDeps } from "./turn-loop/turn-deps.js";
 
 // Consecutive THROWN adapter errors per op — provider hangs/timeouts the
 // adapter couldn't convert into a kind:"error" report. Bounds the feed-back-
@@ -56,7 +45,21 @@ export async function driveTurn(
   adapter: Adapter,
   turnIdx: number,
   opts: DriveTurnOptions = {},
+  depsIn: TurnLoopDeps = {},
 ): Promise<DriveTurnResult> {
+  // Collaborator seams — absent overrides resolve to the concrete module
+  // functions, read here (per call, never hoisted) so runtime-mutable state
+  // (middleware stack, idle-timeout config) is still current per turn. Same
+  // names as the imports they default to; the body below is unchanged.
+  const {
+    emit, emitErrorOnce, publishStreamChunk, commitTurn, runMiddlewarePhase,
+    extractText, extractToolResultText, appendNudgeAsUserMessage,
+    middlewareAbortResult, buildTurnInput, readPendingRedirect,
+    drainInjectsIntoTurn, opConsumesInjects, dispatchTools, createIdleWatchdog,
+    readIdleTimeoutMs, snapshotTouchedApps, decideTurnOutcome,
+    createTurnContextComposer,
+  } = resolveTurnLoopDeps(depsIn);
+
   // Snapshot the redirect column from disk BEFORE emitting `turn_started`.
   // The bus dispatch is synchronous, so a `turn_started` subscriber that
   // calls `opRedirect` lands on disk AFTER this read — meaning a redirect

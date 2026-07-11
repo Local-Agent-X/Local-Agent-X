@@ -10,6 +10,10 @@ const PALETTES = ['aurora', 'forge', 'phosphor', 'nebula', 'cobalt', 'bloom', 'g
 function applyPalette(name) {
   if (!PALETTES.includes(name)) name = 'aurora';
   document.documentElement.setAttribute('data-palette', name);
+  // Palettes redefine --surface (not just accents), so the native overlay
+  // must re-sample here — applyTheme() alone only covers mode changes.
+  syncNativeChromeColor();
+  syncNativeTitlebarOverlay();
 }
 
 function getEffectiveTheme(pref) {

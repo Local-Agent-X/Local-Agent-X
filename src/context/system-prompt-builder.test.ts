@@ -156,3 +156,16 @@ describe("AGENTS.md invariants injection", () => {
     expect(output).not.toContain(srcMd); // the shadow file must not be what shipped
   });
 });
+
+describe("App Map manifest injection", () => {
+  // Regression: the section once did require("../manifest-generator.js") — a
+  // path that doesn't exist — and the try/catch silently rendered the App Map
+  // section empty forever. Pin the import path itself so a rename or move
+  // breaks the test instead of silently emptying the prompt section.
+  it("resolves the manifest-generator module the App Map section imports", async () => {
+    const mod = await import("../manifest-generator/index.js");
+    expect(typeof mod.getManifestSummary).toBe("function");
+    // The section body coerces to string via `|| ""` — mirror that contract.
+    expect(typeof (mod.getManifestSummary() || "")).toBe("string");
+  });
+});

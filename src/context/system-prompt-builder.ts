@@ -146,9 +146,9 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   // App manifest — the agent's map of its own body (auto-generated catalog)
   builder.addSection({
     id: "app-manifest", label: "App Map", type: "static",
-    build: () => {
+    build: async () => {
       try {
-        const { getManifestSummary } = require("../manifest-generator.js");
+        const { getManifestSummary } = await import("../manifest-generator/index.js");
         return getManifestSummary() || "";
       } catch { return ""; }
     },

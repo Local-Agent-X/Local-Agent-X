@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 61 top-level dirs · 61 live · 0 with no live importer · 1193 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1217 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/security/` | 68 | 26 | XL |  |
 | `src/ops/` | 67 | 22 | XL |  |
-| `src/tools/` | 55 | 141 | XL |  |
+| `src/tools/` | 56 | 143 | XL |  |
 | `src/providers/` | 42 | 19 | L |  |
 | `src/canonical-loop/` | 38 | 133 | XL |  |
 | `src/memory/` | 38 | 112 | XL |  |
@@ -29,6 +29,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/auth/` | 23 | 10 | L |  |
+| `src/tool-policy/` | 21 | 19 | L |  |
 | `src/threat/` | 20 | 11 | L |  |
 | `src/session/` | 19 | 5 | M |  |
 | `src/orchestrator/` | 18 | 21 | L |  |
@@ -56,27 +57,24 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/ari-kernel/` | 6 | 11 | L |  |
+| `src/cognition/` | 6 | 38 | XL |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
 | `src/auto-build/` | 5 | 47 | XL |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
 | `src/routes/` | 5 | 81 | XL |  |
 | `src/routing/` | 5 | 7 | M |  |
+| `src/tool-execution/` | 5 | 28 | XL |  |
 | `src/util/` | 5 | 2 | S |  |
 | `src/broker-transport/` | 4 | 27 | L |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/server/` *(entrypoint)* | 4 | 31 | XL |  |
-| `src/tool-policy/` | 4 | 18 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/context/` | 3 | 2 | M |  |
 | `src/embedding-providers/` | 3 | 10 | M |  |
 | `src/errors/` | 3 | 2 | S |  |
 | `src/language-intel/` | 3 | 4 | M |  |
-| `src/tool-execution/` | 3 | 25 | XL |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
-| `src/anticipatory-care/` | 1 | 6 | M |  |
-| `src/associative-recall/` | 1 | 7 | M |  |
-| `src/cross-session-learning/` | 1 | 7 | M |  |
 | `src/manifest-generator/` | 1 | 8 | M |  |
 | `src/types/` | 1 | 2 | M |  |
 
@@ -114,10 +112,6 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/config-profiles.ts` | S |
 | `src/config-schema.ts` | S |
 | `src/config.ts` | M |
-| `src/contradiction-detector.ts` | M |
-| `src/contradiction-patterns.ts` | S |
-| `src/correction-learning-detect.ts` | S |
-| `src/correction-learning.ts` | M |
 | `src/cost-tracker.ts` | M |
 | `src/crash-analytics.ts` | S |
 | `src/datadir-lock.ts` | S |
@@ -129,39 +123,29 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/driver-abstraction.ts` | M |
 | `src/embedded-runtime.ts` | S |
 | `src/embedding-singleton.ts` | S |
-| `src/emotional-lexicon.ts` | S |
-| `src/emotional-memory.ts` | M |
 | `src/event-bus.ts` | S |
 | `src/ffmpeg-bin.ts` | S |
 | `src/file-audit.ts` | S |
-| `src/growth-tracker-store.ts` | S |
-| `src/growth-tracker.ts` | M |
 | `src/hot-reload.ts` | S |
 | `src/index.ts` | M |
 | `src/injection-patterns.ts` | S |
 | `src/injection-views.ts` | S |
-| `src/inside-references.ts` | M |
 | `src/io-abstraction.ts` | S |
 | `src/keychain.ts` | M |
-| `src/language-mirror.ts` | M |
 | `src/lax-data-dir.ts` | S |
 | `src/lifecycle.ts` | S |
 | `src/llm-dispatch.ts` | M |
 | `src/local-only-policy.ts` | S |
 | `src/logger.ts` | S |
 | `src/mcp-bridge.ts` | S |
-| `src/milestone-celebrations.ts` | M |
 | `src/model-fallback.ts` | S |
 | `src/model-tiers.ts` | S |
-| `src/narrative-memory-store.ts` | S |
-| `src/narrative-memory.ts` | M |
 | `src/offline-queue.ts` | S |
 | `src/ollama-cloud.ts` | S |
 | `src/ota-update.ts` | M |
 | `src/output-styles.ts` | S |
 | `src/pid-probe.ts` | S |
 | `src/plugin-system.ts` | M |
-| `src/predictive-prefetch.ts` | M |
 | `src/probe-self-destruct.ts` | S |
 | `src/process-tree-kill.ts` | S |
 | `src/progressive-loader.ts` | S |
@@ -187,7 +171,6 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/server-utils.ts` | M |
 | `src/settings-schema.ts` | M |
 | `src/settings.ts` | S |
-| `src/shared-history.ts` | M |
 | `src/slash-commands.ts` | S |
 | `src/startup-integrity.ts` | S |
 | `src/startup-test.ts` | S |
@@ -195,23 +178,13 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/test-suite.ts` | M |
 | `src/tool-executor.ts` | S |
 | `src/tool-mutation-check.ts` | S |
-| `src/tool-policy.ts` | M |
-| `src/tool-prompt-builder.ts` | S |
-| `src/tool-rag.ts` | S |
 | `src/tool-registry.ts` | S |
-| `src/tool-sdk.ts` | S |
-| `src/tool-search.ts` | S |
-| `src/tool-timeout.ts` | S |
 | `src/tool-tracker.ts` | S |
-| `src/tool-usage-telemetry.ts` | S |
 | `src/tools.ts` | S |
-| `src/trust-deepening.ts` | M |
 | `src/tts-stream.ts` | S |
 | `src/types.ts` | M |
-| `src/unspoken-detector.ts` | M |
 | `src/update-pipeline.ts` | M |
 | `src/update-service.ts` | S |
 | `src/video-summary.ts` | S |
-| `src/vulnerability-awareness.ts` | M |
 | `src/worker-session.ts` | S |
 

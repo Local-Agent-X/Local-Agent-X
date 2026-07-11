@@ -1,7 +1,6 @@
 // Detect which STT/TTS engines are installed on the host. Probed at boot
 // + before each unified synthesize() call so the routing chain knows which
-// tier to start at. XTTS server is checked via /health since it can run
-// either in-process or as a separate sidecar.
+// tier to start at.
 
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -13,10 +12,9 @@ import {
 
 export interface VoiceCapabilities {
   stt: "whisper" | "none";
-  tts: "kokoro" | "piper" | "xtts" | "none";
+  tts: "kokoro" | "piper" | "none";
   whisperModel: string;
   ttsVoice: string;
-  xttsAvailable: boolean;
 }
 
 export async function detectCapabilities(): Promise<VoiceCapabilities> {
@@ -41,19 +39,10 @@ export async function detectCapabilities(): Promise<VoiceCapabilities> {
     ttsVoice = "en_US-ryan-medium";
   }
 
-  let xttsAvailable = false;
-  try {
-    const { getRuntimeConfig } = await import("../config.js");
-    const xttsUrl = getRuntimeConfig().xttsServerUrl;
-    const r = await fetch(`${xttsUrl}/health`, { signal: AbortSignal.timeout(1000) });
-    if (r.ok) xttsAvailable = true;
-  } catch {}
-
   return {
     stt,
     tts,
     whisperModel: stt === "whisper" ? "base.en" : "",
     ttsVoice,
-    xttsAvailable,
   };
 }

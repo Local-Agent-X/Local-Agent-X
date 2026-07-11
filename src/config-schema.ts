@@ -88,7 +88,6 @@ export const configSchema = z.object({
   ollamaCloudUrl: z.string().default("https://ollama.com"),
   sdServerUrl: z.string().default("http://127.0.0.1:7860"),
   videoServerUrl: z.string().default("http://127.0.0.1:7861"),
-  xttsServerUrl: z.string().default("http://127.0.0.1:7862"),
 
   // Explicit browser identity posture. The agent always uses a dedicated
   // profile and never touches the user's normal browser profile. Default is

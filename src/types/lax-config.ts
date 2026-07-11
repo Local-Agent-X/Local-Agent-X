@@ -65,7 +65,6 @@ export interface LAXConfig {
   ollamaCloudUrl: string;
   sdServerUrl: string;
   videoServerUrl: string;
-  xttsServerUrl: string;
 
   /** Browser identity posture. Isolated is ephemeral per session; continuity
    *  persists one dedicated agent identity with single-session ownership;

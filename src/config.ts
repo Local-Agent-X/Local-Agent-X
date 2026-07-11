@@ -110,8 +110,6 @@ export function loadConfig(): LAXConfig {
   if (sdEnv) raw.sdServerUrl = sdEnv;
   const videoEnv = process.env.LAX_VIDEO_SERVER_URL;
   if (videoEnv) raw.videoServerUrl = videoEnv;
-  const xttsEnv = process.env.LAX_XTTS_SERVER_URL;
-  if (xttsEnv) raw.xttsServerUrl = xttsEnv;
 
   // Limit/timeout overrides
   const agentTimeoutEnv = process.env.LAX_AGENT_TIMEOUT_MS;

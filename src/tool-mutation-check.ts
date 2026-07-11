@@ -62,12 +62,6 @@ const MUTATION_OVERRIDES: ReadonlySet<string> = new Set<string>([
   "mcp_filesystem_write_file", "mcp_filesystem_edit_file",
 ]);
 
-/** True if a risk tier is an observable side effect (no-progress reset). Pure —
- *  lets the drift test assert "any external-comms tool counts" without a tool. */
-export function isMutationRisk(risk: ToolRisk): boolean {
-  return MUTATION_RISKS.has(risk);
-}
-
 /** True if the tool effected something observable this turn — resets the
  *  no-progress counter. Excludes `shell` (bash-spin is what no-progress hunts). */
 export function isMutationTool(name: string): boolean {

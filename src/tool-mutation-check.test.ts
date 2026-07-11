@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { isMutationTool, isProgressTool, isMutationRisk } from "./tool-mutation-check.js";
+import { isMutationTool, isProgressTool } from "./tool-mutation-check.js";
 
 describe("tool-mutation-check — critical invariants the loop guards depend on", () => {
   it("bash is NOT a mutation but IS progress (no-progress must still catch bash-spin)", () => {
@@ -33,15 +33,6 @@ describe("tool-mutation-check — critical invariants the loop guards depend on"
 });
 
 describe("tool-mutation-check — drift fix (derives from the risk taxonomy, not a hand-list)", () => {
-  it("any external-comms tier tool counts as a mutation; shell never does", () => {
-    // The contract that kills the drift class: a new tool added to the policy
-    // table with a side-effecting risk tier auto-counts, zero edits here.
-    expect(isMutationRisk("external-comms")).toBe(true);
-    expect(isMutationRisk("workspace-write")).toBe(true);
-    expect(isMutationRisk("shell")).toBe(false);
-    expect(isMutationRisk("safe")).toBe(false);
-  });
-
   it("side-effecting tools absent from the old hand-list now auto-count", () => {
     // These were never in the removed MUTATION_TOOLS set; they classify
     // correctly now purely from their risk tier (the latent false-abort bug).

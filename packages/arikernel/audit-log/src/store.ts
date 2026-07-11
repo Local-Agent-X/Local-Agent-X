@@ -60,6 +60,13 @@ CREATE INDEX IF NOT EXISTS idx_pte_principal ON persistent_taint_events(principa
 CREATE INDEX IF NOT EXISTS idx_pte_type ON persistent_taint_events(event_type, principal_id);
 `;
 
+const MIGRATION_003_META = `
+CREATE TABLE IF NOT EXISTS audit_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`;
+
 /** Row shape for persistent taint event queries. */
 export interface PersistentTaintEventRow {
 	id: string;
@@ -86,6 +93,7 @@ export class AuditStore {
 		this.db.pragma("foreign_keys = ON");
 		this.db.exec(MIGRATION_001);
 		this.db.exec(MIGRATION_002_PERSISTENT_TAINT);
+		this.db.exec(MIGRATION_003_META);
 		this.migrateSchema();
 
 		this.lastHash = this.getLastHash();
@@ -359,6 +367,96 @@ export class AuditStore {
 			.prepare("DELETE FROM persistent_taint_events WHERE timestamp < ?")
 			.run(cutoff);
 		return result.changes;
+	}
+
+	// ── Audit-event retention ────────────────────────────────────────
+
+	private getMeta(key: string): string | null {
+		const row = this.db.prepare("SELECT value FROM audit_meta WHERE key = ?").get(key) as
+			| { value: string }
+			| undefined;
+		return row?.value ?? null;
+	}
+
+	private setMeta(key: string, value: string): void {
+		this.db
+			.prepare("INSERT INTO audit_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+			.run(key, value);
+	}
+
+	/**
+	 * The retention anchor: the hash of the newest PURGED event. After a purge,
+	 * the oldest retained event's previousHash equals this value instead of the
+	 * genesis hash — the verify path accepts either. Null when no purge has
+	 * ever run (chain still anchors at genesis).
+	 */
+	getChainAnchor(): string | null {
+		return this.getMeta("chain_anchor");
+	}
+
+	/**
+	 * Retention for the audit chain itself. audit_log rows previously grew
+	 * WITHOUT BOUND — only persistent_taint_events had a purge — reaching
+	 * hundreds of MB on a long-lived install.
+	 *
+	 * Deletes the maximal PREFIX of the global chain (by insertion order) whose
+	 * events are all older than the retention window and belong to CLOSED runs
+	 * with no retained events — whole runs only, so per-run sequence checks
+	 * stay valid. Records the newest purged hash as the retention anchor
+	 * (audit_meta.chain_anchor) so tamper-evidence over the retained suffix is
+	 * preserved: the suffix still verifies link-by-link, and its anchor is
+	 * pinned at purge time under the same trust model as the HMAC key.
+	 */
+	purgeEventsBefore(retentionMs: number): { events: number; runs: number } {
+		const cutoff = new Date(Date.now() - retentionMs).toISOString();
+
+		const run = this.db.transaction((): { events: number; runs: number } => {
+			// First event that must be KEPT: recent, or sharing a run with a
+			// recent event, or belonging to a still-open run. Everything before
+			// it (by rowid = insertion order) is a clean, purgeable prefix.
+			const firstKeep = this.db
+				.prepare(
+					`SELECT MIN(rowid) as r FROM events
+					 WHERE timestamp >= @cutoff
+					   OR run_id IN (SELECT DISTINCT run_id FROM events WHERE timestamp >= @cutoff)
+					   OR run_id IN (SELECT run_id FROM runs WHERE ended_at IS NULL)`,
+				)
+				.get({ cutoff }) as { r: number | null };
+
+			const anchorRow = (
+				firstKeep.r === null
+					? this.db.prepare("SELECT hash FROM events ORDER BY rowid DESC LIMIT 1").get()
+					: this.db
+							.prepare("SELECT hash FROM events WHERE rowid < ? ORDER BY rowid DESC LIMIT 1")
+							.get(firstKeep.r)
+			) as { hash: string } | undefined;
+			if (!anchorRow) return { events: 0, runs: 0 }; // nothing purgeable
+
+			const deletedEvents =
+				firstKeep.r === null
+					? this.db.prepare("DELETE FROM events").run().changes
+					: this.db.prepare("DELETE FROM events WHERE rowid < ?").run(firstKeep.r).changes;
+
+			// Runs left with no events: closed + old ones ride out with their prefix.
+			const deletedRuns = this.db
+				.prepare(
+					`DELETE FROM runs
+					 WHERE run_id NOT IN (SELECT DISTINCT run_id FROM events)
+					   AND ended_at IS NOT NULL AND started_at < ?`,
+				)
+				.run(cutoff).changes;
+
+			this.setMeta("chain_anchor", anchorRow.hash);
+			this.setMeta("chain_anchor_at", now());
+			return { events: deletedEvents, runs: deletedRuns };
+		});
+
+		return run();
+	}
+
+	/** Reclaim file space after a large purge. Exclusive; call off the hot path. */
+	vacuum(): void {
+		this.db.exec("VACUUM");
 	}
 
 	close(): void {

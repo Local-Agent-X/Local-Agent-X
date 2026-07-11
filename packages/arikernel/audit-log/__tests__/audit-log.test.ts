@@ -303,3 +303,80 @@ describe("Replay and verification", () => {
 		expect(result.valid).toBe(true);
 	});
 });
+
+// Regression: audit_log rows grew WITHOUT BOUND — only persistent_taint_events
+// had a purge (231MB observed on a long-lived install). purgeEventsBefore must
+// remove old closed runs while keeping the retained suffix tamper-evident via
+// the recorded retention anchor.
+describe("purgeEventsBefore — audit-event retention", () => {
+	it("purges old closed runs, keeps open runs, and the retained chain still verifies", () => {
+		store = new AuditStore(":memory:");
+		store.startRun("run-old", "agent", {});
+		store.append(makeToolCall({ id: "a1", runId: "run-old" }), makeDecision());
+		store.append(makeToolCall({ id: "a2", runId: "run-old" }), makeDecision());
+		store.endRun("run-old");
+
+		store.startRun("run-live", "agent", {});
+		store.append(makeToolCall({ id: "b1", runId: "run-live" }), makeDecision());
+		store.append(makeToolCall({ id: "b2", runId: "run-live" }), makeDecision());
+		// run-live left OPEN: retention must never touch an in-flight run.
+
+		const anchorBefore = store.queryRun("run-old").at(-1)!.hash;
+
+		// retentionMs=0 → cutoff=now → everything already written is "old";
+		// only the open run protects its events.
+		const purged = store.purgeEventsBefore(0);
+		expect(purged.events).toBe(2);
+		expect(purged.runs).toBe(1);
+
+		// The anchor is the newest purged event's hash, and the retained
+		// suffix (whose first event chains onto it) still verifies.
+		expect(store.getChainAnchor()).toBe(anchorBefore);
+		expect(store.getRunContext("run-old")).toBeNull();
+		expect(store.queryRun("run-live")).toHaveLength(2);
+		expect(verifyDatabaseChain(store).valid).toBe(true);
+		const replay = replayRun(store, "run-live");
+		expect(replay?.integrity.valid).toBe(true);
+		expect(replay?.integrity.anchorValid).toBe(true);
+	});
+
+	it("is idempotent and a fresh store purges nothing", () => {
+		store = new AuditStore(":memory:");
+		expect(store.purgeEventsBefore(0)).toEqual({ events: 0, runs: 0 });
+		expect(store.getChainAnchor()).toBeNull();
+
+		store.startRun("run-1", "agent", {});
+		store.append(makeToolCall(), makeDecision());
+		store.endRun("run-1");
+		store.purgeEventsBefore(0);
+		// Second purge: nothing left to remove, anchor unchanged.
+		const anchor = store.getChainAnchor();
+		expect(store.purgeEventsBefore(0)).toEqual({ events: 0, runs: 0 });
+		expect(store.getChainAnchor()).toBe(anchor);
+		expect(verifyDatabaseChain(store).valid).toBe(true);
+	});
+
+	it("a long retention window purges nothing", () => {
+		store = new AuditStore(":memory:");
+		store.startRun("run-1", "agent", {});
+		store.append(makeToolCall(), makeDecision());
+		store.endRun("run-1");
+		expect(store.purgeEventsBefore(7 * 24 * 60 * 60 * 1000)).toEqual({ events: 0, runs: 0 });
+		expect(store.queryRun("run-1")).toHaveLength(1);
+	});
+
+	it("new runs appended after a purge still verify (chain continues from lastHash)", () => {
+		store = new AuditStore(":memory:");
+		store.startRun("run-old", "agent", {});
+		store.append(makeToolCall({ runId: "run-old" }), makeDecision());
+		store.endRun("run-old");
+		store.purgeEventsBefore(0);
+
+		store.startRun("run-new", "agent", {});
+		store.append(makeToolCall({ id: "n1", runId: "run-new" }), makeDecision());
+		store.endRun("run-new");
+
+		expect(verifyDatabaseChain(store).valid).toBe(true);
+		expect(replayRun(store, "run-new")?.integrity.valid).toBe(true);
+	});
+});

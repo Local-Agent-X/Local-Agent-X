@@ -112,6 +112,24 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
     const { firewall, tokenStore, grants } = buildAriFirewall(auditStore, resolvedPreset);
     setSharedAuditStore(auditStore);
     setAriScope(DEFAULT_ARI_SCOPE, { firewall, tokenStore, grants });
+    // Audit-event retention: purge chain prefixes older than the window
+    // (default 30 days; LAX_AUDIT_RETENTION_DAYS overrides, 0 disables).
+    // audit_log rows previously grew without bound (231MB observed) — only
+    // taint events were ever purged. Off the boot hot path; a large purge
+    // vacuums to actually reclaim file space.
+    setTimeout(() => {
+      try {
+        const days = Number(process.env.LAX_AUDIT_RETENTION_DAYS ?? "30");
+        if (!Number.isFinite(days) || days <= 0) return;
+        const purged = auditStore.purgeEventsBefore(days * 24 * 60 * 60 * 1000);
+        if (purged.events > 0) {
+          logger.info(`  [ari] Audit retention: purged ${purged.events} events / ${purged.runs} runs older than ${days}d`);
+          if (purged.events >= 5000) auditStore.vacuum();
+        }
+      } catch (e) {
+        logger.warn(`  [ari] Audit retention purge failed: ${(e as Error).message}`);
+      }
+    }, 10_000).unref?.();
     logger.info(`  [ari] Granted ${grants.size} host capabilities (manifest entries: ${HOST_CAPABILITY_MANIFEST.length})`);
     logger.info(`  [ari] Kernel initialized (in-process, preset: ${resolvedPreset})`);
     return true;

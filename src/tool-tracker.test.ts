@@ -1,8 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyOpCategory, normalizeObservedToolName, recordOpOutcome, recordGaveUpNudge, getOpOutcomeStats, _resetOpOutcomeCache } from "./tool-tracker.js";
+import {
+	classifyOpCategory,
+	normalizeObservedToolName,
+	recordOpOutcome,
+	recordGaveUpNudge,
+	getOpOutcomeStats,
+	_resetOpOutcomeCache,
+	createToolTracker,
+	recordToolCall,
+	getToolStats,
+	getToolSuccessRate,
+	getRecentFailures,
+} from "./tool-tracker.js";
 
 // op-outcome persistence resolves getLaxDir() lazily, so redirecting the write
 // off ~/.lax in beforeAll (not at import) is enough. Restore so the env doesn't
@@ -103,5 +115,76 @@ describe("op-outcome telemetry", () => {
     recordGaveUpNudge("research", "nudge-restart-model");
     _resetOpOutcomeCache();
     expect(getOpOutcomeStats()["research::nudge-restart-model"]?.gaveUpNudged).toBe(1);
+  });
+});
+
+describe("createToolTracker instance isolation", () => {
+  it("two instances with different dirs don't share call records", () => {
+    const dirA = mkdtempSync(join(tmpdir(), "lax-tt-a-"));
+    const dirB = mkdtempSync(join(tmpdir(), "lax-tt-b-"));
+    const a = createToolTracker({ dir: dirA });
+    const b = createToolTracker({ dir: dirB });
+
+    a.recordToolCall("web_search", "s1", true, 100);
+    a.recordToolCall("web_search", "s1", false, 50, "boom");
+
+    expect(a.getToolStats().web_search).toEqual({
+      totalCalls: 2,
+      successes: 1,
+      failures: 1,
+      avgDurationMs: 75,
+      lastFailure: "boom",
+      lastFailureTime: expect.any(Number),
+    });
+    expect(b.getToolStats()).toEqual({});
+    expect(a.getToolSuccessRate("web_search")).toBe(0.5);
+    expect(b.getToolSuccessRate()).toBe(1); // empty → optimistic default, as before
+    expect(a.getRecentFailures()).toHaveLength(1);
+    expect(b.getRecentFailures()).toHaveLength(0);
+
+    // Each instance persists to ITS dir, same file name + JSON shape as before.
+    const persistedA = JSON.parse(readFileSync(join(dirA, "tool-stats.json"), "utf-8"));
+    expect(persistedA.web_search.totalCalls).toBe(2);
+    expect(existsSync(join(dirB, "tool-stats.json"))).toBe(false);
+  });
+
+  it("two instances with different dirs don't share op-outcome aggregates", () => {
+    const dirA = mkdtempSync(join(tmpdir(), "lax-tt-oa-"));
+    const dirB = mkdtempSync(join(tmpdir(), "lax-tt-ob-"));
+    const a = createToolTracker({ dir: dirA });
+    const b = createToolTracker({ dir: dirB });
+
+    a.recordOpOutcome("coding", "clean", "model-x");
+
+    expect(a.getOpOutcomeStats()["coding::model-x"]?.clean).toBe(1);
+    expect(b.getOpOutcomeStats()["coding::model-x"]).toBeUndefined();
+    expect(existsSync(join(dirA, "op-outcomes.json"))).toBe(true);
+    expect(existsSync(join(dirB, "op-outcomes.json"))).toBe(false);
+  });
+});
+
+describe("default-instance wrappers", () => {
+  it("record/report through the module-level functions as before", () => {
+    recordToolCall("bash", "sess-default", true, 40);
+    recordToolCall("bash", "sess-default", false, 20, "exit 1");
+
+    const stats = getToolStats();
+    expect(stats.bash.totalCalls).toBe(2);
+    expect(stats.bash.successes).toBe(1);
+    expect(stats.bash.failures).toBe(1);
+    expect(stats.bash.avgDurationMs).toBe(30);
+    expect(stats.bash.lastFailure).toBe("exit 1");
+    expect(getToolSuccessRate("bash")).toBe(0.5);
+    expect(getRecentFailures().some((r) => r.name === "bash" && r.error === "exit 1")).toBe(true);
+  });
+
+  it("lazy-init proof: the default instance binds LAX_DATA_DIR set AFTER import", () => {
+    // beforeAll (post-import) pointed LAX_DATA_DIR at a temp dir. The old code
+    // bound getLaxDir() at import, which would have written tool-stats.json to
+    // the real ~/.lax. The persisted summary landing in the temp dir proves the
+    // default instance resolved its dir on first use, not at import.
+    const file = join(process.env.LAX_DATA_DIR!, "tool-stats.json");
+    expect(existsSync(file)).toBe(true);
+    expect(JSON.parse(readFileSync(file, "utf-8")).bash.totalCalls).toBe(2);
   });
 });

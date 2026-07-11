@@ -49,6 +49,14 @@ vi.mock("./spec-probes.js", () => ({
 vi.mock("./spec-audit.js", () => ({
   runSpecAuditGate: vi.fn(async () => ({ nudge: "", shouldRetry: false })),
 }));
+// Capture the P-1 measurement log line without touching real logging. One
+// shared stub so a test can read `createLogger().info.mock.calls`.
+vi.mock("../../logger.js", () => {
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  return { createLogger: () => logger };
+});
+// Stub the durable P-1 sink so these tests never write ~/.lax/p1-metrics.json.
+vi.mock("./p1-metrics.js", () => ({ recordP1Outcome: vi.fn() }));
 
 import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
 import { recordTerminalOutcome } from "./record-outcome.js";
@@ -152,6 +160,77 @@ describe("decideTurnOutcome — termination is stop-signal driven", () => {
       adapterError: { code: "boom", message: "provider failed" },
     }));
     expect(r.terminalReason).toBe("error");
+  });
+});
+
+describe("decideTurnOutcome — P-1 mutation-wrapup measurement (behavior-neutral)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // A successful, non-silent MUTATION (write) committed this turn, WITH narration
+  // and NO real model stop signal. This is the exact shape where the
+  // `mutationCommitted` shortcut is the SOLE reason the turn can terminate — the
+  // case that can cut off a promised follow-up ("I'll write it, then run tests").
+  const writeCall: ToolCall = { toolCallId: "w1", tool: "write", args: { path: "/x", content: "y" } };
+  const writeOk: CommitTurnMessage = {
+    messageId: "trw1", role: "tool", content: { toolCallId: "w1", text: "[ok]\nwrote 3 lines" },
+  } as unknown as CommitTurnMessage;
+  const writeSummary = [{ tool: "write", toolCallId: "w1" }] as unknown as ToolCallSummary[];
+
+  const mutationInput = (over: Partial<DecideOutcomeInput> = {}) =>
+    input({
+      toolCalls: [writeCall],
+      toolMessages: [writeOk],
+      toolSummary: writeSummary,
+      assistantText: "Writing the file, then I'll run the tests.",
+      modelSignaledDone: false,
+      ...over,
+    });
+
+  const p1Lines = async () => {
+    const { createLogger } = await import("../../logger.js");
+    const logger = (createLogger as unknown as () => { info: ReturnType<typeof vi.fn> })();
+    return logger.info.mock.calls
+      .map((c) => String(c[0]))
+      .filter((s) => s.includes("[p1-mutation-wrapup]"));
+  };
+
+  const recordMock = async () => {
+    const { recordP1Outcome } = await import("./p1-metrics.js");
+    return recordP1Outcome as unknown as ReturnType<typeof vi.fn>;
+  };
+
+  it("logs + durably records outcome=terminated when the shortcut is the sole decider AND stands", async () => {
+    const r = await decideTurnOutcome(mutationInput());
+    expect(r.terminalReason).toBe("done"); // the clause fired (no gate re-opened)
+    const lines = await p1Lines();
+    expect(lines.length).toBe(1);
+    expect(lines[0]).toContain("outcome=terminated");
+    expect(lines[0]).toContain("op=op-test");
+    expect(await recordMock()).toHaveBeenCalledWith("terminated");
+  });
+
+  it("does NOT log or record when the model really signaled done (clause redundant, not decider)", async () => {
+    const r = await decideTurnOutcome(mutationInput({ modelSignaledDone: true }));
+    expect(r.terminalReason).toBe("done");
+    expect(await p1Lines()).toEqual([]); // modelSignaledDone already terminates
+    expect(await recordMock()).not.toHaveBeenCalled();
+  });
+
+  it("logs + records outcome=reopened-by-gate when a completion gate re-opens the terminated turn", async () => {
+    // Same sole-decider shape, but build-verify re-opens the turn — so no
+    // follow-up was actually dropped, and the measurement must say so.
+    const { opEditedSourceUnverified } = await import("../middlewares/verify-gate.js");
+    (opEditedSourceUnverified as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+    const { runBuildVerifyGate } = await import("./build-verify.js");
+    (runBuildVerifyGate as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      nudge: "STOP — build red", shouldRetry: true, capReached: false,
+    });
+    const r = await decideTurnOutcome(mutationInput());
+    expect(r.terminalReason).toBeNull();
+    const lines = await p1Lines();
+    expect(lines.length).toBe(1);
+    expect(lines[0]).toContain("outcome=reopened-by-gate");
+    expect(await recordMock()).toHaveBeenCalledWith("reopened-by-gate");
   });
 });
 

@@ -35,6 +35,10 @@ import {
   CODEBASE_ADVICE_GROUNDING_REASON,
   CODEBASE_ADVICE_GROUNDING_STATUS,
 } from "../../agent-guards/index.js";
+import { createLogger } from "../../logger.js";
+import { recordP1Outcome } from "./p1-metrics.js";
+
+const logger = createLogger("canonical-loop.turn-loop.decide-outcome");
 
 export interface DecideOutcomeInput {
   op: Op;
@@ -159,6 +163,20 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const allSilent = toolCalls.length > 0 && toolCalls.every(isSilentToolCall);
   const noTools = toolCalls.length === 0;
   const mutationCommitted = failureSummary.hadSuccessfulMutation;
+  // P-1 measurement (behavior-neutral). `mutationCommitted` only CHANGES this
+  // decision when the model did not really signal done and the turn is neither
+  // silent nor tool-less — i.e. the model emitted a mutating tool_use (its real
+  // signal wanted to CONTINUE) alongside narration. In every other case one of
+  // modelSignaledDone / allSilent / noTools already terminates, so the clause is
+  // redundant. When it is the SOLE decider it can cut off a promised
+  // post-mutation follow-up ("I'll write the file, then run the tests"). Flag it
+  // here and emit at the end (after the gates may re-open it) to measure how
+  // often that actually happens before we commit to the surgical fix. See P-1.
+  const mutationWasSoleDecider =
+    terminalReason === null &&
+    !middlewareAborted &&
+    assistantText.trim().length > 0 &&
+    mutationCommitted && !modelSignaledDone && !allSilent && !noTools;
   if (
     terminalReason === null &&
     !middlewareAborted &&
@@ -229,6 +247,20 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     const out = await gate.evaluate({ op, turnIdx, toolCalls });
     if (out.buildVerifyConfirmation !== undefined) buildVerifyConfirmation = out.buildVerifyConfirmation;
     if (out.reopen) terminalReason = null;
+  }
+
+  // P-1 measurement sink (behavior-neutral — nothing above or below reads this).
+  // Emit only when the mutation shortcut was the sole reason this turn could
+  // terminate, tagging the actual outcome: `terminated` = the op ended here and
+  // a promised post-mutation follow-up (if any) was cut off; `reopened-by-gate`
+  // = a completion gate (build-verify etc.) drove another turn anyway, so no
+  // follow-up was lost. Grep `[p1-mutation-wrapup]` in the server log; the ratio
+  // of terminated:reopened sizes the surgical fix before we ship it.
+  if (mutationWasSoleDecider) {
+    const outcome = terminalReason === "done" ? "terminated" : "reopened-by-gate";
+    logger.info(`[p1-mutation-wrapup] op=${op.id} turn=${turnIdx} outcome=${outcome}`);
+    // Durable aggregate (~/.lax/p1-metrics.json) — the log clears on restart.
+    recordP1Outcome(outcome);
   }
 
   // Terminal epilogue (terminal-epilogue.ts): loud-partial warning,

@@ -65,6 +65,14 @@ export function buildRequestBody(input: BuildBodyInput): Record<string, unknown>
     // "low" caused ~40% empty responses. A user-picked level (settings
     // reasoningEffort, chat-bar Think picker) overrides the default — their
     // call to trade latency/reliability for depth.
+    // summary MUST be "auto" on this endpoint. Tried "detailed" (2026-07-10)
+    // to get summaries on light turns too: the subscription backend silently
+    // dropped reasoning summaries ENTIRELY — same prompts that streamed
+    // reasoning_summary_* under auto streamed none under detailed, no error.
+    // (The public api.openai.com Responses API does accept detailed; the
+    // chatgpt.com/backend-api/codex endpoint does not honor it.) Consequence:
+    // trivial prompts legitimately render no Thinking block — auto only emits
+    // a summary when the model actually runs a reasoning pass.
     reasoning: { effort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT, summary: "auto" },
   };
 

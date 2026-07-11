@@ -359,7 +359,7 @@ export function noteToolResults(
   const key = toolCalls.map(tc => `${tc.name}:${tc.arguments}`).join("|");
   if (key !== state.lastToolKey) return;
   const sig = createHash("sha1")
-    .update(results.map(r => r.content).join(" "))
+    .update(results.map(r => r.content).join("\x00"))
     .digest("hex");
   if (state.lastResultSig !== null) {
     state.identicalResultRepeats = sig === state.lastResultSig ? state.identicalResultRepeats + 1 : 0;

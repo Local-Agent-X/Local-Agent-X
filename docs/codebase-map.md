@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1183 non-test source files · 0 god files (>400 LOC).
+**Totals:** 61 top-level dirs · 61 live · 0 with no live importer · 1193 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -42,13 +42,14 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/anthropic-client/` | 12 | 18 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
 | `src/context-manager/` | 11 | 7 | M |  |
+| `src/data-lineage/` | 11 | 5 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |
+| `src/self-edit/` | 9 | 19 | L |  |
 | `src/whatsapp-bridge/` | 9 | 6 | M |  |
 | `src/sandbox/` | 8 | 6 | L |  |
 | `src/screen-stream/` | 8 | 8 | L |  |
-| `src/self-edit/` | 8 | 14 | L |  |
 | `src/sync/` | 8 | 18 | L |  |
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/protocols/` | 7 | 32 | XL |  |
@@ -60,11 +61,11 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/bridge-voice/` | 5 | 5 | M |  |
 | `src/routes/` | 5 | 81 | XL |  |
 | `src/routing/` | 5 | 7 | M |  |
-| `src/util/` | 5 | 1 | S |  |
+| `src/util/` | 5 | 2 | S |  |
 | `src/broker-transport/` | 4 | 27 | L |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/server/` *(entrypoint)* | 4 | 31 | XL |  |
-| `src/tool-policy/` | 4 | 19 | L |  |
+| `src/tool-policy/` | 4 | 18 | L |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/context/` | 3 | 2 | M |  |
 | `src/embedding-providers/` | 3 | 10 | M |  |
@@ -119,11 +120,6 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/correction-learning.ts` | M |
 | `src/cost-tracker.ts` | M |
 | `src/crash-analytics.ts` | S |
-| `src/data-lineage-external.ts` | S |
-| `src/data-lineage-fingerprint.ts` | S |
-| `src/data-lineage-paths.ts` | M |
-| `src/data-lineage-taint.ts` | M |
-| `src/data-lineage.ts` | S |
 | `src/datadir-lock.ts` | S |
 | `src/db-migrations.ts` | S |
 | `src/demo-recorder.ts` | M |
@@ -187,11 +183,6 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/secrets-types.ts` | S |
 | `src/secrets.ts` | M |
 | `src/security-tests.ts` | S |
-| `src/self-edit-rollback.ts` | S |
-| `src/self-edit-sandbox-gates.ts` | M |
-| `src/self-edit-sandbox-naming.ts` | S |
-| `src/self-edit-sandbox.ts` | M |
-| `src/self-edit-smoke-suite.ts` | S |
 | `src/server-context.ts` | S |
 | `src/server-utils.ts` | M |
 | `src/settings-schema.ts` | M |

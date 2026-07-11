@@ -57,14 +57,21 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh
    default so macOS and a plain browser never render it. */
 #desktop-titlebar{display:none}
 body.platform-win{height:calc(100vh - 32px);margin-top:32px}
-body.platform-win #desktop-titlebar{display:flex;position:fixed;top:0;left:0;right:0;height:32px;z-index:99999;align-items:center;background:var(--surface);-webkit-app-region:drag;font-size:12px;user-select:none}
+/* right padding reserves room for the OS caption buttons (min/max/close ~138px
+   on Windows) so the ⋯ overflow doesn't sit under them and get misclicked. */
+body.platform-win #desktop-titlebar{display:flex;position:fixed;top:0;left:0;right:0;height:32px;padding-right:138px;z-index:99999;align-items:center;background:var(--surface);-webkit-app-region:drag;font-size:12px;user-select:none}
 body.platform-win #sidebar-expand-btn{top:52px !important}
 body.platform-win #agents-toggle{top:52px !important}
 #desktop-titlebar #dtb-favicon{width:16px;height:16px;margin:0 8px;-webkit-app-region:no-drag}
+#desktop-titlebar #dtb-brand{color:var(--muted);font-weight:600;letter-spacing:.01em;-webkit-app-region:drag}
+#desktop-titlebar .dtb-spacer{flex:1;-webkit-app-region:drag}
 #desktop-titlebar .dtb-menu{position:relative;-webkit-app-region:no-drag}
 #desktop-titlebar .dtb-btn{display:block;padding:4px 8px;color:var(--muted);cursor:pointer}
+#desktop-titlebar .dtb-btn-icon{padding:3px 10px;font-size:17px;line-height:1;border-radius:6px;color:var(--text)}
 #desktop-titlebar .dtb-menu.open .dtb-btn{color:var(--accent);background:var(--hover)}
-#desktop-titlebar .dtb-dd{display:none;position:absolute;top:100%;left:0;min-width:180px;background:var(--bg);border:1px solid var(--border);box-shadow:0 4px 12px rgba(0,0,0,.5);padding:4px 0}
+#desktop-titlebar .dtb-btn-icon:hover{color:var(--text);background:var(--hover)}
+#desktop-titlebar .dtb-dd{display:none;position:absolute;top:100%;left:0;min-width:180px;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.5);padding:4px 0}
+#desktop-titlebar .dtb-dd-right{left:auto;right:0}
 #desktop-titlebar .dtb-menu.open .dtb-dd{display:block}
 #desktop-titlebar .dtb-item{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:6px 12px;color:var(--text);cursor:pointer;white-space:nowrap}
 #desktop-titlebar .dtb-item:hover{background:var(--hover)}

@@ -22,7 +22,7 @@
 <script src="/vendor/highlightjs/highlight.min.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb14"/>
+<link rel="stylesheet" href="/css/app.css?v=vb16"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
      Import map lets `import * as THREE from 'three'` resolve cleanly in
@@ -39,54 +39,35 @@
      paint; macOS uses the native top-of-screen menu (desktop/src/app-menu.ts)
      and a plain browser never gets the class, so the bar stays hidden in both.
      Behavior is wired in /js/desktop-titlebar.js. -->
+<!-- In-window titlebar (Windows/Linux desktop). The old File/Edit/View/Window/
+     Help menu row was removed in the shell overhaul: every keyboard accelerator
+     it exposed lives in the native (hidden) menu in desktop/src/app-menu.ts and
+     keeps firing regardless, so the visible row was pure redundant chrome. The
+     mouse-only actions that had no other home (open in browser, restart, zoom,
+     about, …) collapse into the single ⋯ overflow menu, which reuses the exact
+     .dtb-menu/.dtb-dd/.dtb-item styling the old row used. -->
 <div id="desktop-titlebar">
   <img id="dtb-favicon" src="/favicon.png" alt=""/>
-  <div class="dtb-menu">
-    <span class="dtb-btn">File</span>
-    <div class="dtb-dd">
+  <span id="dtb-brand">Local Agent X</span>
+  <div class="dtb-spacer"></div>
+  <div class="dtb-menu" id="dtb-overflow">
+    <span class="dtb-btn dtb-btn-icon" title="Menu" aria-label="Menu">&#8943;</span>
+    <div class="dtb-dd dtb-dd-right">
       <div class="dtb-item" data-action="open-in-browser">Open in Browser<span class="dtb-key">Ctrl+Shift+B</span></div>
       <div class="dtb-item" data-action="copy-app-url">Copy App URL<span class="dtb-key">Ctrl+Shift+L</span></div>
       <div class="dtb-sep"></div>
-      <div class="dtb-item" data-action="restart-server">Restart Server</div>
-      <div class="dtb-sep"></div>
-      <div class="dtb-item" data-action="quit">Quit</div>
-    </div>
-  </div>
-  <div class="dtb-menu">
-    <span class="dtb-btn">Edit</span>
-    <div class="dtb-dd">
-      <div class="dtb-item" data-action="edit:undo">Undo<span class="dtb-key">Ctrl+Z</span></div>
-      <div class="dtb-item" data-action="edit:redo">Redo<span class="dtb-key">Ctrl+Y</span></div>
-      <div class="dtb-sep"></div>
-      <div class="dtb-item" data-action="edit:cut">Cut<span class="dtb-key">Ctrl+X</span></div>
-      <div class="dtb-item" data-action="edit:copy">Copy<span class="dtb-key">Ctrl+C</span></div>
-      <div class="dtb-item" data-action="edit:paste">Paste<span class="dtb-key">Ctrl+V</span></div>
-      <div class="dtb-item" data-action="edit:selectAll">Select All<span class="dtb-key">Ctrl+A</span></div>
-    </div>
-  </div>
-  <div class="dtb-menu">
-    <span class="dtb-btn">View</span>
-    <div class="dtb-dd">
       <div class="dtb-item" data-action="reload">Reload</div>
       <div class="dtb-item" data-action="toggle-agents">Toggle Agents<span class="dtb-key">Ctrl+Shift+A</span></div>
-      <div class="dtb-item" data-action="toggle-devtools">Toggle DevTools<span class="dtb-key">Ctrl+Shift+I</span></div>
+      <div class="dtb-item" data-action="toggle-devtools">Developer Tools<span class="dtb-key">Ctrl+Shift+I</span></div>
       <div class="dtb-sep"></div>
       <div class="dtb-item" data-action="zoom-in">Zoom In<span class="dtb-key">Ctrl+=</span></div>
       <div class="dtb-item" data-action="zoom-out">Zoom Out<span class="dtb-key">Ctrl+-</span></div>
       <div class="dtb-item" data-action="zoom-reset">Reset Zoom<span class="dtb-key">Ctrl+0</span></div>
-    </div>
-  </div>
-  <div class="dtb-menu">
-    <span class="dtb-btn">Window</span>
-    <div class="dtb-dd">
-      <div class="dtb-item" data-action="minimize">Minimize</div>
-      <div class="dtb-item" data-action="close-to-tray">Close to Tray</div>
-    </div>
-  </div>
-  <div class="dtb-menu">
-    <span class="dtb-btn">Help</span>
-    <div class="dtb-dd">
+      <div class="dtb-sep"></div>
+      <div class="dtb-item" data-action="restart-server">Restart Server</div>
       <div class="dtb-item" data-action="about">About</div>
+      <div class="dtb-sep"></div>
+      <div class="dtb-item" data-action="quit">Quit</div>
     </div>
   </div>
 </div>

@@ -36,6 +36,9 @@ export function evaluateShellCommand(
   inlineEval?: InlineEvalPolicy,
   workspace?: string,
   fileAccessMode?: FileAccessMode,
+  // Injected so tests can pin either platform branch deterministically on any
+  // OS. Production callers omit it.
+  platform: NodeJS.Platform = process.platform,
 ): SecurityDecision {
   // Obfuscation detection
   try {
@@ -123,7 +126,7 @@ export function evaluateShellCommand(
   // Block dangerous shell metacharacters (command chaining, subshells, command substitution)
   // Allow: | (pipes, controlled below), > < (redirects), * ? (globs)
   // Block dangerous shell metacharacters — platform-aware
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     // PowerShell: backtick is the escape char, ${} is variable syntax, {} is script blocks — all normal
     // Only block actual dangerous patterns: Invoke-Expression, iex, & (call operator at start)
     if (/\r\n/.test(command)) {
@@ -181,7 +184,7 @@ export function evaluateShellCommand(
   // unrestricted" bug).
   if (RM_DESTRUCTIVE_FLAGS.test(command)) {
     if (fileAccessMode === "unrestricted") {
-      const catastrophic = detectCatastrophicRm(command, homedir());
+      const catastrophic = detectCatastrophicRm(command, homedir(), platform);
       if (catastrophic) {
         return { allowed: false, reason: catastrophic, userHint: USER_HINTS.commandShell };
       }

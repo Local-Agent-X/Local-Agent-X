@@ -1,4 +1,4 @@
-import { join, sep } from "node:path";
+import { join } from "node:path";
 
 // ── The irreducible "cannot delete, even in unrestricted mode" floor ──
 //
@@ -9,22 +9,31 @@ import { join, sep } from "node:path";
 // place that answers "is this delete target catastrophic?" so the shell rm
 // guard and the unrestricted-write floor agree on what "system directory"
 // means and can never drift.
+//
+// Platform is INJECTED (defaulting to process.platform) rather than read
+// inline, so the test suite can pin either branch deterministically on any
+// OS — the shell guards branch on platform semantics, and a platform-blind
+// test suite is only ever green on the OS it was written on.
 
-// System directories whose SUBPATHS are catastrophic. This IS the list the
-// unrestricted-mode WRITE floor uses (file-access.ts imports it) — kept
-// byte-identical to the pre-existing inline list so extracting it here changes
-// no write behavior; the rm guard simply reuses the same authority.
-export const SYSTEM_DIR_PATTERNS: RegExp[] = process.platform === "win32"
-	? [/^[A-Z]:\\Windows\\/i, /^[A-Z]:\\Program Files/i, /^[A-Z]:\\ProgramData\\/i, /^[A-Z]:\\System/i]
-	: [/^\/etc\//, /^\/sys\//, /^\/proc\//, /^\/boot\//, /^\/usr\/(?:bin|sbin|lib)\//, /^\/sbin\//, /^\/bin\//, /^\/dev\//];
+const WIN_SYSTEM_DIR_PATTERNS: RegExp[] = [/^[A-Z]:\\Windows\\/i, /^[A-Z]:\\Program Files/i, /^[A-Z]:\\ProgramData\\/i, /^[A-Z]:\\System/i];
+const POSIX_SYSTEM_DIR_PATTERNS: RegExp[] = [/^\/etc\//, /^\/sys\//, /^\/proc\//, /^\/boot\//, /^\/usr\/(?:bin|sbin|lib)\//, /^\/sbin\//, /^\/bin\//, /^\/dev\//];
+
+/** System directories whose SUBPATHS are catastrophic, for a given platform. */
+export function systemDirPatterns(platform: NodeJS.Platform = process.platform): RegExp[] {
+	return platform === "win32" ? WIN_SYSTEM_DIR_PATTERNS : POSIX_SYSTEM_DIR_PATTERNS;
+}
+
+// Current-platform constant — the unrestricted-mode WRITE floor
+// (file-access.ts) imports this directly; it always wants the running OS.
+export const SYSTEM_DIR_PATTERNS: RegExp[] = systemDirPatterns();
 
 // Top-level roots that must never be deleted AS A WHOLE (the dir itself, or a
 // `/*` glob of it). Deleting any of these — or the filesystem root or the
 // home-directory root — is the "wipe everything" footgun the floor exists for.
 // Subpaths UNDER these (e.g. ~/Downloads, /Users/me/projects) are user data and
 // stay deletable; only the roots themselves are refused.
-function catastrophicRoots(home: string): string[] {
-	if (process.platform === "win32") {
+function catastrophicRoots(home: string, platform: NodeJS.Platform): string[] {
+	if (platform === "win32") {
 		return [home, "C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)", "C:\\ProgramData", "C:\\Users"];
 	}
 	return [
@@ -40,13 +49,18 @@ function catastrophicRoots(home: string): string[] {
  * the floor that holds even in unrestricted mode. Handles `~` expansion, a
  * trailing `/`, and a trailing `/*` / `/.` "everything under here" glob (so
  * `rm -rf ~/*` and `rm -rf /*` are caught), then checks the normalized target
- * against the protected roots and the shared SYSTEM_DIR_PATTERNS.
+ * against the protected roots and the platform's system-dir patterns.
  *
  * A RELATIVE target (`./build`, `dist`) is never catastrophic — it resolves
  * under the project, not at a system root — so only absolute / `~` targets can
  * trip this.
  */
-export function isCatastrophicDeleteTarget(rawTarget: string, home: string): boolean {
+export function isCatastrophicDeleteTarget(
+	rawTarget: string,
+	home: string,
+	platform: NodeJS.Platform = process.platform,
+): boolean {
+	const sep = platform === "win32" ? "\\" : "/";
 	let t = rawTarget.trim().replace(/^['"]+|['"]+$/g, "");
 	if (!t) return false;
 
@@ -63,18 +77,18 @@ export function isCatastrophicDeleteTarget(rawTarget: string, home: string): boo
 	// Filesystem root (`/`) or a bare Windows drive root (`C:\`, `D:/`).
 	if (t === sep || /^[A-Za-z]:[\\/]?$/.test(t)) return true;
 
-	const norm = process.platform === "win32" ? t.toLowerCase() : t;
+	const norm = platform === "win32" ? t.toLowerCase() : t;
 
 	// Equals a protected root itself.
-	for (const r of catastrophicRoots(home)) {
-		const rn = process.platform === "win32" ? r.toLowerCase() : r;
+	for (const r of catastrophicRoots(home, platform)) {
+		const rn = platform === "win32" ? r.toLowerCase() : r;
 		if (norm === rn) return true;
 	}
 
 	// Sits under a shared system directory (re-add a trailing sep so the
 	// subpath patterns, which require one, match the bare dir too).
 	const probe = t.endsWith(sep) ? t : t + sep;
-	for (const p of SYSTEM_DIR_PATTERNS) if (p.test(probe)) return true;
+	for (const p of systemDirPatterns(platform)) if (p.test(probe)) return true;
 
 	return false;
 }
@@ -86,7 +100,11 @@ export function isCatastrophicDeleteTarget(rawTarget: string, home: string): boo
  * each pipe segment whose argv[0] basename is `rm`, gating its non-flag
  * operands through isCatastrophicDeleteTarget.
  */
-export function detectCatastrophicRm(command: string, home: string): string | null {
+export function detectCatastrophicRm(
+	command: string,
+	home: string,
+	platform: NodeJS.Platform = process.platform,
+): string | null {
 	for (const segment of command.split("|")) {
 		const words = segment.trim().split(/\s+/).filter(Boolean);
 		if (!words.length) continue;
@@ -96,7 +114,7 @@ export function detectCatastrophicRm(command: string, home: string): string | nu
 		for (let i = 1; i < words.length; i++) {
 			const w = words[i];
 			if (w.startsWith("-")) continue; // a flag (incl. `--`), not a target
-			if (isCatastrophicDeleteTarget(w, home)) {
+			if (isCatastrophicDeleteTarget(w, home, platform)) {
 				return `Blocked: refusing to delete a protected system or root path (${w}) even in unrestricted mode — this would break the OS or wipe your home directory. Delete specific files or subfolders instead.`;
 			}
 		}

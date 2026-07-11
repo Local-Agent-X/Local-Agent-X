@@ -14,10 +14,13 @@ import type {
   TransportEvent,
 } from "./anthropic.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import type { ReasoningEffort } from "../../providers/reasoning-effort.js";
 import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
 
 export interface CodexTransportRequest extends AnthropicTransportRequest {
   previousResponseId?: string;
+  /** User-selected thinking depth — forwarded to the Responses API body. */
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface CodexTransport {
@@ -82,6 +85,7 @@ export function defaultCodexTransport(): CodexTransport {
           systemPrompt: req.systemPrompt,
           tools: tools as Parameters<typeof adapter.stream>[0]["tools"],
           previousResponseId: req.previousResponseId,
+          reasoningEffort: req.reasoningEffort,
           sessionId: req.sessionId,
           toolChoice: canonicalToolChoice,
           signal: req.signal,

@@ -2,6 +2,8 @@
 // so submodules import a single source-of-truth for adapter name/version and
 // the option/result shapes.
 
+import type { ReasoningEffort } from "../../../providers/reasoning-effort.js";
+
 export const OPENAI_COMPAT_ADAPTER_NAME = "openai-compat";
 export const OPENAI_COMPAT_ADAPTER_VERSION = "1.0.0";
 export const PROVIDER_STATE_MAX_BYTES = 256 * 1024;
@@ -16,6 +18,9 @@ export interface OpenAICompatAdapterOptions {
   apiKey: string;
   systemPrompt?: string;
   temperature?: number;
+  /** User-selected thinking depth — forwarded as reasoning_effort on
+   *  reasoning-capable models (xhigh clamps to high on Chat Completions). */
+  reasoningEffort?: ReasoningEffort;
   sessionId?: string;
   /**
    * Forced single-tool selection from the intent classifier. Applied on

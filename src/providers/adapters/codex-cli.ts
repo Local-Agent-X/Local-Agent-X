@@ -35,6 +35,7 @@ export class CodexCliAdapter extends BaseAdapter {
         systemPrompt: req.systemPrompt,
         tools: codexTools,
         temperature: req.temperature,
+        reasoningEffort: req.reasoningEffort,
         previousResponseId: req.previousResponseId,
         sessionId: req.sessionId,
         toolChoice: req.toolChoice,

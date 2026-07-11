@@ -313,6 +313,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     images,
     temperature: resolved.temperature,
     maxIterations: resolved.maxIterations,
+    reasoningEffort: resolved.reasoningEffort,
     authSource: resolved.authSource,
     toolChoice,
   };

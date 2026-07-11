@@ -157,6 +157,33 @@ describe("resolveProvider — strict local model validation", () => {
   });
 });
 
+describe("resolveProvider — reasoningEffort from settings", () => {
+  beforeEach(() => {
+    credsPresent.clear();
+    savedSettings = {};
+    credsPresent.add("xai");
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("defaults to medium when nothing is saved", async () => {
+    savedSettings = { provider: "xai" };
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp");
+    expect(res.reasoningEffort).toBe("medium");
+  });
+
+  it("honors a saved level", async () => {
+    savedSettings = { provider: "xai", reasoningEffort: "xhigh" };
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp");
+    expect(res.reasoningEffort).toBe("xhigh");
+  });
+
+  it("normalizes garbage in schema-less settings.json back to medium", async () => {
+    savedSettings = { provider: "xai", reasoningEffort: "turbo-brain" };
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp");
+    expect(res.reasoningEffort).toBe("medium");
+  });
+});
+
 describe("resolveProvider — maxIterations floor (120)", () => {
   // Regression for the "25 turns and it stops" trap: the old Settings panel
   // defaulted maxIterations to 25 (max=100), so legacy settings.json files cap

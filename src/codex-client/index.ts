@@ -11,6 +11,7 @@
  */
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import type { ReasoningEffort } from "../providers/reasoning-effort.js";
 import { createLogger } from "../logger.js";
 
 import {
@@ -39,6 +40,8 @@ export async function* streamCodexResponse(params: {
   systemPrompt: string;
   tools?: CodexTool[];
   temperature?: number;
+  /** User-selected thinking depth — sent as reasoning.effort (default medium). */
+  reasoningEffort?: ReasoningEffort;
   previousResponseId?: string;
   sessionId?: string;
   toolChoice?: "auto" | "required" | { type: "tool"; name: string } | { type: "function"; function: { name: string } };
@@ -57,6 +60,7 @@ export async function* streamCodexResponse(params: {
     messages: params.messages,
     tools: params.tools,
     toolChoice: params.toolChoice,
+    reasoningEffort: params.reasoningEffort,
   });
 
   const res = await fetchCodexOnce({

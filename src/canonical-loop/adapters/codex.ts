@@ -12,6 +12,7 @@
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import type { CodexTransport } from "./codex-transport.js";
+import type { ReasoningEffort } from "../../providers/reasoning-effort.js";
 import type { AnthropicTransportRequest } from "./anthropic.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
@@ -46,6 +47,9 @@ export interface CodexAdapterOptions {
   model?: string;
   systemPrompt?: string;
   maxTokens?: number;
+  /** User-selected thinking depth — sent as `reasoning.effort` on the
+   *  Responses API. Absent = medium (see codex-client/request.ts). */
+  reasoningEffort?: ReasoningEffort;
   providerStateMaxBytes?: number;
   sessionId?: string;
   /**
@@ -104,7 +108,7 @@ export class CodexAdapter implements Adapter {
 
     const forcedToolChoice = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
 
-    const req: AnthropicTransportRequest & { previousResponseId?: string } = {
+    const req: AnthropicTransportRequest & { previousResponseId?: string; reasoningEffort?: ReasoningEffort } = {
       model: this.opts.model ?? "gpt-5.4-mini",
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
       messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
@@ -113,6 +117,7 @@ export class CodexAdapter implements Adapter {
       maxTokens: this.opts.maxTokens,
       sessionId: this.opts.sessionId,
       previousResponseId: prevResponseId,
+      reasoningEffort: this.opts.reasoningEffort,
       forcedToolChoice,
     };
 

@@ -9,6 +9,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ToolDefinition, ServerEvent } from "../../types.js";
+import type { ReasoningEffort } from "../reasoning-effort.js";
 
 /**
  * Normalized request shape that every adapter accepts. The dispatcher
@@ -24,6 +25,9 @@ export interface ProviderRequest {
   tools: ToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  /** User-selected thinking depth for reasoning models. Adapters map it to
+   *  their wire param (reasoning_effort / reasoning.effort); absent = medium. */
+  reasoningEffort?: ReasoningEffort;
   /** Force tool use on this request. "required" = model MUST call a
    *  tool of its choosing. `{ type: "tool", name }` = pin to the named
    *  tool (intent-classifier path). */

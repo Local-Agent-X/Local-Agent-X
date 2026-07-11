@@ -16,6 +16,7 @@ import { toOpenAITools } from "../shared/tool-shape.js";
 import { hasNoToolSupport, markNoToolSupport, hasParamUnsupported, markParamUnsupported } from "../types.js";
 import { createLogger } from "../../logger.js";
 import { PROVIDERS, isHttpProvider } from "../registry.js";
+import { effortForChatCompletions, DEFAULT_REASONING_EFFORT } from "../reasoning-effort.js";
 import { PROVIDER_IDS, type ProviderId } from "../provider-ids.js";
 import { isLocalOnlyMode, isLoopbackUrl } from "../../local-only-policy.js";
 
@@ -129,7 +130,11 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       ...(opts.includeTemperature ? { temperature: req.temperature ?? 0.7 } : {}),
       stream: true as const,
       ...(streamUsage ? { stream_options: { include_usage: true } } : {}),
-      ...(opts.includeReasoningEffort ? { reasoning_effort: "medium" as const } : {}),
+      // Cast: the installed SDK's ReasoningEffort union predates "minimal",
+      // which the API accepts on gpt-5-class models.
+      ...(opts.includeReasoningEffort
+        ? { reasoning_effort: effortForChatCompletions(req.reasoningEffort ?? DEFAULT_REASONING_EFFORT) as "low" | "medium" | "high" }
+        : {}),
     });
 
     let stream;

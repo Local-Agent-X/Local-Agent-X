@@ -4,6 +4,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { convertMessagesToInput } from "../codex-message-convert.js";
+import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from "../providers/reasoning-effort.js";
 import type { CodexTool } from "./types.js";
 
 export function extractAccountIdFromJwt(token: string): string | null {
@@ -46,6 +47,7 @@ export interface BuildBodyInput {
   messages: ChatCompletionMessageParam[];
   tools?: CodexTool[];
   toolChoice?: "auto" | "required" | { type: "tool"; name: string } | { type: "function"; function: { name: string } };
+  reasoningEffort?: ReasoningEffort;
 }
 
 export function buildRequestBody(input: BuildBodyInput): Record<string, unknown> {
@@ -59,9 +61,11 @@ export function buildRequestBody(input: BuildBodyInput): Record<string, unknown>
     store: false,
     // Note: Codex subscription endpoint rejects max_output_tokens (400 error).
     // It has an internal cap we can't raise — means prompts must stay lean.
-    // "high" causes timeouts on complex prompts. "medium" balances tool reliability
-    // with response time. "low" caused ~40% empty responses.
-    reasoning: { effort: "medium", summary: "auto" },
+    // Effort default is "medium": "high" caused timeouts on complex prompts,
+    // "low" caused ~40% empty responses. A user-picked level (settings
+    // reasoningEffort, chat-bar Think picker) overrides the default — their
+    // call to trade latency/reliability for depth.
+    reasoning: { effort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT, summary: "auto" },
   };
 
   // NOTE: previous_response_id is NOT supported on the Codex subscription

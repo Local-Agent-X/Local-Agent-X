@@ -33,7 +33,7 @@ async function _primeLaxSettings() {
     // copies that might be stale from a previous session. We don't replace
     // the entire blob because settings.js stores some client-only keys
     // (lax_*) under lax_settings too on some flows.
-    const tierKeys = ['voiceMode', 'voiceEngine', 'voiceTier4Provider', 'voiceTier4Voice', 'voiceSttProvider', 'voiceRealtimeVoice', 'ttsVoice'];
+    const tierKeys = ['voiceMode', 'voiceEngine', 'voiceTier4Provider', 'voiceTier4Voice', 'voiceSttProvider', 'voiceRealtimeVoice', 'ttsVoice', 'reasoningEffort'];
     for (const k of tierKeys) if (k in server) local[k] = server[k];
     localStorage.setItem('lax_settings', JSON.stringify(local));
   } catch {}
@@ -191,6 +191,18 @@ function updateStatusBar(force) {
     ? `<span class="status-item" style="opacity:.7" title="Medium-tier model. Agent tasks work but may be less reliable than flagship models.">&#9888; medium</span>`
     : '';
 
+  // Thinking-effort picker. One global setting (settings.reasoningEffort),
+  // applied to reasoning-capable models: Codex Responses API gets it verbatim
+  // (Max = xhigh), OpenAI-compat providers get reasoning_effort (Max clamps
+  // to high). Non-reasoning models ignore it. Server settings.json is the
+  // source of truth — primed into lax_settings by _primeLaxSettings.
+  let savedEffort = 'medium';
+  try { savedEffort = JSON.parse(localStorage.getItem('lax_settings') || '{}').reasoningEffort || 'medium'; } catch {}
+  const EFFORT_LEVELS = [['minimal', 'Minimal'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Max']];
+  const effortOpts = EFFORT_LEVELS.map(([v, label]) =>
+    `<option value="${v}" ${v === savedEffort ? 'selected' : ''}>Think: ${label}</option>`
+  ).join('');
+
   // Voice picker + speed slider. Selection persists to localStorage and
   // is pushed to the server-side voice session over /ws/voice the moment
   // it changes (or on next session start). Built-in Kokoro voices are
@@ -282,6 +294,7 @@ function updateStatusBar(force) {
     <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>
     <span style="color:var(--border)">&#9654;</span>
     <select id="model-quick-select" class="status-select" onchange="quickSwitchModel(this.value)" title="Switch model">${modelOpts}</select>
+    <select id="effort-quick-select" class="status-select" onchange="quickSwitchEffort(this.value)" title="Thinking depth for reasoning models (gpt-5.x, o-series, grok-4). Higher = deeper reasoning, slower replies. Max is Codex-only (elsewhere it runs as High). Non-reasoning models ignore this.">${effortOpts}</select>
     <span style="color:var(--border)">|</span>
     <select id="voice-quick-select" class="status-select" onchange="quickSwitchVoice(this.value)" title="Voice for spoken replies">${voiceOpts}</select>
     <input id="voice-speed-slider" type="range" min="0.7" max="1.5" step="0.05" value="${savedSpeed}" onchange="quickSwitchSpeed(this.value)" oninput="document.getElementById('voice-speed-label').textContent = parseFloat(this.value).toFixed(2)+'x'" title="Speech speed" style="width:80px;vertical-align:middle"/>
@@ -303,6 +316,18 @@ async function quickSwitchProject(projectId) {
   window.activeChat.updatedAt = Date.now();
   try { if (typeof window.saveChats === 'function') window.saveChats(); } catch {}
   try { if (typeof window.renderSidebar === 'function') window.renderSidebar(); } catch {}
+}
+
+async function quickSwitchEffort(effort) {
+  try {
+    await apiFetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reasoningEffort: effort }),
+    });
+    try { const s = JSON.parse(localStorage.getItem('lax_settings') || '{}'); s.reasoningEffort = effort; localStorage.setItem('lax_settings', JSON.stringify(s)); } catch {}
+    updateStatusBar(true);
+  } catch (e) { console.warn('[effort] Switch failed:', e); }
 }
 
 async function quickSwitchProvider(providerId) {

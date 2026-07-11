@@ -36,6 +36,7 @@ export async function registerAdapterForChat(
       createCodexAdapter({
         systemPrompt: prepared.systemPrompt,
         model: prepared.model,
+        reasoningEffort: prepared.reasoningEffort,
         sessionId,
         forcedToolChoice,
       }),
@@ -93,6 +94,7 @@ export async function registerAdapterForChat(
       baseURL: finalTarget.baseURL,
       apiKey: finalTarget.apiKey,
       temperature: prepared.temperature,
+      reasoningEffort: prepared.reasoningEffort,
       sessionId,
       forcedToolChoice,
     }),

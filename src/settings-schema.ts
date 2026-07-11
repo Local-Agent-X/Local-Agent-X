@@ -184,6 +184,13 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Model name within the chosen provider (gpt-5.5, claude-opus-4-7, grok-4, etc)",
   },
   {
+    field: "reasoningEffort",
+    validate: z.enum(["minimal", "low", "medium", "high", "xhigh"]),
+    runtime: false,
+    broadcast: true,
+    description: "Thinking depth for reasoning models (gpt-5.x, o-series, grok-4). minimal=fastest, xhigh=deepest (Codex only; clamped to high elsewhere). Default medium",
+  },
+  {
     field: "developer_mode",
     validate: z.boolean(),
     runtime: false,

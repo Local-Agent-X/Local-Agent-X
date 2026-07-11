@@ -4,6 +4,7 @@ import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
 import { PROVIDERS, isHttpProvider } from "../providers/registry.js";
 import { rerouteToCredentialedProvider } from "../providers/credential-reroute.js";
 import { loadSettings, getSetting } from "../settings.js";
+import { normalizeReasoningEffort, type ReasoningEffort } from "../providers/reasoning-effort.js";
 import { resolveCredential } from "../auth/resolve.js";
 import type { CredentialSource } from "../auth/auth-provider.js";
 import { createLogger } from "../logger.js";
@@ -43,6 +44,8 @@ export async function resolveProvider(
   customBaseURL?: string;
   temperature: number;
   maxIterations: number;
+  /** User-selected thinking depth for reasoning models (settings.reasoningEffort). */
+  reasoningEffort: ReasoningEffort;
   /** How the active provider's credential was sourced — `oauth` means a
    *  flat-rate subscription (Claude CLI / SuperGrok / ChatGPT) where per-call
    *  USD is fiction; the rest are real per-token API keys. Drives whether the
@@ -176,6 +179,7 @@ export async function resolveProvider(
   }
 
   const temperature = typeof saved.temperature === "number" ? saved.temperature : config.temperature;
+  const reasoningEffort = normalizeReasoningEffort(saved.reasoningEffort);
   // settings.json is read schema-less, so legacy saved caps (old UI default 25)
   // land here raw — clamp to the floor. config.maxIterations is already clamped
   // at load (config.ts), but Math.max both keeps this seam self-sufficient.
@@ -184,5 +188,5 @@ export async function resolveProvider(
     typeof saved.maxIterations === "number" ? saved.maxIterations : config.maxIterations,
   );
 
-  return { provider, apiKey, model, codexApiKey, customBaseURL, temperature, maxIterations, authSource, providerSwitch };
+  return { provider, apiKey, model, codexApiKey, customBaseURL, temperature, maxIterations, reasoningEffort, authSource, providerSwitch };
 }

@@ -126,6 +126,7 @@ export class OpenAICompatAdapter implements Adapter {
         parameters: (t.inputSchema as Record<string, unknown>) ?? {},
       })) as ProviderRequest["tools"],
       temperature: this.opts.temperature ?? 0.7,
+      reasoningEffort: this.opts.reasoningEffort,
       sessionId: this.opts.sessionId,
       signal: this.aborter.signal,
       ...(forcedInList && forced

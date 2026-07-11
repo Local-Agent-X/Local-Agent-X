@@ -111,7 +111,14 @@ function renderMessages() {
   window._chatScrollBottomNext = false;
   const prevScrollTop = el.scrollTop;
   if (!activeChat || activeChat.messages.length === 0) {
-    el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Local Agent X" class="hero-img hero-dark" /><img src="/hero-light.png" alt="Local Agent X" class="hero-img hero-light" /><h2>LOCAL AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
+    // Empty-state markup is owned by home-launcher.js (single source of truth
+    // for both the classic hero and the flag-gated command-center layout).
+    const sub = activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.';
+    if (typeof window.renderEmptyInto === 'function') {
+      window.renderEmptyInto(el, sub);
+    } else {
+      el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Local Agent X" class="hero-img hero-dark" /><img src="/hero-light.png" alt="Local Agent X" class="hero-img hero-light" /><h2>LOCAL AGENT X</h2><p>${sub}</p></div>`;
+    }
     _liveMessageNodes.clear();
     return;
   }

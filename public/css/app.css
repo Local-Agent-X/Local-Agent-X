@@ -30,18 +30,6 @@
 [data-theme="light"] pre { background: var(--panel) !important; border-color: var(--border) !important; }
 [data-theme="light"] code { background: #e8e8f0 !important; }
 [data-theme="light"] #new-chat-btn:hover { color: #fff; }
-[data-theme="light"] .approval-card { background: #fff8e6; border-color: #e6a816; color: var(--text); }
-[data-theme="light"] .approval-card.approved { background: #e8f7ec; border-color: var(--ok); color: var(--text); }
-[data-theme="light"] .approval-card.denied, [data-theme="light"] .approval-card.timeout { background: var(--danger-bg); border-color: var(--danger); color: var(--text); }
-[data-theme="light"] .approval-icon { color: #b58200; }
-[data-theme="light"] .approval-context { color: #444; }
-[data-theme="light"] .approval-args pre { background: #f3f3f8; color: #444; }
-[data-theme="light"] .approval-actions .btn-approve { background: var(--ok); border-color: var(--ok); color: #fff; }
-[data-theme="light"] .approval-actions .btn-approve:hover:not(:disabled) { filter: brightness(1.1); }
-[data-theme="light"] .approval-actions .btn-deny { background: transparent; color: #555; border-color: #c0c0d0; }
-[data-theme="light"] .approval-actions .btn-deny:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
-[data-theme="light"] .approval-always { color: #666; }
-[data-theme="light"] .approval-status { color: #666; }
 *{box-sizing:border-box;margin:0;padding:0;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -323,21 +311,25 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 .tool-card:has(.indicator.allowed),.tool-card:has(.indicator.blocked){opacity:.55}
 .tool-card:has(.indicator.allowed) .tool-header,.tool-card:has(.indicator.blocked) .tool-header{padding:4px 10px;font-size:.72rem}
 .tool-card:has(.indicator.allowed):hover,.tool-card:has(.indicator.blocked):hover{opacity:1}
-.approval-card{margin:10px 0;padding:12px 14px;border-radius:10px;border:1px solid #f2b01e;background:#2a1f05;font-size:.85rem}
-.approval-card.approved{border-color:var(--accent);background:#0e2318}
-.approval-card.denied,.approval-card.timeout{border-color:var(--danger);background:#2a0e0e;opacity:.75}
+/* Approval cards are fully token-driven: the semantic hue (warn pending / ok
+   approved / danger denied) is mixed into the theme's own --surface so the
+   faint wash + border track every palette and both themes with no separate
+   [data-theme="light"] override block. */
+.approval-card{margin:10px 0;padding:12px 14px;border-radius:10px;border:1px solid var(--warn);background:color-mix(in srgb, var(--warn) 10%, var(--surface));color:var(--text);font-size:.85rem}
+.approval-card.approved{border-color:var(--ok);background:color-mix(in srgb, var(--ok) 10%, var(--surface))}
+.approval-card.denied,.approval-card.timeout{border-color:var(--danger);background:color-mix(in srgb, var(--danger) 10%, var(--surface));opacity:.8}
 .approval-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.approval-icon{color:#f2b01e;font-size:1.1rem}
+.approval-icon{color:var(--warn);font-size:1.1rem}
 .approval-title{font-weight:600}
 .approval-context{color:var(--muted);font-family:var(--mono);font-size:.78rem;margin:6px 0;white-space:pre-wrap;word-break:break-word}
 .approval-args{margin:6px 0;font-family:var(--mono);font-size:.72rem;color:var(--muted)}
 .approval-args pre{white-space:pre-wrap;word-break:break-all;margin:4px 0 0;padding:6px 8px;background:var(--code-bg);border-radius:4px;max-height:120px;overflow-y:auto}
 .approval-actions{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .approval-actions button{padding:6px 14px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:.82rem}
-.approval-actions .btn-approve{background:var(--accent);border-color:var(--accent);color:#001a0a;font-weight:600}
-.approval-actions .btn-approve:hover:not(:disabled){filter:brightness(1.15)}
-.approval-actions .btn-deny{background:transparent;color:var(--fg)}
-.approval-actions .btn-deny:hover:not(:disabled){background:#2a0e0e;border-color:var(--danger);color:var(--danger)}
+.approval-actions .btn-approve{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:600}
+.approval-actions .btn-approve:hover:not(:disabled){filter:brightness(1.1)}
+.approval-actions .btn-deny{background:transparent;color:var(--text);border-color:var(--border)}
+.approval-actions .btn-deny:hover:not(:disabled){background:color-mix(in srgb, var(--danger) 12%, var(--surface));border-color:var(--danger);color:var(--danger)}
 .approval-actions button:disabled{opacity:.5;cursor:default}
 .approval-always{display:flex;align-items:center;gap:5px;font-size:.75rem;color:var(--muted);cursor:pointer}
 .approval-status{margin-top:8px;font-size:.75rem;color:var(--muted);font-style:italic}
@@ -439,6 +431,19 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 [data-theme="light"] .hero-dark{display:none}
 [data-theme="light"] .hero-light{display:block;filter:drop-shadow(0 0 30px rgba(0,0,0,.08))}
 @keyframes heroFade{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+.home-hero{display:flex;flex-direction:column;align-items:center;gap:14px}
+/* Command-center launcher — restrained: one accent spark on the mark, neutral
+   cards, color reserved for hover. Tokens carry both themes automatically. */
+.home-launcher{display:flex;flex-direction:column;align-items:center;gap:20px;width:100%;max-width:660px;padding:0 24px;animation:heroFade .5s ease}
+.home-launcher .hl-mark{font-size:34px;line-height:1;color:var(--accent)}
+.home-launcher .hl-title{font-size:1.6rem;font-weight:800;color:var(--text);letter-spacing:-.01em;text-wrap:balance}
+.home-launcher .hl-starters{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;width:100%}
+.home-launcher .hl-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;cursor:pointer;transition:border-color .15s,background .15s;font-family:var(--font)}
+.home-launcher .hl-card:hover{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 5%, var(--surface))}
+.home-launcher .hl-ci{font-size:1.15rem;color:var(--accent)}
+.home-launcher .hl-ct{font-size:.95rem;font-weight:600;color:var(--text)}
+.home-launcher .hl-cs{font-size:.78rem;color:var(--muted);line-height:1.35}
+@media (max-width:560px){.home-launcher .hl-starters{grid-template-columns:1fr}}
 #empty h2{font-family:var(--mono);color:var(--accent);font-size:1.5rem;letter-spacing:3px;text-shadow:0 0 20px var(--accent-dim)}
 #empty p{font-size:.85rem;max-width:400px;text-align:center;line-height:1.6}
 #input-area{padding:12px 20px 18px;border-top:1px solid var(--border)}

@@ -1,45 +1,25 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 
 import type { PatternsFile } from "./types.js";
 import { getLaxDir } from "../../../lax-data-dir.js";
 import { runMemoryGate } from "../../write-safely.js";
 import type { MemoryPromotionContext } from "../../promotion-gate.js";
+import { atomicWriteFileSync, createJsonStore, ensureDirFor } from "../../../util/json-store.js";
 
-const LAX_DIR = getLaxDir();
-const PATTERNS_FILE = join(LAX_DIR, "proactive-patterns.json");
+const PATTERNS_FILE = join(getLaxDir(), "proactive-patterns.json");
 const MAX_INTERACTIONS = 2000;
 const MAX_PATTERNS = 500;
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
+const store = createJsonStore<PatternsFile>(PATTERNS_FILE, {
+  defaults: () => ({ patterns: [], interactions: [], topicIndex: {} }),
+});
 
 export function loadPatterns(): PatternsFile {
-  try {
-    if (existsSync(PATTERNS_FILE)) {
-      const raw = readFileSync(PATTERNS_FILE, "utf-8");
-      const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.patterns)) return parsed as PatternsFile;
-    }
-  } catch {}
-  return { patterns: [], interactions: [], topicIndex: {} };
+  return store.load();
 }
 
 export function savePatterns(data: PatternsFile, promotion?: MemoryPromotionContext): void {
-  ensureDir();
+  ensureDirFor(PATTERNS_FILE);
   if (data.interactions.length > MAX_INTERACTIONS) {
     data.interactions = data.interactions.slice(-MAX_INTERACTIONS);
   }
@@ -48,6 +28,9 @@ export function savePatterns(data: PatternsFile, promotion?: MemoryPromotionCont
     data.patterns.sort((a, b) => b.confidence - a.confidence);
     data.patterns = data.patterns.slice(0, MAX_PATTERNS);
   }
+  // The payload must pass the memory promotion gate before hitting disk, so
+  // this writes via the atomic primitive rather than store.save() (which
+  // stringifies internally and would bypass the gate).
   const serialized = JSON.stringify(data, null, 2);
   const gated = runMemoryGate({
     content: serialized,
@@ -55,5 +38,5 @@ export function savePatterns(data: PatternsFile, promotion?: MemoryPromotionCont
     target: PATTERNS_FILE,
     promotion,
   });
-  atomicWrite(PATTERNS_FILE, gated);
+  atomicWriteFileSync(PATTERNS_FILE, gated);
 }

@@ -1,13 +1,6 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  renameSync,
-} from "node:fs";
-
 import type { ActionEntry, SessionData } from "./types.js";
-import { DATA_FILE, LAX_DIR, MS_PER_DAY, PRUNE_AGE_DAYS } from "./types.js";
+import { DATA_FILE, MS_PER_DAY, PRUNE_AGE_DAYS } from "./types.js";
+import { createJsonStore, ensureDirFor } from "../../util/json-store.js";
 
 // Recurring types (>=3 entries) keep at most this many of their most recent
 // stale entries. The old unbounded keep-rule made homogeneous legacy data
@@ -15,37 +8,32 @@ import { DATA_FILE, LAX_DIR, MS_PER_DAY, PRUNE_AGE_DAYS } from "./types.js";
 // shrink, and its tokenized artifacts kept being mined as "patterns".
 export const MAX_STALE_PER_TYPE = 10;
 
+const store = createJsonStore<SessionData>(DATA_FILE, {
+  // Missing/corrupt file → lastPrune = now (fresh start, no immediate prune).
+  defaults: () => ({ actions: [], lastPrune: Date.now() }),
+  // Existing file with a missing/falsy lastPrune → 0 (prune-eligible),
+  // matching the old `parsed.lastPrune || 0` read.
+  upgrade: (parsed) =>
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? { ...parsed, lastPrune: (parsed as Partial<SessionData>).lastPrune || 0 }
+      : parsed,
+});
+
 export function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) {
-    mkdirSync(LAX_DIR, { recursive: true });
-  }
+  ensureDirFor(DATA_FILE);
 }
 
 export function loadData(): SessionData {
-  try {
-    if (existsSync(DATA_FILE)) {
-      const raw = readFileSync(DATA_FILE, "utf-8");
-      const parsed = JSON.parse(raw);
-      return {
-        actions: Array.isArray(parsed.actions) ? parsed.actions : [],
-        lastPrune: parsed.lastPrune || 0,
-      };
-    }
-  } catch {
-    // corrupted — start fresh
-  }
-  return { actions: [], lastPrune: Date.now() };
+  return store.load();
 }
 
 export function persistData(data: SessionData): void {
   try {
-    const tmp = DATA_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
-    renameSync(tmp, DATA_FILE);
+    store.save(data);
   } catch {
-    try {
-      writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
-    } catch {}
+    // A failed persist has never crashed the learner; keep that contract.
+    // (The old non-atomic direct-write fallback is gone — better a stale
+    // file than a torn one.)
   }
 }
 

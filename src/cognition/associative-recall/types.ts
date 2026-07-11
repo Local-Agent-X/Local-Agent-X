@@ -60,10 +60,11 @@ export interface StoredMemoryNode {
   created: number;
 }
 
-export interface AssociativeStore {
+// Type alias (not interface) so it satisfies json-store's Record constraint.
+export type AssociativeStore = {
   nodes: StoredMemoryNode[];
   associations: StoredAssociation[];
-}
+};
 
 export const LAX_DIR = getLaxDir();
 export const STORE_FILE = join(LAX_DIR, "associative-memory.json");

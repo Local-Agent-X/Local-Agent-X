@@ -1,49 +1,20 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
-import { randomBytes } from "node:crypto";
 import {
   AssociativeStore,
-  LAX_DIR,
   MAX_ASSOCIATIONS,
   MAX_NODES,
   STORE_FILE,
 } from "./types.js";
+import { createJsonStore } from "../../util/json-store.js";
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
+const store = createJsonStore<AssociativeStore>(STORE_FILE, {
+  defaults: () => ({ nodes: [], associations: [] }),
+  caps: { nodes: MAX_NODES, associations: MAX_ASSOCIATIONS },
+});
 
 export function loadStore(): AssociativeStore {
-  if (!existsSync(STORE_FILE)) return { nodes: [], associations: [] };
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return {
-      nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
-      associations: Array.isArray(parsed.associations) ? parsed.associations : [],
-    };
-  } catch {
-    return { nodes: [], associations: [] };
-  }
+  return store.load();
 }
 
-export function saveStore(store: AssociativeStore): void {
-  ensureDir();
-  if (store.nodes.length > MAX_NODES) {
-    store.nodes = store.nodes.slice(-MAX_NODES);
-  }
-  if (store.associations.length > MAX_ASSOCIATIONS) {
-    store.associations = store.associations.slice(-MAX_ASSOCIATIONS);
-  }
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
+export function saveStore(value: AssociativeStore): void {
+  store.save(value);
 }

@@ -21,8 +21,9 @@ export interface InteractionRecord {
   topics: string[];
 }
 
-export interface PatternsFile {
+// Type alias (not interface) so it satisfies json-store's Record constraint.
+export type PatternsFile = {
   patterns: InteractionPattern[];
   interactions: InteractionRecord[];
   topicIndex: Record<string, string[]>; // topic -> related topics seen together
-}
+};

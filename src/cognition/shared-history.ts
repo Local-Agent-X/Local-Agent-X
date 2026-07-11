@@ -8,10 +8,10 @@
  * Persists to ~/.lax/shared-history.json (max 2000 moments).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createJsonStore } from "../util/json-store.js";
 import type { ModuleSignal } from "../orchestrator/types.js";
 
 // ── Types ────────────────────────────────────────────────────
@@ -38,11 +38,12 @@ export interface RelationshipSummary {
   highlights: string[];
 }
 
-interface HistoryStore {
+// Type alias (not interface) so it satisfies json-store's Record constraint.
+type HistoryStore = {
   moments: HistoryMoment[];
   firstInteraction: number | null;
   conversationCount: number;
-}
+};
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -63,42 +64,17 @@ const CATEGORY_KEYWORDS: Record<MomentCategory, RegExp[]> = {
 
 // ── Persistence ─────────────────────────────────────────────
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
+const historyStore = createJsonStore<HistoryStore>(STORE_FILE, {
+  defaults: () => ({ moments: [], firstInteraction: null, conversationCount: 0 }),
+  caps: { moments: MAX_MOMENTS },
+});
 
 function loadStore(): HistoryStore {
-  if (!existsSync(STORE_FILE)) return { moments: [], firstInteraction: null, conversationCount: 0 };
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return {
-      moments: Array.isArray(parsed.moments) ? parsed.moments : [],
-      firstInteraction: parsed.firstInteraction ?? null,
-      conversationCount: parsed.conversationCount ?? 0,
-    };
-  } catch {
-    return { moments: [], firstInteraction: null, conversationCount: 0 };
-  }
+  return historyStore.load();
 }
 
 function saveStore(store: HistoryStore): void {
-  ensureDir();
-  if (store.moments.length > MAX_MOMENTS) {
-    store.moments = store.moments.slice(-MAX_MOMENTS);
-  }
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
+  historyStore.save(store);
 }
 
 // ── Helpers ─────────────────────────────────────────────────

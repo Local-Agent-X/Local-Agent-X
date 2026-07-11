@@ -31,10 +31,11 @@ export interface SessionInsight {
   period: "daily" | "weekly" | "monthly";
 }
 
-export interface SessionData {
+// Type alias (not interface) so it satisfies json-store's Record constraint.
+export type SessionData = {
   actions: ActionEntry[];
   lastPrune: number;
-}
+};
 
 export const LAX_DIR = getLaxDir();
 export const DATA_FILE = join(LAX_DIR, "cross-session-data.json");

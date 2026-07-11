@@ -14,6 +14,7 @@ export interface FollowUp {
   daysSinceEvent: number;
 }
 
-export interface EventStore {
+// Type alias (not interface) so it satisfies json-store's Record constraint.
+export type EventStore = {
   events: UpcomingEvent[];
-}
+};

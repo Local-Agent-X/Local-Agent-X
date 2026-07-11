@@ -1,47 +1,29 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { EventStore } from "./types.js";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { createJsonStore } from "../../util/json-store.js";
 
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "upcoming-events.json");
+const STORE_FILE = join(getLaxDir(), "upcoming-events.json");
 const MAX_EVENTS = 500;
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
-function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
-}
-
-function atomicWrite(path: string, data: string): void {
-  const tmp = path + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, path);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch {}
-    throw e;
-  }
-}
+const store = createJsonStore<EventStore>(STORE_FILE, {
+  defaults: () => ({ events: [] }),
+});
 
 export function loadStore(): EventStore {
-  if (!existsSync(STORE_FILE)) return { events: [] };
-  try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    return { events: Array.isArray(parsed.events) ? parsed.events : [] };
-  } catch {
-    return { events: [] };
-  }
+  return store.load();
 }
 
-export function saveStore(store: EventStore): void {
-  ensureDir();
-  if (store.events.length > MAX_EVENTS) {
-    store.events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    store.events = store.events.slice(0, MAX_EVENTS);
+export function saveStore(value: EventStore): void {
+  // Cap keeps the newest events BY DATE — a sort-then-head rule the generic
+  // json-store cap (positional slice) can't express, so it stays here.
+  if (value.events.length > MAX_EVENTS) {
+    value.events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    value.events = value.events.slice(0, MAX_EVENTS);
   }
-  atomicWrite(STORE_FILE, JSON.stringify(store, null, 2));
+  store.save(value);
 }
 
 export function generateId(): string {

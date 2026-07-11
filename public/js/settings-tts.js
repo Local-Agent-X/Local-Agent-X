@@ -144,12 +144,12 @@ async function initBridgeVoicePreference() {
     if (r.ok) {
       const s = await r.json();
       const v = s.bridgeVoicePreference;
-      if (v === 'auto' || v === 'sovits' || v === 'chatterbox' || v === 'lite') el.value = v;
+      if (v === 'auto' || v === 'sovits' || v === 'chatterbox' || v === 'lite' || v === 'xai') el.value = v;
     }
   } catch { /* leave default 'auto' */ }
 }
 function onBridgeVoicePreferenceChange(value) {
-  if (!['auto','sovits','chatterbox','lite'].includes(value)) return;
+  if (!['auto','sovits','chatterbox','lite','xai'].includes(value)) return;
   const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('lax_token') || '');
   fetch('/api/settings', {
     method: 'POST',

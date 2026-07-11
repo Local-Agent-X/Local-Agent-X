@@ -1,5 +1,7 @@
 // xAI Grok TTS — POST https://api.x.ai/v1/tts with the SuperGrok / X
-// Premium+ OAuth bearer (or XAI_API_KEY fallback). Opt-in only:
+// Premium+ OAuth bearer ONLY. The XAI_API_KEY path is deliberately not
+// honored for voice: TTS burns per-request credits, so it rides the
+// subscription login, never a metered API key. Opt-in only:
 // bridgeVoicePreference="xai" picks it; the local sidecar chain stays
 // the default because local is faster (the three-tier voice was
 // tuned for 0.9-3s warm path on a mid-range GPU).
@@ -17,13 +19,16 @@ const DEFAULT_LANGUAGE = "en";
 
 async function getCredential(): Promise<string | null> {
   const resolved = await resolveCredential("xai");
-  return resolved?.credential || null;
+  if (!resolved) return null;
+  // OAuth only — a metered API key must never pay for voice.
+  if (resolved.source !== "oauth") return null;
+  return resolved.credential || null;
 }
 
 export async function synthesizeXai(text: string, voice?: string): Promise<Buffer | null> {
   const apiKey = await getCredential();
   if (!apiKey) {
-    logger.info("[synthesize] xAI: no credential (OAuth or XAI_API_KEY) — skipping");
+    logger.info("[synthesize] xAI: no OAuth login (API keys are not used for voice) — skipping");
     return null;
   }
   const voiceId = voice && voice.trim() ? voice.trim() : DEFAULT_VOICE;

@@ -64,9 +64,9 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
   },
   {
     field: "bridgeVoicePreference",
-    validate: z.enum(["auto", "sovits", "chatterbox", "lite"]),
+    validate: z.enum(["auto", "sovits", "chatterbox", "lite", "xai"]),
     runtime: true,
-    description: "Preferred TTS engine for Telegram/WhatsApp bridge replies. auto chooses best available",
+    description: "Preferred TTS engine for Telegram/WhatsApp bridge replies. auto chooses best available; xai needs the SuperGrok OAuth login",
   },
   {
     field: "maxIterations",

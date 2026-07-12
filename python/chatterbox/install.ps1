@@ -1,4 +1,4 @@
-# Studio tier Chatterbox sidecar installer.
+﻿# Studio tier Chatterbox sidecar installer.
 #
 # Resemble AI's Chatterbox (chatterbox-streaming variant) — single-stage
 # TTS with reference-clip voice cloning, sub-200ms first-audio on a 3060,

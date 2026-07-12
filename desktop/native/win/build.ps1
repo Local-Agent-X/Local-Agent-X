@@ -1,4 +1,4 @@
-# Build lax-speech-win.exe — Windows analogue of LaxSpeech.app.
+﻿# Build lax-speech-win.exe — Windows analogue of LaxSpeech.app.
 #
 # Uses csc.exe from .NET Framework (already installed on every Windows
 # build agent and end-user machine since Windows 7). Avoids pulling a

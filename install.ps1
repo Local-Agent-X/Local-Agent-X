@@ -1,4 +1,4 @@
-# Local Agent X — Windows PowerShell installer (thin wrapper).
+﻿# Local Agent X — Windows PowerShell installer (thin wrapper).
 # GUI installer is the preferred path — see Install Local Agent X Windows
 # Installer.exe at the repo root. This wrapper exists for CLI users.
 #

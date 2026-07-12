@@ -1,4 +1,4 @@
-# Studio-Trained (GPT-SoVITS) one-button installer.
+﻿# Studio-Trained (GPT-SoVITS) one-button installer.
 #
 # Senior install architecture (vs the naive "pip install requirements.txt"):
 #   1. Lockfile-first. If `python/sovits/requirements.lock` exists, use it.

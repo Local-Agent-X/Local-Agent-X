@@ -18,14 +18,17 @@ cd /d "%~dp0"
 :: win32 posix-shell step downloads PortableGit when none is present) — bash
 :: isn't needed to RUN that script, only Node is, so it doesn't bootstrap here.
 
+:: Portable ZIP FIRST (parity with NodeBootstrap.cs / install.ps1): per-user
+:: under %LOCALAPPDATA%, no admin, no winget/App Installer required. winget's
+:: Node package installs machine-wide and needs a UAC prompt a non-elevated
+:: install can't always raise -- with silent flags it failed with exit 1602
+:: ("user cancelled") and no visible prompt. winget is only the fallback.
+:: NOTE: comments stay OUTSIDE the ( ) block — cmd parses `::` inside a
+:: parenthesized block as a drive-relative path and prints "The system
+:: cannot find the drive specified." mid-install.
 where node >nul 2>&1
 if %errorlevel% neq 0 (
     echo [install] Installing Node 24 LTS...
-    :: Portable ZIP FIRST (parity with NodeBootstrap.cs / install.ps1): per-user
-    :: under %LOCALAPPDATA%, no admin, no winget/App Installer required. winget's
-    :: Node package installs machine-wide and needs a UAC prompt a non-elevated
-    :: install can't always raise -- with silent flags it failed with exit 1602
-    :: ("user cancelled") and no visible prompt. winget is only the fallback.
     set "NODE_ARCH=win-x64"
     if /i "!PROCESSOR_ARCHITECTURE!"=="ARM64" set "NODE_ARCH=win-arm64"
     if /i "!PROCESSOR_ARCHITEW6432!"=="ARM64" set "NODE_ARCH=win-arm64"

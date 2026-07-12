@@ -148,3 +148,24 @@ describe("streamViaAPI — direct-HTTP OAuth path", () => {
     expect(body.system).toBe("PLAIN");
   });
 });
+
+describe("streamViaAPI — disableThinking (classifier path)", () => {
+  const done = sse([
+    { type: "content_block_delta", delta: { type: "text_delta", text: "{}" } },
+    { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
+  ]);
+
+  it("omits the thinking block and forwards temperature verbatim", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-sonnet-4-6", disableThinking: true, temperature: 0 });
+    const { body } = cap.calls[0];
+    expect(body.thinking).toBeUndefined();
+    expect(body.temperature).toBe(0);
+  });
+
+  it("still enables adaptive thinking when the flag is absent", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-sonnet-4-6" });
+    expect(cap.calls[0].body.thinking).toEqual({ type: "adaptive", display: "summarized" });
+  });
+});

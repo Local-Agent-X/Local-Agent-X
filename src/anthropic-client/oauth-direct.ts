@@ -26,6 +26,20 @@ export function wrapDirectOAuthToken(token: string): string {
   return DIRECT_OAUTH_PREFIX + token;
 }
 
+/** Resolve the subscription OAuth token already wrapped for the direct-HTTP
+ *  path, or null when none is available (unauthenticated / API-key users). The
+ *  caller falls back to the CLI token. Shared by chat (anthropic-transport) and
+ *  the classifier path so the token dance lives in one place. */
+export async function resolveWrappedDirectToken(): Promise<string | null> {
+  try {
+    const { getAnthropicDirectToken } = await import("../auth/anthropic.js");
+    const raw = await getAnthropicDirectToken();
+    return raw ? wrapDirectOAuthToken(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isDirectOAuthToken(token: string): boolean {
   return token.startsWith(DIRECT_OAUTH_PREFIX);
 }

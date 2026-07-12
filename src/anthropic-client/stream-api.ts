@@ -9,7 +9,7 @@ import type { AnthropicContent } from "./types.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const { token, model, messages, systemPrompt, tools, maxTokens = 8192, toolChoice, forcedToolName, signal } = options;
+  const { token, model, messages, systemPrompt, tools, maxTokens = 8192, toolChoice, forcedToolName, signal, temperature, disableThinking } = options;
   // Subscription OAuth tokens reach the Messages API only when the request wears
   // Claude Code's identity (Bearer + betas + UA + system prefix). This is the
   // only subscription path that streams real thinking text. See oauth-direct.ts.
@@ -53,9 +53,14 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // `display: "summarized"` is required to get readable reasoning — on Opus
     // 4.8 / Sonnet 5 / Fable 5 the default is "omitted", which streams thinking
     // blocks with EMPTY text. Without it the "Thinking" UI block would be blank.
-    ...(adaptive
-      ? { thinking: { type: "adaptive", display: "summarized" } }
-      : { thinking: { type: "enabled", budget_tokens: 3000 }, temperature: 1 }),
+    // Classifier calls opt out of thinking entirely: a yes/no verdict must not
+    // burn seconds of reasoning tokens, and it wants deterministic temperature 0
+    // — not the chat-tuned temperature 1 the enabled-thinking shape forces.
+    ...(disableThinking
+      ? (temperature !== undefined ? { temperature } : {})
+      : adaptive
+        ? { thinking: { type: "adaptive", display: "summarized" } }
+        : { thinking: { type: "enabled", budget_tokens: 3000 }, temperature: 1 }),
   };
 
   // On the OAuth wire, every tool name must be a bare or `mcp__` identifier or

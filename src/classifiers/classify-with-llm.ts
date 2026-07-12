@@ -169,11 +169,17 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
     if (provider === "anthropic") {
       providerCall = (async () => {
         const { streamAnthropicResponse } = await import("../anthropic-client/index.js");
+        const { resolveWrappedDirectToken } = await import("../anthropic-client/oauth-direct.js");
+        // Classifier calls take the direct-HTTP path when a subscription token
+        // resolves — the shared-CLI warm pool serialized ~8 classifiers/turn and
+        // nulled the intent verdict. disableThinking + no tools keep it cheap.
+        const token = (await resolveWrappedDirectToken()) ?? apiKey;
         const stream = streamAnthropicResponse({
-          token: apiKey, model,
+          token, model,
           messages: [{ role: "user", content: opts.userPrompt } as never],
           systemPrompt: opts.systemPrompt,
           temperature: 0,
+          disableThinking: true,
           signal: linkedSignal,
         });
         let acc = "";

@@ -50,6 +50,11 @@ export interface StreamOptions {
    *  calls). Without this, abort only stops the JS-side stream consumption
    *  while the subprocess keeps running. */
   signal?: AbortSignal;
+  /** Omit the thinking block and honor `temperature` verbatim. For short
+   *  yes/no classifier calls: extended thinking burns seconds of reasoning
+   *  tokens a verdict doesn't need, and the chat-tuned default forces
+   *  temperature 1. Only the direct-HTTP path reads this. */
+  disableThinking?: boolean;
 }
 
 export interface AnthropicMessage {

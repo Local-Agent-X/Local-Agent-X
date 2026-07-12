@@ -38,7 +38,7 @@ export async function* streamAnthropicResponse(options: StreamOptions): AsyncGen
     let produced = false;
     for await (const ev of streamViaAPI(options)) {
       if (ev.type === "error" && !produced && isPlanFallbackWorthy(ev.error)) {
-        logger.warn(`[anthropic] direct-HTTP rejected (${(ev.error ?? "").slice(0, 80)}) — falling back to CLI proxy (plan-billed)`);
+        logger.warn(`[anthropic] direct-HTTP rejected (${(ev.error ?? "").slice(0, 300)}) — falling back to CLI proxy (plan-billed)`);
         yield* streamViaCliWithTools(options); // ignores the token; spawns `claude`
         return;
       }

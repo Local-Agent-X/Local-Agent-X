@@ -139,10 +139,13 @@ window.addEventListener('hashchange', () => navigate(currentRoute()));
 // dispatch. Running at top-level here would race chat.js loading and skip
 // initStatusBar — leaving the provider/model dropdowns blank until the
 // user manually triggers a re-navigate (e.g. clicking "New Chat").
-// After the first navigate builds the JS-injected regions (the composer
-// control row + sidebar lists), flip body.app-ready so those regions fade in
-// already-populated instead of flashing empty and reflowing — same
-// hide-until-built pattern as sidebar-controls-ready.
+// After the first navigate builds the JS-injected regions (the composer control
+// row + sidebar lists) — and after the preload's earlier DOMContentLoaded
+// listener has set the platform-win class — flip body.app-ready. The whole shell
+// is held at opacity:0 by the boot reveal gate in app.css until then, so it fades
+// in ONCE, fully-built and correctly laid out, instead of assembling piecemeal
+// (fallback layout → chrome → lists). Same hide-until-built pattern as
+// sidebar-controls-ready, promoted from three regions to the entire shell.
 function bootNavigate() {
   navigate(currentRoute());
   requestAnimationFrame(() => document.body.classList.add('app-ready'));
@@ -152,8 +155,9 @@ if (document.readyState === 'loading') {
 } else {
   bootNavigate();
 }
-// Safety net: guarantee the FOUC-gated regions are never stuck invisible even
-// if bootNavigate throws before flipping app-ready. Idempotent with the rAF above.
+// Safety net: the gate hides the ENTIRE shell until app-ready, so if bootNavigate
+// throws before flipping it the app would be blank forever. Force the reveal on a
+// timer regardless. Idempotent with the rAF above.
 setTimeout(() => document.body.classList.add('app-ready'), 2000);
 
 // Auto-refresh sidebar every 30s to pick up new WhatsApp sessions

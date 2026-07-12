@@ -244,7 +244,6 @@
         <div id="context-bar"></div>
         <input id="file-input" type="file" multiple style="display:none" onchange="handleFileUpload(event)" aria-hidden="true"/>
         <div id="input-wrapper">
-          <button id="plus-btn" onclick="triggerUpload()" title="Attach files" aria-label="Attach files">+</button>
           <div id="input-box">
             <div id="upload-previews" role="list" aria-label="Upload previews"></div>
             <textarea id="msg-input" placeholder="Message Agent X..." rows="3" aria-label="Message input"
@@ -255,17 +254,34 @@
                  off. Kept BELOW the textarea so partial rewrites don't
                  jitter the user's cursor in the editable field. -->
             <div id="dictate-preview" aria-live="polite" style="display:none"></div>
+            <!-- In-box control bar. Left: attach + the JS-rendered chips
+                 (plan / project / provider·model·think). Right: compact
+                 icon cluster (dictate, voice mode, voice settings) + send.
+                 Chips render into #composer-chips (chat-status-bar.js);
+                 the cascading model menu + voice popover live OUTSIDE this
+                 innerHTML-rebuilt span so re-renders can't nuke an open menu
+                 (chat-composer-menus.js). -->
+            <div id="composer-bar">
+              <button id="plus-btn" class="input-btn" onclick="triggerUpload()" title="Attach files" aria-label="Attach files">+</button>
+              <span id="composer-chips"></span>
+              <span style="flex:1"></span>
+              <span id="stream-indicator" title="A turn is in flight. The send button will inject into the running turn." style="display:none;align-items:center;gap:6px;font-size:.65rem;font-family:var(--mono);padding:3px 10px;border-radius:6px;border:1px solid var(--accent-dim);color:var(--accent);flex-shrink:0"><span class="chat-dot active-pulse" style="width:6px;height:6px;border-radius:50%"></span><span>STREAMING</span></span>
+              <button id="dictate-btn" class="input-btn" onclick="toggleDictate()" title="Dictate (speech to text only). Works in Chrome / Edge / Safari. On Chrome+Edge audio is processed by Google's cloud ASR; Safari uses Apple's on-device ASR. For all-local transcription, use Voice Mode instead." aria-label="Toggle dictation">&#128221;</button>
+              <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice mode (full hands-free conversation with agent)" aria-label="Toggle voice mode">&#127908;</button>
+              <button id="voice-cfg-btn" class="input-btn" onclick="toggleVoicePop(event)" title="Voice &amp; speech speed" aria-label="Voice settings" aria-haspopup="true">&#128266;</button>
+              <button id="stop-btn" onclick="stopChat()" title="Stop agent" aria-label="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
+              <button id="send-btn" onclick="sendMessage()" aria-label="Send message">&#9650;</button>
+            </div>
           </div>
-          <button id="dictate-btn" class="input-btn" onclick="toggleDictate()" title="Dictate (speech to text only). Works in Chrome / Edge / Safari. On Chrome+Edge audio is processed by Google's cloud ASR; Safari uses Apple's on-device ASR. For all-local transcription, use Voice Mode instead." aria-label="Toggle dictation">&#128221;</button>
-          <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice mode (full hands-free conversation with agent)" aria-label="Toggle voice mode">&#127908;</button>
-          <span id="stream-indicator" title="A turn is in flight. The send button will inject into the running turn." style="display:none;align-items:center;gap:6px;font-size:.65rem;font-family:var(--mono);padding:3px 10px;border-radius:6px;border:1px solid var(--accent-dim);color:var(--accent);margin-bottom:2px;flex-shrink:0"><span class="chat-dot active-pulse" style="width:6px;height:6px;border-radius:50%"></span><span>STREAMING</span></span>
-          <button id="stop-btn" onclick="stopChat()" title="Stop agent" aria-label="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
-          <button id="send-btn" onclick="sendMessage()" aria-label="Send message">&#9650;</button>
+          <div id="model-menu" class="composer-pop" role="menu" aria-label="Provider, model and thinking depth" style="display:none"></div>
+          <div id="voice-pop" class="composer-pop" role="menu" aria-label="Voice and speech speed" style="display:none"></div>
         </div>
-        <!-- Status bar with controls -->
+        <!-- Read-only info strip (weak-model warning, tokens, Local badge) —
+             the interactive controls live in #composer-bar inside the box.
+             Spacer first so the info hugs the right edge, under the send button. -->
         <div id="status-bar" role="status" aria-label="Status information" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span id="status-bar-dynamic"></span>
           <div style="flex:1"></div>
+          <span id="status-bar-dynamic"></span>
           <button id="tts-toggle" onclick="toggleTTS()" aria-label="Toggle text-to-speech" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;font-family:var(--mono);font-size:.62rem;cursor:pointer">VOICE OFF</button>
         </div>
       </div>
@@ -1373,7 +1389,8 @@
 <script src="/js/chat-agent-feeds.js?v=v5"></script>
 <script src="/js/chat-agent-feeds-resize.js?v=v1"></script>
 <script src="/js/chat-status-bar-indicators.js?v=v1"></script>
-<script src="/js/chat-status-bar.js?v=v4"></script>
+<script src="/js/chat-status-bar.js?v=v5"></script>
+<script src="/js/chat-composer-menus.js?v=v1"></script>
 <script src="/js/chat-voice-modal-train.js?v=v1"></script>
 <script src="/js/chat-voice-modal-chatterbox.js?v=v1"></script>
 <script src="/js/chat-voice-modal-manage.js?v=v1"></script>

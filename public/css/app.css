@@ -488,10 +488,10 @@ body.platform-darwin #sidebar-controls{top:3px;left:78px}
 #context-bar .ctx-text{color:var(--muted)}
 #context-bar .ctx-action{background:none;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:.65rem;padding:3px 10px;border-radius:6px;cursor:pointer;margin-left:auto;transition:all .15s}
 #context-bar .ctx-action:hover{border-color:var(--accent);color:var(--accent)}
-#input-wrapper{display:flex;align-items:flex-end;gap:10px;max-width:800px;margin:0 auto;width:100%}
-#plus-btn,#ide-plus-btn{width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:1.3rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-bottom:2px}
-#plus-btn:hover,#ide-plus-btn:hover{border-color:var(--muted);color:var(--text);background:var(--hover)}
-#ide-plus-btn{width:30px;height:30px;font-size:1.05rem}
+#input-wrapper{display:flex;position:relative;max-width:800px;margin:0 auto;width:100%}
+#ide-plus-btn{width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:1.05rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-bottom:2px}
+#ide-plus-btn:hover{border-color:var(--muted);color:var(--text);background:var(--hover)}
+#plus-btn{font-size:1.15rem}
 #input-box{flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:16px;padding:10px 14px;transition:border-color .2s;display:flex;flex-direction:column}
 #input-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 #upload-previews,#ide-upload-previews{display:none;gap:10px;padding:0 0 8px;flex-wrap:wrap}
@@ -499,9 +499,42 @@ body.platform-darwin #sidebar-controls{top:3px;left:78px}
 #ide-upload-previews{padding:8px 12px 0;gap:8px}
 #msg-input{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:.9rem;resize:none;min-height:24px;max-height:200px;line-height:1.5;font-family:var(--font);overflow-y:auto}
 #msg-input::placeholder{color:var(--muted)}
-.input-btn{background:transparent;border:1px solid var(--border);border-radius:50%;color:var(--muted);width:36px;height:36px;cursor:pointer;font-size:1rem;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-bottom:2px}
-.input-btn:hover{border-color:var(--muted);color:var(--text);background:var(--hover)}
-#send-btn{width:36px;height:36px;border-radius:50%;background:var(--accent);border:none;color:var(--bg);font-size:1rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-bottom:2px}
+/* Compact in-box icon buttons. Border is transparent (not none) so the
+   dictating/listening state rules — which only set border-COLOR — still
+   produce a visible ring without a layout shift. */
+.input-btn{background:transparent;border:1px solid transparent;border-radius:8px;color:var(--muted);width:28px;height:28px;padding:0;cursor:pointer;font-size:.85rem;transition:all .15s;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.input-btn:hover{color:var(--text);background:var(--hover)}
+#send-btn{width:30px;height:30px;border-radius:50%;background:var(--accent);border:none;color:var(--bg);font-size:.9rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+/* In-box control bar under the textarea, and the popovers it opens. */
+#composer-bar{display:flex;align-items:center;gap:4px;padding-top:8px;margin-top:4px}
+#composer-chips{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
+#composer-chips .status-select{max-width:130px;text-overflow:ellipsis}
+.model-chip{display:flex;align-items:center;gap:5px;max-width:340px;overflow:hidden;white-space:nowrap;background:transparent;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:.62rem;padding:3px 9px;border-radius:5px;cursor:pointer;transition:all .15s;line-height:1.3}
+.model-chip:hover,.model-chip.open{border-color:var(--accent);color:var(--text)}
+.model-chip .mc-model{overflow:hidden;text-overflow:ellipsis}
+.model-chip .mc-caret{color:var(--muted);font-size:.5rem}
+.composer-pop{position:absolute;bottom:calc(100% + 8px);z-index:600;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 14px 44px rgba(0,0,0,.45);font-family:var(--mono);font-size:.7rem}
+#model-menu{left:0}
+#voice-pop{right:0;width:280px;padding:12px}
+#voice-pop .vp-row{display:flex;align-items:center;gap:8px;margin-top:10px}
+#voice-pop .vp-row:first-child{margin-top:0}
+#voice-pop .vp-label{color:var(--muted);font-size:.62rem;letter-spacing:.5px;flex-shrink:0;width:44px}
+#voice-pop select{flex:1;min-width:0}
+#voice-pop input[type=range]{flex:1}
+/* Cascading model menu: providers column, models column, effort flyout.
+   Columns sit side by side; models/effort appear as the pointer moves in. */
+.mm-cols{display:flex;align-items:stretch}
+.mm-col{display:flex;flex-direction:column;gap:1px;padding:6px;min-width:170px;max-height:360px;overflow-y:auto}
+.mm-col+.mm-col{border-left:1px solid var(--border)}
+.mm-head{color:var(--muted);font-size:.56rem;letter-spacing:1.2px;padding:4px 10px 6px;text-transform:uppercase}
+.mm-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;border:none;border-radius:7px;color:var(--text);font-family:var(--mono);font-size:.68rem;padding:6px 10px;cursor:pointer;white-space:nowrap}
+.mm-row:hover,.mm-row.hl{background:var(--hover)}
+.mm-row.active{color:var(--accent);background:var(--active)}
+.mm-row .mm-tag{margin-left:auto;color:var(--muted);font-size:.56rem;padding-left:10px}
+.mm-row .mm-arrow{margin-left:auto;color:var(--muted);font-size:.55rem;padding-left:10px}
+.mm-row.active .mm-check{color:var(--accent)}
+/* Effort flyout is absolutely positioned beside the hovered model row. */
+.mm-effort{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.4);padding:5px;min-width:120px;z-index:610}
 #send-btn:hover{box-shadow:0 0 14px var(--accent-dim)}
 #send-btn:disabled{opacity:.3;cursor:not-allowed}
 /* Inject mode — applied when the active chat has an in-flight turn (see
@@ -998,10 +1031,10 @@ body.platform-win .settings-overlay{top:32px}
 .cmd-empty{padding:20px;text-align:center;color:var(--muted);font-size:.82rem}
 
 /* ── Status bar (feature 97) ── */
-/* min-height reserves the composer control row's height before its pickers are
-   JS-injected (chat-status-bar.js), so the row doesn't collapse to 0 and then
-   shove the composer up when it fills — one of the two boot flashes. */
-#status-bar{display:flex;gap:8px;padding:6px 14px;font-family:var(--mono);font-size:.62rem;color:var(--muted);max-width:800px;margin:0 auto;width:100%;align-items:center;min-height:29px}
+/* Demoted to a read-only info strip (weak-model warning, token count, Local
+   badge) — all interactive pickers live in the in-box #composer-bar now.
+   No reserved min-height: an empty strip should cost no space. */
+#status-bar{display:flex;gap:8px;padding:2px 14px 0;font-family:var(--mono);font-size:.62rem;color:var(--muted);max-width:800px;margin:0 auto;width:100%;align-items:center;justify-content:flex-end}
 #status-bar-dynamic{display:flex;align-items:center;gap:8px}
 /* Boot reveal gate. The shell paints in stages: app.css applies before first
    paint, but the platform-win class (titlebar visibility + layout) lands at the
@@ -1228,9 +1261,12 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
   .secrets-left,.cron-left{border-right:none;border-bottom:1px solid var(--border);max-height:40vh}
   .secrets-right,.cron-right{padding:16px}
 
-  /* Chat input responsive */
-  #input-wrapper{gap:6px}
+  /* Chat input responsive — chips shrink first so the icon cluster and send
+     button never wrap out of the box. */
   #input-box{border-radius:12px}
+  #composer-chips .status-select{max-width:96px}
+  .model-chip{max-width:180px}
+  #voice-pop{right:-8px;width:min(280px,92vw)}
   #messages{padding:12px 10px}
   .msg{max-width:100%}
   .msg.user .msg-body{max-width:90%}

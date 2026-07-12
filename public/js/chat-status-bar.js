@@ -19,6 +19,14 @@
 // ── Status bar (feature 97) ──
 let serverStartTime = Date.now();
 
+// Thinking-effort catalogue, shared with the cascade menu's flyout
+// (chat-composer-menus.js). Order = menu order.
+const LAX_EFFORT_LEVELS = [['minimal', 'Minimal'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Max']];
+
+function laxGetSavedEffort() {
+  try { return JSON.parse(localStorage.getItem('lax_settings') || '{}').reasoningEffort || 'medium'; } catch { return 'medium'; }
+}
+
 let _providersCache = null;
 let _providersCacheTime = 0;
 
@@ -140,27 +148,34 @@ function classifyModelTier(model) {
 }
 
 function updateStatusBar(force) {
-  const bar = document.getElementById('status-bar-dynamic');
-  if (!bar) return;
+  const chips = document.getElementById('composer-chips');
+  const info = document.getElementById('status-bar-dynamic');
+  const voicePop = document.getElementById('voice-pop');
+  if (!chips && !info) return;
   // Skip re-render while the user is actively interacting with one of the
-  // bar's controls. The bar is rebuilt via innerHTML below — clobbering it
-  // while a <select> dropdown is open destroys the element and slams the
+  // controls. Everything is rebuilt via innerHTML below — clobbering a
+  // <select> while its dropdown is open destroys the element and slams the
   // dropdown shut, which is the "picker closes if I'm not fast enough" bug.
   // <select> doesn't expose its open state, but Chrome/Edge/Firefox hold
   // focus on a select whose dropdown is open, so activeElement is a
   // reliable proxy. Same applies to the speed slider mid-drag. The 10s
   // cadence is for eventual freshness — skipping a tick is harmless.
+  // The cascading model menu (chat-composer-menus.js) sets
+  // window._laxModelMenuOpen while open; it renders from _providersCache
+  // itself, so skipping the chip rebuild under it loses nothing.
   //
   // `force` overrides the guard for user-initiated re-renders. After the
-  // user picks an option, the <select> retains focus even though its
+  // user picks an option, a <select> retains focus even though its
   // dropdown is closed, so the periodic-tick guard would otherwise eat
-  // the rebuild that quickSwitchProvider/quickSwitchModel actually needs
-  // (leaving a Grok provider paired with a stale gpt-5.5/codex model list).
+  // the rebuild that laxSwitchModel actually needs.
   if (!force) {
+    if (window._laxModelMenuOpen) return;
     const ae = document.activeElement;
-    if (ae && bar.contains(ae)) {
-      const tag = ae.tagName;
-      if (tag === 'SELECT' || tag === 'INPUT' || tag === 'OPTION') return;
+    for (const host of [chips, voicePop]) {
+      if (host && ae && host.contains(ae)) {
+        const tag = ae.tagName;
+        if (tag === 'SELECT' || tag === 'INPUT' || tag === 'OPTION') return;
+      }
     }
   }
   const tokenInfo = window.lastContextStatus ? `${(window.lastContextStatus.usedTokens / 1000).toFixed(0)}K tokens` : '';
@@ -170,19 +185,6 @@ function updateStatusBar(force) {
   const providers = data?.providers || [];
   const activeP = providers.find(p => p.active) || providers[0];
 
-  // Build provider dropdown options
-  const providerOpts = providers.map(p =>
-    `<option value="${esc(p.id)}" ${p.active ? 'selected' : ''}>${esc(p.name)}</option>`
-  ).join('');
-
-  // Build model dropdown for active provider. Flag each option's tier so
-  // weak models are obvious at selection time ("qwen2:7b · weak").
-  const modelOpts = activeP ? activeP.models.map(m => {
-    const tier = classifyModelTier(m);
-    const tag = tier === 'weak' ? ' · weak' : tier === 'medium' ? ' · medium' : '';
-    return `<option value="${esc(m)}" ${m === currentModel ? 'selected' : ''}>${esc(m)}${tag}</option>`;
-  }).join('') : `<option value="${esc(currentModel)}">${esc(currentModel)}</option>`;
-
   // Active-model badge: warn when selection is weak.
   const tier = classifyModelTier(currentModel);
   const tierBadge = tier === 'weak'
@@ -191,17 +193,15 @@ function updateStatusBar(force) {
     ? `<span class="status-item" style="opacity:.7" title="Medium-tier model. Agent tasks work but may be less reliable than flagship models.">&#9888; medium</span>`
     : '';
 
-  // Thinking-effort picker. One global setting (settings.reasoningEffort),
+  // Thinking effort. One global setting (settings.reasoningEffort),
   // applied to reasoning-capable models: Codex Responses API gets it verbatim
   // (Max = xhigh), OpenAI-compat providers get reasoning_effort (Max clamps
   // to high). Non-reasoning models ignore it. Server settings.json is the
   // source of truth — primed into lax_settings by _primeLaxSettings.
-  let savedEffort = 'medium';
-  try { savedEffort = JSON.parse(localStorage.getItem('lax_settings') || '{}').reasoningEffort || 'medium'; } catch {}
-  const EFFORT_LEVELS = [['minimal', 'Minimal'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Max']];
-  const effortOpts = EFFORT_LEVELS.map(([v, label]) =>
-    `<option value="${v}" ${v === savedEffort ? 'selected' : ''}>Think: ${label}</option>`
-  ).join('');
+  // Rendered as part of the model chip; changed via the cascade menu's
+  // per-model effort flyout (chat-composer-menus.js).
+  const savedEffort = laxGetSavedEffort();
+  const effortShort = { minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', xhigh: 'Max' }[savedEffort] || savedEffort;
 
   // Voice picker + speed slider. Selection persists to localStorage and
   // is pushed to the server-side voice session over /ws/voice the moment
@@ -286,22 +286,35 @@ function updateStatusBar(force) {
   const planChip = `<button id="plan-mode-chip" onclick="togglePlanMode()" ${planReady ? '' : 'disabled'} title="${planTitle}"
     style="cursor:${planReady ? 'pointer' : 'not-allowed'};opacity:${planReady ? '1' : '.45'};white-space:nowrap;line-height:1;font-family:var(--mono);font-size:.68rem;padding:2px 10px;border-radius:10px;border:1px solid ${planOn ? 'var(--warn,#fbbf24)' : 'var(--border)'};background:${planOn ? 'rgba(251,191,36,.15)' : 'transparent'};color:${planOn ? 'var(--warn,#fbbf24)' : 'var(--muted)'};font-weight:${planOn ? '700' : '400'}">Plan</button>`;
 
-  bar.innerHTML = `
+  // One compact chip carries provider · model · thinking depth; clicking it
+  // opens the cascading menu (providers → models → effort flyout).
+  const providerName = activeP ? activeP.name : currentProvider;
+  const modelChip = `<button id="model-chip" class="model-chip" onclick="toggleModelMenu(event)" aria-haspopup="true"
+    title="Provider &#183; model &#183; thinking depth — click to change. Hover a model in the menu to set thinking depth.">
+    <span>${esc(providerName)}</span><span class="mc-caret">&#9654;</span><span class="mc-model">${esc(currentModel)}</span><span class="mc-caret">&#183;</span><span>Think&nbsp;${esc(effortShort)}</span>
+  </button>`;
+
+  if (chips) chips.innerHTML = `
     ${planChip}
-    <span style="color:var(--border)">|</span>
     <select id="project-quick-select" class="status-select" onchange="quickSwitchProject(this.value)" title="Project scope for this chat — controls which agents this chat can spawn">${projectOpts}</select>
-    <span style="color:var(--border)">|</span>
-    <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>
-    <span style="color:var(--border)">&#9654;</span>
-    <select id="model-quick-select" class="status-select" onchange="quickSwitchModel(this.value)" title="Switch model">${modelOpts}</select>
-    <select id="effort-quick-select" class="status-select" onchange="quickSwitchEffort(this.value)" title="Thinking depth for reasoning models (gpt-5.x, o-series, grok-4). Higher = deeper reasoning, slower replies. Max is Codex-only (elsewhere it runs as High). Non-reasoning models ignore this.">${effortOpts}</select>
-    <span style="color:var(--border)">|</span>
-    <select id="voice-quick-select" class="status-select" onchange="quickSwitchVoice(this.value)" title="Voice for spoken replies">${voiceOpts}</select>
-    <input id="voice-speed-slider" type="range" min="0.7" max="1.5" step="0.05" value="${savedSpeed}" onchange="quickSwitchSpeed(this.value)" oninput="document.getElementById('voice-speed-label').textContent = parseFloat(this.value).toFixed(2)+'x'" title="Speech speed" style="width:80px;vertical-align:middle"/>
-    <span id="voice-speed-label" class="status-item" style="font-family:var(--mono);min-width:42px">${savedSpeed.toFixed(2)}x</span>
+    ${modelChip}
+  `;
+
+  if (info) info.innerHTML = `
     ${tierBadge}
     ${tokenInfo ? `<span class="status-item"><span class="status-icon">&#9998;</span> ${tokenInfo}</span>` : ''}
     <span class="status-item" title="All data stays on your machine. API calls go to your selected provider." style="cursor:help"><span class="status-icon">&#128274;</span> Local</span>
+  `;
+
+  // Voice + speed live in the speaker-icon popover. Only rebuild while it's
+  // CLOSED — an open popover is being interacted with, and toggleVoicePop
+  // triggers a fresh render right before showing it, so it never opens stale.
+  if (voicePop && voicePop.style.display === 'none') voicePop.innerHTML = `
+    <div class="vp-row"><span class="vp-label">VOICE</span>
+      <select id="voice-quick-select" class="status-select" onchange="quickSwitchVoice(this.value)" title="Voice for spoken replies">${voiceOpts}</select></div>
+    <div class="vp-row"><span class="vp-label">SPEED</span>
+      <input id="voice-speed-slider" type="range" min="0.7" max="1.5" step="0.05" value="${savedSpeed}" onchange="quickSwitchSpeed(this.value)" oninput="document.getElementById('voice-speed-label').textContent = parseFloat(this.value).toFixed(2)+'x'" title="Speech speed"/>
+      <span id="voice-speed-label" class="status-item" style="font-family:var(--mono);min-width:42px">${savedSpeed.toFixed(2)}x</span></div>
   `;
 }
 
@@ -330,36 +343,20 @@ async function quickSwitchEffort(effort) {
   } catch (e) { console.warn('[effort] Switch failed:', e); }
 }
 
-async function quickSwitchProvider(providerId) {
-  const data = _providersCache;
-  const provider = data?.providers?.find(p => p.id === providerId);
-  const model = provider ? provider.models[0] : '';
+// Single switch path for the cascade menu (chat-composer-menus.js): provider
+// and model always travel together (a model only exists under its provider),
+// effort rides along when the user picked one from the flyout.
+async function laxSwitchModel(providerId, model, effort) {
   try {
     await apiFetch('/api/providers/switch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: providerId, model }),
     });
-    // Update local settings cache too
     try { const s = JSON.parse(localStorage.getItem('lax_settings') || '{}'); s.provider = providerId; s.model = model; localStorage.setItem('lax_settings', JSON.stringify(s)); } catch {}
+    if (effort) await quickSwitchEffort(effort);
     _providersCacheTime = 0; // Force refresh
     await loadProviders();
     updateStatusBar(true);
   } catch (e) { console.warn('[provider] Switch failed:', e); }
-}
-
-async function quickSwitchModel(model) {
-  const providerSel = document.getElementById('provider-quick-select');
-  const provider = providerSel ? providerSel.value : '';
-  try {
-    await apiFetch('/api/providers/switch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, model }),
-    });
-    try { const s = JSON.parse(localStorage.getItem('lax_settings') || '{}'); s.model = model; localStorage.setItem('lax_settings', JSON.stringify(s)); } catch {}
-    _providersCacheTime = 0;
-    await loadProviders();
-    updateStatusBar(true);
-  } catch (e) { console.warn('[model] Switch failed:', e); }
 }

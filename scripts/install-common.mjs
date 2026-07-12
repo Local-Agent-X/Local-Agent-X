@@ -720,10 +720,15 @@ if (process.platform === "win32") {
     // recognized: '--add'", exit 2316632066). Quoting --override in a single
     // command string passes the whole bootstrapper directive through as one token.
     const vcOverride = "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended";
+    // No --disable-interactivity (parity with the Node winget calls): Build
+    // Tools installs machine-wide under Program Files and needs elevation this
+    // non-elevated installer can't grant, so suppressing interactivity turns
+    // winget's UAC prompt into a silent exit 1602 ("user cancelled") — the user
+    // asked for the toolchain and gets nothing. Let winget raise the prompt.
     const r = await runStreaming(
       `winget install --id Microsoft.VisualStudio.2022.BuildTools `
       + `--accept-package-agreements --accept-source-agreements `
-      + `--silent --disable-interactivity --override "${vcOverride}"`,
+      + `--silent --override "${vcOverride}"`,
       [],
     );
     // winget returns 0x8A150011 = "no applicable upgrade found" if Build

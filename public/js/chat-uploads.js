@@ -272,6 +272,18 @@ function updateStreamUI() {
     // Binding it here re-asserts the correct state on every store mutation.
     const stopBtn = document.getElementById('stop-btn');
     if (stopBtn) stopBtn.style.display = isStreamingHere ? 'flex' : 'none';
+    // The streaming caret (.msg-body.streaming::after) was the last turn-in-flight
+    // affordance torn down only imperatively, in the one-shot finalize
+    // (_finalizeWsTurn → finalizeLiveMessageInPlace). That finalize bails on a
+    // redundant/replayed `done`, stranding the caret while this same reconciler
+    // correctly flips the pill/stop idle — the caret then outlives the turn until
+    // a refresh. Derive it from the same source of truth: once this view isn't
+    // streaming, no bubble may keep the affordance. Idempotent, and safe because
+    // the rAF rerender stops re-adding `.streaming` once isStreaming flips false.
+    if (!isStreamingHere) {
+      const msgs = document.getElementById('messages');
+      if (msgs) msgs.querySelectorAll('.msg-body.streaming').forEach(b => b.classList.remove('streaming'));
+    }
   } catch {}
 }
 window.updateStreamUI = updateStreamUI;

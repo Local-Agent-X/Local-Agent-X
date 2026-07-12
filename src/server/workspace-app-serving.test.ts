@@ -20,6 +20,7 @@ async function requestDevApp(tunneled: boolean, warm: boolean) {
   let proxied = false;
   const deps: AppServingDeps = {
     readDevServerRecord: () => ({ appId: "dev-app", command: "vite", cwd: root, port: 5173, connector: "dev-dev-app", kind: "frontend" }),
+    ensureFrameworkRegistered: () => {}, // record already present — self-heal never fires
     ensureDevServerRunning: () => ({
       status: warm ? "running" : "started",
       record: { appId: "dev-app", command: "vite", cwd: root, port: 5173, connector: "dev-dev-app", kind: "frontend" },
@@ -60,5 +61,35 @@ describe("workspace app dev-serving legacy contract", () => {
   it("proxies tunneled and cold requests instead of redirecting", async () => {
     expect(await requestDevApp(true, true)).toEqual({ status: 200, location: null, body: "proxied", proxied: true });
     expect(await requestDevApp(false, false)).toEqual({ status: 200, location: null, body: "proxied", proxied: true });
+  });
+});
+
+describe("workspace app dev-serving self-heal (open-time registration)", () => {
+  it("registers a framework dev server on open when the app has no record, then proxies", async () => {
+    const root = mkdtempSync(join(tmpdir(), "workspace-app-serving-heal-"));
+    roots.push(root);
+    const config = { workspace: join(root, "workspace"), authToken: "t" } as LAXConfig;
+    const rec = () => ({ appId: "heal-app", command: "vite", cwd: root, port: 5173, connector: "c", kind: "frontend" as const });
+    let hasRecord = false; // flips true once the self-heal "registers" it
+    let registeredAppId = "";
+    const deps: AppServingDeps = {
+      readDevServerRecord: () => (hasRecord ? rec() : null),
+      ensureFrameworkRegistered: (appId) => { registeredAppId = appId; hasRecord = true; },
+      ensureDevServerRunning: () => ({ status: "running", record: rec() }),
+      proxyFrontendDevServer: (_req: IncomingMessage, res: ServerResponse) => { res.writeHead(200, { "Content-Type": "text/plain" }); res.end("proxied"); },
+    };
+    const server = createServer((req, res) => {
+      const url = new URL(req.url || "/", "http://127.0.0.1");
+      if (!serveWorkspaceApp(req.method || "GET", url, req, res, config, root, deps)) { res.writeHead(404); res.end(); }
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const response = await fetch(`http://127.0.0.1:${port}/apps/heal-app/`, { headers: { "x-lax-tunnel": "1" } });
+    const body = await response.text();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+
+    expect(registeredAppId).toBe("heal-app"); // self-heal fired
+    expect(response.status).toBe(200);
+    expect(body).toBe("proxied"); // served via the freshly-registered dev server, not static
   });
 });

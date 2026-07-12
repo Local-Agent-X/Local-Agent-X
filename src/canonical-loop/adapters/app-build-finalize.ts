@@ -24,7 +24,7 @@
  */
 import { resolve } from "node:path";
 import { verifyWriteLanded } from "../../tools/verify.js";
-import { detectFramework, type DetectedFramework } from "../../tools/framework-detect.js";
+import { detectFramework, type DetectedFramework, type FrameworkDetection } from "../../tools/framework-detect.js";
 import type { DevServerKind, DevServerRecord, RegisterResult } from "../../tools/dev-server.js";
 import { supportsStaticBuild, writeRunTargetManifest } from "../../tools/app-run-target.js";
 import type { StaticBuildResult } from "../../tools/static-build-run.js";
@@ -124,7 +124,23 @@ export async function finalizeFrameworkBuild(
     staticNote = `static build failed, serving via dev server instead: ${built.error ?? "unknown error"}`;
   }
 
-  const port = pickDevPort(appName, Number(laxPort), d);
+  const registered = registerDetectedFramework(detection, appDir, appName, Number(laxPort), d);
+  if (registered.handled && registered.ok && staticNote) return { ...registered, note: staticNote };
+  return registered;
+}
+
+/** Deps for registering a framework dev server — the sync subset of the finalize
+ *  deps (no static-build / stop-server machinery). */
+export type FrameworkServeDeps = Pick<ResolvedFinalizeDeps, "registerDevServer" | "listDevServerRecords" | "portBound">;
+
+/** Register + start a detected framework's dev server. The port/command/register
+ *  core, shared by the build finalizer and the open-time self-heal so the two can
+ *  never derive a different command or port for the same app. Assumes the caller
+ *  already confirmed a servable framework (detection ≠ static/unknown). */
+function registerDetectedFramework(
+  detection: FrameworkDetection, appDir: string, appName: string, laxPort: number, d: FrameworkServeDeps,
+): FinalizeFrameworkResult {
+  const port = pickDevPort(appName, laxPort, d);
   const command = detection.devCommand(port);
   if (!command) {
     return { handled: true, ok: false, code: "dev_server_failed", message: `no dev command for detected framework "${detection.framework}"` };
@@ -133,7 +149,30 @@ export async function finalizeFrameworkBuild(
   if (!registered.ok) {
     return { handled: true, ok: false, code: "dev_server_failed", message: registered.error };
   }
-  return { handled: true, ok: true, url, framework: detection.framework, mode: "dev-server", note: staticNote };
+  return { handled: true, ok: true, url: `http://127.0.0.1:${laxPort}/apps/${appName}/`, framework: detection.framework, mode: "dev-server" };
+}
+
+/**
+ * Detect the framework at appDir and register+start its dev server, synchronously.
+ * The build finalizer registers at build time; this is the SAME registration
+ * driven on-open by workspace-app-serving when an app has no dev-server record —
+ * a build that never registered one (e.g. a P-1-terminated build), or a cleared
+ * record. It makes opening a framework app always boot its preview instead of
+ * static-serving an un-transpiled Vite shell (blank page). Returns {handled:false}
+ * when appDir is not a servable framework project (caller serves it as files).
+ */
+export function registerFrameworkDevServerFromDisk(
+  appDir: string, appName: string, laxPort: number, d: FrameworkServeDeps,
+): FinalizeFrameworkResult {
+  const detection = detectFramework(appDir);
+  if (detection.framework === "static" || detection.framework === "unknown") return { handled: false };
+  const pkg = verifyWriteLanded(resolve(appDir, "package.json"));
+  if (!pkg.ok) return incomplete(detection.framework, pkg.reason);
+  if (BARE_FILENAME_RE.test(detection.evidence)) {
+    const evidence = verifyWriteLanded(resolve(appDir, detection.evidence));
+    if (!evidence.ok) return incomplete(detection.framework, evidence.reason);
+  }
+  return registerDetectedFramework(detection, appDir, appName, laxPort, d);
 }
 
 function incomplete(framework: DetectedFramework, reason: string): FinalizeFrameworkResult {
@@ -161,7 +200,7 @@ async function resolveDeps(d: FinalizeFrameworkDeps): Promise<ResolvedFinalizeDe
 /** A rebuild reuses its own record's port (registerDevServer restarts the
  *  record); otherwise walk up from the base, skipping ports other records
  *  hold, the LAX port, and anything already bound on the box. */
-function pickDevPort(appName: string, laxPort: number, d: ResolvedFinalizeDeps): number {
+function pickDevPort(appName: string, laxPort: number, d: FrameworkServeDeps): number {
   const records = d.listDevServerRecords();
   const own = records.find((r) => r.appId === appName);
   if (own) return own.port;

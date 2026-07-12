@@ -4,7 +4,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { jsonResponse } from "../server-utils.js";
 import { confineToDir } from "../security/layer/index.js";
 import { staticBuildDistDir } from "../tools/app-run-target.js";
-import { ensureDevServerRunning, readDevServerRecord } from "../tools/dev-server.js";
+import { ensureDevServerRunning, readDevServerRecord, registerDevServer, listDevServerRecords } from "../tools/dev-server.js";
+import { pidsOnPort } from "../tools/process-session.js";
+import { registerFrameworkDevServerFromDisk } from "../canonical-loop/adapters/app-build-finalize.js";
 import { deriveConnectorCapability } from "./app-connector-auth.js";
 import { decideFrontendServe, proxyFrontendDevServer } from "./dev-server-proxy.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
@@ -14,9 +16,23 @@ export interface AppServingDeps {
   ensureDevServerRunning: typeof ensureDevServerRunning;
   readDevServerRecord: typeof readDevServerRecord;
   proxyFrontendDevServer: typeof proxyFrontendDevServer;
+  /** Self-heal: register+start a framework app's dev server on open when it has
+   *  no record. No-op for static apps. */
+  ensureFrameworkRegistered: (appId: string, appDir: string, laxPort: number) => void;
 }
 
-const DEFAULT_DEPS: AppServingDeps = { ensureDevServerRunning, readDevServerRecord, proxyFrontendDevServer };
+const DEFAULT_DEPS: AppServingDeps = {
+  ensureDevServerRunning,
+  readDevServerRecord,
+  proxyFrontendDevServer,
+  ensureFrameworkRegistered: (appId, appDir, laxPort) => {
+    registerFrameworkDevServerFromDisk(appDir, appId, laxPort, {
+      registerDevServer,
+      listDevServerRecords,
+      portBound: (port) => pidsOnPort(port).length > 0,
+    });
+  },
+};
 const CONTENT_TYPES: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml", ico: "image/x-icon", webp: "image/webp", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", woff: "font/woff", woff2: "font/woff2", map: "application/json", wasm: "application/wasm", txt: "text/plain" };
 
 export function serveWorkspaceApp(
@@ -35,7 +51,17 @@ export function serveWorkspaceApp(
   const distDir = appId ? staticBuildDistDir(join(workspace, "apps", appId)) : null;
 
   if (!distDir) {
-    const frontend = appId ? deps.readDevServerRecord(appId) : null;
+    let frontend = appId ? deps.readDevServerRecord(appId) : null;
+    // Self-heal: a framework app with no dev-server record would otherwise fall
+    // through to static-serving its Vite shell (which ships raw /src/main.tsx the
+    // browser can't run = blank page). Detect the framework on disk and
+    // register+start its dev server on open, so the preview works regardless of
+    // whether the build ever registered it (e.g. a P-1-terminated build). No-op
+    // for genuinely static apps → falls through to file serving below.
+    if (!frontend && appId) {
+      deps.ensureFrameworkRegistered(appId, join(workspace, "apps", appId), Number(process.env.LAX_PORT ?? "7007"));
+      frontend = deps.readDevServerRecord(appId);
+    }
     if (frontend && frontend.kind === "frontend") {
       let warm = false;
       try { warm = deps.ensureDevServerRunning(appId).status === "running"; } catch {}

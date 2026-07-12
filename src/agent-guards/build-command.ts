@@ -64,6 +64,33 @@ function hasScript(pkg: unknown, name: string): boolean {
   return typeof scripts?.[name] === "string";
 }
 
+/**
+ * A "solution" tsconfig delegates all compilation to referenced projects and
+ * lists no files of its own — the standard Vite/CRA-TS layout, where the root
+ * `tsconfig.json` is `{ "files": [], "references": [tsconfig.app.json, …] }`.
+ * `tsc --noEmit` against it compiles ZERO files, so the type-check silently
+ * passes a broken app (a real Vite build reported 7 errors that this gate had
+ * green-lit). Build mode (`tsc -b`) follows the references and checks the real
+ * projects. Detect the layout so the gate picks the right mode.
+ */
+function isSolutionTsconfig(cfg: unknown): boolean {
+  const c = cfg as { references?: unknown; files?: unknown; include?: unknown } | null;
+  if (!c || !Array.isArray(c.references) || c.references.length === 0) return false;
+  const noOwnFiles = !Array.isArray(c.files) || c.files.length === 0;
+  const noInclude = !Array.isArray(c.include) || c.include.length === 0;
+  return noOwnFiles && noInclude;
+}
+
+/** The tsc type-check command for a dir holding a tsconfig — build mode for a
+ *  references-only solution config (else `--noEmit` is a no-op), plain
+ *  `--noEmit` otherwise. Prefers the locally-installed binary (no network). */
+function tscCheckCommand(dir: string, fs: FsProbe): BuildCommand {
+  const localTsc = joinPath(dir, "node_modules/.bin/tsc");
+  const tsc = fs.exists(localTsc) ? "node_modules/.bin/tsc" : "npx --no-install tsc";
+  const flag = isSolutionTsconfig(fs.readJson(joinPath(dir, "tsconfig.json"))) ? "-b" : "--noEmit";
+  return { command: `${tsc} ${flag}`, cwd: dir, kind: "typecheck" };
+}
+
 /** Resolve the verify command for a single project directory. Prefers the
  *  project's declared typecheck script, then a synthesized `tsc --noEmit`,
  *  then a declared build script, then language defaults. */
@@ -78,14 +105,9 @@ function commandForDir(dir: string, fs: FsProbe): BuildCommand | null {
     // it over anything we synthesize. type-check is the common hyphenated alias.
     if (hasScript(pkg, "typecheck")) return { command: `${pm} run typecheck`, cwd: dir, kind: "typecheck" };
     if (hasScript(pkg, "type-check")) return { command: `${pm} run type-check`, cwd: dir, kind: "typecheck" };
-    // No typecheck script but a tsconfig: run the compiler in check-only mode.
-    // Prefer the locally-installed binary (no network), else npx without an
-    // implicit install so a missing tsc fails fast instead of downloading.
-    if (hasTsconfig) {
-      const localTsc = joinPath(dir, "node_modules/.bin/tsc");
-      const tsc = fs.exists(localTsc) ? "node_modules/.bin/tsc" : "npx --no-install tsc";
-      return { command: `${tsc} --noEmit`, cwd: dir, kind: "typecheck" };
-    }
+    // No typecheck script but a tsconfig: run the compiler in check-only mode
+    // (build mode for a references-only solution config — see tscCheckCommand).
+    if (hasTsconfig) return tscCheckCommand(dir, fs);
     // Last resort for a Node project: its build script (may bundle / be slow,
     // hence below the type-check options).
     if (hasScript(pkg, "build")) return { command: `${pm} run build`, cwd: dir, kind: "build" };
@@ -93,11 +115,7 @@ function commandForDir(dir: string, fs: FsProbe): BuildCommand | null {
   }
 
   // A bare tsconfig with no package.json — still type-checkable.
-  if (hasTsconfig) {
-    const localTsc = joinPath(dir, "node_modules/.bin/tsc");
-    const tsc = fs.exists(localTsc) ? "node_modules/.bin/tsc" : "npx --no-install tsc";
-    return { command: `${tsc} --noEmit`, cwd: dir, kind: "typecheck" };
-  }
+  if (hasTsconfig) return tscCheckCommand(dir, fs);
 
   if (fs.exists(joinPath(dir, "Cargo.toml"))) return { command: "cargo check", cwd: dir, kind: "check" };
   if (fs.exists(joinPath(dir, "go.mod"))) return { command: "go build ./...", cwd: dir, kind: "check" };

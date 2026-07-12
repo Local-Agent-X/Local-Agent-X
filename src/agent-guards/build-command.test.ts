@@ -30,6 +30,29 @@ describe("detectBuildCommand", () => {
     expect(r).toEqual({ command: "node_modules/.bin/tsc --noEmit", cwd: "/repo/app", kind: "typecheck" });
   });
 
+  it("uses build mode (tsc -b) for a Vite references-only solution tsconfig, where --noEmit checks nothing", () => {
+    // The standard Vite/CRA-TS layout: root tsconfig lists no files, only
+    // references. `tsc --noEmit` on it compiles zero files (silently green on a
+    // broken app); `tsc -b` follows the references and catches the real errors.
+    const probe = probeFrom({
+      "/app/package.json": { scripts: { build: "tsc -b && vite build" } },
+      "/app/tsconfig.json": { files: [], references: [{ path: "./tsconfig.app.json" }, { path: "./tsconfig.node.json" }] },
+      "/app/node_modules/.bin/tsc": true,
+    });
+    const r = detectBuildCommand(["/app/src/lib/store.tsx"], probe);
+    expect(r).toEqual({ command: "node_modules/.bin/tsc -b", cwd: "/app", kind: "typecheck" });
+  });
+
+  it("keeps --noEmit for a tsconfig that lists its own files (references present but not a pure solution config)", () => {
+    const probe = probeFrom({
+      "/app/package.json": { name: "app" },
+      "/app/tsconfig.json": { include: ["src"], references: [{ path: "./tsconfig.node.json" }] },
+      "/app/node_modules/.bin/tsc": true,
+    });
+    const r = detectBuildCommand(["/app/src/a.ts"], probe);
+    expect(r).toEqual({ command: "node_modules/.bin/tsc --noEmit", cwd: "/app", kind: "typecheck" });
+  });
+
   it("prefers the project's own typecheck script over a synthesized tsc", () => {
     const probe = probeFrom({
       "/p/package.json": { scripts: { typecheck: "tsc --noEmit", build: "vite build" } },

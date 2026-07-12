@@ -478,8 +478,8 @@ body.platform-darwin #sidebar-controls{top:3px;left:78px}
 @media (max-width:560px){.home-launcher .hl-starters{grid-template-columns:1fr}}
 #empty h2{font-family:var(--mono);color:var(--accent);font-size:1.5rem;letter-spacing:3px;text-shadow:0 0 20px var(--accent-dim)}
 #empty p{font-size:.85rem;max-width:400px;text-align:center;line-height:1.6}
-#input-area{padding:12px 20px 18px;border-top:1px solid var(--border)}
-#context-bar{display:none;max-width:800px;margin:0 auto 8px;padding:6px 12px;border-radius:8px;font-family:var(--mono);font-size:.68rem;align-items:center;gap:8px}
+#input-area{padding:6px 20px 12px;border-top:1px solid var(--border)}
+#context-bar{display:none;max-width:800px;margin:0 auto 6px;padding:6px 12px;border-radius:8px;font-family:var(--mono);font-size:.68rem;align-items:center;gap:8px}
 #context-bar.visible{display:flex}
 #context-bar .ctx-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 #context-bar .ctx-dot.green{background:var(--accent);box-shadow:0 0 6px var(--accent-dim)}
@@ -497,7 +497,13 @@ body.platform-darwin #sidebar-controls{top:3px;left:78px}
 #upload-previews,#ide-upload-previews{display:none;gap:10px;padding:0 0 8px;flex-wrap:wrap}
 #upload-previews.has-items,#ide-upload-previews.has-items{display:flex}
 #ide-upload-previews{padding:8px 12px 0;gap:8px}
-#msg-input{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:.9rem;resize:none;min-height:24px;max-height:200px;line-height:1.5;font-family:var(--font);overflow-y:auto}
+/* Starts one line tall (rows=1 in the markup); the input listener in
+   chat-uploads.js grows it with content up to 10 lines (10 × 21.6px
+   line-height = 216px — keep in sync with the JS cap), then scrolls. */
+/* No flex sizing: #input-box is a column flexbox, and flex:1 (flex-basis 0)
+   makes the flex algorithm ignore the JS-set inline height entirely — the
+   silent breaker of auto-grow. Natural sizing lets the height stick. */
+#msg-input{background:none;border:none;outline:none;color:var(--text);font-size:.9rem;resize:none;min-height:24px;max-height:216px;line-height:1.5;font-family:var(--font);overflow-y:auto}
 #msg-input::placeholder{color:var(--muted)}
 /* Compact in-box icon buttons. Border is transparent (not none) so the
    dictating/listening state rules — which only set border-COLOR — still

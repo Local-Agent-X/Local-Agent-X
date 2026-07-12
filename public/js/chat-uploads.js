@@ -99,8 +99,9 @@ document.addEventListener('keydown', e => {
   if (e.code === 'Escape') { if (isVoiceModeActive()) stopVoiceMode(); else stopSpeaking(); }
 });
 
-// Auto-resize textarea
-document.getElementById('msg-input')?.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 200) + 'px'; });
+// Auto-resize textarea: grows with content up to 10 lines (216px — keep in
+// sync with #msg-input's max-height in app.css), then the textarea scrolls.
+document.getElementById('msg-input')?.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 216) + 'px'; });
 
 // ── Paste handling (images + files from clipboard) ──
 // Route by which surface the user is in: IDE fullscreen → IDE chat, else main.

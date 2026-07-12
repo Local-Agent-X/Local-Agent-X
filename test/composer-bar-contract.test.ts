@@ -73,6 +73,18 @@ describe("composer bar contract", () => {
     expect(statusBarJs).toContain('onclick="toggleModelMenu(event)"');
   });
 
+  it("starts the textarea at one line and caps growth at 10 lines in CSS and JS alike", () => {
+    // The composer opens compact (rows=1) and the input listener in
+    // chat-uploads.js grows it with content. Both growth caps — CSS
+    // max-height and the JS scrollHeight clamp — must stay at 216px
+    // (10 lines × 21.6px line-height) or the box jitters at the limit.
+    expect(html).toMatch(/<textarea id="msg-input"[^>]*rows="1"/);
+    const css = readFileSync(join(here, "../public/css/app.css"), "utf8");
+    expect(css).toMatch(/#msg-input\{[^}]*max-height:216px/);
+    const uploadsJs = readFileSync(join(here, "../public/js/chat-uploads.js"), "utf8");
+    expect(uploadsJs).toContain("Math.min(this.scrollHeight, 216)");
+  });
+
   it("keeps the voice-picker element ids the voice modals look up", () => {
     // chat-voice-modals.js / chat-voice-modal-chatterbox.js re-select these by id.
     for (const id of ["voice-quick-select", "voice-speed-slider", "voice-speed-label"]) {

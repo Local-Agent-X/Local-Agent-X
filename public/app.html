@@ -194,6 +194,13 @@
   <!-- ══ CHAT PAGE ══ -->
   <div id="page-chat" class="page active">
     <div id="chat-main">
+      <!-- Animated hero background. One neutral white master (hero-master.png)
+           tinted to the live theme --accent via CSS mask, so every palette
+           recolors the SAME geometry (no skyline drift). Idle = breathing city +
+           electric flicker; once a chat starts (#empty removed) it freezes to a
+           faint static wash so it never distracts from messages. Purely CSS —
+           reacts to :has(#empty). aria-hidden: decorative only. -->
+      <div id="chat-bg" aria-hidden="true"></div>
       <!-- Chat toolbar (mood/context indicators only — controls moved to status bar) -->
       <div id="chat-toolbar">
         <span id="mood-indicator" title="Detected mood" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:6px;border:1px solid var(--border);color:var(--muted)"></span>
@@ -213,7 +220,6 @@
             <p>Select a chat or start a new one.</p>
           </div>
           <div class="home-launcher" data-home="command" hidden>
-            <div class="hl-mark" aria-hidden="true">&#10035;</div>
             <h2 class="hl-title">What's next?</h2>
             <div class="hl-starters" role="list">
               <button class="hl-card" role="listitem" data-starter="research" data-prompt="Research: ">

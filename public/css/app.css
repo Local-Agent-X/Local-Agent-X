@@ -467,7 +467,6 @@ body.platform-darwin #sidebar-controls{top:3px;left:78px}
 /* Command-center launcher — restrained: one accent spark on the mark, neutral
    cards, color reserved for hover. Tokens carry both themes automatically. */
 .home-launcher{display:flex;flex-direction:column;align-items:center;gap:20px;width:100%;max-width:660px;padding:0 24px;animation:heroFade .5s ease}
-.home-launcher .hl-mark{font-size:34px;line-height:1;color:var(--accent)}
 .home-launcher .hl-title{font-size:1.6rem;font-weight:800;color:var(--text);letter-spacing:-.01em;text-wrap:balance}
 .home-launcher .hl-starters{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;width:100%}
 .home-launcher .hl-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;cursor:pointer;transition:border-color .15s,background .15s;font-family:var(--font)}
@@ -1097,7 +1096,56 @@ body.app-ready #desktop-titlebar,body.app-ready #sidebar,body.app-ready #main,bo
 
 /* ── Agent Feeds (Mission Control) ── */
 #page-chat{flex-direction:row}
-#chat-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+#chat-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative;isolation:isolate}
+/* Keep real chat content above the decorative hero background. */
+#chat-main > #chat-toolbar,#chat-main > #messages,#chat-main > #input-area{position:relative;z-index:1}
+
+/* === Animated hero background =========================================
+   One neutral white master (hero-master.png) is luminance-masked so only
+   its bright pixels (figure, X, lightning, circuit-city) show; the black
+   base drops out transparent. The visible shape is filled with the live
+   theme --accent, so EVERY palette recolors the same geometry — no skyline
+   drift between themes, and light palettes get their darker accent for
+   contrast automatically. Idle (#empty present) = breathing city + electric
+   flicker. First send removes #empty → frozen, faint, non-distracting. */
+#chat-bg{
+  position:absolute; inset:0; z-index:0; pointer-events:none;
+  background:var(--accent);
+  -webkit-mask:url(/hero-master.png) center/cover no-repeat;
+          mask:url(/hero-master.png) center/cover no-repeat;
+  -webkit-mask-mode:luminance; mask-mode:luminance;
+  opacity:.14; transition:opacity 1.2s ease;
+}
+/* Electric flicker overlay — same mask, brighter, mostly invisible with
+   sharp lightning spikes. Sits atop the base tint. */
+#chat-bg::after{
+  content:""; position:absolute; inset:0;
+  background:var(--accent);
+  -webkit-mask:inherit; mask:inherit;
+  -webkit-mask-mode:luminance; mask-mode:luminance;
+  opacity:0; mix-blend-mode:screen;
+}
+/* IDLE STATE: only while the empty/home state is mounted. */
+#chat-main:has(#empty) #chat-bg{
+  opacity:.5; animation:heroBreathe 7s ease-in-out infinite;
+}
+#chat-main:has(#empty) #chat-bg::after{
+  animation:heroFlicker 6s steps(1,end) infinite;
+}
+@keyframes heroBreathe{
+  0%,100%{opacity:.42; filter:brightness(.9)}
+  50%{opacity:.6; filter:brightness(1.15)}
+}
+@keyframes heroFlicker{
+  0%,100%{opacity:0} 6%{opacity:.85} 8%{opacity:.1} 10%{opacity:.7}
+  12%{opacity:0} 47%{opacity:0} 49%{opacity:.9} 50%{opacity:.15}
+  52%{opacity:.75} 54%{opacity:0} 80%{opacity:0} 82%{opacity:.6} 84%{opacity:0}
+}
+@media (prefers-reduced-motion:reduce){
+  #chat-main:has(#empty) #chat-bg{animation:none;opacity:.4}
+  #chat-main:has(#empty) #chat-bg::after{animation:none}
+}
+/* === end hero background === */
 .agent-feeds{position:relative;width:0;min-width:0;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column}
 .agent-feeds.collapsed{width:0;min-width:0;border-left:none}
 /* Flip: the whole chat row reverses so #agent-feeds docks to the LEFT edge

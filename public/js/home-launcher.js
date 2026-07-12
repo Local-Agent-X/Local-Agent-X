@@ -21,12 +21,9 @@
     return ''
       + '<div id="empty">'
       +   '<div class="home-hero" data-home="classic">'
-      +     '<img src="/hero.jpg" alt="Local Agent X" class="hero-img hero-dark" />'
-      +     '<img src="/hero-light.png" alt="Local Agent X" class="hero-img hero-light" />'
       +     '<h2>LOCAL AGENT X</h2><p>' + sub + '</p>'
       +   '</div>'
       +   '<div class="home-launcher" data-home="command" hidden>'
-      +     '<div class="hl-mark" aria-hidden="true">&#10035;</div>'
       +     '<h2 class="hl-title">What\'s next?</h2>'
       +     '<div class="hl-starters" role="list">'
       +       card('research', 'data-prompt="Research: "', '&#9673;', 'Research', 'Deep-dive a question, cited')

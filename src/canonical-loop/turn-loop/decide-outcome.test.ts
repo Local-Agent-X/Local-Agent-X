@@ -555,6 +555,9 @@ describe("completion-gate table — single ordering source", () => {
       "design-verify",
       "earned-done",
       "late-inject",
+      // Registers a framework app_build's dev server on the real terminal —
+      // must stay LAST so it fires only when no earlier gate re-opened.
+      "framework-serve",
     ]);
     // The name list is derived from the table itself — they can never drift.
     expect(COMPLETION_GATES.map((g) => g.name)).toEqual([...COMPLETION_GATE_ORDER]);

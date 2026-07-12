@@ -23,6 +23,7 @@
  */
 import type { Op } from "../../ops/types.js";
 import type { ToolCall } from "../contract-types.js";
+import { createLogger } from "../../logger.js";
 import { hasInjects, opConsumesInjects } from "../../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
@@ -60,6 +61,8 @@ export interface CompletionGate {
 }
 
 const CONTINUE: CompletionGateOutput = { reopen: false };
+
+const logger = createLogger("canonical-loop.framework-serve");
 
 /**
  * Render-verify gate (Tier 1.A). When the model says "done" on a turn that
@@ -234,11 +237,49 @@ const lateInjectGate: CompletionGate = {
 };
 
 /**
+ * Framework-serve gate (the live-server guarantee). A framework app_build's dev
+ * server is registered by the verify adapter's smokeAndJudge — but ONLY when the
+ * model's turn is natively "done" (app-build-verify-adapter.ts:148). P-1's
+ * mutation-wrapup promotes a non-"done" turn to "done" downstream in
+ * decide-outcome, AFTER the adapter already returned and skipped its
+ * registration, so a framework build can terminate with NO dev server and render
+ * a blank page (pawsit-dog-sitter-saas, 2026-07-12: installed + tsc-clean but
+ * unreachable). Placed LAST so it fires only when no earlier gate re-opened —
+ * i.e. the op is truly terminating this turn, whichever path produced the "done".
+ * finalizeFrameworkBuild is idempotent (re-lease reuses the record's port) and a
+ * no-op for static apps (returns {handled:false}), so a calculator gets nothing.
+ * Side-effect only; never re-opens.
+ */
+const frameworkServeGate: CompletionGate = {
+  name: "framework-serve",
+  async evaluate({ op }) {
+    if (op.type !== "app_build" || !op.appUrl) return CONTINUE; // APP_BUILD_OP_TYPE
+    const appName = op.appUrl.match(/\/apps\/([^/]+)\//)?.[1];
+    if (!appName) return CONTINUE;
+    try {
+      const { finalizeFrameworkBuild } = await import("../adapters/app-build-finalize.js");
+      const { workspacePath } = await import("../../config.js");
+      const finalized = await finalizeFrameworkBuild(
+        { appDir: workspacePath("apps", appName), appName, laxPort: process.env.LAX_PORT ?? "7007", registerServer: true },
+        {},
+      );
+      if (finalized.handled && !finalized.ok) {
+        logger.warn(`op=${op.id} dev-server registration failed for "${appName}": ${finalized.message}`);
+      }
+    } catch (e) {
+      logger.warn(`op=${op.id} dev-server registration threw for "${appName}": ${(e as Error).message}`);
+    }
+    return CONTINUE;
+  },
+};
+
+/**
  * The single ordering source for the completion gates. Evaluated top to bottom
  * by decide-outcome.ts; the chain short-circuits on the first gate that
  * re-opens the turn. This order is load-bearing (build must clear before the
- * spec probe runs; the late-inject re-check must run AFTER the awaiting gates)
- * and MUST match the sequence documented in decide-outcome.ts.
+ * spec probe runs; the late-inject re-check must run AFTER the awaiting gates;
+ * framework-serve runs LAST so it registers only on a real terminal) and MUST
+ * match the sequence documented in decide-outcome.ts.
  */
 export const COMPLETION_GATES: readonly CompletionGate[] = [
   renderVerifyGate,
@@ -248,6 +289,7 @@ export const COMPLETION_GATES: readonly CompletionGate[] = [
   designVerifyGate,
   earnedDoneGate,
   lateInjectGate,
+  frameworkServeGate,
 ];
 
 /** The gate names, in order — the documented sequence, for tests/tooling. */

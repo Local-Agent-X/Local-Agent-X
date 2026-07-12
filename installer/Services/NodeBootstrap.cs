@@ -64,24 +64,32 @@ public class NodeBootstrap
         OnStatus?.Invoke("Installing Node.js 24 (LTS)…");
         if (OperatingSystem.IsWindows())
         {
-            // winget's exit code is unreliable — it returns benign non-zero
-            // codes (e.g. 0x8A150011 "no applicable upgrade found") and can
-            // report failure even when the package installed. Don't gate on it.
-            // Run winget, splice the install dir into THIS process's PATH (it
-            // won't auto-refresh), then verify the actual goal: a node >= floor
-            // on PATH. Only if that's still missing do we fall back to the
-            // official MSI (parity with install.ps1) and re-verify. The final
-            // NodeAvailable() check is the single source of truth.
+            // Portable ZIP FIRST — parity with the macOS branch below. The ZIP
+            // unpacks to %LOCALAPPDATA% and persists to the USER PATH, so it needs
+            // no elevation and works on locked-down machines with no winget / App
+            // Installer at all. winget's OpenJS.NodeJS.LTS package installs
+            // machine-wide and needs a UAC elevation prompt the installer can't
+            // raise when it isn't itself elevated — that path silently failed with
+            // exit 1602 ("user cancelled") and NO visible prompt. winget stays
+            // only as a fallback for when the ZIP download itself fails.
+            InstallNodeFromZip();
+            if (NodeAvailable()) return true;
+
+            OnStatus?.Invoke("Portable Node download failed — trying winget…");
+            // winget's exit code is unreliable — it returns benign non-zero codes
+            // (e.g. 0x8A150011 "no applicable upgrade found") and can report
+            // failure even when the package installed. Don't gate on it; splice
+            // its install dir into THIS process's PATH (it won't auto-refresh) and
+            // let the final NodeAvailable() check be the single source of truth.
+            // No --disable-interactivity: if winget must elevate to install
+            // machine-wide, it needs to be able to raise the UAC prompt rather
+            // than silently 1602 with no prompt shown.
             RunStreaming("winget", new[] {
                 "install", "OpenJS.NodeJS.LTS",
                 "--accept-package-agreements", "--accept-source-agreements",
-                "--silent", "--disable-interactivity",
+                "--silent",
             });
             SpliceNodeDir();
-            if (NodeAvailable()) return true;
-
-            OnStatus?.Invoke("winget didn't deliver Node — downloading the portable runtime…");
-            InstallNodeFromZip();
             return NodeAvailable();
         }
         if (OperatingSystem.IsMacOS())
@@ -131,12 +139,12 @@ public class NodeBootstrap
         InstallerShell.SplicePath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs"));
     }
 
-    // Fallback when winget can't deliver Node: download the official Windows
-    // ZIP (not the MSI) and unpack it to a per-user dir. No admin and no winget
-    // required — the old MSI path ran `msiexec /qn` to install machine-wide
-    // under Program Files, which needs elevation the installer doesn't request,
-    // so it failed silently on machines without App Installer. The caller
-    // verifies success via NodeAvailable() afterward.
+    // Primary Windows Node path: download the official Windows ZIP (not the MSI)
+    // and unpack it to a per-user dir. No admin and no winget required — the old
+    // MSI path ran `msiexec /qn` to install machine-wide under Program Files,
+    // which needs elevation the installer doesn't request, so it failed silently
+    // on machines without App Installer. The caller verifies success via
+    // NodeAvailable() afterward and only falls back to winget if this fails.
     bool InstallNodeFromZip()
     {
         // Match the host CPU — Windows on ARM (Surface Pro X, Snapdragon laptops)

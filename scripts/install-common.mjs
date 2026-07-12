@@ -44,6 +44,10 @@ const NODE_MAJOR_MIN = (() => {
 // floor. Distinct from the floor: floor = oldest we accept, this = what we
 // install. Keep in sync with NodeBootstrap.cs / install.sh / install.ps1.
 const NODE_LTS_INSTALL = 24;
+// Pinned full version for the per-user portable-ZIP Node install (Windows).
+// Keep in sync with NODE_FALLBACK_VERSION in NodeBootstrap.cs and the pinned
+// $ver in install.ps1 / install.bat.
+const NODE_PORTABLE_VERSION = "24.16.0";
 const EMBED_MODEL = "mxbai-embed-large";
 const IPC = process.argv.includes("--ipc");
 
@@ -556,6 +560,40 @@ async function provisionPortableGit() {
   }
 }
 
+// Per-user portable Node for Windows — download the official ZIP (no MSI, no
+// admin, no winget) and unpack it under %LOCALAPPDATA%\LocalAgentX, then splice
+// it onto this process's PATH and persist to the user PATH. Mirrors
+// NodeBootstrap.InstallNodeFromZip. Returns a spawn-like { status } so callers
+// can gate on `.status === 0`.
+async function installNodePortableWin() {
+  const local = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+  // Match the host CPU — win-x64 node.exe won't run natively on Windows on ARM.
+  const arch = process.arch === "arm64" ? "win-arm64" : "win-x64";
+  const pkg = `node-v${NODE_PORTABLE_VERSION}-${arch}`;
+  const installRoot = join(local, "LocalAgentX");
+  const nodeDir = join(installRoot, pkg);
+  const zip = join(installRoot, `${pkg}.zip`);
+  try {
+    const url = `https://nodejs.org/dist/v${NODE_PORTABLE_VERSION}/${pkg}.zip`;
+    console.log(`[upgrade-node] downloading ${url}`);
+    mkdirSync(installRoot, { recursive: true });
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    writeFileSync(zip, Buffer.from(await res.arrayBuffer()));
+    rmSync(nodeDir, { recursive: true, force: true });
+    const ex = extractZipTo(zip, installRoot);
+    if (ex.status !== 0) throw new Error(`unzip exit ${ex.status}`);
+    process.env.PATH = `${nodeDir};${process.env.PATH || ""}`;
+    persistUserPathWin([nodeDir]);
+    return { status: existsSync(join(nodeDir, "node.exe")) ? 0 : 1 };
+  } catch (e) {
+    console.error(`[upgrade-node] portable Node provision failed: ${e.message}`);
+    return { status: 1 };
+  } finally {
+    try { rmSync(zip, { force: true }); } catch { /* best-effort */ }
+  }
+}
+
 // ── In-app Node upgrade (desktop one-click path) ───────────────────────
 // `--upgrade-node` performs ONLY the platform Node install and exits — no
 // plan, no other steps. The desktop boot gate (desktop/src/node-floor.ts)
@@ -576,14 +614,25 @@ if (process.argv.includes("--upgrade-node")) {
       r = spawnSync("brew", ["link", "--overwrite", "--force", `node@${NODE_LTS_INSTALL}`], { stdio: "inherit" });
     }
   } else if (process.platform === "win32") {
-    r = spawnSync("winget", [
-      "install", "OpenJS.NodeJS.LTS",
-      "--accept-package-agreements", "--accept-source-agreements",
-      "--silent", "--disable-interactivity",
-    ], { stdio: "inherit", shell: true });
-    // 0x8A150011 = winget "no applicable upgrade found" — already at latest
-    // LTS counts as success (same tolerance as the vsbuildtools step below).
-    if (r.status === -1978335215) r.status = 0;
+    // Portable ZIP FIRST — parity with NodeBootstrap.cs. Runs per-user under
+    // %LOCALAPPDATA%, so it needs no elevation. winget's Node package installs
+    // machine-wide and needs a UAC prompt this (usually non-elevated) upgrade
+    // path can't raise — with --disable-interactivity it silently failed with
+    // exit 1602 ("user cancelled") and no visible prompt. winget is the fallback.
+    r = await installNodePortableWin();
+    if (r.status !== 0) {
+      console.log("[upgrade-node] portable download failed — trying winget…");
+      // No --disable-interactivity: let winget raise its UAC prompt if it must
+      // elevate, rather than silently failing.
+      r = spawnSync("winget", [
+        "install", "OpenJS.NodeJS.LTS",
+        "--accept-package-agreements", "--accept-source-agreements",
+        "--silent",
+      ], { stdio: "inherit", shell: true });
+      // 0x8A150011 = winget "no applicable upgrade found" — already at latest
+      // LTS counts as success (same tolerance as the vsbuildtools step below).
+      if (r.status === -1978335215) r.status = 0;
+    }
   } else {
     r = spawnSync("/bin/bash", ["-c",
       `curl -fsSL https://deb.nodesource.com/setup_${NODE_LTS_INSTALL}.x | sudo -E bash - && sudo apt-get install -y nodejs`,

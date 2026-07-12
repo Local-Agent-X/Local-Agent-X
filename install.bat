@@ -20,9 +20,18 @@ cd /d "%~dp0"
 
 where node >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [install] Installing Node 22...
-    where winget >nul 2>&1 && winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements -h
-    set "PATH=%ProgramFiles%\nodejs;%PATH%"
+    echo [install] Installing Node 24 LTS...
+    :: Portable ZIP FIRST (parity with NodeBootstrap.cs / install.ps1): per-user
+    :: under %LOCALAPPDATA%, no admin, no winget/App Installer required. winget's
+    :: Node package installs machine-wide and needs a UAC prompt a non-elevated
+    :: install can't always raise -- with silent flags it failed with exit 1602
+    :: ("user cancelled") and no visible prompt. winget is only the fallback.
+    set "NODE_ARCH=win-x64"
+    if /i "!PROCESSOR_ARCHITECTURE!"=="ARM64" set "NODE_ARCH=win-arm64"
+    if /i "!PROCESSOR_ARCHITEW6432!"=="ARM64" set "NODE_ARCH=win-arm64"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ver='24.16.0'; $arch='!NODE_ARCH!'; $pkg='node-v'+$ver+'-'+$arch; $zip=Join-Path $env:TEMP ($pkg+'.zip'); $root=Join-Path $env:LOCALAPPDATA 'LocalAgentX'; $nodeDir=Join-Path $root $pkg; try { Invoke-WebRequest -Uri ('https://nodejs.org/dist/v'+$ver+'/'+$pkg+'.zip') -OutFile $zip -UseBasicParsing; if(Test-Path $nodeDir){Remove-Item $nodeDir -Recurse -Force}; New-Item -ItemType Directory -Force -Path $root ^| Out-Null; Expand-Archive -Path $zip -DestinationPath $root -Force; Remove-Item $zip -ErrorAction SilentlyContinue; $u=[Environment]::GetEnvironmentVariable('PATH','User'); if($u -notlike ('*'+$nodeDir+'*')){[Environment]::SetEnvironmentVariable('PATH', ($nodeDir+';'+$u), 'User')} } catch { exit 1 }"
+    set "PATH=!LOCALAPPDATA!\LocalAgentX\node-v24.16.0-!NODE_ARCH!;!PATH!"
+    where node >nul 2>&1 || (where winget >nul 2>&1 && winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements --silent && set "PATH=!ProgramFiles!\nodejs;!PATH!")
 )
 where node >nul 2>&1
 if %errorlevel% neq 0 (

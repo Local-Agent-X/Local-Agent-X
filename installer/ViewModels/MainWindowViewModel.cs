@@ -129,8 +129,8 @@ public partial class MainWindowViewModel : ObservableObject
         if (!_node.NodeAvailable())
         {
             CurrentStepLabel = "Node.js runtime";
-            CurrentStepDetail = "Installing via winget (one-time)…";
-            Steps.Add(new StepViewModel { Id = "_bootstrap_node", Label = "Node.js runtime", State = "running", Detail = "Installing via winget…" });
+            CurrentStepDetail = "Provisioning the portable runtime (one-time)…";
+            Steps.Add(new StepViewModel { Id = "_bootstrap_node", Label = "Node.js runtime", State = "running", Detail = "Downloading Node.js…" });
             bool ok = await Task.Run(() => _node.InstallNode());
             if (!ok)
             {

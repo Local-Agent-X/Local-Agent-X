@@ -9,35 +9,37 @@
   var STORE_KEY = 'lax_rain';
   var FONT = "'Cascadia Code','Fira Code','Consolas',monospace";
   var CELL = 15;                          // css px per glyph cell / column width
+  var TRAIL = 16;                         // glyphs kept lit behind each head, fading upward — bounds what's on screen
+  var GAP = 4;                            // blank cells between phrases so each falls as a distinct, readable group
   var canvas = null, ctx = null, raf = 0, cols = [], last = 0;
-  var accent = '#40f0f0', bgFade = 'rgba(10,10,15,0.08)', dpr = 1, running = false;
+  var accent = '#40f0f0', dpr = 1, running = false;
 
-  function phraseChars() {
+  function pickPhrase() {
     var list = (window.THINKING_PHRASES && window.THINKING_PHRASES.length)
       ? window.THINKING_PHRASES
       : ['DECRYPTING', 'EYES ONLY', 'GOING DARK', 'THIS MESSAGE WILL SELF-DESTRUCT'];
-    // Add a trailing space so consecutive phrases in a column get a gap.
-    return (list[(Math.random() * list.length) | 0] + ' ').toUpperCase();
+    return list[(Math.random() * list.length) | 0].toUpperCase();
+  }
+  // A column's content: several phrases as a flat array of glyph cells, each
+  // separated by GAP blank cells so consecutive phrases read as distinct groups
+  // as they fall. '' marks a blank cell (drawn as nothing). Long enough to span
+  // a full fall without obvious repetition.
+  function buildStream() {
+    var chars = [], count = 6 + (Math.random() * 4 | 0);
+    for (var p = 0; p < count; p++) {
+      var ph = pickPhrase();
+      for (var j = 0; j < ph.length; j++) chars.push(ph.charAt(j));
+      for (var g = 0; g < GAP; g++) chars.push('');
+    }
+    return chars;
   }
   function reducedMotion() { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } }
   function tooSmall() { return window.innerWidth < 768; }
   function rnd(a, b) { return a + Math.random() * (b - a); }
 
   function readColors() {
-    var cs = getComputedStyle(document.documentElement);
-    var a = cs.getPropertyValue('--accent').trim();
+    var a = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
     if (a) accent = a;
-    var bg = cs.getPropertyValue('--bg').trim();
-    var rgb = hexToRgb(bg);
-    if (rgb) bgFade = 'rgba(' + rgb + ',0.085)';   // per-frame veil → trailing fade
-  }
-  function hexToRgb(h) {
-    if (!h) return null;
-    h = h.replace('#', '');
-    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-    if (h.length < 6) return null;
-    var n = parseInt(h.slice(0, 6), 16);
-    return ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255);
   }
 
   function makeCanvas() {
@@ -58,15 +60,16 @@
   }
   function seed() {
     var n = Math.ceil(window.innerWidth / CELL);
+    var rows = Math.ceil(window.innerHeight / CELL);
     cols = [];
     for (var i = 0; i < n; i++) {
       cols.push({
         x: i * CELL,
-        y: rnd(-window.innerHeight, 0),     // stagger start heights
+        headPx: rnd(-TRAIL, rows) * CELL,   // stagger heads across (and above) the screen
         speed: rnd(45, 115),                // ms per glyph step (lower = faster)
         acc: 0,
-        phrase: phraseChars(),
-        idx: 0
+        stream: buildStream(),
+        pos: (Math.random() * 40 | 0)       // stagger which glyph each head is on
       });
     }
   }
@@ -79,25 +82,45 @@
     var H = window.innerHeight;
     ctx.save();
     ctx.scale(dpr, dpr);
-    // Translucent veil in the theme bg → previous glyphs fade into a trail.
-    ctx.fillStyle = bgFade;
-    ctx.fillRect(0, 0, window.innerWidth, H);
+    // Full clear every frame — nothing persists across frames, so glyphs can
+    // never accumulate into an unreadable haze. Each column redraws only its
+    // bounded trail below, relative to the live head position.
+    ctx.clearRect(0, 0, window.innerWidth, H);
     ctx.font = '600 ' + CELL + 'px ' + FONT;
     ctx.textBaseline = 'top';
     ctx.fillStyle = accent;
+    var offBottom = H + TRAIL * CELL;
     for (var i = 0; i < cols.length; i++) {
       var c = cols[i];
       c.acc += dt;
       while (c.acc >= c.speed) {
         c.acc -= c.speed;
-        var ch = c.phrase.charAt(c.idx);
-        if (ch !== ' ') ctx.fillText(ch, c.x, c.y);
-        c.idx++;
-        c.y += CELL;
-        if (c.idx >= c.phrase.length) { c.phrase = phraseChars(); c.idx = 0; }
-        if (c.y > H && Math.random() > 0.975) { c.y = rnd(-40, 0); }
+        c.pos++;
+        c.headPx += CELL;
+        if (c.headPx > offBottom) {
+          // The whole trail has fallen past the bottom — re-enter from just
+          // above the top with fresh content. Clean because the frame is fully
+          // cleared each pass, so no old glyphs linger in this lane.
+          c.stream = buildStream();
+          c.pos = 0;
+          c.headPx = rnd(-TRAIL, -1) * CELL;
+          c.acc = 0;
+          break;
+        }
+      }
+      // Trail: brightest glyph at the head, fading upward over TRAIL cells.
+      for (var k = 0; k < TRAIL; k++) {
+        var si = c.pos - k;
+        if (si < 0) continue;
+        var ch = c.stream[si % c.stream.length];
+        if (!ch) continue;                    // blank gap cell
+        var gy = c.headPx - k * CELL;
+        if (gy < -CELL || gy > H) continue;
+        ctx.globalAlpha = 1 - k / TRAIL;
+        ctx.fillText(ch, c.x, gy);
       }
     }
+    ctx.globalAlpha = 1;
     ctx.restore();
     raf = requestAnimationFrame(frame);
   }

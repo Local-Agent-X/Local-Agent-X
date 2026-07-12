@@ -33,6 +33,17 @@ export type P1Outcome = "terminated" | "reopened-by-gate";
 export interface P1Metrics extends Record<string, unknown> {
   terminated: number;
   reopenedByGate: number;
+  /**
+   * Subset of `terminated` where the assistant's narration PROMISED a
+   * post-mutation follow-up (see p1-followup-detector.ts) — the turns where
+   * the shortcut plausibly cut off real work. This is the harm signal; the
+   * bare `terminated` count overstates it. `terminatedWithPromise` +
+   * `terminatedNoPromise` === `terminated` for fires recorded since this field
+   * shipped (older aggregates predate the split and leave both at 0).
+   */
+  terminatedWithPromise: number;
+  /** Subset of `terminated` whose narration promised nothing further — no loss. */
+  terminatedNoPromise: number;
   /** ISO timestamp of the first recorded fire (empty until the first). */
   firstSeen: string;
   /** ISO timestamp of the most recent fire. */
@@ -43,20 +54,35 @@ function store() {
   // Resolve the path per call so a test that sets LAX_DATA_DIR before invoking
   // is honored, and nothing binds ~/.lax at module load.
   return createJsonStore<P1Metrics>(join(getLaxDir(), "p1-metrics.json"), {
-    defaults: () => ({ terminated: 0, reopenedByGate: 0, firstSeen: "", lastSeen: "" }),
+    defaults: () => ({
+      terminated: 0,
+      reopenedByGate: 0,
+      terminatedWithPromise: 0,
+      terminatedNoPromise: 0,
+      firstSeen: "",
+      lastSeen: "",
+    }),
   });
 }
 
 /**
  * Increment the durable counter for one sole-decider fire. Best-effort: any IO
  * or serialization error is logged and swallowed so the turn is untouched.
+ *
+ * `promisedFollowup` only matters for the "terminated" outcome — it splits that
+ * count into the harm case (a promised follow-up was cut off) vs. the benign
+ * case (nothing further was pending). Ignored for "reopened-by-gate", where a
+ * gate drove another turn so nothing was lost regardless.
  */
-export function recordP1Outcome(outcome: P1Outcome): void {
+export function recordP1Outcome(outcome: P1Outcome, promisedFollowup = false): void {
   try {
     const now = new Date().toISOString();
     store().mutate((m) => {
-      if (outcome === "terminated") m.terminated += 1;
-      else m.reopenedByGate += 1;
+      if (outcome === "terminated") {
+        m.terminated += 1;
+        if (promisedFollowup) m.terminatedWithPromise += 1;
+        else m.terminatedNoPromise += 1;
+      } else m.reopenedByGate += 1;
       if (!m.firstSeen) m.firstSeen = now;
       m.lastSeen = now;
     });

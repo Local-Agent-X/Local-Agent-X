@@ -37,6 +37,7 @@ import {
 } from "../../agent-guards/index.js";
 import { createLogger } from "../../logger.js";
 import { recordP1Outcome } from "./p1-metrics.js";
+import { narrationPromisesFollowup } from "./p1-followup-detector.js";
 
 const logger = createLogger("canonical-loop.turn-loop.decide-outcome");
 
@@ -258,9 +259,16 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // of terminated:reopened sizes the surgical fix before we ship it.
   if (mutationWasSoleDecider) {
     const outcome = terminalReason === "done" ? "terminated" : "reopened-by-gate";
-    logger.info(`[p1-mutation-wrapup] op=${op.id} turn=${turnIdx} outcome=${outcome}`);
+    // Split the `terminated` count by whether the narration actually promised a
+    // post-mutation step — that subset is the real harm the surgical fix would
+    // recover. Only meaningful when we terminated (a gate re-open lost nothing).
+    const promisedFollowup =
+      outcome === "terminated" && narrationPromisesFollowup(assistantText);
+    logger.info(
+      `[p1-mutation-wrapup] op=${op.id} turn=${turnIdx} outcome=${outcome} promisedFollowup=${promisedFollowup}`,
+    );
     // Durable aggregate (~/.lax/p1-metrics.json) — the log clears on restart.
-    recordP1Outcome(outcome);
+    recordP1Outcome(outcome, promisedFollowup);
   }
 
   // Terminal epilogue (terminal-epilogue.ts): loud-partial warning,

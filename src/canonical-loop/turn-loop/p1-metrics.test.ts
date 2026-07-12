@@ -22,13 +22,20 @@ afterEach(() => {
 describe("p1-metrics durable store", () => {
   it("defaults to zeroed counts when the file is absent", async () => {
     const { readP1Metrics } = await import("./p1-metrics.js");
-    expect(readP1Metrics()).toEqual({ terminated: 0, reopenedByGate: 0, firstSeen: "", lastSeen: "" });
+    expect(readP1Metrics()).toEqual({
+      terminated: 0,
+      reopenedByGate: 0,
+      terminatedWithPromise: 0,
+      terminatedNoPromise: 0,
+      firstSeen: "",
+      lastSeen: "",
+    });
   });
 
   it("accumulates counts across calls and persists to disk (survives a fresh read)", async () => {
     const { recordP1Outcome, readP1Metrics } = await import("./p1-metrics.js");
-    recordP1Outcome("terminated");
-    recordP1Outcome("terminated");
+    recordP1Outcome("terminated", true);
+    recordP1Outcome("terminated"); // no promise (defaults to false)
     recordP1Outcome("reopened-by-gate");
 
     // The file exists on disk — the whole point is surviving a restart.
@@ -37,6 +44,10 @@ describe("p1-metrics durable store", () => {
     const m = readP1Metrics();
     expect(m.terminated).toBe(2);
     expect(m.reopenedByGate).toBe(1);
+    // The promise split partitions `terminated` exactly.
+    expect(m.terminatedWithPromise).toBe(1);
+    expect(m.terminatedNoPromise).toBe(1);
+    expect(m.terminatedWithPromise + m.terminatedNoPromise).toBe(m.terminated);
     expect(m.firstSeen).not.toBe("");
     expect(m.lastSeen).not.toBe("");
     expect(m.lastSeen >= m.firstSeen).toBe(true);

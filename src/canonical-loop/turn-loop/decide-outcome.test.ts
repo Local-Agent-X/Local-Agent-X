@@ -206,7 +206,19 @@ describe("decideTurnOutcome — P-1 mutation-wrapup measurement (behavior-neutra
     expect(lines.length).toBe(1);
     expect(lines[0]).toContain("outcome=terminated");
     expect(lines[0]).toContain("op=op-test");
-    expect(await recordMock()).toHaveBeenCalledWith("terminated");
+    // The fixture narration promises a follow-up ("then I'll run the tests") —
+    // the harm subset. Recorded as promisedFollowup=true.
+    expect(lines[0]).toContain("promisedFollowup=true");
+    expect(await recordMock()).toHaveBeenCalledWith("terminated", true);
+  });
+
+  it("records terminated with promisedFollowup=false when the narration promises nothing further", async () => {
+    const r = await decideTurnOutcome(mutationInput({ assistantText: "Wrote the file. Done." }));
+    expect(r.terminalReason).toBe("done");
+    const lines = await p1Lines();
+    expect(lines[0]).toContain("outcome=terminated");
+    expect(lines[0]).toContain("promisedFollowup=false");
+    expect(await recordMock()).toHaveBeenCalledWith("terminated", false);
   });
 
   it("does NOT log or record when the model really signaled done (clause redundant, not decider)", async () => {
@@ -230,7 +242,9 @@ describe("decideTurnOutcome — P-1 mutation-wrapup measurement (behavior-neutra
     const lines = await p1Lines();
     expect(lines.length).toBe(1);
     expect(lines[0]).toContain("outcome=reopened-by-gate");
-    expect(await recordMock()).toHaveBeenCalledWith("reopened-by-gate");
+    // A gate re-opened the turn, so nothing was lost — promisedFollowup is
+    // irrelevant here and recorded as false regardless of narration.
+    expect(await recordMock()).toHaveBeenCalledWith("reopened-by-gate", false);
   });
 });
 

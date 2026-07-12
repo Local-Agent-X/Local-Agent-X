@@ -49,6 +49,13 @@ body.platform-win{height:calc(100vh - 32px);margin-top:32px}
    on Windows) so the ⋯ overflow doesn't sit under them and get misclicked. */
 body.platform-win #desktop-titlebar{display:flex;position:fixed;top:0;left:0;right:0;height:32px;padding-right:138px;z-index:99999;align-items:center;background:var(--surface);-webkit-app-region:drag;font-size:12px;user-select:none}
 body.platform-win #agents-toggle{top:52px !important}
+/* The titlebar agents-panel toggle lights up while the panel is open, matching
+   the .dtb-menu.open accent treatment so its state reads at a glance. */
+body.agents-panel-open #desktop-titlebar #dtb-agents-toggle{color:var(--accent);background:var(--hover)}
+/* The titlebar is a drag region; standalone buttons must opt out or the OS
+   swallows the click as a window-drag. The ⋯ menu gets this via .dtb-menu;
+   this button sits outside any menu, so it needs the exemption directly. */
+#desktop-titlebar #dtb-agents-toggle{-webkit-app-region:no-drag}
 /* Windows: the sidebar controls ride inside the 32px in-window titlebar, after
    the favicon + brand (~120px). z-index must clear the titlebar's 99999. */
 body.platform-win #sidebar-controls{top:4px;left:128px;z-index:100000}
@@ -89,7 +96,7 @@ body.sidebar-right #sidebar.collapsed{border-left:none}
    after the platform class is in place — one paint, already positioned. */
 #sidebar-controls{position:fixed;top:18px;left:10px;z-index:1100;display:flex;gap:2px;-webkit-app-region:no-drag;visibility:hidden}
 body.sidebar-controls-ready #sidebar-controls{visibility:visible}
-#sidebar-controls button{-webkit-app-region:no-drag;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.95rem;line-height:1;padding:4px 7px;border-radius:6px}
+#sidebar-controls button{-webkit-app-region:no-drag;background:none;border:none;color:var(--muted);cursor:pointer;font-size:17px;line-height:1;padding:4px 7px;border-radius:6px}
 #sidebar-controls button:hover{color:var(--text);background:var(--hover)}
 /* Plain browser: no native chrome strip, so the cluster floats over the
    top-left corner. Clear whatever column sits there — the brand row when the
@@ -987,8 +994,20 @@ body.platform-darwin #sidebar-controls{top:3px;left:78px}
 .cmd-empty{padding:20px;text-align:center;color:var(--muted);font-size:.82rem}
 
 /* ── Status bar (feature 97) ── */
-#status-bar{display:flex;gap:8px;padding:6px 14px;font-family:var(--mono);font-size:.62rem;color:var(--muted);max-width:800px;margin:0 auto;width:100%;align-items:center}
+/* min-height reserves the composer control row's height before its pickers are
+   JS-injected (chat-status-bar.js), so the row doesn't collapse to 0 and then
+   shove the composer up when it fills — one of the two boot flashes. */
+#status-bar{display:flex;gap:8px;padding:6px 14px;font-family:var(--mono);font-size:.62rem;color:var(--muted);max-width:800px;margin:0 auto;width:100%;align-items:center;min-height:29px}
 #status-bar-dynamic{display:flex;align-items:center;gap:8px}
+/* Boot FOUC gate. The composer control row and sidebar lists are empty in the
+   HTML and built by JS at DOMContentLoaded (app.js bootNavigate + renderSidebar).
+   Keep them invisible until body.app-ready is set right after that first build,
+   then fade in — so the user sees a brief blank in reserved space, not empty
+   containers reflowing. Fallback: if the JS never runs, a plain browser without
+   the class would hide these forever, so the reveal is also armed on a 2s timer
+   in app.js as a safety net. */
+#status-bar-dynamic,#chat-list,#project-list{opacity:0;transition:opacity .18s ease}
+body.app-ready #status-bar-dynamic,body.app-ready #chat-list,body.app-ready #project-list{opacity:1}
 .status-item{display:flex;align-items:center;gap:4px}
 .status-icon{font-size:.7rem}
 .status-selector{position:relative}
@@ -1033,6 +1052,13 @@ body.platform-darwin #sidebar-controls{top:3px;left:78px}
 #chat-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
 .agent-feeds{position:relative;width:0;min-width:0;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column}
 .agent-feeds.collapsed{width:0;min-width:0;border-left:none}
+/* Flip: the whole chat row reverses so #agent-feeds docks to the LEFT edge
+   (opposite the nav sidebar, which body.sidebar-right sends to the right). The
+   panel's divider + resize gutter move to its right edge to match. */
+body.sidebar-right #page-chat{flex-direction:row-reverse}
+body.sidebar-right .agent-feeds{border-left:none;border-right:1px solid var(--border)}
+body.sidebar-right .agent-feeds.collapsed{border-right:none}
+body.sidebar-right .agent-feeds-resize-handle{left:auto;right:0}
 /* Default/persisted-fallback width (== AGENT_FEEDS_DEFAULT in chat-agent-feeds.js).
    toggleAgentFeeds sets an inline width for the user's persisted/dragged width,
    which overrides this; on dblclick-reset the inline width returns here to 320. */

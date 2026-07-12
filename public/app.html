@@ -77,6 +77,11 @@
       <div class="dtb-item" data-action="quit">Quit</div>
     </div>
   </div>
+  <!-- Right-sidebar (agents panel) hide/show toggle. Sits between the ⋯ overflow
+       and the native caption buttons; the 138px right-padding on #desktop-titlebar
+       keeps it clear of min/max/close. Windows/Linux only — macOS puts the same
+       control beside the traffic lights (see #sidebar-controls). -->
+  <span class="dtb-btn dtb-btn-icon" id="dtb-agents-toggle" title="Hide/show right sidebar" aria-label="Toggle right sidebar" onclick="toggleSidePanel('right')">&#9707;</span>
 </div>
 
 <!-- Skip to content link (accessibility feature 100) -->

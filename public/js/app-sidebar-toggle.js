@@ -1,7 +1,24 @@
-// Desktop sidebar collapse toggle (spring-animated). Lives in the window-top
-// #sidebar-controls cluster (next to the macOS traffic lights), which stays
-// visible when the sidebar is hidden — no separate expand button needed.
-function toggleSidebarCollapse() {
+// The two dockable panels and their controls bind to a physical SIDE of the
+// window, not to a specific element. Two panels exist: the nav sidebar
+// (#sidebar) and the right-rail agents panel (#agent-feeds). Which one sits on
+// the left vs right is owned by the `sidebar-right` body class (flip). A
+// collapse button in the titlebar therefore closes whatever panel is currently
+// on its side — never a hardcoded element.
+function isFlipped() { return document.body.classList.contains('sidebar-right'); }
+// Panel on the given physical side ('left' | 'right'), accounting for flip.
+// Unflipped: nav=left, agents=right. Flipped: swapped.
+function panelOnSide(side) {
+  const navIsLeft = !isFlipped();
+  const wantNav = (side === 'left') === navIsLeft;
+  return wantNav
+    ? { kind: 'nav', el: document.getElementById('sidebar') }
+    : { kind: 'agents', el: document.getElementById('agent-feeds') };
+}
+
+// Collapse/expand the nav #sidebar (spring-animated). Split from the side
+// dispatch so flip logic and the agents panel can reuse the nav-specific
+// width restore. `sidebar-collapsed` persists the nav's own state.
+function toggleNavSidebar() {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
   const collapsed = !sidebar.classList.contains('collapsed');
@@ -17,27 +34,59 @@ function toggleSidebarCollapse() {
     Spring.animate(sidebar, 'width', expandedW, { from: 0, preset: 'stiff', unit: 'px', onUpdate: v => { sidebar.style.minWidth = v + 'px'; }, onDone: () => { sidebar.style.overflow = ''; sidebar.style.transition = ''; } });
   }
   localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '');
-  const hideBtn = document.getElementById('sidebar-hide-btn');
-  if (hideBtn) hideBtn.title = collapsed ? 'Show sidebar' : 'Hide sidebar';
 }
 
-// Flip the sidebar to the other side of the window (body flex row-reverse).
+// Toggle whichever panel sits on `side`. This is what the titlebar buttons
+// call: the LEFT cluster's hide button passes 'left', the RIGHT button 'right'.
+// The panel is resolved through flip state so the button always closes the bar
+// physically under it.
+function toggleSidePanel(side) {
+  const { kind } = panelOnSide(side);
+  if (kind === 'nav') toggleNavSidebar();
+  else if (typeof toggleAgentFeeds === 'function') toggleAgentFeeds();
+}
+
+// Back-compat: the left hide button + any legacy caller. Left button owns the
+// left side.
+function toggleSidebarCollapse() { toggleSidePanel('left'); }
+
+// Flip both panels to the opposite side. body.sidebar-right drives the nav via
+// row-reverse (CSS) and the agents rail via #page-chat row-reverse (CSS); this
+// JS only owns the class + persistence. Titles refresh so each button reads
+// against the panel now under it.
 function flipSidebarSide() {
   const right = document.body.classList.toggle('sidebar-right');
   localStorage.setItem('sidebar-side', right ? 'right' : '');
+  refreshSideButtonTitles();
 }
+
+// Keep each titlebar button's tooltip describing the panel currently on its
+// side, and reflect that panel's collapsed state.
+function refreshSideButtonTitles() {
+  const leftBtn = document.getElementById('sidebar-hide-btn');
+  const rightBtn = document.getElementById('dtb-agents-toggle');
+  [['left', leftBtn], ['right', rightBtn]].forEach(([side, btn]) => {
+    if (!btn) return;
+    const { kind, el } = panelOnSide(side);
+    const name = kind === 'nav' ? 'sidebar' : 'agents panel';
+    const isCollapsed = kind === 'nav'
+      ? (el && el.classList.contains('collapsed'))
+      : !document.body.classList.contains('agents-panel-open');
+    btn.title = (isCollapsed ? 'Show ' : 'Hide ') + name;
+  });
+}
+window.refreshSideButtonTitles = refreshSideButtonTitles;
 
 // Restore sidebar state on load
 (function() {
   if (localStorage.getItem('sidebar-collapsed') === '1') {
     const sidebar = document.getElementById('sidebar');
     if (sidebar) sidebar.classList.add('collapsed');
-    const hideBtn = document.getElementById('sidebar-hide-btn');
-    if (hideBtn) hideBtn.title = 'Show sidebar';
   }
   if (localStorage.getItem('sidebar-side') === 'right') {
     document.body.classList.add('sidebar-right');
   }
+  refreshSideButtonTitles();
   // Reveal the window-top controls only once the platform class (added by the
   // preload's DOMContentLoaded handler, which is registered before this script)
   // is in place — so they appear directly at the macOS/Windows position instead

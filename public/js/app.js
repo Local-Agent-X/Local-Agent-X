@@ -139,11 +139,22 @@ window.addEventListener('hashchange', () => navigate(currentRoute()));
 // dispatch. Running at top-level here would race chat.js loading and skip
 // initStatusBar — leaving the provider/model dropdowns blank until the
 // user manually triggers a re-navigate (e.g. clicking "New Chat").
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => navigate(currentRoute()));
-} else {
+// After the first navigate builds the JS-injected regions (the composer
+// control row + sidebar lists), flip body.app-ready so those regions fade in
+// already-populated instead of flashing empty and reflowing — same
+// hide-until-built pattern as sidebar-controls-ready.
+function bootNavigate() {
   navigate(currentRoute());
+  requestAnimationFrame(() => document.body.classList.add('app-ready'));
 }
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootNavigate);
+} else {
+  bootNavigate();
+}
+// Safety net: guarantee the FOUC-gated regions are never stuck invisible even
+// if bootNavigate throws before flipping app-ready. Idempotent with the rAF above.
+setTimeout(() => document.body.classList.add('app-ready'), 2000);
 
 // Auto-refresh sidebar every 30s to pick up new WhatsApp sessions
 setInterval(() => {

@@ -80,9 +80,12 @@ function _initAgentFeedsResize() {
     var startW = panel.getBoundingClientRect().width;
 
     function onMove(ev) {
-      // Handle sits on the LEFT of a right-anchored panel: dragging left
-      // (negative dx) grows it, dragging right shrinks it → subtract dx.
-      _applyAgentFeedsWidth(panel, clampAgentFeedsWidth(startW - (ev.clientX - startX)));
+      // Handle sits on the panel's inner edge: LEFT when the panel is right-
+      // anchored (default) → dragging left grows it (subtract dx); RIGHT when
+      // flipped to the left dock → dragging right grows it (add dx).
+      var dx = ev.clientX - startX;
+      var flipped = document.body.classList.contains('sidebar-right');
+      _applyAgentFeedsWidth(panel, clampAgentFeedsWidth(startW + (flipped ? dx : -dx)));
     }
     function onUp() {
       handle.releasePointerCapture(e.pointerId);

@@ -159,8 +159,11 @@ export class CorrectionLearner {
 
   /**
    * Record a correction: log it, create a lesson, and track demotion/promotion.
+   * Private on purpose — the ONLY persist path is recordCorrectionMaybe, which
+   * gates this behind the LLM confirm. A direct caller would reopen the
+   * regex-only durable write the gate exists to close.
    */
-  recordCorrection(correction: CorrectionEvent): void {
+  private recordCorrection(correction: CorrectionEvent): void {
     const lesson = `Previously thought "${correction.wrongInfo.slice(0, 80)}" ` +
       `but user corrected to "${correction.correctInfo.slice(0, 80)}" ` +
       `on ${formatDate(correction.timestamp)}`;

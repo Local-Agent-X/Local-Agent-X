@@ -15,7 +15,28 @@ export interface DataClassification {
   confidence: number; // 0.0 - 1.0
 }
 
-const CLASSIFICATION_PATTERNS: Array<{ label: DataLabel; pattern: RegExp; confidence: number }> = [
+/** Luhn (mod-10) check on a candidate card number (separators allowed).
+ *  Digit-prefix regexes alone match phone-ish/ID-ish 16-digit runs; the
+ *  checksum is what separates a real PAN from noise. */
+export function luhnValid(candidate: string): boolean {
+  const s = candidate.replace(/[\s-]/g, "");
+  if (s.length < 13 || s.length > 19) return false;
+  let sum = 0;
+  let double = false;
+  for (let i = s.length - 1; i >= 0; i--) {
+    let d = s.charCodeAt(i) - 48;
+    if (d < 0 || d > 9) return false;
+    if (double) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+    double = !double;
+  }
+  return sum % 10 === 0;
+}
+
+const CLASSIFICATION_PATTERNS: Array<{ label: DataLabel; pattern: RegExp; confidence: number; validate?: (match: string) => boolean }> = [
   // Credentials
   { label: "credentials", pattern: /\b(sk-|ghp_|github_pat_|xox[bpas]-|glpat-|AKIA|Bearer\s+[A-Za-z0-9])/i, confidence: 0.95 },
   { label: "credentials", pattern: /(?:api[_-]?key|token|password|secret)\s*[:=]\s*["']?[^\s"',]{8,}/i, confidence: 0.85 },
@@ -32,9 +53,11 @@ const CLASSIFICATION_PATTERNS: Array<{ label: DataLabel; pattern: RegExp; confid
   { label: "secrets", pattern: /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----/, confidence: 0.99 },
   { label: "secrets", pattern: /-----BEGIN\s+CERTIFICATE-----/, confidence: 0.8 },
   { label: "secrets", pattern: /-----BEGIN\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----/, confidence: 0.99 },
-  // Financial — with basic Luhn pre-filter (length check)
-  { label: "financial", pattern: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/, confidence: 0.85 },
-  { label: "financial", pattern: /\b\d{4}[\s-]\d{4}[\s-]\d{4}[\s-]\d{4}\b/, confidence: 0.8 },  // Spaced card numbers
+  // Financial — issuer-prefix regex narrows the candidates, Luhn confirms.
+  // (The 'g' flag is required: validated entries are scanned via matchAll so
+  // one non-Luhn candidate can't mask a real PAN later in the content.)
+  { label: "financial", pattern: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/g, confidence: 0.85, validate: luhnValid },
+  { label: "financial", pattern: /\b\d{4}[\s-]\d{4}[\s-]\d{4}[\s-]\d{4}\b/g, confidence: 0.8, validate: luhnValid },  // Spaced card numbers
   { label: "financial", pattern: /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/, confidence: 0.85 },         // IBAN (uppercase: CC + check digits + BBAN)
   // Internal paths
   { label: "internal_path", pattern: /[/\\]\.ssh[/\\]|[/\\]\.aws[/\\]|[/\\]\.env\b/i, confidence: 0.9 },
@@ -46,8 +69,20 @@ export function classifyData(content: string): DataClassification {
   const labels = new Set<DataLabel>();
   let maxConfidence = 0;
 
-  for (const { label, pattern, confidence } of CLASSIFICATION_PATTERNS) {
-    if (pattern.test(content)) {
+  for (const { label, pattern, confidence, validate } of CLASSIFICATION_PATTERNS) {
+    let hit: boolean;
+    if (validate) {
+      hit = false;
+      for (const m of content.matchAll(pattern)) {
+        if (validate(m[0])) {
+          hit = true;
+          break;
+        }
+      }
+    } else {
+      hit = pattern.test(content);
+    }
+    if (hit) {
       labels.add(label);
       maxConfidence = Math.max(maxConfidence, confidence);
     }

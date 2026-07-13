@@ -86,6 +86,16 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
 
   let doneEmitted = false;
   let lockHeld = false;
+  // Set the instant installEventWiring's startChat registers this turn's
+  // ActiveChat — via callback, so it's accurate even when the REST of the
+  // wiring throws (onEventInstalled below only flips once wiring returns).
+  // Holds the entry's own AbortController: the identity token the finally's
+  // terminal net passes to failChatIfCurrent, so it can only ever terminate
+  // THIS turn's entry (skeptic round 2 — a wedged turn's late error path must
+  // not mark a successor's live entry done). Never set for turns that exited
+  // before startChat (missing credential, lock refusal), where the only live
+  // entry — if any — belongs to a DIFFERENT, still-running turn.
+  let chatToken: AbortController | undefined;
   let onEventInstalled = false;
   let runtimeInstalled = false;
   let retryCtxAttached = false;
@@ -199,6 +209,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     // same controller the lock holds.
     const wiring = await installEventWiring({
       sessionId, message, attachments, prepared, ctx, emitSse, abortController: turnAbort,
+      onChatRegistered: (token) => { chatToken = token; },
     });
     onEventInstalled = true;
     runtimeInstalled = true;
@@ -232,6 +243,27 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
       // wrappedOnEvent path got to emit done.
       emitSse({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } } as ServerEvent);
       try { ctx.chatWs.failChat(sessionId, "Chat ended unexpectedly."); } catch {}
+    } else if (chatToken) {
+      // Orphaned-ActiveChat net (2026-07-13 audit skeptic finding). When a
+      // throw lands AFTER startChat registered this turn's entry — e.g.
+      // installEventWiring's augmentSystemPrompt, or runCanonicalChat — the
+      // catch's emitTurnError terminates the turn via broadcast ONLY, never
+      // through the entry's onEvent, so the entry's done flag stays false and
+      // the !doneEmitted net above is skipped. The orphan then lives forever:
+      // its replay buffer serves stale state to every future subscriber, the
+      // next turn's startChat warns about overwriting it, and its heartbeat
+      // interval spins indefinitely. failChatIfCurrent → terminateChat
+      // (abort:false) buffers the terminal done into the replay buffer
+      // (emitTurnError's done was broadcast-only) and marks the entry done;
+      // empty errorMessage adds no error bubble beyond what emitTurnError
+      // already sent, and the client's done handling is idempotent. No-op
+      // when the turn already delivered done through onEvent. The token guard
+      // (skeptic round 2) covers the wedge clobber: if this turn hung past
+      // the 5s force-release and a successor's startChat overwrote the map
+      // entry, a bare failChat here would mark the SUCCESSOR's live entry
+      // done mid-stream — failChatIfCurrent refuses unless the entry is
+      // still this turn's own.
+      try { ctx.chatWs.failChatIfCurrent(sessionId, chatToken, ""); } catch {}
     }
   }
 }

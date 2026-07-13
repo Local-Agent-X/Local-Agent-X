@@ -34,12 +34,26 @@ export interface InstallEventWiringInput {
    * detection actually cancels the live stream.
    */
   abortController: AbortController;
+  /**
+   * Fires synchronously the moment startChat registers this turn's ActiveChat
+   * — BEFORE the rest of the wiring, which can still throw (augmentSystemPrompt
+   * below). The orchestrator can't see a mid-wiring throw any other way: its
+   * `onEventInstalled` flag only flips once this function RETURNS, so a throw
+   * after startChat used to leave the registered entry invisible to every
+   * cleanup path (2026-07-13 audit skeptic finding). `token` is the entry's
+   * own AbortController (startChat's `.abort` return) — the orchestrator's
+   * error path passes it to failChatIfCurrent so a wedged turn can only ever
+   * terminate ITS entry, never a successor's that overwrote the sessionId
+   * slot after a forced lock release (skeptic round 2).
+   */
+  onChatRegistered: (token: AbortController) => void;
 }
 
 export async function installEventWiring(input: InstallEventWiringInput): Promise<EventWiring> {
   const { sessionId, message, attachments, prepared, ctx, emitSse, abortController } = input;
 
   const wsChat = ctx.chatWs.startChat(sessionId);
+  input.onChatRegistered(wsChat.abort);
   const onEvent = (event: ServerEvent) => { emitSse(event); wsChat.onEvent(event); };
   ctx.setActiveOnEvent(sessionId, onEvent);
   ctx.setActiveBrowserSessionId(sessionId);

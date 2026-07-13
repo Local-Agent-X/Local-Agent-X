@@ -347,3 +347,49 @@ describe("op_heartbeat keepalive (2026-07-13 audit I3)", () => {
   });
 });
 
+describe("failChatIfCurrent identity guard (2026-07-13 audit, skeptic round 2)", () => {
+  // Wedge clobber: T1's provider ignores its abort >5s, T2's
+  // tryAcquireOrReplace force-releases the lock and T2's startChat overwrites
+  // the map entry. Minutes later T1 un-wedges, throws, and its terminal net
+  // fires. A bare failChat would find T2's LIVE entry and mark it done —
+  // T2's remaining events all drop on the onEvent done-guard, Stop no-ops,
+  // and the client sees done mid-stream. The token (the entry's own
+  // AbortController, startChat's `.abort` return) pins the terminate to the
+  // caller's OWN entry.
+  const doneEvent: ServerEvent = {
+    type: "done",
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  } as ServerEvent;
+
+  it("an overwritten turn's token cannot terminate the successor's live entry", () => {
+    const m = buildManager();
+    const t1 = m.startChat("s-guard"); // the turn that will wedge
+    const t2 = m.startChat("s-guard"); // successor overwrites the slot
+
+    // T1's late error path: refused — successor owns the sessionId now.
+    expect(m.failChatIfCurrent("s-guard", t1.abort, "")).toBe(false);
+    const current = activeChats.get("s-guard")!;
+    expect(current.abortController).toBe(t2.abort); // still T2's entry
+    expect(current.done).toBe(false);               // still live + stoppable
+    expect(current.events.some(e => e.type === "done")).toBe(false); // no buffered terminal
+
+    // The rightful owner's token DOES terminate it (buffered terminal done).
+    expect(m.failChatIfCurrent("s-guard", t2.abort, "")).toBe(true);
+    expect(current.done).toBe(true);
+    expect(current.events.some(e => e.type === "done")).toBe(true);
+  });
+
+  it("no-ops on an entry that already went done through onEvent (happy-path net)", () => {
+    const m = buildManager();
+    const t = m.startChat("s-guard-done");
+    t.onEvent(doneEvent);
+    expect(m.failChatIfCurrent("s-guard-done", t.abort, "")).toBe(false);
+  });
+
+  it("no-ops when the entry is gone entirely", () => {
+    const m = buildManager();
+    expect(m.failChatIfCurrent("s-guard-missing", new AbortController(), "")).toBe(false);
+    expect(activeChats.has("s-guard-missing")).toBe(false);
+  });
+});
+

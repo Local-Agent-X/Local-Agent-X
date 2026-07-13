@@ -50,7 +50,7 @@ vi.mock("../../../session/policy.js", () => ({ clearSessionAllowedTools: vi.fn()
 // the lock refuses — exactly the pre-fix bug this test guards. Declared via
 // vi.hoisted so the (hoisted) vi.mock factories can close over them.
 const { installEventWiring, runCanonicalChat } = vi.hoisted(() => ({
-  installEventWiring: vi.fn(async () => ({
+  installEventWiring: vi.fn(async (_input: { onChatRegistered: (token: AbortController) => void }) => ({
     wsChat: { abort: new AbortController(), onEvent: () => {} },
     threatEngine: {},
     wrappedOnEvent: () => {},
@@ -63,12 +63,17 @@ vi.mock("./event-wiring.js", () => ({ installEventWiring }));
 vi.mock("./canonical-run.js", () => ({ runCanonicalChat }));
 
 import { runChatTurn } from "./orchestrator.js";
+import { preparePerTurnRequest } from "./prepare-and-route.js";
 import { getTurnRegistry, releaseTurn, getActiveTurn } from "../../../session/turn-lock.js";
 
 const SESSION = "sess-ct2-refusal";
+const SESSION_ORPHAN = "sess-orphan-activechat";
+const SESSION_EARLY = "sess-early-exit-no-key";
 
 afterEach(() => {
   releaseTurn(SESSION);
+  releaseTurn(SESSION_ORPHAN);
+  releaseTurn(SESSION_EARLY);
   vi.clearAllMocks();
 });
 
@@ -86,6 +91,7 @@ function makeCtx(onEmit: (id: string, ev: ServerEvent) => void) {
       startChat: vi.fn(),
       emit: vi.fn((id: string, ev: ServerEvent) => onEmit(id, ev)),
       failChat: vi.fn(),
+      failChatIfCurrent: vi.fn((_sid: string, _token: AbortController, _msg: string) => true),
     },
   };
   return { ctx, session };
@@ -129,5 +135,129 @@ describe("orchestrator turn-lock ordering (CT-2)", () => {
     expect(forSession).toContain("done");
     const err = emitted.find(e => e.ev.type === "error") as { ev: { message?: string } } | undefined;
     expect(String(err?.ev.message)).toMatch(/still running/i);
+  });
+});
+
+/**
+ * Orphaned-ActiveChat regression (2026-07-13 audit skeptic finding).
+ *
+ * The bug: installEventWiring throws AFTER its internal startChat (e.g.
+ * augmentSystemPrompt). The orchestrator catch runs emitTurnError, which sets
+ * doneEmitted=true and pushes error+done via broadcast ONLY — never through
+ * the registered entry's onEvent — so the entry's done flag stays false. The
+ * finally's !doneEmitted failChat net is then skipped, leaving a permanently
+ * live orphan ActiveChat: stale replay buffer for every future subscriber,
+ * startChat overwrite warnings, heartbeat interval spinning forever.
+ *
+ * The fix: installEventWiring reports startChat via onChatRegistered(token)
+ * (fired BEFORE the throwable wiring steps; token = the entry's own
+ * AbortController), and the finally terminates any turn that registered a
+ * chat via failChatIfCurrent(sessionId, token, "") — a no-op for entries
+ * already done or owned by a successor turn (skeptic round 2: a wedged
+ * turn's late error path must never mark a successor's live entry done),
+ * and never called for turns that exited before startChat.
+ */
+describe("orchestrator orphaned-ActiveChat net", () => {
+  it("fails the registered chat — identity-guarded with its token — when wiring throws after startChat", async () => {
+    const token = new AbortController();
+    installEventWiring.mockImplementationOnce(async (input) => {
+      input.onChatRegistered(token); // startChat happened...
+      throw new Error("augmentSystemPrompt exploded"); // ...then wiring died
+    });
+
+    const emitted: Array<{ id: string; ev: ServerEvent }> = [];
+    const { ctx } = makeCtx((id, ev) => emitted.push({ id, ev }));
+
+    await runChatTurn({
+      sessionId: SESSION_ORPHAN,
+      message: "hello",
+      attachments: [],
+      projectId: null,
+      ctx: ctx as never,
+      requestRole: "operator",
+      sseSink: null,
+    });
+
+    // The registered entry must be terminated (buffered terminal done via
+    // terminateChat) with NO extra error bubble — emitTurnError already sent
+    // it — and WITH the registered token, so only this turn's own entry can
+    // ever be terminated (never a successor's after a wedge-clobber).
+    expect(ctx.chatWs.failChatIfCurrent).toHaveBeenCalledTimes(1);
+    expect(ctx.chatWs.failChatIfCurrent).toHaveBeenCalledWith(SESSION_ORPHAN, token, "");
+    expect(ctx.chatWs.failChat).not.toHaveBeenCalled();
+    expect(runCanonicalChat).not.toHaveBeenCalled();
+
+    // emitTurnError still surfaced the failure on the WS broadcast path.
+    const types = emitted.filter(e => e.id === SESSION_ORPHAN).map(e => e.ev.type);
+    expect(types).toContain("error");
+    expect(types).toContain("done");
+
+    // And the turn lock (acquired before wiring) was released by the finally.
+    expect(getActiveTurn(SESSION_ORPHAN)).toBeFalsy();
+  });
+
+  it("does NOT call failChat for early exits before startChat", async () => {
+    // Missing credential → emitTurnError + return, long before startChat. A
+    // failChat here could touch a live entry owned by a DIFFERENT running turn.
+    vi.mocked(preparePerTurnRequest).mockResolvedValueOnce({
+      apiKey: "", provider: "xai", model: "grok", tools: [], cleanHistory: [],
+    } as never);
+
+    const emitted: Array<{ id: string; ev: ServerEvent }> = [];
+    const { ctx } = makeCtx((id, ev) => emitted.push({ id, ev }));
+
+    await runChatTurn({
+      sessionId: SESSION_EARLY,
+      message: "hello",
+      attachments: [],
+      projectId: null,
+      ctx: ctx as never,
+      requestRole: "operator",
+      sseSink: null,
+    });
+
+    expect(installEventWiring).not.toHaveBeenCalled();
+    expect(ctx.chatWs.failChat).not.toHaveBeenCalled();
+    expect(ctx.chatWs.failChatIfCurrent).not.toHaveBeenCalled();
+    const types = emitted.filter(e => e.id === SESSION_EARLY).map(e => e.ev.type);
+    expect(types).toContain("error");
+    expect(types).toContain("done");
+  });
+
+  it("happy path: no failure-message failChat; only the token-guarded empty-message net", async () => {
+    const token = new AbortController();
+    installEventWiring.mockImplementationOnce(async (input) => {
+      input.onChatRegistered(token);
+      return {
+        wsChat: { abort: token, onEvent: () => {} },
+        threatEngine: {},
+        wrappedOnEvent: () => {},
+        primaryEventProxy: () => {},
+        getFullResponseText: () => "",
+      };
+    });
+    // runCanonicalChat default mock: { doneEmitted: true } — entry already
+    // done via wrappedOnEvent in the real flow, so the net's
+    // failChatIfCurrent("") is a no-op (bails on done entries).
+
+    const { ctx } = makeCtx(() => {});
+    await runChatTurn({
+      sessionId: SESSION_ORPHAN,
+      message: "hello",
+      attachments: [],
+      projectId: null,
+      ctx: ctx as never,
+      requestRole: "operator",
+      sseSink: null,
+    });
+
+    expect(runCanonicalChat).toHaveBeenCalledTimes(1);
+    // The !doneEmitted crash net (with its user-facing message) must not fire.
+    expect(ctx.chatWs.failChat).not.toHaveBeenCalled();
+    // The done-path net only ever fires token-guarded with no error bubble.
+    for (const call of ctx.chatWs.failChatIfCurrent.mock.calls) {
+      expect(call[1]).toBe(token);
+      expect(call[2]).toBe("");
+    }
   });
 });

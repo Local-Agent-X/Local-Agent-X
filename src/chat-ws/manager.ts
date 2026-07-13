@@ -41,6 +41,7 @@ export interface ChatWsManager {
   stopChat(sessionId: string): boolean;
   getActiveChats(): string[];
   failChat(sessionId: string, errorMessage: string): void;
+  failChatIfCurrent(sessionId: string, token: AbortController, errorMessage: string): boolean;
   emit(sessionId: string, event: ServerEvent): void;
   onChat(handler: ChatHandler): void;
 }
@@ -191,6 +192,25 @@ export function buildManager(): ChatWsManager {
      *  its side of the turn. */
     failChat(sessionId: string, errorMessage: string): void {
       terminateChat(sessionId, { abort: false, errorMessage });
+    },
+
+    /** Identity-guarded failChat for a turn's OWN entry (2026-07-13 audit
+     *  skeptic round 2). A plain failChat terminates whatever entry CURRENTLY
+     *  owns the sessionId — reachable clobber: turn T1 wedges (provider
+     *  ignores abort >5s), T2's tryAcquireOrReplace force-releases the lock
+     *  and its startChat overwrites the map entry; when T1 finally un-wedges
+     *  and its error path fires a terminal failChat, it would mark T2's LIVE
+     *  entry done — T2's remaining events all drop on the onEvent done-guard,
+     *  Stop no-ops, and the client sees `done` mid-stream. The token is the
+     *  AbortController startChat minted for the turn (returned as `.abort`
+     *  and stored on the entry), so `entry.abortController === token` proves
+     *  the caller still owns the current entry. Returns true iff it
+     *  terminated; false when the entry is gone, already done, or a
+     *  successor's. */
+    failChatIfCurrent(sessionId: string, token: AbortController, errorMessage: string): boolean {
+      const chat = activeChats.get(sessionId);
+      if (!chat || chat.done || chat.abortController !== token) return false;
+      return terminateChat(sessionId, { abort: false, errorMessage });
     },
 
     /** Push a one-off event to WS subscribers of `sessionId` outside

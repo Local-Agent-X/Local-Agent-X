@@ -134,49 +134,70 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
   const wsChat = ctx.chatWs.startChat(sessionId);
   const onEvent = (event: ServerEvent) => { if (sseSink) sseSink(event); wsChat.onEvent(event); };
   ctx.setActiveOnEvent(sessionId, onEvent);
-  const threatEngineDel = new ThreatEngine(ctx.dataDir, sessionId);
-  const turnStart = Date.now();
-  // Canonical-loop path (P4.C5): ack turn routes through `runAgentViaCanonical`
-  // so it shares the same safety stack + cancel machinery as chat. tools=[]
-  // + maxIterations=1 means the iteration-loop middlewares short-circuit
-  // anyway — observable behavior is identical to the legacy 1-shot path.
-  // images is passed on the options envelope; agent-runner now projects them
-  // into the seeded user message (matches chat-runner) so a vision-capable
-  // ack model can reason about what was attached when phrasing the ack.
-  const result = await runAgentViaCanonical(message, prepared.cleanHistory as ChatCompletionMessageParam[], {
-    apiKey: prepared.apiKey, model: prepared.model,
-    provider: prepared.provider as AgentOptions["provider"],
-    baseURL: prepared.customBaseURL,
-    systemPrompt: delegationSystemPrompt,
-    tools: [],                                      // force text-only — no tool calls
-    security: ctx.security, toolPolicy: ctx.toolPolicy,
-    threatEngine: threatEngineDel, rbac: ctx.rbac, callerRole: requestRole, sessionId,
-    callContext: "local",
-    images: prepared.images as AgentOptions["images"],
-    maxIterations: 1,                               // 1-shot — agent says its piece, ends turn
-    temperature: prepared.temperature,
-    signal: wsChat.abort.signal,
-    onEvent,
-    opType: "delegation_ack",
-    lane: "interactive",
-  });
+  // Orphaned-ActiveChat net (2026-07-13 audit skeptic round 2 — same class
+  // as run-chat-turn/orchestrator.ts's finally net). A throw between the
+  // startChat above and the terminal onEvent(done) below (runAgentViaCanonical,
+  // saveSession) propagates to the orchestrator's catch, whose emitTurnError
+  // is broadcast-only — it never routes through wsChat.onEvent, so this
+  // entry's done flag would stay false forever: stale replay buffer, startChat
+  // overwrite warnings, immortal heartbeat. On the happy path the done at the
+  // end of this try DOES go through onEvent → wsChat.onEvent, marking the
+  // entry done, and this catch never runs. failChatIfCurrent is identity-
+  // guarded by the entry's own AbortController, so if a successor turn has
+  // already overwritten the sessionId slot (wedge → forced lock release →
+  // new startChat) we never mark the successor's live entry done. Empty
+  // errorMessage: the orchestrator's emitTurnError owns the user-facing error.
+  try {
+    const threatEngineDel = new ThreatEngine(ctx.dataDir, sessionId);
+    const turnStart = Date.now();
+    // Canonical-loop path (P4.C5): ack turn routes through `runAgentViaCanonical`
+    // so it shares the same safety stack + cancel machinery as chat. tools=[]
+    // + maxIterations=1 means the iteration-loop middlewares short-circuit
+    // anyway — observable behavior is identical to the legacy 1-shot path.
+    // images is passed on the options envelope; agent-runner now projects them
+    // into the seeded user message (matches chat-runner) so a vision-capable
+    // ack model can reason about what was attached when phrasing the ack.
+    const result = await runAgentViaCanonical(message, prepared.cleanHistory as ChatCompletionMessageParam[], {
+      apiKey: prepared.apiKey, model: prepared.model,
+      provider: prepared.provider as AgentOptions["provider"],
+      baseURL: prepared.customBaseURL,
+      systemPrompt: delegationSystemPrompt,
+      tools: [],                                      // force text-only — no tool calls
+      security: ctx.security, toolPolicy: ctx.toolPolicy,
+      threatEngine: threatEngineDel, rbac: ctx.rbac, callerRole: requestRole, sessionId,
+      callContext: "local",
+      images: prepared.images as AgentOptions["images"],
+      maxIterations: 1,                               // 1-shot — agent says its piece, ends turn
+      temperature: prepared.temperature,
+      signal: wsChat.abort.signal,
+      onEvent,
+      opType: "delegation_ack",
+      lane: "interactive",
+    });
 
-  const { stripEphemeralMessages } = await import("../../providers/sanitize.js");
-  const { COMPACTION_PREFIX } = await import("../../types.js");
-  type MsgRecord = Record<string, unknown>;
-  session.messages = stripEphemeralMessages(result.messages).filter((m) => {
-    if (m.role === "system") {
-      return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX);
-    }
-    if (m.role === "tool") return true;
-    return m.content || (m as unknown as MsgRecord).tool_calls;
-  });
-  session.updatedAt = Date.now();
-  ctx.saveSession(session as Parameters<typeof ctx.saveSession>[0]);
+    const { stripEphemeralMessages } = await import("../../providers/sanitize.js");
+    const { COMPACTION_PREFIX } = await import("../../types.js");
+    type MsgRecord = Record<string, unknown>;
+    session.messages = stripEphemeralMessages(result.messages).filter((m) => {
+      if (m.role === "system") {
+        return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX);
+      }
+      if (m.role === "tool") return true;
+      return m.content || (m as unknown as MsgRecord).tool_calls;
+    });
+    session.updatedAt = Date.now();
+    ctx.saveSession(session as Parameters<typeof ctx.saveSession>[0]);
 
-  const realUsage = result.usage || { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-  onEvent({ type: "done", usage: realUsage });
-  logger.info(`[timing] delegation-ack turn ${Date.now() - turnStart}ms (${prepared.provider}/${prepared.model}, ${realUsage.totalTokens} tokens)`);
+    const realUsage = result.usage || { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    onEvent({ type: "done", usage: realUsage });
+    logger.info(`[timing] delegation-ack turn ${Date.now() - turnStart}ms (${prepared.provider}/${prepared.model}, ${realUsage.totalTokens} tokens)`);
 
-  return { onEventInstalled: true, doneEmitted: true };
+    return { onEventInstalled: true, doneEmitted: true };
+  } catch (e) {
+    // The ack turn died without a done reaching wsChat.onEvent — terminate
+    // OUR entry (identity-guarded) so it can't leak, then let the
+    // orchestrator's catch surface the error to the client.
+    try { ctx.chatWs.failChatIfCurrent(sessionId, wsChat.abort, ""); } catch {}
+    throw e;
+  }
 }

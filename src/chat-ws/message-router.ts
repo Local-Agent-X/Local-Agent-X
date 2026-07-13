@@ -255,22 +255,27 @@ async function handleReconnectOp(ws: WebSocket, sessionId: string, opId: string,
     // the response. Live failure 2026-05-19: same sentence appearing
     // 2-3× stacked inside one bubble; fixed on chat-leave+return
     // because renderMessages rebuilds from op_messages (single copy).
+    //
+    // AND it must be exactly ONE replace for the whole op. A multi-
+    // iteration turn (text → tool → more text) commits N assistant
+    // messages, but the client keeps a single live bubble whose replace
+    // handler sets `content = text` wholesale — so N per-message replaces
+    // left only the LAST message's text in the bubble, and the client
+    // then persisted that truncated content on `done`. Join all assistant
+    // texts with "\n\n", mirroring the paragraph break the live path
+    // inserts after tool calls (chat-stream-store.js toolsSinceText).
     if (result.ok) {
       try {
         const messages = readOpMessages(opId);
-        for (const m of messages) {
-          if (m.role !== "assistant") continue;
-          const content = m.content as { text?: unknown } | null | undefined;
-          const text = typeof content?.text === "string" ? content.text : "";
-          if (text) {
-            ws.send(JSON.stringify({
-              type: "event",
-              sessionId,
-              event: { type: "stream", text, replace: true },
-              _opId: opId,
-              _replay: true,
-            }));
-          }
+        const text = joinAssistantText(messages);
+        if (text) {
+          ws.send(JSON.stringify({
+            type: "event",
+            sessionId,
+            event: { type: "stream", text, replace: true },
+            _opId: opId,
+            _replay: true,
+          }));
         }
       } catch { /* best-effort replay */ }
     } else {
@@ -284,6 +289,30 @@ async function handleReconnectOp(ws: WebSocket, sessionId: string, opId: string,
   } catch (e) {
     logger.warn(`[ws-chat] reconnect_op error: ${(e as Error).message}`);
   }
+}
+
+// Pure join for reconnect replay: all committed assistant texts of an op,
+// in commit order, separated by a blank line ("\n\n" — the same paragraph
+// break the client's live path inserts after tool calls). Non-assistant
+// messages and empty/non-string texts are skipped; zero assistant text
+// yields "" and the caller sends nothing.
+//
+// Seeds are not commits: create-op seeds the ENTIRE prior session history
+// into the op file for provider context (seed-messages.ts stamps those
+// rows "hist-"; the current turn's user message is "um-"). Filtering on
+// role alone would replay every past assistant reply into the live bubble
+// — and the client would persist that contamination on done — so "hist-"
+// rows are excluded here. Exported for tests.
+export function joinAssistantText(messages: Array<{ role?: unknown; content?: unknown; messageId?: unknown }>): string {
+  const parts: string[] = [];
+  for (const m of messages) {
+    if (m.role !== "assistant") continue;
+    if (typeof m.messageId === "string" && m.messageId.startsWith("hist-")) continue;
+    const content = m.content as { text?: unknown } | null | undefined;
+    const text = typeof content?.text === "string" ? content.text : "";
+    if (text) parts.push(text);
+  }
+  return parts.join("\n\n");
 }
 
 function handleStop(sessionId: string): void {

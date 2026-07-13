@@ -177,7 +177,7 @@ export function buildManager(): ChatWsManager {
             // through the 500/400 trim below on any long turn, so a mid-turn
             // reconnect replayed only the TAIL as a `replace` and clobbered
             // the client's fuller partial (trim-truncation bug, 2026-07-13
-            // audit — see replayBufferedEvents in state.ts).
+            // audit — see replayBufferedEvents in replay.ts).
             chat.sawStream = true; // gates the replay's replace frame — even for text:""
             if ("replace" in event) {
               chat.streamText = event.text;

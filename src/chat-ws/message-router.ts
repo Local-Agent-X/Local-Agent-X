@@ -12,9 +12,9 @@ import {
   broadcastToSession,
   getChatHandler,
   getMessageCountForSession,
-  replayBufferedEvents,
   terminateChat,
 } from "./state.js";
+import { replayBufferedEvents } from "./replay.js";
 import { handleIdeRuntimeError } from "./ide-runtime-error.js";
 // Static imports for the inject hot path. Previously these were `await
 // import(...)` inside the handler, but every `await` yields the event loop

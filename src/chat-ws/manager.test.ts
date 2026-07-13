@@ -18,7 +18,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";
 import { buildManager } from "./manager.js";
-import { activeChats, clients, replayBufferedEvents, terminateChat } from "./state.js";
+import { activeChats, clients, terminateChat } from "./state.js";
+import { replayBufferedEvents } from "./replay.js";
 
 interface Frame {
   type: string;

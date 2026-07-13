@@ -22,9 +22,9 @@ import {
   activeChats,
   clients,
   terminateChat,
-  replayBufferedEvents,
   broadcastActiveChats,
 } from "./state.js";
+import { replayBufferedEvents } from "./replay.js";
 import { markChatHandlerPending, clearChatHandlerPending } from "../ops/session-bridge.js";
 
 function makeRouter() {

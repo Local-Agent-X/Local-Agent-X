@@ -1,3 +1,5 @@
+import { classifyYesNo } from "../classifiers/classify-with-llm.js";
+
 const REFUSAL_AND_ERROR_PATTERNS: RegExp[] = [
   /^(?:I'?m sorry|I apologi[sz]e|Sorry,)\b[^.\n]{0,200}\b(?:can'?t|cannot|unable|won'?t)\b/i,
   /^I (?:can'?t|cannot|am unable to|am not able to)\s+(?:help|assist|complete|provide|do|perform|access|fulfill|generate|produce|continue|comply)/i,
@@ -175,5 +177,69 @@ export function validateMissionOutput(prompt: string, output: string, stopReason
       refusal,
       badStop,
     },
+  };
+}
+
+const CONFIRM_SYSTEM_PROMPT = `You are auditing a quality gate that wants to REJECT a scheduled AI job's output. The gate uses keyword patterns for refusals and prompt-keyword overlap for topicality, and it over-fires: a report that opens with a caveat ("I couldn't reach one source, but here is the full analysis...") or answers the mission in synonyms is NOT a refusal or off-topic.
+
+Reply YES if the output genuinely fails the mission — it refuses, errors out, or does not address what the mission asked for. Reply NO if the output substantively delivers on the mission despite the gate's match.
+
+Reply with EXACTLY one line starting with YES or NO, followed by a brief reason.`;
+
+export type ConfirmRejectionFn = (args: { prompt: string; output: string; reason: string }) => Promise<boolean | null>;
+
+const DEFAULT_CONFIRM: ConfirmRejectionFn = ({ prompt, output, reason }) =>
+  classifyYesNo({
+    category: "mission-validate",
+    systemPrompt: CONFIRM_SYSTEM_PROMPT,
+    userPrompt:
+      `MISSION PROMPT:\n"${prompt.slice(0, 800)}"\n\n` +
+      `AGENT OUTPUT (may be truncated):\n"${output.slice(0, 2500)}"\n\n` +
+      `GATE'S REJECTION REASON: ${reason}\n\n` +
+      `Does the output genuinely fail the mission? YES or NO + one-line reason.`,
+    // Once per mission completion — latency is irrelevant next to the run
+    // itself, but keep a ceiling so a hung provider can't stall the job.
+    timeoutMs: 6000,
+    envDisableVar: "LAX_LLM_MISSION_VALIDATE",
+  });
+
+/**
+ * validateMissionOutput with an LLM second opinion on SEMANTIC rejections.
+ * The refusal patterns and topic-overlap score are the churn-prone judgments
+ * (this file's dated "added after miss" comments are the record); when one of
+ * them is the sole reason for rejection, an LLM reads the actual output. A
+ * NO verdict overrides the rejection (content accepted; stopReason gating
+ * still applies). YES / null / error keeps the regex rejection — fail-open
+ * to the deterministic verdict. Structural rejections (empty, too short,
+ * truncated, meta-bad) are never second-guessed.
+ */
+export async function validateMissionOutputConfirmed(
+  prompt: string,
+  output: string,
+  stopReason: string,
+  confirm: ConfirmRejectionFn = DEFAULT_CONFIRM,
+): Promise<ValidationResult> {
+  const v = validateMissionOutput(prompt, output, stopReason);
+  if (v.contentValid) return v;
+  const d = v.details;
+  const semanticOnly =
+    !!(d?.refusal?.refused || d?.offTopic) &&
+    !d?.tooShort && !d?.matchedBad && !d?.truncated;
+  if (!semanticOnly) return v;
+
+  let verdict: boolean | null = null;
+  try {
+    verdict = await confirm({ prompt, output, reason: v.reason ?? "" });
+  } catch {
+    verdict = null;
+  }
+  if (verdict !== false) return v;
+
+  const badStop = stopReason !== "end_turn";
+  return {
+    valid: !badStop,
+    contentValid: true,
+    reason: badStop ? `bad stopReason: ${stopReason}` : undefined,
+    details: { ...d, badStop },
   };
 }

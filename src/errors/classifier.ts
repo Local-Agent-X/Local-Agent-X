@@ -57,12 +57,8 @@ export enum FailoverReason {
   FormatError = "format_error",
 
   // ── Agent output (not API errors — semantic failures) ──
-  /** Agent ended without calling tools, output looks like "I can't do this". */
-  AgentRefusal = "agent_refusal",
   /** Tool returned empty/null/zero results N times in a row. */
   EmptyResult = "empty_result",
-  /** Worker exited with no WORK_DONE sentinel and no meaningful work. */
-  NoProgressMade = "no_progress_made",
 
   // ── Catch-all ──
   /** Unclassifiable — retry with backoff or escalate. */
@@ -91,20 +87,6 @@ export interface ClassifiedError {
 
 /** Tool result that's effectively "no data" — used by agent-guards dead-end detector. */
 const EMPTY_RESULT_RE = /^\s*(\(no output\)|\[\]|\{\}|null|none|No results?|0 results?|Nothing found|No matches|No files matched?|No relevant memor|Command failed)/i;
-
-/** Worker output that signals refusal / "I can't do this" — used by worker classifier. */
-const REFUSAL_PATTERNS = [
-  /\bI (don't|do not) have (the |access to |any )?\w*\s*(file ?system|filesystem|standard)?\s*(tools?|access)/i,
-  /\bI (can't|cannot|am unable to|am not able to|don't have a way to)\s+(audit|refactor|edit|read|modify|access|complete|do this)/i,
-  /\bno (filesystem|tool|MCP|standard)\s+(access|tools?)\s+(available|exposed|enabled)/i,
-  /\b(could|can|please) you (re-?run|provide|share|paste|enable)/i,
-  /\bplease (re-?run|provide|share|paste|enable)\s+(this|the file|tools|file contents)/i,
-  /\b(I'll|I will|I would) need\b/i,
-  /\bI should\s+(read|check|look at|inspect|examine|review|edit|modify|update|run)/i,
-  /\blet me know if you (want|'d like)|\blet me know if (you'd like )?I should\b/i,
-  /\b(would you like|do you want) me to\b/i,
-  /\bI (could|can) (read|check|look at|inspect|examine|edit|modify|update|run|do)\b.*\?\s*$/i,
-];
 
 /** API error message hints by status code or substring. */
 const STATUS_HINTS: Array<{ test: (msg: string, code?: number) => boolean; reason: FailoverReason; recovery: RecoveryAction; retryable: boolean }> = [
@@ -185,16 +167,3 @@ export function isEmptyResultText(text: string): boolean {
   return EMPTY_RESULT_RE.test(text);
 }
 
-/**
- * Detect whether an agent's final text looks like a refusal — "I can't do
- * this", "please re-run", "I would need". Used by worker-entry's
- * classifyOpResult to mark a worker as failed even when stopReason is
- * "end_turn" (the agent ended cleanly but didn't actually do the work).
- *
- * Caller must combine with "no tool calls executed" — these patterns are
- * common in legitimate "I'll need X" messages where the agent then runs
- * tools. Only ENDED-turn-with-no-tool-calls + matches = real refusal.
- */
-export function looksLikeAgentRefusal(text: string): boolean {
-  return REFUSAL_PATTERNS.some(rx => rx.test(text));
-}

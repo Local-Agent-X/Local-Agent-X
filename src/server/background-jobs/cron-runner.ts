@@ -12,7 +12,7 @@ import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import type { CronService } from "../../cron/cron-service.js";
 import type { IntegrationRegistry } from "../../integrations/index.js";
-import { validateMissionOutput } from "../../cron/output-validation.js";
+import { validateMissionOutputConfirmed } from "../../cron/output-validation.js";
 import { createLogger } from "../../logger.js";
 import { CRON_SYSTEM_PROMPT } from "./prompts.js";
 import { stripCronPreamble, stripSaveInstructions } from "./prompt-cleaning.js";
@@ -164,7 +164,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     const jobDir = join(cronReportsDir, jobId);
     if (!existsSync(jobDir)) mkdirSync(jobDir, { recursive: true });
     const job = cronService.get(jobId);
-    const validation = validateMissionOutput(cleanedPrompt, trimmed, stopReason);
+    const validation = await validateMissionOutputConfirmed(cleanedPrompt, trimmed, stopReason);
     // Salvage rule (mirrors src/ops/worker-entry.ts classifyOpResult):
     // judge by evidence — if the agent produced substantive content that
     // passes refusal/topic/length/truncation checks, ship it to canonical

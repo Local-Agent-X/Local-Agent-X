@@ -23,6 +23,27 @@ const _liveMessageNodes = new Map();      // sessionId → .msg.assistant elemen
 // per frame. The latest store state is read at flush time.
 const _rerenderRafs = new Map();          // sessionId → rAF token
 
+// Every swap rebuilds the whole live bubble, including a full markdown parse
+// of ALL accumulated content — O(content length) per frame. Fine for short
+// answers, but a tens-of-KB reply re-parsed up to 60×/second is the late-
+// stream jank on big answers. Past this size, degrade from per-rAF to a time
+// throttle. ~24k chars is a few screens of markdown — comfortably past where
+// per-frame parse cost starts eating the frame budget, and short answers
+// (the common case) never hit it.
+const LIVE_THROTTLE_THRESHOLD_CHARS = 24_000;
+// Minimum gap between swaps once throttled. 150ms is imperceptible during a
+// long-answer tail — the reader is skimming a wall of text, not watching
+// individual tokens land — and cuts the parse work ~10× vs 60fps.
+const MIN_SWAP_INTERVAL_MS = 150;
+const _rerenderTimers = new Map();        // sessionId → trailing setTimeout id
+const _lastSwapAt = new Map();            // sessionId → ts of last completed swap
+
+// Paint + record the swap time so the throttle above measures from the last
+// COMPLETED swap, not from when one was queued.
+function _paintLiveSwap(sessionId) {
+  if (_swapLiveMessage(sessionId)) _lastSwapAt.set(sessionId, Date.now());
+}
+
 // rAF-batched swap of the live assistant bubble from ChatStreamStore state.
 // Called from dispatchChatStreamEvent after applyEvent so the bubble always
 // reflects the latest store snapshot. Multiple events in one frame coalesce
@@ -159,10 +180,30 @@ function rerenderLiveMessage(sessionId) {
   if (!sessionId) return;
   if (!activeChat || activeChat.id !== sessionId) return;
   if (!ChatStreamStore.isStreaming(sessionId)) return;
-  if (_rerenderRafs.has(sessionId)) return;
+  // A pending trailing timer already guarantees the latest store state paints;
+  // stacking a rAF on top would defeat the throttle.
+  if (_rerenderRafs.has(sessionId) || _rerenderTimers.has(sessionId)) return;
+  const store = ChatStreamStore.get(sessionId);
+  const size = store
+    ? (store.content || '').length + (store.reasoning || '').length
+    : 0;
+  if (size > LIVE_THROTTLE_THRESHOLD_CHARS) {
+    const elapsed = Date.now() - (_lastSwapAt.get(sessionId) || 0);
+    if (elapsed < MIN_SWAP_INTERVAL_MS) {
+      // Too soon after the last swap: arm a single trailing timer for the
+      // remainder instead of dropping the delta — the LAST tokens of a turn
+      // must always paint even if no further event arrives to trigger it.
+      const timer = setTimeout(() => {
+        _rerenderTimers.delete(sessionId);
+        _paintLiveSwap(sessionId);
+      }, MIN_SWAP_INTERVAL_MS - elapsed);
+      _rerenderTimers.set(sessionId, timer);
+      return;
+    }
+  }
   const token = requestAnimationFrame(() => {
     _rerenderRafs.delete(sessionId);
-    _swapLiveMessage(sessionId);
+    _paintLiveSwap(sessionId);
   });
   _rerenderRafs.set(sessionId, token);
 }
@@ -181,8 +222,14 @@ function flushLiveRenders() {
     cancelAnimationFrame(_rerenderRafs.get(sessionId));
     _rerenderRafs.delete(sessionId);
   }
+  // Trailing throttle timers too — the catch-up paint below supersedes them,
+  // and a survivor would double-paint (harmless but wasted parse work).
+  for (const sessionId of Array.from(_rerenderTimers.keys())) {
+    clearTimeout(_rerenderTimers.get(sessionId));
+    _rerenderTimers.delete(sessionId);
+  }
   if (activeChat && ChatStreamStore.isStreaming(activeChat.id)) {
-    _swapLiveMessage(activeChat.id);
+    _paintLiveSwap(activeChat.id);
   }
 }
 
@@ -204,6 +251,13 @@ if (typeof window !== 'undefined') {
 // plus every other message vanished and repainted at once. Returns false when
 // the live node can't be located so the caller falls back to a full render.
 function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
+  // The turn is over: retire this session's throttle state. A trailing timer
+  // left running would only no-op (_swapLiveMessage bails once isStreaming
+  // flips false), but cancelling here keeps per-session state from outliving
+  // the stream it belongs to.
+  const timer = _rerenderTimers.get(sessionId);
+  if (timer !== undefined) { clearTimeout(timer); _rerenderTimers.delete(sessionId); }
+  _lastSwapAt.delete(sessionId);
   const el = document.getElementById('messages');
   if (!el || !finalizedMsg) return false;
   let oldNode = _liveMessageNodes.get(sessionId);

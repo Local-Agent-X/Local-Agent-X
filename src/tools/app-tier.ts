@@ -17,9 +17,12 @@
  *
  * This classifier is the detection half: it decides which of the three tiers a
  * build brief is, so the builder can be instructed (and equipped) to build it
- * for real instead of faking. It is deterministic on purpose — an LLM tier call
- * could time out and fall back to "quick-html", which is precisely the silent
- * faking we're trying to kill. Predictable, explainable, no fallback-to-fake.
+ * for real instead of faking. The hard signals below stay deterministic —
+ * predictable, explainable, no fallback-to-fake. The quick-html residue (a
+ * real app described in words the keyword lists don't know) gets an LLM
+ * second opinion at the build_app call site via classifyAppTierEscalation —
+ * ESCALATION-ONLY, so an LLM timeout/outage keeps the regex verdict and can
+ * never itself cause the fall-back-to-fake this file exists to kill.
  *
  * Bias: quick-html stays the lane for genuinely trivial single-screen static
  * tools (a calculator, a tracker, a landing page) — instant, can't-fail, no
@@ -32,6 +35,8 @@
  * a trivial tool read as frontend-spa pays a real build+verify tax, so the
  * real-app signals stay tight to avoid over-routing the simple case.
  */
+
+import { classifyAppTierEscalation } from "../classifiers/app-tier-classify.js";
 
 export type AppTier = "quick-html" | "full-stack" | "frontend-spa" | "compiled-native";
 
@@ -158,6 +163,22 @@ export function classifyAppTier(prompt: string): AppTier {
   if (impliesFullStack(text)) return "full-stack";
   if (REAL_APP_RE.test(text)) return "frontend-spa";
   return "quick-html";
+}
+
+/**
+ * Tier resolution for build_app: regex verdict, plus the LLM escalation on
+ * the quick-html residue. The regex classifier's hard signals (named
+ * toolchain/framework/engine) are trusted as-is. Its quick-html verdict is
+ * the low-confidence residue where real apps described in plain words get
+ * faked as a static page — consult the LLM there, escalation-only:
+ * null/timeout keeps the regex verdict, so an LLM outage can never
+ * downgrade a build toward faking.
+ */
+export async function resolveAppTier(prompt: string): Promise<AppTier> {
+  const tier = classifyAppTier(prompt);
+  if (tier !== "quick-html") return tier;
+  const escalated = await classifyAppTierEscalation({ prompt });
+  return escalated && escalated !== "quick-html" ? escalated : tier;
 }
 
 /** Human-readable label for logs / op descriptions. */

@@ -57,7 +57,7 @@ import { globTool } from "./glob-tool.js";
 import { connectorCreateTool } from "./connector-tools.js";
 import { processStartTool, processStatusTool, processKillTool } from "./process-tools-defs.js";
 import { appServeBackendTool, appServeFrontendTool } from "./dev-server-tools.js";
-import { classifyAppTier, tierLabel, type AppTier } from "./app-tier.js";
+import { resolveAppTier, tierLabel, type AppTier } from "./app-tier.js";
 import { selectDesignBrief } from "./design-brief.js";
 import { recordDesignSpec } from "../canonical-loop/index.js";
 
@@ -213,7 +213,7 @@ export const buildAppTool: ToolDefinition = {
     // failure 2026-05-14 on Anthropic Opus 4.7 — prompt missing, description
     // present. Schema docs the right key; alias keeps back-compat.
     const prompt = String(args.prompt || args.description || "");
-    const tier = classifyAppTier(prompt);
+    const tier = await resolveAppTier(prompt);
     const backend = String(args.backend || "auto");
     const sessionId = String(args._sessionId || "");
     // The chat turn handler stamps args._runtimeProvider/_runtimeModel via

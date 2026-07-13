@@ -95,8 +95,8 @@ Drive a clarifying conversation. The five questions that matter, batched:
 - Hard constraints — stack, hosting, deadline, budget, anything non-negotiable?
 
 If the user gave you most of this in their opening message, don't re-ask.
-Extract what's there, ask only about gaps. Use `ask_user_input_v0` if the
-gaps are checkbox-shaped.
+Extract what's there, ask only about the gaps — as one short batched list,
+not a five-question interrogation.
 
 Output: brief inline in chat, not a file yet. Confirm before continuing.
 

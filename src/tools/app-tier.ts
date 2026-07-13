@@ -40,6 +40,20 @@ import { classifyAppTierEscalation } from "../classifiers/app-tier-classify.js";
 
 export type AppTier = "quick-html" | "full-stack" | "frontend-spa" | "compiled-native";
 
+/**
+ * A materially-ambiguous brief the escalation LLM declined to tier — the target
+ * might not be software ("a mega computer") or the plausible builds diverge
+ * enough that guessing wastes a real build. build_app surfaces the question
+ * instead of blind-building. Distinct from merely-vague briefs (those get a
+ * tier and build). See classifiers/app-tier-classify.ts.
+ */
+export interface AppTierClarify {
+  kind: "clarify";
+  question: string;
+  /** 2-4 concrete interpretations for the user to pick from. */
+  options: string[];
+}
+
 // Compiled / native languages that cannot run as browser JS — their presence in
 // a brief means there's a real program to actually build and run. Checked FIRST
 // (most specific). "go"/"c"/"java" are too common as bare words, so they're
@@ -173,12 +187,19 @@ export function classifyAppTier(prompt: string): AppTier {
  * faked as a static page — consult the LLM there, escalation-only:
  * null/timeout keeps the regex verdict, so an LLM outage can never
  * downgrade a build toward faking.
+ *
+ * The same escalation may instead return a clarify verdict when the quick-html
+ * residue is materially ambiguous (target might not be software, or the builds
+ * diverge). That only reaches here from the plain-word residue and fails open
+ * to the regex tier, so a clear build is never turned into a question.
  */
-export async function resolveAppTier(prompt: string): Promise<AppTier> {
+export async function resolveAppTier(prompt: string): Promise<AppTier | AppTierClarify> {
   const tier = classifyAppTier(prompt);
   if (tier !== "quick-html") return tier;
   const escalated = await classifyAppTierEscalation({ prompt });
-  return escalated && escalated !== "quick-html" ? escalated : tier;
+  if (!escalated) return tier;
+  if (typeof escalated !== "string") return escalated; // clarify verdict
+  return escalated !== "quick-html" ? escalated : tier;
 }
 
 /** Human-readable label for logs / op descriptions. */
@@ -189,4 +210,14 @@ export function tierLabel(tier: AppTier): string {
     case "full-stack": return "full-stack app (real backend)";
     case "quick-html": return "quick HTML app";
   }
+}
+
+/**
+ * Render a clarify verdict into a build_app tool result the model relays to the
+ * user. Framed as a do-not-build instruction with the scoped options so a
+ * tool-shy model surfaces the question instead of guessing and building wrong.
+ */
+export function formatClarify(c: AppTierClarify): string {
+  const opts = c.options.map((o, i) => `${i + 1}. ${o}`).join("\n");
+  return `AMBIGUOUS BUILD REQUEST — do not build yet. Ask the user this one question, list the options, and wait for their answer:\n\n${c.question}\n${opts}\n\nOnce they choose, call build_app again with a prompt that reflects their choice.`;
 }

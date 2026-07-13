@@ -20,11 +20,11 @@
  */
 
 import { classifyWithLLM } from "./classify-with-llm.js";
-import type { AppTier } from "../tools/app-tier.js";
+import type { AppTier, AppTierClarify } from "../tools/app-tier.js";
 
 const TIERS: readonly AppTier[] = ["quick-html", "frontend-spa", "full-stack", "compiled-native"];
 
-const SYSTEM_PROMPT = `You classify an app build brief into the build tier it honestly requires. Reply with EXACTLY one token from: QUICK-HTML, FRONTEND-SPA, FULL-STACK, COMPILED-NATIVE.
+const SYSTEM_PROMPT = `You triage an app build brief. Reply with EXACTLY one tier token from: QUICK-HTML, FRONTEND-SPA, FULL-STACK, COMPILED-NATIVE — OR a CLARIFY line if the brief is materially ambiguous.
 
 Definitions:
 - QUICK-HTML: a single static HTML page can honestly BE this app — a calculator, a tracker, a landing page, a small tool, a dashboard with local/hardcoded data. No login, no server, no persistence beyond localStorage.
@@ -34,21 +34,25 @@ Definitions:
 
 Bias: reply QUICK-HTML unless the brief CLEARLY requires more. A brief that merely sounds ambitious but a single page can honestly satisfy is QUICK-HTML. Escalate only when a static page would have to FAKE something the user asked for (fake login, fake saved data shared between users, fake multi-page navigation, fake native program output).
 
-Reply: one token, then a brief reason on the same line.`;
+CLARIFY — only for MATERIAL ambiguity: the target might not even be software ("a mega computer", "a business", "a house"), OR the plausible builds diverge so much that guessing wrong wastes a real build. Then do NOT pick a tier; reply exactly:
+CLARIFY | <one short question> | <option 1> | <option 2> | <option 3 optional>
+Do NOT use CLARIFY for a brief that is merely vague but unmistakably a real app or site — "a website for a peptide company" is a real site, pick its tier. Reserve CLARIFY for genuine forks.
+
+Reply: a single tier token + brief reason on one line, OR one CLARIFY line.`;
 
 /**
- * Ask the LLM which tier a build brief honestly requires. Caller policy
- * (build_app): consult only when the regex says quick-html; apply only
- * upward. Null = keep the regex verdict.
+ * Ask the LLM to triage a build brief. Caller policy (build_app): consult only
+ * when the regex says quick-html; apply a tier only upward, or surface a clarify
+ * verdict. Null = keep the regex verdict (build).
  */
 export async function classifyAppTierEscalation(
   args: { prompt: string; signal?: AbortSignal; timeoutMs?: number; model?: string },
-): Promise<AppTier | null> {
-  return classifyWithLLM<AppTier>({
+): Promise<AppTier | AppTierClarify | null> {
+  return classifyWithLLM<AppTier | AppTierClarify>({
     category: "app-tier",
     systemPrompt: SYSTEM_PROMPT,
-    userPrompt: `BUILD BRIEF:\n"${args.prompt.slice(0, 2000)}"\n\nWhich tier does this honestly require? One token + reason.`,
-    parse: parseTier,
+    userPrompt: `BUILD BRIEF:\n"${args.prompt.slice(0, 2000)}"\n\nTier token + reason, or a CLARIFY line if materially ambiguous.`,
+    parse: parseTierOrClarify,
     // Once per build_app invocation, before any scaffolding — latency budget
     // is generous relative to the build itself, but keep the default ceiling
     // so a hung provider never stalls the op start.
@@ -64,4 +68,22 @@ export function parseTier(raw: string): AppTier | null {
   const token = head.trim().toLowerCase().replace(/^[^a-z]*/, "").split(/[\s:,.]+/, 1)[0] ?? "";
   const match = TIERS.find((t) => t === token);
   return match ?? null;
+}
+
+/**
+ * Parse the escalation reply into a tier token OR a clarify verdict. A CLARIFY
+ * line is `CLARIFY | question | opt1 | opt2 [| opt3]`; a malformed one (missing
+ * question or < 2 options) returns null so the caller falls open to building
+ * rather than surfacing a broken question. Pure + exported for direct testing.
+ */
+export function parseTierOrClarify(raw: string): AppTier | AppTierClarify | null {
+  const head = raw.trim().split(/\r?\n/, 1)[0] ?? "";
+  if (/^\s*clarify\b/i.test(head)) {
+    const parts = head.split("|").map((s) => s.trim()).filter(Boolean);
+    const question = parts[1] ?? "";
+    const options = parts.slice(2).filter(Boolean).slice(0, 4);
+    if (!question || options.length < 2) return null;
+    return { kind: "clarify", question, options };
+  }
+  return parseTier(raw);
 }

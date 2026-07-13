@@ -5,7 +5,7 @@ vi.mock("./classify-with-llm.js", () => ({
   classifyWithLLM: (...args: unknown[]) => classifyWithLLM(...args),
 }));
 
-const { classifyAppTierEscalation, parseTier } = await import("./app-tier-classify.js");
+const { classifyAppTierEscalation, parseTier, parseTierOrClarify } = await import("./app-tier-classify.js");
 const { resolveAppTier } = await import("../tools/app-tier.js");
 
 beforeEach(() => classifyWithLLM.mockReset());
@@ -27,6 +27,35 @@ describe("parseTier", () => {
       expect(parseTier(raw)).toBeNull();
     },
   );
+});
+
+describe("parseTierOrClarify", () => {
+  it("still parses plain tier tokens (delegates to parseTier)", () => {
+    expect(parseTierOrClarify("FULL-STACK — shared reservations db")).toBe("full-stack");
+    expect(parseTierOrClarify("quick-html, one page is honest")).toBe("quick-html");
+  });
+
+  it("parses a well-formed CLARIFY line into a clarify verdict", () => {
+    const v = parseTierOrClarify(
+      "CLARIFY | What do you mean by a mega computer? | A retro-computer web app | A simulated CPU in code | A real PC parts list",
+    );
+    expect(v).toEqual({
+      kind: "clarify",
+      question: "What do you mean by a mega computer?",
+      options: ["A retro-computer web app", "A simulated CPU in code", "A real PC parts list"],
+    });
+  });
+
+  it("is case-insensitive on the CLARIFY keyword and caps at 4 options", () => {
+    const v = parseTierOrClarify("clarify | Q | a | b | c | d | e");
+    expect(v).toMatchObject({ kind: "clarify", question: "Q", options: ["a", "b", "c", "d"] });
+  });
+
+  it("rejects a malformed CLARIFY (missing question or < 2 options) so the caller builds", () => {
+    expect(parseTierOrClarify("CLARIFY")).toBeNull();
+    expect(parseTierOrClarify("CLARIFY | only a question")).toBeNull();
+    expect(parseTierOrClarify("CLARIFY | q | just-one-option")).toBeNull();
+  });
 });
 
 describe("classifyAppTierEscalation", () => {
@@ -63,5 +92,15 @@ describe("resolveAppTier — escalation-only hybrid", () => {
   it("keeps the regex verdict on LLM outage — never downgrades toward faking", async () => {
     classifyWithLLM.mockResolvedValue(null);
     expect(await resolveAppTier("a tip calculator")).toBe("quick-html");
+  });
+
+  it("surfaces a clarify verdict from the quick-html residue instead of a tier", async () => {
+    const clarify = {
+      kind: "clarify",
+      question: "What do you mean by a mega computer?",
+      options: ["A retro-computer web app", "A real PC parts list"],
+    };
+    classifyWithLLM.mockResolvedValue(clarify);
+    expect(await resolveAppTier("build me a mega computer")).toEqual(clarify);
   });
 });

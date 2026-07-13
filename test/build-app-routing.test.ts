@@ -18,12 +18,12 @@ import { join, resolve } from "node:path";
 import {
   buildAppTool,
   builderToolsForTier,
-  checkBuildCollision,
   pickForcedProviderFromRuntime,
   resolveBuildProvider,
   resolveBuildStrategy,
   APP_BUILD_OP_TYPE,
 } from "../src/tools/build-app.js";
+import { checkBuildCollision } from "../src/tools/build-app-collision.js";
 import { AgentTemplateStore } from "../src/agent-store/index.js";
 import { TOOLS } from "../src/tool-registry.js";
 import { readOp } from "../src/ops/op-store.js";

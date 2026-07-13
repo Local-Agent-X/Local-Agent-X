@@ -96,6 +96,9 @@ function input(over: Partial<DecideOutcomeInput> = {}): DecideOutcomeInput {
     // the loop's done-decision is what's under test.
     adapterTerminalReason: null,
     modelSignaledDone: false,
+    // Default: no explicit continue signal (modelStop undefined path). Tests
+    // that exercise the honor-tool_use fix set this true explicitly.
+    modelWantsToContinue: false,
     adapterError: null,
     ...over,
   };
@@ -167,9 +170,11 @@ describe("decideTurnOutcome — P-1 mutation-wrapup measurement (behavior-neutra
   beforeEach(() => vi.clearAllMocks());
 
   // A successful, non-silent MUTATION (write) committed this turn, WITH narration
-  // and NO real model stop signal. This is the exact shape where the
-  // `mutationCommitted` shortcut is the SOLE reason the turn can terminate — the
-  // case that can cut off a promised follow-up ("I'll write it, then run tests").
+  // and NEITHER stop signal (modelSignaledDone=false, modelWantsToContinue=false
+  // via the input() default) — the modelStop-undefined FALLBACK path. Here the
+  // mutation still terminates (the original "avoid a redundant wrap-up" behavior
+  // for adapters that surface no stop reason). The honored-continue case is
+  // exercised in the "P-1 FIX" block below.
   const writeCall: ToolCall = { toolCallId: "w1", tool: "write", args: { path: "/x", content: "y" } };
   const writeOk: CommitTurnMessage = {
     messageId: "trw1", role: "tool", content: { toolCallId: "w1", text: "[ok]\nwrote 3 lines" },
@@ -245,6 +250,58 @@ describe("decideTurnOutcome — P-1 mutation-wrapup measurement (behavior-neutra
     // A gate re-opened the turn, so nothing was lost — promisedFollowup is
     // irrelevant here and recorded as false regardless of narration.
     expect(await recordMock()).toHaveBeenCalledWith("reopened-by-gate", false);
+  });
+});
+
+describe("decideTurnOutcome — P-1 FIX: honor the model's continue signal", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // The real multi-step-build shape: the model committed a file write AND its
+  // finish_reason was tool_calls / tool_use (modelWantsToContinue) — it is
+  // asking for another turn. Before the fix, the mutationCommitted shortcut
+  // terminated the op anyway, ending the build after every file write and
+  // forcing a nudge each step (observed on BOTH grok and Anthropic). Now the
+  // continue signal must win: the op keeps going with no user nudge.
+  const writeCall: ToolCall = { toolCallId: "w1", tool: "write", args: { path: "/x", content: "y" } };
+  const writeOk: CommitTurnMessage = {
+    messageId: "trw1", role: "tool", content: { toolCallId: "w1", text: "[ok]\nwrote 3 lines" },
+  } as unknown as CommitTurnMessage;
+  const writeSummary = [{ tool: "write", toolCallId: "w1" }] as unknown as ToolCallSummary[];
+  const continuingWrite = (over: Partial<DecideOutcomeInput> = {}) =>
+    input({
+      toolCalls: [writeCall],
+      toolMessages: [writeOk],
+      toolSummary: writeSummary,
+      assistantText: "Wrote index.html. Now the stylesheet.",
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+      ...over,
+    });
+
+  const p1Lines = async () => {
+    const { createLogger } = await import("../../logger.js");
+    const logger = (createLogger as unknown as () => { info: ReturnType<typeof vi.fn> })();
+    return logger.info.mock.calls.map((c) => String(c[0])).filter((s) => s.includes("[p1-mutation-wrapup]"));
+  };
+
+  it("a committed mutation does NOT terminate when the model signaled continue (drives another turn)", async () => {
+    const r = await decideTurnOutcome(continuingWrite());
+    expect(r.terminalReason).toBeNull(); // honored tool_use → keep going, no nudge
+  });
+
+  it("records NO P-1 fire when the continue signal is honored (nothing was cut off)", async () => {
+    await decideTurnOutcome(continuingWrite());
+    expect(await p1Lines()).toEqual([]);
+    const { recordP1Outcome } = await import("./p1-metrics.js");
+    expect(recordP1Outcome as unknown as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
+  it("STILL terminates on a committed mutation when there is NO continue signal (fallback intact)", async () => {
+    // modelStop-undefined path: no continue signal and the model didn't end —
+    // the original mutation fallback must still terminate so no-signal adapters
+    // don't hang waiting for a stop that never comes.
+    const r = await decideTurnOutcome(continuingWrite({ modelWantsToContinue: false }));
+    expect(r.terminalReason).toBe("done");
   });
 });
 

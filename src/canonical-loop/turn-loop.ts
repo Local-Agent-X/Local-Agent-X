@@ -331,6 +331,7 @@ export async function driveTurn(
     // carried it. decide-outcome trusts this to terminate even a non-silent
     // tool turn in one pass; absence → it falls back to shape inference.
     modelSignaledDone: result.modelStop === "ended",
+    modelWantsToContinue: result.modelStop === "continue",
     adapterError,
   });
 

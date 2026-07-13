@@ -62,6 +62,17 @@ export interface DecideOutcomeInput {
    * TurnResult.modelStop in turn-loop. See adapters/model-stop.ts.
    */
   modelSignaledDone: boolean;
+  /**
+   * The model's EXPLICIT continue signal: true when the provider reported a
+   * tool_use / tool_calls end-of-turn (modelStop === "continue") — the model
+   * paused FOR a tool result and wants another turn. Distinct from "no signal
+   * on this path" (modelStop undefined), which still falls back to the shape
+   * heuristics. When true, a committed mutation must NOT terminate the turn:
+   * honoring tool_use is what stops a multi-step build from ending after every
+   * single file write (the P-1 nudge-per-step failure, observed on BOTH grok
+   * and Anthropic). See adapters/model-stop.ts.
+   */
+  modelWantsToContinue: boolean;
   adapterError: { code: string; message: string } | null;
 }
 
@@ -89,7 +100,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const {
     op, turnIdx, middlewareDirective,
     finalized, toolMessages, toolSummary, toolCalls, observedTools,
-    assistantText, adapterTerminalReason, modelSignaledDone, adapterError,
+    assistantText, adapterTerminalReason, modelSignaledDone, modelWantsToContinue, adapterError,
   } = in_;
 
   // A confirmed-false-claim nudge (phantom worker, fake "I scheduled it")
@@ -164,24 +175,30 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const allSilent = toolCalls.length > 0 && toolCalls.every(isSilentToolCall);
   const noTools = toolCalls.length === 0;
   const mutationCommitted = failureSummary.hadSuccessfulMutation;
-  // P-1 measurement (behavior-neutral). `mutationCommitted` only CHANGES this
-  // decision when the model did not really signal done and the turn is neither
-  // silent nor tool-less — i.e. the model emitted a mutating tool_use (its real
-  // signal wanted to CONTINUE) alongside narration. In every other case one of
-  // modelSignaledDone / allSilent / noTools already terminates, so the clause is
-  // redundant. When it is the SOLE decider it can cut off a promised
-  // post-mutation follow-up ("I'll write the file, then run the tests"). Flag it
-  // here and emit at the end (after the gates may re-open it) to measure how
-  // often that actually happens before we commit to the surgical fix. See P-1.
+  // P-1 FIX — honor the model's explicit continue signal. When the model
+  // emitted a tool_use / tool_calls (modelWantsToContinue), it is asking for
+  // another turn; a mutation that committed this turn must NOT terminate the op,
+  // or a multi-step build ends after every single file write and the user has
+  // to nudge it forward each step. This was the reported failure on BOTH grok
+  // (finish_reason=tool_calls) and Anthropic (tool_use). A committed mutation
+  // only stands in as a terminator when there is NO continue signal (modelStop
+  // undefined) — the original "avoid a redundant post-mutation wrap-up" fallback
+  // for adapter paths that surface no stop reason. When the model genuinely
+  // ended, modelSignaledDone already terminates, so this never over-runs.
+  const mutationTerminates = mutationCommitted && !modelWantsToContinue;
+  // P-1 measurement (behavior-neutral). With the fix above, this now flags only
+  // the residual fallback case: a committed mutation terminated the turn with NO
+  // continue signal AND no other terminator. Kept as a regression watch (the
+  // durable sink still splits it by whether a follow-up was promised).
   const mutationWasSoleDecider =
     terminalReason === null &&
     !middlewareAborted &&
     assistantText.trim().length > 0 &&
-    mutationCommitted && !modelSignaledDone && !allSilent && !noTools;
+    mutationTerminates && !modelSignaledDone && !allSilent && !noTools;
   if (
     terminalReason === null &&
     !middlewareAborted &&
-    (modelSignaledDone || allSilent || noTools || mutationCommitted) &&
+    (modelSignaledDone || allSilent || noTools || mutationTerminates) &&
     assistantText.trim().length > 0
   ) {
     terminalReason = "done";

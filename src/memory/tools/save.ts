@@ -1,7 +1,8 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryIndex } from "../../memory/index.js";
-import { PERSONALITY_FILES, dedupeProfileMarkdown, setUserScalarField } from "../personality.js";
+import { PERSONALITY_FILES, setUserScalarField } from "../personality.js";
+import { dedupeProfileMarkdownConfirmed } from "../personality-confirmed.js";
 import {
   writeMemorySafely,
   appendToDailyLogSafely,
@@ -110,7 +111,7 @@ export function createSaveTools(memory: MemoryIndex) {
         const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
         const updated = setUserScalarField(existing, field, value);
         // Funnel through the same dedupe + safety gate every other write uses.
-        const safe = dedupeProfileMarkdown(updated);
+        const safe = await dedupeProfileMarkdownConfirmed(updated);
         try {
           const target = "memory:profile:user-field";
           writeMemorySafely({
@@ -288,7 +289,7 @@ export function createSaveTools(memory: MemoryIndex) {
         // when one exists) used to corrupt the file permanently. This
         // catches that at the funnel.
         if (filename === "USER.md" || filename === "IDENTITY.md" || filename === "HEART.md") {
-          updated = dedupeProfileMarkdown(updated);
+          updated = await dedupeProfileMarkdownConfirmed(updated);
         }
 
         try {

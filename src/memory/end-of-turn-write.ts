@@ -29,7 +29,8 @@ import { resetSession as resetCurateNudge } from "./curate-nudge.js";
 import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
 import { stripCodeFences } from "../classifiers/strip-code-fences.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
-import { PERSONALITY_FILES, dedupeProfileMarkdown } from "./personality.js";
+import { PERSONALITY_FILES } from "./personality.js";
+import { dedupeProfileMarkdownConfirmed } from "./personality-confirmed.js";
 import { writeMemorySafely, MemoryWriteBlocked, MAX_PROFILE_CHARS } from "./write-safely.js";
 import type { MemoryIndex } from "./index-core.js";
 
@@ -248,7 +249,7 @@ export async function applyWrite(d: WriteDecisionPayload, memory: MemoryIndex): 
   // persisting. Mirrors the funnel in memory_update_profile so both write
   // paths land on the same canonical shape.
   if (filename === "USER.md" || filename === "IDENTITY.md" || filename === "HEART.md") {
-    updated = dedupeProfileMarkdown(updated);
+    updated = await dedupeProfileMarkdownConfirmed(updated);
   }
 
   // Char-limit pre-check (graceful skip); the write gate enforces the same cap

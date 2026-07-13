@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { safeReadTextFile } from "./utils.js";
 import { writeMemorySafely } from "./write-safely.js";
 import { createInternalMemoryContext } from "./promotion-gate.js";
-import { findContradictions } from "./contradiction-sweep.js";
+import { findContradictions, type ContradictionPair } from "./contradiction-sweep.js";
 import { stripHtmlComments } from "../sanitize.js";
 
 import { createLogger } from "../logger.js";
@@ -147,6 +147,28 @@ export async function readPersonalityFile(
 // Insertion order is preserved by the first occurrence of each heading.
 export function dedupeProfileMarkdown(content: string): string {
   if (!content || !content.trim()) return content;
+  const out = dedupeProfileLines(content);
+  // Cross-section contradiction sweep. The block-level dedupe merges
+  // duplicate headings and overwrites scalar fields, but it can't catch a
+  // semantically-contradicting bullet that lives under a different section
+  // heading (real example: HEART.md had "Always greet in Spanish" under
+  // `## Language Preference` while `## Greeting Style` said "No Spanish
+  // greetings" — different section, same topic, opposite polarity). The
+  // sweep walks every `- bullet` across all sections, flags pairs that
+  // overlap heavily AND differ in polarity, and strips the affirmative
+  // side. Negation wins because corrections to durable rules are
+  // overwhelmingly phrased as retractions of an earlier instruction.
+  //
+  // This sync entry applies every flagged pair (regex-only floor). The
+  // durable profile-save funnels use dedupeProfileMarkdownConfirmed
+  // (personality-confirmed.ts), which LLM-vets each pair before deleting.
+  const finalLines = applyProfileDrops(out, findProfileBulletPairs(out));
+  return finalLines.join("\n") + "\n";
+}
+
+/** Structural dedupe only (headings/scalars/subsections) — no contradiction
+ *  sweep. Shared core for the sync and LLM-confirmed entries. */
+export function dedupeProfileLines(content: string): string[] {
   const lines = content.split("\n");
 
   // No fast-path. Even files with a single top-level heading can have
@@ -278,37 +300,27 @@ export function dedupeProfileMarkdown(content: string): string {
     }
   }
   while (out.length && out[out.length - 1].trim() === "") out.pop();
-
-  // Cross-section contradiction sweep. The block-level dedupe above merges
-  // duplicate headings and overwrites scalar fields, but it can't catch a
-  // semantically-contradicting bullet that lives under a different section
-  // heading (real example: HEART.md had "Always greet in Spanish" under
-  // `## Language Preference` while `## Greeting Style` said "No Spanish
-  // greetings" — different section, same topic, opposite polarity). The
-  // sweep walks every `- bullet` across all sections, flags pairs that
-  // overlap heavily AND differ in polarity, and strips the affirmative
-  // side. Negation wins because corrections to durable rules are
-  // overwhelmingly phrased as retractions of an earlier instruction.
-  const finalLines = sweepBulletContradictions(out);
-  return finalLines.join("\n") + "\n";
+  return out;
 }
 
-function sweepBulletContradictions(lines: string[]): string[] {
+/** Flag contradicting prose-bullet pairs across the deduped lines. Payloads
+ *  are line indices. Scalar "- Field: value" bullets are exempt — those are
+ *  handled by latest-wins above; the sweep is for instructions/rules. */
+export function findProfileBulletPairs(lines: string[]): ContradictionPair<number>[] {
   const bullets: Array<{ text: string; payload: number }> = [];
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^\s*-\s+(.+?)\s*$/);
     if (!m) continue;
-    // Skip scalar fields ("- Name: <value>") — those are handled by the
-    // latest-wins logic above. Contradiction sweep is for prose bullets
-    // (instructions / rules), not key-value entries.
     if (/^[^:]{1,40}:/.test(m[1])) continue;
     bullets.push({ text: m[1], payload: i });
   }
-  if (bullets.length < 2) return lines;
+  if (bullets.length < 2) return [];
+  return findContradictions(bullets);
+}
 
-  const pairs = findContradictions(bullets);
+/** Drop the losing line of each pair, with the audit log line. */
+export function applyProfileDrops(lines: string[], pairs: ContradictionPair<number>[]): string[] {
   if (pairs.length === 0) return lines;
-
   const toDrop = new Set<number>();
   for (const p of pairs) {
     toDrop.add(p.drop);

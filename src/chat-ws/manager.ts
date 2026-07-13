@@ -32,6 +32,9 @@ export function buildManager(): ChatWsManager {
       const chat: ActiveChat = {
         sessionId,
         events: [],
+        streamText: "",
+        sawStream: false,
+        toolsSinceText: false,
         abortController,
         startedAt: Date.now(),
         done: false,
@@ -50,9 +53,38 @@ export function buildManager(): ChatWsManager {
           // the new response.
           if (chat.done) return;
 
-          chat.events.push(event);
-          if (chat.events.length > 500) {
-            chat.events = chat.events.slice(-400);
+          if (event.type === "stream") {
+            // Fold stream text into the ActiveChat accumulator instead of
+            // buffering the events. Buffered per-token deltas used to blow
+            // through the 500/400 trim below on any long turn, so a mid-turn
+            // reconnect replayed only the TAIL as a `replace` and clobbered
+            // the client's fuller partial (trim-truncation bug, 2026-07-13
+            // audit — see replayBufferedEvents in state.ts).
+            chat.sawStream = true; // gates the replay's replace frame — even for text:""
+            if ("replace" in event) {
+              chat.streamText = event.text;
+              chat.toolsSinceText = false;
+            } else {
+              // Mirror the client store: a tool card since the last text
+              // means the next delta starts a new paragraph
+              // (chat-stream-store.js applyEvent).
+              if (chat.toolsSinceText && chat.streamText && !chat.streamText.endsWith("\n")) {
+                chat.streamText += "\n\n";
+              }
+              chat.streamText += event.delta;
+              chat.toolsSinceText = false;
+            }
+          } else {
+            if (event.type === "tool_start" || event.type === "tool_end") {
+              chat.toolsSinceText = true;
+            }
+            chat.events.push(event);
+            // Backstop only, now that stream deltas never land here — the
+            // non-stream event list stays small, and trimming it can no
+            // longer truncate the replayed text.
+            if (chat.events.length > 500) {
+              chat.events = chat.events.slice(-400);
+            }
           }
 
           broadcastToSession(sessionId, event);

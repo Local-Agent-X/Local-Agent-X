@@ -47,10 +47,15 @@ function makeRouter() {
   };
 }
 
-/** Register an ActiveChat the way manager.startChat does (set + broadcast). */
-function registerChat(sessionId: string, events: ServerEvent[] = []): AbortController {
+/** Register an ActiveChat the way manager.startChat does (set + broadcast).
+ *  Stream text is seeded via `streamText` (the accumulator manager.onEvent
+ *  maintains) — stream events never enter `events` post-2026-07-13. */
+function registerChat(sessionId: string, events: ServerEvent[] = [], streamText = ""): AbortController {
   const abortController = new AbortController();
-  activeChats.set(sessionId, { sessionId, events: [...events], abortController, startedAt: Date.now(), done: false });
+  activeChats.set(sessionId, {
+    sessionId, events: [...events], abortController, startedAt: Date.now(), done: false,
+    streamText, sawStream: streamText !== "", toolsSinceText: false,
+  });
   broadcastActiveChats();
   return abortController;
 }
@@ -79,13 +84,10 @@ describe("CT-7 — non-object frame guard", () => {
   });
 });
 
-describe("CT-3 — subscribe replay coalesces stream deltas", () => {
-  it("replays buffered deltas as a single `replace`, never raw deltas", async () => {
+describe("CT-3 — subscribe replay sends accumulated text as one replace", () => {
+  it("replays the streamText accumulator as a single `replace`, never raw deltas", async () => {
     const sessionId = "sess-ct3";
-    registerChat(sessionId, [
-      { type: "stream", delta: "Hello " },
-      { type: "stream", delta: "world" },
-    ]);
+    registerChat(sessionId, [], "Hello world");
     const r = makeRouter();
     await r.dispatch({ type: "subscribe", sessionId });
 
@@ -103,7 +105,7 @@ describe("CT-3 — subscribe replay coalesces stream deltas", () => {
 describe("CT-5 — terminateChat buffers the terminal + sweeps", () => {
   it("buffers error+done into the replay buffer and marks done", () => {
     const sessionId = "sess-ct5";
-    registerChat(sessionId, [{ type: "stream", delta: "hi" }]);
+    registerChat(sessionId, [], "hi");
 
     expect(terminateChat(sessionId, { abort: true, errorMessage: "Stopped by user" })).toBe(true);
 
@@ -117,7 +119,7 @@ describe("CT-5 — terminateChat buffers the terminal + sweeps", () => {
 
   it("a post-stop replay ends in a terminal `done` (no phantom streaming)", () => {
     const sessionId = "sess-ct5b";
-    registerChat(sessionId, [{ type: "stream", delta: "abc" }]);
+    registerChat(sessionId, [], "abc");
     terminateChat(sessionId, { abort: false, errorMessage: "" });
 
     const sent: string[] = [];
@@ -136,7 +138,7 @@ describe("CT-5 — terminateChat buffers the terminal + sweeps", () => {
   it("sweeps the stopped chat's buffer after the linger window", () => {
     vi.useFakeTimers();
     const sessionId = "sess-ct5c";
-    registerChat(sessionId, [{ type: "stream", delta: "x" }]);
+    registerChat(sessionId, [], "x");
     terminateChat(sessionId, { abort: true, errorMessage: "Stopped by user" });
     expect(activeChats.has(sessionId)).toBe(true);
 
@@ -204,6 +206,7 @@ describe("CT-4 — stop during the prep window", () => {
     // Previous turn finished; its entry lingers (5-min replay window).
     activeChats.set(sessionId, {
       sessionId, events: [], abortController: new AbortController(), startedAt: Date.now(), done: true,
+      streamText: "", sawStream: false, toolsSinceText: false,
     });
     markChatHandlerPending(sessionId); // new turn mid-prep
     try {

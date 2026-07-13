@@ -36,6 +36,9 @@ function registerChat(sessionId: string): { events: ServerEvent[] } {
     abortController: new AbortController(),
     startedAt: Date.now(),
     done: false,
+    streamText: "",
+    sawStream: false,
+    toolsSinceText: false,
   };
   activeChats.set(sessionId, chat);
   return chat;

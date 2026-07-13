@@ -11,7 +11,28 @@ import { hasChatHandlerPending } from "../ops/session-bridge.js";
 
 export interface ActiveChat {
   sessionId: string;
-  events: ServerEvent[];       // Buffered events for replay
+  events: ServerEvent[];       // Buffered NON-stream events for replay (see streamText)
+  /** Accumulated assistant text for this turn. Stream events are folded in
+   *  here by manager.onEvent instead of being pushed into `events`, so the
+   *  500/400 buffer trim can never truncate the text a reconnecting client
+   *  is sent (trim-truncation bug, 2026-07-13 audit). */
+  streamText: string;
+  /** True once ANY stream event (delta or replace) passed through onEvent.
+   *  This — not streamText truthiness — gates the replay's replace frame:
+   *  the tool-call-from-text extractor (chat-runner/event-pump.ts) emits
+   *  `replace` with text:"" when the model's entire visible text was
+   *  tool-call JSON. That empty replace is a CORRECTIVE signal — a client
+   *  that blipped after streaming the JSON needs it on replay to wipe the
+   *  stale JSON from its bubble, or `done` persists the JSON. Gating on a
+   *  truthy streamText would drop exactly that frame (skeptic catch,
+   *  2026-07-13). */
+  sawStream: boolean;
+  /** Mirrors the client store's toolsSinceText: a tool_start/tool_end landed
+   *  since the last text delta. The client inserts "\n\n" before the next
+   *  delta in that case (chat-stream-store.js applyEvent); the accumulator
+   *  must do the same or the replayed replace differs from the live render
+   *  by exactly those paragraph breaks. */
+  toolsSinceText: boolean;
   abortController: AbortController;
   startedAt: number;
   done: boolean;
@@ -150,45 +171,48 @@ export function broadcastToSession(sessionId: string, event: ServerEvent): void 
 /**
  * Replay a session's buffered events to a late/reconnecting subscriber.
  *
- * Stream deltas are COALESCED into a single `replace: true` event rather than
- * replayed raw (CT-3). The client's applyEvent does `content += delta` for
- * delta-shaped stream events, so replaying buffered deltas onto a client that
- * still holds the pre-blip partial (mid-turn WS blip → re-subscribe)
- * double-counts the streamed text into the live bubble AND into persisted
- * history when promoteLiveToMessages runs on `done`. One `replace` sets the
- * client's content to the exact accumulated text regardless of what it
- * already holds — the same duplication fix handleReconnectOp applies for
- * finalized op_messages. Live failure 2026-05-19.
+ * Stream text is sent as a single `replace: true` event built from the
+ * chat.streamText ACCUMULATOR, never reconstructed from buffered deltas
+ * (CT-3, hardened 2026-07-13). Two live failures drove this shape:
  *
- * The coalesced stream is sent FIRST so a trailing buffered `error`/`done`
- * lands after it (`error` appends to content; a `replace` after `error`
- * would wipe it). Non-stream events replay in order and are idempotent
+ * - 2026-05-19: replaying raw deltas onto a client that still holds the
+ *   pre-blip partial (mid-turn WS blip → re-subscribe) double-counts the
+ *   text into the live bubble AND into persisted history when
+ *   promoteLiveToMessages runs on `done`. One `replace` sets the client's
+ *   content to the exact accumulated text regardless of what it already
+ *   holds — the same duplication fix handleReconnectOp applies for
+ *   finalized op_messages.
+ * - 2026-07-13 audit: coalescing from chat.events truncated the text. The
+ *   manager trims the buffer to the last 400 events past 500, so any turn
+ *   longer than ~500 per-token deltas replayed only the TAIL — the replace
+ *   overwrote the client's fuller partial and `done` persisted the stub.
+ *   (session_snapshot can't repair it: it re-hydrates only when the server
+ *   messageCount exceeds local, and the counts match.) manager.onEvent now
+ *   folds stream events into chat.streamText and keeps them OUT of
+ *   chat.events, so the trim is a backstop over the small non-stream list
+ *   and can never eat streamed text.
+ *
+ * The replace is sent FIRST so a trailing buffered `error`/`done` lands
+ * after it (`error` appends to content; a `replace` after `error` would
+ * wipe it). Non-stream events replay in order and are idempotent
  * client-side (tool_* dedupe by call id, done is terminal).
  */
 export function replayBufferedEvents(ws: WebSocket, sessionId: string): void {
   const chat = activeChats.get(sessionId);
   if (!chat) return;
-  let streamed = "";
-  let sawStream = false;
-  const rest: ServerEvent[] = [];
-  for (const event of chat.events) {
-    if (event.type === "stream") {
-      sawStream = true;
-      if ("replace" in event) streamed = event.text;
-      else streamed += event.delta;
-      continue;
-    }
-    rest.push(event);
-  }
-  if (sawStream) {
+  // Gate on sawStream, not streamText truthiness: an empty accumulator after
+  // a stream event means the extractor REPLACED the text with "" (visible
+  // text was all tool-call JSON) — the client needs that empty replace to
+  // wipe its stale partial. No stream at all → send nothing.
+  if (chat.sawStream) {
     ws.send(JSON.stringify({
       type: "event",
       sessionId,
-      event: { type: "stream", replace: true, text: streamed },
+      event: { type: "stream", replace: true, text: chat.streamText },
       _replay: true,
     }));
   }
-  for (const event of rest) {
+  for (const event of chat.events) {
     ws.send(JSON.stringify({ type: "event", sessionId, event }));
   }
 }

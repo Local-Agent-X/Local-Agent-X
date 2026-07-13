@@ -151,6 +151,60 @@ describe("stream accumulator survives the 500/400 event trim", () => {
     expect(streamFrames[0]._replay).toBe(true);
   });
 
+  it("(g) second startChat on a live session overwrites WITHOUT terminating the old turn", () => {
+    // 2026-07-13 audit F8 + skeptic finding: startChat must NOT terminate a
+    // live entry. The caller holds the session's turn lock (lock-then-
+    // startChat invariant, orchestrator.ts:162) and terminateChat's abort
+    // releases that lock by sessionId — it would kill the NEW turn; and
+    // delegation-handoff.ts legitimately overlaps a live committing turn
+    // whose closure must keep broadcasting. Warn-and-overwrite is the
+    // contract; the identity-guarded sweeps protect the new entry.
+    const m = buildManager();
+    m.startChat("s-dup");
+    const oldChat = activeChats.get("s-dup")!;
+    expect(oldChat.done).toBe(false);
+
+    m.startChat("s-dup");
+
+    // Old turn untouched: not aborted, not marked done, no terminal buffered.
+    expect(oldChat.abortController.signal.aborted).toBe(false);
+    expect(oldChat.done).toBe(false);
+    expect(oldChat.events.some(e => e.type === "done")).toBe(false);
+    // The map holds the NEW live entry, not the old one.
+    const newChat = activeChats.get("s-dup")!;
+    expect(newChat).not.toBe(oldChat);
+    expect(newChat.done).toBe(false);
+  });
+
+  it("(h) a stale natural-done sweep cannot reap a successor turn's entry", () => {
+    // Identity-guard half of F8: onEvent's done-branch sweep used to delete
+    // by sessionId unconditionally, so the OLD turn's 5-minute timer reaped
+    // the NEW turn registered on the same session.
+    vi.useFakeTimers();
+    try {
+      const m = buildManager();
+      const { onEvent } = m.startChat("s-sweep");
+      onEvent({
+        type: "done",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      } as ServerEvent);
+      expect(activeChats.get("s-sweep")!.done).toBe(true);
+
+      // New turn registers on the same session before the old sweep fires
+      // (old entry is done, so startChat's overwrite warning doesn't fire).
+      m.startChat("s-sweep");
+      const newChat = activeChats.get("s-sweep")!;
+      expect(newChat.done).toBe(false);
+
+      vi.advanceTimersByTime(5 * 60 * 1000);
+
+      // New entry SURVIVES the old turn's sweep.
+      expect(activeChats.get("s-sweep")).toBe(newChat);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sends no stream frame when nothing was streamed (tool-only turn)", () => {
     const m = buildManager();
     const { onEvent } = m.startChat("s-notext");

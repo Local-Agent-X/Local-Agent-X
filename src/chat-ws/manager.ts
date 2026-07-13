@@ -4,6 +4,7 @@
 // onChat (register the message handler).
 
 import type { ServerEvent } from "../types.js";
+import { createLogger } from "../logger.js";
 import {
   activeChats,
   type ActiveChat,
@@ -13,6 +14,8 @@ import {
   setChatHandler,
   terminateChat,
 } from "./state.js";
+
+const logger = createLogger("chat-ws");
 
 export interface ChatWsManager {
   startChat(sessionId: string): { abort: AbortController; onEvent: (event: ServerEvent) => void };
@@ -28,6 +31,23 @@ export function buildManager(): ChatWsManager {
   return {
     /** Register an active chat. Called when /api/chat starts processing. */
     startChat(sessionId: string) {
+      // 2026-07-13 audit F8 + skeptic finding: do NOT terminate a live entry
+      // here. The caller already holds this session's turn lock — the
+      // lock-then-startChat invariant (run-chat-turn/orchestrator.ts:162) —
+      // and terminateChat's abort path releases that lock by sessionId with
+      // no writer-identity check, so terminating would kill the NEW turn's
+      // own lock microtasks after it registers. delegation-handoff.ts:134
+      // also legitimately calls startChat while a committing turn is still
+      // live; aborting (or even just marking that entry done — its onEvent
+      // guard would then drop the committing turn's remaining broadcasts)
+      // regresses that path. So overwrite as before, but log it; the
+      // identity-guarded sweeps below and in state.ts keep the old timers
+      // from reaping the new entry.
+      const existing = activeChats.get(sessionId);
+      if (existing && !existing.done) {
+        logger.warn(`startChat: overwriting live activeChats entry for session ${sessionId}`);
+      }
+
       const abortController = new AbortController();
       const chat: ActiveChat = {
         sessionId,
@@ -93,9 +113,14 @@ export function buildManager(): ChatWsManager {
           // should not end the chat.
           if (event.type === "done") {
             chat.done = true;
+            // Identity-guarded like terminateChat's sweep (state.ts): if a
+            // NEW chat re-registered this sessionId in the meantime, a stale
+            // sweep must not reap the successor's entry (2026-07-13 audit, F8).
             setTimeout(() => {
-              activeChats.delete(sessionId);
-              broadcastActiveChats();
+              if (activeChats.get(sessionId) === chat) {
+                activeChats.delete(sessionId);
+                broadcastActiveChats();
+              }
             }, 5 * 60 * 1000);
             broadcastActiveChats();
           }

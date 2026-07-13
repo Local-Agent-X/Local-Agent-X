@@ -40,11 +40,12 @@ function handleChatWsMessage(e) {
       try { if (typeof updateStatusBar === 'function') updateStatusBar(true); } catch {}
       return;
     }
-    // Bump per-op activity from the envelope's _opId/_seq so the watchdog
-    // stays honest for any event carrying canonical tags — not just the
-    // ones applyEvent mutates state for.
-    if (msg._opId && typeof msg._seq === 'number') {
-      ChatStreamStore.bumpActivity(msg.sessionId, msg._seq);
+    // Bump per-op activity from the envelope's _opId so the watchdog stays
+    // honest for any event carrying canonical tags — not just the ones
+    // applyEvent mutates state for. Activity is the point; there's no seq
+    // to track (live envelopes never carry _seq — 2026-07-13 audit).
+    if (msg._opId) {
+      ChatStreamStore.bumpActivity(msg.sessionId);
     }
 
     // Mid-turn inject lifecycle (Step 4 JARVIS). inject_queued is purely

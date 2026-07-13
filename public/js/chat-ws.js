@@ -4,7 +4,7 @@
 // the heartbeat, the stuck-stream watchdog, and a small _findStreamingBodyEl
 // helper that maps a sessionId to its live DOM bubble.
 //
-// Per-session stream state (content / toolEvents / opId / seq / activity /
+// Per-session stream state (content / toolEvents / opId / activity /
 // status) lives in ChatStreamStore — this module reads from the store for
 // reconnect replay, watchdog scans, and stop-button cleanup. Worker-card
 // state still lives in agentFeedsData (chat-agent-feeds.js) — it's
@@ -115,12 +115,14 @@ setInterval(function() {
         type: 'reconnect_op',
         sessionId: info.sessionId,
         opId: info.opId,
-        sinceSeq: info.lastSeenSeq,
+        // Server treats <0 as replay-from-beginning; live envelopes never
+        // carry _seq, so there is no client-side cursor (2026-07-13 audit).
+        sinceSeq: -1,
       }));
       // Bump activity so we don't spam reconnect_op every interval while a
       // slow replay is in flight. Real activity from the replay will bump
       // it again via the dispatcher.
-      ChatStreamStore.bumpActivity(info.sessionId, info.lastSeenSeq);
+      ChatStreamStore.bumpActivity(info.sessionId);
     } catch (e) {
       console.warn('[ws] reconnect_op send failed:', e && e.message);
     }
@@ -171,12 +173,14 @@ function connectChatWs() {
     // ask the server to replay missed canonical events and re-attach to
     // the live tail.
     for (const info of ChatStreamStore.inflightOps()) {
-      console.log(`[ws] reconnect_op opId=${info.opId} sinceSeq=${info.lastSeenSeq}`);
+      console.log(`[ws] reconnect_op opId=${info.opId}`);
       chatWs.send(JSON.stringify({
         type: 'reconnect_op',
         sessionId: info.sessionId,
         opId: info.opId,
-        sinceSeq: info.lastSeenSeq,
+        // Server treats <0 as replay-from-beginning; live envelopes never
+        // carry _seq, so there is no client-side cursor (2026-07-13 audit).
+        sinceSeq: -1,
       }));
     }
     // Also replay any non-terminal worker ops. The chat WS heartbeat
@@ -245,18 +249,11 @@ function stopChat() {
   // session's live events during the ~500ms reconnect window (healed only by
   // the 60s watchdog). Closing was an SSE-era leftover from before the
   // protocol went per-session.
-  // Append "stopped" indicator to last message; drop the streaming pin so
-  // the message bubble shrinks back to its natural height.
-  const msgs = document.querySelectorAll('.msg.assistant');
-  const last = msgs[msgs.length - 1];
-  if (last) {
-    // Keep `pin-bottom` on the stopped turn — it's still the most recent
-    // assistant reply, so it should keep the reserved viewport-height below.
-    const body = last.querySelector('.msg-body');
-    if (body && !body.textContent.includes('[stopped]')) {
-      body.innerHTML += '<div style="color:var(--muted);font-size:.72rem;margin-top:8px;font-style:italic">[stopped by user]</div>';
-    }
-  }
+  // The "stopped" indicator is NOT painted here — endTurn set a stopNote on
+  // the entry, and the synchronous finalize it triggered (per-turn subscriber
+  // → promoteLiveToMessages → finalizeLiveMessageInPlace) rendered it via the
+  // stop-notice path. Hand-appending via innerHTML+= re-parsed the finalized
+  // bubble and killed the tool cards' listeners.
   const stopBtn = document.getElementById('stop-btn');
   const sendBtn = document.getElementById('send-btn');
   if (stopBtn) stopBtn.style.display = 'none';

@@ -13,7 +13,6 @@
 //   approvals       pending approval cards, status flips on approval_timeout
 //   stopNote        single stop notice for this turn (last write wins)
 //   opId            canonical chat op (set on chat_op_started, cleared on done)
-//   lastSeenSeq     for reconnect_op replay
 //   lastActivityMs  for the stuck-stream watchdog
 //   status          'idle' | 'streaming' | 'stopping' | 'done'
 //   abortReason     string | null (e.g. "Stopped by user", error message)
@@ -66,7 +65,6 @@
       // turn — see the self_edit stop-button regression where the chat
       // showed streaming for minutes after a successful stop.
       doneOpIds: new Set(),
-      lastSeenSeq: -1,
       lastActivityMs: 0,
       status: 'idle',
       abortReason: null,
@@ -85,9 +83,51 @@
     return entries.get(sessionId) || null;
   }
 
+  // ── Growth bounds ──
+  // A long-lived tab otherwise accumulates one entry per session ever
+  // touched and one doneOpId per turn ever finished — both unbounded.
+  //
+  // Invariant: doneOpIds.size <= DONE_OP_CAP per entry. The set only exists
+  // to reject STALE replays of recently-finished ops (see the doneOpIds
+  // comment in blank()); a replay 200 ops later is not a plausible race, so
+  // evicting the oldest is safe. Set iteration order is insertion order —
+  // the first key is the oldest add.
+  const DONE_OP_CAP = 200;
+  function rememberDoneOp(e, opId) {
+    if (!opId) return;
+    e.doneOpIds.add(opId);
+    while (e.doneOpIds.size > DONE_OP_CAP) {
+      e.doneOpIds.delete(e.doneOpIds.keys().next().value);
+    }
+  }
+
+  // Invariant: an entry is only pruned when NOTHING can still need it —
+  // turn finished (status 'done'), no sidebar marker, no per-session
+  // subscribers, and never the session the user is viewing. Runs on entry
+  // creation only (see ensure), so a stable working set costs nothing and
+  // no timer is needed. Deleting from a Map mid-iteration is spec-safe.
+  const ENTRY_PRUNE_THRESHOLD = 60;
+  function pruneEntries() {
+    if (entries.size <= ENTRY_PRUNE_THRESHOLD) return;
+    const viewingId = (typeof activeChat !== 'undefined' && activeChat) ? activeChat.id : null;
+    for (const [sid, e] of entries) {
+      if (sid === viewingId) continue;
+      if (e.status !== 'done' || e.sidebarActive) continue;
+      const subs = subscribers.get(sid);
+      if (subs && subs.size > 0) continue;
+      entries.delete(sid);
+    }
+  }
+
   function ensure(sessionId) {
     let e = entries.get(sessionId);
-    if (!e) { e = blank(sessionId); entries.set(sessionId, e); }
+    if (!e) {
+      // Opportunistic prune before growing the map — cheapest possible
+      // trigger point that still bounds a long-lived tab.
+      pruneEntries();
+      e = blank(sessionId);
+      entries.set(sessionId, e);
+    }
     return e;
   }
 
@@ -109,7 +149,6 @@
     e.approvals = [];
     e.stopNote = null;
     e.opId = null;
-    e.lastSeenSeq = -1;
     e.lastActivityMs = Date.now();
     e.status = 'streaming';
     e.abortReason = null;
@@ -128,7 +167,14 @@
     if (!e || !chat || !Array.isArray(chat.messages)) return null;
     const content = e.content || '';
     const toolEvents = e.toolEvents || [];
-    if (!content.trim() && toolEvents.length === 0) {
+    // A stop before anything streamed must still promote a row — the
+    // stopNote is the only record that the turn happened and was stopped;
+    // without it the finalize early-returns, the placeholder keeps its
+    // thinking dots, and the turn vanishes on reload. Idempotency holds:
+    // the scratch-clear below nulls stopNote along with content/toolEvents,
+    // so a redundant second `done` (watchdog replay) finds all three empty
+    // and still returns null here.
+    if (!content.trim() && toolEvents.length === 0 && !e.stopNote) {
       e.liveAnchorIndex = -1;
       return null;
     }
@@ -190,7 +236,7 @@
           e.lastActivityMs = now;
           break;
         }
-        if (event.opId) { e.opId = event.opId; e.lastSeenSeq = -1; }
+        if (event.opId) e.opId = event.opId;
         if (e.status === 'idle' || e.status === 'done') e.status = 'streaming';
         e.lastActivityMs = now;
         break;
@@ -306,7 +352,7 @@
         e.lastActivityMs = now;
         break;
       case 'done':
-        if (e.opId) e.doneOpIds.add(e.opId);
+        rememberDoneOp(e, e.opId);
         e.status = 'done';
         e.opId = null;
         e.lastActivityMs = now;
@@ -318,13 +364,14 @@
   }
 
   // Per-op activity bump — used by the dispatcher when it sees an event
-  // envelope carrying _opId/_seq so the watchdog stays honest even for
-  // events that applyEvent doesn't otherwise touch.
-  function bumpActivity(sessionId, seq) {
+  // envelope carrying _opId so the watchdog stays honest even for events
+  // that applyEvent doesn't otherwise touch. (No seq tracking: the server
+  // never stamps _seq on live broadcast envelopes — only the reconnect_op
+  // replay path does — so client-side seq was dead weight. 2026-07-13 audit.)
+  function bumpActivity(sessionId) {
     if (!sessionId) return;
     const e = entries.get(sessionId);
     if (!e) return;
-    if (typeof seq === 'number') e.lastSeenSeq = seq;
     e.lastActivityMs = Date.now();
   }
 
@@ -351,12 +398,40 @@
     // doesn't promote a tool card with a stuck indicator. Mirrors the
     // pre-refactor renderMessages cleanup that used to do this on the
     // fly when stripping stale _streaming flags.
+    //
+    // Match closure by toolCallId when the start carries one — a name-only
+    // check considered a REPEATED tool's second start closed because the
+    // first run's end matched by name, leaving the second card stuck. Name
+    // matching remains only as the fallback for starts without an id
+    // (providers whose ids don't line up start↔end). Pushing into the array
+    // we iterate is safe: synthesized events are type 'end', so the
+    // `type === 'start'` guard skips them.
     for (const te of e.toolEvents) {
-      if (te.type === 'start' && !e.toolEvents.find(t => t.type === 'end' && t.name === te.name)) {
-        e.toolEvents.push({ type: 'end', name: te.name, allowed: true, result: '(interrupted)' });
+      if (te.type !== 'start') continue;
+      const closed = te.toolCallId
+        ? e.toolEvents.some(t => t.type === 'end' && t.toolCallId === te.toolCallId)
+        : e.toolEvents.some(t => t.type === 'end' && t.name === te.name);
+      if (!closed) {
+        e.toolEvents.push({ type: 'end', name: te.name, toolCallId: te.toolCallId, allowed: true, result: '(interrupted)' });
       }
     }
-    if (e.opId) e.doneOpIds.add(e.opId);
+    // Surface the local stop through the same stopNote lane a server
+    // `stopped` event uses, so promoteLiveToMessages carries it onto the
+    // finalized row and the finalize paint renders the stop notice.
+    // Previously stopChat hand-appended a '[stopped by user]' div via
+    // innerHTML+= AFTER finalize — re-parsing the finalized bubble's DOM
+    // (killing tool-card listeners) and duplicating what stopNote rendering
+    // owns. Don't clobber a note the server already delivered.
+    //
+    // ONLY when reason is truthy: endTurn is NOT stop-only — it doubles as
+    // the NORMAL completion finalizer for HTTP/SSE turns (chat-send-http.js
+    // passes null; end-of-stream IS the done signal there). A null reason
+    // means clean end, not a stop — stamping "Stopped." on it would persist
+    // a bogus notice onto every HTTP-fallback turn.
+    if (reason && !e.stopNote) {
+      e.stopNote = { reason: reason, debug: null, firedBy: 'local-stop' };
+    }
+    rememberDoneOp(e, e.opId);
     e.status = 'done';
     e.opId = null;
     if (reason) e.abortReason = reason;
@@ -402,7 +477,7 @@
     const out = [];
     for (const e of entries.values()) {
       if (e.status === 'streaming' && e.opId) {
-        out.push({ sessionId: e.sessionId, opId: e.opId, lastSeenSeq: e.lastSeenSeq, lastActivityMs: e.lastActivityMs });
+        out.push({ sessionId: e.sessionId, opId: e.opId, lastActivityMs: e.lastActivityMs });
       }
     }
     return out;

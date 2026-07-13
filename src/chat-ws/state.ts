@@ -169,11 +169,31 @@ function isHeadlessSession(sessionId: string): boolean {
   return sessionId.startsWith("eval-");
 }
 
+// Backpressure ceiling for droppable delta frames (2026-07-13 audit I2). A
+// hung/slow client (frozen tab, saturated mobile link) never drains its
+// socket, so ws.send at token rate buffers unboundedly in this process.
+// Above this per-socket threshold we skip DELTA-shaped stream/reasoning
+// frames only. Replace, terminal (done/error/stopped), and tool events are
+// NEVER dropped, so state convergence is preserved. Recovery honesty: a
+// client that reconnects/re-subscribes gets the full text via the replay's
+// coalesced replace (built from the ActiveChat accumulators). A client that
+// is merely SLOW and later drains without reconnecting keeps a hole in the
+// live bubble until reload — the 20s op_heartbeat keeps the stuck-stream
+// watchdog quiet, so no automatic replay fires for it. Accepted trade:
+// buffering >1MB at token rate is pathological, and bounding server memory
+// wins; server-side history stays complete regardless.
+const BACKPRESSURE_MAX_BUFFERED = 1_000_000;
+
 export function broadcastToSession(sessionId: string, event: ServerEvent): void {
   if (isHeadlessSession(sessionId)) return;
+  // Delta-shaped stream/reasoning only — the sole event class whose loss the
+  // replay replace fully repairs. Everything else must always be sent.
+  const droppable =
+    (event.type === "stream" || event.type === "reasoning") && !("replace" in event);
   const payload = JSON.stringify({ type: "event", sessionId, event });
   for (const [ws, subs] of clients) {
     if (subs.has(sessionId) && ws.readyState === 1 /* OPEN */) {
+      if (droppable && ws.bufferedAmount > BACKPRESSURE_MAX_BUFFERED) continue;
       ws.send(payload);
     }
   }

@@ -27,10 +27,15 @@ interface Frame {
   _replay?: boolean;
 }
 
-// Minimal WS double: capture everything sent, parsed.
-function makeWs(): { ws: WebSocket; frames: () => Frame[] } {
+// Minimal WS double: capture everything sent, parsed. `bufferedAmount`
+// models a slow/hung client for the backpressure guard tests.
+function makeWs(bufferedAmount = 0): { ws: WebSocket; frames: () => Frame[] } {
   const sent: string[] = [];
-  const ws = { readyState: 1, send: vi.fn((p: string) => { sent.push(p); }) } as unknown as WebSocket;
+  const ws = {
+    readyState: 1,
+    bufferedAmount,
+    send: vi.fn((p: string) => { sent.push(p); }),
+  } as unknown as WebSocket;
   return { ws, frames: () => sent.map(p => JSON.parse(p) as Frame) };
 }
 
@@ -422,6 +427,187 @@ describe("op_heartbeat keepalive (2026-07-13 audit I3)", () => {
     const chat = activeChats.get("s-hb-buf")!;
     expect(chat.events.some(e => (e as { type: string }).type === "op_heartbeat")).toBe(false);
     expect(chat.events).toHaveLength(0);
+  });
+});
+
+describe("delta coalescing (2026-07-13 audit I2)", () => {
+  // The token hot path used to broadcast every stream/reasoning delta
+  // immediately — one JSON.stringify + N ws.sends per token. onEvent now
+  // buffers delta text in an ordered {lane, text} run queue and flushes on a
+  // 30ms timer (~33 paints/sec) or synchronously before ANY non-delta event,
+  // so the client-visible order is unchanged while per-token overhead drops
+  // ~10x. Accumulators stay synchronous — only the broadcast is deferred.
+  const reasoning = (d: string): ServerEvent => ({ type: "reasoning", delta: d });
+  const doneEvent: ServerEvent = {
+    type: "done",
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  } as ServerEvent;
+
+  const eventFrames = (frames: Frame[]) => frames.filter(f => f.type === "event");
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    return () => vi.useRealTimers();
+  });
+
+  it("(a) three deltas within 30ms broadcast as ONE coalesced stream frame", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-co");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-co"]));
+
+    onEvent(delta("a "));
+    onEvent(delta("b "));
+    onEvent(delta("c"));
+    // Nothing on the wire before the window closes.
+    expect(eventFrames(frames())).toHaveLength(0);
+
+    vi.advanceTimersByTime(30);
+    const evs = eventFrames(frames());
+    expect(evs).toHaveLength(1);
+    expect(evs[0].event).toMatchObject({ type: "stream", delta: "a b c" });
+    // The accumulator was never deferred.
+    expect(activeChats.get("s-co")!.streamText).toBe("a b c");
+  });
+
+  it("(b) a non-delta event flushes pending deltas FIRST (stream then tool_start)", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-co-tool");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-co-tool"]));
+
+    onEvent(delta("searching"));
+    onEvent(toolStart); // synchronous flush-then-broadcast — no timer needed
+    const types = eventFrames(frames()).map(f => (f.event as { type: string }).type);
+    expect(types).toEqual(["stream", "tool_start"]);
+    expect(eventFrames(frames())[0].event).toMatchObject({ delta: "searching" });
+
+    // The window is now empty: the timer must not re-send anything.
+    vi.advanceTimersByTime(60);
+    expect(eventFrames(frames())).toHaveLength(2);
+  });
+
+  it("(c) pending deltas flush before the done frame", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-co-done");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-co-done"]));
+
+    onEvent(delta("tail text"));
+    onEvent(doneEvent);
+    const evs = eventFrames(frames()).filter(f => f.event?.type !== "op_heartbeat");
+    expect(evs.map(f => (f.event as { type: string }).type)).toEqual(["stream", "done"]);
+    expect(evs[0].event).toMatchObject({ delta: "tail text" });
+  });
+
+  it("(d) interleaved stream/reasoning deltas flush in arrival order, merged per run", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-co-lanes");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-co-lanes"]));
+
+    onEvent(reasoning("think "));
+    onEvent(reasoning("hard"));
+    onEvent(delta("answer "));
+    onEvent(delta("text"));
+    onEvent(reasoning(" more"));
+    vi.advanceTimersByTime(30);
+
+    // Three runs — consecutive same-lane deltas merged, inter-lane order kept.
+    const evs = eventFrames(frames()).map(f => f.event as { type: string; delta: string });
+    expect(evs).toEqual([
+      { type: "reasoning", delta: "think hard" },
+      { type: "stream", delta: "answer text" },
+      { type: "reasoning", delta: " more" },
+    ]);
+  });
+
+  it("(e) terminateChat mid-window strands the tail: no late delta after done", () => {
+    // terminateChat bypasses onEvent (pushes error/done into chat.events +
+    // broadcasts directly), so it cannot flush the manager closure's pending
+    // deltas. A LATE flush after the client processed done would append to a
+    // parked bubble with anchor -1 — the flush callback therefore gates on
+    // chat.done and DROPS the ≤30ms tail. Replay is still whole: the
+    // accumulator was updated synchronously.
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-co-stop");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-co-stop"]));
+
+    onEvent(delta("partial "));
+    onEvent(delta("tail"));
+    terminateChat("s-co-stop", { abort: false, errorMessage: "stopped" });
+    const beforeTimer = eventFrames(frames()).map(f => (f.event as { type: string }).type);
+    expect(beforeTimer).toEqual(["error", "done"]);
+
+    vi.advanceTimersByTime(60);
+    // No stream frame ever lands — the tail was dropped, not delivered late.
+    expect(eventFrames(frames()).some(f => f.event?.type === "stream")).toBe(false);
+    // But the accumulator (what replay serves) holds the full text.
+    expect(activeChats.get("s-co-stop")!.streamText).toBe("partial tail");
+  });
+
+  it("(f) a stream replace is non-delta: pending flushes first, then the replace", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-co-replace");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-co-replace"]));
+
+    onEvent(delta('{"tool":"x"}'));
+    onEvent({ type: "stream", replace: true, text: "" } as ServerEvent);
+    const evs = eventFrames(frames()).map(f => f.event as Record<string, unknown>);
+    expect(evs).toEqual([
+      { type: "stream", delta: '{"tool":"x"}' },
+      { type: "stream", replace: true, text: "" },
+    ]);
+  });
+});
+
+describe("backpressure guard on delta broadcasts (2026-07-13 audit I2)", () => {
+  // A hung/slow client never drains its socket, so per-token sends buffer
+  // unboundedly in this process. broadcastToSession now skips DELTA-shaped
+  // stream/reasoning frames for any socket with bufferedAmount over 1MB;
+  // replace/terminal/tool frames are never dropped, and the watchdog
+  // replay's replace repairs the dropped text.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    return () => vi.useRealTimers();
+  });
+
+  it("a backed-up socket receives tool_start but not the delta; a healthy one gets both", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-bp");
+    const slow = makeWs(1_000_001); // just over BACKPRESSURE_MAX_BUFFERED
+    const fast = makeWs(0);
+    clients.set(slow.ws, new Set(["s-bp"]));
+    clients.set(fast.ws, new Set(["s-bp"]));
+
+    onEvent(delta("token"));
+    vi.advanceTimersByTime(30); // close the coalescing window
+    onEvent(toolStart);
+
+    const slowTypes = slow.frames().map(f => (f.event as { type: string }).type);
+    const fastTypes = fast.frames().map(f => (f.event as { type: string }).type);
+    expect(slowTypes).toEqual(["tool_start"]);
+    expect(fastTypes).toEqual(["stream", "tool_start"]);
+  });
+
+  it("replace and terminal frames are never dropped, even on a backed-up socket", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-bp-replace");
+    const slow = makeWs(50_000_000);
+    clients.set(slow.ws, new Set(["s-bp-replace"]));
+
+    onEvent(delta("draft"));
+    onEvent({ type: "stream", replace: true, text: "final" } as ServerEvent);
+    terminateChat("s-bp-replace", { abort: false, errorMessage: "provider died" });
+
+    const types = slow.frames()
+      .filter(f => f.type === "event")
+      .map(f => (f.event as { type: string }).type + ("replace" in (f.event ?? {}) ? ":replace" : ""));
+    // The buffered delta was flushed by the replace but dropped at the socket;
+    // the replace itself and the terminals all got through.
+    expect(types).toEqual(["stream:replace", "error", "done"]);
   });
 });
 

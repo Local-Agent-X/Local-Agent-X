@@ -35,6 +35,21 @@ const HEARTBEAT_INTERVAL_MS = 20_000;
 // interval past the cap.
 const HEARTBEAT_MAX_LIFETIME_MS = 4 * 60 * 60 * 1000;
 
+// Delta-coalescing window (2026-07-13 audit I2). Every stream/reasoning
+// delta used to broadcast immediately: one JSON.stringify + N ws.sends PER
+// TOKEN. 30ms ≈ 33 paints/sec — well above the client's rAF/throttle render
+// cadence, so latency is invisible, while at fast token rates it cuts
+// per-token send+parse overhead ~10x. Only the BROADCAST is deferred: the
+// chat.streamText/reasoningText accumulators are updated synchronously on
+// every delta, so replay/persistence correctness never depends on a flush.
+const COALESCE_MS = 30;
+
+/** One buffered run of same-lane delta text awaiting flush (audit I2). */
+interface PendingDeltaRun {
+  lane: "stream" | "reasoning";
+  text: string;
+}
+
 export interface ChatWsManager {
   startChat(sessionId: string): { abort: AbortController; onEvent: (event: ServerEvent) => void };
   getAbortSignal(sessionId: string): AbortSignal | undefined;
@@ -104,6 +119,38 @@ export function buildManager(): ChatWsManager {
       // Never hold the process open for a keepalive.
       heartbeat.unref?.();
 
+      // ── Delta coalescing (2026-07-13 audit I2) ─────────────────────────
+      // Scheme: a single ordered queue of {lane, text} runs shared by both
+      // delta lanes. A delta merges into the tail run when the lane matches,
+      // otherwise appends a new run — so the queue IS the arrival order and
+      // flushing it front-to-back preserves inter-lane order exactly (a
+      // stream→reasoning→stream interleave flushes as three frames in that
+      // order; a burst on one lane flushes as one frame). Typical windows
+      // hold a single run.
+      let pendingDeltas: PendingDeltaRun[] = [];
+      let flushTimer: NodeJS.Timeout | null = null;
+
+      // Broadcast-and-clear. Synchronous callers (any non-delta event below)
+      // rely on this running BEFORE their own broadcast so the client-visible
+      // event order is byte-identical to the pre-coalescing hot path.
+      const flushPendingDeltas = () => {
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        if (pendingDeltas.length === 0) return;
+        const runs = pendingDeltas;
+        pendingDeltas = [];
+        for (const run of runs) {
+          // The narrow per-lane construction (vs. `type: run.lane`) keeps the
+          // discriminated ServerEvent union checkable without a cast.
+          const frame: ServerEvent = run.lane === "stream"
+            ? { type: "stream", delta: run.text }
+            : { type: "reasoning", delta: run.text };
+          broadcastToSession(sessionId, frame);
+        }
+      };
+
       return {
         abort: abortController,
         onEvent(event: ServerEvent) {
@@ -114,6 +161,15 @@ export function buildManager(): ChatWsManager {
           // leak into the next turn on the same session and overwrite
           // the new response.
           if (chat.done) return;
+
+          // Delta-shaped stream/reasoning events are the coalescing hot path
+          // (audit I2): accumulate synchronously (below, as always), but
+          // DEFER the broadcast onto the shared run queue. Everything else —
+          // replaces, tool_*, chat_op_started, approval_*, done, error,
+          // stopped — flushes the queue synchronously FIRST, then broadcasts
+          // itself, so ordering is preserved exactly.
+          const isDelta =
+            (event.type === "stream" || event.type === "reasoning") && !("replace" in event);
 
           if (event.type === "stream") {
             // Fold stream text into the ActiveChat accumulator instead of
@@ -161,6 +217,48 @@ export function buildManager(): ChatWsManager {
             }
           }
 
+          if (isDelta) {
+            // O(1) per token: merge into the tail run when the lane matches,
+            // else start a new run (lane switch). No stringify, no send here.
+            const lane = event.type as "stream" | "reasoning";
+            const tail = pendingDeltas[pendingDeltas.length - 1];
+            if (tail && tail.lane === lane) {
+              tail.text += (event as { delta: string }).delta;
+            } else {
+              pendingDeltas.push({ lane, text: (event as { delta: string }).delta });
+            }
+            if (!flushTimer) {
+              flushTimer = setTimeout(() => {
+                flushTimer = null;
+                // Self-check, mirroring onEvent's own done-guard exactly:
+                // terminateChat (state.ts) BYPASSES onEvent — it pushes
+                // error/done into chat.events and broadcasts directly — so a
+                // pending tail here would otherwise flush AFTER the client
+                // processed done, and a stream delta on a 'done' client entry
+                // appends to content with anchor -1 (the known parked-content
+                // hazard). Dropping the ≤30ms tail is safe: the accumulators
+                // already hold the text, so the reconnect/watchdog replay
+                // replace and server-side persistence are complete
+                // regardless. Deliberately NOT identity-guarded (unlike the
+                // heartbeat): delegation-handoff overwrites a live committing
+                // turn whose closure must keep broadcasting, and onEvent
+                // itself gates only on chat.done — the flush must not be
+                // stricter than the path it defers.
+                if (chat.done) {
+                  pendingDeltas = [];
+                  return;
+                }
+                flushPendingDeltas();
+              }, COALESCE_MS);
+              // Never hold the process open for a paint-cadence flush.
+              flushTimer.unref?.();
+            }
+            return;
+          }
+
+          // Non-delta: pending deltas precede this event chronologically —
+          // flush them first so the client sees the original order.
+          flushPendingDeltas();
           broadcastToSession(sessionId, event);
 
           // Mark done only on real completion — non-terminal errors
@@ -169,6 +267,8 @@ export function buildManager(): ChatWsManager {
             chat.done = true;
             // Stop the keepalive promptly (the interval's own done-check
             // would also catch it next tick; clearInterval is idempotent).
+            // The flush timer is already cleared: `done` is non-delta, so
+            // flushPendingDeltas above ran (and it always clears the timer).
             clearInterval(heartbeat);
             // Identity-guarded like terminateChat's sweep (state.ts): if a
             // NEW chat re-registered this sessionId in the meantime, a stale

@@ -12,6 +12,7 @@ import { mergeSignals } from "./signals.js";
 import { extractNotifications, recordFromMessage } from "./notifications.js";
 import { buildAdaptations } from "./adaptations.js";
 import { applyBleedGate, classifyVerdict, getAnchorText } from "./bleed-gate.js";
+import { confirmSemanticSignals } from "./confirm-gate.js";
 
 export async function processMessageImpl(input: OrchestratorInput): Promise<OrchestratorOutput> {
   const startTime = Date.now();
@@ -48,6 +49,21 @@ export async function processMessageImpl(input: OrchestratorInput): Promise<Orch
         signals.push(...deepSignal);
       }
     }
+  }
+
+  // LLM confirm on high-consequence semantic signals (contradiction /
+  // vulnerability / emotion-shift) — the regex detectors behind them over-fire
+  // and their verdicts steer or retire durable memory. Runs after veto and
+  // deep-pass so every producer path is covered. Fail-open: LLM null/timeout
+  // keeps the signal.
+  const confirmed = await confirmSemanticSignals(signals, input);
+  if (confirmed.dropped.length > 0) {
+    signals = confirmed.signals;
+    // eslint-disable-next-line no-console
+    console.info(
+      `[orchestrator] confirm gate dropped ${confirmed.dropped.length} false-alarm signals ` +
+      `(${confirmed.dropped.map(s => s.category).join(", ")}; msg="${input.message.slice(0, 40)}")`,
+    );
   }
 
   // Cross-conversation bleed guard, structural version. Each module is

@@ -32,18 +32,33 @@ const _rerenderRafs = new Map();          // sessionId → rAF token
 // renderMessages will catch up on next full render.
 // The live bubble is rebuilt from scratch on every WS event, which would
 // wipe any block the user manually expanded. Carry the .open state across
-// the swap, matching groups/cards by document order (the rebuild is
-// deterministic from the same transcript, so new blocks only append).
+// the swap, matching groups/cards by the data-key stamp
+// _renderAssistantToolArtifacts applies (toolCallId-derived) — NOT by
+// document order: `stream replace` events (tool-call-from-text extraction
+// sets content wholesale mid-turn) can shrink or restructure the rebuilt
+// bubble, shifting indices so open-state lands on the wrong card. Keyless
+// elements (legacy paints) still fall back to their index.
 function preserveOpenState(oldNode, fresh) {
   for (const sel of ['.activity-group', '.tool-card']) {
     const olds = oldNode.querySelectorAll(sel);
     const news = fresh.querySelectorAll(sel);
-    for (let i = 0; i < news.length && i < olds.length; i++) {
-      if (!olds[i].classList.contains('open')) continue;
-      news[i].classList.add('open');
-      const chev = news[i].querySelector('.activity-chevron');
+    // One pass over each list (this runs per animation frame): collect the
+    // open old elements' keys (or index when unkeyed), then match new ones.
+    const openKeys = new Set();
+    const openIdx = new Set();
+    olds.forEach((el, i) => {
+      if (!el.classList.contains('open')) return;
+      if (el.dataset.key) openKeys.add(el.dataset.key);
+      else openIdx.add(i);
+    });
+    if (!openKeys.size && !openIdx.size) continue;
+    news.forEach((el, i) => {
+      const open = el.dataset.key ? openKeys.has(el.dataset.key) : openIdx.has(i);
+      if (!open) return;
+      el.classList.add('open');
+      const chev = el.querySelector('.activity-chevron');
       if (chev) chev.textContent = '▼';
-    }
+    });
   }
   // The reasoning block is a native <details> (open attribute, not .open
   // class). Carry the user's collapse across the per-frame swap — otherwise a
@@ -63,7 +78,12 @@ function captureActivityScroll(oldNode) {
   const saved = [];
   oldNode.querySelectorAll('.activity-group-body').forEach((body, i) => {
     if (!body.clientHeight) return;
+    // Same identity rule as preserveOpenState: the enclosing group's data-key
+    // beats the index, which shifts when a `stream replace` restructures the
+    // rebuilt bubble. Index is kept only as the legacy keyless fallback.
+    const group = body.closest('.activity-group');
     saved.push({
+      key: (group && group.dataset.key) || null,
       i,
       top: body.scrollTop,
       atBottom: body.scrollTop + body.clientHeight >= body.scrollHeight - 8,
@@ -75,8 +95,18 @@ function captureActivityScroll(oldNode) {
 function restoreActivityScroll(fresh, saved) {
   if (!saved.length) return;
   const bodies = fresh.querySelectorAll('.activity-group-body');
+  // Key → body map so each restore stays O(1) on the per-frame swap path.
+  const byKey = new Map();
+  bodies.forEach((body) => {
+    const group = body.closest('.activity-group');
+    const key = group && group.dataset.key;
+    if (key && !byKey.has(key)) byKey.set(key, body);
+  });
   for (const s of saved) {
-    const body = bodies[s.i];
+    // A keyed capture must NOT fall back to index — landing the scroll on a
+    // different group is worse than dropping it (fresh bodies start at 0,
+    // which reads as "new group", not as a jump).
+    const body = s.key ? byKey.get(s.key) : bodies[s.i];
     if (body) body.scrollTop = s.atBottom ? body.scrollHeight : s.top;
   }
 }

@@ -132,6 +132,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
         endsByName.get(t.name).push(t);
       }
       const nameCursor = new Map();
+      const startOrdinal = new Map();
       for (const te of toolEvents) {
         if (te.type !== 'start') continue;
         // Route through appendToolCardGrouped so the swap matches the
@@ -139,6 +140,23 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
         // "Agent activity" group, consecutive same-tool calls collapse
         // into a single ×N card.
         const card = appendToolCardGrouped(bodyEl, te.name, te.args || '', te.riskLevel);
+        // Stable identity for preserveOpenState / restoreActivityScroll in
+        // chat-render-live.js. Index matching breaks when a `stream replace`
+        // event restructures the rebuilt bubble mid-turn; keying off the
+        // toolCallId (already deduped in the store) survives that. Only stamp
+        // a card once — a deduped ×N card keeps the key of the start that
+        // created it, so folding later same-name calls in doesn't re-key it.
+        // Id-less events (some providers) fall back to name + per-name start
+        // ordinal, which is deterministic from the append-only toolEvents.
+        const ord = startOrdinal.get(te.name) || 0;
+        startOrdinal.set(te.name, ord + 1);
+        if (!card.dataset.key) {
+          card.dataset.key = te.toolCallId ? 'id:' + te.toolCallId : te.name + '#' + ord;
+        }
+        // The group inherits its first card's key: ensureActivityGroup only
+        // ever appends, so "first card" is a stable identity for the group.
+        const group = card.closest('.activity-group');
+        if (group && !group.dataset.key) group.dataset.key = 'g:' + card.dataset.key;
         let endEvt = (te.toolCallId && endsById.get(te.toolCallId)) || null;
         if (!endEvt) {
           const list = endsByName.get(te.name) || [];

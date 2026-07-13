@@ -94,11 +94,19 @@ function _swapLiveMessage(sessionId) {
   let oldNode = _liveMessageNodes.get(sessionId);
   if (!oldNode || !document.contains(oldNode)) {
     // Fallback: the manual bubble sendMessage created (before any
-    // renderMessages run captured it into _liveMessageNodes).
+    // renderMessages run captured it into _liveMessageNodes). Only accept a
+    // node explicitly stamped data-live="1" — the last .msg.assistant can be
+    // a FINISHED message (reload mid-turn: subscribe replay re-lights
+    // 'streaming' but startTurn never ran, so no live row was synthesized;
+    // grabbing the last bubble here would OVERWRITE the previous finished
+    // answer with live content) or a persisted worker bubble
+    // (appendStaticWorkerBubble rows share .msg.assistant). Returning false
+    // is safe: renderMessages catches up on the next full render.
     const messagesEl = document.getElementById('messages');
     if (messagesEl) {
       const all = messagesEl.querySelectorAll('.msg.assistant');
-      oldNode = all[all.length - 1] || null;
+      const last = all[all.length - 1] || null;
+      oldNode = (last && last.dataset.live === '1') ? last : null;
     }
   }
   if (!oldNode) return false;
@@ -170,8 +178,13 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   if (!el || !finalizedMsg) return false;
   let oldNode = _liveMessageNodes.get(sessionId);
   if (!oldNode || !document.contains(oldNode)) {
+    // Same data-live gate as _swapLiveMessage: an unmarked last bubble is a
+    // finished answer or a worker bubble, and finalizing "in place" over it
+    // would destroy it. Returning false hands the caller to renderMessages,
+    // which paints the finalized turn correctly from activeChat.messages.
     const all = el.querySelectorAll('.msg.assistant');
-    oldNode = all[all.length - 1] || null;
+    const last = all[all.length - 1] || null;
+    oldNode = (last && last.dataset.live === '1') ? last : null;
   }
   if (!oldNode) return false;
   // Reshape the finalized message (promoteLiveToMessages output) back into the
@@ -196,7 +209,11 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   preserveOpenState(oldNode, fresh);
   const activityScroll = captureActivityScroll(oldNode);
   if (oldNode.classList.contains('pin-bottom')) fresh.classList.add('pin-bottom');
-  // Drop the streaming affordance — this is the terminal paint.
+  // Drop the streaming affordance — this is the terminal paint. That includes
+  // the data-live stamp _buildLiveAssistantInto applied: a finalized bubble
+  // must never be adoptable by the last-assistant fallbacks above, or the
+  // next turn's stream could clobber this finished answer.
+  delete fresh.dataset.live;
   fresh.querySelectorAll('.msg-body.streaming').forEach(b => b.classList.remove('streaming'));
   // A tools-only turn (no text) leaves _buildLiveAssistantInto's "thinking"
   // placeholder in the body; the finalized bubble must not look like it's
@@ -245,8 +262,13 @@ function insertInjectBubbleInPlace(sessionId, injectMsg) {
   if (!el || document.getElementById('empty')) return false;
   let liveNode = _liveMessageNodes.get(sessionId);
   if (!liveNode || !document.contains(liveNode)) {
+    // data-live gate: inserting the inject before an unmarked last bubble
+    // (a finished answer, or a worker bubble) would file it under the wrong
+    // turn. False → caller full-renders, which places it via the message
+    // array's splice-at-anchor ordering instead.
     const all = el.querySelectorAll('.msg.assistant');
-    liveNode = all[all.length - 1] || null;
+    const last = all[all.length - 1] || null;
+    liveNode = (last && last.dataset.live === '1') ? last : null;
   }
   if (!liveNode) return false;
   // renderMessage appends to #messages; relocate the bubble to the anchor slot.

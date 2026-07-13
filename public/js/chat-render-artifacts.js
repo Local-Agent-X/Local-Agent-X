@@ -46,6 +46,13 @@ function _buildLiveAssistantInto(parent, store) {
   const bodyContent = mdPreviewMode ? md(content) : `<pre class="raw-md">${esc(content)}</pre>`;
   const div = document.createElement('div');
   div.className = 'msg assistant';
+  // Explicit live marker. The in-place swap paths in chat-render-live.js fall
+  // back to "last .msg.assistant in #messages" when _liveMessageNodes has no
+  // entry — this stamp is what lets that fallback tell a genuine live bubble
+  // apart from a FINISHED message or a persisted worker bubble (which share
+  // the .msg.assistant class). finalizeLiveMessageInPlace strips it from the
+  // terminal paint so a completed bubble can never be mistaken for live again.
+  div.dataset.live = '1';
   div.setAttribute('role', 'article');
   div.setAttribute('aria-label', 'Assistant message');
   div.innerHTML = `<div class="msg-label">Assistant</div><div class="msg-body streaming">${bodyContent}</div><div class="msg-footer"></div>`;

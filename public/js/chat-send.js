@@ -111,6 +111,14 @@ async function sendMessage() {
   const userMsgEl = addMessageEl('user', displayText, msgAttachments, msgTime);
   activeChat.messages.push({ role: 'user', content: finalText, attachments: msgAttachments, timestamp: msgTime });
   const msgEl = addMessageEl('assistant', '');
+  // Mark the placeholder as the live bubble. The in-place swap fallbacks in
+  // chat-render-live.js only adopt a last .msg.assistant stamped data-live="1"
+  // (so they can't clobber a finished answer or a worker bubble); this manual
+  // pre-stream bubble is the legitimate case that fallback exists for, so it
+  // needs the same stamp _buildLiveAssistantInto applies. Stamped here because
+  // addMessageEl (chat-render.js) also builds persisted rows that must NOT be
+  // adoptable.
+  msgEl.dataset.live = '1';
   let bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = thinkingHTML();
   // Reserve a viewport of room under the live bubble from the FIRST frame so

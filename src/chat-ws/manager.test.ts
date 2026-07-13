@@ -308,6 +308,32 @@ describe("op_heartbeat keepalive (2026-07-13 audit I3)", () => {
     expect(heartbeatFrames(frames())).toHaveLength(0);
   });
 
+  it("(e) a leaked entry (done never lands) stops heartbeating at the lifetime cap", () => {
+    // Backstop for entry-leak paths (2026-07-13 audit, skeptic finding):
+    // e.g. emitTurnError bypassing onEvent leaves done=false forever. Without
+    // the cap the immortal heartbeat would keep the client's activity clock
+    // fresh and mask the phantom stream from the watchdog indefinitely.
+    const CAP = 4 * 60 * 60 * 1000;
+    const m = buildManager();
+    m.startChat("s-hb-leak");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-hb-leak"]));
+
+    // Heartbeats flow normally while under the cap.
+    vi.advanceTimersByTime(20_000);
+    expect(heartbeatFrames(frames())).toHaveLength(1);
+
+    // Run out the rest of the cap, then measure a 10-minute window past it:
+    // not a single further heartbeat.
+    vi.advanceTimersByTime(CAP - 20_000);
+    const atCap = heartbeatFrames(frames()).length;
+    vi.advanceTimersByTime(10 * 60 * 1000);
+    expect(heartbeatFrames(frames())).toHaveLength(atCap);
+    // The entry itself is still leaked (done never landed) — the cap only
+    // silences the keepalive so the client watchdog can recover the session.
+    expect(activeChats.get("s-hb-leak")!.done).toBe(false);
+  });
+
   it("(d) heartbeats never land in chat.events (no replay noise)", () => {
     const m = buildManager();
     m.startChat("s-hb-buf");

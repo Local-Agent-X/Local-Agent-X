@@ -142,4 +142,12 @@ export type ServerEvent =
   // agent panel as a chip while the model never sees the id (and therefore
   // can't parrot it back as a fake delegation message — see
   // test/op-submit-async-self-block.test.ts).
-  | { type: "tool_chip"; toolCallId?: string; chip: ToolChip };
+  | { type: "tool_chip"; toolCallId?: string; chip: ToolChip }
+  // Activity-clock keepalive emitted by the chat-ws manager while a turn is
+  // live (2026-07-13 audit I3). A single long tool call (build, npm install)
+  // can go >60s without events, tripping the client's stuck-stream watchdog
+  // into a needless reconnect_op replay. Never buffered into chat.events and
+  // never routed through onEvent — broadcast-only. Ignored by every client
+  // handler except chat-stream-store.js applyEvent's default case, which
+  // bumps lastActivityMs for any unrecognized type.
+  | { type: "op_heartbeat" };

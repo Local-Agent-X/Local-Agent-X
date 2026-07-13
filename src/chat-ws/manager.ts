@@ -17,6 +17,24 @@ import {
 
 const logger = createLogger("chat-ws");
 
+// Keepalive cadence for live turns. The client's stuck-stream watchdog
+// (public/js/chat-ws.js) fires reconnect_op after 60s without events, so a
+// single long tool call (a build, npm install) used to trigger needless full
+// replays. 20s keeps the client's activity clock fresh with 3x margin under
+// that 60s threshold.
+const HEARTBEAT_INTERVAL_MS = 20_000;
+
+// Belt-and-suspenders lifetime bound on the keepalive (2026-07-13 audit,
+// skeptic finding): if an ActiveChat entry leaks — an error path where `done`
+// never lands (the known one: emitTurnError bypassing onEvent; its root fix
+// lives in run-chat-turn's error path) — an immortal heartbeat would keep the
+// client's activity clock fresh forever and defeat the watchdog's
+// reconnect_op recovery of that session's phantom stream. 4h is generously
+// above any plausible turn, including multi-hour agentic builds, so healthy
+// turns never hit it; any leaked entry stops masking itself within one
+// interval past the cap.
+const HEARTBEAT_MAX_LIFETIME_MS = 4 * 60 * 60 * 1000;
+
 export interface ChatWsManager {
   startChat(sessionId: string): { abort: AbortController; onEvent: (event: ServerEvent) => void };
   getAbortSignal(sessionId: string): AbortSignal | undefined;
@@ -61,6 +79,27 @@ export function buildManager(): ChatWsManager {
       };
       activeChats.set(sessionId, chat);
       broadcastActiveChats();
+
+      // Heartbeat: keep the client's per-op activity clock fresh through
+      // long silent tool calls. Broadcast-only — never pushed into
+      // chat.events (replay noise) and never routed through onEvent. The
+      // identity check makes the interval self-cleaning across every exit
+      // path: natural done, terminateChat (state.ts marks done), and
+      // overwrite by a successor startChat — no cross-module wiring needed.
+      // The lifetime cap backstops entry-leak paths where done never lands.
+      const heartbeat = setInterval(() => {
+        if (
+          chat.done ||
+          activeChats.get(sessionId) !== chat ||
+          Date.now() - chat.startedAt > HEARTBEAT_MAX_LIFETIME_MS
+        ) {
+          clearInterval(heartbeat);
+          return;
+        }
+        broadcastToSession(sessionId, { type: "op_heartbeat" });
+      }, HEARTBEAT_INTERVAL_MS);
+      // Never hold the process open for a keepalive.
+      heartbeat.unref?.();
 
       return {
         abort: abortController,
@@ -113,6 +152,9 @@ export function buildManager(): ChatWsManager {
           // should not end the chat.
           if (event.type === "done") {
             chat.done = true;
+            // Stop the keepalive promptly (the interval's own done-check
+            // would also catch it next tick; clearInterval is idempotent).
+            clearInterval(heartbeat);
             // Identity-guarded like terminateChat's sweep (state.ts): if a
             // NEW chat re-registered this sessionId in the meantime, a stale
             // sweep must not reap the successor's entry (2026-07-13 audit, F8).

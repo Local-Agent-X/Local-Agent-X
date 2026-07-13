@@ -29,16 +29,20 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // vs main-chat. Read-only discovery (ARI action "read"), spiral-guarded.
   glob:        ["main-chat", "spawned-agent", "build-intent"],
   grep:        ["main-chat", "spawned-agent", "build-intent"],
-  // structural_search is grep's symbol-accurate sibling — same read-only
-  // discovery surface, same audiences.
-  structural_search: ["main-chat", "spawned-agent", "build-intent"],
+  // structural_search is grep's symbol-accurate sibling. Demoted from
+  // main-chat 2026-07-13: zero fires in 4 wks of telemetry — grep covers the
+  // interactive path; kept for code-working sub-agents.
+  structural_search: ["spawned-agent", "build-intent"],
 
   // Web & search
   web_fetch:   ["main-chat", "spawned-agent", "operator", "build-intent"],
   web_search:  ["main-chat", "spawned-agent", "operator", "build-intent"],
   image_search: ["main-chat", "spawned-agent", "operator", "build-intent"],
-  create_chart: ["main-chat", "spawned-agent", "operator", "build-intent"],
-  preview_document: ["main-chat", "spawned-agent", "operator", "build-intent"],
+  // create_chart/preview_document demoted from main-chat 2026-07-13 (zero
+  // fires in 4 wks): the office keyword rules (chart|graph|preview) resurface
+  // them on the messages that need them; workers keep them eager.
+  create_chart: ["spawned-agent", "operator", "build-intent"],
+  preview_document: ["spawned-agent", "operator", "build-intent"],
   http_request: ["main-chat", "spawned-agent", "operator"],
 
   // App self-control
@@ -54,21 +58,25 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
 
   // Vision
   view_image:     ["main-chat", "spawned-agent", "operator", "build-intent"],
-  send_video:     ["main-chat"],
+  // send_video deferred 2026-07-13 (0 fires/4wks) — the video keyword rule
+  // resurfaces it alongside generate_video.
   send_image:     ["main-chat"],
   screen_capture: ["main-chat"],
   // computer (mouse/keyboard) is intentionally DEFERRED — found via tool_search.
   // The tool-search-nudge middleware forces models that decline a capability
   // tool-lessly (e.g. Grok) to search first, so it doesn't need an eager slot.
-  // Proactive owner DM — interactive ("ping me…") AND autonomous/scheduled runs.
-  telegram_send:  ["main-chat", "operator", "spawned-agent"],
-  whatsapp_send:  ["main-chat", "operator", "spawned-agent"],
-  // Platform self-management — interactive ("restart" / "check for updates") and
-  // scheduled (a nightly update check). Not spawned-agent (sub-agents must not
-  // restart the host).
-  restart:           ["main-chat", "operator"],
-  check_for_updates: ["main-chat", "operator"],
-  apply_update:      ["main-chat", "operator"],
+  // Proactive owner DM — autonomous/scheduled runs keep these eager; the
+  // interactive path is keyword-routed (tool-filter.ts: telegram/whatsapp
+  // rules) after zero main-chat fires in 4 wks of telemetry (2026-07-13).
+  telegram_send:  ["operator", "spawned-agent"],
+  whatsapp_send:  ["operator", "spawned-agent"],
+  // Platform self-management — scheduled runs (nightly update check) keep
+  // these eager; interactive access is keyword-routed (restart/update rules)
+  // after zero main-chat fires in 4 wks. Not spawned-agent (sub-agents must
+  // not restart the host).
+  restart:           ["operator"],
+  check_for_updates: ["operator"],
+  apply_update:      ["operator"],
   ocr:            ["spawned-agent", "operator"],
 
   // Memory
@@ -78,16 +86,30 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // answer "what did we do on <date>" because the only tool that pulls prior
   // sessions never reaches its schema. This is the date-recall surfacing fix.
   search_past_sessions:  ["main-chat", "spawned-agent", "operator"],
-  read_my_logs:          ["main-chat", "spawned-agent"],
+  read_my_logs:          ["spawned-agent"],
   memory_save:           ["main-chat", "spawned-agent", "operator"],
   memory_recall:         ["main-chat", "spawned-agent", "operator"],
   memory_get:            ["main-chat"],
-  memory_forget:         ["main-chat"],
+  // remember/update_fact/forget promoted to eager 2026-07-13: telemetry
+  // showed remember as the single most-fired tool (251/4wks) while DEFERRED —
+  // every save paid a tool_search round-trip. update_fact (18) and forget
+  // (24) are its correction/deletion siblings; a model that can save eagerly
+  // must be able to correct and delete eagerly too. memory_forget (bulk
+  // destructive, 0 fires) demoted to deferred — `forget` covers the
+  // interactive verb.
+  remember:    ["main-chat", "spawned-agent", "operator"],
+  update_fact: ["main-chat", "spawned-agent", "operator"],
+  forget:      ["main-chat"],
   // memory maintenance ops (reflect/update_profile/stats/consolidate/dream/
-  // ingest) are deferred — rare, admin-shaped, reachable via tool_search or a
-  // pasted literal call. 2026-06 usage telemetry should confirm before any
-  // come back.
+  // ingest/memory_forget) are deferred — rare, admin-shaped, reachable via
+  // tool_search or a pasted literal call. 2026-06 usage telemetry should
+  // confirm before any come back.
 
+
+  // process_status promoted 2026-07-13: 47 fires/4wks, all paying the
+  // tool_search round-trip. The rest of the process family stays deferred
+  // (process_start 15 is launch-shaped and keyword/literal-routed).
+  process_status: ["main-chat"],
 
   // Worker-pool observation (submit lives in canonical, not exposed).
   // op_kill/op_redirect stay EAGER: the supervisor must be able to watch and
@@ -111,11 +133,10 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   task_list:       ["main-chat", "spawned-agent"],
   task_get:        ["main-chat", "spawned-agent"],
 
-  // Protocols — one collapsed tool (action param), see src/protocols/protocol-tool.ts
-  protocol: ["main-chat"],
-
-  // MCP administration — agent sets up external MCP servers on request.
-  mcp_add_server: ["main-chat"],
+  // Protocols (collapsed tool, src/protocols/protocol-tool.ts) and MCP
+  // administration: demoted to deferred 2026-07-13 — zero fires in 4 wks.
+  // The skill/protocol and mcp keyword rules (tool-filter.ts) resurface them
+  // on the messages that name them; tool_search covers the rest.
 
   // Mission scheduling: deferred — the keyword router's mission_ prefix rule
   // (social keywords) resurfaces the family; tool_search covers the rest.
@@ -123,6 +144,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Agents — canonical delegation surface
   agent_list:   ["main-chat", "build-intent"],
   agent_spawn:  ["main-chat", "build-intent"],
+  // agent_create stays eager despite 0 fires/4wks — the supervisor-surface
+  // contract (test/tool-filter-supervisor-surface.test.ts) pins the full
+  // delegation trio on normal messages.
   agent_create: ["main-chat", "build-intent"],
 
   // Project containers (sibling to agent_* — same eager visibility)
@@ -133,7 +157,8 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // brief, so it must be eager (not deferred). Spawned agents get both via
   // IDENTITY_TOOLS in tool-search.ts, not here.
   project_brief_read:   ["main-chat", "build-intent"],
-  project_brief_update: ["main-chat"],
+  // project_brief_update demoted 2026-07-13 (0 fires/4wks) — the \bproject\b
+  // keyword rule resurfaces the whole project_ family on project messages.
   agent_status: ["main-chat", "build-intent"],
   // agent_cancel stays eager — same watch-and-cancel contract as op_kill.
   agent_cancel: ["main-chat"],
@@ -164,13 +189,14 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Auto-build orchestrator
   run_build_plan: ["main-chat"],
   build_plan_status:   ["main-chat"],
-  build_plan_resume:   ["main-chat"],
+  // build_plan_resume deferred 2026-07-13 (0 fires/4wks) — resume is
+  // literal-call/tool_search territory; status stays eager for polling.
   start_app_build:       ["main-chat"],
   finalize_app_build:    ["main-chat"],
 
-  // Secrets
-  request_secret:  ["main-chat"],
-  request_secrets: ["main-chat"],
+  // Secrets — request_secret(s) deferred 2026-07-13 (0 fires/4wks); the
+  // secret/api-key keyword rule resurfaces the family. list_secrets stays
+  // eager (fires, and is the entry point that leads to the other two).
   list_secrets:    ["main-chat"],
 
   // Office documents — one collapsed tool per family (action param).

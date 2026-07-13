@@ -47,6 +47,21 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /chain|pipeline/i, toolPrefixes: ["mission_chain_"] },
   { keywords: /template/i, toolPrefixes: ["mission_template"] },
   { keywords: /marketplace/i, toolPrefixes: ["marketplace_"] },
+  // Rules below back the 2026-07-13 eager-tier demotions (audience-map.ts):
+  // each demoted tool stays one keyword away — no tool_search round-trip on
+  // the messages that actually name the capability.
+  { keywords: /\bchart\b|\bgraph\b|\bplot\b/i, toolPrefixes: ["create_chart"] },
+  { keywords: /\bpreview\b/i, toolPrefixes: ["preview_document"] },
+  { keywords: /telegram/i, toolPrefixes: ["telegram_"] },
+  { keywords: /whats\s*app/i, toolPrefixes: ["whatsapp_"] },
+  { keywords: /\brestart\b|\breboot\b/i, toolPrefixes: ["restart"] },
+  { keywords: /check.*updates?\b|updates?\s+(the\s+)?(app|yourself)|new version|upgrade/i, toolPrefixes: ["check_for_updates", "apply_update"] },
+  { keywords: /\bmcp\b/i, toolPrefixes: ["mcp_add_server"] },
+  { keywords: /protocol/i, toolPrefixes: ["protocol"] },
+  { keywords: /\bvideo\b/i, toolPrefixes: ["send_video", "generate_video"] },
+  { keywords: /secret|api.?key|credential|\btoken\b/i, toolPrefixes: ["request_secret", "list_secrets"] },
+  { keywords: /create.*agent|new agent/i, toolPrefixes: ["agent_create"] },
+  { keywords: /your logs|read.*logs/i, toolPrefixes: ["read_my_logs"] },
 ];
 
 // Build-intent narrowing fires when the user asks to build/create an app —
